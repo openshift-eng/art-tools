@@ -101,6 +101,26 @@ class TestImageSchema(unittest.TestCase):
             image_schema.validate('filename', data),
         )
 
+    def test_validate_with_valid_bridge_release_bug_mirroring_override(self):
+        data = {
+            'from': {},
+            'name': 'my-name',
+            'for_payload': True,
+            'delivery': {'delivery_repo_names': ['foo', 'bar']},
+            'bridge_release': {'bug_mirroring': {'enabled': False}},
+        }
+        self.assertIsNone(image_schema.validate('filename', data))
+
+    def test_validate_with_invalid_bridge_release_bug_mirroring_override(self):
+        data = {
+            'from': {},
+            'name': 'my-name',
+            'for_payload': True,
+            'delivery': {'delivery_repo_names': ['foo', 'bar']},
+            'bridge_release': {'bug_mirroring': {'enabled': 'nope'}},
+        }
+        self.assertIn("'nope' is not of type 'boolean'", image_schema.validate('filename', data))
+
     def test_validate_with_valid_konflux_cachi2_lockfile_rpms(self):
         """Test valid konflux.cachi2.lockfile.rpms configuration"""
         valid_data = {

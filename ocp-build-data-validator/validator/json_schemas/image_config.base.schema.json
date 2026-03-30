@@ -1065,6 +1065,46 @@
       "$ref": "#/properties/for_release"
     },
     "for_release-": {},
+    "bridge_release": {
+      "description": "Bridge release overrides for this image",
+      "type": "object",
+      "properties": {
+        "bug_mirroring": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "enabled!": {
+              "$ref": "#/properties/bridge_release/properties/bug_mirroring/properties/enabled"
+            },
+            "enabled?": {
+              "$ref": "#/properties/bridge_release/properties/bug_mirroring/properties/enabled"
+            },
+            "enabled-": {}
+          },
+          "required": [
+            "enabled"
+          ],
+          "additionalProperties": false
+        },
+        "bug_mirroring!": {
+          "$ref": "#/properties/bridge_release/properties/bug_mirroring"
+        },
+        "bug_mirroring?": {
+          "$ref": "#/properties/bridge_release/properties/bug_mirroring"
+        },
+        "bug_mirroring-": {}
+      },
+      "additionalProperties": false
+    },
+    "bridge_release!": {
+      "$ref": "#/properties/bridge_release"
+    },
+    "bridge_release?": {
+      "$ref": "#/properties/bridge_release"
+    },
+    "bridge_release-": {},
     "name_in_bundle": {
       "description": "How the upstream operator calls this operand in the clusterserviceversion.yaml.",
       "type": "string",

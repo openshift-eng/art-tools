@@ -24,6 +24,7 @@ class Ocp4ScanPipeline:
 
         self.logger = logging.getLogger(__name__)
         self._doozer_working = self.runtime.working_dir / "doozer_working"
+        self._elliott_working = self.runtime.working_dir / "elliott_working"
         self.changes = {}
         self.report = {}
         self.issues = []
@@ -63,6 +64,7 @@ class Ocp4ScanPipeline:
         # Scan for changes and RHCOS inconsistencies
         await self.get_changes()
         await self.get_rhcos_inconsistencies()
+        await self.handle_bridge_bug_mirroring()
 
         # Handle image source changes
         self.handle_source_changes()
@@ -266,6 +268,44 @@ class Ocp4ScanPipeline:
                 assembly="stream",
                 build_system="konflux",
             )
+
+    async def handle_bridge_bug_mirroring(self):
+        group = f"openshift-{self.version}"
+        group_config = await util.load_group_config(
+            group=group,
+            assembly=self.assembly,
+            doozer_data_path=self.data_path,
+            doozer_data_gitref=self.data_gitref,
+        )
+        bridge_release = group_config.get("bridge_release", {}) or {}
+        bug_mirroring = bridge_release.get("bug_mirroring", {}) or {}
+        if not bug_mirroring.get("enabled", False):
+            self.logger.info("Bridge bug mirroring is disabled for %s", group)
+            return
+
+        if self.data_gitref:
+            group += f"@{self.data_gitref}"
+        cmd = [
+            "elliott",
+            f"--group={group}",
+            f"--assembly={self.assembly}",
+            "--build-system=konflux",
+            f"--working-dir={self._elliott_working}",
+            f"--data-path={self.data_path}",
+            "find-bugs:bridge-mirror",
+        ]
+        if self.runtime.dry_run:
+            cmd.append("--dry-run")
+
+        try:
+            await exectools.cmd_assert_async(cmd)
+        except ChildProcessError:
+            if self.runtime.dry_run:
+                raise
+            slack_client = self.runtime.new_slack_client()
+            slack_client.bind_channel(f"openshift-{self.version}")
+            await slack_client.say(f"Bridge bug mirroring failed for {self.version}. Please investigate")
+            raise
 
 
 @cli.command('beta:konflux:ocp4-scan')
