@@ -2095,12 +2095,30 @@ class KonfluxRebaser:
             # Get expected stream name
             for name, stream in self._runtime.streams.items():
                 image = str(stream['image'])
-                if ':' not in image:
-                    raise ValueError(f"Invalid stream image `{image}` in stream `{name}`")
-                image_tag = image.split(':')[-1]
+                # Strip digest (@sha256:...) if present before extracting tag
+                image_without_digest = image.split('@')[0]
+                if ':' not in image_without_digest:
+                    # Stream has digest-only image (no tag), skip it as we can't extract version info
+                    self._logger.debug(f"Skipping stream `{name}` - image `{image}` has no tag")
+                    continue
+                image_tag = image_without_digest.split(':')[-1]
+
+                # Try to extract version fields from the stream's image tag
+                try:
+                    version_fields = util.extract_version_fields(image_tag)
+                    if len(version_fields) < 2:
+                        # Need at least major.minor for comparison
+                        self._logger.debug(
+                            f"Skipping stream `{name}` - insufficient version fields in tag `{image_tag}`"
+                        )
+                        continue
+                    stream_major, stream_minor = version_fields[0], version_fields[1]
+                except (ValueError, IOError) as e:
+                    # Can't parse version from this stream's tag, skip it
+                    self._logger.debug(f"Skipping stream `{name}` - cannot parse version from tag `{image_tag}`: {e}")
+                    continue
 
                 # Compare builder X.Y
-                stream_major, stream_minor, _ = util.extract_version_fields(image_tag)
                 if stream_major != major or stream_minor != minor:
                     continue
 
