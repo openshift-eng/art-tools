@@ -103,6 +103,8 @@ class SeedLockfilePipeline:
         return cmd
 
     async def run(self):
+        jenkins.init_jenkins()
+
         if not self.seed_map:
             LOGGER.info('No seed NVRs provided; building in test assembly with network_mode=open')
             await self._build_in_test_assembly()
