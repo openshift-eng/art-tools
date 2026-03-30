@@ -120,10 +120,11 @@ class TestSeedLockfilePipeline(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(pipeline.test_results['ironic']['status'], '0')
         self.assertEqual(pipeline.test_results['ovn-kubernetes']['status'], '-1')
 
+    @patch('pyartcd.pipelines.seed_lockfile.jenkins.init_jenkins')
     @patch('pyartcd.pipelines.seed_lockfile.jenkins.update_title')
     @patch('pyartcd.pipelines.seed_lockfile.jenkins.update_description')
     @patch('pyartcd.pipelines.seed_lockfile.exectools.cmd_assert_async', new_callable=AsyncMock)
-    async def test_run_with_seed_nvrs_skips_build(self, mock_cmd, _desc, _title):
+    async def test_run_with_seed_nvrs_skips_build(self, mock_cmd, _desc, _title, _init):
         """When seed NVRs are provided, Phase 1 is skipped; Phase 2 does rebase + build."""
         pipeline = self._create_pipeline(seed_nvrs='ironic@ironic-container-v4.22.0-assembly.test')
         pipeline.slack_client.say = AsyncMock()
@@ -145,10 +146,11 @@ class TestSeedLockfilePipeline(unittest.IsolatedAsyncioTestCase):
         self.assertIn('beta:images:konflux:build', build_cmd)
         self.assertIn('--assembly=stream', build_cmd)
 
+    @patch('pyartcd.pipelines.seed_lockfile.jenkins.init_jenkins')
     @patch('pyartcd.pipelines.seed_lockfile.jenkins.update_title')
     @patch('pyartcd.pipelines.seed_lockfile.jenkins.update_description')
     @patch('pyartcd.pipelines.seed_lockfile.exectools.cmd_assert_async', new_callable=AsyncMock)
-    async def test_run_without_seed_nvrs_builds_first(self, mock_cmd, _desc, _title):
+    async def test_run_without_seed_nvrs_builds_first(self, mock_cmd, _desc, _title, _init):
         """When no seed NVRs, Phase 1 build runs, then Phase 2 rebase + build."""
         pipeline = self._create_pipeline()
         pipeline.slack_client.say = AsyncMock()
@@ -191,8 +193,9 @@ class TestSeedLockfilePipeline(unittest.IsolatedAsyncioTestCase):
         self.assertIn('beta:images:konflux:build', stream_build_cmd)
         self.assertNotIn('open', stream_build_cmd)
 
+    @patch('pyartcd.pipelines.seed_lockfile.jenkins.init_jenkins')
     @patch('pyartcd.pipelines.seed_lockfile.exectools.cmd_assert_async', new_callable=AsyncMock)
-    async def test_run_fails_if_no_builds_succeed(self, mock_cmd):
+    async def test_run_fails_if_no_builds_succeed(self, mock_cmd, _init):
         """Raises RuntimeError if Phase 1 produces no seed map entries."""
         pipeline = self._create_pipeline()
 
