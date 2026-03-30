@@ -1304,12 +1304,12 @@ class ImageMetadata(Metadata):
         the snapshot-to-release workflow when builds complete.
 
         Returns:
-            bool: True if snapshot_release: true is configured, False otherwise
+            bool: True if snapshot_release: true is configured, True by default if not specified
         """
         snapshot_release_config = getattr(self.config, 'snapshot_release', Missing)
         if snapshot_release_config not in [Missing, None]:
             return bool(snapshot_release_config)
-        return False
+        return True
 
     def get_required_artifacts(self) -> list:
         """

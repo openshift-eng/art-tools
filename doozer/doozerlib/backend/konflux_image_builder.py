@@ -35,6 +35,8 @@ from doozerlib.source_resolver import SourceResolution
 from packageurl import PackageURL
 from tenacity import retry, stop_after_attempt, wait_fixed
 
+from pyartcd import jenkins
+
 LOGGER = logging.getLogger(__name__)
 
 
@@ -251,6 +253,15 @@ class KonfluxImageBuilder:
                     if build_record:
                         record["record_id"] = build_record.record_id
 
+                    # Check base image release AFTER saving to database
+                    if outcome is KonfluxBuildOutcome.SUCCESS and metadata.is_base_image():
+                        base_image_release_success = await self._trigger_base_image_release(metadata, nvr)
+                        if not base_image_release_success:
+                            logger.error(
+                                f"Base image release failed for {metadata.distgit_key}, but build already stored in database"
+                            )
+                            outcome = KonfluxBuildOutcome.FAILURE
+
                 if outcome is not KonfluxBuildOutcome.SUCCESS:
                     error = KonfluxImageBuildError(
                         f"Konflux image build for {metadata.distgit_key} failed with output={outcome}",
@@ -261,7 +272,6 @@ class KonfluxImageBuilder:
                     metadata.build_status = True
                     record["message"] = "Success"
                     record["status"] = 0
-
                     break
 
             if not metadata.build_status and error:
@@ -991,3 +1001,43 @@ class KonfluxImageBuilder:
                 parent_image_nvrs.append(pullspec)
 
         return parent_image_nvrs
+
+    async def _trigger_base_image_release(self, metadata: ImageMetadata, nvr: str) -> bool:
+        """Trigger base image release for a single successful base image build.
+
+        Expects group_name format 'openshift-X.Y' (e.g., 'openshift-4.22') for
+        version extraction. Falls back to full group_name if format doesn't match.
+
+        Returns:
+            bool: True if base image release was triggered successfully, False otherwise
+        """
+        logger = self._logger.getChild(f"[{metadata.distgit_key}]")
+
+        if not metadata.is_snapshot_release_enabled():
+            logger.info(f"Skipping base image release for {nvr}: snapshot_release disabled")
+            return True
+
+        logger.info(f"Triggering base image release for {nvr}")
+
+        try:
+            # Extract build_version from group_name (expected: openshift-X.Y)
+            version_parts = self._config.group_name.split('-')
+            if len(version_parts) >= 2:
+                build_version = '-'.join(version_parts[1:])
+            else:
+                build_version = self._config.group_name
+
+            jenkins.start_base_image_release(
+                build_version=build_version,
+                assembly=metadata.runtime.assembly,
+                base_image_nvrs=[nvr],
+                doozer_data_path=getattr(metadata.runtime, 'data_path', ''),
+                doozer_data_gitref=getattr(metadata.runtime, 'data_gitref', ''),
+                dry_run=self._config.dry_run,
+            )
+            logger.info(f"Successfully triggered base image release for {nvr}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to trigger base image release for {nvr}: {e}")
+            return False
