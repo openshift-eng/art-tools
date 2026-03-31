@@ -63,6 +63,7 @@ GOLANG_RPM_PACKAGE_NAME = 'golang'
 PRODUCT_NAMESPACE_MAP = {
     "oadp": "art-oadp-tenant",
     "mta": "art-mta-tenant",
+    "quay": "art-quay-tenant",
     "rhmtc": "art-mtc-tenant",
     "logging": "art-logging-tenant",
     "openshift-logging": "art-logging-tenant",
@@ -72,6 +73,7 @@ PRODUCT_NAMESPACE_MAP = {
 PRODUCT_KUBECONFIG_MAP = {
     "oadp": "OADP_KONFLUX_SA_KUBECONFIG",
     "mta": "MTA_KONFLUX_SA_KUBECONFIG",
+    "quay": "QUAY_KONFLUX_SA_KUBECONFIG",
     "rhmtc": "MTC_KONFLUX_SA_KUBECONFIG",
     "logging": "LOGGING_KONFLUX_SA_KUBECONFIG",
     "openshift-logging": "LOGGING_KONFLUX_SA_KUBECONFIG",
