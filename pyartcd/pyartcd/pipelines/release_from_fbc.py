@@ -93,6 +93,7 @@ class ReleaseFromFbcPipeline:
         self.gitlab_url = self.runtime.config.get("gitlab_url", "https://gitlab.cee.redhat.com")
         self.gitlab_token = None
         self.shipment_mr_url = None
+        self.job_url = None
 
         # Product configuration - initialized to None, will be loaded from group config in run()
         self.product = None
@@ -190,6 +191,8 @@ class ReleaseFromFbcPipeline:
         if not gitlab_token:
             raise ValueError("GITLAB_TOKEN environment variable is required to create a merge request")
         self.gitlab_token = gitlab_token
+
+        self.job_url = os.getenv('BUILD_URL')
 
     def setup_working_dir(self):
         """
@@ -579,7 +582,8 @@ class ReleaseFromFbcPipeline:
             mr_title = f"Draft: Shipment for {self.product} {self.assembly} (ship date: {self.target_release_date})"
         else:
             mr_title = f"Draft: Shipment for {self.product} {self.assembly}"
-        mr_description = f"Shipment files created for {self.assembly} using release-from-fbc command"
+        mr_description = f"Created by job: {self.job_url}\n\n" if self.job_url else ""
+        mr_description += f"Shipment files created for {self.assembly} using release-from-fbc command"
 
         if self.dry_run:
             self.logger.info("[DRY-RUN] Would have created MR with title: %s", mr_title)
