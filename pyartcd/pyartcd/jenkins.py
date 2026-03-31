@@ -700,7 +700,7 @@ def start_base_image_release(
         'DOOZER_DATA_PATH': doozer_data_path,
         'DOOZER_DATA_GITREF': doozer_data_gitref,
         'DRY_RUN': str(dry_run).lower(),
-        'ART_TOOLS_COMMIT': os.environ.get('ART_TOOLS_COMMIT', 'main'),
+        'ART_TOOLS_COMMIT': os.environ.get('ART_TOOLS_COMMIT', '').strip(),
     }
 
     return start_build(
