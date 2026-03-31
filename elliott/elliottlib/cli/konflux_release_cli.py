@@ -150,6 +150,12 @@ class CreateReleaseCli:
             )
             return None
 
+        if not (config.shipment.snapshot and config.shipment.snapshot.spec.components):
+            raise ValueError("A valid snapshot must be provided")
+
+        # Validate that all components are registered in the ReleasePlanAdmission
+        LOGGER.info("Validating snapshot components against RPA...")
+        await self._validate_snapshot_components(config.shipment)
         # Create snapshot first using the spec from shipment config
         LOGGER.info("Creating snapshot from shipment config...")
         snapshot_obj = await self.create_snapshot(config.shipment)
@@ -278,11 +284,6 @@ class CreateReleaseCli:
         """
         Create a Konflux Snapshot manifest from the given shipment's snapshot spec.
         """
-        if not (shipment.snapshot and shipment.snapshot.spec.components):
-            raise ValueError("A valid snapshot must be provided")
-
-        # Validate that all components are registered in the ReleasePlanAdmission
-        await self._validate_snapshot_components(shipment)
         snapshot_name = self.get_object_name()
 
         # Prepare metadata with labels and optional annotations
