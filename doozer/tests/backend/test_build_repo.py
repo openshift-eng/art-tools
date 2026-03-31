@@ -63,11 +63,47 @@ class TestBuildRepo(IsolatedAsyncioTestCase):
     @patch("doozerlib.backend.build_repo.BuildRepo.clone")
     @patch("pathlib.Path.exists", return_value=True)
     @patch("shutil.rmtree")
-    @patch("artcommonlib.git_helper.gather_git_async", return_value=(0, "", ""))
+    @patch("artcommonlib.git_helper.gather_git_async", return_value=(0, "my-branch", ""))
     async def test_ensure_source_no_upcycle(self, gather_git: AsyncMock, rmtree: Mock, _, clone: AsyncMock):
         await self.repo.ensure_source(upcycle=False)
         clone.assert_not_called()
         rmtree.assert_not_called()
+
+    @patch("doozerlib.backend.build_repo.BuildRepo.switch")
+    @patch("doozerlib.backend.build_repo.BuildRepo.fetch", return_value=True)
+    @patch("doozerlib.backend.build_repo.BuildRepo.clone")
+    @patch("pathlib.Path.exists", return_value=True)
+    @patch("artcommonlib.git_helper.gather_git_async")
+    async def test_ensure_source_switches_branch_when_mismatched(
+        self, gather_git: AsyncMock, _, clone: AsyncMock, fetch: AsyncMock, switch: AsyncMock
+    ):
+        """When the existing repo is on a different branch, ensure_source should fetch and switch."""
+        gather_git.side_effect = [
+            (0, "old-branch", ""),  # rev-parse --abbrev-ref HEAD (current branch)
+            (0, "deadbeef", ""),  # _get_commit_hash rev-parse HEAD
+        ]
+        await self.repo.ensure_source(upcycle=False)
+        clone.assert_not_called()
+        fetch.assert_awaited_once_with("my-branch", strict=False)
+        switch.assert_awaited_once_with("my-branch")
+
+    @patch("doozerlib.backend.build_repo.BuildRepo.switch")
+    @patch("doozerlib.backend.build_repo.BuildRepo.fetch", return_value=False)
+    @patch("doozerlib.backend.build_repo.BuildRepo.clone")
+    @patch("pathlib.Path.exists", return_value=True)
+    @patch("artcommonlib.git_helper.gather_git_async")
+    async def test_ensure_source_creates_orphan_when_branch_not_found(
+        self, gather_git: AsyncMock, _, clone: AsyncMock, fetch: AsyncMock, switch: AsyncMock
+    ):
+        """When switching branch but remote branch doesn't exist, create an orphan branch."""
+        gather_git.side_effect = [
+            (0, "old-branch", ""),  # rev-parse --abbrev-ref HEAD (current branch)
+            (0, "deadbeef", ""),  # _get_commit_hash rev-parse HEAD
+        ]
+        await self.repo.ensure_source(upcycle=False)
+        clone.assert_not_called()
+        fetch.assert_awaited_once_with("my-branch", strict=False)
+        switch.assert_awaited_once_with("my-branch", orphan=True)
 
     @patch("artcommonlib.git_helper.run_git_async", return_value=0)
     @patch("artcommonlib.git_helper.gather_git_async", return_value=(0, "origin", ""))
