@@ -605,18 +605,23 @@ class RPMLockfileGenerator:
         )
         return lowest_rpm.evr
 
-    def _apply_fallback_versions(
-        self, rpms_info_by_arch: Dict[str, List[RpmInfo]], fallback_recommendations: Dict[str, str]
+    async def _apply_fallback_versions(
+        self,
+        rpms_info_by_arch: Dict[str, List[RpmInfo]],
+        fallback_recommendations: Dict[str, str],
+        arches: List[str],
+        enabled_repos: set[str],
     ) -> None:
         """
-        Apply fallback versions to the package collection for Case 1 scenarios.
+        Apply fallback versions to the package collection.
 
-        Only handles cases where the fallback version already exists in all architecture collections.
-        Throws error for Case 2 scenarios where fallback version needs to be resolved from repositories.
+        Handles both Case 1 (fallback version already in collections) and Case 2 (fetch from repositories).
 
         Args:
             rpms_info_by_arch: Architecture to RPM list mapping to modify in place
             fallback_recommendations: Package name to fallback EVR mapping
+            arches: Target architectures for repository resolution
+            enabled_repos: Repository names for fetching missing packages
         """
         for package_name, fallback_evr in fallback_recommendations.items():
             self.logger.info(f"Applying fallback version {fallback_evr} for package {package_name}")
@@ -635,9 +640,21 @@ class RPMLockfileGenerator:
                         break
 
                 if fallback_rpm is None:
-                    raise ValueError(
-                        f"Fallback version {fallback_evr} not available for {package_name} in {arch} - requires repository resolution (Case 2)"
-                    )
+                    # Case 2: Fetch missing fallback version from repositories
+                    self.logger.info(f"Attempting repository resolution for {package_name} {fallback_evr} on {arch}")
+
+                    missing_nvr = f"{package_name}-{fallback_evr}"
+                    fetch_result = await self.builder.fetch_rpms_info([arch], enabled_repos, {missing_nvr})
+
+                    if fetch_result and arch in fetch_result and fetch_result[arch]:
+                        fallback_rpm = fetch_result[arch][0]  # Take the first (and only) result
+                        self.logger.info(
+                            f"Successfully resolved {package_name} {fallback_evr} for {arch} from repositories"
+                        )
+                    else:
+                        raise ValueError(
+                            f"Fallback version {fallback_evr} not available for {package_name} in {arch} - not found in any repository"
+                        )
 
                 fallback_rpms_by_arch[arch] = fallback_rpm
 
@@ -789,7 +806,7 @@ class RPMLockfileGenerator:
                 fallback_evr = self._find_common_fallback_versions(package_name, arch_versions)
                 fallback_recommendations[package_name] = fallback_evr
 
-            self._apply_fallback_versions(rpms_info_by_arch, fallback_recommendations)
+            await self._apply_fallback_versions(rpms_info_by_arch, fallback_recommendations, arches, enabled_repos)
             self.logger.info(f"Applied fallback recovery for {len(fallback_recommendations)} packages")
 
         if image_meta.is_cross_arch_enabled():

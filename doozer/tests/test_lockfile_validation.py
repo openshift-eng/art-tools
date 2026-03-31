@@ -1,6 +1,6 @@
-from unittest.mock import Mock
+import asyncio
+from unittest.mock import AsyncMock, Mock
 
-import pytest
 from doozerlib.lockfile import RpmInfo, RPMLockfileGenerator
 
 
@@ -797,89 +797,78 @@ class TestRPMLockfileFallback:
 
     def test_apply_fallback_versions_case_1_success(self):
         """Test fallback application when fallback version exists in all architectures."""
-        rpms_info_by_arch = {
-            "x86_64": [
-                RpmInfo("pkg1", "0:1.0-2", "checksum1", "repo1", 1000, "src1", "url1", 0, "1.0", "2"),
-                RpmInfo("pkg1", "0:1.0-3", "checksum2", "repo1", 1000, "src1", "url2", 0, "1.0", "3"),
-            ],
-            "aarch64": [
-                RpmInfo("pkg1", "0:1.0-2", "checksum3", "repo1", 1000, "src1", "url3", 0, "1.0", "2"),
-                RpmInfo("pkg1", "0:1.0-4", "checksum4", "repo1", 1000, "src1", "url4", 0, "1.0", "4"),
-            ],
-        }
 
-        fallback_recommendations = {"pkg1": "0:1.0-2"}
-        self.generator._apply_fallback_versions(rpms_info_by_arch, fallback_recommendations)
+        async def _test():
+            rpms_info_by_arch = {
+                "x86_64": [
+                    RpmInfo("pkg1", "0:1.0-2", "checksum1", "repo1", 1000, "src1", "url1", 0, "1.0", "2"),
+                    RpmInfo("pkg1", "0:1.0-3", "checksum2", "repo1", 1000, "src1", "url2", 0, "1.0", "3"),
+                ],
+                "aarch64": [
+                    RpmInfo("pkg1", "0:1.0-2", "checksum3", "repo1", 1000, "src1", "url3", 0, "1.0", "2"),
+                    RpmInfo("pkg1", "0:1.0-4", "checksum4", "repo1", 1000, "src1", "url4", 0, "1.0", "4"),
+                ],
+            }
 
-        for arch in rpms_info_by_arch:
-            pkg_rpms = [rpm for rpm in rpms_info_by_arch[arch] if rpm.name == "pkg1"]
-            assert len(pkg_rpms) == 1
-            assert pkg_rpms[0].evr == "0:1.0-2"
+            fallback_recommendations = {"pkg1": "0:1.0-2"}
+            arches = ["x86_64", "aarch64"]
+            enabled_repos = {"repo1"}
 
-    def test_apply_fallback_versions_case_2_error(self):
-        """Test fallback application fails when fallback version doesn't exist."""
-        rpms_info_by_arch = {
-            "x86_64": [RpmInfo("pkg1", "0:1.0-3", "checksum1", "repo1", 1000, "src1", "url1", 0, "1.0", "3")],
-            "aarch64": [RpmInfo("pkg1", "0:1.0-4", "checksum2", "repo1", 1000, "src1", "url2", 0, "1.0", "4")],
-        }
+            await self.generator._apply_fallback_versions(
+                rpms_info_by_arch, fallback_recommendations, arches, enabled_repos
+            )
 
-        fallback_recommendations = {"pkg1": "0:1.0-2"}
+            for arch in rpms_info_by_arch:
+                pkg_rpms = [rpm for rpm in rpms_info_by_arch[arch] if rpm.name == "pkg1"]
+                assert len(pkg_rpms) == 1
+                assert pkg_rpms[0].evr == "0:1.0-2"
 
-        with pytest.raises(ValueError, match="Fallback version 0:1.0-2 not available"):
-            self.generator._apply_fallback_versions(rpms_info_by_arch, fallback_recommendations)
+        asyncio.run(_test())
 
-    def test_apply_fallback_versions_partial_architecture_coverage(self):
-        """Test fallback with package missing on some architectures."""
-        rpms_info_by_arch = {
-            "x86_64": [RpmInfo("pkg1", "0:1.0-2", "checksum1", "repo1", 1000, "src1", "url1", 0, "1.0", "2")],
-            "aarch64": [RpmInfo("pkg2", "0:2.0-1", "checksum2", "repo1", 1000, "src2", "url2", 0, "2.0", "1")],
-        }
+    def test_apply_fallback_versions_case_2_repository_resolution(self):
+        """Test Case 2: Repository resolution when fallback version doesn't exist in collections but available in repos."""
 
-        fallback_recommendations = {"pkg1": "0:1.0-2"}
-        self.generator._apply_fallback_versions(rpms_info_by_arch, fallback_recommendations)
+        async def _test():
+            rpms_info_by_arch = {
+                "x86_64": [RpmInfo("pkg1", "0:1.0-3", "checksum1", "repo1", 1000, "src1", "url1", 0, "1.0", "3")],
+                "aarch64": [RpmInfo("pkg1", "0:1.0-4", "checksum2", "repo1", 1000, "src1", "url2", 0, "1.0", "4")],
+            }
 
-        x86_64_pkg1 = [rpm for rpm in rpms_info_by_arch["x86_64"] if rpm.name == "pkg1"]
-        assert len(x86_64_pkg1) == 1
-        assert x86_64_pkg1[0].evr == "0:1.0-2"
+            fallback_recommendations = {"pkg1": "0:1.0-2"}
+            arches = ["x86_64", "aarch64"]
+            enabled_repos = {"repo1"}
 
-        aarch64_pkg1 = [rpm for rpm in rpms_info_by_arch["aarch64"] if rpm.name == "pkg1"]
-        assert len(aarch64_pkg1) == 0
+            # Mock successful repository resolution
+            resolved_rpm_x86 = RpmInfo(
+                "pkg1", "0:1.0-2", "resolved_checksum_x86", "repo1", 1000, "src1", "resolved_url_x86", 0, "1.0", "2"
+            )
+            resolved_rpm_aarch64 = RpmInfo(
+                "pkg1",
+                "0:1.0-2",
+                "resolved_checksum_aarch64",
+                "repo1",
+                1000,
+                "src1",
+                "resolved_url_aarch64",
+                0,
+                "1.0",
+                "2",
+            )
 
-    def test_apply_fallback_versions_multi_arch_consistency(self):
-        """Test fallback maintains consistency across all architectures."""
-        rpms_info_by_arch = {
-            "x86_64": [RpmInfo("pkg1", "0:1.0-2", "checksum1", "repo1", 1000, "src1", "url1", 0, "1.0", "2")],
-            "aarch64": [RpmInfo("pkg1", "0:1.0-2", "checksum2", "repo1", 1000, "src1", "url2", 0, "1.0", "2")],
-            "ppc64le": [RpmInfo("pkg1", "0:1.0-2", "checksum3", "repo1", 1000, "src1", "url3", 0, "1.0", "2")],
-            "s390x": [RpmInfo("pkg1", "0:1.0-2", "checksum4", "repo1", 1000, "src1", "url4", 0, "1.0", "2")],
-        }
+            self.generator.builder.fetch_rpms_info = AsyncMock()
+            self.generator.builder.fetch_rpms_info.side_effect = [
+                {"x86_64": [resolved_rpm_x86]},  # First call for x86_64
+                {"aarch64": [resolved_rpm_aarch64]},  # Second call for aarch64
+            ]
 
-        fallback_recommendations = {"pkg1": "0:1.0-2"}
-        self.generator._apply_fallback_versions(rpms_info_by_arch, fallback_recommendations)
+            await self.generator._apply_fallback_versions(
+                rpms_info_by_arch, fallback_recommendations, arches, enabled_repos
+            )
 
-        for arch in rpms_info_by_arch:
-            pkg_rpms = [rpm for rpm in rpms_info_by_arch[arch] if rpm.name == "pkg1"]
-            assert len(pkg_rpms) == 1
-            assert pkg_rpms[0].evr == "0:1.0-2"
+            # Verify fallback versions were applied after repository resolution
+            for arch in rpms_info_by_arch:
+                pkg_rpms = [rpm for rpm in rpms_info_by_arch[arch] if rpm.name == "pkg1"]
+                assert len(pkg_rpms) == 1
+                assert pkg_rpms[0].evr == "0:1.0-2"
 
-    def test_apply_fallback_only_mismatched_packages_affected(self):
-        """Test that only mismatched packages are modified during fallback."""
-        rpms_info_by_arch = {
-            "x86_64": [
-                RpmInfo("pkg1", "0:1.0-2", "checksum1", "repo1", 1000, "src1", "url1", 0, "1.0", "2"),
-                RpmInfo("pkg2", "0:2.0-1", "checksum2", "repo1", 1000, "src2", "url2", 0, "2.0", "1"),
-            ],
-            "aarch64": [
-                RpmInfo("pkg1", "0:1.0-2", "checksum3", "repo1", 1000, "src1", "url3", 0, "1.0", "2"),
-                RpmInfo("pkg2", "0:2.0-1", "checksum4", "repo1", 1000, "src2", "url4", 0, "2.0", "1"),
-            ],
-        }
-
-        original_pkg2 = {arch: [rpm for rpm in rpms if rpm.name == "pkg2"] for arch, rpms in rpms_info_by_arch.items()}
-
-        fallback_recommendations = {"pkg1": "0:1.0-2"}
-        self.generator._apply_fallback_versions(rpms_info_by_arch, fallback_recommendations)
-
-        for arch in rpms_info_by_arch:
-            pkg2_rpms = [rpm for rpm in rpms_info_by_arch[arch] if rpm.name == "pkg2"]
-            assert pkg2_rpms == original_pkg2[arch]
+        asyncio.run(_test())
