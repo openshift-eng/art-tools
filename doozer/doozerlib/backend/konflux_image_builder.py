@@ -682,13 +682,19 @@ class KonfluxImageBuilder:
                         purl = PackageURL.from_string(purl_string)
                         # right now, we only care about rpms
                         if purl.type == "rpm":
-                            # get the installed package (name + version)
-                            if purl.name and purl.version:
-                                package_nvrs.add(f"{purl.name}-{purl.version}")
-
-                            # get the source rpm
+                            # Only process packages actually installed in the image.
+                            # Skip packages that are only available in repository metadata.
+                            # Installed packages have the "upstream" qualifier, which points to the source RPM.
+                            # Packages without "upstream" (only having checksum/repository_id) are just
+                            # available in repository metadata. This prevents spurious entries like
+                            # kernel-rt-427.116.1 appearing when only kernel-rt-427.117.1 is actually installed.
                             source_rpm = purl.qualifiers.get("upstream", None)
                             if source_rpm:
+                                # get the installed package (name + version)
+                                if purl.name and purl.version:
+                                    package_nvrs.add(f"{purl.name}-{purl.version}")
+
+                                # get the source rpm
                                 source_rpms.add(source_rpm.removesuffix(".src.rpm"))
                     except Exception as e:
                         LOGGER.warning(f"Failed to parse purl: {purl_string} {e}")
