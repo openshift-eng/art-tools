@@ -90,11 +90,41 @@ class BuildFbcPipeline:
         self._slack_client = runtime.new_slack_client()
         self._slack_client.bind_channel(version)
 
+    async def _check_production_index_exists(self) -> bool:
+        """Check if the production operator index image exists for the target OCP version.
+
+        Returns True if the image exists or the check is inconclusive, False if it clearly does not exist.
+        """
+        ocp_mm = self.major_minor if self.major_minor else self.version
+        parts = ocp_mm.split('.')
+        major, minor = parts[0], parts[1]
+
+        index_image = f"registry.redhat.io/redhat/redhat-operator-index:v{major}.{minor}"
+        self._logger.info('Checking if production index image exists: %s', index_image)
+
+        cmd = ['skopeo', 'inspect', '--no-tags', f'docker://{index_image}']
+        auth = self.prod_registry_auth or os.environ.get('KONFLUX_OPERATOR_INDEX_AUTH_FILE')
+        if auth:
+            cmd.extend(['--authfile', auth])
+
+        rc, _, err = await exectools.cmd_gather_async(cmd, check=False)
+        if rc != 0:
+            self._logger.info('Production index image %s does not exist: %s', index_image, err.strip())
+            return False
+        return True
+
     async def run(self):
         # Check for required environment variables
         github_token = os.environ.get('GITHUB_TOKEN')
         if not github_token:
             raise ValueError('GITHUB_TOKEN environment variable is required for accessing openshift-priv repos')
+
+        # Early check: verify the production operator index image exists for the target OCP version.
+        # For new OCP versions (e.g. 5.0), neither the index image nor the base images are published yet,
+        # which causes all Konflux FBC builds to fail. Exit silently rather than wasting time.
+        if not await self._check_production_index_exists():
+            self._logger.info('Production operator index image not available yet. Skipping FBC build.')
+            return
 
         try:
             release_str = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
