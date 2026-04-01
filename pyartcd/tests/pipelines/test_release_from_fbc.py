@@ -543,74 +543,88 @@ class TestCategorizeNvrs(unittest.TestCase):
 
 
 class TestExtraImageNvrsValidation(unittest.TestCase):
-    def _make_pipeline(self, extra_image_nvrs):
+    def _make_pipeline(self, extra_image_nvrs, fbc_pullspecs=None):
         runtime = MagicMock()
         runtime.config = {}
         runtime.dry_run = False
         runtime.working_dir = MagicMock()
         runtime.working_dir.absolute.return_value = MagicMock()
-        return ReleaseFromFbcPipeline(
+        pipeline = ReleaseFromFbcPipeline(
             runtime=runtime,
             group="oadp-1.5",
             assembly="1.5.3",
-            fbc_pullspecs=["quay.io/example/fbc:v1"],
+            fbc_pullspecs=fbc_pullspecs or [],
             extra_image_nvrs=extra_image_nvrs,
         )
+        pipeline.product = "oadp"
+        return pipeline
 
     def test_fbc_nvr_in_extra_image_nvrs_raises(self):
-        """FBC NVRs passed via --extra-image-nvrs should be rejected."""
+        """run() should raise RuntimeError when extra_image_nvrs contains an FBC build."""
         pipeline = self._make_pipeline(extra_image_nvrs=["oadp-operator-fbc-1.5.3-1.el9"])
-        with self.assertRaises(RuntimeError) as ctx:
-            # Simulate the merge block from run()
-            from artcommonlib.rpm_utils import parse_nvr
+        pipeline.check_env_vars = MagicMock()
+        pipeline.setup_working_dir = MagicMock()
+        pipeline._load_product_from_group_config = AsyncMock(return_value="oadp")
 
-            fbc_extras = [nvr for nvr in pipeline.extra_image_nvrs if parse_nvr(nvr)['name'].endswith('-fbc')]
-            if fbc_extras:
-                raise RuntimeError(
-                    f"--extra-image-nvrs contains FBC builds which belong in --fbc-pullspecs instead: {fbc_extras}"
-                )
+        with self.assertRaises(RuntimeError) as ctx:
+            asyncio.run(pipeline.run())
         self.assertIn("FBC builds", str(ctx.exception))
 
-    def test_non_fbc_nvrs_pass_validation(self):
-        """Normal image NVRs should not raise."""
+    def test_non_fbc_nvrs_do_not_raise_validation_error(self):
+        """run() should not raise FBC validation error for normal image NVRs."""
         pipeline = self._make_pipeline(extra_image_nvrs=["oadp-velero-container-1.5.3-1.el9"])
-        from artcommonlib.rpm_utils import parse_nvr
+        pipeline.check_env_vars = MagicMock()
+        pipeline.setup_working_dir = MagicMock()
+        pipeline._load_product_from_group_config = AsyncMock(return_value="oadp")
+        pipeline.create_snapshot = AsyncMock(return_value=MagicMock())
+        pipeline.create_shipment_config = MagicMock(return_value=MagicMock())
+        pipeline.write_shipment_files_locally = AsyncMock()
 
-        fbc_extras = [nvr for nvr in pipeline.extra_image_nvrs if parse_nvr(nvr)['name'].endswith('-fbc')]
-        self.assertEqual(fbc_extras, [])
+        try:
+            asyncio.run(pipeline.run())
+        except RuntimeError as e:
+            self.assertNotIn("FBC builds", str(e))
 
 
 class TestCliValidation(unittest.TestCase):
+    """Test CLI argument validation via CliRunner against the real Click command."""
+
+    def _invoke(self, extra_args):
+        from click.testing import CliRunner
+        from pyartcd.pipelines.release_from_fbc import release_from_fbc
+        from pyartcd.runtime import Runtime
+
+        asyncio.set_event_loop(asyncio.new_event_loop())
+
+        mock_runtime = MagicMock(spec=Runtime)
+        mock_runtime.dry_run = False
+        mock_runtime.working_dir = MagicMock()
+        mock_runtime.working_dir.absolute.return_value = MagicMock()
+        mock_runtime.config = {}
+
+        runner = CliRunner()
+        base_args = ["--group", "oadp-1.5", "--assembly", "1.5.3"]
+        return runner.invoke(release_from_fbc, base_args + extra_args, obj=mock_runtime, standalone_mode=False)
+
     def test_both_empty_raises_error(self):
-        """Both --fbc-pullspecs and --extra-image-nvrs empty should raise ClickException."""
-        fbc_pullspecs = ""
-        extra_image_nvrs = ""
+        """Both --fbc-pullspecs and --extra-image-nvrs empty should fail."""
+        result = self._invoke([])
+        self.assertIsInstance(result.exception, click.ClickException)
+        self.assertIn("At least one of", str(result.exception))
 
-        fbc_pullspecs_list = [spec.strip() for spec in fbc_pullspecs.split(',') if spec.strip()]
-        extra_image_nvrs_list = [nvr.strip() for nvr in extra_image_nvrs.split(',') if nvr.strip()]
+    @patch("pyartcd.pipelines.release_from_fbc.ReleaseFromFbcPipeline")
+    def test_fbc_only_does_not_raise(self, mock_pipeline_cls):
+        """Providing only --fbc-pullspecs should pass CLI validation."""
+        mock_pipeline_cls.return_value.run = AsyncMock()
+        result = self._invoke(["--fbc-pullspecs", "quay.io/example/fbc:v1"])
+        self.assertNotIsInstance(result.exception, click.ClickException)
 
-        with self.assertRaises(click.ClickException) as ctx:
-            if not fbc_pullspecs_list and not extra_image_nvrs_list:
-                raise click.ClickException("At least one of --fbc-pullspecs or --extra-image-nvrs must be provided")
-        self.assertIn("At least one of", str(ctx.exception))
-
-    def test_fbc_only_does_not_raise(self):
-        fbc_pullspecs = "quay.io/example/fbc:v1"
-        extra_image_nvrs = ""
-
-        fbc_pullspecs_list = [spec.strip() for spec in fbc_pullspecs.split(',') if spec.strip()]
-        extra_image_nvrs_list = [nvr.strip() for nvr in extra_image_nvrs.split(',') if nvr.strip()]
-
-        self.assertTrue(fbc_pullspecs_list or extra_image_nvrs_list)
-
-    def test_extra_nvrs_only_does_not_raise(self):
-        fbc_pullspecs = ""
-        extra_image_nvrs = "foo-container-1.0-1.el9"
-
-        fbc_pullspecs_list = [spec.strip() for spec in fbc_pullspecs.split(',') if spec.strip()]
-        extra_image_nvrs_list = [nvr.strip() for nvr in extra_image_nvrs.split(',') if nvr.strip()]
-
-        self.assertTrue(fbc_pullspecs_list or extra_image_nvrs_list)
+    @patch("pyartcd.pipelines.release_from_fbc.ReleaseFromFbcPipeline")
+    def test_extra_nvrs_only_does_not_raise(self, mock_pipeline_cls):
+        """Providing only --extra-image-nvrs should pass CLI validation."""
+        mock_pipeline_cls.return_value.run = AsyncMock()
+        result = self._invoke(["--extra-image-nvrs", "foo-container-1.0-1.el9"])
+        self.assertNotIsInstance(result.exception, click.ClickException)
 
 
 if __name__ == "__main__":
