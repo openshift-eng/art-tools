@@ -87,8 +87,6 @@ class BuildMicroShiftBootcPipeline:
         # Track existing shipment timestamp to avoid creating new files on MR updates
         self.existing_shipment_timestamp = None
 
-        self.github_client = get_github_client_for_org("openshift-eng")
-
         self._working_dir = self.runtime.working_dir.absolute()
         self.releases_config = None
         self.assembly_type = AssemblyTypes.STREAM
@@ -604,7 +602,8 @@ class BuildMicroShiftBootcPipeline:
             return "https://github.example.com/foo/bar/pull/1234"
 
         user, repo = self.extract_git_repo(self._doozer_env_vars["DOOZER_DATA_PATH"])
-        upstream_repo = self.github_client.get_repo(f"{user}/{repo}")
+        github_client = get_github_client_for_org(user)
+        upstream_repo = github_client.get_repo(f"{user}/{repo}")
         release_file_content = yaml.load(upstream_repo.get_contents("releases.yml", ref=self.group).decoded_content)
         source_file_content = copy.deepcopy(release_file_content)
         self._pin_image_nvr(nvr, release_file_content)
@@ -654,9 +653,8 @@ class BuildMicroShiftBootcPipeline:
                 raise TimeoutError(error_msg)
 
             # Refresh PR to get latest status
-            pr = self.github_client.get_repo(
-                f"{self.extract_git_repo(self._doozer_env_vars['DOOZER_DATA_PATH'])[0]}/{self.extract_git_repo(self._doozer_env_vars['DOOZER_DATA_PATH'])[1]}"
-            ).get_pull(pr.number)
+            user, repo = self.extract_git_repo(self._doozer_env_vars['DOOZER_DATA_PATH'])
+            pr = get_github_client_for_org(user).get_repo(f"{user}/{repo}").get_pull(pr.number)
 
             # Check if PR was closed/merged by someone else
             if pr.state == "closed":

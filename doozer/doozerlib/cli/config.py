@@ -167,17 +167,18 @@ def config_read_group(runtime, key, as_len, as_yaml, permit_missing_group, defau
 
 def get_releases(runtime) -> dict:
     """
-    Uses GitHub API to fetch releases.yaml from openshift-eng/ocp-build-data for a given group
+    Uses GitHub API to fetch releases.yml from the ocp-build-data repo for a given group.
 
-    Parses the file and returns it as a dictionary
+    Parses the file and returns it as a dictionary.
     """
 
     if not runtime.data_path.startswith('https://'):
         with open(f'{runtime.data_path}/releases.yml', 'r') as file:
             return yaml.safe_load(file)
 
-    owner = runtime.data_path.split('/')[-2]
-    repo = get_github_client_for_org(owner).get_repo(f"{owner}/ocp-build-data")
+    parts = runtime.data_path.rstrip('/').rstrip('.git').split('/')
+    owner, repo_name = parts[-2], parts[-1]
+    repo = get_github_client_for_org(owner).get_repo(f"{owner}/{repo_name}")
     content = repo.get_contents('releases.yml', ref=runtime.group_commitish)
     return yaml.safe_load(content.decoded_content)
 
