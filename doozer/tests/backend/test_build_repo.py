@@ -37,7 +37,9 @@ class TestBuildRepo(IsolatedAsyncioTestCase):
         run_git.assert_any_await(
             ["-C", "/path/to/repo", "commit", "-q", "-m", "commit message"], github_url=self.repo.url
         )
-        gather_git.assert_awaited_once_with(["-C", "/path/to/repo", "rev-parse", "HEAD"], check=False)
+        gather_git.assert_awaited_once_with(
+            ["-C", "/path/to/repo", "rev-parse", "HEAD"], check=False, github_url=self.repo.url
+        )
         self.assertEqual(self.repo.commit_hash, "deadbeef")
 
     @patch("artcommonlib.git_helper.run_git_async", return_value=0)
@@ -157,8 +159,8 @@ class TestBuildRepo(IsolatedAsyncioTestCase):
 
     @patch("doozerlib.backend.build_repo.BuildRepo._get_commit_hash", return_value="deadbeef")
     @patch("doozerlib.backend.build_repo.Path")
-    @patch("artcommonlib.git_helper.gather_git_async", return_value=(0, "whatever", ""))
-    async def test_from_local_dir_found(self, gather_git: AsyncMock, MockPath: Mock, _):
+    @patch("doozerlib.backend.build_repo.exectools.cmd_gather_async", return_value=(0, "whatever", ""))
+    async def test_from_local_dir_found(self, cmd_gather: AsyncMock, MockPath: Mock, _):
         MockPath.joinpath.return_value.exists.return_value = True
         local_dir = Path("/path/to/repo")
         repo = await BuildRepo.from_local_dir(local_dir)
@@ -337,15 +339,14 @@ class TestBuildRepo(IsolatedAsyncioTestCase):
 
     @patch("doozerlib.backend.build_repo.BuildRepo._get_commit_hash", return_value="deadbeef")
     @patch("doozerlib.backend.build_repo.Path")
-    @patch("artcommonlib.git_helper.gather_git_async")
-    async def test_from_local_dir_with_pull_remote(self, gather_git: AsyncMock, MockPath: Mock, _):
+    @patch("doozerlib.backend.build_repo.exectools.cmd_gather_async")
+    async def test_from_local_dir_with_pull_remote(self, cmd_gather: AsyncMock, MockPath: Mock, _):
         """Test from_local_dir method detects pull remote when available."""
         push_url = "https://git.example.com/push-repo.git"
         pull_url = "https://git.example.com/pull-repo.git"
         MockPath.joinpath.return_value.exists.return_value = True
 
-        # Mock git config calls for origin and pull remotes
-        def mock_gather_git(cmd, **kwargs):
+        def mock_cmd_gather(cmd, **kwargs):
             if "remote.origin.url" in cmd:
                 return (0, push_url, "")
             elif "remote.pull.url" in cmd:
@@ -354,7 +355,7 @@ class TestBuildRepo(IsolatedAsyncioTestCase):
                 return (0, "my-branch", "")
             return (0, "", "")
 
-        gather_git.side_effect = mock_gather_git
+        cmd_gather.side_effect = mock_cmd_gather
 
         local_dir = Path("/path/to/repo")
         repo = await BuildRepo.from_local_dir(local_dir)
@@ -366,14 +367,13 @@ class TestBuildRepo(IsolatedAsyncioTestCase):
 
     @patch("doozerlib.backend.build_repo.BuildRepo._get_commit_hash", return_value="deadbeef")
     @patch("doozerlib.backend.build_repo.Path")
-    @patch("artcommonlib.git_helper.gather_git_async")
-    async def test_from_local_dir_without_pull_remote(self, gather_git: AsyncMock, MockPath: Mock, _):
+    @patch("doozerlib.backend.build_repo.exectools.cmd_gather_async")
+    async def test_from_local_dir_without_pull_remote(self, cmd_gather: AsyncMock, MockPath: Mock, _):
         """Test from_local_dir method when no pull remote exists."""
         push_url = "https://git.example.com/push-repo.git"
         MockPath.joinpath.return_value.exists.return_value = True
 
-        # Mock git config calls - no pull remote
-        def mock_gather_git(cmd, **kwargs):
+        def mock_cmd_gather(cmd, **kwargs):
             if "remote.origin.url" in cmd:
                 return (0, push_url, "")
             elif "remote.pull.url" in cmd:
@@ -382,7 +382,7 @@ class TestBuildRepo(IsolatedAsyncioTestCase):
                 return (0, "my-branch", "")
             return (0, "", "")
 
-        gather_git.side_effect = mock_gather_git
+        cmd_gather.side_effect = mock_cmd_gather
 
         local_dir = Path("/path/to/repo")
         repo = await BuildRepo.from_local_dir(local_dir)
