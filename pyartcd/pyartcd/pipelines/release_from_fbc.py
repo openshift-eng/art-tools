@@ -249,6 +249,26 @@ class ReleaseFromFbcPipeline:
         self.logger.info(f"Using product extracted from group name: {product}")
         return product
 
+    async def _load_mr_approvers_from_group_config(self) -> dict[str, list[str]]:
+        """
+        Load the mr_approvers field from group configuration using doozer command.
+        Returns a dict mapping approval group names to lists of GitLab usernames,
+        e.g. {"QE": ["user1", "user2"]}. Returns empty dict if not configured.
+        """
+        try:
+            cmd = ['doozer', f'--group={self.group}', 'config:read-group', 'mr_approvers']
+            _, output, _ = await exectools.cmd_gather_async(cmd)
+            output = output.strip()
+            if output and output not in ('None', 'null'):
+                parsed = stdlib_yaml.safe_load(output)
+                if not isinstance(parsed, dict):
+                    self.logger.warning("mr_approvers is not a dict (got %s), ignoring", type(parsed).__name__)
+                    return {}
+                return parsed
+        except Exception as e:
+            self.logger.warning(f"Failed to load mr_approvers from group config: {e}")
+        return {}
+
     async def extract_fbc_labels(self, fbc_pullspec: str) -> Dict[str, Optional[str]]:
         """
         Extract both the NVR and __doozer_key labels from the FBC image.
@@ -601,6 +621,17 @@ class ReleaseFromFbcPipeline:
             )
             mr_url = mr.web_url
             self.logger.info("Created Merge Request: %s", mr_url)
+
+        # Configure approval rules from group.yml if defined
+        approvers_config = await self._load_mr_approvers_from_group_config()
+        if approvers_config:
+            if self.dry_run:
+                self.logger.info("[DRY-RUN] Would set MR approval rules: %s", approvers_config)
+            else:
+                try:
+                    await self._gitlab.set_mr_approval_rules(mr_url, approvers_config)
+                except Exception as e:
+                    self.logger.warning(f"Failed to set MR approval rules: {e}")
 
         # Store the MR URL for later use
         self.shipment_mr_url = mr_url
