@@ -558,7 +558,8 @@
     "csv_namespace": {"type": "string"},
     "software_lifecycle": {"type": "object"},
     "external_scanners": {"type": "object"},
-    "reconciliation_prs": {"type": "object"}
+    "reconciliation_prs": {"type": "object"},
+    "mr_approvers": {"type": "object"}
   },
   "additionalProperties": false
 }

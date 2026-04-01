@@ -107,6 +107,71 @@ class GitLabClient:
             logger.info("MR is already ready (no draft prefix found)")
             return mr
 
+    def _resolve_user_ids(self, usernames: list[str]) -> list[int]:
+        """
+        Resolve GitLab usernames to user IDs.
+
+        Arg(s):
+            usernames: List of GitLab usernames
+        Return Value(s):
+            List of resolved user IDs (skips unresolved usernames with a warning)
+        """
+        user_ids = []
+        for username in usernames:
+            users = self._client.users.list(username=username)
+            if users:
+                user_ids.append(users[0].id)
+            else:
+                logger.warning(f"Could not resolve GitLab username: {username}")
+        return user_ids
+
+    async def set_mr_approval_rules(self, mr_url: str, approvers_config: dict[str, list[str]]):
+        """
+        Configure MR-level approval rules based on group.yml mr_approvers config.
+        Keeps the "ART" rule, removes all other inherited rules, and creates new
+        rules from approvers_config.
+
+        Arg(s):
+            mr_url: Full URL to the merge request
+            approvers_config: Dict mapping approval group names to lists of GitLab usernames,
+                              e.g. {"QE": ["user1", "user2"]}
+        """
+        if not mr_url or not approvers_config:
+            return
+
+        mr = self.get_mr_from_url(mr_url)
+        if not mr:
+            logger.error(f"Could not retrieve MR from URL: {mr_url}")
+            return
+
+        existing_rules = mr.approval_rules.list()
+
+        if self.dry_run:
+            rules_to_delete = [r for r in existing_rules if r.name != "ART"]
+            logger.info(f"[DRY-RUN] Would delete {len(rules_to_delete)} non-ART approval rules")
+            for name, usernames in approvers_config.items():
+                logger.info(f"[DRY-RUN] Would create approval rule '{name}' with users: {usernames}")
+            return
+
+        for rule in existing_rules:
+            if rule.name != "ART":
+                logger.info(f"Deleting approval rule '{rule.name}' (id={rule.id})")
+                rule.delete()
+
+        for name, usernames in approvers_config.items():
+            user_ids = self._resolve_user_ids(usernames)
+            if not user_ids:
+                logger.warning(f"No valid user IDs resolved for approval rule '{name}', skipping")
+                continue
+            mr.approval_rules.create(
+                {
+                    "name": name,
+                    "approvals_required": 1,
+                    "user_ids": user_ids,
+                }
+            )
+            logger.info(f"Created approval rule '{name}' with users: {usernames} (ids: {user_ids})")
+
     async def trigger_ci_pipeline(self, mr) -> str | None:
         """
         Trigger a GitLab Merge Request pipeline using the MR API.
