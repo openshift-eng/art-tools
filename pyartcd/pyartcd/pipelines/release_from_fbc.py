@@ -249,7 +249,7 @@ class ReleaseFromFbcPipeline:
         self.logger.info(f"Using product extracted from group name: {product}")
         return product
 
-    async def _load_mr_approvers_from_group_config(self) -> dict:
+    async def _load_mr_approvers_from_group_config(self) -> dict[str, list[str]]:
         """
         Load the mr_approvers field from group configuration using doozer command.
         Returns a dict mapping approval group names to lists of GitLab usernames,

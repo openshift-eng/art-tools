@@ -559,7 +559,13 @@
     "software_lifecycle": {"type": "object"},
     "external_scanners": {"type": "object"},
     "reconciliation_prs": {"type": "object"},
-    "mr_approvers": {"type": "object"}
+    "mr_approvers": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": {"type": "string"}
+      }
+    }
   },
   "additionalProperties": false
 }

@@ -139,19 +139,17 @@ class GitLabClient:
         if not mr_url or not approvers_config:
             return
 
+        if self.dry_run:
+            for name, usernames in approvers_config.items():
+                logger.info(f"[DRY-RUN] Would create approval rule '{name}' with users: {usernames}")
+            return
+
         mr = self.get_mr_from_url(mr_url)
         if not mr:
             logger.error(f"Could not retrieve MR from URL: {mr_url}")
             return
 
         existing_rules = mr.approval_rules.list()
-
-        if self.dry_run:
-            rules_to_delete = [r for r in existing_rules if r.name != "ART"]
-            logger.info(f"[DRY-RUN] Would delete {len(rules_to_delete)} non-ART approval rules")
-            for name, usernames in approvers_config.items():
-                logger.info(f"[DRY-RUN] Would create approval rule '{name}' with users: {usernames}")
-            return
 
         for rule in existing_rules:
             if rule.name != "ART":
