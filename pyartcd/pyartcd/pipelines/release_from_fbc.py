@@ -871,9 +871,7 @@ class ReleaseFromFbcPipeline:
         # Merge extra image NVRs into the image category so they end up in the same image shipment
         if self.extra_image_nvrs:
             self.logger.info(f"Adding {len(self.extra_image_nvrs)} extra image NVRs to image shipment")
-            categorized_nvrs['image'] = list(
-                dict.fromkeys([*categorized_nvrs['image'], *self.extra_image_nvrs])
-            )
+            categorized_nvrs['image'] = list(dict.fromkeys([*categorized_nvrs['image'], *self.extra_image_nvrs]))
 
         # Create snapshots for image builds (only once since they're shared)
         image_snapshot = None
