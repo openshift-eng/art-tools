@@ -2392,22 +2392,83 @@ class PayloadGenerator:
         rhcos_build_id: str,
         package_rpm_finder=None,
     ) -> Optional[AssemblyIssue]:
-        """check that the specified package in the member is consistent with the RHCOS build"""
+        """
+        Check that the specified package in the member is consistent with the RHCOS build.
+
+        For Konflux builds, this also detects when multiple versions of the same package
+        are installed (e.g., two different kernel versions), which should never happen.
+        """
         logger = bri.runtime.logger
         payload_tag_nvr: str = bri.get_nvr()
         logger.debug(f"Checking consistency of {pkg} for {payload_tag_nvr} against {rhcos_build_id}")
-        member_nvrs: Dict[str, Dict] = bri.get_all_installed_package_build_dicts(
-            package_rpm_finder or self.package_rpm_finder
-        )  # by name
-        try:
-            build = member_nvrs[pkg]
-        except KeyError:
-            return AssemblyIssue(
-                f"RHCOS consistency configuration specifies that payload tag '{payload_tag}' "
-                f"should install package '{pkg}', but it does not",
-                payload_tag,
-                AssemblyIssueCode.FAILED_CONSISTENCY_REQUIREMENT,
-            )
+
+        # For Konflux, get ALL installed package NVRs to detect duplicates
+        # For Brew, use the old method (only one version per package is expected)
+        if self.runtime.build_system == 'konflux':
+            # Access the build record directly to get all installed packages
+            build_record = bri.get_build_obj()  # Returns KonfluxBuildRecord
+            installed_packages = build_record.installed_packages  # List of package NVRs
+
+            # Filter for packages matching the name we're checking
+            matching_packages = [pkg_nvr for pkg_nvr in installed_packages if parse_nvr(pkg_nvr)['name'] == pkg]
+
+            if not matching_packages:
+                return AssemblyIssue(
+                    f"RHCOS consistency configuration specifies that payload tag '{payload_tag}' "
+                    f"should install package '{pkg}', but it does not",
+                    payload_tag,
+                    AssemblyIssueCode.FAILED_CONSISTENCY_REQUIREMENT,
+                )
+
+            # Check if there are multiple versions of the same package installed
+            if len(matching_packages) > 1:
+                return AssemblyIssue(
+                    f"Payload tag '{payload_tag}' has multiple versions of package '{pkg}' installed: "
+                    f"{', '.join(matching_packages)}. Only one version should be present.",
+                    payload_tag,
+                    AssemblyIssueCode.FAILED_CONSISTENCY_REQUIREMENT,
+                )
+
+            # Get the single package build dict
+            pkg_finder = package_rpm_finder or self.package_rpm_finder
+            pkg_finder._cache_packages(matching_packages)
+            build = pkg_finder._packages_build_dicts[matching_packages[0]]
+
+        else:  # Brew
+            # First, check for duplicate packages in Brew builds
+            # Although OSBS should enforce single versions, check to be safe
+            all_rpm_dicts = bri.get_all_installed_rpm_dicts()
+            matching_package_nvrs = set()
+            for rpm_dict in all_rpm_dicts:
+                rpm_nvr = rpm_dict['nvr']
+                parsed = parse_nvr(rpm_nvr)
+                if parsed['name'] == pkg:
+                    # Extract package NVR from RPM NVR (RPMs have arch suffix)
+                    # e.g., kernel-5.14.0-427.116.1.el9_4.x86_64 -> kernel-5.14.0-427.116.1.el9_4
+                    package_nvr = f"{parsed['name']}-{parsed['version']}-{parsed['release']}"
+                    matching_package_nvrs.add(package_nvr)
+
+            if not matching_package_nvrs:
+                return AssemblyIssue(
+                    f"RHCOS consistency configuration specifies that payload tag '{payload_tag}' "
+                    f"should install package '{pkg}', but it does not",
+                    payload_tag,
+                    AssemblyIssueCode.FAILED_CONSISTENCY_REQUIREMENT,
+                )
+
+            if len(matching_package_nvrs) > 1:
+                return AssemblyIssue(
+                    f"Payload tag '{payload_tag}' has multiple versions of package '{pkg}' installed: "
+                    f"{', '.join(sorted(matching_package_nvrs))}. Only one version should be present.",
+                    payload_tag,
+                    AssemblyIssueCode.FAILED_CONSISTENCY_REQUIREMENT,
+                )
+
+            # Get the build dict using the old method (now we know there's only one)
+            member_nvrs: Dict[str, Dict] = bri.get_all_installed_package_build_dicts(
+                package_rpm_finder or self.package_rpm_finder
+            )  # by name
+            build = member_nvrs[pkg]  # We know this exists now
 
         # get names of all the actual RPMs included in this package build, because that's what we
         # have for comparison in the RHCOS metadata (not the package name).
