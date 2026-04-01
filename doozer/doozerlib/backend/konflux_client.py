@@ -709,8 +709,8 @@ class KonfluxClient:
 
         obj["spec"]["taskRunTemplate"]["serviceAccountName"] = service_account or f"build-pipeline-{component_name}"
 
-        # Check if RPM lockfile prefetch is being used
-        rpm_lockfile_prefetch_enabled = prefetch and any(item.get("type") == "rpm" for item in prefetch)
+        # Check if verbose prefetch is being used (RPM, generic, or yarn types)
+        verbose_prefetch_enabled = prefetch and any(item.get("type") in ("rpm", "generic", "yarn") for item in prefetch)
 
         # Task specific parameters to override in the template
         has_build_images_task = False
@@ -723,7 +723,7 @@ class KonfluxClient:
                     _modify_param(task["params"], "SBOM_TYPE", "spdx")
                 case "prefetch-dependencies":
                     _modify_param(task["params"], "sbom-type", "spdx")
-                    if rpm_lockfile_prefetch_enabled:
+                    if verbose_prefetch_enabled:
                         _modify_param(task["params"], "dev-package-managers", "true")
                         _modify_param(task["params"], "log-level", "debug")
                 case "apply-tags":

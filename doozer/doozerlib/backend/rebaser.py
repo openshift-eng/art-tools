@@ -1388,12 +1388,6 @@ class KonfluxRebaser:
                     # Cachito also writes a pem file which some builds reference: https://github.com/openshift/console/blob/52510bcb417e44808c07970f09d448fc49787087/Dockerfile#L41 .
                     "ADD https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem $REMOTE_SOURCES_DIR/cachito-gomod-with-deps/app/registry-ca.pem",
                 ]
-            elif metadata.is_artifact_lockfile_enabled():
-                konflux_lines += [
-                    "USER 0",
-                    "RUN cp /cachi2/output/deps/generic/Current-IT-Root-CAs.pem /tmp/art/Current-IT-Root-CAs.pem",
-                    "RUN cp /cachi2/output/deps/generic/Current-IT-Root-CAs.pem $REMOTE_SOURCES_DIR/cachito-gomod-with-deps/app/registry-ca.pem",
-                ]
 
         konflux_lines += [
             f"ENV ART_BUILD_DEPS_MODE={build_deps_mode}",
