@@ -870,6 +870,11 @@ class ReleaseFromFbcPipeline:
 
         # Merge extra image NVRs into the image category so they end up in the same image shipment
         if self.extra_image_nvrs:
+            fbc_extras = [nvr for nvr in self.extra_image_nvrs if parse_nvr(nvr)['name'].endswith('-fbc')]
+            if fbc_extras:
+                raise RuntimeError(
+                    f"--extra-image-nvrs contains FBC builds which belong in --fbc-pullspecs instead: {fbc_extras}"
+                )
             self.logger.info(f"Adding {len(self.extra_image_nvrs)} extra image NVRs to image shipment")
             categorized_nvrs['image'] = list(dict.fromkeys([*categorized_nvrs['image'], *self.extra_image_nvrs]))
 

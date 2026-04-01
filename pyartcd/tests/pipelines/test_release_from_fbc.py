@@ -542,6 +542,44 @@ class TestCategorizeNvrs(unittest.TestCase):
         self.assertIn("oadp-operator-fbc-1.5.3-1.el9", result["fbc"])
 
 
+class TestExtraImageNvrsValidation(unittest.TestCase):
+    def _make_pipeline(self, extra_image_nvrs):
+        runtime = MagicMock()
+        runtime.config = {}
+        runtime.dry_run = False
+        runtime.working_dir = MagicMock()
+        runtime.working_dir.absolute.return_value = MagicMock()
+        return ReleaseFromFbcPipeline(
+            runtime=runtime,
+            group="oadp-1.5",
+            assembly="1.5.3",
+            fbc_pullspecs=["quay.io/example/fbc:v1"],
+            extra_image_nvrs=extra_image_nvrs,
+        )
+
+    def test_fbc_nvr_in_extra_image_nvrs_raises(self):
+        """FBC NVRs passed via --extra-image-nvrs should be rejected."""
+        pipeline = self._make_pipeline(extra_image_nvrs=["oadp-operator-fbc-1.5.3-1.el9"])
+        with self.assertRaises(RuntimeError) as ctx:
+            # Simulate the merge block from run()
+            from artcommonlib.rpm_utils import parse_nvr
+
+            fbc_extras = [nvr for nvr in pipeline.extra_image_nvrs if parse_nvr(nvr)['name'].endswith('-fbc')]
+            if fbc_extras:
+                raise RuntimeError(
+                    f"--extra-image-nvrs contains FBC builds which belong in --fbc-pullspecs instead: {fbc_extras}"
+                )
+        self.assertIn("FBC builds", str(ctx.exception))
+
+    def test_non_fbc_nvrs_pass_validation(self):
+        """Normal image NVRs should not raise."""
+        pipeline = self._make_pipeline(extra_image_nvrs=["oadp-velero-container-1.5.3-1.el9"])
+        from artcommonlib.rpm_utils import parse_nvr
+
+        fbc_extras = [nvr for nvr in pipeline.extra_image_nvrs if parse_nvr(nvr)['name'].endswith('-fbc')]
+        self.assertEqual(fbc_extras, [])
+
+
 class TestCliValidation(unittest.TestCase):
     def test_both_empty_raises_error(self):
         """Both --fbc-pullspecs and --extra-image-nvrs empty should raise ClickException."""
