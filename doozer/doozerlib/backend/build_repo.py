@@ -122,6 +122,27 @@ class BuildRepo:
                 self._logger.info("Upcycling existing build source repository at %s", local_dir)
                 await exectools.to_thread(shutil.rmtree, local_dir)
             else:
+                # Check if the existing repo is on the expected branch
+                if self.branch is not None:
+                    _, current_branch, _ = await git_helper.gather_git_async(
+                        ["-C", local_dir, "rev-parse", "--abbrev-ref", "HEAD"]
+                    )
+                    current_branch = current_branch.strip()
+                    if current_branch != self.branch:
+                        self._logger.info(
+                            "Existing repo at %s is on branch %s, need branch %s; switching",
+                            local_dir,
+                            current_branch,
+                            self.branch,
+                        )
+                        if await self.fetch(self.branch, strict=strict):
+                            await self.switch(self.branch)
+                        else:
+                            self._logger.info(
+                                "Branch %s not found in remote; creating a new orphan branch",
+                                self.branch,
+                            )
+                            await self.switch(self.branch, orphan=True)
                 self._logger.info("Reusing existing build source repository at %s", local_dir)
                 self._commit_hash = await self._get_commit_hash(local_dir, strict=strict)
                 needs_clone = False
