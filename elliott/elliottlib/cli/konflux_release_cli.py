@@ -245,11 +245,11 @@ class CreateReleaseCli:
         try:
             mapping = rpa_data.get("data", {}).get("mapping", {})
             allowed_components: List[dict] = mapping.get("components", [])
-        except (AttributeError, TypeError):
+        except (AttributeError, TypeError) as err:
             raise ValueError(
                 f"ReleasePlanAdmission '{release_plan}' has invalid structure. "
                 "Expected 'data.mapping.components' to be a list."
-            )
+            ) from err
 
         if not allowed_components:
             raise ValueError(
@@ -263,6 +263,11 @@ class CreateReleaseCli:
                 allowed_names.add(comp["name"])
             elif isinstance(comp, str):
                 allowed_names.add(comp)
+            else:
+                raise ValueError(
+                    f"ReleasePlanAdmission '{release_plan}' has invalid component entry: {comp!r}. "
+                    "Each entry must be a string or an object containing 'name'."
+                )
 
         # Check each snapshot component against allowed list
         snapshot_components = shipment.snapshot.spec.components
