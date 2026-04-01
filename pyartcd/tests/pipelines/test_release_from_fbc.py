@@ -221,49 +221,49 @@ class TestLoadMrApproversFromGroupConfig(unittest.TestCase):
     def test_valid_dict_returned(self, mock_cmd):
         mock_cmd.return_value = (0, "QE:\n- asdas1\n- rjohnson\n", "")
         pipeline = self._make_pipeline()
-        result = asyncio.get_event_loop().run_until_complete(pipeline._load_mr_approvers_from_group_config())
+        result = asyncio.run(pipeline._load_mr_approvers_from_group_config())
         self.assertEqual(result, {"QE": ["asdas1", "rjohnson"]})
 
     @patch("pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async")
     def test_non_dict_returns_empty(self, mock_cmd):
         mock_cmd.return_value = (0, "- asdas1\n- rjohnson\n", "")
         pipeline = self._make_pipeline()
-        result = asyncio.get_event_loop().run_until_complete(pipeline._load_mr_approvers_from_group_config())
+        result = asyncio.run(pipeline._load_mr_approvers_from_group_config())
         self.assertEqual(result, {})
 
     @patch("pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async")
     def test_scalar_string_returns_empty(self, mock_cmd):
         mock_cmd.return_value = (0, "just-a-string\n", "")
         pipeline = self._make_pipeline()
-        result = asyncio.get_event_loop().run_until_complete(pipeline._load_mr_approvers_from_group_config())
+        result = asyncio.run(pipeline._load_mr_approvers_from_group_config())
         self.assertEqual(result, {})
 
     @patch("pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async")
     def test_none_output_returns_empty(self, mock_cmd):
         mock_cmd.return_value = (0, "None", "")
         pipeline = self._make_pipeline()
-        result = asyncio.get_event_loop().run_until_complete(pipeline._load_mr_approvers_from_group_config())
+        result = asyncio.run(pipeline._load_mr_approvers_from_group_config())
         self.assertEqual(result, {})
 
     @patch("pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async")
     def test_null_output_returns_empty(self, mock_cmd):
         mock_cmd.return_value = (0, "null", "")
         pipeline = self._make_pipeline()
-        result = asyncio.get_event_loop().run_until_complete(pipeline._load_mr_approvers_from_group_config())
+        result = asyncio.run(pipeline._load_mr_approvers_from_group_config())
         self.assertEqual(result, {})
 
     @patch("pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async")
     def test_empty_output_returns_empty(self, mock_cmd):
         mock_cmd.return_value = (0, "  \n", "")
         pipeline = self._make_pipeline()
-        result = asyncio.get_event_loop().run_until_complete(pipeline._load_mr_approvers_from_group_config())
+        result = asyncio.run(pipeline._load_mr_approvers_from_group_config())
         self.assertEqual(result, {})
 
     @patch("pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async")
     def test_exception_returns_empty(self, mock_cmd):
         mock_cmd.side_effect = RuntimeError("doozer failed")
         pipeline = self._make_pipeline()
-        result = asyncio.get_event_loop().run_until_complete(pipeline._load_mr_approvers_from_group_config())
+        result = asyncio.run(pipeline._load_mr_approvers_from_group_config())
         self.assertEqual(result, {})
 
 
@@ -303,7 +303,7 @@ class TestCreateShipmentMrApprovalRules(unittest.TestCase):
         mock_gitlab.set_mr_approval_rules = AsyncMock()
         pipeline.__dict__["_gitlab"] = mock_gitlab
 
-        mr_url = asyncio.get_event_loop().run_until_complete(pipeline.create_shipment_mr({}, env="prod"))
+        mr_url = asyncio.run(pipeline.create_shipment_mr({}, env="prod"))
 
         mock_gitlab.set_mr_approval_rules.assert_not_called()
         self.assertIn("placeholder", mr_url)
@@ -326,7 +326,7 @@ class TestCreateShipmentMrApprovalRules(unittest.TestCase):
         mock_gitlab.set_mr_approval_rules = AsyncMock()
         pipeline.__dict__["_gitlab"] = mock_gitlab
 
-        mr_url = asyncio.get_event_loop().run_until_complete(pipeline.create_shipment_mr({}, env="prod"))
+        mr_url = asyncio.run(pipeline.create_shipment_mr({}, env="prod"))
 
         mock_gitlab.set_mr_approval_rules.assert_awaited_once_with(
             "https://gitlab.example.com/org/repo/-/merge_requests/1",
@@ -352,7 +352,7 @@ class TestCreateShipmentMrApprovalRules(unittest.TestCase):
         mock_gitlab.set_mr_approval_rules = AsyncMock()
         pipeline.__dict__["_gitlab"] = mock_gitlab
 
-        asyncio.get_event_loop().run_until_complete(pipeline.create_shipment_mr({}, env="prod"))
+        asyncio.run(pipeline.create_shipment_mr({}, env="prod"))
 
         mock_gitlab.set_mr_approval_rules.assert_not_called()
 
@@ -374,7 +374,7 @@ class TestCreateShipmentMrApprovalRules(unittest.TestCase):
         mock_gitlab.set_mr_approval_rules = AsyncMock(side_effect=RuntimeError("API error"))
         pipeline.__dict__["_gitlab"] = mock_gitlab
 
-        mr_url = asyncio.get_event_loop().run_until_complete(pipeline.create_shipment_mr({}, env="prod"))
+        mr_url = asyncio.run(pipeline.create_shipment_mr({}, env="prod"))
 
         self.assertEqual(mr_url, mock_mr.web_url)
 
@@ -394,22 +394,20 @@ class TestSetMrApprovalRules(unittest.TestCase):
     def test_empty_config_returns_early(self):
         client = self._make_client()
         client.get_mr_from_url = MagicMock()
-        asyncio.get_event_loop().run_until_complete(
-            client.set_mr_approval_rules("https://gitlab.example.com/a/b/-/merge_requests/1", {})
-        )
+        asyncio.run(client.set_mr_approval_rules("https://gitlab.example.com/a/b/-/merge_requests/1", {}))
         client.get_mr_from_url.assert_not_called()
 
     def test_empty_url_returns_early(self):
         client = self._make_client()
         client.get_mr_from_url = MagicMock()
-        asyncio.get_event_loop().run_until_complete(client.set_mr_approval_rules("", {"QE": ["user1"]}))
+        asyncio.run(client.set_mr_approval_rules("", {"QE": ["user1"]}))
         client.get_mr_from_url.assert_not_called()
 
     def test_dry_run_does_not_mutate(self):
         client = self._make_client(dry_run=True)
         client.get_mr_from_url = MagicMock()
 
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             client.set_mr_approval_rules(
                 "https://gitlab.example.com/a/b/-/merge_requests/1",
                 {"QE": ["user1"]},
@@ -438,7 +436,7 @@ class TestSetMrApprovalRules(unittest.TestCase):
         mock_user.id = 15399
         client._client.users.list = MagicMock(return_value=[mock_user])
 
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             client.set_mr_approval_rules(
                 "https://gitlab.example.com/a/b/-/merge_requests/1",
                 {"QE": ["asdas1"]},
@@ -460,7 +458,7 @@ class TestSetMrApprovalRules(unittest.TestCase):
         client.get_mr_from_url = MagicMock(return_value=mock_mr)
         client._client.users.list = MagicMock(return_value=[])
 
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             client.set_mr_approval_rules(
                 "https://gitlab.example.com/a/b/-/merge_requests/1",
                 {"QE": ["nonexistent_user"]},
@@ -483,7 +481,7 @@ class TestSetMrApprovalRules(unittest.TestCase):
         }
         client._client.users.list = MagicMock(side_effect=lambda username: [user_map[username]])
 
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             client.set_mr_approval_rules(
                 "https://gitlab.example.com/a/b/-/merge_requests/1",
                 {"QE": ["user1", "user2"], "Dev": ["user3"]},
