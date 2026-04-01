@@ -1392,6 +1392,7 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         self.assertEqual(result, [])
 
     def test_is_base_image(self):
+        from artcommonlib.constants import GOLANG_BUILDER_IMAGE_NAME
         from artcommonlib.model import Model
 
         runtime = MagicMock()
@@ -1407,6 +1408,11 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         regular_data = Model({'key': 'test-regular', 'data': regular_image, 'filename': 'test-regular.yaml'})
         regular_metadata = ImageMetadata(runtime, regular_data)
         self.assertFalse(regular_metadata.is_base_image())
+
+        golang_builder = Model({'name': GOLANG_BUILDER_IMAGE_NAME})
+        golang_data = Model({'key': 'golang-builder', 'data': golang_builder, 'filename': 'golang-builder.yaml'})
+        golang_metadata = ImageMetadata(runtime, golang_data)
+        self.assertTrue(golang_metadata.is_base_image())
 
     def test_is_snapshot_release_enabled(self):
         from artcommonlib.model import Model
