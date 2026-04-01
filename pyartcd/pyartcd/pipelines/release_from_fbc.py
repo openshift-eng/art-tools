@@ -75,12 +75,14 @@ class ReleaseFromFbcPipeline:
         shipment_path: Optional[str] = None,
         jira_bugs: Optional[List[str]] = None,
         target_release_date: Optional[str] = None,
+        extra_image_nvrs: Optional[List[str]] = None,
     ) -> None:
         self.logger = logging.getLogger(__name__)
         self.runtime = runtime
         self.group = group
         self.assembly = assembly
         self.fbc_pullspecs = fbc_pullspecs
+        self.extra_image_nvrs = extra_image_nvrs or []
         self.create_mr = create_mr
         self.dry_run = self.runtime.dry_run
 
@@ -824,6 +826,8 @@ class ReleaseFromFbcPipeline:
         """
         self.logger.info(f"Starting FBC-based release workflow for {self.assembly}")
         self.logger.info(f"Processing {len(self.fbc_pullspecs)} FBC pullspecs")
+        if self.extra_image_nvrs:
+            self.logger.info(f"Including {len(self.extra_image_nvrs)} extra image NVRs")
 
         # Initialize environment and repositories
         self.check_env_vars()
@@ -838,27 +842,41 @@ class ReleaseFromFbcPipeline:
         # Note: All products use the same shipment data repository
         # No need to update shipment repository based on product
 
-        # Validate that all FBC builds have the same related images
-        related_nvrs = await self.validate_fbc_related_images(self.fbc_pullspecs)
+        related_nvrs = []
+        fbc_nvrs = []
 
-        # Extract FBC NVRs from each FBC pullspec
-        fbc_nvrs = [
-            nvr for fbc_pullspec in self.fbc_pullspecs if (nvr := self.extract_fbc_nvr(fbc_pullspec)) is not None
-        ]
+        if self.fbc_pullspecs:
+            # Validate that all FBC builds have the same related images
+            related_nvrs = await self.validate_fbc_related_images(self.fbc_pullspecs)
 
-        if fbc_nvrs:
-            self.logger.info(f"✓ Extracted {len(fbc_nvrs)} FBC NVRs: {fbc_nvrs}")
-        else:
-            self.logger.warning("Could not extract any FBC NVRs - FBC shipments will not be created")
+            # Extract FBC NVRs from each FBC pullspec
+            fbc_nvrs = [
+                nvr for fbc_pullspec in self.fbc_pullspecs if (nvr := self.extract_fbc_nvr(fbc_pullspec)) is not None
+            ]
+
+            if fbc_nvrs:
+                self.logger.info(f"✓ Extracted {len(fbc_nvrs)} FBC NVRs: {fbc_nvrs}")
+            else:
+                self.logger.warning("Could not extract any FBC NVRs - FBC shipments will not be created")
 
         # Combine related images with FBC NVRs
         all_nvrs = related_nvrs[:] + fbc_nvrs
 
-        if not all_nvrs:
-            raise RuntimeError("No NVRs extracted from FBC images")
+        if not all_nvrs and not self.extra_image_nvrs:
+            raise RuntimeError("No NVRs extracted from FBC images and no extra image NVRs provided")
 
         # Categorize the extracted NVRs
-        categorized_nvrs = self.categorize_nvrs(all_nvrs)
+        categorized_nvrs = self.categorize_nvrs(all_nvrs) if all_nvrs else {"image": [], "fbc": [], "external": []}
+
+        # Merge extra image NVRs into the image category so they end up in the same image shipment
+        if self.extra_image_nvrs:
+            fbc_extras = [nvr for nvr in self.extra_image_nvrs if parse_nvr(nvr)['name'].endswith('-fbc')]
+            if fbc_extras:
+                raise RuntimeError(
+                    f"--extra-image-nvrs contains FBC builds which belong in --fbc-pullspecs instead: {fbc_extras}"
+                )
+            self.logger.info(f"Adding {len(self.extra_image_nvrs)} extra image NVRs to image shipment")
+            categorized_nvrs['image'] = list(dict.fromkeys([*categorized_nvrs['image'], *self.extra_image_nvrs]))
 
         # Create snapshots for image builds (only once since they're shared)
         image_snapshot = None
@@ -934,8 +952,16 @@ class ReleaseFromFbcPipeline:
 @click.option(
     "--fbc-pullspecs",
     metavar="FBC_PULLSPECS",
-    required=True,
-    help="Comma-separated list of FBC image pullspecs to extract NVRs from",
+    required=False,
+    default="",
+    help="Comma-separated list of FBC image pullspecs to extract NVRs from. At least one of --fbc-pullspecs or --extra-image-nvrs must be provided.",
+)
+@click.option(
+    "--extra-image-nvrs",
+    metavar="EXTRA_IMAGE_NVRS",
+    required=False,
+    default="",
+    help="Comma-separated list of extra image NVRs to include in the image shipment (not part of the FBC). At least one of --fbc-pullspecs or --extra-image-nvrs must be provided.",
 )
 @click.option(
     "--create-mr",
@@ -969,6 +995,7 @@ async def release_from_fbc(
     group: str,
     assembly: str,
     fbc_pullspecs: str,
+    extra_image_nvrs: str,
     create_mr: bool,
     shipment_data_repo_url: Optional[str],
     shipment_path: Optional[str],
@@ -980,7 +1007,10 @@ async def release_from_fbc(
 
     This command is designed for products other than OpenShift (e.g., OADP, MTA, MTC, logging).
     It extracts NVRs from an FBC image and creates separate shipment files for
-    image builds and FBC builds.
+    image builds and FBC builds. Extra image NVRs (not part of the FBC) can be
+    included in the same image shipment file.
+
+    At least one of --fbc-pullspecs or --extra-image-nvrs must be provided.
 
     Note: For OpenShift releases, use the prepare-release-konflux command instead.
 
@@ -992,12 +1022,19 @@ async def release_from_fbc(
         --fbc-pullspecs quay.io/redhat-user-workloads/ocp-art-tenant/art-fbc:oadp-operator-fbc-1.5.3-20251028153444
 
     \b
-    # Create shipment files with custom shipment repository:
+    # Create shipment files with extra image NVRs:
     $ artcd release-from-fbc \\
         --group oadp-1.5 \\
         --assembly 1.5.3 \\
         --fbc-pullspecs quay.io/redhat-user-workloads/ocp-art-tenant/art-fbc:oadp-operator-fbc-1.5.3-20251028153444 \\
-        --shipment-path /path/to/custom-shipment-data
+        --extra-image-nvrs oadp-velero-container-1.5.3-20251028.el9,oadp-helper-container-1.5.3-20251028.el9
+
+    \b
+    # Ship only extra image NVRs (no FBC):
+    $ artcd release-from-fbc \\
+        --group oadp-1.5 \\
+        --assembly 1.5.3 \\
+        --extra-image-nvrs oadp-velero-container-1.5.3-20251028.el9
 
     \b
     # Create shipment files and MR (requires GITLAB_TOKEN env var):
@@ -1007,10 +1044,11 @@ async def release_from_fbc(
         --fbc-pullspecs quay.io/redhat-user-workloads/ocp-art-tenant/art-fbc:oadp-operator-fbc-1.5.3-20251028153444 \\
         --create-mr
     """
-    # Parse comma-separated FBC pullspecs
     fbc_pullspecs_list = [spec.strip() for spec in fbc_pullspecs.split(',') if spec.strip()]
-    if not fbc_pullspecs_list:
-        raise click.ClickException("At least one FBC pullspec must be provided")
+    extra_image_nvrs_list = [nvr.strip() for nvr in extra_image_nvrs.split(',') if nvr.strip()]
+
+    if not fbc_pullspecs_list and not extra_image_nvrs_list:
+        raise click.ClickException("At least one of --fbc-pullspecs or --extra-image-nvrs must be provided")
 
     # Parse comma-separated JIRA bugs
     jira_bugs_list = None
@@ -1024,7 +1062,6 @@ async def release_from_fbc(
     if target_release_date:
         normalized_date = _normalize_release_date(target_release_date)
 
-    # Create pipeline and run
     pipeline = ReleaseFromFbcPipeline(
         runtime=runtime,
         group=group,
@@ -1035,6 +1072,7 @@ async def release_from_fbc(
         shipment_path=shipment_path,
         jira_bugs=jira_bugs_list,
         target_release_date=normalized_date,
+        extra_image_nvrs=extra_image_nvrs_list,
     )
 
     await pipeline.run()
