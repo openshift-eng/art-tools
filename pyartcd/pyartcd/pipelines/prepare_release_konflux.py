@@ -406,7 +406,7 @@ class PrepareReleaseKonfluxPipeline:
 
         # Find bugs
         self.logger.info("Finding %s bugs...", impetus)
-        impetus_bugs = await self.find_bugs(build_system='brew')
+        impetus_bugs = await self.find_bugs()
 
         # Process bugs
         for impetus, advisory_num in impetus_advisories.items():
