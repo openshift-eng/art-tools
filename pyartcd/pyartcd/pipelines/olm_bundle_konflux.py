@@ -243,7 +243,7 @@ async def olm_bundle_konflux(
                     dry_run=runtime.dry_run,
                     propagate_params=propagate_params,
                 )
-                await asyncio.sleep(5)  # Avoid timestamp collisions between FBC builds
+                await asyncio.sleep(10)  # Avoid timestamp collisions between FBC builds
         else:
             runtime.logger.info(f'Group {group} does not match OADP/MTA/MTC pattern, using original behavior')
             # Not an OADP/MTA/MTC group, use original behavior
