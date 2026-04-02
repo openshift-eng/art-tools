@@ -9,11 +9,11 @@ import yaml
 from artcommonlib import exectools, redis, rhcos
 from artcommonlib.arch_util import go_arch_for_brew_arch, go_suffix_for_arch
 from artcommonlib.exectools import limit_concurrency
+from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.redis import RedisError
 from artcommonlib.release_util import SoftwareLifecyclePhase
 from artcommonlib.telemetry import start_as_current_span_async
 from artcommonlib.util import split_git_url, uses_konflux_imagestream_override
-from ghapi.all import GhApi
 from opentelemetry import trace
 
 from pyartcd import constants, jenkins, locks
@@ -101,7 +101,6 @@ class BuildSyncPipeline:
         try:
             _, _, repository = split_git_url(self.data_path)
             branch = self.doozer_data_gitref
-            token = os.environ.get('GITHUB_TOKEN')
 
             pattern = r"github\.com/([^/]+)/"
             match = re.search(pattern, self.data_path)
@@ -110,17 +109,15 @@ class BuildSyncPipeline:
             if match:
                 repo_owner = match.group(1)
 
-            api = GhApi(owner=constants.GITHUB_OWNER, repo=repository, token=token)
+            gh_repo = get_github_client_for_org(constants.GITHUB_OWNER).get_repo(
+                f"{constants.GITHUB_OWNER}/{repository}"
+            )
 
-            # Check if the doozer_data_gitref is given then, if not
-            # then it set the branch to openshift-{major}.{minor}
             if not branch:
                 branch = f"openshift-{self.version}"
 
-            # Head needs to have the repo name prepended for GhApi to fetch the correct one
             head = f"{repo_owner}:{branch}"
-            # Find our assembly PR.
-            prs = api.pulls.list(head=head, state="open")
+            prs = list(gh_repo.get_pulls(head=head, state="open"))
 
             if len(prs) == 0:
                 self.logger.warning(f"No assembly PRs were found with head={head}")
@@ -130,7 +127,7 @@ class BuildSyncPipeline:
                 self.logger.warning(f"{len(prs)} PR(s) were found with head={head}. We need only 1.")
                 return
 
-            pr_number = prs[0]["number"]
+            pr_number = prs[0].number
 
             if self.runtime.dry_run:
                 self.logger.warning(
@@ -139,9 +136,7 @@ class BuildSyncPipeline:
                 )
                 return
 
-            # https://docs.github.com/en/rest/issues/comments?apiVersion=2022-11-28#create-an-issue-comment
-            # PR is an issue as far as  GitHub API is concerned
-            api.issues.create_comment(issue_number=pr_number, body=text_body)
+            gh_repo.get_issue(pr_number).create_comment(body=text_body)
 
         except Exception as e:
             self.logger.warning(f"Failed commenting to PR: {e}")

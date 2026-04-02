@@ -1,5 +1,4 @@
 import asyncio
-import base64
 import json
 import logging
 import os
@@ -19,6 +18,7 @@ import yaml
 from artcommonlib import exectools
 from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch
 from artcommonlib.exectools import cmd_gather_async
+from artcommonlib.github_auth import get_github_client_for_org, get_github_git_auth_env
 from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
 from artcommonlib.model import Missing, Model
@@ -64,9 +64,7 @@ class ConfigScanSources:
             raise DoozerFatalError('Cannot run scan-sources without a valid Konflux DB connection')
         runtime.konflux_db.bind(KonfluxBuildRecord)
 
-        self.github_token = os.getenv('GITHUB_TOKEN')
-        if not self.github_token:
-            raise DoozerFatalError("GITHUB_TOKEN environment variable must be set")
+        # GitHub auth is handled by get_github_client_for_org() with App auth / PAT fallback
 
         self.logger = logging.getLogger(__name__)
         self.runtime = runtime
@@ -244,9 +242,12 @@ class ConfigScanSources:
 
     def _try_reconciliation(self, metadata: Metadata, repo_name: str, pub_branch_name: str, priv_branch_name: str):
         reconciled = False
+        git_auth_env = get_github_git_auth_env(url=f"https://github.com/{repo_name}")
 
         # Attempt a fast-forward merge
-        rc, _, _ = exectools.cmd_gather(cmd=['git', 'pull', '--ff-only', 'public_upstream', pub_branch_name])
+        rc, _, _ = exectools.cmd_gather(
+            cmd=['git', 'pull', '--ff-only', 'public_upstream', pub_branch_name], set_env=git_auth_env
+        )
         if not rc:
             # fast-forward succeeded, will push to openshift-priv
             self.logger.info('Fast-forwarded %s from public_upstream/%s', metadata.name, pub_branch_name)
@@ -286,7 +287,7 @@ class ConfigScanSources:
 
         # Try to push to openshift-priv
         try:
-            exectools.cmd_assert(cmd=['git', 'push', 'origin', priv_branch_name], retries=3)
+            exectools.cmd_assert(cmd=['git', 'push', 'origin', priv_branch_name], retries=3, set_env=git_auth_env)
             self.logger.info('Successfully reconciled %s with public upstream', metadata.name)
 
         except ChildProcessError:
@@ -302,14 +303,16 @@ class ConfigScanSources:
 
         try:
             # Check public commit ID
+            pub_auth_env = get_github_git_auth_env(url=public_url)
             out, _ = exectools.cmd_assert(
-                ['git', 'ls-remote', public_url, pub_branch_name], retries=5, on_retry='sleep 5'
+                ['git', 'ls-remote', public_url, pub_branch_name], retries=5, on_retry='sleep 5', set_env=pub_auth_env
             )
             pub_commit = out.strip().split()[0]
 
             # Check private commit ID
+            priv_auth_env = get_github_git_auth_env(url=priv_url)
             out, _ = exectools.cmd_assert(
-                ['git', 'ls-remote', priv_url, priv_branch_name], retries=5, on_retry='sleep 5'
+                ['git', 'ls-remote', priv_url, priv_branch_name], retries=5, on_retry='sleep 5', set_env=priv_auth_env
             )
             priv_commit = out.strip().split()[0]
 
@@ -406,7 +409,7 @@ class ConfigScanSources:
                 )
                 continue
 
-            priv_url = artcommonlib.util.convert_remote_git_to_https(metadata.config.content.source.git.url)
+            priv_url = artcommonlib.util.ensure_github_https_url(metadata.config.content.source.git.url)
             priv_branch_name = metadata.config.content.source.git.branch.target
 
             # If a git commit hash was declared as the upstream source, skip the rebase
@@ -436,9 +439,7 @@ class ConfigScanSources:
             _, public_org, public_repo_name = artcommonlib.util.split_git_url(public_url)
             _, priv_org, priv_repo_name = artcommonlib.util.split_git_url(priv_url)
 
-            if self._do_shas_match(
-                public_url, public_branch_name, metadata.config.content.source.git.url, priv_branch_name
-            ):
+            if self._do_shas_match(public_url, public_branch_name, priv_url, priv_branch_name):
                 # If they match, do nothing
                 continue
 
@@ -753,14 +754,13 @@ class ConfigScanSources:
         with tempfile.NamedTemporaryFile(delete=True) as temp_file:
             config_digest = temp_file.name
 
-            # Download the config digest to the temporary file
+            _, org, _ = artcommonlib.util.split_git_url(build_record.rebase_repo_url)
             await artcommonlib.util.download_file_from_github(
                 repository=build_record.rebase_repo_url,
                 branch=build_record.rebase_commitish,
                 path='.oit/config_digest',
-                token=self.github_token,
+                github_client=get_github_client_for_org(org),
                 destination=config_digest,
-                session=self.session,
             )
 
             # Read and return the content of the temporary file
@@ -1265,32 +1265,25 @@ class ConfigScanSources:
         Fetch current task bundle SHAs from the art-konflux-template GitHub repository
         """
         self.logger.info(f'Fetching task bundle template from {KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL}')
+
+        def _fetch():
+            repo = get_github_client_for_org("openshift-priv").get_repo("openshift-priv/art-konflux-template")
+            content = repo.get_contents(".tekton/art-konflux-template-push.yaml", ref="main")
+            return content.decoded_content.decode('utf-8')
+
+        yaml_content = await asyncio.to_thread(_fetch)
+
         try:
-            async with self.session.get(
-                KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL, headers={'Authorization': f'Bearer {self.github_token}'}
-            ) as response:
-                response.raise_for_status()
-                response_data = await response.json()
-
-            # GitHub API returns base64-encoded content, decode it first
-            if 'content' not in response_data:
-                raise ValueError('Response does not contain content field')
-
-            encoded_content = response_data['content']
-            yaml_content = base64.b64decode(encoded_content).decode('utf-8')
-
-            # Parse YAML to extract task bundle references
             self.logger.info('Parsing YAML content to extract task bundle references')
             yaml_data = yaml.safe_load(yaml_content)
             task_bundles = {}
 
-            # Look for task references in the YAML
             self._extract_task_refs(yaml_data, task_bundles)
             self.logger.info(f'Successfully extracted {len(task_bundles)} task bundle references from GitHub template')
             return task_bundles
 
-        except Exception as e:
-            self.logger.error(f'Failed to fetch current task bundle SHAs: {e}')
+        except (yaml.YAMLError, KeyError, TypeError) as e:
+            self.logger.error(f'Failed to parse task bundle template: {e}')
             return {}
 
     def _extract_task_refs(self, obj, task_bundles: Dict[str, str]):
