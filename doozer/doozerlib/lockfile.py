@@ -257,6 +257,11 @@ class RpmInfoCollector:
         """
         Resolve RPM metadata for a specific architecture from the given repodata names.
 
+        Searches ALL repositories for each package and keeps the highest version found,
+        rather than stopping at the first repo that has the package. This ensures consistent
+        version resolution regardless of repo iteration order and avoids picking stale versions
+        from repos that haven't been synced yet.
+
         Args:
             rpm_names (set[str]): RPM names or NVRs to resolve.
             repo_names (set[str]): Names of repodata sources to search.
@@ -265,9 +270,9 @@ class RpmInfoCollector:
         Returns:
             list[RpmInfo]: Resolved RPM package metadata.
         """
-        rpm_info_list = []
-        unresolved_rpms = set(rpm_names)
-        missing_rpms = unresolved_rpms
+        # Track the best (highest version) RpmInfo per package name across all repos
+        best_rpms: dict[str, RpmInfo] = {}
+        found_rpm_names: set[str] = set()
 
         for repo_name in repo_names:
             repodata = self.loaded_repos.get(f'{repo_name}-{arch}')
@@ -282,30 +287,31 @@ class RpmInfoCollector:
                 self.logger.error(f'repo {repo_name} not found')
                 continue
 
-            found_rpms, missing_rpms = repodata.get_rpms(unresolved_rpms, arch)
+            found_rpms, _ = repodata.get_rpms(rpm_names, arch)
 
             content_set_id = repo.content_set(arch)
             if content_set_id is None:
                 self.logger.warning(f'repo {repo_name} has no content_set for {arch}, falling back to repo key')
                 content_set_id = f'{repo_name}-{arch}'
 
-            rpm_info_list.extend(
-                [
-                    RpmInfo.from_rpm(rpm, repoid=content_set_id, baseurl=repo.baseurl(repotype="unsigned", arch=arch))
-                    for rpm in found_rpms
-                ]
-            )
+            for rpm in found_rpms:
+                rpm_info = RpmInfo.from_rpm(rpm, repoid=content_set_id, baseurl=repo.baseurl(repotype="unsigned", arch=arch))
+                found_rpm_names.add(rpm_info.name)
 
-            if not missing_rpms:
-                # Found all rpms, break early
-                break
+                existing = best_rpms.get(rpm_info.name)
+                if existing is None or rpm_info > existing:
+                    if existing is not None:
+                        self.logger.info(
+                            f'Upgrading {rpm_info.name} from {existing.evr} (repo {existing.repoid}) '
+                            f'to {rpm_info.evr} (repo {rpm_info.repoid}) for arch {arch}'
+                        )
+                    best_rpms[rpm_info.name] = rpm_info
 
-            unresolved_rpms = missing_rpms
-
+        missing_rpms = rpm_names - found_rpm_names
         if missing_rpms:
-            self.logger.warning(f"Could not find {','.join(missing_rpms)} in {', '.join(repo_names)} for arch {arch}")
+            self.logger.warning(f"Could not find {','.join(sorted(missing_rpms))} in {', '.join(repo_names)} for arch {arch}")
 
-        return sorted(rpm_info_list)
+        return sorted(best_rpms.values())
 
     @start_as_current_span_async(TRACER, "lockfile.fetch_rpms_info")
     async def fetch_rpms_info(
