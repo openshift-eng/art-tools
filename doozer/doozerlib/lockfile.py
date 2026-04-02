@@ -22,6 +22,25 @@ DEFAULT_RPM_LOCKFILE_NAME = "rpms.lock.yaml"
 DEFAULT_ARTIFACT_LOCKFILE_NAME = "artifacts.lock.yaml"
 
 
+def sort_repos_for_lockfile_resolution(repo_names: set[str]) -> list[str]:
+    """
+    Order repos so OCP content (rhocp / *ose-rpms*) is preferred over plain RHEL (baseos, appstream, CRB, ...).
+
+    :meth:`RpmInfoCollector._fetch_rpms_info_per_arch` resolves each package name from the first repo in
+    iteration order that contains it. ``repo_names`` is a ``set``, so order was undefined; the same RPM
+    name can exist in both RHEL AppStream (e.g. modular ``runc`` 1.1.x) and OSE (``runc`` 1.2.x from
+    ``rhaos``). Prefer OSE so lockfiles and hermetic prefetch match ``check_external_packages`` / Brew.
+    """
+
+    def sort_key(name: str) -> tuple[int, str]:
+        lower = name.lower()
+        if 'ose-rpms' in lower or 'rhocp' in lower:
+            return (0, name)
+        return (1, name)
+
+    return sorted(repo_names, key=sort_key)
+
+
 @total_ordering
 @dataclass(frozen=True)
 class RpmInfo:
@@ -269,7 +288,7 @@ class RpmInfoCollector:
         unresolved_rpms = set(rpm_names)
         missing_rpms = unresolved_rpms
 
-        for repo_name in repo_names:
+        for repo_name in sort_repos_for_lockfile_resolution(repo_names):
             repodata = self.loaded_repos.get(f'{repo_name}-{arch}')
             if repodata is None:
                 self.logger.error(

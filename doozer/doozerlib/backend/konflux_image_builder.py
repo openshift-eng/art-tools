@@ -388,6 +388,17 @@ class KonfluxImageBuilder:
         name = f"ose-{name[10:]}" if name.startswith("openshift-") else name
         return name
 
+    @staticmethod
+    def _repo_gets_hermetic_module_hotfixes(repo_name: str, group: str, golang_pattern: re.Pattern) -> bool:
+        """
+        art-unsigned.repo sets module_hotfixes=1 on OSE (plashet) repos so non-modular RPMs there can win over
+        modular AppStream streams (e.g. runc). Apply the same hint to cachi2 hermetic prefetch DNF repo options.
+        """
+        if not (group.startswith("openshift-") or golang_pattern.match(group)):
+            return False
+        lower = repo_name.lower()
+        return 'ose-rpms' in lower or 'rhocp' in lower
+
     def _prefetch(self, metadata: ImageMetadata, group: str, dest_dir: Optional[Path] = None) -> list:
         """
         To generate the param values for konflux's prefetch dependencies task which uses cachi2 (similar to cachito in
@@ -433,26 +444,40 @@ class KonfluxImageBuilder:
                     phase = SoftwareLifecyclePhase.from_name(metadata.runtime.group_config.software_lifecycle.phase)
                     should_disable_gpg = phase <= SoftwareLifecyclePhase.SIGNING
 
-                if should_disable_gpg:
-                    enabled_repos = metadata.get_enabled_repos()
-                    if enabled_repos:
-                        dnf_options = {}
-                        repos = metadata.runtime.repos
-                        building_arches = metadata.get_arches()
+                enabled_repos = metadata.get_enabled_repos()
+                if enabled_repos:
+                    dnf_options = {}
+                    repos = metadata.runtime.repos
+                    building_arches = metadata.get_arches()
 
-                        for repo_name in enabled_repos:
-                            repo = repos[repo_name]
-                            for arch in building_arches:
-                                content_set_id = repo.content_set(arch)
-                                if content_set_id is None:
-                                    content_set_id = f'{repo_name}-{arch}'
+                    for repo_name in enabled_repos:
+                        repo = repos[repo_name]
+                        for arch in building_arches:
+                            content_set_id = repo.content_set(arch)
+                            if content_set_id is None:
+                                content_set_id = f'{repo_name}-{arch}'
 
-                                dnf_options[content_set_id] = {"gpgcheck": "0"}
+                            opts: dict = {}
+                            if should_disable_gpg:
+                                opts["gpgcheck"] = "0"
+                            if self._repo_gets_hermetic_module_hotfixes(repo_name, group, golang_pattern):
+                                opts["module_hotfixes"] = "1"
 
+                            if opts:
+                                dnf_options[content_set_id] = opts
+
+                    if dnf_options:
                         data["options"] = {"dnf": dnf_options}
-                        logger.info(
-                            f"Adding prerelease DNF options for {len(dnf_options)} repository IDs: gpgcheck disabled"
-                        )
+                        if should_disable_gpg:
+                            logger.info(
+                                f"Adding hermetic RPM prefetch DNF options for {len(dnf_options)} repository IDs "
+                                f"(gpgcheck disabled for prerelease; module_hotfixes on OSE/rhocp where applicable)"
+                            )
+                        else:
+                            logger.info(
+                                f"Adding hermetic RPM prefetch DNF options for {len(dnf_options)} repository IDs "
+                                f"(module_hotfixes on OSE/rhocp repos, aligned with art-unsigned.repo)"
+                            )
 
             prefetch.append(data)
             logger.info(f"Adding RPM prefetch for lockfile {DEFAULT_RPM_LOCKFILE_NAME} at path: {lockfile_path}")
