@@ -1,5 +1,6 @@
 import logging
 import os
+import sys
 
 import click
 import yaml
@@ -25,6 +26,9 @@ class Ocp4ScanPipeline:
         self._doozer_working = self.runtime.working_dir / "doozer_working"
         self.changes = {}
         self.report = {}
+        self.issues = []
+        self.command_failed = False
+        self.command_failure_message = ''
 
         self.rhcos_updated = False
         self.rhcos_outdated = False
@@ -66,6 +70,9 @@ class Ocp4ScanPipeline:
         # Handle RHCOS changes or inconsistencies
         await self.handle_rhcos_changes()
 
+        self._report_issues()
+        self._finalize()
+
     def check_params(self):
         """
         Make sure non-stream assemblies, custom forks and branches are only used with dry run mode
@@ -98,10 +105,19 @@ class Ocp4ScanPipeline:
         if self.runtime.dry_run:
             cmd.append('--dry-run')
 
-        _, out, _ = await exectools.cmd_gather_async(cmd, stderr=None)
+        rc, out, _ = await exectools.cmd_gather_async(cmd, stderr=None, check=False)
         self.logger.info('scan-sources output for openshift-%s:\n%s', self.version, out)
 
-        self.report = yaml.safe_load(out)
+        self.command_failed = rc != 0
+        if self.command_failed:
+            self.command_failure_message = f'scan-sources command failed with exit code {rc}'
+            self.logger.error(self.command_failure_message)
+
+        self.report = yaml.safe_load(out) or {}
+        if not isinstance(self.report, dict):
+            raise ValueError('scan-sources output did not contain a YAML mapping')
+
+        self.issues = self.report.get('issues', [])
         self.changes = util.get_changes(self.report)
         if self.changes:
             self.logger.info('Detected source changes:\n%s', yaml.safe_dump(self.changes))
@@ -115,6 +131,32 @@ class Ocp4ScanPipeline:
                     self.rhcos_updated = True
                 if rhcos_change['reason'].get('outdated', None):
                     self.rhcos_outdated = True
+
+    def _report_issues(self):
+        if not self.issues:
+            return
+
+        image_names = sorted({issue.get('name') for issue in self.issues if issue.get('name')})
+
+        if 1 <= len(image_names) <= 10:
+            jenkins.update_description(f'Scan failures: {", ".join(image_names)}<br/>')
+        elif image_names:
+            jenkins.update_description(f'{len(image_names)} images had scan failures. Check scan-sources output<br/>')
+        else:
+            jenkins.update_description('Scan failures detected. Check scan-sources output<br/>')
+
+    def _finalize(self):
+        if self.command_failed:
+            raise RuntimeError(self.command_failure_message)
+
+        if not self.issues:
+            return
+
+        if self.changes:
+            self.logger.warning('scan-sources reported issues but also found valid changes; marking job unstable')
+            sys.exit(2)
+
+        raise RuntimeError('scan-sources reported issues but found no valid changes')
 
     async def get_rhcos_inconsistencies(self):
         """
