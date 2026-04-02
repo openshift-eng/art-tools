@@ -2,7 +2,7 @@ import base64
 import json
 from datetime import datetime, timezone
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
 import yaml
