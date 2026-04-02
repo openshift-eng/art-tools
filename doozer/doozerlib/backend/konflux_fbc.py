@@ -1022,6 +1022,18 @@ class KonfluxFbcRebaser:
         logger = self._logger.getChild(f"[{bundle_short_name}]")
         repo_dir = self.base_dir.joinpath(metadata.distgit_key)
 
+        # Determine OCP version early -- needed for both branch naming and NVR uniqueness
+        group_config = metadata.runtime.group_config
+        if self.ocp_version_override:
+            ocp_version = self.ocp_version_override
+        else:
+            ocp_version = int(group_config.vars.MAJOR), int(group_config.vars.MINOR)
+
+        # For non-OpenShift groups (layered operators), the same operator is built for multiple
+        # OCP versions. Include the target OCP version in the release to ensure unique NVRs.
+        if not self.group.startswith('openshift-'):
+            release = f"{release}.ocp{ocp_version[0]}.{ocp_version[1]}"
+
         name = self.get_fbc_name(metadata.distgit_key)
         nvr = f"{name}-{version}-{release}"
         record = {
@@ -1036,13 +1048,6 @@ class KonfluxFbcRebaser:
         }
 
         try:
-            # Get OCP version for branch naming
-            group_config = metadata.runtime.group_config
-            if self.ocp_version_override:
-                ocp_version = self.ocp_version_override
-            else:
-                ocp_version = int(group_config.vars.MAJOR), int(group_config.vars.MINOR)
-
             # Clone the FBC repo
             fbc_build_branch = _generate_fbc_branch_name(
                 group=self.group, assembly=self.assembly, distgit_key=metadata.distgit_key, ocp_version=ocp_version
