@@ -406,85 +406,87 @@ class ConfigScanSources:
             n_threads=20,
         ).get()
 
+        def _rebase_into_priv(metadata, public_upstream):
+            # Skip rebase for disabled components
+            if metadata.meta_type == 'image':
+                # For images: use OKD-aware enabled check
+                if not self._is_image_enabled(metadata):
+                    self.logger.warning('%s is disabled: skipping rebase', metadata.name)
+                    return
+            elif not metadata.enabled:
+                # For RPMs, use standard enabled check
+                self.logger.warning('%s is disabled: skipping rebase', metadata.name)
+                return
+
+            if metadata.config.content is Missing:
+                self.logger.warning(
+                    '%s %s is a distgit-only component: skipping openshift-priv rebase',
+                    metadata.meta_type,
+                    metadata.name,
+                )
+                return
+
+            public_url, public_branch_name, has_public_upstream = public_upstream
+
+            # If no public upstream exists, skip the rebase
+            if not has_public_upstream:
+                self.logger.warning(
+                    '%s %s does not have a public upstream: skipping openshift-priv rebase',
+                    metadata.meta_type,
+                    metadata.name,
+                )
+                return
+
+            priv_url = artcommonlib.util.ensure_github_https_url(metadata.config.content.source.git.url)
+            priv_branch_name = metadata.config.content.source.git.branch.target
+
+            # If a git commit hash was declared as the upstream source, skip the rebase
+            try:
+                _ = int(priv_branch_name, 16)
+                # target branch is a sha: skip rebase for this component
+                self.logger.warning('Target branch for %s is a SHA: skipping rebase', metadata.name)
+                return
+
+            except ValueError:
+                # target branch is a normal branch name
+                pass
+
+            # If no public_upstreams field exists, public_branch_name will be None
+            public_branch_name = public_branch_name or priv_branch_name
+
+            if priv_url == public_url:
+                # Upstream repo does not have a public counterpart: no need to rebase
+                self.logger.warning(
+                    '%s %s does not have a public upstream: skipping openshift-priv rebase',
+                    metadata.meta_type,
+                    metadata.name,
+                )
+                return
+
+            # First, quick check: if SHAs match across remotes, repo is synced and we can avoid cloning it
+            _, public_org, public_repo_name = artcommonlib.util.split_git_url(public_url)
+            _, priv_org, priv_repo_name = artcommonlib.util.split_git_url(priv_url)
+
+            if self._do_shas_match(
+                public_url, public_branch_name, metadata.config.content.source.git.url, priv_branch_name
+            ):
+                # If they match, do nothing
+                return
+
+            # If they don't, clone source repo
+            path = self.runtime.source_resolver.resolve_source(metadata).source_path
+
+            # SHAs might differ because of previous rebase; let's check the actual content across upstreams
+            if self._is_pub_ancestor_of_priv(path, public_branch_name, priv_branch_name, priv_repo_name):
+                # Private upstream is ahead of public: no need to rebase
+                return
+
+            with Dir(path):
+                self._try_reconciliation(metadata, priv_repo_name, public_branch_name, priv_branch_name)
+
         for metadata, public_upstream in upstream_mappings:
             try:
-                # Skip rebase for disabled components
-                if metadata.meta_type == 'image':
-                    # For images: use OKD-aware enabled check
-                    if not self._is_image_enabled(metadata):
-                        self.logger.warning('%s is disabled: skipping rebase', metadata.name)
-                        continue
-                elif not metadata.enabled:
-                    # For RPMs, use standard enabled check
-                    self.logger.warning('%s is disabled: skipping rebase', metadata.name)
-                    continue
-
-                if metadata.config.content is Missing:
-                    self.logger.warning(
-                        '%s %s is a distgit-only component: skipping openshift-priv rebase',
-                        metadata.meta_type,
-                        metadata.name,
-                    )
-                    continue
-
-                public_url, public_branch_name, has_public_upstream = public_upstream
-
-                # If no public upstream exists, skip the rebase
-                if not has_public_upstream:
-                    self.logger.warning(
-                        '%s %s does not have a public upstream: skipping openshift-priv rebase',
-                        metadata.meta_type,
-                        metadata.name,
-                    )
-                    continue
-
-                priv_url = artcommonlib.util.ensure_github_https_url(metadata.config.content.source.git.url)
-                priv_branch_name = metadata.config.content.source.git.branch.target
-
-                # If a git commit hash was declared as the upstream source, skip the rebase
-                try:
-                    _ = int(priv_branch_name, 16)
-                    # target branch is a sha: skip rebase for this component
-                    self.logger.warning('Target branch for %s is a SHA: skipping rebase', metadata.name)
-                    continue
-
-                except ValueError:
-                    # target branch is a normal branch name
-                    pass
-
-                # If no public_upstreams field exists, public_branch_name will be None
-                public_branch_name = public_branch_name or priv_branch_name
-
-                if priv_url == public_url:
-                    # Upstream repo does not have a public counterpart: no need to rebase
-                    self.logger.warning(
-                        '%s %s does not have a public upstream: skipping openshift-priv rebase',
-                        metadata.meta_type,
-                        metadata.name,
-                    )
-                    continue
-
-                # First, quick check: if SHAs match across remotes, repo is synced and we can avoid cloning it
-                _, public_org, public_repo_name = artcommonlib.util.split_git_url(public_url)
-                _, priv_org, priv_repo_name = artcommonlib.util.split_git_url(priv_url)
-
-                if self._do_shas_match(
-                    public_url, public_branch_name, metadata.config.content.source.git.url, priv_branch_name
-                ):
-                    # If they match, do nothing
-                    continue
-
-                # If they don't, clone source repo
-                path = self.runtime.source_resolver.resolve_source(metadata).source_path
-
-                # SHAs might differ because of previous rebase; let's check the actual content across upstreams
-                if self._is_pub_ancestor_of_priv(path, public_branch_name, priv_branch_name, priv_repo_name):
-                    # Private upstream is ahead of public: no need to rebase
-                    continue
-
-                with Dir(path):
-                    self._try_reconciliation(metadata, priv_repo_name, public_branch_name, priv_branch_name, priv_url=priv_url)
-
+                _rebase_into_priv(metadata, public_upstream)
             except Exception as e:
                 self.logger.exception('Failed rebasing %s into openshift-priv', metadata.distgit_key)
                 self.issues.append({'name': metadata.distgit_key, 'issue': f'Failed rebasing into -priv: {e}'})
