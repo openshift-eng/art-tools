@@ -351,7 +351,7 @@ class BuildMicroShiftPipeline:
         except Exception as err:
             self._logger.error("Failed to trigger microshift_sync job: %s", err)
             message = (
-                f"@release-artists Please start <{constants.JENKINS_UI_URL}"
+                f"@automated-tooling-triage Please start <{constants.JENKINS_UI_URL}"
                 "/job/aos-cd-builds/job/build%252Fmicroshift_sync|microshift sync> manually."
             )
             await self.slack_client.say_in_thread(message)
@@ -376,7 +376,7 @@ class BuildMicroShiftPipeline:
         except Exception as err:
             self._logger.error("Failed to trigger build-microshift-bootc job: %s", err)
             message = (
-                f"@release-artists Please start <{constants.JENKINS_UI_URL}"
+                f"@automated-tooling-triage Please start <{constants.JENKINS_UI_URL}"
                 "/job/aos-cd-builds/job/build%252Fbuild-microshift-bootc|build-microshift-bootc> manually."
             )
             await self.slack_client.say_in_thread(message)
@@ -675,7 +675,7 @@ class BuildMicroShiftPipeline:
         slack_client = self.runtime.new_slack_client()
         slack_client.channel = "C0310LGMQQY"  # microshift-alerts
         message = f":alert: @here ART build failure: microshift-{version_release}."
-        message += "\nPing @ release-artists if you need help."
+        message += "\nPing @ automated-tooling-triage if you need help."
         slack_response = await slack_client.say(message)
         slack_thread = slack_response["message"]["ts"]
         if doozer_log_file.exists():

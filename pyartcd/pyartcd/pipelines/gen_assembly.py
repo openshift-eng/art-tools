@@ -240,7 +240,7 @@ class GenAssemblyPipeline:
 
             # Sends a slack message
             message = (
-                f"Hi @release-artists, please review assembly definition for {self.assembly}: {pr.html_url}\n\n"
+                f"Hi @automated-tooling-triage, please review assembly definition for {self.assembly}: {pr.html_url}\n\n"
                 f"The inflight release is {self.in_flight}"
             )
             if not self.skip_get_nightlies:

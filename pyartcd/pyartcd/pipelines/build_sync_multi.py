@@ -163,7 +163,7 @@ class BuildSyncMultiPipeline:
             # Comment on the PR that the job succeeded
             await self.comment_on_assembly_pr(f"Multi-model build sync job [run]({self.job_run}) succeeded!")
             await self.slack_client.say(
-                f"@release-artists Multi-model <{self.job_run}|build-sync> for assembly `{self.assembly}` succeeded!"
+                f"Multi-model <{self.job_run}|build-sync> for assembly `{self.assembly}` succeeded!"
             )
 
         #  All good: delete fail counter
@@ -253,7 +253,7 @@ class BuildSyncMultiPipeline:
         if self.assembly != 'stream':
             await self.comment_on_assembly_pr(f"Multi-model build sync job [run]({self.job_run}) failed!")
             await self.slack_client.say(
-                f"@release-artists Multi-model <{self.job_run}|build-sync> for assembly {self.assembly} failed!"
+                f"Multi-model <{self.job_run}|build-sync> for assembly {self.assembly} failed!"
             )
 
         # Increment failure count

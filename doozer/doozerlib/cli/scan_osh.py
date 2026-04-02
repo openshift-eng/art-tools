@@ -31,7 +31,7 @@ Once these issues are addressed, the Bug can be closed. But a new one will be op
 
 For information on triaging these issues and dispositioning this ticket, please review the [policy document for SAST Scanning Jira Tickets|https://docs.google.com/document/d/1GsT3tvw5qf3sOSAkTSVWnMIO6vzIuirhsVhhsbK_qf0].
 
-For other questions please reach out to @release-artists in #forum-ocp-art.
+For other questions please reach out to @automated-tooling-triage in #forum-ocp-art.
 
 _(Ticket title and description are maintained by the bot. Please do not modify)_
 """
