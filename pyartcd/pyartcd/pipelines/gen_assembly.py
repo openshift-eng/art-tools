@@ -167,7 +167,12 @@ class GenAssemblyPipeline:
             if self.skip_get_nightlies:
                 candidate_nightlies = self.nightlies
             elif self.ignore_non_x86_nightlies:
-                candidate_nightlies = [await self._get_latest_accepted_nightly()]
+                if self.nightlies:
+                    # Use the specified nightlies directly - user knows what they want
+                    candidate_nightlies = self.nightlies
+                else:
+                    # No nightlies specified, get the latest accepted x86_64 nightly
+                    candidate_nightlies = [await self._get_latest_accepted_nightly()]
             else:
                 candidate_nightlies, latest_nightly = await asyncio.gather(
                     *[self._get_nightlies(), self._get_latest_accepted_nightly()]
