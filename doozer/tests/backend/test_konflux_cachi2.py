@@ -209,7 +209,7 @@ class TestKonfluxCachi2(TestCase):
 
     @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
     def test_prefetch_rpm_lockfile_non_prerelease_no_dnf_options(self, mock_konflux_client_init):
-        """Test that non-prerelease phase does NOT add DNF options"""
+        """Non-prerelease: no gpgcheck override; plain repos get no DNF options."""
         builder = KonfluxImageBuilder(MagicMock())
         metadata = MagicMock()
 
@@ -228,6 +228,83 @@ class TestKonfluxCachi2(TestCase):
         result = builder._prefetch(metadata=metadata, group="openshift-4.17")
 
         expected = [{'type': 'rpm', 'path': '.'}, {'type': 'gomod', 'path': '.'}]
+        self.assertEqual(result, expected)
+
+    @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
+    def test_prefetch_rpm_lockfile_release_ose_module_hotfixes(self, mock_konflux_client_init):
+        """Release phase: OSE/rhocp repos still get module_hotfixes=1 (aligned with art-unsigned.repo)."""
+        builder = KonfluxImageBuilder(MagicMock())
+        metadata = MagicMock()
+
+        metadata.is_cachi2_enabled.return_value = True
+        metadata.is_lockfile_generation_enabled.return_value = True
+        metadata.is_artifact_lockfile_enabled.return_value = False
+        metadata.get_konflux_network_mode.return_value = "hermetic"
+        metadata.config.content.source.pkg_managers = ["gomod"]
+        metadata.config.cachito.packages = {'gomod': [{'path': '.'}]}
+        metadata.config.konflux.cachi2.lockfile.get.return_value = "."
+
+        metadata.runtime.group_config.software_lifecycle.phase = 'release'
+        metadata.get_enabled_repos.return_value = {'rhel-8-server-ose-rpms-embargoed', 'baseos'}
+        metadata.get_arches.return_value = ['x86_64']
+
+        mock_ose = MagicMock()
+        mock_ose.content_set.side_effect = lambda arch: f'ose-cs-{arch}'
+        mock_base = MagicMock()
+        mock_base.content_set.side_effect = lambda arch: f'baseos-cs-{arch}'
+        metadata.runtime.repos = {
+            'rhel-8-server-ose-rpms-embargoed': mock_ose,
+            'baseos': mock_base,
+        }
+
+        result = builder._prefetch(metadata=metadata, group="openshift-4.17")
+
+        expected_rpm_data = {
+            'type': 'rpm',
+            'path': '.',
+            'options': {
+                'dnf': {
+                    'ose-cs-x86_64': {'module_hotfixes': '1'},
+                }
+            },
+        }
+        expected = [expected_rpm_data, {'type': 'gomod', 'path': '.'}]
+        self.assertEqual(result, expected)
+
+    @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
+    def test_prefetch_rpm_lockfile_prerelease_rhocp_module_hotfixes_and_gpg(self, mock_konflux_client_init):
+        """Prerelease: rhocp/ose repos get both gpgcheck=0 and module_hotfixes=1."""
+        builder = KonfluxImageBuilder(MagicMock())
+        metadata = MagicMock()
+
+        metadata.is_cachi2_enabled.return_value = True
+        metadata.is_lockfile_generation_enabled.return_value = True
+        metadata.is_artifact_lockfile_enabled.return_value = False
+        metadata.get_konflux_network_mode.return_value = "hermetic"
+        metadata.config.content.source.pkg_managers = ["gomod"]
+        metadata.config.cachito.packages = {'gomod': [{'path': '.'}]}
+        metadata.config.konflux.cachi2.lockfile.get.return_value = "."
+
+        metadata.runtime.group_config.software_lifecycle.phase = 'pre-release'
+        metadata.get_enabled_repos.return_value = {'rhocp-4.12'}
+        metadata.get_arches.return_value = ['x86_64']
+
+        mock_rhocp = MagicMock()
+        mock_rhocp.content_set.side_effect = lambda arch: f'rhocp-cs-{arch}'
+        metadata.runtime.repos = {'rhocp-4.12': mock_rhocp}
+
+        result = builder._prefetch(metadata=metadata, group="openshift-4.17")
+
+        expected_rpm_data = {
+            'type': 'rpm',
+            'path': '.',
+            'options': {
+                'dnf': {
+                    'rhocp-cs-x86_64': {'gpgcheck': '0', 'module_hotfixes': '1'},
+                }
+            },
+        }
+        expected = [expected_rpm_data, {'type': 'gomod', 'path': '.'}]
         self.assertEqual(result, expected)
 
     @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")

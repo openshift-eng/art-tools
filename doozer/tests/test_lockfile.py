@@ -10,6 +10,7 @@ from doozerlib.lockfile import (
     RpmInfo,
     RpmInfoCollector,
     RPMLockfileGenerator,
+    sort_repos_for_lockfile_resolution,
 )
 from doozerlib.repodata import Rpm, RpmModule
 from doozerlib.repos import Repos
@@ -111,6 +112,22 @@ class TestModuleInfo(unittest.TestCase):
             "size": 12345,
         }
         self.assertEqual(module_info.to_dict(), expected)
+
+
+class TestSortReposForLockfileResolution(unittest.TestCase):
+    def test_prefers_ose_and_rhocp_over_rhel(self):
+        names = {
+            'rhel-8-appstream-rpms',
+            'rhel-8-baseos-rpms',
+            'rhel-8-server-ose-rpms-embargoed',
+        }
+        ordered = sort_repos_for_lockfile_resolution(names)
+        self.assertEqual(ordered[0], 'rhel-8-server-ose-rpms-embargoed')
+        self.assertEqual(set(ordered), names)
+
+    def test_rhocp_before_baseos(self):
+        ordered = sort_repos_for_lockfile_resolution({'rhel-8-baseos-rpms', 'rhocp-4.12-for-rhel-8-x86_64-rpms'})
+        self.assertEqual(ordered[0], 'rhocp-4.12-for-rhel-8-x86_64-rpms')
 
 
 class TestRpmInfoCollectorFetchRpms(unittest.TestCase):
@@ -285,6 +302,65 @@ class TestRpmInfoCollectorFetchRpms(unittest.TestCase):
 
         self.collector._fetch_rpms_info_per_arch({rpm.name, "missingpkg"}, {repo_name}, arch)
         self.collector.logger.warning.assert_called_with(f"Could not find missingpkg in {repo_name} for arch {arch}")
+
+    def test_fetch_rpms_prefers_ose_repo_when_same_name_in_appstream(self):
+        """OSE/rhocp must be scanned before RHEL repos so e.g. runc resolves to rhaos, not container-tools."""
+        arches = ['x86_64']
+        repo_data = {
+            "rhel-8-appstream-rpms": {
+                "conf": {"baseurl": {"x86_64": "https://example.com/appstream/"}},
+                "content_set": {"default": "appstream-cs"},
+                "reposync": {"enabled": False},
+            },
+            "rhel-8-server-ose-rpms-embargoed": {
+                "conf": {"baseurl": {"x86_64": "https://example.com/ose/"}},
+                "content_set": {"default": "ose-cs"},
+                "reposync": {"enabled": False},
+            },
+        }
+        repos = Repos(repo_data, arches=arches)
+        collector = RpmInfoCollector(repos=repos)
+        collector.logger = MagicMock()
+
+        runc_appstream = Rpm(
+            name="runc",
+            epoch=1,
+            version="1.1.12",
+            checksum="a",
+            size=1,
+            location="/runc-old.rpm",
+            sourcerpm="runc.src.rpm",
+            release="1.module.el8",
+            arch="x86_64",
+        )
+        runc_ose = Rpm(
+            name="runc",
+            epoch=4,
+            version="1.2.9",
+            checksum="b",
+            size=2,
+            location="/runc-ose.rpm",
+            sourcerpm="runc.src.rpm",
+            release="1.rhaos4.17.el8",
+            arch="x86_64",
+        )
+        arch = 'x86_64'
+        for repo_name in repo_data:
+            repodata = MagicMock()
+            if 'ose' in repo_name:
+                repodata.get_rpms.return_value = ([runc_ose], [])
+            else:
+                repodata.get_rpms.return_value = ([runc_appstream], [])
+            collector.loaded_repos[f"{repo_name}-{arch}"] = repodata
+
+        result = collector._fetch_rpms_info_per_arch(
+            {'runc'},
+            {'rhel-8-appstream-rpms', 'rhel-8-server-ose-rpms-embargoed'},
+            arch,
+        )
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].evr, '4:1.2.9-1.rhaos4.17.el8')
+        self.assertEqual(result[0].repoid, 'ose-cs')
 
     def test_load_repos_skips_already_loaded(self):
         # Simulate that both repos are already loaded
