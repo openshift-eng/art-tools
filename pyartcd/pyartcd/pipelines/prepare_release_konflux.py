@@ -402,6 +402,8 @@ class PrepareReleaseKonfluxPipeline:
 
         # Find bugs
         self.logger.info("Finding %s bugs...", impetus)
+
+        # Build system is brew here by design, since its needed to pickup ET Advisories
         impetus_bugs = await self.find_bugs(build_system='brew')
 
         # Process bugs
