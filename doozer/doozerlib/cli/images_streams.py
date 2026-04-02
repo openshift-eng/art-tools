@@ -968,7 +968,7 @@ with the images referenced in this component's github repository.
 
 Differences in upstream and downstream builds impact the fidelity of your CI signal.
 
-If you disagree with the content of this PR, please contact @release-artists
+If you disagree with the content of this PR, please contact @automated-tooling-triage
 in #forum-ocp-art to discuss the discrepancy.
 
 Closing this issue without addressing the difference will cause the issue to
@@ -980,7 +980,7 @@ be reopened automatically.
 Important: ART has recorded in their product data that bugs for
 this component should be opened against Jira project "{potential_project}" and
 component "{potential_component}". This project or component does not exist. Jira
-should either be updated to include this component or @release-artists should be
+should either be updated to include this component or @automated-tooling-triage should be
 notified of the proper mapping in the #forum-ocp-art Slack channel.
 
 Component name: {image_meta.get_component_name()} .
@@ -992,7 +992,7 @@ Jira mapping: https://github.com/openshift-eng/ocp-build-data/blob/main/product.
 Important: ART maintains a mapping of OpenShift software components to
 Jira components. This component does not currently have an entry defined
 within that data.
-Contact @release-artists in the #forum-ocp-art Slack channel to inform them of
+Contact @automated-tooling-triage in the #forum-ocp-art Slack channel to inform them of
 the Jira project and component to use for this image.
 
 Until this is done, ART issues against this component will be opened
@@ -1600,7 +1600,7 @@ communicated to the ART team.
 
 __Roles & Responsibilities__:
 - Component owners are responsible for ensuring these alignment PRs merge with passing
-  tests OR that necessary metadata changes are reported to the ART team: `@release-artists`
+  tests OR that necessary metadata changes are reported to the ART team: `@automated-tooling-triage`
   in `#forum-ocp-art` on Slack. If necessary, the changes required by this pull request can be
   introduced with a separate PR opened by the component team. Once the repository is aligned,
   this PR will be closed automatically.
@@ -1631,7 +1631,7 @@ __Change behavior of future PRs__:
 * You can set a commit prefix, like `UPSTREAM: <carry>: `. [An example](https://github.com/openshift-eng/ocp-build-data/blob/6831b59dddc5b63282076d3abe04593ad1945148/images/ose-cluster-api.yml#L11).
 """
             pr_body += """
-If you have any questions about this pull request, please reach out to `@release-artists` in the `#forum-ocp-art` coreos slack channel.
+If you have any questions about this pull request, please reach out to `@automated-tooling-triage` in the `#forum-ocp-art` coreos slack channel.
 """
 
             parent_pr_urls = None
