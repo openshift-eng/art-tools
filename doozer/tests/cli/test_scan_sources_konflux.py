@@ -65,6 +65,77 @@ class TestScanSourcesKonflux(IsolatedAsyncioTestCase):
         super().tearDown()
 
 
+class TestMinimalCrashIsolation(TestScanSourcesKonflux):
+    async def test_scan_image_records_issue_instead_of_raising(self):
+        self.image_meta.config.konflux = Missing
+
+        with (
+            patch.object(self.scanner, 'scan_for_upstream_changes', AsyncMock(side_effect=RuntimeError('boom'))),
+            patch.object(self.scanner, 'scan_dependency_changes', AsyncMock()),
+            patch.object(self.scanner, 'scan_builders_changes', AsyncMock()),
+            patch.object(self.scanner, 'scan_arch_changes', AsyncMock()),
+            patch.object(self.scanner, 'scan_network_mode_changes', AsyncMock()),
+            patch.object(self.scanner, 'scan_for_config_changes', AsyncMock()),
+            patch.object(self.scanner, 'scan_rpm_changes', AsyncMock()),
+            patch.object(self.scanner, 'scan_extra_packages', AsyncMock()),
+            patch.object(self.scanner, 'scan_task_bundle_changes', AsyncMock()),
+        ):
+            await self.scanner.scan_image(self.image_meta)
+
+        self.assertEqual(
+            self.scanner.issues,
+            [{'name': 'test-image', 'issue': 'Failed scanning image during upstream commit checks: boom'}],
+        )
+
+    @patch('doozerlib.cli.scan_sources_konflux.Dir')
+    @patch('doozerlib.cli.scan_sources_konflux.exectools.parallel_exec')
+    def test_rebase_into_priv_records_issue_and_continues(self, mock_parallel_exec, mock_dir):
+        broken_meta = MagicMock()
+        broken_meta.meta_type = 'image'
+        broken_meta.enabled = True
+        broken_meta.name = 'broken-image'
+        broken_meta.distgit_key = 'broken-image'
+        broken_meta.config.content = MagicMock()
+        broken_meta.config.content.source.git.url = 'https://example.com/org/broken.git'
+        broken_meta.config.content.source.git.branch.target = 'main'
+
+        good_meta = MagicMock()
+        good_meta.meta_type = 'image'
+        good_meta.enabled = True
+        good_meta.name = 'good-image'
+        good_meta.distgit_key = 'good-image'
+        good_meta.config.content = MagicMock()
+        good_meta.config.content.source.git.url = 'https://example.com/org/good.git'
+        good_meta.config.content.source.git.branch.target = 'main'
+
+        mock_parallel_exec.return_value.get.return_value = [
+            (broken_meta, ('https://example.com/public-org/broken.git', 'main', True)),
+            (good_meta, ('https://example.com/public-org/good.git', 'main', True)),
+        ]
+        mock_dir.return_value.__enter__.return_value = None
+        mock_dir.return_value.__exit__.return_value = None
+
+        self.runtime.source_resolver = MagicMock()
+        self.runtime.source_resolver.resolve_source.side_effect = [
+            MagicMock(source_path='/tmp/broken'),
+            MagicMock(source_path='/tmp/good'),
+        ]
+
+        with (
+            patch.object(self.scanner, '_is_image_enabled', return_value=True),
+            patch.object(self.scanner, '_do_shas_match', return_value=False),
+            patch.object(self.scanner, '_is_pub_ancestor_of_priv', side_effect=[RuntimeError('bad repo'), False]),
+            patch.object(self.scanner, '_try_reconciliation') as mock_try_reconciliation,
+        ):
+            self.scanner.rebase_into_priv()
+
+        self.assertEqual(
+            self.scanner.issues,
+            [{'name': 'broken-image', 'issue': 'Failed rebasing into -priv: bad repo'}],
+        )
+        mock_try_reconciliation.assert_called_once_with(good_meta, 'good', 'main', 'main')
+
+
 class TestScanTaskBundleChanges(TestScanSourcesKonflux):
     """Test the scan_task_bundle_changes method."""
 
