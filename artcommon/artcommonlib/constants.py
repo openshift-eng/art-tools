@@ -61,23 +61,29 @@ GOLANG_RPM_PACKAGE_NAME = 'golang'
 
 # Product-based mappings for Konflux tenant namespaces and kubeconfigs
 PRODUCT_NAMESPACE_MAP = {
-    "oadp": "art-oadp-tenant",
+    "cert-manager": "art-oap-tenant",
+    "external-secrets": "art-oap-tenant",
+    "logging": "art-logging-tenant",
     "mta": "art-mta-tenant",
+    "oadp": "art-oadp-tenant",
+    "ocp": "ocp-art-tenant",
+    "openshift-logging": "art-logging-tenant",
     "quay": "art-quay-tenant",
     "rhmtc": "art-mtc-tenant",
-    "logging": "art-logging-tenant",
-    "openshift-logging": "art-logging-tenant",
-    "ocp": "ocp-art-tenant",
+    "zero-trust": "art-oap-tenant",
 }
 
 PRODUCT_KUBECONFIG_MAP = {
-    "oadp": "OADP_KONFLUX_SA_KUBECONFIG",
+    "cert-manager": "OAP_KONFLUX_SA_KUBECONFIG",
+    "external-secrets": "OAP_KONFLUX_SA_KUBECONFIG",
+    "logging": "LOGGING_KONFLUX_SA_KUBECONFIG",
     "mta": "MTA_KONFLUX_SA_KUBECONFIG",
+    "oadp": "OADP_KONFLUX_SA_KUBECONFIG",
+    "ocp": "KONFLUX_SA_KUBECONFIG",
+    "openshift-logging": "LOGGING_KONFLUX_SA_KUBECONFIG",
     "quay": "QUAY_KONFLUX_SA_KUBECONFIG",
     "rhmtc": "MTC_KONFLUX_SA_KUBECONFIG",
-    "logging": "LOGGING_KONFLUX_SA_KUBECONFIG",
-    "openshift-logging": "LOGGING_KONFLUX_SA_KUBECONFIG",
-    "ocp": "KONFLUX_SA_KUBECONFIG",
+    "zero-trust": "OAP_KONFLUX_SA_KUBECONFIG",
 }
 
 # Default namespace for Konflux operations
