@@ -295,7 +295,9 @@ class RpmInfoCollector:
                 content_set_id = f'{repo_name}-{arch}'
 
             for rpm in found_rpms:
-                rpm_info = RpmInfo.from_rpm(rpm, repoid=content_set_id, baseurl=repo.baseurl(repotype="unsigned", arch=arch))
+                rpm_info = RpmInfo.from_rpm(
+                    rpm, repoid=content_set_id, baseurl=repo.baseurl(repotype="unsigned", arch=arch)
+                )
                 found_rpm_names.add(rpm_info.name)
 
                 existing = best_rpms.get(rpm_info.name)
@@ -309,7 +311,9 @@ class RpmInfoCollector:
 
         missing_rpms = rpm_names - found_rpm_names
         if missing_rpms:
-            self.logger.warning(f"Could not find {','.join(sorted(missing_rpms))} in {', '.join(repo_names)} for arch {arch}")
+            self.logger.warning(
+                f"Could not find {','.join(sorted(missing_rpms))} in {', '.join(repo_names)} for arch {arch}"
+            )
 
         return sorted(best_rpms.values())
 
