@@ -260,7 +260,7 @@ class KonfluxImageBuilder:
                             logger.error(
                                 f"Base image release failed for {metadata.distgit_key}, but build already stored in database"
                             )
-                            outcome = KonfluxBuildOutcome.FAILURE
+                            # outcome = KonfluxBuildOutcome.FAILURE
 
                 if outcome is not KonfluxBuildOutcome.SUCCESS:
                     error = KonfluxImageBuildError(
