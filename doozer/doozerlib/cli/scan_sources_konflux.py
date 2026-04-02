@@ -467,9 +467,7 @@ class ConfigScanSources:
             _, public_org, public_repo_name = artcommonlib.util.split_git_url(public_url)
             _, priv_org, priv_repo_name = artcommonlib.util.split_git_url(priv_url)
 
-            if self._do_shas_match(
-                public_url, public_branch_name, metadata.config.content.source.git.url, priv_branch_name
-            ):
+            if self._do_shas_match(public_url, public_branch_name, priv_url, priv_branch_name):
                 # If they match, do nothing
                 return
 
