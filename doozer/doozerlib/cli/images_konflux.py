@@ -290,11 +290,14 @@ class KonfluxBuildCli:
                     LOGGER.error(f"Failed to build {image_name}: {result}; {stack_trace}")
         finally:
             try:
+                await builder._konflux_client.delete_git_auth_secret(
+                    namespace=self.konflux_namespace,
+                )
                 await builder._konflux_client.cleanup_stale_git_auth_secrets(
                     namespace=self.konflux_namespace,
                 )
             except Exception as e:
-                LOGGER.warning("Failed to cleanup stale git-auth secrets: %s", e)
+                LOGGER.warning("Failed to cleanup git-auth secrets: %s", e)
 
         if failed_images:
             raise DoozerFatalError(f"Failed to build images: {failed_images}")
@@ -586,11 +589,14 @@ class KonfluxBundleCli:
                     successful_nvrs.append(result)
         finally:
             try:
+                await builder._konflux_client.delete_git_auth_secret(
+                    namespace=self.konflux_namespace,
+                )
                 await builder._konflux_client.cleanup_stale_git_auth_secrets(
                     namespace=self.konflux_namespace,
                 )
             except Exception as e:
-                LOGGER.warning("Failed to cleanup stale git-auth secrets: %s", e)
+                LOGGER.warning("Failed to cleanup git-auth secrets: %s", e)
 
         if self.output == 'json':
             output_data = {

@@ -70,14 +70,18 @@ class TestKonfluxBundleCli(unittest.IsolatedAsyncioTestCase):
             }
         )
 
-        async def rebase_and_build_side_effect(_rebaser, _builder, image_meta, _operator_build):
+        async def rebase_and_build_side_effect(_rebaser, _builder, image_meta, _operator_build, **kwargs):
             if image_meta.distgit_key == "test-operator-b":
                 raise RuntimeError("bundle build failed")
             return "test-operator-a-bundle-1.0.0-1"
 
         self.bundle_cli._rebase_and_build = mock.AsyncMock(side_effect=rebase_and_build_side_effect)
         mock_rebaser_class.return_value = mock.Mock()
-        mock_builder_class.return_value = mock.Mock()
+        mock_builder = mock.Mock()
+        mock_builder._konflux_client.ensure_git_auth_secret = mock.AsyncMock(return_value="test-secret")
+        mock_builder._konflux_client.delete_git_auth_secret = mock.AsyncMock()
+        mock_builder._konflux_client.cleanup_stale_git_auth_secrets = mock.AsyncMock()
+        mock_builder_class.return_value = mock_builder
 
         with self.assertRaises(SystemExit):
             await self.bundle_cli.run()
@@ -100,7 +104,11 @@ class TestKonfluxBundleCli(unittest.IsolatedAsyncioTestCase):
         self.bundle_cli.get_operator_builds = mock.AsyncMock(return_value={"test-operator": operator_build})
         self.bundle_cli._rebase_and_build = mock.AsyncMock(side_effect=RuntimeError("bundle build failed"))
         mock_rebaser_class.return_value = mock.Mock()
-        mock_builder_class.return_value = mock.Mock()
+        mock_builder = mock.Mock()
+        mock_builder._konflux_client.ensure_git_auth_secret = mock.AsyncMock(return_value="test-secret")
+        mock_builder._konflux_client.delete_git_auth_secret = mock.AsyncMock()
+        mock_builder._konflux_client.cleanup_stale_git_auth_secrets = mock.AsyncMock()
+        mock_builder_class.return_value = mock_builder
 
         with self.assertRaises(DoozerFatalError):
             await self.bundle_cli.run()

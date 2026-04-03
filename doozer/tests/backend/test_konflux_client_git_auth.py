@@ -43,7 +43,7 @@ class TestEnsureGitAuthSecret(TestCase):
         self.assertEqual(name, "pipelines-as-code-secret")
 
     @patch.dict("os.environ", {"GITHUB_APP_ID": "12345"})
-    @patch("doozerlib.backend.konflux_client.get_github_app_token_from_env", return_value="ghp_fake_token")
+    @patch("doozerlib.backend.konflux_client.get_github_app_token_for_org", return_value="ghp_fake_token")
     @patch("doozerlib.backend.konflux_client.time")
     def test_creates_secret_with_correct_shape(self, mock_time, mock_token_fn):
         mock_time.time_ns.return_value = 1700000000000000000
@@ -71,7 +71,7 @@ class TestEnsureGitAuthSecret(TestCase):
         )
 
     @patch.dict("os.environ", {"GITHUB_APP_ID": "12345"})
-    @patch("doozerlib.backend.konflux_client.get_github_app_token_from_env", return_value="ghp_fake_token")
+    @patch("doozerlib.backend.konflux_client.get_github_app_token_for_org", return_value="ghp_fake_token")
     @patch("doozerlib.backend.konflux_client.time")
     def test_caches_secret_name(self, mock_time, mock_token_fn):
         mock_time.time_ns.return_value = 1700000000000000000
@@ -85,7 +85,7 @@ class TestEnsureGitAuthSecret(TestCase):
         self.assertEqual(client.corev1_client.create_namespaced_secret.call_count, 1)
 
     @patch.dict("os.environ", {"GITHUB_APP_ID": "12345"})
-    @patch("doozerlib.backend.konflux_client.get_github_app_token_from_env", return_value="ghp_fake_token")
+    @patch("doozerlib.backend.konflux_client.get_github_app_token_for_org", return_value="ghp_fake_token")
     @patch("doozerlib.backend.konflux_client.time")
     def test_dry_run_does_not_create(self, mock_time, mock_token_fn):
         mock_time.time_ns.return_value = 1700000000000000000
@@ -173,3 +173,54 @@ class TestCleanupStaleGitAuthSecrets(TestCase):
         _run(client.cleanup_stale_git_auth_secrets(namespace="test-ns"))
 
         client.corev1_client.delete_namespaced_secret.assert_not_called()
+
+
+class TestDeleteGitAuthSecret(TestCase):
+    def test_deletes_own_secret_and_resets_cache(self):
+        client = _make_client()
+        client._git_auth_secret_name = f"{_GIT_AUTH_SECRET_PREFIX}1700000000000000000"
+
+        _run(client.delete_git_auth_secret(namespace="test-ns"))
+
+        client.corev1_client.delete_namespaced_secret.assert_called_once_with(
+            name=f"{_GIT_AUTH_SECRET_PREFIX}1700000000000000000",
+            namespace="test-ns",
+            _request_timeout=client.request_timeout,
+        )
+        self.assertIsNone(client._git_auth_secret_name)
+
+    def test_noop_when_no_secret_created(self):
+        client = _make_client()
+        self.assertIsNone(client._git_auth_secret_name)
+
+        _run(client.delete_git_auth_secret(namespace="test-ns"))
+
+        client.corev1_client.delete_namespaced_secret.assert_not_called()
+
+    def test_noop_for_static_fallback(self):
+        """When the fallback pipelines-as-code-secret was used, nothing is deleted."""
+        client = _make_client()
+        client._git_auth_secret_name = "pipelines-as-code-secret"
+
+        _run(client.delete_git_auth_secret(namespace="test-ns"))
+
+        client.corev1_client.delete_namespaced_secret.assert_not_called()
+        self.assertEqual(client._git_auth_secret_name, "pipelines-as-code-secret")
+
+    def test_ignores_404(self):
+        client = _make_client()
+        client._git_auth_secret_name = f"{_GIT_AUTH_SECRET_PREFIX}1700000000000000000"
+        client.corev1_client.delete_namespaced_secret.side_effect = ApiException(status=404, reason="Not Found")
+
+        _run(client.delete_git_auth_secret(namespace="test-ns"))
+
+        self.assertIsNone(client._git_auth_secret_name)
+
+    def test_dry_run_skips_deletion(self):
+        client = _make_client(dry_run=True)
+        client._git_auth_secret_name = f"{_GIT_AUTH_SECRET_PREFIX}1700000000000000000"
+
+        _run(client.delete_git_auth_secret(namespace="test-ns"))
+
+        client.corev1_client.delete_namespaced_secret.assert_not_called()
+        self.assertIsNone(client._git_auth_secret_name)

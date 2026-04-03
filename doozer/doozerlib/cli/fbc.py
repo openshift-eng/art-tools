@@ -337,11 +337,14 @@ class FbcMergeCli:
             await merger.run(fragments, target_index, git_auth_secret=git_auth_secret)
         finally:
             try:
+                await merger._konflux_client.delete_git_auth_secret(
+                    namespace=self.konflux_namespace,
+                )
                 await merger._konflux_client.cleanup_stale_git_auth_secrets(
                     namespace=self.konflux_namespace,
                 )
             except Exception as e:
-                LOGGER.warning("Failed to cleanup stale git-auth secrets: %s", e)
+                LOGGER.warning("Failed to cleanup git-auth secrets: %s", e)
 
 
 @cli.command("beta:fbc:merge", short_help="Merge FBC fragments from multiple index images into a single FBC repository")
@@ -783,11 +786,14 @@ class FbcRebaseAndBuildCli:
                     successful_nvrs.append(result)
         finally:
             try:
+                await builder._konflux_client.delete_git_auth_secret(
+                    namespace=self.konflux_namespace,
+                )
                 await builder._konflux_client.cleanup_stale_git_auth_secrets(
                     namespace=self.konflux_namespace,
                 )
             except Exception as e:
-                LOGGER.warning("Failed to cleanup stale git-auth secrets: %s", e)
+                LOGGER.warning("Failed to cleanup git-auth secrets: %s", e)
 
         if self.output == 'json':
             output_data = {

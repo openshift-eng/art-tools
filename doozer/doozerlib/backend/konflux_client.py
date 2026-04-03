@@ -293,6 +293,40 @@ class KonfluxClient:
         self._git_auth_secret_name = secret_name
         return secret_name
 
+    async def delete_git_auth_secret(self, namespace: Optional[str] = None) -> None:
+        """Delete the transient git-auth secret created by this invocation.
+
+        No-op when no transient secret was created (e.g. fallback to the static
+        pipelines-as-code-secret).  A 404 from the API is silently ignored so
+        that concurrent or repeated calls are safe.
+
+        :param namespace: Target namespace. Defaults to self.default_namespace.
+        """
+        secret_name = self._git_auth_secret_name
+        if not secret_name or not secret_name.startswith(_GIT_AUTH_SECRET_PREFIX):
+            return
+
+        namespace = namespace or self.default_namespace
+
+        if self.dry_run:
+            self._logger.warning(f"[DRY RUN] Would have deleted git-auth Secret {namespace}/{secret_name}")
+        else:
+            try:
+                await exectools.to_thread(
+                    self.corev1_client.delete_namespaced_secret,
+                    name=secret_name,
+                    namespace=namespace,
+                    _request_timeout=self.request_timeout,
+                )
+                self._logger.info(f"Deleted git-auth Secret {namespace}/{secret_name}")
+            except ApiException as e:
+                if e.status == 404:
+                    self._logger.debug(f"Secret {secret_name} already deleted by another process")
+                else:
+                    self._logger.warning(f"Failed to delete git-auth Secret {secret_name}: {e}")
+
+        self._git_auth_secret_name = None
+
     async def cleanup_stale_git_auth_secrets(self, namespace: Optional[str] = None, max_age_hours: int = 24) -> None:
         """Delete transient git-auth secrets older than *max_age_hours*.
 
