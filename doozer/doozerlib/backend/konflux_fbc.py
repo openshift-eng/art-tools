@@ -1023,10 +1023,10 @@ class KonfluxFbcRebaser:
         repo_dir = self.base_dir.joinpath(metadata.distgit_key)
 
         # Determine OCP version early -- needed for both branch naming and NVR uniqueness
-        group_config = metadata.runtime.group_config
-        if self.ocp_version_override:
+        if self.ocp_version_override is not None:
             ocp_version = self.ocp_version_override
         else:
+            group_config = metadata.runtime.group_config
             ocp_version = int(group_config.vars.MAJOR), int(group_config.vars.MINOR)
 
         # For non-OpenShift groups (layered operators), the same operator is built for multiple
