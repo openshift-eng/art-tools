@@ -323,10 +323,12 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
         build_repo = mock_build_repo.return_value
         build_repo.local_dir = self.base_dir.joinpath(metadata.distgit_key)
         mock_opm.validate = AsyncMock()
-        mock_rebase_dir.return_value = "test-distgit-key-fbc-1.0.0-1"
+        # Non-OpenShift group: release gets OCP version suffix
+        expected_release = "1.ocp4.9"
+        mock_rebase_dir.return_value = f"test-distgit-key-fbc-1.0.0-{expected_release}"
 
         actual = await self.rebaser.rebase(metadata, bundle_build, version, release)
-        self.assertEqual(actual, "test-distgit-key-fbc-1.0.0-1")
+        self.assertEqual(actual, f"test-distgit-key-fbc-1.0.0-{expected_release}")
 
         mock_build_repo.assert_called_once_with(
             url=self.fbc_repo,
@@ -335,7 +337,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
             logger=ANY,
         )
         build_repo.ensure_source.assert_called_once_with(upcycle=self.upcycle, strict=False)
-        mock_rebase_dir.assert_called_once_with(metadata, build_repo, bundle_build, version, release, ANY)
+        mock_rebase_dir.assert_called_once_with(metadata, build_repo, bundle_build, version, expected_release, ANY)
         mock_opm.validate.assert_called_once_with(self.base_dir.joinpath(metadata.distgit_key, "catalog"))
         build_repo.commit.assert_called_once_with(ANY, allow_empty=True)
         build_repo.push.assert_not_called()
@@ -370,11 +372,13 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
         build_repo = mock_build_repo.return_value
         build_repo.local_dir = self.base_dir.joinpath(metadata.distgit_key)
         mock_opm.validate = AsyncMock()
-        mock_rebase_dir.return_value = "test-distgit-key-fbc-1.0.0-1"
+        # Non-OpenShift group: release gets OCP version suffix
+        expected_release = "1.ocp4.9"
+        mock_rebase_dir.return_value = f"test-distgit-key-fbc-1.0.0-{expected_release}"
         self.rebaser.push = True
 
         actual = await self.rebaser.rebase(metadata, bundle_build, version, release)
-        self.assertEqual(actual, "test-distgit-key-fbc-1.0.0-1")
+        self.assertEqual(actual, f"test-distgit-key-fbc-1.0.0-{expected_release}")
 
         mock_build_repo.assert_called_once_with(
             url=self.fbc_repo,
@@ -383,7 +387,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
             logger=ANY,
         )
         build_repo.ensure_source.assert_called_once_with(upcycle=self.upcycle, strict=False)
-        mock_rebase_dir.assert_called_once_with(metadata, build_repo, bundle_build, version, release, ANY)
+        mock_rebase_dir.assert_called_once_with(metadata, build_repo, bundle_build, version, expected_release, ANY)
         mock_opm.validate.assert_called_once_with(self.base_dir.joinpath(metadata.distgit_key, "catalog"))
         build_repo.commit.assert_called_once_with(ANY, allow_empty=True)
         build_repo.push.assert_called_once()
