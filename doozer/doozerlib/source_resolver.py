@@ -10,9 +10,10 @@ from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple, cast
 from artcommonlib import assertion, constants, exectools
 from artcommonlib import util as art_util
 from artcommonlib.git_helper import git_clone
+from artcommonlib.github_auth import get_github_client_for_org, get_github_git_auth_env
 from artcommonlib.lock import get_named_semaphore
 from artcommonlib.model import ListModel, Missing, Model
-from github import Github, GithubException, UnknownObjectException
+from github import GithubException, UnknownObjectException
 
 from doozerlib.record_logger import RecordLogger
 
@@ -359,17 +360,20 @@ class SourceResolver:
         :param branch: The name of the branch. If the name is not a branch and appears to be a commit
                 hash, the hash will be returned without modification.
         """
+        git_url = art_util.ensure_github_https_url(git_url)
+        auth_env = get_github_git_auth_env(url=git_url)
         LOGGER.info('Checking if target branch {} exists in {}'.format(branch, git_url))
 
         try:
-            out, _ = exectools.cmd_assert('git ls-remote --heads {} refs/heads/{}'.format(git_url, branch), retries=3)
+            out, _ = exectools.cmd_assert(
+                'git ls-remote --heads {} refs/heads/{}'.format(git_url, branch), retries=3, set_env=auth_env
+            )
         except Exception as err:
-            # We don't expect and exception if the branch does not exist; just an empty string
             LOGGER.error('Error attempting to find target branch {} hash: {}'.format(branch, err))
             return None
-        result = out.strip()  # any result means the branch is found; e.g. "7e66b10fbcd6bb4988275ffad0a69f563695901f	refs/heads/some_branch")
+        result = out.strip()
         if not result and SourceResolver.is_branch_commit_hash(branch):
-            return branch  # It is valid hex; just return it
+            return branch
 
         return result.split()[0] if result else None
 
@@ -397,18 +401,8 @@ class SourceResolver:
 
         _, owner, repo = art_util.split_git_url(git_url)
 
-        github_token = os.environ.get("GITHUB_TOKEN")
-        if not github_token:
-            # No token available — try an anonymous API call (60 req/hour limit)
-            LOGGER.warning(
-                "GITHUB_TOKEN not set; attempting anonymous branch protection check for %s/%s branch %s",
-                owner,
-                repo,
-                branch,
-            )
-
         try:
-            gh = Github(github_token) if github_token else Github()
+            gh = get_github_client_for_org(owner)
             gh_repo = gh.get_repo(f"{owner}/{repo}")
             gh_branch = gh_repo.get_branch(branch)
             if gh_branch.protected:
@@ -417,8 +411,6 @@ class SourceResolver:
             LOGGER.warning("Branch %s in %s/%s is NOT protected", branch, owner, repo)
             return False
         except UnknownObjectException:
-            # 404 — repo or branch doesn't exist. Fail-open: let the clone
-            # step surface the real error rather than blocking here.
             LOGGER.warning(
                 "Branch %s or repo %s/%s not found on GitHub; failing open",
                 branch,
@@ -603,10 +595,11 @@ class SourceResolver:
             exectools.cmd_assert(
                 ["git", "-C", source_dir, "remote", "set-url", "--", "public_upstream", public_source_url]
             )
+        fetch_env = {**constants.GIT_NO_PROMPTS, **get_github_git_auth_env(url=public_source_url)}
         exectools.cmd_assert(
             ["git", "-C", source_dir, "fetch", "--", "public_upstream", public_upstream_branch],
             retries=3,
-            set_env=constants.GIT_NO_PROMPTS,
+            set_env=fetch_env,
         )
 
     @staticmethod
