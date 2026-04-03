@@ -654,3 +654,89 @@ class TestTaskBundleIntegration(TestScanSourcesKonflux):
 
         result = meta.get_konflux_network_mode()
         self.assertEqual(result, "internal-only")
+
+
+class TestFindImagesWithDisabledDependencies(TestScanSourcesKonflux):
+    """Test the _find_images_with_disabled_dependencies method."""
+
+    def setUp(self):
+        super().setUp()
+        self.runtime.group = 'oadp-1.4'
+        self.runtime.gitdata = MagicMock()
+
+    def _make_gitdata_entry(self, key, mode='enabled', dependents=None):
+        entry = MagicMock()
+        entry.key = key
+        entry.data = {'mode': mode, 'name': f'test/{key}'}
+        if dependents:
+            entry.data['dependents'] = dependents
+        return entry
+
+    def test_no_disabled_images(self):
+        """No disabled images means no images should be flagged."""
+        self.scanner.changing_image_names = {'oadp-operator', 'oadp-velero'}
+        self.runtime.gitdata.load_data.return_value = {
+            'oadp-operator': self._make_gitdata_entry('oadp-operator'),
+            'oadp-velero': self._make_gitdata_entry('oadp-velero', dependents=['oadp-operator']),
+        }
+
+        result = self.scanner._find_images_with_disabled_dependencies()
+        self.assertEqual(result, set())
+
+    def test_disabled_image_with_dependent(self):
+        """A disabled image listing a changed image as dependent should flag the dependent."""
+        self.scanner.changing_image_names = {'oadp-operator', 'oadp-velero-restic-restore-helper'}
+        self.runtime.gitdata.load_data.return_value = {
+            'oadp-operator': self._make_gitdata_entry('oadp-operator'),
+            'oadp-velero': self._make_gitdata_entry('oadp-velero', mode='disabled', dependents=['oadp-operator']),
+            'oadp-velero-restic-restore-helper': self._make_gitdata_entry('oadp-velero-restic-restore-helper'),
+        }
+
+        result = self.scanner._find_images_with_disabled_dependencies()
+        self.assertEqual(result, {'oadp-operator'})
+
+    def test_disabled_image_dependent_not_changing(self):
+        """A disabled image whose dependent is not in the changing set should not flag anything."""
+        self.scanner.changing_image_names = {'oadp-velero-restic-restore-helper'}
+        self.runtime.gitdata.load_data.return_value = {
+            'oadp-operator': self._make_gitdata_entry('oadp-operator'),
+            'oadp-velero': self._make_gitdata_entry('oadp-velero', mode='disabled', dependents=['oadp-operator']),
+            'oadp-velero-restic-restore-helper': self._make_gitdata_entry('oadp-velero-restic-restore-helper'),
+        }
+
+        result = self.scanner._find_images_with_disabled_dependencies()
+        self.assertEqual(result, set())
+
+    def test_multiple_disabled_images_same_dependent(self):
+        """Multiple disabled images listing the same dependent should flag it once."""
+        self.scanner.changing_image_names = {'my-operator'}
+        self.runtime.gitdata.load_data.return_value = {
+            'my-operator': self._make_gitdata_entry('my-operator'),
+            'disabled-img-a': self._make_gitdata_entry('disabled-img-a', mode='disabled', dependents=['my-operator']),
+            'disabled-img-b': self._make_gitdata_entry('disabled-img-b', mode='disabled', dependents=['my-operator']),
+        }
+
+        result = self.scanner._find_images_with_disabled_dependencies()
+        self.assertEqual(result, {'my-operator'})
+
+    def test_wip_images_not_treated_as_disabled(self):
+        """Images with mode 'wip' should not be treated as disabled for dependency checking."""
+        self.scanner.changing_image_names = {'my-operator'}
+        self.runtime.gitdata.load_data.return_value = {
+            'my-operator': self._make_gitdata_entry('my-operator'),
+            'wip-image': self._make_gitdata_entry('wip-image', mode='wip', dependents=['my-operator']),
+        }
+
+        result = self.scanner._find_images_with_disabled_dependencies()
+        self.assertEqual(result, set())
+
+    def test_disabled_image_without_dependents(self):
+        """A disabled image without dependents should not affect anything."""
+        self.scanner.changing_image_names = {'my-operator'}
+        self.runtime.gitdata.load_data.return_value = {
+            'my-operator': self._make_gitdata_entry('my-operator'),
+            'disabled-standalone': self._make_gitdata_entry('disabled-standalone', mode='disabled'),
+        }
+
+        result = self.scanner._find_images_with_disabled_dependencies()
+        self.assertEqual(result, set())

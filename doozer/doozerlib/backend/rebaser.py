@@ -2447,8 +2447,14 @@ class KonfluxRebaser:
             if meta:  # image is currently being processed
                 image_tag = f"{meta.image_name_short}:{self.uuid_tag}"
             else:
-                meta = self._runtime.late_resolve_image(distgit)
-                assert meta is not None
+                meta = self._runtime.late_resolve_image(distgit, required=False)
+                if meta is None:
+                    from doozerlib.exceptions import DoozerFatalError
+
+                    raise DoozerFatalError(
+                        f'Attempted to load image {distgit} but it has mode disabled; '
+                        f'{metadata.distgit_key} references it in image-references'
+                    )
                 build = await meta.get_latest_build(
                     el_target=self._get_el_target_string(meta.branch_el_target()),
                     engine=Engine.KONFLUX,

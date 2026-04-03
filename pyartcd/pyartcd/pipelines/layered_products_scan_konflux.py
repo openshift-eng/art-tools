@@ -22,6 +22,7 @@ class LayeredProductsScanPipeline:
 
         self.logger = logging.getLogger(__name__)
         self._doozer_working = self.runtime.working_dir / "doozer_working"
+        self.report = {}
         self.changes = {}
 
         self.skipped = True  # True by default; if not locked, run() will set it to False
@@ -91,8 +92,8 @@ class LayeredProductsScanPipeline:
         _, out, _ = await exectools.cmd_gather_async(cmd, stderr=None)
         self.logger.info('scan-sources output for %s:\n%s', self.group, out)
 
-        yaml_data = yaml.safe_load(out)
-        self.changes = util.get_changes(yaml_data)
+        self.report = yaml.safe_load(out)
+        self.changes = util.get_changes(self.report)
         if self.changes:
             self.logger.info('Detected source changes:\n%s', yaml.safe_dump(self.changes))
         else:
@@ -105,7 +106,25 @@ class LayeredProductsScanPipeline:
         jenkins.update_title(' [SOURCE CHANGES]')
         self.logger.info('Detected at least one updated layered product image')
 
-        image_list = self.changes.get('images', [])
+        # Filter out images that reference disabled dependencies
+        # (e.g. an operator whose CSV references an operand with mode: disabled)
+        image_list = [
+            image['name']
+            for image in self.report.get('images', [])
+            if image.get('changed') and not image.get('has_disabled_dependency')
+        ]
+
+        skipped_images = [
+            image['name']
+            for image in self.report.get('images', [])
+            if image.get('changed') and image.get('has_disabled_dependency')
+        ]
+        if skipped_images:
+            self.logger.warning('Skipping images with disabled dependencies: %s', skipped_images)
+
+        if not image_list:
+            self.logger.info('No buildable images after filtering disabled dependencies')
+            return
 
         # Do NOT trigger konflux builds in dry-run mode
         if self.runtime.dry_run:

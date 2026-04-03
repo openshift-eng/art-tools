@@ -7,7 +7,7 @@ import re
 import tempfile
 from datetime import datetime, timedelta, timezone
 from functools import wraps
-from typing import Dict, List, Optional, cast
+from typing import Dict, List, Optional, Set, cast
 
 import aiohttp
 import artcommonlib.util
@@ -1518,6 +1518,36 @@ class ConfigScanSources:
             self.logger.warning('Excluding image %s from the report as it is not enabled in Konflux', image_name)
         return enabled
 
+    def _find_images_with_disabled_dependencies(self) -> Set[str]:
+        """Find images that have disabled images listing them as dependents.
+
+        When a disabled image (e.g. oadp-velero with mode: disabled) has
+        a 'dependents' field listing an enabled operator image (e.g. oadp-operator),
+        the operator's CSV references the disabled image. Building such an operator
+        will fail because the rebase cannot resolve the disabled image reference.
+
+        Returns a set of distgit keys that should be excluded from build triggers.
+        """
+        images_with_disabled_deps: Set[str] = set()
+
+        all_image_data = self.runtime.gitdata.load_data(path='images')
+        for img in all_image_data.values():
+            mode = img.data.get('mode', 'enabled')
+            if mode != 'disabled':
+                continue
+
+            dependents = img.data.get('dependents', [])
+            for dependent_key in dependents:
+                if dependent_key in self.changing_image_names:
+                    self.logger.warning(
+                        'Image %s references disabled image %s via dependents; excluding from build trigger',
+                        dependent_key,
+                        img.key,
+                    )
+                    images_with_disabled_deps.add(dependent_key)
+
+        return images_with_disabled_deps
+
     async def detect_rhcos_status(self):
         """
         gather the existing RHCOS tags and compare them to latest rhcos builds. Also check outdated rpms in builds
@@ -1656,6 +1686,15 @@ class ConfigScanSources:
         changing_image_names = list(
             filter(lambda image_name: self.is_image_enabled(image_name), self.changing_image_names)
         )
+
+        # For non-openshift groups (layered products like oadp-1.4), find images
+        # whose operator CSV references disabled images. OpenShift groups handle
+        # disabled/okd-only filtering through their own pipeline logic.
+        if self.runtime.group.startswith("openshift-"):
+            images_with_disabled_deps: Set[str] = set()
+        else:
+            images_with_disabled_deps = self._find_images_with_disabled_dependencies()
+
         for image_meta in self.all_image_metas:
             dgk = image_meta.distgit_key
             is_changing = dgk in changing_image_names
@@ -1673,6 +1712,8 @@ class ConfigScanSources:
                 # Only add okd_only flag if True to avoid polluting the report
                 if is_okd_only:
                     result['okd_only'] = True
+                if dgk in images_with_disabled_deps:
+                    result['has_disabled_dependency'] = True
                 image_results.append(result)
 
         rpm_results = []
