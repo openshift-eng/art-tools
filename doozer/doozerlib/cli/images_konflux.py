@@ -557,9 +557,11 @@ class KonfluxBundleCli:
         tasks = []
         for dgk, record in dgk_records.items():
             image_meta = runtime.image_map[dgk]
-            tasks.append(asyncio.create_task(
-                self._rebase_and_build(rebaser, builder, image_meta, record, git_auth_secret=git_auth_secret)
-            ))
+            tasks.append(
+                asyncio.create_task(
+                    self._rebase_and_build(rebaser, builder, image_meta, record, git_auth_secret=git_auth_secret)
+                )
+            )
 
         try:
             results = await asyncio.gather(*tasks, return_exceptions=True)

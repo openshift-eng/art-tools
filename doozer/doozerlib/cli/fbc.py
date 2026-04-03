@@ -749,7 +749,11 @@ class FbcRebaseAndBuildCli:
 
         tasks = [
             self._rebase_and_build(
-                importer, rebaser, builder, self.runtime.image_map[dgk], bundle_build,
+                importer,
+                rebaser,
+                builder,
+                self.runtime.image_map[dgk],
+                bundle_build,
                 git_auth_secret=git_auth_secret,
             )
             for dgk, bundle_build in dgk_bundle_builds.items()

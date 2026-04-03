@@ -4,22 +4,23 @@ import datetime
 from unittest import TestCase
 from unittest.mock import MagicMock, patch
 
-from kubernetes.client import ApiException
-
 from doozerlib.backend.konflux_client import (
-    KonfluxClient,
     _GIT_AUTH_SECRET_LABEL_KEY,
     _GIT_AUTH_SECRET_LABEL_VALUE,
     _GIT_AUTH_SECRET_PREFIX,
+    KonfluxClient,
 )
+from kubernetes.client import ApiException
 
 
 def _make_client(dry_run=False) -> KonfluxClient:
     """Build a KonfluxClient with mocked Kubernetes plumbing."""
     config = MagicMock()
-    with patch("doozerlib.backend.konflux_client.ApiClient"), \
-         patch("doozerlib.backend.konflux_client.DynamicClient"), \
-         patch("doozerlib.backend.konflux_client.CoreV1Api"):
+    with (
+        patch("doozerlib.backend.konflux_client.ApiClient"),
+        patch("doozerlib.backend.konflux_client.DynamicClient"),
+        patch("doozerlib.backend.konflux_client.CoreV1Api"),
+    ):
         client = KonfluxClient(
             default_namespace="test-ns",
             config=config,
@@ -34,7 +35,6 @@ def _run(coro):
 
 
 class TestEnsureGitAuthSecret(TestCase):
-
     @patch.dict("os.environ", {}, clear=True)
     def test_fallback_when_no_github_app_id(self):
         """Without GITHUB_APP_ID the static PAT secret name is returned."""
@@ -62,10 +62,12 @@ class TestEnsureGitAuthSecret(TestCase):
             _GIT_AUTH_SECRET_LABEL_VALUE,
         )
         self.assertEqual(
-            base64.b64decode(body.data["username"]).decode(), "x-access-token",
+            base64.b64decode(body.data["username"]).decode(),
+            "x-access-token",
         )
         self.assertEqual(
-            base64.b64decode(body.data["password"]).decode(), "ghp_fake_token",
+            base64.b64decode(body.data["password"]).decode(),
+            "ghp_fake_token",
         )
 
     @patch.dict("os.environ", {"GITHUB_APP_ID": "12345"})
@@ -96,7 +98,6 @@ class TestEnsureGitAuthSecret(TestCase):
 
 
 class TestCleanupStaleGitAuthSecrets(TestCase):
-
     def _make_secret(self, name: str, created: datetime.datetime):
         secret = MagicMock()
         secret.metadata.name = name

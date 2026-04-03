@@ -710,7 +710,11 @@ class KonfluxOlmBundleBuilder:
             for attempt in range(build_attempts):
                 logger.info("Build attempt %d/%d", attempt + 1, build_attempts)
                 pipelinerun_info, url = await self._start_build(
-                    metadata, bundle_build_repo, output_image, self.konflux_namespace, self.skip_checks,
+                    metadata,
+                    bundle_build_repo,
+                    output_image,
+                    self.konflux_namespace,
+                    self.skip_checks,
                     git_auth_secret=git_auth_secret,
                 )
                 pipelinerun_name = pipelinerun_info.name

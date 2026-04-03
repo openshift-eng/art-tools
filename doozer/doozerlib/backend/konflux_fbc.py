@@ -1721,7 +1721,9 @@ class KonfluxFbcBuilder:
         except Exception:
             logger.exception("Error while syncing FBC related images to art-images-share")
 
-    async def build(self, metadata: ImageMetadata, operator_nvr: Optional[str] = None, git_auth_secret: Optional[str] = None):
+    async def build(
+        self, metadata: ImageMetadata, operator_nvr: Optional[str] = None, git_auth_secret: Optional[str] = None
+    ):
         bundle_short_name = metadata.get_olm_bundle_short_name()
         logger = self._logger.getChild(f"[{bundle_short_name}]")
         logger.info("Building FBC for %s", metadata.distgit_key)
