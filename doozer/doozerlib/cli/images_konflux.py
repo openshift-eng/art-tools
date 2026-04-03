@@ -269,17 +269,33 @@ class KonfluxBuildCli:
             build_priority=self.build_priority,
         )
         builder = KonfluxImageBuilder(config=config, record_logger=runtime.record_logger)
+
+        # Mint a per-invocation GitHub App token and create a transient Secret.
+        # All PipelineRuns in this batch share the same secret — no contention.
+        git_auth_secret = await builder._konflux_client.ensure_git_auth_secret(
+            namespace=self.konflux_namespace,
+        )
+
         tasks = []
         for image_meta in metas:
-            tasks.append(asyncio.create_task(builder.build(image_meta)))
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        failed_images = []
-        for index, result in enumerate(results):
-            if isinstance(result, Exception):
-                image_name = metas[index].distgit_key
-                failed_images.append(image_name)
-                stack_trace = ''.join(traceback.TracebackException.from_exception(result).format())
-                LOGGER.error(f"Failed to build {image_name}: {result}; {stack_trace}")
+            tasks.append(asyncio.create_task(builder.build(image_meta, git_auth_secret=git_auth_secret)))
+        try:
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            failed_images = []
+            for index, result in enumerate(results):
+                if isinstance(result, Exception):
+                    image_name = metas[index].distgit_key
+                    failed_images.append(image_name)
+                    stack_trace = ''.join(traceback.TracebackException.from_exception(result).format())
+                    LOGGER.error(f"Failed to build {image_name}: {result}; {stack_trace}")
+        finally:
+            try:
+                await builder._konflux_client.cleanup_stale_git_auth_secrets(
+                    namespace=self.konflux_namespace,
+                )
+            except Exception as e:
+                LOGGER.warning("Failed to cleanup stale git-auth secrets: %s", e)
+
         if failed_images:
             raise DoozerFatalError(f"Failed to build images: {failed_images}")
         LOGGER.info("Build complete")
@@ -457,6 +473,7 @@ class KonfluxBundleCli:
         builder: KonfluxOlmBundleBuilder,
         image_meta: ImageMetadata,
         operator_build: KonfluxBuildRecord,
+        git_auth_secret: Optional[str] = None,
     ) -> str:
         logger = LOGGER.getChild(f"[{image_meta.distgit_key}]")
         input_release = self.release
@@ -480,7 +497,7 @@ class KonfluxBundleCli:
         logger.info("Rebasing OLM bundle...")
         nvr = await rebaser.rebase(image_meta, operator_build, input_release)
         logger.info("Building OLM bundle...")
-        await builder.build(image_meta)
+        await builder.build(image_meta, git_auth_secret=git_auth_secret)
         logger.info("Bundle build complete")
         return nvr
 
@@ -532,31 +549,47 @@ class KonfluxBundleCli:
             record_logger=runtime.record_logger,
         )
 
+        # Mint a per-invocation GitHub App token for git-clone auth
+        git_auth_secret = await builder._konflux_client.ensure_git_auth_secret(
+            namespace=self.konflux_namespace,
+        )
+
         tasks = []
         for dgk, record in dgk_records.items():
             image_meta = runtime.image_map[dgk]
-            tasks.append(asyncio.create_task(self._rebase_and_build(rebaser, builder, image_meta, record)))
+            tasks.append(asyncio.create_task(
+                self._rebase_and_build(rebaser, builder, image_meta, record, git_auth_secret=git_auth_secret)
+            ))
 
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        successful_nvrs = []
-        failed_tasks = []
-        errors = []
-        for dgk, result in zip(dgk_records, results):
-            if isinstance(result, Exception):
-                failed_tasks.append(dgk)
-                stack_trace = ''.join(traceback.TracebackException.from_exception(result).format())
-                errors.append(
-                    {
-                        "operator": dgk,
-                        "operator_nvr": dgk_records[dgk].nvr,
-                        "bundle_nvr": None,
-                        "error": str(result),
-                        "traceback": stack_trace,
-                    }
+        try:
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            successful_nvrs = []
+            failed_tasks = []
+            errors = []
+            for dgk, result in zip(dgk_records, results):
+                if isinstance(result, Exception):
+                    failed_tasks.append(dgk)
+                    stack_trace = ''.join(traceback.TracebackException.from_exception(result).format())
+                    errors.append(
+                        {
+                            "operator": dgk,
+                            "operator_nvr": dgk_records[dgk].nvr,
+                            "bundle_nvr": None,
+                            "error": str(result),
+                            "traceback": stack_trace,
+                        }
+                    )
+                    LOGGER.error(f"Failed to rebase/build OLM bundle for {dgk}: {result}; {stack_trace}")
+                else:
+                    successful_nvrs.append(result)
+        finally:
+            try:
+                await builder._konflux_client.cleanup_stale_git_auth_secrets(
+                    namespace=self.konflux_namespace,
                 )
-                LOGGER.error(f"Failed to rebase/build OLM bundle for {dgk}: {result}; {stack_trace}")
-            else:
-                successful_nvrs.append(result)
+            except Exception as e:
+                LOGGER.warning("Failed to cleanup stale git-auth secrets: %s", e)
+
         if self.output == 'json':
             output_data = {
                 "nvrs": successful_nvrs,

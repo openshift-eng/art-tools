@@ -89,7 +89,7 @@ class KonfluxImageBuilder:
             dry_run=config.dry_run,
         )
 
-    async def build(self, metadata: ImageMetadata):
+    async def build(self, metadata: ImageMetadata, git_auth_secret: Optional[str] = None):
         """Build a container image with Konflux."""
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
         metadata.build_status = False
@@ -199,6 +199,7 @@ class KonfluxImageBuilder:
                     nvr=nvr,
                     build_priority=build_priority,
                     dest_dir=dest_dir,
+                    git_auth_secret=git_auth_secret,
                 )
                 pipelinerun_name = pipelinerun_info.name
                 record["task_id"] = pipelinerun_name
@@ -543,6 +544,7 @@ class KonfluxImageBuilder:
         nvr: str,
         build_priority: str,
         dest_dir: Optional[Path] = None,
+        git_auth_secret: Optional[str] = None,
     ) -> PipelineRunInfo:
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
         if not build_repo.commit_hash:
@@ -596,7 +598,7 @@ class KonfluxImageBuilder:
             annotations["art-overall-timeout-minutes"] = str(build_timeout_minutes)
             logger.info(f"Setting custom build timeout: {build_timeout_minutes} minutes")
 
-        pipelinerun_info = await self._konflux_client.start_pipeline_run_for_image_build(
+        build_kwargs = dict(
             generate_name=f"{component_name}-",
             namespace=self._config.namespace,
             application_name=app_name,
@@ -616,6 +618,9 @@ class KonfluxImageBuilder:
             annotations=annotations,
             build_priority=build_priority,
         )
+        if git_auth_secret:
+            build_kwargs["git_auth_secret"] = git_auth_secret
+        pipelinerun_info = await self._konflux_client.start_pipeline_run_for_image_build(**build_kwargs)
 
         logger.info(f"Created PipelineRun: {self._konflux_client.resource_url(pipelinerun_info.to_dict())}")
         return pipelinerun_info
