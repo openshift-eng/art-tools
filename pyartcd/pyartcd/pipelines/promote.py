@@ -28,7 +28,6 @@ from artcommonlib.arch_util import (
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.exceptions import VerificationError
 from artcommonlib.exectools import manifest_tool, to_thread
-from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.gitlab import GitLabClient
 from artcommonlib.jira_config import JIRA_EMAIL, JIRA_SERVER_URL
 from artcommonlib.oc_image_info import oc_image_info__cached_async
@@ -40,7 +39,7 @@ from elliottlib.shipment_utils import (
     get_shipment_config_from_mr,
     get_shipment_configs_from_mr,
 )
-from github import GithubException
+from github import Github, GithubException
 from ruamel.yaml import YAML
 from ruamel.yaml.parser import ParserError
 from semver import VersionInfo
@@ -165,7 +164,7 @@ class PromotePipeline:
     def check_environment_variables(self):
         logger = self.runtime.logger
 
-        required_vars = ["JIRA_TOKEN", "QUAY_PASSWORD"]
+        required_vars = ["GITHUB_TOKEN", "JIRA_TOKEN", "QUAY_PASSWORD"]
         if not self.skip_mirror_binaries and not self.skip_signing:
             required_vars += ["AWS_SHARED_CREDENTIALS_FILE", "CLOUDFLARE_ENDPOINT"]
         if not self.skip_signing:
@@ -2035,8 +2034,9 @@ class PromotePipeline:
 
     @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
     def _update_qe_repo(self, release_name: str, release_jira: str, advisories: Dict[str, int]):
-        upstream_repo = get_github_client_for_org("openshift").get_repo("openshift/release-tests")
-        fork_repo = get_github_client_for_org("openshift-bot").get_repo("openshift-bot/release-tests")
+        github_client = Github(os.environ.get("GITHUB_TOKEN"))
+        upstream_repo = github_client.get_repo("openshift/release-tests")
+        fork_repo = github_client.get_repo("openshift-bot/release-tests")
         update_message = f"Add release {release_name}"
         major, minor = isolate_major_minor_in_group(self.group)
         file_path = f"_releases/{major}.{minor}/{major}.{minor}.z.yaml"
@@ -2148,7 +2148,7 @@ class PromotePipeline:
             pr_messages = "Promoting a hotfix release (e.g. for a single customer). There is no advisory associated. \nPlease merge immediately."
 
         # create a forked branch
-        github_client = get_github_client_for_org("openshift")
+        github_client = Github(os.environ.get("GITHUB_TOKEN"))
         upstream_repo = github_client.get_repo("openshift/cincinnati-graph-data")
         for branch in upstream_repo.get_branches():
             if branch.name == branchName:

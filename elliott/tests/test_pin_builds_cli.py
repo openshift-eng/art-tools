@@ -56,7 +56,7 @@ class TestAssemblyPinBuildsCli(IsolatedAsyncioTestCase):
 
         self.pr = "https://github.com/org/repo/pull/123"
         self.why = "Testing"
-        self.github_client = MagicMock()
+        self.github_token = "fake_token"
 
         self.build_record_image = AsyncMock()
         self.build_record_image.name = "image1"
@@ -84,7 +84,7 @@ class TestAssemblyPinBuildsCli(IsolatedAsyncioTestCase):
             nvrs=[self.image_nvr, self.rpm_nvr],
             pr=None,
             why=self.why,
-            github_client=self.github_client,
+            github_token=self.github_token,
         )
         out, changed = await cli.run()
 
@@ -154,7 +154,7 @@ class TestAssemblyPinBuildsCli(IsolatedAsyncioTestCase):
             nvrs=[self.image_nvr, self.rpm_nvr],
             pr=None,
             why=self.why,
-            github_client=self.github_client,
+            github_token=self.github_token,
         )
         _, changed = await cli.run()
         mock_validate_nvrs_brew.assert_called_once_with([self.image_nvr, self.rpm_nvr])
@@ -170,7 +170,7 @@ class TestAssemblyPinBuildsCli(IsolatedAsyncioTestCase):
             nvrs=[],
             pr=self.pr,
             why=self.why,
-            github_client=self.github_client,
+            github_token=self.github_token,
         )
         out, changed = await cli.run()
 
@@ -234,7 +234,7 @@ class TestAssemblyPinBuildsCli(IsolatedAsyncioTestCase):
             nvrs=[self.rhcos_nvr],
             pr=None,
             why=self.why,
-            github_client=self.github_client,
+            github_token=self.github_token,
         )
         out, changed = await cli.run()
 
@@ -278,7 +278,7 @@ class TestAssemblyPinBuildsCli(IsolatedAsyncioTestCase):
             nvrs=[self.non_art_rpm_nvr],
             pr=None,
             why=self.why,
-            github_client=self.github_client,
+            github_token=self.github_token,
         )
         out, changed = await cli.run()
 
@@ -314,11 +314,11 @@ class TestAssemblyPinBuildsCli(IsolatedAsyncioTestCase):
             nvrs=[],
             pr=self.pr,
             why=self.why,
-            github_client=self.github_client,
+            github_token=self.github_token,
         )
         nvrs = await cli.get_nvrs_for_pr()
 
-        mock_get_pr_merge_commit.assert_called_once_with(self.pr, self.github_client)
+        mock_get_pr_merge_commit.assert_called_once_with(self.pr, self.github_token)
         search_builds_mock.assert_called_once_with(
             where={
                 "group": self.runtime.group,
@@ -329,18 +329,16 @@ class TestAssemblyPinBuildsCli(IsolatedAsyncioTestCase):
         )
         self.assertEqual(nvrs, [self.image_nvr, self.rpm_nvr])
 
-    def test_get_pr_merge_commit(self):
-        mock_pr = MagicMock()
-        mock_pr.merge_commit_sha = "abc123def456"
-        mock_pr.base.ref = "release-4.18"
-        mock_repo = MagicMock()
-        mock_repo.get_pull.return_value = mock_pr
-        mock_client = MagicMock()
-        mock_client.get_repo.return_value = mock_repo
+    @patch("elliottlib.cli.pin_builds_cli.requests.get")
+    def test_get_pr_merge_commit(self, mock_requests_get):
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "merge_commit_sha": "abc123def456",
+            "base": {"ref": "release-4.18"},
+        }
+        mock_requests_get.return_value = mock_response
 
-        sha, branch = AssemblyPinBuildsCli.get_pr_merge_commit(self.pr, mock_client)
-        mock_client.get_repo.assert_called_once_with("org/repo")
-        mock_repo.get_pull.assert_called_once_with(123)
+        sha, branch = AssemblyPinBuildsCli.get_pr_merge_commit(self.pr, self.github_token)
         self.assertEqual(sha, "abc123def456")
         self.assertEqual(branch, "release-4.18")
 
@@ -358,7 +356,7 @@ class TestAssemblyPinBuildsCli(IsolatedAsyncioTestCase):
             nvrs=[self.rpm_nvr],  # Only passing the el8 NVR
             pr=None,
             why=self.why,
-            github_client=self.github_client,
+            github_token=self.github_token,
         )
         cli.assembly_config = self.assembly_config
 
@@ -375,7 +373,7 @@ class TestAssemblyPinBuildsCli(IsolatedAsyncioTestCase):
             nvrs=[self.image_nvr, self.rpm_nvr],
             pr=None,
             why=self.why,
-            github_client=self.github_client,
+            github_token=self.github_token,
         )
         await cli.run()
 

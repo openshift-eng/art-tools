@@ -9,10 +9,8 @@ import ruamel.yaml.util
 import yaml
 from artcommonlib import exectools
 from artcommonlib.constants import GIT_NO_PROMPTS
-from artcommonlib.github_auth import get_github_git_auth_env
 from artcommonlib.logutil import get_logger
 from artcommonlib.pushd import Dir
-from artcommonlib.util import ensure_github_https_url
 from future.utils import as_native_str
 
 SCHEMES = ['ssh', 'ssh+git', "http", "https"]
@@ -131,14 +129,13 @@ class GitData(object):
         """
 
         # Remove trailing slash to prevent GitDataBranchException:
-        self.data_path = ensure_github_https_url(data_path.rstrip('/'))
+        self.data_path = data_path.rstrip('/')
 
         data_url = urllib.parse.urlparse(self.data_path)
         if data_url.scheme in SCHEMES or (data_url.scheme == '' and ':' in data_url.path):
             data_name = os.path.splitext(os.path.basename(data_url.path))[0]
             data_destination = os.path.join(self.clone_dir, data_name)
             clone_data = True
-            git_env = {**GIT_NO_PROMPTS, **get_github_git_auth_env(url=self.data_path)}
 
             if self.reclone and os.path.isdir(data_destination):
                 shutil.rmtree(data_destination)
@@ -169,9 +166,7 @@ class GitData(object):
                             raise GitDataBranchException(msg)
                     else:
                         # Check if local is synced with remote
-                        rc, out, err = exectools.cmd_gather(
-                            ["git", "ls-remote", self.data_path, self.branch], set_env=git_env
-                        )
+                        rc, out, err = exectools.cmd_gather(["git", "ls-remote", self.data_path, self.branch])
                         if rc:
                             raise GitDataException('Unable to check remote sha: {}'.format(err))
                         remote = out.strip().split('\t')[0]
@@ -193,9 +188,10 @@ class GitData(object):
                     shutil.rmtree(data_destination)
                 self.logger.info('Cloning config data from {}'.format(self.data_path))
                 if not os.path.isdir(data_destination):
+                    # Clone all branches as we must sometimes reference master /OWNERS for maintainer information
                     cmd = "git clone --no-single-branch {} {}".format(self.data_path, data_destination)
-                    exectools.cmd_assert(cmd, set_env=git_env)
-                    exectools.cmd_assert(f'git -C {data_destination} checkout {self.branch}', set_env=git_env)
+                    exectools.cmd_assert(cmd, set_env=GIT_NO_PROMPTS)
+                    exectools.cmd_assert(f'git -C {data_destination} checkout {self.branch}', set_env=GIT_NO_PROMPTS)
 
             self.remote_path = self.data_path
             self.data_path = data_destination

@@ -11,7 +11,6 @@ from typing import Iterable, Optional, OrderedDict, Tuple
 import aiohttp
 import click
 from artcommonlib import exectools
-from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.util import (
     get_inflight,
     isolate_major_minor_in_group,
@@ -21,6 +20,7 @@ from artcommonlib.util import (
     uses_konflux_imagestream_override,
 )
 from doozerlib.cli.get_nightlies import get_nightly_tag_base, rc_api_url
+from ghapi.all import GhApi
 
 from pyartcd import constants, jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -124,7 +124,9 @@ class GenAssemblyPipeline:
         self._slack_client = self.runtime.new_slack_client()
         self._working_dir = self.runtime.working_dir.absolute()
 
-        # GitHub auth is handled by get_github_client_for_org() with App auth / PAT fallback
+        self._github_token = os.environ.get('GITHUB_TOKEN')
+        if not self._github_token and not self.runtime.dry_run:
+            raise ValueError("GITHUB_TOKEN environment variable is required to create a pull request.")
 
         # determines OCP version
         match = re.fullmatch(r"openshift-(\d+).(\d+)", group)
@@ -353,15 +355,14 @@ class GenAssemblyPipeline:
             return None
 
         # Create a pull request
-        _, owner, repo_name = split_git_url(ocp_build_data_repo_push_url)
-        gh_repo = get_github_client_for_org(owner).get_repo(f"{owner}/{repo_name}")
-        existing_prs = list(gh_repo.get_pulls(state="open", base=base, head=head))
-        if not existing_prs:
-            result = gh_repo.create_pull(head=head, base=base, title=title, body=body, maintainer_can_modify=True)
+        _, owner, repo = split_git_url(ocp_build_data_repo_push_url)
+        api = GhApi(owner=owner, repo=repo, token=self._github_token)
+        existing_prs = api.pulls.list(state="open", base=base, head=head)
+        if not existing_prs.items:
+            result = api.pulls.create(head=head, base=base, title=title, body=body, maintainer_can_modify=True)
         else:
-            pr = existing_prs[0]
-            pr.edit(title=title, body=body)
-            result = pr
+            pull_number = existing_prs.items[0].number
+            result = api.pulls.update(pull_number=pull_number, title=title, body=body)
 
         # Trigger build-sync
         if self.auto_trigger_build_sync:

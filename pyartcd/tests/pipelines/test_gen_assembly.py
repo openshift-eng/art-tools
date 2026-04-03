@@ -1,4 +1,5 @@
 import asyncio
+import os
 from collections import OrderedDict
 from pathlib import Path
 from unittest import IsolatedAsyncioTestCase, TestCase
@@ -147,11 +148,12 @@ releases:
         actual = asyncio.run(pipeline._gen_assembly_from_releases(candidate_nightlies))
         self.assertIn("4.12.99", actual["releases"])
 
+    @patch("os.environ", return_value={"GITHUB_TOKEN": "deadbeef"})
     @patch("pathlib.Path.exists", autospec=True, return_value=True)
-    @patch("pyartcd.pipelines.gen_assembly.get_github_client_for_org")
+    @patch("pyartcd.pipelines.gen_assembly.GhApi")
     @patch("pyartcd.pipelines.gen_assembly.yaml")
     @patch("pyartcd.pipelines.gen_assembly.GitRepository", autospec=True)
-    def test_create_or_update_pull_request(self, git_repo: MagicMock, yaml: MagicMock, mock_get_client: MagicMock, *_):
+    def test_create_or_update_pull_request(self, git_repo: MagicMock, yaml: MagicMock, gh_api: MagicMock, *_):
         runtime = MagicMock(
             dry_run=False,
             config={
@@ -209,11 +211,9 @@ releases:
             )
         )
         git_repo.return_value.commit_push.return_value = True
-        gh_repo = mock_get_client.return_value.get_repo.return_value
-        gh_repo.get_pulls.return_value = []
-        gh_repo.create_pull.return_value = MagicMock(
-            html_url="https://github.example.com/foo/bar/pull/1234", number=1234
-        )
+        api = gh_api.return_value
+        api.pulls.list.return_value = MagicMock(items=[])
+        api.pulls.create.return_value = MagicMock(html_url="https://github.example.com/foo/bar/pull/1234", number=1234)
         actual = asyncio.run(pipeline._create_or_update_pull_request(fn))
         self.assertEqual(actual.number, 1234)
         git_repo.return_value.setup.assert_awaited_once_with("git@github.com:someone/ocp-build-data.git")
@@ -222,7 +222,7 @@ releases:
         )
         yaml.load.assert_called_once_with(pipeline._working_dir / 'ocp-build-data-push/releases.yml')
         git_repo.return_value.commit_push.assert_awaited_once_with(ANY)
-        gh_repo.create_pull.assert_called_once_with(
+        api.pulls.create.assert_called_once_with(
             head='someone:auto-gen-assembly-openshift-4.12-4.12.99',
             base='openshift-4.12',
             title='Add assembly 4.12.99',
@@ -245,6 +245,8 @@ releases:
         _create_or_update_pull_request: AsyncMock,
         _get_latest_accepted_nightly: AsyncMock,
     ):
+        os.environ["GITHUB_TOKEN"] = "irrelevant"
+
         runtime = MagicMock(
             dry_run=False,
             config={
@@ -286,6 +288,7 @@ releases:
         get_nightlies.assert_awaited_once_with(pipeline)
         _gen_assembly_from_releases.assert_awaited_once_with(pipeline, ['nightly1', 'nightly2', 'nightly3', 'nightly4'])
         _create_or_update_pull_request.assert_awaited_once_with(pipeline, ANY)
+        del os.environ["GITHUB_TOKEN"]
 
 
 class TestValidateReleaseDate(TestCase):

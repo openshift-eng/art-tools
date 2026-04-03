@@ -1,5 +1,7 @@
 import asyncio
+import base64
 import io
+import os
 import pathlib
 import sys
 from typing import Dict, List
@@ -8,8 +10,8 @@ import click
 import yaml
 from artcommonlib import gitdata
 from artcommonlib.format_util import color_print, green_print, red_print, yellow_print
-from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.metadata import CONFIG_MODES
+from ghapi.core import GhApi
 
 from doozerlib import Runtime
 from doozerlib.cli import cli, click_coroutine, pass_runtime
@@ -167,20 +169,23 @@ def config_read_group(runtime, key, as_len, as_yaml, permit_missing_group, defau
 
 def get_releases(runtime) -> dict:
     """
-    Uses GitHub API to fetch releases.yml from the ocp-build-data repo for a given group.
+    Uses GitHub API to fetch releases.yaml from openshift-eng/ocp-build-data for a given group
 
-    Parses the file and returns it as a dictionary.
+    Parses the file and returns it as a dictionary
     """
 
     if not runtime.data_path.startswith('https://'):
+        # assume data_path is a local path; GhApi couldn't handle other sources anyway
         with open(f'{runtime.data_path}/releases.yml', 'r') as file:
             return yaml.safe_load(file)
 
-    parts = runtime.data_path.rstrip('/').rstrip('.git').split('/')
-    owner, repo_name = parts[-2], parts[-1]
-    repo = get_github_client_for_org(owner).get_repo(f"{owner}/{repo_name}")
-    content = repo.get_contents('releases.yml', ref=runtime.group_commitish)
-    return yaml.safe_load(content.decoded_content)
+    if not (github_token := os.environ.get('GITHUB_TOKEN')):
+        raise DoozerFatalError('A GITHUB_TOKEN environment variable must be defined!')
+
+    owner = runtime.data_path.split('/')[-2]
+    api = GhApi(owner=owner, repo='ocp-build-data', token=github_token)
+    blob = api.repos.get_content('releases.yml', ref=runtime.group_commitish)
+    return yaml.safe_load(base64.b64decode(blob['content']))
 
 
 @cli.command("config:read-releases", short_help="Output aspects of releases.yml")

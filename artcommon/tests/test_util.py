@@ -62,37 +62,6 @@ class TestUtil(unittest.TestCase):
             'git@github.com:openshift/aos-cd-jobs.git',
         )
 
-    def test_ensure_github_https_url(self):
-        # SSH to HTTPS for github.com
-        self.assertEqual(
-            util.ensure_github_https_url('git@github.com:openshift/origin.git'),
-            'https://github.com/openshift/origin',
-        )
-
-        # HTTPS passthrough for github.com
-        self.assertEqual(
-            util.ensure_github_https_url('https://github.com/openshift/origin'),
-            'https://github.com/openshift/origin',
-        )
-
-        # SSH with explicit ssh:// prefix
-        self.assertEqual(
-            util.ensure_github_https_url('ssh://git@github.com/openshift-priv/art-fbc.git'),
-            'https://github.com/openshift-priv/art-fbc',
-        )
-
-        # Non-GitHub URL passthrough (distgit)
-        self.assertEqual(
-            util.ensure_github_https_url('ssh://pkgs.devel.redhat.com/containers/ose-cluster-kube-apiserver-operator'),
-            'ssh://pkgs.devel.redhat.com/containers/ose-cluster-kube-apiserver-operator',
-        )
-
-        # Non-GitHub URL passthrough (gitlab)
-        self.assertEqual(
-            util.ensure_github_https_url('https://gitlab.cee.redhat.com/some/repo'),
-            'https://gitlab.cee.redhat.com/some/repo',
-        )
-
     def test_find_latest_builds(self):
         builds = [
             {

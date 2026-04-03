@@ -23,7 +23,6 @@ from artcommonlib.arch_util import brew_arch_for_go_arch
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.config.repo import RepoList
 from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
-from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.gitlab import GitLabClient
 from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.konflux.konflux_db import KonfluxDb
@@ -39,7 +38,7 @@ from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
 from doozerlib.constants import KONFLUX_DEFAULT_IMAGE_REPO
 from doozerlib.util import isolate_git_commit_in_release
 from elliottlib.shipment_model import ShipmentConfig, Snapshot, SnapshotSpec
-from github import GithubException
+from github import Github, GithubException
 
 from pyartcd import constants, jenkins, oc
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -86,6 +85,14 @@ class BuildMicroShiftBootcPipeline:
 
         # Track existing shipment timestamp to avoid creating new files on MR updates
         self.existing_shipment_timestamp = None
+
+        # Check if GitHub token is available (unless in dry-run mode)
+        if not runtime.dry_run:
+            github_token = os.environ.get("GITHUB_TOKEN")
+            if not github_token or not github_token.strip():
+                raise ValueError("GITHUB_TOKEN environment variable is required to create pull requests")
+
+        self.github_client = Github(os.environ.get("GITHUB_TOKEN"))
 
         self._working_dir = self.runtime.working_dir.absolute()
         self.releases_config = None
@@ -602,8 +609,7 @@ class BuildMicroShiftBootcPipeline:
             return "https://github.example.com/foo/bar/pull/1234"
 
         user, repo = self.extract_git_repo(self._doozer_env_vars["DOOZER_DATA_PATH"])
-        github_client = get_github_client_for_org(user)
-        upstream_repo = github_client.get_repo(f"{user}/{repo}")
+        upstream_repo = self.github_client.get_repo(f"{user}/{repo}")
         release_file_content = yaml.load(upstream_repo.get_contents("releases.yml", ref=self.group).decoded_content)
         source_file_content = copy.deepcopy(release_file_content)
         self._pin_image_nvr(nvr, release_file_content)
@@ -653,8 +659,9 @@ class BuildMicroShiftBootcPipeline:
                 raise TimeoutError(error_msg)
 
             # Refresh PR to get latest status
-            user, repo = self.extract_git_repo(self._doozer_env_vars['DOOZER_DATA_PATH'])
-            pr = get_github_client_for_org(user).get_repo(f"{user}/{repo}").get_pull(pr.number)
+            pr = self.github_client.get_repo(
+                f"{self.extract_git_repo(self._doozer_env_vars['DOOZER_DATA_PATH'])[0]}/{self.extract_git_repo(self._doozer_env_vars['DOOZER_DATA_PATH'])[1]}"
+            ).get_pull(pr.number)
 
             # Check if PR was closed/merged by someone else
             if pr.state == "closed":
