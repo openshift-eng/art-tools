@@ -1,5 +1,4 @@
 import logging
-import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
@@ -91,11 +90,6 @@ class BuildFbcPipeline:
         self._slack_client = runtime.new_slack_client()
 
     async def run(self):
-        # Check for required environment variables
-        github_token = os.environ.get('GITHUB_TOKEN')
-        if not github_token:
-            raise ValueError('GITHUB_TOKEN environment variable is required for accessing openshift-priv repos')
-
         # Bind Slack channel based on product field from group config
         group = f"openshift-{self.version}" if not self.group else self.group
         group_config = await load_group_config(

@@ -53,7 +53,6 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         self.mock_slack_client = Mock(spec=SlackClient)
         self.group = "openshift-4.18"
         self.assembly = "test-assembly"
-        self.github_token = "gh_token"
         self.gitlab_token = "gl_token"
         self.job_url = "http://jenkins/job/test-job/1"
 
@@ -64,7 +63,6 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             group=self.group,
             assembly=self.assembly,
         )
-        pipeline.github_token = self.github_token
         pipeline.gitlab_token = self.gitlab_token
 
         self.assertEqual(pipeline.build_data_repo_pull_url, self.runtime.config["build_config"]["ocp_build_data_url"])
@@ -85,7 +83,6 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             group=self.group,
             assembly=self.assembly,
         )
-        pipeline.github_token = self.github_token
         pipeline.gitlab_token = self.gitlab_token
 
         self.assertEqual(pipeline.build_data_repo_pull_url, constants.OCP_BUILD_DATA_URL)
@@ -103,7 +100,6 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             build_data_repo_url="https://github.com/foo/build-repo@branch",
             shipment_data_repo_url="https://gitlab.com/bar/shipment-repo",
         )
-        pipeline.github_token = self.github_token
         pipeline.gitlab_token = self.gitlab_token
 
         self.assertEqual(pipeline.build_data_repo_pull_url, "https://github.com/foo/build-repo")
@@ -134,7 +130,6 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             group=self.group,
             assembly=self.assembly,
         )
-        pipeline.github_token = self.github_token
         pipeline.gitlab_token = self.gitlab_token
 
         await pipeline.setup_repos()
@@ -169,7 +164,6 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             group=self.group,
             assembly=self.assembly,
         )
-        pipeline.github_token = self.github_token
         pipeline.gitlab_token = self.gitlab_token
         pipeline.releases_config = Model(
             {
@@ -193,7 +187,6 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             group=self.group,
             assembly=self.assembly,
         )
-        pipeline.github_token = self.github_token
         pipeline.gitlab_token = self.gitlab_token
         pipeline.releases_config = Model({"releases": {}})
         with self.assertRaises(ValueError) as context:
@@ -207,7 +200,6 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             group=self.group,
             assembly=self.assembly,
         )
-        pipeline.github_token = self.github_token
         pipeline.gitlab_token = self.gitlab_token
         pipeline.releases_config = Model(
             {"releases": {self.assembly: {"assembly": {"type": AssemblyTypes.STREAM.value}}}}
@@ -223,7 +215,6 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             group=self.group,
             assembly=self.assembly,
         )
-        pipeline.github_token = self.github_token
         pipeline.gitlab_token = self.gitlab_token
         pipeline.releases_config = Model(
             {
@@ -267,7 +258,6 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             group=self.group,
             assembly=self.assembly,
         )
-        pipeline.github_token = self.github_token
         pipeline.gitlab_token = self.gitlab_token
         pipeline.releases_config = Model(
             {
@@ -297,7 +287,6 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             group=self.group,
             assembly=self.assembly,
         )
-        pipeline.github_token = self.github_token
         pipeline.gitlab_token = self.gitlab_token
         pipeline.releases_config = Model(
             {
@@ -361,7 +350,6 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             group=self.group,
             assembly=self.assembly,
         )
-        pipeline.github_token = self.github_token
         pipeline.gitlab_token = self.gitlab_token
         pipeline.releases_config = Model(
             {
@@ -439,13 +427,19 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         # Run the function
         with (
             patch("pyartcd.pipelines.prepare_release_konflux.push_cdn_stage") as mock_push_cdn_stage,
-            patch("pyartcd.pipelines.prepare_release_konflux.GhApi") as mock_gh_api,
+            patch("pyartcd.pipelines.prepare_release_konflux.get_github_client_for_org") as mock_get_github,
+            patch.object(PrepareReleaseKonfluxPipeline, "_wait_for_pr_merge", new_callable=AsyncMock),
             patch("asyncio.sleep", new_callable=AsyncMock),
         ):
-            # Mock GitHub API
-            mock_api = Mock()
-            mock_api.pulls.list.return_value = Mock(items=[])
-            mock_gh_api.return_value = mock_api
+            # Mock PyGithub-style API: get_github_client_for_org(org).get_repo(...).get_pulls/create_pull
+            mock_gh_repo = Mock()
+            mock_gh_repo.get_pulls.return_value = []  # No existing PRs
+            mock_pr = Mock()
+            mock_pr.number = 1
+            mock_pr.html_url = "https://github.com/user1/repo1/pull/1"
+            mock_pr.body = ""
+            mock_gh_repo.create_pull.return_value = mock_pr
+            mock_get_github.return_value.get_repo.return_value = mock_gh_repo
 
             await pipeline.prepare_et_advisories()
 
@@ -476,7 +470,6 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             group=self.group,
             assembly=self.assembly,
         )
-        pipeline.github_token = self.github_token
         pipeline.gitlab_token = self.gitlab_token
         pipeline.releases_config = Model(
             {
@@ -545,7 +538,6 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             group=self.group,
             assembly=self.assembly,
         )
-        pipeline.github_token = self.github_token
         pipeline.gitlab_token = self.gitlab_token
         pipeline.releases_config = Model(
             {

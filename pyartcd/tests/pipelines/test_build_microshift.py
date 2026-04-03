@@ -6,7 +6,7 @@ import os
 import tempfile
 from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 from pyartcd.pipelines.build_microshift import BuildMicroShiftPipeline
 from pyartcd.runtime import Runtime
@@ -38,8 +38,7 @@ class TestBuildMicroShiftPipeline(IsolatedAsyncioTestCase):
         """
         os.environ.pop("GITHUB_TOKEN", None)
 
-    @patch('pyartcd.pipelines.build_microshift.Github')
-    def test_pin_nvrs_no_existing_advisory(self, mock_github):
+    def test_pin_nvrs_no_existing_advisory(self):
         """
         Test that when no advisory exists in releases config, the new advisory is saved
         """
@@ -68,8 +67,7 @@ class TestBuildMicroShiftPipeline(IsolatedAsyncioTestCase):
         )
         self.assertEqual(pipeline.advisory_num, 12345, "advisory_num should remain unchanged")
 
-    @patch('pyartcd.pipelines.build_microshift.Github')
-    def test_pin_nvrs_same_advisory_already_exists(self, mock_github):
+    def test_pin_nvrs_same_advisory_already_exists(self):
         """
         Test that when the same advisory already exists, no conflict is detected (idempotent)
         """
@@ -100,8 +98,7 @@ class TestBuildMicroShiftPipeline(IsolatedAsyncioTestCase):
         # Should not log a warning
         pipeline._logger.warning.assert_not_called()
 
-    @patch('pyartcd.pipelines.build_microshift.Github')
-    def test_pin_nvrs_different_advisory_exists_adopts_existing(self, mock_github):
+    def test_pin_nvrs_different_advisory_exists_adopts_existing(self):
         """
         Test that when a different advisory already exists in releases config,
         the pipeline adopts the existing advisory and logs a warning
@@ -152,8 +149,7 @@ class TestBuildMicroShiftPipeline(IsolatedAsyncioTestCase):
         self.assertIn("already references microshift advisory 12345", warning_msg)
         self.assertIn("adopting existing advisory instead of newly created advisory 99999", warning_msg)
 
-    @patch('pyartcd.pipelines.build_microshift.Github')
-    def test_pin_nvrs_existing_advisory_is_zero(self, mock_github):
+    def test_pin_nvrs_existing_advisory_is_zero(self):
         """
         Test that when advisory is 0 (treated as "not set"), the new advisory is saved
         """
@@ -198,8 +194,7 @@ class TestBuildMicroShiftPipeline(IsolatedAsyncioTestCase):
         # Should not log a warning (0 is treated as "not set")
         pipeline._logger.warning.assert_not_called()
 
-    @patch('pyartcd.pipelines.build_microshift.Github')
-    def test_pin_nvrs_existing_advisory_is_negative(self, mock_github):
+    def test_pin_nvrs_existing_advisory_is_negative(self):
         """
         Test that when advisory is negative (treated as "not set"), the new advisory is saved
         """
@@ -244,8 +239,7 @@ class TestBuildMicroShiftPipeline(IsolatedAsyncioTestCase):
         # Should not log a warning (-1 is treated as "not set")
         pipeline._logger.warning.assert_not_called()
 
-    @patch('pyartcd.pipelines.build_microshift.Github')
-    def test_pin_nvrs_with_nvrs_saves_advisory_and_pins_builds(self, mock_github):
+    def test_pin_nvrs_with_nvrs_saves_advisory_and_pins_builds(self):
         """
         Test that when NVRs are provided, both advisory and NVRs are saved
         """
@@ -290,8 +284,7 @@ class TestBuildMicroShiftPipeline(IsolatedAsyncioTestCase):
             microshift_entry["metadata"]["is"]["el9"], "microshift-4.17.1-202601290005.p0.g7ebffc3.assembly.4.17.1.el9"
         )
 
-    @patch('pyartcd.pipelines.build_microshift.Github')
-    def test_pin_nvrs_without_nvrs_only_saves_advisory(self, mock_github):
+    def test_pin_nvrs_without_nvrs_only_saves_advisory(self):
         """
         Test that when nvrs=None, only the advisory is saved (no NVR pinning)
         """
