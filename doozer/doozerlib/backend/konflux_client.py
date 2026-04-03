@@ -18,7 +18,7 @@ import jinja2
 from artcommonlib import exectools
 from artcommonlib import util as art_util
 from artcommonlib.constants import KONFLUX_DEFAULT_NAMESPACE
-from artcommonlib.github_auth import get_github_app_token_from_env
+from artcommonlib.github_auth import get_github_app_token_for_org
 from async_lru import alru_cache
 from doozerlib import constants
 from doozerlib.backend.konflux_watcher import KonfluxWatcher
@@ -229,7 +229,7 @@ class KonfluxClient:
             self._logger.error(f"Failed to authenticate to the Kubernetes cluster: {e}")
             raise
 
-    async def ensure_git_auth_secret(self, namespace: Optional[str] = None) -> str:
+    async def ensure_git_auth_secret(self, namespace: Optional[str] = None, org: str = "openshift-priv") -> str:
         """Mint a GitHub App installation token and store it in a per-invocation
         Kubernetes Secret for use as a git-clone basic-auth credential.
 
@@ -241,6 +241,8 @@ class KonfluxClient:
         credentials are not configured (GITHUB_APP_ID unset).
 
         :param namespace: Target namespace. Defaults to self.default_namespace.
+        :param org: GitHub org whose installation token to mint.
+                    Defaults to "openshift-priv" (where Konflux build sources live).
         :return: The secret name to wire into PipelineRun workspaces.
         """
         if self._git_auth_secret_name:
@@ -254,7 +256,7 @@ class KonfluxClient:
 
         # Mint a short-lived installation token (valid ~1 hour, but only the
         # git-clone + prefetch tasks need it — those run in the first few minutes).
-        token = await exectools.to_thread(get_github_app_token_from_env)
+        token = await exectools.to_thread(get_github_app_token_for_org, org)
 
         epoch_ns = time.time_ns()
         secret_name = f"{_GIT_AUTH_SECRET_PREFIX}{epoch_ns}"
