@@ -480,7 +480,9 @@ class ConfigScanSources:
                 return
 
             with Dir(path):
-                self._try_reconciliation(metadata, priv_repo_name, public_branch_name, priv_branch_name)
+                self._try_reconciliation(
+                    metadata, priv_repo_name, public_branch_name, priv_branch_name, priv_url=priv_url
+                )
 
         for metadata, public_upstream in upstream_mappings:
             try:
