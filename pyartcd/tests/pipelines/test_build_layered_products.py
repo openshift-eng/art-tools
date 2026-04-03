@@ -31,6 +31,36 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
                 skip_bundle_build=True,
             )
 
+    def test_test_assembly_sets_test_banner(self):
+        """When assembly is 'test', the Jenkins title should include [TEST]."""
+        with patch('pyartcd.pipelines.build_layered_products.jenkins.init_jenkins'), \
+             patch('pyartcd.pipelines.build_layered_products.jenkins.update_title') as mock_update_title:
+            BuildLayeredProductsPipeline(
+                runtime=self.runtime,
+                group='oadp-1.4',
+                version='1.4.9',
+                assembly='test',
+                image_list='oadp-velero-restic-restore-helper',
+                data_path='https://github.com/openshift-eng/ocp-build-data',
+                skip_bundle_build=True,
+            )
+        mock_update_title.assert_called_once_with(" [TEST]")
+
+    def test_non_test_assembly_does_not_set_test_banner(self):
+        """When assembly is not 'test', the Jenkins [TEST] banner should not be set."""
+        with patch('pyartcd.pipelines.build_layered_products.jenkins.init_jenkins'), \
+             patch('pyartcd.pipelines.build_layered_products.jenkins.update_title') as mock_update_title:
+            BuildLayeredProductsPipeline(
+                runtime=self.runtime,
+                group='oadp-1.4',
+                version='1.4.9',
+                assembly='stream',
+                image_list='oadp-velero-restic-restore-helper',
+                data_path='https://github.com/openshift-eng/ocp-build-data',
+                skip_bundle_build=True,
+            )
+        mock_update_title.assert_not_called()
+
     async def test_rebase_success_returns_original_image_list(self):
         """When rebase succeeds, the full image list is returned unchanged."""
         with patch('pyartcd.pipelines.build_layered_products.exectools.cmd_assert_async', new_callable=AsyncMock):
