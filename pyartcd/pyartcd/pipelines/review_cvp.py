@@ -7,8 +7,8 @@ from typing import Dict
 
 import click
 from artcommonlib import exectools
-from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.util import new_roundtrip_yaml_handler
+from ghapi.all import GhApi
 
 from pyartcd import constants, jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -166,14 +166,16 @@ If you have any questions or encounter a CVP bug, drop a message to CVP gchat ch
             d = {"html_url": "https://github.example.com/foo/bar/pull/1234", "number": 1234}
             result = namedtuple('pull_request', d.keys())(*d.values())
             return result
-        gh_repo = get_github_client_for_org(owner).get_repo(f"{owner}/{repo}")
-        existing_prs = list(gh_repo.get_pulls(state="open", base=base, head=head))
-        if not existing_prs:
-            result = gh_repo.create_pull(head=head, base=base, title=title, body=body, maintainer_can_modify=True)
+        github_token = os.environ.get('GITHUB_TOKEN')
+        if not github_token:
+            raise ValueError("GITHUB_TOKEN environment variable is required to create a pull request")
+        api = GhApi(owner=owner, repo=repo, token=github_token)
+        existing_prs = api.pulls.list(state="open", base=base, head=head)
+        if not existing_prs.items:
+            result = api.pulls.create(head=head, base=base, title=title, body=body, maintainer_can_modify=True)
         else:
-            pr = existing_prs[0]
-            pr.edit(title=title, body=body)
-            result = pr
+            pull_number = existing_prs.items[0].number
+            result = api.pulls.update(pull_number=pull_number, title=title, body=body)
         return result
 
     def update_repos(self, name, image_config, dg_key, old, new):

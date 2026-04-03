@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import io
 import logging
 import os
@@ -10,7 +11,6 @@ import koji
 from artcommonlib import exectools
 from artcommonlib.brew import BuildStates
 from artcommonlib.constants import BREW_HUB, GOLANG_BUILDER_IMAGE_NAME, PRODUCT_NAMESPACE_MAP
-from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.release_util import split_el_suffix_in_release
@@ -18,6 +18,8 @@ from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import new_roundtrip_yaml_handler
 from elliottlib import util as elliottutil
 from elliottlib.constants import GOLANG_BUILDER_CVE_COMPONENT
+from ghapi.all import GhApi
+from github import Github
 
 from pyartcd import constants, jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -194,7 +196,9 @@ class UpdateGolangPipeline:
             kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
         self.kubeconfig = kubeconfig
 
-        # GitHub auth is handled by get_github_client_for_org() with App auth / PAT fallback
+        self.github_token = os.environ.get('GITHUB_TOKEN')
+        if not self.github_token:
+            raise ValueError("GITHUB_TOKEN environment variable is required to fetch build data repo contents")
 
         # Initialize KonfluxDb for Konflux build system
         if build_system in ('konflux', 'both'):
@@ -487,8 +491,9 @@ class UpdateGolangPipeline:
         3. If it'a major version bump, also need to update key in streams.yml and vars in group.yml
         4. Create pr to update changes
         """
+        github_client = Github(os.environ.get("GITHUB_TOKEN"))
         branch = f"openshift-{self.ocp_version}"
-        upstream_repo = get_github_client_for_org("openshift-eng").get_repo("openshift-eng/ocp-build-data")
+        upstream_repo = github_client.get_repo("openshift-eng/ocp-build-data")
         streams_content = yaml.load(upstream_repo.get_contents("streams.yml", ref=branch).decoded_content)
         group_content = yaml.load(upstream_repo.get_contents("group.yml", ref=branch).decoded_content)
 
@@ -603,7 +608,7 @@ class UpdateGolangPipeline:
                     f"Golang builder images:\n{builder_details}"
                 )
                 return
-            fork_repo = get_github_client_for_org("openshift-bot").get_repo("openshift-bot/ocp-build-data")
+            fork_repo = github_client.get_repo("openshift-bot/ocp-build-data")
             branch_name = f"update-golang-{self.ocp_version}-{go_version}"
             title = f"{self.art_jira} - Bump {self.ocp_version} golang builders to {go_version}"
             update_message = f"Bump {self.ocp_version} golang builders to {go_version}"
@@ -778,19 +783,21 @@ class UpdateGolangPipeline:
         return f'rhel-{el_v}-golang-{go_v}'
 
     def verify_golang_builder_repo(self, el_v, go_version):
+        # read group.yml from the golang branch using ghapi
+        owner, repo = 'openshift-eng', 'ocp-build-data'
         branch = self.get_golang_branch(el_v, go_version)
         filename = 'group.yml'
 
-        repo = get_github_client_for_org("openshift-eng").get_repo("openshift-eng/ocp-build-data")
-        content = repo.get_contents(filename, ref=branch)
-        group_config = yaml.load(content.decoded_content)
+        api = GhApi(owner=owner, repo=repo, token=self.github_token)
+        blob = api.repos.get_content(filename, ref=branch)
+        group_config = yaml.load(base64.b64decode(blob['content']))
         content_repo_url_suffix = self.get_content_repo_url_suffix(el_v)
 
         golang_repo = f'rhel-{el_v}-golang-rpms'
         if golang_repo not in group_config['repos']:
             raise ValueError(
                 f"Did not find {golang_repo} defined at "
-                f"https://github.com/openshift-eng/ocp-build-data/blob/{branch}/{filename}. If it's with a different "
+                f"https://github.com/{owner}/{repo}/blob/{branch}/{filename}. If it's with a different "
                 "name please correct it."
             )
 

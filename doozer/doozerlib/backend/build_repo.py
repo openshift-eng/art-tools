@@ -36,8 +36,8 @@ class BuildRepo:
         :param logger: A logger object to use for logging messages
         :param pull_url: The URL of the repository to pull from. If None, uses url for both pull and push.
         """
-        self.url = art_util.ensure_github_https_url(url)
-        self.pull_url = art_util.ensure_github_https_url(pull_url or url)
+        self.url = url
+        self.pull_url = pull_url or url
         self.branch = branch
         self.local_dir = Path(local_dir)
         self._username = username
@@ -83,10 +83,10 @@ class BuildRepo:
 
         # Run git config credential.helper store
         git_config_cmd = ["config", "credential.helper", "store"]
-        await git_helper.run_git_async(git_config_cmd, cwd=str(self.local_dir), github_url=self.url)
+        await git_helper.run_git_async(git_config_cmd, cwd=str(self.local_dir))
         # Run git config credential.useHttpPath true
         git_config_cmd = ["config", "credential.useHttpPath", "true"]
-        await git_helper.run_git_async(git_config_cmd, cwd=str(self.local_dir), github_url=self.url)
+        await git_helper.run_git_async(git_config_cmd, cwd=str(self.local_dir))
 
         # Check if the credentials are already set in ~/.git-credentials
         credentials_file = Path.home() / ".git-credentials"
@@ -125,7 +125,7 @@ class BuildRepo:
                 # Check if the existing repo is on the expected branch
                 if self.branch is not None:
                     _, current_branch, _ = await git_helper.gather_git_async(
-                        ["-C", local_dir, "rev-parse", "--abbrev-ref", "HEAD"], github_url=self.url
+                        ["-C", local_dir, "rev-parse", "--abbrev-ref", "HEAD"]
                     )
                     current_branch = current_branch.strip()
                     if current_branch != self.branch:
@@ -144,7 +144,7 @@ class BuildRepo:
                             )
                             await self.switch(self.branch, orphan=True)
                 self._logger.info("Reusing existing build source repository at %s", local_dir)
-                self._commit_hash = await self._get_commit_hash(local_dir, strict=strict, github_url=self.url)
+                self._commit_hash = await self._get_commit_hash(local_dir, strict=strict)
                 needs_clone = False
         if needs_clone:
             self._logger.info(
@@ -182,7 +182,7 @@ class BuildRepo:
     async def init(self):
         """Initialize the local directory as a git repository."""
         local_dir = str(self.local_dir)
-        await git_helper.run_git_async(["init", local_dir], github_url=self.url)
+        await git_helper.run_git_async(["init", local_dir])
 
     @start_as_current_span_async(TRACER, "build_repo.set_remote_url")
     async def set_remote_url(self, url: Optional[str], remote_name: str = "origin"):
@@ -193,11 +193,11 @@ class BuildRepo:
         if url is None:
             url = self.url
         local_dir = str(self.local_dir)
-        _, out, _ = await git_helper.gather_git_async(["-C", local_dir, "remote"], stderr=None, github_url=url)
+        _, out, _ = await git_helper.gather_git_async(["-C", local_dir, "remote"], stderr=None)
         if remote_name not in out.strip().split():
-            await git_helper.run_git_async(["-C", local_dir, "remote", "add", remote_name, url], github_url=url)
+            await git_helper.run_git_async(["-C", local_dir, "remote", "add", remote_name, url])
         else:
-            await git_helper.run_git_async(["-C", local_dir, "remote", "set-url", remote_name, url], github_url=url)
+            await git_helper.run_git_async(["-C", local_dir, "remote", "set-url", remote_name, url])
 
     @start_as_current_span_async(TRACER, "build_repo.set_pull_remote")
     async def set_pull_remote(self, pull_url: str):
@@ -220,9 +220,8 @@ class BuildRepo:
             fetch_options.append(f"--depth={depth}")
         # Use pull remote if different from push URL, otherwise use origin
         remote_name = "pull" if self.pull_url != self.url else "origin"
-        remote_url = self.pull_url if remote_name == "pull" else self.url
         rc, _, err = await git_helper.gather_git_async(
-            ["-C", local_dir, "fetch"] + fetch_options + [remote_name, refspec], check=False, github_url=remote_url
+            ["-C", local_dir, "fetch"] + fetch_options + [remote_name, refspec], check=False
         )
         if rc != 0:
             if not strict and "fatal: couldn't find remote ref" in err:
@@ -242,26 +241,22 @@ class BuildRepo:
             options.append("--detach")
         if orphan:
             options.append("--orphan")
-        await git_helper.run_git_async(["-C", local_dir, "switch"] + options + [branch], github_url=self.url)
+        await git_helper.run_git_async(["-C", local_dir, "switch"] + options + [branch])
         self.branch = branch
-        self._commit_hash = await self._get_commit_hash(local_dir, github_url=self.url)
+        self._commit_hash = await self._get_commit_hash(local_dir)
 
     @start_as_current_span_async(TRACER, "build_repo.delete_all_files")
     async def delete_all_files(self):
         """Delete all files in the local directory."""
-        await git_helper.run_git_async(
-            ["-C", str(self.local_dir), "rm", "-rf", "--ignore-unmatch", "."], github_url=self.url
-        )
+        await git_helper.run_git_async(["-C", str(self.local_dir), "rm", "-rf", "--ignore-unmatch", "."])
 
     @staticmethod
     @start_as_current_span_async(TRACER, "build_repo.get_commit_hash")
-    async def _get_commit_hash(local_dir: str, strict: bool = False, github_url: str | None = None) -> Optional[str]:
+    async def _get_commit_hash(local_dir: str, strict: bool = False) -> Optional[str]:
         """Get the commit hash of the current commit in the build source repository.
         :return: The commit hash of the current commit; None if the branch has no commits yet.
         """
-        rc, out, err = await git_helper.gather_git_async(
-            ["-C", str(local_dir), "rev-parse", "HEAD"], check=False, github_url=github_url
-        )
+        rc, out, err = await git_helper.gather_git_async(["-C", str(local_dir), "rev-parse", "HEAD"], check=False)
         if rc != 0:
             if "unknown revision or path not in the working tree" in err:
                 # This branch has no commits yet
@@ -275,14 +270,12 @@ class BuildRepo:
     async def commit(self, message: str, allow_empty: bool = False, force: bool = False):
         """Commit changes in the local directory to the build source repository."""
         local_dir = str(self.local_dir)
-        await git_helper.run_git_async(["-C", local_dir, "add", "."] + (["-f"] if force else []), github_url=self.url)
+        await git_helper.run_git_async(["-C", local_dir, "add", "."] + (["-f"] if force else []))
         commit_opts = []
         if allow_empty:
             commit_opts.append("--allow-empty")
-        await git_helper.run_git_async(
-            ["-C", local_dir, "commit", "-q"] + commit_opts + ["-m", message], github_url=self.url
-        )
-        self._commit_hash = await self._get_commit_hash(local_dir, strict=True, github_url=self.url)
+        await git_helper.run_git_async(["-C", local_dir, "commit", "-q"] + commit_opts + ["-m", message])
+        self._commit_hash = await self._get_commit_hash(local_dir, strict=True)
 
     @start_as_current_span_async(TRACER, "build_repo.tag")
     async def tag(self, tag: str):
@@ -291,7 +284,7 @@ class BuildRepo:
         :param tag: The tag to apply to the current commit.
         """
         local_dir = str(self.local_dir)
-        await git_helper.run_git_async(["-C", local_dir, "tag", "-fam", tag, "--", tag], github_url=self.url)
+        await git_helper.run_git_async(["-C", local_dir, "tag", "-fam", tag, "--", tag])
 
     @start_as_current_span_async(TRACER, "build_repo.push")
     async def push(self, force: bool = False):
@@ -303,9 +296,9 @@ class BuildRepo:
         if force:
             push_cmd.append("--force")
             self._logger.info("Using force push for branch %s", self.branch)
-        await git_helper.run_git_async(push_cmd, github_url=self.url)
+        await git_helper.run_git_async(push_cmd)
         try:
-            await git_helper.run_git_async(["-C", local_dir, "push", "origin", "--tags"], github_url=self.url)
+            await git_helper.run_git_async(["-C", local_dir, "push", "origin", "--tags"])
         except Exception as e:
             # Rebase should not fail if the tags are not pushed successfully
             self._logger.warning(e)
@@ -323,20 +316,17 @@ class BuildRepo:
         if not local_dir.joinpath(".git").exists():
             raise FileNotFoundError(f"{local_dir} is not a git repository")
         local_dir = str(local_dir)
+        _, url, _ = await git_helper.gather_git_async(["-C", local_dir, "config", "--get", "remote.origin.url"])
+        _, branch, _ = await git_helper.gather_git_async(["-C", local_dir, "rev-parse", "--abbrev-ref", "HEAD"])
 
-        # Discover repo metadata using local-only git commands (no auth needed)
-        _, url, _ = await exectools.cmd_gather_async(["git", "-C", local_dir, "config", "--get", "remote.origin.url"])
-        url = url.strip()
-        _, branch, _ = await exectools.cmd_gather_async(["git", "-C", local_dir, "rev-parse", "--abbrev-ref", "HEAD"])
-        branch = branch.strip()
-
+        # Check if pull remote exists
         pull_url = None
-        rc, pull_remote_url, _ = await exectools.cmd_gather_async(
-            ["git", "-C", local_dir, "config", "--get", "remote.pull.url"], check=False
+        rc, pull_remote_url, _ = await git_helper.gather_git_async(
+            ["-C", local_dir, "config", "--get", "remote.pull.url"], check=False
         )
         if rc == 0:
             pull_url = pull_remote_url.strip()
 
-        repo = BuildRepo(url, branch, local_dir, logger=logger, pull_url=pull_url)
-        repo._commit_hash = await BuildRepo._get_commit_hash(local_dir, github_url=url)
+        repo = BuildRepo(url.strip(), branch.strip(), local_dir, logger=logger, pull_url=pull_url)
+        repo._commit_hash = await BuildRepo._get_commit_hash(local_dir)
         return repo

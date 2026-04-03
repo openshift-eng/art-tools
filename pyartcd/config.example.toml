@@ -5,7 +5,7 @@ package_owner = "jdelft@redhat.com"
 
 [build_config]
 ocp_build_data_url = "https://github.com/openshift-eng/ocp-build-data.git"
-ocp_build_data_repo_push_url = "https://github.com/openshift-eng/ocp-build-data.git"
+ocp_build_data_repo_push_url = "git@github.com:openshift-eng/ocp-build-data.git"
 
 [shipment_config]
 shipment_data_url = "https://gitlab.cee.redhat.com/hybrid-platforms/art/ocp-shipment-data.git"

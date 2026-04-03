@@ -1627,7 +1627,7 @@ class TestFetchCsvFromGit(unittest.IsolatedAsyncioTestCase):
     """Test the _fetch_csv_from_git helper function."""
 
     @patch("doozerlib.backend.konflux_fbc.shutil.rmtree")
-    @patch("doozerlib.backend.konflux_fbc.artlib_util.ensure_github_https_url")
+    @patch("doozerlib.backend.konflux_fbc.artlib_util.convert_remote_git_to_ssh")
     @patch("artcommonlib.git_helper.run_git_async", new_callable=AsyncMock)
     async def test_fetch_csv_from_git_success(self, mock_run_git, mock_convert_url, mock_rmtree):
         """Test successful CSV extraction from git."""
@@ -1646,7 +1646,7 @@ class TestFetchCsvFromGit(unittest.IsolatedAsyncioTestCase):
                 True,
                 True,
             ]  # repo_dir doesn't exist, manifests exists, repo exists for cleanup
-            mock_convert_url.return_value = "https://github.com/openshift-priv/test-operator"
+            mock_convert_url.return_value = "git@github.com:openshift-priv/test-operator.git"
 
             mock_csv_file = MagicMock()
             mock_csv_file.name = "test.clusterserviceversion.yaml"
@@ -1656,8 +1656,12 @@ class TestFetchCsvFromGit(unittest.IsolatedAsyncioTestCase):
             logger = MagicMock()
             work_dir = Path("/tmp/test")
 
+            # The function catches exceptions internally, so we need to mock properly
+            # For this test, let's verify the git commands are called correctly
             mock_run_git.return_value = None
 
+            # Since the function has complex file operations, let's just verify
+            # the git commands are called with correct arguments
             await _fetch_csv_from_git(
                 git_url="https://github.com/openshift-priv/test-operator",
                 revision="abc123",
@@ -1665,16 +1669,18 @@ class TestFetchCsvFromGit(unittest.IsolatedAsyncioTestCase):
                 logger=logger,
             )
 
+            # Verify git commands were called
             mock_convert_url.assert_called_once_with("https://github.com/openshift-priv/test-operator")
 
     @patch("doozerlib.backend.konflux_fbc.shutil.rmtree")
-    @patch("doozerlib.backend.konflux_fbc.artlib_util.ensure_github_https_url")
+    @patch("doozerlib.backend.konflux_fbc.artlib_util.convert_remote_git_to_ssh")
     @patch("artcommonlib.git_helper.run_git_async", new_callable=AsyncMock)
     async def test_fetch_csv_from_git_no_manifests_dir(self, mock_run_git, mock_convert_url, mock_rmtree):
         """Test when manifests directory doesn't exist."""
         with patch("pathlib.Path.exists") as mock_exists:
+            # repo_dir doesn't exist initially, manifests doesn't exist, repo exists for cleanup
             mock_exists.side_effect = [False, False, True]
-            mock_convert_url.return_value = "https://github.com/openshift-priv/test-operator"
+            mock_convert_url.return_value = "git@github.com:openshift-priv/test-operator.git"
 
             logger = MagicMock()
             work_dir = Path("/tmp/test")

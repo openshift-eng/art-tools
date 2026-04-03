@@ -324,6 +324,26 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
         self.assertIsNotNone(pipeline.konflux_db)
         mock_konflux_db.assert_called_once()
 
+    def test_init_missing_github_token(self):
+        """Test initialization fails without GITHUB_TOKEN"""
+        del os.environ["GITHUB_TOKEN"]
+        mock_runtime = Mock(
+            dry_run=False,
+            working_dir=Path("/tmp/working"),
+        )
+        mock_runtime.new_slack_client.return_value = Mock()
+
+        with self.assertRaisesRegex(ValueError, "GITHUB_TOKEN environment variable is required"):
+            UpdateGolangPipeline(
+                runtime=mock_runtime,
+                ocp_version="4.16",
+                cves=None,
+                force_update_tracker=False,
+                go_nvrs=["golang-1.20.12-2.el8"],
+                art_jira="ART-1234",
+                tag_builds=True,
+            )
+
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     def test_init_with_custom_kubeconfig(self, mock_konflux_db):
         """Test initialization with custom kubeconfig path"""
