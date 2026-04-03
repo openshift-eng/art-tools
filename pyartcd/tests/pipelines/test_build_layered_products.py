@@ -33,8 +33,10 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
 
     def test_test_assembly_sets_test_banner(self):
         """When assembly is 'test', the Jenkins title should include [TEST]."""
-        with patch('pyartcd.pipelines.build_layered_products.jenkins.init_jenkins'), \
-             patch('pyartcd.pipelines.build_layered_products.jenkins.update_title') as mock_update_title:
+        with (
+            patch('pyartcd.pipelines.build_layered_products.jenkins.init_jenkins'),
+            patch('pyartcd.pipelines.build_layered_products.jenkins.update_title') as mock_update_title,
+        ):
             BuildLayeredProductsPipeline(
                 runtime=self.runtime,
                 group='oadp-1.4',
@@ -48,8 +50,10 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
 
     def test_non_test_assembly_does_not_set_test_banner(self):
         """When assembly is not 'test', the Jenkins [TEST] banner should not be set."""
-        with patch('pyartcd.pipelines.build_layered_products.jenkins.init_jenkins'), \
-             patch('pyartcd.pipelines.build_layered_products.jenkins.update_title') as mock_update_title:
+        with (
+            patch('pyartcd.pipelines.build_layered_products.jenkins.init_jenkins'),
+            patch('pyartcd.pipelines.build_layered_products.jenkins.update_title') as mock_update_title,
+        ):
             BuildLayeredProductsPipeline(
                 runtime=self.runtime,
                 group='oadp-1.4',
