@@ -240,8 +240,9 @@ class ConfigScanSources:
         # Print the output report
         self.generate_report()
 
-    def _try_reconciliation(self, metadata: Metadata, repo_name: str, pub_branch_name: str, priv_branch_name: str,
-                             priv_url: str = ""):
+    def _try_reconciliation(
+        self, metadata: Metadata, repo_name: str, pub_branch_name: str, priv_branch_name: str, priv_url: str = ""
+    ):
         reconciled = False
         git_auth_env = get_github_git_auth_env(url=priv_url or None)
 
@@ -453,8 +454,9 @@ class ConfigScanSources:
                 continue
 
             with Dir(path):
-                self._try_reconciliation(metadata, priv_repo_name, public_branch_name, priv_branch_name,
-                                         priv_url=priv_url)
+                self._try_reconciliation(
+                    metadata, priv_repo_name, public_branch_name, priv_branch_name, priv_url=priv_url
+                )
 
     def generate_dependency_tree(self, tree, level=1, levels_dict=None):
         if not levels_dict:
