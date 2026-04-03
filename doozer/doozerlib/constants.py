@@ -1,7 +1,6 @@
 RC_BASE_URL = "https://{arch}.ocp.releases.ci.openshift.org"
 RC_BASE_PRIV_URL = "https://{arch}.ocp.internal.releases.ci.openshift.org"
 
-GITHUB_TOKEN = "GITHUB_TOKEN"
 BREWWEB_URL = "https://brewweb.engineering.redhat.com/brew"
 DISTGIT_GIT_URL = "git+https://pkgs.devel.redhat.com/git"
 
@@ -47,7 +46,7 @@ KONFLUX_UI_DEFAULT_WORKSPACE = "ocp-art"  # associated with ocp-art-tenant
 KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL = "https://api.github.com/repos/openshift-priv/art-konflux-template/contents/.tekton/art-konflux-template-push.yaml?ref=main"
 KONFLUX_DEFAULT_BUNDLE_BUILD_PLR_TEMPLATE_URL = "https://api.github.com/repos/openshift-priv/art-konflux-template/contents/.tekton/art-bundle-konflux-template-push.yaml?ref=main"
 KONFLUX_DEFAULT_FBC_BUILD_PLR_TEMPLATE_URL = "https://api.github.com/repos/openshift-priv/art-konflux-template/contents/.tekton/art-fbc-konflux-template-push.yaml?ref=main"
-ART_FBC_GIT_REPO = "git@github.com:openshift-priv/art-fbc.git"
+ART_FBC_GIT_REPO = "https://github.com/openshift-priv/art-fbc.git"
 REGISTRY_PROXY_BASE_URL = "registry-proxy.engineering.redhat.com"
 BREW_REGISTRY_BASE_URL = "brew.registry.redhat.io"
 

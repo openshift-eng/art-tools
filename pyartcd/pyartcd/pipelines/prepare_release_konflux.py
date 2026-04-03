@@ -22,6 +22,7 @@ import semver
 from artcommonlib import exectools
 from artcommonlib.assembly import AssemblyTypes, assembly_config_struct, assembly_group_config
 from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
+from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.gitlab import GitLabClient
 from artcommonlib.jira_config import JIRA_EMAIL
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBundleBuildRecord
@@ -39,7 +40,6 @@ from elliottlib.errata import push_cdn_stage
 from elliottlib.errata_async import AsyncErrataAPI
 from elliottlib.shipment_model import Issue, ReleaseNotes, ShipmentConfig, Snapshot, SnapshotSpec, Tools
 from elliottlib.shipment_utils import get_shipment_configs_from_mr, set_jira_bug_ids
-from ghapi.all import GhApi
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 from pyartcd import constants
@@ -103,7 +103,6 @@ class PrepareReleaseKonfluxPipeline:
         self.releases_config = None
         self.release_version = None
         self.group_config = None
-        self.github_token = None
         self.gitlab_token = None
         self.jira_token = None
         self.job_url = None
@@ -253,10 +252,7 @@ class PrepareReleaseKonfluxPipeline:
             sys.exit(2)
 
     def check_env_vars(self):
-        github_token = os.getenv('GITHUB_TOKEN')
-        if not github_token:
-            raise ValueError("GITHUB_TOKEN environment variable is required to create a pull request")
-        self.github_token = github_token
+        # GitHub auth is handled by get_github_client_for_org() with App auth / PAT fallback
 
         gitlab_token = os.getenv("GITLAB_TOKEN")
         if not gitlab_token:
@@ -1270,14 +1266,10 @@ class PrepareReleaseKonfluxPipeline:
 
         head = f"{source_owner}:{branch}"
         base = self.build_data_gitref or self.group
-        api = GhApi(owner=target_owner, repo=target_repo, token=self.github_token)
-        existing_prs = api.pulls.list(
-            state="open",
-            head=head,
-            base=base,
-        )
+        gh_repo = get_github_client_for_org(target_owner).get_repo(f"{target_owner}/{target_repo}")
+        existing_prs = list(gh_repo.get_pulls(state="open", head=head, base=base))
 
-        if not existing_prs.items:
+        if not existing_prs:
             pr_title = f"Update assembly {self.assembly}"
             pr_body = f"This PR updates {self.assembly} assembly definition."
             if self.job_url:
@@ -1287,7 +1279,7 @@ class PrepareReleaseKonfluxPipeline:
                 self.logger.info("[DRY-RUN] Would have created a new PR with title '%s'", pr_title)
                 return True
 
-            result = api.pulls.create(
+            result = gh_repo.create_pull(
                 head=head,
                 base=base,
                 title=pr_title,
@@ -1298,20 +1290,18 @@ class PrepareReleaseKonfluxPipeline:
             await self._slack_client.say_in_thread(f"PR to update assembly definition: {result.html_url}")
             pull_number = result.number
         else:
-            self.logger.info("Existing PR to update assembly found: %s", existing_prs.items[0].html_url)
-            pull_number = existing_prs.items[0].number
+            self.logger.info("Existing PR to update assembly found: %s", existing_prs[0].html_url)
+            pull_number = existing_prs[0].number
 
             if self.dry_run:
                 self.logger.info("[DRY-RUN] Would have updated PR with number %s", pull_number)
                 return True
 
-            pr_body = existing_prs.items[0].body
+            pr_body = existing_prs[0].body or ""
             if self.job_url:
                 pr_body += f"\n\nUpdated by job: {self.job_url}"
-            result = api.pulls.update(
-                pull_number=pull_number,
-                body=pr_body,
-            )
+            result = existing_prs[0]
+            result.edit(body=pr_body)
             self.logger.info("PR to update assembly updated: %s", result.html_url)
             await self._slack_client.say_in_thread(f"PR to update assembly updated: {result.html_url}")
 
@@ -1324,11 +1314,10 @@ class PrepareReleaseKonfluxPipeline:
                 self.logger.info("[DRY-RUN] Would have auto-merged PR with number %s", pull_number)
             else:
                 try:
-                    # Retry merge to handle race conditions where the base branch
-                    # is modified between PR creation and the merge attempt
+
                     @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(5))
                     def merge_pr():
-                        api.pulls.merge(pull_number)
+                        gh_repo.get_pull(pull_number).merge()
 
                     merge_pr()
 
@@ -1339,27 +1328,25 @@ class PrepareReleaseKonfluxPipeline:
                     await self._slack_client.say_in_thread(
                         f"Failed to auto-merge PR, will wait for manual merge: {result.html_url}"
                     )
-                    # Fall back to waiting for manual merge
-                    await self._wait_for_pr_merge(api, pull_number, result.html_url)
+                    await self._wait_for_pr_merge(gh_repo, pull_number, result.html_url)
         else:
             self.logger.info(
                 "Push owner (%s) differs from pull owner (%s), waiting for manual merge...", source_owner, target_owner
             )
             await self._slack_client.say_in_thread(f"Waiting for PR to update assembly to be merged: {result.html_url}")
-            await self._wait_for_pr_merge(api, pull_number, result.html_url)
+            await self._wait_for_pr_merge(gh_repo, pull_number, result.html_url)
 
         return True
 
-    async def _wait_for_pr_merge(self, api, pull_number: int, pr_url: str):
+    async def _wait_for_pr_merge(self, gh_repo, pull_number: int, pr_url: str):
         """Wait for a PR to be merged manually with timeout."""
-        # wait until the PR is merged
         timeout = 60 * 60  # 1 hour
         start_time = time.time()
         while True:
             if (time.time() - start_time) > timeout:
                 raise TimeoutError(f"Timeout waiting for PR to update assembly to be merged: {pr_url}")
             await asyncio.sleep(10)
-            pr = api.pulls.get(pull_number)
+            pr = gh_repo.get_pull(pull_number)
             if pr.merged:
                 self.logger.info("PR to update assembly was merged: %s", pr_url)
                 break
