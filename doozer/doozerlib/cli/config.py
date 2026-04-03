@@ -176,7 +176,7 @@ def get_releases(runtime) -> dict:
         with open(f'{runtime.data_path}/releases.yml', 'r') as file:
             return yaml.safe_load(file)
 
-    parts = runtime.data_path.rstrip('/').rstrip('.git').split('/')
+    parts = runtime.data_path.rstrip('/').removesuffix('.git').split('/')
     owner, repo_name = parts[-2], parts[-1]
     repo = get_github_client_for_org(owner).get_repo(f"{owner}/{repo_name}")
     content = repo.get_contents('releases.yml', ref=runtime.group_commitish)

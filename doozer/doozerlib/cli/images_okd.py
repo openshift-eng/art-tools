@@ -18,7 +18,7 @@ import yaml
 from artcommonlib import exectools
 from artcommonlib.format_util import yellow_print
 from artcommonlib.git_helper import git_clone
-from artcommonlib.github_auth import get_github_client_for_org, get_github_git_auth_env
+from artcommonlib.github_auth import get_github_git_auth_env
 from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
 from artcommonlib.util import (
@@ -812,10 +812,7 @@ async def images_okd_prs(
     # OKD images are marked as disabled: true in their metadata. So make sure to load
     # disabled images.
     runtime.initialize(clone_distgits=False, clone_source=False, disabled=True)
-    if github_access_token:
-        g = Github(auth=Auth.Token(github_access_token))
-    else:
-        g = get_github_client_for_org("openshift")
+    g = Github(auth=Auth.Token(github_access_token))
     github_user = g.get_user()
 
     major = runtime.group_config.vars['MAJOR']
