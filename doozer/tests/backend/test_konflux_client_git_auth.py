@@ -5,6 +5,8 @@ from unittest import TestCase
 from unittest.mock import MagicMock, patch
 
 from doozerlib.backend.konflux_client import (
+    _GIT_AUTH_GENERATED_BY_LABEL_KEY,
+    _GIT_AUTH_GENERATED_BY_LABEL_VALUE,
     _GIT_AUTH_SECRET_LABEL_KEY,
     _GIT_AUTH_SECRET_LABEL_VALUE,
     _GIT_AUTH_SECRET_PREFIX,
@@ -42,7 +44,7 @@ class TestEnsureGitAuthSecret(TestCase):
         name = _run(client.ensure_git_auth_secret())
         self.assertEqual(name, "pipelines-as-code-secret")
 
-    @patch.dict("os.environ", {"GITHUB_APP_ID": "12345"})
+    @patch.dict("os.environ", {"GITHUB_APP_ID": "12345", "BUILD_URL": "https://jenkins.example.com/job/test/42/"})
     @patch("doozerlib.backend.konflux_client.get_github_app_token_for_org", return_value="ghp_fake_token")
     @patch("doozerlib.backend.konflux_client.time")
     def test_creates_secret_with_correct_shape(self, mock_time, mock_token_fn):
@@ -60,6 +62,14 @@ class TestEnsureGitAuthSecret(TestCase):
         self.assertEqual(
             body.metadata.labels[_GIT_AUTH_SECRET_LABEL_KEY],
             _GIT_AUTH_SECRET_LABEL_VALUE,
+        )
+        self.assertEqual(
+            body.metadata.labels[_GIT_AUTH_GENERATED_BY_LABEL_KEY],
+            _GIT_AUTH_GENERATED_BY_LABEL_VALUE,
+        )
+        self.assertEqual(
+            body.metadata.annotations["art-jenkins-job-url"],
+            "https://jenkins.example.com/job/test/42/",
         )
         self.assertEqual(
             base64.b64decode(body.data["username"]).decode(),
@@ -124,7 +134,8 @@ class TestCleanupStaleGitAuthSecrets(TestCase):
         self.assertEqual(list_kwargs["namespace"], "test-ns")
         self.assertEqual(
             list_kwargs["label_selector"],
-            f"{_GIT_AUTH_SECRET_LABEL_KEY}={_GIT_AUTH_SECRET_LABEL_VALUE}",
+            f"{_GIT_AUTH_SECRET_LABEL_KEY}={_GIT_AUTH_SECRET_LABEL_VALUE},"
+            f"{_GIT_AUTH_GENERATED_BY_LABEL_KEY}={_GIT_AUTH_GENERATED_BY_LABEL_VALUE}",
         )
 
         # Only the old secret should be deleted

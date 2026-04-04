@@ -37,6 +37,8 @@ LOGGER = logging.getLogger(__name__)
 _GIT_AUTH_SECRET_PREFIX = "art-transient-pipeline-auth-"
 _GIT_AUTH_SECRET_LABEL_KEY = "art.openshift.io/git-auth"
 _GIT_AUTH_SECRET_LABEL_VALUE = "true"
+_GIT_AUTH_GENERATED_BY_LABEL_KEY = "art.openshift.io/generated-by"
+_GIT_AUTH_GENERATED_BY_LABEL_VALUE = "art-automation"
 
 # Label key used to filter PipelineRuns for this process
 _COMMON_RUNTIME_LABEL_KEY = "doozer-watch-id"
@@ -275,8 +277,14 @@ class KonfluxClient:
             metadata=V1ObjectMeta(
                 name=secret_name,
                 namespace=namespace,
-                labels={_GIT_AUTH_SECRET_LABEL_KEY: _GIT_AUTH_SECRET_LABEL_VALUE},
-                annotations={"art.openshift.io/created-at": now},
+                labels={
+                    _GIT_AUTH_SECRET_LABEL_KEY: _GIT_AUTH_SECRET_LABEL_VALUE,
+                    _GIT_AUTH_GENERATED_BY_LABEL_KEY: _GIT_AUTH_GENERATED_BY_LABEL_VALUE,
+                },
+                annotations={
+                    "art.openshift.io/created-at": now,
+                    "art-jenkins-job-url": os.getenv("BUILD_URL", "n/a"),
+                },
             ),
             # basic-auth secrets expect "username" and "password" keys
             data={
@@ -343,7 +351,10 @@ class KonfluxClient:
         :param max_age_hours: Secrets older than this are deleted.
         """
         namespace = namespace or self.default_namespace
-        label_selector = f"{_GIT_AUTH_SECRET_LABEL_KEY}={_GIT_AUTH_SECRET_LABEL_VALUE}"
+        label_selector = (
+            f"{_GIT_AUTH_SECRET_LABEL_KEY}={_GIT_AUTH_SECRET_LABEL_VALUE},"
+            f"{_GIT_AUTH_GENERATED_BY_LABEL_KEY}={_GIT_AUTH_GENERATED_BY_LABEL_VALUE}"
+        )
 
         secrets = await exectools.to_thread(
             self.corev1_client.list_namespaced_secret,
