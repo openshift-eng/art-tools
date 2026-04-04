@@ -258,6 +258,12 @@ class KonfluxClient:
         # git-clone + prefetch tasks need it — those run in the first few minutes).
         token = await exectools.to_thread(get_github_app_token_for_org, org)
 
+        # Nanosecond epoch avoids name collisions when multiple doozer
+        # invocations start within the same second.  A human-readable
+        # timestamp would need sanitising for k8s naming rules and still
+        # risk collisions at second granularity, so raw nanoseconds are
+        # the safest choice.  Use the helper below to decode:
+        #   python3 -c "import datetime as d; print(d.datetime.fromtimestamp(<ns>/1e9, d.timezone.utc))"
         epoch_ns = time.time_ns()
         secret_name = f"{_GIT_AUTH_SECRET_PREFIX}{epoch_ns}"
         now = datetime.datetime.now(datetime.timezone.utc).isoformat()
