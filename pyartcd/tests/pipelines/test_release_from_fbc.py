@@ -621,9 +621,7 @@ class TestReleaseJira(unittest.TestCase):
     @patch("pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async")
     def test_mr_description_includes_jira_when_set(self, mock_cmd):
         mock_cmd.return_value = (0, "None", "")
-        pipeline = self._make_pipeline(
-            dry_run=False, release_jira="https://redhat.atlassian.net/browse/OADP-1234"
-        )
+        pipeline = self._make_pipeline(dry_run=False, release_jira="https://redhat.atlassian.net/browse/OADP-1234")
         pipeline.update_shipment_data = AsyncMock(return_value=True)
 
         mock_source_project = MagicMock()
@@ -665,9 +663,7 @@ class TestReleaseJira(unittest.TestCase):
         self.assertEqual(key, "MTA-999")
 
     def test_update_jira_adds_remote_link(self):
-        pipeline = self._make_pipeline(
-            dry_run=False, release_jira="https://redhat.atlassian.net/browse/OADP-5678"
-        )
+        pipeline = self._make_pipeline(dry_run=False, release_jira="https://redhat.atlassian.net/browse/OADP-5678")
         mock_jira = MagicMock()
         pipeline.runtime.new_jira_client.return_value = mock_jira
 
@@ -679,9 +675,7 @@ class TestReleaseJira(unittest.TestCase):
         )
 
     def test_update_jira_dry_run_skips(self):
-        pipeline = self._make_pipeline(
-            dry_run=True, release_jira="https://redhat.atlassian.net/browse/OADP-5678"
-        )
+        pipeline = self._make_pipeline(dry_run=True, release_jira="https://redhat.atlassian.net/browse/OADP-5678")
 
         pipeline._update_jira_with_mr_link("https://gitlab.example.com/org/repo/-/merge_requests/10")
 
@@ -695,9 +689,7 @@ class TestReleaseJira(unittest.TestCase):
         pipeline.runtime.new_jira_client.assert_not_called()
 
     def test_update_jira_failure_is_nonfatal(self):
-        pipeline = self._make_pipeline(
-            dry_run=False, release_jira="https://redhat.atlassian.net/browse/OADP-5678"
-        )
+        pipeline = self._make_pipeline(dry_run=False, release_jira="https://redhat.atlassian.net/browse/OADP-5678")
         pipeline.runtime.new_jira_client.side_effect = RuntimeError("auth failed")
 
         pipeline._update_jira_with_mr_link("https://gitlab.example.com/org/repo/-/merge_requests/10")
