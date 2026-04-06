@@ -91,6 +91,7 @@ class ReleaseFromFbcPipeline:
         extra_image_nvrs: Optional[List[str]] = None,
         ocp_optional: bool = False,
         exclude_nvr_components: Optional[List[str]] = None,
+        release_jira: Optional[str] = None,
     ) -> None:
         self.logger = logging.getLogger(__name__)
         self.runtime = runtime
@@ -139,6 +140,7 @@ class ReleaseFromFbcPipeline:
 
         self.jira_bugs = jira_bugs
         self.target_release_date = target_release_date
+        self.release_jira = release_jira
 
         # Base elliott command template
         self._elliott_base_command = [
@@ -864,6 +866,8 @@ class ReleaseFromFbcPipeline:
             mr_title = f"Draft: Shipment for {self.product} {self.assembly}"
         mr_description = f"Created by job: {self.job_url}\n\n" if self.job_url else ""
         mr_description += f"Shipment files created for {self.assembly} using release-from-fbc command"
+        if self.release_jira:
+            mr_description += f"\n\nRelease JIRA: {self.release_jira}"
 
         if self.dry_run:
             self.logger.info("[DRY-RUN] Would have created MR with title: %s", mr_title)
@@ -940,6 +944,39 @@ class ReleaseFromFbcPipeline:
                 blocking_mr_url,
                 e,
             )
+
+    @staticmethod
+    def _parse_jira_key(jira_url: str) -> str:
+        """Extract the JIRA issue key from a browse URL.
+
+        E.g. "https://redhat.atlassian.net/browse/OADP-1234" -> "OADP-1234"
+        """
+        path = urlparse(jira_url).path.rstrip('/')
+        return path.split('/')[-1]
+
+    def _update_jira_with_mr_link(self, mr_url: str):
+        """Add a remote web link on the release JIRA ticket pointing to the shipment MR.
+
+        This is best-effort; failures are logged but do not raise.
+        """
+        if not self.release_jira:
+            return
+
+        issue_key = self._parse_jira_key(self.release_jira)
+        if not issue_key:
+            self.logger.warning("Could not extract JIRA issue key from URL: %s", self.release_jira)
+            return
+
+        if self.dry_run:
+            self.logger.info("[DRY-RUN] Would add remote link on %s pointing to %s", issue_key, mr_url)
+            return
+
+        try:
+            jira_client = self.runtime.new_jira_client()
+            jira_client.add_remote_link(issue_key, {"title": "Shipment MR", "url": mr_url})
+            self.logger.info("Added shipment MR link to JIRA ticket %s", issue_key)
+        except Exception as e:
+            self.logger.warning("Failed to update JIRA ticket %s with MR link: %s", issue_key, e)
 
     async def update_shipment_data(
         self, shipments_by_kind: Dict[str, ShipmentConfig], env: str, commit_message: str, branch: str
@@ -1194,6 +1231,7 @@ class ReleaseFromFbcPipeline:
                         if main_ocp_mr_url:
                             await self._set_shipment_mr_dependency(main_ocp_mr_url)
 
+                    self._update_jira_with_mr_link(mr_url)
                     await self.set_shipment_mr_ready()
             except Exception as e:
                 self.logger.exception(f"Failed to create MR: {e}")
@@ -1280,6 +1318,13 @@ class ReleaseFromFbcPipeline:
     help='Comma-separated NVR component names to explicitly exclude from the shipment '
     '(e.g., kube-rbac-proxy-container). Only needed in edge cases with --ocp-optional.',
 )
+@click.option(
+    '--release-jira',
+    default=None,
+    help='Optional JIRA ticket URL for the release request (e.g. https://redhat.atlassian.net/browse/OADP-1234). '
+    'When provided, the ticket is referenced in the shipment MR description, and a web link '
+    'to the MR is added back to the JIRA ticket.',
+)
 @pass_runtime
 @click_coroutine
 async def release_from_fbc(
@@ -1295,6 +1340,7 @@ async def release_from_fbc(
     target_release_date: Optional[str],
     ocp_optional: bool,
     exclude_nvr_components: Optional[str],
+    release_jira: Optional[str],
 ):
     """
     Create shipment files from an FBC image.
@@ -1380,6 +1426,7 @@ async def release_from_fbc(
         extra_image_nvrs=extra_image_nvrs_list,
         ocp_optional=ocp_optional,
         exclude_nvr_components=exclude_nvr_components_list,
+        release_jira=release_jira,
     )
 
     await pipeline.run()
