@@ -76,6 +76,7 @@ class ReleaseFromFbcPipeline:
         jira_bugs: Optional[List[str]] = None,
         target_release_date: Optional[str] = None,
         extra_image_nvrs: Optional[List[str]] = None,
+        release_jira: Optional[str] = None,
     ) -> None:
         self.logger = logging.getLogger(__name__)
         self.runtime = runtime
@@ -115,6 +116,7 @@ class ReleaseFromFbcPipeline:
 
         self.jira_bugs = jira_bugs
         self.target_release_date = target_release_date
+        self.release_jira = release_jira
 
         # Base elliott command template
         self._elliott_base_command = [
@@ -606,6 +608,8 @@ class ReleaseFromFbcPipeline:
             mr_title = f"Draft: Shipment for {self.product} {self.assembly}"
         mr_description = f"Created by job: {self.job_url}\n\n" if self.job_url else ""
         mr_description += f"Shipment files created for {self.assembly} using release-from-fbc command"
+        if self.release_jira:
+            mr_description += f"\n\nRelease JIRA: {self.release_jira}"
 
         if self.dry_run:
             self.logger.info("[DRY-RUN] Would have created MR with title: %s", mr_title)
@@ -638,6 +642,39 @@ class ReleaseFromFbcPipeline:
         # Store the MR URL for later use
         self.shipment_mr_url = mr_url
         return mr_url
+
+    @staticmethod
+    def _parse_jira_key(jira_url: str) -> str:
+        """Extract the JIRA issue key from a browse URL.
+
+        E.g. "https://redhat.atlassian.net/browse/OADP-1234" -> "OADP-1234"
+        """
+        path = urlparse(jira_url).path.rstrip('/')
+        return path.split('/')[-1]
+
+    def _update_jira_with_mr_link(self, mr_url: str):
+        """Add a remote web link on the release JIRA ticket pointing to the shipment MR.
+
+        This is best-effort; failures are logged but do not raise.
+        """
+        if not self.release_jira:
+            return
+
+        issue_key = self._parse_jira_key(self.release_jira)
+        if not issue_key:
+            self.logger.warning("Could not extract JIRA issue key from URL: %s", self.release_jira)
+            return
+
+        if self.dry_run:
+            self.logger.info("[DRY-RUN] Would add remote link on %s pointing to %s", issue_key, mr_url)
+            return
+
+        try:
+            jira_client = self.runtime.new_jira_client()
+            jira_client.add_remote_link(issue_key, {"title": "Shipment MR", "url": mr_url})
+            self.logger.info("Added shipment MR link to JIRA ticket %s", issue_key)
+        except Exception as e:
+            self.logger.warning("Failed to update JIRA ticket %s with MR link: %s", issue_key, e)
 
     async def update_shipment_data(
         self, shipments_by_kind: Dict[str, ShipmentConfig], env: str, commit_message: str, branch: str
@@ -922,6 +959,7 @@ class ReleaseFromFbcPipeline:
                 mr_url = await self.create_shipment_mr(shipments_by_kind, env="prod")
                 if mr_url:
                     self.logger.info(f"Created shipment MR: {mr_url}")
+                    self._update_jira_with_mr_link(mr_url)
             except Exception as e:
                 self.logger.exception(f"Failed to create MR: {e}")
                 if not self.dry_run:
@@ -988,6 +1026,13 @@ class ReleaseFromFbcPipeline:
     help='Target ship date for the release (e.g., 2026-Mar-31 or 2026-03-31). '
     'When provided, the date is included in the shipment MR title.',
 )
+@click.option(
+    '--release-jira',
+    default=None,
+    help='Optional JIRA ticket URL for the release request (e.g. https://redhat.atlassian.net/browse/OADP-1234). '
+    'When provided, the ticket is referenced in the shipment MR description, and a web link '
+    'to the MR is added back to the JIRA ticket.',
+)
 @pass_runtime
 @click_coroutine
 async def release_from_fbc(
@@ -1001,6 +1046,7 @@ async def release_from_fbc(
     shipment_path: Optional[str],
     jira_bugs: Optional[str],
     target_release_date: Optional[str],
+    release_jira: Optional[str],
 ):
     """
     Create shipment files from an FBC image for non-OpenShift products.
@@ -1073,6 +1119,7 @@ async def release_from_fbc(
         jira_bugs=jira_bugs_list,
         target_release_date=normalized_date,
         extra_image_nvrs=extra_image_nvrs_list,
+        release_jira=release_jira,
     )
 
     await pipeline.run()

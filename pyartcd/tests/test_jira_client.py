@@ -29,6 +29,14 @@ class TestJIRAClient(TestCase):
             }
         )
 
+    def test_add_remote_link(self):
+        client = JIRAClient(mock.MagicMock())
+        client.add_remote_link("OADP-1234", {"title": "Shipment MR", "url": "https://gitlab.example.com/mr/1"})
+        client._client.add_remote_link.assert_called_once_with(
+            "OADP-1234",
+            {"object": {"title": "Shipment MR", "url": "https://gitlab.example.com/mr/1"}},
+        )
+
     def test_clone_issue(self):
         source_issue = mock.MagicMock(
             key="FOO-1",
