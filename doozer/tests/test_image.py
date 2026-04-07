@@ -259,7 +259,10 @@ class TestImageMetadata(unittest.TestCase):
 
         metadata.runtime.group_config.konflux.cachi2.lockfile.enabled = False
 
-        with patch.object(ImageMetadata, "is_cachi2_enabled", return_value=True):
+        with (
+            patch.object(ImageMetadata, "is_cachi2_enabled", return_value=True),
+            patch.object(ImageMetadata, "get_konflux_network_mode", return_value="hermetic"),
+        ):
             result = metadata.is_lockfile_generation_enabled()
         self.assertTrue(result)
         self.logger.info.assert_any_call("Lockfile generation set from metadata config True")
@@ -290,7 +293,10 @@ class TestImageMetadata(unittest.TestCase):
 
         metadata.runtime.group_config.konflux.cachi2.lockfile.enabled = True
 
-        with patch.object(ImageMetadata, "is_cachi2_enabled", return_value=True):
+        with (
+            patch.object(ImageMetadata, "is_cachi2_enabled", return_value=True),
+            patch.object(ImageMetadata, "get_konflux_network_mode", return_value="hermetic"),
+        ):
             result = metadata.is_lockfile_generation_enabled()
         self.assertTrue(result)
         self.logger.info.assert_any_call("Lockfile generation set from group config True")
@@ -321,7 +327,10 @@ class TestImageMetadata(unittest.TestCase):
 
         metadata.runtime.group_config.konflux.cachi2.lockfile.enabled = Missing
 
-        with patch.object(ImageMetadata, "is_cachi2_enabled", return_value=True):
+        with (
+            patch.object(ImageMetadata, "is_cachi2_enabled", return_value=True),
+            patch.object(ImageMetadata, "get_konflux_network_mode", return_value="hermetic"),
+        ):
             result = metadata.is_lockfile_generation_enabled()
         self.assertTrue(result)
 
@@ -354,6 +363,48 @@ class TestImageMetadata(unittest.TestCase):
         with patch.object(ImageMetadata, "is_cachi2_enabled", return_value=Missing):
             result = metadata.is_lockfile_generation_enabled()
         self.assertFalse(result)
+
+    def test_lockfile_enabled_open_network_mode(self):
+        """Test that lockfile generation is disabled for open network mode"""
+        self.logger = MagicMock()
+        metadata = self._create_image_metadata('openshift/test_lockfile')
+
+        mock_config = MagicMock()
+        mock_config.konflux.cachi2.lockfile.enabled = True
+        metadata.config = mock_config
+        metadata.logger = self.logger
+
+        metadata.runtime.group_config.konflux.cachi2.lockfile.enabled = True
+
+        with (
+            patch.object(ImageMetadata, "is_cachi2_enabled", return_value=True),
+            patch.object(ImageMetadata, "get_konflux_network_mode", return_value="open"),
+        ):
+            result = metadata.is_lockfile_generation_enabled()
+        self.assertFalse(result)
+        self.logger.info.assert_any_call("Lockfile generation disabled: network mode is 'open' (requires 'hermetic')")
+
+    def test_lockfile_enabled_internal_only_network_mode(self):
+        """Test that lockfile generation is disabled for internal-only network mode"""
+        self.logger = MagicMock()
+        metadata = self._create_image_metadata('openshift/test_lockfile')
+
+        mock_config = MagicMock()
+        mock_config.konflux.cachi2.lockfile.enabled = True
+        metadata.config = mock_config
+        metadata.logger = self.logger
+
+        metadata.runtime.group_config.konflux.cachi2.lockfile.enabled = True
+
+        with (
+            patch.object(ImageMetadata, "is_cachi2_enabled", return_value=True),
+            patch.object(ImageMetadata, "get_konflux_network_mode", return_value="internal-only"),
+        ):
+            result = metadata.is_lockfile_generation_enabled()
+        self.assertFalse(result)
+        self.logger.info.assert_any_call(
+            "Lockfile generation disabled: network mode is 'internal-only' (requires 'hermetic')"
+        )
 
     def test_get_enabled_repos_with_repos(self):
         """Test get_enabled_repos returns repos that are both globally enabled and in image config"""

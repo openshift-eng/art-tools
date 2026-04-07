@@ -1010,9 +1010,10 @@ class ImageMetadata(Metadata):
         Determines whether lockfile generation is enabled for the current image configuration.
 
         The method checks preconditions in the following order:
-        1. Cachi2 feature must be enabled
-        2. enabled_repos must be defined and not empty
-        3. Lockfile generation overrides:
+        1. Network mode must be "hermetic" (lockfiles only for hermetic builds)
+        2. Cachi2 feature must be enabled
+        3. enabled_repos must be defined and not empty
+        4. Lockfile generation overrides:
            - Image metadata configuration (`self.config.konflux.cachi2.lockfile.enabled`)
            - Group configuration (`self.runtime.group_config.konflux.cachi2.lockfile.enabled`)
         If no override is set, lockfile generation defaults to enabled.
@@ -1020,6 +1021,12 @@ class ImageMetadata(Metadata):
         Returns:
             bool: True if lockfile generation is enabled, False otherwise.
         """
+        # Early network mode check - lockfiles only for hermetic builds
+        network_mode = self.get_konflux_network_mode()
+        if network_mode != "hermetic":
+            self.logger.info(f"Lockfile generation disabled: network mode is '{network_mode}' (requires 'hermetic')")
+            return False
+
         lockfile_enabled = True
 
         # First check: cachi2 must be enabled
