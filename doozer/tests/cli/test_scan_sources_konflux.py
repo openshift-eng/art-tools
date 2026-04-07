@@ -133,7 +133,9 @@ class TestMinimalCrashIsolation(TestScanSourcesKonflux):
             self.scanner.issues,
             [{'name': 'broken-image', 'issue': 'Failed rebasing into -priv: bad repo'}],
         )
-        mock_try_reconciliation.assert_called_once_with(good_meta, 'good', 'main', 'main')
+        mock_try_reconciliation.assert_called_once_with(
+            good_meta, 'good', 'main', 'main', priv_url='https://example.com/org/good.git'
+        )
 
 
 class TestScanTaskBundleChanges(TestScanSourcesKonflux):
