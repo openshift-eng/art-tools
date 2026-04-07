@@ -1287,23 +1287,45 @@ class ImageMetadata(Metadata):
         """
         Determines whether this image is configured as a base image.
 
-        Base images are identified by the base_only: true configuration field
-        or by being a golang builder image. These images require special
-        snapshot-to-release workflow processing to generate dual URLs for
-        streams.yml updates.
+        Base images are identified by the base_only: true configuration field.
+        These images require special snapshot-to-release workflow processing
+        to generate dual URLs for streams.yml updates.
 
         Returns:
-            bool: True if this is a base image (base_only: true) or golang builder, False otherwise
+            bool: True if this is a base image (base_only: true), False otherwise
         """
         base_only_config = getattr(self.config, 'base_only', Missing)
         if base_only_config not in [Missing, None]:
             return bool(base_only_config)
-
-        # Golang builders also need snapshot-to-release workflow
-        if hasattr(self.config, 'name') and self.config.name == GOLANG_BUILDER_IMAGE_NAME:
-            return True
-
         return False
+
+    def is_golang_builder(self) -> bool:
+        """
+        Determines whether this image is a golang builder image.
+
+        Golang builders are identified by having a name that matches
+        the GOLANG_BUILDER_IMAGE_NAME constant.
+
+        Returns:
+            bool: True if this is a golang builder image, False otherwise
+        """
+        return hasattr(self.config, 'name') and self.config.name == GOLANG_BUILDER_IMAGE_NAME
+
+    def should_trigger_base_image_release(self) -> bool:
+        """
+        Determines whether this image should trigger the base image release workflow.
+
+        The base image release workflow should be triggered for both:
+        - Base images (base_only: true)
+        - Golang builder images
+
+        These image types require special snapshot-to-release workflow processing
+        to generate dual URLs for streams.yml updates.
+
+        Returns:
+            bool: True if base image release workflow should be triggered, False otherwise
+        """
+        return self.is_base_image() or self.is_golang_builder()
 
     def is_snapshot_release_enabled(self) -> bool:
         """

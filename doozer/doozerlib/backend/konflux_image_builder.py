@@ -254,7 +254,7 @@ class KonfluxImageBuilder:
                         record["record_id"] = build_record.record_id
 
                     # Check base image release AFTER saving to database
-                    if outcome is KonfluxBuildOutcome.SUCCESS and metadata.is_base_image():
+                    if outcome is KonfluxBuildOutcome.SUCCESS and metadata.should_trigger_base_image_release():
                         base_image_release_success = await self._trigger_base_image_release(metadata, nvr)
                         if not base_image_release_success:
                             logger.error(
