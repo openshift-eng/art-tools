@@ -23,6 +23,7 @@ from artcommonlib.rpm_utils import _rpmvercmp, compare_nvr, parse_nvr
 from artcommonlib.util import isolate_el_version_in_brew_tag
 from elliottlib import errata
 from requests_kerberos import HTTPKerberosAuth
+from tenacity import retry, retry_if_exception_type, stop_after_delay, wait_fixed
 
 from doozerlib.brew import get_builds_tags
 from doozerlib.cli import cli
@@ -198,7 +199,7 @@ def update_advisory_builds(config, errata_session, advisory_id, nvres, nvr_produ
             raise IOError(f'Unable to add nvrs to advisory {advisory_id}: {to_add}')
 
 
-def _assemble_repo(config: SimpleNamespace, nvres: List[str]):
+def _assemble_repo(config: SimpleNamespace, nvres: List[str], koji_api: koji.ClientSession = None):
     """
     This method is intended to be wrapped by assemble_repo.
     Assembles one or more architecture specific repos in the
@@ -206,9 +207,50 @@ def _assemble_repo(config: SimpleNamespace, nvres: List[str]):
     is called that all RPMs are signed if any of those arches requires signing.
     :param config: cli config
     :param nvres: a list of nvres to include.
+    :param koji_api: optional koji client session; when provided and assembling
+        in signed mode, the expected RPMs for each build are queried from Koji
+        and compared against the contents of the signed directory to ensure
+        completeness.
     :return: n/a
     An exception will be thrown if no RPMs can be found matching an nvr.
     """
+
+    @retry(
+        retry=retry_if_exception_type(IOError),
+        stop=stop_after_delay(600),
+        wait=wait_fixed(30),
+        reraise=True,
+        before_sleep=lambda retry_state: logger.info('Waiting for signed RPMs to become available, retrying in 30s...'),
+    )
+    def _wait_for_signed_rpms(brewroot_arch_path: str, expected_rpm_filenames: set, nvre: str, arch: str) -> List[str]:
+        rpms = os.listdir(brewroot_arch_path)
+        if not rpms:
+            raise IOError(f'Did not find any rpms in {brewroot_arch_path}')
+        if expected_rpm_filenames:
+            missing = expected_rpm_filenames - set(rpms)
+            if missing:
+                raise IOError(
+                    f'Signed {arch} directory for {nvre} is incomplete; '
+                    f'missing {len(missing)} RPM(s): {sorted(missing)}'
+                )
+        return rpms
+
+    # Pre-fetch expected RPMs per build for completeness validation when signing
+    expected_rpms_by_nvr: Dict[str, Dict[str, set]] = {}  # nvr -> {arch -> set of filenames}
+    if koji_api and any(mode == 'signed' for _, mode in config.arch):
+        for nvre in nvres:
+            nvr = strip_epoch(nvre)
+            nvre_obj = parse_nvr(nvre)
+            if nvre_obj["name"] in config.exclude_package:
+                continue
+            build = koji_api.getBuild(nvr, strict=True)
+            rpms = koji_api.listRPMs(buildID=build["id"])
+            by_arch: Dict[str, set] = {}
+            for rpm in rpms:
+                arch = rpm["arch"]
+                filename = os.path.basename(koji.pathinfo.rpm(rpm))
+                by_arch.setdefault(arch, set()).add(filename)
+            expected_rpms_by_nvr[nvr] = by_arch
 
     for arch_name, signing_mode in config.arch:
         # These directories shouldn't exist yet. They will be created during assemble.
@@ -257,9 +299,13 @@ def _assemble_repo(config: SimpleNamespace, nvres: List[str]):
                     package_link_path = os.path.join(links_dir, link_name)
                     os.symlink(brewroot_arch_path, package_link_path)
 
-                    rpms = os.listdir(package_link_path)
-                    if not rpms:
-                        raise IOError(f'Did not find any rpms in {brewroot_arch_path}')
+                    if signed and nvr in expected_rpms_by_nvr:
+                        expected_rpm_filenames = expected_rpms_by_nvr[nvr].get(a, set())
+                        rpms = _wait_for_signed_rpms(brewroot_arch_path, expected_rpm_filenames, nvre, a)
+                    else:
+                        rpms = os.listdir(package_link_path)
+                        if not rpms:
+                            raise IOError(f'Did not find any rpms in {brewroot_arch_path}')
 
                     for r in rpms:
                         rpm_path = os.path.join('Packages', link_name, r)
@@ -274,7 +320,7 @@ def _assemble_repo(config: SimpleNamespace, nvres: List[str]):
                         "it is not required for that arch"
                     )
 
-        exectools.cmd_assert('createrepo_c -i rpm_list .', cwd=dest_arch_path)
+        exectools.cmd_assert('createrepo_c --no-database -i rpm_list .', cwd=dest_arch_path)
         logger.info(f'Successfully created repo at {dest_arch_path}')
 
 
@@ -298,7 +344,7 @@ def assemble_repo(config, nvres, event_info=None, extra_data: Dict = None):
     with open(os.path.join(config.dest_dir, 'plashet.yml'), mode='w+', encoding='utf-8') as y:
         success = False
         try:
-            _assemble_repo(config, nvres)
+            _assemble_repo(config, nvres, koji_api=koji_proxy)
             success = True
         finally:
             packages = list()

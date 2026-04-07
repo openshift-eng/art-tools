@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from artcommonlib import exectools
 from artcommonlib.model import Missing, Model
+from artcommonlib.variants import BuildVariant
 from doozerlib import build_info, image
 from doozerlib.image import ImageMetadata, extract_builder_info_from_pullspec
 from doozerlib.repodata import Repodata, Rpm
@@ -765,7 +766,7 @@ RUN echo "test"
     @patch('doozerlib.image.SourceResolver')
     @patch('builtins.open', create=True)
     @patch('pathlib.Path.joinpath')
-    @patch('doozerlib.image.util.oc_image_info_for_arch__caching', return_value={'config': {'config': {'Labels': {}}}})
+    @patch('doozerlib.image.util.oc_image_info_for_arch', return_value={'config': {'config': {'Labels': {}}}})
     def test_determine_upstream_rhel_version_ubi_pattern(
         self, mock_oc_image_info, mock_joinpath, mock_open, mock_source_resolver
     ):
@@ -819,6 +820,75 @@ RUN echo "test"
 
         # Verify config was merged (should detect el8 from ubi8 tag)
         self.assertEqual(metadata.config['distgit']['branch'], 'rhaos-4.16-rhel-8')
+
+    def test_get_olm_bundle_delivery_repo_name_override_single_entry(self):
+        metadata = self._create_image_metadata('openshift/test')
+        mock_config = MagicMock()
+        mock_config.delivery.delivery_repo_name_override = True
+        mock_config.delivery.delivery_repo_names = ['openshift4/ose-csi-livenessprobe-rhel9']
+        metadata.config = mock_config
+        with patch.object(type(metadata), 'is_olm_operator', new_callable=lambda: property(lambda self: True)):
+            result = metadata.get_olm_bundle_delivery_repo_name()
+        self.assertEqual(result, 'openshift4/ose-csi-livenessprobe-rhel9')
+
+    def test_get_olm_bundle_delivery_repo_name_override_multiple_entries_raises(self):
+        metadata = self._create_image_metadata('openshift/test')
+        mock_config = MagicMock()
+        mock_config.delivery.delivery_repo_name_override = True
+        mock_config.delivery.delivery_repo_names = [
+            'openshift4/ose-csi-livenessprobe-rhel9',
+            'openshift4/ose-csi-livenessprobe-rhel8',
+        ]
+        metadata.config = mock_config
+        with patch.object(type(metadata), 'is_olm_operator', new_callable=lambda: property(lambda self: True)):
+            with self.assertRaises(IOError):
+                metadata.get_olm_bundle_delivery_repo_name()
+
+    def test_get_olm_bundle_delivery_repo_name_no_override_uses_bundle_delivery_repo_name(self):
+        metadata = self._create_image_metadata('openshift/test')
+        mock_config = MagicMock()
+        mock_config.delivery.delivery_repo_name_override = False
+        mock_config.delivery.bundle_delivery_repo_name = 'openshift4/ose-my-operator-bundle'
+        metadata.config = mock_config
+        with patch.object(type(metadata), 'is_olm_operator', new_callable=lambda: property(lambda self: True)):
+            result = metadata.get_olm_bundle_delivery_repo_name()
+        self.assertEqual(result, 'openshift4/ose-my-operator-bundle')
+
+    def test_get_olm_bundle_delivery_repo_name_no_override_missing_bundle_delivery_repo_name_raises(self):
+        metadata = self._create_image_metadata('openshift/test')
+        mock_config = MagicMock()
+        mock_config.delivery.delivery_repo_name_override = False
+        mock_config.delivery.bundle_delivery_repo_name = Missing
+        metadata.config = mock_config
+        with patch.object(type(metadata), 'is_olm_operator', new_callable=lambda: property(lambda self: True)):
+            with self.assertRaises(IOError):
+                metadata.get_olm_bundle_delivery_repo_name()
+
+    def test_get_olm_bundle_delivery_repo_name_not_olm_operator_raises(self):
+        metadata = self._create_image_metadata('openshift/test')
+        with patch.object(type(metadata), 'is_olm_operator', new_callable=lambda: property(lambda self: False)):
+            with self.assertRaises(IOError):
+                metadata.get_olm_bundle_delivery_repo_name()
+
+    def test_get_olm_bundle_delivery_repo_name_override_missing_delivery_repo_names_raises(self):
+        metadata = self._create_image_metadata('openshift/test')
+        mock_config = MagicMock()
+        mock_config.delivery.delivery_repo_name_override = True
+        mock_config.delivery.delivery_repo_names = Missing
+        metadata.config = mock_config
+        with patch.object(type(metadata), 'is_olm_operator', new_callable=lambda: property(lambda self: True)):
+            with self.assertRaises(IOError):
+                metadata.get_olm_bundle_delivery_repo_name()
+
+    def test_get_olm_bundle_delivery_repo_name_override_empty_list_raises(self):
+        metadata = self._create_image_metadata('openshift/test')
+        mock_config = MagicMock()
+        mock_config.delivery.delivery_repo_name_override = True
+        mock_config.delivery.delivery_repo_names = []
+        metadata.config = mock_config
+        with patch.object(type(metadata), 'is_olm_operator', new_callable=lambda: property(lambda self: True)):
+            with self.assertRaises(IOError):
+                metadata.get_olm_bundle_delivery_repo_name()
 
 
 class TestImageInspector(IsolatedAsyncioTestCase):
@@ -1025,6 +1095,70 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
 
         self.assertEqual(result, set())
         self.assertEqual(metadata.installed_rpms, [])
+
+    async def test_fetch_rpms_from_build_uses_lockfile_seed_nvrs(self):
+        """Test fetch_rpms_from_build uses seed NVR when its DB record matches the distgit key"""
+        metadata = self._create_image_metadata('openshift/test-seed')
+
+        mock_build = MagicMock()
+        mock_build.installed_rpms = ['seed-pkg1', 'seed-pkg2']
+        mock_build.name = 'test-image'
+
+        metadata.runtime.konflux_db.get_build_record_by_nvr = AsyncMock(return_value=mock_build)
+
+        result = await metadata.fetch_rpms_from_build(lockfile_seed_nvrs=['test-image-container-v4.22.0-assembly.test'])
+
+        self.assertEqual(result, {'seed-pkg1', 'seed-pkg2'})
+        metadata.runtime.konflux_db.get_build_record_by_nvr.assert_awaited_once_with(
+            nvr='test-image-container-v4.22.0-assembly.test', strict=False
+        )
+        metadata.runtime.konflux_db.get_latest_build.assert_not_called()
+
+    async def test_fetch_rpms_from_build_seed_nvrs_no_match(self):
+        """Test fetch_rpms_from_build falls back to latest build when no seed NVR matches"""
+        metadata = self._create_image_metadata('openshift/test-no-seed')
+
+        mock_seed_build = MagicMock()
+        mock_seed_build.name = 'other-image'
+
+        mock_latest = MagicMock()
+        mock_latest.installed_rpms = ['latest-pkg1']
+
+        metadata.runtime.konflux_db.get_build_record_by_nvr = AsyncMock(return_value=mock_seed_build)
+        metadata.runtime.konflux_db.get_latest_build = AsyncMock(return_value=mock_latest)
+
+        result = await metadata.fetch_rpms_from_build(lockfile_seed_nvrs=['other-container-v4.22.0-assembly.test'])
+
+        self.assertEqual(result, {'latest-pkg1'})
+        metadata.runtime.konflux_db.get_latest_build.assert_awaited_once()
+
+    async def test_fetch_rpms_from_build_seed_nvr_not_in_db(self):
+        """Test fetch_rpms_from_build falls back when seed NVR not found in DB"""
+        metadata = self._create_image_metadata('openshift/test-seed-missing')
+
+        mock_latest = MagicMock()
+        mock_latest.installed_rpms = ['pkg1']
+
+        metadata.runtime.konflux_db.get_build_record_by_nvr = AsyncMock(return_value=None)
+        metadata.runtime.konflux_db.get_latest_build = AsyncMock(return_value=mock_latest)
+
+        result = await metadata.fetch_rpms_from_build(lockfile_seed_nvrs=['nonexistent-v4.22.0-assembly.test'])
+
+        self.assertEqual(result, {'pkg1'})
+        metadata.runtime.konflux_db.get_latest_build.assert_awaited_once()
+
+    async def test_fetch_rpms_from_build_no_seed_nvrs(self):
+        """Test fetch_rpms_from_build works when no lockfile_seed_nvrs are provided"""
+        metadata = self._create_image_metadata('openshift/test-no-seed-param')
+
+        mock_build = MagicMock()
+        mock_build.installed_rpms = ['pkg1']
+        metadata.runtime.konflux_db.get_latest_build = AsyncMock(return_value=mock_build)
+
+        result = await metadata.fetch_rpms_from_build()
+
+        self.assertEqual(result, {'pkg1'})
+        metadata.runtime.konflux_db.get_latest_build.assert_awaited_once()
 
     def _setup_mock_config(self, metadata, lockfile_rpms=None):
         """Helper to setup mock config with lockfile RPMs."""
@@ -1256,3 +1390,95 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
 
         result = metadata.get_required_artifacts()
         self.assertEqual(result, [])
+
+    def test_is_base_image(self):
+        from artcommonlib.model import Model
+
+        runtime = MagicMock()
+        runtime.logger = logging.getLogger('test_runtime')
+        runtime.variant = BuildVariant.OCP
+
+        base_image = Model({'name': 'test-base', 'base_only': True})
+        base_data = Model({'key': 'test-base', 'data': base_image, 'filename': 'test-base.yaml'})
+        base_metadata = ImageMetadata(runtime, base_data)
+        self.assertTrue(base_metadata.is_base_image())
+
+        regular_image = Model({'name': 'test-regular'})
+        regular_data = Model({'key': 'test-regular', 'data': regular_image, 'filename': 'test-regular.yaml'})
+        regular_metadata = ImageMetadata(runtime, regular_data)
+        self.assertFalse(regular_metadata.is_base_image())
+
+    def test_is_snapshot_release_enabled(self):
+        from artcommonlib.model import Model
+
+        runtime = MagicMock()
+        runtime.logger = logging.getLogger('test_runtime')
+        runtime.variant = BuildVariant.OCP
+
+        enabled_image = Model({'name': 'test-snapshot', 'snapshot_release': True})
+        enabled_data = Model({'key': 'test-snapshot', 'data': enabled_image, 'filename': 'test-snapshot.yaml'})
+        enabled_metadata = ImageMetadata(runtime, enabled_data)
+        self.assertTrue(enabled_metadata.is_snapshot_release_enabled())
+
+        disabled_image = Model({'name': 'test-regular', 'snapshot_release': False})
+        disabled_data = Model({'key': 'test-regular', 'data': disabled_image, 'filename': 'test-regular.yaml'})
+        disabled_metadata = ImageMetadata(runtime, disabled_data)
+        self.assertFalse(disabled_metadata.is_snapshot_release_enabled())
+
+        default_image = Model({'name': 'test-default'})
+        default_data = Model({'key': 'test-default', 'data': default_image, 'filename': 'test-default.yaml'})
+        default_metadata = ImageMetadata(runtime, default_data)
+        self.assertTrue(default_metadata.is_snapshot_release_enabled())
+
+
+class TestExtractBuilderInfoFromPullspec(unittest.TestCase):
+    """
+    Test class for extract_builder_info_from_pullspec function
+    """
+
+    def test_extract_builder_info_with_digest(self):
+        """
+        Test that pullspecs with SHA digests are parsed correctly.
+        The digest portion should be stripped before parsing the tag.
+        """
+        # Clear cache to avoid interference
+        extract_builder_info_from_pullspec.cache_clear()
+
+        pullspec_with_digest = (
+            "registry.ci.openshift.org/ocp/builder:rhel-9-golang-1.24-openshift-4.21"
+            "@sha256:143123d85045df426c5bbafc6863659880ebe276eb02c77ee868b88d08dbd05d"
+        )
+
+        rhel_version, golang_version = extract_builder_info_from_pullspec(pullspec_with_digest)
+
+        self.assertEqual(rhel_version, 9)
+        self.assertEqual(golang_version, (1, 24))
+
+    def test_extract_builder_info_without_digest(self):
+        """
+        Test that pullspecs without SHA digests still work correctly.
+        """
+        extract_builder_info_from_pullspec.cache_clear()
+
+        pullspec_without_digest = "registry.ci.openshift.org/ocp/builder:rhel-9-golang-1.24-openshift-4.21"
+
+        rhel_version, golang_version = extract_builder_info_from_pullspec(pullspec_without_digest)
+
+        self.assertEqual(rhel_version, 9)
+        self.assertEqual(golang_version, (1, 24))
+
+    def test_extract_builder_info_rhel8_with_digest(self):
+        """
+        Test RHEL 8 builder with digest.
+        """
+        extract_builder_info_from_pullspec.cache_clear()
+
+        pullspec = (
+            "registry.ci.openshift.org/ocp/builder:rhel-8-golang-1.21-openshift-4.18"
+            "@sha256:abcd1234567890abcdef1234567890abcdef1234567890abcdef1234567890ab"
+        )
+
+        rhel_version, golang_version = extract_builder_info_from_pullspec(pullspec)
+
+        self.assertEqual(rhel_version, 8)
+        self.assertEqual(golang_version, (1, 21))

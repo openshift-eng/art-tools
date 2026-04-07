@@ -1,12 +1,14 @@
 import logging
 
 import click
-from artcommonlib.arch_util import BREW_ARCHES, GO_ARCHES, brew_arch_for_go_arch, go_suffix_for_arch
+from artcommonlib.arch_util import BREW_ARCHES, GO_ARCHES, brew_arch_for_go_arch
 from artcommonlib.format_util import green_print
 from artcommonlib.rhcos import get_build_id_from_rhcos_pullspec, get_primary_container_name
+from doozerlib.util import get_nightly_pullspec
 
 from elliottlib import rhcos, util
 from elliottlib.cli.common import cli
+from elliottlib.runtime import Runtime
 
 LOGGER = logging.getLogger(__name__)
 
@@ -28,7 +30,7 @@ LOGGER = logging.getLogger(__name__)
 @click.option('--packages', '-p', 'packages', help='Show details for only these package names (comma-separated)')
 @click.option('--go', '-g', 'go', is_flag=True, help='Show go version for packages that are go binaries')
 @click.pass_obj
-def rhcos_cli(runtime, release, packages, arch, go):
+def rhcos_cli(runtime: Runtime, release, packages, arch, go):
     """
         Show packages in an RHCOS build in a payload image.
         There are several ways to specify the location of the RHCOS build.
@@ -79,7 +81,6 @@ def rhcos_cli(runtime, release, packages, arch, go):
                 break
 
     version = f'{major}.{minor}'
-    logger = LOGGER
 
     if arch == 'all':
         target_arches = BREW_ARCHES
@@ -93,7 +94,7 @@ def rhcos_cli(runtime, release, packages, arch, go):
         if pullspec:
             payload_pullspecs.append(release)
         elif nightly:
-            payload_pullspecs.append(get_nightly_pullspec(release, arch))
+            payload_pullspecs.append(get_nightly_pullspec(release, runtime.build_system))
         elif named_release:
             for local_arch in target_arches:
                 p = get_pullspec(release, local_arch)
@@ -106,16 +107,11 @@ def rhcos_cli(runtime, release, packages, arch, go):
         ]
 
     for build, local_arch in build_ids:
-        _via_build_id(runtime, build, local_arch, version, packages, go, logger)
+        _via_build_id(runtime, build, local_arch, version, packages, go)
 
 
 def get_pullspec(release, arch):
     return f'quay.io/openshift-release-dev/ocp-release:{release}-{arch}'
-
-
-def get_nightly_pullspec(release, arch):
-    suffix = go_suffix_for_arch(arch, "priv" in release)
-    return f'registry.ci.openshift.org/ocp{suffix}/release{suffix}:{release}'
 
 
 def get_rhcos_pullspecs_from_assembly(runtime):
@@ -136,7 +132,7 @@ def get_build_id_from_image_pullspec(runtime, pullspec):
     return build_id, arch
 
 
-def _via_build_id(runtime, build_id, arch, version, packages, go, logger):
+def _via_build_id(runtime, build_id, arch, version, packages, go):
     if not build_id:
         Exception('Cannot find build_id')
 
@@ -152,7 +148,7 @@ def _via_build_id(runtime, build_id, arch, version, packages, go, logger):
             packages.append('openshift-hyperkube')
         nvrs = [p for p in nvrs if p[0] in packages]
     if go:
-        go_rpm_nvrs = util.get_golang_rpm_nvrs(nvrs, logger)
+        go_rpm_nvrs = util.get_golang_rpm_nvrs(nvrs)
         util.pretty_print_nvrs_go(go_rpm_nvrs, ignore_na=True)
         return
     for nvr in sorted(nvrs):

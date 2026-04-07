@@ -12,24 +12,24 @@ from copy import copy
 from pathlib import Path
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
-import aiohttp
 import click
 import openshift_client as oc
 import yaml
 from artcommonlib import exectools
 from artcommonlib.format_util import yellow_print
 from artcommonlib.git_helper import git_clone
+from artcommonlib.github_auth import get_github_git_auth_env
 from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
 from artcommonlib.util import (
-    convert_remote_git_to_ssh,
     deep_merge,
     download_file_from_github,
+    ensure_github_https_url,
     split_git_url,
 )
 from artcommonlib.variants import BuildVariant
 from dockerfile_parse import DockerfileParser
-from github import Github, UnknownObjectException
+from github import Auth, Github, UnknownObjectException
 
 from doozerlib import Runtime, constants
 from doozerlib.backend.rebaser import KonfluxRebaser
@@ -94,13 +94,34 @@ class OkdRebaseCli:
         self.state = {}
 
     async def run(self):
-        self.runtime.initialize(mode='images', clone_distgits=False, build_system='konflux')
+        # OKD configuration is automatically merged in get_group_config() when variant=okd
+        # Initialize with disabled=True to load all images (including those with mode: disabled)
+        # This is necessary because some parent images may be disabled for OCP but enabled for OKD
+        self.runtime.initialize(mode='images', clone_distgits=False, build_system='konflux', disabled=True)
 
-        group_config = self.runtime.group_config.copy()
-        if group_config.get('okd', None):
-            self.logger.info('Using OKD group configuration')
-            group_config = deep_merge(group_config, group_config['okd'])
-            self.runtime.group_config = Model(group_config)
+        # Apply OKD config to ALL loaded images
+        # This ensures that parent images also get the OKD branch overrides
+        for image_meta in self.runtime.image_metas():
+            if image_meta.config.okd is not Missing:
+                # Apply the OKD configuration to this image
+                image_meta.config = self.get_okd_image_config(image_meta)
+                self.logger.debug(f'Applied OKD config to {image_meta.distgit_key}')
+
+        # Wrap late_resolve_image to apply OKD config to any images loaded during rebase
+        # This handles parent images that are loaded on-demand when not explicitly included via --images
+        original_late_resolve_image = self.runtime.late_resolve_image
+
+        def okd_late_resolve_image(distgit_name, add=False, required=True):
+            # Call the original method to load the image
+            meta = original_late_resolve_image(distgit_name, add=add, required=required)
+            # Apply OKD config if this image has one
+            if meta and meta.config.okd is not Missing:
+                meta.config = self.get_okd_image_config(meta)
+                self.logger.debug(f'Applied OKD config to late-resolved image {meta.distgit_key}')
+            return meta
+
+        # Replace the method on the runtime instance
+        self.runtime.late_resolve_image = okd_late_resolve_image
 
         # For OKD, we need to use the OKD group variant (e.g., okd-4.20 instead of openshift-4.20)
         # This ensures the Konflux DB cache is loaded for the correct group
@@ -119,6 +140,7 @@ class OkdRebaseCli:
             image_repo=self.image_repo,
         )
 
+        # Rebase all loaded images (filtered by --images flag if specified)
         metas = self.runtime.ordered_image_metas()
         tasks = [self.rebase_image(image_meta, rebaser) for image_meta in metas]
         await asyncio.gather(*tasks, return_exceptions=False)
@@ -142,7 +164,10 @@ class OkdRebaseCli:
             self.logger.warning('Image %s is disabled for OKD: skipping rebase', image_name)
             image_meta.rebase_status = True
             image_meta.rebase_event.set()
-            self.state[image_name] = 'skipped'
+            self.state[image_name] = {
+                'status': 'skipped',
+                'private_fix': False,
+            }
             return
 
         try:
@@ -154,11 +179,17 @@ class OkdRebaseCli:
                 commit_message=self.message,
                 push=self.push,
             )
-            self.state[image_name] = 'success'
+            self.state[image_name] = {
+                'status': 'success',
+                'private_fix': image_meta.private_fix if image_meta.private_fix else False,
+            }
 
         except Exception as e:
             self.logger.warning('Failed rebasing %s: %s', image_name, e)
-            self.state[image_name] = 'failure'
+            self.state[image_name] = {
+                'status': 'failure',
+                'private_fix': False,
+            }
 
     def get_okd_image_config(self, image_meta: ImageMetadata):
         image_config = copy(image_meta.config)
@@ -213,6 +244,7 @@ async def images_okd_rebase(
     Refresh a group's konflux content from source content.
     """
 
+    runtime.variant = BuildVariant.OKD  # Set variant so get_group_config() merges okd config
     runtime.network_mode_override = 'open'  # OKD builds must be done in open mode.
 
     await OkdRebaseCli(
@@ -780,7 +812,7 @@ async def images_okd_prs(
     # OKD images are marked as disabled: true in their metadata. So make sure to load
     # disabled images.
     runtime.initialize(clone_distgits=False, clone_source=False, disabled=True)
-    g = Github(login_or_token=github_access_token)
+    g = Github(auth=Auth.Token(github_access_token))
     github_user = g.get_user()
 
     major = runtime.group_config.vars['MAJOR']
@@ -810,8 +842,9 @@ async def images_okd_prs(
         release_fork_repo = github_user.create_fork(public_release_repo)
 
     # Clone openshift/release and populate our fork as a remote
-    release_repo_url = convert_remote_git_to_ssh(f'http://github.com/openshift/{openshift_release_repo_name}')
+    release_repo_url = f'https://github.com/openshift/{openshift_release_repo_name}'
     release_clone_dir = Path(runtime.working_dir).joinpath('clones', 'release')
+    git_auth_env = get_github_git_auth_env(url=release_repo_url)
 
     # Clone the openshift/release repo so we can open a PR if necessary.
     runtime.logger.info(f'Cloning {release_repo_url}')
@@ -819,8 +852,10 @@ async def images_okd_prs(
     git_clone(release_repo_url, release_clone_dir, git_cache_dir=runtime.git_cache_dir)
     with Dir(release_clone_dir):
         exectools.cmd_gather('git remote remove fork')  # In case we are reusing a cloned path
-        exectools.cmd_assert(f'git remote add fork {convert_remote_git_to_ssh(release_fork_repo.git_url)}')
-        exectools.cmd_assert('git fetch --all', retries=3)
+        exectools.cmd_assert(
+            f'git remote add fork {ensure_github_https_url(release_fork_repo.git_url)}', set_env=git_auth_env
+        )
+        exectools.cmd_assert('git fetch --all', retries=3, set_env=git_auth_env)
         exectools.cmd_assert('git checkout origin/master')
         # All content will be produced in the staging branch. It will be pushed to the public
         # reconcile branch if and only if staging differs.
@@ -972,7 +1007,7 @@ async def images_okd_prs(
         # The upstream source for the component.
         ci_operator_config = ci_operator_configs.get_ci_operator_config(org, repo_name, public_branch)
 
-        public_repo_url = convert_remote_git_to_ssh(public_repo_url)
+        public_repo_url = ensure_github_https_url(public_repo_url)
         component_source_path = pathlib.Path(runtime.working_dir).joinpath('snapshots', dgk)
         component_source_path.mkdir(exist_ok=True, parents=True)
 
@@ -994,15 +1029,13 @@ async def images_okd_prs(
         while True:  # Allows symlinks to be followed
             dockerfile_abs_path = component_source_path.joinpath(os.path.basename(dockerfile_path))
 
-            async with aiohttp.ClientSession() as session:
-                await download_file_from_github(
-                    repository=public_repo_url,
-                    branch=public_branch,
-                    path=dockerfile_path,
-                    token=github_access_token,
-                    destination=dockerfile_abs_path,
-                    session=session,
-                )
+            await download_file_from_github(
+                repository=public_repo_url,
+                branch=public_branch,
+                path=dockerfile_path,
+                github_client=g,
+                destination=dockerfile_abs_path,
+            )
 
             content = dockerfile_abs_path.read_text()
             if len(content.strip().splitlines()) == 1:

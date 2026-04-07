@@ -7,10 +7,10 @@ class TestJIRAClient(TestCase):
     @mock.patch("pyartcd.jira_client.JIRA")
     def test_from_url(self, MockJIRA):
         url = "https://jira.example.com"
-        token_auth = "fake_token"
-        client = JIRAClient.from_url(url, token_auth=token_auth)
+        basic_auth = ("user@example.com", "fake_token")
+        client = JIRAClient.from_url(url, basic_auth=basic_auth)
         self.assertEqual(client._client, MockJIRA.return_value)
-        MockJIRA.assert_called_once_with(url, token_auth=token_auth)
+        MockJIRA.assert_called_once_with(options={'server': url}, basic_auth=basic_auth)
 
     def test_get_issue(self):
         client = JIRAClient(mock.MagicMock())

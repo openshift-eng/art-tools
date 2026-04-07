@@ -96,7 +96,7 @@ def print_nvrs_golang(nvrs, output, report):
 
     go_nvr_map = {}
     if rpm_nvrs:
-        go_nvr_map.update(util.get_golang_rpm_nvrs(rpm_nvrs, _LOGGER))
+        go_nvr_map.update(util.get_golang_rpm_nvrs(rpm_nvrs))
     if container_nvrs:
         go_nvr_map.update(util.get_golang_container_nvrs(container_nvrs, _LOGGER))
 
@@ -126,7 +126,7 @@ def print_advisory_golang(advisory_id, components, output, report):
     if content_type == 'docker':
         go_nvr_map = util.get_golang_container_nvrs(nvrs, _LOGGER)
     else:
-        go_nvr_map = util.get_golang_rpm_nvrs(nvrs, _LOGGER)
+        go_nvr_map = util.get_golang_rpm_nvrs(nvrs)
 
     if output == 'json':
         util.pretty_print_nvrs_go_json(go_nvr_map, report)

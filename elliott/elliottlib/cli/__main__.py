@@ -58,6 +58,7 @@ from elliottlib.cli.konflux_release_cli import konflux_release_cli
 from elliottlib.cli.konflux_release_watch_cli import watch_release_cli
 from elliottlib.cli.move_builds_cli import move_builds_cli
 from elliottlib.cli.pin_builds_cli import assembly_pin_builds_cli
+from elliottlib.cli.process_release_from_fbc_bugs_cli import process_release_from_fbc_bugs_cli
 from elliottlib.cli.remove_bugs_cli import remove_bugs_cli
 from elliottlib.cli.remove_builds_cli import remove_builds_cli
 from elliottlib.cli.repair_bugs_cli import repair_bugs_cli
@@ -319,6 +320,7 @@ cli.add_command(assembly_pin_builds_cli)
 cli.add_command(shipment_cli)
 cli.add_command(watch_release_cli)
 cli.add_command(find_bugs_second_fix_cli)
+cli.add_command(process_release_from_fbc_bugs_cli)
 
 # -----------------------------------------------------------------------------
 # CLI Entry point

@@ -62,6 +62,37 @@ class TestUtil(unittest.TestCase):
             'git@github.com:openshift/aos-cd-jobs.git',
         )
 
+    def test_ensure_github_https_url(self):
+        # SSH to HTTPS for github.com
+        self.assertEqual(
+            util.ensure_github_https_url('git@github.com:openshift/origin.git'),
+            'https://github.com/openshift/origin',
+        )
+
+        # HTTPS passthrough for github.com
+        self.assertEqual(
+            util.ensure_github_https_url('https://github.com/openshift/origin'),
+            'https://github.com/openshift/origin',
+        )
+
+        # SSH with explicit ssh:// prefix
+        self.assertEqual(
+            util.ensure_github_https_url('ssh://git@github.com/openshift-priv/art-fbc.git'),
+            'https://github.com/openshift-priv/art-fbc',
+        )
+
+        # Non-GitHub URL passthrough (distgit)
+        self.assertEqual(
+            util.ensure_github_https_url('ssh://pkgs.devel.redhat.com/containers/ose-cluster-kube-apiserver-operator'),
+            'ssh://pkgs.devel.redhat.com/containers/ose-cluster-kube-apiserver-operator',
+        )
+
+        # Non-GitHub URL passthrough (gitlab)
+        self.assertEqual(
+            util.ensure_github_https_url('https://gitlab.cee.redhat.com/some/repo'),
+            'https://gitlab.cee.redhat.com/some/repo',
+        )
+
     def test_find_latest_builds(self):
         builds = [
             {
@@ -486,6 +517,65 @@ class TestKonfluxImagestreamOverride(unittest.TestCase):
             util.uses_konflux_imagestream_override("")
         with self.assertRaises(ValueError):
             util.uses_konflux_imagestream_override("openshift-4.12")
+
+
+class TestIsFutureReleaseDate(unittest.TestCase):
+    """Tests for is_future_release_date function"""
+
+    def test_future_date_yyyy_mm_dd_format(self):
+        """Test future date in YYYY-MM-DD format"""
+        future_date = "2099-12-31"
+        result = util.is_future_release_date(future_date)
+        self.assertTrue(result)
+
+    def test_past_date_yyyy_mm_dd_format(self):
+        """Test past date in YYYY-MM-DD format"""
+        past_date = "2020-01-01"
+        result = util.is_future_release_date(past_date)
+        self.assertFalse(result)
+
+    def test_future_date_yyyy_mmm_dd_format(self):
+        """Test future date in YYYY-Mon-DD format (e.g., 2099-Dec-31)"""
+        future_date = "2099-Dec-31"
+        result = util.is_future_release_date(future_date)
+        self.assertTrue(result)
+
+    def test_past_date_yyyy_mmm_dd_format(self):
+        """Test past date in YYYY-Mon-DD format (e.g., 2020-Jan-01)"""
+        past_date = "2020-Jan-01"
+        result = util.is_future_release_date(past_date)
+        self.assertFalse(result)
+
+    def test_invalid_date_format(self):
+        """Test invalid date format raises ValueError"""
+        invalid_date = "not-a-date"
+        with self.assertRaises(ValueError):
+            util.is_future_release_date(invalid_date)
+
+    def test_empty_string(self):
+        """Test empty string raises ValueError"""
+        with self.assertRaises(ValueError):
+            util.is_future_release_date("")
+
+    def test_partial_date(self):
+        """Test partial date raises ValueError"""
+        with self.assertRaises(ValueError):
+            util.is_future_release_date("2024-01")
+
+    def test_various_month_abbreviations(self):
+        """Test various month abbreviations in YYYY-Mon-DD format"""
+        # Test different month abbreviations
+        test_cases = [
+            ("2099-Jan-15", True),  # Future
+            ("2099-Feb-15", True),
+            ("2099-Mar-15", True),
+            ("2020-Apr-15", False),  # Past
+            ("2020-May-15", False),
+            ("2020-Jun-15", False),
+        ]
+        for date_str, expected in test_cases:
+            result = util.is_future_release_date(date_str)
+            self.assertEqual(result, expected, f"Failed for date: {date_str}")
 
 
 # Legacy group-based resolver tests removed - functions no longer exist

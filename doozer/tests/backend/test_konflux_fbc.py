@@ -4,14 +4,17 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import ANY, AsyncMock, MagicMock, Mock, call, patch
 
+from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBundleBuildRecord
 from doozerlib.backend.build_repo import BuildRepo
 from doozerlib.backend.konflux_client import KonfluxClient
 from doozerlib.backend.konflux_fbc import (
+    AssemblyBundleCsvInfo,
     KonfluxFbcBuilder,
     KonfluxFbcFragmentMerger,
     KonfluxFbcImporter,
     KonfluxFbcRebaser,
+    _fetch_csv_from_git,
     _generate_fbc_branch_name,
 )
 from doozerlib.backend.pipelinerun_utils import PipelineRunInfo
@@ -95,6 +98,7 @@ class TestKonfluxFbcImporter(unittest.IsolatedAsyncioTestCase):
             index_image,
             "test-package",
             migrate_level="none",
+            strict=True,
         )
         mock_get_package_name.assert_awaited_once_with(metadata)
 
@@ -145,6 +149,7 @@ class TestKonfluxFbcImporter(unittest.IsolatedAsyncioTestCase):
             index_image,
             "test-package",
             migrate_level="none",
+            strict=True,
         )
         mock_get_package_name.assert_awaited_once_with(metadata)
 
@@ -187,7 +192,10 @@ class TestKonfluxFbcImporter(unittest.IsolatedAsyncioTestCase):
         actual = await self.importer._render_index_image("test-index-image-pullspec")
         self.assertEqual(actual, mock_render.return_value)
         mock_render.assert_called_once_with(
-            "test-index-image-pullspec", migrate_level="none", auth=OpmRegistryAuth(path='/path/to/auth.json')
+            "test-index-image-pullspec",
+            migrate_level="none",
+            auth=OpmRegistryAuth(path='/path/to/auth.json'),
+            strict=True,
         )
 
     def test_filter_catalog_blobs(self):
@@ -218,7 +226,7 @@ class TestKonfluxFbcImporter(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
-    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcImporter._render_index_image")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcImporter._render_index_image", new_callable=AsyncMock)
     async def test_get_catalog_blobs_from_index_image(self, mock_render_index_image):
         index_image = "test-index-image"
         mock_render_index_image.return_value = [
@@ -238,7 +246,7 @@ class TestKonfluxFbcImporter(unittest.IsolatedAsyncioTestCase):
                 {"schema": "olm.channel", "name": "test-channel", "package": "test-package"},
             ],
         )
-        mock_render_index_image.assert_called_once_with(index_image, migrate_level="none")
+        mock_render_index_image.assert_called_once_with(index_image, migrate_level="none", strict=True)
 
     @patch("pathlib.Path.open")
     @patch("pathlib.Path.glob")
@@ -315,10 +323,12 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
         build_repo = mock_build_repo.return_value
         build_repo.local_dir = self.base_dir.joinpath(metadata.distgit_key)
         mock_opm.validate = AsyncMock()
-        mock_rebase_dir.return_value = "test-distgit-key-fbc-1.0.0-1"
+        # Non-OpenShift group: release gets OCP version suffix
+        expected_release = "1.ocp4.9"
+        mock_rebase_dir.return_value = f"test-distgit-key-fbc-1.0.0-{expected_release}"
 
         actual = await self.rebaser.rebase(metadata, bundle_build, version, release)
-        self.assertEqual(actual, "test-distgit-key-fbc-1.0.0-1")
+        self.assertEqual(actual, f"test-distgit-key-fbc-1.0.0-{expected_release}")
 
         mock_build_repo.assert_called_once_with(
             url=self.fbc_repo,
@@ -327,7 +337,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
             logger=ANY,
         )
         build_repo.ensure_source.assert_called_once_with(upcycle=self.upcycle, strict=False)
-        mock_rebase_dir.assert_called_once_with(metadata, build_repo, bundle_build, version, release, ANY)
+        mock_rebase_dir.assert_called_once_with(metadata, build_repo, bundle_build, version, expected_release, ANY)
         mock_opm.validate.assert_called_once_with(self.base_dir.joinpath(metadata.distgit_key, "catalog"))
         build_repo.commit.assert_called_once_with(ANY, allow_empty=True)
         build_repo.push.assert_not_called()
@@ -362,11 +372,13 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
         build_repo = mock_build_repo.return_value
         build_repo.local_dir = self.base_dir.joinpath(metadata.distgit_key)
         mock_opm.validate = AsyncMock()
-        mock_rebase_dir.return_value = "test-distgit-key-fbc-1.0.0-1"
+        # Non-OpenShift group: release gets OCP version suffix
+        expected_release = "1.ocp4.9"
+        mock_rebase_dir.return_value = f"test-distgit-key-fbc-1.0.0-{expected_release}"
         self.rebaser.push = True
 
         actual = await self.rebaser.rebase(metadata, bundle_build, version, release)
-        self.assertEqual(actual, "test-distgit-key-fbc-1.0.0-1")
+        self.assertEqual(actual, f"test-distgit-key-fbc-1.0.0-{expected_release}")
 
         mock_build_repo.assert_called_once_with(
             url=self.fbc_repo,
@@ -375,7 +387,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
             logger=ANY,
         )
         build_repo.ensure_source.assert_called_once_with(upcycle=self.upcycle, strict=False)
-        mock_rebase_dir.assert_called_once_with(metadata, build_repo, bundle_build, version, release, ANY)
+        mock_rebase_dir.assert_called_once_with(metadata, build_repo, bundle_build, version, expected_release, ANY)
         mock_opm.validate.assert_called_once_with(self.base_dir.joinpath(metadata.distgit_key, "catalog"))
         build_repo.commit.assert_called_once_with(ANY, allow_empty=True)
         build_repo.push.assert_called_once()
@@ -613,7 +625,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
         result = self.rebaser._generate_image_digest_mirror_set(olm_bundle_blobs, ref_pullspecs)
         self.assertEqual(len(result["spec"]["imageDigestMirrors"]), 4)
 
-    @patch("doozerlib.util.oc_image_info_for_arch_async__caching", new_callable=AsyncMock)
+    @patch("doozerlib.util.oc_image_info_for_arch_async", new_callable=AsyncMock)
     async def test_fetch_olm_bundle_image_info(self, mock_oc_image_info):
         bundle_build = MagicMock(spec=KonfluxBundleBuildRecord)
         bundle_build.image_pullspec = "test-image-pullspec"
@@ -699,6 +711,1392 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
             actual["test-package2"]["olm.bundle"]["test-bundle2"],
             {"schema": "olm.bundle", "name": "test-bundle2", "package": "test-package2"},
         )
+
+    def test_extract_version_from_bundle_name(self):
+        """Test version extraction from bundle names with 'v' prefix"""
+        from semver import VersionInfo
+
+        # Test standard format with v prefix
+        version = self.rebaser._extract_version_from_bundle_name("oadp-operator.v1.3.9")
+        self.assertEqual(version, VersionInfo(1, 3, 9))
+
+        # Test another version
+        version = self.rebaser._extract_version_from_bundle_name("oadp-operator.v1.4.4")
+        self.assertEqual(version, VersionInfo(1, 4, 4))
+
+        # Test without v prefix (backward compatibility for tests)
+        version = self.rebaser._extract_version_from_bundle_name("test-bundle-name.v2.1.0")
+        self.assertEqual(version, VersionInfo(2, 1, 0))
+
+        # Test invalid format - should raise ValueError
+        with self.assertRaises(ValueError) as cm:
+            self.rebaser._extract_version_from_bundle_name("invalid-name")
+        self.assertIn("Cannot parse semantic version", str(cm.exception))
+
+        # Test malformed version - should raise ValueError
+        with self.assertRaises(ValueError) as cm:
+            self.rebaser._extract_version_from_bundle_name("operator.vX.Y.Z")
+        self.assertIn("Cannot parse semantic version", str(cm.exception))
+
+    def test_rebuild_replaces_chain(self):
+        """Test rebuilding replaces chain based on sorted entry order"""
+        # Test with three entries in sorted order
+        entries = [
+            {"name": "operator.v1.0.0", "replaces": "old-operator"},
+            {"name": "operator.v1.1.0"},
+            {"name": "operator.v1.2.0", "replaces": "operator.v1.0.0"},
+        ]
+
+        self.rebaser._rebuild_replaces_chain(entries)
+
+        # First entry should have no replaces
+        self.assertNotIn('replaces', entries[0])
+
+        # Second entry should replace first
+        self.assertEqual(entries[1]['replaces'], 'operator.v1.0.0')
+
+        # Third entry should replace second
+        self.assertEqual(entries[2]['replaces'], 'operator.v1.1.0')
+
+    def test_rebuild_replaces_chain_single_entry(self):
+        """Test rebuilding replaces chain with single entry"""
+        entries = [{"name": "operator.v1.0.0", "replaces": "old-operator"}]
+
+        self.rebaser._rebuild_replaces_chain(entries)
+
+        # Single entry should have no replaces
+        self.assertNotIn('replaces', entries[0])
+
+    def test_rebuild_replaces_chain_empty(self):
+        """Test rebuilding replaces chain with empty list"""
+        entries = []
+
+        # Should not raise an error
+        self.rebaser._rebuild_replaces_chain(entries)
+
+        self.assertEqual(len(entries), 0)
+
+    def test_resolve_default_channel_multiple_versioned(self):
+        """Highest semver channel wins among same-prefix versioned channels"""
+        channels = ["stable-6.2", "stable-6.3", "stable-6.4"]
+        self.assertEqual(
+            KonfluxFbcRebaser._resolve_default_channel(channels, "stable-6.3"),
+            "stable-6.4",
+        )
+
+    def test_resolve_default_channel_single_versioned(self):
+        """Single versioned channel returns itself"""
+        self.assertEqual(
+            KonfluxFbcRebaser._resolve_default_channel(["release-1.8"], "release-1.8"),
+            "release-1.8",
+        )
+
+    def test_resolve_default_channel_non_versioned(self):
+        """Non-versioned channel names are returned unchanged"""
+        self.assertEqual(
+            KonfluxFbcRebaser._resolve_default_channel(["stable", "candidate"], "stable"),
+            "stable",
+        )
+
+    def test_resolve_default_channel_with_v_prefix(self):
+        """Channels using v-prefixed versions (stable-v8.0) are resolved correctly"""
+        channels = ["stable-v8.0", "stable-v8.1"]
+        self.assertEqual(
+            KonfluxFbcRebaser._resolve_default_channel(channels, "stable-v8.0"),
+            "stable-v8.1",
+        )
+
+    def test_resolve_default_channel_ignores_different_prefix(self):
+        """Only channels sharing the same prefix are compared"""
+        channels = ["stable-6.3", "stable-6.4", "candidate-4.18"]
+        self.assertEqual(
+            KonfluxFbcRebaser._resolve_default_channel(channels, "stable-6.3"),
+            "stable-6.4",
+        )
+
+    def test_resolve_default_channel_default_already_highest(self):
+        """When the bundle label's channel is already the highest, it is returned"""
+        channels = ["stable-6.2", "stable-6.3", "stable-6.4"]
+        self.assertEqual(
+            KonfluxFbcRebaser._resolve_default_channel(channels, "stable-6.4"),
+            "stable-6.4",
+        )
+
+    def test_resolve_default_channel_major_only(self):
+        """Channels with only a major version component are handled"""
+        channels = ["release-5", "release-6"]
+        self.assertEqual(
+            KonfluxFbcRebaser._resolve_default_channel(channels, "release-5"),
+            "release-6",
+        )
+
+    def test_resolve_default_channel_empty_list(self):
+        """Empty channel list returns original default unchanged"""
+        self.assertEqual(
+            KonfluxFbcRebaser._resolve_default_channel([], "stable-6.3"),
+            "stable-6.3",
+        )
+
+    def test_resolve_default_channel_all_invalid_versions(self):
+        """When all versions are invalid, returns original default"""
+        channels = ["stable-invalid", "stable-bad", "stable-xyz"]
+        self.assertEqual(
+            KonfluxFbcRebaser._resolve_default_channel(channels, "stable-6.3"),
+            "stable-6.3",
+        )
+
+    def test_resolve_default_channel_default_not_in_list(self):
+        """Default channel not in list still finds highest version"""
+        channels = ["stable-6.4", "stable-6.5"]
+        self.assertEqual(
+            KonfluxFbcRebaser._resolve_default_channel(channels, "stable-6.3"),
+            "stable-6.5",
+        )
+
+    def test_resolve_default_channel_mixed_valid_invalid(self):
+        """Mixed valid and invalid versions skips invalid ones"""
+        channels = ["stable-6.2", "stable-invalid", "stable-6.4", "stable-bad"]
+        self.assertEqual(
+            KonfluxFbcRebaser._resolve_default_channel(channels, "stable-6.3"),
+            "stable-6.4",
+        )
+
+    def test_resolve_default_channel_four_part_version(self):
+        """Versions with 4+ parts use first 3 for comparison"""
+        channels = ["stable-1.2.3.4", "stable-1.2.4"]
+        self.assertEqual(
+            KonfluxFbcRebaser._resolve_default_channel(channels, "stable-1.2.3"),
+            "stable-1.2.4",
+        )
+
+    def test_resolve_default_channel_duplicates(self):
+        """Duplicate channel names don't break comparison"""
+        channels = ["stable-6.3", "stable-6.3", "stable-6.2"]
+        self.assertEqual(
+            KonfluxFbcRebaser._resolve_default_channel(channels, "stable-6.2"),
+            "stable-6.3",
+        )
+
+    def test_resolve_default_channel_no_matching_prefix(self):
+        """No channels with matching prefix returns original default"""
+        channels = ["candidate-4.18", "preview-4.19"]
+        self.assertEqual(
+            KonfluxFbcRebaser._resolve_default_channel(channels, "stable-6.3"),
+            "stable-6.3",
+        )
+
+    def test_resolve_default_channel_different_component_counts(self):
+        """Version normalization handles different component counts"""
+        channels = ["stable-6", "stable-6.3.1"]
+        self.assertEqual(
+            KonfluxFbcRebaser._resolve_default_channel(channels, "stable-6.3"),
+            "stable-6.3.1",
+        )
+
+    @patch("doozerlib.opm.generate_dockerfile")
+    @patch("pathlib.Path.unlink")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._load_csv_from_bundle")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._get_referenced_images")
+    @patch("doozerlib.backend.konflux_fbc.DockerfileParser")
+    @patch("pathlib.Path.mkdir")
+    @patch("pathlib.Path.is_file", return_value=True)
+    @patch("pathlib.Path.open")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._fetch_olm_bundle_image_info", new_callable=AsyncMock)
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._fetch_olm_bundle_blob", new_callable=AsyncMock)
+    async def test_rebase_with_insert_missing_entry(
+        self,
+        mock_fetch_olm_bundle_blob,
+        mock_fetch_olm_bundle_image_info,
+        mock_open,
+        mock_is_file,
+        mock_mkdir,
+        MockDockerfileParser,
+        mock_get_referenced_images,
+        mock_load_csv_from_bundle,
+        mock_path_unlink,
+        mock_generate_dockerfile,
+    ):
+        """Test that insert_missing_entry flag causes version-ordered sorting"""
+        # Create rebaser with insert_missing_entry=True
+        rebaser = KonfluxFbcRebaser(
+            base_dir=self.base_dir,
+            group=self.group,
+            assembly=self.assembly,
+            version="1.3.9",
+            release="1",
+            commit_message="test",
+            push=False,
+            fbc_repo="https://example.com/fbc.git",
+            upcycle=False,
+            insert_missing_entry=True,
+        )
+
+        metadata = MagicMock(spec=ImageMetadata)
+        metadata.distgit_key = "test-operator"
+        # Mock the runtime and group_config structure
+        metadata.runtime = MagicMock()
+        metadata.runtime.group_config = MagicMock()
+        metadata.runtime.group_config.vars = MagicMock()
+        metadata.runtime.group_config.vars.MAJOR = "4"
+        metadata.runtime.group_config.vars.MINOR = "14"
+        metadata.runtime.konflux_db = MagicMock()
+        metadata.config = MagicMock()
+        metadata.config.delivery = MagicMock()
+        metadata.config.delivery.delivery_repo_names = ["test-repo"]
+        metadata.get_olm_bundle_delivery_repo_name.return_value = "test-repo"
+
+        build_repo = MagicMock()
+        build_repo.local_dir = self.base_dir
+
+        bundle_build = MagicMock(
+            spec=KonfluxBundleBuildRecord,
+            nvr="test-operator-bundle-1.3.9-1",
+            operator_nvr="test-operator-1.3.9-1",
+            operand_nvrs=[],
+            image_pullspec="example.com/test-bundle@sha256:abc",
+            image_tag="abc123",
+            source_repo="https://example.com/test-operator.git",
+            commitish="abc123def",
+        )
+
+        version = "1.3.9"
+        release = "1"
+        logger = MagicMock()
+
+        mock_fetch_olm_bundle_image_info.return_value = {
+            "config": {
+                "config": {
+                    "Labels": {
+                        "name": "test-operator",
+                        "operators.operatorframework.io.bundle.channels.v1": "stable",
+                        "operators.operatorframework.io.bundle.channel.default.v1": "stable",
+                        "operators.operatorframework.io.bundle.package.v1": "test-package",
+                        "operators.operatorframework.io.bundle.manifests.v1": "manifests/",
+                    },
+                },
+            },
+        }
+
+        mock_fetch_olm_bundle_blob.return_value = (
+            "test-operator.v1.3.9",
+            "test-package",
+            {
+                "schema": "olm.bundle",
+                "name": "test-operator.v1.3.9",
+                "package": "test-package",
+                "properties": [],
+                "relatedImages": [{"name": "", "image": "example.com/test-bundle@sha256:abc"}],
+            },
+        )
+
+        # Set up catalog with entries in wrong order: [v1.0.0, v1.4.4]
+        # After adding v1.3.9, they should be sorted to [v1.0.0, v1.3.9, v1.4.4]
+        org_catalog_blobs = [
+            {"schema": "olm.package", "name": "test-package", "defaultChannel": "stable"},
+            {
+                "schema": "olm.channel",
+                "name": "stable",
+                "package": "test-package",
+                "entries": [
+                    {"name": "test-operator.v1.0.0"},
+                    {"name": "test-operator.v1.4.4"},
+                ],
+            },
+            {
+                "schema": "olm.bundle",
+                "name": "test-operator.v1.0.0",
+                "package": "test-package",
+                "properties": [],
+                "relatedImages": [],
+            },
+        ]
+
+        org_catalog_file = StringIO()
+        yaml.dump_all(org_catalog_blobs, org_catalog_file)
+        org_catalog_file.seek(0)
+        result_catalog_file = StringIO()
+        images_mirror_set_file = StringIO()
+        mock_open.return_value.__enter__.side_effect = [org_catalog_file, result_catalog_file, images_mirror_set_file]
+
+        mock_get_referenced_images.return_value = []
+        mock_load_csv_from_bundle.return_value = {
+            "metadata": {"name": "test-operator", "annotations": {}},
+            "spec": {"icon": []},
+        }
+
+        mock_dfp = MockDockerfileParser.return_value
+        mock_dfp.envs = {}
+        mock_dfp.labels = {}
+
+        mock_generate_dockerfile.return_value = None
+
+        # Run the rebase
+        await rebaser._rebase_dir(metadata, build_repo, bundle_build, version, release, logger)
+
+        # Verify the entries are sorted by version
+        result_catalog_file.seek(0)
+        result_catalog_blobs = list(yaml.load_all(result_catalog_file))
+        result_catalog_blobs = rebaser._catagorize_catalog_blobs(result_catalog_blobs)
+
+        entries = result_catalog_blobs["test-package"]["olm.channel"]["stable"]["entries"]
+        entry_names = [e["name"] for e in entries]
+
+        # Verify correct sorted order: v1.0.0 < v1.3.9 < v1.4.4
+        self.assertEqual(entry_names, ["test-operator.v1.0.0", "test-operator.v1.3.9", "test-operator.v1.4.4"])
+
+    @patch("doozerlib.opm.generate_dockerfile")
+    @patch("pathlib.Path.unlink")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._load_csv_from_bundle")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._get_referenced_images")
+    @patch("doozerlib.backend.konflux_fbc.DockerfileParser")
+    @patch("pathlib.Path.mkdir")
+    @patch("pathlib.Path.is_file", return_value=True)
+    @patch("pathlib.Path.open")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._fetch_olm_bundle_image_info", new_callable=AsyncMock)
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._fetch_olm_bundle_blob", new_callable=AsyncMock)
+    async def test_rebase_with_insert_missing_entry_replaces_chain(
+        self,
+        mock_fetch_olm_bundle_blob,
+        mock_fetch_olm_bundle_image_info,
+        mock_open,
+        mock_is_file,
+        mock_mkdir,
+        MockDockerfileParser,
+        mock_get_referenced_images,
+        mock_load_csv_from_bundle,
+        mock_path_unlink,
+        mock_generate_dockerfile,
+    ):
+        """Test that insert_missing_entry rebuilds replaces chain for non-OpenShift groups"""
+        # Create rebaser with non-OpenShift group and insert_missing_entry=True
+        rebaser = KonfluxFbcRebaser(
+            base_dir=self.base_dir,
+            group="oadp-1.3",  # Non-OpenShift group that uses replaces
+            assembly=self.assembly,
+            version="1.3.8",
+            release="1",
+            commit_message="test",
+            push=False,
+            fbc_repo="https://example.com/fbc.git",
+            upcycle=False,
+            insert_missing_entry=True,
+        )
+
+        metadata = MagicMock(spec=ImageMetadata)
+        metadata.distgit_key = "oadp-operator"
+        # Mock the runtime and group_config structure
+        metadata.runtime = MagicMock()
+        metadata.runtime.group_config = MagicMock()
+        metadata.runtime.group_config.vars = MagicMock()
+        metadata.runtime.group_config.vars.MAJOR = "1"
+        metadata.runtime.group_config.vars.MINOR = "3"
+        metadata.runtime.konflux_db = MagicMock()
+        metadata.config = MagicMock()
+        metadata.config.delivery = MagicMock()
+        metadata.config.delivery.delivery_repo_names = ["oadp-repo"]
+        metadata.get_olm_bundle_delivery_repo_name.return_value = "oadp-repo"
+
+        build_repo = MagicMock()
+        build_repo.local_dir = self.base_dir
+
+        bundle_build = MagicMock(
+            spec=KonfluxBundleBuildRecord,
+            nvr="oadp-operator-bundle-1.3.8-1",
+            operator_nvr="oadp-operator-1.3.8-1",
+            operand_nvrs=[],
+            image_pullspec="example.com/oadp-bundle@sha256:abc",
+            image_tag="abc123",
+            source_repo="https://example.com/oadp-operator.git",
+            commitish="abc123def",
+        )
+
+        version = "1.3.8"
+        release = "1"
+        logger = MagicMock()
+
+        mock_fetch_olm_bundle_image_info.return_value = {
+            "config": {
+                "config": {
+                    "Labels": {
+                        "name": "oadp-operator",
+                        "operators.operatorframework.io.bundle.channels.v1": "stable",
+                        "operators.operatorframework.io.bundle.channel.default.v1": "stable",
+                        "operators.operatorframework.io.bundle.package.v1": "oadp-package",
+                        "operators.operatorframework.io.bundle.manifests.v1": "manifests/",
+                    },
+                },
+            },
+        }
+
+        mock_fetch_olm_bundle_blob.return_value = (
+            "oadp-operator.v1.3.8",
+            "oadp-package",
+            {
+                "schema": "olm.bundle",
+                "name": "oadp-operator.v1.3.8",
+                "package": "oadp-package",
+                "properties": [],
+                "relatedImages": [{"name": "", "image": "example.com/oadp-bundle@sha256:abc"}],
+            },
+        )
+
+        # Set up catalog with entries: [v1.3.7, v1.3.9 (replaces v1.3.7)]
+        # After adding v1.3.8 and sorting, should become:
+        # [v1.3.7 (no replaces), v1.3.8 (replaces v1.3.7), v1.3.9 (replaces v1.3.8)]
+        org_catalog_blobs = [
+            {"schema": "olm.package", "name": "oadp-package", "defaultChannel": "stable"},
+            {
+                "schema": "olm.channel",
+                "name": "stable",
+                "package": "oadp-package",
+                "entries": [
+                    {"name": "oadp-operator.v1.3.7"},
+                    {"name": "oadp-operator.v1.3.9", "replaces": "oadp-operator.v1.3.7"},
+                ],
+            },
+            {
+                "schema": "olm.bundle",
+                "name": "oadp-operator.v1.3.7",
+                "package": "oadp-package",
+                "properties": [],
+                "relatedImages": [],
+            },
+        ]
+
+        org_catalog_file = StringIO()
+        yaml.dump_all(org_catalog_blobs, org_catalog_file)
+        org_catalog_file.seek(0)
+        result_catalog_file = StringIO()
+        images_mirror_set_file = StringIO()
+        mock_open.return_value.__enter__.side_effect = [org_catalog_file, result_catalog_file, images_mirror_set_file]
+
+        mock_get_referenced_images.return_value = []
+        mock_load_csv_from_bundle.return_value = {
+            "metadata": {"name": "oadp-operator", "annotations": {}},
+            "spec": {"icon": []},
+        }
+
+        mock_dfp = MockDockerfileParser.return_value
+        mock_dfp.envs = {}
+        mock_dfp.labels = {}
+
+        mock_generate_dockerfile.return_value = None
+
+        # Run the rebase
+        await rebaser._rebase_dir(metadata, build_repo, bundle_build, version, release, logger)
+
+        # Verify the entries are sorted by version with correct replaces chain
+        result_catalog_file.seek(0)
+        result_catalog_blobs = list(yaml.load_all(result_catalog_file))
+        result_catalog_blobs = rebaser._catagorize_catalog_blobs(result_catalog_blobs)
+
+        entries = result_catalog_blobs["oadp-package"]["olm.channel"]["stable"]["entries"]
+
+        # Verify correct sorted order: v1.3.7 < v1.3.8 < v1.3.9
+        self.assertEqual(len(entries), 3)
+
+        # v1.3.7 should be first with no replaces
+        self.assertEqual(entries[0]['name'], 'oadp-operator.v1.3.7')
+        self.assertNotIn('replaces', entries[0])
+
+        # v1.3.8 should be second and replace v1.3.7
+        self.assertEqual(entries[1]['name'], 'oadp-operator.v1.3.8')
+        self.assertEqual(entries[1]['replaces'], 'oadp-operator.v1.3.7')
+
+        # v1.3.9 should be third and replace v1.3.8
+        self.assertEqual(entries[2]['name'], 'oadp-operator.v1.3.9')
+        self.assertEqual(entries[2]['replaces'], 'oadp-operator.v1.3.8')
+
+    @patch("doozerlib.opm.generate_dockerfile")
+    @patch("pathlib.Path.unlink")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._load_csv_from_bundle")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._get_referenced_images")
+    @patch("doozerlib.backend.konflux_fbc.DockerfileParser")
+    @patch("pathlib.Path.mkdir")
+    @patch("pathlib.Path.is_file", return_value=True)
+    @patch("pathlib.Path.open")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._fetch_olm_bundle_image_info", new_callable=AsyncMock)
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._fetch_olm_bundle_blob", new_callable=AsyncMock)
+    async def test_rebase_dir_resolves_highest_default_channel(
+        self,
+        mock_fetch_olm_bundle_blob,
+        mock_fetch_olm_bundle_image_info,
+        mock_open,
+        mock_is_file,
+        mock_mkdir,
+        MockDockerfileParser,
+        mock_get_referenced_images,
+        mock_load_csv_from_bundle,
+        mock_path_unlink,
+        mock_generate_dockerfile,
+    ):
+        """For non-openshift groups, defaultChannel resolves to the highest versioned channel"""
+        rebaser = KonfluxFbcRebaser(
+            base_dir=self.base_dir,
+            group="logging-6.3",
+            assembly=self.assembly,
+            version="6.3.4",
+            release="1",
+            commit_message="test",
+            push=False,
+            fbc_repo="https://example.com/fbc.git",
+            upcycle=False,
+        )
+
+        metadata = MagicMock(spec=ImageMetadata)
+        metadata.distgit_key = "cluster-logging-operator"
+        metadata.runtime = MagicMock()
+        metadata.runtime.group_config = MagicMock()
+        metadata.runtime.group_config.vars = MagicMock()
+        metadata.runtime.group_config.vars.MAJOR = "6"
+        metadata.runtime.group_config.vars.MINOR = "3"
+        metadata.runtime.konflux_db = MagicMock()
+        metadata.config = MagicMock()
+        metadata.config.delivery = MagicMock()
+        metadata.config.delivery.delivery_repo_names = ["logging-repo"]
+        metadata.get_olm_bundle_delivery_repo_name.return_value = "logging-repo"
+
+        build_repo = MagicMock()
+        build_repo.local_dir = self.base_dir
+        bundle_build = MagicMock(
+            spec=KonfluxBundleBuildRecord,
+            nvr="cluster-logging-operator-bundle-6.3.4-1",
+            operator_nvr="cluster-logging-operator-6.3.4-1",
+            operand_nvrs=[],
+            image_pullspec="example.com/logging-bundle@sha256:abc",
+            image_tag="abc123",
+            source_repo="https://example.com/cluster-logging-operator.git",
+            commitish="abc123def",
+        )
+        logger = MagicMock()
+
+        mock_fetch_olm_bundle_image_info.return_value = {
+            "config": {
+                "config": {
+                    "Labels": {
+                        "name": "cluster-logging-operator",
+                        "operators.operatorframework.io.bundle.channels.v1": "stable-6.3",
+                        "operators.operatorframework.io.bundle.channel.default.v1": "stable-6.3",
+                        "operators.operatorframework.io.bundle.package.v1": "cluster-logging",
+                        "operators.operatorframework.io.bundle.manifests.v1": "manifests/",
+                    },
+                },
+            },
+        }
+
+        mock_fetch_olm_bundle_blob.return_value = (
+            "cluster-logging.v6.3.4",
+            "cluster-logging",
+            {
+                "schema": "olm.bundle",
+                "name": "cluster-logging.v6.3.4",
+                "package": "cluster-logging",
+                "properties": [],
+                "relatedImages": [{"name": "", "image": "example.com/logging-bundle@sha256:abc"}],
+            },
+        )
+
+        org_catalog_blobs = [
+            {"schema": "olm.package", "name": "cluster-logging", "defaultChannel": "stable-6.3"},
+            {
+                "schema": "olm.channel",
+                "name": "stable-6.2",
+                "package": "cluster-logging",
+                "entries": [{"name": "cluster-logging.v6.2.9"}],
+            },
+            {
+                "schema": "olm.channel",
+                "name": "stable-6.3",
+                "package": "cluster-logging",
+                "entries": [{"name": "cluster-logging.v6.3.3"}],
+            },
+            {
+                "schema": "olm.channel",
+                "name": "stable-6.4",
+                "package": "cluster-logging",
+                "entries": [{"name": "cluster-logging.v6.4.3"}],
+            },
+            {
+                "schema": "olm.bundle",
+                "name": "cluster-logging.v6.2.9",
+                "package": "cluster-logging",
+                "properties": [],
+                "relatedImages": [],
+            },
+        ]
+
+        org_catalog_file = StringIO()
+        yaml.dump_all(org_catalog_blobs, org_catalog_file)
+        org_catalog_file.seek(0)
+        result_catalog_file = StringIO()
+        images_mirror_set_file = StringIO()
+        mock_open.return_value.__enter__.side_effect = [org_catalog_file, result_catalog_file, images_mirror_set_file]
+
+        mock_get_referenced_images.return_value = []
+        mock_load_csv_from_bundle.return_value = {
+            "metadata": {"name": "cluster-logging-operator", "annotations": {}},
+            "spec": {"icon": []},
+        }
+
+        mock_dfp = MockDockerfileParser.return_value
+        mock_dfp.envs = {}
+        mock_dfp.labels = {}
+
+        mock_generate_dockerfile.return_value = None
+
+        await rebaser._rebase_dir(metadata, build_repo, bundle_build, "6.3.4", "1", logger)
+
+        result_catalog_file.seek(0)
+        result_catalog_blobs = list(yaml.load_all(result_catalog_file))
+        result_catalog_blobs = rebaser._catagorize_catalog_blobs(result_catalog_blobs)
+
+        package_blob = result_catalog_blobs["cluster-logging"]["olm.package"]["cluster-logging"]
+        self.assertEqual(package_blob["defaultChannel"], "stable-6.4")
+
+    @patch("doozerlib.opm.generate_dockerfile")
+    @patch("pathlib.Path.unlink")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._load_csv_from_bundle")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._get_referenced_images")
+    @patch("doozerlib.backend.konflux_fbc.DockerfileParser")
+    @patch("pathlib.Path.mkdir")
+    @patch("pathlib.Path.is_file", return_value=True)
+    @patch("pathlib.Path.open")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._fetch_olm_bundle_image_info", new_callable=AsyncMock)
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._fetch_olm_bundle_blob", new_callable=AsyncMock)
+    async def test_rebase_dir_openshift_group_no_resolution(
+        self,
+        mock_fetch_olm_bundle_blob,
+        mock_fetch_olm_bundle_image_info,
+        mock_open,
+        mock_is_file,
+        mock_mkdir,
+        MockDockerfileParser,
+        mock_get_referenced_images,
+        mock_load_csv_from_bundle,
+        mock_path_unlink,
+        mock_generate_dockerfile,
+    ):
+        """For openshift groups, defaultChannel is NOT resolved (remains as-is)"""
+        rebaser = KonfluxFbcRebaser(
+            base_dir=self.base_dir,
+            group="openshift-4.17",
+            assembly=self.assembly,
+            version="4.17.4",
+            release="1",
+            commit_message="test",
+            push=False,
+            fbc_repo="https://example.com/fbc.git",
+            upcycle=False,
+        )
+
+        metadata = MagicMock(spec=ImageMetadata)
+        metadata.distgit_key = "test-operator"
+        metadata.runtime = MagicMock()
+        metadata.runtime.group_config = MagicMock()
+        metadata.runtime.group_config.vars = MagicMock()
+        metadata.runtime.group_config.vars.MAJOR = "4"
+        metadata.runtime.group_config.vars.MINOR = "17"
+        metadata.runtime.konflux_db = MagicMock()
+        metadata.config = MagicMock()
+        metadata.config.delivery = MagicMock()
+        metadata.config.delivery.delivery_repo_names = ["test-repo"]
+        metadata.get_olm_bundle_delivery_repo_name.return_value = "test-repo"
+
+        build_repo = MagicMock()
+        build_repo.local_dir = self.base_dir
+        bundle_build = MagicMock(
+            spec=KonfluxBundleBuildRecord,
+            nvr="test-operator-bundle-4.17.4-1",
+            operator_nvr="test-operator-4.17.4-1",
+            operand_nvrs=[],
+            image_pullspec="example.com/test-bundle@sha256:abc",
+            image_tag="abc123",
+            source_repo="https://example.com/test-operator.git",
+            commitish="abc123def",
+        )
+        logger = MagicMock()
+
+        mock_fetch_olm_bundle_image_info.return_value = {
+            "config": {
+                "config": {
+                    "Labels": {
+                        "name": "test-operator",
+                        "operators.operatorframework.io.bundle.channels.v1": "stable-6.3",
+                        "operators.operatorframework.io.bundle.channel.default.v1": "stable-6.3",
+                        "operators.operatorframework.io.bundle.package.v1": "test-package",
+                        "operators.operatorframework.io.bundle.manifests.v1": "manifests/",
+                    },
+                },
+            },
+        }
+
+        mock_fetch_olm_bundle_blob.return_value = (
+            "test-package.v4.17.4",
+            "test-package",
+            {
+                "schema": "olm.bundle",
+                "name": "test-package.v4.17.4",
+                "package": "test-package",
+                "properties": [],
+                "relatedImages": [{"name": "", "image": "example.com/test-bundle@sha256:abc"}],
+            },
+        )
+
+        org_catalog_blobs = [
+            {"schema": "olm.package", "name": "test-package", "defaultChannel": "stable-6.3"},
+            {
+                "schema": "olm.channel",
+                "name": "stable-6.2",
+                "package": "test-package",
+                "entries": [{"name": "test-package.v6.2.9"}],
+            },
+            {
+                "schema": "olm.channel",
+                "name": "stable-6.3",
+                "package": "test-package",
+                "entries": [{"name": "test-package.v6.3.3"}],
+            },
+            {
+                "schema": "olm.channel",
+                "name": "stable-6.4",
+                "package": "test-package",
+                "entries": [{"name": "test-package.v6.4.3"}],
+            },
+        ]
+
+        org_catalog_file = StringIO()
+        yaml.dump_all(org_catalog_blobs, org_catalog_file)
+        org_catalog_file.seek(0)
+        result_catalog_file = StringIO()
+        images_mirror_set_file = StringIO()
+        mock_open.return_value.__enter__.side_effect = [org_catalog_file, result_catalog_file, images_mirror_set_file]
+
+        mock_get_referenced_images.return_value = []
+        mock_load_csv_from_bundle.return_value = {
+            "metadata": {"name": "test-operator", "annotations": {}},
+            "spec": {"icon": []},
+        }
+
+        mock_dfp = MockDockerfileParser.return_value
+        mock_dfp.envs = {}
+        mock_dfp.labels = {}
+
+        mock_generate_dockerfile.return_value = None
+
+        await rebaser._rebase_dir(metadata, build_repo, bundle_build, "4.17.4", "1", logger)
+
+        result_catalog_file.seek(0)
+        result_catalog_blobs = list(yaml.load_all(result_catalog_file))
+        result_catalog_blobs = rebaser._catagorize_catalog_blobs(result_catalog_blobs)
+
+        package_blob = result_catalog_blobs["test-package"]["olm.package"]["test-package"]
+        self.assertEqual(package_blob["defaultChannel"], "stable-6.3")
+
+    @patch("doozerlib.opm.generate_dockerfile")
+    @patch("pathlib.Path.unlink")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._load_csv_from_bundle")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._get_referenced_images")
+    @patch("doozerlib.backend.konflux_fbc.DockerfileParser")
+    @patch("pathlib.Path.mkdir")
+    @patch("pathlib.Path.is_file", return_value=True)
+    @patch("pathlib.Path.open")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._fetch_olm_bundle_image_info", new_callable=AsyncMock)
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._fetch_olm_bundle_blob", new_callable=AsyncMock)
+    async def test_rebase_dir_logs_default_channel_change(
+        self,
+        mock_fetch_olm_bundle_blob,
+        mock_fetch_olm_bundle_image_info,
+        mock_open,
+        mock_is_file,
+        mock_mkdir,
+        MockDockerfileParser,
+        mock_get_referenced_images,
+        mock_load_csv_from_bundle,
+        mock_path_unlink,
+        mock_generate_dockerfile,
+    ):
+        """Logging occurs when defaultChannel is set"""
+        rebaser = KonfluxFbcRebaser(
+            base_dir=self.base_dir,
+            group="logging-6.3",
+            assembly=self.assembly,
+            version="6.3.4",
+            release="1",
+            commit_message="test",
+            push=False,
+            fbc_repo="https://example.com/fbc.git",
+            upcycle=False,
+        )
+
+        metadata = MagicMock(spec=ImageMetadata)
+        metadata.distgit_key = "cluster-logging-operator"
+        metadata.runtime = MagicMock()
+        metadata.runtime.group_config = MagicMock()
+        metadata.runtime.group_config.vars = MagicMock()
+        metadata.runtime.group_config.vars.MAJOR = "6"
+        metadata.runtime.group_config.vars.MINOR = "3"
+        metadata.runtime.konflux_db = MagicMock()
+        metadata.config = MagicMock()
+        metadata.config.delivery = MagicMock()
+        metadata.config.delivery.delivery_repo_names = ["logging-repo"]
+        metadata.get_olm_bundle_delivery_repo_name.return_value = "logging-repo"
+
+        build_repo = MagicMock()
+        build_repo.local_dir = self.base_dir
+        bundle_build = MagicMock(
+            spec=KonfluxBundleBuildRecord,
+            nvr="cluster-logging-operator-bundle-6.3.4-1",
+            operator_nvr="cluster-logging-operator-6.3.4-1",
+            operand_nvrs=[],
+            image_pullspec="example.com/logging-bundle@sha256:abc",
+            image_tag="abc123",
+            source_repo="https://example.com/cluster-logging-operator.git",
+            commitish="abc123def",
+        )
+        logger = MagicMock()
+
+        mock_fetch_olm_bundle_image_info.return_value = {
+            "config": {
+                "config": {
+                    "Labels": {
+                        "name": "cluster-logging-operator",
+                        "operators.operatorframework.io.bundle.channels.v1": "stable-6.3",
+                        "operators.operatorframework.io.bundle.channel.default.v1": "stable-6.3",
+                        "operators.operatorframework.io.bundle.package.v1": "cluster-logging",
+                        "operators.operatorframework.io.bundle.manifests.v1": "manifests/",
+                    },
+                },
+            },
+        }
+
+        mock_fetch_olm_bundle_blob.return_value = (
+            "cluster-logging.v6.3.4",
+            "cluster-logging",
+            {
+                "schema": "olm.bundle",
+                "name": "cluster-logging.v6.3.4",
+                "package": "cluster-logging",
+                "properties": [],
+                "relatedImages": [{"name": "", "image": "example.com/logging-bundle@sha256:abc"}],
+            },
+        )
+
+        org_catalog_blobs = [
+            {"schema": "olm.package", "name": "cluster-logging", "defaultChannel": "stable-6.3"},
+            {
+                "schema": "olm.channel",
+                "name": "stable-6.2",
+                "package": "cluster-logging",
+                "entries": [{"name": "cluster-logging.v6.2.9"}],
+            },
+            {
+                "schema": "olm.channel",
+                "name": "stable-6.3",
+                "package": "cluster-logging",
+                "entries": [{"name": "cluster-logging.v6.3.3"}],
+            },
+            {
+                "schema": "olm.channel",
+                "name": "stable-6.4",
+                "package": "cluster-logging",
+                "entries": [{"name": "cluster-logging.v6.4.3"}],
+            },
+        ]
+
+        org_catalog_file = StringIO()
+        yaml.dump_all(org_catalog_blobs, org_catalog_file)
+        org_catalog_file.seek(0)
+        result_catalog_file = StringIO()
+        images_mirror_set_file = StringIO()
+        mock_open.return_value.__enter__.side_effect = [org_catalog_file, result_catalog_file, images_mirror_set_file]
+
+        mock_get_referenced_images.return_value = []
+        mock_load_csv_from_bundle.return_value = {
+            "metadata": {"name": "cluster-logging-operator", "annotations": {}},
+            "spec": {"icon": []},
+        }
+
+        mock_dfp = MockDockerfileParser.return_value
+        mock_dfp.envs = {}
+        mock_dfp.labels = {}
+
+        mock_generate_dockerfile.return_value = None
+
+        await rebaser._rebase_dir(metadata, build_repo, bundle_build, "6.3.4", "1", logger)
+
+        logger.info.assert_any_call("Setting default channel to %s", "stable-6.4")
+
+
+class TestFetchCsvFromGit(unittest.IsolatedAsyncioTestCase):
+    """Test the _fetch_csv_from_git helper function."""
+
+    @patch("doozerlib.backend.konflux_fbc.shutil.rmtree")
+    @patch("doozerlib.backend.konflux_fbc.artlib_util.ensure_github_https_url")
+    @patch("artcommonlib.git_helper.run_git_async", new_callable=AsyncMock)
+    async def test_fetch_csv_from_git_success(self, mock_run_git, mock_convert_url, mock_rmtree):
+        """Test successful CSV extraction from git."""
+        with (
+            patch("pathlib.Path.exists") as mock_exists,
+            patch("pathlib.Path.rglob") as mock_rglob,
+            patch(
+                "builtins.open",
+                unittest.mock.mock_open(
+                    read_data="metadata:\n  name: test-csv\n  annotations:\n    olm.skipRange: '>=4.8.0 <4.17.0'"
+                ),
+            ),
+        ):
+            mock_exists.side_effect = [
+                False,
+                True,
+                True,
+            ]  # repo_dir doesn't exist, manifests exists, repo exists for cleanup
+            mock_convert_url.return_value = "https://github.com/openshift-priv/test-operator"
+
+            mock_csv_file = MagicMock()
+            mock_csv_file.name = "test.clusterserviceversion.yaml"
+            mock_csv_file.open = unittest.mock.mock_open(read_data="metadata:\n  name: test-csv")
+            mock_rglob.return_value = [mock_csv_file]
+
+            logger = MagicMock()
+            work_dir = Path("/tmp/test")
+
+            mock_run_git.return_value = None
+
+            await _fetch_csv_from_git(
+                git_url="https://github.com/openshift-priv/test-operator",
+                revision="abc123",
+                work_dir=work_dir,
+                logger=logger,
+            )
+
+            mock_convert_url.assert_called_once_with("https://github.com/openshift-priv/test-operator")
+
+    @patch("doozerlib.backend.konflux_fbc.shutil.rmtree")
+    @patch("doozerlib.backend.konflux_fbc.artlib_util.ensure_github_https_url")
+    @patch("artcommonlib.git_helper.run_git_async", new_callable=AsyncMock)
+    async def test_fetch_csv_from_git_no_manifests_dir(self, mock_run_git, mock_convert_url, mock_rmtree):
+        """Test when manifests directory doesn't exist."""
+        with patch("pathlib.Path.exists") as mock_exists:
+            mock_exists.side_effect = [False, False, True]
+            mock_convert_url.return_value = "https://github.com/openshift-priv/test-operator"
+
+            logger = MagicMock()
+            work_dir = Path("/tmp/test")
+
+            result = await _fetch_csv_from_git(
+                git_url="https://github.com/openshift-priv/test-operator",
+                revision="abc123",
+                work_dir=work_dir,
+                logger=logger,
+            )
+
+            # Should return None when manifests dir doesn't exist
+            self.assertIsNone(result)
+
+
+class TestKonfluxFbcRebaserAssemblyMethods(unittest.IsolatedAsyncioTestCase):
+    """Test the assembly-related methods in KonfluxFbcRebaser."""
+
+    def setUp(self):
+        self.base_dir = Path("/tmp/konflux_fbc_rebaser")
+        self.group = "openshift-4.20"
+        self.assembly = "stream"
+        self.version = "1.0.0"
+        self.release = "1"
+        self.commit_message = "Test rebase commit message"
+        self.push = False
+        self.fbc_repo = "https://example.com/fbc-repo.git"
+        self.upcycle = False
+
+        self.rebaser = KonfluxFbcRebaser(
+            base_dir=self.base_dir,
+            group=self.group,
+            assembly=self.assembly,
+            version=self.version,
+            release=self.release,
+            commit_message=self.commit_message,
+            push=self.push,
+            fbc_repo=self.fbc_repo,
+            upcycle=self.upcycle,
+        )
+
+    @patch("doozerlib.backend.konflux_fbc.assembly_config_struct")
+    @patch("doozerlib.backend.konflux_fbc.assembly_type")
+    def test_find_future_release_assembly_found(self, mock_assembly_type, mock_assembly_config_struct):
+        """Test finding a future release assembly."""
+        mock_assembly_type.return_value = AssemblyTypes.STANDARD
+        releases_config = MagicMock()
+        releases_config.releases.keys.return_value = ["4.20.10", "4.20.11", "4.20.12"]
+
+        mock_assembly_config_struct.side_effect = lambda rc, name, key, default: {
+            "4.20.10": {"release_date": "2024-01-01"},
+            "4.20.11": {"release_date": "2099-12-31"},
+            "4.20.12": {"release_date": "2099-12-31"},
+        }.get(name, default)
+
+        with patch("doozerlib.backend.konflux_fbc.artlib_util.is_future_release_date") as mock_is_future:
+            mock_is_future.side_effect = lambda d: d == "2099-12-31"
+            result = self.rebaser._find_future_release_assembly(releases_config)
+
+        self.assertEqual(result, "4.20.11")
+
+    @patch("doozerlib.backend.konflux_fbc.assembly_config_struct")
+    @patch("doozerlib.backend.konflux_fbc.assembly_type")
+    def test_find_future_release_assembly_not_found(self, mock_assembly_type, mock_assembly_config_struct):
+        """Test when no future release assembly exists."""
+        mock_assembly_type.return_value = AssemblyTypes.STANDARD
+        releases_config = MagicMock()
+        releases_config.releases.keys.return_value = ["4.20.10", "4.20.11"]
+
+        mock_assembly_config_struct.side_effect = lambda rc, name, key, default: {
+            "4.20.10": {"release_date": "2024-01-01"},
+            "4.20.11": {"release_date": "2024-06-01"},
+        }.get(name, default)
+
+        with patch("doozerlib.backend.konflux_fbc.artlib_util.is_future_release_date") as mock_is_future:
+            mock_is_future.return_value = False
+            result = self.rebaser._find_future_release_assembly(releases_config)
+
+        self.assertIsNone(result)
+
+    def test_find_future_release_assembly_empty_releases(self):
+        """Test when releases config is empty."""
+        releases_config = MagicMock()
+        releases_config.releases.keys.return_value = []
+
+        result = self.rebaser._find_future_release_assembly(releases_config)
+        self.assertIsNone(result)
+
+    @patch("doozerlib.backend.konflux_fbc.assembly_config_struct")
+    @patch("doozerlib.backend.konflux_fbc.assembly_type")
+    def test_find_future_release_assembly_skips_non_standard(self, mock_assembly_type, mock_assembly_config_struct):
+        """Test that non-standard assemblies are skipped."""
+        mock_assembly_type.side_effect = lambda rc, name: {
+            "artXYZ": AssemblyTypes.CUSTOM,
+            "4.20.11": AssemblyTypes.STANDARD,
+        }.get(name, AssemblyTypes.STREAM)
+        releases_config = MagicMock()
+        releases_config.releases.keys.return_value = ["artXYZ", "4.20.11"]
+
+        mock_assembly_config_struct.side_effect = lambda rc, name, key, default: {
+            "artXYZ": {"release_date": "2099-12-31"},
+            "4.20.11": {"release_date": "2099-12-31"},
+        }.get(name, default)
+
+        with patch("doozerlib.backend.konflux_fbc.artlib_util.is_future_release_date") as mock_is_future:
+            mock_is_future.return_value = True
+            result = self.rebaser._find_future_release_assembly(releases_config)
+
+        self.assertEqual(result, "4.20.11")
+
+    def test_get_shipment_url_for_assembly_found(self):
+        """Test getting shipment URL for an assembly."""
+        releases_config = MagicMock()
+        releases_config.releases.get.return_value = {
+            "assembly": {
+                "group": {
+                    "shipment": {
+                        "url": "https://gitlab.cee.redhat.com/hybrid-platforms/art/ocp-shipment-data/-/merge_requests/337"
+                    }
+                }
+            }
+        }
+
+        result = self.rebaser._get_shipment_url_for_assembly(releases_config, "4.20.13")
+        self.assertEqual(
+            result, "https://gitlab.cee.redhat.com/hybrid-platforms/art/ocp-shipment-data/-/merge_requests/337"
+        )
+
+    def test_get_shipment_url_for_assembly_not_found(self):
+        """Test when shipment URL doesn't exist."""
+        releases_config = MagicMock()
+        releases_config.releases.get.return_value = {"assembly": {"group": {}}}
+
+        result = self.rebaser._get_shipment_url_for_assembly(releases_config, "4.20.13")
+        self.assertIsNone(result)
+
+    def test_get_shipment_url_for_assembly_missing_assembly(self):
+        """Test when assembly doesn't exist in releases."""
+        releases_config = MagicMock()
+        releases_config.releases.get.return_value = {}
+
+        result = self.rebaser._get_shipment_url_for_assembly(releases_config, "nonexistent")
+        self.assertIsNone(result)
+
+    def test_find_component_in_shipment_found(self):
+        """Test finding a component in shipment snapshot."""
+        shipment = MagicMock()
+
+        component1 = MagicMock()
+        component1.name = "other-operator-bundle"
+        component2 = MagicMock()
+        component2.name = "nfd-operator-bundle"
+
+        shipment.shipment.snapshot.spec.components = [component1, component2]
+
+        result = self.rebaser._find_component_in_shipment(shipment, "nfd-operator")
+        self.assertEqual(result, component2)
+
+    def test_find_component_in_shipment_by_operator_name(self):
+        """Test finding a component by exact operator name (no -bundle suffix)."""
+        shipment = MagicMock()
+
+        component1 = MagicMock()
+        component1.name = "other-operator-bundle"
+        component2 = MagicMock()
+        component2.name = "cluster-nfd-operator"
+
+        shipment.shipment.snapshot.spec.components = [component1, component2]
+
+        result = self.rebaser._find_component_in_shipment(shipment, "cluster-nfd-operator")
+        self.assertEqual(result, component2)
+
+    def test_find_component_in_shipment_prefers_bundle_suffix(self):
+        """Test that -bundle suffix match is preferred over bare operator name."""
+        shipment = MagicMock()
+
+        bare_component = MagicMock()
+        bare_component.name = "nfd-operator"
+        bundle_component = MagicMock()
+        bundle_component.name = "nfd-operator-bundle"
+
+        shipment.shipment.snapshot.spec.components = [bare_component, bundle_component]
+
+        result = self.rebaser._find_component_in_shipment(shipment, "nfd-operator")
+        self.assertEqual(result, bundle_component)
+
+    def test_find_component_in_shipment_not_found(self):
+        """Test when component is not found in shipment."""
+        shipment = MagicMock()
+
+        component1 = MagicMock()
+        component1.name = "other-operator-bundle"
+
+        shipment.shipment.snapshot.spec.components = [component1]
+
+        result = self.rebaser._find_component_in_shipment(shipment, "nfd-operator")
+        self.assertIsNone(result)
+
+    def test_find_component_in_shipment_empty(self):
+        """Test when shipment snapshot is None."""
+        shipment = MagicMock()
+        shipment.shipment.snapshot = None
+
+        result = self.rebaser._find_component_in_shipment(shipment, "nfd-operator")
+        self.assertIsNone(result)
+
+    @patch("doozerlib.backend.konflux_fbc._fetch_csv_from_git", new_callable=AsyncMock)
+    async def test_extract_csv_info_from_bundle_success(self, mock_fetch_csv):
+        """Test extracting CSV info from a bundle component."""
+        bundle_component = MagicMock()
+        bundle_component.name = "nfd-operator-bundle"
+        bundle_component.source.git.url = "https://github.com/openshift-priv/nfd-operator"
+        bundle_component.source.git.revision = "abc123"
+
+        mock_fetch_csv.return_value = {
+            "metadata": {
+                "name": "nfd.4.20.0-202601280915",
+                "annotations": {"olm.skipRange": ">=4.8.0 <4.20.0"},
+            }
+        }
+
+        result = await self.rebaser._extract_csv_info_from_bundle(bundle_component)
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result[0], "nfd.4.20.0-202601280915")
+        self.assertEqual(result[1], ">=4.8.0 <4.20.0")
+
+    @patch("doozerlib.backend.konflux_fbc._fetch_csv_from_git", new_callable=AsyncMock)
+    async def test_extract_csv_info_from_bundle_no_skip_range(self, mock_fetch_csv):
+        """Test extracting CSV info when skipRange is not present."""
+        bundle_component = MagicMock()
+        bundle_component.name = "nfd-operator-bundle"
+        bundle_component.source.git.url = "https://github.com/openshift-priv/nfd-operator"
+        bundle_component.source.git.revision = "abc123"
+
+        mock_fetch_csv.return_value = {
+            "metadata": {
+                "name": "nfd.4.20.0-202601280915",
+                "annotations": {},
+            }
+        }
+
+        result = await self.rebaser._extract_csv_info_from_bundle(bundle_component)
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result[0], "nfd.4.20.0-202601280915")
+        self.assertIsNone(result[1])
+
+    @patch("doozerlib.backend.konflux_fbc._fetch_csv_from_git", new_callable=AsyncMock)
+    async def test_extract_csv_info_from_bundle_fetch_failed(self, mock_fetch_csv):
+        """Test when fetching CSV from git fails."""
+        bundle_component = MagicMock()
+        bundle_component.name = "nfd-operator-bundle"
+        bundle_component.source.git.url = "https://github.com/openshift-priv/nfd-operator"
+        bundle_component.source.git.revision = "abc123"
+
+        mock_fetch_csv.return_value = None
+
+        result = await self.rebaser._extract_csv_info_from_bundle(bundle_component)
+        self.assertIsNone(result)
+
+    @patch("doozerlib.backend.konflux_fbc.opm.render", new_callable=AsyncMock)
+    async def test_get_bundle_blob_from_fbc_success(self, mock_render):
+        """Test getting bundle blob from FBC image."""
+        fbc_component = MagicMock()
+        fbc_component.containerImage = "quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:abc123"
+
+        mock_render.return_value = [
+            {"schema": "olm.package", "name": "nfd"},
+            {"schema": "olm.channel", "name": "stable", "package": "nfd"},
+            {"schema": "olm.bundle", "name": "nfd.4.20.0-202601280915", "package": "nfd"},
+            {"schema": "olm.bundle", "name": "nfd.4.19.0", "package": "nfd"},
+        ]
+
+        result = await self.rebaser._get_bundle_blob_from_fbc(fbc_component, "nfd.4.20.0-202601280915")
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result["schema"], "olm.bundle")
+        self.assertEqual(result["name"], "nfd.4.20.0-202601280915")
+
+    @patch("doozerlib.backend.konflux_fbc.opm.render", new_callable=AsyncMock)
+    async def test_get_bundle_blob_from_fbc_not_found(self, mock_render):
+        """Test when bundle blob is not found in FBC image."""
+        fbc_component = MagicMock()
+        fbc_component.containerImage = "quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:abc123"
+
+        mock_render.return_value = [
+            {"schema": "olm.package", "name": "nfd"},
+            {"schema": "olm.bundle", "name": "nfd.4.19.0", "package": "nfd"},
+        ]
+
+        result = await self.rebaser._get_bundle_blob_from_fbc(fbc_component, "nfd.4.20.0-nonexistent")
+        self.assertIsNone(result)
+
+    @patch("doozerlib.backend.konflux_fbc.opm.render", new_callable=AsyncMock)
+    async def test_get_bundle_blob_from_fbc_empty_blobs(self, mock_render):
+        """Test when FBC image returns no blobs."""
+        fbc_component = MagicMock()
+        fbc_component.containerImage = "quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:abc123"
+
+        mock_render.return_value = []
+
+        result = await self.rebaser._get_bundle_blob_from_fbc(fbc_component, "nfd.4.20.0")
+        self.assertIsNone(result)
+
+    @patch("doozerlib.backend.konflux_fbc.get_shipment_config_from_mr")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._get_bundle_blob_from_fbc", new_callable=AsyncMock)
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._extract_csv_info_from_bundle", new_callable=AsyncMock)
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._find_component_in_shipment")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._get_shipment_url_for_assembly")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._find_future_release_assembly")
+    async def test_get_assembly_bundle_csv_info_stream_assembly(
+        self,
+        mock_find_future,
+        mock_get_shipment_url,
+        mock_find_component,
+        mock_extract_csv,
+        mock_get_bundle_blob,
+        mock_get_shipment_config,
+    ):
+        """Test getting assembly bundle CSV info for stream assembly."""
+        metadata = MagicMock()
+        metadata.distgit_key = "nfd-operator"
+        metadata.runtime.get_releases_config.return_value = MagicMock()
+
+        # Setup mocks
+        mock_find_future.return_value = "4.20.13"
+        mock_get_shipment_url.return_value = "https://gitlab.example.com/mr/123"
+
+        bundle_component = MagicMock()
+        bundle_component.name = "nfd-operator-bundle"
+        fbc_component = MagicMock()
+        fbc_component.containerImage = "quay.io/test@sha256:abc"
+
+        mock_find_component.side_effect = [bundle_component, fbc_component]
+        mock_extract_csv.return_value = ("nfd.4.20.0-202601280915", ">=4.8.0 <4.20.0")
+        mock_get_bundle_blob.return_value = {"schema": "olm.bundle", "name": "nfd.4.20.0-202601280915"}
+
+        result = await self.rebaser._get_assembly_bundle_csv_info(metadata)
+
+        self.assertIsNotNone(result)
+        self.assertIsInstance(result, AssemblyBundleCsvInfo)
+        self.assertEqual(result.csv_name, "nfd.4.20.0-202601280915")
+        self.assertEqual(result.skip_range, ">=4.8.0 <4.20.0")
+        self.assertIsNotNone(result.bundle_blob)
+
+    @patch("doozerlib.backend.konflux_fbc.get_shipment_config_from_mr")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._get_bundle_blob_from_fbc", new_callable=AsyncMock)
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._extract_csv_info_from_bundle", new_callable=AsyncMock)
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._find_component_in_shipment")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._get_shipment_url_for_assembly")
+    async def test_get_assembly_bundle_csv_info_named_assembly(
+        self,
+        mock_get_shipment_url,
+        mock_find_component,
+        mock_extract_csv,
+        mock_get_bundle_blob,
+        mock_get_shipment_config,
+    ):
+        """Test getting assembly bundle CSV info for named assembly."""
+        # Create rebaser with named assembly
+        rebaser = KonfluxFbcRebaser(
+            base_dir=self.base_dir,
+            group=self.group,
+            assembly="4.20.13",  # Named assembly
+            version=self.version,
+            release=self.release,
+            commit_message=self.commit_message,
+            push=self.push,
+            fbc_repo=self.fbc_repo,
+            upcycle=self.upcycle,
+        )
+
+        metadata = MagicMock()
+        metadata.distgit_key = "nfd-operator"
+        metadata.runtime.get_releases_config.return_value = MagicMock()
+
+        mock_get_shipment_url.return_value = "https://gitlab.example.com/mr/123"
+
+        bundle_component = MagicMock()
+        fbc_component = MagicMock()
+        fbc_component.containerImage = "quay.io/test@sha256:abc"
+
+        mock_find_component.side_effect = [bundle_component, fbc_component]
+        mock_extract_csv.return_value = ("nfd.4.20.13", None)
+        mock_get_bundle_blob.return_value = {"schema": "olm.bundle", "name": "nfd.4.20.13"}
+
+        result = await rebaser._get_assembly_bundle_csv_info(metadata)
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result.csv_name, "nfd.4.20.13")
+        self.assertIsNone(result.skip_range)
+
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._find_future_release_assembly")
+    async def test_get_assembly_bundle_csv_info_no_future_release(self, mock_find_future):
+        """Test when no future release is found for stream assembly."""
+        metadata = MagicMock()
+        metadata.distgit_key = "nfd-operator"
+        metadata.runtime.get_releases_config.return_value = MagicMock()
+
+        mock_find_future.return_value = None
+
+        result = await self.rebaser._get_assembly_bundle_csv_info(metadata)
+        self.assertIsNone(result)
+
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._get_shipment_url_for_assembly")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._find_future_release_assembly")
+    async def test_get_assembly_bundle_csv_info_no_shipment_url(self, mock_find_future, mock_get_shipment_url):
+        """Test when shipment URL is not found."""
+        metadata = MagicMock()
+        metadata.distgit_key = "nfd-operator"
+        metadata.runtime.get_releases_config.return_value = MagicMock()
+
+        mock_find_future.return_value = "4.20.13"
+        mock_get_shipment_url.return_value = None
+
+        result = await self.rebaser._get_assembly_bundle_csv_info(metadata)
+        self.assertIsNone(result)
 
 
 class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
@@ -1207,9 +2605,9 @@ class TestKonfluxFbcFragmentMerger(unittest.IsolatedAsyncioTestCase):
                 logger=self.logger,
             )
 
-    @patch("doozerlib.util.oc_image_info_for_arch_async__caching", new_callable=AsyncMock)
+    @patch("doozerlib.util.oc_image_info_for_arch_async", new_callable=AsyncMock)
     @patch("httpx.AsyncClient", autospec=True)
-    async def test_merge_idms(self, mock_async_client: Mock, mock_oc_image_info_for_arch_async__caching: AsyncMock):
+    async def test_merge_idms(self, mock_async_client: Mock, mock_oc_image_info_for_arch_async: AsyncMock):
         http_client = mock_async_client.return_value.__aenter__.return_value = AsyncMock()
         http_client.get.side_effect = [
             MagicMock(
@@ -1232,7 +2630,7 @@ spec:
             )
             for idx in range(3)
         ]
-        mock_oc_image_info_for_arch_async__caching.return_value = {
+        mock_oc_image_info_for_arch_async.return_value = {
             "config": {
                 "config": {
                     "Labels": {

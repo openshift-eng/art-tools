@@ -11,6 +11,7 @@ from artcommonlib.brew import BuildStates
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.model import Missing, Model
 from artcommonlib.util import isolate_el_version_in_brew_tag
+from artcommonlib.variants import BuildVariant
 
 CONFIG_MODES = [
     'enabled',  # business as usual
@@ -69,6 +70,19 @@ class MetadataBase(object):
         self.data_obj.save()
 
     def branch(self):
+        # For OKD variant, check if okd.distgit.branch is configured
+        # runtime.variant is set by commands like scan-sources --variant=okd
+        if self.runtime.variant == BuildVariant.OKD:
+            if self.config.okd.distgit.branch is not Missing:
+                return self.config.okd.distgit.branch
+
+            # For OKD, prefer runtime.branch (which includes merged group okd.branch)
+            # over image's standard distgit.branch. This ensures group-level okd.branch
+            # takes precedence when there's no image-specific okd.distgit.branch override.
+            if self.runtime.branch:
+                return self.runtime.branch
+
+        # Fall back to standard branch logic
         if self.config.distgit.branch is not Missing:
             return self.config.distgit.branch
         return self.runtime.branch
@@ -434,7 +448,6 @@ class MetadataBase(object):
         completed_before: datetime.datetime | None = None,
         extra_patterns: dict | None = None,
         exclude_large_columns: bool = False,
-        enforce_network_mode: bool = False,
         **kwargs,
     ) -> KonfluxBuildRecord | None:
         """
@@ -453,10 +466,6 @@ class MetadataBase(object):
         :param exclude_large_columns: If True, exclude installed_rpms and installed_packages columns from
                                       BigQuery queries to reduce query cost and latency.
                                       Default is False (include all columns).
-        :param enforce_network_mode: If True, filters builds by the configured network mode (hermetic vs non-hermetic).
-                                     For hermetic images, only hermetic builds are retrieved.
-                                     For internal-only and open images, only non-hermetic builds are retrieved.
-                                     Default is False (no network mode filtering).
         """
         assert self.runtime.konflux_db is not None, 'Konflux DB must be initialized with GCP credentials'
         self.runtime.konflux_db.bind(KonfluxBuildRecord)
@@ -471,23 +480,25 @@ class MetadataBase(object):
                 return None
             return await self.get_pinned_konflux_build(el_target=el_target)
 
-        # Handle network mode enforcement
-        if enforce_network_mode:
-            configured_network_mode = self.get_konflux_network_mode()
-            is_hermetic = configured_network_mode == "hermetic"
-            self.logger.debug(
-                f"Querying latest build for {self.distgit_key} with network_mode={configured_network_mode} (hermetic={is_hermetic})"
-            )
-            extra_patterns["hermetic"] = is_hermetic
-
         # Determine the correct group and el_target for querying builds
-        # For okd-only images (mode: disabled, okd.mode: enabled), use the okd group variant
+        # For OKD variant scans, use okd-* group for ALL images
+        # For OCP scans, only use okd-* group for okd-only images (mode: disabled, okd.mode: enabled)
         query_group = self.runtime.group
-        is_okd_only = False
-        if self.mode == 'disabled':
+        is_okd = False
+
+        # Check if we're running in OKD variant mode (set by scan-sources --variant okd)
+        runtime_variant = getattr(self.runtime, 'variant', None)
+
+        if runtime_variant == BuildVariant.OKD:
+            # For OKD variant, query with okd-* group for all images
+            query_group = self.runtime.group.replace('openshift-', 'okd-')
+            # All images use scos prefix for OKD variant
+            is_okd = True
+            self.logger.debug(f"Using OKD group '{query_group}' for OKD variant scan of {self.distgit_key}")
+        elif self.mode == 'disabled':
             if self.config.okd is not Missing and self.config.okd.mode == 'enabled':
                 # This is an okd-only image, use okd group (e.g., okd-4.23 instead of openshift-4.23)
-                is_okd_only = True
+                is_okd = True
                 query_group = self.runtime.group.replace('openshift-', 'okd-')
                 self.logger.debug(f"Using OKD group '{query_group}' for okd-only image {self.distgit_key}")
 
@@ -502,7 +513,7 @@ class MetadataBase(object):
             **kwargs,
         }
         if el_target and isinstance(el_target, int):
-            if self.meta_type == 'image' and is_okd_only:
+            if self.meta_type == 'image' and is_okd:
                 el_target = f'scos{el_target}'
             else:
                 el_target = f'el{el_target}'
@@ -517,7 +528,7 @@ class MetadataBase(object):
                 base_search_params['el_target'] = el_target
             else:
                 # OKD builds use 'scos' prefix instead of 'el' (e.g., scos9 vs el9)
-                el_prefix = 'scos' if is_okd_only else 'el'
+                el_prefix = 'scos' if is_okd else 'el'
                 base_search_params['el_target'] = f'{el_prefix}{self.branch_el_target()}'
 
         assembly = assembly if assembly else self.runtime.assembly

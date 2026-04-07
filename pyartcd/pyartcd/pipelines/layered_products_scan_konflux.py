@@ -11,7 +11,7 @@ from pyartcd.locks import Lock
 from pyartcd.runtime import Runtime
 
 
-class OadpScanPipeline:
+class LayeredProductsScanPipeline:
     def __init__(self, runtime, group, data_path, assembly, data_gitref, image_list):
         self.runtime = runtime
         self.group = group
@@ -22,6 +22,7 @@ class OadpScanPipeline:
 
         self.logger = logging.getLogger(__name__)
         self._doozer_working = self.runtime.working_dir / "doozer_working"
+        self.report = {}
         self.changes = {}
 
         self.skipped = True  # True by default; if not locked, run() will set it to False
@@ -41,7 +42,9 @@ class OadpScanPipeline:
     async def run(self):
         # If we get here, lock could be acquired
         self.skipped = False
-        scan_info = f'Scanning OADP group {self.group}, assembly {self.assembly}, data path {self.data_path}'
+        scan_info = (
+            f'Scanning layered products group {self.group}, assembly {self.assembly}, data path {self.data_path}'
+        )
 
         if self.data_gitref:
             scan_info += f'@{self.data_gitref}'
@@ -49,7 +52,7 @@ class OadpScanPipeline:
 
         self.check_params()
 
-        # Scan for changes (OADP only has images/RPMs, no RHCOS)
+        # Scan for changes (layered products only have images/RPMs, no RHCOS)
         await self.get_changes()
 
         # Handle image source changes
@@ -61,9 +64,8 @@ class OadpScanPipeline:
         """
 
         if not self.runtime.dry_run:
-            # TODO: Uncomment after logging can support stream builds
-            # if self.assembly != 'stream':
-            #     raise ValueError('non-stream assemblies are only allowed in dry-run mode')
+            if self.assembly != 'stream':
+                raise ValueError('non-stream assemblies are only allowed in dry-run mode')
             if self.data_path != constants.OCP_BUILD_DATA_URL or self.data_gitref:
                 raise ValueError('Custom data paths can only be used in dry-run mode')
 
@@ -90,41 +92,59 @@ class OadpScanPipeline:
         _, out, _ = await exectools.cmd_gather_async(cmd, stderr=None)
         self.logger.info('scan-sources output for %s:\n%s', self.group, out)
 
-        yaml_data = yaml.safe_load(out)
-        self.changes = util.get_changes(yaml_data)
+        self.report = yaml.safe_load(out)
+        self.changes = util.get_changes(self.report)
         if self.changes:
             self.logger.info('Detected source changes:\n%s', yaml.safe_dump(self.changes))
         else:
-            self.logger.info('No changes detected in OADP RPMs or images')
+            self.logger.info('No changes detected in layered products RPMs or images')
 
     def handle_source_changes(self):
         if not self.changes:
             return
 
         jenkins.update_title(' [SOURCE CHANGES]')
-        self.logger.info('Detected at least one updated OADP image')
+        self.logger.info('Detected at least one updated layered product image')
 
-        image_list = self.changes.get('images', [])
+        # Filter out images that reference disabled dependencies
+        # (e.g. an operator whose CSV references an operand with mode: disabled)
+        image_list = [
+            image['name']
+            for image in self.report.get('images', [])
+            if image.get('changed') and not image.get('has_disabled_dependency')
+        ]
+
+        skipped_images = [
+            image['name']
+            for image in self.report.get('images', [])
+            if image.get('changed') and image.get('has_disabled_dependency')
+        ]
+        if skipped_images:
+            self.logger.warning('Skipping images with disabled dependencies: %s', skipped_images)
+
+        if not image_list:
+            self.logger.info('No buildable images after filtering disabled dependencies')
+            return
 
         # Do NOT trigger konflux builds in dry-run mode
         if self.runtime.dry_run:
-            self.logger.info('Would have triggered an OADP %s build', self.group)
+            self.logger.info('Would have triggered a layered products %s build', self.group)
             return
 
         # Update build description
-        jenkins.update_description(f'Changed {len(image_list)} OADP images<br/>')
+        jenkins.update_description(f'Changed {len(image_list)} layered product images<br/>')
 
-        # Trigger OADP build
-        self.logger.info('Triggering an OADP %s build', self.group)
-        jenkins.start_oadp(
+        # Trigger layered product build
+        self.logger.info('Triggering a layered products %s build', self.group)
+        jenkins.start_layered_products(
             group=self.group,
             assembly=self.assembly,
             image_list=image_list,
         )
 
 
-@cli.command('beta:konflux:oadp-scan')
-@click.option('--group', required=True, help='OADP group to scan (e.g., oadp-1.5)')
+@cli.command('layered-products-scan')
+@click.option('--group', required=True, help='Layered products group to scan (e.g., oadp-1.5)')
 @click.option('--assembly', required=False, default='stream', help='Assembly to scan for')
 @click.option(
     '--data-path',
@@ -136,14 +156,16 @@ class OadpScanPipeline:
 @click.option('--image-list', required=False, help='Comma/space-separated list to of images to scan, empty to scan all')
 @pass_runtime
 @click_coroutine
-async def oadp_scan(runtime: Runtime, group: str, assembly: str, data_path: str, data_gitref, image_list: str):
+async def layered_products_scan(
+    runtime: Runtime, group: str, assembly: str, data_path: str, data_gitref, image_list: str
+):
     # KUBECONFIG env var must be defined in order to scan sources
     if not os.getenv('KUBECONFIG'):
         raise RuntimeError('Environment variable KUBECONFIG must be defined')
 
     jenkins.init_jenkins()
 
-    pipeline = OadpScanPipeline(
+    pipeline = LayeredProductsScanPipeline(
         runtime=runtime,
         group=group,
         assembly=assembly,
@@ -156,7 +178,7 @@ async def oadp_scan(runtime: Runtime, group: str, assembly: str, data_path: str,
         await pipeline.run()
 
     else:
-        lock = Lock.OADP_SCAN
+        lock = Lock.LAYERED_PRODUCTS_SCAN
         lock_name = lock.value.format(group=group)
         lock_identifier = jenkins.get_build_path_or_random()
 
@@ -165,7 +187,7 @@ async def oadp_scan(runtime: Runtime, group: str, assembly: str, data_path: str,
         # and skip the current build if that's the case.
         # Should that happen, signal it by appending a [SKIPPED][LOCKED] to the build title
         async def run_with_build_lock():
-            build_lock = Lock.OADP_BUILD
+            build_lock = Lock.LAYERED_PRODUCTS_BUILD
             build_lock_name = build_lock.value.format(group=group)
             await locks.run_with_lock(
                 coro=pipeline.run(),

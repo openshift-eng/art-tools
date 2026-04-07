@@ -100,6 +100,7 @@ def plashet_config_for_major_minor(major, minor):
             "include_embargoed": True,
             "embargoed_tags": [f"rhaos-{major}.{minor}-rhel-8-embargoed"],
             "include_previous_packages": previous_packages,
+            "exclude_packages": ["kernel", "kernel-rt"] if (int(major), int(minor)) >= (4, 13) else [],
         },
         "rhel-8-server-ose-rpms": {
             "slug": "el8",
@@ -108,6 +109,7 @@ def plashet_config_for_major_minor(major, minor):
             "include_embargoed": False,
             "embargoed_tags": [f"rhaos-{major}.{minor}-rhel-8-embargoed"],
             "include_previous_packages": previous_packages,
+            "exclude_packages": ["kernel", "kernel-rt"] if (int(major), int(minor)) >= (4, 13) else [],
         },
         "rhel-8-server-ironic-rpms": {
             "slug": "ironic-el8",
@@ -157,6 +159,7 @@ def convert_plashet_config_to_new_style(plashet_config: dict) -> list[Repo]:
             embargo_aware=True,
             include_embargoed=config.get("include_embargoed", False),
             include_previous_packages=config.get("include_previous_packages", []),
+            exclude_packages=config.get("exclude_packages", []),
             source=BrewSource(
                 type="brew",
                 from_tags=[
@@ -329,6 +332,7 @@ async def build_plashets(
             embargoed_tags=config.source.embargoed_tags,
             tag_pvs=tuple((tag.name, tag.product_version) for tag in config.source.from_tags),
             include_previous_packages=config.include_previous_packages,
+            exclude_packages=config.exclude_packages,
             repo_subdir=plashet_config.repo_subdir if plashet_config.create_repo_subdirs else None,
             data_path=data_path,
             dry_run=dry_run,
@@ -374,6 +378,7 @@ async def build_plashet_from_tags(
     tag_pvs: Sequence[Tuple[str, str]],
     embargoed_tags: Optional[Sequence[str]],
     include_previous_packages: Optional[Sequence[str]] = None,
+    exclude_packages: Optional[Sequence[str]] = None,
     repo_subdir: str | None = 'os',
     poll_for: int = 0,
     data_path: str = constants.OCP_BUILD_DATA_URL,
@@ -406,6 +411,8 @@ async def build_plashet_from_tags(
         cmd.extend(["--repo-subdir", repo_subdir])
     for arch in arches:
         cmd.extend(["--arch", arch, signing_mode])
+    for pkg in exclude_packages or []:
+        cmd.extend(["--exclude-package", pkg])
     cmd.extend(
         [
             "from-tags",
@@ -423,8 +430,10 @@ async def build_plashet_from_tags(
             cmd.extend(["--embargoed-brew-tag", t])
     for tag, pv in tag_pvs:
         cmd.extend(["--brew-tag", tag, pv])
+    exclude_set = set(exclude_packages or [])
     for pkg in include_previous_packages:
-        cmd.extend(["--include-previous-for", pkg])
+        if pkg not in exclude_set:
+            cmd.extend(["--include-previous-for", pkg])
     if poll_for:
         cmd.extend(["--poll-for", str(poll_for)])
 
@@ -504,3 +513,54 @@ async def copy_to_remote(
     else:
         logger.info("Executing %s", ' '.join(cmd))
         await exectools.cmd_assert_async(cmd, env=os.environ.copy())
+
+    # Clean up old revision directories on the remote, keeping the 3 most recent.
+    keep = 3
+    await run_cleanup_script(plashet_remote_host, remote_base_dir, keep=keep, dry_run=dry_run)
+
+
+CLEANUP_SCRIPT = Path(__file__).parent / 'cleanup_plashets.sh'
+
+
+async def run_cleanup_script(
+    plashet_remote_host: str,
+    remote_base_dir: os.PathLike,
+    keep: int = 3,
+    dry_run: bool = False,
+):
+    """
+    Run cleanup_plashets.sh on a remote host via SSH, piping the script via stdin
+    to avoid shell quoting issues.
+    """
+    script = CLEANUP_SCRIPT.read_text()
+    args = [str(remote_base_dir), str(keep)]
+    if dry_run:
+        args.append("--dry-run")
+
+    cmd = ["ssh", plashet_remote_host, "--", "bash", "-s", "--"] + args
+    logger.info(
+        "Cleaning up old plashet directories on %s:%s (keeping last %d)%s",
+        plashet_remote_host,
+        remote_base_dir,
+        keep,
+        " [DRY RUN]" if dry_run else "",
+    )
+    proc = await asyncio.subprocess.create_subprocess_exec(
+        *cmd,
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env=os.environ.copy(),
+    )
+    stdout, stderr = await proc.communicate(input=script.encode())
+    if stdout:
+        logger.info("Cleanup output from %s:\n%s", plashet_remote_host, stdout.decode().rstrip())
+    if stderr:
+        logger.warning("Cleanup stderr from %s:\n%s", plashet_remote_host, stderr.decode().rstrip())
+    if proc.returncode != 0:
+        logger.warning(
+            "Cleanup script failed on %s:%s with exit code %d",
+            plashet_remote_host,
+            remote_base_dir,
+            proc.returncode,
+        )

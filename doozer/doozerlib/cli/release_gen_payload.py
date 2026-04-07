@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import sys
 import traceback
@@ -54,11 +55,13 @@ from doozerlib.util import (
     check_nightly_exists,
     extract_version_fields,
     find_manifest_list_sha,
+    get_nightly_pullspec,
     isolate_nightly_name_components,
     what_is_in_master,
 )
 
 TRACER = trace.get_tracer(__name__)
+logger = logging.getLogger(__name__)
 
 
 async def check_multi_nightly_exists_for_model(model_nightly_name: str) -> bool:
@@ -837,6 +840,8 @@ class GenPayloadCli:
         # check that images for this assembly/group have installed rpms that are not allowed to assemble.
         self.detect_installed_rpms_issues(assembly_inspector)
 
+        self.detect_hermetic_mismatches(assembly_inspector)
+
         # update issues found for payload images and check RPM consistency
         await self.detect_extend_payload_entry_issues(assembly_inspector)
 
@@ -853,7 +858,11 @@ class GenPayloadCli:
         """
         span = trace.get_current_span()
         self.logger.debug("Checking for mismatched sibling sources...")
-        group_images: List = list(assembly_inspector.get_group_release_images().values())
+        group_images: List = [
+            img
+            for img in assembly_inspector.get_group_release_images().values()
+            if img and img.get_image_meta().is_payload
+        ]
         issues = []
         for mismatched, sibling in self.payload_generator.find_mismatched_siblings(group_images):
             component = mismatched.get_image_meta().distgit_key
@@ -1028,6 +1037,33 @@ class GenPayloadCli:
             if bbii:
                 self.assembly_issues.extend(
                     assembly_inspector.check_installed_rpms_in_image(dg_key, bbii, self.package_rpm_finder)
+                )
+
+    @TRACER.start_as_current_span("GenPayloadCli.detect_hermetic_mismatches")
+    def detect_hermetic_mismatches(self, assembly_inspector: AssemblyInspector):
+        """
+        For Konflux builds, check that images configured as hermetic were
+        actually built hermetically. Only flags the case where the config
+        requires hermetic but the build was non-hermetic.
+        """
+        if self.runtime.build_system != 'konflux':
+            return
+
+        self.logger.debug("Detecting hermetic mode mismatches...")
+        for dg_key, bbii in assembly_inspector.get_group_release_images().items():
+            if not bbii:
+                continue
+            image_meta = bbii.get_image_meta()
+            configured_mode = image_meta.get_konflux_network_mode()
+
+            if configured_mode == "hermetic" and not bbii.get_build_obj().hermetic:
+                self.assembly_issues.append(
+                    AssemblyIssue(
+                        f"Image {dg_key} build {bbii.get_nvr()} was built non-hermetically "
+                        f"but configured network mode is 'hermetic'",
+                        component=dg_key,
+                        code=AssemblyIssueCode.MISMATCHED_NETWORK_MODE,
+                    )
                 )
 
     def full_component_repo(self, repo_type: RepositoryType = RepositoryType.PUBLIC) -> str:
@@ -2176,8 +2212,16 @@ class PayloadGenerator:
             # If an artist overrides one sibling's git url, but not another, the following
             # scan would not be able to detect that they were siblings. Instead, we rely on the
             # original image metadata to determine sibling-ness.
-            source_url = build_record_inspector.get_image_meta().raw_config.content.source.git.url
+            raw_source = build_record_inspector.get_image_meta().raw_config.content.source
 
+            if raw_source.allow_mismatched_siblings:
+                logger.info(
+                    "Skipping sibling check for %s (allow_mismatched_siblings is set)",
+                    build_record_inspector.get_image_meta().distgit_key,
+                )
+                continue
+
+            source_url = raw_source.git.url
             source_git_commit = build_record_inspector.get_source_git_commit()
             if not source_url or not source_git_commit:
                 # This is true for distgit only components.
@@ -2328,7 +2372,12 @@ class PayloadGenerator:
             for pkg in consistent_pkgs:
                 issues.append(
                     self.validate_pkg_consistency_req(
-                        payload_tag, pkg, bbii, rhcos_rpm_vrs, str(primary_rhcos_build), package_rpm_finder
+                        payload_tag,
+                        pkg,
+                        bbii,
+                        rhcos_rpm_vrs,
+                        str(primary_rhcos_build),
+                        package_rpm_finder or self.package_rpm_finder,
                     )
                 )
 
@@ -2343,20 +2392,83 @@ class PayloadGenerator:
         rhcos_build_id: str,
         package_rpm_finder=None,
     ) -> Optional[AssemblyIssue]:
-        """check that the specified package in the member is consistent with the RHCOS build"""
+        """
+        Check that the specified package in the member is consistent with the RHCOS build.
+
+        For Konflux builds, this also detects when multiple versions of the same package
+        are installed (e.g., two different kernel versions), which should never happen.
+        """
         logger = bri.runtime.logger
         payload_tag_nvr: str = bri.get_nvr()
         logger.debug(f"Checking consistency of {pkg} for {payload_tag_nvr} against {rhcos_build_id}")
-        member_nvrs: Dict[str, Dict] = bri.get_all_installed_package_build_dicts(package_rpm_finder)  # by name
-        try:
-            build = member_nvrs[pkg]
-        except KeyError:
-            return AssemblyIssue(
-                f"RHCOS consistency configuration specifies that payload tag '{payload_tag}' "
-                f"should install package '{pkg}', but it does not",
-                payload_tag,
-                AssemblyIssueCode.FAILED_CONSISTENCY_REQUIREMENT,
-            )
+
+        # For Konflux, get ALL installed package NVRs to detect duplicates
+        # For Brew, use the old method (only one version per package is expected)
+        if self.runtime.build_system == 'konflux':
+            # Access the build record directly to get all installed packages
+            build_record = bri.get_build_obj()  # Returns KonfluxBuildRecord
+            installed_packages = build_record.installed_packages  # List of package NVRs
+
+            # Filter for packages matching the name we're checking
+            matching_packages = [pkg_nvr for pkg_nvr in installed_packages if parse_nvr(pkg_nvr)['name'] == pkg]
+
+            if not matching_packages:
+                return AssemblyIssue(
+                    f"RHCOS consistency configuration specifies that payload tag '{payload_tag}' "
+                    f"should install package '{pkg}', but it does not",
+                    payload_tag,
+                    AssemblyIssueCode.FAILED_CONSISTENCY_REQUIREMENT,
+                )
+
+            # Check if there are multiple versions of the same package installed
+            if len(matching_packages) > 1:
+                return AssemblyIssue(
+                    f"Payload tag '{payload_tag}' has multiple versions of package '{pkg}' installed: "
+                    f"{', '.join(matching_packages)}. Only one version should be present.",
+                    payload_tag,
+                    AssemblyIssueCode.FAILED_CONSISTENCY_REQUIREMENT,
+                )
+
+            # Get the single package build dict
+            pkg_finder = package_rpm_finder or self.package_rpm_finder
+            pkg_finder._cache_packages(matching_packages)
+            build = pkg_finder._packages_build_dicts[matching_packages[0]]
+
+        else:  # Brew
+            # First, check for duplicate packages in Brew builds
+            # Although OSBS should enforce single versions, check to be safe
+            all_rpm_dicts = bri.get_all_installed_rpm_dicts()
+            matching_package_nvrs = set()
+            for rpm_dict in all_rpm_dicts:
+                rpm_nvr = rpm_dict['nvr']
+                parsed = parse_nvr(rpm_nvr)
+                if parsed['name'] == pkg:
+                    # Extract package NVR from RPM NVR (RPMs have arch suffix)
+                    # e.g., kernel-5.14.0-427.116.1.el9_4.x86_64 -> kernel-5.14.0-427.116.1.el9_4
+                    package_nvr = f"{parsed['name']}-{parsed['version']}-{parsed['release']}"
+                    matching_package_nvrs.add(package_nvr)
+
+            if not matching_package_nvrs:
+                return AssemblyIssue(
+                    f"RHCOS consistency configuration specifies that payload tag '{payload_tag}' "
+                    f"should install package '{pkg}', but it does not",
+                    payload_tag,
+                    AssemblyIssueCode.FAILED_CONSISTENCY_REQUIREMENT,
+                )
+
+            if len(matching_package_nvrs) > 1:
+                return AssemblyIssue(
+                    f"Payload tag '{payload_tag}' has multiple versions of package '{pkg}' installed: "
+                    f"{', '.join(sorted(matching_package_nvrs))}. Only one version should be present.",
+                    payload_tag,
+                    AssemblyIssueCode.FAILED_CONSISTENCY_REQUIREMENT,
+                )
+
+            # Get the build dict using the old method (now we know there's only one)
+            member_nvrs: Dict[str, Dict] = bri.get_all_installed_package_build_dicts(
+                package_rpm_finder or self.package_rpm_finder
+            )  # by name
+            build = member_nvrs[pkg]  # We know this exists now
 
         # get names of all the actual RPMs included in this package build, because that's what we
         # have for comparison in the RHCOS metadata (not the package name).
@@ -2675,23 +2787,19 @@ class PayloadGenerator:
 
         issues: List[str]
         runtime.logger.info(f"Processing nightly: {nightly}")
-        major_minor, brew_cpu_arch, priv = isolate_nightly_name_components(nightly)
 
+        major_minor, _, _ = isolate_nightly_name_components(nightly)
         if major_minor != runtime.get_minor_version():
             return terminal_issue(f"Specified nightly {nightly} does not match group major.minor")
 
-        # For 4.20, remove the -konflux suffix as Konflux builds are being mirrored to standard imagestreams
-        if runtime.build_system == 'brew' or uses_konflux_imagestream_override(major_minor):
-            release_suffix = 'release'
-        else:
-            release_suffix = 'konflux-release'
-
-        rc_suffix = go_suffix_for_arch(brew_cpu_arch, priv)
+        try:
+            pullspec = get_nightly_pullspec(nightly, runtime.build_system)
+        except ValueError as e:
+            return terminal_issue(str(e))
 
         retries: int = 3
         release_json_str = ""
         rc = -1
-        pullspec = f"registry.ci.openshift.org/ocp{rc_suffix}/{release_suffix}{rc_suffix}:{nightly}"
         while retries > 0:
             rc, release_json_str, err = await exectools.cmd_gather_async(
                 f"oc adm release info {pullspec} -o=json", check=False

@@ -11,6 +11,7 @@ class SlackClient:
     """A SlackClient allows pipelines to send Slack messages."""
 
     DEFAULT_CHANNEL = "#art-release"
+    DEFAULT_CHANNEL_LAYERED_OPERATORS = "#art-release-layered-operators"
 
     def __init__(
         self,

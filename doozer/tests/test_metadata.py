@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, Mock, patch
 
 from artcommonlib.brew import BuildStates
 from artcommonlib.model import Model
+from artcommonlib.variants import BuildVariant
 from doozerlib.image import ImageMetadata
 from doozerlib.metadata import CgitAtomFeedEntry, Metadata, RebuildHintCode
 
@@ -16,6 +17,7 @@ class TestMetadata(TestCase):
         runtime.group_config.urls.cgit = "http://distgit.example.com/cgit"
         runtime.group_config.scan_freshness.threshold_hours = 6
         runtime.logger = Mock()
+        runtime.variant = BuildVariant.OCP
 
         koji_mock = Mock()
         koji_mock.__enter__ = Mock()
@@ -769,3 +771,118 @@ class TestMetadata(TestCase):
         )
 
         self.assertEqual(meta.get_konflux_network_mode(), "hermetic")
+
+    def test_branch_okd_with_image_override(self):
+        """Test that okd.distgit.branch override is used for OKD variant"""
+        from artcommonlib.metadata import MetadataBase
+
+        data_obj = MagicMock(key="test-image", filename="test-image.yml", data={"name": "test-image"})
+        runtime = MagicMock()
+        runtime.variant = BuildVariant.OKD
+        runtime.branch = "rhaos-5.0-rhel-10"  # Group-level branch
+
+        meta = MetadataBase("image", runtime, data_obj)
+        meta.config = Model(
+            dict_to_model={
+                "distgit": {
+                    "branch": "rhaos-5.0-rhel-9",  # Standard branch
+                },
+                "okd": {
+                    "distgit": {
+                        "branch": "rhaos-5.0-rhel-9",  # Image-specific OKD override
+                    }
+                },
+            }
+        )
+
+        # Should return okd.distgit.branch override
+        self.assertEqual(meta.branch(), "rhaos-5.0-rhel-9")
+
+    def test_branch_okd_with_runtime_branch(self):
+        """Test that runtime.branch is used for OKD when no image override exists"""
+        from artcommonlib.metadata import MetadataBase
+
+        data_obj = MagicMock(key="test-image", filename="test-image.yml", data={"name": "test-image"})
+        runtime = MagicMock()
+        runtime.variant = BuildVariant.OKD
+        runtime.branch = "rhaos-5.0-rhel-10"  # Group-level branch merged from okd.branch
+
+        meta = MetadataBase("image", runtime, data_obj)
+        meta.config = Model(
+            dict_to_model={
+                "distgit": {
+                    "branch": "rhaos-5.0-rhel-9",  # Standard branch (should be ignored for OKD)
+                },
+            }
+        )
+
+        # Should return runtime.branch (group okd.branch) not distgit.branch
+        self.assertEqual(meta.branch(), "rhaos-5.0-rhel-10")
+
+    def test_branch_okd_fallback_to_distgit_branch(self):
+        """Test fallback to distgit.branch for OKD when no override and no runtime.branch"""
+        from artcommonlib.metadata import MetadataBase
+
+        data_obj = MagicMock(key="test-image", filename="test-image.yml", data={"name": "test-image"})
+        runtime = MagicMock()
+        runtime.variant = BuildVariant.OKD
+        runtime.branch = None  # No runtime.branch set
+
+        meta = MetadataBase("image", runtime, data_obj)
+        meta.config = Model(
+            dict_to_model={
+                "distgit": {
+                    "branch": "rhaos-5.0-rhel-9",
+                },
+            }
+        )
+
+        # Should fall back to distgit.branch
+        self.assertEqual(meta.branch(), "rhaos-5.0-rhel-9")
+
+    def test_branch_ocp_uses_distgit_branch(self):
+        """Test that OCP variant uses standard distgit.branch"""
+        from artcommonlib.metadata import MetadataBase
+
+        data_obj = MagicMock(key="test-image", filename="test-image.yml", data={"name": "test-image"})
+        runtime = MagicMock()
+        runtime.variant = BuildVariant.OCP
+        runtime.branch = "rhaos-5.0-rhel-9"
+
+        meta = MetadataBase("image", runtime, data_obj)
+        meta.config = Model(
+            dict_to_model={
+                "distgit": {
+                    "branch": "rhaos-5.0-rhel-9",
+                },
+                "okd": {
+                    "distgit": {
+                        "branch": "rhaos-5.0-rhel-10",  # Should be ignored for OCP
+                    }
+                },
+            }
+        )
+
+        # Should return standard distgit.branch, ignoring okd config
+        self.assertEqual(meta.branch(), "rhaos-5.0-rhel-9")
+
+    def test_branch_ocp_with_runtime_branch(self):
+        """Test that OCP variant prefers distgit.branch over runtime.branch"""
+        from artcommonlib.metadata import MetadataBase
+
+        data_obj = MagicMock(key="test-image", filename="test-image.yml", data={"name": "test-image"})
+        runtime = MagicMock()
+        runtime.variant = BuildVariant.OCP
+        runtime.branch = "rhaos-5.0-rhel-10"  # Should be ignored if distgit.branch is set
+
+        meta = MetadataBase("image", runtime, data_obj)
+        meta.config = Model(
+            dict_to_model={
+                "distgit": {
+                    "branch": "rhaos-5.0-rhel-9",
+                },
+            }
+        )
+
+        # Should return distgit.branch, not runtime.branch
+        self.assertEqual(meta.branch(), "rhaos-5.0-rhel-9")

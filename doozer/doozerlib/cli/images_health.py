@@ -92,6 +92,14 @@ class ImagesHealthPipeline:
                 if effective_mode == 'disabled':
                     self.logger.info('Skipping OKD disabled image: %s', image_meta.distgit_key)
                     continue
+
+                # For OKD, skip non-payload images (they are not built/released)
+                for_payload = image_meta.config.for_payload
+                if for_payload is Missing:
+                    for_payload = False
+                if not for_payload:
+                    self.logger.info('Skipping OKD non-payload image: %s', image_meta.distgit_key)
+                    continue
             elif image_meta.config.konflux.mode == 'disabled' or image_meta.mode == 'disabled':
                 self.logger.info('Skipping disabled image: %s', image_meta.distgit_key)
                 continue
@@ -217,16 +225,10 @@ class ImagesHealthPipeline:
 @click.option('--limit', default=LIMIT_BUILD_RESULTS, help='How far back in the database to search for builds')
 @click.option('--group', required=False, help='(Optional) override the group name from the config')
 @click.option('--assembly', required=False, help='(Optional) override the runtime assembly name')
-@click.option(
-    '--variant',
-    default=BuildVariant.OCP.value,
-    type=click.Choice([v.value for v in BuildVariant]),
-    help='Build variant.',
-)
 @click_coroutine
 @pass_runtime
-async def images_health(runtime, limit, group, assembly, variant):
+async def images_health(runtime, limit, group, assembly):
     runtime.initialize(clone_distgits=False, clone_source=False, prevent_cloning=True)
     await ImagesHealthPipeline(
-        runtime=runtime, limit=limit, group=group, assembly=assembly, variant=BuildVariant(variant)
+        runtime=runtime, limit=limit, group=group, assembly=assembly, variant=runtime.variant
     ).run()

@@ -2,14 +2,13 @@ import base64
 import json
 from datetime import datetime, timezone
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import MagicMock, patch
 
 import aiohttp
 import yaml
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord
 from artcommonlib.model import Missing
 from doozerlib.cli.scan_sources_konflux import ConfigScanSources
-from doozerlib.constants import KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL
 from doozerlib.image import ImageMetadata
 from doozerlib.metadata import RebuildHintCode
 from doozerlib.runtime import Runtime
@@ -28,16 +27,20 @@ class TestScanSourcesKonflux(IsolatedAsyncioTestCase):
         self.session = MagicMock(spec=aiohttp.ClientSession)
         self.ci_kubeconfig = "/tmp/test_kubeconfig"
 
-        # Mock environment variables
-        with patch.dict('os.environ', {'GITHUB_TOKEN': 'test_token'}):
-            self.scanner = ConfigScanSources(
-                runtime=self.runtime,
-                ci_kubeconfig=self.ci_kubeconfig,
-                session=self.session,
-                as_yaml=False,
-                rebase_priv=False,
-                dry_run=False,
-            )
+        # Mock get_github_client_for_org (returns client directly; no Github class or GITHUB_TOKEN)
+        # Patch must persist for test duration since get_current_task_bundle_shas calls it at runtime
+        self._github_patch = patch('doozerlib.cli.scan_sources_konflux.get_github_client_for_org')
+        mock_get_github_client = self._github_patch.start()
+        self.mock_github_client = MagicMock()
+        mock_get_github_client.return_value = self.mock_github_client
+        self.scanner = ConfigScanSources(
+            runtime=self.runtime,
+            ci_kubeconfig=self.ci_kubeconfig,
+            session=self.session,
+            as_yaml=False,
+            rebase_priv=False,
+            dry_run=False,
+        )
 
         # Mock image metadata
         self.image_meta = MagicMock(spec=ImageMetadata)
@@ -55,6 +58,11 @@ class TestScanSourcesKonflux(IsolatedAsyncioTestCase):
 
         # Mock changing_image_names to allow scanning
         self.scanner.changing_image_names = set()
+
+    def tearDown(self):
+        if hasattr(self, '_github_patch'):
+            self._github_patch.stop()
+        super().tearDown()
 
 
 class TestScanTaskBundleChanges(TestScanSourcesKonflux):
@@ -362,23 +370,11 @@ class TestGetCurrentTaskBundleShas(TestScanSourcesKonflux):
 
     async def test_get_current_task_bundle_shas_success(self):
         """Test successful fetching and parsing of task bundle SHAs."""
-        # Convert YAML to base64-encoded content (like GitHub API)
         yaml_content = yaml.dump(self.sample_yaml)
-        encoded_content = base64.b64encode(yaml_content.encode('utf-8')).decode('utf-8')
 
-        # Mock GitHub API response with base64-encoded content
-        mock_github_response = {
-            "name": "art-konflux-template-push.yaml",
-            "content": encoded_content,
-            "encoding": "base64",
-        }
-
-        # Mock successful HTTP response
-        mock_response = AsyncMock()
-        mock_response.raise_for_status = Mock()
-        mock_response.json = AsyncMock(return_value=mock_github_response)
-
-        self.session.get.return_value.__aenter__.return_value = mock_response
+        mock_content = MagicMock()
+        mock_content.decoded_content = yaml_content.encode('utf-8')
+        self.mock_github_client.get_repo.return_value.get_contents.return_value = mock_content
 
         result = await self.scanner.get_current_task_bundle_shas()
 
@@ -389,42 +385,29 @@ class TestGetCurrentTaskBundleShas(TestScanSourcesKonflux):
         }
         self.assertEqual(result, expected)
 
-        # Verify correct URL and headers were used
-        self.session.get.assert_called_once_with(
-            KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL, headers={'Authorization': 'Bearer test_token'}
+        self.mock_github_client.get_repo.assert_called_with("openshift-priv/art-konflux-template")
+        self.mock_github_client.get_repo.return_value.get_contents.assert_called_with(
+            ".tekton/art-konflux-template-push.yaml", ref="main"
         )
 
     async def test_get_current_task_bundle_shas_http_error(self):
-        """Test handling of HTTP errors when fetching from GitHub."""
-        # Mock HTTP error
-        mock_response = AsyncMock()
-        mock_response.raise_for_status = Mock(
-            side_effect=aiohttp.ClientResponseError(request_info=MagicMock(), history=[], status=404)
+        """Test that GitHub API errors propagate so @retry can handle them."""
+        from github import GithubException
+
+        self.mock_github_client.get_repo.return_value.get_contents.side_effect = GithubException(
+            404, {"message": "Not Found"}, None
         )
 
-        self.session.get.return_value.__aenter__.return_value = mock_response
-
-        result = await self.scanner.get_current_task_bundle_shas()
-
-        self.assertEqual(result, {})
+        with self.assertRaises(GithubException):
+            await self.scanner.get_current_task_bundle_shas()
 
     async def test_get_current_task_bundle_shas_yaml_parse_error(self):
         """Test handling of YAML parsing errors."""
-        # Mock GitHub response with invalid base64-encoded YAML content
         invalid_yaml = "invalid: yaml: content: [unclosed"
-        encoded_content = base64.b64encode(invalid_yaml.encode('utf-8')).decode('utf-8')
 
-        mock_github_response = {
-            "name": "art-konflux-template-push.yaml",
-            "content": encoded_content,
-            "encoding": "base64",
-        }
-
-        mock_response = AsyncMock()
-        mock_response.raise_for_status = Mock()
-        mock_response.json = AsyncMock(return_value=mock_github_response)
-
-        self.session.get.return_value.__aenter__.return_value = mock_response
+        mock_content = MagicMock()
+        mock_content.decoded_content = invalid_yaml.encode('utf-8')
+        self.mock_github_client.get_repo.return_value.get_contents.return_value = mock_content
 
         result = await self.scanner.get_current_task_bundle_shas()
 
@@ -433,23 +416,11 @@ class TestGetCurrentTaskBundleShas(TestScanSourcesKonflux):
     async def test_get_current_task_bundle_shas_no_task_refs(self):
         """Test handling when YAML contains no task references."""
         yaml_without_tasks = {"spec": {"resources": []}}
-
-        # Convert YAML to base64-encoded content (like GitHub API)
         yaml_content = yaml.dump(yaml_without_tasks)
-        encoded_content = base64.b64encode(yaml_content.encode('utf-8')).decode('utf-8')
 
-        # Mock GitHub API response with base64-encoded content
-        mock_github_response = {
-            "name": "art-konflux-template-push.yaml",
-            "content": encoded_content,
-            "encoding": "base64",
-        }
-
-        mock_response = AsyncMock()
-        mock_response.raise_for_status = Mock()
-        mock_response.json = AsyncMock(return_value=mock_github_response)
-
-        self.session.get.return_value.__aenter__.return_value = mock_response
+        mock_content = MagicMock()
+        mock_content.decoded_content = yaml_content.encode('utf-8')
+        self.mock_github_client.get_repo.return_value.get_contents.return_value = mock_content
 
         result = await self.scanner.get_current_task_bundle_shas()
 
@@ -493,22 +464,11 @@ class TestGetCurrentTaskBundleShas(TestScanSourcesKonflux):
             },
         }
 
-        # Convert YAML to base64-encoded content (like GitHub API)
         yaml_content = yaml.dump(nested_yaml)
-        encoded_content = base64.b64encode(yaml_content.encode('utf-8')).decode('utf-8')
 
-        # Mock GitHub API response with base64-encoded content
-        mock_github_response = {
-            "name": "art-konflux-template-push.yaml",
-            "content": encoded_content,
-            "encoding": "base64",
-        }
-
-        mock_response = AsyncMock()
-        mock_response.raise_for_status = Mock()
-        mock_response.json = AsyncMock(return_value=mock_github_response)
-
-        self.session.get.return_value.__aenter__.return_value = mock_response
+        mock_content = MagicMock()
+        mock_content.decoded_content = yaml_content.encode('utf-8')
+        self.mock_github_client.get_repo.return_value.get_contents.return_value = mock_content
 
         result = await self.scanner.get_current_task_bundle_shas()
 
@@ -694,3 +654,89 @@ class TestTaskBundleIntegration(TestScanSourcesKonflux):
 
         result = meta.get_konflux_network_mode()
         self.assertEqual(result, "internal-only")
+
+
+class TestFindImagesWithDisabledDependencies(TestScanSourcesKonflux):
+    """Test the _find_images_with_disabled_dependencies method."""
+
+    def setUp(self):
+        super().setUp()
+        self.runtime.group = 'oadp-1.4'
+        self.runtime.gitdata = MagicMock()
+
+    def _make_gitdata_entry(self, key, mode='enabled', dependents=None):
+        entry = MagicMock()
+        entry.key = key
+        entry.data = {'mode': mode, 'name': f'test/{key}'}
+        if dependents:
+            entry.data['dependents'] = dependents
+        return entry
+
+    def test_no_disabled_images(self):
+        """No disabled images means no images should be flagged."""
+        self.scanner.changing_image_names = {'oadp-operator', 'oadp-velero'}
+        self.runtime.gitdata.load_data.return_value = {
+            'oadp-operator': self._make_gitdata_entry('oadp-operator'),
+            'oadp-velero': self._make_gitdata_entry('oadp-velero', dependents=['oadp-operator']),
+        }
+
+        result = self.scanner._find_images_with_disabled_dependencies()
+        self.assertEqual(result, set())
+
+    def test_disabled_image_with_dependent(self):
+        """A disabled image listing a changed image as dependent should flag the dependent."""
+        self.scanner.changing_image_names = {'oadp-operator', 'oadp-velero-restic-restore-helper'}
+        self.runtime.gitdata.load_data.return_value = {
+            'oadp-operator': self._make_gitdata_entry('oadp-operator'),
+            'oadp-velero': self._make_gitdata_entry('oadp-velero', mode='disabled', dependents=['oadp-operator']),
+            'oadp-velero-restic-restore-helper': self._make_gitdata_entry('oadp-velero-restic-restore-helper'),
+        }
+
+        result = self.scanner._find_images_with_disabled_dependencies()
+        self.assertEqual(result, {'oadp-operator'})
+
+    def test_disabled_image_dependent_not_changing(self):
+        """A disabled image whose dependent is not in the changing set should not flag anything."""
+        self.scanner.changing_image_names = {'oadp-velero-restic-restore-helper'}
+        self.runtime.gitdata.load_data.return_value = {
+            'oadp-operator': self._make_gitdata_entry('oadp-operator'),
+            'oadp-velero': self._make_gitdata_entry('oadp-velero', mode='disabled', dependents=['oadp-operator']),
+            'oadp-velero-restic-restore-helper': self._make_gitdata_entry('oadp-velero-restic-restore-helper'),
+        }
+
+        result = self.scanner._find_images_with_disabled_dependencies()
+        self.assertEqual(result, set())
+
+    def test_multiple_disabled_images_same_dependent(self):
+        """Multiple disabled images listing the same dependent should flag it once."""
+        self.scanner.changing_image_names = {'my-operator'}
+        self.runtime.gitdata.load_data.return_value = {
+            'my-operator': self._make_gitdata_entry('my-operator'),
+            'disabled-img-a': self._make_gitdata_entry('disabled-img-a', mode='disabled', dependents=['my-operator']),
+            'disabled-img-b': self._make_gitdata_entry('disabled-img-b', mode='disabled', dependents=['my-operator']),
+        }
+
+        result = self.scanner._find_images_with_disabled_dependencies()
+        self.assertEqual(result, {'my-operator'})
+
+    def test_wip_images_not_treated_as_disabled(self):
+        """Images with mode 'wip' should not be treated as disabled for dependency checking."""
+        self.scanner.changing_image_names = {'my-operator'}
+        self.runtime.gitdata.load_data.return_value = {
+            'my-operator': self._make_gitdata_entry('my-operator'),
+            'wip-image': self._make_gitdata_entry('wip-image', mode='wip', dependents=['my-operator']),
+        }
+
+        result = self.scanner._find_images_with_disabled_dependencies()
+        self.assertEqual(result, set())
+
+    def test_disabled_image_without_dependents(self):
+        """A disabled image without dependents should not affect anything."""
+        self.scanner.changing_image_names = {'my-operator'}
+        self.runtime.gitdata.load_data.return_value = {
+            'my-operator': self._make_gitdata_entry('my-operator'),
+            'disabled-standalone': self._make_gitdata_entry('disabled-standalone', mode='disabled'),
+        }
+
+        result = self.scanner._find_images_with_disabled_dependencies()
+        self.assertEqual(result, set())

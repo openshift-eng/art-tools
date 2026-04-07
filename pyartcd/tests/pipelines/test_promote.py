@@ -1990,9 +1990,9 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         )
 
     @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
-    @patch("pyartcd.pipelines.promote.Github")
+    @patch("pyartcd.pipelines.promote.get_github_client_for_org")
     @patch.dict(os.environ, {"GITHUB_TOKEN": "fake-token"})
-    async def test_update_qe_repo_releases_is_none(self, mock_github_class: Mock, _):
+    async def test_update_qe_repo_releases_is_none(self, mock_get_github_client: Mock, _):
         """
         Test _update_qe_repo handles TypeError when YAML contains 'releases:' with no value.
         When yaml.load returns {'releases': None}, attempting file_content['releases'][release_name]
@@ -2005,13 +2005,21 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
 
         pipeline = PromotePipeline(runtime, group="openshift-4.21", assembly="4.21.0", signing_env="prod")
 
-        mock_github = MagicMock()
-        mock_github_class.return_value = mock_github
         mock_upstream_repo = MagicMock()
         mock_fork_repo = MagicMock()
-        mock_github.get_repo.side_effect = lambda repo: (
-            mock_upstream_repo if repo == "openshift/release-tests" else mock_fork_repo
-        )
+        mock_openshift_client = MagicMock()
+        mock_openshift_client.get_repo.return_value = mock_upstream_repo
+        mock_openshift_bot_client = MagicMock()
+        mock_openshift_bot_client.get_repo.return_value = mock_fork_repo
+
+        def get_client_side_effect(org):
+            if org == "openshift":
+                return mock_openshift_client
+            if org == "openshift-bot":
+                return mock_openshift_bot_client
+            return MagicMock()
+
+        mock_get_github_client.side_effect = get_client_side_effect
 
         mock_fork_repo.get_branches.return_value = []
         mock_upstream_branch = MagicMock()

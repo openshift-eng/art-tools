@@ -42,7 +42,7 @@ def list_olm_operators(runtime: Runtime, output_format: str):
     $ doozer --group openshift-4.5 olm-bundle:list-olm-operators
     $ doozer --group openshift-4.5 olm-bundle:list-olm-operators --output-format=distgit-key
     """
-    runtime.initialize(clone_distgits=False)
+    runtime.initialize(clone_distgits=False, clone_source=False, prevent_cloning=True)
 
     for image in runtime.image_metas():
         if image.enabled and image.config['update-csv'] is not Missing:
@@ -89,7 +89,7 @@ def olm_bundles_print(runtime: Runtime, skip_missing, pattern: Optional[str]):
 
     runtime.initialize(config_only=True)
     clone_distgits = bool(runtime.group_config.canonical_builders_from_upstream)
-    runtime.initialize(clone_distgits=clone_distgits)
+    runtime.initialize(clone_distgits=clone_distgits, prevent_cloning=not clone_distgits)
 
     # If user omitted braces, add them.
     if "{" not in pattern:
@@ -204,13 +204,13 @@ def rebase_and_build_olm_bundle(runtime: Runtime, operator_nvrs: Tuple[str, ...]
             images.append(image_name)
             operator_builds.append(build)
         runtime.images = images
-        runtime.initialize(clone_distgits=False)
+        runtime.initialize(clone_distgits=False, clone_source=False, prevent_cloning=True)
     else:
         # We initialize with config_only first to check if we need to clone distgits or not
         # Cloning distgits is necessary for meta.get_latest_build() to work correctly
         runtime.initialize(config_only=True)
         clone_distgits = bool(runtime.group_config.canonical_builders_from_upstream)
-        runtime.initialize(clone_distgits=clone_distgits)
+        runtime.initialize(clone_distgits=clone_distgits, prevent_cloning=not clone_distgits)
 
         # Since no operator nvs are explicitly given
         # fetch all latest operator builds from Brew

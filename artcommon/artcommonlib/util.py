@@ -5,7 +5,6 @@ import json
 import logging
 import os
 import re
-import sys
 import tempfile
 from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
@@ -24,8 +23,12 @@ from artcommonlib.constants import (
     PRODUCT_NAMESPACE_MAP,
     RELEASE_SCHEDULES,
 )
-from artcommonlib.exectools import cmd_assert_async, cmd_gather_async, limit_concurrency
+from artcommonlib.exectools import cmd_gather_async, limit_concurrency
 from artcommonlib.model import ListModel, Missing
+from artcommonlib.oc_image_info import (
+    oc_image_info__cached__lru,
+    oc_image_info__cached_async__lru,
+)
 from artcommonlib.release_util import isolate_el_version_in_release
 from ruamel.yaml import YAML
 from semver import VersionInfo
@@ -135,6 +138,33 @@ def convert_remote_git_to_ssh(url):
     return f'git@{server}:{org}/{repo_name}.git'
 
 
+def _extract_git_hostname(url: str) -> str | None:
+    """Extract the hostname from a git remote URL (standard or SCP-style)."""
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+    if parsed.hostname:
+        return parsed.hostname.lower()
+    # SCP-style: git@github.com:org/repo.git or user@host:path
+    m = re.match(r'^(?:[^@]+@)?([^:/]+)[:/]', url)
+    return m.group(1).lower() if m else None
+
+
+def ensure_github_https_url(url: str) -> str:
+    """Convert a GitHub SSH/git URL to HTTPS, leaving non-GitHub URLs unchanged.
+
+    This is used when switching git CLI operations from SSH to HTTPS + GIT_ASKPASS.
+    Non-GitHub URLs (distgit, gitlab, etc.) are returned as-is so that their
+    existing auth mechanisms (Kerberos, SSH agent) continue to work.
+
+    :param url: Any git remote URL
+    :return: HTTPS URL if the input points to github.com, otherwise the original URL
+    """
+    if _extract_git_hostname(url.strip()) != "github.com":
+        return url
+    return convert_remote_git_to_https(url)
+
+
 def split_git_url(url) -> (str, str, str):
     """
     :param url: A remote ssh or https github url
@@ -148,16 +178,25 @@ def split_git_url(url) -> (str, str, str):
 
 
 @retry(reraise=True, wait=wait_fixed(10), stop=stop_after_attempt(3))
-async def download_file_from_github(repository, branch, path, token: str, destination, session):
-    server, org, repo_name = split_git_url(repository)
-    url = f'https://raw.githubusercontent.com/{org}/{repo_name}/{branch}/{path}'
-    headers = {"Authorization": f'Bearer {token}'}
+async def download_file_from_github(repository, branch, path, github_client, destination):
+    """Download a file from a GitHub repository using the PyGithub Contents API.
 
-    LOGGER.info('Downloading %s...', url)
-    async with session.get(url, headers=headers) as resp:
-        resp.raise_for_status()
-        with open(str(destination), "wb") as f:
-            f.write((await resp.text()).encode())
+    :param repository: Git remote URL (ssh or https)
+    :param branch: Branch or commit ref to download from
+    :param path: Path to the file within the repository
+    :param github_client: An authenticated github.Github instance
+    :param destination: Local file path to write the downloaded content to
+    """
+    _, org, repo_name = split_git_url(repository)
+
+    def _fetch():
+        repo = github_client.get_repo(f"{org}/{repo_name}")
+        return repo.get_contents(path, ref=branch).decoded_content
+
+    LOGGER.info('Downloading %s/%s/%s ref=%s ...', org, repo_name, path, branch)
+    data = await asyncio.to_thread(_fetch)
+    with open(str(destination), "wb") as f:
+        f.write(data)
 
 
 def merge_objects(a, b):
@@ -177,25 +216,43 @@ def merge_objects(a, b):
 
 def is_future_release_date(date_str):
     """
-    If the input date is in future then return True elase False
+    If the input date is in future then return True else False
     """
-    try:
-        target_date = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-    except ValueError:
-        return False
-    current_date = datetime.now(tz=timezone.utc)
-    if target_date > current_date:
-        return True
-    else:
-        return False
+    formats = ["%Y-%m-%d", "%Y-%b-%d"]
+    for fmt in formats:
+        try:
+            target_date = datetime.strptime(date_str, fmt).replace(tzinfo=timezone.utc)
+            return target_date > datetime.now(tz=timezone.utc)
+        except ValueError:
+            continue
+    raise ValueError(f"Unable to parse date string '{date_str}' with any of the supported formats: {formats}")
 
 
-def get_assembly_release_date(assembly, group):
+def get_assembly_release_date(assembly, group, date=None):
     """
     Get assembly release release date from release schedule API.
 
+    :param assembly: Assembly name
+    :param group: Group name
+    :param date: Optional explicitly provided date. Accepts formats:
+                 - YYYY-MM-DD (e.g., 2026-03-31)
+                 - YYYY-MMM-DD (e.g., 2026-Mar-31)
+                 If provided, this date is used instead of fetching from the API.
     :raises ValueError: If the assembly release date is not found
+    :return: Date in format YYYY-MMM-DD (e.g., 2026-Mar-31)
     """
+    # If a date is explicitly provided, normalize it to the expected format
+    if date:
+        # Try to parse the date in multiple formats and return in YYYY-MMM-DD format
+        for fmt in ["%Y-%m-%d", "%Y-%b-%d"]:
+            try:
+                parsed_date = datetime.strptime(date, fmt)
+                return parsed_date.strftime("%Y-%b-%d")
+            except ValueError:
+                continue
+        # If neither format worked, return the date as-is (will fail later with better context)
+        return date
+
     s = requests.Session()
     auth = requests_gssapi.HTTPSPNEGOAuth(mutual_authentication=requests_gssapi.OPTIONAL)
     s.post('https://pp.engineering.redhat.com/oidc/authenticate', auth=auth)
@@ -252,12 +309,16 @@ def is_release_next_week(group):
     return False
 
 
-def get_inflight(assembly, group):
+def get_inflight(assembly, group, date=None):
     """
     Get inflight release name from current assembly release
+
+    :param assembly: Assembly name
+    :param group: Group name
+    :param date: Optional explicitly provided date in format YYYY-MMM-DD (e.g., 2026-Mar-31)
     """
     inflight_release = None
-    assembly_release_date = get_assembly_release_date(assembly, group)
+    assembly_release_date = get_assembly_release_date(assembly, group, date)
     major, minor = get_ocp_version_from_group(group)
 
     # Only look for previous group if minor > 0 to avoid negative minor versions (e.g., openshift-4.-1)
@@ -630,6 +691,50 @@ async def fetch_slsa_attestation(
         return None
 
 
+async def _oc_image_mirror(cmd: list, description: str, timeout: int = 1800):
+    """Run oc image mirror, streaming output and logging only summary/error lines."""
+
+    async def _drain_stream(stream, collected: list, label: str):
+        async for raw_line in stream:
+            line = raw_line.decode("utf-8", errors="replace").rstrip()
+            collected.append(line)
+            stripped = line.strip()
+            if stripped.startswith(("info:", "error:", "warning:")):
+                LOGGER.info(f"oc image mirror [{label}]: {stripped}")
+
+    LOGGER.info(f"Executing: {' '.join(cmd)}")
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout_lines: list[str] = []
+    stderr_lines: list[str] = []
+    try:
+        await asyncio.wait_for(
+            asyncio.gather(
+                _drain_stream(proc.stdout, stdout_lines, "stdout"),
+                _drain_stream(proc.stderr, stderr_lines, "stderr"),
+                proc.wait(),
+            ),
+            timeout=timeout,
+        )
+    except TimeoutError:
+        LOGGER.warning(f"Timeout occurred while {description} after {timeout // 60} minutes")
+        proc.kill()
+        await proc.wait()
+        raise
+
+    if proc.returncode != 0:
+        stdout_text = "\n".join(stdout_lines)
+        stderr_text = "\n".join(stderr_lines)
+        LOGGER.error(
+            f"oc image mirror failed while {description} (rc={proc.returncode})\n"
+            f"stdout:\n{stdout_text}\nstderr:\n{stderr_text}"
+        )
+        raise ChildProcessError(f"Process {cmd!r} exited with code {proc.returncode}.")
+
+
 @limit_concurrency(limit=32)
 @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(5), retry=retry_if_exception_type(ChildProcessError))
 async def sync_to_quay(source_pullspec, destination_repo, tags=None):
@@ -647,14 +752,8 @@ async def sync_to_quay(source_pullspec, destination_repo, tags=None):
     if konflux_registry_auth_file:
         cmd += [f'--registry-config={konflux_registry_auth_file}']
 
-    try:
-        await asyncio.wait_for(cmd_assert_async(cmd, stdout=sys.stderr), timeout=1800)
-        LOGGER.info(f"Syncing from {source_pullspec} to {destination_repo} completed")
-    except TimeoutError:
-        LOGGER.warning(
-            f"Timeout occurred while syncing image from {source_pullspec} to {destination_repo} after 30 minutes"
-        )
-        raise
+    await _oc_image_mirror(cmd, f"syncing image from {source_pullspec} to {destination_repo}")
+    LOGGER.info(f"Syncing from {source_pullspec} to {destination_repo} completed")
 
     # Sync the builds to a "sha" tag as well to prevent it from being garbage collected in quay
     shasum = source_pullspec.split("@sha256:")[1]
@@ -669,14 +768,11 @@ async def sync_to_quay(source_pullspec, destination_repo, tags=None):
     ]
     if konflux_registry_auth_file:
         cmd += [f'--registry-config={konflux_registry_auth_file}']
-    try:
-        await asyncio.wait_for(cmd_assert_async(cmd, stdout=sys.stderr), timeout=1800)
-        LOGGER.info(f"Tagging from {destination_repo}@sha256:{shasum} to {destination_repo}:sha256-{shasum} completed")
-    except TimeoutError:
-        LOGGER.warning(
-            f"Timeout occurred while tagging image from {destination_repo}@sha256:{shasum} to {destination_repo}:sha256-{shasum} after 30 minutes"
-        )
-        raise
+
+    await _oc_image_mirror(
+        cmd, f"tagging image from {destination_repo}@sha256:{shasum} to {destination_repo}:sha256-{shasum}"
+    )
+    LOGGER.info(f"Tagging from {destination_repo}@sha256:{shasum} to {destination_repo}:sha256-{shasum} completed")
 
     # Mirror optional tags if provided
     if tags:
@@ -692,14 +788,10 @@ async def sync_to_quay(source_pullspec, destination_repo, tags=None):
             ]
             if konflux_registry_auth_file:
                 cmd += [f'--registry-config={konflux_registry_auth_file}']
-            try:
-                await asyncio.wait_for(cmd_assert_async(cmd, stdout=sys.stderr), timeout=1800)
-                LOGGER.info(f"Tagging from {destination_repo}@sha256:{shasum} to {destination_repo}:{tag} completed")
-            except TimeoutError:
-                LOGGER.warning(
-                    f"Timeout occurred while tagging image from {destination_repo}@sha256:{shasum} to {destination_repo}:{tag} after 30 minutes"
-                )
-                raise
+            await _oc_image_mirror(
+                cmd, f"tagging image from {destination_repo}@sha256:{shasum} to {destination_repo}:{tag}"
+            )
+            LOGGER.info(f"Tagging from {destination_repo}@sha256:{shasum} to {destination_repo}:{tag} completed")
 
 
 async def extract_related_images_from_fbc(fbc_pullspec: str, product: str) -> list[str]:
@@ -804,6 +896,7 @@ async def extract_related_images_from_fbc(fbc_pullspec: str, product: str) -> li
         # OCP uses 'openshift4' namespace in registry.redhat.io
         product_to_namespace = {
             'ocp': 'openshift4',
+            'openshift': 'openshift4',
         }
         registry_namespace = product_to_namespace.get(product, product)
         LOGGER.info(f"Using registry namespace '{registry_namespace}' for product '{product}'")
@@ -1027,3 +1120,138 @@ async def run_safe(func: Callable[[], Any], failures_list: Optional[List[Tuple[s
         if failures_list is not None:
             failures_list.append((func.__name__, e))
         return None
+
+
+# ===============================================================================
+# oc image info wrapper functions
+# ===============================================================================
+# These functions provide convenient wrappers around the low-level caching
+# functions in artcommonlib.oc_image_info, adding JSON parsing, error handling,
+# and common use-case helpers (e.g., --filter-by-os, --show-multiarch).
+# ===============================================================================
+
+
+def oc_image_info(
+    pullspec: str,
+    *options,
+    registry_config: Optional[str] = None,
+    strict: bool = True,
+) -> Union[Dict, List[Dict], None]:
+    """
+    Returns the parsed JSON output of `oc image info` for the specified pullspec.
+
+    Uses both Redis caching (for sha256-pinned pullspecs) and in-memory LRU caching
+    (for all pullspecs within the process lifetime), avoiding redundant registry lookups.
+
+    :param pullspec: Image pullspec (e.g., 'registry.io/repo/image:tag' or 'registry.io/repo/image@sha256:...')
+    :param options: Extra oc image info flags (e.g., '--show-multiarch', '--filter-by-os=amd64')
+    :param registry_config: Path to registry auth config file
+    :param strict: If True, raise IOError on errors. If False, return None for "manifest unknown" errors.
+    :return: Parsed JSON output (dict or list) or None if strict=False and image doesn't exist
+    :raises IOError: If command fails and strict=True
+    """
+    try:
+        out = oc_image_info__cached__lru(pullspec, *options, registry_config=registry_config)
+    except ChildProcessError as e:
+        err_msg = str(e)
+        if not strict and 'manifest unknown' in err_msg.lower():
+            return None
+        raise IOError(err_msg) from e
+
+    return json.loads(out)
+
+
+def oc_image_info_for_arch(
+    pullspec: str,
+    go_arch: str = 'amd64',
+    registry_config: Optional[str] = None,
+    strict: bool = True,
+) -> Union[Dict, None]:
+    """
+    Get image info filtered by architecture.
+
+    Adds --filter-by-os flag because multi-arch manifest lists cause
+    oc image info to error without filtering.
+
+    :param pullspec: Image pullspec
+    :param go_arch: Architecture to filter by (e.g., 'amd64', 'arm64')
+    :param registry_config: Path to registry config file
+    :param strict: If True, raise exception on errors. If False, return None for "manifest unknown" errors.
+    :return: Dict of image info or None if strict=False and image doesn't exist
+    :raises AssertionError: If result is not a dict (should never happen with --filter-by-os)
+    """
+    result = oc_image_info(pullspec, f'--filter-by-os={go_arch}', registry_config=registry_config, strict=strict)
+    if result is None:
+        return None
+    assert isinstance(result, dict), f"Expected dict from oc_image_info with --filter-by-os, got {type(result)}"
+    return result
+
+
+def oc_image_info_show_multiarch(
+    pullspec: str,
+    registry_config: Optional[str] = None,
+    strict: bool = True,
+) -> Union[Dict, List[Dict], None]:
+    """
+    Get image info with --show-multiarch flag.
+
+    For single-arch images: returns a dict representing the manifest.
+    For multi-arch images: returns a list of dicts, one per architecture.
+
+    :param pullspec: Image pullspec
+    :param registry_config: Path to registry config file
+    :param strict: If True, raise exception on errors. If False, return None for "manifest unknown" errors.
+    :return: Dict or list of dicts, or None if strict=False and image doesn't exist
+    """
+    return oc_image_info(
+        pullspec,
+        '--show-multiarch',
+        registry_config=registry_config,
+        strict=strict,
+    )
+
+
+@retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
+async def oc_image_info_async(
+    pullspec: str,
+    *options,
+    registry_config: Optional[str] = None,
+) -> Union[Dict, List]:
+    """
+    Async version of oc_image_info.
+
+    Returns the parsed JSON output of `oc image info` for the specified pullspec.
+    Uses both Redis caching (for sha256-pinned pullspecs) and in-memory LRU caching.
+
+    Retries up to 3 times (with 10s wait) before giving up.
+
+    :param pullspec: Image pullspec
+    :param options: Extra oc image info flags (e.g., '--show-multiarch', '--filter-by-os=amd64')
+    :param registry_config: Path to registry auth config file
+    :return: Parsed JSON output (dict or list)
+    :raises ChildProcessError: If command fails after all retry attempts
+    """
+    out = await oc_image_info__cached_async__lru(pullspec, *options, registry_config=registry_config)
+    return json.loads(out)
+
+
+async def oc_image_info_for_arch_async(
+    pullspec: str,
+    go_arch: str = 'amd64',
+    registry_config: Optional[str] = None,
+) -> Dict:
+    """
+    Async version of oc_image_info_for_arch.
+
+    Get image info filtered by architecture using --filter-by-os flag.
+
+    :param pullspec: Image pullspec
+    :param go_arch: Architecture to filter by (e.g., 'amd64', 'arm64')
+    :param registry_config: Path to registry config file
+    :return: Dict of image info for the specified architecture
+    """
+    return await oc_image_info_async(
+        pullspec,
+        f'--filter-by-os={go_arch}',
+        registry_config=registry_config,
+    )

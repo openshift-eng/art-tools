@@ -7,7 +7,7 @@ from typing import Dict, List, Optional, Set, Tuple
 import click
 import requests
 from artcommonlib import exectools, rhcos
-from artcommonlib.arch_util import go_arch_for_brew_arch, go_suffix_for_arch
+from artcommonlib.arch_util import go_arch_for_brew_arch
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.constants import RHCOS_RELEASES_STREAM_URL
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord
@@ -17,7 +17,6 @@ from artcommonlib.release_util import isolate_el_version_in_release
 from artcommonlib.util import (
     get_art_prod_image_repo_for_version,
     get_assembly_release_date,
-    uses_konflux_imagestream_override,
 )
 from requests.adapters import HTTPAdapter
 from ruamel.yaml import YAML
@@ -30,6 +29,7 @@ from doozerlib.build_info import BrewBuildRecordInspector, BuildRecordInspector,
 from doozerlib.cli import cli, click_coroutine, pass_runtime
 from doozerlib.rpmcfg import RPMMetadata
 from doozerlib.runtime import Runtime
+from doozerlib.util import get_nightly_pullspec
 
 
 @cli.group("release:gen-assembly", short_help="Output assembly metadata based on inputs")
@@ -304,9 +304,7 @@ class GenAssemblyCli:
 
     def _get_release_pullspecs(self):
         for nightly_name in self.nightlies:
-            major_minor, brew_cpu_arch, priv = util.isolate_nightly_name_components(nightly_name)
-            if major_minor != self.runtime.get_minor_version():
-                self._exit_with_error(f'Specified nightly {nightly_name} does not match group major.minor')
+            _, brew_cpu_arch, _ = util.isolate_nightly_name_components(nightly_name)
             self.reference_releases_by_arch[brew_cpu_arch] = nightly_name
 
             if brew_cpu_arch in self.release_pullspecs:
@@ -314,32 +312,7 @@ class GenAssemblyCli:
                     f'Cannot process {nightly_name} since {self.release_pullspecs[brew_cpu_arch]} is already included'
                 )
 
-            # Extract major version to determine imagestream naming
-            major_version = int(major_minor.split('.')[0])
-            arch_suffix = go_suffix_for_arch(brew_cpu_arch, priv)
-
-            # Determine version suffix for repo naming
-            # OCP 4.x: no version suffix
-            # OCP 5.x: add version suffix (e.g., '-5')
-            if major_version == 4:
-                version_suffix = ''
-            elif major_version == 5:
-                version_suffix = f'-{major_version}'
-            else:
-                self._exit_with_error(f'Unsupported OCP major version: {major_version}')
-
-            # Determine base repository name based on build system
-            if self.runtime.build_system == 'konflux' and not uses_konflux_imagestream_override(major_minor):
-                base_repo = 'konflux-release'
-            else:
-                base_repo = 'release'
-
-            # Construct repository name: base + version_suffix + arch_suffix
-            # e.g., 'release-5-s390x' for OCP 5.x s390x, 'release' for OCP 4.x amd64
-            repo = f'{base_repo}{version_suffix}{arch_suffix}'
-
-            # Construct the full pullspec
-            nightly_pullspec = f'registry.ci.openshift.org/ocp{arch_suffix}/{repo}:{nightly_name}'
+            nightly_pullspec = get_nightly_pullspec(nightly_name, self.runtime.build_system)
             self.release_pullspecs[brew_cpu_arch] = nightly_pullspec
 
         for standard_release_name in self.standards:
@@ -618,10 +591,16 @@ class GenAssemblyCli:
                         f"Did not find RHCOS {self.primary_rhcos_tag} image for active group architecture: {arch}"
                     )
                 # get rhcos pullspecs for this arch from rhcos version value if not full arch nightly provided
-                for tag in rhcos.get_container_configs(self.runtime):
-                    if self.rhcos_by_tag[tag.name].get(arch):
-                        continue
-                    if self.runtime.group_config.rhcos.get("layered_rhcos", False):
+                tags_to_resolve = [
+                    tag
+                    for tag in rhcos.get_container_configs(self.runtime)
+                    if not self.rhcos_by_tag[tag.name].get(arch)
+                ]
+                if not tags_to_resolve:
+                    continue
+
+                if self.runtime.group_config.rhcos.get("layered_rhcos", False):
+                    for tag in tags_to_resolve:
                         if not self.rhcos_by_tag[tag.name].get("x86_64"):
                             self._exit_with_error(
                                 f"Did not find RHCOS {tag.name} image for architecture: x86_64 in any nightly"
@@ -636,23 +615,39 @@ class GenAssemblyCli:
                             go_arch_for_brew_arch(arch),
                         )
                         self.rhcos_by_tag[tag.name][arch] = f"{art_repo}@{rhcos_info['digest']}"
-                    else:
-                        url_key = (
-                            f"{major_minor}-{rhcos_el_major}.{rhcos_el_minor}" if rhcos_el_major > 8 else major_minor
+                        self.logger.info(f'Find RHCOS image {tag.name} for {arch}: {self.rhcos_by_tag[tag.name][arch]}')
+                else:
+                    url_key = f"{major_minor}-{rhcos_el_major}.{rhcos_el_minor}" if rhcos_el_major > 8 else major_minor
+                    rhcos_build_url = (
+                        f"{RHCOS_RELEASES_STREAM_URL}/{url_key}/builds/{self.rhcos_version}/{arch}/meta.json"
+                    )
+                    self.logger.info("Fetching RHCOS build metadata: %s", rhcos_build_url)
+                    session = requests.Session()
+                    retry_strategy = Retry(total=3, backoff_factor=2, status_forcelist=[429, 500, 502, 503, 504])
+                    session.mount('https://', HTTPAdapter(max_retries=retry_strategy))
+                    try:
+                        response = session.get(rhcos_build_url, timeout=60)
+                        response.raise_for_status()
+                        rhcos_meta_json = response.json()
+                    except requests.exceptions.RetryError as e:
+                        self._exit_with_error(
+                            f"RHCOS server is experiencing issues (retried 3 times). "
+                            f"URL: {rhcos_build_url}\n"
+                            f"Error: {e}\n"
+                            f"This is likely a transient server issue. Please retry the build."
                         )
-                        rhcos_build_url = (
-                            f"{RHCOS_RELEASES_STREAM_URL}/{url_key}/builds/{self.rhcos_version}/{arch}/meta.json"
-                        )
-                        session = requests.Session()
-                        session.mount('https://', HTTPAdapter(max_retries=Retry(total=3)))
-                        rhcos_meta_json = session.get(rhcos_build_url).json()
+                    except requests.exceptions.HTTPError as e:
+                        self._exit_with_error(f"Failed to fetch RHCOS metadata from {rhcos_build_url}: {e}")
+                    except requests.exceptions.JSONDecodeError as e:
+                        self._exit_with_error(f"Failed to parse RHCOS metadata JSON from {rhcos_build_url}: {e}")
+                    for tag in tags_to_resolve:
                         if tag.build_metadata_key not in rhcos_meta_json:
                             self._exit_with_error(
                                 f'Did not find RHCOS "{tag.name}" image for active group architecture: {arch}'
                             )
                         rhcos_image = rhcos_meta_json[tag.build_metadata_key]
                         self.rhcos_by_tag[tag.name][arch] = f"{rhcos_image['image']}@{rhcos_image['digest']}"
-                    self.logger.info(f'Find RHCOS image {tag.name} for {arch}: {self.rhcos_by_tag[tag.name][arch]}')
+                        self.logger.info(f'Find RHCOS image {tag.name} for {arch}: {self.rhcos_by_tag[tag.name][arch]}')
 
     async def _select_rpms(self):
         """

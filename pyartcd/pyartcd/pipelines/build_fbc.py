@@ -1,4 +1,5 @@
 import logging
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
@@ -13,6 +14,7 @@ from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import Lock
 from pyartcd.record import parse_record_log
 from pyartcd.runtime import Runtime
+from pyartcd.slack import SlackClient
 from pyartcd.util import load_group_config
 
 
@@ -63,6 +65,7 @@ class BuildFbcPipeline:
         group: str,
         major_minor: Optional[str],
         ignore_locks: bool,
+        insert_missing_entry: bool,
     ):
         self.runtime = runtime
         self.version = version
@@ -82,18 +85,61 @@ class BuildFbcPipeline:
         self.force = force
         self.major_minor = major_minor
         self.ignore_locks = ignore_locks
+        self.insert_missing_entry = insert_missing_entry
 
         self._logger = logging.getLogger(__name__)
         self._slack_client = runtime.new_slack_client()
-        self._slack_client.bind_channel(version)
+
+    async def _check_production_index_exists(self) -> bool:
+        """Check if the production operator index image exists for the target OCP version.
+
+        Returns True if the image exists or the check is inconclusive, False if it clearly does not exist.
+        """
+        ocp_mm = self.major_minor if self.major_minor else self.version
+        parts = ocp_mm.split('.')
+        major, minor = parts[0], parts[1]
+
+        index_image = f"registry.redhat.io/redhat/redhat-operator-index:v{major}.{minor}"
+        self._logger.info('Checking if production index image exists: %s', index_image)
+
+        cmd = ['skopeo', 'inspect', '--no-tags', f'docker://{index_image}']
+        auth = self.prod_registry_auth or os.environ.get('KONFLUX_OPERATOR_INDEX_AUTH_FILE')
+        if auth:
+            cmd.extend(['--authfile', auth])
+
+        rc, _, err = await exectools.cmd_gather_async(cmd, check=False)
+        if rc != 0:
+            self._logger.info('Production index image %s does not exist: %s', index_image, err.strip())
+            return False
+        return True
 
     async def run(self):
+        # Bind Slack channel based on product field from group config
+        group = f"openshift-{self.version}" if not self.group else self.group
+        group_config = await load_group_config(
+            group=group, assembly=self.assembly, doozer_data_path=self.data_path, doozer_data_gitref=self.data_gitref
+        )
+        product = group_config.get('product') or 'ocp'
+        if product != 'ocp':
+            self._slack_client.bind_channel(SlackClient.DEFAULT_CHANNEL_LAYERED_OPERATORS)
+        else:
+            self._slack_client.bind_channel(self.version)
+        self._logger.info('Slack channel bound to %s (product: %s)', self._slack_client.channel, product)
+
+        # Early check: verify the production operator index image exists for the target OCP version.
+        # For new OCP versions (e.g. 5.0), neither the index image nor the base images are published yet,
+        # which causes all Konflux FBC builds to fail. Exit silently rather than wasting time.
+        if not await self._check_production_index_exists():
+            self._logger.info('Production operator index image not available yet. Skipping FBC build.')
+            return
+
         try:
             release_str = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
             self._logger.info('Rebasing and building FBC repo with release %s', release_str)
             build_records = await self._rebase_and_build(
                 release=release_str,
                 commit_message='Rebase FBC segment with release {}'.format(release_str),
+                group_config=group_config,
             )
 
             # Parse doozer record.log
@@ -106,7 +152,7 @@ class BuildFbcPipeline:
         except Exception as e:
             self._logger.error('Encountered error: %s', e)
             await self._slack_client.say(
-                f'*:heavy_exclamation_mark: Error building FBC for {self.version} assembly {self.assembly}*\n'
+                f'*:heavy_exclamation_mark: Error building FBC for {group} {self.version} assembly {self.assembly}*\n'
             )
             raise
 
@@ -131,7 +177,7 @@ class BuildFbcPipeline:
         self._logger.info(f'Running doozer command: {" ".join(cmd)}')
         await exectools.cmd_assert_async(cmd)
 
-    async def _rebase_and_build(self, release: str, commit_message: str):
+    async def _rebase_and_build(self, release: str, commit_message: str, group_config: dict):
         doozer_opts = [
             'beta:fbc:rebase-and-build',
             '--version',
@@ -145,12 +191,7 @@ class BuildFbcPipeline:
             doozer_opts.append('--dry-run')
         if self.fbc_repo:
             doozer_opts.extend(['--fbc-repo', self.fbc_repo])
-        # Load group config to get product information
-        group = f"openshift-{self.version}" if not self.group else self.group
-        group_config = await load_group_config(
-            group=group, assembly=self.assembly, doozer_data_path=self.data_path, doozer_data_gitref=self.data_gitref
-        )
-        product = group_config.get('product', 'ocp')
+        product = group_config.get('product') or 'ocp'
 
         # Set namespace based on product
         namespace = resolve_konflux_namespace_by_product(product)
@@ -185,6 +226,8 @@ class BuildFbcPipeline:
             doozer_opts.append('--force')
         if self.major_minor:
             doozer_opts.extend(['--major-minor', self.major_minor])
+        if self.insert_missing_entry:
+            doozer_opts.append('--insert-missing-entry')
         if self.operator_nvrs:
             doozer_opts.extend([nvr for nvr in self.operator_nvrs.split(',')])
         try:
@@ -290,6 +333,12 @@ class BuildFbcPipeline:
     default=False,
     help='Do not wait for other FBC builds in this group to complete (use only if you know they will not conflict)',
 )
+@click.option(
+    '--insert-missing-entry',
+    is_flag=True,
+    default=False,
+    help='Insert the new bundle entry in version order instead of appending. Use this to fix missing entries that were removed from the catalog.',
+)
 @pass_runtime
 @click_coroutine
 async def build_fbc(
@@ -311,6 +360,7 @@ async def build_fbc(
     group: str,
     major_minor: Optional[str],
     ignore_locks: bool,
+    insert_missing_entry: bool,
 ):
     # Validate that --major-minor is provided for non-OpenShift groups
     if not group.startswith('openshift-') and not major_minor:
@@ -335,6 +385,7 @@ async def build_fbc(
         group=group,
         major_minor=major_minor,
         ignore_locks=ignore_locks,
+        insert_missing_entry=insert_missing_entry,
     )
 
     lock_identifier = jenkins.get_build_path_or_random()

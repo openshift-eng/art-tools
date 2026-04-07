@@ -14,7 +14,7 @@ class TestResolveImageFromUpstreamParent(TestDistgit):
         self.dg = distgit.ImageDistGitRepo(self.md, autoclone=False)
         self.dg.runtime.group_config = Model()
 
-    @patch('doozerlib.util.oc_image_info_for_arch__caching')
+    @patch('doozerlib.util.oc_image_info_for_arch')
     def test_resolve_parent_1(
         self,
         oc_mock,
@@ -38,7 +38,7 @@ class TestResolveImageFromUpstreamParent(TestDistgit):
         image = self.dg._resolve_image_from_upstream_parent('unused', MagicMock())
         self.assertEqual(image, streams['golang']['image'])
 
-    @patch('doozerlib.util.oc_image_info_for_arch__caching')
+    @patch('doozerlib.util.oc_image_info_for_arch')
     def test_resolve_parent_2(
         self,
         oc_mock,
@@ -61,7 +61,7 @@ class TestResolveImageFromUpstreamParent(TestDistgit):
         image = self.dg._resolve_image_from_upstream_parent('unused', MagicMock())
         self.assertEqual(image, None)
 
-    @patch('doozerlib.util.oc_image_info_for_arch__caching')
+    @patch('doozerlib.util.oc_image_info_for_arch')
     def test_resolve_parent_3(
         self,
         oc_mock,
@@ -84,7 +84,7 @@ class TestResolveImageFromUpstreamParent(TestDistgit):
         image = self.dg._resolve_image_from_upstream_parent('unused', MagicMock())
         self.assertEqual(image, None)
 
-    @patch('doozerlib.util.oc_image_info_for_arch__caching')
+    @patch('doozerlib.util.oc_image_info_for_arch')
     def test_resolve_parent_4(
         self,
         oc_mock,
@@ -107,7 +107,7 @@ class TestResolveImageFromUpstreamParent(TestDistgit):
         image = self.dg._resolve_image_from_upstream_parent('unused', MagicMock())
         self.assertEqual(image, None)
 
-    @patch('doozerlib.util.oc_image_info_for_arch__caching')
+    @patch('doozerlib.util.oc_image_info_for_arch')
     def test_resolve_parent_5(
         self,
         oc_mock,

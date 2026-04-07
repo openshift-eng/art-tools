@@ -10,8 +10,10 @@ from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple, cast
 from artcommonlib import assertion, constants, exectools
 from artcommonlib import util as art_util
 from artcommonlib.git_helper import git_clone
+from artcommonlib.github_auth import get_github_client_for_org, get_github_git_auth_env
 from artcommonlib.lock import get_named_semaphore
 from artcommonlib.model import ListModel, Missing, Model
+from github import GithubException, UnknownObjectException
 
 from doozerlib.record_logger import RecordLogger
 
@@ -185,6 +187,34 @@ class SourceResolver:
                     url, self._group_config.public_upstreams
                 )
 
+            # ART-14540: Check branch protection for the resolved branch
+            if not self.is_branch_commit_hash(clone_branch):
+                allow_unprotected = source_details.get("allow_unprotected_branch", False)
+                if not allow_unprotected:
+                    # Check the public upstream URL if available, otherwise the source URL
+                    check_url = meta.public_upstream_url if has_public_upstream else url
+                    check_branch = (
+                        (meta.public_upstream_branch or clone_branch) if has_public_upstream else clone_branch
+                    )
+                    is_protected = self._check_branch_protection(check_url, check_branch)
+                    if not is_protected:
+                        owners = list(meta.config.owners or [])
+                        if self._record_logger:
+                            self._record_logger.add_record(
+                                "branch_protection_missing",
+                                distgit=meta.qualified_key,
+                                source_url=check_url,
+                                branch=check_branch,
+                                owners=",".join(owners),
+                            )
+                        LOGGER.warning(
+                            "Branch '%s' in %s does not have branch protection enabled. "
+                            "Please enable branch protection or set 'allow_unprotected_branch: true' "
+                            "in the image/rpm metadata under content.source.git to override.",
+                            check_branch,
+                            check_url,
+                        )
+
             if no_clone:
                 https_url = art_util.convert_remote_git_to_https(url)
                 return SourceResolution(
@@ -330,19 +360,82 @@ class SourceResolver:
         :param branch: The name of the branch. If the name is not a branch and appears to be a commit
                 hash, the hash will be returned without modification.
         """
+        git_url = art_util.ensure_github_https_url(git_url)
+        auth_env = get_github_git_auth_env(url=git_url)
         LOGGER.info('Checking if target branch {} exists in {}'.format(branch, git_url))
 
         try:
-            out, _ = exectools.cmd_assert('git ls-remote --heads {} refs/heads/{}'.format(git_url, branch), retries=3)
+            out, _ = exectools.cmd_assert(
+                'git ls-remote --heads {} refs/heads/{}'.format(git_url, branch), retries=3, set_env=auth_env
+            )
         except Exception as err:
-            # We don't expect and exception if the branch does not exist; just an empty string
             LOGGER.error('Error attempting to find target branch {} hash: {}'.format(branch, err))
             return None
-        result = out.strip()  # any result means the branch is found; e.g. "7e66b10fbcd6bb4988275ffad0a69f563695901f	refs/heads/some_branch")
+        result = out.strip()
         if not result and SourceResolver.is_branch_commit_hash(branch):
-            return branch  # It is valid hex; just return it
+            return branch
 
         return result.split()[0] if result else None
+
+    @staticmethod
+    def _check_branch_protection(git_url: str, branch: str) -> bool:
+        """
+        Check if a GitHub branch has branch protection enabled.
+        Uses the PyGithub Branch object's `protected` boolean, which does NOT
+        require admin access (unlike the /protection endpoint).
+
+        Returns True if the branch is protected or if the check cannot be performed
+        (non-GitHub repo, missing token, API errors). Returns False only when the
+        API confirms the branch is unprotected.
+
+        Arg(s):
+            git_url (str): The git URL of the repository (SSH or HTTPS).
+            branch (str): The branch name to check.
+        Return Value(s):
+            bool: True if protected or check is inconclusive, False if confirmed unprotected.
+        """
+        https_url = art_util.convert_remote_git_to_https(git_url)
+        if "github.com" not in https_url:
+            LOGGER.info("Skipping branch protection check for non-GitHub repo: %s", https_url)
+            return True
+
+        _, owner, repo = art_util.split_git_url(git_url)
+
+        try:
+            gh = get_github_client_for_org(owner)
+            gh_repo = gh.get_repo(f"{owner}/{repo}")
+            gh_branch = gh_repo.get_branch(branch)
+            if gh_branch.protected:
+                LOGGER.info("Branch protection confirmed for %s/%s branch %s", owner, repo, branch)
+                return True
+            LOGGER.warning("Branch %s in %s/%s is NOT protected", branch, owner, repo)
+            return False
+        except UnknownObjectException:
+            LOGGER.warning(
+                "Branch %s or repo %s/%s not found on GitHub; failing open",
+                branch,
+                owner,
+                repo,
+            )
+            return True
+        except GithubException as e:
+            LOGGER.warning(
+                "GitHub API error checking branch protection for %s/%s branch %s: %s",
+                owner,
+                repo,
+                branch,
+                e,
+            )
+            return True
+        except Exception as e:
+            LOGGER.warning(
+                "Unexpected error checking branch protection for %s/%s branch %s: %s",
+                owner,
+                repo,
+                branch,
+                e,
+            )
+            return True
 
     def register_source_alias(self, alias: str, path: str):
         LOGGER.info("Registering source alias %s: %s" % (alias, path))
@@ -502,10 +595,11 @@ class SourceResolver:
             exectools.cmd_assert(
                 ["git", "-C", source_dir, "remote", "set-url", "--", "public_upstream", public_source_url]
             )
+        fetch_env = {**constants.GIT_NO_PROMPTS, **get_github_git_auth_env(url=public_source_url)}
         exectools.cmd_assert(
             ["git", "-C", source_dir, "fetch", "--", "public_upstream", public_upstream_branch],
             retries=3,
-            set_env=constants.GIT_NO_PROMPTS,
+            set_env=fetch_env,
         )
 
     @staticmethod

@@ -2,14 +2,20 @@ import logging
 import pathlib
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch
 from artcommonlib.model import Model
+from artcommonlib.oc_image_info import oc_image_info__cached__lru, oc_image_info__cached_async__lru
 from doozerlib import util
 
 
 class TestUtil(unittest.TestCase):
+    def setUp(self):
+        """Clear LRU caches before each test to ensure test isolation."""
+        oc_image_info__cached__lru.cache_clear()
+        oc_image_info__cached_async__lru.cache_clear()
+
     def test_isolate_nightly_name_components(self):
         self.assertEqual(
             util.isolate_nightly_name_components('4.1.0-0.nightly-2019-11-08-213727'), ('4.1', 'x86_64', False)
@@ -129,7 +135,7 @@ class TestUtil(unittest.TestCase):
     @patch("artcommonlib.exectools.cmd_gather")
     def test_oc_image_info_show_multiarch_caching(self, gather_mock):
         gather_mock.return_value = (0, '{}', '')
-        util.oc_image_info_show_multiarch__caching('pullspec')
+        util.oc_image_info_show_multiarch('pullspec')
         gather_mock.assert_called_with(['oc', 'image', 'info', '-o', 'json', '--show-multiarch', 'pullspec'])
 
     @patch("artcommonlib.exectools.cmd_gather")
@@ -178,10 +184,10 @@ class TestUtil(unittest.TestCase):
     @patch("artcommonlib.exectools.cmd_gather")
     def test_oc_image_info_for_arch_caching(self, gather_mock):
         gather_mock.return_value = (0, '{}', '')
-        util.oc_image_info_for_arch__caching('pullspec')
+        util.oc_image_info_for_arch('pullspec')
         gather_mock.assert_called_with(['oc', 'image', 'info', '-o', 'json', '--filter-by-os=amd64', 'pullspec'])
 
-    @patch("doozerlib.util.oc_image_info")
+    @patch("artcommonlib.util.oc_image_info")
     def test_oc_image_info_for_arch_strict_false_manifest_unknown(self, oc_image_info_mock):
         # When strict=False and manifest unknown, should return None
         oc_image_info_mock.return_value = None
@@ -191,14 +197,14 @@ class TestUtil(unittest.TestCase):
             'pullspec', '--filter-by-os=amd64', registry_config=None, strict=False
         )
 
-    @patch("doozerlib.util.oc_image_info")
+    @patch("artcommonlib.util.oc_image_info")
     def test_oc_image_info_for_arch_strict_false_other_error(self, oc_image_info_mock):
         # When strict=False but other error, should raise
         oc_image_info_mock.side_effect = IOError("oc image info failed (rc=1): error: network timeout")
         with self.assertRaises(IOError):
             util.oc_image_info_for_arch('pullspec', strict=False)
 
-    @patch("doozerlib.util.oc_image_info")
+    @patch("artcommonlib.util.oc_image_info")
     def test_oc_image_info_for_arch_strict_true_manifest_unknown(self, oc_image_info_mock):
         # When strict=True and manifest unknown, should raise
         oc_image_info_mock.side_effect = IOError(
@@ -550,6 +556,57 @@ class TestInjectCoverageProducer(unittest.TestCase):
             # Only server in other dir
             self.assertTrue((other_dir / 'coverage_server.go').exists())
             self.assertFalse((other_dir / 'coverage_producer.go').exists())
+
+
+class TestGetKonfluxBuildPriority(unittest.TestCase):
+    is_leaf = []
+    is_parent = [MagicMock()]
+
+    def _make_metadata(self, children, phase="release", image_config_priority=None, group_config_priority=None):
+        metadata = MagicMock()
+        metadata.distgit_key = "test-image"
+        metadata.children = children
+        metadata.config.konflux.get.return_value = image_config_priority
+        metadata.runtime.group_config.konflux.get.return_value = group_config_priority
+        metadata.runtime.group_config.software_lifecycle.phase = phase
+        return metadata
+
+    def test_parent_images_get_higher_priority_than_leaf_images(self):
+        cases = [
+            # (group, phase, children, expected, description)
+            ("openshift-4.19", "release", self.is_leaf, "5", "leaf default"),
+            ("openshift-4.19", "release", self.is_parent, "4", "parent default"),
+            ("openshift-4.19", "pre-release", self.is_leaf, "3", "leaf pre-release"),
+            ("openshift-4.19", "pre-release", self.is_parent, "2", "parent pre-release"),
+            ("openshift-4.19", "signing", self.is_leaf, "3", "leaf signing"),
+            ("openshift-4.19", "signing", self.is_parent, "2", "parent signing"),
+            ("oadp-1.5", "release", self.is_leaf, "5", "leaf non-openshift"),
+            ("oadp-1.5", "release", self.is_parent, "4", "parent non-openshift"),
+        ]
+        for group, phase, children, expected, desc in cases:
+            with self.subTest(desc):
+                metadata = self._make_metadata(children=children, phase=phase)
+                self.assertEqual(util.get_konflux_build_priority(metadata, group), expected)
+
+    def test_explicit_overrides_ignore_parent_status(self):
+        cases = [
+            # (override_type, override_value, expected)
+            ("image_config", 7, "7"),
+            ("group_config", 8, "8"),
+        ]
+        for override_type, value, expected in cases:
+            with self.subTest(f"{override_type}={value} on parent"):
+                kwargs = {f"{override_type}_priority": value}
+                metadata = self._make_metadata(children=self.is_parent, **kwargs)
+                self.assertEqual(util.get_konflux_build_priority(metadata, "openshift-4.19"), expected)
+
+    def test_golang_group_overrides_parent_status(self):
+        metadata = self._make_metadata(children=self.is_parent)
+        self.assertEqual(util.get_konflux_build_priority(metadata, "golang-1.22"), "2")
+
+    def test_priority_never_goes_below_1(self):
+        metadata = self._make_metadata(children=self.is_parent, phase="pre-release")
+        self.assertGreaterEqual(int(util.get_konflux_build_priority(metadata, "openshift-4.19")), 1)
 
 
 if __name__ == "__main__":

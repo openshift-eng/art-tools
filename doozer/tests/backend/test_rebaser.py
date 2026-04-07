@@ -899,3 +899,124 @@ USER 3000
         self.assertEqual(rebaser._get_el_target_string(8), "scos8")
         self.assertEqual(rebaser._get_el_target_string(9), "scos9")
         self.assertEqual(rebaser._get_el_target_string(10), "scos10")
+
+    def test_make_actual_release_string_okd_with_image_override(self):
+        """Test OKD build with image-specific okd.distgit.branch override"""
+        from artcommonlib.variants import BuildVariant
+
+        runtime = MagicMock()
+        runtime.assembly = "stream"
+        runtime.group_config.public_upstreams = []
+        runtime.get_major_minor_fields.return_value = (5, 0)
+        runtime.branch = "rhaos-5.0-rhel-10"  # Group-level okd.branch
+        runtime.repos = MagicMock()
+        runtime.konflux_db = None
+
+        rebaser = KonfluxRebaser(
+            runtime=runtime,
+            base_dir=Path("/tmp"),
+            source_resolver=MagicMock(),
+            repo_type="test",
+            variant=BuildVariant.OKD,
+        )
+
+        # Image has okd.distgit.branch override to rhel-9
+        metadata = MagicMock()
+        metadata.config.okd.distgit.branch = "rhaos-5.0-rhel-9"
+        metadata.branch_el_target.return_value = 9  # Should not be used
+
+        source = MagicMock()
+        source.commit_hash = "abc123def456"
+        source.commit_hash_short = "abc123d"
+
+        result = rebaser._make_actual_release_string(
+            metadata=metadata,
+            input_release="202601131053.p?",
+            private_fix=False,
+            source=source,
+        )
+
+        # Should use image override (rhel-9) not runtime.branch (rhel-10)
+        self.assertIn(".scos9", result)
+        self.assertNotIn(".scos10", result)
+
+    def test_make_actual_release_string_okd_with_runtime_branch(self):
+        """Test OKD build without image override, using runtime.branch from group okd.branch"""
+        from artcommonlib.model import Missing
+        from artcommonlib.variants import BuildVariant
+
+        runtime = MagicMock()
+        runtime.assembly = "stream"
+        runtime.group_config.public_upstreams = []
+        runtime.get_major_minor_fields.return_value = (5, 0)
+        runtime.branch = "rhaos-5.0-rhel-10"  # Group-level okd.branch
+        runtime.repos = MagicMock()
+        runtime.konflux_db = None
+
+        rebaser = KonfluxRebaser(
+            runtime=runtime,
+            base_dir=Path("/tmp"),
+            source_resolver=MagicMock(),
+            repo_type="test",
+            variant=BuildVariant.OKD,
+        )
+
+        # Image has NO okd.distgit.branch override
+        metadata = MagicMock()
+        metadata.config.okd.distgit.branch = Missing
+        metadata.branch_el_target.return_value = 9  # Should not be used
+
+        source = MagicMock()
+        source.commit_hash = "abc123def456"
+        source.commit_hash_short = "abc123d"
+
+        result = rebaser._make_actual_release_string(
+            metadata=metadata,
+            input_release="202601131053.p?",
+            private_fix=False,
+            source=source,
+        )
+
+        # Should use runtime.branch (rhel-10) not metadata.branch_el_target (9)
+        self.assertIn(".scos10", result)
+        self.assertNotIn(".scos9", result)
+
+    def test_make_actual_release_string_okd_fallback_to_branch_el_target(self):
+        """Test OKD build falls back to metadata.branch_el_target when no override or runtime.branch"""
+        from artcommonlib.model import Missing
+        from artcommonlib.variants import BuildVariant
+
+        runtime = MagicMock()
+        runtime.assembly = "stream"
+        runtime.group_config.public_upstreams = []
+        runtime.get_major_minor_fields.return_value = (5, 0)
+        runtime.branch = None  # No runtime.branch set
+        runtime.repos = MagicMock()
+        runtime.konflux_db = None
+
+        rebaser = KonfluxRebaser(
+            runtime=runtime,
+            base_dir=Path("/tmp"),
+            source_resolver=MagicMock(),
+            repo_type="test",
+            variant=BuildVariant.OKD,
+        )
+
+        # Image has NO okd.distgit.branch override
+        metadata = MagicMock()
+        metadata.config.okd.distgit.branch = Missing
+        metadata.branch_el_target.return_value = 9  # Should be used as fallback
+
+        source = MagicMock()
+        source.commit_hash = "abc123def456"
+        source.commit_hash_short = "abc123d"
+
+        result = rebaser._make_actual_release_string(
+            metadata=metadata,
+            input_release="202601131053.p?",
+            private_fix=False,
+            source=source,
+        )
+
+        # Should fall back to metadata.branch_el_target (9)
+        self.assertIn(".scos9", result)

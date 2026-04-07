@@ -13,16 +13,18 @@ import yaml
 from artcommonlib import exectools
 from artcommonlib.format_util import green_print, yellow_print
 from artcommonlib.git_helper import git_clone
+from artcommonlib.github_auth import get_github_client_for_org, get_github_git_auth_env
 from artcommonlib.jira_config import get_jira_browse_url
 from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
-from artcommonlib.util import convert_remote_git_to_https, convert_remote_git_to_ssh, remove_prefix, split_git_url
+from artcommonlib.util import convert_remote_git_to_https, ensure_github_https_url, remove_prefix, split_git_url
 from dockerfile_parse import DockerfileParser
-from github import Github, GithubException, PullRequest, UnknownObjectException
+from elliottlib.bzutil import JIRABugTracker
+from github import Auth, Github, GithubException, PullRequest, UnknownObjectException
 from jira import JIRA, Issue
 from tenacity import retry, stop_after_attempt, wait_fixed
 
-from doozerlib import constants, util
+from doozerlib import util
 from doozerlib.cli import cli, option_registry_auth, pass_runtime
 from doozerlib.image import ImageMetadata
 from doozerlib.source_resolver import SourceResolver
@@ -820,7 +822,8 @@ def prs():
 
 
 @prs.command(
-    'list', short_help='List all open reconciliation prs for upstream repos (requires GITHUB_TOKEN env var to be set.'
+    'list',
+    short_help='List all open reconciliation prs for upstream repos (requires GitHub App credentials or GITHUB_TOKEN).',
 )
 @click.option(
     '--as',
@@ -843,7 +846,7 @@ def prs_list(runtime, as_user, include_master):
     major = runtime.group_config.vars['MAJOR']
     minor = runtime.group_config.vars['MINOR']
     retdata = {}
-    github_client = Github(os.getenv(constants.GITHUB_TOKEN))
+    github_client = get_github_client_for_org("openshift")
     pr_query = f'org:openshift author:{as_user} type:pr state:open ART in:title'
     query = f'{pr_query} base:release-{major}.{minor}'
     if include_master:
@@ -1025,7 +1028,7 @@ This ticket was created by ART pipline run [sync-ci-images|{jenkins_build_url}]
 
                 # Build the update payload using the retrieved string
                 issue_update = {
-                    'customfield_12319940': [{'name': target_version_segment}],
+                    JIRABugTracker.field_target_version: [{'name': target_version_segment}],
                 }
                 runtime.logger.info(
                     f"Attempting to update issue {issue.key} Target Version to: {target_version_segment}"
@@ -1048,16 +1051,14 @@ This ticket was created by ART pipline run [sync-ci-images|{jenkins_build_url}]
             connect_issue_with_pr(pr, issue.key)
             try:
                 # Retrieve the value of the custom field
-                release_notes_text_cf_value = getattr(issue.fields, 'customfield_12317313', None)
-                release_notes_type_cf_value = getattr(issue.fields, 'customfield_12320850', None)
+                release_notes_text_cf_value = getattr(issue.fields, JIRABugTracker.field_release_notes_text, None)
+                release_notes_type_cf_value = getattr(issue.fields, JIRABugTracker.field_release_notes_type, None)
 
                 if release_notes_type_cf_value is None and release_notes_text_cf_value is None:
                     # Data to update (e.g., changing the Release Notes Type and Release Notes Text)
                     issue_update = {
-                        'customfield_12317313': 'N/A',  # customfield_12317313 is Release Notes Text in JIRA
-                        'customfield_12320850': {
-                            'value': 'Release Note Not Required'
-                        },  # customfield_12320850 is Release Notes Type in JIRA
+                        JIRABugTracker.field_release_notes_text: 'N/A',
+                        JIRABugTracker.field_release_notes_type: {'value': 'Release Note Not Required'},
                     }
                     # Now update the issue using the retrieved issue object
                     issue.update(fields=issue_update)
@@ -1136,7 +1137,13 @@ def images_streams_prs(
     add_label,
 ):
     runtime.initialize(clone_distgits=False, clone_source=False, prevent_cloning=True)
-    g = Github(login_or_token=(github_access_token or os.getenv(constants.GITHUB_TOKEN)))
+    if not github_access_token:
+        raise click.BadParameter(
+            "This command requires a personal access token (--github-access-token) "
+            "because it forks repos and opens PRs as a user. GitHub App tokens cannot be used.",
+            param_hint="'--github-access-token'",
+        )
+    g = Github(auth=Auth.Token(github_access_token))
     github_user = g.get_user()
 
     major = runtime.group_config.vars['MAJOR']
@@ -1189,7 +1196,7 @@ def images_streams_prs(
                 # We don't know yet whether this image exists; perhaps a buildconfig is
                 # failing. Don't open PRs for images that don't yet exist.
                 try:
-                    util.oc_image_info_for_arch__caching(upstream_image)
+                    util.oc_image_info_for_arch(upstream_image)
                 except:
                     yellow_print(
                         f'Unable to access upstream image {upstream_image} for {dgk}-- check whether buildconfigs are running successfully.'
@@ -1344,15 +1351,17 @@ def images_streams_prs(
             if ge.status != 404:
                 raise
 
-        public_repo_url = convert_remote_git_to_ssh(public_repo_url)
+        public_repo_url = ensure_github_https_url(public_repo_url)
+        fork_url = ensure_github_https_url(fork_repo.git_url)
         clone_dir = os.path.join(runtime.working_dir, 'clones', dgk)
+        git_auth_env = get_github_git_auth_env(url=public_repo_url)
         # Clone the private url to make the best possible use of our doozer_cache
         git_clone(source_repo_url, clone_dir, git_cache_dir=runtime.git_cache_dir)
 
         with Dir(clone_dir):
-            exectools.cmd_assert(f'git remote add public {public_repo_url}')
-            exectools.cmd_assert(f'git remote add fork {convert_remote_git_to_ssh(fork_repo.git_url)}')
-            exectools.cmd_assert('git fetch --all', retries=3)
+            exectools.cmd_assert(f'git remote add public {public_repo_url}', set_env=git_auth_env)
+            exectools.cmd_assert(f'git remote add fork {fork_url}', set_env=git_auth_env)
+            exectools.cmd_assert('git fetch --all', retries=3, set_env=git_auth_env)
 
             # The path to the Dockerfile in the target branch
             if image_meta.config.content.source.dockerfile is not Missing:
@@ -1549,7 +1558,9 @@ open_prs: {open_prs}
                         f'git commit -m "{commit_msg}"'
                     )  # Add a commit atop the public branch's current state
                     # Create or update the remote fork branch
-                    exectools.cmd_assert(f'git push --force fork {work_branch_name}:{fork_branch_name}', retries=3)
+                    exectools.cmd_assert(
+                        f'git push --force fork {work_branch_name}:{fork_branch_name}', retries=3, set_env=git_auth_env
+                    )
 
             # At this point, we have a fork branch in the proper state
             pr_body = f"""{first_commit_line}

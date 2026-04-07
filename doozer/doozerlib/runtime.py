@@ -1,5 +1,6 @@
 import atexit
 import datetime
+import functools
 import io
 import itertools
 import os
@@ -29,6 +30,7 @@ from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
 from artcommonlib.runtime import GroupRuntime
 from artcommonlib.util import isolate_el_version_in_brew_tag
+from artcommonlib.variants import BuildVariant
 from jira import JIRA
 from semver import Version
 
@@ -88,7 +90,7 @@ class Runtime(GroupRuntime):
         self.verbose = False
         self.load_wip = False
         self.load_disabled = False
-        self.load_okd_only = False
+        self.variant = BuildVariant.OCP  # Default to OCP variant
         self.data_path = None
         self.data_dir = None
         self.group_commitish = None
@@ -148,6 +150,10 @@ class Runtime(GroupRuntime):
 
         for key, val in kwargs.items():
             self.__dict__[key] = val
+
+        # Convert variant string to BuildVariant enum if it's a string
+        if isinstance(self.variant, str):
+            self.variant = BuildVariant(self.variant.lower())
 
         self.network_mode_override = None
 
@@ -240,13 +246,31 @@ class Runtime(GroupRuntime):
     def group_config(self, config: Model):
         self._group_config = config
 
+    @functools.lru_cache(maxsize=1)
     def get_group_config(self) -> Model:
+        """
+        Load and cache group configuration. Automatically merges OKD config when variant=okd.
+        Cached to prevent reloading from disk when initialize() is called multiple times.
+        """
         replace_vars = self.get_replace_vars(None)
         group_config = self._build_data_loader.load_group_config(
             self.assembly,
             self.get_releases_config(),
             additional_vars=replace_vars,
         )
+
+        # For OKD variant, automatically merge the optional okd: field
+        from artcommonlib.util import deep_merge
+        from artcommonlib.variants import BuildVariant
+
+        if self.variant == BuildVariant.OKD and 'okd' in group_config:
+            self._logger.info('Merging OKD group configuration')
+            group_config = deep_merge(group_config, group_config['okd'])
+            # Update runtime.branch if OKD specifies a different branch
+            if 'branch' in group_config:
+                self.branch = group_config['branch']
+                self._logger.info(f'Updated runtime branch to OKD variant: {self.branch}')
+
         return Model(group_config)
 
     def get_errata_config(self):
@@ -595,15 +619,15 @@ class Runtime(GroupRuntime):
 
             def filter_enabled(n, d):
                 mode = d.get('mode', 'enabled')
-                # Include if generally enabled
-                if mode == 'enabled':
-                    return True
-                # Include if has okd.mode: enabled AND --load-okd-only flag is set
-                if mode == 'disabled' and self.load_okd_only:
-                    okd_config = d.get('okd', {})
-                    if isinstance(okd_config, dict) and okd_config.get('mode') == 'enabled':
-                        return True
-                return False
+
+                # For OKD variant, check okd.mode if present (enabled/disabled), otherwise fall back to top-level mode
+                if self.variant == BuildVariant.OKD:
+                    okd_mode = d.get('okd', {}).get('mode')
+                    if okd_mode is not None:
+                        return okd_mode == 'enabled'
+
+                # For OCP variant or OKD fallback, use top-level mode
+                return mode == 'enabled'
 
             def filter_disabled(n, d):
                 return d.get('mode', 'enabled') in ['enabled', 'disabled']
@@ -813,18 +837,22 @@ class Runtime(GroupRuntime):
         """
         :return: Returns a JIRA client setup for the server in bug.yaml
         """
-        from artcommonlib.jira_config import JIRA_SERVER_URL
+        from artcommonlib.jira_config import DEFAULT_JIRA_EMAIL, JIRA_SERVER_URL
 
         major, minor = self.get_major_minor_fields()
         if (major, minor) < (4, 6):
-            raise ValueError("ocp-build-data/bug.yml is not expected to be available for OCP versions < 4.6")
-        bug_config = Model(self.get_bug_config())
-        server = bug_config.jira_config.server or JIRA_SERVER_URL
+            raise ValueError("JIRA client is not supported for OCP versions < 4.6")
+        # JIRA server is hardcoded in artcommonlib.jira_config (not read from bug.yml)
+        server = JIRA_SERVER_URL
 
         token_auth = os.environ.get("JIRA_TOKEN")
         if not token_auth:
             raise ValueError(f"Jira activity requires login credentials for {server}. Set a JIRA_TOKEN env var")
-        client = JIRA(server, token_auth=token_auth)
+        # Get email for basic auth
+        jira_email = os.environ.get("JIRA_EMAIL", DEFAULT_JIRA_EMAIL)
+
+        jira_options = {'server': server}
+        client = JIRA(options=jira_options, basic_auth=(jira_email, token_auth))
         return client
 
     def build_retrying_koji_client(self):
@@ -1108,11 +1136,11 @@ class Runtime(GroupRuntime):
 
         mode = data_obj.data.get("mode", "enabled")
 
-        # Check if image has OKD mode override that enables it (only when load_okd_only is set)
+        # Check if image has OKD mode override that enables it (only when variant is OKD)
         okd_config = data_obj.data.get("okd", {})
-        okd_enabled = mode == "disabled" and okd_config.get("mode") == "enabled" and self.load_okd_only
+        okd_enabled = mode == "disabled" and okd_config.get("mode") == "enabled" and self.variant == BuildVariant.OKD
 
-        # Skip loading if disabled (unless okd.mode: enabled with load_okd_only or load_disabled is set)
+        # Skip loading if disabled (unless okd.mode: enabled with variant=OKD or load_disabled is set)
         if mode == "disabled" and not self.load_disabled and not okd_enabled:
             if required:
                 raise DoozerFatalError('Attempted to load image {} but it has mode {}'.format(distgit_name, mode))

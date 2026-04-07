@@ -2,9 +2,10 @@ import logging
 import os
 import traceback
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 import click
+import yaml
 from artcommonlib import exectools
 from artcommonlib.constants import PRODUCT_KUBECONFIG_MAP
 from artcommonlib.util import resolve_konflux_kubeconfig_by_product, resolve_konflux_namespace_by_product
@@ -18,8 +19,8 @@ from pyartcd.runtime import Runtime
 from pyartcd.util import default_release_suffix, load_group_config
 
 
-class BuildOadpPipeline:
-    """Rebase and build OADP for an assembly"""
+class BuildLayeredProductsPipeline:
+    """Rebase and build layered products for an assembly"""
 
     def __init__(
         self,
@@ -64,6 +65,8 @@ class BuildOadpPipeline:
             self._doozer_env_vars["DOOZER_DATA_PATH"] = data_path
 
         jenkins.init_jenkins()
+        if self.assembly.lower() == "test":
+            jenkins.update_title(" [TEST]")
 
     def trigger_bundle_build(self):
         if self.skip_bundle_build:
@@ -82,6 +85,9 @@ class BuildOadpPipeline:
                 if record['has_olm_bundle'] == '1' and record['status'] == '0' and record.get('nvrs', None):
                     operator_nvrs.append(record['nvrs'].split(',')[0])
             if operator_nvrs:
+                # Automatically propagate parameters if set in environment
+                propagate_params = jenkins.get_propagatable_params()
+
                 jenkins.start_olm_bundle_konflux(
                     build_version=self.version,
                     assembly=self.assembly,
@@ -89,6 +95,7 @@ class BuildOadpPipeline:
                     operator_nvrs=operator_nvrs,
                     doozer_data_path=self._doozer_env_vars["DOOZER_DATA_PATH"] or '',
                     doozer_data_gitref=self.data_gitref or '',
+                    propagate_params=propagate_params,
                 )
         except Exception as e:
             self._logger.exception(f"Failed to trigger bundle build: {e}")
@@ -103,7 +110,7 @@ class BuildOadpPipeline:
             return record_log
 
     async def run(self):
-        """Run the OADP rebase and build pipeline"""
+        """Run the layered products rebase and build pipeline"""
         # Load group config once for both version and product information
         group_config = await load_group_config(
             group=self.group,
@@ -124,77 +131,113 @@ class BuildOadpPipeline:
         await self._rebase_and_build(product)
         self.trigger_bundle_build()
 
-    async def _rebase_and_build(self, product: str):
-        """Rebase and build OADP image"""
-        release = default_release_suffix()
-
-        group_param = f"--group={self.group}"
+    def _group_param(self) -> str:
         if self.data_gitref:
-            group_param = f"--group={self.group}@{self.data_gitref}"
+            return f"--group={self.group}@{self.data_gitref}"
+        return f"--group={self.group}"
 
-        # Skip rebase if the flag is set
-        if self.skip_rebase:
-            self._logger.warning("Skipping rebase step because --skip-rebase flag is set")
-        else:
-            # Rebase OADP image
-            self._logger.info(f"Rebasing {self.image_list} image for assembly {self.assembly}")
-
-            rebase_cmd = [
-                "doozer",
-                f"--assembly={self.assembly}",
-                f"--working-dir={self.runtime.doozer_working}",
-                f"--data-path={self._doozer_env_vars['DOOZER_DATA_PATH']}",
-                "--build-system=konflux",
-                group_param,
-                "--latest-parent-version",
-                f"--images={self.image_list}",
-                "beta:images:konflux:rebase",
-                f"--version={self.version}",
-                f"--release={release}",
-                f"--message='Updating Dockerfile version and release {self.version}-{release}'",
-            ]
-            if self.network_mode:
-                rebase_cmd.extend(['--network-mode', self.network_mode])
-            if not self.runtime.dry_run:
-                rebase_cmd.append("--push")
-
-            await exectools.cmd_assert_async(rebase_cmd, env=self._doozer_env_vars)
-            self._logger.info(f"Successfully rebased {self.image_list}")
-
-        # Build OADP image
-        self._logger.info(f"Building {self.image_list} image for assembly {self.assembly}")
-        build_cmd = [
+    def _doozer_base_command(self) -> List[str]:
+        return [
             "doozer",
             f"--assembly={self.assembly}",
             f"--working-dir={self.runtime.doozer_working}",
             f"--data-path={self._doozer_env_vars['DOOZER_DATA_PATH']}",
             "--build-system=konflux",
-            group_param,
+            self._group_param(),
             "--latest-parent-version",
-            f"--images={self.image_list}",
-            "beta:images:konflux:build",
-            f"--image-repo={KONFLUX_DEFAULT_IMAGE_REPO}",
-            "--build-priority=1",
         ]
 
-        # Resolve namespace using product-based utility function
+    async def _rebase_and_build(self, product: str):
+        """Rebase and build layered product image"""
+        image_list = self.image_list
+
+        if not self.skip_rebase:
+            image_list = await self._rebase(image_list)
+        else:
+            self._logger.warning("Skipping rebase step because --skip-rebase flag is set")
+
+        if not image_list:
+            self._logger.warning('No buildable images remaining after rebase; skipping build')
+            return
+
+        await self._build(image_list, product)
+
+    async def _rebase(self, image_list: str) -> str:
+        """Rebase layered product images.
+
+        Returns the (possibly reduced) comma-separated image list after
+        excluding images that failed to rebase, following the same pattern
+        used by the OCP4 pipeline.
+        """
+        release = default_release_suffix()
+        self._logger.info(f"Rebasing {image_list} image(s) for assembly {self.assembly}")
+
+        rebase_cmd = self._doozer_base_command()
+        rebase_cmd.extend(
+            [
+                f"--images={image_list}",
+                "beta:images:konflux:rebase",
+                f"--version={self.version}",
+                f"--release={release}",
+                f"--message='Updating Dockerfile version and release {self.version}-{release}'",
+            ]
+        )
+        if self.network_mode:
+            rebase_cmd.extend(['--network-mode', self.network_mode])
+        if not self.runtime.dry_run:
+            rebase_cmd.append("--push")
+
+        try:
+            await exectools.cmd_assert_async(rebase_cmd, env=self._doozer_env_vars)
+            self._logger.info(f"Successfully rebased {image_list}")
+            return image_list
+
+        except ChildProcessError:
+            state_path = Path(self.runtime.doozer_working, 'state.yaml')
+            if not state_path.exists():
+                raise
+
+            with state_path.open('r') as f:
+                state = yaml.safe_load(f)
+            failed_images = state.get('images:konflux:rebase', {}).get('failed-images', [])
+            if not failed_images:
+                raise
+
+            self._logger.warning(
+                'Following images failed to rebase and will be excluded from build: %s',
+                ','.join(failed_images),
+            )
+
+            requested = [img.strip() for img in image_list.split(',') if img.strip()]
+            remaining = [img for img in requested if img not in failed_images]
+            return ','.join(remaining)
+
+    async def _build(self, image_list: str, product: str):
+        """Build layered product images."""
+        self._logger.info(f"Building {image_list} image(s) for assembly {self.assembly}")
+
+        build_cmd = self._doozer_base_command()
+        build_cmd.extend(
+            [
+                f"--images={image_list}",
+                "beta:images:konflux:build",
+                f"--image-repo={KONFLUX_DEFAULT_IMAGE_REPO}",
+                "--build-priority=1",
+            ]
+        )
+
         namespace = resolve_konflux_namespace_by_product(product)
         build_cmd.append(f"--konflux-namespace={namespace}")
 
-        # Use kubeconfig from CLI parameter or resolve from product-specific environment variable
         kubeconfig = resolve_konflux_kubeconfig_by_product(product, self.kubeconfig)
         if not kubeconfig:
             available_env_vars = list(PRODUCT_KUBECONFIG_MAP.values())
             raise ValueError(
-                f"Kubeconfig required for Konflux builds. Provide --kubeconfig parameter or set one of: {', '.join(available_env_vars)}"
+                f"Kubeconfig required for Konflux builds. Provide --kubeconfig parameter "
+                f"or set one of: {', '.join(available_env_vars)}"
             )
 
-        build_cmd.extend(
-            [
-                "--konflux-kubeconfig",
-                kubeconfig,
-            ]
-        )
+        build_cmd.extend(["--konflux-kubeconfig", kubeconfig])
         if self.plr_template:
             plr_template_owner, plr_template_branch = (
                 self.plr_template.split("@") if self.plr_template else ["openshift-priv", "main"]
@@ -208,17 +251,16 @@ class BuildOadpPipeline:
         if self.runtime.dry_run:
             build_cmd.append("--dry-run")
 
-        # Ensure KONFLUX_ART_IMAGES_AUTH_FILE is passed through environment
         build_env = self._doozer_env_vars.copy()
         konflux_registry_auth_file = os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")
         if konflux_registry_auth_file:
             build_env["KONFLUX_ART_IMAGES_AUTH_FILE"] = konflux_registry_auth_file
 
         await exectools.cmd_assert_async(build_cmd, env=build_env)
-        self._logger.info(f"Successfully built {self.image_list}")
+        self._logger.info(f"Successfully built {image_list}")
 
 
-@cli.command("build-oadp")
+@cli.command("build-layered-products")
 @click.option(
     "--data-path",
     metavar='BUILD_DATA',
@@ -236,7 +278,7 @@ class BuildOadpPipeline:
     "--version",
     metavar='NAME',
     required=False,
-    help="OADP version (if not provided, will be read from group config)",
+    help="Layered product version (if not provided, will be read from group config)",
 )
 @click.option(
     "--assembly",
@@ -272,7 +314,7 @@ class BuildOadpPipeline:
 )
 @pass_runtime
 @click_coroutine
-async def build_oadp(
+async def build_layered_products(
     runtime: Runtime,
     data_path: str,
     group: str,
@@ -287,9 +329,9 @@ async def build_oadp(
     ignore_locks: bool,
     plr_template: str,
 ):
-    """Rebase and build OADP image for an assembly"""
+    """Rebase and build layered product image for an assembly"""
     try:
-        pipeline = BuildOadpPipeline(
+        pipeline = BuildLayeredProductsPipeline(
             runtime=runtime,
             group=group,
             version=version,
@@ -311,11 +353,11 @@ async def build_oadp(
         else:
             await locks.run_with_lock(
                 coro=pipeline.run(),
-                lock=Lock.OADP_BUILD,
-                lock_name=Lock.OADP_BUILD.value.format(group=group),
+                lock=Lock.LAYERED_PRODUCTS_BUILD,
+                lock_name=Lock.LAYERED_PRODUCTS_BUILD.value.format(group=group),
                 lock_id=lock_identifier,
             )
     except Exception as err:
-        error_message = f"build-oadp pipeline encountered error: {err}\n{traceback.format_exc()}"
+        error_message = f"build-layered-products pipeline encountered error: {err}\n{traceback.format_exc()}"
         runtime.logger.error(error_message)
         raise

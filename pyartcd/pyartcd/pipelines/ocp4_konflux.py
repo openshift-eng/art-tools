@@ -167,8 +167,8 @@ class KonfluxOcpPipeline:
             return [f'--{kind}=', f'--exclude={",".join(excludes)}']
 
     async def update_rebase_fail_counters(self, failed_images):
-        if self.assembly == 'test':
-            # Ignore for test assembly
+        if self.assembly != 'stream':
+            # Only update fail counters for stream assembly
             return
 
         # Reset fail counters for images that were rebased successfully
@@ -254,7 +254,7 @@ class KonfluxOcpPipeline:
         except ChildProcessError:
             with open(f'{self.runtime.doozer_working}/state.yaml') as state_yaml:
                 state = yaml.safe_load(state_yaml)
-            failed_images = state['images:konflux:rebase'].get('failed-images', [])
+            failed_images = state.get('images:konflux:rebase', {}).get('failed-images', [])
             if not failed_images:
                 raise  # Something else went wrong
 
@@ -672,6 +672,16 @@ class KonfluxOcpPipeline:
             )
 
         await self.rebase_images(f"v{self.version}.0", self.release)
+
+        # ART-14540: Notify component owners about missing branch protection
+        record_log_path = Path(self.runtime.doozer_working) / "record.log"
+        if record_log_path.exists():
+            await util.notify_branch_protection_missing(
+                version=self.version,
+                doozer_working=self.runtime.doozer_working,
+                mail_client=self.runtime.new_mail_client(),
+            )
+
         await self.build_images()
 
         if self.mass_rebuild:

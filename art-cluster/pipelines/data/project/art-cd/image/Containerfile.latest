@@ -4,14 +4,15 @@ FROM art-cd:base
 
 USER 0
 
-RUN pip3 install --upgrade pip
+RUN uv self update
 
 # Set workspace
 WORKDIR /home/dev
 
-# Copy art-tools and run the install script
+# Copy art-tools and install packages in editable mode
 COPY . .
-RUN pip3 install -e artcommon/ -e doozer/ -e elliott/ -e pyartcd/ -e ocp-build-data-validator/
+RUN uv pip install --python 3.11 --system -e .
+
 
 # Install check-payload tool for FIPS scanning, and copy to a location in PATH
 # They update the tool often, so lets keep in update for now

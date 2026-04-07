@@ -33,20 +33,22 @@ class Jobs(Enum):
     BUILD_MICROSHIFT_BOOTC = 'aos-cd-builds/build%2Fbuild-microshift-bootc'
     OCP4 = 'aos-cd-builds/build%2Focp4'
     OKD = 'aos-cd-builds/build%2Fokd'
+    OKD_SCAN_KONFLUX = 'aos-cd-builds/build%2Fokd-scan'
     OCP4_KONFLUX = 'aos-cd-builds/build%2Focp4-konflux'
     OCP4_SCAN = 'aos-cd-builds/build%2Focp4_scan'
     OCP4_SCAN_KONFLUX = 'aos-cd-builds/build%2Focp4-scan-konflux'
     RHCOS = 'aos-cd-builds/build%2Frhcos'
     OLM_BUNDLE = 'aos-cd-builds/build%2Folm_bundle'
     OLM_BUNDLE_KONFLUX = 'aos-cd-builds/build%2Folm_bundle_konflux'
+    BASE_IMAGE_RELEASE = 'aos-cd-builds/build%2Fbase-image-release'
     SYNC_FOR_CI = 'scheduled-builds/sync-for-ci'
     MICROSHIFT_SYNC = 'aos-cd-builds/build%2Fmicroshift_sync'
     CINCINNATI_PRS = 'aos-cd-builds/build%2Fcincinnati-prs'
     RHCOS_SYNC = 'aos-cd-builds/build%2Frhcos_sync'
     BUILD_PLASHETS = 'aos-cd-builds/build%2Fbuild-plashets'
     BUILD_FBC = 'aos-cd-builds/build%2Fbuild-fbc'
-    OADP = 'aos-cd-builds/build%2Foadp'
-    OADP_SCAN = 'aos-cd-builds/build%2Foadp-scan'
+    LAYERED_PRODUCTS = 'aos-cd-builds/build%2Flayered-products'
+    LAYERED_PRODUCTS_SCAN = 'aos-cd-builds/build%2Flayered-products-scan'
     SCAN_PLASHET_RPMS = 'scanning/scanning%2Fplashet-rpms'
     SCAN_OPERATOR = 'aos-cd-builds/build%2Fscan-operator'
 
@@ -304,6 +306,29 @@ def is_build_running(build_path: str) -> bool:
     return build.is_running()
 
 
+def get_propagatable_params() -> dict:
+    """
+    Get parameters that should automatically propagate to downstream jobs.
+    Only non-empty parameters are included.
+
+    Returns:
+        dict: Parameters to propagate (e.g., {'ART_TOOLS_COMMIT': 'user@branch'})
+    """
+    propagatable = {}
+
+    # Check for ART_TOOLS_COMMIT
+    art_tools_commit = os.getenv('ART_TOOLS_COMMIT', '').strip()
+    if art_tools_commit:
+        propagatable['ART_TOOLS_COMMIT'] = art_tools_commit
+
+    # Check for PLR_TEMPLATE_COMMIT
+    plr_template_commit = os.getenv('PLR_TEMPLATE_COMMIT', '').strip()
+    if plr_template_commit:
+        propagatable['PLR_TEMPLATE_COMMIT'] = plr_template_commit
+
+    return propagatable
+
+
 @check_env_vars
 def start_build(
     job: Jobs,
@@ -471,6 +496,17 @@ def start_ocp4_scan_konflux(version: str, **kwargs) -> Optional[str]:
     )
 
 
+def start_okd_scan_konflux(version: str, **kwargs) -> Optional[str]:
+    params = {
+        'VERSION': version,
+    }
+    return start_build(
+        job=Jobs.OKD_SCAN_KONFLUX,
+        params=params,
+        **kwargs,
+    )
+
+
 def start_scan_plashet_rpms(group: str, assembly: str = 'stream', **kwargs) -> Optional[str]:
     params = {
         'GROUP': group,
@@ -613,6 +649,7 @@ def start_olm_bundle_konflux(
     doozer_data_path: str = constants.OCP_BUILD_DATA_URL,
     doozer_data_gitref: str = '',
     group: Optional[str] = None,
+    propagate_params: Optional[dict] = None,
     **kwargs,
 ) -> Optional[str]:
     if not operator_nvrs:
@@ -630,8 +667,44 @@ def start_olm_bundle_konflux(
     if group:
         params['GROUP'] = group
 
+    # Automatically propagate parameters if provided
+    # Note: params.update() will override existing parameter values if keys match
+    if propagate_params:
+        params.update(propagate_params)
+        logger.info("Propagating parameters to olm_bundle_konflux: %s", propagate_params)
+
     return start_build(
         job=Jobs.OLM_BUNDLE_KONFLUX,
+        params=params,
+        **kwargs,
+    )
+
+
+def start_base_image_release(
+    build_version: str,
+    assembly: str,
+    base_image_nvrs: list,
+    doozer_data_path: str = constants.OCP_BUILD_DATA_URL,
+    doozer_data_gitref: str = '',
+    dry_run: bool = False,
+    **kwargs,
+) -> Optional[str]:
+    if not base_image_nvrs:
+        logger.warning('Empty base image NVR list: skipping base image release')
+        return
+
+    params = {
+        'BUILD_VERSION': build_version,
+        'ASSEMBLY': assembly,
+        'NVRS': ','.join(base_image_nvrs),
+        'DOOZER_DATA_PATH': doozer_data_path,
+        'DOOZER_DATA_GITREF': doozer_data_gitref,
+        'DRY_RUN': str(dry_run).lower(),
+        'ART_TOOLS_COMMIT': os.environ.get('ART_TOOLS_COMMIT', '').strip(),
+    }
+
+    return start_build(
+        job=Jobs.BASE_IMAGE_RELEASE,
         params=params,
         **kwargs,
     )
@@ -711,6 +784,7 @@ def start_build_fbc(
     force_build: Optional[bool] = None,
     group: Optional[str] = None,
     ocp_target_version: Optional[str] = None,
+    propagate_params: Optional[dict] = None,
     **kwargs,
 ) -> Optional[str]:
     params = {
@@ -726,6 +800,12 @@ def start_build_fbc(
     if force_build:
         params["FORCE_BUILD"] = force_build
 
+    # Automatically propagate parameters if provided
+    # Note: params.update() will override existing parameter values if keys match
+    if propagate_params:
+        params.update(propagate_params)
+        logger.info("Propagating parameters to build-fbc: %s", propagate_params)
+
     return start_build(
         job=Jobs.BUILD_FBC,
         params=params,
@@ -733,7 +813,7 @@ def start_build_fbc(
     )
 
 
-def start_oadp(
+def start_layered_products(
     group: str,
     assembly: str,
     image_list: list = None,
@@ -749,20 +829,20 @@ def start_oadp(
         params['IMAGE_LIST'] = ','.join(image_list)
 
     return start_build(
-        job=Jobs.OADP,
+        job=Jobs.LAYERED_PRODUCTS,
         params=params,
         **kwargs,
     )
 
 
-def start_oadp_scan_konflux(group: str, assembly: str = "stream", **kwargs) -> Optional[str]:
+def start_layered_products_scan_konflux(group: str, assembly: str = "stream", **kwargs) -> Optional[str]:
     params = {
         'GROUP': group,
         'ASSEMBLY': assembly,
     }
 
     return start_build(
-        job=Jobs.OADP_SCAN,
+        job=Jobs.LAYERED_PRODUCTS_SCAN,
         params=params,
         **kwargs,
     )

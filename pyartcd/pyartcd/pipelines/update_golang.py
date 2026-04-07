@@ -1,5 +1,4 @@
 import asyncio
-import base64
 import io
 import logging
 import os
@@ -11,6 +10,7 @@ import koji
 from artcommonlib import exectools
 from artcommonlib.brew import BuildStates
 from artcommonlib.constants import BREW_HUB, GOLANG_BUILDER_IMAGE_NAME, PRODUCT_NAMESPACE_MAP
+from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.release_util import split_el_suffix_in_release
@@ -18,8 +18,6 @@ from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import new_roundtrip_yaml_handler
 from elliottlib import util as elliottutil
 from elliottlib.constants import GOLANG_BUILDER_CVE_COMPONENT
-from ghapi.all import GhApi
-from github import Github
 
 from pyartcd import constants, jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -196,9 +194,7 @@ class UpdateGolangPipeline:
             kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
         self.kubeconfig = kubeconfig
 
-        self.github_token = os.environ.get('GITHUB_TOKEN')
-        if not self.github_token:
-            raise ValueError("GITHUB_TOKEN environment variable is required to fetch build data repo contents")
+        # GitHub auth is handled by get_github_client_for_org() with App auth / PAT fallback
 
         # Initialize KonfluxDb for Konflux build system
         if build_system in ('konflux', 'both'):
@@ -359,6 +355,11 @@ class UpdateGolangPipeline:
         # Tag builds into override tag
         await self.tag_build(el_v, nvr)
         # Wait for repo to be available (5 hours max)
+
+        if self.dry_run:
+            _LOGGER.info(f"[DRY RUN] Would have waited for {nvr} to be available in build tags")
+            return True
+
         for _ in range(30):
             await asyncio.sleep(600)  # 10 minutes
             if await is_latest_and_available(self.ocp_version, el_v, nvr, self.koji_session):
@@ -486,15 +487,18 @@ class UpdateGolangPipeline:
         3. If it'a major version bump, also need to update key in streams.yml and vars in group.yml
         4. Create pr to update changes
         """
-        github_client = Github(os.environ.get("GITHUB_TOKEN"))
         branch = f"openshift-{self.ocp_version}"
-        upstream_repo = github_client.get_repo("openshift-eng/ocp-build-data")
+        upstream_repo = get_github_client_for_org("openshift-eng").get_repo("openshift-eng/ocp-build-data")
         streams_content = yaml.load(upstream_repo.get_contents("streams.yml", ref=branch).decoded_content)
         group_content = yaml.load(upstream_repo.get_contents("group.yml", ref=branch).decoded_content)
 
         go_latest_var, go_previous_var = "GO_LATEST", "GO_PREVIOUS"
-        go_latest = group_content['vars'][go_latest_var]
-        go_previous = group_content['vars'].get(go_previous_var, None)
+        go_latest = group_content['vars'].get(go_latest_var)
+        if not go_latest:
+            raise ValueError(
+                f"{go_latest_var} variable not found in group.yml, please make sure it is defined before running the pipeline"
+            )
+        go_previous = group_content['vars'].get(go_previous_var)
 
         # these group var templates are used in streams.yml
         # but we do not need to replace/update them
@@ -571,10 +575,10 @@ class UpdateGolangPipeline:
                         info['image'] = new_latest_go
                     if info['image'] == previous_go:
                         info['image'] = latest_go
-                group_content['vars']['GO_LATEST'] = go_version
+                group_content['vars'][go_latest_var] = go_version
                 group_content['vars']['GO_EXTRA'] = go_version
                 if go_previous:
-                    group_content['vars']['GO_PREVIOUS'] = go_latest
+                    group_content['vars'][go_previous_var] = go_latest
                 update_streams = update_group = True
         # save changes and create pr
         if update_streams:
@@ -599,7 +603,7 @@ class UpdateGolangPipeline:
                     f"Golang builder images:\n{builder_details}"
                 )
                 return
-            fork_repo = github_client.get_repo("openshift-bot/ocp-build-data")
+            fork_repo = get_github_client_for_org("openshift-bot").get_repo("openshift-bot/ocp-build-data")
             branch_name = f"update-golang-{self.ocp_version}-{go_version}"
             title = f"{self.art_jira} - Bump {self.ocp_version} golang builders to {go_version}"
             update_message = f"Bump {self.ocp_version} golang builders to {go_version}"
@@ -774,21 +778,19 @@ class UpdateGolangPipeline:
         return f'rhel-{el_v}-golang-{go_v}'
 
     def verify_golang_builder_repo(self, el_v, go_version):
-        # read group.yml from the golang branch using ghapi
-        owner, repo = 'openshift-eng', 'ocp-build-data'
         branch = self.get_golang_branch(el_v, go_version)
         filename = 'group.yml'
 
-        api = GhApi(owner=owner, repo=repo, token=self.github_token)
-        blob = api.repos.get_content(filename, ref=branch)
-        group_config = yaml.load(base64.b64decode(blob['content']))
+        repo = get_github_client_for_org("openshift-eng").get_repo("openshift-eng/ocp-build-data")
+        content = repo.get_contents(filename, ref=branch)
+        group_config = yaml.load(content.decoded_content)
         content_repo_url_suffix = self.get_content_repo_url_suffix(el_v)
 
         golang_repo = f'rhel-{el_v}-golang-rpms'
         if golang_repo not in group_config['repos']:
             raise ValueError(
                 f"Did not find {golang_repo} defined at "
-                f"https://github.com/{owner}/{repo}/blob/{branch}/{filename}. If it's with a different "
+                f"https://github.com/openshift-eng/ocp-build-data/blob/{branch}/{filename}. If it's with a different "
                 "name please correct it."
             )
 

@@ -630,6 +630,74 @@ Thanks for your help!\n"""
         )
 
 
+async def notify_branch_protection_missing(version: str, doozer_working: str, mail_client: MailService):
+    """
+    Notify component owners when their upstream branch does not have branch protection enabled.
+    Uses Redis to throttle notifications: owners are only emailed once per 7 days per repo/branch.
+    ART-14540: Builds from unprotected branches are not allowed.
+    """
+    with open(Path(doozer_working) / "record.log", "r") as file:
+        record_log: dict = record.parse_record_log(file)
+
+    entries = record.get_branch_protection_notify(record_log)
+    for entry in entries:
+        owners = entry.get("owners", "")
+        if not owners:
+            continue
+
+        source_url = entry.get("source_url", "unknown")
+        branch = entry.get("branch", "unknown")
+        distgit = entry.get("distgit", "unknown")
+
+        # Throttle: only notify once per 7 days per repo/branch
+        # Use owner/repo instead of full URL to avoid colons in Redis keys
+        _, repo_owner, repo_name = artcommonlib.util.split_git_url(source_url)
+        redis_key = f"appdata:branch-protection-notified:{version}:{repo_owner}/{repo_name}:{branch}"
+        already_notified = await redis.get_value(redis_key)
+        if already_notified:
+            logger.info(
+                "Skipping branch protection notification for %s branch %s (already notified)",
+                source_url,
+                branch,
+            )
+            continue
+
+        email_subject = f"[ACTION REQUIRED] Branch protection missing for {distgit} in OCP v{version}"
+        explanation_body = f"""Why am I receiving this?
+------------------------
+You are receiving this message because you are listed as an owner for an
+OpenShift related image or RPM, and the upstream source branch used to build
+it does not have branch protection enabled.
+
+Per Red Hat internal audit requirements, all branches contributing to released
+code must have branch protection enabled.
+
+What needs to happen?
+---------------------
+Branch protection must be enabled for:
+  Repository: {source_url}
+  Branch: {branch}
+
+Please enable branch protection on this branch. Until branch protection is
+enabled, builds for {distgit} will fail.
+
+If this is a temporary situation (onboarding, hotfix, emergency), the ART team
+can set 'allow_unprotected_branch: true' in the image/RPM metadata as a
+short-term override.
+
+Please direct any questions to the Automated Release Tooling team (#forum-ocp-art on slack).
+"""
+
+        mail_client.send_mail(
+            to=owners,
+            subject=email_subject,
+            content=explanation_body,
+        )
+
+        # Mark as notified with 1-day TTL
+        await redis.set_value(redis_key, "1", expiry=86400)
+
+
 def mail_build_failure_owners(failed_builds: dict, doozer_working: str, mail_client: MailService, default_owner: str):
     """
      Send email to owners of failed image builds.
@@ -868,7 +936,7 @@ async def get_group_images(
     working_dir: Path,
     doozer_data_path: str = constants.OCP_BUILD_DATA_URL,
     doozer_data_gitref: str = '',
-    load_okd_only: bool = False,
+    variant: str = None,
 ) -> List[str]:
     """
     Get the list of images for a given group and assembly.
@@ -879,7 +947,7 @@ async def get_group_images(
     :param working_dir: Working directory for doozer
     :param doozer_data_path: Path to ocp-build-data repository
     :param doozer_data_gitref: Git reference to use in ocp-build-data
-    :param load_okd_only: Whether to load OKD-only images (mode: disabled, okd.mode: enabled)
+    :param variant: Build variant ('ocp' or 'okd'). If None, uses doozer's default (runtime.variant, which defaults to 'ocp').
     :return: List of image distgit keys
     """
 
@@ -892,8 +960,8 @@ async def get_group_images(
         f'--working-dir={working_dir}',
         f'--data-path={doozer_data_path}',
     ]
-    if load_okd_only:
-        command.append('--load-okd-only')
+    if variant:
+        command.append(f'--variant={variant}')
     if build_system:
         command.append(f'--build-system={build_system}')
     command.extend(
@@ -979,3 +1047,81 @@ async def reset_rebase_fail_counter(image, version, build_system, branch='rebase
 
     redis_branch = f'count:{branch}:{build_system}:{version}:{image}:*'
     await redis.delete_keys_by_pattern(redis_branch)
+
+
+async def get_rebase_failures(version: str, branches: list[str], build_systems: list[str], logger=None):
+    """
+    Fetch rebase failure data from Redis for a specific version.
+    Checks multiple branch patterns and build systems.
+
+    Arg(s):
+        version (str): Version (e.g., "4.18")
+        branches (list[str]): Branch identifiers (e.g., ['rebase-failure'] or ['okd-rebase-failure'])
+        build_systems (list[str]): Build systems to check (e.g., ['brew', 'konflux'])
+        logger (Logger): Optional logger for debugging
+    Return Value(s):
+        dict: {image_name: {failure_count, url, build_system, branch}}
+    """
+    failures = {}
+
+    try:
+        for branch in branches:
+            for build_system in build_systems:
+                pattern = f'count:{branch}:{build_system}:{version}:*:failure'
+                failure_keys = await redis.get_keys(pattern)
+
+                if not failure_keys:
+                    if logger:
+                        logger.info('No %s %s rebase failures found for version %s', branch, build_system, version)
+                    continue
+
+                if logger:
+                    logger.info(
+                        'Found %d %s %s rebase failure keys for version %s',
+                        len(failure_keys),
+                        branch,
+                        build_system,
+                        version,
+                    )
+
+                # Parse failure keys to extract image names and fetch counts + URLs
+                for failure_key in failure_keys:
+                    # Extract image name from key: count:rebase-failure:konflux:4.18:ironic:failure
+                    parts = failure_key.split(':')
+                    if len(parts) >= 5:
+                        image_name = parts[4]
+                        url_key = f'count:{branch}:{build_system}:{version}:{image_name}:url'
+
+                        # Fetch failure count and URL
+                        failure_count = await redis.get_value(failure_key)
+                        job_url = await redis.get_value(url_key)
+
+                        # If image already exists (from another build system/branch), keep the one with higher count
+                        if image_name in failures:
+                            existing_count = failures[image_name]['failure_count']
+                            new_count = int(failure_count or 0)
+                            if new_count > existing_count:
+                                failures[image_name] = {
+                                    'failure_count': new_count,
+                                    'url': job_url or '',
+                                    'build_system': build_system,
+                                    'branch': branch,
+                                }
+                        else:
+                            failures[image_name] = {
+                                'failure_count': int(failure_count) if failure_count else 0,
+                                'url': job_url or '',
+                                'build_system': build_system,
+                                'branch': branch,
+                            }
+
+        if logger and failures:
+            import json
+
+            logger.info('Rebase failures for version %s: %s', version, json.dumps(failures, indent=2))
+
+    except Exception as e:
+        if logger:
+            logger.warning('Failed to fetch rebase failures from Redis for version %s: %s', version, e)
+
+    return failures

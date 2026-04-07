@@ -89,6 +89,7 @@ class KonfluxRebaser:
         logger: Optional[logging.Logger] = None,
         variant: BuildVariant = BuildVariant.OCP,
         image_repo: str = constants.KONFLUX_DEFAULT_IMAGE_REPO,
+        lockfile_seed_nvrs: Optional[list[str]] = None,
     ) -> None:
         self._runtime = runtime
         self._base_dir = base_dir
@@ -99,7 +100,9 @@ class KonfluxRebaser:
         self._record_logger = record_logger
         self._source_modifier_factory = source_modifier_factory
         self._logger = logger or LOGGER
-        self.rpm_lockfile_generator = RPMLockfileGenerator(runtime.repos, runtime=runtime)
+        self.rpm_lockfile_generator = RPMLockfileGenerator(
+            runtime.repos, runtime=runtime, lockfile_seed_nvrs=lockfile_seed_nvrs
+        )
         self.artifact_lockfile_generator = ArtifactLockfileGenerator(runtime=runtime)
         self.image_repo = image_repo
         self.uuid_tag = ''
@@ -858,7 +861,29 @@ class KonfluxRebaser:
 
         el_ver = 0
         try:
-            el_ver = metadata.branch_el_target()
+            # For OKD builds, check for image-specific okd.distgit.branch override first
+            # If not present, use group-level okd.branch (via runtime.branch)
+            # This ensures proper precedence:
+            #   1. metadata.config.okd.distgit.branch (image-specific override, e.g., rhel-9)
+            #   2. runtime.branch for OKD (group okd.branch merged, e.g., rhel-10)
+            #   3. metadata.branch_el_target() fallback (standard distgit.branch)
+            if self.variant is BuildVariant.OKD:
+                # Check for image-specific okd.distgit.branch override
+                if metadata.config.okd.distgit.branch is not Missing:
+                    # Image has an explicit okd.distgit.branch override, use it
+                    target_match = re.match(r'.*-rhel-(\d+)(?:-|$)', str(metadata.config.okd.distgit.branch))
+                    if target_match:
+                        el_ver = int(target_match.group(1))
+
+                # If no override, use runtime.branch (which includes merged group okd.branch)
+                if not el_ver and self._runtime.branch:
+                    target_match = re.match(r'.*-rhel-(\d+)(?:-|$)', str(self._runtime.branch))
+                    if target_match:
+                        el_ver = int(target_match.group(1))
+
+            # If not OKD or no el_ver determined yet, use metadata.branch_el_target()
+            if not el_ver:
+                el_ver = metadata.branch_el_target()
         except ValueError:
             pass
         if el_ver:
@@ -1036,7 +1061,7 @@ class KonfluxRebaser:
         df_lines = filtered_content
 
         # ART-8476 assert rhel version equivalence
-        if metadata.canonical_builders_enabled:
+        if metadata.canonical_builders_enabled and self.variant != BuildVariant.OKD:
             el_version = metadata.branch_el_target()
             df_lines.extend(
                 [
@@ -1363,12 +1388,6 @@ class KonfluxRebaser:
                     # Cachito also writes a pem file which some builds reference: https://github.com/openshift/console/blob/52510bcb417e44808c07970f09d448fc49787087/Dockerfile#L41 .
                     "ADD https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem $REMOTE_SOURCES_DIR/cachito-gomod-with-deps/app/registry-ca.pem",
                 ]
-            elif metadata.is_artifact_lockfile_enabled():
-                konflux_lines += [
-                    "USER 0",
-                    "RUN cp /cachi2/output/deps/generic/Current-IT-Root-CAs.pem /tmp/art/Current-IT-Root-CAs.pem",
-                    "RUN cp /cachi2/output/deps/generic/Current-IT-Root-CAs.pem $REMOTE_SOURCES_DIR/cachito-gomod-with-deps/app/registry-ca.pem",
-                ]
 
         konflux_lines += [
             f"ENV ART_BUILD_DEPS_MODE={build_deps_mode}",
@@ -1604,24 +1623,96 @@ class KonfluxRebaser:
         async with aiofiles.open(path, "w") as f:
             await f.write(yaml_str)
 
+    @staticmethod
+    def _heredoc_delimiter(value):
+        """Return the delimiter for a RUN heredoc (e.g. <<EORUN -> 'EORUN') or None."""
+        val = value.strip()
+        if not val.startswith("<<"):
+            return None
+        rest = val[2:].lstrip()
+        if not rest:
+            return None
+        # Quoted delimiter: <<'EOF' or <<"EOF"
+        m = re.match(r"^(['\"])(\w+)\1", rest)
+        if m:
+            return m.group(2)
+        return rest.split()[0]
+
+    @staticmethod
+    def _extract_heredoc_run_from_lines(lines, startline, delimiter):
+        """
+        Reconstruct the full RUN command string for a heredoc from raw lines.
+        Returns (full_run, endline) or (None, None) if the closing delimiter is not found.
+        """
+        if startline >= len(lines):
+            return None, None
+        first = lines[startline].rstrip("\n")
+        if "RUN " not in first.upper():
+            return None, None
+        # Content after "RUN " on the first line (e.g. "<<EORUN" or "--mount=... <<EORUN")
+        run_body_start = first.upper().index("RUN ") + 4
+        first_part = first[run_body_start:].strip()
+        for i in range(startline + 1, len(lines)):
+            line = lines[i].rstrip("\n")
+            if line.strip() == delimiter:
+                body = "\n".join(ln.rstrip("\n") for ln in lines[startline + 1 : i])
+                full_run = first_part + "\n" + body + "\n" + line
+                return full_run, i
+        return None, None
+
     def _clean_repos(self, dfp):
         """
         Remove any calls to yum --enable-repo or
         yum-config-manager in RUN instructions
         """
+        lines = dfp.lines
+        # Pre-pass: RUN instructions with heredoc (<<DELIM) - dockerfile_parse only gives
+        # the first line as entry['value'], so we reconstruct the full RUN from raw lines
+        # and replace the whole block so bashlex can parse it.
+        heredoc_replacements = []  # (startline, endline, new_value)
+        for entry in dfp.structure:
+            if entry["instruction"] != "RUN":
+                continue
+            val = entry.get("value") or ""
+            delim = self._heredoc_delimiter(val)
+            if delim is None:
+                continue
+            startline = entry.get("startline", 0)
+            full_run, endline = self._extract_heredoc_run_from_lines(lines, startline, delim)
+            if full_run is None:
+                self._logger.warning(
+                    "Could not find closing heredoc delimiter %s for RUN at line %s", delim, startline + 1
+                )
+                continue
+            try:
+                changed, new_value = self._mangle_pkgmgr(full_run)
+            except (IOError, NotImplementedError) as e:
+                self._logger.warning("Cannot parse RUN heredoc, skipping: %s", str(e)[:100])
+                continue
+            if changed:
+                heredoc_replacements.append((startline, endline, new_value))
+        # Apply from high to low so line indices stay valid
+        for startline, endline, new_value in sorted(heredoc_replacements, key=lambda x: -x[0]):
+            lines[startline : endline + 1] = ["RUN " + new_value + "\n"]
+        if heredoc_replacements:
+            dfp.lines = lines
+
         for entry in reversed(dfp.structure):
             if entry['instruction'] == 'RUN':
-                if self._runtime.group.startswith('openshift-'):
-                    changed, new_value = self._mangle_pkgmgr(entry['value'])
-                else:
-                    # Only parse if command contains package manager keywords
-                    if not re.search(r'\b(yum|dnf|microdnf|yum-config-manager)\b', entry['value']):
-                        continue
-                    try:
+                # Skip heredoc RUNs already handled in pre-pass (value still starts with << until we set dfp.lines)
+                if self._heredoc_delimiter(entry.get("value") or ""):
+                    continue
+                try:
+                    if self._runtime.group.startswith('openshift-'):
                         changed, new_value = self._mangle_pkgmgr(entry['value'])
-                    except (IOError, NotImplementedError) as e:
-                        self._logger.warning(f"Cannot parse RUN command, skipping: {str(e)[:100]}")
-                        continue
+                    else:
+                        # Only parse if command contains package manager keywords
+                        if not re.search(r'\b(yum|dnf|microdnf|yum-config-manager)\b', entry['value']):
+                            continue
+                        changed, new_value = self._mangle_pkgmgr(entry['value'])
+                except (IOError, NotImplementedError) as e:
+                    self._logger.warning(f"Cannot parse RUN command, skipping: {str(e)[:100]}")
+                    continue
                 if changed:
                     dfp.add_lines_at(entry, "RUN " + new_value, replace=True)
 
@@ -1659,6 +1750,9 @@ class KonfluxRebaser:
         except bashlex.errors.ParsingError as e:
             raise IOError("Error while parsing Dockerfile RUN command:\n{}\n{}".format(cmd, e))
 
+        def first_word(n):
+            return getattr(n.parts[0], "word", None) if n.parts else None
+
         # note: make changes working back from the end so that positions to splice don't change
         for subcmd in reversed(cmd_nodes):
             if subcmd.kind == "operator":
@@ -1667,31 +1761,39 @@ class KonfluxRebaser:
                 cmd = splice(subcmd.pos, "\\\n " + subcmd.op)
                 continue  # not "changed" logically however
 
+            cmd_name = first_word(subcmd)
+            if cmd_name is None:
+                continue
+
             # replace package manager config with a no-op
-            if re.search(r'(^|/)(microdnf\s+|dnf\s+|yum-)config-manager$', subcmd.parts[0].word):
+            if re.search(r'(^|/)(microdnf\s+|dnf\s+|yum-)config-manager$', cmd_name):
                 cmd = splice(subcmd.pos, ": 'removed yum-config-manager'")
                 changed = True
                 continue
             if (
-                re.search(r'(^|/)(micro)?dnf$', subcmd.parts[0].word)
+                re.search(r'(^|/)(micro)?dnf$', cmd_name)
                 and len(subcmd.parts) > 1
-                and subcmd.parts[1].word == "config-manager"
+                and getattr(subcmd.parts[1], "word", None) == "config-manager"
             ):
                 cmd = splice(subcmd.pos, ": 'removed dnf config-manager'")
                 changed = True
                 continue
 
             # clear repo options from yum and dnf commands
-            if not re.search(r'(^|/)(yum|dnf|microdnf)$', subcmd.parts[0].word):
+            if not re.search(r'(^|/)(yum|dnf|microdnf)$', cmd_name):
                 continue
             next_word = None
             for word in reversed(subcmd.parts):
                 if word.kind != "word":
                     next_word = None
                     continue
+                w = getattr(word, "word", None)
+                if w is None:
+                    next_word = None
+                    continue
 
                 # seek e.g. "--enablerepo=foo" or "--disablerepo bar"
-                match = re.match(r'--(en|dis)ablerepo(=|$)', word.word)
+                match = re.match(r'--(en|dis)ablerepo(=|$)', w)
                 if match:
                     if next_word and match.group(2) != "=":
                         # no "=", next word is the repo so remove it too
@@ -1987,12 +2089,30 @@ class KonfluxRebaser:
             # Get expected stream name
             for name, stream in self._runtime.streams.items():
                 image = str(stream['image'])
-                if ':' not in image:
-                    raise ValueError(f"Invalid stream image `{image}` in stream `{name}`")
-                image_tag = image.split(':')[-1]
+                # Strip digest (@sha256:...) if present before extracting tag
+                image_without_digest = image.split('@')[0]
+                if ':' not in image_without_digest:
+                    # Stream has digest-only image (no tag), skip it as we can't extract version info
+                    self._logger.debug(f"Skipping stream `{name}` - image `{image}` has no tag")
+                    continue
+                image_tag = image_without_digest.split(':')[-1]
+
+                # Try to extract version fields from the stream's image tag
+                try:
+                    version_fields = util.extract_version_fields(image_tag)
+                    if len(version_fields) < 2:
+                        # Need at least major.minor for comparison
+                        self._logger.debug(
+                            f"Skipping stream `{name}` - insufficient version fields in tag `{image_tag}`"
+                        )
+                        continue
+                    stream_major, stream_minor = version_fields[0], version_fields[1]
+                except (ValueError, IOError) as e:
+                    # Can't parse version from this stream's tag, skip it
+                    self._logger.debug(f"Skipping stream `{name}` - cannot parse version from tag `{image_tag}`: {e}")
+                    continue
 
                 # Compare builder X.Y
-                stream_major, stream_minor, _ = util.extract_version_fields(image_tag)
                 if stream_major != major or stream_minor != minor:
                     continue
 
@@ -2307,7 +2427,7 @@ class KonfluxRebaser:
         replacements: List[Tuple[str, str]] = []
         for ref in image_refs:
             name = ref['name']
-            name = _map_image_name(name, image_map)
+            mapped_name = _map_image_name(name, image_map)
             spec = ref['from']['name']
 
             # Skip images that are defined in external-images config
@@ -2319,14 +2439,22 @@ class KonfluxRebaser:
             distgit = self._runtime.name_in_bundle_map.get(name, None)
             # fail if upstream is referring to an image we don't actually build
             if not distgit:
-                raise ValueError('Unable to find {} in image-references data for {}'.format(name, metadata.distgit_key))
+                raise ValueError(
+                    'Unable to find {} in image-references data for {}'.format(mapped_name, metadata.distgit_key)
+                )
 
             meta = self._runtime.image_map.get(distgit, None)
             if meta:  # image is currently being processed
                 image_tag = f"{meta.image_name_short}:{self.uuid_tag}"
             else:
-                meta = self._runtime.late_resolve_image(distgit)
-                assert meta is not None
+                meta = self._runtime.late_resolve_image(distgit, required=False)
+                if meta is None:
+                    from doozerlib.exceptions import DoozerFatalError
+
+                    raise DoozerFatalError(
+                        f'Attempted to load image {distgit} but it has mode disabled; '
+                        f'{metadata.distgit_key} references it in image-references'
+                    )
                 build = await meta.get_latest_build(
                     el_target=self._get_el_target_string(meta.branch_el_target()),
                     engine=Engine.KONFLUX,
@@ -2511,7 +2639,7 @@ class KonfluxRebaser:
             self._logger.info(f"Resolving digest for external image {target}")
             try:
                 registry_auth = os.getenv("KONFLUX_OPERATOR_INDEX_AUTH_FILE")
-                image_info = await util.oc_image_info_for_arch_async__caching(target, registry_config=registry_auth)
+                image_info = await util.oc_image_info_for_arch_async(target, registry_config=registry_auth)
                 # Use listDigest for multi-arch images, if no listDigest, use digest
                 digest = image_info.get('listDigest')
                 if not digest:

@@ -18,6 +18,7 @@ class PlashetRepo(BaseModel):
     embargo_aware: bool = False
     include_embargoed: bool = False
     include_previous_packages: list[str] = []
+    exclude_packages: list[str] = []
     arches: list[BrewArch] | None = None
     source: "BrewSource"
 

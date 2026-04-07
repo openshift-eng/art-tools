@@ -2,6 +2,7 @@ import asyncio
 import itertools
 import logging
 import os
+import re
 import shutil
 import ssl
 from collections import defaultdict
@@ -10,12 +11,13 @@ from io import StringIO
 from os import PathLike
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any, Collection, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import Any, Collection, Dict, Iterable, List, NamedTuple, Optional, Sequence, Set, Tuple
 
 import httpx
 import truststore
-from artcommonlib import exectools
+from artcommonlib import exectools, git_helper
 from artcommonlib import util as artlib_util
+from artcommonlib.assembly import AssemblyTypes, assembly_config_struct, assembly_type
 from artcommonlib.constants import KONFLUX_ART_IMAGES_SHARE
 from artcommonlib.konflux.konflux_build_record import (
     Engine,
@@ -34,7 +36,18 @@ from doozerlib.backend.pipelinerun_utils import PipelineRunInfo
 from doozerlib.constants import KONFLUX_DEFAULT_IMAGE_REPO
 from doozerlib.image import ImageMetadata
 from doozerlib.record_logger import RecordLogger
+from elliottlib.shipment_utils import get_shipment_config_from_mr
+from semver import VersionInfo
 from tenacity import retry, stop_after_attempt, wait_fixed
+
+
+class AssemblyBundleCsvInfo(NamedTuple):
+    """Catalog info extracted from an assembly's FBC component."""
+
+    csv_name: str
+    skip_range: Optional[str]
+    bundle_blob: Optional[Dict]  # The olm.bundle blob to add to the catalog
+
 
 LOGGER = logging.getLogger(__name__)
 yaml = opm.yaml
@@ -70,6 +83,70 @@ def _generate_fbc_branch_name(
             raise ValueError(f"ocp_version is required for non-OpenShift group '{group}'")
         ocp_version_str = f"{ocp_version[0]}.{ocp_version[1]}"
         return f"art-{group}-ocp-{ocp_version_str}-assembly-{assembly}-fbc-{distgit_key}"
+
+
+async def _fetch_csv_from_git(
+    git_url: str,
+    revision: str,
+    work_dir: Path,
+    logger: logging.Logger,
+) -> Optional[Dict]:
+    """
+    Clone a git repo at a specific revision and extract the clusterserviceversion.yaml.
+
+    Args:
+        git_url: The git repository URL (e.g., https://github.com/openshift-priv/ptp-operator)
+        revision: The git commit SHA to checkout
+        work_dir: Working directory for the git clone
+        logger: Logger instance
+
+    Returns:
+        Parsed CSV content as a dict, or None if not found
+    """
+    repo_dir = work_dir / "csv_repo"
+    if repo_dir.exists():
+        shutil.rmtree(repo_dir)
+
+    try:
+        clone_url = artlib_util.ensure_github_https_url(git_url)
+        logger.info("Cloning %s at revision %s", clone_url, revision)
+        await git_helper.run_git_async(
+            ["clone", "--no-checkout", "--depth=1", clone_url, str(repo_dir)], check=True, github_url=clone_url
+        )
+
+        # Fetch the specific revision
+        await git_helper.run_git_async(
+            ["-C", str(repo_dir), "fetch", "--depth=1", "origin", revision], check=True, github_url=clone_url
+        )
+
+        # Checkout the revision
+        await git_helper.run_git_async(["-C", str(repo_dir), "checkout", revision], check=True, github_url=clone_url)
+
+        # Find the clusterserviceversion.yaml file in manifests/
+        manifests_dir = repo_dir / "manifests"
+        if not manifests_dir.exists():
+            logger.warning("manifests/ directory not found in %s", git_url)
+            return None
+
+        csv_files = sorted(manifests_dir.rglob("*clusterserviceversion.yaml"))
+        if not csv_files:
+            logger.warning("No clusterserviceversion.yaml found in manifests/")
+            return None
+        if len(csv_files) > 1:
+            raise IOError(f"Multiple clusterserviceversion.yaml files found under {manifests_dir}")
+
+        csv_file = csv_files[0]
+        logger.info("Found CSV file: %s", csv_file.name)
+
+        with csv_file.open() as f:
+            return yaml.load(f)
+
+    except Exception as e:
+        logger.warning("Failed to fetch CSV from git: %s", e)
+        return None
+    finally:
+        if repo_dir.exists():
+            shutil.rmtree(repo_dir)
 
 
 class KonfluxFbcImporter:
@@ -123,7 +200,7 @@ class KonfluxFbcImporter:
         if self.ocp_version >= (4, 17):
             migrate_level = "bundle-object-to-csv-metadata"
         catalog_blobs = await self._get_catalog_blobs_from_index_image(
-            index_image, package_name, migrate_level=migrate_level
+            index_image, package_name, migrate_level=migrate_level, strict=strict
         )
         if not catalog_blobs:
             if strict:
@@ -197,11 +274,14 @@ class KonfluxFbcImporter:
         logger.info("FBC directory updated")
 
     @alru_cache
-    async def _render_index_image(self, index_image: str, migrate_level: str = "none") -> List[Dict]:
+    async def _render_index_image(
+        self, index_image: str, migrate_level: str = "none", strict: bool = True
+    ) -> List[Dict] | None:
         blobs = await retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(5))(opm.render)(
             index_image,
             auth=self.auth,
             migrate_level=migrate_level,
+            strict=strict,
         )
         return blobs
 
@@ -231,12 +311,14 @@ class KonfluxFbcImporter:
         return filtered
 
     async def _get_catalog_blobs_from_index_image(
-        self, index_image: str, package_name: str, migrate_level: str = "none"
-    ):
-        blobs = await self._render_index_image(index_image, migrate_level=migrate_level)
+        self, index_image: str, package_name: str, migrate_level: str = "none", strict: bool = True
+    ) -> list[dict[str, Any]] | None:
+        blobs = await self._render_index_image(index_image, migrate_level=migrate_level, strict=strict)
+        if blobs is None:
+            return None
         filtered_blobs = self._filter_catalog_blobs(blobs, {package_name})
         if package_name not in filtered_blobs:
-            return
+            return None
         return filtered_blobs[package_name]
 
     async def _get_package_name(self, metadata: ImageMetadata) -> str:
@@ -476,7 +558,7 @@ class KonfluxFbcFragmentMerger:
                 """
                 Fetch the ImageDigestMirrorSet for a given fragment.
                 """
-                fragment_info = await util.oc_image_info_for_arch_async__caching(
+                fragment_info = await util.oc_image_info_for_arch_async(
                     fragment,
                     registry_config=self.registry_auth,
                 )
@@ -583,6 +665,7 @@ class KonfluxFbcRebaser:
         fbc_repo: str,
         upcycle: bool,
         ocp_version_override: Optional[Tuple[int, int]] = None,
+        insert_missing_entry: bool = False,
         record_logger: Optional[RecordLogger] = None,
         logger: Optional[logging.Logger] = None,
     ) -> None:
@@ -598,10 +681,339 @@ class KonfluxFbcRebaser:
         self.ocp_version_override = ocp_version_override
         self._record_logger = record_logger
         self._logger = logger or LOGGER.getChild(self.__class__.__name__)
+        self.insert_missing_entry = insert_missing_entry
 
     @staticmethod
     def get_fbc_name(image_name: str):
         return f"{image_name}-fbc"
+
+    @staticmethod
+    def _extract_version_from_bundle_name(bundle_name: str) -> VersionInfo:
+        """Extract semantic version from bundle name.
+
+        Bundle names follow format: {operator-name}.v{major}.{minor}.{patch}
+        Example: "oadp-operator.v1.3.9" -> VersionInfo(1, 3, 9)
+
+        :param bundle_name: The bundle name
+        :return: VersionInfo object
+        :raises ValueError: If version cannot be parsed from bundle name
+        """
+        # Find the version part (starts with .v followed by semantic version)
+        # Split by '.' and look for the part starting with 'v'
+        parts = bundle_name.split('.')
+        for i, part in enumerate(parts):
+            if part.startswith('v') and len(parts) > i + 2:
+                # Extract vX.Y.Z format
+                version_str = '.'.join([part[1:]] + parts[i + 1 : i + 3])  # Remove 'v' prefix
+                try:
+                    return VersionInfo.parse(version_str)
+                except Exception as e:
+                    raise ValueError(
+                        f"Cannot parse semantic version from bundle name '{bundle_name}'. "
+                        f"Expected format: {{operator-name}}.v{{major}}.{{minor}}.{{patch}}"
+                    ) from e
+        # If we reach here, no version was found
+        raise ValueError(
+            f"Cannot parse semantic version from bundle name '{bundle_name}'. "
+            f"Expected format: {{operator-name}}.v{{major}}.{{minor}}.{{patch}}"
+        )
+
+    @staticmethod
+    def _rebuild_replaces_chain(entries: list) -> None:
+        """Rebuild replaces field for all entries based on their sorted order.
+
+        After sorting entries by version, each entry should replace the previous
+        entry in the list, forming a linear upgrade chain.
+
+        :param entries: List of channel entries sorted by version
+        """
+        for i in range(len(entries)):
+            if i == 0:
+                # First entry (oldest version) replaces nothing
+                entries[i].pop('replaces', None)
+            else:
+                # Each subsequent entry replaces the previous one
+                entries[i]['replaces'] = entries[i - 1]['name']
+
+    _VERSIONED_CHANNEL_RE = re.compile(r'^(.+)-v?(\d+(?:\.\d+)*)$')
+
+    @staticmethod
+    def _resolve_default_channel(channel_names: Collection[str], default_channel_name: str) -> str:
+        """Resolve the default channel to the highest versioned channel sharing the same prefix.
+
+        For versioned channels (e.g. stable-6.3, release-v1.8), finds all channels in the catalog
+        that share the same prefix and returns the one with the highest semver version.
+        For non-versioned channels (e.g. stable, candidate), returns the input unchanged.
+
+        :param channel_names: All channel names present in the catalog for the package.
+        :param default_channel_name: The default channel name from the bundle label.
+        :return: The channel name with the highest version among same-prefix channels,
+                 or default_channel_name if it is non-versioned.
+        """
+        match = KonfluxFbcRebaser._VERSIONED_CHANNEL_RE.match(default_channel_name)
+        if not match:
+            return default_channel_name
+
+        prefix = match.group(1)
+        best_channel = default_channel_name
+        best_version: Optional[VersionInfo] = None
+
+        for name in channel_names:
+            ch_match = KonfluxFbcRebaser._VERSIONED_CHANNEL_RE.match(name)
+            if not ch_match or ch_match.group(1) != prefix:
+                continue
+            parts = ch_match.group(2).split('.')
+            while len(parts) < 3:
+                parts.append('0')
+            try:
+                version = VersionInfo.parse('.'.join(parts[:3]))
+            except ValueError:
+                continue
+            if best_version is None or version > best_version:
+                best_version = version
+                best_channel = name
+
+        return best_channel
+
+    def _find_future_release_assembly(
+        self,
+        releases_config,
+    ) -> Optional[str]:
+        """
+        Find the first standard assembly with a future release_date.
+
+        Only considers assemblies of type STANDARD to avoid picking up
+        non-standard assemblies (e.g., custom, preview, candidate).
+
+        Args:
+            releases_config: The releases configuration from releases.yml
+
+        Returns:
+            The assembly name if found, None otherwise
+        """
+        release_names = list(releases_config.releases.keys())
+        if not release_names:
+            self._logger.info("No releases found in releases.yml")
+            return None
+
+        for release_name in release_names:
+            self._logger.info(f"checking assembly for {release_name}")
+
+            # Only consider standard assemblies
+            assem_type = assembly_type(releases_config, release_name)
+            if assem_type != AssemblyTypes.STANDARD:
+                self._logger.info("Skipping assembly %s (type=%s, expected standard)", release_name, assem_type.value)
+                continue
+
+            resolved_group = assembly_config_struct(releases_config, release_name, "group", {})
+            release_date = resolved_group.get("release_date")
+            self._logger.info(f"Got release date {release_date}")
+            if release_date and artlib_util.is_future_release_date(release_date):
+                self._logger.info(
+                    "Stream build: using future release assembly %s (release_date: %s)", release_name, release_date
+                )
+                return release_name
+
+        self._logger.info("No future standard release found in releases.yml")
+        return None
+
+    def _get_shipment_url_for_assembly(
+        self,
+        releases_config,
+        assembly: str,
+    ) -> Optional[str]:
+        """
+        Get the shipment URL for a given assembly from releases.yml.
+
+        Args:
+            releases_config: The releases configuration from releases.yml
+            assembly: The assembly name to look up
+
+        Returns:
+            The shipment URL if found, None otherwise
+        """
+        assembly_config = releases_config.releases.get(assembly, {})
+        if not assembly_config:
+            self._logger.debug("Assembly %s not found in releases.yml", assembly)
+            return None
+
+        shipment_info = assembly_config.get("assembly", {}).get("group", {}).get("shipment", {})
+        shipment_url = shipment_info.get("url")
+
+        if not shipment_url:
+            self._logger.debug("No shipment URL found for assembly %s", assembly)
+            return None
+
+        return shipment_url
+
+    def _find_component_in_shipment(
+        self,
+        shipment,
+        operator_name: str,
+    ):
+        """
+        Find a component matching the operator name in a shipment snapshot.
+
+        Args:
+            shipment: The shipment config object
+            operator_name: The operator distgit key to search for
+
+        Returns:
+            The matching component if found, None otherwise
+        """
+        if not shipment or not shipment.shipment.snapshot:
+            return None
+
+        # Bundle components typically follow pattern: {operator_name}-bundle
+        expected_names = (
+            f"{operator_name}-bundle",
+            operator_name,
+        )
+        for expected_name in expected_names:
+            component = next(
+                (c for c in shipment.shipment.snapshot.spec.components if c.name == expected_name),
+                None,
+            )
+            if component:
+                return component
+
+        return None
+
+    async def _extract_csv_info_from_bundle(
+        self,
+        bundle_component,
+    ) -> Optional[Tuple[str, Optional[str]]]:
+        """
+        Extract CSV name and skipRange from a bundle component's source.
+
+        Args:
+            bundle_component: The bundle component from shipment snapshot
+
+        Returns:
+            Tuple of (csv_name, skip_range) if found, None otherwise
+        """
+        git_url = bundle_component.source.git.url
+        revision = bundle_component.source.git.revision
+        self._logger.info("Found bundle component %s at %s@%s", bundle_component.name, git_url, revision)
+
+        with TemporaryDirectory(prefix=f"assembly_csv_{bundle_component.name}_") as tmpdir:
+            csv_data = await _fetch_csv_from_git(git_url, revision, Path(tmpdir), self._logger)
+        if not csv_data:
+            self._logger.warning("Could not fetch CSV from bundle source")
+            return None
+
+        csv_name = csv_data.get("metadata", {}).get("name")
+        skip_range = csv_data.get("metadata", {}).get("annotations", {}).get("olm.skipRange")
+
+        if not csv_name:
+            self._logger.warning("Could not extract CSV name from bundle source")
+            return None
+
+        self._logger.info("Found assembly bundle CSV: name=%s, skipRange=%s", csv_name, skip_range)
+        return csv_name, skip_range
+
+    async def _get_bundle_blob_from_fbc(
+        self,
+        fbc_component,
+        csv_name: str,
+    ) -> Optional[Dict]:
+        """
+        Render an FBC image and extract the olm.bundle blob matching the csv_name.
+
+        Args:
+            fbc_component: The FBC component from shipment snapshot
+            csv_name: The CSV name to match
+
+        Returns:
+            The matching olm.bundle blob if found, None otherwise
+        """
+        fbc_pullspec = fbc_component.containerImage
+        self._logger.info("Rendering FBC image %s to get bundle blob", fbc_pullspec)
+
+        registry_auth = opm.OpmRegistryAuth(
+            path=os.environ.get("KONFLUX_ART_IMAGES_AUTH_FILE"),
+        )
+        blobs = await opm.render(fbc_pullspec, auth=registry_auth)
+        if not blobs:
+            self._logger.warning("No catalog blobs found in FBC image %s", fbc_pullspec)
+            return None
+
+        for blob in blobs:
+            if blob.get("schema") == "olm.bundle" and blob.get("name") == csv_name:
+                self._logger.info("Found olm.bundle blob for %s", csv_name)
+                return blob
+
+        self._logger.warning("Could not find olm.bundle blob for %s in FBC image", csv_name)
+        return None
+
+    async def _get_assembly_bundle_csv_info(
+        self,
+        metadata: ImageMetadata,
+    ) -> Optional[AssemblyBundleCsvInfo]:
+        """
+        Get bundle CSV info (name and skipRange) from a named assembly's shipment.
+
+        This method:
+        1. Looks up the shipment MR for the latest named assembly (with future release_date)
+        2. Gets the "metadata" shipment to find the bundle component
+        3. Clones the bundle source at the specified revision and extracts CSV metadata
+        4. Gets the "fbc" shipment to find the FBC component
+        5. Renders the FBC image with opm to get the olm.bundle blob
+
+        For stream builds, it finds a future release from releases.yml.
+        For named assembly builds, it uses the current assembly.
+
+        Args:
+            metadata: The operator image metadata
+
+        Returns:
+            AssemblyBundleCsvInfo with csv_name, skip_range, and bundle_blob, or None if not found
+        """
+        try:
+            # 1. Determine which assembly to look up
+            releases_config = metadata.runtime.get_releases_config()
+            if self.assembly == 'stream':
+                assembly = self._find_future_release_assembly(releases_config)
+                if not assembly:
+                    return None
+            else:
+                assembly = self.assembly
+
+            # 2. Get shipment URL from releases.yml
+            shipment_url = self._get_shipment_url_for_assembly(releases_config, assembly)
+            if not shipment_url:
+                return None
+
+            # 3. Get "metadata" shipment config and find bundle component
+            self._logger.info("Fetching metadata shipment config from %s", shipment_url)
+            metadata_shipment = get_shipment_config_from_mr(shipment_url, "metadata")
+            operator_name = metadata.distgit_key
+            bundle_component = self._find_component_in_shipment(metadata_shipment, operator_name)
+            if not bundle_component:
+                self._logger.info("Bundle component for %s not found in assembly %s", operator_name, assembly)
+                return None
+
+            # 4. Extract CSV name and skipRange from bundle source
+            csv_info = await self._extract_csv_info_from_bundle(bundle_component)
+            if not csv_info:
+                return None
+            csv_name, skip_range = csv_info
+
+            # 5. Get "fbc" shipment config and find FBC component for bundle blob
+            self._logger.info("Fetching FBC shipment config from %s", shipment_url)
+            fbc_shipment = get_shipment_config_from_mr(shipment_url, "fbc")
+            fbc_component = self._find_component_in_shipment(fbc_shipment, operator_name)
+            if not fbc_component:
+                self._logger.info("FBC component for %s not found in assembly %s", operator_name, assembly)
+                return AssemblyBundleCsvInfo(csv_name=csv_name, skip_range=skip_range, bundle_blob=None)
+
+            # 6. Render the FBC image and get the olm.bundle blob
+            bundle_blob = await self._get_bundle_blob_from_fbc(fbc_component, csv_name)
+            return AssemblyBundleCsvInfo(csv_name=csv_name, skip_range=skip_range, bundle_blob=bundle_blob)
+
+        except Exception as e:
+            self._logger.warning("Failed to get assembly bundle CSV info: %s", e)
+            return None
 
     async def rebase(
         self, metadata: ImageMetadata, bundle_build: KonfluxBundleBuildRecord, version: str, release: str
@@ -609,6 +1021,18 @@ class KonfluxFbcRebaser:
         bundle_short_name = metadata.get_olm_bundle_short_name()
         logger = self._logger.getChild(f"[{bundle_short_name}]")
         repo_dir = self.base_dir.joinpath(metadata.distgit_key)
+
+        # Determine OCP version early -- needed for both branch naming and NVR uniqueness
+        if self.ocp_version_override is not None:
+            ocp_version = self.ocp_version_override
+        else:
+            group_config = metadata.runtime.group_config
+            ocp_version = int(group_config.vars.MAJOR), int(group_config.vars.MINOR)
+
+        # For non-OpenShift groups (layered operators), the same operator is built for multiple
+        # OCP versions. Include the target OCP version in the release to ensure unique NVRs.
+        if not self.group.startswith('openshift-'):
+            release = f"{release}.ocp{ocp_version[0]}.{ocp_version[1]}"
 
         name = self.get_fbc_name(metadata.distgit_key)
         nvr = f"{name}-{version}-{release}"
@@ -624,13 +1048,6 @@ class KonfluxFbcRebaser:
         }
 
         try:
-            # Get OCP version for branch naming
-            group_config = metadata.runtime.group_config
-            if self.ocp_version_override:
-                ocp_version = self.ocp_version_override
-            else:
-                ocp_version = int(group_config.vars.MAJOR), int(group_config.vars.MINOR)
-
             # Clone the FBC repo
             fbc_build_branch = _generate_fbc_branch_name(
                 group=self.group, assembly=self.assembly, distgit_key=metadata.distgit_key, ocp_version=ocp_version
@@ -763,6 +1180,11 @@ class KonfluxFbcRebaser:
                 f"The catalog file {catalog_file_path} has multiple packages: {','.join(categorized_catalog_blobs.keys())}"
             )
 
+        # Get assembly bundle info from the latest named assembly's shipment
+        assembly_csv_info: Optional[AssemblyBundleCsvInfo] = None
+        assembly_csv_info = await self._get_assembly_bundle_csv_info(metadata)
+        logger.info(f"Get assembly csv info: {assembly_csv_info}")
+
         # Update the catalog
         def _update_channel(channel: Dict):
             # Update "skips" in the channel
@@ -808,24 +1230,56 @@ class KonfluxFbcRebaser:
                     # if the new build have the same name like 202601292040 we should do nothing(no skips)
                     skips = {only_entry_name}
 
-            # For an operator bundle that uses replaces -- such as OADP
-            # Update "replaces" in the channel
-            replaces = None
-            if not self.group.startswith('openshift-'):
-                # Find the current head - the entry that is not replaced by any other entry
-                bundle_with_replaces = [it for it in channel['entries']]
-                replaced_names = {it.get('replaces') for it in bundle_with_replaces if it.get('replaces')}
-                current_head = next((it for it in bundle_with_replaces if it['name'] not in replaced_names), None)
-                if current_head:
-                    # The new bundle should replace the current head
-                    replaces = current_head['name']
+            # Add assembly bundle to skips from the latest named assembly's shipment
+            if assembly_csv_info:
+                if assembly_csv_info.csv_name == olm_bundle_name:
+                    logger.info("Assembly bundle is the same as the current bundle, skipping")
+                else:
+                    if skips is None:
+                        skips = set()
+                    skips.add(assembly_csv_info.csv_name)
+                    # Also add assembly entry to channel if not exists
+                    if not any(e['name'] == assembly_csv_info.csv_name for e in channel['entries']):
+                        assembly_entry = {"name": assembly_csv_info.csv_name}
+                        if assembly_csv_info.skip_range:
+                            assembly_entry["skipRange"] = assembly_csv_info.skip_range
+                        channel['entries'].append(assembly_entry)
 
             # Add the current bundle to the specified channel in the catalog
             entry = next((entry for entry in channel['entries'] if entry['name'] == olm_bundle_name), None)
             if not entry:
                 logger.info("Adding bundle %s to channel %s", olm_bundle_name, channel['name'])
                 entry = {"name": olm_bundle_name}
-                channel['entries'].append(entry)
+
+                if self.insert_missing_entry:
+                    # Add entry and then sort all entries in ascending version order
+                    channel['entries'].append(entry)
+
+                    logger.info("Sorting channel entries by version order")
+                    channel['entries'].sort(key=lambda e: self._extract_version_from_bundle_name(e['name']))
+
+                    # Rebuild replaces chain for non-OpenShift groups (operators using replaces)
+                    if not self.group.startswith('openshift-'):
+                        logger.info("Rebuilding replaces chain after version sorting")
+                        self._rebuild_replaces_chain(channel['entries'])
+                else:
+                    # For an operator bundle that uses replaces -- such as OADP
+                    # Calculate replaces based on current head before appending
+                    replaces = None
+                    if not self.group.startswith('openshift-'):
+                        # Find the current head - the entry that is not replaced by any other entry
+                        bundle_with_replaces = [it for it in channel['entries']]
+                        replaced_names = {it.get('replaces') for it in bundle_with_replaces if it.get('replaces')}
+                        current_head = next(
+                            (it for it in bundle_with_replaces if it['name'] not in replaced_names), None
+                        )
+                        if current_head:
+                            # The new bundle should replace the current head
+                            replaces = current_head['name']
+
+                    channel['entries'].append(entry)
+                    if replaces:
+                        entry["replaces"] = replaces
             else:
                 logger.warning("Bundle %s already exists in channel %s. Replacing...", olm_bundle_name, channel['name'])
                 entry.clear()
@@ -834,8 +1288,6 @@ class KonfluxFbcRebaser:
                 entry["skipRange"] = olm_skip_range
             if skips:
                 entry["skips"] = sorted(skips)
-            if replaces:
-                entry["replaces"] = replaces
 
         for channel_name in channel_names:
             logger.info("Updating channel %s", channel_name)
@@ -847,12 +1299,26 @@ class KonfluxFbcRebaser:
                 catalog_blobs.append(channel)
             _update_channel(channel)
 
+        # Add the assembly bundle blob to the catalog if available
+        if assembly_csv_info and assembly_csv_info.bundle_blob:
+            assembly_bundle_name = assembly_csv_info.csv_name
+            if assembly_bundle_name not in categorized_catalog_blobs[olm_package].setdefault("olm.bundle", {}):
+                logger.info("Adding assembly bundle %s to package %s", assembly_bundle_name, olm_package)
+                categorized_catalog_blobs[olm_package]["olm.bundle"][assembly_bundle_name] = (
+                    assembly_csv_info.bundle_blob
+                )
+                catalog_blobs.append(assembly_csv_info.bundle_blob)
+
         # Set default channel
         if default_channel_name:
             package_blob = categorized_catalog_blobs[olm_package]["olm.package"][olm_package]
-            if package_blob.get("defaultChannel") != default_channel_name:
-                logger.info("Setting default channel to %s", default_channel_name)
-                package_blob["defaultChannel"] = default_channel_name
+            resolved_default = default_channel_name
+            if not self.group.startswith('openshift-'):
+                all_channel_names = list(categorized_catalog_blobs[olm_package].get("olm.channel", {}).keys())
+                resolved_default = self._resolve_default_channel(all_channel_names, default_channel_name)
+            if package_blob.get("defaultChannel") != resolved_default:
+                logger.info("Setting default channel to %s", resolved_default)
+                package_blob["defaultChannel"] = resolved_default
 
         # Replace pullspecs to use the prod registry
         digest = bundle_build.image_pullspec.split('@', 1)[-1]
@@ -1026,7 +1492,7 @@ class KonfluxFbcRebaser:
         return image_digest_mirror_set
 
     async def _fetch_olm_bundle_image_info(self, bundle_build: KonfluxBundleBuildRecord):
-        return await util.oc_image_info_for_arch_async__caching(
+        return await util.oc_image_info_for_arch_async(
             bundle_build.image_pullspec,
             registry_config=os.environ.get("KONFLUX_ART_IMAGES_AUTH_FILE"),
         )

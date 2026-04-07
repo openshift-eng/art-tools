@@ -131,6 +131,7 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
             detect_non_latest_rpms=None,
             detect_inconsistent_images=Mock(),
             detect_installed_rpms_issues=None,
+            detect_hermetic_mismatches=None,
             detect_extend_payload_entry_issues=AsyncMock(),
             summarize_issue_permits=(True, {}),
         )
@@ -141,12 +142,82 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
     @patch("doozerlib.cli.release_gen_payload.PayloadGenerator.find_mismatched_siblings")
     def test_detect_mismatched_siblings(self, fms_mock):
         gpcli = rgp_cli.GenPayloadCli(runtime=MagicMock(assembly="stream"))
-        ai = flexmock(Mock(AssemblyInspector), get_group_release_images={})
+        payload_img = self._make_sibling_inspector(
+            "https://github.com/openshift/repo.git", "aaa", "payload-img", is_payload=True
+        )
+        ai = flexmock(Mock(AssemblyInspector), get_group_release_images={"payload-img": payload_img})
         bbii = flexmock(Mock(BrewBuildRecordInspector), get_nvr="spam-1.0", get_source_git_commit="spamcommit")
         fms_mock.return_value = [(bbii, bbii)]
 
         gpcli.detect_mismatched_siblings(ai)
         self.assertIsInstance(gpcli.assembly_issues[-1], AssemblyIssue)
+        fms_mock.assert_called_once_with([payload_img])
+
+    @patch("doozerlib.cli.release_gen_payload.PayloadGenerator.find_mismatched_siblings")
+    def test_detect_mismatched_siblings_skips_non_payload(self, fms_mock):
+        """Non-payload images should be excluded from the sibling mismatch check."""
+        gpcli = rgp_cli.GenPayloadCli(runtime=MagicMock(assembly="stream"))
+        non_payload = self._make_sibling_inspector(
+            "https://github.com/openshift/repo.git", "aaa", "non-payload-img", is_payload=False
+        )
+        ai = flexmock(Mock(AssemblyInspector), get_group_release_images={"non-payload-img": non_payload})
+        fms_mock.return_value = []
+
+        gpcli.detect_mismatched_siblings(ai)
+        fms_mock.assert_called_once_with([])
+        self.assertEqual(len(gpcli.assembly_issues), 0)
+
+    def _make_sibling_inspector(self, source_url, commit, distgit_key, allow_mismatched=False, is_payload=True):
+        """Helper to build a mock BuildRecordInspector for sibling tests."""
+        source_config = dict(
+            git=dict(url=source_url),
+        )
+        if allow_mismatched:
+            source_config['allow_mismatched_siblings'] = True
+        raw_config = Model(dict(content=dict(source=source_config)))
+        meta = MagicMock()
+        meta.raw_config = raw_config
+        meta.distgit_key = distgit_key
+        meta.is_payload = is_payload
+        inspector = MagicMock()
+        inspector.get_image_meta.return_value = meta
+        inspector.get_source_git_commit.return_value = commit
+        inspector.get_nvr.return_value = f"{distgit_key}-v1.0-1"
+        return inspector
+
+    def test_find_mismatched_siblings_detects_mismatch(self):
+        """Two images from the same repo at different commits should be flagged."""
+        img_a = self._make_sibling_inspector("https://github.com/openshift/repo.git", "aaa", "image-a")
+        img_b = self._make_sibling_inspector("https://github.com/openshift/repo.git", "bbb", "image-b")
+        result = rgp_cli.PayloadGenerator.find_mismatched_siblings([img_a, img_b])
+        self.assertEqual(len(result), 1)
+
+    def test_find_mismatched_siblings_no_mismatch_same_commit(self):
+        """Two images from the same repo at the same commit should not be flagged."""
+        img_a = self._make_sibling_inspector("https://github.com/openshift/repo.git", "aaa", "image-a")
+        img_b = self._make_sibling_inspector("https://github.com/openshift/repo.git", "aaa", "image-b")
+        result = rgp_cli.PayloadGenerator.find_mismatched_siblings([img_a, img_b])
+        self.assertEqual(len(result), 0)
+
+    def test_find_mismatched_siblings_allow_flag_suppresses(self):
+        """An image with allow_mismatched_siblings should be excluded from sibling comparison."""
+        img_a = self._make_sibling_inspector("https://github.com/openshift/repo.git", "aaa", "image-a")
+        img_b = self._make_sibling_inspector(
+            "https://github.com/openshift/repo.git", "bbb", "image-b", allow_mismatched=True
+        )
+        result = rgp_cli.PayloadGenerator.find_mismatched_siblings([img_a, img_b])
+        self.assertEqual(len(result), 0, "allow_mismatched_siblings flag should suppress the mismatch")
+
+    def test_find_mismatched_siblings_allow_flag_only_on_flagged(self):
+        """The flag only excludes the flagged image; unflagged siblings from different repos still compare."""
+        img_a = self._make_sibling_inspector("https://github.com/openshift/repo.git", "aaa", "image-a")
+        img_b = self._make_sibling_inspector(
+            "https://github.com/openshift/repo.git", "bbb", "image-b", allow_mismatched=True
+        )
+        img_c = self._make_sibling_inspector("https://github.com/openshift/other.git", "ccc", "image-c")
+        img_d = self._make_sibling_inspector("https://github.com/openshift/other.git", "ddd", "image-d")
+        result = rgp_cli.PayloadGenerator.find_mismatched_siblings([img_a, img_b, img_c, img_d])
+        self.assertEqual(len(result), 1, "only unflagged siblings from other.git should mismatch")
 
     def test_id_tags_list(self):
         gpcli = rgp_cli.GenPayloadCli()
@@ -957,6 +1028,112 @@ manifests:
         self.assertEqual('false', new_tag_annotations['release.openshift.io/rewrite'])
         self.assertEqual(os.getenv('BUILD_URL', ''), new_tag_annotations['release.openshift.io/build-url'])
         self.assertIn('release.openshift.io/runtime-brew-event', new_tag_annotations)
+
+    def _make_bbii(self, configured_mode, actual_hermetic, nvr="test-1.0-1"):
+        """Helper to create mock build record inspector for hermetic mismatch tests."""
+        build_obj = Mock()
+        build_obj.hermetic = actual_hermetic
+
+        image_meta = Mock()
+        image_meta.get_konflux_network_mode.return_value = configured_mode
+
+        bbii = Mock()
+        bbii.get_image_meta.return_value = image_meta
+        bbii.get_build_obj.return_value = build_obj
+        bbii.get_nvr.return_value = nvr
+        return bbii
+
+    def test_detect_hermetic_mismatches_configured_hermetic_built_non_hermetic(self):
+        """Configured hermetic but built non-hermetically should produce an issue."""
+        gpcli = rgp_cli.GenPayloadCli(runtime=MagicMock(build_system='konflux'))
+        bbii = self._make_bbii(configured_mode="hermetic", actual_hermetic=False, nvr="spam-1.0-1")
+        ai = Mock(AssemblyInspector)
+        ai.get_group_release_images.return_value = {"spam": bbii}
+
+        gpcli.detect_hermetic_mismatches(ai)
+
+        self.assertEqual(len(gpcli.assembly_issues), 1)
+        issue = gpcli.assembly_issues[0]
+        self.assertEqual(issue.code, AssemblyIssueCode.MISMATCHED_NETWORK_MODE)
+        self.assertEqual(issue.component, "spam")
+        self.assertIn("non-hermetic", issue.msg)
+
+    def test_detect_hermetic_mismatches_configured_open_built_hermetic(self):
+        """Configured open but built hermetically should NOT produce an issue."""
+        gpcli = rgp_cli.GenPayloadCli(runtime=MagicMock(build_system='konflux'))
+        bbii = self._make_bbii(configured_mode="open", actual_hermetic=True, nvr="eggs-2.0-1")
+        ai = Mock(AssemblyInspector)
+        ai.get_group_release_images.return_value = {"eggs": bbii}
+
+        gpcli.detect_hermetic_mismatches(ai)
+
+        self.assertEqual(gpcli.assembly_issues, [])
+
+    def test_detect_hermetic_mismatches_match_hermetic(self):
+        """Configured hermetic and built hermetically should produce no issues."""
+        gpcli = rgp_cli.GenPayloadCli(runtime=MagicMock(build_system='konflux'))
+        bbii = self._make_bbii(configured_mode="hermetic", actual_hermetic=True, nvr="foo-1.0-1")
+        ai = Mock(AssemblyInspector)
+        ai.get_group_release_images.return_value = {"foo": bbii}
+
+        gpcli.detect_hermetic_mismatches(ai)
+
+        self.assertEqual(gpcli.assembly_issues, [])
+
+    def test_detect_hermetic_mismatches_match_open(self):
+        """Configured open and built non-hermetically should produce no issues."""
+        gpcli = rgp_cli.GenPayloadCli(runtime=MagicMock(build_system='konflux'))
+        bbii = self._make_bbii(configured_mode="open", actual_hermetic=False, nvr="bar-1.0-1")
+        ai = Mock(AssemblyInspector)
+        ai.get_group_release_images.return_value = {"bar": bbii}
+
+        gpcli.detect_hermetic_mismatches(ai)
+
+        self.assertEqual(gpcli.assembly_issues, [])
+
+    def test_detect_hermetic_mismatches_defaults_to_open(self):
+        """Default network mode ('open') with non-hermetic build should produce no issues."""
+        gpcli = rgp_cli.GenPayloadCli(runtime=MagicMock(build_system='konflux'))
+        bbii = self._make_bbii(configured_mode="open", actual_hermetic=False, nvr="default-1.0-1")
+        ai = Mock(AssemblyInspector)
+        ai.get_group_release_images.return_value = {"default-img": bbii}
+
+        gpcli.detect_hermetic_mismatches(ai)
+
+        self.assertEqual(gpcli.assembly_issues, [])
+
+    def test_detect_hermetic_mismatches_skips_none_bbii(self):
+        """Images with no build record inspector (None) should be skipped."""
+        gpcli = rgp_cli.GenPayloadCli(runtime=MagicMock(build_system='konflux'))
+        ai = Mock(AssemblyInspector)
+        ai.get_group_release_images.return_value = {"missing-img": None}
+
+        gpcli.detect_hermetic_mismatches(ai)
+
+        self.assertEqual(gpcli.assembly_issues, [])
+
+    def test_detect_hermetic_mismatches_multiple_images(self):
+        """Only mismatched images produce issues; matched ones do not."""
+        gpcli = rgp_cli.GenPayloadCli(runtime=MagicMock(build_system='konflux'))
+        good_bbii = self._make_bbii(configured_mode="hermetic", actual_hermetic=True, nvr="good-1.0-1")
+        bad_bbii = self._make_bbii(configured_mode="hermetic", actual_hermetic=False, nvr="bad-1.0-1")
+        ai = Mock(AssemblyInspector)
+        ai.get_group_release_images.return_value = {"good-img": good_bbii, "bad-img": bad_bbii}
+
+        gpcli.detect_hermetic_mismatches(ai)
+
+        self.assertEqual(len(gpcli.assembly_issues), 1)
+        self.assertEqual(gpcli.assembly_issues[0].component, "bad-img")
+
+    def test_detect_hermetic_mismatches_skips_brew_builds(self):
+        """Brew builds should be skipped - they don't have hermetic attribute."""
+        gpcli = rgp_cli.GenPayloadCli(runtime=MagicMock(build_system='brew'))
+        ai = Mock(AssemblyInspector)
+
+        gpcli.detect_hermetic_mismatches(ai)
+
+        ai.get_group_release_images.assert_not_called()
+        self.assertEqual(gpcli.assembly_issues, [])
 
     @patch("doozerlib.cli.release_gen_payload.what_is_in_master", return_value="4.19")
     @patch("doozerlib.cli.release_gen_payload.modify_and_replace_api_object")

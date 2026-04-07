@@ -4,7 +4,6 @@ import os
 import click
 import yaml
 from artcommonlib import exectools
-from doozerlib.metadata import RebuildHintCode
 
 from pyartcd import constants, jenkins, locks, util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -44,7 +43,6 @@ class Ocp4ScanPipeline:
             f'--group={group_param}',
             f'--assembly={self.assembly}',
             '--build-system=konflux',
-            '--load-okd-only',
         ]
 
     async def run(self):
@@ -152,7 +150,6 @@ class Ocp4ScanPipeline:
         match major_version:
             case 5 | 4:
                 self.trigger_ocp4()
-                self.trigger_okd()
             case _:
                 raise ValueError(f'Unsupported OCP major version: {major_version}')
 
@@ -160,7 +157,7 @@ class Ocp4ScanPipeline:
         changed_rpm = self.changes.get('rpms', [])
 
         # Filter out okd-only images (mode: disabled, okd.mode: enabled)
-        # These will be built by trigger_okd() only
+        # These are handled by the okd-scan pipeline instead
         changed_ocp_images = [
             image['name']
             for image in self.report.get('images', [])
@@ -189,70 +186,6 @@ class Ocp4ScanPipeline:
             assembly='stream',
             image_list=changed_ocp_images,
             rpm_list=changed_rpm,
-        )
-
-    def trigger_okd(self):
-        # Only trigger OKD builds for enabled versions
-        if self.version not in constants.OKD_ENABLED_VERSIONS:
-            self.logger.info(
-                'Skipping OKD build for version %s (enabled versions: %s)',
-                self.version,
-                constants.OKD_ENABLED_VERSIONS,
-            )
-            return
-
-        # Valid reasons to rebuild an image in OKD
-        rebuild_reasons = [
-            RebuildHintCode.NO_LATEST_BUILD,
-            RebuildHintCode.LAST_BUILD_FAILED,
-            RebuildHintCode.NEW_UPSTREAM_COMMIT,
-            RebuildHintCode.UPSTREAM_COMMIT_MISMATCH,
-            RebuildHintCode.ANCESTOR_CHANGING,
-            RebuildHintCode.CONFIG_CHANGE,
-            RebuildHintCode.BUILDER_CHANGING,
-            RebuildHintCode.DEPENDENCY_NEWER,
-        ]
-
-        # Filter images to only those with valid rebuild hint codes
-        changed_okd_images = []
-        for image in self.report.get('images', []):
-            if not image.get('changed'):
-                continue
-            code_str = image.get('code')
-            if not code_str:
-                continue
-
-            try:
-                # Access enum member by name using bracket notation
-                code = RebuildHintCode[code_str]
-                if code in rebuild_reasons:
-                    changed_okd_images.append(image['name'])
-
-            except (KeyError, TypeError):
-                # Skip images with invalid or missing codes
-                self.logger.warning(f"Invalid rebuild hint code '{code_str}' for image {image.get('name', 'unknown')}")
-                continue
-
-        if not changed_okd_images:
-            self.logger.info('No images found with valid rebuild reasons for OKD')
-            return
-
-        # Update Jenkins title and description
-        jenkins.update_title(' [SOURCE CHANGES]')
-        jenkins.update_description(f'Changed {len(changed_okd_images)} images for OKD<br/>')
-
-        if self.runtime.dry_run:
-            self.logger.info(
-                'Would have triggered a %s okd build with images %s', self.version, ','.join(changed_okd_images)
-            )
-            return
-
-        # Trigger okd build
-        self.logger.info('Triggering a %s okd build with %d images', self.version, len(changed_okd_images))
-        jenkins.start_okd(
-            build_version=self.version,
-            assembly='stream',
-            image_list=changed_okd_images,
         )
 
     async def handle_rhcos_changes(self):

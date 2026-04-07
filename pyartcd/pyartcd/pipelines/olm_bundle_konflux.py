@@ -199,6 +199,10 @@ async def olm_bundle_konflux(
     # Trigger FBC builds for successful bundles only
     if operator_nvrs:
         runtime.logger.info(f'Found operator NVRs: {operator_nvrs}')
+
+        # Automatically propagate parameters if set in environment
+        propagate_params = jenkins.get_propagatable_params()
+
         # Check if this is a non-openshift group and if OCP_TARGET_VERSIONS is configured
         if group and not group.startswith("openshift-"):
             runtime.logger.info(f'Group {group} is a non-openshift group, checking for OCP_TARGET_VERSIONS')
@@ -225,8 +229,9 @@ async def olm_bundle_konflux(
                         ocp_target_version=target_version,
                         # Always force rebuild FBCs for OADP / MTA / MTC
                         force_build=True,
+                        propagate_params=propagate_params,
                     )
-                    await asyncio.sleep(5)
+                    await asyncio.sleep(10)
             else:
                 runtime.logger.info(f'No OCP_TARGET_VERSIONS defined for group {group}, using original behavior')
                 # No OCP_TARGET_VERSIONS defined, use original behavior
@@ -236,6 +241,7 @@ async def olm_bundle_konflux(
                     assembly=assembly,
                     operator_nvrs=operator_nvrs,
                     dry_run=runtime.dry_run,
+                    propagate_params=propagate_params,
                 )
         else:
             runtime.logger.info(f'Group {group} does not match OADP/MTA/MTC pattern, using original behavior')
@@ -246,6 +252,7 @@ async def olm_bundle_konflux(
                 assembly=assembly,
                 operator_nvrs=operator_nvrs,
                 dry_run=runtime.dry_run,
+                propagate_params=propagate_params,
             )
 
     if operators_with_failed_bundles and successful_bundles:

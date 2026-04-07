@@ -566,11 +566,12 @@ class TestBuildingImages(IsolatedAsyncioTestCase):
 
     def test_building_images_with_strategy_all(self):
         """
-        Test that building_images returns True for ALL strategy.
+        Test that building_images returns True for ALL strategy with payload images.
         """
 
         # given
         self.pipeline.build_plan.image_build_strategy = BuildStrategy.ALL
+        self.pipeline.group_images = ['image1', 'image2']  # Payload images after filtering
 
         # when
         result = self.pipeline.building_images()
@@ -585,6 +586,7 @@ class TestBuildingImages(IsolatedAsyncioTestCase):
 
         # given
         self.pipeline.build_plan.image_build_strategy = BuildStrategy.ONLY
+        self.pipeline.group_images = ['image1', 'image2', 'image3']  # Payload images after filtering
         self.pipeline.build_plan.images_included = ['image1', 'image2']
 
         # when
@@ -610,11 +612,12 @@ class TestBuildingImages(IsolatedAsyncioTestCase):
 
     def test_building_images_with_strategy_except(self):
         """
-        Test that building_images returns True for EXCEPT strategy.
+        Test that building_images returns True for EXCEPT strategy with some images to build.
         """
 
         # given
         self.pipeline.build_plan.image_build_strategy = BuildStrategy.EXCEPT
+        self.pipeline.group_images = ['image1', 'image2', 'image3']  # Payload images after filtering
         self.pipeline.build_plan.images_excluded = ['image1']
 
         # when
@@ -622,6 +625,54 @@ class TestBuildingImages(IsolatedAsyncioTestCase):
 
         # then
         self.assertTrue(result)
+
+    def test_building_images_with_strategy_all_no_payload_images(self):
+        """
+        Test that building_images returns False when no payload images exist (all filtered out).
+        """
+
+        # given
+        self.pipeline.build_plan.image_build_strategy = BuildStrategy.ALL
+        self.pipeline.group_images = []  # All images filtered out as non-payload
+
+        # when
+        result = self.pipeline.building_images()
+
+        # then
+        self.assertFalse(result)
+
+    def test_building_images_with_strategy_except_all_excluded(self):
+        """
+        Test that building_images returns False when all payload images are excluded.
+        """
+
+        # given
+        self.pipeline.build_plan.image_build_strategy = BuildStrategy.EXCEPT
+        self.pipeline.group_images = ['image1', 'image2']
+        self.pipeline.build_plan.images_excluded = ['image1', 'image2']  # All images excluded
+
+        # when
+        result = self.pipeline.building_images()
+
+        # then
+        self.assertFalse(result)
+
+    def test_building_images_with_strategy_only_no_payload_match(self):
+        """
+        Test that building_images returns False when requested images are not payload images.
+        This simulates the case where IMAGE_LIST contains only non-payload images.
+        """
+
+        # given
+        self.pipeline.build_plan.image_build_strategy = BuildStrategy.ONLY
+        self.pipeline.group_images = []  # Non-payload images were filtered out
+        self.pipeline.build_plan.images_included = []  # No matches after filtering
+
+        # when
+        result = self.pipeline.building_images()
+
+        # then
+        self.assertFalse(result)
 
 
 class TestIncludeExcludeParam(IsolatedAsyncioTestCase):
@@ -659,17 +710,18 @@ class TestIncludeExcludeParam(IsolatedAsyncioTestCase):
 
     def test_include_exclude_param_with_strategy_all(self):
         """
-        Test that ALL strategy returns empty list.
+        Test that ALL strategy returns --images parameter with all payload images.
         """
 
         # given
         self.pipeline.build_plan.image_build_strategy = BuildStrategy.ALL
+        self.pipeline.group_images = ['image1', 'image2', 'image3']  # Payload images after filtering
 
         # when
         result = self.pipeline.include_exclude_param()
 
         # then
-        self.assertEqual(result, [])
+        self.assertEqual(result, ['--images=image1,image2,image3'])
 
     def test_include_exclude_param_with_strategy_only(self):
         """
@@ -688,18 +740,20 @@ class TestIncludeExcludeParam(IsolatedAsyncioTestCase):
 
     def test_include_exclude_param_with_strategy_except(self):
         """
-        Test that EXCEPT strategy returns --images= and --exclude parameters.
+        Test that EXCEPT strategy returns --images parameter with remaining images after exclusion.
         """
 
         # given
         self.pipeline.build_plan.image_build_strategy = BuildStrategy.EXCEPT
+        self.pipeline.group_images = ['good1', 'good2', 'bad1', 'bad2']  # All payload images
         self.pipeline.build_plan.images_excluded = ['bad1', 'bad2']
 
         # when
         result = self.pipeline.include_exclude_param()
 
         # then
-        self.assertEqual(result, ['--images=', '--exclude=bad1,bad2'])
+        # Should only include images not in the exclusion list
+        self.assertEqual(result, ['--images=good1,good2'])
 
     def test_include_exclude_param_with_strategy_none_raises_error(self):
         """
@@ -761,3 +815,215 @@ class TestBuildPlan(IsolatedAsyncioTestCase):
         self.assertIn('image1', result)
         self.assertIn('image2', result)
         self.assertIn('"active_image_count": 10', result)
+
+
+class TestDetectEmbargoedBuilds(IsolatedAsyncioTestCase):
+    def setUp(self):
+        """
+        Set up common test fixtures.
+        """
+
+        self.mock_runtime = MagicMock()
+        self.mock_runtime.working_dir = MagicMock()
+        self.mock_runtime.logger = MagicMock()
+        self.mock_runtime.dry_run = False
+        self.mock_runtime.doozer_working = '/tmp/doozer_working'
+
+        mock_slack_client = MagicMock()
+        mock_slack_client.say = AsyncMock()
+        mock_slack_client.bind_channel = MagicMock()
+
+        self.mock_runtime.new_slack_client = MagicMock(return_value=mock_slack_client)
+
+        self.pipeline = KonfluxOkdPipeline(
+            runtime=self.mock_runtime,
+            image_build_strategy='all',
+            image_list=None,
+            assembly='stream',
+            data_path='https://github.com/openshift-eng/ocp-build-data',
+            data_gitref='',
+            version='4.22',
+            ignore_locks=False,
+            plr_template='',
+            lock_identifier='test-lock',
+            build_priority='10',
+            imagestream_namespace='origin',
+        )
+        # Set up group_images so building_images() returns True by default
+        self.pipeline.group_images = ['cli', 'installer', 'operator']
+
+    async def test_detect_embargoed_builds_missing_rebase_results(self):
+        """
+        Test that pipeline crashes when rebase results are missing (fail-safe).
+        """
+
+        # given
+        with patch.object(self.pipeline, 'load_state_yaml', return_value={}):
+            # when/then
+            with self.assertRaises(RuntimeError) as context:
+                await self.pipeline.detect_embargoed_builds()
+
+            self.assertIn('EMBARGO SAFETY', str(context.exception))
+            self.assertIn('no rebase results', str(context.exception))
+
+    async def test_detect_embargoed_builds_public_images_only(self):
+        """
+        Test that public images (private_fix=False) are allowed through.
+        """
+
+        # given
+        mock_state = {
+            'images:okd:rebase': {
+                'images': {
+                    'cli': {'status': 'success', 'private_fix': False},
+                    'installer': {'status': 'success', 'private_fix': False},
+                }
+            }
+        }
+
+        with patch.object(self.pipeline, 'load_state_yaml', return_value=mock_state):
+            # when
+            await self.pipeline.detect_embargoed_builds()
+
+            # then
+            self.assertEqual(self.pipeline.embargoed_builds, [])
+
+    async def test_detect_embargoed_builds_detects_private_fixes(self):
+        """
+        Test that embargoed images (private_fix=True) are detected and excluded.
+        """
+
+        # given
+        mock_state = {
+            'images:okd:rebase': {
+                'images': {
+                    'cli': {'status': 'success', 'private_fix': False},
+                    'installer': {'status': 'success', 'private_fix': True},
+                }
+            }
+        }
+
+        with (
+            patch.object(self.pipeline, 'load_state_yaml', return_value=mock_state),
+            patch('pyartcd.pipelines.okd.jenkins') as mock_jenkins,
+        ):
+            # when
+            await self.pipeline.detect_embargoed_builds()
+
+            # then
+            self.assertEqual(len(self.pipeline.embargoed_builds), 1)
+            self.assertEqual(self.pipeline.embargoed_builds[0]['name'], 'installer')
+
+            # Jenkins should be updated with warning
+            mock_jenkins.update_description.assert_called_once()
+            call_args = mock_jenkins.update_description.call_args[0][0]
+            self.assertIn('EMBARGOED', call_args)
+            self.assertIn('installer', call_args)
+
+    async def test_detect_embargoed_builds_missing_private_fix_field(self):
+        """
+        Test that pipeline crashes when private_fix field is missing (fail-safe).
+        """
+
+        # given
+        mock_state = {
+            'images:okd:rebase': {
+                'images': {
+                    'cli': {'status': 'success'},  # Missing private_fix field
+                }
+            }
+        }
+
+        with patch.object(self.pipeline, 'load_state_yaml', return_value=mock_state):
+            # when/then - expect KeyError when private_fix is missing
+            with self.assertRaises(KeyError):
+                await self.pipeline.detect_embargoed_builds()
+
+    async def test_detect_embargoed_builds_missing_status_field(self):
+        """
+        Test that pipeline crashes when status field is missing (fail-safe).
+        """
+
+        # given
+        mock_state = {
+            'images:okd:rebase': {
+                'images': {
+                    'cli': {'private_fix': False},  # Missing status field
+                }
+            }
+        }
+
+        with patch.object(self.pipeline, 'load_state_yaml', return_value=mock_state):
+            # when/then - expect KeyError when status is missing
+            with self.assertRaises(KeyError):
+                await self.pipeline.detect_embargoed_builds()
+
+    async def test_detect_embargoed_builds_multiple_embargoed_images(self):
+        """
+        Test detection with multiple embargoed images.
+        """
+
+        # given
+        mock_state = {
+            'images:okd:rebase': {
+                'images': {
+                    'image1': {'status': 'success', 'private_fix': True},
+                    'image2': {'status': 'success', 'private_fix': True},
+                    'image3': {'status': 'success', 'private_fix': False},
+                }
+            }
+        }
+
+        with (
+            patch.object(self.pipeline, 'load_state_yaml', return_value=mock_state),
+            patch('pyartcd.pipelines.okd.jenkins') as mock_jenkins,
+        ):
+            # when
+            await self.pipeline.detect_embargoed_builds()
+
+            # then
+            self.assertEqual(len(self.pipeline.embargoed_builds), 2)
+            embargoed_names = {img['name'] for img in self.pipeline.embargoed_builds}
+            self.assertEqual(embargoed_names, {'image1', 'image2'})
+
+            mock_jenkins.update_description.assert_called_once()
+
+    async def test_detect_embargoed_builds_skips_failed_images(self):
+        """
+        Test that failed/skipped images are ignored during embargo detection.
+        """
+
+        # given
+        mock_state = {
+            'images:okd:rebase': {
+                'images': {
+                    'cli': {'status': 'success', 'private_fix': False},
+                    'installer': {'status': 'failure', 'private_fix': True},
+                    'operator': {'status': 'skipped', 'private_fix': False},
+                }
+            }
+        }
+
+        with patch.object(self.pipeline, 'load_state_yaml', return_value=mock_state):
+            # when
+            await self.pipeline.detect_embargoed_builds()
+
+            # then
+            # Only successful images are checked; failed/skipped are ignored
+            self.assertEqual(len(self.pipeline.embargoed_builds), 0)
+
+    async def test_detect_embargoed_builds_no_images_to_build(self):
+        """
+        Test that embargo detection is skipped when no images are being built (all filtered out).
+        """
+
+        # given
+        self.pipeline.group_images = []  # No payload images
+        self.pipeline.build_plan.images_included = []
+        self.pipeline.build_plan.image_build_strategy = BuildStrategy.ONLY
+
+        # when
+        await self.pipeline.detect_embargoed_builds()
+
+        # then - should complete without error
+        self.assertEqual(len(self.pipeline.embargoed_builds), 0)

@@ -1,11 +1,11 @@
 import asyncio
-import os
 from collections import OrderedDict
 from pathlib import Path
-from unittest import IsolatedAsyncioTestCase
+from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
-from pyartcd.pipelines.gen_assembly import GenAssemblyPipeline
+import click
+from pyartcd.pipelines.gen_assembly import GenAssemblyPipeline, validate_release_date
 
 
 class TestGenAssemblyPipeline(IsolatedAsyncioTestCase):
@@ -147,12 +147,11 @@ releases:
         actual = asyncio.run(pipeline._gen_assembly_from_releases(candidate_nightlies))
         self.assertIn("4.12.99", actual["releases"])
 
-    @patch("os.environ", return_value={"GITHUB_TOKEN": "deadbeef"})
     @patch("pathlib.Path.exists", autospec=True, return_value=True)
-    @patch("pyartcd.pipelines.gen_assembly.GhApi")
+    @patch("pyartcd.pipelines.gen_assembly.get_github_client_for_org")
     @patch("pyartcd.pipelines.gen_assembly.yaml")
     @patch("pyartcd.pipelines.gen_assembly.GitRepository", autospec=True)
-    def test_create_or_update_pull_request(self, git_repo: MagicMock, yaml: MagicMock, gh_api: MagicMock, *_):
+    def test_create_or_update_pull_request(self, git_repo: MagicMock, yaml: MagicMock, mock_get_client: MagicMock, *_):
         runtime = MagicMock(
             dry_run=False,
             config={
@@ -210,9 +209,11 @@ releases:
             )
         )
         git_repo.return_value.commit_push.return_value = True
-        api = gh_api.return_value
-        api.pulls.list.return_value = MagicMock(items=[])
-        api.pulls.create.return_value = MagicMock(html_url="https://github.example.com/foo/bar/pull/1234", number=1234)
+        gh_repo = mock_get_client.return_value.get_repo.return_value
+        gh_repo.get_pulls.return_value = []
+        gh_repo.create_pull.return_value = MagicMock(
+            html_url="https://github.example.com/foo/bar/pull/1234", number=1234
+        )
         actual = asyncio.run(pipeline._create_or_update_pull_request(fn))
         self.assertEqual(actual.number, 1234)
         git_repo.return_value.setup.assert_awaited_once_with("git@github.com:someone/ocp-build-data.git")
@@ -221,7 +222,7 @@ releases:
         )
         yaml.load.assert_called_once_with(pipeline._working_dir / 'ocp-build-data-push/releases.yml')
         git_repo.return_value.commit_push.assert_awaited_once_with(ANY)
-        api.pulls.create.assert_called_once_with(
+        gh_repo.create_pull.assert_called_once_with(
             head='someone:auto-gen-assembly-openshift-4.12-4.12.99',
             base='openshift-4.12',
             title='Add assembly 4.12.99',
@@ -244,8 +245,6 @@ releases:
         _create_or_update_pull_request: AsyncMock,
         _get_latest_accepted_nightly: AsyncMock,
     ):
-        os.environ["GITHUB_TOKEN"] = "irrelevant"
-
         runtime = MagicMock(
             dry_run=False,
             config={
@@ -287,4 +286,50 @@ releases:
         get_nightlies.assert_awaited_once_with(pipeline)
         _gen_assembly_from_releases.assert_awaited_once_with(pipeline, ['nightly1', 'nightly2', 'nightly3', 'nightly4'])
         _create_or_update_pull_request.assert_awaited_once_with(pipeline, ANY)
-        del os.environ["GITHUB_TOKEN"]
+
+
+class TestValidateReleaseDate(TestCase):
+    """
+    Test the validate_release_date callback function.
+    """
+
+    def test_validate_release_date_elliott_format(self):
+        """
+        Test that dates in elliott format (YYYY-Mon-DD) are accepted as-is.
+        """
+        result = validate_release_date(None, None, "2026-Mar-31")
+        self.assertEqual(result, "2026-Mar-31")
+
+        result = validate_release_date(None, None, "2020-Nov-25")
+        self.assertEqual(result, "2020-Nov-25")
+
+    def test_validate_release_date_numeric_format(self):
+        """
+        Test that dates in numeric format (YYYY-MM-DD) are converted to elliott format.
+        """
+        result = validate_release_date(None, None, "2026-03-31")
+        self.assertEqual(result, "2026-Mar-31")
+
+        result = validate_release_date(None, None, "2020-11-25")
+        self.assertEqual(result, "2020-Nov-25")
+
+    def test_validate_release_date_none(self):
+        """
+        Test that None is returned when no date is provided.
+        """
+        result = validate_release_date(None, None, None)
+        self.assertIsNone(result)
+
+    def test_validate_release_date_invalid_format(self):
+        """
+        Test that invalid date formats raise BadParameter.
+        """
+        with self.assertRaises(click.BadParameter) as context:
+            validate_release_date(None, None, "2026/03/31")
+
+        self.assertIn("must be in YYYY-Mon-DD format", str(context.exception))
+
+        with self.assertRaises(click.BadParameter) as context:
+            validate_release_date(None, None, "invalid-date")
+
+        self.assertIn("must be in YYYY-Mon-DD format", str(context.exception))

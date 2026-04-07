@@ -22,7 +22,9 @@ import semver
 from artcommonlib import exectools
 from artcommonlib.assembly import AssemblyTypes, assembly_config_struct, assembly_group_config
 from artcommonlib.constants import KONFLUX_RELEASE_DATA_RPA_BASE_URL, SHIPMENT_DATA_URL_TEMPLATE
+from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.gitlab import GitLabClient
+from artcommonlib.jira_config import JIRA_EMAIL
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBundleBuildRecord
 from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.model import Model
@@ -38,7 +40,6 @@ from elliottlib.errata import push_cdn_stage
 from elliottlib.errata_async import AsyncErrataAPI
 from elliottlib.shipment_model import Issue, ReleaseNotes, ShipmentConfig, Snapshot, SnapshotSpec, Tools
 from elliottlib.shipment_utils import get_shipment_configs_from_mr, set_jira_bug_ids
-from ghapi.all import GhApi
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 from pyartcd import constants
@@ -102,7 +103,6 @@ class PrepareReleaseKonfluxPipeline:
         self.releases_config = None
         self.release_version = None
         self.group_config = None
-        self.github_token = None
         self.gitlab_token = None
         self.jira_token = None
         self.job_url = None
@@ -110,7 +110,8 @@ class PrepareReleaseKonfluxPipeline:
         self.updated_assembly_group_config = None
         self.olm_operators = None
         self.shipment_mr_url = None  # Track shipment MR URL for draft/ready management
-        self.fbc_build_errors = []  # Track FBC build errors for UNSTABLE marking
+        self.bundle_build_errors = []
+        self.fbc_build_errors = []
 
         group_param = f'--group={group}'
         if self.build_data_gitref:
@@ -207,7 +208,10 @@ class PrepareReleaseKonfluxPipeline:
         self.setup_working_dir()
         await self.setup_repos()
         await self.validate_assembly()
-        self.jira_client = JIRAClient.from_url(self.runtime.config["jira"]["url"], token_auth=self.jira_token)
+        self.jira_client = JIRAClient.from_url(
+            self.runtime.config["jira"]["url"],
+            basic_auth=(JIRA_EMAIL, self.jira_token),
+        )
 
     async def run(self):
         await self.initialize()
@@ -225,37 +229,30 @@ class PrepareReleaseKonfluxPipeline:
             self.logger.error(f"Unable to prepare release: {ex}", exc_info=True)
             err = ex
         finally:
-            self.logger.info("Prep failed. Trying to update assembly in case of partial success ...")
+            msg = (
+                "Prep failed. Trying to update assembly in case of partial success"
+                if err
+                else "Prep succeeded. Updating assembly"
+            )
+            self.logger.info(msg)
             await self.create_update_build_data_pr()
 
         if err:
             raise err
 
-        await self.set_shipment_mr_ready()
         await self.verify_payload()
+        await self.set_shipment_mr_ready()
 
-        # Check for FBC build errors and exit with code 2 for UNSTABLE status
-        if self.fbc_build_errors:
-            error_count = len(self.fbc_build_errors)
-            error_summary = f"Completed with {error_count} FBC build error(s):\n" + "\n".join(
-                f"  - {error.split(chr(10))[0]}"
-                for error in self.fbc_build_errors  # Only include first line of each error
-            )
-            self.logger.warning(error_summary)
-            await self._slack_client.say_in_thread(
-                f":warning: prepare-release-konflux completed with {error_count} FBC build error(s). "
-                f"Successfully built FBC builds have been attached. Job marked as UNSTABLE.\n"
-                f"Details:\n{chr(10).join(f'• {error.split(chr(10))[0]}' for error in self.fbc_build_errors)}"
-            )
+        # Check for deferred bundle/FBC build errors and exit with code 2 for UNSTABLE status
+        deferred_build_errors = self._deferred_build_errors()
+        if deferred_build_errors:
+            await self.report_deferred_build_failures(deferred_build_errors)
             # Exit with code 2 to mark Jenkins job as UNSTABLE
             # The Jenkinsfile should catch this exit code and set currentBuild.result = 'UNSTABLE'
             sys.exit(2)
 
     def check_env_vars(self):
-        github_token = os.getenv('GITHUB_TOKEN')
-        if not github_token:
-            raise ValueError("GITHUB_TOKEN environment variable is required to create a pull request")
-        self.github_token = github_token
+        # GitHub auth is handled by get_github_client_for_org() with App auth / PAT fallback
 
         gitlab_token = os.getenv("GITLAB_TOKEN")
         if not gitlab_token:
@@ -377,7 +374,7 @@ class PrepareReleaseKonfluxPipeline:
         # Sweep builds
         base_command = [item for item in self._elliott_base_command if item != '--build-system=konflux']
         for impetus, advisory_num in impetus_advisories.items():
-            if advisory_num <= 0:
+            if advisory_num <= 0 and not self.dry_run:
                 raise ValueError(f"Invalid {impetus} advisory number: {advisory_num}")
             # Skip populating microshift advisory since that is done later after promote
             if impetus == "microshift":
@@ -405,6 +402,8 @@ class PrepareReleaseKonfluxPipeline:
 
         # Find bugs
         self.logger.info("Finding %s bugs...", impetus)
+
+        # Build system is brew here by design, since its needed to pickup ET Advisories
         impetus_bugs = await self.find_bugs(build_system='brew')
 
         # Process bugs
@@ -430,7 +429,12 @@ class PrepareReleaseKonfluxPipeline:
             operate_cmd = ["attach-cve-flaws", f"--advisory={advisory_num}"]
             if self.dry_run:
                 operate_cmd += ["--dry-run"]
-            await self.run_cmd_with_retry(base_command, operate_cmd)
+
+            # If we're dry-running the pipeline and the advisories do not exist, skip the command since it will fail
+            if advisory_num <= 0 and self.dry_run:
+                self.logger.info("[DRY-RUN] Would have attached CVE flaws to %s advisory %s", impetus, advisory_num)
+            else:
+                await self.run_cmd_with_retry(base_command, operate_cmd)
 
             # change status to qe
             try:
@@ -533,8 +537,18 @@ class PrepareReleaseKonfluxPipeline:
         # make sure that metadata shipment needs to be prepared
         # if so, build any missing bundle builds
         if "metadata" in shipments_by_kind and kind_to_builds["olm_builds_not_found"]:
-            bundle_nvrs = await self.find_or_build_bundle_builds(kind_to_builds["olm_builds_not_found"])
+            bundle_nvrs, bundle_errors = await self.find_or_build_bundle_builds(kind_to_builds["olm_builds_not_found"])
             kind_to_builds["metadata"] += bundle_nvrs
+            if bundle_errors:
+                self.record_deferred_build_errors(
+                    "bundle",
+                    bundle_errors,
+                    [
+                        ("operator", "operator"),
+                        ("operator_nvr", "operator_nvr"),
+                        ("bundle_nvr", "bundle_nvr"),
+                    ],
+                )
 
         await self.verify_attached_operators(kind_to_builds)
 
@@ -546,15 +560,15 @@ class PrepareReleaseKonfluxPipeline:
             )
             kind_to_builds["fbc"] = fbc_builds
             if fbc_errors:
-                # Track FBC build errors for later reporting
-                for error in fbc_errors:
-                    error_summary = (
-                        f"FBC build failed for operator={error.get('operator')}, "
-                        f"operator_nvr={error.get('operator_nvr')}, "
-                        f"bundle_nvr={error.get('bundle_nvr')}: {error.get('error')}\n"
-                        f"Traceback: {error.get('traceback')}"
-                    )
-                    self.fbc_build_errors.append(error_summary)
+                self.record_deferred_build_errors(
+                    "FBC",
+                    fbc_errors,
+                    [
+                        ("operator", "operator"),
+                        ("operator_nvr", "operator_nvr"),
+                        ("bundle_nvr", "bundle_nvr"),
+                    ],
+                )
 
         # prepare snapshot from the found builds
         for kind, shipment in shipments_by_kind.items():
@@ -662,9 +676,6 @@ class PrepareReleaseKonfluxPipeline:
             tuple[list[str], list[dict]]: A tuple of (successful_nvrs, errors).
                 - successful_nvrs: List of FBC NVRs that were successfully found or built.
                 - errors: List of error dictionaries with details about failed builds.
-
-        Raises:
-            IOError: If the command produces no parseable output.
         """
         olm_operator_nvrs = await self.filter_olm_operators(nvrs)
 
@@ -693,20 +704,9 @@ class PrepareReleaseKonfluxPipeline:
 
         # Run command and tolerate non-zero exit code
         # The doozer command returns partial results in JSON even on failure
-        rc, stdout, stderr = await exectools.cmd_gather_async(cmd, check=False)
+        _, stdout, _ = await exectools.cmd_gather_async(cmd, check=False)
 
-        # Parse JSON output to get both successful builds and errors
-        try:
-            output_data = json.loads(stdout)
-        except json.JSONDecodeError as ex:
-            error_msg = f"Failed to parse FBC rebase-and-build JSON output (rc={rc}): {ex}"
-            if stdout:
-                error_msg += f"\nStdout: {stdout}"
-            if stderr:
-                error_msg += f"\nStderr: {stderr}"
-            self.logger.error(error_msg)
-            raise IOError(error_msg)
-
+        output_data = json.loads(stdout)
         successful_nvrs = output_data.get("nvrs", [])
         errors = output_data.get("errors", [])
         failed_count = output_data.get("failed_count", 0)
@@ -727,7 +727,7 @@ class PrepareReleaseKonfluxPipeline:
         self.logger.info(f"Returning {len(successful_nvrs)} successful FBC build(s)")
         return successful_nvrs, errors
 
-    async def find_or_build_bundle_builds(self, nvrs: list[str]) -> list[str]:
+    async def find_or_build_bundle_builds(self, nvrs: list[str]) -> tuple[list[str], list[dict]]:
         """
         For the given list of NVRs, determine which are OLM operators and fetch bundle builds for them.
         Trigger bundle builds for them if needed.
@@ -736,7 +736,7 @@ class PrepareReleaseKonfluxPipeline:
             nvrs (list[str]): List of NVRs to check and build bundles for.
 
         Returns:
-            list[str]: List of bundle NVRs that were found or built.
+            tuple[list[str], list[dict]]: A tuple of (successful_nvrs, errors).
         """
 
         olm_operator_nvrs = await self.filter_olm_operators(nvrs)
@@ -759,9 +759,61 @@ class PrepareReleaseKonfluxPipeline:
         if self.dry_run:
             cmd += ["--dry-run"]
         cmd += ["--", *olm_operator_nvrs]
-        stdout = await self.execute_command_with_logging(cmd)
-        bundle_nvrs = json.loads(stdout).get("nvrs", []) if stdout else []
-        return bundle_nvrs
+        _, stdout, _ = await exectools.cmd_gather_async(cmd, check=False)
+
+        output_data = json.loads(stdout)
+        successful_nvrs = output_data.get("nvrs", [])
+        errors = output_data.get("errors", [])
+        failed_count = output_data.get("failed_count", 0)
+        success_count = output_data.get("success_count", 0)
+
+        if errors:
+            self.logger.warning(
+                f"Bundle rebase-and-build completed with {failed_count} failure(s) and {success_count} success(es)"
+            )
+            for error in errors:
+                error_msg = (
+                    f"Failed to build bundle for operator={error.get('operator')}, "
+                    f"operator_nvr={error.get('operator_nvr')}: {error.get('error')}"
+                )
+                self.logger.error(error_msg)
+
+        self.logger.info(f"Returning {len(successful_nvrs)} successful bundle build(s)")
+        return successful_nvrs, errors
+
+    def _deferred_build_errors(self) -> list[str]:
+        return self.bundle_build_errors + self.fbc_build_errors
+
+    def record_deferred_build_errors(
+        self, build_kind: str, errors: list[dict], detail_fields: list[tuple[str, str]]
+    ) -> None:
+        formatted_errors = []
+        for error in errors:
+            details = ", ".join(
+                f"{label}={error.get(field)}" for field, label in detail_fields if error.get(field) is not None
+            )
+            error_summary = f"{build_kind} build failed"
+            if details:
+                error_summary += f" for {details}"
+            error_summary += f": {error.get('error')}\nTraceback: {error.get('traceback')}"
+            formatted_errors.append(error_summary)
+
+        if build_kind.lower() == "bundle":
+            self.bundle_build_errors.extend(formatted_errors)
+        else:
+            self.fbc_build_errors.extend(formatted_errors)
+
+    async def report_deferred_build_failures(self, deferred_build_errors: list[str]) -> None:
+        error_count = len(deferred_build_errors)
+        error_summary = f"Completed with {error_count} deferred bundle/FBC build failure(s):\n" + "\n".join(
+            f"  - {error.split(chr(10))[0]}" for error in deferred_build_errors
+        )
+        self.logger.warning(error_summary)
+        await self._slack_client.say_in_thread(
+            f":warning: prepare-release-konflux completed with {error_count} deferred bundle/FBC build failure(s). "
+            f"Successfully built builds have been attached. Job marked as UNSTABLE.\n"
+            f"Details:\n{chr(10).join(f'• {error.split(chr(10))[0]}' for error in deferred_build_errors)}"
+        )
 
     def validate_shipment_config(self, shipment_config: dict):
         """Validate the given shipment configuration for an assembly.
@@ -1214,14 +1266,10 @@ class PrepareReleaseKonfluxPipeline:
 
         head = f"{source_owner}:{branch}"
         base = self.build_data_gitref or self.group
-        api = GhApi(owner=target_owner, repo=target_repo, token=self.github_token)
-        existing_prs = api.pulls.list(
-            state="open",
-            head=head,
-            base=base,
-        )
+        gh_repo = get_github_client_for_org(target_owner).get_repo(f"{target_owner}/{target_repo}")
+        existing_prs = list(gh_repo.get_pulls(state="open", head=head, base=base))
 
-        if not existing_prs.items:
+        if not existing_prs:
             pr_title = f"Update assembly {self.assembly}"
             pr_body = f"This PR updates {self.assembly} assembly definition."
             if self.job_url:
@@ -1231,7 +1279,7 @@ class PrepareReleaseKonfluxPipeline:
                 self.logger.info("[DRY-RUN] Would have created a new PR with title '%s'", pr_title)
                 return True
 
-            result = api.pulls.create(
+            result = gh_repo.create_pull(
                 head=head,
                 base=base,
                 title=pr_title,
@@ -1242,20 +1290,18 @@ class PrepareReleaseKonfluxPipeline:
             await self._slack_client.say_in_thread(f"PR to update assembly definition: {result.html_url}")
             pull_number = result.number
         else:
-            self.logger.info("Existing PR to update assembly found: %s", existing_prs.items[0].html_url)
-            pull_number = existing_prs.items[0].number
+            self.logger.info("Existing PR to update assembly found: %s", existing_prs[0].html_url)
+            pull_number = existing_prs[0].number
 
             if self.dry_run:
                 self.logger.info("[DRY-RUN] Would have updated PR with number %s", pull_number)
                 return True
 
-            pr_body = existing_prs.items[0].body
+            pr_body = existing_prs[0].body or ""
             if self.job_url:
                 pr_body += f"\n\nUpdated by job: {self.job_url}"
-            result = api.pulls.update(
-                pull_number=pull_number,
-                body=pr_body,
-            )
+            result = existing_prs[0]
+            result.edit(body=pr_body)
             self.logger.info("PR to update assembly updated: %s", result.html_url)
             await self._slack_client.say_in_thread(f"PR to update assembly updated: {result.html_url}")
 
@@ -1268,8 +1314,13 @@ class PrepareReleaseKonfluxPipeline:
                 self.logger.info("[DRY-RUN] Would have auto-merged PR with number %s", pull_number)
             else:
                 try:
-                    # Auto-merge the PR
-                    api.pulls.merge(pull_number)
+
+                    @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(5))
+                    def merge_pr():
+                        gh_repo.get_pull(pull_number).merge()
+
+                    merge_pr()
+
                     self.logger.info("PR to update assembly was auto-merged: %s", result.html_url)
                     await self._slack_client.say_in_thread(f":white_check_mark: PR auto-merged: {result.html_url}")
                 except Exception as ex:
@@ -1277,27 +1328,25 @@ class PrepareReleaseKonfluxPipeline:
                     await self._slack_client.say_in_thread(
                         f"Failed to auto-merge PR, will wait for manual merge: {result.html_url}"
                     )
-                    # Fall back to waiting for manual merge
-                    await self._wait_for_pr_merge(api, pull_number, result.html_url)
+                    await self._wait_for_pr_merge(gh_repo, pull_number, result.html_url)
         else:
             self.logger.info(
                 "Push owner (%s) differs from pull owner (%s), waiting for manual merge...", source_owner, target_owner
             )
             await self._slack_client.say_in_thread(f"Waiting for PR to update assembly to be merged: {result.html_url}")
-            await self._wait_for_pr_merge(api, pull_number, result.html_url)
+            await self._wait_for_pr_merge(gh_repo, pull_number, result.html_url)
 
         return True
 
-    async def _wait_for_pr_merge(self, api, pull_number: int, pr_url: str):
+    async def _wait_for_pr_merge(self, gh_repo, pull_number: int, pr_url: str):
         """Wait for a PR to be merged manually with timeout."""
-        # wait until the PR is merged
         timeout = 60 * 60  # 1 hour
         start_time = time.time()
         while True:
             if (time.time() - start_time) > timeout:
                 raise TimeoutError(f"Timeout waiting for PR to update assembly to be merged: {pr_url}")
             await asyncio.sleep(10)
-            pr = api.pulls.get(pull_number)
+            pr = gh_repo.get_pull(pull_number)
             if pr.merged:
                 self.logger.info("PR to update assembly was merged: %s", pr_url)
                 break
@@ -1447,7 +1496,29 @@ class PrepareReleaseKonfluxPipeline:
             "candidate_nightlies": candidate_nightlies,
         }
 
+    def _convert_release_date_to_iso(self, release_date: str | None) -> str | None:
+        """
+        Converts release date from elliott format (YYYY-Mon-DD) to ISO format
+        (YYYY-MM-DD) for use as Jira due date.
+
+        Arg(s):
+            release_date (str | None): Release date in YYYY-Mon-DD format (e.g., "2025-Oct-22").
+        Return Value(s):
+            str | None: Date in YYYY-MM-DD format, or None if input is None or invalid.
+        """
+        if not release_date:
+            return None
+        try:
+            parsed = datetime.strptime(release_date, "%Y-%b-%d")
+            return parsed.strftime("%Y-%m-%d")
+        except ValueError:
+            self.logger.warning("Could not parse release date '%s' for Jira due date", release_date)
+            return None
+
     def create_release_jira(self, template_issue: Issue, template_vars: Dict) -> Optional[Issue]:
+        # Convert release date to ISO format for Jira due date
+        jira_due_date = self._convert_release_date_to_iso(self.release_date)
+
         def fields_transform(fields):
             labels = set(fields.get("labels", []))
             # change summary title for security
@@ -1455,7 +1526,11 @@ class PrepareReleaseKonfluxPipeline:
                 return fields  # no need to modify fields of non-template issue
             # remove "template" label
             fields["labels"] = list(labels - {"template"})
-            return self.jira_client.render_jira_template(fields, template_vars)
+            fields = self.jira_client.render_jira_template(fields, template_vars)
+            # Set due date from release date
+            if jira_due_date:
+                fields["duedate"] = jira_due_date
+            return fields
 
         if self.dry_run:
             jira_fields = fields_transform(template_issue.raw["fields"].copy())
@@ -1479,13 +1554,17 @@ class PrepareReleaseKonfluxPipeline:
 
     def update_release_jira(self, issue: Issue, template_issue: Issue, template_vars: Dict[str, int]) -> bool:
         self.logger.info("Updating release JIRA %s from template %s...", issue.key, template_issue.key)
+        jira_due_date = self._convert_release_date_to_iso(self.release_date)
+
         old_fields = {
             "summary": issue.fields.summary,
             "description": issue.fields.description.strip(),
+            "duedate": getattr(issue.fields, "duedate", None),
         }
         fields = {
             "summary": template_issue.fields.summary,
             "description": template_issue.fields.description,
+            "duedate": jira_due_date,
         }
         if "template" in template_issue.fields.labels:
             fields = self.jira_client.render_jira_template(fields, template_vars)

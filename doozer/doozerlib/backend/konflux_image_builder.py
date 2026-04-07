@@ -35,6 +35,8 @@ from doozerlib.source_resolver import SourceResolution
 from packageurl import PackageURL
 from tenacity import retry, stop_after_attempt, wait_fixed
 
+from pyartcd import jenkins
+
 LOGGER = logging.getLogger(__name__)
 
 
@@ -245,9 +247,20 @@ class KonfluxImageBuilder:
 
                 else:
                     # Create a build record after every attempt (both success and failure)
-                    await self.update_konflux_db(
+                    build_record = await self.update_konflux_db(
                         metadata, build_repo, pipelinerun_info, outcome, building_arches, build_priority
                     )
+                    if build_record:
+                        record["record_id"] = build_record.record_id
+
+                    # Check base image release AFTER saving to database
+                    if outcome is KonfluxBuildOutcome.SUCCESS and metadata.is_base_image():
+                        base_image_release_success = await self._trigger_base_image_release(metadata, nvr)
+                        if not base_image_release_success:
+                            logger.error(
+                                f"Base image release failed for {metadata.distgit_key}, but build already stored in database"
+                            )
+                            # outcome = KonfluxBuildOutcome.FAILURE
 
                 if outcome is not KonfluxBuildOutcome.SUCCESS:
                     error = KonfluxImageBuildError(
@@ -375,6 +388,17 @@ class KonfluxImageBuilder:
         name = f"ose-{name[10:]}" if name.startswith("openshift-") else name
         return name
 
+    @staticmethod
+    def _repo_gets_hermetic_module_hotfixes(repo_name: str, group: str, golang_pattern: re.Pattern) -> bool:
+        """
+        art-unsigned.repo sets module_hotfixes=1 on OSE (plashet) repos so non-modular RPMs there can win over
+        modular AppStream streams (e.g. runc). Apply the same hint to cachi2 hermetic prefetch DNF repo options.
+        """
+        if not (group.startswith("openshift-") or golang_pattern.match(group)):
+            return False
+        lower = repo_name.lower()
+        return 'ose-rpms' in lower or 'rhocp' in lower
+
     def _prefetch(self, metadata: ImageMetadata, group: str, dest_dir: Optional[Path] = None) -> list:
         """
         To generate the param values for konflux's prefetch dependencies task which uses cachi2 (similar to cachito in
@@ -420,26 +444,40 @@ class KonfluxImageBuilder:
                     phase = SoftwareLifecyclePhase.from_name(metadata.runtime.group_config.software_lifecycle.phase)
                     should_disable_gpg = phase <= SoftwareLifecyclePhase.SIGNING
 
-                if should_disable_gpg:
-                    enabled_repos = metadata.get_enabled_repos()
-                    if enabled_repos:
-                        dnf_options = {}
-                        repos = metadata.runtime.repos
-                        building_arches = metadata.get_arches()
+                enabled_repos = metadata.get_enabled_repos()
+                if enabled_repos:
+                    dnf_options = {}
+                    repos = metadata.runtime.repos
+                    building_arches = metadata.get_arches()
 
-                        for repo_name in enabled_repos:
-                            repo = repos[repo_name]
-                            for arch in building_arches:
-                                content_set_id = repo.content_set(arch)
-                                if content_set_id is None:
-                                    content_set_id = f'{repo_name}-{arch}'
+                    for repo_name in enabled_repos:
+                        repo = repos[repo_name]
+                        for arch in building_arches:
+                            content_set_id = repo.content_set(arch)
+                            if content_set_id is None:
+                                content_set_id = f'{repo_name}-{arch}'
 
-                                dnf_options[content_set_id] = {"gpgcheck": "0"}
+                            opts: dict = {}
+                            if should_disable_gpg:
+                                opts["gpgcheck"] = "0"
+                            if self._repo_gets_hermetic_module_hotfixes(repo_name, group, golang_pattern):
+                                opts["module_hotfixes"] = "1"
 
+                            if opts:
+                                dnf_options[content_set_id] = opts
+
+                    if dnf_options:
                         data["options"] = {"dnf": dnf_options}
-                        logger.info(
-                            f"Adding prerelease DNF options for {len(dnf_options)} repository IDs: gpgcheck disabled"
-                        )
+                        if should_disable_gpg:
+                            logger.info(
+                                f"Adding hermetic RPM prefetch DNF options for {len(dnf_options)} repository IDs "
+                                f"(gpgcheck disabled for prerelease; module_hotfixes on OSE/rhocp where applicable)"
+                            )
+                        else:
+                            logger.info(
+                                f"Adding hermetic RPM prefetch DNF options for {len(dnf_options)} repository IDs "
+                                f"(module_hotfixes on OSE/rhocp repos, aligned with art-unsigned.repo)"
+                            )
 
             prefetch.append(data)
             logger.info(f"Adding RPM prefetch for lockfile {DEFAULT_RPM_LOCKFILE_NAME} at path: {lockfile_path}")
@@ -540,9 +578,9 @@ class KonfluxImageBuilder:
 
         prefetch = self._prefetch(metadata=metadata, dest_dir=dest_dir, group=self._config.group_name)
 
-        # Check if SAST tasks needs to be enabled
+        # Check if SAST tasks should be enabled (default: True)
         # Image config value overrides group config value
-        group_config_sast_task = metadata.runtime.group_config.get("konflux", {}).get("sast", {}).get("enabled", False)
+        group_config_sast_task = metadata.runtime.group_config.get("konflux", {}).get("sast", {}).get("enabled", True)
         image_config_sast_task = metadata.config.get("konflux", {}).get("sast", {}).get("enabled", Missing)
         sast = image_config_sast_task if image_config_sast_task is not Missing else group_config_sast_task
 
@@ -988,3 +1026,43 @@ class KonfluxImageBuilder:
                 parent_image_nvrs.append(pullspec)
 
         return parent_image_nvrs
+
+    async def _trigger_base_image_release(self, metadata: ImageMetadata, nvr: str) -> bool:
+        """Trigger base image release for a single successful base image build.
+
+        Expects group_name format 'openshift-X.Y' (e.g., 'openshift-4.22') for
+        version extraction. Falls back to full group_name if format doesn't match.
+
+        Returns:
+            bool: True if base image release was triggered successfully, False otherwise
+        """
+        logger = self._logger.getChild(f"[{metadata.distgit_key}]")
+
+        if not metadata.is_snapshot_release_enabled():
+            logger.info(f"Skipping base image release for {nvr}: snapshot_release disabled")
+            return True
+
+        logger.info(f"Triggering base image release for {nvr}")
+
+        try:
+            # Extract build_version from group_name (expected: openshift-X.Y)
+            version_parts = self._config.group_name.split('-')
+            if len(version_parts) >= 2:
+                build_version = '-'.join(version_parts[1:])
+            else:
+                build_version = self._config.group_name
+
+            jenkins.start_base_image_release(
+                build_version=build_version,
+                assembly=metadata.runtime.assembly,
+                base_image_nvrs=[nvr],
+                doozer_data_path=getattr(metadata.runtime, 'data_path', ''),
+                doozer_data_gitref=getattr(metadata.runtime, 'data_gitref', ''),
+                dry_run=self._config.dry_run,
+            )
+            logger.info(f"Successfully triggered base image release for {nvr}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to trigger base image release for {nvr}: {e}")
+            return False

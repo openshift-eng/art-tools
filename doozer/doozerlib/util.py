@@ -23,17 +23,21 @@ from artcommonlib.arch_util import GO_ARCHES, brew_arch_for_go_arch, go_arch_for
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.format_util import red_print
 from artcommonlib.model import Missing, Model
-from artcommonlib.oc_image_info import oc_image_info__cached, oc_image_info__cached_async
-from artcommonlib.util import isolate_major_minor_in_group
-from async_lru import alru_cache
-from tenacity import retry, stop_after_attempt, wait_fixed
+from artcommonlib.util import (
+    isolate_major_minor_in_group,
+    oc_image_info,  # noqa: F401 - re-exported for backward compatibility
+    oc_image_info_async,  # noqa: F401 - re-exported for backward compatibility
+    oc_image_info_for_arch,  # noqa: F401 - re-exported for backward compatibility
+    oc_image_info_for_arch_async,
+    oc_image_info_show_multiarch,  # noqa: F401 - re-exported for backward compatibility
+    uses_konflux_imagestream_override,
+)
 
 try:
     from reprlib import repr
 except ImportError:
     pass
 
-from functools import lru_cache
 
 DICT_EMPTY = object()
 logger = logging.getLogger(__name__)
@@ -305,6 +309,28 @@ def isolate_nightly_name_components(nightly_name: str) -> (str, str, bool):
     return major_minor, brew_arch, is_private
 
 
+def get_nightly_pullspec(nightly: str, build_system: str = 'konflux') -> str:
+    """
+    Construct nightly pullspec from nightly name.
+
+    :param nightly: Nightly name (e.g., '5.0.0-0.nightly-2022-12-01-153811')
+    :param build_system: 'brew' or 'konflux'
+    :return: Full pullspec URL
+    """
+    major_minor, brew_cpu_arch, priv = isolate_nightly_name_components(nightly)
+
+    # Extract major version from nightly name
+    major = int(major_minor.split('.')[0])
+
+    if build_system == 'brew' or uses_konflux_imagestream_override(major_minor):
+        release_suffix = "release-5" if major == 5 else "release"
+    else:
+        release_suffix = 'konflux-release'
+
+    rc_suffix = go_suffix_for_arch(brew_cpu_arch, priv)
+    return f"registry.ci.openshift.org/ocp{rc_suffix}/{release_suffix}{rc_suffix}:{nightly}"
+
+
 # https://code.activestate.com/recipes/577504/
 def total_size(o, handlers=None, verbose=False):
     """Returns the approximate memory footprint an object and all of its contents.
@@ -519,7 +545,7 @@ def get_release_calc_previous(
 
 
 async def find_manifest_list_sha(pullspec):
-    image_data = oc_image_info_for_arch__caching(pullspec)
+    image_data = await oc_image_info_for_arch_async(pullspec)
     if 'listDigest' not in image_data:
         raise ValueError('Specified image is not a manifest-list.')
     return image_data['listDigest']
@@ -578,179 +604,6 @@ def get_release_name_for_assembly(group_name: str, releases_config: Model, assem
                     "patch_version is not set in assembly definition and can't be auto-determined through the chain of inheritance."
                 )
     return get_release_name(assembly_type, group_name, assembly_name, patch_version)
-
-
-@retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
-def oc_image_info(
-    pullspec: str,
-    *options,
-    registry_config: Optional[str] = None,
-    strict: bool = True,
-) -> dict | list[dict] | None:
-    """
-    Returns a Dict of the parsed JSON output of `oc image info` for the specified
-    pullspec. Use oc_image_info__caching if you do not believe the image will change
-    during the course of doozer's execution.
-
-    Results for sha256-pinned pullspecs are cached in Redis when credentials are available.
-
-    :param pullspec: e.g. registry-proxy.engineering.redhat.com/rh-osbs/openshift-ose-vsphere-problem-detector-rhel9:v4.19.0-202501230108.p0.gcbd8539.assembly.stream.el9
-    :param options: list of extra args to use with oc, e.g. '--show-multiarch', '--filter-by-os=linux/amd64'
-    :param registry_config: The path to the registry config file.
-    :param strict: If True, raise exception on errors. If False, return None for "manifest unknown" errors.
-    :return: Parsed JSON output or None if strict=False and image doesn't exist
-    """
-    try:
-        out = oc_image_info__cached(pullspec, *options, registry_config=registry_config)
-    except ChildProcessError as e:
-        err_msg = str(e)
-        if not strict and 'manifest unknown' in err_msg.lower():
-            return None
-        raise IOError(err_msg) from e
-
-    return json.loads(out)
-
-
-def oc_image_info_for_arch(
-    pullspec: str, go_arch: str = 'amd64', registry_config: Optional[str] = None, strict: bool = True
-) -> dict | None:
-    """
-    Filter by os because images can be multi-arch manifest lists
-    (which cause oc image info to throw an error if not filtered).
-
-    :param pullspec: Image pullspec
-    :param go_arch: Architecture to filter by (e.g., 'amd64', 'arm64')
-    :param registry_config: Path to registry config file
-    :param strict: If True, raise exception on errors. If False, return None for "manifest unknown" errors.
-    :return: Dict of image info or None if strict=False and image doesn't exist
-    """
-    result = oc_image_info(pullspec, f'--filter-by-os={go_arch}', registry_config=registry_config, strict=strict)
-    if result is None:
-        return None
-    assert isinstance(result, dict), f"Expected dict from oc_image_info with --filter-by-os, got {type(result)}"
-    return result
-
-
-@lru_cache(maxsize=1000)
-def oc_image_info_for_arch__caching(
-    pullspec: str, go_arch: str = 'amd64', registry_config: Optional[str] = None, strict: bool = True
-) -> dict | None:
-    """
-    Returns a Dict of the parsed JSON output of `oc image info` for the specified
-    pullspec. This function will cache that output per pullspec, so do not use it
-    if you expect the image to change during the course of doozer's execution.
-
-    :param pullspec: Image pullspec
-    :param go_arch: Architecture to filter by (e.g., 'amd64', 'arm64')
-    :param registry_config: Path to registry config file
-    :param strict: If True, raise exception on errors. If False, return None for "manifest unknown" errors.
-    :return: Dict of image info or None if strict=False and image doesn't exist
-    """
-    return oc_image_info_for_arch(pullspec, go_arch, registry_config=registry_config, strict=strict)
-
-
-def oc_image_info_show_multiarch(
-    pullspec: str,
-    registry_config: Optional[str] = None,
-    strict: bool = True,
-) -> dict | list[dict] | None:
-    """
-    Runs oc image info with --show-multiarch which can be used with both single and multi arch images.
-    For single arch images, it will return a dict representing the supported arch manifest.
-    For multi arch images, it will return a list of dictionaries, each of these representing a single arch
-
-    :param pullspec: Image pullspec
-    :param registry_config: Path to registry config file
-    :param strict: If True, raise exception on errors. If False, return None for "manifest unknown" errors.
-    :return: Dict/List of image info or None if strict=False and image doesn't exist
-    """
-    return oc_image_info(
-        pullspec,
-        '--show-multiarch',
-        registry_config=registry_config,
-        strict=strict,
-    )
-
-
-@lru_cache(maxsize=1000)
-def oc_image_info_show_multiarch__caching(
-    pullspec: str,
-    registry_config: Optional[str] = None,
-    strict: bool = True,
-) -> dict | list[dict] | None:
-    """
-    Runs oc image info with --show-multiarch which can be used with both single and multi arch images.
-    For single arch images, it will return a dict representing the supported arch manifest.
-    For multi arch images, it will return a list of dictionaries, each of these representing a single arch
-
-    :param pullspec: Image pullspec
-    :param registry_config: Path to registry config file
-    :param strict: If True, raise exception on errors. If False, return None for "manifest unknown" errors.
-    :return: Dict/List of image info or None if strict=False and image doesn't exist
-    """
-    return oc_image_info_show_multiarch(pullspec, registry_config, strict)
-
-
-@retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
-async def oc_image_info_async(
-    pullspec: str,
-    *options,
-    registry_config: Optional[str] = None,
-) -> Union[Dict, List]:
-    """
-    Returns a Dict of the parsed JSON output of `oc image info` for the specified
-    pullspec.
-    This function will authenticate with the registry using the provided registry_config.
-
-    Results for sha256-pinned pullspecs are cached in Redis when credentials are available.
-
-    Use oc_image_info_async__caching if you think the image won't change during the course of doozer
-    execution.
-
-    :param pullspec: The image pullspec to query.
-    :param registry_config: The path to the registry config file.
-    :return: The parsed JSON output of `oc image info`.
-    """
-    out = await oc_image_info__cached_async(pullspec, *options, registry_config=registry_config)
-    return json.loads(out)
-
-
-async def oc_image_info_for_arch_async(
-    pullspec: str,
-    go_arch: str = 'amd64',
-    registry_config: Optional[str] = None,
-) -> Dict:
-    """
-    Runs oc image info with --filter-by-os because images can be multi-arch manifest lists
-    (which cause oc image info to throw an error if not filtered).
-    Will return a single dictionary repesenting the amd64 arch
-    """
-    return await oc_image_info_async(
-        pullspec,
-        f'--filter-by-os={go_arch}',
-        registry_config=registry_config,
-    )
-
-
-@alru_cache
-async def oc_image_info_for_arch_async__caching(
-    pullspec: str,
-    go_arch: str = 'amd64',
-    registry_config: Optional[str] = None,
-) -> Dict:
-    """
-    Returns a Dict of the parsed JSON output of `oc image info` for the specified
-    pullspec. This will authenticate with the registry using the provided config.
-
-    This function will cache that output per pullspec, so do not use it
-    if you expect the image to change during the course of doozer's execution.
-
-    :param pullspec: The image pullspec to query.
-    :param go_arch: The Go architecture to filter by.
-    :param registry_config: The path to the registry config file.
-    :return: The parsed JSON output of `oc image info`.
-    """
-    return await oc_image_info_for_arch_async(pullspec, go_arch, registry_config)
 
 
 async def oc_image_extract_async(pullspec: str, path_specs: list[str], registry_config: Optional[str] = None):
@@ -816,7 +669,13 @@ def get_konflux_build_priority(metadata, group):
 
     # 4. Higher than default priority for main & pre-GA N-1 streams.
     if group.startswith("openshift-") and phase in ("pre-release", "signing"):
+        if metadata.children:
+            return higher_by(3)
         return higher_by(2)
+
+    # 5. Non-leaf images get a priority bump since they block dependent builds.
+    if metadata.children:
+        return higher_by(1)
 
     # Default
     return higher_by(0)

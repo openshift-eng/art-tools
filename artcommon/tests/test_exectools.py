@@ -267,5 +267,54 @@ class TestExectools(IsolatedAsyncioTestCase):
         self.assertGreaterEqual(duration, 0.25)
 
 
+class TestRedactEnvForLogging(unittest.TestCase):
+    def test_redacts_password_keys(self):
+        env = {"GIT_PASSWORD": "ghs_secret123", "DB_PASSWORD": "hunter2"}
+        result = exectools._redact_env_for_logging(env)
+        self.assertEqual(result["GIT_PASSWORD"], "***REDACTED***")
+        self.assertEqual(result["DB_PASSWORD"], "***REDACTED***")
+
+    def test_redacts_token_keys(self):
+        env = {"GITHUB_TOKEN": "ghp_abc", "SLACK_BOT_TOKEN": "xoxb-123"}
+        result = exectools._redact_env_for_logging(env)
+        self.assertEqual(result["GITHUB_TOKEN"], "***REDACTED***")
+        self.assertEqual(result["SLACK_BOT_TOKEN"], "***REDACTED***")
+
+    def test_redacts_secret_and_key_and_credential(self):
+        env = {"API_SECRET": "s3cr3t", "PRIVATE_KEY": "pem-data", "SERVICE_CREDENTIAL": "cred"}
+        result = exectools._redact_env_for_logging(env)
+        for k in env:
+            self.assertEqual(result[k], "***REDACTED***")
+
+    def test_preserves_non_sensitive_keys(self):
+        env = {"GIT_SSH_COMMAND": "ssh -oBatchMode=yes", "GIT_TERMINAL_PROMPT": "0", "GIT_ASKPASS": "/tmp/script.sh"}
+        result = exectools._redact_env_for_logging(env)
+        self.assertEqual(result, env)
+
+    def test_case_insensitive(self):
+        env = {"git_password": "secret", "Github_Token": "tok"}
+        result = exectools._redact_env_for_logging(env)
+        self.assertEqual(result["git_password"], "***REDACTED***")
+        self.assertEqual(result["Github_Token"], "***REDACTED***")
+
+    def test_empty_dict(self):
+        self.assertEqual(exectools._redact_env_for_logging({}), {})
+
+    def test_cmd_gather_does_not_log_secrets(self):
+        secret_val = "ghs_SuperSecretToken123"
+        env = {"GIT_PASSWORD": secret_val, "GIT_ASKPASS": "/tmp/askpass.sh"}
+        with mock.patch("subprocess.Popen") as MockPopen:
+            mock_popen = MockPopen.return_value
+            mock_popen.communicate.return_value = (b"ok\n", b"")
+            mock_popen.returncode = 0
+
+            with self.assertLogs(level=logging.DEBUG) as cm:
+                exectools.cmd_gather(["/usr/bin/echo", "hi"], set_env=env)
+                log_text = "\n".join(cm.output)
+                self.assertNotIn(secret_val, log_text)
+                self.assertIn("***REDACTED***", log_text)
+                self.assertIn("/tmp/askpass.sh", log_text)
+
+
 if __name__ == "__main__":
     unittest.main()

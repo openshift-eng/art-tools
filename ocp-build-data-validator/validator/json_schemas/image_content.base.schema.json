@@ -18,6 +18,10 @@
           "$ref": "#/properties/source/properties/alias"
         },
         "alias-": {},
+        "allow_mismatched_siblings": {
+          "description": "If true, this image is excluded from sibling commit comparison in find_mismatched_siblings during build-sync",
+          "type": "boolean"
+        },
         "ci_alignment": {
           "type": "object",
           "properties": {
@@ -419,7 +423,18 @@
             "web!": {
               "$ref": "#/properties/source/properties/git/properties/web"
             },
-            "web-": {}
+            "web-": {},
+            "allow_unprotected_branch": {
+              "description": "If true, allow builds from branches without branch protection enabled. Use for onboarding, hotfixes, or emergency situations.",
+              "type": "boolean"
+            },
+            "allow_unprotected_branch?": {
+              "$ref": "#/properties/source/properties/git/properties/allow_unprotected_branch"
+            },
+            "allow_unprotected_branch!": {
+              "$ref": "#/properties/source/properties/git/properties/allow_unprotected_branch"
+            },
+            "allow_unprotected_branch-": {}
           },
           "additionalProperties": false
         },

@@ -26,9 +26,10 @@ class Lock(enum.Enum):
     SCAN = 'lock:scan:{version}'
     SCAN_KONFLUX = 'lock:scan-konflux:{version}'
     FBC_BUILD = 'lock:fbc-build:{group}'
-    OADP_BUILD = 'lock:oadp-build:{group}'
-    OADP_SCAN = 'lock:oadp-scan:{group}'
+    LAYERED_PRODUCTS_BUILD = 'lock:layered-products-build:{group}'
+    LAYERED_PRODUCTS_SCAN = 'lock:layered-products-scan:{group}'
     BUILD_OKD = 'lock:build-okd:{version}'
+    SCAN_OKD = 'lock:scan-okd:{version}'
     SCAN_PLASHET_RPMS = 'lock:scan-plashet-rpms:{assembly}:{group}'
     SCAN_OPERATOR = 'lock:scan-operator:{version}'
 
@@ -124,18 +125,23 @@ LOCK_POLICY = {
         'retry_delay_min': 0.1,
         'lock_timeout': DEFAULT_LOCK_TIMEOUT,
     },
-    Lock.OADP_BUILD: {
+    Lock.LAYERED_PRODUCTS_BUILD: {
         'retry_count': 36000,
         'retry_delay_min': 0.1,
         'lock_timeout': DEFAULT_LOCK_TIMEOUT,
     },
-    Lock.OADP_SCAN: {
+    Lock.LAYERED_PRODUCTS_SCAN: {
         'retry_count': 36000,
         'retry_delay_min': 0.1,
         'lock_timeout': DEFAULT_LOCK_TIMEOUT,
     },
     Lock.BUILD_OKD: {
         'retry_count': 36000 * 1,
+        'retry_delay_min': 0.1,
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
+    },
+    Lock.SCAN_OKD: {
+        'retry_count': 36000,
         'retry_delay_min': 0.1,
         'lock_timeout': DEFAULT_LOCK_TIMEOUT,
     },
@@ -209,8 +215,17 @@ class LockManager(Aioredlock):
             await super().unlock(lock)
             self.logger.info('Lock released')
         except LockError:
+            # Log the error but don't re-raise - lock release failures during cleanup
+            # should not crash the job. The lock will expire eventually.
             self.logger.error('Failed releasing lock %s', lock.resource)
-            raise
+
+    async def is_locked(self, resource_or_lock):
+        locked = await super().is_locked(resource_or_lock)
+        if locked:
+            resource = resource_or_lock.resource if hasattr(resource_or_lock, 'resource') else resource_or_lock
+            lock_id = await self.get_lock_id(resource)
+            self.logger.info('Resource %s is currently locked by %s', resource, lock_id)
+        return locked
 
     async def get_lock_id(self, resource) -> str:
         self.logger.debug('Retrieving identifier for lock %s', resource)

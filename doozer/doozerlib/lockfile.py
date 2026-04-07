@@ -22,6 +22,25 @@ DEFAULT_RPM_LOCKFILE_NAME = "rpms.lock.yaml"
 DEFAULT_ARTIFACT_LOCKFILE_NAME = "artifacts.lock.yaml"
 
 
+def sort_repos_for_lockfile_resolution(repo_names: set[str]) -> list[str]:
+    """
+    Order repos so OCP content (rhocp / *ose-rpms*) is preferred over plain RHEL (baseos, appstream, CRB, ...).
+
+    :meth:`RpmInfoCollector._fetch_rpms_info_per_arch` resolves each package name from the first repo in
+    iteration order that contains it. ``repo_names`` is a ``set``, so order was undefined; the same RPM
+    name can exist in both RHEL AppStream (e.g. modular ``runc`` 1.1.x) and OSE (``runc`` 1.2.x from
+    ``rhaos``). Prefer OSE so lockfiles and hermetic prefetch match ``check_external_packages`` / Brew.
+    """
+
+    def sort_key(name: str) -> tuple[int, str]:
+        lower = name.lower()
+        if 'ose-rpms' in lower or 'rhocp' in lower:
+            return (0, name)
+        return (1, name)
+
+    return sorted(repo_names, key=sort_key)
+
+
 @total_ordering
 @dataclass(frozen=True)
 class RpmInfo:
@@ -269,7 +288,7 @@ class RpmInfoCollector:
         unresolved_rpms = set(rpm_names)
         missing_rpms = unresolved_rpms
 
-        for repo_name in repo_names:
+        for repo_name in sort_repos_for_lockfile_resolution(repo_names):
             repodata = self.loaded_repos.get(f'{repo_name}-{arch}')
             if repodata is None:
                 self.logger.error(
@@ -493,10 +512,55 @@ class RPMLockfileGenerator:
     for asynchronous RPM metadata retrieval and outputs YAML lockfiles along with digest files.
     """
 
-    def __init__(self, repos: Repos, logger: Optional[Logger] = None, runtime=None):
+    def __init__(
+        self,
+        repos: Repos,
+        logger: Optional[Logger] = None,
+        runtime=None,
+        lockfile_seed_nvrs: Optional[list[str]] = None,
+    ):
         self.logger = logger or logutil.get_logger(__name__)
         self.builder = RpmInfoCollector(repos, self.logger)
         self.runtime = runtime
+        self.lockfile_seed_nvrs = lockfile_seed_nvrs
+
+    def _validate_cross_arch_version_sets(self, rpms_info_by_arch: dict[str, list[RpmInfo]]) -> None:
+        """Validate that RPM latest version sets are consistent across architectures where packages exist."""
+        package_arch_evrs = {}
+
+        for arch, rpm_list in rpms_info_by_arch.items():
+            # Group RPMs by package name
+            packages = {}
+            for rpm in rpm_list:
+                packages.setdefault(rpm.name, []).append(rpm)
+
+            # For each package, find latest version and add to validation set
+            for package_name, package_rpms in packages.items():
+                if len(package_rpms) == 1:
+                    latest_rpm = package_rpms[0]
+                else:
+                    # Find latest using RpmInfo comparison (leverages @total_ordering)
+                    latest_rpm = package_rpms[0]
+                    for rpm in package_rpms[1:]:
+                        if rpm > latest_rpm:
+                            latest_rpm = rpm
+
+                package_arch_evrs.setdefault(package_name, {}).setdefault(arch, set()).add(latest_rpm.evr)
+
+        mismatches = []
+        for package_name, arch_evrs in package_arch_evrs.items():
+            if len(arch_evrs) < 2:
+                continue
+
+            evr_sets = list(arch_evrs.values())
+            reference_set = evr_sets[0]
+
+            if not all(evr_set == reference_set for evr_set in evr_sets[1:]):
+                arch_details = [f"{arch}:{{{','.join(sorted(evr_set))}}}" for arch, evr_set in arch_evrs.items()]
+                mismatches.append(f"{package_name} ({'; '.join(arch_details)})")
+
+        if mismatches:
+            raise ValueError(f"RPM version set mismatches: {'; '.join(mismatches)}")
 
     async def should_generate_lockfile(
         self, image_meta: ImageMetadata, dest_dir: Path, filename: str = DEFAULT_RPM_LOCKFILE_NAME
@@ -520,7 +584,7 @@ class RPMLockfileGenerator:
             self.logger.info(f"Skipping lockfile generation for {image_meta.distgit_key}: repositories set is empty")
             return False, set()
 
-        rpms_to_install = await image_meta.get_lockfile_rpms_to_install()
+        rpms_to_install = await image_meta.get_lockfile_rpms_to_install(lockfile_seed_nvrs=self.lockfile_seed_nvrs)
 
         if not rpms_to_install:
             self.logger.warning(
@@ -578,6 +642,8 @@ class RPMLockfileGenerator:
             )
 
             if repos_by_arch:
+                # Note: loading repos across arches in parallel (asyncio.gather) was tested
+                # and did not improve performance. Keep sequential loading.
                 for arch, repos_for_arch in repos_by_arch.items():
                     await self.builder._load_repos(repos_for_arch, arch)
             else:
@@ -629,6 +695,9 @@ class RPMLockfileGenerator:
             self.builder.fetch_rpms_info(arches, enabled_repos, rpms_to_install),
             self.builder.fetch_modules_info(arches, enabled_repos, modules_to_install),
         )
+
+        # Validate cross-architecture version set consistency
+        self._validate_cross_arch_version_sets(rpms_info_by_arch)
 
         if image_meta.is_cross_arch_enabled():
             self.logger.info("Cross-architecture lockfile inclusion enabled")

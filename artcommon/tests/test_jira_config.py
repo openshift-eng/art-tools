@@ -19,8 +19,8 @@ class TestJiraConfig(unittest.TestCase):
         """
         Test that the default JIRA server URL is set correctly.
         """
-        # When JIRA_SERVER_URL env var is not set, should use default
-        self.assertEqual(jira_config.DEFAULT_JIRA_SERVER_URL, "https://issues.redhat.com")
+        # When JIRA_SERVER_URL env var is not set, should use default (hardcoded, not from bug.yml)
+        self.assertEqual(jira_config.DEFAULT_JIRA_SERVER_URL, "https://redhat.atlassian.net")
 
     def test_jira_api_field_url(self):
         """
