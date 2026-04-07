@@ -260,7 +260,7 @@ class Repodata:
 
     def _filter_nvr_versions(self, original_nvr: str, matching_rpms: list[Rpm], rpm_name: str) -> list[Rpm]:
         """
-        Filter RPMs to return specific version from NVR + latest version.
+        Filter RPMs to return specific version from NVR + latest version if upgrade path is valid.
 
         Args:
             original_nvr: The original NVR string provided by user
@@ -268,24 +268,18 @@ class Repodata:
             rpm_name: Extracted package name
 
         Returns:
-            List containing specific RPM + latest RPM (deduplicated)
+            List containing specific RPM + latest RPM (if latest >= specific).
+            Empty list if specific version not available in this repo.
         """
-        if not matching_rpms:
+        specific_rpm = self._find_specific_rpm(original_nvr, matching_rpms)
+        if not specific_rpm:
             return []
 
-        result_rpms = []
+        result_rpms = [specific_rpm]
 
-        # Find the specific RPM matching the original NVR
-        specific_rpm = self._find_specific_rpm(original_nvr, matching_rpms)
-        if specific_rpm:
-            result_rpms.append(specific_rpm)
-
-        # Find the latest RPM version
         latest_rpm = self._find_latest_rpm(matching_rpms)
-        if latest_rpm:
-            # Only add latest if it's different from specific
-            if not specific_rpm or latest_rpm.nvr != specific_rpm.nvr:
-                result_rpms.append(latest_rpm)
+        if latest_rpm and latest_rpm.nvr != specific_rpm.nvr and latest_rpm.compare(specific_rpm) >= 0:
+            result_rpms.append(latest_rpm)
 
         return result_rpms
 
