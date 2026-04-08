@@ -468,7 +468,7 @@ class UpdateGolangPipeline:
                 exact=True,
             )
             builder_nvr = list(list(go_nvr_map.values())[0])[0]
-            actual_go_nvr = go_nvr_map.keys()[0]
+            actual_go_nvr = list(go_nvr_map.keys())[0]
             expected_go_nvr = el_nvr_map[el_v]
             if actual_go_nvr != expected_go_nvr:
                 _LOGGER.warning(
