@@ -1,7 +1,8 @@
 from unittest.mock import Mock
 
 import pytest
-from doozerlib.lockfile import RpmInfo, RPMLockfileGenerator
+from doozerlib.lockfile import RpmInfo, RpmInfoCollector, RPMLockfileGenerator
+from doozerlib.repodata import Repodata, Rpm
 
 
 class TestCrossArchVersionSetValidation:
@@ -776,3 +777,151 @@ class TestCrossArchVersionSetValidation:
         assert validation_passed, (
             "Validation should pass when single-arch packages are present and multi-arch packages have identical versions"
         )
+
+
+class TestCrossArchRepoDetection:
+    """Test that cross-arch repo URL misconfiguration is detected and handled."""
+
+    def setup_method(self):
+        self.mock_repos = Mock()
+        self.generator = RPMLockfileGenerator(self.mock_repos)
+
+    def test_cross_arch_mismatch_is_warning_not_error(self):
+        """When a version mismatch is caused by a cross-arch repo URL, it should warn, not raise."""
+        # Simulate: openstack repo configured for aarch64/s390x but contains x86_64 RPMs
+        self.generator.builder.cross_arch_repos = {
+            ("openstack-16-rpms", "aarch64"): {"x86_64"},
+            ("openstack-16-rpms", "s390x"): {"x86_64"},
+        }
+
+        # x86_64/ppc64le get higher version from openstack repo;
+        # aarch64/s390x get lower version from base repo (openstack RPMs filtered out)
+        rpms_info_by_arch = {
+            "x86_64": [
+                RpmInfo(
+                    name="python3-netifaces", evr="0:0.10.9-9.el8ost.1",
+                    checksum="sha1", repoid="openstack-16-rpms", size=100,
+                    sourcerpm="src.rpm", url="url1", epoch=0,
+                    version="0.10.9", release="9.el8ost.1",
+                ),
+            ],
+            "aarch64": [
+                RpmInfo(
+                    name="python3-netifaces", evr="0:0.10.6-4.el8",
+                    checksum="sha2", repoid="rhel-8-baseos-rpms", size=100,
+                    sourcerpm="src.rpm", url="url2", epoch=0,
+                    version="0.10.6", release="4.el8",
+                ),
+            ],
+            "s390x": [
+                RpmInfo(
+                    name="python3-netifaces", evr="0:0.10.6-4.el8",
+                    checksum="sha3", repoid="rhel-8-baseos-rpms", size=100,
+                    sourcerpm="src.rpm", url="url3", epoch=0,
+                    version="0.10.6", release="4.el8",
+                ),
+            ],
+            "ppc64le": [
+                RpmInfo(
+                    name="python3-netifaces", evr="0:0.10.9-9.el8ost.1",
+                    checksum="sha4", repoid="openstack-16-rpms", size=100,
+                    sourcerpm="src.rpm", url="url4", epoch=0,
+                    version="0.10.9", release="9.el8ost.1",
+                ),
+            ],
+        }
+
+        # Should NOT raise - just warn
+        self.generator._validate_cross_arch_version_sets(rpms_info_by_arch)
+
+    def test_real_mismatch_still_raises(self):
+        """When a version mismatch is NOT caused by cross-arch repo issues, it should still raise."""
+        # No cross-arch repos
+        self.generator.builder.cross_arch_repos = {}
+
+        rpms_info_by_arch = {
+            "x86_64": [
+                RpmInfo(
+                    name="somepkg", evr="0:2.0-1.el9",
+                    checksum="sha1", repoid="repo1", size=100,
+                    sourcerpm="src.rpm", url="url1", epoch=0,
+                    version="2.0", release="1.el9",
+                ),
+            ],
+            "aarch64": [
+                RpmInfo(
+                    name="somepkg", evr="0:1.0-1.el9",
+                    checksum="sha2", repoid="repo1", size=100,
+                    sourcerpm="src.rpm", url="url2", epoch=0,
+                    version="1.0", release="1.el9",
+                ),
+            ],
+        }
+
+        with pytest.raises(ValueError, match="RPM version set mismatches"):
+            self.generator._validate_cross_arch_version_sets(rpms_info_by_arch)
+
+
+class TestDetectCrossArchRepo:
+    """Test _detect_cross_arch_repo method on RpmInfoCollector."""
+
+    def setup_method(self):
+        self.mock_repos = Mock()
+        self.collector = RpmInfoCollector(self.mock_repos)
+
+    def test_detects_wrong_arch_repo(self):
+        """Repo configured for aarch64 but containing x86_64 RPMs should be detected."""
+        repodata = Repodata(
+            name="openstack-rpms-aarch64",
+            primary_rpms=[
+                Rpm(name="pkg1", epoch=0, version="1.0", release="1.el8",
+                    arch="x86_64", checksum="c1", size=100,
+                    location="pkg1.rpm", sourcerpm="pkg1.src.rpm"),
+                Rpm(name="pkg2", epoch=0, version="2.0", release="1.el8",
+                    arch="x86_64", checksum="c2", size=200,
+                    location="pkg2.rpm", sourcerpm="pkg2.src.rpm"),
+            ],
+        )
+
+        self.collector._detect_cross_arch_repo("openstack-rpms", "aarch64", repodata)
+
+        assert ("openstack-rpms", "aarch64") in self.collector.cross_arch_repos
+        assert self.collector.cross_arch_repos[("openstack-rpms", "aarch64")] == {"x86_64"}
+
+    def test_no_detection_for_correct_arch(self):
+        """Repo with correct arch RPMs should not be flagged."""
+        repodata = Repodata(
+            name="baseos-rpms-aarch64",
+            primary_rpms=[
+                Rpm(name="pkg1", epoch=0, version="1.0", release="1.el8",
+                    arch="aarch64", checksum="c1", size=100,
+                    location="pkg1.rpm", sourcerpm="pkg1.src.rpm"),
+            ],
+        )
+
+        self.collector._detect_cross_arch_repo("baseos-rpms", "aarch64", repodata)
+
+        assert ("baseos-rpms", "aarch64") not in self.collector.cross_arch_repos
+
+    def test_noarch_only_repo_is_fine(self):
+        """Repo with only noarch packages should not be flagged."""
+        repodata = Repodata(
+            name="noarch-repo-aarch64",
+            primary_rpms=[
+                Rpm(name="pkg1", epoch=0, version="1.0", release="1.el8",
+                    arch="noarch", checksum="c1", size=100,
+                    location="pkg1.rpm", sourcerpm="pkg1.src.rpm"),
+            ],
+        )
+
+        self.collector._detect_cross_arch_repo("noarch-repo", "aarch64", repodata)
+
+        assert ("noarch-repo", "aarch64") not in self.collector.cross_arch_repos
+
+    def test_empty_repo_is_fine(self):
+        """Repo with no RPMs should not be flagged."""
+        repodata = Repodata(name="empty-repo-aarch64", primary_rpms=[])
+
+        self.collector._detect_cross_arch_repo("empty-repo", "aarch64", repodata)
+
+        assert ("empty-repo", "aarch64") not in self.collector.cross_arch_repos

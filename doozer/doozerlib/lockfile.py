@@ -210,6 +210,9 @@ class RpmInfoCollector:
         self.repos = repos
         self.loaded_repos: dict[str, Repodata] = {}
         self.logger = logger or logutil.get_logger(__name__)
+        # Track repos whose URL is misconfigured for certain arches (e.g., aarch64 URL pointing to x86_64 content).
+        # Maps (repo_name, arch) -> set of actual RPM arches found in the repodata.
+        self.cross_arch_repos: dict[tuple[str, str], set[str]] = {}
 
     @start_as_current_span_async(TRACER, "lockfile.load_repos")
     async def _load_repos(self, requested_repos: set[str], arch: str):
@@ -252,6 +255,8 @@ class RpmInfoCollector:
 
         self.loaded_repos.update({r.name: r for r in repodatas})
         self.logger.info(f"Finished loading repos: {', '.join(repos_to_fetch)} for arch {arch}")
+        for repo_name, repodata in zip(repos_to_fetch, repodatas):
+            self._detect_cross_arch_repo(repo_name, arch, repodata)
 
     def _fetch_rpms_info_per_arch(self, rpm_names: set[str], repo_names: set[str], arch: str) -> list[RpmInfo]:
         """
@@ -316,6 +321,38 @@ class RpmInfoCollector:
             )
 
         return sorted(best_rpms.values())
+
+    def _detect_cross_arch_repo(self, repo_name: str, arch: str, repodata: Repodata) -> None:
+        """
+        Detect when a repo configured for a given arch actually contains RPMs
+        for a different arch (e.g., aarch64 URL pointing to x86_64 content).
+
+        When detected, records the mismatch in self.cross_arch_repos so that
+        the cross-arch version validator can account for it.
+        """
+        if not repodata.primary_rpms:
+            return
+
+        # Sample the first RPMs to detect what arches are actually in the repo
+        # (noarch packages are valid for any arch, so exclude them)
+        actual_arches = set()
+        for rpm in repodata.primary_rpms[:200]:
+            if rpm.arch != 'noarch':
+                actual_arches.add(rpm.arch)
+
+        if not actual_arches:
+            # Repo only has noarch packages, which is fine for any arch
+            return
+
+        if arch not in actual_arches:
+            self.cross_arch_repos[(repo_name, arch)] = actual_arches
+            self.logger.warning(
+                f'Repo {repo_name} is configured for arch {arch} but its repodata contains '
+                f'RPMs for {", ".join(sorted(actual_arches))} instead. '
+                f'This is likely a misconfigured repo URL. '
+                f'Packages from this repo will not be available for {arch}, '
+                f'which may cause cross-arch version mismatches.'
+            )
 
     @start_as_current_span_async(TRACER, "lockfile.fetch_rpms_info")
     async def fetch_rpms_info(
@@ -517,7 +554,11 @@ class RPMLockfileGenerator:
 
     def _validate_cross_arch_version_sets(self, rpms_info_by_arch: dict[str, list[RpmInfo]]) -> None:
         """Validate that RPM latest version sets are consistent across architectures where packages exist."""
-        package_arch_evrs = {}
+
+        # Collect arches that have known cross-arch repo URL misconfiguration
+        cross_arch_arches = {arch for (_, arch) in self.builder.cross_arch_repos}
+
+        package_arch_evrs: dict[str, dict[str, set[str]]] = {}
 
         for arch, rpm_list in rpms_info_by_arch.items():
             # Group RPMs by package name
@@ -539,6 +580,7 @@ class RPMLockfileGenerator:
                 package_arch_evrs.setdefault(package_name, {}).setdefault(arch, set()).add(latest_rpm.evr)
 
         mismatches = []
+        warnings = []
         for package_name, arch_evrs in package_arch_evrs.items():
             if len(arch_evrs) < 2:
                 continue
@@ -548,10 +590,36 @@ class RPMLockfileGenerator:
 
             if not all(evr_set == reference_set for evr_set in evr_sets[1:]):
                 arch_details = [f"{arch}:{{{','.join(sorted(evr_set))}}}" for arch, evr_set in arch_evrs.items()]
-                mismatches.append(f"{package_name} ({'; '.join(arch_details)})")
+                mismatch_msg = f"{package_name} ({'; '.join(arch_details)})"
+
+                # Check if this mismatch is explainable by cross-arch repo misconfiguration.
+                # If any arch with the mismatch has a cross-arch repo issue, treat as warning.
+                if cross_arch_arches and self._is_cross_arch_mismatch(arch_evrs, cross_arch_arches):
+                    warnings.append(mismatch_msg)
+                else:
+                    mismatches.append(mismatch_msg)
+
+        if warnings:
+            self.logger.warning(
+                f"RPM version mismatches due to cross-arch repo URL misconfiguration (non-fatal): "
+                f"{'; '.join(warnings)}"
+            )
 
         if mismatches:
             raise ValueError(f"RPM version set mismatches: {'; '.join(mismatches)}")
+
+    def _is_cross_arch_mismatch(
+        self, arch_evrs: dict[str, set[str]], cross_arch_arches: set[str],
+    ) -> bool:
+        """
+        Determine if a version mismatch is caused by cross-arch repo misconfiguration.
+
+        Returns True if at least one arch involved in the mismatch has a known
+        cross-arch repo issue, indicating the mismatch is due to repo URL
+        misconfiguration rather than a real packaging problem.
+        """
+        mismatched_arches = set(arch_evrs.keys())
+        return bool(mismatched_arches & cross_arch_arches)
 
     async def should_generate_lockfile(
         self, image_meta: ImageMetadata, dest_dir: Path, filename: str = DEFAULT_RPM_LOCKFILE_NAME
