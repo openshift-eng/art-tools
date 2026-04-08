@@ -322,7 +322,7 @@ async def scan_operator(runtime: Runtime, version: str, assembly: str, data_path
     if runtime.dry_run:
         await pipeline.run()
     else:
-        build_lock_name = Lock.BUILD_KONFLUX.value.format(version=version)
+        build_lock_name = Lock.BUILD_KONFLUX.value.format(version=version, assembly=assembly)
         lock_manager = locks.LockManager([redis.redis_url()])
 
         try:

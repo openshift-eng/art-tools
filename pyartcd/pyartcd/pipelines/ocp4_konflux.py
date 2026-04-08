@@ -969,6 +969,6 @@ async def ocp4(
         await locks.run_with_lock(
             coro=pipeline.run(),
             lock=Lock.BUILD_KONFLUX,
-            lock_name=Lock.BUILD_KONFLUX.value.format(version=version),
+            lock_name=Lock.BUILD_KONFLUX.value.format(version=version, assembly=assembly),
             lock_id=lock_identifier,
         )

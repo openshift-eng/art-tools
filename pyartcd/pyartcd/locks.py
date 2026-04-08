@@ -16,7 +16,7 @@ class Lock(enum.Enum):
     MIRRORING_RPMS = 'lock:mirroring-rpms:{version}'
     PLASHET = 'lock:compose:{assembly}:{group}'
     BUILD = 'lock:build:{version}'
-    BUILD_KONFLUX = 'lock:build-konflux:{version}'
+    BUILD_KONFLUX = 'lock:build-konflux:{version}:{assembly}'
     MASS_REBUILD = 'lock:mass-rebuild-serializer'
     KONFLUX_MASS_REBUILD = 'lock:konflux-mass-rebuild-serializer'
     SIGNING = 'lock:signing:{signing_env}'

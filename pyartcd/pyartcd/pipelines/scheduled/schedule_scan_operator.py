@@ -19,7 +19,7 @@ async def run_for(version: str, runtime: Runtime, lock_manager: LockManager):
         return
 
     # Skip if locked on build
-    build_lock_name = Lock.BUILD_KONFLUX.value.format(version=version)
+    build_lock_name = Lock.BUILD_KONFLUX.value.format(version=version, assembly='stream')
     if await lock_manager.is_locked(build_lock_name):
         runtime.logger.info(f'[{version}] Locked on {build_lock_name}, skipping')
         return

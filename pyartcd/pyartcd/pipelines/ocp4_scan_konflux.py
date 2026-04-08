@@ -269,7 +269,7 @@ async def ocp4_scan(runtime: Runtime, version: str, assembly: str, data_path: st
         # Should that happen, signal it by appending a [SKIPPED][LOCKED] to the build title
         async def run_with_build_lock():
             build_lock = Lock.BUILD_KONFLUX
-            build_lock_name = build_lock.value.format(version=version)
+            build_lock_name = build_lock.value.format(version=version, assembly=assembly)
             await locks.run_with_lock(
                 coro=pipeline.run(),
                 lock=build_lock,
