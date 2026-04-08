@@ -732,14 +732,19 @@ def start_microshift_sync(version: str, assembly: str, dry_run: bool, **kwargs):
     )
 
 
-def start_build_microshift_bootc(version: str, assembly: str, dry_run: bool, **kwargs):
+def start_build_microshift_bootc(
+    version: str, assembly: str, dry_run: bool, doozer_data_gitref: Optional[str] = None, **kwargs
+):
+    params = {
+        'BUILD_VERSION': version,
+        'ASSEMBLY': assembly,
+        'DRY_RUN': dry_run,
+    }
+    if doozer_data_gitref:
+        params['DOOZER_DATA_GITREF'] = doozer_data_gitref
     return start_build(
         job=Jobs.BUILD_MICROSHIFT_BOOTC,
-        params={
-            'BUILD_VERSION': version,
-            'ASSEMBLY': assembly,
-            'DRY_RUN': dry_run,
-        },
+        params=params,
         **kwargs,
     )
 
