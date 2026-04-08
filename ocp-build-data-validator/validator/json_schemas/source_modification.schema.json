@@ -23,12 +23,7 @@
     "command": {
       "type": "array",
       "items": {
-        "type": "string",
-        "enum": [
-          "update-console-sources",
-          "update-jenkins-label",
-          "upload-coreos-iso-to-lookaside-cache"
-        ]
+        "type": "string"
       }
     },
     "command?": {
