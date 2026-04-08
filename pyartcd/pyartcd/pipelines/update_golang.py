@@ -467,16 +467,17 @@ class UpdateGolangPipeline:
                 _LOGGER,
                 exact=True,
             )
-            builder_nvr = list(list(go_nvr_map.values())[0])[0]
-            actual_go_nvr = list(go_nvr_map.keys())[0]
+            actual_go_nvr, _ = next(iter(go_nvr_map.items()))
             expected_go_nvr = el_nvr_map[el_v]
             if actual_go_nvr != expected_go_nvr:
                 _LOGGER.warning(
-                    f"Installed golang rpm for {el_v} is different from the expected one: {actual_go_nvr} != {expected_go_nvr}"
+                    f"Installed golang rpm in {build_record.nvr} is different from the expected one: {actual_go_nvr} != {expected_go_nvr}"
                 )
             else:
-                _LOGGER.info(f"Found existing builder image in Konflux: {builder_nvr} built with {expected_go_nvr}")
-                builder_nvrs[el_v] = builder_nvr
+                _LOGGER.info(
+                    f"Found existing builder image in Konflux: {build_record.nvr} built with {expected_go_nvr}"
+                )
+                builder_nvrs[el_v] = build_record.nvr
         return builder_nvrs
 
     def _get_builder_pullspec(self, parsed_nvr, build_system: str):
