@@ -580,10 +580,8 @@ data:
     def test_get_rpms_nvr_not_found(self):
         # Test NVR input where the specific version doesn't exist
         found, not_found = self.repodata.get_rpms("foo-9.9.9-1.el9", arch="x86_64")
-        # Should still return latest version of foo, but report the specific NVR as not found
-        self.assertEqual(len(found), 1)
-        self.assertEqual(found[0].name, "foo")
-        self.assertEqual(found[0].nvr, "foo-1.2.3-1.el9")  # Latest version
+        # Should return empty list when specific version not available (no arbitrary latest selection)
+        self.assertEqual(len(found), 0)
         self.assertEqual(not_found, ["foo-9.9.9-1.el9"])
 
     def test_get_rpms_mixed_nvr_and_names(self):
@@ -734,6 +732,105 @@ data:
                 is_nvr, extracted_name = self.repodata._detect_nvr_vs_name(input_str)
                 self.assertEqual(is_nvr, expected_is_nvr, f"NVR detection failed for {input_str}")
                 self.assertEqual(extracted_name, expected_name, f"Name extraction failed for {input_str}")
+
+    def test_filter_nvr_versions_current_missing(self):
+        rpms = []
+        result = self.repodata._filter_nvr_versions('python3-netifaces-0.10.9-9.el8ost.1', rpms, 'python3-netifaces')
+        self.assertEqual(result, [])
+
+    def test_filter_nvr_versions_downgrade_prevention(self):
+        rpms = [
+            Rpm(
+                name="python3-netifaces",
+                epoch=0,
+                version="0.10.9",
+                release="9.el8ost.1",
+                arch="x86_64",
+                checksum="abc",
+                size=100,
+                location="pkg.rpm",
+                sourcerpm="src.rpm",
+            ),
+            Rpm(
+                name="python3-netifaces",
+                epoch=0,
+                version="0.10.6",
+                release="4.el8",
+                arch="x86_64",
+                checksum="def",
+                size=100,
+                location="pkg2.rpm",
+                sourcerpm="src2.rpm",
+            ),
+        ]
+        result = self.repodata._filter_nvr_versions('python3-netifaces-0.10.9-9.el8ost.1', rpms, 'python3-netifaces')
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].nvr, 'python3-netifaces-0.10.9-9.el8ost.1')
+
+    def test_filter_nvr_versions_valid_upgrade(self):
+        rpms = [
+            Rpm(
+                name="python3-netifaces",
+                epoch=0,
+                version="0.10.6",
+                release="4.el8",
+                arch="x86_64",
+                checksum="abc",
+                size=100,
+                location="pkg.rpm",
+                sourcerpm="src.rpm",
+            ),
+            Rpm(
+                name="python3-netifaces",
+                epoch=0,
+                version="0.10.9",
+                release="9.el8ost.1",
+                arch="x86_64",
+                checksum="def",
+                size=100,
+                location="pkg2.rpm",
+                sourcerpm="src2.rpm",
+            ),
+        ]
+        result = self.repodata._filter_nvr_versions('python3-netifaces-0.10.6-4.el8', rpms, 'python3-netifaces')
+        self.assertEqual(len(result), 2)
+        result_nvrs = {rpm.nvr for rpm in result}
+        self.assertEqual(result_nvrs, {'python3-netifaces-0.10.6-4.el8', 'python3-netifaces-0.10.9-9.el8ost.1'})
+
+    def test_filter_nvr_versions_only_specific(self):
+        rpms = [
+            Rpm(
+                name="python3-netifaces",
+                epoch=0,
+                version="0.10.9",
+                release="9.el8ost.1",
+                arch="x86_64",
+                checksum="abc",
+                size=100,
+                location="pkg.rpm",
+                sourcerpm="src.rpm",
+            )
+        ]
+        result = self.repodata._filter_nvr_versions('python3-netifaces-0.10.9-9.el8ost.1', rpms, 'python3-netifaces')
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].nvr, 'python3-netifaces-0.10.9-9.el8ost.1')
+
+    def test_filter_nvr_versions_real_world_mismatch(self):
+        rpms = [
+            Rpm(
+                name="python3-netifaces",
+                epoch=0,
+                version="0.10.6",
+                release="4.el8",
+                arch="x86_64",
+                checksum="def",
+                size=100,
+                location="pkg2.rpm",
+                sourcerpm="src2.rpm",
+            )
+        ]
+        result = self.repodata._filter_nvr_versions('python3-netifaces-0.10.9-9.el8ost.1', rpms, 'python3-netifaces')
+        self.assertEqual(result, [])
 
 
 class TestRepodataLoader(IsolatedAsyncioTestCase):
