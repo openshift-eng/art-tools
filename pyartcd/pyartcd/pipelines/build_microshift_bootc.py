@@ -73,10 +73,13 @@ class BuildMicroShiftBootcPipeline:
         prepare_shipment: bool,
         data_path: str,
         slack_client,
+        data_gitref: str | None = None,
         logger: Optional[logging.Logger] = None,
     ):
         self.runtime = runtime
         self.group = group
+        self.data_gitref = data_gitref or ""
+        self.doozer_group = f"{self.group}@{self.data_gitref}" if self.data_gitref else self.group
         self.assembly = assembly
         self.force = force
         self.force_plashet_sync = force_plashet_sync
@@ -129,7 +132,7 @@ class BuildMicroShiftBootcPipeline:
             self._elliott_env_vars["ELLIOTT_DATA_PATH"] = data_path
 
         # Setup Elliott base command for shipment operations
-        group_param = f'--group={group}'
+        group_param = f'--group={self.doozer_group}'
         self._elliott_base_command = [
             'elliott',
             group_param,
@@ -143,14 +146,14 @@ class BuildMicroShiftBootcPipeline:
         # Make sure our api.ci token is fresh
         await oc.registry_login()
         data_path = self._doozer_env_vars["DOOZER_DATA_PATH"]
-        self.releases_config = await load_releases_config(
-            group=self.group,
-            data_path=data_path,
-        )
+        self.releases_config = await load_releases_config(group=self.doozer_group, data_path=data_path)
         self.assembly_type = get_assembly_type(self.releases_config, self.assembly)
         # Load group config
         self.group_config = await load_group_config(
-            group=self.group, assembly=self.assembly, doozer_data_path=data_path
+            group=self.group,
+            assembly=self.assembly,
+            doozer_data_path=data_path,
+            doozer_data_gitref=self.data_gitref,
         )
         bootc_build = await self._rebase_and_build_bootc()
         if bootc_build:
@@ -360,7 +363,9 @@ class BuildMicroShiftBootcPipeline:
                         f" {url}, but could not find it. Use --force to rebuild plashet."
                     )
 
-                microshift_nvrs = await get_microshift_builds(self.group, self.assembly, env=self._elliott_env_vars)
+                microshift_nvrs = await get_microshift_builds(
+                    self.doozer_group, self.assembly, env=self._elliott_env_vars
+                )
                 expected_microshift_nvr = next(
                     (n for n in microshift_nvrs if isolate_el_version_in_release(n) == 9), None
                 )
@@ -387,6 +392,7 @@ class BuildMicroShiftBootcPipeline:
             assembly=self.assembly,
             repos=[microshift_plashet_name],
             data_path=self._doozer_env_vars["DOOZER_DATA_PATH"],
+            data_gitref=self.data_gitref,
             dry_run=self.runtime.dry_run,
             block_until_complete=True,
         )
@@ -399,7 +405,7 @@ class BuildMicroShiftBootcPipeline:
         Return Value(s):
             str: The abbreviated git commit hash extracted from the RPM NVR.
         """
-        microshift_nvrs = await get_microshift_builds(self.group, self.assembly, env=self._elliott_env_vars)
+        microshift_nvrs = await get_microshift_builds(self.doozer_group, self.assembly, env=self._elliott_env_vars)
         if not microshift_nvrs:
             raise ValueError(
                 f"Could not find microshift RPM NVRs for assembly {self.assembly}. "
@@ -479,7 +485,7 @@ class BuildMicroShiftBootcPipeline:
         rebase_cmd = [
             "doozer",
             "--group",
-            self.group,
+            self.doozer_group,
             "--assembly",
             self.assembly,
             "--latest-parent-version",
@@ -508,7 +514,7 @@ class BuildMicroShiftBootcPipeline:
         build_cmd = [
             "doozer",
             "--group",
-            self.group,
+            self.doozer_group,
             "--assembly",
             self.assembly,
             "--latest-parent-version",
@@ -1045,6 +1051,12 @@ class BuildMicroShiftBootcPipeline:
     is_flag=True,
     help="(For named assemblies) Prepare shipment with found microshift-bootc build",
 )
+@click.option(
+    "--data-gitref",
+    required=False,
+    default="",
+    help="Doozer data path git [branch / tag / sha] to use",
+)
 @pass_runtime
 @click_coroutine
 async def build_microshift_bootc(
@@ -1055,6 +1067,7 @@ async def build_microshift_bootc(
     force: bool,
     force_plashet_sync: bool,
     prepare_shipment: bool,
+    data_gitref: str | None = None,
 ):
     # slack client is dry-run aware and will not send messages if dry-run is enabled
     slack_client = runtime.new_slack_client()
@@ -1069,6 +1082,7 @@ async def build_microshift_bootc(
             prepare_shipment=prepare_shipment,
             data_path=data_path,
             slack_client=slack_client,
+            data_gitref=data_gitref,
         )
         await pipeline.run()
     except Exception as err:
