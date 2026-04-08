@@ -601,15 +601,16 @@ class RPMLockfileGenerator:
 
         if warnings:
             self.logger.warning(
-                f"RPM version mismatches due to cross-arch repo URL misconfiguration (non-fatal): "
-                f"{'; '.join(warnings)}"
+                f"RPM version mismatches due to cross-arch repo URL misconfiguration (non-fatal): {'; '.join(warnings)}"
             )
 
         if mismatches:
             raise ValueError(f"RPM version set mismatches: {'; '.join(mismatches)}")
 
     def _is_cross_arch_mismatch(
-        self, arch_evrs: dict[str, set[str]], cross_arch_arches: set[str],
+        self,
+        arch_evrs: dict[str, set[str]],
+        cross_arch_arches: set[str],
     ) -> bool:
         """
         Determine if a version mismatch is caused by cross-arch repo misconfiguration.
