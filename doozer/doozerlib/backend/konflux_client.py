@@ -680,6 +680,7 @@ class KonfluxClient:
             "appstudio.openshift.io/application": application_name,
             "appstudio.openshift.io/component": component_name,
             "test.appstudio.openshift.io/scenario": its_name,
+            "kueue.x-k8s.io/priority-class": "build-priority-2",
         }
         labels.update(watch_labels)
 

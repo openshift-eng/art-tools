@@ -174,6 +174,7 @@ class TestNewEcPipelinerun(TestCase):
         self.assertEqual(labels["appstudio.openshift.io/application"], "openshift-4-21")
         self.assertEqual(labels["appstudio.openshift.io/component"], "ose-4-21-openshift-apiserver")
         self.assertEqual(labels["test.appstudio.openshift.io/scenario"], "openshift-4-21-ec-registry-ocp-art-stage")
+        self.assertEqual(labels["kueue.x-k8s.io/priority-class"], "build-priority-2")
         self.assertEqual(labels["doozer-watch-id"], "12345")
 
         # annotations
