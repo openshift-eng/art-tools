@@ -401,7 +401,7 @@ class KonfluxFbcFragmentMerger:
             logger=logger,
         )
 
-    async def run(self, fragments: Collection[str], target_index: str):
+    async def run(self, fragments: Collection[str], target_index: str, git_auth_secret: Optional[str] = None):
         if not fragments:
             raise ValueError("At least one fragment must be provided.")
         if not target_index:
@@ -494,6 +494,7 @@ class KonfluxFbcFragmentMerger:
             created_plr = await self._start_build(
                 build_repo=build_repo,
                 output_image=target_index,
+                git_auth_secret=git_auth_secret,
             )
             plr_name = created_plr.name
             plr_url = konflux_client.resource_url(created_plr.to_dict())
@@ -599,7 +600,7 @@ class KonfluxFbcFragmentMerger:
         }
         return target_idms
 
-    async def _start_build(self, build_repo: BuildRepo, output_image: str):
+    async def _start_build(self, build_repo: BuildRepo, output_image: str, git_auth_secret: Optional[str] = None):
         logger = self._logger
         konflux_client = self._konflux_client
         commit_sha = build_repo.commit_hash
@@ -630,7 +631,7 @@ class KonfluxFbcFragmentMerger:
 
         arches = self.group_config.get("arches", list(KonfluxClient.SUPPORTED_ARCHES.keys()))
 
-        created_plr = await konflux_client.start_pipeline_run_for_image_build(
+        build_kwargs = dict(
             generate_name=f"{comp_name}-",
             namespace=self.konflux_namespace,
             application_name=app_name,
@@ -641,14 +642,17 @@ class KonfluxFbcFragmentMerger:
             output_image=f"{output_image_repo}:{output_image_tag}",
             additional_tags=[],
             vm_override={},
-            building_arches=arches,  # FBC should be built for all supported arches
-            hermetic=True,  # FBC should be built in hermetic mode
+            building_arches=arches,
+            hermetic=True,
             dockerfile="catalog.Dockerfile",
             skip_checks=self.skip_checks,
             skip_fips_check=self.skip_fips_check,
             pipelinerun_template_url=self.plr_template,
             build_priority=FBC_BUILD_PRIORITY,
         )
+        if git_auth_secret:
+            build_kwargs["git_auth_secret"] = git_auth_secret
+        created_plr = await konflux_client.start_pipeline_run_for_image_build(**build_kwargs)
         return created_plr
 
 
@@ -1717,7 +1721,9 @@ class KonfluxFbcBuilder:
         except Exception:
             logger.exception("Error while syncing FBC related images to art-images-share")
 
-    async def build(self, metadata: ImageMetadata, operator_nvr: Optional[str] = None):
+    async def build(
+        self, metadata: ImageMetadata, operator_nvr: Optional[str] = None, git_auth_secret: Optional[str] = None
+    ):
         bundle_short_name = metadata.get_olm_bundle_short_name()
         logger = self._logger.getChild(f"[{bundle_short_name}]")
         logger.info("Building FBC for %s", metadata.distgit_key)
@@ -1833,6 +1839,7 @@ class KonfluxFbcBuilder:
                     arches=arches,
                     logger=logger,
                     operator_nvr=operator_nvr,
+                    git_auth_secret=git_auth_secret,
                 )
                 pipelinerun_name = pipelinerun_info.name
                 record["task_id"] = pipelinerun_name
@@ -1913,6 +1920,7 @@ class KonfluxFbcBuilder:
         arches: Sequence[str],
         logger: logging.Logger,
         operator_nvr: Optional[str] = None,
+        git_auth_secret: Optional[str] = None,
     ) -> Tuple[PipelineRunInfo, str]:
         """Start a build with Konflux."""
         if not build_repo.commit_hash:
@@ -1973,7 +1981,7 @@ class KonfluxFbcBuilder:
         else:
             logger.info("No additional tags to be added")
 
-        pipelinerun_info = await konflux_client.start_pipeline_run_for_image_build(
+        build_kwargs = dict(
             generate_name=f"{component_name}-",
             namespace=self.konflux_namespace,
             application_name=app_name,
@@ -1983,7 +1991,7 @@ class KonfluxFbcBuilder:
             target_branch=build_repo.branch or build_repo.commit_hash,
             output_image=output_image,
             vm_override={},
-            building_arches=arches,  # FBC should be built for all supported arches
+            building_arches=arches,
             additional_tags=list(additional_tags),
             skip_checks=self.skip_checks,
             hermetic=True,
@@ -1991,6 +1999,9 @@ class KonfluxFbcBuilder:
             pipelinerun_template_url=self.pipelinerun_template_url,
             build_priority=FBC_BUILD_PRIORITY,
         )
+        if git_auth_secret:
+            build_kwargs["git_auth_secret"] = git_auth_secret
+        pipelinerun_info = await konflux_client.start_pipeline_run_for_image_build(**build_kwargs)
         url = konflux_client.resource_url(pipelinerun_info.to_dict())
         logger.info(f"PipelineRun {pipelinerun_info.name} created: {url}")
         return pipelinerun_info, url

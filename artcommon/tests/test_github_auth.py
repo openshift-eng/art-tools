@@ -6,6 +6,7 @@ import pytest
 from artcommonlib.github_auth import (
     _extract_org_from_github_url,
     get_github_app_token,
+    get_github_app_token_for_org,
     get_github_app_token_from_env,
     get_github_client_for_org,
     get_github_git_auth_env,
@@ -103,6 +104,46 @@ class TestGetGithubAppTokenFromEnv:
 
         with pytest.raises(EnvironmentError, match="GITHUB_APP_PRIVATE_KEY"):
             get_github_app_token_from_env()
+
+
+class TestGetGithubAppTokenForOrg:
+    """Tests for the org-aware token generation function."""
+
+    @pytest.fixture(autouse=True)
+    def _clear_caches(self):
+        gh_auth._installation_map.clear()
+        yield
+        gh_auth._installation_map.clear()
+
+    @patch("artcommonlib.github_auth.get_github_app_token", return_value="ghs_org_token")
+    @patch("artcommonlib.github_auth._resolve_installation_id", return_value=42)
+    def test_resolves_org_when_no_explicit_id(self, mock_resolve, mock_token, monkeypatch):
+        monkeypatch.setenv("GITHUB_APP_ID", "100")
+        monkeypatch.setenv("GITHUB_APP_PRIVATE_KEY", FAKE_PEM)
+        monkeypatch.delenv("GITHUB_APP_INSTALLATION_ID", raising=False)
+
+        result = get_github_app_token_for_org("openshift-priv")
+
+        mock_resolve.assert_called_once_with("openshift-priv", 100, FAKE_PEM)
+        mock_token.assert_called_once_with(100, FAKE_PEM, 42)
+        assert result == "ghs_org_token"
+
+    @patch("artcommonlib.github_auth.get_github_app_token", return_value="ghs_explicit_token")
+    def test_explicit_installation_id_takes_precedence(self, mock_token, monkeypatch):
+        monkeypatch.setenv("GITHUB_APP_ID", "100")
+        monkeypatch.setenv("GITHUB_APP_PRIVATE_KEY", FAKE_PEM)
+        monkeypatch.setenv("GITHUB_APP_INSTALLATION_ID", "777")
+
+        result = get_github_app_token_for_org("openshift-priv")
+
+        mock_token.assert_called_once_with(100, FAKE_PEM, 777)
+        assert result == "ghs_explicit_token"
+
+    def test_missing_credentials_raises(self, monkeypatch):
+        monkeypatch.delenv("GITHUB_APP_ID", raising=False)
+
+        with pytest.raises(EnvironmentError, match="GITHUB_APP_ID"):
+            get_github_app_token_for_org("openshift-priv")
 
 
 def _make_installation(org_login: str, install_id: int) -> MagicMock:

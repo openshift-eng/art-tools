@@ -117,6 +117,26 @@ def get_github_app_token_from_env() -> str:
     return get_github_app_token(app_id, private_key, installation_id)
 
 
+def get_github_app_token_for_org(org: str) -> str:
+    """
+    Generate a short-lived GitHub installation access token for a specific org.
+
+    Like get_github_app_token_from_env() but resolves the installation ID
+    from the org name instead of requiring exactly one installation.
+    If GITHUB_APP_INSTALLATION_ID is set it takes precedence over org-based
+    resolution.
+
+    :param org: GitHub organisation name (e.g. "openshift-priv")
+    :return: Installation access token string
+    :raises EnvironmentError: If required environment variables are missing
+    :raises ValueError: If no installation matches the org
+    """
+    app_id, private_key, installation_id = _read_env_credentials()
+    if not installation_id:
+        installation_id = _resolve_installation_id(org, app_id, private_key)
+    return get_github_app_token(app_id, private_key, installation_id)
+
+
 _askpass_script_path: str | None = None
 
 _git_token_cache: dict[str | None, tuple[str, float]] = {}

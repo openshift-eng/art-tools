@@ -626,7 +626,7 @@ class KonfluxOlmBundleBuilder:
             dry_run=self.dry_run,
         )
 
-    async def build(self, metadata: ImageMetadata):
+    async def build(self, metadata: ImageMetadata, git_auth_secret: Optional[str] = None):
         """Build a bundle with Konflux."""
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
         konflux_client = self._konflux_client
@@ -710,7 +710,12 @@ class KonfluxOlmBundleBuilder:
             for attempt in range(build_attempts):
                 logger.info("Build attempt %d/%d", attempt + 1, build_attempts)
                 pipelinerun_info, url = await self._start_build(
-                    metadata, bundle_build_repo, output_image, self.konflux_namespace, self.skip_checks
+                    metadata,
+                    bundle_build_repo,
+                    output_image,
+                    self.konflux_namespace,
+                    self.skip_checks,
+                    git_auth_secret=git_auth_secret,
                 )
                 pipelinerun_name = pipelinerun_info.name
                 record["task_id"] = pipelinerun_name
@@ -816,6 +821,7 @@ class KonfluxOlmBundleBuilder:
         namespace: str,
         skip_checks: bool = False,
         additional_tags: Optional[Sequence[str]] = None,
+        git_auth_secret: Optional[str] = None,
     ) -> Tuple[PipelineRunInfo, str]:
         """Start a build with Konflux."""
         if not bundle_build_repo.commit_hash:
@@ -845,7 +851,7 @@ class KonfluxOlmBundleBuilder:
         )
         logger.info(f"Konflux component {component_name} created")
         # Start a PipelineRun
-        pipelinerun_info = await konflux_client.start_pipeline_run_for_image_build(
+        build_kwargs = dict(
             generate_name=f"{component_name}-",
             namespace=namespace,
             application_name=app_name,
@@ -855,7 +861,7 @@ class KonfluxOlmBundleBuilder:
             target_branch=target_branch,
             output_image=output_image,
             vm_override={},
-            building_arches=["x86_64"],  # We always build bundles on x86_64
+            building_arches=["x86_64"],
             additional_tags=list(additional_tags),
             skip_checks=skip_checks,
             hermetic=True,
@@ -863,6 +869,9 @@ class KonfluxOlmBundleBuilder:
             artifact_type="operatorbundle",
             build_priority=BUNDLE_BUILD_PRIORITY,
         )
+        if git_auth_secret:
+            build_kwargs["git_auth_secret"] = git_auth_secret
+        pipelinerun_info = await konflux_client.start_pipeline_run_for_image_build(**build_kwargs)
         url = konflux_client.resource_url(pipelinerun_info.to_dict())
         logger.info(f"PipelineRun {pipelinerun_info.name} created: {url}")
         return pipelinerun_info, url

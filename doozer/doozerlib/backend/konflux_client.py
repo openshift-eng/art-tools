@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import datetime
 import hashlib
 import logging
@@ -17,17 +18,27 @@ import jinja2
 from artcommonlib import exectools
 from artcommonlib import util as art_util
 from artcommonlib.constants import KONFLUX_DEFAULT_NAMESPACE
+from artcommonlib.github_auth import get_github_app_token_for_org
 from async_lru import alru_cache
 from doozerlib import constants
 from doozerlib.backend.konflux_watcher import KonfluxWatcher
 from doozerlib.backend.pipelinerun_utils import PipelineRunInfo
 from kubernetes import config, watch
-from kubernetes.client import ApiClient, Configuration, CoreV1Api
+from kubernetes.client import ApiClient, ApiException, Configuration, CoreV1Api, V1ObjectMeta, V1Secret
 from kubernetes.dynamic import DynamicClient, exceptions, resource
 from ruamel.yaml import YAML
 
 yaml = YAML(typ="safe")
 LOGGER = logging.getLogger(__name__)
+
+# Prefix and label for transient git-auth secrets created per doozer invocation.
+# Each invocation mints a GitHub App installation token and stores it in a
+# uniquely-named Secret so concurrent builds never contend on the same object.
+_GIT_AUTH_SECRET_PREFIX = "art-transient-pipeline-auth-"
+_GIT_AUTH_SECRET_LABEL_KEY = "art.openshift.io/git-auth"
+_GIT_AUTH_SECRET_LABEL_VALUE = "true"
+_GIT_AUTH_GENERATED_BY_LABEL_KEY = "art.openshift.io/generated-by"
+_GIT_AUTH_GENERATED_BY_LABEL_VALUE = "art-automation"
 
 # Label key used to filter PipelineRuns for this process
 _COMMON_RUNTIME_LABEL_KEY = "doozer-watch-id"
@@ -209,6 +220,8 @@ class KonfluxClient:
         # This is a workaround to set a timeout for the requests.
         # https://github.com/kubernetes-client/python/blob/master/examples/watch/timeout-settings.md
         self.request_timeout = 60 * 5  # 5 minutes
+        # Cached per-invocation git-auth secret name (created once, reused for all PLRs)
+        self._git_auth_secret_name: Optional[str] = None
 
     def verify_connection(self):
         try:
@@ -217,6 +230,164 @@ class KonfluxClient:
         except Exception as e:
             self._logger.error(f"Failed to authenticate to the Kubernetes cluster: {e}")
             raise
+
+    async def ensure_git_auth_secret(self, namespace: Optional[str] = None, org: str = "openshift-priv") -> str:
+        """Mint a GitHub App installation token and store it in a per-invocation
+        Kubernetes Secret for use as a git-clone basic-auth credential.
+
+        The secret is created once per KonfluxClient instance and reused for all
+        PipelineRuns in the same doozer invocation — no contention between
+        concurrent builds.
+
+        Falls back to the static "pipelines-as-code-secret" when GitHub App
+        credentials are not configured (GITHUB_APP_ID unset).
+
+        :param namespace: Target namespace. Defaults to self.default_namespace.
+        :param org: GitHub org whose installation token to mint.
+                    Defaults to "openshift-priv" (where Konflux build sources live).
+        :return: The secret name to wire into PipelineRun workspaces.
+        """
+        if self._git_auth_secret_name:
+            return self._git_auth_secret_name
+
+        if not os.environ.get("GITHUB_APP_ID"):
+            self._logger.info("GITHUB_APP_ID not set; falling back to static pipelines-as-code-secret")
+            return "pipelines-as-code-secret"
+
+        namespace = namespace or self.default_namespace
+
+        # Mint a short-lived installation token (valid ~1 hour, but only the
+        # git-clone + prefetch tasks need it — those run in the first few minutes).
+        token = await exectools.to_thread(get_github_app_token_for_org, org)
+
+        # Nanosecond epoch avoids name collisions when multiple doozer
+        # invocations start within the same second.  A human-readable
+        # timestamp would need sanitising for k8s naming rules and still
+        # risk collisions at second granularity, so raw nanoseconds are
+        # the safest choice.  Use the helper below to decode:
+        #   python3 -c "import datetime as d; print(d.datetime.fromtimestamp(<ns>/1e9, d.timezone.utc))"
+        epoch_ns = time.time_ns()
+        secret_name = f"{_GIT_AUTH_SECRET_PREFIX}{epoch_ns}"
+        now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+        secret = V1Secret(
+            api_version="v1",
+            kind="Secret",
+            type="kubernetes.io/basic-auth",
+            metadata=V1ObjectMeta(
+                name=secret_name,
+                namespace=namespace,
+                labels={
+                    _GIT_AUTH_SECRET_LABEL_KEY: _GIT_AUTH_SECRET_LABEL_VALUE,
+                    _GIT_AUTH_GENERATED_BY_LABEL_KEY: _GIT_AUTH_GENERATED_BY_LABEL_VALUE,
+                },
+                annotations={
+                    "art.openshift.io/created-at": now,
+                    "art-jenkins-job-url": os.getenv("BUILD_URL", "n/a"),
+                },
+            ),
+            # basic-auth secrets expect "username" and "password" keys
+            data={
+                "username": base64.b64encode(b"x-access-token").decode(),
+                "password": base64.b64encode(token.encode()).decode(),
+            },
+        )
+
+        if self.dry_run:
+            self._logger.warning(f"[DRY RUN] Would have created git-auth Secret {namespace}/{secret_name}")
+        else:
+            await exectools.to_thread(
+                self.corev1_client.create_namespaced_secret,
+                namespace=namespace,
+                body=secret,
+                _request_timeout=self.request_timeout,
+            )
+            self._logger.info(f"Created git-auth Secret {namespace}/{secret_name}")
+
+        self._git_auth_secret_name = secret_name
+        return secret_name
+
+    async def delete_git_auth_secret(self, namespace: Optional[str] = None) -> None:
+        """Delete the transient git-auth secret created by this invocation.
+
+        No-op when no transient secret was created (e.g. fallback to the static
+        pipelines-as-code-secret).  A 404 from the API is silently ignored so
+        that concurrent or repeated calls are safe.
+
+        :param namespace: Target namespace. Defaults to self.default_namespace.
+        """
+        secret_name = self._git_auth_secret_name
+        if not secret_name or not secret_name.startswith(_GIT_AUTH_SECRET_PREFIX):
+            return
+
+        namespace = namespace or self.default_namespace
+
+        if self.dry_run:
+            self._logger.warning(f"[DRY RUN] Would have deleted git-auth Secret {namespace}/{secret_name}")
+        else:
+            try:
+                await exectools.to_thread(
+                    self.corev1_client.delete_namespaced_secret,
+                    name=secret_name,
+                    namespace=namespace,
+                    _request_timeout=self.request_timeout,
+                )
+                self._logger.info(f"Deleted git-auth Secret {namespace}/{secret_name}")
+            except ApiException as e:
+                if e.status == 404:
+                    self._logger.debug(f"Secret {secret_name} already deleted by another process")
+                else:
+                    self._logger.warning(f"Failed to delete git-auth Secret {secret_name}: {e}")
+
+        self._git_auth_secret_name = None
+
+    async def cleanup_stale_git_auth_secrets(self, namespace: Optional[str] = None, max_age_hours: int = 24) -> None:
+        """Delete transient git-auth secrets older than *max_age_hours*.
+
+        Safe to call from concurrent doozer invocations: if two jobs race to
+        delete the same secret the loser simply gets a 404, which is ignored.
+
+        :param namespace: Target namespace. Defaults to self.default_namespace.
+        :param max_age_hours: Secrets older than this are deleted.
+        """
+        namespace = namespace or self.default_namespace
+        label_selector = (
+            f"{_GIT_AUTH_SECRET_LABEL_KEY}={_GIT_AUTH_SECRET_LABEL_VALUE},"
+            f"{_GIT_AUTH_GENERATED_BY_LABEL_KEY}={_GIT_AUTH_GENERATED_BY_LABEL_VALUE}"
+        )
+
+        secrets = await exectools.to_thread(
+            self.corev1_client.list_namespaced_secret,
+            namespace=namespace,
+            label_selector=label_selector,
+            _request_timeout=self.request_timeout,
+        )
+
+        cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=max_age_hours)
+
+        for secret in secrets.items:
+            created = secret.metadata.creation_timestamp
+            if created and created >= cutoff:
+                continue
+
+            if self.dry_run:
+                self._logger.warning(f"[DRY RUN] Would have deleted stale git-auth Secret {secret.metadata.name}")
+                continue
+
+            try:
+                await exectools.to_thread(
+                    self.corev1_client.delete_namespaced_secret,
+                    name=secret.metadata.name,
+                    namespace=namespace,
+                    _request_timeout=self.request_timeout,
+                )
+                self._logger.info(f"Deleted stale git-auth Secret {secret.metadata.name}")
+            except ApiException as e:
+                # Another concurrent invocation may have already deleted it
+                if e.status == 404:
+                    self._logger.debug(f"Secret {secret.metadata.name} already deleted by another process")
+                else:
+                    self._logger.warning(f"Failed to delete stale Secret {secret.metadata.name}: {e}")
 
     @staticmethod
     def from_kubeconfig(

@@ -329,7 +329,22 @@ class FbcMergeCli:
             plr_template=self.plr_template,
             major_minor_override=(major, minor) if self.major_minor else None,
         )
-        await merger.run(fragments, target_index)
+        # Mint a per-invocation GitHub App token for git-clone auth
+        git_auth_secret = await merger._konflux_client.ensure_git_auth_secret(
+            namespace=self.konflux_namespace,
+        )
+        try:
+            await merger.run(fragments, target_index, git_auth_secret=git_auth_secret)
+        finally:
+            try:
+                await merger._konflux_client.delete_git_auth_secret(
+                    namespace=self.konflux_namespace,
+                )
+                await merger._konflux_client.cleanup_stale_git_auth_secrets(
+                    namespace=self.konflux_namespace,
+                )
+            except Exception as e:
+                LOGGER.warning("Failed to cleanup git-auth secrets: %s", e)
 
 
 @cli.command("beta:fbc:merge", short_help="Merge FBC fragments from multiple index images into a single FBC repository")
@@ -614,6 +629,7 @@ class FbcRebaseAndBuildCli:
         builder: KonfluxFbcBuilder,
         operator_meta: ImageMetadata,
         bundle_build: KonfluxBundleBuildRecord,
+        git_auth_secret: Optional[str] = None,
     ) -> str:
         """Rebase and build FBC for the given operator and bundle build.
 
@@ -621,6 +637,7 @@ class FbcRebaseAndBuildCli:
         :param builder: FBC builder instance
         :param operator_meta: Operator metadata
         :param bundle_build: Bundle build record
+        :param git_auth_secret: Name of the transient git-auth Secret for PipelineRuns
         :return: NVR of the FBC build
         """
         existing_fbc_build = await self._check_existing_fbc_build(operator_meta, bundle_build)
@@ -637,7 +654,7 @@ class FbcRebaseAndBuildCli:
         self._logger.info(f"Rebasing fbc for {operator_meta.name}...")
         nvr = await rebaser.rebase(operator_meta, bundle_build, self.version, self.release)
         self._logger.info(f"Building fbc for {operator_meta.name}...")
-        await builder.build(operator_meta, operator_nvr=bundle_build.operator_nvr)
+        await builder.build(operator_meta, operator_nvr=bundle_build.operator_nvr, git_auth_secret=git_auth_secret)
         return nvr
 
     async def run(self):
@@ -728,32 +745,55 @@ class FbcRebaseAndBuildCli:
             record_logger=runtime.record_logger,
         )
 
+        # Mint a per-invocation GitHub App token for git-clone auth
+        git_auth_secret = await builder._konflux_client.ensure_git_auth_secret(
+            namespace=self.konflux_namespace,
+        )
+
         tasks = [
-            self._rebase_and_build(importer, rebaser, builder, self.runtime.image_map[dgk], bundle_build)
+            self._rebase_and_build(
+                importer,
+                rebaser,
+                builder,
+                self.runtime.image_map[dgk],
+                bundle_build,
+                git_auth_secret=git_auth_secret,
+            )
             for dgk, bundle_build in dgk_bundle_builds.items()
         ]
 
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        successful_nvrs = []
-        failed_tasks = []
-        errors = []
+        try:
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            successful_nvrs = []
+            failed_tasks = []
+            errors = []
 
-        for dgk, result in zip(dgk_bundle_builds, results):
-            if isinstance(result, Exception):
-                failed_tasks.append(dgk)
-                stack_trace = ''.join(traceback.TracebackException.from_exception(result).format())
-                error_msg = f"Failed to rebase/build FBC for {dgk}: {result}"
-                error_details = {
-                    "operator": dgk,
-                    "operator_nvr": dgk_operator_builds[dgk].nvr,
-                    "bundle_nvr": dgk_bundle_builds[dgk].nvr,
-                    "error": str(result),
-                    "traceback": stack_trace,
-                }
-                errors.append(error_details)
-                LOGGER.error(f"{error_msg}; {stack_trace}")
-            else:
-                successful_nvrs.append(result)
+            for dgk, result in zip(dgk_bundle_builds, results):
+                if isinstance(result, Exception):
+                    failed_tasks.append(dgk)
+                    stack_trace = ''.join(traceback.TracebackException.from_exception(result).format())
+                    error_msg = f"Failed to rebase/build FBC for {dgk}: {result}"
+                    error_details = {
+                        "operator": dgk,
+                        "operator_nvr": dgk_operator_builds[dgk].nvr,
+                        "bundle_nvr": dgk_bundle_builds[dgk].nvr,
+                        "error": str(result),
+                        "traceback": stack_trace,
+                    }
+                    errors.append(error_details)
+                    LOGGER.error(f"{error_msg}; {stack_trace}")
+                else:
+                    successful_nvrs.append(result)
+        finally:
+            try:
+                await builder._konflux_client.delete_git_auth_secret(
+                    namespace=self.konflux_namespace,
+                )
+                await builder._konflux_client.cleanup_stale_git_auth_secrets(
+                    namespace=self.konflux_namespace,
+                )
+            except Exception as e:
+                LOGGER.warning("Failed to cleanup git-auth secrets: %s", e)
 
         if self.output == 'json':
             output_data = {
