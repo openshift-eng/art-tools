@@ -219,6 +219,7 @@ class KonfluxBuildCli:
         dry_run: bool,
         plr_template: str,
         build_priority: Optional[str],
+        skip_ec_verify: bool = False,
     ):
         self.runtime = runtime
         self.konflux_kubeconfig = konflux_kubeconfig
@@ -230,6 +231,7 @@ class KonfluxBuildCli:
         self.dry_run = dry_run
         self.plr_template = plr_template
         self.build_priority = build_priority
+        self.skip_ec_verify = skip_ec_verify
 
         validate_build_priority(self.build_priority)
 
@@ -267,6 +269,7 @@ class KonfluxBuildCli:
             dry_run=self.dry_run,
             plr_template=self.plr_template,
             build_priority=self.build_priority,
+            skip_ec_verify=self.skip_ec_verify,
         )
         builder = KonfluxImageBuilder(config=config, record_logger=runtime.record_logger)
         tasks = []
@@ -322,6 +325,12 @@ class KonfluxBuildCli:
     type=click.Choice(['hermetic', 'internal-only', 'open']),
     help='Override network mode for Konflux builds. Takes precedence over image and group config settings.',
 )
+@click.option(
+    '--skip-ec-verify',
+    default=False,
+    is_flag=True,
+    help='Skip enterprise-contract verification after builds.',
+)
 @pass_runtime
 @click_coroutine
 async def images_konflux_build(
@@ -335,6 +344,7 @@ async def images_konflux_build(
     plr_template: str,
     build_priority: Optional[str],
     network_mode: Optional[str],
+    skip_ec_verify: bool,
 ):
     if network_mode:
         runtime.network_mode_override = network_mode
@@ -350,6 +360,7 @@ async def images_konflux_build(
         dry_run=dry_run,
         plr_template=plr_template,
         build_priority=build_priority,
+        skip_ec_verify=skip_ec_verify,
     )
     await cli.run()
 

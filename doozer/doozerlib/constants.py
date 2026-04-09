@@ -51,3 +51,11 @@ REGISTRY_PROXY_BASE_URL = "registry-proxy.engineering.redhat.com"
 BREW_REGISTRY_BASE_URL = "brew.registry.redhat.io"
 
 ART_BUILD_HISTORY_URL = 'https://art-build-history-art-build-history.apps.artc2023.pc3z.p1.openshiftapps.com'
+
+# Enterprise Contract (EC) verification pipeline constants
+# TODO: Expand EC verification to layered products (logging, oadp, mta, rhmtc, quay, cert-manager, etc.)
+# Currently scoped to OCP only.
+KONFLUX_EC_PIPELINE_GIT_URL = "https://github.com/konflux-ci/build-definitions"
+KONFLUX_EC_PIPELINE_REVISION = "main"
+KONFLUX_EC_PIPELINE_PATH = "pipelines/enterprise-contract.yaml"
+KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION = "rhtap-releng-tenant/registry-ocp-art-stage"

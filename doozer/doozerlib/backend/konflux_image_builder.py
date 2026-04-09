@@ -62,6 +62,8 @@ class KonfluxImageBuilderConfig:
     skip_checks: bool = False
     dry_run: bool = False
     build_priority: Optional[str] = None
+    ec_policy_configuration: str = constants.KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION
+    skip_ec_verify: bool = False
 
 
 class KonfluxImageBuilder:
@@ -240,6 +242,62 @@ class KonfluxImageBuilder:
                         logger.error(
                             f"Failed to get SLA attestation / source signature from konflux for image {image_pullspec}, marking build as {KonfluxBuildOutcome.FAILURE}. Error: {e}"
                         )
+                        outcome = KonfluxBuildOutcome.FAILURE
+
+                # Run enterprise-contract (EC) verification after a successful build
+                # TODO: Expand EC verification to layered products
+                if outcome is KonfluxBuildOutcome.SUCCESS and not self._config.skip_ec_verify:
+                    try:
+                        app_name = self.get_application_name(self._config.group_name)
+                        its_name = f"{app_name}-ec-registry-ocp-art-stage"
+
+                        logger.info("Ensuring IntegrationTestScenario %s exists...", its_name)
+                        await self._konflux_client.ensure_integration_test_scenario(
+                            name=its_name,
+                            application_name=app_name,
+                            policy_configuration=self._config.ec_policy_configuration,
+                        )
+
+                        image_with_digest = f"{image_pullspec.split(':')[0]}@{image_digest}"
+                        source_url = artlib_util.convert_remote_git_to_https(build_repo.url)
+                        konflux_component_name = self.get_component_name(app_name, metadata.distgit_key)
+
+                        logger.info("Starting EC verification PipelineRun for %s...", metadata.distgit_key)
+                        ec_plr_info = await self._konflux_client.start_ec_pipeline_run(
+                            namespace=self._config.namespace,
+                            application_name=app_name,
+                            component_name=konflux_component_name,
+                            image_pullspec=image_with_digest,
+                            source_url=source_url,
+                            commit_sha=build_repo.commit_hash,
+                            its_name=its_name,
+                            policy_configuration=self._config.ec_policy_configuration,
+                        )
+                        ec_plr_name = ec_plr_info.name
+
+                        logger.info("Waiting for EC PipelineRun %s to complete...", ec_plr_name)
+                        ec_plr_info = await self._konflux_client.wait_for_pipelinerun(
+                            ec_plr_name, namespace=self._config.namespace
+                        )
+
+                        ec_condition = ec_plr_info.find_condition('Succeeded')
+                        ec_outcome = KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition(ec_condition)
+                        if ec_outcome is not KonfluxBuildOutcome.SUCCESS:
+                            logger.error(
+                                "EC verification failed for %s. PLR: %s",
+                                metadata.distgit_key,
+                                self._konflux_client.resource_url(ec_plr_info.to_dict()),
+                            )
+                            outcome = KonfluxBuildOutcome.FAILURE
+                        else:
+                            logger.info(
+                                "EC verification passed for %s. PLR: %s",
+                                metadata.distgit_key,
+                                self._konflux_client.resource_url(ec_plr_info.to_dict()),
+                            )
+
+                    except Exception as e:
+                        logger.error("EC verification error for %s: %s", metadata.distgit_key, e)
                         outcome = KonfluxBuildOutcome.FAILURE
 
                 if self._config.dry_run:

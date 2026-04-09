@@ -1,6 +1,7 @@
 import asyncio
 import datetime
 import hashlib
+import json
 import logging
 import os
 import random
@@ -172,11 +173,13 @@ def _clone_or_update_template_repo(git_url: str, ref: str) -> Path:
 
 
 API_VERSION = "appstudio.redhat.com/v1alpha1"
+API_VERSION_V1BETA2 = "appstudio.redhat.com/v1beta2"
 KIND_SNAPSHOT = "Snapshot"
 KIND_COMPONENT = "Component"
 KIND_APPLICATION = "Application"
 KIND_RELEASE = "Release"
 KIND_RELEASE_PLAN = "ReleasePlan"
+KIND_INTEGRATION_TEST_SCENARIO = "IntegrationTestScenario"
 
 DEFAULT_WAIT_HOURS_RELEASE = 5
 
@@ -558,6 +561,230 @@ class KonfluxClient:
     ) -> resource.ResourceInstance:
         component = self._new_component(name, application, component_name, image_repo, source_url, revision)
         return await self._create_or_replace(component)
+
+    @staticmethod
+    def _new_integration_test_scenario(
+        name: str,
+        application_name: str,
+        application_uid: str,
+        policy_configuration: str,
+        ec_pipeline_url: str = constants.KONFLUX_EC_PIPELINE_GIT_URL,
+        ec_pipeline_revision: str = constants.KONFLUX_EC_PIPELINE_REVISION,
+        ec_pipeline_path: str = constants.KONFLUX_EC_PIPELINE_PATH,
+    ) -> dict:
+        """Create an IntegrationTestScenario manifest for enterprise-contract verification.
+
+        :param name: The name of the ITS resource.
+        :param application_name: The application name.
+        :param application_uid: The UID of the Application resource (for ownerReference).
+        :param policy_configuration: The EC policy configuration (e.g. rhtap-releng-tenant/registry-ocp-art-stage).
+        :param ec_pipeline_url: The git URL for the EC pipeline.
+        :param ec_pipeline_revision: The git revision for the EC pipeline.
+        :param ec_pipeline_path: The path to the EC pipeline in the git repo.
+        :return: The ITS manifest dict.
+        """
+        return {
+            "apiVersion": API_VERSION_V1BETA2,
+            "kind": KIND_INTEGRATION_TEST_SCENARIO,
+            "metadata": {
+                "name": name,
+                "labels": {
+                    "test.appstudio.openshift.io/optional": "true",
+                },
+                "annotations": {
+                    "test.appstudio.openshift.io/kind": "enterprise-contract",
+                },
+                "ownerReferences": [
+                    {
+                        "apiVersion": API_VERSION,
+                        "kind": KIND_APPLICATION,
+                        "name": application_name,
+                        "uid": application_uid,
+                    }
+                ],
+            },
+            "spec": {
+                "application": application_name,
+                "params": [
+                    {"name": "POLICY_CONFIGURATION", "value": policy_configuration},
+                    {"name": "SINGLE_COMPONENT", "value": "true"},
+                ],
+                "resolverRef": {
+                    "resolver": "git",
+                    "params": [
+                        {"name": "url", "value": ec_pipeline_url},
+                        {"name": "revision", "value": ec_pipeline_revision},
+                        {"name": "pathInRepo", "value": ec_pipeline_path},
+                    ],
+                    "resourceKind": "pipeline",
+                },
+            },
+        }
+
+    async def ensure_integration_test_scenario(
+        self,
+        name: str,
+        application_name: str,
+        policy_configuration: str,
+    ) -> resource.ResourceInstance:
+        """Ensure an IntegrationTestScenario exists for the given application.
+
+        Creates or patches the ITS resource idempotently. Safe for concurrent calls.
+
+        :param name: The name of the ITS resource.
+        :param application_name: The application name.
+        :param policy_configuration: The EC policy configuration.
+        :return: The ITS resource.
+        """
+        app = await self.get_application(application_name, strict=True)
+        application_uid = app.metadata.uid
+
+        its = self._new_integration_test_scenario(
+            name=name,
+            application_name=application_name,
+            application_uid=application_uid,
+            policy_configuration=policy_configuration,
+        )
+        return await self._create_or_patch(its)
+
+    @staticmethod
+    def _new_ec_pipelinerun(
+        generate_name: str,
+        namespace: str,
+        application_name: str,
+        component_name: str,
+        snapshot_json: str,
+        its_name: str,
+        policy_configuration: str,
+        watch_labels: dict,
+        ec_pipeline_url: str = constants.KONFLUX_EC_PIPELINE_GIT_URL,
+        ec_pipeline_revision: str = constants.KONFLUX_EC_PIPELINE_REVISION,
+        ec_pipeline_path: str = constants.KONFLUX_EC_PIPELINE_PATH,
+    ) -> dict:
+        """Create a PipelineRun manifest for enterprise-contract verification.
+
+        :param generate_name: The generateName prefix for the PipelineRun.
+        :param namespace: The namespace for the PipelineRun.
+        :param application_name: The application name.
+        :param component_name: The component name.
+        :param snapshot_json: JSON-encoded snapshot spec for the SNAPSHOT param.
+        :param its_name: The name of the IntegrationTestScenario.
+        :param policy_configuration: The EC policy configuration.
+        :param watch_labels: Labels for the KonfluxWatcher to track this PLR.
+        :param ec_pipeline_url: The git URL for the EC pipeline.
+        :param ec_pipeline_revision: The git revision for the EC pipeline.
+        :param ec_pipeline_path: The path to the EC pipeline in the git repo.
+        :return: The PipelineRun manifest dict.
+        """
+        labels = {
+            "appstudio.openshift.io/application": application_name,
+            "appstudio.openshift.io/component": component_name,
+            "test.appstudio.openshift.io/scenario": its_name,
+        }
+        labels.update(watch_labels)
+
+        return {
+            "apiVersion": "tekton.dev/v1",
+            "kind": "PipelineRun",
+            "metadata": {
+                "generateName": generate_name,
+                "namespace": namespace,
+                "labels": labels,
+                "annotations": {
+                    "test.appstudio.openshift.io/kind": "enterprise-contract",
+                    "art-jenkins-job-url": os.getenv("BUILD_URL", "n/a"),
+                },
+            },
+            "spec": {
+                "pipelineRef": {
+                    "resolver": "git",
+                    "params": [
+                        {"name": "url", "value": ec_pipeline_url},
+                        {"name": "revision", "value": ec_pipeline_revision},
+                        {"name": "pathInRepo", "value": ec_pipeline_path},
+                    ],
+                },
+                "params": [
+                    {"name": "POLICY_CONFIGURATION", "value": policy_configuration},
+                    {"name": "SINGLE_COMPONENT", "value": "true"},
+                    {"name": "SNAPSHOT", "value": snapshot_json},
+                ],
+                "taskRunTemplate": {
+                    "serviceAccountName": f"build-pipeline-{component_name}",
+                },
+                "timeouts": {
+                    "pipeline": "1h",
+                },
+            },
+        }
+
+    async def start_ec_pipeline_run(
+        self,
+        namespace: str,
+        application_name: str,
+        component_name: str,
+        image_pullspec: str,
+        source_url: str,
+        commit_sha: str,
+        its_name: str,
+        policy_configuration: str,
+    ) -> PipelineRunInfo:
+        """Start an enterprise-contract verification PipelineRun.
+
+        :param namespace: The namespace for the PipelineRun.
+        :param application_name: The application name.
+        :param component_name: The component name.
+        :param image_pullspec: The built image pullspec (repo@digest).
+        :param source_url: The source git URL.
+        :param commit_sha: The source commit SHA.
+        :param its_name: The name of the IntegrationTestScenario.
+        :param policy_configuration: The EC policy configuration.
+        :return: The PipelineRunInfo for the created EC PipelineRun.
+        """
+        snapshot_spec = {
+            "application": application_name,
+            "components": [
+                {
+                    "name": component_name,
+                    "containerImage": image_pullspec,
+                    "source": {
+                        "git": {
+                            "url": source_url,
+                            "revision": commit_sha,
+                        }
+                    },
+                }
+            ],
+        }
+        snapshot_json = json.dumps(snapshot_spec)
+
+        watch_labels = get_common_runtime_watcher_labels()
+        generate_name = f"{application_name}-ec-{component_name}-"
+        # K8s names must be <= 253 chars; generateName adds 5 random chars
+        if len(generate_name) > 248:
+            generate_name = generate_name[:248]
+
+        manifest = self._new_ec_pipelinerun(
+            generate_name=generate_name,
+            namespace=namespace,
+            application_name=application_name,
+            component_name=component_name,
+            snapshot_json=snapshot_json,
+            its_name=its_name,
+            policy_configuration=policy_configuration,
+            watch_labels=watch_labels,
+        )
+
+        if self.dry_run:
+            fake_plr = resource.ResourceInstance(self.dyn_client, manifest)
+            fake_plr.metadata.name = f"{component_name}-ec-dry-run"
+            self._logger.warning(f"[DRY RUN] Would have created EC PipelineRun: {fake_plr.metadata.name}")
+            return PipelineRunInfo(fake_plr, {})
+
+        plr = await self._create(manifest, async_req=True)
+        plr_info = PipelineRunInfo(plr, {})
+        self._logger.info(f"Created EC PipelineRun: {self.resource_url(plr.to_dict())}")
+        return plr_info
 
     @staticmethod
     @alru_cache
