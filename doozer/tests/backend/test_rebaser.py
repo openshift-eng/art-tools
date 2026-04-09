@@ -1020,3 +1020,110 @@ USER 3000
 
         # Should fall back to metadata.branch_el_target (9)
         self.assertIn(".scos9", result)
+
+    def test_identify_stage_references_simple(self):
+        """Test stage reference detection with simple multi-stage build"""
+        dfp = DockerfileParser(path=self.directory.name)
+        dfp.content = """
+            FROM registry.io/base:latest AS build
+            RUN echo "building"
+
+            FROM build AS metadata
+            RUN echo "metadata"
+
+            FROM build
+            COPY --from=metadata /data /data
+        """
+
+        result = KonfluxRebaser._identify_stage_references(dfp)
+
+        # Expected: [False, True, True]
+        # - First FROM is an external image (base image)
+        # - Second FROM references "build" stage
+        # - Third FROM references "build" stage
+        self.assertEqual(result, [False, True, True])
+        self.assertEqual(len(result), 3)
+
+    def test_identify_stage_references_no_stage_refs(self):
+        """Test with Dockerfile that has no stage references"""
+        dfp = DockerfileParser(path=self.directory.name)
+        dfp.content = """
+            FROM registry.io/base1:latest
+            RUN echo "step1"
+
+            FROM registry.io/base2:latest
+            RUN echo "step2"
+        """
+
+        result = KonfluxRebaser._identify_stage_references(dfp)
+
+        # Expected: [False, False]
+        # - Both FROM directives are external images
+        self.assertEqual(result, [False, False])
+
+    def test_identify_stage_references_all_stage_refs(self):
+        """Test with Dockerfile where all but first FROM are stage references"""
+        dfp = DockerfileParser(path=self.directory.name)
+        dfp.content = """
+            FROM registry.io/base:v1 AS stage1
+            RUN echo "stage1"
+
+            FROM stage1 AS stage2
+            RUN echo "stage2"
+
+            FROM stage2 AS stage3
+            RUN echo "stage3"
+
+            FROM stage3
+            RUN echo "final"
+        """
+
+        result = KonfluxRebaser._identify_stage_references(dfp)
+
+        # Expected: [False, True, True, True]
+        self.assertEqual(result, [False, True, True, True])
+
+    def test_identify_stage_references_mixed(self):
+        """Test with Dockerfile mixing external images and stage references"""
+        dfp = DockerfileParser(path=self.directory.name)
+        dfp.content = """
+            FROM registry.io/base:v1 AS builder
+            RUN echo "building"
+
+            FROM registry.io/tools:latest AS tools
+            RUN echo "tools"
+
+            FROM builder
+            COPY --from=tools /bin/tool /bin/tool
+        """
+
+        result = KonfluxRebaser._identify_stage_references(dfp)
+
+        # Expected: [False, False, True]
+        # - First FROM: external (base image)
+        # - Second FROM: external (tools image)
+        # - Third FROM: references "builder" stage
+        self.assertEqual(result, [False, False, True])
+
+    def test_identify_stage_references_rhcos_node_image(self):
+        """Test with actual rhcos-node-image Dockerfile pattern"""
+        dfp = DockerfileParser(path=self.directory.name)
+        dfp.content = """
+            FROM quay.io/openshift-release-dev/ocp-v4.0-art-dev:c9s-coreos AS build
+            ARG OPENSHIFT_CI=0
+            RUN --mount=type=bind,target=/run/src /run/src/build-node-image.sh
+
+            FROM build AS metadata
+            RUN --mount=type=bind,target=/run/src /run/src/scripts/generate-metadata
+
+            FROM build
+            COPY --from=metadata /usr/share/openshift /usr/share/openshift
+            LABEL io.openshift.metalayer=true
+        """
+
+        result = KonfluxRebaser._identify_stage_references(dfp)
+
+        # Expected: [False, True, True]
+        # This is the exact pattern from rhcos-node-image
+        self.assertEqual(result, [False, True, True])
+        self.assertEqual(len(result), 3)
