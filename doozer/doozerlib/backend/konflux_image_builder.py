@@ -246,7 +246,8 @@ class KonfluxImageBuilder:
 
                 # Run enterprise-contract (EC) verification after a successful build
                 # TODO: Expand EC verification to layered products
-                if outcome is KonfluxBuildOutcome.SUCCESS and not self._config.skip_ec_verify:
+                is_ocp_group = self._config.group_name.startswith("openshift-")
+                if outcome is KonfluxBuildOutcome.SUCCESS and is_ocp_group and not self._config.skip_ec_verify:
                     try:
                         app_name = self.get_application_name(self._config.group_name)
                         its_name = f"{app_name}-ec-registry-ocp-art-stage"
@@ -296,8 +297,8 @@ class KonfluxImageBuilder:
                                 self._konflux_client.resource_url(ec_plr_info.to_dict()),
                             )
 
-                    except Exception as e:
-                        logger.error("EC verification error for %s: %s", metadata.distgit_key, e)
+                    except Exception:
+                        logger.exception("EC verification error for %s", metadata.distgit_key)
                         outcome = KonfluxBuildOutcome.FAILURE
 
                 if self._config.dry_run:
