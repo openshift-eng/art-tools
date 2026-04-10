@@ -128,6 +128,7 @@ class ConfigScanSources:
 
         For OKD variant:
         - Image is enabled if generally enabled OR has okd.mode: enabled
+        - Image must have for_payload: true (non-payload images are not built for OKD)
 
         For OCP variant:
         - Image must be generally enabled (mode != 'disabled')
@@ -140,7 +141,13 @@ class ConfigScanSources:
         """
         if self.variant == BuildVariant.OKD:
             # For OKD, image is enabled if generally enabled OR has okd.mode: enabled
-            return self._is_okd_enabled(image_meta)
+            if not self._is_okd_enabled(image_meta):
+                return False
+            # For OKD, also check for_payload - only payload images are built
+            for_payload = image_meta.config.for_payload
+            if for_payload is Missing:
+                for_payload = False
+            return for_payload
         else:
             # For OCP, only process generally enabled images (not OKD-only images)
             return image_meta.enabled
@@ -153,6 +160,9 @@ class ConfigScanSources:
         - It's enabled (generally enabled OR okd.mode: enabled), OR
         - load_disabled is set (includes all images even if disabled)
 
+        For OKD variant, additionally filters out non-payload images (for_payload: false)
+        since OKD only builds images that are in the payload.
+
         This ensures OKD-only images (mode: disabled, okd.mode: enabled) are scanned
         so they can be built for OKD when they change.
 
@@ -163,6 +173,13 @@ class ConfigScanSources:
         """
         # Include if enabled (handles both general and OKD-enabled cases)
         if self._is_image_enabled(image_meta):
+            # For OKD variant, skip non-payload images
+            if self.variant == BuildVariant.OKD:
+                for_payload = image_meta.config.for_payload
+                if for_payload is Missing:
+                    for_payload = False
+                if not for_payload:
+                    return False
             return True
 
         # Include if disabled but load_disabled is set
