@@ -1603,7 +1603,7 @@ class ConfigScanSources:
                 build_id = ""
                 for container_conf in self.runtime.group_config.rhcos.payload_tags:
                     if self.runtime.group_config.rhcos.get("layered_rhcos", False):
-                        build_id, pullspec = get_latest_layered_rhcos_build(container_conf, brew_arch)
+                        build_id, pullspec = get_latest_layered_rhcos_build(container_conf, brew_arch, registry_config=self.registry_auth_file)
                     else:
                         build_id, pullspec = rhcos.RHCOSBuildFinder(
                             self.runtime, version, brew_arch, private
@@ -1651,7 +1651,7 @@ class ConfigScanSources:
         rhcos_index = next(
             (tag.rhcos_index_tag for tag in self.runtime.group_config.rhcos.payload_tags if tag.primary), ""
         )
-        rhcos_info = util.oc_image_info_for_arch(rhcos_index, go_arch)
+        rhcos_info = util.oc_image_info_for_arch(rhcos_index, go_arch, registry_config=self.registry_auth_file)
         return rhcos_info['digest']
 
     def tagged_rhcos_id(self, container_name, version, arch, private) -> Optional[str]:

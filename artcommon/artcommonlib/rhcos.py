@@ -131,25 +131,26 @@ def get_build_id_from_rhcos_pullspec(pullspec) -> str:
     return build_id
 
 
-def get_latest_layered_rhcos_build(container_conf: dict = None, arch: str = None):
+def get_latest_layered_rhcos_build(container_conf: Model, arch: str, registry_config: str = None):
     """
     Get the latest Layered RHCOS build ID and pullspec for the specified rhcos container configuration.
 
-    :param container_conf: RHCOS container configuration
-    :param arch: Architecture (e.g., 'x86_64', 'aarch64')
+    :param container_conf: Payload tag config Model from group.yml (exposes rhel_build_id_index, rhcos_index_tag, etc.)
+    :param arch: Brew architecture (e.g., 'x86_64', 'aarch64')
+    :param registry_config: Optional path to registry auth config file
     :return: Tuple of (build_id, pullspec)
     """
     brew_arch = go_arch_for_brew_arch(arch)
 
     # Get build_id from rhel_build_id_index
-    rhel_info_str = oc_image_info__cached(container_conf.rhel_build_id_index, f'--filter-by-os={brew_arch}')
+    rhel_info_str = oc_image_info__cached(container_conf.rhel_build_id_index, f'--filter-by-os={brew_arch}', registry_config=registry_config)
     rhel_info = json.loads(rhel_info_str)
     build_id = rhel_info['config']['config']['Labels']["org.opencontainers.image.version"]
 
     if container_conf.rhel_build_id_index == container_conf.rhcos_index_tag:
         digest = rhel_info['digest']
     else:
-        rhcos_info_str = oc_image_info__cached(container_conf.rhcos_index_tag, f'--filter-by-os={brew_arch}')
+        rhcos_info_str = oc_image_info__cached(container_conf.rhcos_index_tag, f'--filter-by-os={brew_arch}', registry_config=registry_config)
         digest = json.loads(rhcos_info_str)['digest']
 
     # NOTE: RHCOS images are always hosted in the OCP 4.x art-dev repository, even for OCP 5.x,
