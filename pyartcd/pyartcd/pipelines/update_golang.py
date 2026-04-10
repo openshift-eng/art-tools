@@ -457,18 +457,27 @@ class UpdateGolangPipeline:
             for el_v, build_record in zip(el_nvr_map, build_records)
             if build_record
         }
-        go_nvr_map = elliottutil.get_golang_container_nvrs_for_konflux_record(found_records.values(), _LOGGER)
-        for builder_go_vr, nvrs in go_nvr_map.items():
-            for el_v, go_nvr in el_nvr_map.items():
-                # Strip RHEL minor version suffix (e.g. el9_5 -> el9) from both sides,
-                # since installed RPMs may have a more specific dist tag than the input NVR
-                normalized_builder = re.sub(r'\.el(\d+)_\d+$', r'.el\1', builder_go_vr)
-                normalized_input = re.sub(r'\.el(\d+)_\d+$', r'.el\1', go_nvr)
-                if normalized_builder in normalized_input:
-                    for nvr in nvrs:
-                        nvr_str = f"{nvr[0]}-{nvr[1]}-{nvr[2]}"
-                        _LOGGER.info(f"Found existing builder image in Konflux: {nvr_str} built with {go_nvr}")
-                        builder_nvrs[el_v] = nvr_str
+
+        # The found builder records until this point, their NVRs contain the go version substring that we are looking for
+        # Sometimes due to misconfiguration, installed golang rpm may be different/incorrect
+        # So ensure that the installed rpm is exactly the one we want
+        for el_v, build_record in found_records.items():
+            go_nvr_map = elliottutil.get_golang_container_nvrs_for_konflux_record(
+                [build_record],
+                _LOGGER,
+                exact=True,
+            )
+            actual_go_nvr, _ = next(iter(go_nvr_map.items()))
+            expected_go_nvr = el_nvr_map[el_v]
+            if actual_go_nvr != expected_go_nvr:
+                _LOGGER.warning(
+                    f"Installed golang rpm in {build_record.nvr} is different from the expected one: {actual_go_nvr} != {expected_go_nvr}"
+                )
+            else:
+                _LOGGER.info(
+                    f"Found existing builder image in Konflux: {build_record.nvr} built with {expected_go_nvr}"
+                )
+                builder_nvrs[el_v] = build_record.nvr
         return builder_nvrs
 
     def _get_builder_pullspec(self, parsed_nvr, build_system: str):
