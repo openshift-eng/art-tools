@@ -49,7 +49,7 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         metadata.is_base_image.return_value = False
         return metadata
 
-    async def test_build_uses_image_digest_for_attestation_validation(self):
+    async def test_build_uses_definitive_pullspec_for_attestation_validation(self):
         metadata = self._metadata()
         dest_dir = self.builder._config.base_dir.joinpath(metadata.qualified_key)
         dest_dir.mkdir(parents=True)
@@ -92,9 +92,9 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         ):
             await self.builder.build(metadata)
 
-        mock_validate.assert_awaited_once_with("sha256:testdigest", "test-image")
+        mock_validate.assert_awaited_once_with("quay.io/test/image@sha256:testdigest", "test-image")
 
-    async def test_update_konflux_db_uses_image_digest_for_installed_packages(self):
+    async def test_update_konflux_db_uses_definitive_pullspec_for_installed_packages(self):
         metadata = self._metadata()
         build_repo = MagicMock()
         build_repo.https_url = "https://example.com/repo.git"
@@ -151,4 +151,4 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
                 "5",
             )
 
-        mock_get_installed_packages.assert_awaited_once_with("sha256:testdigest", ["x86_64"], None)
+        mock_get_installed_packages.assert_awaited_once_with("quay.io/test/image@sha256:testdigest", ["x86_64"], None)
