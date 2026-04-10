@@ -236,7 +236,8 @@ class KonfluxImageBuilder:
 
                     # Validate SLSA attestation and source image signature
                     try:
-                        await self._validate_build_attestation_and_signature(image_pullspec, metadata.distgit_key)
+                        # use image_digest here to be precise, image_pullspec can collide in case of golang-builder images
+                        await self._validate_build_attestation_and_signature(image_digest, metadata.distgit_key)
                     except Exception as e:
                         logger.error(
                             f"Failed to get SLA attestation / source signature from konflux for image {image_pullspec}, marking build as {KonfluxBuildOutcome.FAILURE}. Error: {e}"
@@ -813,8 +814,9 @@ class KonfluxImageBuilder:
                     f"pipelinerun {pipelinerun_name}"
                 )
 
+            # use image_digest here to be precise, image_pullspec can collide in case of golang-builder images
             package_nvrs, source_rpms = await self.get_installed_packages(
-                image_pullspec, building_arches, self._config.registry_auth_file
+                image_digest, building_arches, self._config.registry_auth_file
             )
 
             build_record_params.update(
