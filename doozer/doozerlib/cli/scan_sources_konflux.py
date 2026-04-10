@@ -309,9 +309,10 @@ class ConfigScanSources:
             exectools.cmd_assert(cmd=['git', 'push', 'origin', priv_branch_name], retries=3, set_env=git_auth_env)
             self.logger.info('Successfully reconciled %s with public upstream', metadata.name)
 
-        except ChildProcessError:
-            # Failed pushing to openshift-priv
-            self.logger.warning('failed pushing to openshift-priv for %s', metadata.name)
+        except ChildProcessError as exc:
+            # Failed pushing to openshift-priv (exc.args[0] is cmd_assert message with git stderr)
+            detail = exc.args[0] if exc.args else exc
+            self.logger.warning('failed pushing to openshift-priv for %s: %s', metadata.name, detail)
             self.issues.append({'name': metadata.distgit_key, 'issue': 'Failed pushing to openshift-priv'})
 
     def _do_shas_match(self, public_url, pub_branch_name, priv_url, priv_branch_name) -> bool:
