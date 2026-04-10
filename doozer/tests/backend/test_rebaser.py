@@ -1127,3 +1127,27 @@ USER 3000
         # This is the exact pattern from rhcos-node-image
         self.assertEqual(result, [False, True, True])
         self.assertEqual(len(result), 3)
+
+    def test_identify_stage_references_case_insensitive(self):
+        """Test that stage name references are case-insensitive (Docker behavior)"""
+        dfp = DockerfileParser(path=self.directory.name)
+        dfp.content = """
+            FROM registry.io/base:latest AS Build
+            RUN echo "building"
+
+            FROM build AS METADATA
+            RUN echo "metadata"
+
+            FROM BUILD
+            COPY --from=metadata /data /data
+        """
+
+        result = KonfluxRebaser._identify_stage_references(dfp)
+
+        # Expected: [False, True, True]
+        # - First FROM: external image (base)
+        # - Second FROM: references "Build" stage (case-insensitive: "build")
+        # - Third FROM: references "Build" stage (case-insensitive: "BUILD" -> "build")
+        # Note: COPY --from=metadata is not a FROM directive, so not counted
+        self.assertEqual(result, [False, True, True])
+        self.assertEqual(len(result), 3)

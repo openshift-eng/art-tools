@@ -430,7 +430,7 @@ class KonfluxRebaser:
 
                 # Check if this FROM references a previously defined stage
                 # Extract the base image name (first token in FROM clause)
-                base_image = from_clause.split()[0]
+                base_image = from_clause.split()[0].lower()
                 is_stage_ref.append(base_image in stage_names)
 
                 # Extract stage name if this FROM defines a new stage (has "AS stagename")
@@ -439,7 +439,7 @@ class KonfluxRebaser:
                     tokens = from_clause.split()
                     as_index = next(i for i, t in enumerate(tokens) if t.upper() == 'AS')
                     if as_index + 1 < len(tokens):
-                        stage_name = tokens[as_index + 1]
+                        stage_name = tokens[as_index + 1].lower()
                         stage_names.add(stage_name)
 
         return is_stage_ref
