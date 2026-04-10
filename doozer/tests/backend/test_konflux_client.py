@@ -138,6 +138,22 @@ class TestNewIntegrationTestScenario(TestCase):
         self.assertEqual(resolver_params["pathInRepo"], "pipelines/enterprise-contract.yaml")
 
 
+class TestNewIntegrationTestScenarioPreGA(TestCase):
+    """Test that preGA (PREVIEW) assemblies use the ec-stage policy."""
+
+    def test_prega_policy_manifest(self):
+        manifest = KonfluxClient._new_integration_test_scenario(
+            name="openshift-4-22-ec-registry-ocp-art-ec-stage",
+            application_name="openshift-4-22",
+            application_uid="test-uid-prega",
+            policy_configuration="rhtap-releng-tenant/registry-ocp-art-ec-stage",
+        )
+
+        self.assertEqual(manifest["metadata"]["name"], "openshift-4-22-ec-registry-ocp-art-ec-stage")
+        params = {p["name"]: p["value"] for p in manifest["spec"]["params"]}
+        self.assertEqual(params["POLICY_CONFIGURATION"], "rhtap-releng-tenant/registry-ocp-art-ec-stage")
+
+
 class TestNewEcPipelinerun(TestCase):
     def test_manifest_structure(self):
         snapshot_spec = {

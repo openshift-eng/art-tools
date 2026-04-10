@@ -59,3 +59,6 @@ KONFLUX_EC_PIPELINE_GIT_URL = "https://github.com/konflux-ci/build-definitions"
 KONFLUX_EC_PIPELINE_REVISION = "main"
 KONFLUX_EC_PIPELINE_PATH = "pipelines/enterprise-contract.yaml"
 KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION = "rhtap-releng-tenant/registry-ocp-art-stage"
+# PreGA (PREVIEW assembly) EC policy: same as stage but allows unsigned RPMs
+# https://gitlab.cee.redhat.com/releng/konflux-release-data/-/blob/main/config/kflux-ocp-p01.7ayg.p1/product/EnterpriseContractPolicy/registry-ocp-art-ec-stage.yaml
+KONFLUX_PREGA_EC_POLICY_CONFIGURATION = "rhtap-releng-tenant/registry-ocp-art-ec-stage"

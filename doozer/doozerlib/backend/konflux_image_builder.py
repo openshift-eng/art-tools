@@ -15,6 +15,7 @@ from artcommonlib import bigquery, exectools
 from artcommonlib import constants as artlib_constants
 from artcommonlib import util as artlib_util
 from artcommonlib.arch_util import go_arch_for_brew_arch
+from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.build_visibility import is_release_embargoed
 from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.model import Missing
@@ -246,17 +247,28 @@ class KonfluxImageBuilder:
 
                 # Run enterprise-contract (EC) verification after a successful build
                 # TODO: Expand EC verification to layered products
+                # TODO: Expose EC failure links (ITS/PLR URLs) via Slack notification or dashboard column
                 is_ocp_group = self._config.group_name.startswith("openshift-")
                 if outcome is KonfluxBuildOutcome.SUCCESS and is_ocp_group and not self._config.skip_ec_verify:
                     try:
                         app_name = self.get_application_name(self._config.group_name)
-                        its_name = f"{app_name}-ec-registry-ocp-art-stage"
+
+                        # Select EC policy based on assembly type:
+                        # PREVIEW (preGA) assemblies use a more permissive policy that allows unsigned RPMs.
+                        # Mirrors the logic in prepare_release_konflux.py check_advisory_stage_policy().
+                        if metadata.runtime.assembly_type == AssemblyTypes.PREVIEW:
+                            ec_policy = constants.KONFLUX_PREGA_EC_POLICY_CONFIGURATION
+                        else:
+                            ec_policy = self._config.ec_policy_configuration
+
+                        policy_suffix = ec_policy.split('/')[-1]
+                        its_name = f"{app_name}-ec-{policy_suffix}"
 
                         logger.info("Ensuring IntegrationTestScenario %s exists...", its_name)
                         await self._konflux_client.ensure_integration_test_scenario(
                             name=its_name,
                             application_name=app_name,
-                            policy_configuration=self._config.ec_policy_configuration,
+                            policy_configuration=ec_policy,
                         )
 
                         image_with_digest = f"{image_pullspec.split(':')[0]}@{image_digest}"
@@ -272,7 +284,7 @@ class KonfluxImageBuilder:
                             source_url=source_url,
                             commit_sha=build_repo.commit_hash,
                             its_name=its_name,
-                            policy_configuration=self._config.ec_policy_configuration,
+                            policy_configuration=ec_policy,
                         )
                         ec_plr_name = ec_plr_info.name
 
