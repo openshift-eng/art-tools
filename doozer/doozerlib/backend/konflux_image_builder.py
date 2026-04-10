@@ -46,6 +46,25 @@ from pyartcd import jenkins
 LOGGER = logging.getLogger(__name__)
 
 
+def _normalize_version(version: str) -> str:
+    """
+    Pad a 2-segment version string to 3 segments so that "v4.20" and
+    "v4.20.0" compare as equal in NVR comparisons.
+
+    This handles the microshift-bootc transition from 3-segment ("v4.20.0")
+    to 2-segment ("v4.20") versioning.
+
+    Arg(s):
+        version (str): Version string, optionally prefixed with "v".
+    Return Value(s):
+        str: Version padded to at least 3 segments (e.g. "v4.20" -> "v4.20.0").
+    """
+    parts = version.split(".")
+    if len(parts) == 2:
+        version = f"{version}.0"
+    return version
+
+
 class KonfluxImageBuildError(Exception):
     def __init__(self, message: str, pipelinerun_name: str, pipelinerun_dict: Optional[Dict]) -> None:
         super().__init__(message)
@@ -153,9 +172,12 @@ class KonfluxImageBuilder:
                 exclude_large_columns=True,
             )
             if latest_build:
-                # Parse both NVRs and compare them
+                # Parse both NVRs and normalize versions to 3 segments so that
+                # "v4.20" and "v4.20.0" compare as equal (microshift-bootc transition)
                 target_nvr_dict = parse_nvr(nvr)
                 latest_nvr_dict = parse_nvr(latest_build.nvr)
+                target_nvr_dict["version"] = _normalize_version(target_nvr_dict["version"])
+                latest_nvr_dict["version"] = _normalize_version(latest_nvr_dict["version"])
 
                 # compare_nvr returns: 1 if target > latest, 0 if equal, -1 if target < latest
                 if compare_nvr(target_nvr_dict, latest_nvr_dict) <= 0:

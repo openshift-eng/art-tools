@@ -306,9 +306,6 @@ def validate_semver_major_minor_patch(ctx, param, version):
     :param version: The version specified on the command line
     :return:
     """
-    if version == 'auto' or version is None:
-        return version
-
     vsplit = version.split(".")
     try:
         int(vsplit[0].removeprefix('v'))
@@ -321,6 +318,29 @@ def validate_semver_major_minor_patch(ctx, param, version):
         raise click.BadParameter('Expected X, X.Y, or X.Y.Z (with optional "v" prefix)')
 
     return f'{vsplit[0]}.{minor_version}.{patch_version}'
+
+
+def validate_semver_major_minor(ctx, param, version):
+    """
+    For non-None, non-auto values, ensures that the incoming parameter meets
+    the criteria X.Y (with optional "v" prefix). Used by microshift-bootc
+    which uses 2-segment versions (e.g. v4.20).
+    :param ctx: Click context
+    :param param: The parameter specified on the command line
+    :param version: The version specified on the command line
+    :return:
+    """
+    vsplit = version.split(".")
+    if len(vsplit) != 2:
+        raise click.BadParameter('Expected X.Y (with optional "v" prefix)')
+
+    try:
+        int(vsplit[0].removeprefix('v'))
+        minor_version = int(vsplit[1])
+    except ValueError:
+        raise click.BadParameter('Expected integers in version fields')
+
+    return f'{vsplit[0]}.{minor_version}'
 
 
 def validate_rpm_version(ctx, param, version: str):

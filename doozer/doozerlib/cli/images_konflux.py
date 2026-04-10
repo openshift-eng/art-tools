@@ -30,6 +30,7 @@ from doozerlib.cli import (
     option_commit_message,
     option_push,
     pass_runtime,
+    validate_semver_major_minor,
     validate_semver_major_minor_patch,
 )
 from doozerlib.exceptions import DoozerFatalError
@@ -38,6 +39,19 @@ from doozerlib.runtime import Runtime
 
 TRACER = trace.get_tracer(__name__)
 LOGGER = logging.getLogger(__name__)
+
+
+def _validate_version(ctx, param, version):
+    """
+    Accept both X.Y (microshift-bootc) and X.Y.Z versions, preserving segment count.
+    """
+    if version is None or version == "auto":
+        return version
+
+    if len(version.split(".")) == 2:  # used by microshift-bootc
+        return validate_semver_major_minor(ctx, param, version)
+
+    return validate_semver_major_minor_patch(ctx, param, version)
 
 
 class KonfluxRebaseCli:
@@ -130,7 +144,7 @@ class KonfluxRebaseCli:
     "--version",
     metavar='VERSION',
     required=True,
-    callback=validate_semver_major_minor_patch,
+    callback=_validate_version,
     help="Version string to populate in Dockerfiles.",
 )
 @click.option("--release", metavar='RELEASE', required=True, help="Release string to populate in Dockerfiles.")

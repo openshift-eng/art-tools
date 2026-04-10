@@ -504,7 +504,7 @@ class BuildMicroShiftBootcPipeline:
         assembly_label_value = self._get_assembly_label_value()
 
         # Rebase and build bootc image
-        version = f"v{major}.{minor}.0"
+        version = f"v{major}.{minor}"
         release = default_release_suffix()
         rebase_cmd = [
             "doozer",

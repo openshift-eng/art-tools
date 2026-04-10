@@ -361,6 +361,40 @@ shipment:
     @patch.object(BuildMicroShiftBootcPipeline, "get_latest_bootc_build", new_callable=AsyncMock)
     @patch.object(BuildMicroShiftBootcPipeline, "_get_microshift_rpm_commit", new_callable=AsyncMock)
     @patch.object(BuildMicroShiftBootcPipeline, "_build_plashet_for_bootc", new_callable=AsyncMock)
+    async def test_rebase_uses_two_segment_version(self, mock_plashet, mock_get_commit, mock_get_build, mock_cmd):
+        """
+        Test that _rebase_and_build_bootc passes --version v4.21 (2 segments)
+        instead of v4.21.0 to avoid confusing tags on the container catalog
+        (OCPBUGS-78040).
+        """
+        mock_get_commit.return_value = "abc1234"
+        mock_get_build.return_value = Mock(nvr="microshift-bootc-4.21.0-1.el9")
+        pipeline = self._make_pipeline(group="openshift-4.21", assembly="4.21.7")
+        pipeline.assembly_type = AssemblyTypes.STANDARD
+        pipeline.force = True
+        os.environ["KONFLUX_SA_KUBECONFIG"] = "/fake/kubeconfig"
+
+        try:
+            with patch("asyncio.sleep", new_callable=AsyncMock):
+                await pipeline._rebase_and_build_bootc()
+
+            rebase_cmd = mock_cmd.call_args_list[0][0][0]
+
+            # --version uses 2-segment format (no trailing .0)
+            ver_idx = rebase_cmd.index("--version")
+            self.assertEqual(rebase_cmd[ver_idx + 1], "v4.21")
+
+            # assembly label is also set
+            extra_label_indices = [i for i, v in enumerate(rebase_cmd) if v == "--extra-label"]
+            extra_labels = [rebase_cmd[i + 1] for i in extra_label_indices]
+            self.assertIn("assembly=v4.21.7", extra_labels)
+        finally:
+            os.environ.pop("KONFLUX_SA_KUBECONFIG", None)
+
+    @patch("pyartcd.pipelines.build_microshift_bootc.exectools.cmd_assert_async", new_callable=AsyncMock)
+    @patch.object(BuildMicroShiftBootcPipeline, "get_latest_bootc_build", new_callable=AsyncMock)
+    @patch.object(BuildMicroShiftBootcPipeline, "_get_microshift_rpm_commit", new_callable=AsyncMock)
+    @patch.object(BuildMicroShiftBootcPipeline, "_build_plashet_for_bootc", new_callable=AsyncMock)
     async def test_rebase_and_build_bootc_uses_rpm_commit(
         self, mock_plashet, mock_get_commit, mock_get_build, mock_cmd
     ):

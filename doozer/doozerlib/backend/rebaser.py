@@ -1051,18 +1051,15 @@ class KonfluxRebaser:
             for k, v in metadata.config.labels.items():
                 dfp.labels[k] = str(v)
 
-        # Set extra labels passed via CLI
-        for k, v in self.extra_labels.items():
-            dfp.labels[k] = v
-
         # Set the image name
         dfp.labels["name"] = metadata.config.name
 
         # The vendor should always be Red Hat, Inc.
         dfp.labels["vendor"] = "Red Hat, Inc."
 
-        # "v4.20.0" -> "4.20"
-        cleaned_version = version.lstrip('v').rsplit('.', 1)[0]
+        # "v4.20.0" -> "4.20", "v4.20" -> "4.20"
+        version_parts = version.lstrip('v').split('.')
+        cleaned_version = f"{version_parts[0]}.{version_parts[1]}" if len(version_parts) >= 2 else version_parts[0]
         # "202509030239.p2.gfe588cb.assembly.stream.el9" -> "el9"
         rhel_version = release.split(".")[-1]
         product = self._runtime.group_config.product if self._runtime.group_config.product else "openshift"
@@ -1090,6 +1087,10 @@ class KonfluxRebaser:
         # Set version and release labels
         dfp.labels['version'] = version
         dfp.labels['release'] = release
+
+        # Set extra labels passed via CLI
+        for k, v in self.extra_labels.items():
+            dfp.labels[k] = v
 
         # log nvr
         self._logger.info(f"nvr={metadata.get_component_name()}-{version}-{release}")
