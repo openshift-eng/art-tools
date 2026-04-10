@@ -229,7 +229,8 @@ class KonfluxImageBuilder:
                     image_pullspec = next((r['value'] for r in results if r['name'] == 'IMAGE_URL'), None)
                     image_digest = next((r['value'] for r in results if r['name'] == 'IMAGE_DIGEST'), None)
 
-                    record["image_pullspec"] = f"{image_pullspec.split(':')[0]}@{image_digest}"
+                    definitive_image_pullspec = f"{image_pullspec.split(':')[0]}@{image_digest}"
+                    record["image_pullspec"] = definitive_image_pullspec
 
                     image_tag = image_pullspec.split(':')[-1]
                     record["image_tag"] = image_tag
@@ -237,10 +238,12 @@ class KonfluxImageBuilder:
                     # Validate SLSA attestation and source image signature
                     try:
                         # use image_digest here to be precise, image_pullspec can collide in case of golang-builder images
-                        await self._validate_build_attestation_and_signature(image_digest, metadata.distgit_key)
+                        await self._validate_build_attestation_and_signature(
+                            definitive_image_pullspec, metadata.distgit_key
+                        )
                     except Exception as e:
                         logger.error(
-                            f"Failed to get SLA attestation / source signature from konflux for image {image_pullspec}, marking build as {KonfluxBuildOutcome.FAILURE}. Error: {e}"
+                            f"Failed to get SLA attestation / source signature from konflux for image {definitive_image_pullspec}, marking build as {KonfluxBuildOutcome.FAILURE}. Error: {e}"
                         )
                         outcome = KonfluxBuildOutcome.FAILURE
 
@@ -814,14 +817,16 @@ class KonfluxImageBuilder:
                     f"pipelinerun {pipelinerun_name}"
                 )
 
+            definitive_image_pullspec = f"{image_pullspec.split(':')[0]}@{image_digest}"
+
             # use image_digest here to be precise, image_pullspec can collide in case of golang-builder images
             package_nvrs, source_rpms = await self.get_installed_packages(
-                image_digest, building_arches, self._config.registry_auth_file
+                definitive_image_pullspec, building_arches, self._config.registry_auth_file
             )
 
             build_record_params.update(
                 {
-                    'image_pullspec': f"{image_pullspec.split(':')[0]}@{image_digest}",
+                    'image_pullspec': definitive_image_pullspec,
                     'installed_packages': sorted(source_rpms),
                     'installed_rpms': sorted(package_nvrs),
                     'image_tag': image_pullspec.split(':')[-1],
