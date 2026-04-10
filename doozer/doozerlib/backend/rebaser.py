@@ -405,20 +405,82 @@ class KonfluxRebaser:
                 await file.write("\n!/.oit/**\n")
                 await file.write("\n!labels.json\n")
 
+    @staticmethod
+    def _identify_stage_references(dfp: DockerfileParser) -> List[bool]:
+        """
+        Identify which FROM directives are stage references vs actual base image pulls.
+
+        Returns a boolean list where:
+        - True = this FROM directive references a build stage defined earlier
+        - False = this FROM directive pulls an external base image
+
+        Example Dockerfile:
+            FROM registry.io/base:latest AS build   # False (base image)
+            FROM build AS metadata                   # True (stage reference)
+            FROM build                               # True (stage reference)
+
+        Returns: [False, True, True]
+        """
+        stage_names = set()
+        is_stage_ref = []
+
+        for line in json.loads(dfp.json):
+            if 'FROM' in line:
+                from_clause = line['FROM']
+
+                # Check if this FROM references a previously defined stage
+                # Extract the base image name (first token in FROM clause)
+                base_image = from_clause.split()[0].lower()
+                is_stage_ref.append(base_image in stage_names)
+
+                # Extract stage name if this FROM defines a new stage (has "AS stagename")
+                if ' AS ' in from_clause.upper():
+                    # Stage name is the last token after AS
+                    tokens = from_clause.split()
+                    as_index = next(i for i, t in enumerate(tokens) if t.upper() == 'AS')
+                    if as_index + 1 < len(tokens):
+                        stage_name = tokens[as_index + 1].lower()
+                        stage_names.add(stage_name)
+
+        return is_stage_ref
+
     @start_as_current_span_async(TRACER, "rebase.resolve_parents")
     async def _resolve_parents(self, metadata: ImageMetadata, dfp: DockerfileParser):
-        """Resolve the parent images for the given image metadata."""
+        """
+        Resolve the parent images for the given image metadata.
+
+        This method handles multi-stage Dockerfiles where some FROM directives may reference
+        earlier build stages (e.g., "FROM build") rather than external base images.
+        Stage references are preserved as-is, while external base images are resolved
+        according to the metadata configuration.
+        """
+        # Detect which FROM directives are stage references vs external base images
+        is_stage_ref = self._identify_stage_references(dfp)
+
+        # Filter to only actual base images (not stage references)
+        actual_base_images = [img for img, is_ref in zip(dfp.parent_images, is_stage_ref) if not is_ref]
+
+        # Get parent image configuration from metadata
         image_from = metadata.config.get('from', {})
         parents = image_from.get("builder", []).copy()
-        parents.append(image_from)
 
-        if len(parents) != len(dfp.parent_images):
+        # Only append image_from as a final parent if it specifies one
+        # (i.e., it has member, stream, or image key directly)
+        if any(key in image_from for key in ["member", "stream", "image"]):
+            parents.append(image_from)
+
+        # Validate: metadata should specify one entry per actual base image (not per stage reference)
+        num_stage_refs = sum(is_stage_ref)
+        if len(parents) != len(actual_base_images):
             raise ValueError(
-                f"Build metadata for {metadata.distgit_key} expected {len(parents)} parent images, but found {len(dfp.parent_images)} in Dockerfile"
+                f"Build metadata for {metadata.distgit_key} expected {len(parents)} parent images, "
+                f"but found {len(actual_base_images)} in Dockerfile "
+                f"({len(dfp.parent_images)} total FROM directives, {num_stage_refs} are stage references)"
             )
 
+        # Resolve only the actual base images according to metadata config
         mapped_images: List[Tuple[str, bool]] = []
-        for parent, original_parent in zip(parents, dfp.parent_images):
+        for parent, original_parent in zip(parents, actual_base_images):
             if "member" in parent:
                 mapped_images.append(await self._resolve_member_parent(parent["member"], original_parent))
             elif "image" in parent:
@@ -430,7 +492,18 @@ class KonfluxRebaser:
             else:
                 raise ValueError(f"Image in 'from' for [{metadata.distgit_key}] is missing its definition.")
 
-        downstream_parents = [pullspec for pullspec, _ in mapped_images]
+        # Build final parent list: resolved images for base pulls, original stage names for references
+        downstream_parents = []
+        resolved_idx = 0
+        for i, is_ref in enumerate(is_stage_ref):
+            if is_ref:
+                # This is a stage reference - preserve it as-is
+                downstream_parents.append(dfp.parent_images[i])
+            else:
+                # This is an actual base image - use the resolved pullspec
+                downstream_parents.append(mapped_images[resolved_idx][0])
+                resolved_idx += 1
+
         private_fix = any(private_fix for _, private_fix in mapped_images)
         return downstream_parents, private_fix
 
