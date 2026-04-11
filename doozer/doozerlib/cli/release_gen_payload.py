@@ -1086,6 +1086,7 @@ class GenPayloadCli:
 
         public_entries_for_arch: Dict[str, Dict[str, PayloadEntry]] = dict()  # arch => img tag => PayloadEntry
         private_entries_for_arch: Dict[str, Dict[str, PayloadEntry]] = dict()  # arch => img tag => PayloadEntry
+        registry_config = os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")
 
         arches = (
             self.runtime.group_config.konflux.arches if self.runtime.build_system == 'konflux' else self.runtime.arches
@@ -1100,7 +1101,9 @@ class GenPayloadCli:
             entries: Dict[str, PayloadEntry]  # Key of this dict is release payload tag name
             payload_issues: List[AssemblyIssue]
             public_repo = self.full_component_repo(repo_type=RepositoryType.PUBLIC)
-            entries, payload_issues = self.payload_generator.find_payload_entries(assembly_inspector, arch, public_repo)
+            entries, payload_issues = self.payload_generator.find_payload_entries(
+                assembly_inspector, arch, public_repo, registry_config=registry_config
+            )
 
             public_entries: Dict[str, PayloadEntry] = dict()
             for k, v in entries.items():
@@ -1161,7 +1164,10 @@ class GenPayloadCli:
             self.assembly_issues.extend(embargo_issues)
 
             private_entries, private_payload_issues = self.payload_generator.find_payload_entries(
-                assembly_inspector, arch, self.full_component_repo(repo_type=RepositoryType.PRIVATE)
+                assembly_inspector,
+                arch,
+                self.full_component_repo(repo_type=RepositoryType.PRIVATE),
+                registry_config=registry_config,
             )
             private_entries_for_arch[arch] = private_entries
 
@@ -2511,7 +2517,7 @@ class PayloadGenerator:
         return f"{dest_repo}:{tag}"
 
     def find_payload_entries(
-        self, assembly_inspector: AssemblyInspector, arch: str, dest_repo: str
+        self, assembly_inspector: AssemblyInspector, arch: str, dest_repo: str, registry_config: str = None
     ) -> (Dict[str, PayloadEntry], List[AssemblyIssue]):
         """
         Returns a list of images which should be included in the architecture specific release payload.
@@ -2519,12 +2525,15 @@ class PayloadGenerator:
         :param assembly_inspector: An analyzer for the assembly to generate entries for.
         :param arch: The brew architecture name to create the list for.
         :param dest_repo: The registry/org/repo into which the image should be mirrored.
+        :param registry_config: Optional path to registry auth config file.
         :return: Map[payload_tag_name] -> PayloadEntry.
         """
 
         members: Dict[str, PayloadEntry] = self._find_initial_payload_entries(assembly_inspector, arch, dest_repo)
         members = self._replace_missing_payload_entries(members, arch)
-        rhcos_members, issues = self._find_rhcos_payload_entries(assembly_inspector, arch)
+        rhcos_members, issues = self._find_rhcos_payload_entries(
+            assembly_inspector, arch, registry_config=registry_config
+        )
         members.update(rhcos_members)
         return members, issues
 
@@ -2573,7 +2582,7 @@ class PayloadGenerator:
     @staticmethod
     @TRACER.start_as_current_span("PayloadGenerator._find_rhcos_payload_entries")
     def _find_rhcos_payload_entries(
-        assembly_inspector: AssemblyInspector, arch: str
+        assembly_inspector: AssemblyInspector, arch: str, registry_config: str = None
     ) -> Tuple[Dict[str, PayloadEntry], List[AssemblyIssue]]:
         span = trace.get_current_span()
         span.set_attributes(
@@ -2583,7 +2592,7 @@ class PayloadGenerator:
         )
         members: Dict[str, PayloadEntry] = dict()
         issues: List[AssemblyIssue] = list()
-        rhcos_build: RHCOSBuildInspector = assembly_inspector.get_rhcos_build(arch)
+        rhcos_build: RHCOSBuildInspector = assembly_inspector.get_rhcos_build(arch, registry_config=registry_config)
         for container_config in rhcos_build.get_container_configs():
             try:
                 members[container_config.name] = PayloadEntry(
@@ -2818,7 +2827,10 @@ class PayloadGenerator:
 
         payload_entries: Dict[str, PayloadEntry]
         issues: List[AssemblyIssue]
-        payload_entries, issues = self.find_payload_entries(assembly_inspector, arch, "")
+        registry_config = os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")
+        payload_entries, issues = self.find_payload_entries(
+            assembly_inspector, arch, "", registry_config=registry_config
+        )
         rhcos_container_configs = {tag.name: tag for tag in rhcos.get_container_configs(runtime)}
         for component_tag in release_info.references.spec.tags:  # For each tag in the imagestream
             payload_tag_name: str = component_tag.name  # e.g. "aws-ebs-csi-driver"
