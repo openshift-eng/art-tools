@@ -143,14 +143,18 @@ def get_latest_layered_rhcos_build(container_conf: Model, arch: str, registry_co
     brew_arch = go_arch_for_brew_arch(arch)
 
     # Get build_id from rhel_build_id_index
-    rhel_info_str = oc_image_info__cached(container_conf.rhel_build_id_index, f'--filter-by-os={brew_arch}', registry_config=registry_config)
+    rhel_info_str = oc_image_info__cached(
+        container_conf.rhel_build_id_index, f'--filter-by-os={brew_arch}', registry_config=registry_config
+    )
     rhel_info = json.loads(rhel_info_str)
     build_id = rhel_info['config']['config']['Labels']["org.opencontainers.image.version"]
 
     if container_conf.rhel_build_id_index == container_conf.rhcos_index_tag:
         digest = rhel_info['digest']
     else:
-        rhcos_info_str = oc_image_info__cached(container_conf.rhcos_index_tag, f'--filter-by-os={brew_arch}', registry_config=registry_config)
+        rhcos_info_str = oc_image_info__cached(
+            container_conf.rhcos_index_tag, f'--filter-by-os={brew_arch}', registry_config=registry_config
+        )
         digest = json.loads(rhcos_info_str)['digest']
 
     # NOTE: RHCOS images are always hosted in the OCP 4.x art-dev repository, even for OCP 5.x,

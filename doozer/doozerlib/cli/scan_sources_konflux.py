@@ -1603,7 +1603,9 @@ class ConfigScanSources:
                 build_id = ""
                 for container_conf in self.runtime.group_config.rhcos.payload_tags:
                     if self.runtime.group_config.rhcos.get("layered_rhcos", False):
-                        build_id, pullspec = get_latest_layered_rhcos_build(container_conf, brew_arch, registry_config=self.registry_auth_file)
+                        build_id, pullspec = get_latest_layered_rhcos_build(
+                            container_conf, brew_arch, registry_config=self.registry_auth_file
+                        )
                     else:
                         build_id, pullspec = rhcos.RHCOSBuildFinder(
                             self.runtime, version, brew_arch, private
