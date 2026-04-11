@@ -1,4 +1,5 @@
 import logging
+import os
 from pprint import pprint
 
 import click
@@ -32,8 +33,12 @@ async def inspect_stream(runtime: Runtime, code: AssemblyIssueCode, strict: bool
         await assembly_inspector.initialize(lookup_mode=None)
         package_rpm_finder = PackageRpmFinder(runtime)
         payload_generator = PayloadGenerator(runtime, package_rpm_finder)
+        registry_config = os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")
         rhcos_builds, rhcos_inconsistencies = _check_inconsistent_rhcos_rpms(
-            runtime, assembly_inspector, payload_generator
+            runtime,
+            assembly_inspector,
+            payload_generator,
+            registry_config=registry_config,
         )
         if rhcos_inconsistencies:
             msg = f'Found RHCOS inconsistencies in builds {rhcos_builds}'
@@ -60,8 +65,13 @@ async def inspect_stream(runtime: Runtime, code: AssemblyIssueCode, strict: bool
         await assembly_inspector.initialize(lookup_mode="images")
         package_rpm_finder = PackageRpmFinder(runtime)
         payload_generator = PayloadGenerator(runtime, package_rpm_finder)
+        registry_config = os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")
         issues = _check_cross_payload_consistency_requirements(
-            runtime, assembly_inspector, payload_generator, requirements
+            runtime,
+            assembly_inspector,
+            payload_generator,
+            requirements,
+            registry_config=registry_config,
         )
         if issues:
             LOGGER.info('Payload contents consistency requirements not satisfied')
@@ -77,11 +87,14 @@ async def inspect_stream(runtime: Runtime, code: AssemblyIssueCode, strict: bool
 
 
 def _check_inconsistent_rhcos_rpms(
-    runtime: Runtime, assembly_inspector: AssemblyInspector, payload_generator: PayloadGenerator
+    runtime: Runtime,
+    assembly_inspector: AssemblyInspector,
+    payload_generator: PayloadGenerator,
+    registry_config: str = None,
 ):
     rhcos_builds = []
     for arch in runtime.group_config.arches:
-        build_inspector = assembly_inspector.get_rhcos_build(arch)
+        build_inspector = assembly_inspector.get_rhcos_build(arch, registry_config=registry_config)
         rhcos_builds.append(build_inspector)
     runtime.logger.info(f"Checking following builds for inconsistency: {rhcos_builds}")
     rhcos_inconsistencies = payload_generator.find_rhcos_build_rpm_inconsistencies(rhcos_builds)
@@ -89,13 +102,17 @@ def _check_inconsistent_rhcos_rpms(
 
 
 def _check_cross_payload_consistency_requirements(
-    runtime: Runtime, assembly_inspector: AssemblyInspector, payload_generator: PayloadGenerator, requirements: dict
+    runtime: Runtime,
+    assembly_inspector: AssemblyInspector,
+    payload_generator: PayloadGenerator,
+    requirements: dict,
+    registry_config: str = None,
 ):
     issues = []
     for arch in runtime.group_config.arches:
         issues.extend(
             payload_generator.find_rhcos_payload_rpm_inconsistencies(
-                assembly_inspector.get_rhcos_build(arch),
+                assembly_inspector.get_rhcos_build(arch, registry_config=registry_config),
                 assembly_inspector.get_group_release_images(),
                 requirements,
             )
