@@ -601,7 +601,9 @@ class AssemblyInspector:
                 cache[tag] = component_builds
         return cache
 
-    def get_rhcos_build(self, arch: str, private: bool = False, custom: bool = False) -> RHCOSBuildInspector:
+    def get_rhcos_build(
+        self, arch: str, private: bool = False, custom: bool = False, registry_config: str = None
+    ) -> RHCOSBuildInspector:
         """
         :param arch: The CPU architecture of the build to retrieve.
         :param private: If this should be a private build (NOT CURRENTLY SUPPORTED)
@@ -638,7 +640,12 @@ class AssemblyInspector:
             try:
                 version = self.runtime.get_minor_version()
                 build_id, pullspec = RHCOSBuildFinder(
-                    runtime, version, brew_arch, private, custom=custom
+                    runtime,
+                    version,
+                    brew_arch,
+                    private,
+                    custom=custom,
+                    registry_config=registry_config,
                 ).latest_container(container_conf)
                 if not pullspec:
                     raise IOError(f"No RHCOS latest found for {version} / {brew_arch}")
@@ -649,4 +656,4 @@ class AssemblyInspector:
                     # their absence will be noted when generating payloads anyway.
                     raise
 
-        return RHCOSBuildInspector(runtime, pullspec_for_tag, brew_arch, build_id)
+        return RHCOSBuildInspector(runtime, pullspec_for_tag, brew_arch, build_id, registry_config=registry_config)
