@@ -27,7 +27,15 @@ class RHCOSNotFound(Exception):
 
 
 class RHCOSBuildFinder:
-    def __init__(self, runtime, version: str, brew_arch: str = "x86_64", private: bool = False, custom: bool = False):
+    def __init__(
+        self,
+        runtime,
+        version: str,
+        brew_arch: str = "x86_64",
+        private: bool = False,
+        custom: bool = False,
+        registry_config: str = None,
+    ):
         """
         @param runtime  The Runtime object passed in from the CLI
         @param version  The 4.y ocp version as a string (e.g. "4.6")
@@ -36,6 +44,7 @@ class RHCOSBuildFinder:
         @param custom If the caller knows this build is custom, the library will only search in the -custom buckets. When the RHCOS pipeline runs a custom build, artifacts
             should be stored in a different area; e.g. https://releases-rhcos--prod-pipeline.apps.int.prod-stable-spoke1-dc-iad2.itup.redhat.com/storage/releases/rhcos-4.8-custom/48.84.....-0/x86_64/commitmeta.json
             This is done by ART's RHCOS pipeline code when a custom build is indicated: https://gitlab.cee.redhat.com/openshift-art/rhcos-upshift/-/blob/fdad7917ebdd9c8b47d952010e56e511394ed348/Jenkinsfile#L30
+        @param registry_config  Optional path to registry auth config file
         """
         self.runtime = runtime
         self.version = version
@@ -44,6 +53,7 @@ class RHCOSBuildFinder:
         self.custom = custom
         self.go_arch = go_arch_for_brew_arch(brew_arch)
         self._primary_container = None
+        self.registry_config = registry_config
         self.layered = self.runtime.group_config.rhcos.get("layered_rhcos", False)
         if self.layered is Missing:
             self.layered = False
@@ -164,10 +174,11 @@ class RHCOSBuildFinder:
         """
         This is a helper function to retrieve meta.json from a layered RHCOS build
         """
+        reg_conf_arg = f" --registry-config={self.registry_config}" if self.registry_config else ""
         if meta_type == "commitmeta":
             with tempfile.TemporaryDirectory() as temp_dir:
                 stdout, _ = exectools.cmd_assert(
-                    f"oc image extract {pullspec}[-1] --path /usr/share/openshift/base/meta.json:{temp_dir} --confirm",
+                    f"oc image extract {pullspec}[-1] --path /usr/share/openshift/base/meta.json:{temp_dir} --confirm{reg_conf_arg}",
                     retries=3,
                 )
                 with open(os.path.join(temp_dir, "meta.json"), 'r') as f:
@@ -176,7 +187,7 @@ class RHCOSBuildFinder:
         elif meta_type == "meta":
             with tempfile.TemporaryDirectory() as temp_dir:
                 stdout, _ = exectools.cmd_assert(
-                    f"oc image extract {pullspec}[-1] --path /usr/share/rpm-ostree/extensions.json:{temp_dir} --confirm",
+                    f"oc image extract {pullspec}[-1] --path /usr/share/rpm-ostree/extensions.json:{temp_dir} --confirm{reg_conf_arg}",
                     retries=3,
                 )
                 with open(os.path.join(temp_dir, "extensions.json"), 'r') as f:
@@ -209,7 +220,8 @@ class RHCOSBuildFinder:
             list: rpm list for rhel build
         """
         if self.layered:
-            image_info_str, _ = exectools.cmd_assert(f"oc image info -o json {pullspec}", retries=3)
+            reg_conf_arg = f" --registry-config={self.registry_config}" if self.registry_config else ""
+            image_info_str, _ = exectools.cmd_assert(f"oc image info -o json {pullspec}{reg_conf_arg}", retries=3)
             image_info = Model(json.loads(image_info_str))
             build_id = image_info.config.config.Labels.get("org.opencontainers.image.version")
             if not build_id:
@@ -229,7 +241,9 @@ class RHCOSBuildFinder:
         :return: Returns (rhcos build id, image pullspec) or (None, None) if not found.
         """
         if self.layered:
-            build_id, pullspec = rhcos.get_latest_layered_rhcos_build(container_conf, self.brew_arch)
+            build_id, pullspec = rhcos.get_latest_layered_rhcos_build(
+                container_conf, self.brew_arch, registry_config=self.registry_config
+            )
             return build_id, pullspec
         else:
             build_id = self.latest_rhcos_build_id()
@@ -243,24 +257,31 @@ class RHCOSBuildFinder:
 
 class RHCOSBuildInspector:
     def __init__(
-        self, runtime: Runtime, pullspec_for_tag: Dict[str, str], brew_arch: str, build_id: Optional[str] = None
+        self,
+        runtime: Runtime,
+        pullspec_for_tag: Dict[str, str],
+        brew_arch: str,
+        build_id: Optional[str] = None,
+        registry_config: str = None,
     ):
         self.runtime = runtime
         self.brew_arch = brew_arch
         self.pullspec_for_tag = pullspec_for_tag
         self.build_id = build_id  # this is used for non-layered rhcos
         self.stream_version = None
+        self.registry_config = registry_config
         self.layered = self.runtime.group_config.rhcos.get("layered_rhcos", False)
-        # Initialize RHEL 10 metadata attributes to None (they may be set conditionally later)
         self._build_meta_10 = None
         self._os_commitmeta_10 = None
 
         if self.layered:
-            # set build_id to the OCP ystream build_id of the rhel-coreos image
-            # (e.g. 4.21.9.6.202602041851-0, used for Brew NVR construction)
-            self.build_id = get_build_id_from_rhcos_pullspec(pullspec_for_tag["rhel-coreos"])
+            self.build_id = get_build_id_from_rhcos_pullspec(
+                pullspec_for_tag["rhel-coreos"], registry_config=self.registry_config
+            )
 
-            finder = RHCOSBuildFinder(runtime, self.stream_version, self.brew_arch)
+            finder = RHCOSBuildFinder(
+                runtime, self.stream_version, self.brew_arch, registry_config=self.registry_config
+            )
             self._build_meta = finder.rhcos_build_meta_layered(
                 pullspec=pullspec_for_tag.get("rhel-coreos-extensions", None), meta_type='meta'
             )

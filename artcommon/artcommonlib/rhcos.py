@@ -86,14 +86,14 @@ def get_container_pullspec(build_meta: dict, container_conf: Model) -> str:
     return container['image']
 
 
-def get_build_id_from_rhcos_pullspec(pullspec) -> str:
+def get_build_id_from_rhcos_pullspec(pullspec, registry_config: str = None) -> str:
     """
     Extract the RHCOS build ID from an image pullspec.
     - Starting from 4.16, the version is extracted from a new label "org.opencontainers.image.version". Prefer this if present and fall back to the "version" label if not.
     - Starting with 4.19, we also support layered RHCOS images, which have a label "coreos.build.manifest-list-tag" that contains the build ID for the image. The base rhel layer buildID is preserved in the "org.opencontainers.image.version" label.
 
     :param pullspec: The image pullspec to extract the build ID from.
-    :param layered_id: If True, will attempt to extract the build ID from the "coreos.build.manifest-list-tag" label first if available, otherwise will use the "org.opencontainers.image.version" label.
+    :param registry_config: Optional path to registry auth config file.
 
     :return: The extracted build ID as a string.
 
@@ -104,7 +104,7 @@ def get_build_id_from_rhcos_pullspec(pullspec) -> str:
 
     logger.info(f"Looking up BuildID from RHCOS pullspec: {pullspec}")
 
-    image_info_str = oc_image_info__cached(pullspec)
+    image_info_str = oc_image_info__cached(pullspec, registry_config=registry_config)
     image_info = Model(json.loads(image_info_str))
     labels = image_info.config.config.Labels
 

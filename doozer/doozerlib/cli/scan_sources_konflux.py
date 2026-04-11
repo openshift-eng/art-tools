@@ -1612,7 +1612,11 @@ class ConfigScanSources:
                         ).latest_container(container_conf)
                     pullspec_for_tag[container_conf.name] = pullspec
                 non_latest_rpms = await rhcos.RHCOSBuildInspector(
-                    self.runtime, pullspec_for_tag, brew_arch, build_id
+                    self.runtime,
+                    pullspec_for_tag,
+                    brew_arch,
+                    build_id,
+                    registry_config=self.registry_auth_file,
                 ).find_non_latest_rpms(exclude_rhel=True)
                 if non_latest_rpms:
                     status['outdated'] = True
