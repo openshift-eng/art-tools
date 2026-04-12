@@ -190,6 +190,7 @@ class KonfluxImageBuilder:
             error = None
             ec_failed = False
             ec_status = KonfluxECStatus.NOT_APPLICABLE
+            ec_pipeline_url = ''
             # Resolve build priority based on precedence rules
             if self._config.build_priority == "auto":
                 build_priority = util.get_konflux_build_priority(metadata=metadata, group=self._config.group_name)
@@ -307,13 +308,14 @@ class KonfluxImageBuilder:
                             ec_plr_name, namespace=self._config.namespace
                         )
 
+                        ec_pipeline_url = self._konflux_client.resource_url(ec_plr_info.to_dict())
                         ec_condition = ec_plr_info.find_condition('Succeeded')
                         ec_outcome = KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition(ec_condition)
                         if ec_outcome is not KonfluxBuildOutcome.SUCCESS:
                             logger.error(
                                 "EC verification failed for %s. PLR: %s",
                                 metadata.distgit_key,
-                                self._konflux_client.resource_url(ec_plr_info.to_dict()),
+                                ec_pipeline_url,
                             )
                             outcome = KonfluxBuildOutcome.FAILURE
                             ec_failed = True
@@ -322,7 +324,7 @@ class KonfluxImageBuilder:
                             logger.info(
                                 "EC verification passed for %s. PLR: %s",
                                 metadata.distgit_key,
-                                self._konflux_client.resource_url(ec_plr_info.to_dict()),
+                                ec_pipeline_url,
                             )
                             ec_status = KonfluxECStatus.PASSED
 
@@ -362,6 +364,7 @@ class KonfluxImageBuilder:
                         building_arches,
                         build_priority,
                         ec_status=ec_status,
+                        ec_pipeline_url=ec_pipeline_url,
                     )
                     if build_record:
                         record["record_id"] = build_record.record_id
@@ -844,6 +847,7 @@ class KonfluxImageBuilder:
         building_arches,
         build_priority,
         ec_status=KonfluxECStatus.NOT_APPLICABLE,
+        ec_pipeline_url='',
     ) -> Optional[KonfluxBuildRecord]:
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
         if not metadata.runtime.konflux_db:
@@ -909,6 +913,7 @@ class KonfluxImageBuilder:
             'build_component': build_component,
             'build_priority': int(build_priority),
             'ec_status': ec_status,
+            'ec_pipeline_url': ec_pipeline_url,
         }
 
         if outcome == KonfluxBuildOutcome.SUCCESS:
