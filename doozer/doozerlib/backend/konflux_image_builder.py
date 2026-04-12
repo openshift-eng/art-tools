@@ -17,7 +17,13 @@ from artcommonlib import util as artlib_util
 from artcommonlib.arch_util import go_arch_for_brew_arch
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.build_visibility import is_release_embargoed
-from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
+from artcommonlib.konflux.konflux_build_record import (
+    ArtifactType,
+    Engine,
+    KonfluxBuildOutcome,
+    KonfluxBuildRecord,
+    KonfluxECStatus,
+)
 from artcommonlib.model import Missing
 from artcommonlib.oc_image_info import oc_image_info__cached_async
 from artcommonlib.release_util import SoftwareLifecyclePhase, isolate_el_version_in_release, split_el_suffix_in_release
@@ -183,6 +189,7 @@ class KonfluxImageBuilder:
             logger.info(f"Building for arches: {building_arches}")
             error = None
             ec_failed = False
+            ec_status = KonfluxECStatus.NOT_APPLICABLE
             # Resolve build priority based on precedence rules
             if self._config.build_priority == "auto":
                 build_priority = util.get_konflux_build_priority(metadata=metadata, group=self._config.group_name)
@@ -214,6 +221,7 @@ class KonfluxImageBuilder:
                     KonfluxBuildOutcome.PENDING,
                     building_arches,
                     build_priority,
+                    ec_status=KonfluxECStatus.NOT_APPLICABLE,
                 )
 
                 logger.info("Waiting for PipelineRun %s to complete...", pipelinerun_name)
@@ -309,17 +317,20 @@ class KonfluxImageBuilder:
                             )
                             outcome = KonfluxBuildOutcome.FAILURE
                             ec_failed = True
+                            ec_status = KonfluxECStatus.FAILED
                         else:
                             logger.info(
                                 "EC verification passed for %s. PLR: %s",
                                 metadata.distgit_key,
                                 self._konflux_client.resource_url(ec_plr_info.to_dict()),
                             )
+                            ec_status = KonfluxECStatus.PASSED
 
                     except Exception:
                         logger.exception("EC verification error for %s", metadata.distgit_key)
                         outcome = KonfluxBuildOutcome.FAILURE
                         ec_failed = True
+                        ec_status = KonfluxECStatus.FAILED
 
                 elif outcome is KonfluxBuildOutcome.SUCCESS:
                     if self._config.skip_ec_verify:
@@ -344,7 +355,13 @@ class KonfluxImageBuilder:
                 else:
                     # Create a build record after every attempt (both success and failure)
                     build_record = await self.update_konflux_db(
-                        metadata, build_repo, pipelinerun_info, outcome, building_arches, build_priority
+                        metadata,
+                        build_repo,
+                        pipelinerun_info,
+                        outcome,
+                        building_arches,
+                        build_priority,
+                        ec_status=ec_status,
                     )
                     if build_record:
                         record["record_id"] = build_record.record_id
@@ -826,6 +843,7 @@ class KonfluxImageBuilder:
         outcome,
         building_arches,
         build_priority,
+        ec_status=KonfluxECStatus.NOT_APPLICABLE,
     ) -> Optional[KonfluxBuildRecord]:
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
         if not metadata.runtime.konflux_db:
@@ -890,6 +908,7 @@ class KonfluxImageBuilder:
             'pipeline_commit': 'n/a',  # TODO: populate this
             'build_component': build_component,
             'build_priority': int(build_priority),
+            'ec_status': ec_status,
         }
 
         if outcome == KonfluxBuildOutcome.SUCCESS:

@@ -44,6 +44,12 @@ class KonfluxBuildOutcome(KonfluxEnum):
         return cls.PENDING
 
 
+class KonfluxECStatus(KonfluxEnum):
+    PASSED = 'passed'
+    FAILED = 'failed'
+    NOT_APPLICABLE = 'n/a'
+
+
 class ArtifactType(KonfluxEnum):
     RPM = 'rpm'
     IMAGE = 'image'
@@ -60,6 +66,7 @@ class KonfluxRecord:
         'record_id',
         'build_id',
         'nvr',
+        'ec_status',
     ]
 
     TABLE_ID = None
@@ -282,6 +289,7 @@ class KonfluxBuildRecord(KonfluxRecord):
         nvr: str = None,
         build_component: str = '',
         build_priority: int = constants.KONFLUX_DEFAULT_BUILD_PRIORITY,
+        ec_status: KonfluxECStatus = KonfluxECStatus.NOT_APPLICABLE,
     ):
         super().__init__(
             name,
@@ -316,6 +324,7 @@ class KonfluxBuildRecord(KonfluxRecord):
         self.embargoed = embargoed
         self.hermetic = hermetic
         self.artifact_type = artifact_type if isinstance(artifact_type, ArtifactType) else ArtifactType(artifact_type)
+        self.ec_status = ec_status if isinstance(ec_status, KonfluxECStatus) else KonfluxECStatus(ec_status)
         self.init_uuids(record_id, build_id, nvr)
 
 
