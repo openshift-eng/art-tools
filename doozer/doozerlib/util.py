@@ -544,8 +544,8 @@ def get_release_calc_previous(
     return sort_semver(list(upgrade_from))
 
 
-async def find_manifest_list_sha(pullspec):
-    image_data = await oc_image_info_for_arch_async(pullspec)
+async def find_manifest_list_sha(pullspec, registry_config: str = None):
+    image_data = await oc_image_info_for_arch_async(pullspec, registry_config=registry_config)
     if 'listDigest' not in image_data:
         raise ValueError('Specified image is not a manifest-list.')
     return image_data['listDigest']
