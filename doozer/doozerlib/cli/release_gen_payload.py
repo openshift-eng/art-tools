@@ -1976,22 +1976,24 @@ class GenPayloadCli:
 
         @retry(reraise=True, stop=stop_after_attempt(10), wait=wait_fixed(60))
         async def _run(to_image, to_image_base):
-            return await exectools.cmd_assert_async(
-                [
-                    "oc",
-                    "adm",
-                    "release",
-                    "new",
-                    f"--name={multi_release_name}",
-                    "--reference-mode=source",
-                    "--keep-manifest-list",
-                    f"--from-image-stream-file={str(multi_release_is_path)}",
-                    f"--to-image-base={to_image_base}",
-                    f"--to-image={to_image}",
-                    "--metadata",
-                    json.dumps({"release.openshift.io/architecture": "multi"}),
-                ]
-            )
+            cmd = [
+                "oc",
+                "adm",
+                "release",
+                "new",
+                f"--name={multi_release_name}",
+                "--reference-mode=source",
+                "--keep-manifest-list",
+                f"--from-image-stream-file={str(multi_release_is_path)}",
+                f"--to-image-base={to_image_base}",
+                f"--to-image={to_image}",
+                "--metadata",
+                json.dumps({"release.openshift.io/architecture": "multi"}),
+            ]
+            registry_config = os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")
+            if registry_config:
+                cmd.append(f"--registry-config={registry_config}")
+            return await exectools.cmd_assert_async(cmd)
 
         # This will map arch names to a release payload pullspec we create for that arch
         # (i.e. based on the arch's CVO image)
