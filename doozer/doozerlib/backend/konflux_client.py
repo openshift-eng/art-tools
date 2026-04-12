@@ -10,6 +10,7 @@ import shutil
 import tempfile
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, NamedTuple, Optional, Sequence, Union, cast
 from urllib.parse import parse_qs, urlparse
@@ -52,6 +53,15 @@ def get_common_runtime_watcher_labels() -> Dict[str, str]:
             # Use nanoseconds since epoch for uniqueness
             _COMMON_RUNTIME_LABEL_VALUE = str(time.time_ns())
         return {_COMMON_RUNTIME_LABEL_KEY: _COMMON_RUNTIME_LABEL_VALUE}
+
+
+@dataclass
+class ECVerificationResult:
+    """Result of an enterprise-contract verification run."""
+
+    ec_status: object  # KonfluxECStatus (imported lazily to avoid circular imports)
+    ec_pipeline_url: str
+    ec_failed: bool
 
 
 class GitHubApiUrlInfo(NamedTuple):
@@ -786,6 +796,74 @@ class KonfluxClient:
         plr_info = PipelineRunInfo(plr, {})
         self._logger.info(f"Created EC PipelineRun: {self.resource_url(plr.to_dict())}")
         return plr_info
+
+    async def verify_enterprise_contract(
+        self,
+        namespace: str,
+        application_name: str,
+        component_name: str,
+        image_pullspec: str,
+        source_url: str,
+        commit_sha: str,
+        ec_policy: str,
+        logger: logging.Logger,
+    ) -> ECVerificationResult:
+        """Run enterprise-contract verification for a built image.
+
+        Ensures an IntegrationTestScenario exists, starts an EC PipelineRun,
+        waits for completion, and returns the result. This is the shared entry
+        point used by image, FBC, and bundle builders.
+        """
+        from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxECStatus
+
+        ec_status = KonfluxECStatus.NOT_APPLICABLE
+        ec_pipeline_url = ''
+        ec_failed = False
+
+        try:
+            policy_suffix = ec_policy.split('/')[-1]
+            its_name = f"{application_name}-ec-{policy_suffix}"
+
+            logger.info("Ensuring IntegrationTestScenario %s exists...", its_name)
+            await self.ensure_integration_test_scenario(
+                name=its_name,
+                application_name=application_name,
+                policy_configuration=ec_policy,
+            )
+
+            logger.info("Starting EC verification PipelineRun...")
+            ec_plr_info = await self.start_ec_pipeline_run(
+                namespace=namespace,
+                application_name=application_name,
+                component_name=component_name,
+                image_pullspec=image_pullspec,
+                source_url=source_url,
+                commit_sha=commit_sha,
+                its_name=its_name,
+                policy_configuration=ec_policy,
+            )
+            ec_plr_name = ec_plr_info.name
+
+            logger.info("Waiting for EC PipelineRun %s to complete...", ec_plr_name)
+            ec_plr_info = await self.wait_for_pipelinerun(ec_plr_name, namespace=namespace)
+
+            ec_pipeline_url = self.resource_url(ec_plr_info.to_dict())
+            ec_condition = ec_plr_info.find_condition('Succeeded')
+            ec_outcome = KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition(ec_condition)
+            if ec_outcome is not KonfluxBuildOutcome.SUCCESS:
+                logger.error("EC verification failed. PLR: %s", ec_pipeline_url)
+                ec_status = KonfluxECStatus.FAILED
+                ec_failed = True
+            else:
+                logger.info("EC verification passed. PLR: %s", ec_pipeline_url)
+                ec_status = KonfluxECStatus.PASSED
+
+        except Exception:
+            logger.exception("EC verification error")
+            ec_status = KonfluxECStatus.FAILED
+            ec_failed = True
+
+        return ECVerificationResult(ec_status=ec_status, ec_pipeline_url=ec_pipeline_url, ec_failed=ec_failed)
 
     @staticmethod
     @alru_cache

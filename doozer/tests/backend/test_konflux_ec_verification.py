@@ -1,7 +1,7 @@
 """Tests for EC verification gating logic in KonfluxImageBuilder.build().
 
 Verifies that enterprise-contract verification is only triggered for images
-that are for_release=True, in an OCP group, and not skipped via --skip-ec-verify.
+that are for_release=True (or base images), in an OCP group, and not skipped via --skip-ec-verify.
 """
 
 import asyncio
@@ -9,7 +9,8 @@ from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxECStatus
+from doozerlib.backend.konflux_client import ECVerificationResult
 from doozerlib.backend.konflux_image_builder import (
     KonfluxImageBuilder,
     KonfluxImageBuilderConfig,
@@ -60,7 +61,7 @@ def _make_successful_pipelinerun_info():
     return plr_info
 
 
-def _make_metadata(distgit_key="test-image", for_release=True):
+def _make_metadata(distgit_key="test-image", for_release=True, is_base_image=False):
     """Create a mock ImageMetadata."""
     metadata = MagicMock()
     metadata.distgit_key = distgit_key
@@ -68,6 +69,7 @@ def _make_metadata(distgit_key="test-image", for_release=True):
     metadata.image_name_short = distgit_key
     metadata.is_olm_operator = False
     metadata.for_release = for_release
+    metadata.is_base_image.return_value = is_base_image
     metadata.has_source.return_value = True
     metadata.get_konflux_build_attempts.return_value = 1
     metadata.get_arches.return_value = ["x86_64"]
@@ -80,12 +82,27 @@ def _make_metadata(distgit_key="test-image", for_release=True):
     return metadata
 
 
+def _ec_passed_result():
+    return ECVerificationResult(
+        ec_status=KonfluxECStatus.PASSED, ec_pipeline_url="https://example.com/ec-plr", ec_failed=False
+    )
+
+
+def _ec_failed_result():
+    return ECVerificationResult(
+        ec_status=KonfluxECStatus.FAILED, ec_pipeline_url="https://example.com/ec-plr", ec_failed=True
+    )
+
+
 @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
 class TestEcVerificationGating(IsolatedAsyncioTestCase):
     """Test that EC verification is only triggered under the correct conditions."""
 
-    async def _run_build_and_get_ec_calls(self, config, metadata, mock_kc_init):
-        """Helper: run build() with all heavy methods mocked, return EC-related call info."""
+    async def _run_build_and_get_ec_calls(self, config, metadata, mock_kc_init, ec_result=None):
+        """Helper: run build() with all heavy methods mocked, return verify_enterprise_contract mock."""
+        if ec_result is None:
+            ec_result = _ec_passed_result()
+
         builder = KonfluxImageBuilder(config)
 
         plr_info = _make_successful_pipelinerun_info()
@@ -98,7 +115,6 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
             return_value=("uuid-tag", "test-component", "v4.18.0", "202604100000.p0.el9")
         )
 
-        # Make dest_dir.exists() return True so we skip cloning
         with patch.object(Path, "exists", return_value=True):
             with patch(
                 "doozerlib.backend.konflux_image_builder.BuildRepo.from_local_dir",
@@ -110,29 +126,11 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
                 mock_repo.branch = "art-openshift-4.18-assembly-stream-dgk-test-image"
                 mock_build_repo.return_value = mock_repo
 
-                # Mock wait_for_pipelinerun to return a successful PLR
                 wait_plr_info = _make_successful_pipelinerun_info()
                 builder._konflux_client.wait_for_pipelinerun = AsyncMock(return_value=wait_plr_info)
                 builder._konflux_client.resource_url = MagicMock(return_value="https://example.com/plr")
 
-                # Mock EC methods
-                builder._konflux_client.ensure_integration_test_scenario = AsyncMock()
-                ec_plr_info = MagicMock()
-                ec_plr_info.name = "test-ec-plr"
-                ec_plr_info.to_dict.return_value = {
-                    "kind": "PipelineRun",
-                    "metadata": {
-                        "name": "test-ec-plr",
-                        "namespace": "ocp-art-tenant",
-                        "labels": {"appstudio.openshift.io/application": "openshift-4-18"},
-                    },
-                }
-                ec_succeeded = MagicMock()
-                ec_plr_info.find_condition.return_value = ec_succeeded
-                builder._konflux_client.start_ec_pipeline_run = AsyncMock(return_value=ec_plr_info)
-
-                # Make the second wait_for_pipelinerun call (for EC) also return success
-                builder._konflux_client.wait_for_pipelinerun = AsyncMock(side_effect=[wait_plr_info, ec_plr_info])
+                builder._konflux_client.verify_enterprise_contract = AsyncMock(return_value=ec_result)
 
                 with patch.object(
                     KonfluxBuildOutcome,
@@ -141,47 +139,49 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
                 ):
                     await builder.build(metadata)
 
-        return builder._konflux_client.ensure_integration_test_scenario, builder._konflux_client.start_ec_pipeline_run
+        return builder._konflux_client.verify_enterprise_contract
 
     async def test_ec_runs_for_release_ocp_image(self, mock_kc_init):
         """EC verification should run for a for_release=True OCP image."""
         config = _make_config(group_name="openshift-4.18")
         metadata = _make_metadata(for_release=True)
 
-        ensure_its, start_ec_plr = await self._run_build_and_get_ec_calls(config, metadata, mock_kc_init)
+        verify_ec = await self._run_build_and_get_ec_calls(config, metadata, mock_kc_init)
+        verify_ec.assert_called_once()
 
-        ensure_its.assert_called_once()
-        start_ec_plr.assert_called_once()
-
-    async def test_ec_skipped_for_non_release_image(self, mock_kc_init):
-        """EC verification should be skipped for base images (for_release=False)."""
+    async def test_ec_runs_for_base_image(self, mock_kc_init):
+        """EC verification should run for base images using the base image policy."""
         config = _make_config(group_name="openshift-4.18")
-        metadata = _make_metadata(for_release=False)
+        metadata = _make_metadata(for_release=False, is_base_image=True)
 
-        ensure_its, start_ec_plr = await self._run_build_and_get_ec_calls(config, metadata, mock_kc_init)
+        verify_ec = await self._run_build_and_get_ec_calls(config, metadata, mock_kc_init)
+        verify_ec.assert_called_once()
+        call_kwargs = verify_ec.call_args[1]
+        self.assertEqual(call_kwargs["ec_policy"], "rhtap-releng-tenant/registry-ocp-art-base-prod")
 
-        ensure_its.assert_not_called()
-        start_ec_plr.assert_not_called()
+    async def test_ec_skipped_for_non_release_non_base_image(self, mock_kc_init):
+        """EC verification should be skipped for non-release, non-base images."""
+        config = _make_config(group_name="openshift-4.18")
+        metadata = _make_metadata(for_release=False, is_base_image=False)
+
+        verify_ec = await self._run_build_and_get_ec_calls(config, metadata, mock_kc_init)
+        verify_ec.assert_not_called()
 
     async def test_ec_skipped_when_skip_flag_set(self, mock_kc_init):
         """EC verification should be skipped when --skip-ec-verify is set."""
         config = _make_config(group_name="openshift-4.18", skip_ec_verify=True)
         metadata = _make_metadata(for_release=True)
 
-        ensure_its, start_ec_plr = await self._run_build_and_get_ec_calls(config, metadata, mock_kc_init)
-
-        ensure_its.assert_not_called()
-        start_ec_plr.assert_not_called()
+        verify_ec = await self._run_build_and_get_ec_calls(config, metadata, mock_kc_init)
+        verify_ec.assert_not_called()
 
     async def test_ec_skipped_for_non_ocp_group(self, mock_kc_init):
         """EC verification should be skipped for non-OCP groups (e.g. logging)."""
         config = _make_config(group_name="logging-6.2")
         metadata = _make_metadata(for_release=True)
 
-        ensure_its, start_ec_plr = await self._run_build_and_get_ec_calls(config, metadata, mock_kc_init)
-
-        ensure_its.assert_not_called()
-        start_ec_plr.assert_not_called()
+        verify_ec = await self._run_build_and_get_ec_calls(config, metadata, mock_kc_init)
+        verify_ec.assert_not_called()
 
     async def test_no_retry_when_ec_fails(self, mock_kc_init):
         """When EC verification fails, the build should NOT be retried."""
@@ -212,28 +212,14 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
                 mock_build_repo.return_value = mock_repo
 
                 wait_plr_info = _make_successful_pipelinerun_info()
-                ec_plr_info = MagicMock()
-                ec_plr_info.name = "test-ec-plr"
-                ec_plr_info.to_dict.return_value = {
-                    "kind": "PipelineRun",
-                    "metadata": {
-                        "name": "test-ec-plr",
-                        "namespace": "ocp-art-tenant",
-                        "labels": {"appstudio.openshift.io/application": "openshift-4-18"},
-                    },
-                }
-                ec_plr_info.find_condition.return_value = MagicMock()
-
-                builder._konflux_client.wait_for_pipelinerun = AsyncMock(side_effect=[wait_plr_info, ec_plr_info])
+                builder._konflux_client.wait_for_pipelinerun = AsyncMock(return_value=wait_plr_info)
                 builder._konflux_client.resource_url = MagicMock(return_value="https://example.com/plr")
-                builder._konflux_client.ensure_integration_test_scenario = AsyncMock()
-                builder._konflux_client.start_ec_pipeline_run = AsyncMock(return_value=ec_plr_info)
+                builder._konflux_client.verify_enterprise_contract = AsyncMock(return_value=_ec_failed_result())
 
-                # Build PLR succeeds, EC PLR fails
                 with patch.object(
                     KonfluxBuildOutcome,
                     "extract_from_pipelinerun_succeeded_condition",
-                    side_effect=[KonfluxBuildOutcome.SUCCESS, KonfluxBuildOutcome.FAILURE],
+                    return_value=KonfluxBuildOutcome.SUCCESS,
                 ):
                     with self.assertRaises(KonfluxImageBuildError):
                         await builder.build(metadata)

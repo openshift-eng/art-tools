@@ -540,6 +540,7 @@ class KonfluxBundleCli:
             skip_checks=self.skip_checks,
             pipelinerun_template_url=self.plr_template,
             dry_run=self.dry_run,
+            assembly_type=runtime.assembly_type,
             record_logger=runtime.record_logger,
         )
 

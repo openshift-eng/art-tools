@@ -1,12 +1,15 @@
 import json
+import logging
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from artcommonlib.konflux.konflux_build_record import KonfluxECStatus
 from doozerlib.backend.konflux_client import (
     API_VERSION,
     API_VERSION_V1BETA2,
     KIND_APPLICATION,
     KIND_INTEGRATION_TEST_SCENARIO,
+    ECVerificationResult,
     GitHubApiUrlInfo,
     KonfluxClient,
     parse_github_api_url,
@@ -395,3 +398,135 @@ class TestEnsureIntegrationTestScenarioNotFound(IsolatedAsyncioTestCase):
                 application_name="nonexistent-app",
                 policy_configuration="test-policy",
             )
+
+
+class TestVerifyEnterpriseContract(IsolatedAsyncioTestCase):
+    def _make_client_with_ec_result(self, is_success: bool):
+        """Create a mocked KonfluxClient that returns the given EC outcome."""
+        from artcommonlib.util import KubeCondition
+
+        client = MagicMock(spec=KonfluxClient)
+        client.ensure_integration_test_scenario = AsyncMock()
+
+        ec_plr_mock = MagicMock()
+        ec_plr_mock.name = "test-ec-plr"
+        client.start_ec_pipeline_run = AsyncMock(return_value=ec_plr_mock)
+
+        condition = KubeCondition(
+            {
+                'type': 'Succeeded',
+                'status': 'True' if is_success else 'False',
+                'reason': 'Succeeded' if is_success else 'Failed',
+                'message': '',
+            }
+        )
+        waited_plr = MagicMock()
+        waited_plr.find_condition.return_value = condition
+        waited_plr.to_dict.return_value = {"metadata": {"name": "test-ec-plr"}}
+        client.wait_for_pipelinerun = AsyncMock(return_value=waited_plr)
+        client.resource_url = MagicMock(return_value="https://example.com/plr/test")
+        return client
+
+    async def test_ec_passed(self):
+        client = self._make_client_with_ec_result(is_success=True)
+
+        result = await KonfluxClient.verify_enterprise_contract(
+            client,
+            namespace="ocp-art-tenant",
+            application_name="openshift-4-21",
+            component_name="ose-4-21-openshift-apiserver",
+            image_pullspec="quay.io/repo@sha256:abc123",
+            source_url="https://github.com/org/repo",
+            commit_sha="deadbeef",
+            ec_policy="rhtap-releng-tenant/registry-ocp-art-stage",
+            logger=logging.getLogger("test"),
+        )
+
+        self.assertIsInstance(result, ECVerificationResult)
+        self.assertEqual(result.ec_status, KonfluxECStatus.PASSED)
+        self.assertFalse(result.ec_failed)
+        self.assertEqual(result.ec_pipeline_url, "https://example.com/plr/test")
+        client.ensure_integration_test_scenario.assert_called_once_with(
+            name="openshift-4-21-ec-registry-ocp-art-stage",
+            application_name="openshift-4-21",
+            policy_configuration="rhtap-releng-tenant/registry-ocp-art-stage",
+        )
+
+    async def test_ec_failed(self):
+        client = self._make_client_with_ec_result(is_success=False)
+
+        result = await KonfluxClient.verify_enterprise_contract(
+            client,
+            namespace="ocp-art-tenant",
+            application_name="openshift-4-21",
+            component_name="ose-4-21-openshift-apiserver",
+            image_pullspec="quay.io/repo@sha256:abc123",
+            source_url="https://github.com/org/repo",
+            commit_sha="deadbeef",
+            ec_policy="rhtap-releng-tenant/registry-ocp-art-stage",
+            logger=logging.getLogger("test"),
+        )
+
+        self.assertEqual(result.ec_status, KonfluxECStatus.FAILED)
+        self.assertTrue(result.ec_failed)
+
+    async def test_ec_exception_returns_failed(self):
+        client = MagicMock(spec=KonfluxClient)
+        client.ensure_integration_test_scenario = AsyncMock(side_effect=RuntimeError("connection error"))
+
+        result = await KonfluxClient.verify_enterprise_contract(
+            client,
+            namespace="ocp-art-tenant",
+            application_name="openshift-4-21",
+            component_name="ose-4-21-openshift-apiserver",
+            image_pullspec="quay.io/repo@sha256:abc123",
+            source_url="https://github.com/org/repo",
+            commit_sha="deadbeef",
+            ec_policy="rhtap-releng-tenant/registry-ocp-art-stage",
+            logger=logging.getLogger("test"),
+        )
+
+        self.assertEqual(result.ec_status, KonfluxECStatus.FAILED)
+        self.assertTrue(result.ec_failed)
+
+    async def test_its_name_derived_from_fbc_policy(self):
+        client = self._make_client_with_ec_result(is_success=True)
+
+        await KonfluxClient.verify_enterprise_contract(
+            client,
+            namespace="ns",
+            application_name="fbc-openshift-4-21",
+            component_name="comp",
+            image_pullspec="quay.io/repo@sha256:abc",
+            source_url="https://github.com/org/repo",
+            commit_sha="abc",
+            ec_policy="rhtap-releng-tenant/fbc-ocp-art-stage",
+            logger=logging.getLogger("test"),
+        )
+
+        client.ensure_integration_test_scenario.assert_called_once_with(
+            name="fbc-openshift-4-21-ec-fbc-ocp-art-stage",
+            application_name="fbc-openshift-4-21",
+            policy_configuration="rhtap-releng-tenant/fbc-ocp-art-stage",
+        )
+
+    async def test_its_name_derived_from_base_image_policy(self):
+        client = self._make_client_with_ec_result(is_success=True)
+
+        await KonfluxClient.verify_enterprise_contract(
+            client,
+            namespace="ns",
+            application_name="openshift-4-21",
+            component_name="comp",
+            image_pullspec="quay.io/repo@sha256:abc",
+            source_url="https://github.com/org/repo",
+            commit_sha="abc",
+            ec_policy="rhtap-releng-tenant/registry-ocp-art-base-prod",
+            logger=logging.getLogger("test"),
+        )
+
+        client.ensure_integration_test_scenario.assert_called_once_with(
+            name="openshift-4-21-ec-registry-ocp-art-base-prod",
+            application_name="openshift-4-21",
+            policy_configuration="rhtap-releng-tenant/registry-ocp-art-base-prod",
+        )

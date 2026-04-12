@@ -259,80 +259,45 @@ class KonfluxImageBuilder:
                 # TODO: Expand EC verification to layered products
                 # TODO: Expose EC failure links (ITS/PLR URLs) via Slack notification or dashboard column
                 is_ocp_group = self._config.group_name.startswith("openshift-")
-                if (
+                should_run_ec = (
                     outcome is KonfluxBuildOutcome.SUCCESS
                     and is_ocp_group
                     and not self._config.skip_ec_verify
-                    and metadata.for_release
-                ):
-                    try:
-                        app_name = self.get_application_name(self._config.group_name)
+                    and (metadata.for_release or metadata.is_base_image())
+                )
+                if should_run_ec:
+                    app_name = self.get_application_name(self._config.group_name)
 
-                        # Select EC policy based on assembly type:
-                        # PREVIEW (preGA) assemblies use a more permissive policy that allows unsigned RPMs.
-                        # Mirrors the logic in prepare_release_konflux.py check_advisory_stage_policy().
-                        if metadata.runtime.assembly_type == AssemblyTypes.PREVIEW:
-                            ec_policy = constants.KONFLUX_PREGA_EC_POLICY_CONFIGURATION
-                        else:
-                            ec_policy = self._config.ec_policy_configuration
+                    # Select EC policy based on image type and assembly type:
+                    # - Base images always use the dedicated base-prod policy
+                    # - PREVIEW (preGA) assemblies use a more permissive policy that allows unsigned RPMs
+                    # - All other images use the default stage policy
+                    if metadata.is_base_image():
+                        ec_policy = constants.KONFLUX_BASE_IMAGE_EC_POLICY_CONFIGURATION
+                    elif metadata.runtime.assembly_type == AssemblyTypes.PREVIEW:
+                        ec_policy = constants.KONFLUX_PREGA_EC_POLICY_CONFIGURATION
+                    else:
+                        ec_policy = self._config.ec_policy_configuration
 
-                        policy_suffix = ec_policy.split('/')[-1]
-                        its_name = f"{app_name}-ec-{policy_suffix}"
+                    image_with_digest = f"{image_pullspec.split(':')[0]}@{image_digest}"
+                    source_url = artlib_util.convert_remote_git_to_https(build_repo.url)
+                    konflux_component_name = self.get_component_name(app_name, metadata.distgit_key)
 
-                        logger.info("Ensuring IntegrationTestScenario %s exists...", its_name)
-                        await self._konflux_client.ensure_integration_test_scenario(
-                            name=its_name,
-                            application_name=app_name,
-                            policy_configuration=ec_policy,
-                        )
-
-                        image_with_digest = f"{image_pullspec.split(':')[0]}@{image_digest}"
-                        source_url = artlib_util.convert_remote_git_to_https(build_repo.url)
-                        konflux_component_name = self.get_component_name(app_name, metadata.distgit_key)
-
-                        logger.info("Starting EC verification PipelineRun for %s...", metadata.distgit_key)
-                        ec_plr_info = await self._konflux_client.start_ec_pipeline_run(
-                            namespace=self._config.namespace,
-                            application_name=app_name,
-                            component_name=konflux_component_name,
-                            image_pullspec=image_with_digest,
-                            source_url=source_url,
-                            commit_sha=build_repo.commit_hash,
-                            its_name=its_name,
-                            policy_configuration=ec_policy,
-                        )
-                        ec_plr_name = ec_plr_info.name
-
-                        logger.info("Waiting for EC PipelineRun %s to complete...", ec_plr_name)
-                        ec_plr_info = await self._konflux_client.wait_for_pipelinerun(
-                            ec_plr_name, namespace=self._config.namespace
-                        )
-
-                        ec_pipeline_url = self._konflux_client.resource_url(ec_plr_info.to_dict())
-                        ec_condition = ec_plr_info.find_condition('Succeeded')
-                        ec_outcome = KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition(ec_condition)
-                        if ec_outcome is not KonfluxBuildOutcome.SUCCESS:
-                            logger.error(
-                                "EC verification failed for %s. PLR: %s",
-                                metadata.distgit_key,
-                                ec_pipeline_url,
-                            )
-                            outcome = KonfluxBuildOutcome.FAILURE
-                            ec_failed = True
-                            ec_status = KonfluxECStatus.FAILED
-                        else:
-                            logger.info(
-                                "EC verification passed for %s. PLR: %s",
-                                metadata.distgit_key,
-                                ec_pipeline_url,
-                            )
-                            ec_status = KonfluxECStatus.PASSED
-
-                    except Exception:
-                        logger.exception("EC verification error for %s", metadata.distgit_key)
+                    ec_result = await self._konflux_client.verify_enterprise_contract(
+                        namespace=self._config.namespace,
+                        application_name=app_name,
+                        component_name=konflux_component_name,
+                        image_pullspec=image_with_digest,
+                        source_url=source_url,
+                        commit_sha=build_repo.commit_hash,
+                        ec_policy=ec_policy,
+                        logger=logger,
+                    )
+                    ec_status = ec_result.ec_status
+                    ec_pipeline_url = ec_result.ec_pipeline_url
+                    ec_failed = ec_result.ec_failed
+                    if ec_failed:
                         outcome = KonfluxBuildOutcome.FAILURE
-                        ec_failed = True
-                        ec_status = KonfluxECStatus.FAILED
 
                 elif outcome is KonfluxBuildOutcome.SUCCESS:
                     if self._config.skip_ec_verify:
@@ -345,9 +310,9 @@ class KonfluxImageBuilder:
                             metadata.distgit_key,
                             self._config.group_name,
                         )
-                    elif not metadata.for_release:
+                    elif not metadata.for_release and not metadata.is_base_image():
                         logger.info(
-                            "Skipping EC verification for %s: image is not for_release (base image or non-release)",
+                            "Skipping EC verification for %s: image is not for_release and not a base image",
                             metadata.distgit_key,
                         )
 

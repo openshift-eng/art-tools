@@ -19,6 +19,7 @@ class TestKonfluxBundleCli(unittest.IsolatedAsyncioTestCase):
         self.runtime.assembly = "test-assembly"
         self.runtime.images = []
         self.runtime.upcycle = False
+        self.runtime.assembly_type = None
         self.runtime.source_resolver = mock.Mock(spec=SourceResolver)
         self.runtime.konflux_db = mock.Mock()
         self.runtime.konflux_db.bind = mock.Mock()
