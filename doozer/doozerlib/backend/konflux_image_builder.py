@@ -249,7 +249,12 @@ class KonfluxImageBuilder:
                 # TODO: Expand EC verification to layered products
                 # TODO: Expose EC failure links (ITS/PLR URLs) via Slack notification or dashboard column
                 is_ocp_group = self._config.group_name.startswith("openshift-")
-                if outcome is KonfluxBuildOutcome.SUCCESS and is_ocp_group and not self._config.skip_ec_verify:
+                if (
+                    outcome is KonfluxBuildOutcome.SUCCESS
+                    and is_ocp_group
+                    and not self._config.skip_ec_verify
+                    and metadata.for_release
+                ):
                     try:
                         app_name = self.get_application_name(self._config.group_name)
 
@@ -312,6 +317,23 @@ class KonfluxImageBuilder:
                     except Exception:
                         logger.exception("EC verification error for %s", metadata.distgit_key)
                         outcome = KonfluxBuildOutcome.FAILURE
+
+                elif outcome is KonfluxBuildOutcome.SUCCESS:
+                    if self._config.skip_ec_verify:
+                        logger.info(
+                            "Skipping EC verification for %s: --skip-ec-verify flag is set", metadata.distgit_key
+                        )
+                    elif not is_ocp_group:
+                        logger.info(
+                            "Skipping EC verification for %s: non-OCP group '%s'",
+                            metadata.distgit_key,
+                            self._config.group_name,
+                        )
+                    elif not metadata.for_release:
+                        logger.info(
+                            "Skipping EC verification for %s: image is not for_release (base image or non-release)",
+                            metadata.distgit_key,
+                        )
 
                 if self._config.dry_run:
                     logger.info("Dry run: Would have inserted build record in Konflux DB")
