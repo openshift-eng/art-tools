@@ -614,6 +614,7 @@ class GenPayloadCli:
             suggestions_url=None,
             gen_microshift=False,
             release_date=dummy_release_date,  # Prevent release schedule lookup
+            registry_config=os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE"),
         )
 
         # Run gen-assembly logic to create the assembly definition
