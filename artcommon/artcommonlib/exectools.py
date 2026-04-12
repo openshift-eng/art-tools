@@ -6,8 +6,10 @@ import functools
 import os
 import platform
 import shlex
+import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import traceback
@@ -514,11 +516,22 @@ async def manifest_tool(options, dry_run=False):
     auth_opt = ""
     konflux_auth = os.environ.get("KONFLUX_ART_IMAGES_AUTH_FILE")
     if konflux_auth and Path(konflux_auth).is_file():
-        auth_opt = f"--docker-cfg={konflux_auth}"
+        # manifest-tool --docker-cfg expects a DIRECTORY containing config.json,
+        # not a file path. If the parent directory already has config.json (e.g.
+        # Tekton layout), use it directly; otherwise create a temp directory.
+        docker_cfg_dir = Path(konflux_auth).parent
+        if (docker_cfg_dir / "config.json").is_file():
+            auth_opt = f"--docker-cfg={docker_cfg_dir}"
+        else:
+            tmp_dir = Path(tempfile.mkdtemp(prefix="manifest-tool-cfg-"))
+            target = tmp_dir / "config.json"
+            if not target.exists():
+                shutil.copy2(konflux_auth, target)
+            auth_opt = f"--docker-cfg={tmp_dir}"
     elif os.environ.get("XDG_RUNTIME_DIR"):
         auth_file = os.path.expandvars("${XDG_RUNTIME_DIR}/containers/auth.json")
         if Path(auth_file).is_file():
-            auth_opt = f"--docker-cfg={auth_file}"
+            auth_opt = f"--docker-cfg={Path(auth_file).parent}"
 
     if isinstance(options, str):
         cmd = f'manifest-tool {auth_opt} {options}'
