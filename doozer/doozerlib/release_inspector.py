@@ -65,19 +65,22 @@ async def introspect_release(pullspec: str) -> Model:
     return release_info
 
 
-async def extract_nvr_from_pullspec(pullspec: str, arch: str = None) -> Tuple[str, str, str]:
+async def extract_nvr_from_pullspec(
+    pullspec: str, arch: str = None, registry_config: str = None
+) -> Tuple[str, str, str]:
     """
     Extract NVR (name, version, release) from an image pullspec by reading labels.
 
     :param pullspec: Image pullspec
     :param arch: Optional go architecture to filter by
+    :param registry_config: Optional path to registry auth config file
     :return: Tuple of (name, version, release)
     """
     options = []
     if arch:
         options.append(f"--filter-by-os={arch}")
     try:
-        stdout = await oc_image_info__cached_async(pullspec, *options)
+        stdout = await oc_image_info__cached_async(pullspec, *options, registry_config=registry_config)
     except ChildProcessError as e:
         raise IOError(f"Failed to get image info for {pullspec}: {e}") from e
 
@@ -117,15 +120,18 @@ async def get_build_inspector_from_nvr(runtime: Runtime, nvr: str, pullspec: str
         return KonfluxBuildRecordInspector(runtime, build_record)
 
 
-async def get_build_inspector_from_pullspec(runtime: Runtime, pullspec: str, arch: str = None) -> BuildRecordInspector:
+async def get_build_inspector_from_pullspec(
+    runtime: Runtime, pullspec: str, arch: str = None, registry_config: str = None
+) -> BuildRecordInspector:
     """
     Extract NVR from a pullspec and query build system to get build inspector.
 
     :param runtime: Doozer runtime
     :param pullspec: Image pullspec
     :param arch: Optional go architecture to filter by
+    :param registry_config: Optional path to registry auth config file
     :return: BuildRecordInspector for the build
     """
-    name, version, release = await extract_nvr_from_pullspec(pullspec, arch)
+    name, version, release = await extract_nvr_from_pullspec(pullspec, arch, registry_config=registry_config)
     nvr = f"{name}-{version}-{release}"
     return await get_build_inspector_from_nvr(runtime, nvr, pullspec=pullspec)
