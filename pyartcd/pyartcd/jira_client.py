@@ -117,13 +117,32 @@ class JIRAClient:
             _LOGGER.debug("Cloned %d subtasks...", len(source_issue.fields.subtasks))
         return new_issues
 
-    def create_issue(self, project: str, issue_type: str, summary: str, description: str):
-        fields = {
+    @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(5))
+    def search_issues(self, jql: str, maxResults: int = 50) -> List[Issue]:
+        return self._client.search_issues(jql_str=jql, maxResults=maxResults)
+
+    def create_issue(
+        self,
+        project: str,
+        issue_type: str,
+        summary: str,
+        description: str,
+        labels: Optional[List[str]] = None,
+        components: Optional[List[str]] = None,
+        additional_fields: Optional[Dict[str, Any]] = None,
+    ):
+        fields: Dict[str, Any] = {
             "project": {"key": project},
             "summary": summary,
             "description": description,
             "issuetype": {"name": issue_type},
         }
+        if labels:
+            fields["labels"] = labels
+        if components:
+            fields["components"] = [{"name": c} for c in components]
+        if additional_fields:
+            fields.update(additional_fields)
         new_issue = self._client.create_issue(fields=fields)
         return new_issue
 

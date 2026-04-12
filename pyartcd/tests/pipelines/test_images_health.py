@@ -1,10 +1,30 @@
-from unittest import IsolatedAsyncioTestCase
+from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, MagicMock
 
 from doozerlib.cli.images_health import ConcernCode
 from pyartcd.pipelines.images_health import ImagesHealthPipeline
 
 DATA_PATH = "https://github.com/openshift-eng/ocp-build-data"
+
+
+def _make_ticket(key, labels):
+    ticket = MagicMock()
+    ticket.key = key
+    ticket.fields.labels = labels
+    return ticket
+
+
+def _make_concern(image_name, group, code, **kwargs):
+    concern = {
+        "image_name": image_name,
+        "group": group,
+        "code": code,
+        "latest_failed_build_time": "2025-12-17T10:00:00+00:00",
+        "latest_failed_nvr": f"{image_name}-1.0-1",
+        "latest_failed_build_record_id": "12345",
+    }
+    concern.update(kwargs)
+    return concern
 
 
 class TestImagesHealthPipeline(IsolatedAsyncioTestCase):
@@ -156,3 +176,119 @@ class TestImagesHealthPipeline(IsolatedAsyncioTestCase):
         mock_slack_client.say.assert_called_once_with(
             ":white_check_mark: All images are healthy for all monitored releases"
         )
+
+
+class TestSyncJira(TestCase):
+    def _make_pipeline(self, image_list=""):
+        runtime = MagicMock()
+        runtime.working_dir = MagicMock()
+        runtime.logger = MagicMock()
+        runtime.new_slack_client.return_value = MagicMock()
+        pipeline = ImagesHealthPipeline(
+            runtime=runtime,
+            versions="5.0",
+            send_to_release_channel=False,
+            send_to_forum_ocp_art=False,
+            data_path=DATA_PATH,
+            data_gitref="",
+            image_list=image_list,
+            assembly="stream",
+            sync_jira=True,
+        )
+        pipeline.scanned_versions = ["5.0"]
+        return pipeline
+
+    def test_creates_ticket_for_new_failure(self):
+        pipeline = self._make_pipeline()
+        pipeline.report = [
+            _make_concern("ironic", "openshift-5.0", ConcernCode.FAILING_AT_LEAST_FOR.value),
+        ]
+
+        mock_jira = MagicMock()
+        mock_jira.search_issues.return_value = []
+        mock_jira.create_issue.return_value = MagicMock(key="ART-100")
+        pipeline.runtime.new_jira_client.return_value = mock_jira
+
+        pipeline.sync_jira()
+
+        mock_jira.create_issue.assert_called_once()
+        kwargs = mock_jira.create_issue.call_args
+        self.assertEqual(kwargs[1]["project"], "ART")
+        self.assertEqual(kwargs[1]["summary"], "Image build failure: ironic (openshift-5.0)")
+        self.assertIn("art:image-build-failure", kwargs[1]["labels"])
+        self.assertIn("art:package:ironic", kwargs[1]["labels"])
+        self.assertIn("art:group:openshift-5.0", kwargs[1]["labels"])
+        mock_jira.close_task.assert_not_called()
+
+    def test_skips_existing_ticket(self):
+        pipeline = self._make_pipeline()
+        pipeline.report = [
+            _make_concern("ironic", "openshift-5.0", ConcernCode.FAILING_AT_LEAST_FOR.value),
+        ]
+
+        existing_ticket = _make_ticket(
+            "ART-99",
+            ["art:image-build-failure", "art:package:ironic", "art:group:openshift-5.0"],
+        )
+        mock_jira = MagicMock()
+        mock_jira.search_issues.return_value = [existing_ticket]
+        pipeline.runtime.new_jira_client.return_value = mock_jira
+
+        pipeline.sync_jira()
+
+        mock_jira.create_issue.assert_not_called()
+        mock_jira.close_task.assert_not_called()
+
+    def test_closes_resolved_ticket(self):
+        pipeline = self._make_pipeline()
+        # Report only has a success — no failures
+        pipeline.report = [
+            _make_concern("ironic", "openshift-5.0", ConcernCode.LATEST_BUILD_SUCCEEDED.value),
+        ]
+
+        stale_ticket = _make_ticket(
+            "ART-50",
+            ["art:image-build-failure", "art:package:ironic", "art:group:openshift-5.0"],
+        )
+        mock_jira = MagicMock()
+        mock_jira.search_issues.return_value = [stale_ticket]
+        pipeline.runtime.new_jira_client.return_value = mock_jira
+
+        pipeline.sync_jira()
+
+        mock_jira.create_issue.assert_not_called()
+        mock_jira.close_task.assert_called_once_with("ART-50")
+
+    def test_skips_close_for_unscanned_version(self):
+        pipeline = self._make_pipeline()
+        pipeline.scanned_versions = ["5.0"]
+        pipeline.report = []
+
+        # Ticket for a version we did NOT scan
+        ticket_4_18 = _make_ticket(
+            "ART-60",
+            ["art:image-build-failure", "art:package:ironic", "art:group:openshift-4.18"],
+        )
+        mock_jira = MagicMock()
+        mock_jira.search_issues.return_value = [ticket_4_18]
+        pipeline.runtime.new_jira_client.return_value = mock_jira
+
+        pipeline.sync_jira()
+
+        mock_jira.close_task.assert_not_called()
+
+    def test_skips_close_for_unscanned_image(self):
+        pipeline = self._make_pipeline(image_list="other-image")
+        pipeline.report = []
+
+        ticket = _make_ticket(
+            "ART-70",
+            ["art:image-build-failure", "art:package:ironic", "art:group:openshift-5.0"],
+        )
+        mock_jira = MagicMock()
+        mock_jira.search_issues.return_value = [ticket]
+        pipeline.runtime.new_jira_client.return_value = mock_jira
+
+        pipeline.sync_jira()
+
+        mock_jira.close_task.assert_not_called()

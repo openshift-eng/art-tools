@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from urllib.parse import quote
@@ -13,7 +14,12 @@ from doozerlib.constants import ART_BUILD_HISTORY_URL
 from pyartcd import util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.constants import OCP_BUILD_DATA_URL
+from pyartcd.jira_client import JIRAClient
 from pyartcd.runtime import Runtime
+
+_LOGGER = logging.getLogger(__name__)
+
+FAILURE_CODES = {ConcernCode.FAILING_AT_LEAST_FOR.value, ConcernCode.LATEST_ATTEMPT_FAILED.value}
 
 
 class ImagesHealthPipeline:
@@ -27,6 +33,7 @@ class ImagesHealthPipeline:
         data_gitref: str,
         image_list: str,
         assembly: str,
+        sync_jira: bool = False,
     ):
         self.runtime = runtime
         self.versions = versions.split(',') if versions else ACTIVE_OCP_VERSIONS
@@ -37,15 +44,20 @@ class ImagesHealthPipeline:
         self.data_gitref = data_gitref
         self.image_list = image_list.split(',') if image_list else []
         self.assembly = assembly
+        self._sync_jira = sync_jira
         self.report = []
         self.slack_client = self.runtime.new_slack_client()
         self.scanned_versions = []
         self.rebase_failures = {}  # version -> {image: {failure_count, url, build_system}}
+        self.jira_tickets: dict[tuple[str, str], str] = {}  # (image_name, group) -> ticket key
 
     async def run(self):
         await asyncio.gather(*(self.get_report(v) for v in self.versions))
         await asyncio.gather(*(self.get_rebase_failures(v) for v in self.versions))
         self.runtime.logger.info('Found %s concerns', len(self.report))
+
+        if self._sync_jira:
+            self.sync_jira()
 
         if self.send_to_release_channel:
             for version in self.scanned_versions:
@@ -105,6 +117,107 @@ class ImagesHealthPipeline:
             build_systems=['brew', 'konflux'],
             logger=self.runtime.logger,
         )
+
+    def sync_jira(self):
+        jira_client = self.runtime.new_jira_client()
+
+        # Build current failure set keyed by (image_name, group)
+        current_failures: dict[tuple[str, str], dict] = {}
+        for concern in self.report:
+            if concern['code'] in FAILURE_CODES:
+                key = (concern['image_name'], concern['group'])
+                current_failures[key] = concern
+
+        # Fetch all open image-build-failure tickets
+        jql = 'project = ART AND labels = "art:image-build-failure" AND statusCategory != Done'
+        open_tickets = jira_client.search_issues(jql)
+
+        # Index open tickets by (image_name, group) extracted from labels
+        ticket_index: dict[tuple[str, str], object] = {}
+        for ticket in open_tickets:
+            image_name = None
+            group = None
+            for label in ticket.fields.labels:
+                if label.startswith("art:package:"):
+                    image_name = label[len("art:package:") :]
+                elif label.startswith("art:group:"):
+                    group = label[len("art:group:") :]
+            if image_name and group:
+                ticket_index[(image_name, group)] = ticket
+
+        # Record existing tickets and create missing ones
+        scanned_groups = {f"openshift-{v}" for v in self.scanned_versions}
+        for (image_name, group), concern in current_failures.items():
+            if (image_name, group) in ticket_index:
+                ticket = ticket_index[(image_name, group)]
+                self.jira_tickets[(image_name, group)] = ticket.key
+                _LOGGER.info("Ticket already exists for %s (%s): %s", image_name, group, ticket.key)
+                continue
+            new_ticket = self._create_failure_ticket(jira_client, concern)
+            self.jira_tickets[(image_name, group)] = new_ticket.key
+
+        # Close resolved tickets (with scope guard)
+        for (image_name, group), ticket in ticket_index.items():
+            if group not in scanned_groups:
+                _LOGGER.info("Skipping close check for %s (%s): version not scanned", image_name, group)
+                continue
+            if self.image_list and image_name not in self.image_list:
+                _LOGGER.info("Skipping close check for %s (%s): image not in scan list", image_name, group)
+                continue
+            if (image_name, group) not in current_failures:
+                _LOGGER.info("Closing resolved ticket %s for %s (%s)", ticket.key, image_name, group)
+                jira_client.close_task(ticket.key)
+
+    def _create_failure_ticket(self, jira_client: JIRAClient, concern: dict):
+        image_name = concern['image_name']
+        group = concern['group']
+        code = concern['code']
+        nvr = concern.get('latest_failed_nvr', 'N/A')
+        logs_url = self.get_logs_url(concern)
+        search_url = self.get_search_url(concern)
+
+        if code == ConcernCode.FAILING_AT_LEAST_FOR.value:
+            category = f"Persistent failure (>{LIMIT_BUILD_RESULTS} consecutive failures)"
+        else:
+            category = f"Recent failure ({concern.get('latest_success_idx', '?')} attempts since last success)"
+
+        last_good_url = concern.get("latest_successful_task_url", "")
+
+        description = (
+            f"Image build failure detected by images-health.\n\n"
+            f"*Image:* {image_name}\n"
+            f"*Group:* {group}\n"
+            f"*NVR:* {nvr}\n"
+            f"*Category:* {category}\n"
+            f"*Build history:* {search_url}\n"
+            f"*Error logs:* {logs_url}\n"
+        )
+        if last_good_url:
+            description += f"*Last successful build:* {last_good_url}\n"
+
+        labels = [
+            "art:image-build-failure",
+            f"art:package:{image_name}",
+            f"art:group:{group}",
+        ]
+
+        ticket = jira_client.create_issue(
+            project="ART",
+            issue_type="Task",
+            summary=f"Image build failure: {image_name} ({group})",
+            description=description,
+            labels=labels,
+            components=["daily-ops"],
+        )
+        _LOGGER.info("Created ticket %s for %s (%s)", ticket.key, image_name, group)
+        return ticket
+
+    def _jira_link(self, concern: dict) -> str:
+        key = self.jira_tickets.get((concern['image_name'], concern['group']))
+        if not key:
+            return ''
+        jira_url = f'{self.runtime.config["jira"]["url"]}/browse/{key}'
+        return f' | {self.url_text(jira_url, key)}'
 
     async def notify_release_channel(self, version):
         self.slack_client.bind_channel(version)
@@ -266,6 +379,7 @@ class ImagesHealthPipeline:
         if code in [ConcernCode.LATEST_ATTEMPT_FAILED.value, ConcernCode.FAILING_AT_LEAST_FOR.value]:
             logs_url = self.get_logs_url(concern)
             message += f' | {self.url_text(logs_url, "Latest failure logs")}'
+            message += self._jira_link(concern)
 
         if code == ConcernCode.FAILING_AT_LEAST_FOR.value:
             message += f' - Failing for at least {LIMIT_BUILD_RESULTS} attempts'
@@ -292,6 +406,7 @@ class ImagesHealthPipeline:
         else:  # ConcernCode.LATEST_ATTEMPT_FAILED
             message += f'{concern["latest_success_idx"]} failures ({logs_link}).'
 
+        message += self._jira_link(concern)
         return message
 
     @staticmethod
@@ -370,6 +485,9 @@ class ImagesHealthPipeline:
     required=False,
     help='(Optional) override the runtime assembly name',
 )
+@click.option(
+    '--sync-jira/--no-sync-jira', default=True, help='Create/close Jira tickets for build failures (default: enabled)'
+)
 @pass_runtime
 @click_coroutine
 async def images_health(
@@ -381,6 +499,7 @@ async def images_health(
     data_gitref: str,
     image_list: str,
     assembly: str,
+    sync_jira: bool,
 ):
     await ImagesHealthPipeline(
         runtime,
@@ -391,4 +510,5 @@ async def images_health(
         data_gitref,
         image_list,
         assembly,
+        sync_jira=sync_jira,
     ).run()
