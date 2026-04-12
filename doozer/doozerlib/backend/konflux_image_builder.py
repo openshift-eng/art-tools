@@ -182,6 +182,7 @@ class KonfluxImageBuilder:
             building_arches = metadata.get_arches()
             logger.info(f"Building for arches: {building_arches}")
             error = None
+            ec_failed = False
             # Resolve build priority based on precedence rules
             if self._config.build_priority == "auto":
                 build_priority = util.get_konflux_build_priority(metadata=metadata, group=self._config.group_name)
@@ -307,6 +308,7 @@ class KonfluxImageBuilder:
                                 self._konflux_client.resource_url(ec_plr_info.to_dict()),
                             )
                             outcome = KonfluxBuildOutcome.FAILURE
+                            ec_failed = True
                         else:
                             logger.info(
                                 "EC verification passed for %s. PLR: %s",
@@ -317,6 +319,7 @@ class KonfluxImageBuilder:
                     except Exception:
                         logger.exception("EC verification error for %s", metadata.distgit_key)
                         outcome = KonfluxBuildOutcome.FAILURE
+                        ec_failed = True
 
                 elif outcome is KonfluxBuildOutcome.SUCCESS:
                     if self._config.skip_ec_verify:
@@ -361,6 +364,11 @@ class KonfluxImageBuilder:
                         pipelinerun_name,
                         pipelinerun_info.to_dict(),
                     )
+                    if ec_failed:
+                        # EC policy failures are not recoverable by rebuilding -- the image
+                        # artifact is valid but violates policy. Retrying would just rebuild
+                        # the same image and fail EC again, wasting cluster resources.
+                        break
                 else:
                     metadata.build_status = True
                     record["message"] = "Success"

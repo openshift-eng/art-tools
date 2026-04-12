@@ -10,7 +10,11 @@ from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome
-from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder, KonfluxImageBuilderConfig
+from doozerlib.backend.konflux_image_builder import (
+    KonfluxImageBuilder,
+    KonfluxImageBuilderConfig,
+    KonfluxImageBuildError,
+)
 
 
 def _make_config(**overrides) -> KonfluxImageBuilderConfig:
@@ -178,3 +182,60 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
 
         ensure_its.assert_not_called()
         start_ec_plr.assert_not_called()
+
+    async def test_no_retry_when_ec_fails(self, mock_kc_init):
+        """When EC verification fails, the build should NOT be retried."""
+        config = _make_config(group_name="openshift-4.18")
+        metadata = _make_metadata(for_release=True)
+        metadata.get_konflux_build_attempts.return_value = 3
+
+        builder = KonfluxImageBuilder(config)
+
+        plr_info = _make_successful_pipelinerun_info()
+        builder._start_build = AsyncMock(return_value=plr_info)
+        builder._validate_build_attestation_and_signature = AsyncMock()
+        builder._wait_for_parent_members = AsyncMock(return_value=[])
+        builder.update_konflux_db = AsyncMock(return_value=None)
+        builder._parse_dockerfile = MagicMock(
+            return_value=("uuid-tag", "test-component", "v4.18.0", "202604100000.p0.el9")
+        )
+
+        with patch.object(Path, "exists", return_value=True):
+            with patch(
+                "doozerlib.backend.konflux_image_builder.BuildRepo.from_local_dir",
+                new_callable=AsyncMock,
+            ) as mock_build_repo:
+                mock_repo = MagicMock()
+                mock_repo.url = "https://github.com/openshift/test-repo"
+                mock_repo.commit_hash = "deadbeef"
+                mock_repo.branch = "art-openshift-4.18-assembly-stream-dgk-test-image"
+                mock_build_repo.return_value = mock_repo
+
+                wait_plr_info = _make_successful_pipelinerun_info()
+                ec_plr_info = MagicMock()
+                ec_plr_info.name = "test-ec-plr"
+                ec_plr_info.to_dict.return_value = {
+                    "kind": "PipelineRun",
+                    "metadata": {
+                        "name": "test-ec-plr",
+                        "namespace": "ocp-art-tenant",
+                        "labels": {"appstudio.openshift.io/application": "openshift-4-18"},
+                    },
+                }
+                ec_plr_info.find_condition.return_value = MagicMock()
+
+                builder._konflux_client.wait_for_pipelinerun = AsyncMock(side_effect=[wait_plr_info, ec_plr_info])
+                builder._konflux_client.resource_url = MagicMock(return_value="https://example.com/plr")
+                builder._konflux_client.ensure_integration_test_scenario = AsyncMock()
+                builder._konflux_client.start_ec_pipeline_run = AsyncMock(return_value=ec_plr_info)
+
+                # Build PLR succeeds, EC PLR fails
+                with patch.object(
+                    KonfluxBuildOutcome,
+                    "extract_from_pipelinerun_succeeded_condition",
+                    side_effect=[KonfluxBuildOutcome.SUCCESS, KonfluxBuildOutcome.FAILURE],
+                ):
+                    with self.assertRaises(KonfluxImageBuildError):
+                        await builder.build(metadata)
+
+        builder._start_build.assert_called_once()
