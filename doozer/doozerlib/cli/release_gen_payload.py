@@ -1949,7 +1949,7 @@ class GenPayloadCli:
         await manifest_tool(f'push from-spec {str(component_manifest_path)}')
 
         # we are pushing a new manifest list, so return its sha256 based pullspec
-        sha = await find_manifest_list_sha(output_pullspec)
+        sha = await find_manifest_list_sha(output_pullspec, registry_config=os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE"))
         return exchange_pullspec_tag_for_shasum(output_pullspec, sha)
 
     async def create_multi_release_image(
@@ -2046,7 +2046,9 @@ class GenPayloadCli:
         await manifest_tool(f'push from-spec {str(release_payload_ml_path)}')
 
         # if we are actually pushing a manifest list, then we should derive a sha256 based pullspec
-        sha = await find_manifest_list_sha(multi_release_dest)
+        sha = await find_manifest_list_sha(
+            multi_release_dest, registry_config=os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")
+        )
         return exchange_pullspec_tag_for_shasum(multi_release_dest, sha)
 
     async def apply_multi_imagestream_update(
