@@ -204,10 +204,11 @@ class TestSeedLockfilePipeline(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(RuntimeError):
                 await pipeline.run()
 
+    @patch('pyartcd.pipelines.seed_lockfile.jenkins.init_jenkins')
     @patch('pyartcd.pipelines.seed_lockfile.jenkins.update_title')
     @patch('pyartcd.pipelines.seed_lockfile.jenkins.update_description')
     @patch('pyartcd.pipelines.seed_lockfile.exectools.cmd_assert_async', new_callable=AsyncMock)
-    async def test_dry_run_skips_push(self, mock_cmd, _desc, _title):
+    async def test_dry_run_skips_push(self, mock_cmd, _desc, _title, _init):
         """In dry run, --push is not added to rebase and --dry-run is added to build."""
         pipeline = self._create_pipeline(
             runtime=MagicMock(dry_run=True, doozer_working='/tmp/doozer-working'),
@@ -272,6 +273,27 @@ class TestSeedLockfilePipeline(unittest.IsolatedAsyncioTestCase):
         url = SeedLockfilePipeline._build_url('openshift-4.22', {'nvrs': 'n/a', 'status': '-1'})
         self.assertEqual(url, '')
 
+    def test_search_url_contains_image_and_group(self):
+        url = SeedLockfilePipeline._search_url('ironic', 'openshift-4.22')
+        self.assertIn('name=^ironic$', url)
+        self.assertIn('group=openshift-4.22', url)
+        self.assertIn('engine=konflux', url)
+
+    def test_link_fallback_search(self):
+        """_link returns a search URL when _build_url returns empty and fallback_search is True."""
+        pipeline = self._create_pipeline(image_list='ironic')
+        pipeline.stream_results = {'ironic': {'name': 'ironic', 'nvrs': 'n/a', 'status': '-1'}}
+        url = pipeline._link('ironic', 'stream', 'openshift-4.22', fallback_search=True)
+        self.assertIn('name=^ironic$', url)
+        self.assertIn('group=openshift-4.22', url)
+
+    def test_link_no_fallback_returns_empty(self):
+        """_link returns empty when _build_url returns empty and fallback_search is False."""
+        pipeline = self._create_pipeline(image_list='ironic')
+        pipeline.stream_results = {'ironic': {'name': 'ironic', 'nvrs': 'n/a', 'status': '-1'}}
+        url = pipeline._link('ironic', 'stream', 'openshift-4.22', fallback_search=False)
+        self.assertEqual(url, '')
+
     def test_slack_report_content(self):
         """Slack report contains expected sections."""
         pipeline = self._create_pipeline(image_list='img-a,img-b,img-c')
@@ -283,6 +305,13 @@ class TestSeedLockfilePipeline(unittest.IsolatedAsyncioTestCase):
         self.assertIn('Stream build failed', report)
         self.assertIn('img-c', report)
 
+    def test_slack_report_uses_succeeded_for_test_assembly(self):
+        """Slack report shows 'Succeeded' instead of 'Solved' for non-stream assembly."""
+        pipeline = self._create_pipeline(image_list='img-a', assembly='test')
+        report = pipeline._build_slack_report(test_failed=[], solved=['img-a'], stream_failed=[])
+        self.assertIn('Succeeded', report)
+        self.assertNotIn('Solved', report)
+
     def test_jenkins_description_content(self):
         """Jenkins HTML description contains expected sections."""
         pipeline = self._create_pipeline(image_list='img-a,img-b,img-c')
@@ -293,6 +322,50 @@ class TestSeedLockfilePipeline(unittest.IsolatedAsyncioTestCase):
         self.assertIn('img-b', html)
         self.assertIn('Stream build failed', html)
         self.assertIn('img-c', html)
+
+    def test_jenkins_description_uses_succeeded_for_test_assembly(self):
+        """Jenkins description shows 'Succeeded' instead of 'Solved' for non-stream assembly."""
+        pipeline = self._create_pipeline(image_list='img-a', assembly='test')
+        html = pipeline._build_jenkins_description(test_failed=[], solved=['img-a'], stream_failed=[])
+        self.assertIn('Succeeded', html)
+        self.assertNotIn('Solved', html)
+
+    def test_jenkins_description_includes_seed_nvrs(self):
+        """Jenkins description includes seed NVR section."""
+        pipeline = self._create_pipeline(
+            image_list='ironic',
+            seed_nvrs='ironic@ironic-container-v4.22.0-assembly.test',
+        )
+        pipeline.stream_results = {'ironic': {'name': 'ironic', 'status': '0', 'nvrs': 'ironic-nvr', 'record_id': 'r1'}}
+        html = pipeline._build_jenkins_description(test_failed=[], solved=['ironic'], stream_failed=[])
+        self.assertIn('Seed NVRs', html)
+        self.assertIn('ironic-container-v4.22.0-assembly.test', html)
+
+    def test_jenkins_description_includes_data_link(self):
+        """Jenkins description includes ocp-build-data branch link when data_gitref is set."""
+        pipeline = self._create_pipeline(
+            image_list='ironic',
+            data_path='https://github.com/joepvd/ocp-build-data',
+            data_gitref='ART-14902-4.22-ose-frr',
+        )
+        html = pipeline._build_jenkins_description(test_failed=[], solved=[], stream_failed=[])
+        self.assertIn('https://github.com/joepvd/ocp-build-data/tree/ART-14902-4.22-ose-frr', html)
+        self.assertIn('Data:', html)
+
+    def test_jenkins_description_no_data_link_without_gitref(self):
+        """Jenkins description omits data link when data_gitref is not set."""
+        pipeline = self._create_pipeline(image_list='ironic')
+        html = pipeline._build_jenkins_description(test_failed=[], solved=[], stream_failed=[])
+        self.assertNotIn('Data:', html)
+
+    def test_jenkins_description_stream_failed_has_fallback_link(self):
+        """stream_failed entries get a fallback search URL when build URL is unavailable."""
+        pipeline = self._create_pipeline(image_list='img-c')
+        pipeline.stream_results = {'img-c': {'name': 'img-c', 'nvrs': 'n/a', 'status': '-1'}}
+        pipeline.test_results = {'img-c': {'name': 'img-c', 'nvrs': 'img-c-nvr', 'status': '0', 'record_id': 'r1'}}
+        html = pipeline._build_jenkins_description(test_failed=[], solved=[], stream_failed=['img-c'])
+        self.assertIn('stream', html)
+        self.assertIn('name=^img-c$', html)
 
     @patch('pyartcd.pipelines.seed_lockfile.jenkins.update_title')
     @patch('pyartcd.pipelines.seed_lockfile.jenkins.update_description')
@@ -306,4 +379,56 @@ class TestSeedLockfilePipeline(unittest.IsolatedAsyncioTestCase):
 
         pipeline.slack_client.say.assert_awaited_once()
         mock_title.assert_called_once()
+        self.assertIn('solved', mock_title.call_args[0][0])
         self.assertIn('ironic', mock_title.call_args[0][0])
+
+    @patch('pyartcd.pipelines.seed_lockfile.jenkins.update_title')
+    @patch('pyartcd.pipelines.seed_lockfile.jenkins.update_description')
+    async def test_post_report_no_solved_in_title_for_test_assembly(self, mock_desc, mock_title):
+        """_post_report does not add 'solved' to title when assembly is not stream."""
+        pipeline = self._create_pipeline(image_list='ironic', assembly='test')
+        pipeline.stream_results = {'ironic': {'name': 'ironic', 'status': '0'}}
+        pipeline.slack_client.say = AsyncMock()
+
+        await pipeline._post_report()
+
+        mock_title.assert_called_once()
+        title_arg = mock_title.call_args[0][0]
+        self.assertIn('[test]', title_arg)
+        self.assertNotIn('solved', title_arg)
+
+    @patch('pyartcd.pipelines.seed_lockfile.jenkins.update_title')
+    @patch('pyartcd.pipelines.seed_lockfile.jenkins.update_description')
+    async def test_post_report_includes_jira_key_in_title(self, mock_desc, mock_title):
+        """_post_report includes jira_key in the Jenkins title."""
+        pipeline = self._create_pipeline(image_list='ironic', assembly='test', jira_key='ART-14902')
+        pipeline.stream_results = {'ironic': {'name': 'ironic', 'status': '0'}}
+        pipeline.slack_client.say = AsyncMock()
+
+        await pipeline._post_report()
+
+        mock_title.assert_called_once()
+        title_arg = mock_title.call_args[0][0]
+        self.assertIn('ART-14902', title_arg)
+        self.assertIn('[test]', title_arg)
+
+    @patch('pyartcd.pipelines.seed_lockfile.jenkins.update_title')
+    @patch('pyartcd.pipelines.seed_lockfile.jenkins.update_description')
+    async def test_post_report_no_title_update_for_stream_no_solved(self, mock_desc, mock_title):
+        """_post_report does not update title when assembly is stream and nothing solved."""
+        pipeline = self._create_pipeline(image_list='ironic')
+        pipeline.stream_results = {'ironic': {'name': 'ironic', 'status': '-1'}}
+        pipeline.test_results = {'ironic': {'name': 'ironic', 'status': '0'}}
+        pipeline.slack_client.say = AsyncMock()
+
+        await pipeline._post_report()
+
+        mock_title.assert_not_called()
+
+    def test_init_stores_jira_key(self):
+        pipeline = self._create_pipeline(jira_key='ART-12345')
+        self.assertEqual(pipeline.jira_key, 'ART-12345')
+
+    def test_init_jira_key_defaults_to_empty(self):
+        pipeline = self._create_pipeline()
+        self.assertEqual(pipeline.jira_key, '')
