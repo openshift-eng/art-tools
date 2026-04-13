@@ -34,6 +34,8 @@ from doozerlib.util import mkdirs, strip_epoch, to_nvre
 
 ERRATA_API_URL = "https://errata.engineering.redhat.com/api/v1/"
 
+KNOWN_SIGNING_KEYS = ('fd431d51', 'release4,release2,ima')
+
 logger: logging.Logger = None
 
 # As a plashet is assembled, concerns about its viability can be
@@ -275,14 +277,24 @@ def _assemble_repo(config: SimpleNamespace, nvres: List[str], koji_api: koji.Cli
                     continue
 
                 signed = signing_mode == 'signed'
-                br_arch_base_path = get_brewroot_arch_base_path(config, nvre, signed)
-                if br_arch_base_path is None:
+                base_path = get_brewroot_base_path(config, nvre)
+                if base_path is None:
                     continue
 
                 # Include noarch in each arch specific repo.
                 include_arches = [arch_name, 'noarch']
                 for a in include_arches:
-                    brewroot_arch_path = os.path.join(br_arch_base_path, a)
+                    if signed:
+                        signing_keys = getattr(config, 'signing_keys', KNOWN_SIGNING_KEYS)
+                        resolved = resolve_signed_arch_path(base_path, a, nvre, signing_keys)
+                        if resolved is None:
+                            logger.debug(f'No signed {a} arch directory for {nvre}')
+                            continue
+                        brewroot_arch_path = str(resolved)
+                        signing_key = resolved.parent.name
+                    else:
+                        brewroot_arch_path = os.path.join(base_path, a)
+                        signing_key = None
 
                     if not os.path.isdir(brewroot_arch_path):
                         logger.debug(f'No {a} arch directory for {nvre}')
@@ -294,7 +306,7 @@ def _assemble_repo(config: SimpleNamespace, nvres: List[str], koji_api: koji.Cli
                         arch=a,
                     )
                     if signed:
-                        link_name += f'__{config.signing_key_id}'
+                        link_name += f'__{signing_key}'
 
                     package_link_path = os.path.join(links_dir, link_name)
                     os.symlink(brewroot_arch_path, package_link_path)
@@ -313,7 +325,7 @@ def _assemble_repo(config: SimpleNamespace, nvres: List[str], koji_api: koji.Cli
                         matched_count += 1
 
                 if not matched_count:
-                    path = br_arch_base_path or "unknown path"
+                    path = base_path or "unknown path"
                     logger.warning(
                         f"Unable to find any {arch_name} rpms for {nvre} in {path}; "
                         "this may be ok if the package doesn't support the arch and "
@@ -382,13 +394,12 @@ def assemble_repo(config, nvres, event_info=None, extra_data: Dict = None):
             yaml.dump(plashet_info, y, default_flow_style=False)
 
 
-def get_brewroot_arch_base_path(config: SimpleNamespace, nvre: str, signed: bool) -> Path | None:
-    """
-    :param config: Base cli config object
-    :param nvre: Will return the base directory under which the arch directories should exist.
-    :param signed: If True, the base directory under which signed arch directories should exit.
-    An exception will be raised if the nvr cannot be found unsigned in the brewroot as this
-    indicates the nvr has not been built.
+def get_brewroot_base_path(config: SimpleNamespace, nvre: str) -> Path | None:
+    """Return the unsigned brewroot base directory for an NVR.
+
+    This is ``<brewroot>/packages/<name>/<version>/<release>/``.
+    Returns *None* when the directory does not exist (i.e. the NVR has not
+    been built).
     """
     nvr = parse_nvr(nvre)
     name, version, release = nvr["name"], nvr["version"], nvr["release"]
@@ -404,40 +415,94 @@ def get_brewroot_arch_base_path(config: SimpleNamespace, nvre: str, signed: bool
         logger.error(f"Unable to find {nvre} in brewroot filesystem: {base_path}; skipping this package")
         return None
 
-    if signed:
-        return base_path / "data" / "signed" / config.signing_key_id
-
     return base_path
+
+
+def resolve_signed_arch_path(
+    base_path: Path, arch: str, nvre: str, signing_keys: tuple[str, ...] = KNOWN_SIGNING_KEYS
+) -> Path | None:
+    """Find the signed arch directory for an NVR by trying each key in order.
+
+    *signing_keys* is tried left-to-right; the first key whose
+    ``data/signed/<key>/<arch>/`` directory exists on disk is returned.
+    This avoids picking a key whose signing is still in progress when
+    another key is already complete — provided the caller puts the
+    preferred (usually older / fully-populated) key first.
+
+    Returns *None* when no accepted key provides a populated arch directory.
+    An error is logged when only unknown keys are present so operators know
+    which key to add.
+    """
+    signed_dir = base_path / "data" / "signed"
+    for key in signing_keys:
+        candidate = signed_dir / key / arch
+        if candidate.is_dir():
+            return candidate
+
+    if signed_dir.is_dir():
+        unknown = [e.name for e in signed_dir.iterdir() if e.is_dir() and e.name and e.name not in KNOWN_SIGNING_KEYS]
+        if unknown:
+            logger.error(
+                f"{nvre} is signed with unrecognised key(s) {unknown}; "
+                f"known keys are {sorted(KNOWN_SIGNING_KEYS)}. "
+                f"Update KNOWN_SIGNING_KEYS in config_plashet.py to accept the new key."
+            )
+
+    return None
 
 
 def is_signed(config: SimpleNamespace, nvre: str, koji_api: koji.ClientSession) -> bool:
     """
     :param config: cli config object
     :param nvre: The nvr to check
-    :return: Returns whether the specified nvr is signed with the signing key id.
+    :return: Returns whether the specified nvr is signed with one of the accepted signing keys.
     Returns False if the nvr can't be found in the brew root.
+
+    We require that at least one accepted signing key covers ALL RPMs in
+    the build (i.e. every RPM has a signed copy on disk under that single
+    key).  This matches the assembly strategy where
+    ``resolve_signed_arch_path`` picks one key per NVR+arch and symlinks
+    the whole directory.
     """
-    unsigned_base = get_brewroot_arch_base_path(config, nvre, False)
-    if unsigned_base is None:
+    base_path = get_brewroot_base_path(config, nvre)
+    if base_path is None:
         logger.warning(f"Cannot verify signing status for {nvre} - brewroot path not found")
         return False
 
-    sigkey = config.signing_key_id
+    signing_keys = getattr(config, 'signing_keys', KNOWN_SIGNING_KEYS)
 
     build = koji_api.getBuild(strip_epoch(nvre), strict=True)
     rpms = koji_api.listRPMs(buildID=build["id"])
 
-    tasks = []
+    # queryRPMSigs without sigkey returns ALL signatures for each RPM.
+    sig_tasks = []
     with koji_api.multicall(batch=5000) as m:
         for rpm in rpms:
-            tasks.append(m.queryRPMSigs(rpm_id=rpm["id"], sigkey=sigkey))
+            sig_tasks.append((rpm, m.queryRPMSigs(rpm_id=rpm["id"])))
 
-    for rpm, task in zip(rpms, tasks):
-        signed_paths = (unsigned_base / koji.pathinfo.signed(rpm, sig["sigkey"]) for sig in task.result)
+    # Collect the set of accepted sigkeys each RPM is signed with on disk.
+    keys_per_rpm: list[set[str]] = []
+    for rpm, task in sig_tasks:
+        rpm_keys: set[str] = set()
+        for sig in task.result:
+            sigkey = sig.get("sigkey", "")
+            if sigkey not in signing_keys:
+                continue
+            if (base_path / koji.pathinfo.signed(rpm, sigkey)).exists():
+                rpm_keys.add(sigkey)
+        keys_per_rpm.append(rpm_keys)
 
-        if not any(path.exists() for path in signed_paths):
-            logger.info(f"Found incomplete signed rpm {nvre}; brewroot may still be being built.")
+    if not keys_per_rpm:
+        return True
+
+    # At least one key must cover every RPM in the build.
+    common_keys = keys_per_rpm[0]
+    for rpm_keys in keys_per_rpm[1:]:
+        common_keys = common_keys & rpm_keys
+        if not common_keys:
+            logger.info(f"No single signing key covers all RPMs for {nvre}; signing may still be in progress.")
             return False
+
     return True
 
 
@@ -465,10 +530,11 @@ def assert_signed(config: SimpleNamespace, nvre: str, koji_api: koji.ClientSessi
 
     while not is_signed(config, nvre, koji_api):
         if minutes_used >= poll_for:
-            br_arch_base_path = get_brewroot_arch_base_path(config, nvre, True)
-            signed_path = br_arch_base_path or "unknown brewroot path"
+            base_path = get_brewroot_base_path(config, nvre)
+            signed_path = f"{base_path}/data/signed/<key>" if base_path else "unknown brewroot path"
 
-            msg = f"Package {nvre} has not been signed; {signed_path} does not exist"
+            signing_keys = getattr(config, 'signing_keys', KNOWN_SIGNING_KEYS)
+            msg = f"Package {nvre} has not been signed after {poll_for} minutes; no accepted key ({sorted(signing_keys)}) found at {signed_path}"
             logger.info(msg)
             raise IOError(msg)
 
@@ -530,7 +596,7 @@ def setup_logging(dest_dir: str):
     '--signing-key-id',
     required=False,
     metavar='HEX',
-    help='Signing key to require for signed arches if you fd431d51 is not desired.',
+    help='Restrict signing to a single key (default: accept any key in KNOWN_SIGNING_KEYS).',
 )
 @click.option(
     '--arch',
@@ -602,6 +668,13 @@ def config_plashet(ctx, base_dir, brew_root, name, signing_key_id, **kwargs):
 
     runtime: Runtime = ctx.obj
 
+    effective_key = signing_key_id if signing_key_id else 'fd431d51'
+    if signing_key_id and signing_key_id not in KNOWN_SIGNING_KEYS:
+        logger.warning(
+            f"--signing-key-id={signing_key_id!r} is not in KNOWN_SIGNING_KEYS "
+            f"{sorted(KNOWN_SIGNING_KEYS)}; only that key will be accepted"
+        )
+
     ctx.obj = SimpleNamespace(
         base_dir=base_dir,
         brew_root=brew_root,
@@ -610,7 +683,8 @@ def config_plashet(ctx, base_dir, brew_root, name, signing_key_id, **kwargs):
         packages_path=packages_path,
         base_dir_path=base_dir_path,
         dest_dir=dest_dir,
-        signing_key_id=signing_key_id if signing_key_id else 'fd431d51',
+        signing_key_id=effective_key,
+        signing_keys=(effective_key,) if signing_key_id else KNOWN_SIGNING_KEYS,
         runtime=runtime,
         **kwargs,
     )
