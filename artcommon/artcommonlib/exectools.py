@@ -31,7 +31,7 @@ from artcommonlib.telemetry import start_as_current_span_async
 from future.utils import as_native_str
 from opentelemetry import trace
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
-from tenacity import stop_after_attempt, wait_fixed
+from tenacity import stop_after_attempt, wait_fixed, wait_random
 
 SUCCESS = 0
 
@@ -545,8 +545,8 @@ def _get_manifest_tool_docker_cfg() -> str:
     return _manifest_tool_cfg_dir
 
 
-@limit_concurrency(10)
-@tenacity.retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(60))
+@limit_concurrency(4)
+@tenacity.retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(60) + wait_random(0, 30))
 async def manifest_tool(options, dry_run=False):
     auth_opt = _get_manifest_tool_docker_cfg()
 
