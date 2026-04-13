@@ -33,7 +33,7 @@ class ImagesHealthPipeline:
         data_gitref: str,
         image_list: str,
         assembly: str,
-        sync_jira: bool = False,
+        sync_jira: bool = True,
     ):
         self.runtime = runtime
         self.versions = versions.split(',') if versions else ACTIVE_OCP_VERSIONS
@@ -56,8 +56,11 @@ class ImagesHealthPipeline:
         await asyncio.gather(*(self.get_rebase_failures(v) for v in self.versions))
         self.runtime.logger.info('Found %s concerns', len(self.report))
 
-        if self._sync_jira:
-            self.sync_jira()
+        if self._sync_jira and self.assembly == "stream":
+            try:
+                self.sync_jira()
+            except Exception:
+                _LOGGER.exception("Jira sync failed; continuing without Jira ticket updates")
 
         if self.send_to_release_channel:
             for version in self.scanned_versions:
@@ -130,7 +133,7 @@ class ImagesHealthPipeline:
 
         # Fetch all open image-build-failure tickets
         jql = 'project = ART AND labels = "art:image-build-failure" AND statusCategory != Done'
-        open_tickets = jira_client.search_issues(jql)
+        open_tickets = jira_client.search_issues(jql, maxResults=False)
 
         # Index open tickets by (image_name, group) extracted from labels
         ticket_index: dict[tuple[str, str], object] = {}

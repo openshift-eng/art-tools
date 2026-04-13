@@ -1,5 +1,5 @@
 from unittest import IsolatedAsyncioTestCase, TestCase
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from doozerlib.cli.images_health import ConcernCode
 from pyartcd.pipelines.images_health import ImagesHealthPipeline
@@ -292,3 +292,73 @@ class TestSyncJira(TestCase):
         pipeline.sync_jira()
 
         mock_jira.close_task.assert_not_called()
+
+    def test_fetches_all_pages(self):
+        pipeline = self._make_pipeline()
+        pipeline.report = []
+
+        mock_jira = MagicMock()
+        mock_jira.search_issues.return_value = []
+        pipeline.runtime.new_jira_client.return_value = mock_jira
+
+        pipeline.sync_jira()
+
+        mock_jira.search_issues.assert_called_once()
+        _, kwargs = mock_jira.search_issues.call_args
+        self.assertFalse(kwargs.get("maxResults", True))
+
+
+class TestSyncJiraIntegration(IsolatedAsyncioTestCase):
+    def _make_pipeline(self, assembly="stream"):
+        runtime = MagicMock()
+        runtime.working_dir = MagicMock()
+        runtime.logger = MagicMock()
+        runtime.new_slack_client.return_value = MagicMock()
+        pipeline = ImagesHealthPipeline(
+            runtime=runtime,
+            versions="5.0",
+            send_to_release_channel=False,
+            send_to_forum_ocp_art=False,
+            data_path=DATA_PATH,
+            data_gitref="",
+            image_list="",
+            assembly=assembly,
+            sync_jira=True,
+        )
+        pipeline.scanned_versions = ["5.0"]
+        return pipeline
+
+    @patch.object(ImagesHealthPipeline, "get_report", new_callable=AsyncMock)
+    @patch.object(ImagesHealthPipeline, "get_rebase_failures", new_callable=AsyncMock)
+    async def test_skips_jira_sync_for_non_stream_assembly(self, _mock_rebase, _mock_report):
+        pipeline = self._make_pipeline(assembly="4.18.5")
+        pipeline.report = [
+            _make_concern("ironic", "openshift-5.0", ConcernCode.FAILING_AT_LEAST_FOR.value),
+        ]
+        mock_jira = MagicMock()
+        pipeline.runtime.new_jira_client.return_value = mock_jira
+
+        await pipeline.run()
+
+        mock_jira.search_issues.assert_not_called()
+        mock_jira.create_issue.assert_not_called()
+
+    @patch.object(ImagesHealthPipeline, "get_report", new_callable=AsyncMock)
+    @patch.object(ImagesHealthPipeline, "get_rebase_failures", new_callable=AsyncMock)
+    async def test_jira_failure_does_not_block_notifications(self, _mock_rebase, _mock_report):
+        pipeline = self._make_pipeline()
+        pipeline.report = []
+        pipeline.send_to_release_channel = True
+        pipeline.scanned_versions = ["5.0"]
+
+        mock_jira = MagicMock()
+        mock_jira.search_issues.side_effect = RuntimeError("Jira is down")
+        pipeline.runtime.new_jira_client.return_value = mock_jira
+
+        mock_slack = MagicMock()
+        mock_slack.say = AsyncMock()
+        pipeline.slack_client = mock_slack
+
+        await pipeline.run()
+
+        mock_slack.say.assert_called()

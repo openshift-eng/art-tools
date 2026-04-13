@@ -118,7 +118,7 @@ class JIRAClient:
         return new_issues
 
     @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(5))
-    def search_issues(self, jql: str, maxResults: int = 50) -> List[Issue]:
+    def search_issues(self, jql: str, maxResults: int | bool = 50) -> List[Issue]:
         return self._client.search_issues(jql_str=jql, maxResults=maxResults)
 
     def create_issue(
