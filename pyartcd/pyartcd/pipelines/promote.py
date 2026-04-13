@@ -1753,27 +1753,14 @@ class PromotePipeline:
         with dest_manifest_list_path.open("w") as ml:
             yaml.dump(dest_manifest_list, ml)
 
-        await manifest_tool(["push", "from-spec", "--", f"{dest_manifest_list_path}"], self.runtime.dry_run)
-        auth_opt = ""
-        if os.environ.get("XDG_RUNTIME_DIR"):
-            auth_file = os.path.expandvars("${XDG_RUNTIME_DIR}/containers/auth.json")
-            if Path(auth_file).is_file():
-                auth_opt = f"--docker-cfg={auth_file}"
+        self._logger.info("Pushing manifest list for %s from %s", release_name, dest_manifest_list_path)
 
-        cmd = [
-            "manifest-tool",
-            auth_opt,
-            "push",
-            "from-spec",
-            "--",
-            f"{dest_manifest_list_path}",
-        ]
-
-        if self.runtime.dry_run:
-            self._logger.warning("[DRY RUN] Would have run %s", cmd)
-            return
-        env = os.environ.copy()
-        await exectools.cmd_assert_async(cmd, env=env, stdout=sys.stderr)
+        # Use centralized helper which already respects KONFLUX_ART_IMAGES_AUTH_FILE
+        await manifest_tool(
+            ["push", "from-spec", "--", str(dest_manifest_list_path)],
+            self.runtime.dry_run,
+        )
+        self._logger.info("Successfully pushed manifest list for %s", release_name)
 
     async def build_release_image(
         self,
