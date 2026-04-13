@@ -6,10 +6,8 @@ import functools
 import os
 import platform
 import shlex
-import shutil
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 import traceback
@@ -31,7 +29,7 @@ from artcommonlib.telemetry import start_as_current_span_async
 from future.utils import as_native_str
 from opentelemetry import trace
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
-from tenacity import stop_after_attempt, wait_fixed, wait_random
+from tenacity import stop_after_attempt, wait_fixed
 
 SUCCESS = 0
 
@@ -511,44 +509,16 @@ def unpack_tuple_args(func):
     return wrapper
 
 
-_manifest_tool_cfg_dir: Optional[str] = None
-
-
-def _get_manifest_tool_docker_cfg() -> str:
-    """Return the --docker-cfg argument for manifest-tool, or empty string.
-
-    manifest-tool expects a *directory* containing ``config.json``.
-    The result is cached so all concurrent calls share one temp directory.
-    """
-    global _manifest_tool_cfg_dir
-    if _manifest_tool_cfg_dir is not None:
-        return _manifest_tool_cfg_dir
-
+@tenacity.retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(60))
+async def manifest_tool(options, dry_run=False):
+    auth_opt = ""
     konflux_auth = os.environ.get("KONFLUX_ART_IMAGES_AUTH_FILE")
     if konflux_auth and Path(konflux_auth).is_file():
-        docker_cfg_dir = Path(konflux_auth).parent
-        if (docker_cfg_dir / "config.json").is_file():
-            _manifest_tool_cfg_dir = f"--docker-cfg={docker_cfg_dir}"
-        else:
-            tmp_dir = Path(tempfile.mkdtemp(prefix="manifest-tool-cfg-"))
-            shutil.copy2(konflux_auth, tmp_dir / "config.json")
-            _manifest_tool_cfg_dir = f"--docker-cfg={tmp_dir}"
+        auth_opt = f"--docker-cfg={konflux_auth}"
     elif os.environ.get("XDG_RUNTIME_DIR"):
-        auth_file = Path(os.path.expandvars("${XDG_RUNTIME_DIR}/containers/auth.json"))
-        if auth_file.is_file():
-            tmp_dir = Path(tempfile.mkdtemp(prefix="manifest-tool-cfg-"))
-            shutil.copy2(auth_file, tmp_dir / "config.json")
-            _manifest_tool_cfg_dir = f"--docker-cfg={tmp_dir}"
-
-    if _manifest_tool_cfg_dir is None:
-        _manifest_tool_cfg_dir = ""
-    return _manifest_tool_cfg_dir
-
-
-@limit_concurrency(4)
-@tenacity.retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(60) + wait_random(0, 30))
-async def manifest_tool(options, dry_run=False):
-    auth_opt = _get_manifest_tool_docker_cfg()
+        auth_file = os.path.expandvars("${XDG_RUNTIME_DIR}/containers/auth.json")
+        if Path(auth_file).is_file():
+            auth_opt = f"--docker-cfg={auth_file}"
 
     if isinstance(options, str):
         cmd = f'manifest-tool {auth_opt} {options}'
