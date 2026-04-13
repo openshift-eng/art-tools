@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import ANY, AsyncMock, MagicMock, Mock, call, patch
 
 from artcommonlib.assembly import AssemblyTypes
-from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBundleBuildRecord
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBundleBuildRecord, KonfluxECStatus
 from doozerlib.backend.build_repo import BuildRepo
 from doozerlib.backend.konflux_client import KonfluxClient
 from doozerlib.backend.konflux_fbc import (
@@ -2315,6 +2315,8 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
                     KonfluxBuildOutcome.SUCCESS,
                     all_arches,
                     logger=ANY,
+                    ec_status=KonfluxECStatus.NOT_APPLICABLE,
+                    ec_pipeline_url='',
                 ),
             ]
         )
@@ -2402,6 +2404,8 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
                     KonfluxBuildOutcome.SUCCESS,
                     all_arches,
                     logger=ANY,
+                    ec_status=KonfluxECStatus.NOT_APPLICABLE,
+                    ec_pipeline_url='',
                 ),
             ]
         )
