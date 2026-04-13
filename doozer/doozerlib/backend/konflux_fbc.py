@@ -1892,8 +1892,19 @@ class KonfluxFbcBuilder:
                         ec_status = ec_result.ec_status
                         ec_pipeline_url = ec_result.ec_pipeline_url
                         if ec_result.ec_failed:
-                            outcome = KonfluxBuildOutcome.FAILURE
-                            ec_failed = True
+                            ec_failure_is_error = metadata.runtime.group_config.get("konflux", {}).get(
+                                "ec_failure_is_error", False
+                            )
+                            if ec_failure_is_error:
+                                outcome = KonfluxBuildOutcome.FAILURE
+                                ec_failed = True
+                            else:
+                                logger.warning(
+                                    "EC verification failed for %s but ec_failure_is_error is false; "
+                                    "recording status without failing the build. PLR: %s",
+                                    metadata.distgit_key,
+                                    ec_pipeline_url,
+                                )
                     else:
                         logger.warning("Could not extract image pullspec/digest for EC verification")
                 elif outcome is KonfluxBuildOutcome.SUCCESS and self.skip_ec_verify:

@@ -445,7 +445,18 @@
         "build_attempts?": {
           "$ref": "#/properties/konflux/properties/build_attempts"
         },
-        "build_attempts-": {}
+        "build_attempts-": {},
+        "ec_failure_is_error": {
+          "description": "When true, enterprise-contract verification failures will fail the build. When false (default), failures are recorded but the build succeeds.",
+          "type": "boolean"
+        },
+        "ec_failure_is_error!": {
+          "$ref": "#/properties/konflux/properties/ec_failure_is_error"
+        },
+        "ec_failure_is_error?": {
+          "$ref": "#/properties/konflux/properties/ec_failure_is_error"
+        },
+        "ec_failure_is_error-": {}
       },
       "additionalProperties": false
     },
