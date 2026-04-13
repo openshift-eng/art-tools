@@ -498,9 +498,9 @@ class TestGetTaskBundleAgeDays(TestScanSourcesKonflux):
 
         self.assertEqual(result, 35)
 
-        # Verify correct pullspec was queried
+        # Verify correct pullspec was queried with registry_config
         expected_pullspec = "quay.io/konflux-ci/tekton-catalog/test-task@sha256:abc123"
-        mock_oc_image_info.assert_called_once_with(expected_pullspec)
+        mock_oc_image_info.assert_called_once_with(expected_pullspec, registry_config=None)
 
     @patch('doozerlib.cli.scan_sources_konflux.oc_image_info__cached_async')
     async def test_get_task_bundle_age_days_missing_created_field(self, mock_oc_image_info):
