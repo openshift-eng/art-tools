@@ -512,10 +512,7 @@ def unpack_tuple_args(func):
 @tenacity.retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(60))
 async def manifest_tool(options, dry_run=False):
     auth_opt = ""
-    konflux_auth = os.environ.get("KONFLUX_ART_IMAGES_AUTH_FILE")
-    if konflux_auth and Path(konflux_auth).is_file():
-        auth_opt = f"--docker-cfg={konflux_auth}"
-    elif os.environ.get("XDG_RUNTIME_DIR"):
+    if os.environ.get("XDG_RUNTIME_DIR"):
         auth_file = os.path.expandvars("${XDG_RUNTIME_DIR}/containers/auth.json")
         if Path(auth_file).is_file():
             auth_opt = f"--docker-cfg={auth_file}"
