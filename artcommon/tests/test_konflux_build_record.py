@@ -1,7 +1,12 @@
 import json
 from unittest import TestCase
 
-from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord, KonfluxECStatus
+from artcommonlib.konflux.konflux_build_record import (
+    KonfluxBuildRecord,
+    KonfluxBundleBuildRecord,
+    KonfluxECStatus,
+    KonfluxFbcBuildRecord,
+)
 
 
 class TestKonfluxBuild(TestCase):
@@ -97,3 +102,61 @@ class TestKonfluxBuild(TestCase):
 
         build = KonfluxBuildRecord(ec_status='n/a')
         self.assertEqual(build.ec_status, KonfluxECStatus.NOT_APPLICABLE)
+
+
+class TestKonfluxBundleBuildRecordEC(TestCase):
+    def test_ec_status_default(self):
+        build = KonfluxBundleBuildRecord()
+        self.assertEqual(build.ec_status, KonfluxECStatus.NOT_APPLICABLE)
+        self.assertEqual(build.ec_pipeline_url, '')
+
+    def test_ec_status_serialization(self):
+        build = KonfluxBundleBuildRecord(ec_status=KonfluxECStatus.PASSED, ec_pipeline_url='https://example.com/plr')
+        d = build.to_dict()
+        self.assertEqual(d['ec_status'], 'passed')
+        self.assertEqual(d['ec_pipeline_url'], 'https://example.com/plr')
+
+    def test_ec_status_none_defaults_to_not_applicable(self):
+        build = KonfluxBundleBuildRecord(ec_status=None)
+        self.assertEqual(build.ec_status, KonfluxECStatus.NOT_APPLICABLE)
+
+    def test_ec_status_string_to_enum_conversion(self):
+        build = KonfluxBundleBuildRecord(ec_status='passed')
+        self.assertEqual(build.ec_status, KonfluxECStatus.PASSED)
+
+        build = KonfluxBundleBuildRecord(ec_status='failed')
+        self.assertEqual(build.ec_status, KonfluxECStatus.FAILED)
+
+    def test_ec_status_excluded_from_build_id(self):
+        build_1 = KonfluxBundleBuildRecord(ec_status=KonfluxECStatus.NOT_APPLICABLE)
+        build_2 = KonfluxBundleBuildRecord(ec_status=KonfluxECStatus.PASSED)
+        self.assertEqual(build_1.build_id, build_2.build_id)
+
+
+class TestKonfluxFbcBuildRecordEC(TestCase):
+    def test_ec_status_default(self):
+        build = KonfluxFbcBuildRecord()
+        self.assertEqual(build.ec_status, KonfluxECStatus.NOT_APPLICABLE)
+        self.assertEqual(build.ec_pipeline_url, '')
+
+    def test_ec_status_serialization(self):
+        build = KonfluxFbcBuildRecord(ec_status=KonfluxECStatus.PASSED, ec_pipeline_url='https://example.com/plr')
+        d = build.to_dict()
+        self.assertEqual(d['ec_status'], 'passed')
+        self.assertEqual(d['ec_pipeline_url'], 'https://example.com/plr')
+
+    def test_ec_status_none_defaults_to_not_applicable(self):
+        build = KonfluxFbcBuildRecord(ec_status=None)
+        self.assertEqual(build.ec_status, KonfluxECStatus.NOT_APPLICABLE)
+
+    def test_ec_status_string_to_enum_conversion(self):
+        build = KonfluxFbcBuildRecord(ec_status='passed')
+        self.assertEqual(build.ec_status, KonfluxECStatus.PASSED)
+
+        build = KonfluxFbcBuildRecord(ec_status='failed')
+        self.assertEqual(build.ec_status, KonfluxECStatus.FAILED)
+
+    def test_ec_status_excluded_from_build_id(self):
+        build_1 = KonfluxFbcBuildRecord(ec_status=KonfluxECStatus.NOT_APPLICABLE)
+        build_2 = KonfluxFbcBuildRecord(ec_status=KonfluxECStatus.PASSED)
+        self.assertEqual(build_1.build_id, build_2.build_id)

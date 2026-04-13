@@ -10,6 +10,7 @@ from artcommonlib.konflux.konflux_build_record import (
     KonfluxBuildOutcome,
     KonfluxBuildRecord,
     KonfluxBundleBuildRecord,
+    KonfluxFbcBuildRecord,
 )
 from artcommonlib.konflux.konflux_db import CacheRecordsType, KonfluxDb
 from google.cloud.bigquery import SchemaField
@@ -694,8 +695,45 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
             SchemaField('nvr', 'STRING', 'REQUIRED'),
             SchemaField('build_component', 'STRING', 'REQUIRED'),
             SchemaField('build_priority', 'INTEGER', 'REQUIRED'),
+            SchemaField('ec_status', 'STRING', 'REQUIRED'),
+            SchemaField('ec_pipeline_url', 'STRING', 'REQUIRED'),
         ]
         self.db.bind(KonfluxBundleBuildRecord)
+        self.assertEqual(self.db.generate_build_schema(), expected_fields)
+
+    def test_generate_fbc_builds_schema(self):
+        expected_fields = [
+            SchemaField('name', 'STRING', 'REQUIRED'),
+            SchemaField('group', 'STRING', 'REQUIRED'),
+            SchemaField('version', 'STRING', 'REQUIRED'),
+            SchemaField('release', 'STRING', 'REQUIRED'),
+            SchemaField('assembly', 'STRING', 'REQUIRED'),
+            SchemaField('source_repo', 'STRING', 'REQUIRED'),
+            SchemaField('commitish', 'STRING', 'REQUIRED'),
+            SchemaField('rebase_repo_url', 'STRING', 'REQUIRED'),
+            SchemaField('rebase_commitish', 'STRING', 'REQUIRED'),
+            SchemaField('start_time', 'TIMESTAMP', 'REQUIRED'),
+            SchemaField('end_time', 'TIMESTAMP', 'REQUIRED'),
+            SchemaField('engine', 'STRING', 'REQUIRED'),
+            SchemaField('image_pullspec', 'STRING', 'REQUIRED'),
+            SchemaField('image_tag', 'STRING', 'REQUIRED'),
+            SchemaField('outcome', 'STRING', 'REQUIRED'),
+            SchemaField('art_job_url', 'STRING', 'REQUIRED'),
+            SchemaField('build_pipeline_url', 'STRING', 'REQUIRED'),
+            SchemaField('pipeline_commit', 'STRING', 'REQUIRED'),
+            SchemaField('schema_level', 'INTEGER', 'REQUIRED'),
+            SchemaField('ingestion_time', 'TIMESTAMP', 'REQUIRED'),
+            SchemaField('bundle_nvrs', 'STRING', 'REQUIRED', None, None, (), None),
+            SchemaField('arches', 'STRING', 'REQUIRED', None, None, (), None),
+            SchemaField('record_id', 'STRING', 'REQUIRED'),
+            SchemaField('build_id', 'STRING', 'REQUIRED'),
+            SchemaField('nvr', 'STRING', 'REQUIRED'),
+            SchemaField('build_component', 'STRING', 'REQUIRED'),
+            SchemaField('build_priority', 'INTEGER', 'REQUIRED'),
+            SchemaField('ec_status', 'STRING', 'REQUIRED'),
+            SchemaField('ec_pipeline_url', 'STRING', 'REQUIRED'),
+        ]
+        self.db.bind(KonfluxFbcBuildRecord)
         self.assertEqual(self.db.generate_build_schema(), expected_fields)
 
     @patch("artcommonlib.konflux.konflux_db.KonfluxDb.get_latest_build")

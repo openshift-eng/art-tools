@@ -24,6 +24,7 @@ from artcommonlib.konflux.konflux_build_record import (
     KonfluxBuildOutcome,
     KonfluxBuildRecord,
     KonfluxBundleBuildRecord,
+    KonfluxECStatus,
     KonfluxFbcBuildRecord,
 )
 from artcommonlib.konflux.konflux_db import KonfluxDb
@@ -1863,15 +1864,10 @@ class KonfluxFbcBuilder:
                 succeeded_condition = pipelinerun_info.find_condition('Succeeded')
                 outcome = KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition(succeeded_condition)
 
-                if self.dry_run:
-                    logger.info("Dry run: Would have inserted build record in Konflux DB")
-                else:
-                    await self._update_konflux_db(
-                        metadata, build_repo, pipelinerun_info, outcome, arches, logger=logger
-                    )
-
                 # Run EC verification after a successful FBC build
                 ec_failed = False
+                ec_status = KonfluxECStatus.NOT_APPLICABLE
+                ec_pipeline_url = ''
                 if outcome is KonfluxBuildOutcome.SUCCESS and not self.skip_ec_verify:
                     results = pipelinerun_dict.get('status', {}).get('results', [])
                     image_pullspec = next((r['value'] for r in results if r['name'] == 'IMAGE_URL'), None)
@@ -1893,6 +1889,8 @@ class KonfluxFbcBuilder:
                             ec_policy=constants.KONFLUX_FBC_EC_POLICY_CONFIGURATION,
                             logger=logger,
                         )
+                        ec_status = ec_result.ec_status
+                        ec_pipeline_url = ec_result.ec_pipeline_url
                         if ec_result.ec_failed:
                             outcome = KonfluxBuildOutcome.FAILURE
                             ec_failed = True
@@ -1900,6 +1898,20 @@ class KonfluxFbcBuilder:
                         logger.warning("Could not extract image pullspec/digest for EC verification")
                 elif outcome is KonfluxBuildOutcome.SUCCESS and self.skip_ec_verify:
                     logger.info("Skipping EC verification for %s: skip_ec_verify is set", metadata.distgit_key)
+
+                if self.dry_run:
+                    logger.info("Dry run: Would have inserted build record in Konflux DB")
+                else:
+                    await self._update_konflux_db(
+                        metadata,
+                        build_repo,
+                        pipelinerun_info,
+                        outcome,
+                        arches,
+                        logger=logger,
+                        ec_status=ec_status,
+                        ec_pipeline_url=ec_pipeline_url,
+                    )
 
                 if outcome is not KonfluxBuildOutcome.SUCCESS:
                     error = KonfluxFbcBuildError(
@@ -2049,6 +2061,8 @@ class KonfluxFbcBuilder:
         outcome: KonfluxBuildOutcome,
         arches: Sequence[str],
         logger: Optional[logging.Logger] = None,
+        ec_status: KonfluxECStatus = KonfluxECStatus.NOT_APPLICABLE,
+        ec_pipeline_url: str = '',
     ):
         logger = logger or self._logger.getChild(f"[{metadata.distgit_key}]")
         db = self._db
@@ -2101,6 +2115,8 @@ class KonfluxFbcBuilder:
                 'bundle_nvrs': bundle_nvrs,
                 'arches': arches,
                 'build_component': build_component,
+                'ec_status': ec_status,
+                'ec_pipeline_url': ec_pipeline_url,
             }
 
             match outcome:
