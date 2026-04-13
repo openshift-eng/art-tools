@@ -213,6 +213,12 @@ class SeedLockfilePipeline:
         """Phase 2: Rebase and build in the target assembly with --lockfile-seed-nvrs for lockfile generation."""
         seed_nvrs_str = ','.join(self.seed_map.values())
 
+        # Generate a fresh release suffix so Phase 2's NVR is strictly newer
+        # than any Phase 1 build (avoids NVR collision when both phases target
+        # the same assembly, or when RPM version ordering makes the stream
+        # assembly sort below the test assembly).
+        self.release = default_release_suffix()
+
         # Rebase with seeded lockfile
         LOGGER.info('Phase 2: Rebasing images in %s assembly with seed NVRs', self.assembly)
         cmd = self._doozer_base_command(assembly=self.assembly)
