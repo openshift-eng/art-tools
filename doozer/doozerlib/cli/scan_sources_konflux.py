@@ -1351,7 +1351,7 @@ class ConfigScanSources:
         pullspec = f"quay.io/konflux-ci/tekton-catalog/{task_name}@sha256:{sha}"
         self.logger.info(f'Getting age for task bundle {task_name} using pullspec {pullspec}')
         try:
-            out = await oc_image_info__cached_async(pullspec)
+            out = await oc_image_info__cached_async(pullspec, registry_config=self.registry_auth_file)
             image_info = json.loads(out)
             created_str = image_info.get('config', {}).get('created', '')
             if not created_str:
