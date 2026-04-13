@@ -326,7 +326,11 @@ class KonfluxBuildRecord(KonfluxRecord):
         self.embargoed = embargoed
         self.hermetic = hermetic
         self.artifact_type = artifact_type if isinstance(artifact_type, ArtifactType) else ArtifactType(artifact_type)
-        self.ec_status = ec_status if isinstance(ec_status, KonfluxECStatus) else KonfluxECStatus(ec_status)
+        self.ec_status = (
+            ec_status
+            if isinstance(ec_status, KonfluxECStatus)
+            else KonfluxECStatus(ec_status or KonfluxECStatus.NOT_APPLICABLE.value)
+        )
         self.ec_pipeline_url = ec_pipeline_url
         self.init_uuids(record_id, build_id, nvr)
 

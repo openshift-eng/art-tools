@@ -84,6 +84,10 @@ class TestKonfluxBuild(TestCase):
         self.assertEqual(build_1.build_id, build_2.build_id)
         self.assertEqual(build_1.build_id, build_3.build_id)
 
+    def test_ec_status_none_defaults_to_not_applicable(self):
+        build = KonfluxBuildRecord(ec_status=None)
+        self.assertEqual(build.ec_status, KonfluxECStatus.NOT_APPLICABLE)
+
     def test_ec_status_string_to_enum_conversion(self):
         build = KonfluxBuildRecord(ec_status='passed')
         self.assertEqual(build.ec_status, KonfluxECStatus.PASSED)
