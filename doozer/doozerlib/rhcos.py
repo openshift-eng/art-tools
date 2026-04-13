@@ -302,7 +302,7 @@ class RHCOSBuildInspector:
                 )
         else:
             for tag, pullspec in pullspec_for_tag.items():
-                image_build_id = get_build_id_from_rhcos_pullspec(pullspec)
+                image_build_id = get_build_id_from_rhcos_pullspec(pullspec, registry_config=self.registry_config)
                 if self.build_id and self.build_id != image_build_id:
                     raise Exception(
                         f'Found divergent RHCOS build_id for {tag} {pullspec}. {image_build_id} versus {self.build_id}'
