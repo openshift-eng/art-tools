@@ -1,7 +1,10 @@
+import html as html_mod
 import logging
 import os
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional, Tuple
+from urllib.parse import quote
 
 import click
 from artcommonlib import exectools
@@ -49,6 +52,7 @@ class SeedLockfilePipeline:
         plr_template: str = '',
         build_priority: str = 'auto',
         seed_nvrs: Optional[str] = None,
+        jira_key: Optional[str] = None,
     ):
         self.runtime = runtime
         self.version = version
@@ -74,6 +78,8 @@ class SeedLockfilePipeline:
                     raise click.BadParameter(f"Invalid seed-nvrs entry '{entry}': expected format name@NVR")
                 name, nvr = entry.split('@', 1)
                 self.seed_map[name.strip()] = nvr.strip()
+
+        self.jira_key = jira_key or ''
 
         self.test_results: dict[str, dict] = {}
         self.stream_results: dict[str, dict] = {}
@@ -278,6 +284,16 @@ class SeedLockfilePipeline:
             return f'{ART_BUILD_HISTORY_URL}/?nvr={nvr}&group={group}&engine=konflux'
         return ''
 
+    @staticmethod
+    def _search_url(image_name: str, group: str) -> str:
+        """Build a search page URL for a component in art-build-history (fallback when no NVR is available)."""
+        start_date = (datetime.now(timezone.utc) - timedelta(days=2)).strftime('%Y-%m-%d')
+        end_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+        return (
+            f'{ART_BUILD_HISTORY_URL}/?name=^{image_name}$&group={group}'
+            f'&engine=konflux&dateRange={start_date}+to+{end_date}&outcome=success&outcome=failure'
+        )
+
     def _categorize_results(self) -> tuple[list[str], list[str], list[str]]:
         test_failed: list[str] = []
         solved: list[str] = []
@@ -297,11 +313,14 @@ class SeedLockfilePipeline:
 
         return test_failed, solved, stream_failed
 
-    def _link(self, name: str, phase: str, group: str) -> str:
+    def _link(self, name: str, phase: str, group: str, fallback_search: bool = False) -> str:
         """Return an art-build-history URL for a build, or empty string if unavailable."""
         results = self.test_results if phase == 'test' else self.stream_results
         entry = results.get(name, {})
-        return self._build_url(group, entry) if entry else ''
+        url = self._build_url(group, entry) if entry else ''
+        if not url and fallback_search:
+            return self._search_url(name, group)
+        return url
 
     def _build_slack_report(self, test_failed: list[str], solved: list[str], stream_failed: list[str]) -> str:
         group = f'openshift-{self.version}'
@@ -323,7 +342,8 @@ class SeedLockfilePipeline:
                     lines.append(f'  - `{name}`')
 
         if solved:
-            lines.append('\n*Solved:*')
+            label = 'Solved' if self.assembly == 'stream' else 'Succeeded'
+            lines.append(f'\n*{label}:*')
             for name in solved:
                 url = self._link(name, 'stream', group)
                 if url:
@@ -332,10 +352,11 @@ class SeedLockfilePipeline:
                     lines.append(f'  - `{name}`')
 
         if stream_failed:
-            lines.append('\n*Stream build failed after successful test build:*')
+            phase2_label = 'Stream' if self.assembly == 'stream' else f'{self.assembly} assembly'
+            lines.append(f'\n*{phase2_label} build failed after successful test build:*')
             for name in stream_failed:
                 test_url = self._link(name, 'test', group)
-                stream_url = self._link(name, 'stream', group)
+                stream_url = self._link(name, 'stream', group, fallback_search=True)
                 parts = [f'`{name}`']
                 if test_url:
                     parts.append(f'<{test_url}|test>')
@@ -357,27 +378,29 @@ class SeedLockfilePipeline:
             for name in test_failed:
                 url = self._link(name, 'test', group)
                 if url:
-                    lines.append(f'<li><a href="{url}">{name}</a></li>')
+                    lines.append(f'<li><a href="{url}">{html_mod.escape(name)}</a></li>')
                 else:
-                    lines.append(f'<li>{name}</li>')
+                    lines.append(f'<li>{html_mod.escape(name)}</li>')
             lines.append('</ul>')
 
         if solved:
-            lines.append('<b>Solved:</b><ul>')
+            label = 'Solved' if self.assembly == 'stream' else 'Succeeded'
+            lines.append(f'<b>{label}:</b><ul>')
             for name in solved:
                 url = self._link(name, 'stream', group)
                 if url:
-                    lines.append(f'<li><a href="{url}">{name}</a></li>')
+                    lines.append(f'<li><a href="{url}">{html_mod.escape(name)}</a></li>')
                 else:
-                    lines.append(f'<li>{name}</li>')
+                    lines.append(f'<li>{html_mod.escape(name)}</li>')
             lines.append('</ul>')
 
         if stream_failed:
-            lines.append('<b>Stream build failed after successful test build:</b><ul>')
+            phase2_label = 'Stream' if self.assembly == 'stream' else f'{self.assembly} assembly'
+            lines.append(f'<b>{phase2_label} build failed after successful test build:</b><ul>')
             for name in stream_failed:
                 test_url = self._link(name, 'test', group)
-                stream_url = self._link(name, 'stream', group)
-                parts = [name]
+                stream_url = self._link(name, 'stream', group, fallback_search=True)
+                parts = [html_mod.escape(name)]
                 if test_url:
                     parts.append(f'<a href="{test_url}">test</a>')
                 if stream_url:
@@ -387,6 +410,19 @@ class SeedLockfilePipeline:
 
         if not lines:
             lines.append('No build results recorded.')
+
+        if self.seed_map:
+            lines.append('<b>Seed NVRs:</b><ul>')
+            for name, nvr in sorted(self.seed_map.items()):
+                lines.append(f'<li>{html_mod.escape(name)}: <code>{html_mod.escape(nvr)}</code></li>')
+            lines.append('</ul>')
+
+        if self.data_gitref:
+            data_url = f'{self.data_path.rstrip("/")}/tree/{quote(self.data_gitref, safe="")}'
+            lines.append(
+                f'<b>Data:</b> <a href="{html_mod.escape(data_url, quote=True)}">'
+                f'{html_mod.escape(self.data_gitref)}</a><br/>'
+            )
 
         return '\n'.join(lines)
 
@@ -408,8 +444,15 @@ class SeedLockfilePipeline:
             )
             jenkins.update_description(f'<a href="{build_history_url}">View build history</a><br/>')
 
-            if solved:
-                jenkins.update_title(f' | solved: {", ".join(solved)}')
+            title_parts: list[str] = []
+            if self.assembly != 'stream':
+                title_parts.append(f'[{self.assembly}]')
+            if self.jira_key:
+                title_parts.append(self.jira_key)
+            if solved and self.assembly == 'stream':
+                title_parts.append(f'solved: {", ".join(solved)}')
+            if title_parts:
+                jenkins.update_title(f' | {" ".join(title_parts)}')
         except Exception:
             LOGGER.warning('Could not update Jenkins build description/title', exc_info=True)
 
@@ -453,6 +496,12 @@ class SeedLockfilePipeline:
     default='auto',
     help='Kueue build priority (1-10 or "auto")',
 )
+@click.option(
+    '--jira-key',
+    required=False,
+    default='',
+    help='(Optional) Jira ticket key to include in Jenkins build title (e.g. ART-14902)',
+)
 @pass_runtime
 @click_coroutine
 async def seed_lockfile(
@@ -467,6 +516,7 @@ async def seed_lockfile(
     arches: Tuple[str, ...],
     plr_template: str,
     build_priority: str,
+    jira_key: str,
 ):
     if not kubeconfig:
         kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
@@ -483,5 +533,6 @@ async def seed_lockfile(
         arches=arches,
         plr_template=plr_template,
         build_priority=build_priority,
+        jira_key=jira_key,
     )
     await pipeline.run()
