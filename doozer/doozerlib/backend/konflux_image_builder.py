@@ -87,7 +87,6 @@ class KonfluxImageBuilderConfig:
     skip_checks: bool = False
     dry_run: bool = False
     build_priority: Optional[str] = None
-    ec_policy_configuration: str = constants.KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION
     skip_ec_verify: bool = False
 
 
@@ -291,12 +290,12 @@ class KonfluxImageBuilder:
                         )
 
                 # Run enterprise-contract (EC) verification after a successful build
-                # TODO: Expand EC verification to layered products
                 # TODO: Expose EC failure links (ITS/PLR URLs) via Slack notification or dashboard column
-                is_ocp_group = self._config.group_name.startswith("openshift-")
+                product = metadata.runtime.product
+                has_ec_policy = product in constants.PRODUCT_EC_POLICY_MAP
                 should_run_ec = (
                     outcome is KonfluxBuildOutcome.SUCCESS
-                    and is_ocp_group
+                    and has_ec_policy
                     and not self._config.skip_ec_verify
                     and metadata.for_release
                 )
@@ -305,7 +304,7 @@ class KonfluxImageBuilder:
 
                     # Select EC policy based on software lifecycle phase:
                     # - pre-release phase uses a more permissive policy that allows unsigned RPMs
-                    # - All other phases use the default stage policy
+                    # - All other phases use the product-specific stage policy
                     lifecycle_phase = metadata.runtime.group_config.software_lifecycle.phase
                     if (
                         lifecycle_phase is not Missing
@@ -313,7 +312,7 @@ class KonfluxImageBuilder:
                     ):
                         ec_policy = constants.KONFLUX_PREGA_EC_POLICY_CONFIGURATION
                     else:
-                        ec_policy = self._config.ec_policy_configuration
+                        ec_policy = constants.get_ec_policy_for_product(product)
 
                     image_with_digest = f"{image_pullspec.split(':')[0]}@{image_digest}"
                     source_url = artlib_util.convert_remote_git_to_https(build_repo.url)
@@ -340,11 +339,11 @@ class KonfluxImageBuilder:
                         logger.info(
                             "Skipping EC verification for %s: --skip-ec-verify flag is set", metadata.distgit_key
                         )
-                    elif not is_ocp_group:
+                    elif not has_ec_policy:
                         logger.info(
-                            "Skipping EC verification for %s: non-OCP group '%s'",
+                            "Skipping EC verification for %s: product '%s' not configured for EC verification",
                             metadata.distgit_key,
-                            self._config.group_name,
+                            product,
                         )
                     elif not metadata.for_release:
                         logger.info(

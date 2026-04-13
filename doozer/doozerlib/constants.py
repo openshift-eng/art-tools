@@ -53,15 +53,54 @@ BREW_REGISTRY_BASE_URL = "brew.registry.redhat.io"
 ART_BUILD_HISTORY_URL = 'https://art-build-history-art-build-history.apps.artc2023.pc3z.p1.openshiftapps.com'
 
 # Enterprise Contract (EC) verification pipeline constants
-# TODO: Expand EC verification to layered products (logging, oadp, mta, rhmtc, quay, cert-manager, etc.)
-# Currently scoped to OCP only.
 KONFLUX_EC_PIPELINE_GIT_URL = "https://github.com/konflux-ci/build-definitions"
 KONFLUX_EC_PIPELINE_REVISION = "main"
 KONFLUX_EC_PIPELINE_PATH = "pipelines/enterprise-contract.yaml"
-KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION = "rhtap-releng-tenant/registry-ocp-art-stage"
+
+# Shared namespace for all EC policies in konflux-release-data
+KONFLUX_EC_POLICY_NAMESPACE = "rhtap-releng-tenant"
+
+# Product-to-EC-policy mappings (bare policy names; prepend KONFLUX_EC_POLICY_NAMESPACE at lookup time).
+# Policy YAMLs live in konflux-release-data under config/kflux-ocp-p01.7ayg.p1/product/EnterpriseContractPolicy/.
+PRODUCT_EC_POLICY_MAP = {
+    "ocp": "registry-ocp-art-stage",
+    "logging": "registry-art-logging-stage",
+    "mta": "registry-art-mta-stage",
+    "rhmtc": "registry-art-mtc-stage",
+    "oadp": "registry-art-oadp-stage",
+}
+
+PRODUCT_FBC_EC_POLICY_MAP = {
+    "logging": "fbc-ocp-art-stage",
+    "mta": "fbc-ocp-art-stage",
+    "rhmtc": "fbc-ocp-art-stage",
+    "oadp": "fbc-art-oadp-stage",
+}
+
+KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION = f"{KONFLUX_EC_POLICY_NAMESPACE}/registry-ocp-art-stage"
 # PreGA (PREVIEW assembly) EC policy: same as stage but allows unsigned RPMs
 # https://gitlab.cee.redhat.com/releng/konflux-release-data/-/blob/main/config/kflux-ocp-p01.7ayg.p1/product/EnterpriseContractPolicy/registry-ocp-art-ec-stage.yaml
-KONFLUX_PREGA_EC_POLICY_CONFIGURATION = "rhtap-releng-tenant/registry-ocp-art-ec-stage"
+KONFLUX_PREGA_EC_POLICY_CONFIGURATION = f"{KONFLUX_EC_POLICY_NAMESPACE}/registry-ocp-art-ec-stage"
 # Base image EC policy (base_only images use a dedicated prod policy for all assembly types)
 # https://gitlab.cee.redhat.com/releng/konflux-release-data/-/blob/main/config/kflux-ocp-p01.7ayg.p1/product/EnterpriseContractPolicy/registry-ocp-art-base-prod.yaml
-KONFLUX_BASE_IMAGE_EC_POLICY_CONFIGURATION = "rhtap-releng-tenant/registry-ocp-art-base-prod"
+KONFLUX_BASE_IMAGE_EC_POLICY_CONFIGURATION = f"{KONFLUX_EC_POLICY_NAMESPACE}/registry-ocp-art-base-prod"
+
+
+def get_ec_policy_for_product(product: str) -> str:
+    """Resolve the registry EC policy for a given product, falling back to OCP default."""
+    policy_name = PRODUCT_EC_POLICY_MAP.get(product)
+    if policy_name:
+        return f"{KONFLUX_EC_POLICY_NAMESPACE}/{policy_name}"
+    return KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION
+
+
+def get_fbc_ec_policy_for_product(product: str) -> str:
+    """Resolve the FBC EC policy for a given product.
+
+    Only products in PRODUCT_FBC_EC_POLICY_MAP should call this; callers gate
+    on map membership first. The fallback is purely defensive.
+    """
+    policy_name = PRODUCT_FBC_EC_POLICY_MAP.get(product)
+    if policy_name:
+        return f"{KONFLUX_EC_POLICY_NAMESPACE}/{policy_name}"
+    return KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION
