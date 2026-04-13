@@ -1225,11 +1225,29 @@ class KonfluxDb:
 
     def from_result_row(self, row: Row) -> KonfluxRecord:
         """
-        Given a google.cloud.bigquery.table.Row object, construct and return a KonfluxBuild object
+        Given a google.cloud.bigquery.table.Row object, construct and return a KonfluxBuild object.
+        Filters out unexpected fields to handle cases where BigQuery has new columns not yet in the code.
         """
         assert self.record_cls is not None, 'DB client is not bound to a table'
         try:
-            return self.record_cls(**{field: (row[field]) for field in row.keys()})
+            # Get valid parameters from the record class __init__ signature
+            sig = inspect.signature(self.record_cls.__init__)
+            valid_params = set(sig.parameters.keys()) - {'self'}
+
+            # Filter row fields to only include valid parameters
+            row_fields = set(row.keys())
+            filtered_fields = {field: row[field] for field in row_fields if field in valid_params}
+
+            # Log warning if any fields were ignored
+            ignored_fields = row_fields - valid_params
+            if ignored_fields:
+                self.logger.warning(
+                    'Ignoring unexpected fields from BigQuery row for %s: %s',
+                    self.record_cls.__name__,
+                    sorted(ignored_fields),
+                )
+
+            return self.record_cls(**filtered_fields)
 
         except AttributeError as e:
             self.logger.error(
