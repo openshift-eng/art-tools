@@ -767,6 +767,7 @@ class UpdateGolangPipeline:
                 branch,
                 "beta:images:konflux:build",
                 f"--konflux-namespace={konflux_namespace}",
+                "--skip-ec-verify",
             ]
         )
         if self.kubeconfig:

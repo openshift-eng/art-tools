@@ -15,8 +15,15 @@ from artcommonlib import bigquery, exectools
 from artcommonlib import constants as artlib_constants
 from artcommonlib import util as artlib_util
 from artcommonlib.arch_util import go_arch_for_brew_arch
+from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.build_visibility import is_release_embargoed
-from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
+from artcommonlib.konflux.konflux_build_record import (
+    ArtifactType,
+    Engine,
+    KonfluxBuildOutcome,
+    KonfluxBuildRecord,
+    KonfluxECStatus,
+)
 from artcommonlib.model import Missing
 from artcommonlib.oc_image_info import oc_image_info__cached_async
 from artcommonlib.release_util import SoftwareLifecyclePhase, isolate_el_version_in_release, split_el_suffix_in_release
@@ -62,6 +69,8 @@ class KonfluxImageBuilderConfig:
     skip_checks: bool = False
     dry_run: bool = False
     build_priority: Optional[str] = None
+    ec_policy_configuration: str = constants.KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION
+    skip_ec_verify: bool = False
 
 
 class KonfluxImageBuilder:
@@ -179,6 +188,9 @@ class KonfluxImageBuilder:
             building_arches = metadata.get_arches()
             logger.info(f"Building for arches: {building_arches}")
             error = None
+            ec_failed = False
+            ec_status = KonfluxECStatus.NOT_APPLICABLE
+            ec_pipeline_url = ''
             # Resolve build priority based on precedence rules
             if self._config.build_priority == "auto":
                 build_priority = util.get_konflux_build_priority(metadata=metadata, group=self._config.group_name)
@@ -211,6 +223,7 @@ class KonfluxImageBuilder:
                     KonfluxBuildOutcome.PENDING,
                     building_arches,
                     build_priority,
+                    ec_status=KonfluxECStatus.NOT_APPLICABLE,
                 )
 
                 logger.info("Waiting for PipelineRun %s to complete...", pipelinerun_name)
@@ -247,13 +260,81 @@ class KonfluxImageBuilder:
                         )
                         outcome = KonfluxBuildOutcome.FAILURE
 
+                # Run enterprise-contract (EC) verification after a successful build
+                # TODO: Expand EC verification to layered products
+                # TODO: Expose EC failure links (ITS/PLR URLs) via Slack notification or dashboard column
+                is_ocp_group = self._config.group_name.startswith("openshift-")
+                should_run_ec = (
+                    outcome is KonfluxBuildOutcome.SUCCESS
+                    and is_ocp_group
+                    and not self._config.skip_ec_verify
+                    and (metadata.for_release or metadata.is_base_image())
+                )
+                if should_run_ec:
+                    app_name = self.get_application_name(self._config.group_name)
+
+                    # Select EC policy based on image type and assembly type:
+                    # - Base images always use the dedicated base-prod policy
+                    # - PREVIEW (preGA) assemblies use a more permissive policy that allows unsigned RPMs
+                    # - All other images use the default stage policy
+                    if metadata.is_base_image():
+                        ec_policy = constants.KONFLUX_BASE_IMAGE_EC_POLICY_CONFIGURATION
+                    elif metadata.runtime.assembly_type == AssemblyTypes.PREVIEW:
+                        ec_policy = constants.KONFLUX_PREGA_EC_POLICY_CONFIGURATION
+                    else:
+                        ec_policy = self._config.ec_policy_configuration
+
+                    image_with_digest = f"{image_pullspec.split(':')[0]}@{image_digest}"
+                    source_url = artlib_util.convert_remote_git_to_https(build_repo.url)
+                    konflux_component_name = self.get_component_name(app_name, metadata.distgit_key)
+
+                    ec_result = await self._konflux_client.verify_enterprise_contract(
+                        namespace=self._config.namespace,
+                        application_name=app_name,
+                        component_name=konflux_component_name,
+                        image_pullspec=image_with_digest,
+                        source_url=source_url,
+                        commit_sha=build_repo.commit_hash,
+                        ec_policy=ec_policy,
+                        logger=logger,
+                    )
+                    ec_status = ec_result.ec_status
+                    ec_pipeline_url = ec_result.ec_pipeline_url
+                    ec_failed = ec_result.ec_failed
+                    if ec_failed:
+                        outcome = KonfluxBuildOutcome.FAILURE
+
+                elif outcome is KonfluxBuildOutcome.SUCCESS:
+                    if self._config.skip_ec_verify:
+                        logger.info(
+                            "Skipping EC verification for %s: --skip-ec-verify flag is set", metadata.distgit_key
+                        )
+                    elif not is_ocp_group:
+                        logger.info(
+                            "Skipping EC verification for %s: non-OCP group '%s'",
+                            metadata.distgit_key,
+                            self._config.group_name,
+                        )
+                    elif not metadata.for_release and not metadata.is_base_image():
+                        logger.info(
+                            "Skipping EC verification for %s: image is not for_release and not a base image",
+                            metadata.distgit_key,
+                        )
+
                 if self._config.dry_run:
                     logger.info("Dry run: Would have inserted build record in Konflux DB")
 
                 else:
                     # Create a build record after every attempt (both success and failure)
                     build_record = await self.update_konflux_db(
-                        metadata, build_repo, pipelinerun_info, outcome, building_arches, build_priority
+                        metadata,
+                        build_repo,
+                        pipelinerun_info,
+                        outcome,
+                        building_arches,
+                        build_priority,
+                        ec_status=ec_status,
+                        ec_pipeline_url=ec_pipeline_url,
                     )
                     if build_record:
                         record["record_id"] = build_record.record_id
@@ -273,6 +354,11 @@ class KonfluxImageBuilder:
                         pipelinerun_name,
                         pipelinerun_info.to_dict(),
                     )
+                    if ec_failed:
+                        # EC policy failures are not recoverable by rebuilding -- the image
+                        # artifact is valid but violates policy. Retrying would just rebuild
+                        # the same image and fail EC again, wasting cluster resources.
+                        break
                 else:
                     metadata.build_status = True
                     record["message"] = "Success"
@@ -734,6 +820,8 @@ class KonfluxImageBuilder:
         outcome,
         building_arches,
         build_priority,
+        ec_status=KonfluxECStatus.NOT_APPLICABLE,
+        ec_pipeline_url='',
     ) -> Optional[KonfluxBuildRecord]:
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
         if not metadata.runtime.konflux_db:
@@ -798,6 +886,8 @@ class KonfluxImageBuilder:
             'pipeline_commit': 'n/a',  # TODO: populate this
             'build_component': build_component,
             'build_priority': int(build_priority),
+            'ec_status': ec_status,
+            'ec_pipeline_url': ec_pipeline_url,
         }
 
         if outcome == KonfluxBuildOutcome.SUCCESS:

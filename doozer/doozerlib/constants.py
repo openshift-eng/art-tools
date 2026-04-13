@@ -51,3 +51,19 @@ REGISTRY_PROXY_BASE_URL = "registry-proxy.engineering.redhat.com"
 BREW_REGISTRY_BASE_URL = "brew.registry.redhat.io"
 
 ART_BUILD_HISTORY_URL = 'https://art-build-history-art-build-history.apps.artc2023.pc3z.p1.openshiftapps.com'
+
+# Enterprise Contract (EC) verification pipeline constants
+# TODO: Expand EC verification to layered products (logging, oadp, mta, rhmtc, quay, cert-manager, etc.)
+# Currently scoped to OCP only.
+KONFLUX_EC_PIPELINE_GIT_URL = "https://github.com/konflux-ci/build-definitions"
+KONFLUX_EC_PIPELINE_REVISION = "main"
+KONFLUX_EC_PIPELINE_PATH = "pipelines/enterprise-contract.yaml"
+KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION = "rhtap-releng-tenant/registry-ocp-art-stage"
+# PreGA (PREVIEW assembly) EC policy: same as stage but allows unsigned RPMs
+# https://gitlab.cee.redhat.com/releng/konflux-release-data/-/blob/main/config/kflux-ocp-p01.7ayg.p1/product/EnterpriseContractPolicy/registry-ocp-art-ec-stage.yaml
+KONFLUX_PREGA_EC_POLICY_CONFIGURATION = "rhtap-releng-tenant/registry-ocp-art-ec-stage"
+# Base image EC policy (base_only images use a dedicated prod policy for all assembly types)
+# https://gitlab.cee.redhat.com/releng/konflux-release-data/-/blob/main/config/kflux-ocp-p01.7ayg.p1/product/EnterpriseContractPolicy/registry-ocp-art-base-prod.yaml
+KONFLUX_BASE_IMAGE_EC_POLICY_CONFIGURATION = "rhtap-releng-tenant/registry-ocp-art-base-prod"
+# FBC (File-Based Catalog) EC policy
+KONFLUX_FBC_EC_POLICY_CONFIGURATION = "rhtap-releng-tenant/fbc-ocp-art-stage"

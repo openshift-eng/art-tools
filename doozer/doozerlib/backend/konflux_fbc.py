@@ -1594,6 +1594,7 @@ class KonfluxFbcBuilder:
         pipelinerun_template_url: str = constants.KONFLUX_DEFAULT_FBC_BUILD_PLR_TEMPLATE_URL,
         dry_run: bool = False,
         major_minor_override: Optional[Tuple[int, int]] = None,
+        skip_ec_verify: bool = False,
         record_logger: Optional[RecordLogger] = None,
         logger: logging.Logger = LOGGER,
     ):
@@ -1611,6 +1612,7 @@ class KonfluxFbcBuilder:
         self.pipelinerun_template_url = pipelinerun_template_url
         self.dry_run = dry_run
         self.major_minor_override = major_minor_override
+        self.skip_ec_verify = skip_ec_verify
         self.source_git_commits = []
         self._record_logger = record_logger
         self._logger = logger.getChild(self.__class__.__name__)
@@ -1868,10 +1870,43 @@ class KonfluxFbcBuilder:
                         metadata, build_repo, pipelinerun_info, outcome, arches, logger=logger
                     )
 
+                # Run EC verification after a successful FBC build
+                ec_failed = False
+                if outcome is KonfluxBuildOutcome.SUCCESS and not self.skip_ec_verify:
+                    results = pipelinerun_dict.get('status', {}).get('results', [])
+                    image_pullspec = next((r['value'] for r in results if r['name'] == 'IMAGE_URL'), None)
+                    image_digest = next((r['value'] for r in results if r['name'] == 'IMAGE_DIGEST'), None)
+
+                    if image_pullspec and image_digest:
+                        app_name = self.get_application_name(self.group)
+                        component_name = self.get_component_name(self.group, metadata.distgit_key)
+                        image_with_digest = f"{image_pullspec.split(':')[0]}@{image_digest}"
+                        source_url = artlib_util.convert_remote_git_to_https(build_repo.url)
+
+                        ec_result = await self._konflux_client.verify_enterprise_contract(
+                            namespace=self.konflux_namespace,
+                            application_name=app_name,
+                            component_name=component_name,
+                            image_pullspec=image_with_digest,
+                            source_url=source_url,
+                            commit_sha=build_repo.commit_hash,
+                            ec_policy=constants.KONFLUX_FBC_EC_POLICY_CONFIGURATION,
+                            logger=logger,
+                        )
+                        if ec_result.ec_failed:
+                            outcome = KonfluxBuildOutcome.FAILURE
+                            ec_failed = True
+                    else:
+                        logger.warning("Could not extract image pullspec/digest for EC verification")
+                elif outcome is KonfluxBuildOutcome.SUCCESS and self.skip_ec_verify:
+                    logger.info("Skipping EC verification for %s: skip_ec_verify is set", metadata.distgit_key)
+
                 if outcome is not KonfluxBuildOutcome.SUCCESS:
                     error = KonfluxFbcBuildError(
                         f"Konflux image build for {metadata.distgit_key} failed", pipelinerun_name, pipelinerun_dict
                     )
+                    if ec_failed:
+                        break
                 else:
                     error = None
                     metadata.build_status = True

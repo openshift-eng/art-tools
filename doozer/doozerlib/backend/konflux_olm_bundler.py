@@ -12,6 +12,8 @@ from typing import Dict, Optional, Sequence, Tuple, cast
 import aiofiles
 import yaml
 from artcommonlib import exectools
+from artcommonlib import util as artlib_util
+from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.constants import KONFLUX_ART_IMAGES_SHARE
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBuildRecord, KonfluxBundleBuildRecord
 from artcommonlib.konflux.konflux_db import Engine, KonfluxDb
@@ -602,6 +604,8 @@ class KonfluxOlmBundleBuilder:
         skip_checks: bool = False,
         pipelinerun_template_url: str = constants.KONFLUX_DEFAULT_BUNDLE_BUILD_PLR_TEMPLATE_URL,
         dry_run: bool = False,
+        skip_ec_verify: bool = False,
+        assembly_type: Optional[AssemblyTypes] = None,
         record_logger: Optional[RecordLogger] = None,
         logger: logging.Logger = _LOGGER,
     ) -> None:
@@ -617,6 +621,8 @@ class KonfluxOlmBundleBuilder:
         self.skip_checks = skip_checks
         self.pipelinerun_template_url = pipelinerun_template_url
         self.dry_run = dry_run
+        self.skip_ec_verify = skip_ec_verify
+        self.assembly_type = assembly_type
         self._record_logger = record_logger
         self._logger = logger
         self._konflux_client = KonfluxClient.from_kubeconfig(
@@ -745,6 +751,7 @@ class KonfluxOlmBundleBuilder:
                 succeeded_condition = pipelinerun_info.find_condition('Succeeded')
                 outcome = KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition(succeeded_condition)
 
+                ec_failed = False
                 if not self.dry_run:
                     results = pipelinerun_dict.get('status', {}).get('results', [])
                     image_pullspec = next((r['value'] for r in results if r['name'] == 'IMAGE_URL'), None)
@@ -758,6 +765,43 @@ class KonfluxOlmBundleBuilder:
 
                     # Sync the bundle to art-images-share
                     await sync_to_quay(f"{image_pullspec.split(':')[0]}@{image_digest}", KONFLUX_ART_IMAGES_SHARE)
+
+                    # Run EC verification after a successful bundle build
+                    is_ocp_group = self.group.startswith("openshift-")
+                    if outcome is KonfluxBuildOutcome.SUCCESS and is_ocp_group and not self.skip_ec_verify:
+                        app_name = self.get_application_name(metadata.runtime.group)
+                        bundle_name = metadata.get_olm_bundle_short_name()
+                        component_name = self.get_component_name(app_name, bundle_name)
+                        image_with_digest = f"{image_pullspec.split(':')[0]}@{image_digest}"
+                        source_url = artlib_util.convert_remote_git_to_https(bundle_build_repo.url)
+
+                        if self.assembly_type == AssemblyTypes.PREVIEW:
+                            ec_policy = constants.KONFLUX_PREGA_EC_POLICY_CONFIGURATION
+                        else:
+                            ec_policy = constants.KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION
+
+                        ec_result = await konflux_client.verify_enterprise_contract(
+                            namespace=self.konflux_namespace,
+                            application_name=app_name,
+                            component_name=component_name,
+                            image_pullspec=image_with_digest,
+                            source_url=source_url,
+                            commit_sha=bundle_build_repo.commit_hash,
+                            ec_policy=ec_policy,
+                            logger=logger,
+                        )
+                        if ec_result.ec_failed:
+                            outcome = KonfluxBuildOutcome.FAILURE
+                            ec_failed = True
+                    elif outcome is KonfluxBuildOutcome.SUCCESS:
+                        if self.skip_ec_verify:
+                            logger.info("Skipping EC verification for %s: skip_ec_verify is set", metadata.distgit_key)
+                        elif not is_ocp_group:
+                            logger.info(
+                                "Skipping EC verification for %s: non-OCP group '%s'",
+                                metadata.distgit_key,
+                                self.group,
+                            )
 
                     # Update the Konflux DB with the final outcome
                     await self._update_konflux_db(
@@ -779,6 +823,8 @@ class KonfluxOlmBundleBuilder:
                         pipelinerun_dict,
                     )
                     logger.error(f"{error}: {url}")
+                    if ec_failed:
+                        break
                 else:
                     error = None
                     record["message"] = "Success"
