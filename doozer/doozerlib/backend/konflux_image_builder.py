@@ -268,18 +268,15 @@ class KonfluxImageBuilder:
                     outcome is KonfluxBuildOutcome.SUCCESS
                     and is_ocp_group
                     and not self._config.skip_ec_verify
-                    and (metadata.for_release or metadata.is_base_image())
+                    and metadata.for_release
                 )
                 if should_run_ec:
                     app_name = self.get_application_name(self._config.group_name)
 
-                    # Select EC policy based on image type and assembly type:
-                    # - Base images always use the dedicated base-prod policy
+                    # Select EC policy based on assembly type:
                     # - PREVIEW (preGA) assemblies use a more permissive policy that allows unsigned RPMs
                     # - All other images use the default stage policy
-                    if metadata.is_base_image():
-                        ec_policy = constants.KONFLUX_BASE_IMAGE_EC_POLICY_CONFIGURATION
-                    elif metadata.runtime.assembly_type == AssemblyTypes.PREVIEW:
+                    if metadata.runtime.assembly_type == AssemblyTypes.PREVIEW:
                         ec_policy = constants.KONFLUX_PREGA_EC_POLICY_CONFIGURATION
                     else:
                         ec_policy = self._config.ec_policy_configuration
@@ -315,9 +312,9 @@ class KonfluxImageBuilder:
                             metadata.distgit_key,
                             self._config.group_name,
                         )
-                    elif not metadata.for_release and not metadata.is_base_image():
+                    elif not metadata.for_release:
                         logger.info(
-                            "Skipping EC verification for %s: image is not for_release and not a base image",
+                            "Skipping EC verification for %s: image is not for_release",
                             metadata.distgit_key,
                         )
 

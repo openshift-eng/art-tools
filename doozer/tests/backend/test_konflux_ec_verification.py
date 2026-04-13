@@ -1,7 +1,7 @@
 """Tests for EC verification gating logic in KonfluxImageBuilder.build().
 
 Verifies that enterprise-contract verification is only triggered for images
-that are for_release=True (or base images), in an OCP group, and not skipped via --skip-ec-verify.
+that are for_release=True, in an OCP group, and not skipped via --skip-ec-verify.
 """
 
 import asyncio
@@ -149,18 +149,16 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
         verify_ec = await self._run_build_and_get_ec_calls(config, metadata, mock_kc_init)
         verify_ec.assert_called_once()
 
-    async def test_ec_runs_for_base_image(self, mock_kc_init):
-        """EC verification should run for base images using the base image policy."""
+    async def test_ec_skipped_for_base_image(self, mock_kc_init):
+        """EC verification should be skipped for base images (not for_release)."""
         config = _make_config(group_name="openshift-4.18")
         metadata = _make_metadata(for_release=False, is_base_image=True)
 
         verify_ec = await self._run_build_and_get_ec_calls(config, metadata, mock_kc_init)
-        verify_ec.assert_called_once()
-        call_kwargs = verify_ec.call_args[1]
-        self.assertEqual(call_kwargs["ec_policy"], "rhtap-releng-tenant/registry-ocp-art-base-prod")
+        verify_ec.assert_not_called()
 
-    async def test_ec_skipped_for_non_release_non_base_image(self, mock_kc_init):
-        """EC verification should be skipped for non-release, non-base images."""
+    async def test_ec_skipped_for_non_release_image(self, mock_kc_init):
+        """EC verification should be skipped for non-release images."""
         config = _make_config(group_name="openshift-4.18")
         metadata = _make_metadata(for_release=False, is_base_image=False)
 
