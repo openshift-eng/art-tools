@@ -515,7 +515,8 @@ async def manifest_tool(options, dry_run=False):
     if os.environ.get("XDG_RUNTIME_DIR"):
         auth_file = os.path.expandvars("${XDG_RUNTIME_DIR}/containers/auth.json")
         if Path(auth_file).is_file():
-            auth_opt = f"--docker-cfg={auth_file}"
+            # manifest-tool expects --docker-cfg to be a directory containing config.json, not a file path
+            auth_opt = f"--docker-cfg={Path(auth_file).parent}"
 
     if isinstance(options, str):
         cmd = f'manifest-tool {auth_opt} {options}'
