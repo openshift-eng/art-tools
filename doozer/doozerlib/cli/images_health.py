@@ -168,16 +168,8 @@ class ImagesHealthPipeline:
                 ),
             )
 
-        elif self.variant is not BuildVariant.OKD and latest_success_idx <= 3:
-            # The latest attempt was a failure, but there was a success within the last 3 attempts: skip notification
-            # Note: For OKD, we always notify on first failure, so this check is skipped
-            self.logger.info(
-                f'Latest attempt for {image_meta.distgit_key} failed, but the one before it succeeded, skipping notification.'
-            )
-            return
-
         else:
-            # The latest attempt was a failure, and the last success was more than 3 attempts ago: add a concern
+            # The latest attempt was a failure: add a concern
             self.add_concern(
                 Concern(
                     image_name=image_meta.distgit_key,
