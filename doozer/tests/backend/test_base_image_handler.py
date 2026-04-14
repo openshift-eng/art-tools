@@ -206,3 +206,52 @@ class TestBaseImageHandler(IsolatedAsyncioTestCase):
         error_message = str(context.exception)
         self.assertIn("No component name found", error_message)
         self.assertIn(missing_name_nvr, error_message)
+
+    @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_kubeconfig_by_product")
+    async def test_process_base_image_completion_golang_builder_success(
+        self, mock_kubeconfig, mock_namespace, mock_konflux_client_init
+    ):
+        """Test that golang builders can successfully go through base image workflow."""
+        from artcommonlib.constants import GOLANG_BUILDER_IMAGE_NAME
+
+        mock_namespace.return_value = "ocp-art-tenant"
+        mock_kubeconfig.return_value = "/path/to/kubeconfig"
+
+        konflux_client = AsyncMock()
+        mock_konflux_client_init.return_value = konflux_client
+
+        # Create golang builder metadata
+        golang_builder_model = Model(
+            {
+                "name": GOLANG_BUILDER_IMAGE_NAME,
+                "snapshot_release": True,
+                "distgit": {"component": "ose-golang-builder-container"},
+            }
+        )
+        golang_data = Model({"key": "golang-builder", "data": golang_builder_model, "filename": "golang-builder.yaml"})
+        golang_metadata = ImageMetadata(self.runtime, golang_data)
+        golang_metadata.distgit_key = "golang-builder"
+
+        golang_nvr = "golang-builder-container-v1.0.0-1.el9"
+        handler = BaseImageHandler(self.runtime, [golang_nvr], dry_run=True)
+
+        # Mock the build record for golang builder
+        golang_build_record = MagicMock()
+        golang_build_record.name = "golang-builder"
+        golang_build_record.image_pullspec = "quay.io/test/golang-builder:latest"
+        golang_build_record.rebase_repo_url = "https://example.com/golang-builder.git"
+        golang_build_record.rebase_commitish = "def456"
+
+        self.runtime.image_map = {"golang-builder": golang_metadata}
+
+        with patch.object(handler, "_fetch_build_records", return_value={golang_nvr: golang_build_record}):
+            with patch.object(handler, "_create_snapshot", return_value="golang-snapshot"):
+                with patch.object(handler, "_create_release_from_snapshot", return_value="golang-release"):
+                    with patch.object(handler, "_wait_for_release_completion", return_value=True):
+                        result = await handler.process_base_image_completion()
+
+        # Golang builder should successfully complete the workflow
+        self.assertIsNotNone(result)
+        self.assertEqual(result, ("golang-release", "golang-snapshot"))

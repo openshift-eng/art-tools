@@ -1472,7 +1472,7 @@ def release_to_base_repo(runtime, nvrs):
     4. Waits for release completion
     
     This is intended to be called as a separate job after base image builds complete.
-    Only processes images configured with base_only: true and snapshot_release: true.
+    Only processes base images (base_only: true) and golang builders with snapshot_release: true.
     
     Examples:
     

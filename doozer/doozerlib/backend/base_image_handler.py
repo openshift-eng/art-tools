@@ -99,8 +99,8 @@ class BaseImageHandler:
                     critical_errors.append(f"Could not resolve metadata for component {build_record.name} from {nvr}")
                     continue
 
-                if not metadata.is_base_image():
-                    self.logger.warning(f"Image {nvr} is not marked as base image, skipping")
+                if not metadata.should_trigger_base_image_release():
+                    self.logger.warning(f"Image {nvr} does not qualify for base image release workflow, skipping")
                     continue
 
                 if not metadata.is_snapshot_release_enabled():
