@@ -10,7 +10,6 @@ from urllib.parse import unquote
 
 import click
 import requests
-from artcommonlib import redis
 from slack_bolt import App
 from slack_sdk.errors import SlackApiError
 
@@ -351,79 +350,6 @@ class ArtNotifyPipeline:
             for notification in extra_notifications:
                 self.app.client.chat_postMessage(channel=self.channel, text=notification, thread_ts=response['ts'])
 
-    async def _get_rebase_failures(self):
-        """
-        Read the rebase failure counters from Redis, for both Brew and Konflux build systems
-        """
-
-        failures = {}
-
-        redis_branch = 'count:rebase-failure:konflux'
-        self.logger.info(f'Reading from {redis_branch}...')
-        all_keys = await redis.get_keys(f'{redis_branch}:*')
-
-        # Filter out URL and failure suffix keys to get only the base image keys
-        # Keys look like: count:rebase-failure:konflux:4.18:image-name:failure
-        #                 count:rebase-failure:konflux:4.18:image-name:url
-        # We want to get: count:rebase-failure:konflux:4.18:image-name
-        failed_images = [key for key in all_keys if key.endswith(':failure')]
-        # Remove the :failure suffix to get base keys
-        base_keys = [key[:-8] for key in failed_images]  # Remove ':failure' (8 chars)
-
-        if base_keys:
-            # Get the counter values from keys ending with :failure
-            fail_counters = await redis.get_multiple_values(failed_images)
-            # Also get the corresponding job URLs
-            url_keys = [f'{base_key}:url' for base_key in base_keys]
-            job_urls = await redis.get_multiple_values(url_keys)
-
-            for base_key, fail_counter, job_url in zip(base_keys, fail_counters, job_urls):
-                image_name = base_key.split(':')[-1]
-                version = base_key.split(':')[-2]
-                failures.setdefault('konflux', {}).setdefault(version, {})[image_name] = {
-                    'count': fail_counter,
-                    'url': job_url,
-                }
-
-        return failures
-
-    async def _notify_rebase_failures(self):
-        """
-        Notify about rebase failures in Brew and Konflux
-        """
-
-        rebase_failures = await self._get_rebase_failures()
-
-        if not rebase_failures:
-            self.logger.info('No rebase failures found.')
-            return
-
-        self.logger.info('Found rebase failures:')
-        self.logger.info(json.dumps(rebase_failures, indent=4))
-
-        if self.runtime.dry_run:
-            self.logger.info("[DRY RUN] Would have notified rebase failures")
-            return
-
-        for engine, versions in rebase_failures.items():
-            for version, failures in versions.items():
-                major, minor = version.split('.')
-                channel = f'#art-release-{major}-{minor}'
-                response = self.app.client.chat_postMessage(
-                    channel=channel,
-                    text=f":warning: {len(failures)} image{'s' if len(failures) > 1 else ''} failed to rebase in *{engine.capitalize()}*",
-                    link_names=True,
-                )
-
-                for image, failure_info in failures.items():
-                    counter = failure_info['count']
-                    job_url = failure_info.get('url')
-                    if job_url:
-                        text = f'- `{image}`: failed {counter} times - <{job_url}|View Job>'
-                    else:
-                        text = f'- `{image}`: failed {counter} times'
-                    self.app.client.chat_postMessage(channel=channel, text=text, thread_ts=response['ts'])
-
     async def run(self):
         failed_jobs_text = self._get_failed_jobs_text()
         messages = self._get_messages()
@@ -440,8 +366,6 @@ class ArtNotifyPipeline:
             self.app.client.chat_postMessage(
                 channel=self.channel, text=':check: no unresolved threads / job failures found'
             )
-
-        await self._notify_rebase_failures()
 
 
 @cli.command('art-notify', help='Rebase and build FBC segments for OLM operators')
