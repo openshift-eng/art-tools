@@ -305,7 +305,9 @@ class BuildRepo:
             self._logger.info("Using force push for branch %s", self.branch)
         rc, stdout, stderr = await git_helper.gather_git_async(push_cmd, check=False, github_url=self.url)
         if rc != 0:
-            self._logger.error("git push failed (rc=%s) for %s: stdout=%s stderr=%s", rc, self.url, stdout.strip(), stderr.strip())
+            self._logger.error(
+                "git push failed (rc=%s) for %s: stdout=%s stderr=%s", rc, self.url, stdout.strip(), stderr.strip()
+            )
             raise ChildProcessError(f"git push to {self.url} failed (rc={rc}): {stderr.strip()}")
         try:
             await git_helper.run_git_async(["-C", local_dir, "push", "origin", "--tags"], github_url=self.url)
