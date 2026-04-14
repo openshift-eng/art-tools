@@ -4,7 +4,11 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome
-from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder, KonfluxImageBuilderConfig
+from doozerlib.backend.konflux_image_builder import (
+    KonfluxImageBuilder,
+    KonfluxImageBuilderConfig,
+    _normalize_version,
+)
 from doozerlib.backend.pipelinerun_utils import PipelineRunInfo
 
 
@@ -290,3 +294,45 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         mock_verify_ec.assert_awaited_once()
         call_kwargs = mock_verify_ec.await_args[1]
         self.assertEqual(call_kwargs['ec_policy'], constants.KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION)
+
+
+class TestNormalizeVersion(unittest.TestCase):
+    """
+    Tests for _normalize_version.
+    """
+
+    def test_two_segments_padded(self):
+        """
+        v4.20 -> v4.20.0
+        """
+        self.assertEqual(_normalize_version("v4.20"), "v4.20.0")
+
+    def test_three_segments_unchanged(self):
+        """
+        v4.20.0 stays v4.20.0.
+        """
+        self.assertEqual(_normalize_version("v4.20.0"), "v4.20.0")
+
+    def test_three_segments_nonzero_unchanged(self):
+        """
+        v4.20.1 stays v4.20.1.
+        """
+        self.assertEqual(_normalize_version("v4.20.1"), "v4.20.1")
+
+    def test_no_prefix(self):
+        """
+        Works without the 'v' prefix too.
+        """
+        self.assertEqual(_normalize_version("4.20"), "4.20.0")
+
+    def test_single_segment_unchanged(self):
+        """
+        A single segment is unchanged (only 2-segment gets padded).
+        """
+        self.assertEqual(_normalize_version("4"), "4")
+
+    def test_four_segments_unchanged(self):
+        """
+        Four segments are left as-is.
+        """
+        self.assertEqual(_normalize_version("v4.20.0.1"), "v4.20.0.1")

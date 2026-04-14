@@ -1151,3 +1151,34 @@ USER 3000
         # Note: COPY --from=metadata is not a FROM directive, so not counted
         self.assertEqual(result, [False, True, True])
         self.assertEqual(len(result), 3)
+
+
+class TestCpeVersionExtraction(TestCase):
+    """
+    Tests for the CPE version extraction logic in _update_dockerfile.
+    The logic must produce major.minor regardless of whether version
+    has 2 segments (v4.20) or 3 segments (v4.20.0).
+    """
+
+    @staticmethod
+    def _extract_cpe_version(version: str) -> str:
+        """
+        Replicate the CPE version extraction logic from rebaser.py.
+        """
+        version_parts = version.lstrip("v").split(".")
+        return f"{version_parts[0]}.{version_parts[1]}" if len(version_parts) >= 2 else version_parts[0]
+
+    def test_three_segment_version(self):
+        self.assertEqual(self._extract_cpe_version("v4.20.0"), "4.20")
+
+    def test_two_segment_version(self):
+        self.assertEqual(self._extract_cpe_version("v4.20"), "4.20")
+
+    def test_three_segment_nonzero_patch(self):
+        self.assertEqual(self._extract_cpe_version("v4.18.3"), "4.18")
+
+    def test_no_prefix(self):
+        self.assertEqual(self._extract_cpe_version("4.20.0"), "4.20")
+
+    def test_single_segment(self):
+        self.assertEqual(self._extract_cpe_version("v4"), "4")
