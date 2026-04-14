@@ -15,7 +15,6 @@ from artcommonlib import bigquery, exectools
 from artcommonlib import constants as artlib_constants
 from artcommonlib import util as artlib_util
 from artcommonlib.arch_util import go_arch_for_brew_arch
-from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.build_visibility import is_release_embargoed
 from artcommonlib.konflux.konflux_build_record import (
     ArtifactType,
@@ -282,10 +281,14 @@ class KonfluxImageBuilder:
                 if should_run_ec:
                     app_name = self.get_application_name(self._config.group_name)
 
-                    # Select EC policy based on assembly type:
-                    # - PREVIEW (preGA) assemblies use a more permissive policy that allows unsigned RPMs
-                    # - All other images use the default stage policy
-                    if metadata.runtime.assembly_type == AssemblyTypes.PREVIEW:
+                    # Select EC policy based on software lifecycle phase:
+                    # - pre-release phase uses a more permissive policy that allows unsigned RPMs
+                    # - All other phases use the default stage policy
+                    lifecycle_phase = metadata.runtime.group_config.software_lifecycle.phase
+                    if (
+                        lifecycle_phase is not Missing
+                        and SoftwareLifecyclePhase.from_name(lifecycle_phase) == SoftwareLifecyclePhase.PRE_RELEASE
+                    ):
                         ec_policy = constants.KONFLUX_PREGA_EC_POLICY_CONFIGURATION
                     else:
                         ec_policy = self._config.ec_policy_configuration
