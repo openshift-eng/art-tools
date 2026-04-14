@@ -1104,13 +1104,23 @@ class KonfluxImageBuilder:
         parent_image_nvrs = []
         for pullspec in parent_image_pullspecs:
             try:
+                # Choose the appropriate auth file based on the registry
+                # For brew.registry.redhat.io and registry.redhat.io, use KONFLUX_OPERATOR_INDEX_AUTH_FILE
+                # For everything else (quay.io, etc.), use the provided registry_auth_file
+                auth_file = registry_auth_file
+                if pullspec.startswith(('brew.registry.redhat.io/', 'registry.redhat.io/')):
+                    operator_auth = os.getenv("KONFLUX_OPERATOR_INDEX_AUTH_FILE")
+                    if operator_auth:
+                        auth_file = operator_auth
+                        logger.debug(f"Using KONFLUX_OPERATOR_INDEX_AUTH_FILE for {pullspec}")
+
                 # Use oc image info with optional auth file to get image labels
                 # Use --filter-by-os to handle manifest list images
                 try:
                     stdout = await oc_image_info__cached_async(
                         pullspec,
                         '--filter-by-os=amd64',
-                        registry_config=registry_auth_file if registry_auth_file else None,
+                        registry_config=auth_file if auth_file else None,
                     )
                 except ChildProcessError as e:
                     # Could not access the image - this is unexpected and worth a warning
