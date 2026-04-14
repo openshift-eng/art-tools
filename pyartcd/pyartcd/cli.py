@@ -11,7 +11,7 @@ from artcommonlib import logutil
 
 from pyartcd import __version__
 from pyartcd.runtime import Runtime
-from pyartcd.telemetry import initialize_telemetry
+from pyartcd.telemetry import initialize_telemetry, shutdown_telemetry
 
 pass_runtime = click.make_pass_decorator(Runtime)
 
@@ -23,7 +23,10 @@ def click_coroutine(f):
 
     def wrapper(*args, **kwargs):
         loop = asyncio.get_event_loop()
-        return loop.run_until_complete(f(*args, **kwargs))
+        try:
+            return loop.run_until_complete(f(*args, **kwargs))
+        finally:
+            shutdown_telemetry()
 
     return update_wrapper(wrapper, f)
 
