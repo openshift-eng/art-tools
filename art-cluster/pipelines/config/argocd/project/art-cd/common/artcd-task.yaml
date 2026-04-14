@@ -94,7 +94,7 @@ spec:
       value: /tmp/konflux-kubeconfigs/logging
     - name: ASSISTED_INSTALLER_SA_KUBECONFIG
       value: /tmp/konflux-kubeconfigs/assisted-installer
-    - name: KONFLUX_ART_IMAGES_AUTH_FILE
+    - name: QUAY_AUTH_FILE
       value: /tmp/konflux-art-images-auth/config.json
     - name: DOCKER_CONFIG
       value: /tmp/konflux-art-images-auth

@@ -748,7 +748,7 @@ async def sync_to_quay(source_pullspec, destination_repo, tags=None):
         destination_repo,
     ]
 
-    konflux_registry_auth_file = os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")
+    konflux_registry_auth_file = os.getenv("QUAY_AUTH_FILE")
     if konflux_registry_auth_file:
         cmd += [f'--registry-config={konflux_registry_auth_file}']
 

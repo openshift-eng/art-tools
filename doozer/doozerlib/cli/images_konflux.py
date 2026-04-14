@@ -374,7 +374,7 @@ async def images_konflux_build(
         konflux_context=konflux_context,
         konflux_namespace=konflux_namespace,
         image_repo=image_repo,
-        registry_auth_file=os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE"),
+        registry_auth_file=os.getenv("QUAY_AUTH_FILE"),
         skip_checks=skip_checks,
         dry_run=dry_run,
         plr_template=plr_template,

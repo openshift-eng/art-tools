@@ -962,9 +962,9 @@ class PrepareReleaseKonfluxPipeline:
             "new",
             f"--builds-file={temp_file_path}",
         ]
-        konflux_art_images_auth_file = os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")
-        if konflux_art_images_auth_file:
-            snapshot_cmd.append(f"--pull-secret={konflux_art_images_auth_file}")
+        quay_auth_file = os.getenv("QUAY_AUTH_FILE")
+        if quay_auth_file:
+            snapshot_cmd.append(f"--pull-secret={quay_auth_file}")
         stdout = await self.execute_command_with_logging(snapshot_cmd)
 
         # remove the temporary file

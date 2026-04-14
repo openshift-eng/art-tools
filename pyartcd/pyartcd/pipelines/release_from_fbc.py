@@ -283,9 +283,9 @@ class ReleaseFromFbcPipeline:
             oc_cmd = ['oc', 'image', 'info', fbc_pullspec, '--filter-by-os', 'amd64', '-o', 'json']
 
             # Add registry config for authentication if available
-            konflux_art_images_auth_file = os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")
-            if konflux_art_images_auth_file:
-                oc_cmd.extend(['--registry-config', konflux_art_images_auth_file])
+            quay_auth_file = os.getenv("QUAY_AUTH_FILE")
+            if quay_auth_file:
+                oc_cmd.extend(['--registry-config', quay_auth_file])
 
             rc, stdout, stderr = await exectools.cmd_gather_async(oc_cmd, check=False)
             if rc != 0:
@@ -319,9 +319,9 @@ class ReleaseFromFbcPipeline:
             oc_cmd = ['oc', 'image', 'info', fbc_pullspec, '--filter-by-os', 'amd64', '-o', 'json']
 
             # Add registry config for authentication if available
-            konflux_art_images_auth_file = os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")
-            if konflux_art_images_auth_file:
-                oc_cmd.extend(['--registry-config', konflux_art_images_auth_file])
+            quay_auth_file = os.getenv("QUAY_AUTH_FILE")
+            if quay_auth_file:
+                oc_cmd.extend(['--registry-config', quay_auth_file])
 
             rc, stdout, stderr = exectools.cmd_gather(oc_cmd)
             if rc != 0:
@@ -449,9 +449,9 @@ class ReleaseFromFbcPipeline:
             f"--builds-file={temp_file_path}",
         ]
 
-        konflux_art_images_auth_file = os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")
-        if konflux_art_images_auth_file:
-            snapshot_cmd.append(f"--pull-secret={konflux_art_images_auth_file}")
+        quay_auth_file = os.getenv("QUAY_AUTH_FILE")
+        if quay_auth_file:
+            snapshot_cmd.append(f"--pull-secret={quay_auth_file}")
 
         try:
             self.logger.info(f"Running elliott snapshot command: {' '.join(snapshot_cmd)}")

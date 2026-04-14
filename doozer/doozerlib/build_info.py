@@ -700,7 +700,7 @@ class KonfluxBuildRecordInspector(BuildRecordInspector):
         if not self._inspectors:
             info = util.oc_image_info_show_multiarch(
                 pullspec=self.get_build_pullspec(),
-                registry_config=os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE"),
+                registry_config=os.getenv("QUAY_AUTH_FILE"),
             )
             if isinstance(info, dict):
                 # The pullspec points to a single arch image

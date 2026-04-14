@@ -168,7 +168,7 @@ async def gen_assembly_from_releases(
         suggestions_url=suggestions_url,
         gen_microshift=gen_microshift,
         release_date=date,
-        registry_config=os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE"),
+        registry_config=os.getenv("QUAY_AUTH_FILE"),
     ).run()
 
     # ruamel.yaml configuration

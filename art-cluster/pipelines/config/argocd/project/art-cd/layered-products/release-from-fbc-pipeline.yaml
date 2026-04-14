@@ -43,7 +43,7 @@ spec:
         subprocess.run(["kinit", "-f", "-k", "-t", "/tmp/keytab/keytab", "exd-ocp-buildvm-bot-prod@IPA.REDHAT.COM"], check=True)
 
         # Ensure oras can find registry credentials via ~/.docker/config.json
-        auth_file = os.environ.get("KONFLUX_ART_IMAGES_AUTH_FILE", "/tmp/konflux-art-images-auth/config.json")
+        auth_file = os.environ.get("QUAY_AUTH_FILE", "/tmp/konflux-art-images-auth/config.json")
         if os.path.exists(auth_file):
             os.makedirs("/root/.docker", exist_ok=True)
             docker_config = "/root/.docker/config.json"

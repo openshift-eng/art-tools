@@ -804,7 +804,7 @@ async def extract_nvrs_from_fbc(fbc_pullspec: str, product: str) -> list[str]:
         """Extract NVR from a single image. Returns (image_url, nvr_or_empty, error_msg_or_empty)"""
         try:
             logger.debug(f"Running oc image info for: {image_url}")
-            registry_config = os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")
+            registry_config = os.getenv("QUAY_AUTH_FILE")
             image_info_output = await oc_image_info__cached_async(
                 image_url,
                 '--filter-by-os=amd64',

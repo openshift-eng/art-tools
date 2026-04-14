@@ -104,7 +104,7 @@ class ConfigScanSources:
         self.image_tree = {}
         self.changing_rpm_names = set()
         self.rhcos_status = []
-        self.registry_auth_file = os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")
+        self.registry_auth_file = os.getenv("QUAY_AUTH_FILE")
         self.current_task_bundles: Dict[str, str] = {}
 
     def _is_okd_enabled(self, image_meta: ImageMetadata) -> bool:

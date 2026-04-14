@@ -599,7 +599,7 @@ async def verify_conforma_cli(
         konflux_kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
 
     if not pull_secret:
-        pull_secret = os.environ.get('KONFLUX_ART_IMAGES_AUTH_FILE')
+        pull_secret = os.environ.get('QUAY_AUTH_FILE')
 
     pipeline = ConformaVerifyCli(
         runtime=runtime,
