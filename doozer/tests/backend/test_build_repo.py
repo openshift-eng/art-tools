@@ -43,15 +43,21 @@ class TestBuildRepo(IsolatedAsyncioTestCase):
         self.assertEqual(self.repo.commit_hash, "deadbeef")
 
     @patch("artcommonlib.git_helper.run_git_async", return_value=0)
-    async def test_push(self, run_git: AsyncMock):
+    @patch("artcommonlib.git_helper.gather_git_async", return_value=(0, "", ""))
+    async def test_push(self, gather_git: AsyncMock, run_git: AsyncMock):
         await self.repo.push()
-        run_git.assert_any_await(["-C", "/path/to/repo", "push", "origin", "HEAD"], github_url=self.repo.url)
+        gather_git.assert_awaited_once_with(
+            ["-C", "/path/to/repo", "push", "origin", "HEAD"], check=False, github_url=self.repo.url
+        )
         run_git.assert_any_await(["-C", "/path/to/repo", "push", "origin", "--tags"], github_url=self.repo.url)
 
     @patch("artcommonlib.git_helper.run_git_async", return_value=0)
-    async def test_push_force(self, run_git: AsyncMock):
+    @patch("artcommonlib.git_helper.gather_git_async", return_value=(0, "", ""))
+    async def test_push_force(self, gather_git: AsyncMock, run_git: AsyncMock):
         await self.repo.push(force=True)
-        run_git.assert_any_await(["-C", "/path/to/repo", "push", "origin", "HEAD", "--force"], github_url=self.repo.url)
+        gather_git.assert_awaited_once_with(
+            ["-C", "/path/to/repo", "push", "origin", "HEAD", "--force"], check=False, github_url=self.repo.url
+        )
         run_git.assert_any_await(["-C", "/path/to/repo", "push", "origin", "--tags"], github_url=self.repo.url)
 
     @patch("pathlib.Path.exists", return_value=True)
@@ -320,7 +326,8 @@ class TestBuildRepo(IsolatedAsyncioTestCase):
             mock_set_remote.assert_called_once_with("https://example.com/new-pull.git", "pull")
 
     @patch("artcommonlib.git_helper.run_git_async", return_value=0)
-    async def test_push_always_uses_origin(self, run_git: Mock):
+    @patch("artcommonlib.git_helper.gather_git_async", return_value=(0, "", ""))
+    async def test_push_always_uses_origin(self, gather_git: AsyncMock, run_git: AsyncMock):
         """Test push operation always uses origin remote regardless of pull URL."""
         push_url = "https://git.example.com/push-repo.git"
         pull_url = "https://git.example.com/pull-repo.git"
@@ -334,8 +341,10 @@ class TestBuildRepo(IsolatedAsyncioTestCase):
         await repo.push()
 
         # Verify push uses origin remote (push URL) with push URL for auth
-        run_git.assert_any_call(["-C", "/path/to/repo", "push", "origin", "HEAD"], github_url=push_url)
-        run_git.assert_any_call(["-C", "/path/to/repo", "push", "origin", "--tags"], github_url=push_url)
+        gather_git.assert_awaited_once_with(
+            ["-C", "/path/to/repo", "push", "origin", "HEAD"], check=False, github_url=push_url
+        )
+        run_git.assert_any_await(["-C", "/path/to/repo", "push", "origin", "--tags"], github_url=push_url)
 
     @patch("doozerlib.backend.build_repo.BuildRepo._get_commit_hash", return_value="deadbeef")
     @patch("doozerlib.backend.build_repo.Path")
