@@ -77,7 +77,7 @@ def _make_metadata(distgit_key="test-image", for_release=True, is_base_image=Fal
     metadata.build_event = asyncio.Event()
     metadata.get_parent_members.return_value = {}
     metadata.runtime.assembly = "stream"
-    metadata.runtime.assembly_type = MagicMock()
+    metadata.runtime.group_config.software_lifecycle.phase = "release"
     metadata.runtime.konflux_db = None
     return metadata
 

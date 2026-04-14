@@ -42,6 +42,8 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         metadata.runtime = MagicMock()
         metadata.runtime.assembly = "test-assembly"
         metadata.runtime.konflux_db = MagicMock()
+        metadata.runtime.group_config.software_lifecycle.phase = "release"
+        metadata.for_release = True
         metadata.get_latest_build = AsyncMock(return_value=None)
         metadata.get_konflux_build_attempts.return_value = 1
         metadata.get_arches.return_value = ["x86_64"]
