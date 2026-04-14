@@ -252,9 +252,9 @@ class BuildLayeredProductsPipeline:
             build_cmd.append("--dry-run")
 
         build_env = self._doozer_env_vars.copy()
-        konflux_registry_auth_file = os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")
+        konflux_registry_auth_file = os.getenv("QUAY_AUTH_FILE")
         if konflux_registry_auth_file:
-            build_env["KONFLUX_ART_IMAGES_AUTH_FILE"] = konflux_registry_auth_file
+            build_env["QUAY_AUTH_FILE"] = konflux_registry_auth_file
 
         await exectools.cmd_assert_async(build_cmd, env=build_env)
         self._logger.info(f"Successfully built {image_list}")

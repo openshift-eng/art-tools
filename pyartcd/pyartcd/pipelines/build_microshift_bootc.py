@@ -170,7 +170,7 @@ class BuildMicroShiftBootcPipeline:
             'quay.io/redhat-user-workloads',
         ]
 
-        konflux_registry_auth_file = os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")
+        konflux_registry_auth_file = os.getenv("QUAY_AUTH_FILE")
         if konflux_registry_auth_file:
             cmd += [f'--registry-config={konflux_registry_auth_file}']
         await exectools.cmd_assert_async(cmd)
@@ -861,9 +861,9 @@ class BuildMicroShiftBootcPipeline:
             nvr,
         ]
 
-        konflux_art_images_auth_file = os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")
-        if konflux_art_images_auth_file:
-            snapshot_cmd.append(f"--pull-secret={konflux_art_images_auth_file}")
+        quay_auth_file = os.getenv("QUAY_AUTH_FILE")
+        if quay_auth_file:
+            snapshot_cmd.append(f"--pull-secret={quay_auth_file}")
 
         stdout = await self._execute_command_with_logging(snapshot_cmd)
 

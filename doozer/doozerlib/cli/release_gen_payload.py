@@ -628,7 +628,7 @@ class GenPayloadCli:
             suggestions_url=None,
             gen_microshift=False,
             release_date=dummy_release_date,  # Prevent release schedule lookup
-            registry_config=os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE"),
+            registry_config=os.getenv("QUAY_AUTH_FILE"),
         )
 
         # Run gen-assembly logic to create the assembly definition
@@ -1101,7 +1101,7 @@ class GenPayloadCli:
 
         public_entries_for_arch: Dict[str, Dict[str, PayloadEntry]] = dict()  # arch => img tag => PayloadEntry
         private_entries_for_arch: Dict[str, Dict[str, PayloadEntry]] = dict()  # arch => img tag => PayloadEntry
-        registry_config = os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")
+        registry_config = os.getenv("QUAY_AUTH_FILE")
 
         arches = (
             self.runtime.group_config.konflux.arches if self.runtime.build_system == 'konflux' else self.runtime.arches
@@ -1436,7 +1436,7 @@ class GenPayloadCli:
                 'login',
                 '--registry',
                 'quay.io/redhat-user-workloads',
-                f'--registry-config={os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")}',
+                f'--registry-config={os.getenv("QUAY_AUTH_FILE")}',
             ]
             await exectools.cmd_assert_async(cmd)
 
@@ -1479,7 +1479,7 @@ class GenPayloadCli:
                     f'--filename={str(src_dest_path)}',
                 ]
                 if self.runtime.build_system == 'konflux':
-                    cmd.append(f'--registry-config={os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")}')
+                    cmd.append(f'--registry-config={os.getenv("QUAY_AUTH_FILE")}')
                 await asyncio.wait_for(exectools.cmd_assert_async(cmd), timeout=7200)
 
         # Mirror the images in chunks to avoid erroring out due to possible registry issues
@@ -1963,7 +1963,7 @@ class GenPayloadCli:
         await manifest_tool(f'push from-spec {str(component_manifest_path)}')
 
         # we are pushing a new manifest list, so return its sha256 based pullspec
-        sha = await find_manifest_list_sha(output_pullspec, registry_config=os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE"))
+        sha = await find_manifest_list_sha(output_pullspec, registry_config=os.getenv("QUAY_AUTH_FILE"))
         return exchange_pullspec_tag_for_shasum(output_pullspec, sha)
 
     async def create_multi_release_image(
@@ -2004,7 +2004,7 @@ class GenPayloadCli:
                 "--metadata",
                 json.dumps({"release.openshift.io/architecture": "multi"}),
             ]
-            registry_config = os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")
+            registry_config = os.getenv("QUAY_AUTH_FILE")
             if registry_config:
                 cmd.append(f"--registry-config={registry_config}")
             return await exectools.cmd_assert_async(cmd)
@@ -2062,9 +2062,7 @@ class GenPayloadCli:
         await manifest_tool(f'push from-spec {str(release_payload_ml_path)}')
 
         # if we are actually pushing a manifest list, then we should derive a sha256 based pullspec
-        sha = await find_manifest_list_sha(
-            multi_release_dest, registry_config=os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")
-        )
+        sha = await find_manifest_list_sha(multi_release_dest, registry_config=os.getenv("QUAY_AUTH_FILE"))
         return exchange_pullspec_tag_for_shasum(multi_release_dest, sha)
 
     async def apply_multi_imagestream_update(
@@ -2846,7 +2844,7 @@ class PayloadGenerator:
 
         payload_entries: Dict[str, PayloadEntry]
         issues: List[AssemblyIssue]
-        registry_config = os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")
+        registry_config = os.getenv("QUAY_AUTH_FILE")
         payload_entries, issues = self.find_payload_entries(
             assembly_inspector, arch, "", registry_config=registry_config
         )

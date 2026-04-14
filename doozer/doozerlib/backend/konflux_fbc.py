@@ -936,7 +936,7 @@ class KonfluxFbcRebaser:
         self._logger.info("Rendering FBC image %s to get bundle blob", fbc_pullspec)
 
         registry_auth = opm.OpmRegistryAuth(
-            path=os.environ.get("KONFLUX_ART_IMAGES_AUTH_FILE"),
+            path=os.environ.get("QUAY_AUTH_FILE"),
         )
         blobs = await opm.render(fbc_pullspec, auth=registry_auth)
         if not blobs:
@@ -1499,7 +1499,7 @@ class KonfluxFbcRebaser:
     async def _fetch_olm_bundle_image_info(self, bundle_build: KonfluxBundleBuildRecord):
         return await util.oc_image_info_for_arch_async(
             bundle_build.image_pullspec,
-            registry_config=os.environ.get("KONFLUX_ART_IMAGES_AUTH_FILE"),
+            registry_config=os.environ.get("QUAY_AUTH_FILE"),
         )
 
     async def _load_csv_from_bundle(self, bundle_build: KonfluxBundleBuildRecord, manifests_dir: str):
@@ -1514,7 +1514,7 @@ class KonfluxFbcRebaser:
             await util.oc_image_extract_async(
                 bundle_build.image_pullspec,
                 path_specs=path_specs,
-                registry_config=os.environ.get("KONFLUX_ART_IMAGES_AUTH_FILE"),
+                registry_config=os.environ.get("QUAY_AUTH_FILE"),
             )
             # Find the CSV file in the extracted manifests directory
             csv_file = next(Path(tmpdir).glob("*.clusterserviceversion.yaml"), None)
@@ -1530,7 +1530,7 @@ class KonfluxFbcRebaser:
         :return: A tuple of (bundle name, package name, bundle blob).
         """
         registry_auth = opm.OpmRegistryAuth(
-            path=os.environ.get("KONFLUX_ART_IMAGES_AUTH_FILE"),
+            path=os.environ.get("QUAY_AUTH_FILE"),
         )
         rendered_blobs = await opm.render(bundle_build.image_pullspec, migrate_level=migrate_level, auth=registry_auth)
         if not isinstance(rendered_blobs, list) or len(rendered_blobs) != 1:
@@ -1676,7 +1676,7 @@ class KonfluxFbcBuilder:
         logger = logger or self._logger
         try:
             logger.debug(f"Checking if image exists: {pullspec}")
-            registry_config = os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")
+            registry_config = os.getenv("QUAY_AUTH_FILE")
             await util.oc_image_info_for_arch_async(pullspec, registry_config=registry_config)
             logger.debug(f"Image exists: {pullspec}")
             return True

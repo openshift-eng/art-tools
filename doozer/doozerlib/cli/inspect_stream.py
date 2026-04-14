@@ -33,7 +33,7 @@ async def inspect_stream(runtime: Runtime, code: AssemblyIssueCode, strict: bool
         await assembly_inspector.initialize(lookup_mode=None)
         package_rpm_finder = PackageRpmFinder(runtime)
         payload_generator = PayloadGenerator(runtime, package_rpm_finder)
-        registry_config = os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")
+        registry_config = os.getenv("QUAY_AUTH_FILE")
         rhcos_builds, rhcos_inconsistencies = _check_inconsistent_rhcos_rpms(
             runtime,
             assembly_inspector,
@@ -65,7 +65,7 @@ async def inspect_stream(runtime: Runtime, code: AssemblyIssueCode, strict: bool
         await assembly_inspector.initialize(lookup_mode="images")
         package_rpm_finder = PackageRpmFinder(runtime)
         payload_generator = PayloadGenerator(runtime, package_rpm_finder)
-        registry_config = os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")
+        registry_config = os.getenv("QUAY_AUTH_FILE")
         issues = _check_cross_payload_consistency_requirements(
             runtime,
             assembly_inspector,
