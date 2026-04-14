@@ -550,7 +550,21 @@ class GenPayloadCli:
         self.payload_entries_for_arch, self.private_payload_entries_for_arch = await self.generate_payload_entries(
             assembly_inspector
         )
-        assembly_report: Dict = await self.generate_assembly_report(assembly_inspector)
+
+        if self.multi_model:
+            # The model nightly already passed consistency checks in regular build-sync;
+            # re-running them here is expensive and can flake without adding value.
+            self.payload_permitted = True
+            assembly_report: Dict = dict(
+                non_release_images=[m.distgit_key for m in rt.get_non_release_image_metas()],
+                release_images=[m.distgit_key for m in rt.get_for_release_image_metas()],
+                missing_image_builds=[],
+                viable=True,
+                assembly_issues={},
+            )
+            self.logger.info("Multi-model mode: skipping assembly consistency checks")
+        else:
+            assembly_report: Dict = await self.generate_assembly_report(assembly_inspector)
 
         self.logger.info('\n%s', yaml.dump(assembly_report, default_flow_style=False, indent=2))
         with self.output_path.joinpath("assembly-report.yaml").open(mode="w") as report_file:
