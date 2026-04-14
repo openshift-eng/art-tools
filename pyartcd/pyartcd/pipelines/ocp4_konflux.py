@@ -1,9 +1,12 @@
 import asyncio
+import inspect
 import json
 import logging
 import os
 import shutil
+import time
 from enum import Enum
+from functools import wraps
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -19,6 +22,8 @@ from artcommonlib.util import (
     uses_konflux_imagestream_override,
     validate_build_priority,
 )
+from opentelemetry import metrics, trace
+from opentelemetry.trace import Status, StatusCode
 
 from pyartcd import constants, jenkins, locks, oc, util
 from pyartcd import record as record_util
@@ -35,6 +40,59 @@ from pyartcd.util import (
 )
 
 LOGGER = logging.getLogger(__name__)
+TRACER = trace.get_tracer(__name__)
+METER = metrics.get_meter(__name__)
+STAGE_RUN_COUNTER = METER.create_counter(
+    "pyartcd.ocp4_konflux.stage_runs",
+    unit="1",
+    description="Completed ocp4_konflux pipeline stages by result.",
+)
+STAGE_FAILURE_COUNTER = METER.create_counter(
+    "pyartcd.ocp4_konflux.stage_failures",
+    unit="1",
+    description="Failed ocp4_konflux pipeline stages.",
+)
+STAGE_DURATION_HISTOGRAM = METER.create_histogram(
+    "pyartcd.ocp4_konflux.stage_duration_seconds",
+    unit="s",
+    description="Duration of ocp4_konflux pipeline stages.",
+)
+
+
+def instrument_stage(stage_name: str):
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(self, *args, **kwargs):
+            attributes = self._stage_attributes(stage_name)
+            start_time = time.monotonic()
+            with TRACER.start_as_current_span(f"ocp4-konflux.{stage_name}") as span:
+                for key, value in attributes.items():
+                    span.set_attribute(f"ocp4-konflux.{key}", value)
+                try:
+                    result = func(self, *args, **kwargs)
+                    if inspect.isawaitable(result):
+                        result = await result
+                except Exception as exc:
+                    span.record_exception(exc)
+                    span.set_status(Status(StatusCode.ERROR, str(exc)))
+                    STAGE_RUN_COUNTER.add(1, {**attributes, "result": "failure"})
+                    STAGE_FAILURE_COUNTER.add(1, attributes)
+                    STAGE_DURATION_HISTOGRAM.record(
+                        time.monotonic() - start_time,
+                        {**attributes, "result": "failure"},
+                    )
+                    raise
+
+                STAGE_RUN_COUNTER.add(1, {**attributes, "result": "success"})
+                STAGE_DURATION_HISTOGRAM.record(
+                    time.monotonic() - start_time,
+                    {**attributes, "result": "success"},
+                )
+                return result
+
+        return wrapper
+
+    return decorator
 
 
 class BuildStrategy(Enum):
@@ -166,6 +224,15 @@ class KonfluxOcpPipeline:
         elif build_strategy == BuildStrategy.EXCEPT:
             return [f'--{kind}=', f'--exclude={",".join(excludes)}']
 
+    def _stage_attributes(self, stage_name: str) -> dict[str, str | bool]:
+        return {
+            "pipeline": "ocp4_konflux",
+            "stage": stage_name,
+            "assembly": self.assembly,
+            "version": self.version,
+            "dry_run": self.runtime.dry_run,
+        }
+
     async def update_rebase_fail_counters(self, failed_images):
         if self.assembly != 'stream':
             # Only update fail counters for stream assembly
@@ -214,6 +281,7 @@ class KonfluxOcpPipeline:
         # or if the build strategy is ALL, all images will be built
         return True
 
+    @instrument_stage("rebase_images")
     async def rebase_images(self, version: str, input_release: str):
         # Skip rebase if the flag is set
         if self.skip_rebase:
@@ -279,6 +347,7 @@ class KonfluxOcpPipeline:
             # Track rebase failures for later steps
             self.rebase_failures = failed_images
 
+    @instrument_stage("build_images")
     async def build_images(self):
         if not self.building_images():
             LOGGER.warning('No images will be built')
@@ -322,6 +391,7 @@ class KonfluxOcpPipeline:
 
         LOGGER.info("All builds completed successfully")
 
+    @instrument_stage("sync_images")
     async def sync_images(self):
         if not self.building_images():
             LOGGER.warning('No images will be synced')
@@ -411,6 +481,7 @@ class KonfluxOcpPipeline:
             cmd.extend(['images:streams', 'mirror'])
             await exectools.cmd_assert_async(cmd)
 
+    @instrument_stage("sweep_bugs")
     async def sweep_bugs(self):
         """
         Find MODIFIED bugs for the target-releases, and set them to ON_QA
@@ -438,6 +509,7 @@ class KonfluxOcpPipeline:
             self.slack_client.bind_channel(f'openshift-{self.version}')
             await self.slack_client.say(f'Bug sweep failed for {self.version}. Please investigate')
 
+    @instrument_stage("sweep_golang_bugs")
     async def sweep_golang_bugs(self):
         # find-bugs:golang only modifies bug state after verifying
         # that the bug is fixed in the builds found in latest nightly / rpms in candidate tag
@@ -592,11 +664,13 @@ class KonfluxOcpPipeline:
             else:
                 jenkins.update_description(f'RPMs: building {n_rpms} RPMs.<br/>')
 
+    @instrument_stage("initialize")
     async def initialize(self):
         jenkins.init_jenkins()
         jenkins.update_title(f' - {self.version} [{self.assembly}] ')
         await self.init_build_plan()
 
+    @instrument_stage("clean_up")
     async def clean_up(self):
         LOGGER.info('Cleaning up Doozer source dirs')
         await asyncio.gather(
@@ -646,6 +720,7 @@ class KonfluxOcpPipeline:
             record_log: dict = record_util.parse_record_log(file)
             return record_log
 
+    @instrument_stage("request_mass_rebuild")
     async def request_mass_rebuild(self):
         await self.slack_client.say(
             f':konflux: :loading-correct: Enqueuing mass rebuild for {self.version} :loading-correct:'
@@ -788,6 +863,7 @@ class KonfluxOcpPipeline:
                 failed_ops = ", ".join(f"{name}: {err}" for name, err in critical_failures)
                 raise RuntimeError(f"Critical operations failed in finally block: {failed_ops}")
 
+    @instrument_stage("rebase_and_build_rpms")
     async def rebase_and_build_rpms(self, input_release: str):
         if (
             self.build_plan.rpm_build_strategy == BuildStrategy.ONLY and not self.build_plan.rpms_included

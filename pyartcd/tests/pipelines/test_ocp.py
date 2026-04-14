@@ -839,15 +839,15 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
 
 
 class TestKonfluxOcpPipeline(unittest.IsolatedAsyncioTestCase):
-    @patch('pyartcd.pipelines.ocp4_konflux.exectools.cmd_assert_async')
-    async def test_konflux_pipeline_network_mode_parameter_flow(self, mock_cmd):
-        """Test pipeline passes network-mode to both doozer commands."""
+    @staticmethod
+    def _default_konflux_pipeline():
         from pyartcd.pipelines.ocp4_konflux import KonfluxOcpPipeline
 
         runtime = MagicMock()
         runtime.dry_run = False
+        runtime.doozer_working = "doozer-working"
 
-        pipeline = KonfluxOcpPipeline(
+        return KonfluxOcpPipeline(
             runtime=runtime,
             assembly='stream',
             version='4.14',
@@ -869,6 +869,11 @@ class TestKonfluxOcpPipeline(unittest.IsolatedAsyncioTestCase):
             network_mode='open',
         )
 
+    @patch('pyartcd.pipelines.ocp4_konflux.exectools.cmd_assert_async')
+    async def test_konflux_pipeline_network_mode_parameter_flow(self, mock_cmd):
+        """Test pipeline passes network-mode to both doozer commands."""
+        pipeline = self._default_konflux_pipeline()
+
         await pipeline.rebase_images('4.14.0', '1')
         await pipeline.build_images()
 
@@ -881,3 +886,56 @@ class TestKonfluxOcpPipeline(unittest.IsolatedAsyncioTestCase):
         self.assertIn('open', rebase_call)
         self.assertIn('--network-mode', build_call)
         self.assertIn('open', build_call)
+
+    @patch('pyartcd.pipelines.ocp4_konflux.STAGE_DURATION_HISTOGRAM')
+    @patch('pyartcd.pipelines.ocp4_konflux.STAGE_FAILURE_COUNTER')
+    @patch('pyartcd.pipelines.ocp4_konflux.STAGE_RUN_COUNTER')
+    @patch('pyartcd.pipelines.ocp4_konflux.jenkins.update_title')
+    @patch('pyartcd.pipelines.ocp4_konflux.jenkins.init_jenkins')
+    async def test_initialize_records_success_metrics(
+        self,
+        _mock_init_jenkins,
+        _mock_update_title,
+        mock_run_counter,
+        mock_failure_counter,
+        mock_duration,
+    ):
+        pipeline = self._default_konflux_pipeline()
+        pipeline.init_build_plan = AsyncMock()
+
+        await pipeline.initialize()
+
+        expected_attributes = {
+            'pipeline': 'ocp4_konflux',
+            'stage': 'initialize',
+            'assembly': 'stream',
+            'version': '4.14',
+            'dry_run': False,
+            'result': 'success',
+        }
+        mock_run_counter.add.assert_called_once_with(1, expected_attributes)
+        mock_failure_counter.add.assert_not_called()
+        mock_duration.record.assert_called_once()
+        self.assertEqual(mock_duration.record.call_args.args[1], expected_attributes)
+
+    @patch('pyartcd.pipelines.ocp4_konflux.STAGE_DURATION_HISTOGRAM')
+    @patch('pyartcd.pipelines.ocp4_konflux.STAGE_FAILURE_COUNTER')
+    @patch('pyartcd.pipelines.ocp4_konflux.STAGE_RUN_COUNTER')
+    async def test_clean_up_records_failure_metrics(self, mock_run_counter, mock_failure_counter, mock_duration):
+        pipeline = self._default_konflux_pipeline()
+        pipeline.rebase_failures = ['image-a']
+        pipeline.runtime.cleanup_sources = AsyncMock()
+
+        with self.assertRaisesRegex(RuntimeError, 'Following images failed to rebase: image-a'):
+            await pipeline.clean_up()
+
+        base_attributes = {
+            'pipeline': 'ocp4_konflux',
+            'stage': 'clean_up',
+            'assembly': 'stream',
+            'version': '4.14',
+            'dry_run': False,
+        }
+        mock_run_counter.add.assert_called_once_with(1, {**base_attributes, 'result': 'failure'})
+        mock_failure_counter.add.assert_called_once_with(1, base_attributes)
+        mock_duration.record.assert_called_once()
