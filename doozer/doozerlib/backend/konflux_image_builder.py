@@ -285,7 +285,10 @@ class KonfluxImageBuilder:
                     # - pre-release phase uses a more permissive policy that allows unsigned RPMs
                     # - All other phases use the default stage policy
                     lifecycle_phase = metadata.runtime.group_config.software_lifecycle.phase
-                    if lifecycle_phase is not Missing and SoftwareLifecyclePhase.from_name(lifecycle_phase) == SoftwareLifecyclePhase.PRE_RELEASE:
+                    if (
+                        lifecycle_phase is not Missing
+                        and SoftwareLifecyclePhase.from_name(lifecycle_phase) == SoftwareLifecyclePhase.PRE_RELEASE
+                    ):
                         ec_policy = constants.KONFLUX_PREGA_EC_POLICY_CONFIGURATION
                     else:
                         ec_policy = self._config.ec_policy_configuration
