@@ -512,7 +512,12 @@ def unpack_tuple_args(func):
 @tenacity.retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(60))
 async def manifest_tool(options, dry_run=False):
     auth_opt = ""
-    if os.environ.get("XDG_RUNTIME_DIR"):
+    # First priority: KONFLUX_ART_IMAGES_AUTH_FILE (set by Jenkins jobs)
+    if os.environ.get("KONFLUX_ART_IMAGES_AUTH_FILE"):
+        auth_file = os.environ["KONFLUX_ART_IMAGES_AUTH_FILE"]
+        auth_opt = f"--docker-cfg={auth_file}"
+    # Fallback: XDG_RUNTIME_DIR (local development environments)
+    elif os.environ.get("XDG_RUNTIME_DIR"):
         auth_file = os.path.expandvars("${XDG_RUNTIME_DIR}/containers/auth.json")
         if Path(auth_file).is_file():
             auth_opt = f"--docker-cfg={auth_file}"
