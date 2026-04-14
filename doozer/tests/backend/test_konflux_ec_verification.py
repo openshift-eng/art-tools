@@ -61,7 +61,7 @@ def _make_successful_pipelinerun_info():
     return plr_info
 
 
-def _make_metadata(distgit_key="test-image", for_release=True, is_base_image=False):
+def _make_metadata(distgit_key="test-image", for_release=True, is_base_image=False, ec_failure_is_error=False):
     """Create a mock ImageMetadata."""
     metadata = MagicMock()
     metadata.distgit_key = distgit_key
@@ -79,6 +79,7 @@ def _make_metadata(distgit_key="test-image", for_release=True, is_base_image=Fal
     metadata.runtime.assembly = "stream"
     metadata.runtime.assembly_type = MagicMock()
     metadata.runtime.konflux_db = None
+    metadata.runtime.group_config = {"konflux": {"ec_failure_is_error": ec_failure_is_error}}
     return metadata
 
 
@@ -181,10 +182,21 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
         verify_ec = await self._run_build_and_get_ec_calls(config, metadata, mock_kc_init)
         verify_ec.assert_not_called()
 
-    async def test_no_retry_when_ec_fails(self, mock_kc_init):
-        """When EC verification fails, the build should NOT be retried."""
+    async def test_ec_failure_does_not_fail_build_by_default(self, mock_kc_init):
+        """When ec_failure_is_error is false (default), EC failure should not fail the build."""
         config = _make_config(group_name="openshift-4.18")
-        metadata = _make_metadata(for_release=True)
+        metadata = _make_metadata(for_release=True, ec_failure_is_error=False)
+
+        verify_ec = await self._run_build_and_get_ec_calls(
+            config, metadata, mock_kc_init, ec_result=_ec_failed_result()
+        )
+        verify_ec.assert_called_once()
+        self.assertTrue(metadata.build_status)
+
+    async def test_no_retry_when_ec_fails(self, mock_kc_init):
+        """When ec_failure_is_error is true and EC verification fails, the build should NOT be retried."""
+        config = _make_config(group_name="openshift-4.18")
+        metadata = _make_metadata(for_release=True, ec_failure_is_error=True)
         metadata.get_konflux_build_attempts.return_value = 3
 
         builder = KonfluxImageBuilder(config)

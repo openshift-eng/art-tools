@@ -297,9 +297,20 @@ class KonfluxImageBuilder:
                     )
                     ec_status = ec_result.ec_status
                     ec_pipeline_url = ec_result.ec_pipeline_url
-                    ec_failed = ec_result.ec_failed
-                    if ec_failed:
-                        outcome = KonfluxBuildOutcome.FAILURE
+                    ec_failure_is_error = metadata.runtime.group_config.get("konflux", {}).get(
+                        "ec_failure_is_error", False
+                    )
+                    if ec_result.ec_failed:
+                        if ec_failure_is_error:
+                            ec_failed = True
+                            outcome = KonfluxBuildOutcome.FAILURE
+                        else:
+                            logger.warning(
+                                "EC verification failed for %s but ec_failure_is_error is false; "
+                                "recording status without failing the build. PLR: %s",
+                                metadata.distgit_key,
+                                ec_pipeline_url,
+                            )
 
                 elif outcome is KonfluxBuildOutcome.SUCCESS:
                     if self._config.skip_ec_verify:
