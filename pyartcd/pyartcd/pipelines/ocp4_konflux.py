@@ -12,6 +12,7 @@ import yaml
 from artcommonlib import exectools, redis
 from artcommonlib.build_visibility import is_release_embargoed
 from artcommonlib.constants import KONFLUX_ART_IMAGES_SHARE
+from artcommonlib.registry_config import Registry, RegistryConfig
 from artcommonlib.util import (
     new_roundtrip_yaml_handler,
     run_safe,
@@ -406,10 +407,21 @@ class KonfluxOcpPipeline:
             # Log into QCI registry
             await oc.qci_registry_login()
 
-            # Mirror out ART equivalent images to CI
-            cmd = self._doozer_base_command.copy()
-            cmd.extend(['images:streams', 'mirror'])
-            await exectools.cmd_assert_async(cmd)
+            # Get the auth file path where oc.registry_login() writes credentials
+            ci_auth_file = os.getenv('REGISTRY_AUTH_FILE', f"{os.getenv('XDG_RUNTIME_DIR')}/containers/auth.json")
+
+            with RegistryConfig(
+                registries=[
+                    # Explicit credentials from Jenkins QUAY_AUTH_FILE
+                    Registry('quay.io/openshift-release-dev', auth_file=os.getenv('QUAY_AUTH_FILE')),
+                    Registry('quay.io', auth_file=os.getenv('QUAY_AUTH_FILE')),
+                    # CI registry credentials from oc login
+                    Registry('registry.ci.openshift.org', auth_file=ci_auth_file),
+                ]
+            ) as auth_file:
+                cmd = self._doozer_base_command.copy()
+                cmd.extend(['images:streams', 'mirror', '--registry-auth', auth_file])
+                await exectools.cmd_assert_async(cmd)
 
     async def sweep_bugs(self):
         """
