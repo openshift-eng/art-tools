@@ -71,7 +71,6 @@ class ImagesHealthPipeline:
 
     async def get_report(self, version: str) -> Optional[list]:
         doozer_working = f'{self.doozer_working}-{version}'
-        # Check if automation is frozen for current group
         if not await util.is_build_permitted(
             version,
             doozer_working=str(doozer_working),
@@ -83,8 +82,24 @@ class ImagesHealthPipeline:
 
         self.scanned_versions.append(version)
 
-        # Get doozer report for the given version
-        group_param = f'--group=openshift-{version}'
+        group = f'openshift-{version}'
+        failures = await util.get_build_failures(group=group, logger=self.runtime.logger)
+
+        # Use Redis failures to scope the image list for the BigQuery query.
+        # If an explicit image_list was provided, intersect it with failing images.
+        failing_images = set(failures.keys())
+        if self.image_list:
+            failing_images &= set(self.image_list)
+
+        if not failing_images:
+            self.runtime.logger.info('No build failures in Redis for %s; skipping BigQuery scan', group)
+            return
+
+        self.runtime.logger.info(
+            'Redis reports %d failing image(s) for %s; querying BigQuery for details', len(failing_images), group
+        )
+
+        group_param = f'--group={group}'
         if self.data_gitref:
             group_param += f'@{self.data_gitref}'
         cmd = [
@@ -92,17 +107,16 @@ class ImagesHealthPipeline:
             f'--working-dir={doozer_working}',
             f'--data-path={self.data_path}',
             group_param,
+            f'--images={",".join(sorted(failing_images))}',
+            'images:health',
         ]
-        if self.image_list:
-            cmd.append(f'--images={",".join(self.image_list)}')
-        cmd.append('images:health')
 
         if self.assembly:
             cmd.append(f'--assembly={self.assembly}')
 
         _, out, err = await exectools.cmd_gather_async(cmd, stderr=None)
         report = json.loads(out.strip())
-        self.runtime.logger.info('images:health output for openshift-%s:\n%s', version, out)
+        self.runtime.logger.info('images:health output for %s:\n%s', group, out)
         self.report.extend(report)
 
     async def get_rebase_failures(self, version: str):

@@ -57,7 +57,22 @@ class ImagesHealthPipeline:
             await self.notify_okd_channel()
 
     async def get_report(self, version: str) -> Optional[list]:
-        # Get doozer report for the given version
+        group = OKD_GROUP_TEMPLATE.format(version)
+        failures = await util.get_build_failures(group=group, logger=self.runtime.logger)
+
+        failing_images = set(failures.keys())
+        if self.image_list:
+            failing_images &= set(self.image_list)
+
+        if not failing_images:
+            self.runtime.logger.info('No build failures in Redis for %s; skipping BigQuery scan', group)
+            self.scanned_versions.append(version)
+            return
+
+        self.runtime.logger.info(
+            'Redis reports %d failing image(s) for %s; querying BigQuery for details', len(failing_images), group
+        )
+
         doozer_working = f'{self.doozer_working}-{version}'
         group_param = f'--group=openshift-{version}'
         if self.data_gitref:
@@ -69,12 +84,10 @@ class ImagesHealthPipeline:
             f'--data-path={self.data_path}',
             '--variant=okd',
             group_param,
+            f'--images={",".join(sorted(failing_images))}',
+            'images:health',
+            f'--group={group}',
         ]
-
-        if self.image_list:
-            cmd.append(f'--images={",".join(self.image_list)}')
-
-        cmd.extend(['images:health', f'--group={OKD_GROUP_TEMPLATE.format(version)}'])
 
         if self.assembly:
             cmd.append(f'--assembly={self.assembly}')
@@ -82,7 +95,7 @@ class ImagesHealthPipeline:
         _, out, err = await exectools.cmd_gather_async(cmd, stderr=None)
         report = json.loads(out.strip())
 
-        self.runtime.logger.info('images:health output for openshift-%s:\n%s', version, out)
+        self.runtime.logger.info('images:health output for %s:\n%s', group, out)
         self.report.extend(report)
         self.scanned_versions.append(version)
 
