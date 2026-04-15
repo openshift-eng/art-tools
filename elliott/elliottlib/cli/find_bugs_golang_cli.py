@@ -567,6 +567,9 @@ class FindBugsGolangCli:
                 continue
 
             cve_data = get_cve_from_prodsec_db(cve_id)
+            if not cve_data or 'bugzilla' not in cve_data:
+                logger.warning(f"Could not fetch valid CVE data for {cve_id}. Skipping.")
+                continue
             flaw_id = cve_data['bugzilla']['id']
             title = cve_data['bugzilla']['description']
             comp_in_title = get_component_from_bug_title(title)
