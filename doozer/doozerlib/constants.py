@@ -87,7 +87,11 @@ KONFLUX_BASE_IMAGE_EC_POLICY_CONFIGURATION = f"{KONFLUX_EC_POLICY_NAMESPACE}/reg
 
 
 def get_ec_policy_for_product(product: str) -> str:
-    """Resolve the registry EC policy for a given product, falling back to OCP default."""
+    """Resolve the registry EC policy for a given product.
+
+    Only products in PRODUCT_EC_POLICY_MAP should call this; callers gate
+    on map membership first. The fallback is purely defensive.
+    """
     policy_name = PRODUCT_EC_POLICY_MAP.get(product)
     if policy_name:
         return f"{KONFLUX_EC_POLICY_NAMESPACE}/{policy_name}"
