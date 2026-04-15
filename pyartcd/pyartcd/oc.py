@@ -51,13 +51,17 @@ async def get_release_image_info(pullspec: str, raise_if_not_found: bool = False
     return info
 
 
-async def registry_login():
+async def registry_login(to_file: str | None = None):
     """
     Login into OC registry using KUBECONFIG env var
+
+    :param to_file: Optional path to write credentials to (uses --to flag).
+                    If not provided, writes to default location.
     """
 
     try:
-        await exectools.cmd_gather_async(f'oc --kubeconfig {os.environ["KUBECONFIG"]} registry login')
+        to_arg = f'--to={to_file}' if to_file else ''
+        await exectools.cmd_gather_async(f'oc --kubeconfig {os.environ["KUBECONFIG"]} registry login {to_arg}'.strip())
 
     except KeyError:
         logger.error('KUBECONFIG env var must be defined!')
@@ -68,14 +72,18 @@ async def registry_login():
         raise
 
 
-async def qci_registry_login():
+async def qci_registry_login(to_file: str | None = None):
     """
     Log in to quay.io with credentials necessary to push to DPTP's QCI registry (quay.io/openshift/ci)
+
+    :param to_file: Optional path to write credentials to (uses --to flag).
+                    If not provided, writes to default location.
     """
 
     try:
+        to_arg = f'--to={to_file}' if to_file else ''
         await exectools.cmd_gather_async(
-            f'oc registry login --registry=quay.io/openshift --auth-basic={os.environ["QCI_USER"]}:{os.environ["QCI_PASSWORD"]}'
+            f'oc registry login --registry=quay.io/openshift --auth-basic={os.environ["QCI_USER"]}:{os.environ["QCI_PASSWORD"]} {to_arg}'.strip()
         )
 
     except KeyError:

@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import shutil
+import tempfile
 from enum import Enum
 from pathlib import Path
 from typing import Optional, Tuple
@@ -401,27 +402,31 @@ class KonfluxOcpPipeline:
         if built_images.get('ose-openshift-apiserver', None):
             LOGGER.warning('apiserver rebuilt: mirroring streams to CI...')
 
-            # Make sure our api.ci token is fresh
-            await oc.registry_login()
+            # Create temp file for oc registry login credentials
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as ci_auth_temp:
+                ci_auth_file = ci_auth_temp.name
 
-            # Log into QCI registry
-            await oc.qci_registry_login()
+            try:
+                # Write oc credentials to temp file instead of default location
+                await oc.registry_login(to_file=ci_auth_file)
+                await oc.qci_registry_login(to_file=ci_auth_file)
 
-            # Get the auth file path where oc.registry_login() writes credentials
-            ci_auth_file = os.getenv('REGISTRY_AUTH_FILE', f"{os.getenv('XDG_RUNTIME_DIR')}/containers/auth.json")
-
-            with RegistryConfig(
-                registries=[
-                    # Explicit credentials from Jenkins QUAY_AUTH_FILE
-                    Registry('quay.io/openshift-release-dev', auth_file=os.getenv('QUAY_AUTH_FILE')),
-                    Registry('quay.io', auth_file=os.getenv('QUAY_AUTH_FILE')),
-                    # CI registry credentials from oc login
-                    Registry('registry.ci.openshift.org', auth_file=ci_auth_file),
-                ]
-            ) as auth_file:
-                cmd = self._doozer_base_command.copy()
-                cmd.extend(['images:streams', 'mirror', '--registry-auth', auth_file])
-                await exectools.cmd_assert_async(cmd)
+                with RegistryConfig(
+                    registries=[
+                        # Explicit credentials from Jenkins QUAY_AUTH_FILE
+                        Registry('quay.io/openshift-release-dev', auth_file=os.getenv('QUAY_AUTH_FILE')),
+                        Registry('quay.io', auth_file=os.getenv('QUAY_AUTH_FILE')),
+                        # CI registry credentials from oc login
+                        Registry('registry.ci.openshift.org', auth_file=ci_auth_file),
+                    ]
+                ) as auth_file:
+                    cmd = self._doozer_base_command.copy()
+                    cmd.extend(['images:streams', 'mirror', '--registry-auth', auth_file])
+                    await exectools.cmd_assert_async(cmd)
+            finally:
+                # Clean up temp oc auth file
+                if os.path.exists(ci_auth_file):
+                    os.unlink(ci_auth_file)
 
     async def sweep_bugs(self):
         """
