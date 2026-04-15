@@ -637,7 +637,13 @@ def detect_package_managers(metadata, dest_dir: Path):
     return pkg_managers
 
 
-@retry(reraise=True, wait=wait_fixed(30), stop=stop_after_attempt(10), before_sleep=before_sleep_log(LOGGER, logging.WARNING))
+@retry(
+    reraise=True,
+    retry=retry_if_exception_type(ChildProcessError),
+    wait=wait_fixed(30),
+    stop=stop_after_attempt(10),
+    before_sleep=before_sleep_log(LOGGER, logging.WARNING),
+)
 async def get_konflux_data(pullspec: str, mode: str = "attestation", registry_auth_file: Optional[str] = None) -> str:
     """
     Retrieve Konflux data (attestation or signature) for a given pullspec.
