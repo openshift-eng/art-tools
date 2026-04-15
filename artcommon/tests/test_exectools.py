@@ -287,6 +287,64 @@ class TestExectools(IsolatedAsyncioTestCase):
             stderr=sys.stderr,
         )
 
+    def test_manifest_tool_auth_aliases_require_repo_boundary(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manifest_spec = f"{temp_dir}/manifest-list.yaml"
+            with open(manifest_spec, "w", encoding="utf-8") as f:
+                f.write("image: quay.io/ns2/repo:test-tag\n")
+
+            aliases = exectools._manifest_tool_auth_aliases(
+                {"quay.io/ns": {"auth": "Zm9vOmJhcg=="}},
+                ["push", "from-spec", "--", manifest_spec],
+            )
+
+        self.assertEqual(aliases, {})
+
+    @mock.patch("artcommonlib.exectools.logger.warning")
+    @mock.patch("artcommonlib.exectools.manifest_tool_auth_file")
+    @mock.patch("artcommonlib.exectools.cmd_assert_async")
+    async def test_manifest_tool_dry_run_avoids_auth_file_side_effects(
+        self,
+        cmd_assert_async: mock.AsyncMock,
+        manifest_tool_auth_file: mock.MagicMock,
+        logger_warning: mock.MagicMock,
+    ):
+        await exectools.manifest_tool(
+            ["push", "from-spec", "--", "/tmp/manifest-list.yaml"],
+            dry_run=True,
+            auth_file="/tmp/quay-auth.json",
+        )
+
+        manifest_tool_auth_file.assert_not_called()
+        cmd_assert_async.assert_not_awaited()
+        logger_warning.assert_called_once_with(
+            "[DRY RUN] Would have run %s",
+            ["manifest-tool", "--docker-cfg=/tmp/quay-auth.json", "push", "from-spec", "--", "/tmp/manifest-list.yaml"],
+        )
+
+    @mock.patch("artcommonlib.exectools.manifest_tool_auth_file")
+    @mock.patch("artcommonlib.exectools.cmd_assert_async")
+    async def test_manifest_tool_string_options_preserve_paths_with_spaces(
+        self,
+        cmd_assert_async: mock.AsyncMock,
+        manifest_tool_auth_file: mock.MagicMock,
+    ):
+        context_manager = mock.MagicMock()
+        context_manager.__enter__.return_value = "/tmp/my auth.json"
+        context_manager.__exit__.return_value = False
+        manifest_tool_auth_file.return_value = context_manager
+
+        await exectools.manifest_tool(
+            'push from-spec -- "/tmp/manifest list.yaml"',
+            auth_file="/tmp/ignored-auth.json",
+        )
+
+        cmd_assert_async.assert_awaited_once_with(
+            ["manifest-tool", "--docker-cfg=/tmp/my auth.json", "push", "from-spec", "--", "/tmp/manifest list.yaml"],
+            stdout=sys.stderr,
+            stderr=sys.stderr,
+        )
+
     @mock.patch("artcommonlib.exectools.cmd_assert_async")
     async def test_manifest_tool_adds_quay_host_compat_entry(self, cmd_assert_async: mock.AsyncMock):
         captured_auth = {}

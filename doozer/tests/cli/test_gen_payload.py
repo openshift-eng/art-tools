@@ -890,7 +890,13 @@ spec:
 
         self.assertEqual(
             exec_mock.call_args[0][0],
-            "manifest-tool --docker-cfg=/tmp/quay-auth.json push from-spec /tmp/ocp-multi.spam.manifest-list.yaml",
+            [
+                "manifest-tool",
+                "--docker-cfg=/tmp/quay-auth.json",
+                "push",
+                "from-spec",
+                "/tmp/ocp-multi.spam.manifest-list.yaml",
+            ],
         )
         fmlsha_mock.assert_awaited_once()
         self.assertEqual(fmlsha_mock.await_args.kwargs["registry_config"], "/tmp/quay-auth.json")
@@ -947,7 +953,13 @@ spec:
         self.assertEqual(pullspec, "quay.io/org/repo@sha256:abcdef")
         self.assertEqual(
             exec_mock.call_args[0][0],
-            "manifest-tool --docker-cfg=/tmp/quay-auth.json push from-spec /tmp/isname.manifest-list.yaml",
+            [
+                "manifest-tool",
+                "--docker-cfg=/tmp/quay-auth.json",
+                "push",
+                "from-spec",
+                "/tmp/isname.manifest-list.yaml",
+            ],
         )
         fmlsha_mock.assert_awaited_once()
         self.assertEqual(fmlsha_mock.await_args.kwargs["registry_config"], "/tmp/quay-auth.json")

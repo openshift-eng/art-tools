@@ -165,7 +165,11 @@ def _manifest_tool_auth_aliases(
         return {}
 
     candidate = max(
-        (key for key in auths if key.startswith(f"{host}/") and image_name.startswith(key)),
+        (
+            key
+            for key in auths
+            if key.startswith(f"{host}/") and (image_name == key or image_name.startswith(f"{key}/"))
+        ),
         key=len,
         default=None,
     )
@@ -672,28 +676,31 @@ def unpack_tuple_args(func):
 
 @tenacity.retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(60))
 async def manifest_tool(options, dry_run=False, auth_file: Optional[str] = None):
-    with manifest_tool_auth_file(auth_file, options) as manifest_auth_file:
-        auth_opt = ""
-        if manifest_auth_file:
-            auth_opt = f"--docker-cfg={manifest_auth_file}"
+    def _build_cmd(resolved_auth_file: Optional[str]):
+        auth_opt = f"--docker-cfg={resolved_auth_file}" if resolved_auth_file else ""
 
         if isinstance(options, str):
-            cmd = f'manifest-tool {auth_opt} {options}' if auth_opt else f'manifest-tool {options}'
+            cmd = ["manifest-tool"]
+            if auth_opt:
+                cmd.append(auth_opt)
+            cmd.extend(shlex.split(options))
+            return cmd
 
-        elif isinstance(options, list):
+        if isinstance(options, list):
             cmd = ['manifest-tool']
             if auth_opt:
                 cmd.append(auth_opt)
             cmd.extend(options)
+            return cmd
 
-        else:
-            raise ValueError('Invalid type for manifest-tool options provided')
+        raise ValueError('Invalid type for manifest-tool options provided')
 
-        if dry_run:
-            logger.warning("[DRY RUN] Would have run %s", cmd)
-            return
+    if dry_run:
+        logger.warning("[DRY RUN] Would have run %s", _build_cmd(auth_file))
+        return
 
-        await cmd_assert_async(cmd, stdout=sys.stderr, stderr=sys.stderr)
+    with manifest_tool_auth_file(auth_file, options) as manifest_auth_file:
+        await cmd_assert_async(_build_cmd(manifest_auth_file), stdout=sys.stderr, stderr=sys.stderr)
 
 
 @start_as_current_span_async(TRACER, "cmd_gather_async")
