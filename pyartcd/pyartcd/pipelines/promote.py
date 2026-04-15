@@ -27,7 +27,7 @@ from artcommonlib.arch_util import (
 )
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.exceptions import VerificationError
-from artcommonlib.exectools import manifest_tool, to_thread
+from artcommonlib.exectools import manifest_tool, manifest_tool_auth_file, to_thread
 from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.gitlab import GitLabClient
 from artcommonlib.jira_config import JIRA_EMAIL, JIRA_SERVER_URL
@@ -1759,27 +1759,30 @@ class PromotePipeline:
             self.runtime.dry_run,
             auth_file=auth_file,
         )
-        auth_opt = ""
-        if auth_file:
-            auth_opt = f"--docker-cfg={auth_file}"
+        with manifest_tool_auth_file(
+            auth_file, ["push", "from-spec", "--", f"{dest_manifest_list_path}"]
+        ) as resolved_auth_file:
+            auth_opt = ""
+            if resolved_auth_file:
+                auth_opt = f"--docker-cfg={resolved_auth_file}"
 
-        cmd = ["manifest-tool"]
-        if auth_opt:
-            cmd.append(auth_opt)
-        cmd.extend(
-            [
-                "push",
-                "from-spec",
-                "--",
-                f"{dest_manifest_list_path}",
-            ]
-        )
+            cmd = ["manifest-tool"]
+            if auth_opt:
+                cmd.append(auth_opt)
+            cmd.extend(
+                [
+                    "push",
+                    "from-spec",
+                    "--",
+                    f"{dest_manifest_list_path}",
+                ]
+            )
 
-        if self.runtime.dry_run:
-            self._logger.warning("[DRY RUN] Would have run %s", cmd)
-            return
-        env = os.environ.copy()
-        await exectools.cmd_assert_async(cmd, env=env, stdout=sys.stderr)
+            if self.runtime.dry_run:
+                self._logger.warning("[DRY RUN] Would have run %s", cmd)
+                return
+            env = os.environ.copy()
+            await exectools.cmd_assert_async(cmd, env=env, stdout=sys.stderr)
 
     async def build_release_image(
         self,

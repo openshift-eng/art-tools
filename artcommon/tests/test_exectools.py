@@ -4,8 +4,10 @@ Test functions related to controlled command execution
 """
 
 import asyncio
+import json
 import logging
 import subprocess
+import tempfile
 import time
 import unittest
 from unittest import IsolatedAsyncioTestCase, mock
@@ -275,6 +277,105 @@ class TestExectools(IsolatedAsyncioTestCase):
         cmd_assert_async.assert_awaited_once_with(
             ["manifest-tool", "push", "from-spec", "--", "/tmp/manifest-list.yaml"]
         )
+
+    @mock.patch("artcommonlib.exectools.cmd_assert_async")
+    async def test_manifest_tool_adds_quay_host_compat_entry(self, cmd_assert_async: mock.AsyncMock):
+        captured_auth = {}
+
+        async def _capture_auth(cmd):
+            self.assertEqual(cmd[0], "manifest-tool")
+            self.assertTrue(cmd[1].startswith("--docker-cfg="))
+            compat_auth_file = cmd[1].split("=", 1)[1]
+            with open(compat_auth_file, encoding="utf-8") as f:
+                captured_auth.update(json.load(f))
+
+        cmd_assert_async.side_effect = _capture_auth
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            auth_file = f"{temp_dir}/auth.json"
+            manifest_spec = f"{temp_dir}/manifest-list.yaml"
+            with open(auth_file, "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "auths": {
+                            "quay.io/openshift-release-dev": {
+                                "auth": "Zm9vOmJhcg==",
+                            }
+                        }
+                    },
+                    f,
+                )
+            with open(manifest_spec, "w", encoding="utf-8") as f:
+                f.write("image: quay.io/openshift-release-dev/ocp-v4.0-art-dev:test-tag\n")
+
+            await exectools.manifest_tool(
+                ["push", "from-spec", "--", manifest_spec],
+                auth_file=auth_file,
+            )
+
+        self.assertEqual(captured_auth["auths"]["quay.io"], {"auth": "Zm9vOmJhcg=="})
+        self.assertEqual(captured_auth["auths"]["quay.io/openshift-release-dev"], {"auth": "Zm9vOmJhcg=="})
+
+    @mock.patch("artcommonlib.exectools.cmd_assert_async")
+    async def test_manifest_tool_selects_best_matching_repo_cred(self, cmd_assert_async: mock.AsyncMock):
+        captured_auth = {}
+
+        async def _capture_auth(cmd):
+            compat_auth_file = cmd[1].split("=", 1)[1]
+            with open(compat_auth_file, encoding="utf-8") as f:
+                captured_auth.update(json.load(f))
+
+        cmd_assert_async.side_effect = _capture_auth
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            auth_file = f"{temp_dir}/auth.json"
+            manifest_spec = f"{temp_dir}/manifest-list.yaml"
+            with open(auth_file, "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "auths": {
+                            "quay.io/redhat-user-workloads/ocp-art-tenant/art-images": {
+                                "auth": "YXJ0OnRva2Vu",
+                            },
+                            "quay.io/openshift-release-dev": {
+                                "auth": "cmVsZWFzZTpkZXY=",
+                            },
+                        }
+                    },
+                    f,
+                )
+            with open(manifest_spec, "w", encoding="utf-8") as f:
+                f.write("image: quay.io/redhat-user-workloads/ocp-art-tenant/art-images:test-tag\n")
+
+            await exectools.manifest_tool(
+                ["push", "from-spec", "--", manifest_spec],
+                auth_file=auth_file,
+            )
+
+        self.assertEqual(captured_auth["auths"]["quay.io"], {"auth": "YXJ0OnRva2Vu"})
+
+    @mock.patch("artcommonlib.exectools.cmd_assert_async")
+    async def test_manifest_tool_reuses_cached_compat_auth_file(self, cmd_assert_async: mock.AsyncMock):
+        compat_paths = []
+
+        async def _capture_auth(cmd):
+            compat_paths.append(cmd[1].split("=", 1)[1])
+
+        cmd_assert_async.side_effect = _capture_auth
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            auth_file = f"{temp_dir}/auth.json"
+            manifest_spec = f"{temp_dir}/manifest-list.yaml"
+            with open(auth_file, "w", encoding="utf-8") as f:
+                json.dump({"auths": {"quay.io/openshift-release-dev": {"auth": "Zm9vOmJhcg=="}}}, f)
+            with open(manifest_spec, "w", encoding="utf-8") as f:
+                f.write("image: quay.io/openshift-release-dev/ocp-v4.0-art-dev:test-tag\n")
+
+            await exectools.manifest_tool(["push", "from-spec", "--", manifest_spec], auth_file=auth_file)
+            await exectools.manifest_tool(["push", "from-spec", "--", manifest_spec], auth_file=auth_file)
+
+        self.assertEqual(len(compat_paths), 2)
+        self.assertEqual(compat_paths[0], compat_paths[1])
 
     def test_parallel_exec(self):
         items = [1, 2, 3]

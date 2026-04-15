@@ -1,13 +1,16 @@
 import asyncio
+import atexit
 import concurrent.futures
 import contextvars
 import errno
 import functools
+import json
 import os
 import platform
 import shlex
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import traceback
@@ -21,6 +24,7 @@ from typing import Awaitable, Callable, Dict, List, Optional, Tuple, TypeVar, Un
 from urllib.request import urlopen
 
 import tenacity
+import yaml
 from artcommonlib import logutil
 from artcommonlib.format_util import green_print, yellow_print
 from artcommonlib.pushd import Dir
@@ -36,6 +40,9 @@ logger = logutil.get_logger(__name__)
 TRACER = trace.get_tracer(__name__)
 
 _SENSITIVE_ENV_KEY_PATTERNS = frozenset({'PASSWORD', 'TOKEN', 'SECRET', 'KEY', 'CREDENTIAL'})
+_MANIFEST_TOOL_AUTH_CACHE_LOCK = threading.Lock()
+_MANIFEST_TOOL_AUTH_CACHE: Dict[Tuple[str, int, str], str] = {}
+_MANIFEST_TOOL_AUTH_TEMP_FILES: set[str] = set()
 
 
 def _redact_env_for_logging(env_dict: Dict[str, str]) -> Dict[str, str]:
@@ -45,6 +52,144 @@ def _redact_env_for_logging(env_dict: Dict[str, str]) -> Dict[str, str]:
         k: '***REDACTED***' if any(p in upper_key_cache[k] for p in _SENSITIVE_ENV_KEY_PATTERNS) else v
         for k, v in env_dict.items()
     }
+
+
+def _cleanup_manifest_tool_auth_temp_files():
+    with _MANIFEST_TOOL_AUTH_CACHE_LOCK:
+        temp_files = list(_MANIFEST_TOOL_AUTH_TEMP_FILES)
+        _MANIFEST_TOOL_AUTH_TEMP_FILES.clear()
+        _MANIFEST_TOOL_AUTH_CACHE.clear()
+
+    for temp_path in temp_files:
+        try:
+            os.unlink(temp_path)
+        except FileNotFoundError:
+            pass
+
+
+atexit.register(_cleanup_manifest_tool_auth_temp_files)
+
+
+@contextmanager
+def manifest_tool_auth_file(auth_file: Optional[str], options: Optional[Union[List[str], str]] = None):
+    """Yield an auth file path compatible with manifest-tool's host lookup."""
+    if not auth_file:
+        yield None
+        return
+
+    try:
+        with open(auth_file, encoding="utf-8") as f:
+            auth_config = json.load(f)
+    except (FileNotFoundError, OSError, json.JSONDecodeError) as e:
+        logger.warning("Unable to inspect manifest-tool auth file %s: %s", auth_file, e)
+        yield auth_file
+        return
+
+    auths = auth_config.get("auths")
+    if not isinstance(auths, dict):
+        yield auth_file
+        return
+
+    aliases = _manifest_tool_auth_aliases(auths, options)
+    if not aliases:
+        yield auth_file
+        return
+
+    try:
+        auth_stat = os.stat(auth_file)
+    except OSError as e:
+        logger.warning("Unable to stat manifest-tool auth file %s: %s", auth_file, e)
+        yield auth_file
+        return
+
+    cache_key = (auth_file, auth_stat.st_mtime_ns, json.dumps(aliases, sort_keys=True))
+
+    with _MANIFEST_TOOL_AUTH_CACHE_LOCK:
+        cached_path = _MANIFEST_TOOL_AUTH_CACHE.get(cache_key)
+        if cached_path and os.path.exists(cached_path):
+            yield cached_path
+            return
+
+        compat_config = dict(auth_config)
+        compat_auths = dict(auths)
+        compat_auths.update(aliases)
+        compat_config["auths"] = compat_auths
+
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", suffix=".json", delete=False) as tmp:
+            json.dump(compat_config, tmp)
+            tmp.flush()
+            temp_path = tmp.name
+
+        _MANIFEST_TOOL_AUTH_CACHE[cache_key] = temp_path
+        _MANIFEST_TOOL_AUTH_TEMP_FILES.add(temp_path)
+
+    logger.info("Created cached manifest-tool auth compatibility file for host lookup: %s", ", ".join(sorted(aliases)))
+    yield temp_path
+
+
+def _manifest_tool_auth_aliases(
+    auths: Dict[str, Dict[str, str]], options: Optional[Union[List[str], str]]
+) -> Dict[str, Dict[str, str]]:
+    target_image = _manifest_tool_target_image(options)
+    if not target_image:
+        return {}
+
+    image_name = target_image.split("@", 1)[0]
+    last_slash = image_name.rfind("/")
+    last_colon = image_name.rfind(":")
+    if last_colon > last_slash:
+        image_name = image_name[:last_colon]
+
+    if "/" not in image_name:
+        return {}
+
+    host, _, _ = image_name.partition("/")
+    if auths.get(host):
+        return {}
+
+    candidate = max(
+        (key for key in auths if key.startswith(f"{host}/") and image_name.startswith(key)),
+        key=len,
+        default=None,
+    )
+    if not candidate:
+        return {}
+
+    return {host: auths[candidate]}
+
+
+def _manifest_tool_target_image(options: Optional[Union[List[str], str]]) -> Optional[str]:
+    spec_path = _manifest_tool_spec_path(options)
+    if not spec_path:
+        return None
+
+    try:
+        with open(spec_path, encoding="utf-8") as f:
+            spec = yaml.safe_load(f)
+    except (FileNotFoundError, OSError, yaml.YAMLError) as e:
+        logger.warning("Unable to inspect manifest-tool spec %s: %s", spec_path, e)
+        return None
+
+    if not isinstance(spec, dict):
+        return None
+    image = spec.get("image")
+    return image if isinstance(image, str) else None
+
+
+def _manifest_tool_spec_path(options: Optional[Union[List[str], str]]) -> Optional[str]:
+    if isinstance(options, str):
+        tokens = shlex.split(options)
+    elif isinstance(options, list):
+        tokens = options
+    else:
+        return None
+
+    if len(tokens) < 3 or tokens[0] != "push" or tokens[1] != "from-spec":
+        return None
+
+    if tokens[2] == "--":
+        return tokens[3] if len(tokens) > 3 else None
+    return tokens[2]
 
 
 F = TypeVar('F', bound=Callable[..., Awaitable])
@@ -510,27 +655,28 @@ def unpack_tuple_args(func):
 
 @tenacity.retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(60))
 async def manifest_tool(options, dry_run=False, auth_file: Optional[str] = None):
-    auth_opt = ""
-    if auth_file:
-        auth_opt = f"--docker-cfg={auth_file}"
+    with manifest_tool_auth_file(auth_file, options) as manifest_auth_file:
+        auth_opt = ""
+        if manifest_auth_file:
+            auth_opt = f"--docker-cfg={manifest_auth_file}"
 
-    if isinstance(options, str):
-        cmd = f'manifest-tool {auth_opt} {options}' if auth_opt else f'manifest-tool {options}'
+        if isinstance(options, str):
+            cmd = f'manifest-tool {auth_opt} {options}' if auth_opt else f'manifest-tool {options}'
 
-    elif isinstance(options, list):
-        cmd = ['manifest-tool']
-        if auth_opt:
-            cmd.append(auth_opt)
-        cmd.extend(options)
+        elif isinstance(options, list):
+            cmd = ['manifest-tool']
+            if auth_opt:
+                cmd.append(auth_opt)
+            cmd.extend(options)
 
-    else:
-        raise ValueError('Invalid type for manifest-tool options provided')
+        else:
+            raise ValueError('Invalid type for manifest-tool options provided')
 
-    if dry_run:
-        logger.warning("[DRY RUN] Would have run %s", cmd)
-        return
+        if dry_run:
+            logger.warning("[DRY RUN] Would have run %s", cmd)
+            return
 
-    await cmd_assert_async(cmd)
+        await cmd_assert_async(cmd)
 
 
 @start_as_current_span_async(TRACER, "cmd_gather_async")
