@@ -2056,3 +2056,51 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
                 }
             },
         )
+
+    @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
+    @patch("pyartcd.pipelines.promote.exectools.cmd_assert_async")
+    @patch("pyartcd.pipelines.promote.manifest_tool")
+    async def test_push_manifest_list_uses_quay_auth_file(
+        self, manifest_tool: AsyncMock, cmd_assert_async: AsyncMock, _
+    ):
+        runtime = MagicMock(
+            config={
+                "build_config": {
+                    "ocp_build_data_url": "https://example.com/ocp-build-data.git",
+                },
+                "jira": {
+                    "url": JIRA_SERVER_URL,
+                },
+            },
+            dry_run=False,
+            logger=MagicMock(),
+            new_slack_client=MagicMock(return_value=AsyncMock()),
+            new_mail_client=MagicMock(),
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            runtime.working_dir = Path(temp_dir)
+            pipeline = PromotePipeline(runtime, group="openshift-4.10", assembly="4.10.99", signing_env="prod")
+            with patch.dict(os.environ, {"QUAY_AUTH_FILE": "/tmp/quay-auth.json", "XDG_RUNTIME_DIR": "/run/user/984"}):
+                await pipeline.push_manifest_list("4.10.99", {"schemaVersion": 2})
+
+            manifest_tool.assert_awaited_once_with(
+                ["push", "from-spec", "--", str(Path(temp_dir) / "4.10.99.manifest-list.yaml")],
+                False,
+                auth_file="/tmp/quay-auth.json",
+            )
+            cmd_assert_async.assert_awaited_once()
+            self.assertEqual(
+                cmd_assert_async.await_args.kwargs["env"]["QUAY_AUTH_FILE"],
+                "/tmp/quay-auth.json",
+            )
+            self.assertEqual(
+                cmd_assert_async.await_args.args[0],
+                [
+                    "manifest-tool",
+                    "--docker-cfg=/tmp/quay-auth.json",
+                    "push",
+                    "from-spec",
+                    "--",
+                    str(Path(temp_dir) / "4.10.99.manifest-list.yaml"),
+                ],
+            )

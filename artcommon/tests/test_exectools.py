@@ -228,6 +228,54 @@ class TestExectools(IsolatedAsyncioTestCase):
             create_subprocess_exec.assert_awaited_once_with(*cmd, cwd=fake_cwd)
             self.assertEqual(rc, 0)
 
+    @mock.patch("artcommonlib.exectools.cmd_assert_async")
+    async def test_manifest_tool_uses_explicit_auth_file(self, cmd_assert_async: mock.AsyncMock):
+        await exectools.manifest_tool(
+            ["push", "from-spec", "--", "/tmp/manifest-list.yaml"],
+            auth_file="/tmp/quay-auth.json",
+        )
+
+        cmd_assert_async.assert_awaited_once_with(
+            ["manifest-tool", "--docker-cfg=/tmp/quay-auth.json", "push", "from-spec", "--", "/tmp/manifest-list.yaml"]
+        )
+
+    @mock.patch("artcommonlib.exectools.cmd_assert_async")
+    async def test_manifest_tool_ignores_xdg_runtime_auth_file(self, cmd_assert_async: mock.AsyncMock):
+        with mock.patch.dict(exectools.os.environ, {"XDG_RUNTIME_DIR": "/run/user/984"}, clear=True):
+            await exectools.manifest_tool(["push", "from-spec", "--", "/tmp/manifest-list.yaml"])
+
+        cmd_assert_async.assert_awaited_once_with(
+            ["manifest-tool", "push", "from-spec", "--", "/tmp/manifest-list.yaml"]
+        )
+
+    @mock.patch("artcommonlib.exectools.cmd_assert_async")
+    async def test_manifest_tool_uses_explicit_auth_file_over_env(self, cmd_assert_async: mock.AsyncMock):
+        with mock.patch.dict(exectools.os.environ, {"QUAY_AUTH_FILE": "/tmp/env-auth.json"}, clear=True):
+            await exectools.manifest_tool(
+                ["push", "from-spec", "--", "/tmp/manifest-list.yaml"],
+                auth_file="/tmp/explicit-auth.json",
+            )
+
+        cmd_assert_async.assert_awaited_once_with(
+            [
+                "manifest-tool",
+                "--docker-cfg=/tmp/explicit-auth.json",
+                "push",
+                "from-spec",
+                "--",
+                "/tmp/manifest-list.yaml",
+            ]
+        )
+
+    @mock.patch("artcommonlib.exectools.cmd_assert_async")
+    async def test_manifest_tool_ignores_quay_auth_file_env(self, cmd_assert_async: mock.AsyncMock):
+        with mock.patch.dict(exectools.os.environ, {"QUAY_AUTH_FILE": "/tmp/env-auth.json"}, clear=True):
+            await exectools.manifest_tool(["push", "from-spec", "--", "/tmp/manifest-list.yaml"])
+
+        cmd_assert_async.assert_awaited_once_with(
+            ["manifest-tool", "push", "from-spec", "--", "/tmp/manifest-list.yaml"]
+        )
+
     def test_parallel_exec(self):
         items = [1, 2, 3]
         results = exectools.parallel_exec(lambda k, v: k, items, n_threads=4)

@@ -867,29 +867,33 @@ spec:
     @patch("artcommonlib.exectools.cmd_assert_async")
     @patch("aiofiles.open")
     async def test_create_multi_manifest_list(self, open_mock, exec_mock, fmlsha_mock):
-        os.environ['XDG_RUNTIME_DIR'] = 'fake'
-        runtime = MagicMock(uuid="uuid")
-        gpcli = rgp_cli.GenPayloadCli(runtime, output_dir="/tmp", organization="org", repository="repo")
+        with patch.dict(os.environ, {"QUAY_AUTH_FILE": "/tmp/quay-auth.json"}, clear=True):
+            runtime = MagicMock(uuid="uuid")
+            gpcli = rgp_cli.GenPayloadCli(runtime, output_dir="/tmp", organization="org", repository="repo")
 
-        buffer = io.StringIO()
-        open_mock.return_value.__aenter__.return_value.write = AsyncMock(side_effect=lambda s: buffer.write(s))
-        exec_mock.return_value = None  # do not actually run the command
-        fmlsha_mock.return_value = "sha256:abcdef"
+            buffer = io.StringIO()
+            open_mock.return_value.__aenter__.return_value.write = AsyncMock(side_effect=lambda s: buffer.write(s))
+            exec_mock.return_value = None  # do not actually run the command
+            fmlsha_mock.return_value = "sha256:abcdef"
 
-        arch_to_payload_entry = dict(
-            s390x=rgp_cli.PayloadEntry(
-                issues=[],
-                dest_pullspec="quay.io/org/repo:eggs-s390x",
-            ),
-            ppc64le=rgp_cli.PayloadEntry(
-                issues=[],
-                dest_pullspec="quay.io/org/repo:eggs-ppc64le",
-            ),
-        )
-        await gpcli.create_multi_manifest_list("spam", arch_to_payload_entry, "ocp-multi")
+            arch_to_payload_entry = dict(
+                s390x=rgp_cli.PayloadEntry(
+                    issues=[],
+                    dest_pullspec="quay.io/org/repo:eggs-s390x",
+                ),
+                ppc64le=rgp_cli.PayloadEntry(
+                    issues=[],
+                    dest_pullspec="quay.io/org/repo:eggs-ppc64le",
+                ),
+            )
+            await gpcli.create_multi_manifest_list("spam", arch_to_payload_entry, "ocp-multi")
+
         self.assertEqual(
-            exec_mock.call_args[0][0], "manifest-tool  push from-spec /tmp/ocp-multi.spam.manifest-list.yaml"
+            exec_mock.call_args[0][0],
+            "manifest-tool --docker-cfg=/tmp/quay-auth.json push from-spec /tmp/ocp-multi.spam.manifest-list.yaml",
         )
+        fmlsha_mock.assert_awaited_once()
+        self.assertEqual(fmlsha_mock.await_args.kwargs["registry_config"], "/tmp/quay-auth.json")
         ml = yaml.safe_load(buffer.getvalue())
         self.assertRegex(ml["image"], r"^quay.io/org/repo:sha256-")
         self.assertEqual(len(ml["manifests"]), 2)
@@ -927,21 +931,26 @@ spec:
     async def test_create_multi_release_manifest_list(
         self, open_mock, exec_mock, mirror_payload_content_mock, fmlsha_mock
     ):
-        os.environ['XDG_RUNTIME_DIR'] = 'fake'
-        gpcli = rgp_cli.GenPayloadCli(output_dir="/tmp")
+        with patch.dict(os.environ, {"QUAY_AUTH_FILE": "/tmp/quay-auth.json"}, clear=True):
+            gpcli = rgp_cli.GenPayloadCli(output_dir="/tmp")
 
-        exec_mock.return_value = None  # do not actually execute command
-        buffer = io.StringIO()
-        open_mock.return_value.__aenter__.return_value.write = AsyncMock(side_effect=lambda s: buffer.write(s))
-        fmlsha_mock.return_value = "sha256:abcdef"
+            exec_mock.return_value = None  # do not actually execute command
+            buffer = io.StringIO()
+            open_mock.return_value.__aenter__.return_value.write = AsyncMock(side_effect=lambda s: buffer.write(s))
+            fmlsha_mock.return_value = "sha256:abcdef"
 
-        pullspec = await gpcli.create_multi_release_manifest_list(
-            arch_release_dests=dict(x86_64="pullspec:x86"),
-            imagestream_name="isname",
-            multi_release_dest="quay.io/org/repo:spam",
-        )
+            pullspec = await gpcli.create_multi_release_manifest_list(
+                arch_release_dests=dict(x86_64="pullspec:x86"),
+                imagestream_name="isname",
+                multi_release_dest="quay.io/org/repo:spam",
+            )
         self.assertEqual(pullspec, "quay.io/org/repo@sha256:abcdef")
-        self.assertEqual(exec_mock.call_args[0][0], "manifest-tool  push from-spec /tmp/isname.manifest-list.yaml")
+        self.assertEqual(
+            exec_mock.call_args[0][0],
+            "manifest-tool --docker-cfg=/tmp/quay-auth.json push from-spec /tmp/isname.manifest-list.yaml",
+        )
+        fmlsha_mock.assert_awaited_once()
+        self.assertEqual(fmlsha_mock.await_args.kwargs["registry_config"], "/tmp/quay-auth.json")
         self.assertEqual(
             buffer.getvalue().strip(),
             """
