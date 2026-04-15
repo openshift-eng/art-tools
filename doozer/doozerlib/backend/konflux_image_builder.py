@@ -448,12 +448,27 @@ class KonfluxImageBuilder:
         :param distgit_key: The distgit key for logging purposes
         :raises: Exception if validation fails
         """
-        # Get SLA attestation from konflux. The command will error out if it cannot find it.
-        attestation = await fetch_slsa_attestation(
-            image_pullspec=image_pullspec,
-            build_name=distgit_key,
-            registry_auth_file=self._config.registry_auth_file,
-        )
+        # Attestation may not be immediately available after build completion due to
+        # signing/attestation propagation delays. Retry with wait to allow time.
+        max_attempts = 5
+        wait_seconds = 60
+        attestation = None
+
+        for attempt in range(1, max_attempts + 1):
+            attestation = await fetch_slsa_attestation(
+                image_pullspec=image_pullspec,
+                build_name=distgit_key,
+                registry_auth_file=self._config.registry_auth_file,
+            )
+            if attestation:
+                break
+            if attempt < max_attempts:
+                LOGGER.warning(
+                    "SLSA attestation not yet available for %s, retrying in %ds (attempt %d/%d)",
+                    distgit_key, wait_seconds, attempt, max_attempts,
+                )
+                await asyncio.sleep(wait_seconds)
+
         if not attestation:
             raise ValueError("SLSA attestation cannot be empty")
 
