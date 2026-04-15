@@ -141,6 +141,7 @@ def uses_ssh(data):
 def has_permitted_repo(data):
     permitted = [
         'redhat-cne/cloud-event-proxy',  # max version 4.12
+        'redhat-cne/downstream-ptp-operator-monorepo',  # max version 4.12
         'operator-framework/operator-lifecycle-manager',  # max version 4.7 3.11
         'operator-framework/operator-marketplace',  # max version 4.19
         'openshift/jenkins',  # max version 3.11
