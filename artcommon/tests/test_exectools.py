@@ -7,6 +7,7 @@ import asyncio
 import json
 import logging
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -238,7 +239,9 @@ class TestExectools(IsolatedAsyncioTestCase):
         )
 
         cmd_assert_async.assert_awaited_once_with(
-            ["manifest-tool", "--docker-cfg=/tmp/quay-auth.json", "push", "from-spec", "--", "/tmp/manifest-list.yaml"]
+            ["manifest-tool", "--docker-cfg=/tmp/quay-auth.json", "push", "from-spec", "--", "/tmp/manifest-list.yaml"],
+            stdout=sys.stderr,
+            stderr=sys.stderr,
         )
 
     @mock.patch("artcommonlib.exectools.cmd_assert_async")
@@ -247,7 +250,9 @@ class TestExectools(IsolatedAsyncioTestCase):
             await exectools.manifest_tool(["push", "from-spec", "--", "/tmp/manifest-list.yaml"])
 
         cmd_assert_async.assert_awaited_once_with(
-            ["manifest-tool", "push", "from-spec", "--", "/tmp/manifest-list.yaml"]
+            ["manifest-tool", "push", "from-spec", "--", "/tmp/manifest-list.yaml"],
+            stdout=sys.stderr,
+            stderr=sys.stderr,
         )
 
     @mock.patch("artcommonlib.exectools.cmd_assert_async")
@@ -266,7 +271,9 @@ class TestExectools(IsolatedAsyncioTestCase):
                 "from-spec",
                 "--",
                 "/tmp/manifest-list.yaml",
-            ]
+            ],
+            stdout=sys.stderr,
+            stderr=sys.stderr,
         )
 
     @mock.patch("artcommonlib.exectools.cmd_assert_async")
@@ -275,14 +282,16 @@ class TestExectools(IsolatedAsyncioTestCase):
             await exectools.manifest_tool(["push", "from-spec", "--", "/tmp/manifest-list.yaml"])
 
         cmd_assert_async.assert_awaited_once_with(
-            ["manifest-tool", "push", "from-spec", "--", "/tmp/manifest-list.yaml"]
+            ["manifest-tool", "push", "from-spec", "--", "/tmp/manifest-list.yaml"],
+            stdout=sys.stderr,
+            stderr=sys.stderr,
         )
 
     @mock.patch("artcommonlib.exectools.cmd_assert_async")
     async def test_manifest_tool_adds_quay_host_compat_entry(self, cmd_assert_async: mock.AsyncMock):
         captured_auth = {}
 
-        async def _capture_auth(cmd):
+        async def _capture_auth(cmd, **_kwargs):
             self.assertEqual(cmd[0], "manifest-tool")
             self.assertTrue(cmd[1].startswith("--docker-cfg="))
             compat_auth_file = cmd[1].split("=", 1)[1]
@@ -320,7 +329,7 @@ class TestExectools(IsolatedAsyncioTestCase):
     async def test_manifest_tool_selects_best_matching_repo_cred(self, cmd_assert_async: mock.AsyncMock):
         captured_auth = {}
 
-        async def _capture_auth(cmd):
+        async def _capture_auth(cmd, **_kwargs):
             compat_auth_file = cmd[1].split("=", 1)[1]
             with open(compat_auth_file, encoding="utf-8") as f:
                 captured_auth.update(json.load(f))
@@ -358,7 +367,7 @@ class TestExectools(IsolatedAsyncioTestCase):
     async def test_manifest_tool_reuses_cached_compat_auth_file(self, cmd_assert_async: mock.AsyncMock):
         compat_paths = []
 
-        async def _capture_auth(cmd):
+        async def _capture_auth(cmd, **_kwargs):
             compat_paths.append(cmd[1].split("=", 1)[1])
 
         cmd_assert_async.side_effect = _capture_auth

@@ -676,7 +676,7 @@ async def manifest_tool(options, dry_run=False, auth_file: Optional[str] = None)
             logger.warning("[DRY RUN] Would have run %s", cmd)
             return
 
-        await cmd_assert_async(cmd)
+        await cmd_assert_async(cmd, stdout=sys.stderr, stderr=sys.stderr)
 
 
 @start_as_current_span_async(TRACER, "cmd_gather_async")
