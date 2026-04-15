@@ -680,7 +680,9 @@ async def manifest_tool(options, dry_run=False, auth_file: Optional[str] = None)
 
 
 @start_as_current_span_async(TRACER, "cmd_gather_async")
-async def cmd_gather_async(cmd: Union[List[str], str], check: bool = True, **kwargs) -> Tuple[Optional[int], str, str]:
+async def cmd_gather_async(
+    cmd: Union[List[str], str], check: bool = True, timeout: Optional[float] = None, **kwargs
+) -> Tuple[Optional[int], str, str]:
     """Runs a command asynchronously and returns rc,stdout,stderr as a tuple
     :param cmd <string|list>: A shell command
     :param check: If check is True and the exit code was non-zero, it raises a ChildProcessError
@@ -730,7 +732,13 @@ async def cmd_gather_async(cmd: Union[List[str], str], check: bool = True, **kwa
     proc = await asyncio.subprocess.create_subprocess_exec(cmd_list[0], *cmd_list[1:], **kwargs)
     span.set_attribute("process.pid", proc.pid)
 
-    stdout, stderr = await proc.communicate()
+    try:
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        logger.warning("Command timed out after %ss: %s", timeout, " ".join(cmd_list))
+        proc.kill()
+        await proc.wait()
+        raise ChildProcessError(f"Process {cmd_list!r} timed out after {timeout} seconds.")
     duration_seconds = time.time() - start_time
 
     stdout = stdout.decode() if stdout else ""

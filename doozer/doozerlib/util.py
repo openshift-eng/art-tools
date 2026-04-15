@@ -545,9 +545,11 @@ def get_release_calc_previous(
 
 
 async def find_manifest_list_sha(pullspec, registry_config: str = None):
+    logger.info("Resolving manifest list digest for %s", pullspec)
     image_data = await oc_image_info_for_arch_async(pullspec, registry_config=registry_config)
     if 'listDigest' not in image_data:
         raise ValueError('Specified image is not a manifest-list.')
+    logger.info("Resolved manifest list digest for %s: %s", pullspec, image_data['listDigest'])
     return image_data['listDigest']
 
 
