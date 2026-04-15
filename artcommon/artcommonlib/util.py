@@ -32,7 +32,7 @@ from artcommonlib.oc_image_info import (
 from artcommonlib.release_util import isolate_el_version_in_release
 from ruamel.yaml import YAML
 from semver import VersionInfo
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
+from tenacity import before_sleep_log, retry, retry_if_exception_type, stop_after_attempt, wait_fixed
 
 LOGGER = logging.getLogger(__name__)
 KONFLUX_LOGGER = logutil.get_logger(__name__)
@@ -637,7 +637,13 @@ def detect_package_managers(metadata, dest_dir: Path):
     return pkg_managers
 
 
-@retry(reraise=True, wait=wait_fixed(10), stop=stop_after_attempt(3))
+@retry(
+    reraise=True,
+    retry=retry_if_exception_type(ChildProcessError),
+    wait=wait_fixed(30),
+    stop=stop_after_attempt(10),
+    before_sleep=before_sleep_log(LOGGER, logging.WARNING),
+)
 async def get_konflux_data(pullspec: str, mode: str = "attestation", registry_auth_file: Optional[str] = None) -> str:
     """
     Retrieve Konflux data (attestation or signature) for a given pullspec.
@@ -683,7 +689,7 @@ async def fetch_slsa_attestation(
         return json.loads(base64.b64decode(json.loads(attestation)["payload"]).decode("utf-8"))
 
     except ChildProcessError:
-        LOGGER.warning(f'Failed to fetch SLSA attestation for {build_name}')
+        LOGGER.warning('Failed to fetch SLSA attestation for %s (%s) after all retries', build_name, image_pullspec)
         return None
 
     except (JSONDecodeError, Exception) as e:
