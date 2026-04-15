@@ -686,10 +686,6 @@ async def fetch_slsa_attestation(
         LOGGER.warning(f'Failed to fetch SLSA attestation for {build_name}')
         return None
 
-    except (JSONDecodeError, Exception) as e:
-        LOGGER.warning('Failed to parse SLSA attestation for %s: %s', build_name, e)
-        return None
-
 
 async def _oc_image_mirror(cmd: list, description: str, timeout: int = 1800):
     """Run oc image mirror, streaming output and logging only summary/error lines."""

@@ -658,9 +658,13 @@ class ConfigScanSources:
         build_record = self.latest_image_build_records_map[image_meta.distgit_key]
 
         # Fetch the SLSA attestation for the latest build
-        attestation = await fetch_slsa_attestation(
-            build_record.image_pullspec, build_record.name, self.registry_auth_file
-        )
+        try:
+            attestation = await fetch_slsa_attestation(
+                build_record.image_pullspec, build_record.name, self.registry_auth_file
+            )
+        except Exception as e:
+            self.logger.warning('Failed to parse SLSA attestation for %s: %s', image_meta.distgit_key, e)
+            attestation = None
         if not attestation:
             self.logger.warning('Skipping network mode check for %s', image_meta.distgit_key)
             return
@@ -1177,9 +1181,13 @@ class ConfigScanSources:
         build_record = self.latest_image_build_records_map[image_meta.distgit_key]
 
         # Fetch SLSA attestation
-        attestation = await fetch_slsa_attestation(
-            build_record.image_pullspec, build_record.name, self.registry_auth_file
-        )
+        try:
+            attestation = await fetch_slsa_attestation(
+                build_record.image_pullspec, build_record.name, self.registry_auth_file
+            )
+        except Exception as e:
+            self.logger.warning('Failed to parse SLSA attestation for %s: %s', image_meta.distgit_key, e)
+            attestation = None
         if not attestation:
             self.logger.warning('Skipping task bundle check for %s', image_meta.distgit_key)
             return
