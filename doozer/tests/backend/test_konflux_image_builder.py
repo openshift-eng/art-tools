@@ -109,67 +109,69 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         ):
             await self.builder.build(metadata)
 
-        mock_validate.assert_awaited_once_with("quay.io/test/image@sha256:testdigest", "test-image")
+        # TODO: Re-enable once cosign attestation validation is re-enabled
+        # mock_validate.assert_awaited_once_with("quay.io/test/image@sha256:testdigest", "test-image")
 
-    async def test_build_skips_slsa_validation_for_non_ocp_groups(self):
-        """Test that SLSA attestation validation is skipped for non-OCP groups like OKD."""
-        # Create a builder with an OKD group name
-        okd_builder = KonfluxImageBuilder(
-            KonfluxImageBuilderConfig(
-                base_dir=Path(self.temp_dir.name),
-                group_name="okd-4.17",
-                namespace="test-namespace",
-                plr_template="test-template",
-                build_priority="5",
-            )
-        )
-
-        metadata = self._metadata()
-        dest_dir = okd_builder._config.base_dir.joinpath(metadata.qualified_key)
-        dest_dir.mkdir(parents=True)
-
-        build_repo = MagicMock()
-        build_repo.local_dir = dest_dir
-        build_repo.url = "https://github.com/test/okd-repo.git"
-        build_repo.commit_hash = "test-okd-commit"
-
-        initial_pipelinerun = MagicMock()
-        initial_pipelinerun.name = "test-pipelinerun"
-        initial_pipelinerun.to_dict.return_value = {"metadata": {"name": "test-pipelinerun"}}
-
-        completed_pipelinerun = MagicMock()
-        completed_pipelinerun.name = "test-pipelinerun"
-        completed_pipelinerun.find_condition.return_value = {"status": "True"}
-        completed_pipelinerun.to_dict.return_value = {
-            "metadata": {"name": "test-pipelinerun"},
-            "status": {
-                "results": [
-                    {"name": "IMAGE_URL", "value": "quay.io/test/okd-image:test-tag"},
-                    {"name": "IMAGE_DIGEST", "value": "sha256:okddigest"},
-                ]
-            },
-        }
-        self.mock_konflux_client.wait_for_pipelinerun = AsyncMock(return_value=completed_pipelinerun)
-
-        with (
-            patch(
-                "doozerlib.backend.konflux_image_builder.BuildRepo.from_local_dir",
-                new=AsyncMock(return_value=build_repo),
-            ),
-            patch.object(okd_builder, "_parse_dockerfile", return_value=("test-uuid", "test-component", "1.0", "1")),
-            patch.object(okd_builder, "_wait_for_parent_members", new=AsyncMock(return_value=[])),
-            patch.object(okd_builder, "_start_build", new=AsyncMock(return_value=initial_pipelinerun)),
-            patch.object(okd_builder, "update_konflux_db", new=AsyncMock(return_value=MagicMock(record_id="1"))),
-            patch.object(okd_builder, "_validate_build_attestation_and_signature", new=AsyncMock()) as mock_validate,
-            patch(
-                "doozerlib.backend.konflux_image_builder.KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition",
-                return_value=KonfluxBuildOutcome.SUCCESS,
-            ),
-        ):
-            await okd_builder.build(metadata)
-
-        # Validation should NOT be called for OKD groups
-        mock_validate.assert_not_awaited()
+    # TODO: Re-enable once cosign attestation validation is re-enabled
+    # async def test_build_skips_slsa_validation_for_non_ocp_groups(self):
+    #     """Test that SLSA attestation validation is skipped for non-OCP groups like OKD."""
+    #     # Create a builder with an OKD group name
+    #     okd_builder = KonfluxImageBuilder(
+    #         KonfluxImageBuilderConfig(
+    #             base_dir=Path(self.temp_dir.name),
+    #             group_name="okd-4.17",
+    #             namespace="test-namespace",
+    #             plr_template="test-template",
+    #             build_priority="5",
+    #         )
+    #     )
+    #
+    #     metadata = self._metadata()
+    #     dest_dir = okd_builder._config.base_dir.joinpath(metadata.qualified_key)
+    #     dest_dir.mkdir(parents=True)
+    #
+    #     build_repo = MagicMock()
+    #     build_repo.local_dir = dest_dir
+    #     build_repo.url = "https://github.com/test/okd-repo.git"
+    #     build_repo.commit_hash = "test-okd-commit"
+    #
+    #     initial_pipelinerun = MagicMock()
+    #     initial_pipelinerun.name = "test-pipelinerun"
+    #     initial_pipelinerun.to_dict.return_value = {"metadata": {"name": "test-pipelinerun"}}
+    #
+    #     completed_pipelinerun = MagicMock()
+    #     completed_pipelinerun.name = "test-pipelinerun"
+    #     completed_pipelinerun.find_condition.return_value = {"status": "True"}
+    #     completed_pipelinerun.to_dict.return_value = {
+    #         "metadata": {"name": "test-pipelinerun"},
+    #         "status": {
+    #             "results": [
+    #                 {"name": "IMAGE_URL", "value": "quay.io/test/okd-image:test-tag"},
+    #                 {"name": "IMAGE_DIGEST", "value": "sha256:okddigest"},
+    #             ]
+    #         },
+    #     }
+    #     self.mock_konflux_client.wait_for_pipelinerun = AsyncMock(return_value=completed_pipelinerun)
+    #
+    #     with (
+    #         patch(
+    #             "doozerlib.backend.konflux_image_builder.BuildRepo.from_local_dir",
+    #             new=AsyncMock(return_value=build_repo),
+    #         ),
+    #         patch.object(okd_builder, "_parse_dockerfile", return_value=("test-uuid", "test-component", "1.0", "1")),
+    #         patch.object(okd_builder, "_wait_for_parent_members", new=AsyncMock(return_value=[])),
+    #         patch.object(okd_builder, "_start_build", new=AsyncMock(return_value=initial_pipelinerun)),
+    #         patch.object(okd_builder, "update_konflux_db", new=AsyncMock(return_value=MagicMock(record_id="1"))),
+    #         patch.object(okd_builder, "_validate_build_attestation_and_signature", new=AsyncMock()) as mock_validate,
+    #         patch(
+    #             "doozerlib.backend.konflux_image_builder.KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition",
+    #             return_value=KonfluxBuildOutcome.SUCCESS,
+    #         ),
+    #     ):
+    #         await okd_builder.build(metadata)
+    #
+    #     # Validation should NOT be called for OKD groups
+    #     mock_validate.assert_not_awaited()
 
     async def test_update_konflux_db_uses_definitive_pullspec_for_installed_packages(self):
         metadata = self._metadata()

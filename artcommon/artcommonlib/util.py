@@ -682,8 +682,8 @@ async def fetch_slsa_attestation(
         )
         return json.loads(base64.b64decode(json.loads(attestation)["payload"]).decode("utf-8"))
 
-    except ChildProcessError:
-        LOGGER.warning(f'Failed to fetch SLSA attestation for {build_name}')
+    except ChildProcessError as e:
+        LOGGER.warning('Failed to fetch SLSA attestation for %s: %s', build_name, e)
         return None
 
 
