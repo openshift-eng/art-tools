@@ -106,25 +106,42 @@ def manifest_tool_auth_file(auth_file: Optional[str], options: Optional[Union[Li
 
     with _MANIFEST_TOOL_AUTH_CACHE_LOCK:
         cached_path = _MANIFEST_TOOL_AUTH_CACHE.get(cache_key)
+    if cached_path and os.path.exists(cached_path):
+        yield cached_path
+        return
+
+    compat_config = dict(auth_config)
+    compat_auths = dict(auths)
+    compat_auths.update(aliases)
+    compat_config["auths"] = compat_auths
+
+    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", suffix=".json", delete=False) as tmp:
+        json.dump(compat_config, tmp)
+        tmp.flush()
+        temp_path = tmp.name
+
+    created = False
+    resolved_path = temp_path
+    with _MANIFEST_TOOL_AUTH_CACHE_LOCK:
+        cached_path = _MANIFEST_TOOL_AUTH_CACHE.get(cache_key)
         if cached_path and os.path.exists(cached_path):
-            yield cached_path
-            return
+            resolved_path = cached_path
+        else:
+            _MANIFEST_TOOL_AUTH_CACHE[cache_key] = temp_path
+            _MANIFEST_TOOL_AUTH_TEMP_FILES.add(temp_path)
+            created = True
 
-        compat_config = dict(auth_config)
-        compat_auths = dict(auths)
-        compat_auths.update(aliases)
-        compat_config["auths"] = compat_auths
+    if not created and resolved_path != temp_path:
+        try:
+            os.unlink(temp_path)
+        except FileNotFoundError:
+            pass
 
-        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", suffix=".json", delete=False) as tmp:
-            json.dump(compat_config, tmp)
-            tmp.flush()
-            temp_path = tmp.name
-
-        _MANIFEST_TOOL_AUTH_CACHE[cache_key] = temp_path
-        _MANIFEST_TOOL_AUTH_TEMP_FILES.add(temp_path)
-
-    logger.info("Created cached manifest-tool auth compatibility file for host lookup: %s", ", ".join(sorted(aliases)))
-    yield temp_path
+    if created:
+        logger.info(
+            "Created cached manifest-tool auth compatibility file for host lookup: %s", ", ".join(sorted(aliases))
+        )
+    yield resolved_path
 
 
 def _manifest_tool_auth_aliases(
