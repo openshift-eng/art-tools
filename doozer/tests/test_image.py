@@ -1443,21 +1443,82 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         self.assertEqual(result, [])
 
     def test_is_base_image(self):
+        from artcommonlib.constants import GOLANG_BUILDER_IMAGE_NAME
         from artcommonlib.model import Model
 
         runtime = MagicMock()
         runtime.logger = logging.getLogger('test_runtime')
         runtime.variant = BuildVariant.OCP
 
+        # Test base image with base_only: true
         base_image = Model({'name': 'test-base', 'base_only': True})
         base_data = Model({'key': 'test-base', 'data': base_image, 'filename': 'test-base.yaml'})
         base_metadata = ImageMetadata(runtime, base_data)
         self.assertTrue(base_metadata.is_base_image())
 
+        # Test regular image (not base)
         regular_image = Model({'name': 'test-regular'})
         regular_data = Model({'key': 'test-regular', 'data': regular_image, 'filename': 'test-regular.yaml'})
         regular_metadata = ImageMetadata(runtime, regular_data)
         self.assertFalse(regular_metadata.is_base_image())
+
+        # Test golang builder - should NOT be considered base image
+        golang_builder = Model({'name': GOLANG_BUILDER_IMAGE_NAME})
+        golang_data = Model({'key': 'golang-builder', 'data': golang_builder, 'filename': 'golang-builder.yaml'})
+        golang_metadata = ImageMetadata(runtime, golang_data)
+        self.assertFalse(golang_metadata.is_base_image())
+
+    def test_is_golang_builder(self):
+        from artcommonlib.constants import GOLANG_BUILDER_IMAGE_NAME
+        from artcommonlib.model import Model
+
+        runtime = MagicMock()
+        runtime.logger = logging.getLogger('test_runtime')
+        runtime.variant = BuildVariant.OCP
+
+        # Test golang builder image
+        golang_builder = Model({'name': GOLANG_BUILDER_IMAGE_NAME})
+        golang_data = Model({'key': 'golang-builder', 'data': golang_builder, 'filename': 'golang-builder.yaml'})
+        golang_metadata = ImageMetadata(runtime, golang_data)
+        self.assertTrue(golang_metadata.is_golang_builder())
+
+        # Test regular image (not golang builder)
+        regular_image = Model({'name': 'test-regular'})
+        regular_data = Model({'key': 'test-regular', 'data': regular_image, 'filename': 'test-regular.yaml'})
+        regular_metadata = ImageMetadata(runtime, regular_data)
+        self.assertFalse(regular_metadata.is_golang_builder())
+
+        # Test base image (not golang builder)
+        base_image = Model({'name': 'test-base', 'base_only': True})
+        base_data = Model({'key': 'test-base', 'data': base_image, 'filename': 'test-base.yaml'})
+        base_metadata = ImageMetadata(runtime, base_data)
+        self.assertFalse(base_metadata.is_golang_builder())
+
+    def test_should_trigger_base_image_release(self):
+        from artcommonlib.constants import GOLANG_BUILDER_IMAGE_NAME
+        from artcommonlib.model import Model
+
+        runtime = MagicMock()
+        runtime.logger = logging.getLogger('test_runtime')
+        runtime.variant = BuildVariant.OCP
+
+        # Test base image - should trigger workflow
+        base_image = Model({'name': 'test-base', 'base_only': True})
+        base_data = Model({'key': 'test-base', 'data': base_image, 'filename': 'test-base.yaml'})
+        base_metadata = ImageMetadata(runtime, base_data)
+        self.assertTrue(base_metadata.should_trigger_base_image_release())
+
+        # Test golang builder - should trigger workflow
+        golang_builder = Model({'name': GOLANG_BUILDER_IMAGE_NAME})
+        golang_data = Model({'key': 'golang-builder', 'data': golang_builder, 'filename': 'golang-builder.yaml'})
+        golang_metadata = ImageMetadata(runtime, golang_data)
+        self.assertTrue(golang_metadata.should_trigger_base_image_release())
+
+        # Test regular image - should NOT trigger workflow
+        regular_image = Model({'name': 'test-regular'})
+        regular_data = Model({'key': 'test-regular', 'data': regular_image, 'filename': 'test-regular.yaml'})
+        regular_metadata = ImageMetadata(runtime, regular_data)
+        self.assertFalse(regular_metadata.should_trigger_base_image_release())
 
     def test_is_snapshot_release_enabled(self):
         from artcommonlib.model import Model

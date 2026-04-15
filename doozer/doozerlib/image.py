@@ -10,6 +10,7 @@ from multiprocessing import Event
 from typing import Any, Dict, List, Optional, Set, Tuple, cast
 
 from artcommonlib import util as artlib_util
+from artcommonlib.constants import GOLANG_BUILDER_IMAGE_NAME
 from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
@@ -1304,6 +1305,34 @@ class ImageMetadata(Metadata):
         if base_only_config not in [Missing, None]:
             return bool(base_only_config)
         return False
+
+    def is_golang_builder(self) -> bool:
+        """
+        Determines whether this image is a golang builder image.
+
+        Golang builders are identified by having a name that matches
+        the GOLANG_BUILDER_IMAGE_NAME constant.
+
+        Returns:
+            bool: True if this is a golang builder image, False otherwise
+        """
+        return hasattr(self.config, 'name') and self.config.name == GOLANG_BUILDER_IMAGE_NAME
+
+    def should_trigger_base_image_release(self) -> bool:
+        """
+        Determines whether this image should trigger the base image release workflow.
+
+        The base image release workflow should be triggered for both:
+        - Base images (base_only: true)
+        - Golang builder images
+
+        These image types require special snapshot-to-release workflow processing
+        to generate dual URLs for streams.yml updates.
+
+        Returns:
+            bool: True if base image release workflow should be triggered, False otherwise
+        """
+        return self.is_base_image() or self.is_golang_builder()
 
     def is_snapshot_release_enabled(self) -> bool:
         """
