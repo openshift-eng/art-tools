@@ -402,6 +402,17 @@ class KonfluxOcpPipeline:
         if built_images.get('ose-openshift-apiserver', None):
             LOGGER.warning('apiserver rebuilt: mirroring streams to CI...')
 
+            # PROOF-OF-CONCEPT: Explicit registry auth for ocp4-konflux
+            # This avoids dependency on default auth.json and makes credential sources explicit.
+            # Once validated, this pattern can be migrated to other pipelines.
+
+            quay_auth_file = os.getenv('QUAY_AUTH_FILE')
+            if not quay_auth_file:
+                raise ValueError(
+                    "QUAY_AUTH_FILE environment variable is required for registry authentication. "
+                    "This should be set by Jenkins credentials."
+                )
+
             # Create temp file for oc registry login credentials
             with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as ci_auth_temp:
                 ci_auth_file = ci_auth_temp.name
@@ -414,8 +425,8 @@ class KonfluxOcpPipeline:
                 with RegistryConfig(
                     registries=[
                         # Explicit credentials from Jenkins QUAY_AUTH_FILE
-                        Registry('quay.io/openshift-release-dev', auth_file=os.getenv('QUAY_AUTH_FILE')),
-                        Registry('quay.io', auth_file=os.getenv('QUAY_AUTH_FILE')),
+                        Registry('quay.io/openshift-release-dev', auth_file=quay_auth_file),
+                        Registry('quay.io', auth_file=quay_auth_file),
                         # CI registry credentials from oc login
                         Registry('registry.ci.openshift.org', auth_file=ci_auth_file),
                     ]

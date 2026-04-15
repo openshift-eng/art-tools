@@ -6,6 +6,11 @@
 **``oc image mirror`` (and related ``oc image`` commands)** accept
 ``-a PATH`` or ``--registry-config=PATH`` with this file.
 
+**PROOF-OF-CONCEPT STATUS:**
+Currently used in ocp4-konflux pipeline as a PoC to eliminate dependency on
+default auth.json files. Once validated in production, this pattern can be
+gradually migrated to other pipelines (build-sync, sync-ci-images, etc.).
+
 **Usage:**
 
 Specify explicit credentials from trusted credential stores::
@@ -67,8 +72,8 @@ class Registry:
 
     def __post_init__(self):
         # Validate exactly one auth source
-        sources = [self.auth_file, self.username_password, self.base64_auth]
-        if sum(bool(s) for s in sources) != 1:
+        sources_provided = [s for s in [self.auth_file, self.username_password, self.base64_auth] if s is not None]
+        if len(sources_provided) != 1:
             raise ValueError(
                 f"Registry '{self.path}' requires exactly one of: auth_file, username_password, or base64_auth"
             )
