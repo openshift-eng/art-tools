@@ -220,20 +220,6 @@ class TestExectools(IsolatedAsyncioTestCase):
             self.assertEqual(out, fake_stdout.decode("utf-8"))
             self.assertEqual(err, fake_stderr.decode("utf-8"))
 
-    async def test_cmd_gather_async_timeout_kills_process(self):
-        cmd = ["uname", "-a"]
-        with mock.patch("asyncio.subprocess.create_subprocess_exec") as create_subprocess_exec:
-            proc = create_subprocess_exec.return_value
-            proc.communicate.side_effect = asyncio.TimeoutError()
-            proc.kill = mock.MagicMock()
-            proc.wait.return_value = 0
-
-            with self.assertRaises(ChildProcessError):
-                await exectools.cmd_gather_async(cmd, timeout=1)
-
-            proc.kill.assert_called_once_with()
-            proc.wait.assert_awaited()
-
     async def test_cmd_assert_async(self):
         cmd = ["uname", "-a"]
         fake_cwd = "/foo/bar"

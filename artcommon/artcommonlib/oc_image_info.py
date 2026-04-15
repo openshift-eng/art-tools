@@ -39,7 +39,6 @@ _CACHE_EXPIRY_SECONDS = 60 * 24 * 60 * 60
 
 # Bump to invalidate every cached entry at once.
 _CACHE_KEY_VERSION = "v1"
-_DEFAULT_OC_IMAGE_INFO_TIMEOUT = 300
 
 
 # ---------------------------------------------------------------------------
@@ -110,21 +109,6 @@ def _cache_context(pullspec: str, options: Tuple[str, ...]):
     use_cache = _is_cacheable(pullspec) and _redis_available()
     cache_key = _make_cache_key(pullspec, options) if use_cache else ""
     return use_cache, cache_key
-
-
-def _oc_image_info_timeout() -> int:
-    """Return the timeout in seconds for `oc image info` commands."""
-    raw_timeout = os.getenv("ART_OC_IMAGE_INFO_TIMEOUT", str(_DEFAULT_OC_IMAGE_INFO_TIMEOUT))
-    try:
-        timeout = int(raw_timeout)
-    except ValueError:
-        logger.warning(
-            "Invalid ART_OC_IMAGE_INFO_TIMEOUT=%r; defaulting to %s seconds",
-            raw_timeout,
-            _DEFAULT_OC_IMAGE_INFO_TIMEOUT,
-        )
-        return _DEFAULT_OC_IMAGE_INFO_TIMEOUT
-    return timeout if timeout > 0 else _DEFAULT_OC_IMAGE_INFO_TIMEOUT
 
 
 def _redis_get(cache_key: str, pullspec: str) -> Optional[str]:
@@ -235,7 +219,6 @@ async def oc_image_info__cached_async(
     rc, stdout, stderr = await exectools.cmd_gather_async(
         _build_cmd(pullspec, options, registry_config),
         check=False,
-        timeout=_oc_image_info_timeout(),
     )
     if rc != 0:
         raise ChildProcessError(f"oc image info failed (rc={rc}): {stderr}")
