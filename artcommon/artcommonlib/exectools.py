@@ -17,7 +17,6 @@ from datetime import datetime
 from fcntl import F_GETFL, F_SETFL, fcntl
 from inspect import getframeinfo, stack
 from multiprocessing.pool import MapResult, ThreadPool
-from pathlib import Path
 from typing import Awaitable, Callable, Dict, List, Optional, Tuple, TypeVar, Union
 from urllib.request import urlopen
 
@@ -510,18 +509,18 @@ def unpack_tuple_args(func):
 
 
 @tenacity.retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(60))
-async def manifest_tool(options, dry_run=False):
+async def manifest_tool(options, dry_run=False, auth_file: Optional[str] = None):
     auth_opt = ""
-    if os.environ.get("XDG_RUNTIME_DIR"):
-        auth_file = os.path.expandvars("${XDG_RUNTIME_DIR}/containers/auth.json")
-        if Path(auth_file).is_file():
-            auth_opt = f"--docker-cfg={auth_file}"
+    if auth_file:
+        auth_opt = f"--docker-cfg={auth_file}"
 
     if isinstance(options, str):
-        cmd = f'manifest-tool {auth_opt} {options}'
+        cmd = f'manifest-tool {auth_opt} {options}' if auth_opt else f'manifest-tool {options}'
 
     elif isinstance(options, list):
-        cmd = ['manifest-tool', auth_opt]
+        cmd = ['manifest-tool']
+        if auth_opt:
+            cmd.append(auth_opt)
         cmd.extend(options)
 
     else:

@@ -1960,7 +1960,7 @@ class GenPayloadCli:
         # write the manifest list to a file and push it to the registry.
         async with aiofiles.open(component_manifest_path, mode="w+") as ml:
             await ml.write(yaml.safe_dump(dict(image=output_pullspec, manifests=manifests), default_flow_style=False))
-        await manifest_tool(f'push from-spec {str(component_manifest_path)}')
+        await manifest_tool(f'push from-spec {str(component_manifest_path)}', auth_file=os.getenv("QUAY_AUTH_FILE"))
 
         # we are pushing a new manifest list, so return its sha256 based pullspec
         sha = await find_manifest_list_sha(output_pullspec, registry_config=os.getenv("QUAY_AUTH_FILE"))
@@ -2059,7 +2059,7 @@ class GenPayloadCli:
         async with aiofiles.open(release_payload_ml_path, mode="w+") as ml:
             await ml.write(yaml.safe_dump(ml_dict, default_flow_style=False))
 
-        await manifest_tool(f'push from-spec {str(release_payload_ml_path)}')
+        await manifest_tool(f'push from-spec {str(release_payload_ml_path)}', auth_file=os.getenv("QUAY_AUTH_FILE"))
 
         # if we are actually pushing a manifest list, then we should derive a sha256 based pullspec
         sha = await find_manifest_list_sha(multi_release_dest, registry_config=os.getenv("QUAY_AUTH_FILE"))
