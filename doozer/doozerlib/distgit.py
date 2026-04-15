@@ -48,7 +48,7 @@ from dockerfile_parse import DockerfileParser
 from tenacity import before_sleep_log, retry, retry_if_not_result, stop_after_attempt, wait_fixed
 
 import doozerlib
-from doozerlib import state, util
+from doozerlib import constants, state, util
 from doozerlib.build_info import BrewBuildRecordInspector
 from doozerlib.comment_on_pr import CommentOnPr
 from doozerlib.dblib import Record
@@ -61,23 +61,6 @@ from doozerlib.util import extract_version_fields
 if TYPE_CHECKING:
     from doozerlib.image import ImageMetadata
     from doozerlib.metadata import Metadata
-
-# doozer used to be part of OIT
-OIT_COMMENT_PREFIX = '#oit##'
-OIT_BEGIN = '##OIT_BEGIN'
-OIT_END = '##OIT_END'
-
-CONTAINER_YAML_HEADER = """
-# This file is managed by doozer: https://github.com/openshift-eng/doozer
-# operated by the OpenShift Automated Release Tooling team (#forum-ocp-art on CoreOS Slack).
-
-# Any manual changes will be overwritten by doozer on the next build.
-#
-# See https://source.redhat.com/groups/public/container-build-system/container_build_system_wiki/odcs_integration_with_osbs
-# for more information on maintaining this file and the format and examples
-
----
-"""
 
 # Always ignore these files/folders when rebasing into distgit
 # May be added to based on group/image config
@@ -564,7 +547,7 @@ class ImageDistGitRepo(DistGitRepo):
         # generate yaml data with header
         content_yml = yaml.safe_dump(container_config, default_flow_style=False)
         with self.dg_path.joinpath('container.yaml').open('w', encoding="utf-8") as rc:
-            rc.write(CONTAINER_YAML_HEADER + content_yml)
+            rc.write(constants.CONTAINER_YAML_HEADER + content_yml)
 
     def _generate_osbs_image_config(self, version: str) -> Dict:
         """
@@ -2187,16 +2170,16 @@ class ImageDistGitRepo(DistGitRepo):
 
             # Remove any programmatic oit comments from previous management
             df_lines = dfp.content.splitlines(False)
-            df_lines = [line for line in df_lines if not line.strip().startswith(OIT_COMMENT_PREFIX)]
+            df_lines = [line for line in df_lines if not line.strip().startswith(constants.OIT_COMMENT_PREFIX)]
 
             filtered_content = []
             in_mod_block = False
             for line in df_lines:
                 # Check for begin/end of mod block, skip any lines inside
-                if OIT_BEGIN in line:
+                if constants.OIT_BEGIN in line:
                     in_mod_block = True
                     continue
-                elif OIT_END in line:
+                elif constants.OIT_END in line:
                     in_mod_block = False
                     continue
 

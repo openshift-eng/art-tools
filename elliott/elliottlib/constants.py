@@ -7,9 +7,7 @@ from artcommonlib.constants import BREW_DOWNLOAD_URL, BREW_HUB, RHCOS_RELEASES_B
 # JIRA configuration is now centralized in artcommonlib.jira_config
 from artcommonlib.jira_config import JIRA_API_FIELD, JIRA_SECURITY_ALLOWLIST
 
-CINCINNATI_BASE_URL = "https://api.openshift.com/api/upgrades_info/v1/graph"
 BREW_DOWNLOAD_TEMPLATE = BREW_DOWNLOAD_URL + "/packages/{name}/{version}/{release}/files/{file_path}"
-CGIT_URL = "https://pkgs.devel.redhat.com/cgit"
 RESULTSDB_API_URL = "https://resultsdb-api.engineering.redhat.com"
 
 VALID_BUG_STATES = ['NEW', 'ASSIGNED', 'POST', 'MODIFIED', 'ON_QA', 'VERIFIED', 'RELEASE_PENDING', 'CLOSED']
@@ -65,44 +63,6 @@ standard_advisory_types = [
     "bootimage",
 ]
 
-
-# Valid external test (RPMDiff) statuses defined in Errata Tool.
-# Note those status names are partially different from the status names in RPMDiff tool.
-# https://code.engineering.redhat.com/gerrit/gitweb?p=errata-rails.git;a=blob;f=app/models/external_test_run.rb;h=eb9489c24ec70a8e6b4e54cfe6b385fb51e330b8;hb=refs/heads/master
-ET_EXTERNAL_TEST_STATUSES = {
-    "PASSED",
-    "INELIGIBLE",
-    "INFO",
-    "WAIVED",
-    "NEEDS_INSPECTION",
-    "FAILED",
-    "PENDING",
-    "QUEUED_FOR_TEST",
-    "RUNNING",
-}
-
-ET_COMPLETED_EXTERNAL_TEST_STATUSES = {
-    "PASSED",
-    "INELIGIBLE",
-    "INFO",
-    "WAIVED",
-    "NEEDS_INSPECTION",
-    "FAILED",
-}
-
-# External test statuses that are considered "good" by Errata Tool:
-# https://code.engineering.redhat.com/gerrit/gitweb?p=errata-rails.git;a=blob;f=app/models/external_test_run.rb;h=eb9489c24ec70a8e6b4e54cfe6b385fb51e330b8;hb=refs/heads/master#l74
-ET_GOOD_EXTERNAL_TEST_STATUSES = {
-    "PASSED",
-    "INELIGIBLE",
-    "INFO",
-    "WAIVED",
-}
-
-ET_BAD_EXTERNAL_TEST_STATUSES = {
-    "NEEDS_INSPECTION",
-    "FAILED",
-}
 
 ADVISORY_TYPES = ('rhba', 'rhea', 'rhsa')
 

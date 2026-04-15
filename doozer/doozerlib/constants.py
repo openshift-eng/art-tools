@@ -4,6 +4,23 @@ RC_BASE_PRIV_URL = "https://{arch}.ocp.internal.releases.ci.openshift.org"
 BREWWEB_URL = "https://brewweb.engineering.redhat.com/brew"
 DISTGIT_GIT_URL = "git+https://pkgs.devel.redhat.com/git"
 
+# Doozer used to be part of OIT
+OIT_COMMENT_PREFIX = '#oit##'
+OIT_BEGIN = '##OIT_BEGIN'
+OIT_END = '##OIT_END'
+
+CONTAINER_YAML_HEADER = """
+# This file is managed by Doozer: https://github.com/openshift-eng/art-tools/tree/main/doozer
+# operated by the OpenShift Automated Release Tooling team (#forum-ocp-art on CoreOS Slack).
+
+# Any manual changes will be overwritten by Doozer on the next build.
+#
+# See https://source.redhat.com/groups/public/container-build-system/container_build_system_wiki/odcs_integration_with_osbs
+# for more information on maintaining this file and the format and examples
+
+---
+"""
+
 # Environment variables that should be set for doozer interaction with db for storing and retrieving build records.
 # DB ENV VARS
 DB_HOST = "DOOZER_DB_HOST"
@@ -32,9 +49,6 @@ KONFLUX_REPO_CA_BUNDLE_HOST = "https://certs.corp.redhat.com/certs"
 WORKING_SUBDIR_KONFLUX_BUILD_SOURCES = "konflux_build_sources"
 WORKING_SUBDIR_KONFLUX_FBC_SOURCES = "konflux_fbc_sources"
 WORKING_SUBDIR_KONFLUX_OKD_SOURCES = "konflux_okd_sources"
-KONFLUX_DEFAULT_PIPELINERUN_SERVICE_ACCOUNT = "appstudio-pipeline"
-KONFLUX_DEFAULT_PIPELINERUN_TIMEOUT = "1h0m0s"
-KONFLUX_DEFAULT_PIPRLINE_DOCKER_BUILD_BUNDLE_PULLSPEC = "quay.io/konflux-ci/tekton-catalog/pipeline-docker-build:devel"
 KONFLUX_DEFAULT_IMAGE_REPO = (
     "quay.io/redhat-user-workloads/ocp-art-tenant/art-images"  # FIXME: If we change clusters this URL will change
 )
@@ -42,7 +56,6 @@ KONFLUX_DEFAULT_FBC_REPO = "quay.io/redhat-user-workloads/ocp-art-tenant/art-fbc
 # Legacy constants removed - use get_art_prod_image_repo_for_version() from artcommonlib.util instead
 DELIVERY_IMAGE_REGISTRY = "registry.redhat.io"
 KONFLUX_UI_HOST = "https://konflux-ui.apps.kflux-ocp-p01.7ayg.p1.openshiftapps.com"
-KONFLUX_UI_DEFAULT_WORKSPACE = "ocp-art"  # associated with ocp-art-tenant
 KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL = "https://api.github.com/repos/openshift-priv/art-konflux-template/contents/.tekton/art-konflux-template-push.yaml?ref=main"
 KONFLUX_DEFAULT_BUNDLE_BUILD_PLR_TEMPLATE_URL = "https://api.github.com/repos/openshift-priv/art-konflux-template/contents/.tekton/art-bundle-konflux-template-push.yaml?ref=main"
 KONFLUX_DEFAULT_FBC_BUILD_PLR_TEMPLATE_URL = "https://api.github.com/repos/openshift-priv/art-konflux-template/contents/.tekton/art-fbc-konflux-template-push.yaml?ref=main"

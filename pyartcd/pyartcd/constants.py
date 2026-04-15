@@ -11,8 +11,6 @@ SPMM_UTILS_REMOTE_HOST = "exd-ocp-buildvm-bot-prod@spmm-util"
 
 RELEASE_IMAGE_REPO = "quay.io/openshift-release-dev/ocp-release"
 
-GIT_AUTHOR = "AOS Automation Release Team <noreply@redhat.com>"
-
 # Maps the name of a release component tag to the filename element to include
 # when creating artifacts on mirror.openshift.com.
 MIRROR_CLIENTS = {
@@ -30,8 +28,6 @@ JENKINS_SERVER_URL = 'https://art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.r
 # This is the URL that humans behind a VPN use to browse Jenkins UI
 # It shall be used to print clickable logs that redirect the user to the triggered job page
 JENKINS_UI_URL = 'https://art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com'
-
-MIRROR_BASE_URL = 'https://mirror.openshift.com'
 
 UMB_BROKERS = {
     "prod": "stomp+ssl://umb.api.redhat.com:61612",
