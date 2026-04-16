@@ -11,8 +11,11 @@ logger = logging.getLogger(__name__)
 
 
 @retry(reraise=True, stop=stop_after_attempt(3))
-async def get_image_info(pullspec: str, raise_if_not_found: bool = False):
-    cmd = ["oc", "image", "info", "--show-multiarch", "-o", "json", "--", pullspec]
+async def get_image_info(pullspec: str, raise_if_not_found: bool = False, registry_config: Optional[str] = None):
+    cmd = ["oc", "image", "info", "--show-multiarch", "-o", "json"]
+    if registry_config:
+        cmd.append(f"--registry-config={registry_config}")
+    cmd.extend(["--", pullspec])
     env = os.environ.copy()
     env["GOTRACEBACK"] = "all"
     rc, stdout, stderr = await exectools.cmd_gather_async(cmd, check=False, env=env)
@@ -33,8 +36,13 @@ async def get_image_info(pullspec: str, raise_if_not_found: bool = False):
 
 
 @retry(reraise=True, stop=stop_after_attempt(3))
-async def get_release_image_info(pullspec: str, raise_if_not_found: bool = False):
-    cmd = ["oc", "adm", "release", "info", "-o", "json", "--", pullspec]
+async def get_release_image_info(
+    pullspec: str, raise_if_not_found: bool = False, registry_config: Optional[str] = None
+):
+    cmd = ["oc", "adm", "release", "info", "-o", "json"]
+    if registry_config:
+        cmd.append(f"--registry-config={registry_config}")
+    cmd.extend(["--", pullspec])
     env = os.environ.copy()
     env["GOTRACEBACK"] = "all"
     rc, stdout, stderr = await exectools.cmd_gather_async(cmd, check=False, env=env)
