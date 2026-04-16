@@ -5,6 +5,7 @@ import itertools
 import json
 import logging
 import os
+import shutil
 import tempfile
 import uuid
 from dataclasses import dataclass, field
@@ -294,8 +295,23 @@ class SigstoreSignatory:
         quay_auth_file = os.environ.get("QUAY_AUTH_FILE")
         if quay_auth_file:
             docker_config_dir = tempfile.mkdtemp(prefix="cosign-docker-config-")
-            os.symlink(os.path.abspath(quay_auth_file), os.path.join(docker_config_dir, "config.json"))
+            config_json_path = os.path.join(docker_config_dir, "config.json")
+            shutil.copy2(quay_auth_file, config_json_path)
             self.ENV["DOCKER_CONFIG"] = docker_config_dir
+            logger.info(
+                "Set DOCKER_CONFIG=%s for cosign (copied from QUAY_AUTH_FILE=%s)", docker_config_dir, quay_auth_file
+            )
+            # Log auth file structure (keys only) for debugging
+            try:
+                with open(config_json_path) as f:
+                    auth_data = json.load(f)
+                logger.info("Auth file top-level keys: %s", list(auth_data.keys()))
+                if "auths" in auth_data:
+                    logger.info("Auth file registry entries: %s", list(auth_data["auths"].keys()))
+            except Exception as e:
+                logger.warning("Could not inspect auth file: %s", e)
+        else:
+            logger.warning("QUAY_AUTH_FILE not set; cosign may lack registry credentials")
         self.concurrency_limit = concurrency_limit  # limit on concurrent lookups or signings
         self.batch_retries = batch_retries  # number of batch-level retries for failed images
         self.batch_retry_delay = batch_retry_delay  # seconds to wait between batch retries
@@ -660,6 +676,7 @@ class SigstoreSignatory:
     async def _retrying_cosign(self, cmd: List[str]) -> str:
         """Execute cosign with retry on failure."""
         await asyncio.sleep(uniform(0, self.THROTTLE_DELAY))
+        self._logger.debug("cosign ENV DOCKER_CONFIG=%s", self.ENV.get("DOCKER_CONFIG"))
         rc, stdout, stderr = await exectools.cmd_gather_async(cmd, check=False, env=self.ENV)
         if rc:
             raise RuntimeError(stderr)
