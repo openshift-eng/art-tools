@@ -721,7 +721,8 @@ async def get_nvrs_from_release(pullspec_or_imagestream, rhcos_images, logger=No
     async def _get_image_info(tag):
         pullspec = tag['from']['name']
         try:
-            return await oc_image_info__cached_async(pullspec)
+            registry_config = os.getenv("QUAY_AUTH_FILE")
+            return await oc_image_info__cached_async(pullspec, registry_config=registry_config)
         except ChildProcessError as e:
             raise RuntimeError(f"Unable to run oc image info for {pullspec}: {e}") from e
 
