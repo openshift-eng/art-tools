@@ -22,6 +22,8 @@ from doozerlib.backend.konflux_client import API_VERSION, KIND_RELEASE, KIND_REL
 from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
 from kubernetes.dynamic import exceptions
 
+from pyartcd import jenkins
+
 LOGGER = logutil.get_logger(__name__)
 ART_IMAGES_BASE_RELEASE_PLAN = "ocp-art-images-base-silent"
 ART_IMAGES_BASE_APPLICATION = "art-images-base"
@@ -118,6 +120,26 @@ class BaseImageHandler:
                 return None
 
             self.logger.info(f"Processing {len(valid_records)} valid base images")
+
+            # Update Jenkins job title and description with component information
+            component_names = [build_record.name for build_record in valid_records.values()]
+            group_name = self.runtime.group
+
+            if len(component_names) == 1:
+                title_suffix = f"{group_name}: {component_names[0]}"
+            else:
+                title_suffix = f"{group_name}: {len(component_names)} components"
+
+            description_content = f"Components: {', '.join(sorted(component_names))}"
+
+            try:
+                jenkins.init_jenkins()
+                jenkins.update_title(title_suffix, append=False)
+                jenkins.update_description(description_content)
+                self.logger.info("Updated Jenkins job title and description with component info")
+            except Exception as e:
+                self.logger.warning(f"Failed to update Jenkins job title/description: {e}")
+
             snapshot_name = await self._create_snapshot(valid_records)
             if not snapshot_name:
                 self.logger.error("Failed to create snapshot, aborting workflow")
@@ -203,7 +225,11 @@ class BaseImageHandler:
 
             components = []
             for nvr, build_record in valid_records.items():
-                comp_name = KonfluxImageBuilder.get_component_name(app_name, build_record.name)
+                if build_record.name == "openshift-golang-builder":
+                    comp_name = KonfluxImageBuilder.get_golang_builder_component_name(nvr)
+                else:
+                    comp_name = KonfluxImageBuilder.get_component_name(app_name, build_record.name)
+
                 component = {
                     "name": comp_name,
                     "containerImage": build_record.image_pullspec,

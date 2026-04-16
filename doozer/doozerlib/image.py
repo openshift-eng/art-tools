@@ -1310,24 +1310,18 @@ class ImageMetadata(Metadata):
         """
         Determines whether this image is a golang builder image.
 
-        Golang builders are identified by having a name that matches
-        the GOLANG_BUILDER_IMAGE_NAME constant.
-
         Returns:
             bool: True if this is a golang builder image, False otherwise
         """
-        return hasattr(self.config, 'name') and self.config.name == GOLANG_BUILDER_IMAGE_NAME
+        if not hasattr(self.config, 'name'):
+            return False
+
+        image_name = self.config.name
+        return image_name == GOLANG_BUILDER_IMAGE_NAME or image_name == 'openshift/golang-builder'
 
     def should_trigger_base_image_release(self) -> bool:
         """
         Determines whether this image should trigger the base image release workflow.
-
-        The base image release workflow should be triggered for both:
-        - Base images (base_only: true)
-        - Golang builder images
-
-        These image types require special snapshot-to-release workflow processing
-        to generate dual URLs for streams.yml updates.
 
         Returns:
             bool: True if base image release workflow should be triggered, False otherwise
