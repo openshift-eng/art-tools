@@ -276,9 +276,12 @@ class RpmInfoCollector:
         """
         Resolve RPM metadata for a specific architecture from the given repodata names.
 
-        For each package, the highest version across ALL repos is selected (matching dnf
-        behaviour). When the same EVR exists in multiple repos, the repo iteration order
-        from ``sort_repos_for_lockfile_resolution`` acts as tiebreaker (RHEL upstream repos
+        For plain package names the highest version across ALL repos is selected (matching
+        dnf behaviour).  For NVR-pinned items the exact requested version is preserved in
+        the output so that hermetic builds can install a specific older version.
+
+        When the same EVR exists in multiple repos, the repo iteration order from
+        ``sort_repos_for_lockfile_resolution`` acts as tiebreaker (RHEL upstream repos
         are preferred over rhocp plashets).
 
         Args:
@@ -289,10 +292,14 @@ class RpmInfoCollector:
         Returns:
             list[RpmInfo]: Resolved RPM package metadata.
         """
-        # best_by_name tracks the highest-version RpmInfo seen so far per package name.
-        # Iteration order (RHEL first) ensures that when two repos carry the same EVR
-        # the upstream RHEL entry is kept.
+        nvr_to_name: dict[str, str] = {}
+        for item in rpm_names:
+            is_nvr, pkg_name = Repodata._detect_nvr_vs_name(item)
+            if is_nvr:
+                nvr_to_name[item] = pkg_name
+
         best_by_name: dict[str, RpmInfo] = {}
+        pinned_by_nvr: dict[str, RpmInfo] = {}
         resolved_items: set[str] = set()
 
         for repo_name in sort_repos_for_lockfile_resolution(repo_names):
@@ -319,6 +326,11 @@ class RpmInfoCollector:
             baseurl = repo.baseurl(repotype="unsigned", arch=arch)
             for rpm in found_rpms:
                 info = RpmInfo.from_rpm(rpm, repoid=content_set_id, baseurl=baseurl)
+
+                for nvr_str, pkg_name in nvr_to_name.items():
+                    if rpm.name == pkg_name and rpm.nvr == nvr_str and nvr_str not in pinned_by_nvr:
+                        pinned_by_nvr[nvr_str] = info
+
                 existing = best_by_name.get(rpm.name)
                 if existing is None or info > existing:
                     best_by_name[rpm.name] = info
@@ -329,7 +341,13 @@ class RpmInfoCollector:
                 f"Could not find {','.join(sorted(missing))} in {', '.join(repo_names)} for arch {arch}"
             )
 
-        return sorted(best_by_name.values())
+        results: dict[tuple[str, str], RpmInfo] = {}
+        for info in best_by_name.values():
+            results[(info.name, info.evr)] = info
+        for info in pinned_by_nvr.values():
+            results[(info.name, info.evr)] = info
+
+        return sorted(results.values())
 
     @start_as_current_span_async(TRACER, "lockfile.fetch_rpms_info")
     async def fetch_rpms_info(
