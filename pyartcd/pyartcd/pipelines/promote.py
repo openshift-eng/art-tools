@@ -1828,6 +1828,9 @@ class PromotePipeline:
         if metadata:
             cmd.append("--metadata")
             cmd.append(json.dumps(metadata))
+        registry_config = os.environ.get("QUAY_AUTH_FILE")
+        if registry_config:
+            cmd.append(f"--registry-config={registry_config}")
         env = os.environ.copy()
         env["GOTRACEBACK"] = "all"
         self._logger.info("Running %s", " ".join(cmd))
