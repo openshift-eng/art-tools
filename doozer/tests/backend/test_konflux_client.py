@@ -125,7 +125,10 @@ class TestNewIntegrationTestScenario(TestCase):
         self.assertEqual(owner_refs[0]["name"], "openshift-4-21")
         self.assertEqual(owner_refs[0]["uid"], "test-uid-1234")
 
-        # spec
+        # spec - contexts must include disabled to prevent automatic EC runs
+        self.assertEqual(len(manifest["spec"]["contexts"]), 1)
+        self.assertEqual(manifest["spec"]["contexts"][0]["name"], "disabled")
+
         self.assertEqual(manifest["spec"]["application"], "openshift-4-21")
         params = {p["name"]: p["value"] for p in manifest["spec"]["params"]}
         self.assertEqual(params["POLICY_CONFIGURATION"], "rhtap-releng-tenant/registry-ocp-art-stage")

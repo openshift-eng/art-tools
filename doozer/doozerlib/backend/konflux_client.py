@@ -786,6 +786,13 @@ class KonfluxClient:
             },
             "spec": {
                 "application": application_name,
+                "contexts": [
+                    {
+                        "name": "disabled",
+                        "description": "disables the execution of the given integration test "
+                        "if it's the only context that's defined",
+                    },
+                ],
                 "params": [
                     {"name": "POLICY_CONFIGURATION", "value": policy_configuration},
                     {"name": "SINGLE_COMPONENT", "value": "true"},
