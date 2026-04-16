@@ -18,7 +18,7 @@ import yaml
 from artcommonlib import exectools
 from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch
 from artcommonlib.exectools import cmd_gather_async
-from artcommonlib.github_auth import get_github_client_for_org, get_github_git_auth_env
+from artcommonlib.github_auth import get_github_client_for_org, get_github_git_auth_env, get_github_git_pat_env
 from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
 from artcommonlib.model import Missing, Model
@@ -304,9 +304,11 @@ class ConfigScanSources:
             self.logger.info('Would have tried reconciliation for %s/%s', repo_name, priv_branch_name)
             return
 
-        # Try to push to openshift-priv
+        # Try to push to openshift-priv using the PAT token instead of the GitHub App token,
+        # because the App does not have permission to push to protected branches (GH006)
+        git_pat_env = get_github_git_pat_env() or git_auth_env
         try:
-            exectools.cmd_assert(cmd=['git', 'push', 'origin', priv_branch_name], retries=3, set_env=git_auth_env)
+            exectools.cmd_assert(cmd=['git', 'push', 'origin', priv_branch_name], retries=3, set_env=git_pat_env)
             self.logger.info('Successfully reconciled %s with public upstream', metadata.name)
 
         except ChildProcessError as exc:
