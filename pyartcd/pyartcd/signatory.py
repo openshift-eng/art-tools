@@ -291,25 +291,34 @@ class SigstoreSignatory:
         self.signing_key_ids = signing_key_ids  # key ids for signing
         self.rekor_url = rekor_url  # rekor server for cosign tlog storage
         self.ENV["AWS_SHARED_CREDENTIALS_FILE"] = signing_creds  # filename for KMS credentials
-        # cosign uses go-containerregistry which reads auth from DOCKER_CONFIG dir containing config.json
+        # cosign uses go-containerregistry which does hostname-only auth lookup.
+        # QUAY_AUTH_FILE has path-scoped keys (e.g. "quay.io/openshift-release-dev")
+        # so we must add hostname-only entries (e.g. "quay.io") for cosign to find them.
         quay_auth_file = os.environ.get("QUAY_AUTH_FILE")
         if quay_auth_file:
             docker_config_dir = tempfile.mkdtemp(prefix="cosign-docker-config-")
             config_json_path = os.path.join(docker_config_dir, "config.json")
-            shutil.copy2(quay_auth_file, config_json_path)
-            self.ENV["DOCKER_CONFIG"] = docker_config_dir
-            logger.info(
-                "Set DOCKER_CONFIG=%s for cosign (copied from QUAY_AUTH_FILE=%s)", docker_config_dir, quay_auth_file
-            )
-            # Log auth file structure (keys only) for debugging
             try:
-                with open(config_json_path) as f:
+                with open(quay_auth_file) as f:
                     auth_data = json.load(f)
-                logger.info("Auth file top-level keys: %s", list(auth_data.keys()))
-                if "auths" in auth_data:
-                    logger.info("Auth file registry entries: %s", list(auth_data["auths"].keys()))
+                auths = auth_data.get("auths", {})
+                # Add hostname-only entries for any path-scoped keys
+                hostname_auths = {}
+                for key, value in auths.items():
+                    hostname = key.split("/")[0]
+                    if hostname != key and hostname not in auths:
+                        hostname_auths[hostname] = value
+                if hostname_auths:
+                    auths.update(hostname_auths)
+                    auth_data["auths"] = auths
+                    logger.info("Added hostname-only auth entries for cosign: %s", list(hostname_auths.keys()))
+                with open(config_json_path, "w") as f:
+                    json.dump(auth_data, f)
             except Exception as e:
-                logger.warning("Could not inspect auth file: %s", e)
+                logger.warning("Could not rewrite auth file for cosign, falling back to copy: %s", e)
+                shutil.copy2(quay_auth_file, config_json_path)
+            self.ENV["DOCKER_CONFIG"] = docker_config_dir
+            logger.info("Set DOCKER_CONFIG=%s for cosign (from QUAY_AUTH_FILE=%s)", docker_config_dir, quay_auth_file)
         else:
             logger.warning("QUAY_AUTH_FILE not set; cosign may lack registry credentials")
         self.concurrency_limit = concurrency_limit  # limit on concurrent lookups or signings
