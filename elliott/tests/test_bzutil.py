@@ -703,7 +703,6 @@ class TestJIRABug(unittest.TestCase):
         self.assertEqual(bug.whiteboard_component, "openshift-golang-builder-container")
 
 
-
 class TestBugzillaBug(unittest.TestCase):
     def test_is_tracker_bug(self):
         bug = flexmock(
