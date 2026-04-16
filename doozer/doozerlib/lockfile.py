@@ -24,19 +24,19 @@ DEFAULT_ARTIFACT_LOCKFILE_NAME = "artifacts.lock.yaml"
 
 def sort_repos_for_lockfile_resolution(repo_names: set[str]) -> list[str]:
     """
-    Order repos so upstream RHEL content (baseos, appstream, CRB, ...) is preferred over OCP plashets
-    (rhocp / *ose-rpms*) as a tiebreaker when the same EVR exists in multiple repos.
+    Order repos so OCP content (rhocp / *ose-rpms*) is preferred over plain RHEL (baseos, appstream, CRB, ...).
 
-    :meth:`RpmInfoCollector._fetch_rpms_info_per_arch` always picks the highest EVR across all repos.
-    When two repos provide the same highest EVR, the first one in iteration order wins — so RHEL repos
-    are listed first to prefer the upstream/canonical source for system packages.
+    :meth:`RpmInfoCollector._fetch_rpms_info_per_arch` resolves each package name from the first repo in
+    iteration order that contains it. ``repo_names`` is a ``set``, so order was undefined; the same RPM
+    name can exist in both RHEL AppStream (e.g. modular ``runc`` 1.1.x) and OSE (``runc`` 1.2.x from
+    ``rhaos``). Prefer OSE so lockfiles and hermetic prefetch match ``check_external_packages`` / Brew.
     """
 
     def sort_key(name: str) -> tuple[int, str]:
         lower = name.lower()
         if 'ose-rpms' in lower or 'rhocp' in lower:
-            return (1, name)
-        return (0, name)
+            return (0, name)
+        return (1, name)
 
     return sorted(repo_names, key=sort_key)
 
@@ -276,11 +276,6 @@ class RpmInfoCollector:
         """
         Resolve RPM metadata for a specific architecture from the given repodata names.
 
-        For each package, the highest version across ALL repos is selected (matching dnf
-        behaviour). When the same EVR exists in multiple repos, the repo iteration order
-        from ``sort_repos_for_lockfile_resolution`` acts as tiebreaker (RHEL upstream repos
-        are preferred over rhocp plashets).
-
         Args:
             rpm_names (set[str]): RPM names or NVRs to resolve.
             repo_names (set[str]): Names of repodata sources to search.
@@ -289,11 +284,9 @@ class RpmInfoCollector:
         Returns:
             list[RpmInfo]: Resolved RPM package metadata.
         """
-        # best_by_name tracks the highest-version RpmInfo seen so far per package name.
-        # Iteration order (RHEL first) ensures that when two repos carry the same EVR
-        # the upstream RHEL entry is kept.
-        best_by_name: dict[str, RpmInfo] = {}
-        resolved_items: set[str] = set()
+        rpm_info_list = []
+        unresolved_rpms = set(rpm_names)
+        missing_rpms = unresolved_rpms
 
         for repo_name in sort_repos_for_lockfile_resolution(repo_names):
             repodata = self.loaded_repos.get(f'{repo_name}-{arch}')
@@ -308,28 +301,30 @@ class RpmInfoCollector:
                 self.logger.error(f'repo {repo_name} not found')
                 continue
 
-            found_rpms, not_found = repodata.get_rpms(rpm_names, arch)
-            resolved_items |= rpm_names - set(not_found)
+            found_rpms, missing_rpms = repodata.get_rpms(unresolved_rpms, arch)
 
             content_set_id = repo.content_set(arch)
             if content_set_id is None:
                 self.logger.warning(f'repo {repo_name} has no content_set for {arch}, falling back to repo key')
                 content_set_id = f'{repo_name}-{arch}'
 
-            baseurl = repo.baseurl(repotype="unsigned", arch=arch)
-            for rpm in found_rpms:
-                info = RpmInfo.from_rpm(rpm, repoid=content_set_id, baseurl=baseurl)
-                existing = best_by_name.get(rpm.name)
-                if existing is None or info > existing:
-                    best_by_name[rpm.name] = info
-
-        missing = rpm_names - resolved_items
-        if missing:
-            self.logger.warning(
-                f"Could not find {','.join(sorted(missing))} in {', '.join(repo_names)} for arch {arch}"
+            rpm_info_list.extend(
+                [
+                    RpmInfo.from_rpm(rpm, repoid=content_set_id, baseurl=repo.baseurl(repotype="unsigned", arch=arch))
+                    for rpm in found_rpms
+                ]
             )
 
-        return sorted(best_by_name.values())
+            if not missing_rpms:
+                # Found all rpms, break early
+                break
+
+            unresolved_rpms = missing_rpms
+
+        if missing_rpms:
+            self.logger.warning(f"Could not find {','.join(missing_rpms)} in {', '.join(repo_names)} for arch {arch}")
+
+        return sorted(rpm_info_list)
 
     @start_as_current_span_async(TRACER, "lockfile.fetch_rpms_info")
     async def fetch_rpms_info(
