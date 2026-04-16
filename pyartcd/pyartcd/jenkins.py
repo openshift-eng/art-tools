@@ -40,7 +40,7 @@ class Jobs(Enum):
     RHCOS = 'aos-cd-builds/build%2Frhcos'
     OLM_BUNDLE = 'aos-cd-builds/build%2Folm_bundle'
     OLM_BUNDLE_KONFLUX = 'aos-cd-builds/build%2Folm_bundle_konflux'
-    BASE_IMAGE_RELEASE = 'hack/lgarciaa/build%2Fbase-image-release'
+    BASE_IMAGE_RELEASE = 'aos-cd-builds/build%2Fbase-image-release'
     SYNC_FOR_CI = 'scheduled-builds/sync-for-ci'
     MICROSHIFT_SYNC = 'aos-cd-builds/build%2Fmicroshift_sync'
     CINCINNATI_PRS = 'aos-cd-builds/build%2Fcincinnati-prs'
