@@ -289,6 +289,9 @@ class SigstoreSignatory:
         self.signing_key_ids = signing_key_ids  # key ids for signing
         self.rekor_url = rekor_url  # rekor server for cosign tlog storage
         self.ENV["AWS_SHARED_CREDENTIALS_FILE"] = signing_creds  # filename for KMS credentials
+        quay_auth_file = os.environ.get("QUAY_AUTH_FILE")
+        if quay_auth_file:
+            self.ENV["REGISTRY_AUTH_FILE"] = quay_auth_file
         self.concurrency_limit = concurrency_limit  # limit on concurrent lookups or signings
         self.batch_retries = batch_retries  # number of batch-level retries for failed images
         self.batch_retry_delay = batch_retry_delay  # seconds to wait between batch retries
