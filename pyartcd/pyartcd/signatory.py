@@ -5,6 +5,8 @@ import itertools
 import json
 import logging
 import os
+import shutil
+import tempfile
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -289,6 +291,36 @@ class SigstoreSignatory:
         self.signing_key_ids = signing_key_ids  # key ids for signing
         self.rekor_url = rekor_url  # rekor server for cosign tlog storage
         self.ENV["AWS_SHARED_CREDENTIALS_FILE"] = signing_creds  # filename for KMS credentials
+        # cosign uses go-containerregistry which does hostname-only auth lookup.
+        # QUAY_AUTH_FILE has path-scoped keys (e.g. "quay.io/openshift-release-dev")
+        # so we must add hostname-only entries (e.g. "quay.io") for cosign to find them.
+        quay_auth_file = os.environ.get("QUAY_AUTH_FILE")
+        if quay_auth_file:
+            docker_config_dir = tempfile.mkdtemp(prefix="cosign-docker-config-")
+            config_json_path = os.path.join(docker_config_dir, "config.json")
+            try:
+                with open(quay_auth_file) as f:
+                    auth_data = json.load(f)
+                auths = auth_data.get("auths", {})
+                # Add hostname-only entries for any path-scoped keys
+                hostname_auths = {}
+                for key, value in auths.items():
+                    hostname = key.split("/")[0]
+                    if hostname != key and hostname not in auths:
+                        hostname_auths[hostname] = value
+                if hostname_auths:
+                    auths.update(hostname_auths)
+                    auth_data["auths"] = auths
+                    logger.info("Added hostname-only auth entries for cosign: %s", list(hostname_auths.keys()))
+                with open(config_json_path, "w") as f:
+                    json.dump(auth_data, f)
+            except Exception as e:
+                logger.warning("Could not rewrite auth file for cosign, falling back to copy: %s", e)
+                shutil.copy2(quay_auth_file, config_json_path)
+            self.ENV["DOCKER_CONFIG"] = docker_config_dir
+            logger.info("Set DOCKER_CONFIG=%s for cosign (from QUAY_AUTH_FILE=%s)", docker_config_dir, quay_auth_file)
+        else:
+            logger.warning("QUAY_AUTH_FILE not set; cosign may lack registry credentials")
         self.concurrency_limit = concurrency_limit  # limit on concurrent lookups or signings
         self.batch_retries = batch_retries  # number of batch-level retries for failed images
         self.batch_retry_delay = batch_retry_delay  # seconds to wait between batch retries
@@ -331,7 +363,8 @@ class SigstoreSignatory:
         seen: Set[str] = {pullspec}
 
         await asyncio.sleep(uniform(0, self.THROTTLE_DELAY))
-        img_info = await get_image_info(pullspec, True)
+        registry_config = os.environ.get("QUAY_AUTH_FILE")
+        img_info = await get_image_info(pullspec, True, registry_config=registry_config)
 
         if isinstance(img_info, list):
             # Manifest list: discover each arch manifest
@@ -427,9 +460,10 @@ class SigstoreSignatory:
         errors: Dict[str, Exception] = {}
 
         await asyncio.sleep(uniform(0, self.THROTTLE_DELAY))
+        registry_config = os.environ.get("QUAY_AUTH_FILE")
 
         try:
-            img_info = await get_image_info(pullspec, True)
+            img_info = await get_image_info(pullspec, True, registry_config=registry_config)
         except Exception as exc:
             errors[pullspec] = exc
             return need_signing, need_examining, errors
@@ -449,8 +483,12 @@ class SigstoreSignatory:
     @staticmethod
     async def get_release_image_references(pullspec: str) -> Set[str]:
         """Retrieve the pullspecs referenced by a release image."""
+        registry_config = os.environ.get("QUAY_AUTH_FILE")
         return set(
-            tag["from"]["name"] for tag in (await get_release_image_info(pullspec))["references"]["spec"]["tags"]
+            tag["from"]["name"]
+            for tag in (await get_release_image_info(pullspec, registry_config=registry_config))["references"]["spec"][
+                "tags"
+            ]
         )
 
     async def sign_release_images(
@@ -647,6 +685,7 @@ class SigstoreSignatory:
     async def _retrying_cosign(self, cmd: List[str]) -> str:
         """Execute cosign with retry on failure."""
         await asyncio.sleep(uniform(0, self.THROTTLE_DELAY))
+        self._logger.debug("cosign ENV DOCKER_CONFIG=%s", self.ENV.get("DOCKER_CONFIG"))
         rc, stdout, stderr = await exectools.cmd_gather_async(cmd, check=False, env=self.ENV)
         if rc:
             raise RuntimeError(stderr)

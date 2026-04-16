@@ -212,7 +212,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
     @patch("pyartcd.pipelines.promote.PromotePipeline.build_release_image", return_value=None)
     @patch(
         "pyartcd.pipelines.promote.get_release_image_info",
-        side_effect=lambda pullspec, raise_if_not_found=False: {
+        side_effect=lambda pullspec, raise_if_not_found=False, registry_config=None: {
             "image": pullspec,
             "digest": f"fake:deadbeef-{pullspec}",
             "metadata": {
@@ -285,10 +285,14 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             group='openshift-4.10', data_path='https://example.com/ocp-build-data.git'
         )
         get_release_image_info.assert_any_await(
-            "quay.io/openshift-release-dev/ocp-release:4.10.99-assembly.art0001-x86_64", raise_if_not_found=ANY
+            "quay.io/openshift-release-dev/ocp-release:4.10.99-assembly.art0001-x86_64",
+            raise_if_not_found=ANY,
+            registry_config=ANY,
         )
         get_release_image_info.assert_any_await(
-            "quay.io/openshift-release-dev/ocp-release:4.10.99-assembly.art0001-s390x", raise_if_not_found=ANY
+            "quay.io/openshift-release-dev/ocp-release:4.10.99-assembly.art0001-s390x",
+            raise_if_not_found=ANY,
+            registry_config=ANY,
         )
         build_release_image.assert_any_await(
             "4.10.99-assembly.art0001",
@@ -496,7 +500,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
     @patch("pyartcd.pipelines.promote.PromotePipeline.build_release_image", return_value=None)
     @patch(
         "pyartcd.pipelines.promote.get_release_image_info",
-        side_effect=lambda pullspec, raise_if_not_found=False: {
+        side_effect=lambda pullspec, raise_if_not_found=False, registry_config=None: {
             "image": pullspec,
             "digest": f"fake:deadbeef-{pullspec}",
             "metadata": {
@@ -616,10 +620,14 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             [1, 2, 3, 4], no_verify_blocking_bugs=False, verify_flaws=True
         )
         get_release_image_info.assert_any_await(
-            "quay.io/openshift-release-dev/ocp-release:4.10.99-x86_64", raise_if_not_found=ANY
+            "quay.io/openshift-release-dev/ocp-release:4.10.99-x86_64",
+            raise_if_not_found=ANY,
+            registry_config=ANY,
         )
         get_release_image_info.assert_any_await(
-            "quay.io/openshift-release-dev/ocp-release:4.10.99-s390x", raise_if_not_found=ANY
+            "quay.io/openshift-release-dev/ocp-release:4.10.99-s390x",
+            raise_if_not_found=ANY,
+            registry_config=ANY,
         )
         build_release_image.assert_any_await(
             "4.10.99",
@@ -692,7 +700,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
     @patch("pyartcd.pipelines.promote.PromotePipeline.build_release_image", return_value=None)
     @patch(
         "pyartcd.pipelines.promote.get_release_image_info",
-        side_effect=lambda pullspec, raise_if_not_found=False: {
+        side_effect=lambda pullspec, raise_if_not_found=False, registry_config=None: {
             "image": pullspec,
             "digest": "fake:deadbeef",
             "metadata": {
@@ -748,7 +756,10 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             tag_stable=True,
             assembly_type=AssemblyTypes.CUSTOM,
         )
-        get_release_image_info.assert_any_await("quay.io/openshift-release-dev/ocp-release:4.10.99-x86_64")
+        get_release_image_info.assert_any_await(
+            "quay.io/openshift-release-dev/ocp-release:4.10.99-x86_64",
+            registry_config=ANY,
+        )
         build_release_image.assert_awaited_once_with(
             "4.10.99",
             "x86_64",
@@ -780,7 +791,10 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             tag_stable=True,
             assembly_type=AssemblyTypes.CUSTOM,
         )
-        get_release_image_info.assert_any_await("quay.io/openshift-release-dev/ocp-release:4.10.99-aarch64")
+        get_release_image_info.assert_any_await(
+            "quay.io/openshift-release-dev/ocp-release:4.10.99-aarch64",
+            registry_config=ANY,
+        )
         build_release_image.assert_awaited_once_with(
             "4.10.99",
             "aarch64",
@@ -818,7 +832,10 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
                 tag_stable=True,
                 assembly_type=AssemblyTypes.CUSTOM,
             )
-        get_release_image_info.assert_any_await("quay.io/openshift-release-dev/ocp-release:4.10.99-aarch64")
+        get_release_image_info.assert_any_await(
+            "quay.io/openshift-release-dev/ocp-release:4.10.99-aarch64",
+            registry_config=ANY,
+        )
         build_release_image.assert_awaited_once_with(
             "4.10.99",
             "aarch64",
