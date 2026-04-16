@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import re
 import sys
 
@@ -356,7 +357,8 @@ def get_rhcos_nvrs_from_assembly(runtime: Runtime, brew_session: koji.ClientSess
             continue
 
         for arch, pullspec in config['images'].items():
-            build_id = get_build_id_from_rhcos_pullspec(pullspec)
+            registry_config = os.getenv("QUAY_AUTH_FILE")
+            build_id = get_build_id_from_rhcos_pullspec(pullspec, registry_config=registry_config)
             if arch not in build_ids_by_arch:
                 build_ids_by_arch[arch] = set()
             build_ids_by_arch[arch].add(build_id)
