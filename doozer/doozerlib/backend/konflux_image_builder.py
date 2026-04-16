@@ -511,6 +511,43 @@ class KonfluxImageBuilder:
         return name
 
     @staticmethod
+    def get_golang_builder_component_name(nvr: str) -> str:
+        """
+        Generate golang builder specific component name from NVR.
+
+        Args:
+            nvr: Build NVR (e.g., "openshift-golang-builder-container-v1.25.8-202604081607.p0.g2aa6a05.el8")
+
+        Returns:
+            Component name (e.g., "golang-builder-v1.25-rhel8")
+        """
+        nvr_parsed = parse_nvr(nvr)
+        version = nvr_parsed["version"]
+        release = nvr_parsed["release"]
+
+        # Extract major.minor from semantic version (e.g., "v1.25.8" -> "v1.25")
+        if version.startswith("v"):
+            version_parts = version[1:].split(".")  # Remove 'v' prefix and split
+        else:
+            version_parts = version.split(".")
+
+        if len(version_parts) >= 2:
+            major_minor = f"v{version_parts[0]}.{version_parts[1]}"
+        else:
+            # Fallback to original version if parsing fails
+            major_minor = version
+
+        # Determine RHEL version from release field
+        if ".el9" in release:
+            el_suffix = "rhel9"
+        elif ".el8" in release:
+            el_suffix = "rhel8"
+        else:
+            el_suffix = "rhel9"  # Default fallback
+
+        return f"golang-builder-{major_minor}-{el_suffix}"
+
+    @staticmethod
     def _repo_gets_hermetic_module_hotfixes(repo_name: str, group: str, golang_pattern: re.Pattern) -> bool:
         """
         art-unsigned.repo sets module_hotfixes=1 on OSE (plashet) repos so non-modular RPMs there can win over
@@ -1184,12 +1221,7 @@ class KonfluxImageBuilder:
         logger.info(f"Triggering base image release for {nvr}")
 
         try:
-            # Extract build_version from group_name (expected: openshift-X.Y)
-            version_parts = self._config.group_name.split('-')
-            if len(version_parts) >= 2:
-                build_version = '-'.join(version_parts[1:])
-            else:
-                build_version = self._config.group_name
+            build_version = self._config.group_name
 
             jenkins.start_base_image_release(
                 build_version=build_version,
