@@ -235,3 +235,67 @@ class TestDeleteGitAuthSecret(TestCase):
 
         client.corev1_client.delete_namespaced_secret.assert_not_called()
         self.assertIsNone(client._git_auth_secret_name)
+
+
+class TestRefreshGitAuthSecret(TestCase):
+    @patch("doozerlib.backend.konflux_client.get_github_app_token_for_org", return_value="ghp_refreshed_token")
+    def test_refreshes_secret_with_new_token(self, mock_token_fn):
+        client = _make_client()
+        secret_name = f"{_GIT_AUTH_SECRET_PREFIX}1700000000000000000"
+        client._git_auth_secret_name = secret_name
+
+        existing_secret = MagicMock()
+        existing_secret.data = {"username": base64.b64encode(b"x-access-token").decode(), "password": "old"}
+        existing_secret.metadata.annotations = {"art.openshift.io/created-at": "old-time"}
+        client.corev1_client.read_namespaced_secret.return_value = existing_secret
+
+        _run(client.refresh_git_auth_secret(namespace="test-ns"))
+
+        client.corev1_client.read_namespaced_secret.assert_called_once_with(
+            name=secret_name,
+            namespace="test-ns",
+            _request_timeout=client.request_timeout,
+        )
+        client.corev1_client.replace_namespaced_secret.assert_called_once()
+        call_kwargs = client.corev1_client.replace_namespaced_secret.call_args
+        body = call_kwargs.kwargs.get("body") or call_kwargs[1].get("body")
+        self.assertEqual(
+            base64.b64decode(body.data["password"]).decode(),
+            "ghp_refreshed_token",
+        )
+
+    def test_noop_when_no_secret(self):
+        client = _make_client()
+        self.assertIsNone(client._git_auth_secret_name)
+
+        _run(client.refresh_git_auth_secret(namespace="test-ns"))
+
+        client.corev1_client.read_namespaced_secret.assert_not_called()
+
+    def test_noop_for_static_fallback(self):
+        client = _make_client()
+        client._git_auth_secret_name = "pipelines-as-code-secret"
+
+        _run(client.refresh_git_auth_secret(namespace="test-ns"))
+
+        client.corev1_client.read_namespaced_secret.assert_not_called()
+
+    @patch("doozerlib.backend.konflux_client.get_github_app_token_for_org", return_value="ghp_refreshed_token")
+    def test_handles_404(self, mock_token_fn):
+        client = _make_client()
+        client._git_auth_secret_name = f"{_GIT_AUTH_SECRET_PREFIX}1700000000000000000"
+        client.corev1_client.read_namespaced_secret.side_effect = ApiException(status=404, reason="Not Found")
+
+        # Should not raise
+        _run(client.refresh_git_auth_secret(namespace="test-ns"))
+
+        client.corev1_client.replace_namespaced_secret.assert_not_called()
+
+    def test_dry_run_skips_refresh(self):
+        client = _make_client(dry_run=True)
+        client._git_auth_secret_name = f"{_GIT_AUTH_SECRET_PREFIX}1700000000000000000"
+
+        _run(client.refresh_git_auth_secret(namespace="test-ns"))
+
+        client.corev1_client.read_namespaced_secret.assert_not_called()
+        client.corev1_client.replace_namespaced_secret.assert_not_called()

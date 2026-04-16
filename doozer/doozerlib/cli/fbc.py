@@ -333,9 +333,17 @@ class FbcMergeCli:
         git_auth_secret = await merger._konflux_client.ensure_git_auth_secret(
             namespace=self.konflux_namespace,
         )
+        refresh_task = asyncio.create_task(
+            merger._konflux_client.token_refresh_loop(namespace=self.konflux_namespace)
+        )
         try:
             await merger.run(fragments, target_index, git_auth_secret=git_auth_secret)
         finally:
+            refresh_task.cancel()
+            try:
+                await refresh_task
+            except asyncio.CancelledError:
+                pass
             try:
                 await merger._konflux_client.delete_git_auth_secret(
                     namespace=self.konflux_namespace,
@@ -749,6 +757,9 @@ class FbcRebaseAndBuildCli:
         git_auth_secret = await builder._konflux_client.ensure_git_auth_secret(
             namespace=self.konflux_namespace,
         )
+        refresh_task = asyncio.create_task(
+            builder._konflux_client.token_refresh_loop(namespace=self.konflux_namespace)
+        )
 
         tasks = [
             self._rebase_and_build(
@@ -785,6 +796,11 @@ class FbcRebaseAndBuildCli:
                 else:
                     successful_nvrs.append(result)
         finally:
+            refresh_task.cancel()
+            try:
+                await refresh_task
+            except asyncio.CancelledError:
+                pass
             try:
                 await builder._konflux_client.delete_git_auth_secret(
                     namespace=self.konflux_namespace,

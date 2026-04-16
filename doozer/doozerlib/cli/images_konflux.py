@@ -311,6 +311,9 @@ class KonfluxBuildCli:
         git_auth_secret = await builder._konflux_client.ensure_git_auth_secret(
             namespace=self.konflux_namespace,
         )
+        refresh_task = asyncio.create_task(
+            builder._konflux_client.token_refresh_loop(namespace=self.konflux_namespace)
+        )
 
         tasks = []
         for image_meta in metas:
@@ -325,6 +328,11 @@ class KonfluxBuildCli:
                     stack_trace = ''.join(traceback.TracebackException.from_exception(result).format())
                     LOGGER.error(f"Failed to build {image_name}: {result}; {stack_trace}")
         finally:
+            refresh_task.cancel()
+            try:
+                await refresh_task
+            except asyncio.CancelledError:
+                pass
             try:
                 await builder._konflux_client.delete_git_auth_secret(
                     namespace=self.konflux_namespace,
@@ -601,6 +609,9 @@ class KonfluxBundleCli:
         git_auth_secret = await builder._konflux_client.ensure_git_auth_secret(
             namespace=self.konflux_namespace,
         )
+        refresh_task = asyncio.create_task(
+            builder._konflux_client.token_refresh_loop(namespace=self.konflux_namespace)
+        )
 
         tasks = []
         for dgk, record in dgk_records.items():
@@ -633,6 +644,11 @@ class KonfluxBundleCli:
                 else:
                     successful_nvrs.append(result)
         finally:
+            refresh_task.cancel()
+            try:
+                await refresh_task
+            except asyncio.CancelledError:
+                pass
             try:
                 await builder._konflux_client.delete_git_auth_secret(
                     namespace=self.konflux_namespace,

@@ -269,8 +269,10 @@ class KonfluxClient:
 
         namespace = namespace or self.default_namespace
 
-        # Mint a short-lived installation token (valid ~1 hour, but only the
-        # git-clone + prefetch tasks need it — those run in the first few minutes).
+        # Mint a short-lived installation token (valid ~1 hour).
+        # A background refresh loop (token_refresh_loop) keeps the secret
+        # up-to-date for PipelineRuns that sit in the Kueue queue longer than
+        # the token's lifetime.
         token = await exectools.to_thread(get_github_app_token_for_org, org)
 
         # Nanosecond epoch avoids name collisions when multiple doozer
@@ -353,6 +355,81 @@ class KonfluxClient:
                     self._logger.warning(f"Failed to delete git-auth Secret {secret_name}: {e}")
 
         self._git_auth_secret_name = None
+
+    async def refresh_git_auth_secret(self, namespace: Optional[str] = None, org: str = "openshift-priv") -> None:
+        """Re-mint the GitHub App installation token and update the existing
+        Kubernetes Secret in-place.
+
+        This keeps the token valid for PipelineRuns that have been queued
+        longer than the token's 1-hour lifetime. Tekton reads Secret data
+        when the Pod is actually scheduled, so updating the Secret while a
+        PipelineRun is Pending ensures the git-clone task gets a valid token.
+
+        No-op when:
+        - No transient secret was created (static fallback)
+        - Running in dry-run mode
+
+        :param namespace: Target namespace. Defaults to self.default_namespace.
+        :param org: GitHub org whose installation token to mint.
+        """
+        secret_name = self._git_auth_secret_name
+        if not secret_name or not secret_name.startswith(_GIT_AUTH_SECRET_PREFIX):
+            return
+
+        if self.dry_run:
+            self._logger.warning(f"[DRY RUN] Would have refreshed git-auth Secret {secret_name}")
+            return
+
+        namespace = namespace or self.default_namespace
+
+        token = await exectools.to_thread(get_github_app_token_for_org, org)
+        now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+        try:
+            existing = await exectools.to_thread(
+                self.corev1_client.read_namespaced_secret,
+                name=secret_name,
+                namespace=namespace,
+                _request_timeout=self.request_timeout,
+            )
+            existing.data["password"] = base64.b64encode(token.encode()).decode()
+            existing.metadata.annotations["art.openshift.io/created-at"] = now
+            await exectools.to_thread(
+                self.corev1_client.replace_namespaced_secret,
+                name=secret_name,
+                namespace=namespace,
+                body=existing,
+                _request_timeout=self.request_timeout,
+            )
+            self._logger.info(f"Refreshed git-auth Secret {namespace}/{secret_name}")
+        except ApiException as e:
+            if e.status == 404:
+                self._logger.debug(f"Secret {secret_name} already deleted; skipping refresh")
+            else:
+                raise
+
+    async def token_refresh_loop(
+        self,
+        namespace: Optional[str] = None,
+        org: str = "openshift-priv",
+        interval_seconds: int = 45 * 60,
+    ) -> None:
+        """Periodically refresh the transient git-auth secret.
+
+        Runs until cancelled. Intended to be launched as an asyncio task
+        alongside PipelineRun build tasks so that the token stays valid
+        for jobs queued longer than the 1-hour token lifetime.
+
+        :param namespace: Target namespace. Defaults to self.default_namespace.
+        :param org: GitHub org whose installation token to mint.
+        :param interval_seconds: Seconds between refreshes (default 45 min).
+        """
+        while True:
+            await asyncio.sleep(interval_seconds)
+            try:
+                await self.refresh_git_auth_secret(namespace=namespace, org=org)
+            except Exception as exc:
+                self._logger.warning(f"Failed to refresh git-auth secret (will retry next cycle): {exc}")
 
     async def cleanup_stale_git_auth_secrets(self, namespace: Optional[str] = None, max_age_hours: int = 24) -> None:
         """Delete transient git-auth secrets older than *max_age_hours*.
