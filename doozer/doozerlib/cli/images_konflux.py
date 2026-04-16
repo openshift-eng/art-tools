@@ -311,9 +311,7 @@ class KonfluxBuildCli:
         git_auth_secret = await builder._konflux_client.ensure_git_auth_secret(
             namespace=self.konflux_namespace,
         )
-        refresh_task = asyncio.create_task(
-            builder._konflux_client.token_refresh_loop(namespace=self.konflux_namespace)
-        )
+        refresh_task = asyncio.create_task(builder._konflux_client.token_refresh_loop(namespace=self.konflux_namespace))
 
         tasks = []
         for image_meta in metas:
@@ -609,9 +607,7 @@ class KonfluxBundleCli:
         git_auth_secret = await builder._konflux_client.ensure_git_auth_secret(
             namespace=self.konflux_namespace,
         )
-        refresh_task = asyncio.create_task(
-            builder._konflux_client.token_refresh_loop(namespace=self.konflux_namespace)
-        )
+        refresh_task = asyncio.create_task(builder._konflux_client.token_refresh_loop(namespace=self.konflux_namespace))
 
         tasks = []
         for dgk, record in dgk_records.items():
