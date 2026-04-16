@@ -466,6 +466,207 @@ class TestRpmInfoCollectorFetchRpms(unittest.TestCase):
         self.assertEqual(result[0].evr, '0:252-32.el9_4')
         self.assertEqual(result[0].repoid, 'baseos-cs')
 
+    def test_fetch_rpms_preserves_nvr_pin_alongside_latest(self):
+        """When both a plain name and a pinned NVR are requested, the lockfile must contain both versions."""
+        arches = ['x86_64']
+        repo_data = {
+            "rhel-9-appstream-rpms": {
+                "conf": {"baseurl": {"x86_64": "https://example.com/appstream/"}},
+                "content_set": {"default": "appstream-cs"},
+                "reposync": {"enabled": False},
+            },
+        }
+        repos = Repos(repo_data, arches=arches)
+        collector = RpmInfoCollector(repos=repos)
+        collector.logger = MagicMock()
+
+        pinned_rpm = Rpm(
+            name="rust-toolset",
+            epoch=0,
+            version="1.84.1",
+            checksum="pinned",
+            size=100,
+            location="/rust-toolset-1.84.1.rpm",
+            sourcerpm="rust-toolset.src.rpm",
+            release="1.el9",
+            arch="x86_64",
+        )
+        latest_rpm = Rpm(
+            name="rust-toolset",
+            epoch=0,
+            version="1.85.0",
+            checksum="latest",
+            size=110,
+            location="/rust-toolset-1.85.0.rpm",
+            sourcerpm="rust-toolset.src.rpm",
+            release="1.el9",
+            arch="x86_64",
+        )
+        arch = 'x86_64'
+        repodata = MagicMock()
+        repodata.get_rpms.return_value = ([pinned_rpm, latest_rpm], [])
+        collector.loaded_repos[f"rhel-9-appstream-rpms-{arch}"] = repodata
+
+        result = collector._fetch_rpms_info_per_arch(
+            {'rust-toolset', 'rust-toolset-1.84.1-1.el9'},
+            set(repo_data.keys()),
+            arch,
+        )
+        result_evrs = {r.evr for r in result}
+        self.assertIn('0:1.84.1-1.el9', result_evrs)
+        self.assertIn('0:1.85.0-1.el9', result_evrs)
+        self.assertEqual(len(result), 2)
+
+    def test_fetch_rpms_preserves_nvr_pin_across_repos(self):
+        """Pinned NVR from rhocp and latest from RHEL must both appear in the lockfile."""
+        arches = ['x86_64']
+        repo_data = {
+            "rhel-9-appstream-rpms": {
+                "conf": {"baseurl": {"x86_64": "https://example.com/appstream/"}},
+                "content_set": {"default": "appstream-cs"},
+                "reposync": {"enabled": False},
+            },
+            "rhocp-4.16-for-rhel-9-rpms": {
+                "conf": {"baseurl": {"x86_64": "https://example.com/rhocp/"}},
+                "content_set": {"default": "rhocp-cs"},
+                "reposync": {"enabled": False},
+            },
+        }
+        repos = Repos(repo_data, arches=arches)
+        collector = RpmInfoCollector(repos=repos)
+        collector.logger = MagicMock()
+
+        pinned_rpm = Rpm(
+            name="rust-toolset",
+            epoch=0,
+            version="1.84.1",
+            checksum="pinned",
+            size=100,
+            location="/rust-toolset-1.84.1.rpm",
+            sourcerpm="rust-toolset.src.rpm",
+            release="1.el9",
+            arch="x86_64",
+        )
+        latest_rpm = Rpm(
+            name="rust-toolset",
+            epoch=0,
+            version="1.85.0",
+            checksum="latest",
+            size=110,
+            location="/rust-toolset-1.85.0.rpm",
+            sourcerpm="rust-toolset.src.rpm",
+            release="1.el9",
+            arch="x86_64",
+        )
+        arch = 'x86_64'
+
+        appstream_repodata = MagicMock()
+        appstream_repodata.get_rpms.return_value = ([latest_rpm], ['rust-toolset-1.84.1-1.el9'])
+
+        rhocp_repodata = MagicMock()
+        rhocp_repodata.get_rpms.return_value = ([pinned_rpm, latest_rpm], [])
+
+        collector.loaded_repos[f"rhel-9-appstream-rpms-{arch}"] = appstream_repodata
+        collector.loaded_repos[f"rhocp-4.16-for-rhel-9-rpms-{arch}"] = rhocp_repodata
+
+        result = collector._fetch_rpms_info_per_arch(
+            {'rust-toolset', 'rust-toolset-1.84.1-1.el9'},
+            set(repo_data.keys()),
+            arch,
+        )
+        result_evrs = {r.evr for r in result}
+        self.assertIn('0:1.84.1-1.el9', result_evrs)
+        self.assertIn('0:1.85.0-1.el9', result_evrs)
+        self.assertEqual(len(result), 2)
+
+    def test_fetch_rpms_solo_nvr_pin_preserved(self):
+        """A sole NVR pin (no plain name counterpart) must appear even when a newer version exists."""
+        arches = ['x86_64']
+        repo_data = {
+            "rhel-9-appstream-rpms": {
+                "conf": {"baseurl": {"x86_64": "https://example.com/appstream/"}},
+                "content_set": {"default": "appstream-cs"},
+                "reposync": {"enabled": False},
+            },
+        }
+        repos = Repos(repo_data, arches=arches)
+        collector = RpmInfoCollector(repos=repos)
+        collector.logger = MagicMock()
+
+        pinned_rpm = Rpm(
+            name="rust-toolset",
+            epoch=0,
+            version="1.84.1",
+            checksum="pinned",
+            size=100,
+            location="/rust-toolset-1.84.1.rpm",
+            sourcerpm="rust-toolset.src.rpm",
+            release="1.el9",
+            arch="x86_64",
+        )
+        latest_rpm = Rpm(
+            name="rust-toolset",
+            epoch=0,
+            version="1.85.0",
+            checksum="latest",
+            size=110,
+            location="/rust-toolset-1.85.0.rpm",
+            sourcerpm="rust-toolset.src.rpm",
+            release="1.el9",
+            arch="x86_64",
+        )
+        arch = 'x86_64'
+        repodata = MagicMock()
+        repodata.get_rpms.return_value = ([pinned_rpm, latest_rpm], [])
+        collector.loaded_repos[f"rhel-9-appstream-rpms-{arch}"] = repodata
+
+        result = collector._fetch_rpms_info_per_arch(
+            {'rust-toolset-1.84.1-1.el9'},
+            set(repo_data.keys()),
+            arch,
+        )
+        result_evrs = {r.evr for r in result}
+        self.assertIn('0:1.84.1-1.el9', result_evrs)
+        self.assertEqual(len(result), 2)
+
+    def test_fetch_rpms_nvr_pin_deduplicates_when_pinned_is_latest(self):
+        """When the pinned NVR IS the latest version, only one entry should appear (no duplicate)."""
+        arches = ['x86_64']
+        repo_data = {
+            "rhel-9-appstream-rpms": {
+                "conf": {"baseurl": {"x86_64": "https://example.com/appstream/"}},
+                "content_set": {"default": "appstream-cs"},
+                "reposync": {"enabled": False},
+            },
+        }
+        repos = Repos(repo_data, arches=arches)
+        collector = RpmInfoCollector(repos=repos)
+        collector.logger = MagicMock()
+
+        the_rpm = Rpm(
+            name="rust-toolset",
+            epoch=0,
+            version="1.84.1",
+            checksum="only",
+            size=100,
+            location="/rust-toolset-1.84.1.rpm",
+            sourcerpm="rust-toolset.src.rpm",
+            release="1.el9",
+            arch="x86_64",
+        )
+        arch = 'x86_64'
+        repodata = MagicMock()
+        repodata.get_rpms.return_value = ([the_rpm], [])
+        collector.loaded_repos[f"rhel-9-appstream-rpms-{arch}"] = repodata
+
+        result = collector._fetch_rpms_info_per_arch(
+            {'rust-toolset', 'rust-toolset-1.84.1-1.el9'},
+            set(repo_data.keys()),
+            arch,
+        )
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].evr, '0:1.84.1-1.el9')
+
     def test_load_repos_skips_already_loaded(self):
         # Simulate that both repos are already loaded
         already_loaded = {f"{name}-x86_64" for name in self.repo_names}

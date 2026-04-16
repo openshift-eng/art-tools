@@ -228,7 +228,8 @@ class Repodata:
 
         return found_rpms, sorted(not_found)
 
-    def _detect_nvr_vs_name(self, item: str) -> Tuple[bool, str]:
+    @staticmethod
+    def _detect_nvr_vs_name(item: str) -> Tuple[bool, str]:
         """
         Detect if input item is an NVR or a package name.
 
