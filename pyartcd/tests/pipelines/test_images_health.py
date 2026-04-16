@@ -218,12 +218,55 @@ class TestSyncJira(TestCase):
         self.assertIn("art:image-build-failure", kwargs[1]["labels"])
         self.assertIn("art:package:ironic", kwargs[1]["labels"])
         self.assertIn("art:group:openshift-5.0", kwargs[1]["labels"])
+        self.assertIn("art:fail-count:100", kwargs[1]["labels"])
         mock_jira.close_task.assert_not_called()
 
-    def test_skips_existing_ticket(self):
+    def test_creates_ticket_with_fail_count_from_latest_success_idx(self):
+        pipeline = self._make_pipeline()
+        pipeline.report = [
+            _make_concern("ironic", "openshift-5.0", ConcernCode.LATEST_ATTEMPT_FAILED.value, latest_success_idx=7),
+        ]
+
+        mock_jira = MagicMock()
+        mock_jira.search_issues.return_value = []
+        mock_jira.create_issue.return_value = MagicMock(key="ART-101")
+        pipeline.runtime.new_jira_client.return_value = mock_jira
+
+        pipeline.sync_jira()
+
+        kwargs = mock_jira.create_issue.call_args
+        self.assertIn("art:fail-count:7", kwargs[1]["labels"])
+
+    def test_updates_existing_ticket(self):
         pipeline = self._make_pipeline()
         pipeline.report = [
             _make_concern("ironic", "openshift-5.0", ConcernCode.FAILING_AT_LEAST_FOR.value),
+        ]
+
+        existing_ticket = _make_ticket(
+            "ART-99",
+            ["art:image-build-failure", "art:package:ironic", "art:group:openshift-5.0", "art:fail-count:5"],
+        )
+        mock_jira = MagicMock()
+        mock_jira.search_issues.return_value = [existing_ticket]
+        pipeline.runtime.new_jira_client.return_value = mock_jira
+
+        pipeline.sync_jira()
+
+        mock_jira.create_issue.assert_not_called()
+        mock_jira.close_task.assert_not_called()
+        existing_ticket.update.assert_called_once()
+        updated_fields = existing_ticket.update.call_args[1]["fields"]
+        updated_labels = updated_fields["labels"]
+        self.assertIn("art:fail-count:100", updated_labels)
+        self.assertNotIn("art:fail-count:5", updated_labels)
+        self.assertIn("ironic", updated_fields["description"])
+        self.assertIn("Error logs", updated_fields["description"])
+
+    def test_updates_existing_ticket_without_prior_fail_count(self):
+        pipeline = self._make_pipeline()
+        pipeline.report = [
+            _make_concern("ironic", "openshift-5.0", ConcernCode.LATEST_ATTEMPT_FAILED.value, latest_success_idx=3),
         ]
 
         existing_ticket = _make_ticket(
@@ -237,7 +280,12 @@ class TestSyncJira(TestCase):
         pipeline.sync_jira()
 
         mock_jira.create_issue.assert_not_called()
-        mock_jira.close_task.assert_not_called()
+        existing_ticket.update.assert_called_once()
+        updated_fields = existing_ticket.update.call_args[1]["fields"]
+        updated_labels = updated_fields["labels"]
+        self.assertIn("art:fail-count:3", updated_labels)
+        self.assertIn("art:image-build-failure", updated_labels)
+        self.assertIn("ironic-1.0-1", updated_fields["description"])
 
     def test_closes_resolved_ticket(self):
         pipeline = self._make_pipeline()

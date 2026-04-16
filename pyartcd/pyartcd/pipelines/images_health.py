@@ -154,7 +154,8 @@ class ImagesHealthPipeline:
             if (image_name, group) in ticket_index:
                 ticket = ticket_index[(image_name, group)]
                 self.jira_tickets[(image_name, group)] = ticket.key
-                _LOGGER.info("Ticket already exists for %s (%s): %s", image_name, group, ticket.key)
+                _LOGGER.info("Ticket already exists for %s (%s): %s — updating", image_name, group, ticket.key)
+                self._update_existing_ticket(ticket, concern)
                 continue
             new_ticket = self._create_failure_ticket(jira_client, concern)
             self.jira_tickets[(image_name, group)] = new_ticket.key
@@ -171,7 +172,26 @@ class ImagesHealthPipeline:
                 _LOGGER.info("Closing resolved ticket %s for %s (%s)", ticket.key, image_name, group)
                 jira_client.close_task(ticket.key)
 
-    def _create_failure_ticket(self, jira_client: JIRAClient, concern: dict):
+    @staticmethod
+    def _get_fail_count(concern: dict) -> int:
+        """Return the number of consecutive build failures from a concern."""
+        if concern['code'] == ConcernCode.FAILING_AT_LEAST_FOR.value:
+            return LIMIT_BUILD_RESULTS
+        return concern['latest_success_idx']
+
+    @staticmethod
+    def _fail_count_label(concern: dict) -> str:
+        return f"art:fail-count:{ImagesHealthPipeline._get_fail_count(concern)}"
+
+    def _update_existing_ticket(self, ticket, concern: dict):
+        """Update fail-count label and description on an existing ticket."""
+        new_label = self._fail_count_label(concern)
+        labels = [label for label in ticket.fields.labels if not label.startswith("art:fail-count:")]
+        if new_label not in labels:
+            labels.append(new_label)
+        ticket.update(fields={"labels": labels, "description": self._build_description(concern)})
+
+    def _build_description(self, concern: dict) -> str:
         image_name = concern['image_name']
         group = concern['group']
         code = concern['code']
@@ -197,18 +217,24 @@ class ImagesHealthPipeline:
         )
         if last_good_url:
             description += f"*Last successful build:* {last_good_url}\n"
+        return description
+
+    def _create_failure_ticket(self, jira_client: JIRAClient, concern: dict):
+        image_name = concern['image_name']
+        group = concern['group']
 
         labels = [
             "art:image-build-failure",
             f"art:package:{image_name}",
             f"art:group:{group}",
+            self._fail_count_label(concern),
         ]
 
         ticket = jira_client.create_issue(
             project="ART",
             issue_type="Task",
             summary=f"Image build failure: {image_name} ({group})",
-            description=description,
+            description=self._build_description(concern),
             labels=labels,
             components=["daily-ops"],
         )
@@ -424,7 +450,7 @@ class ImagesHealthPipeline:
         """
         dt = datetime.fromisoformat(concern['latest_failed_build_time'])
         formatted = dt.astimezone(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S GMT")
-        logs_url = f'{ART_BUILD_HISTORY_URL}/logs?nvr={concern["latest_failed_nvr"]}&record_id={concern["latest_failed_build_record_id"]}&after={formatted}'
+        logs_url = f'{ART_BUILD_HISTORY_URL}/logs?nvr={concern["latest_failed_nvr"]}&record_id={concern["latest_failed_build_record_id"]}&after={quote(formatted)}'
         return logs_url
 
     @staticmethod
