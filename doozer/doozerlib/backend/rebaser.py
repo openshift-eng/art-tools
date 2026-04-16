@@ -49,25 +49,6 @@ LOGGER = logging.getLogger(__name__)
 TRACER = trace.get_tracer(__name__)
 
 
-CONTAINER_YAML_HEADER = """
-# This file is managed by Doozer: https://github.com/openshift-eng/art-tools/tree/main/doozer
-# operated by the OpenShift Automated Release Tooling team (#forum-ocp-art on CoreOS Slack).
-
-# Any manual changes will be overwritten by Doozer on the next build.
-#
-# See https://source.redhat.com/groups/public/container-build-system/container_build_system_wiki/odcs_integration_with_osbs
-# for more information on maintaining this file and the format and examples
-
----
-"""
-
-
-# Doozer used to be part of OIT
-OIT_COMMENT_PREFIX = '#oit##'
-OIT_BEGIN = '##OIT_BEGIN'
-OIT_END = '##OIT_END'
-
-
 class KonfluxRebaser:
     """Rebase images to a new branch in the build source repository.
 
@@ -1117,16 +1098,16 @@ class KonfluxRebaser:
 
         # Remove any programmatic oit comments from previous management
         df_lines = dfp.content.splitlines(False)
-        df_lines = [line for line in df_lines if not line.strip().startswith(OIT_COMMENT_PREFIX)]
+        df_lines = [line for line in df_lines if not line.strip().startswith(constants.OIT_COMMENT_PREFIX)]
 
         filtered_content = []
         in_mod_block = False
         for line in df_lines:
             # Check for begin/end of mod block, skip any lines inside
-            if OIT_BEGIN in line:
+            if constants.OIT_BEGIN in line:
                 in_mod_block = True
                 continue
-            elif OIT_END in line:
+            elif constants.OIT_END in line:
                 in_mod_block = False
                 continue
 
@@ -1908,7 +1889,7 @@ class KonfluxRebaser:
         # generate yaml data with header
         content_yml = yaml.safe_dump(container_config, default_flow_style=False)
         async with aiofiles.open(dest_dir.joinpath('container.yaml'), 'w', encoding="utf-8") as rc:
-            await rc.write(CONTAINER_YAML_HEADER + content_yml)
+            await rc.write(constants.CONTAINER_YAML_HEADER + content_yml)
 
     def _generate_osbs_image_config(
         self, metadata: ImageMetadata, dest_dir: Path, source: Optional[SourceResolution], version: str
