@@ -1478,7 +1478,8 @@ class PromotePipeline:
         self._logger.info(
             "Checking if release image %s for %s (%s) already exists...", release_name, arch, dest_image_pullspec
         )
-        dest_image_info = await get_release_image_info(dest_image_pullspec)
+        registry_config = os.environ.get("QUAY_AUTH_FILE")
+        dest_image_info = await get_release_image_info(dest_image_pullspec, registry_config=registry_config)
         if dest_image_info:  # this arch-specific release image is already promoted
             self._logger.warning(
                 "Release image %s for %s (%s) already exists", release_name, arch, dest_image_info["image"]
@@ -1515,7 +1516,9 @@ class PromotePipeline:
             )
             self._logger.info("Getting release image information for %s...", dest_image_pullspec)
             if not self.runtime.dry_run:
-                dest_image_info = await get_release_image_info(dest_image_pullspec, raise_if_not_found=True)
+                dest_image_info = await get_release_image_info(
+                    dest_image_pullspec, raise_if_not_found=True, registry_config=registry_config
+                )
             else:
                 # populate fake data for dry run
                 dest_image_info = {
@@ -1860,7 +1863,8 @@ class PromotePipeline:
     async def get_image_info(pullspec: str, raise_if_not_found: bool = False):
         # Get image manifest/manifest-list.
         try:
-            stdout = await oc_image_info__cached_async(pullspec, '--show-multiarch')
+            registry_config = os.environ.get("QUAY_AUTH_FILE")
+            stdout = await oc_image_info__cached_async(pullspec, '--show-multiarch', registry_config=registry_config)
         except ChildProcessError as e:
             err_msg = str(e)
             if "not found: manifest unknown" in err_msg or "was deleted or has expired" in err_msg:
@@ -1899,7 +1903,10 @@ class PromotePipeline:
     async def get_multi_image_digest(pullspec: str, raise_if_not_found: bool = False):
         # Get image digest
         try:
-            stdout = await oc_image_info__cached_async(pullspec, '--filter-by-os=linux/amd64')
+            registry_config = os.environ.get("QUAY_AUTH_FILE")
+            stdout = await oc_image_info__cached_async(
+                pullspec, '--filter-by-os=linux/amd64', registry_config=registry_config
+            )
         except ChildProcessError as e:
             err_msg = str(e)
             if "manifest unknown" in err_msg or "was deleted or has expired" in err_msg:
