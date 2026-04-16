@@ -201,6 +201,30 @@ def get_github_git_auth_env(url: str | None = None, force_refresh: bool = False)
     }
 
 
+def get_github_git_pat_env() -> dict[str, str]:
+    """
+    Return GIT_ASKPASS environment variables using only the GITHUB_TOKEN PAT,
+    bypassing GitHub App credentials entirely.
+
+    This is needed for operations like pushing to protected branches on
+    openshift-priv, where the GitHub App lacks permission to bypass branch
+    protection rules but the PAT does.
+
+    :return: Dict with GIT_ASKPASS, GIT_PASSWORD, GIT_TERMINAL_PROMPT; or {}
+    """
+    token = os.environ.get("GITHUB_TOKEN")
+    if not token:
+        LOGGER.warning("GITHUB_TOKEN is not set; cannot provide PAT-based git auth")
+        return {}
+    LOGGER.info("Using GITHUB_TOKEN (PAT) for git CLI auth (App credentials bypassed)")
+    script = _ensure_askpass_script()
+    return {
+        "GIT_ASKPASS": script,
+        "GIT_PASSWORD": token,
+        "GIT_TERMINAL_PROMPT": "0",
+    }
+
+
 def _generate_app_token_for_url(url: str | None) -> str:
     """Generate an App installation token, using the URL's org when available."""
     app_id, private_key, installation_id = _read_env_credentials()

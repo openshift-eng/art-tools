@@ -10,6 +10,7 @@ from artcommonlib.github_auth import (
     get_github_app_token_from_env,
     get_github_client_for_org,
     get_github_git_auth_env,
+    get_github_git_pat_env,
 )
 
 FAKE_PEM = "-----BEGIN RSA PRIVATE KEY-----\nfake\n-----END RSA PRIVATE KEY-----"
@@ -456,3 +457,39 @@ class TestGetGithubGitAuthEnv:
 
         mock_token.assert_called_once_with(100, FAKE_PEM, 777)
         assert result["GIT_PASSWORD"] == "ghs_explicit"
+
+
+class TestGetGithubGitPatEnv:
+    """Tests for the PAT-only GIT_ASKPASS auth helper."""
+
+    @pytest.fixture(autouse=True)
+    def _clear_askpass_cache(self):
+        gh_auth._askpass_script_path = None
+        yield
+        if gh_auth._askpass_script_path and os.path.exists(gh_auth._askpass_script_path):
+            os.unlink(gh_auth._askpass_script_path)
+        gh_auth._askpass_script_path = None
+
+    def test_returns_pat_env(self, monkeypatch):
+        monkeypatch.setenv("GITHUB_TOKEN", "ghp_my_pat")
+
+        result = get_github_git_pat_env()
+
+        assert "GIT_ASKPASS" in result
+        assert result["GIT_PASSWORD"] == "ghp_my_pat"
+        assert result["GIT_TERMINAL_PROMPT"] == "0"
+
+    def test_ignores_app_credentials(self, monkeypatch):
+        monkeypatch.setenv("GITHUB_APP_ID", "12345")
+        monkeypatch.setenv("GITHUB_TOKEN", "ghp_pat_only")
+
+        result = get_github_git_pat_env()
+
+        assert result["GIT_PASSWORD"] == "ghp_pat_only"
+
+    def test_returns_empty_when_no_pat(self, monkeypatch):
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+
+        result = get_github_git_pat_env()
+
+        assert result == {}
