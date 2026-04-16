@@ -331,7 +331,8 @@ class SigstoreSignatory:
         seen: Set[str] = {pullspec}
 
         await asyncio.sleep(uniform(0, self.THROTTLE_DELAY))
-        img_info = await get_image_info(pullspec, True)
+        registry_config = os.environ.get("QUAY_AUTH_FILE")
+        img_info = await get_image_info(pullspec, True, registry_config=registry_config)
 
         if isinstance(img_info, list):
             # Manifest list: discover each arch manifest
@@ -427,9 +428,10 @@ class SigstoreSignatory:
         errors: Dict[str, Exception] = {}
 
         await asyncio.sleep(uniform(0, self.THROTTLE_DELAY))
+        registry_config = os.environ.get("QUAY_AUTH_FILE")
 
         try:
-            img_info = await get_image_info(pullspec, True)
+            img_info = await get_image_info(pullspec, True, registry_config=registry_config)
         except Exception as exc:
             errors[pullspec] = exc
             return need_signing, need_examining, errors
@@ -449,8 +451,12 @@ class SigstoreSignatory:
     @staticmethod
     async def get_release_image_references(pullspec: str) -> Set[str]:
         """Retrieve the pullspecs referenced by a release image."""
+        registry_config = os.environ.get("QUAY_AUTH_FILE")
         return set(
-            tag["from"]["name"] for tag in (await get_release_image_info(pullspec))["references"]["spec"]["tags"]
+            tag["from"]["name"]
+            for tag in (await get_release_image_info(pullspec, registry_config=registry_config))["references"]["spec"][
+                "tags"
+            ]
         )
 
     async def sign_release_images(
