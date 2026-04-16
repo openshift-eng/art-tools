@@ -104,7 +104,7 @@ class TestFindBuildsKonfluxAllTypes(IsolatedAsyncioTestCase):
         build_2 = MagicMock(nvr="image2-2.0.0-1.el9")
         image_meta_2.get_latest_build = AsyncMock(return_value=build_2)
 
-        # Mock OLM bundle search
+        # Mock OLM bundle search (operator_nvr lookup)
         build_3 = MagicMock(nvr="image2-bundle-2.0.0-1.el9")
         runtime.konflux_db.should_receive("search_builds_by_fields").and_return(iter([build_3]))
 
@@ -116,7 +116,16 @@ class TestFindBuildsKonfluxAllTypes(IsolatedAsyncioTestCase):
             except StopIteration:
                 return default
 
-        with mock.patch("elliottlib.cli.find_builds_cli.anext", side_effect=fake_anext):
+        async def fake_select_olm(_rt, _img):
+            return build_2, []
+
+        with (
+            mock.patch("elliottlib.cli.find_builds_cli.anext", side_effect=fake_anext),
+            mock.patch(
+                "elliottlib.cli.find_builds_cli.select_konflux_olm_operator_build_for_find_builds",
+                side_effect=fake_select_olm,
+            ),
+        ):
             builds_map = await find_builds_konflux_all_types(runtime)
 
         # Assertions
@@ -127,8 +136,9 @@ class TestFindBuildsKonfluxAllTypes(IsolatedAsyncioTestCase):
         self.assertEqual(len(builds_map['olm_builds']), 1)
         self.assertEqual(builds_map['olm_builds'][0], build_3.nvr)
         self.assertEqual(len(builds_map['olm_builds_not_found']), 0)
+        self.assertEqual(builds_map.get("olm_operator_skipped_invalid_refs"), [])
         image_meta_1.get_latest_build.assert_called_once_with(el_target="el8", exclude_large_columns=True)
-        image_meta_2.get_latest_build.assert_called_once_with(el_target="el9", exclude_large_columns=True)
+        image_meta_2.get_latest_build.assert_not_called()
 
 
 if __name__ == "__main__":

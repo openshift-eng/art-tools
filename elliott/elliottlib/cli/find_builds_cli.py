@@ -24,6 +24,7 @@ from elliottlib.cli.common import cli, click_coroutine, find_default_advisory, u
 from elliottlib.errata_async import AsyncErrataAPI
 from elliottlib.exceptions import ElliottFatalError
 from elliottlib.imagecfg import ImageMetadata
+from elliottlib.olm_operator_build_validation import select_konflux_olm_operator_build_for_find_builds
 from elliottlib.util import (
     ensure_erratatool_auth,
     get_release_version,
@@ -749,21 +750,19 @@ async def find_builds_konflux_all_types(runtime: Runtime) -> dict[str, list]:
     - For each image, queries for the latest build.
     - Separates the results into payload and non-payload image builds.
     - For OLM operator images, fetches the related bundle build records from the database.
-    - Returns a dictionary with four categorized lists:
-        1. 'payload': Build nvrs for payload images.
-        2. 'non_payload': Build nvrs for non-payload images.
-        3. 'olm_builds': NVRs of OLM bundle builds found.
-        4. 'olm_builds_not_found': NVRs of OLM operator builds for which no bundle build was found.
+    - Returns a dictionary with categorized lists including optional OLM skip diagnostics.
 
     Args:
         runtime: The runtime object providing access to image metadata and the Konflux database.
 
     Returns:
-        dict[str, list]: A dictionary containing four lists:
+        dict[str, list]: A dictionary containing:
             - 'payload': List of build nvrs for payload images.
             - 'non_payload': List of build nvrs for non-payload images.
             - 'olm_builds': List of NVRs for OLM bundle builds found.
             - 'olm_builds_not_found': List of NVRs for OLM operator builds with no bundle build.
+            - 'olm_operator_skipped_invalid_refs': Builds skipped due to invalid manifest image refs
+              (each item: distgit_key, nvr, reason).
     """
     runtime.konflux_db.bind(KonfluxBuildRecord)
 
@@ -774,15 +773,22 @@ async def find_builds_konflux_all_types(runtime: Runtime) -> dict[str, list]:
         image_metas.append((image.is_payload, image))
 
     LOGGER.info("Fetching image NVRs from DB...")
-    # find build result (is_olm_operator, build_Record, is_payload)
-    olm_flags = []
-    payload_flags = []
-    tasks = []
-    for is_payload, image in image_metas:
-        olm_flags.append(image.is_olm_operator)
-        payload_flags.append(is_payload)
-        tasks.append(image.get_latest_build(el_target=image.branch_el_target(), exclude_large_columns=True))
-    results = await asyncio.gather(*tasks)
+
+    async def _resolve_image_build(is_payload: bool, image: ImageMetadata) -> tuple[KonfluxBuildRecord | None, list]:
+        if image.is_olm_operator:
+            record, skipped = await select_konflux_olm_operator_build_for_find_builds(runtime, image)
+            return record, skipped
+        record = await image.get_latest_build(el_target=image.branch_el_target(), exclude_large_columns=True)
+        return record, []
+
+    tasks = [_resolve_image_build(is_payload, image) for is_payload, image in image_metas]
+    resolved = await asyncio.gather(*tasks)
+    results = [r for r, _ in resolved]
+    olm_operator_skipped_invalid_refs: list[dict] = []
+    for (is_payload, image), (_, skipped) in zip(image_metas, resolved):
+        if image.is_olm_operator:
+            for row in skipped:
+                olm_operator_skipped_invalid_refs.append({'distgit_key': image.distgit_key, **row})
     images_not_found: list[str] = [image_metas[i][1].name for i, r in enumerate(results) if r is None]
     if images_not_found:
         message = f"Failed to find Konflux builds for {len(images_not_found)} images: {images_not_found}"
@@ -795,7 +801,7 @@ async def find_builds_konflux_all_types(runtime: Runtime) -> dict[str, list]:
 
     operator_builds = []
     olm_tasks = []
-    records_with_olm = [(is_olm, is_payload, r) for is_olm, is_payload, r in zip(olm_flags, payload_flags, results)]
+    records_with_olm = [(image.is_olm_operator, is_payload, r) for (is_payload, image), r in zip(image_metas, results)]
     for is_olm, is_payload, record in records_with_olm:
         if is_olm:
             operator_builds.append(record)
@@ -817,5 +823,9 @@ async def find_builds_konflux_all_types(runtime: Runtime) -> dict[str, list]:
         'non_payload': sorted([record.nvr for _, is_payload, record in records_with_olm if not is_payload]),
         'olm_builds': sorted([b.nvr for b in olm_records]),
         'olm_builds_not_found': sorted([b.nvr for b in olm_records_not_found]),
+        'olm_operator_skipped_invalid_refs': sorted(
+            olm_operator_skipped_invalid_refs,
+            key=lambda d: (d.get('distgit_key', ''), d.get('nvr', '')),
+        ),
     }
     return builds_tuple

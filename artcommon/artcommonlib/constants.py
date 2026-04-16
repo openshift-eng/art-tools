@@ -8,6 +8,8 @@ RHCOS_RELEASES_STREAM_URL = (
 )
 BREW_HUB = "https://brewhub.engineering.redhat.com/brewhub"
 BREW_DOWNLOAD_URL = "https://download.devel.redhat.com/brewroot"
+# Brew image proxy used by OLM bundle rebasing / reference resolution
+REGISTRY_PROXY_BASE_URL = "registry-proxy.engineering.redhat.com"
 RELEASE_SCHEDULES = "https://pp.engineering.redhat.com/api/v7/releases"
 DEFAULT_PLASHET_BASE_URL = "https://ocp-artifacts.engineering.redhat.com/pub/RHOCP/plashets"
 

@@ -2,10 +2,9 @@ import asyncio
 import glob
 import logging
 import os
-import re
 import shutil
 from datetime import datetime, timezone
-from functools import cached_property, lru_cache
+from functools import cached_property
 from pathlib import Path
 from typing import Dict, Optional, Sequence, Tuple, cast
 
@@ -23,9 +22,10 @@ from artcommonlib.konflux.konflux_build_record import (
 )
 from artcommonlib.konflux.konflux_db import Engine, KonfluxDb
 from artcommonlib.model import Model
+from artcommonlib.olm import operator_image_refs as olm_image_refs
 from artcommonlib.util import sync_to_quay
 from dockerfile_parse import DockerfileParser
-from doozerlib import constants, util
+from doozerlib import constants
 from doozerlib.backend.build_repo import BuildRepo
 from doozerlib.backend.konflux_client import KonfluxClient
 from doozerlib.backend.pipelinerun_utils import PipelineRunInfo
@@ -347,25 +347,14 @@ class KonfluxOlmBundleRebaser:
         async with aiofiles.open(oit_dir / 'olm_bundle_info.yaml', 'w') as f:
             await f.write(content)
 
-    @lru_cache
     @staticmethod
     def _get_image_reference_pattern(registry: str):
-        """Get a compiled regex pattern to match image references in the format of `registry/namespace/image:tag`."""
-        pattern = r'{}\/([^:]+):([^\'"\\\s]+)'.format(re.escape(registry))
-        return re.compile(pattern)
+        """Delegate to artcommon OLM helpers (kept for tests and callers)."""
+        return olm_image_refs.get_image_reference_pattern(registry)
 
     @staticmethod
     def _get_digest_image_pattern():
-        """Get a compiled regex pattern to match digest-pinned image references.
-
-        Matches images in the format: registry/namespace/image@sha256:digest
-        Examples:
-            - registry.redhat.io/rhel9/postgresql-15@sha256:abc123...
-            - quay.io/openshift/image@sha256:def456...
-        """
-        # Match: registry/path@sha256:hexdigest
-        pattern = r'([a-zA-Z0-9][-a-zA-Z0-9.]*(?::[0-9]+)?/[^@\s]+)@(sha256:[a-fA-F0-9]{64})'
-        return re.compile(pattern)
+        return olm_image_refs.get_digest_image_pattern()
 
     async def _replace_image_references(self, old_registry: str, content: str, engine: Engine, metadata):
         """
@@ -378,121 +367,15 @@ class KonfluxOlmBundleRebaser:
         2. Digest-pinned images (e.g., registry.redhat.io/rhel9/postgresql-15@sha256:...)
            - These are already pinned and are included in found_images without modification
         """
-        new_content = content
-        found_images: Dict[str, Tuple[str, str, str]] = {}
-
-        # Step 1: Find and process ART-built images matching the registry pattern
-        pattern = KonfluxOlmBundleRebaser._get_image_reference_pattern(old_registry)
-        matches = pattern.finditer(content)
-        art_references = {}  # map of image pullspec to (namespace, image_short_name, image_tag)
-        image_info_tasks = []
-        for match in matches:
-            pullspec = match.group(0)
-            namespace, image_short_name = match.group(1).rsplit('/', maxsplit=1)
-            image_tag = match.group(2)
-            art_references[pullspec] = (namespace, image_short_name, image_tag)
-
-        # Get image infos for ART-built images
-        for pullspec, (namespace, image_short_name, image_tag) in art_references.items():
-            if engine is Engine.KONFLUX:
-                build_pullspec = f"{self.image_repo}:{image_short_name}-{image_tag}"
-                image_info_tasks.append(
-                    asyncio.create_task(
-                        util.oc_image_info_for_arch_async(
-                            build_pullspec,
-                            registry_config=os.getenv("QUAY_AUTH_FILE"),
-                        )
-                    )
-                )
-            elif engine is Engine.BREW:
-                build_pullspec = (
-                    f"{constants.REGISTRY_PROXY_BASE_URL}/rh-osbs/{namespace}-{image_short_name}:{image_tag}"
-                )
-                image_info_tasks.append(
-                    asyncio.create_task(
-                        util.oc_image_info_for_arch_async(
-                            build_pullspec,
-                        )
-                    )
-                )
-        image_infos = await asyncio.gather(*image_info_tasks)
-
-        # Replace ART-built image references in the content
-        csv_namespace = self._group_config.get('csv_namespace', 'openshift')
-        # Build a map of image short name -> delivery override short name for images that have
-        # delivery_repo_name_override set. This allows operators to reference images using a
-        # versioned internal name (e.g. ose-csi-livenessprobe-4.18-rhel9) while having them
-        # replaced with the preferred unversioned delivery repo name (e.g. ose-csi-livenessprobe-rhel9).
-        _delivery_override_map: Dict[str, str] = {}
-        _data_dir = metadata.runtime.data_dir
-        for _yml_path in glob.glob(f"{_data_dir}/images/*.yml") + glob.glob(f"{_data_dir}/images/*.yaml"):
-            try:
-                with open(_yml_path) as _yf:
-                    _img_data = yaml.safe_load(_yf)
-                if not isinstance(_img_data, dict):
-                    continue
-                _delivery = _img_data.get('delivery', {}) or {}
-                if not _delivery.get('delivery_repo_name_override'):
-                    continue
-                _repo_names = _delivery.get('delivery_repo_names') or []
-                if len(_repo_names) != 1:
-                    raise IOError(
-                        f"delivery_repo_name_override is set in {_yml_path} but delivery_repo_names has "
-                        f"{len(_repo_names)} entries (expected exactly 1)"
-                    )
-                _img_short = str(_img_data.get('name', '')).rsplit('/', 1)[-1]
-                _override_short = str(_repo_names[0]).rsplit('/', 1)[-1]
-                _delivery_override_map[_img_short] = _override_short
-            except (yaml.YAMLError, OSError) as e:
-                self._logger.debug("Failed to parse image YAML %s: %s", _yml_path, e)
-        for pullspec, image_info in zip(art_references, image_infos):
-            image_labels = image_info['config']['config']['Labels']
-            image_version = image_labels['version']
-            image_release = image_labels['release']
-            image_component_name = image_labels['com.redhat.component']
-            image_nvr = f"{image_component_name}-{image_version}-{image_release}"
-            namespace, image_short_name, image_tag = art_references[pullspec]
-            image_sha = (
-                image_info['contentDigest']
-                if self._group_config.operator_image_ref_mode == 'by-arch'
-                else image_info['listDigest']
-            )
-            if not metadata.runtime.group.startswith("openshift-"):
-                new_namespace = namespace
-            else:
-                new_namespace = 'openshift4' if namespace == csv_namespace else namespace
-            # If delivery_repo_name_override is set for this image, use the overridden short name
-            # so the final pullspec uses the preferred delivery repo name (e.g. without a version tag).
-            delivery_image_short_name = _delivery_override_map.get(image_short_name, image_short_name)
-            new_pullspec = '{}/{}@{}'.format(
-                'registry.redhat.io',  # hardcoded until appregistry is dead
-                f'{new_namespace}/{delivery_image_short_name}',
-                image_sha,
-            )
-            new_content = new_content.replace(pullspec, new_pullspec)
-            found_images[delivery_image_short_name] = (pullspec, new_pullspec, image_nvr)
-
-        # Step 2: Find digest-pinned images that are already resolved (e.g., external images)
-        # These don't need resolution but should be included in found_images for relatedImages
-        digest_pattern = KonfluxOlmBundleRebaser._get_digest_image_pattern()
-        for match in digest_pattern.finditer(new_content):
-            image_path = match.group(1)  # e.g., registry.redhat.io/rhel9/postgresql-15
-            digest = match.group(2)  # e.g., sha256:abc123...
-            pullspec = f"{image_path}@{digest}"
-
-            # Extract image short name from the path
-            image_short_name = image_path.rsplit('/', 1)[-1]
-
-            # Skip if this image was already processed as an ART-built image
-            if image_short_name in found_images:
-                continue
-
-            # Add to found_images with pullspec as both old and new (no change needed)
-            # Use "external" as NVR since we don't have version info for external images
-            found_images[image_short_name] = (pullspec, pullspec, "external")
-            self._logger.debug(f"Found digest-pinned external image: {pullspec}")
-
-        return new_content, found_images
+        return await olm_image_refs.replace_olm_manifest_image_references(
+            old_registry,
+            content,
+            engine,
+            metadata,
+            self._group_config,
+            self.image_repo,
+            logger=self._logger,
+        )
 
     @cached_property
     def _operator_index_mode(self):

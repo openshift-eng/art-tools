@@ -8,7 +8,13 @@ from typing import Any
 from artcommonlib import logutil
 from artcommonlib.assembly import assembly_basis_event, assembly_metadata_config
 from artcommonlib.brew import BuildStates
-from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBuildRecord
+from artcommonlib.konflux.konflux_build_record import (
+    ArtifactType,
+    Engine,
+    KonfluxBuildOutcome,
+    KonfluxBuildRecord,
+)
+from artcommonlib.konflux.konflux_db import LARGE_COLUMNS
 from artcommonlib.model import Missing, Model
 from artcommonlib.util import isolate_el_version_in_brew_tag
 from artcommonlib.variants import BuildVariant
@@ -569,6 +575,111 @@ class MetadataBase(object):
             )
             return default
         return build_record
+
+    async def list_konflux_success_build_candidates(
+        self,
+        *,
+        el_target: int | str | None = None,
+        assembly: str | None = None,
+        honor_is: bool = True,
+        outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS,
+        completed_before: datetime.datetime | None = None,
+        extra_patterns: dict | None = None,
+        exclude_large_columns: bool = False,
+        limit: int = 25,
+    ) -> list[KonfluxBuildRecord]:
+        """
+        Return up to ``limit`` successful Konflux image builds newest-first, for OLM validation / find-builds.
+
+        Honors the same query_group, el_target, assembly, and completed_before semantics as
+        :meth:`get_latest_konflux_build`. Pinned ``is:`` images return at most that single build.
+        """
+        assert self.runtime.konflux_db is not None, 'Konflux DB must be initialized with GCP credentials'
+        self.runtime.konflux_db.bind(KonfluxBuildRecord)
+
+        if self.meta_type != 'image':
+            return []
+
+        extra_patterns = extra_patterns or {}
+
+        if honor_is and self.config['is']:
+            if outcome != KonfluxBuildOutcome.SUCCESS:
+                return []
+            pinned = await self.get_pinned_konflux_build(el_target=el_target)
+            return [pinned] if pinned else []
+
+        query_group = self.runtime.group
+        is_okd = False
+        runtime_variant = getattr(self.runtime, 'variant', None)
+        if runtime_variant == BuildVariant.OKD:
+            query_group = self.runtime.group.replace('openshift-', 'okd-')
+            is_okd = True
+            self.logger.debug("Using OKD group '%s' for OKD variant scan of %s", query_group, self.distgit_key)
+        elif self.mode == 'disabled':
+            if self.config.okd is not Missing and self.config.okd.mode == 'enabled':
+                is_okd = True
+                query_group = self.runtime.group.replace('openshift-', 'okd-')
+                self.logger.debug("Using OKD group '%s' for okd-only image %s", query_group, self.distgit_key)
+
+        el_val: str | None
+        if el_target and isinstance(el_target, int):
+            el_val = f'scos{el_target}' if is_okd else f'el{el_target}'
+        elif el_target:
+            el_val = str(el_target)
+        else:
+            el_prefix = 'scos' if is_okd else 'el'
+            el_val = f'{el_prefix}{self.branch_el_target()}'
+
+        assembly = assembly if assembly else self.runtime.assembly
+        effective_assemblies: list[str | None]
+        if not assembly:
+            effective_assemblies = [None]
+        else:
+            if assembly_basis_event(self.runtime.get_releases_config(), assembly=assembly, build_system='konflux'):
+                effective_assemblies = ['stream']
+            else:
+                effective_assemblies = [assembly]
+                if assembly != 'stream':
+                    effective_assemblies.append('stream')
+
+        exclude_columns = LARGE_COLUMNS if exclude_large_columns else None
+        per_asm_limit = max(limit, 1)
+
+        merged: list[KonfluxBuildRecord] = []
+        seen: set[str] = set()
+
+        for asm in effective_assemblies:
+            where: dict = {
+                'name': self.distgit_key,
+                'group': query_group,
+                'outcome': outcome,
+                'engine': Engine(self.runtime.build_system),
+                'artifact_type': ArtifactType.IMAGE,
+                'el_target': el_val,
+            }
+            if asm is not None:
+                where['assembly'] = asm
+            count = 0
+            async for row in self.runtime.konflux_db.search_builds_by_fields(
+                end_search=completed_before,
+                where=where,
+                extra_patterns=extra_patterns or None,
+                order_by='start_time',
+                sorting='DESC',
+                limit=per_asm_limit,
+                exclude_columns=exclude_columns,
+            ):
+                if row.nvr in seen:
+                    continue
+                seen.add(row.nvr)
+                merged.append(row)
+                count += 1
+                if count >= per_asm_limit:
+                    break
+
+        epoch = datetime.datetime.fromtimestamp(0, tz=datetime.timezone.utc)
+        merged.sort(key=lambda r: r.start_time or epoch, reverse=True)
+        return merged[:limit]
 
     async def get_latest_brew_build_async(self, **kwargs):
         return await asyncio.to_thread(self.get_latest_brew_build, **kwargs)
