@@ -452,15 +452,31 @@ class JIRABug(Bug):
         # return the component name from the label
         pscomponent = next((m.group(1) for label in labels if (m := self._ART_PSCOMPONENT_RE.match(label))), None)
         if pscomponent:
-            return pscomponent
+            return self._normalize_component(pscomponent)
         # If this bug is of type vulnerability, return the component name from the custom "Downstream Component Name" field
         if self.is_type_vulnerability() and (
             pscomponent := getattr(self.bug.fields, JIRABugTracker.field_cve_component, None)
         ):
-            return pscomponent
+            return self._normalize_component(pscomponent)
         # Fall back to the label "pscomponent:<component_name>"
         pscomponent = next((m.group(1) for label in labels if (m := self._PSCOMPONENT_RE.match(label))), None)
+        if pscomponent:
+            return self._normalize_component(pscomponent)
         return pscomponent
+
+    @staticmethod
+    def _normalize_component(component: str) -> str:
+        """Normalize a component name.
+
+        Some bugs have a duplicated component value in the format
+        "component/component" (e.g. "openshift-golang-builder-container/openshift-golang-builder-container").
+        This method normalizes such values by removing the duplicate prefix.
+        """
+        if '/' in component:
+            parts = component.split('/', 1)
+            if parts[0] == parts[1]:
+                return parts[0]
+        return component
 
     def _get_release_blocker(self):
         # release blocker can be ['None','Approved'=='+','Proposed'=='?','Rejected'=='-']

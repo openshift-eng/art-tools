@@ -664,6 +664,45 @@ class TestJIRABug(unittest.TestCase):
             actual = bug.whiteboard_component
             self.assertEqual(actual, expected.strip())
 
+    def test_whiteboard_component_normalizes_duplicated_component(self):
+        """Test that duplicated component values like 'comp/comp' are normalized to 'comp'."""
+        # Duplicated component from pscomponent label
+        bug = JIRABug(
+            flexmock(
+                key=1,
+                fields=flexmock(
+                    labels=["pscomponent:openshift-golang-builder-container/openshift-golang-builder-container"],
+                    issuetype=flexmock(name="Bug"),
+                ),
+            )
+        )
+        self.assertEqual(bug.whiteboard_component, "openshift-golang-builder-container")
+
+        # Non-duplicated component with slash should be left alone
+        bug = JIRABug(
+            flexmock(
+                key=2,
+                fields=flexmock(
+                    labels=["pscomponent:openshift4/ose-cli"],
+                    issuetype=flexmock(name="Bug"),
+                ),
+            )
+        )
+        self.assertEqual(bug.whiteboard_component, "openshift4/ose-cli")
+
+        # Component without slash should be unaffected
+        bug = JIRABug(
+            flexmock(
+                key=3,
+                fields=flexmock(
+                    labels=["pscomponent:openshift-golang-builder-container"],
+                    issuetype=flexmock(name="Bug"),
+                ),
+            )
+        )
+        self.assertEqual(bug.whiteboard_component, "openshift-golang-builder-container")
+
+
 
 class TestBugzillaBug(unittest.TestCase):
     def test_is_tracker_bug(self):
