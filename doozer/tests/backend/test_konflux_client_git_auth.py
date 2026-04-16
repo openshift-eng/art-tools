@@ -290,6 +290,7 @@ class TestRefreshGitAuthSecret(TestCase):
         _run(client.refresh_git_auth_secret(namespace="test-ns"))
 
         client.corev1_client.replace_namespaced_secret.assert_not_called()
+        self.assertIsNone(client._git_auth_secret_name)
 
     def test_dry_run_skips_refresh(self):
         client = _make_client(dry_run=True)

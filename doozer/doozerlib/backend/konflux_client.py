@@ -405,6 +405,7 @@ class KonfluxClient:
         except ApiException as e:
             if e.status == 404:
                 self._logger.debug(f"Secret {secret_name} already deleted; skipping refresh")
+                self._git_auth_secret_name = None
             else:
                 raise
 
