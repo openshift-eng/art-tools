@@ -12,6 +12,10 @@
             "type": "string",
             "minLength": 1
         },
+        "exclude": {
+            "description": "If true, exclude this component from the assembly.",
+            "const": true
+        },
         "metadata": {
             "type": "object",
             "properties": {
