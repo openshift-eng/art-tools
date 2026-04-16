@@ -304,9 +304,15 @@ class ConfigScanSources:
             self.logger.info('Would have tried reconciliation for %s/%s', repo_name, priv_branch_name)
             return
 
-        # Try to push to openshift-priv using the PAT token instead of the GitHub App token,
+        # Push to openshift-priv using the PAT token instead of the GitHub App token,
         # because the App does not have permission to push to protected branches (GH006)
-        git_pat_env = get_github_git_pat_env() or git_auth_env
+        git_pat_env = get_github_git_pat_env()
+        if not git_pat_env:
+            raise RuntimeError(
+                f'GITHUB_TOKEN (PAT) is not set; cannot push to protected branch {priv_branch_name} '
+                f'on openshift-priv for {metadata.name}. The GitHub App token lacks permission to '
+                f'bypass branch protection (GH006).'
+            )
         try:
             exectools.cmd_assert(cmd=['git', 'push', 'origin', priv_branch_name], retries=3, set_env=git_pat_env)
             self.logger.info('Successfully reconciled %s with public upstream', metadata.name)
