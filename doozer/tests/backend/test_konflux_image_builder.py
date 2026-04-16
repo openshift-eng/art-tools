@@ -432,3 +432,11 @@ class TestKonfluxImageBuilderGolangComponent(unittest.TestCase):
             with self.subTest(nvr=nvr):
                 result = KonfluxImageBuilder.get_golang_builder_component_name(nvr)
                 self.assertEqual(result, expected)
+
+    def test_get_golang_builder_component_name_multiple_el_patterns(self):
+        """Test theoretical edge case where both .el8 and .el9 appear in release."""
+        # This documents the expected behavior: .el8 override wins due to simplified logic
+        nvr = "openshift-golang-builder-container-v1.25.8-202604081607.p0.g2aa6a05.el8.dependency.el9"
+        expected = "golang-builder-v1.25-rhel8"  # .el8 override takes precedence
+        result = KonfluxImageBuilder.get_golang_builder_component_name(nvr)
+        self.assertEqual(result, expected)

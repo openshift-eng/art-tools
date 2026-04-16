@@ -538,12 +538,10 @@ class KonfluxImageBuilder:
             major_minor = version
 
         # Determine RHEL version from release field
-        if ".el9" in release:
-            el_suffix = "rhel9"
-        elif ".el8" in release:
+        # Assumes exactly one .elX pattern per release (validated by production data)
+        el_suffix = "rhel9"  # Default to latest RHEL version
+        if ".el8" in release:
             el_suffix = "rhel8"
-        else:
-            el_suffix = "rhel9"  # Default fallback
 
         return f"golang-builder-{major_minor}-{el_suffix}"
 
