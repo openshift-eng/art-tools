@@ -5,6 +5,7 @@ import itertools
 import json
 import logging
 import os
+import tempfile
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -289,9 +290,12 @@ class SigstoreSignatory:
         self.signing_key_ids = signing_key_ids  # key ids for signing
         self.rekor_url = rekor_url  # rekor server for cosign tlog storage
         self.ENV["AWS_SHARED_CREDENTIALS_FILE"] = signing_creds  # filename for KMS credentials
+        # cosign uses go-containerregistry which reads auth from DOCKER_CONFIG dir containing config.json
         quay_auth_file = os.environ.get("QUAY_AUTH_FILE")
         if quay_auth_file:
-            self.ENV["REGISTRY_AUTH_FILE"] = quay_auth_file
+            docker_config_dir = tempfile.mkdtemp(prefix="cosign-docker-config-")
+            os.symlink(os.path.abspath(quay_auth_file), os.path.join(docker_config_dir, "config.json"))
+            self.ENV["DOCKER_CONFIG"] = docker_config_dir
         self.concurrency_limit = concurrency_limit  # limit on concurrent lookups or signings
         self.batch_retries = batch_retries  # number of batch-level retries for failed images
         self.batch_retry_delay = batch_retry_delay  # seconds to wait between batch retries
