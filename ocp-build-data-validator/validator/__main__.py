@@ -92,7 +92,7 @@ def main():
     else:
         try:
             rc = 0
-            pool = Pool(cpu_count(), initializer=global_session.set_global_session)
+            pool = Pool(min(cpu_count(), len(args.files)), initializer=global_session.set_global_session)
             atexit.register(pool.close)
             pool.starmap(validate, [(f, args.schema_only, args.images_dir) for f in args.files])
         except exceptions.ValidationFailedWIP as e:
