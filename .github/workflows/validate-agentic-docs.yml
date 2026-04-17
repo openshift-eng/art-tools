@@ -1,0 +1,274 @@
+name: Validate Agentic Documentation
+
+on:
+  pull_request:
+    paths:
+      - 'agentic/**'
+      - '*.md'
+      - '.github/workflows/validate-agentic-docs.yml'
+  push:
+    branches:
+      - main
+
+jobs:
+  structure:
+    name: Validate Structure
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check AGENTS.md length
+        run: |
+          lines=$(wc -l < AGENTS.md)
+          echo "AGENTS.md has $lines lines"
+          if [ "$lines" -gt 150 ]; then
+            echo "AGENTS.md too long ($lines lines). Keep under 150."
+            exit 1
+          fi
+          echo "AGENTS.md length OK"
+
+      - name: Verify directory structure
+        run: |
+          required_dirs="design-docs domain exec-plans decisions references generated"
+          for dir in $required_dirs; do
+            if [ ! -d "agentic/$dir" ]; then
+              echo "Missing required directory: agentic/$dir"
+              exit 1
+            fi
+          done
+          echo "Directory structure OK"
+
+      - name: Check required files exist
+        run: |
+          required_files="design-docs/index.md domain/index.md decisions/index.md DESIGN.md DEVELOPMENT.md TESTING.md SECURITY.md"
+          for file in $required_files; do
+            if [ ! -f "agentic/$file" ]; then
+              echo "Missing required file: agentic/$file"
+              exit 1
+            fi
+          done
+          echo "Required files OK"
+
+  frontmatter:
+    name: Validate Frontmatter
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check exec-plan frontmatter
+        run: |
+          for file in agentic/exec-plans/active/*.md agentic/exec-plans/completed/*.md; do
+            if [ -f "$file" ]; then
+              if ! head -n 1 "$file" | grep -q "^---$"; then
+                echo "$file missing YAML frontmatter"
+                exit 1
+              fi
+            fi
+          done
+          echo "Exec-plan frontmatter OK"
+
+      - name: Check ADR frontmatter
+        run: |
+          for file in agentic/decisions/adr-*.md; do
+            if [ -f "$file" ] && [ "$(basename "$file")" != "adr-template.md" ]; then
+              if ! head -n 1 "$file" | grep -q "^---$"; then
+                echo "$file missing YAML frontmatter"
+                exit 1
+              fi
+            fi
+          done
+          echo "ADR frontmatter OK"
+
+  links:
+    name: Validate Links
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for broken internal links
+        run: |
+          broken=0
+          while IFS= read -r file; do
+            # Extract relative markdown links
+            grep -oP '\[.*?\]\(\./[^)]+\)' "$file" 2>/dev/null | grep -oP '\(\K[^)]+' | while read -r link; do
+              # Remove anchor
+              path="${link%%#*}"
+              # Resolve relative to the file's directory
+              dir=$(dirname "$file")
+              resolved="$dir/$path"
+              if [ ! -f "$resolved" ] && [ ! -d "$resolved" ]; then
+                echo "Broken link in $file: $link (resolved to $resolved)"
+                broken=$((broken + 1))
+              fi
+            done
+          done < <(find agentic -name "*.md" -type f)
+
+          # Also check root md files
+          for file in AGENTS.md ARCHITECTURE.md; do
+            if [ -f "$file" ]; then
+              grep -oP '\[.*?\]\(\./[^)]+\)' "$file" 2>/dev/null | grep -oP '\(\K[^)]+' | while read -r link; do
+                path="${link%%#*}"
+                if [ ! -f "$path" ] && [ ! -d "$path" ]; then
+                  echo "Broken link in $file: $link"
+                fi
+              done
+            fi
+          done
+          echo "Link check complete"
+
+  freshness:
+    name: Check Freshness
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for stale TODOs
+        run: |
+          stale_count=0
+          while IFS= read -r file; do
+            last_modified=$(git log -1 --format=%ct "$file" 2>/dev/null || echo 0)
+            now=$(date +%s)
+            days=$(( (now - last_modified) / 86400 ))
+
+            if [ "$days" -gt 30 ] && grep -q "TODO" "$file"; then
+              echo "WARNING: $file has TODO and hasn't been updated in $days days"
+              stale_count=$((stale_count + 1))
+            fi
+          done < <(find agentic -name "*.md" -type f)
+
+          if [ "$stale_count" -gt 5 ]; then
+            echo "Too many stale TODOs ($stale_count). Update or move to tech-debt-tracker.md"
+            exit 1
+          fi
+          echo "TODO freshness OK ($stale_count stale)"
+
+      - name: Check for stale exec-plans
+        run: |
+          stale_plans=0
+          while IFS= read -r file; do
+            last_modified=$(git log -1 --format=%ct "$file" 2>/dev/null || echo 0)
+            now=$(date +%s)
+            days=$(( (now - last_modified) / 86400 ))
+
+            if [ "$days" -gt 90 ]; then
+              echo "WARNING: Active exec-plan $file hasn't been updated in $days days -- consider completing or abandoning"
+              stale_plans=$((stale_plans + 1))
+            fi
+          done < <(find agentic/exec-plans/active -name "*.md" -type f 2>/dev/null)
+
+          if [ "$stale_plans" -gt 3 ]; then
+            echo "Too many stale active exec-plans ($stale_plans). Clean up agentic/exec-plans/active/"
+            exit 1
+          fi
+          echo "Exec-plan freshness OK ($stale_plans stale)"
+
+      - name: Validate code paths referenced in docs
+        run: |
+          broken=0
+          while IFS= read -r doc; do
+            # Extract backtick-quoted file paths that look like Python source files
+            grep -oP '`(?:artcommon/artcommonlib|doozer/doozerlib|elliott/elliottlib|pyartcd/pyartcd|ocp-build-data-validator/validator)/[a-zA-Z0-9_/]+\.py`' "$doc" 2>/dev/null | tr -d '`' | sort -u | while read -r path; do
+              if [ ! -f "$path" ]; then
+                echo "BROKEN PATH in $doc: $path does not exist"
+                broken=$((broken + 1))
+              fi
+            done
+          done < <(find agentic AGENTS.md ARCHITECTURE.md -name "*.md" -type f 2>/dev/null)
+
+          if [ "$broken" -gt 0 ]; then
+            echo "Found references to non-existent source files. Update the docs."
+            exit 1
+          fi
+          echo "Code path validation OK"
+
+      - name: Check doc staleness relative to code
+        run: |
+          warn_count=0
+
+          # Map: concept doc -> source files it documents
+          check_staleness() {
+            local doc="$1"
+            shift
+            local sources=("$@")
+
+            if [ ! -f "$doc" ]; then
+              return
+            fi
+
+            doc_modified=$(git log -1 --format=%ct "$doc" 2>/dev/null || echo 0)
+
+            for src in "${sources[@]}"; do
+              if [ ! -f "$src" ]; then
+                continue
+              fi
+              src_modified=$(git log -1 --format=%ct "$src" 2>/dev/null || echo 0)
+              if [ "$src_modified" -eq 0 ] || [ "$doc_modified" -eq 0 ]; then
+                continue
+              fi
+
+              src_days_ago=$(( ($(date +%s) - src_modified) / 86400 ))
+              doc_days_ago=$(( ($(date +%s) - doc_modified) / 86400 ))
+              drift=$(( doc_days_ago - src_days_ago ))
+
+              # Warn if code changed recently (last 30 days) but doc is 60+ days stale
+              if [ "$src_days_ago" -lt 30 ] && [ "$doc_days_ago" -gt 60 ]; then
+                echo "WARNING: $src changed ${src_days_ago}d ago but $doc last updated ${doc_days_ago}d ago (drift: ${drift}d)"
+                warn_count=$((warn_count + 1))
+              fi
+            done
+          }
+
+          # Concept docs and their primary source files
+          check_staleness agentic/domain/concepts/runtime.md \
+            artcommon/artcommonlib/runtime.py doozer/doozerlib/runtime.py elliott/elliottlib/runtime.py
+
+          check_staleness agentic/domain/concepts/assembly.md \
+            artcommon/artcommonlib/assembly.py
+
+          check_staleness agentic/domain/concepts/metadata.md \
+            artcommon/artcommonlib/metadata.py doozer/doozerlib/image.py doozer/doozerlib/rpmcfg.py
+
+          check_staleness agentic/domain/concepts/brew-koji.md \
+            doozer/doozerlib/brew.py elliott/elliottlib/brew.py
+
+          check_staleness agentic/domain/concepts/distgit.md \
+            doozer/doozerlib/distgit.py
+
+          check_staleness agentic/domain/concepts/errata-advisories.md \
+            elliott/elliottlib/errata.py elliott/elliottlib/errata_async.py
+
+          check_staleness agentic/domain/concepts/konflux.md \
+            doozer/doozerlib/backend/konflux_client.py artcommon/artcommonlib/konflux/konflux_db.py
+
+          check_staleness agentic/domain/concepts/plashet.md \
+            doozer/doozerlib/plashet.py
+
+          check_staleness agentic/domain/concepts/model-missing.md \
+            artcommon/artcommonlib/model.py
+
+          check_staleness agentic/domain/concepts/ocp-build-data.md \
+            artcommon/artcommonlib/gitdata.py
+
+          # Component docs and their entry points
+          check_staleness agentic/design-docs/components/doozer.md \
+            doozer/doozerlib/cli/__main__.py doozer/doozerlib/runtime.py
+
+          check_staleness agentic/design-docs/components/elliott.md \
+            elliott/elliottlib/cli/__main__.py elliott/elliottlib/runtime.py
+
+          check_staleness agentic/design-docs/components/pyartcd.md \
+            pyartcd/pyartcd/__main__.py
+
+          check_staleness agentic/design-docs/components/artcommon.md \
+            artcommon/artcommonlib/runtime.py artcommon/artcommonlib/assembly.py
+
+          check_staleness agentic/design-docs/components/validator.md \
+            ocp-build-data-validator/validator/__main__.py
+
+          if [ "$warn_count" -gt 5 ]; then
+            echo "Too many stale docs ($warn_count). Code has changed significantly -- update the affected docs."
+            exit 1
+          fi
+          echo "Doc staleness check OK ($warn_count warnings)"

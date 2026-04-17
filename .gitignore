@@ -125,3 +125,7 @@ sjb/generated/*.sh
 
 # git mergetool backup files
 *.orig
+
+# Generated metrics dashboard (regenerated on demand)
+agentic/metrics-dashboard.html
+agentic/METRICS_REPORT.md
