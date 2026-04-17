@@ -14,7 +14,12 @@ from elliottlib import bzutil, constants
 from elliottlib.bzutil import Bug, get_flaws
 from elliottlib.cli.attach_cve_flaws_cli import AttachCveFlaws
 from elliottlib.cli.common import cli, click_coroutine, pass_runtime
-from elliottlib.cli.find_bugs_sweep_cli import FindBugsSweep, categorize_bugs_by_type, get_builds_by_advisory_kind
+from elliottlib.cli.find_bugs_sweep_cli import (
+    FindBugsSweep,
+    categorize_bugs_by_type,
+    filter_art_managed_jira_trackers,
+    get_builds_by_advisory_kind,
+)
 from elliottlib.errata import get_bug_ids, is_advisory_editable, sync_jira_issue
 from elliottlib.errata_async import AsyncErrataAPI, AsyncErrataUtils
 from elliottlib.runtime import Runtime
@@ -173,9 +178,16 @@ async def verify_attached_bugs(
     default='text',
     help='Applies chosen format to command output',
 )
+@click.option(
+    "--art-managed-trackers-only/--no-art-managed-trackers-only",
+    default=True,
+    help="Filter image component CVE trackers to ART-managed images only",
+)
 @pass_runtime
 @click_coroutine
-async def verify_bugs_cli(runtime, verify_bug_status, output, no_verify_blocking_bugs: bool):
+async def verify_bugs_cli(
+    runtime, verify_bug_status, output, no_verify_blocking_bugs: bool, art_managed_trackers_only: bool
+):
     """
     Validate bugs that qualify as being part of an assembly (specified as --assembly)
     Requires group param (-g openshift-X.Y). By default runs for --assembly=stream
@@ -191,16 +203,20 @@ async def verify_bugs_cli(runtime, verify_bug_status, output, no_verify_blocking
 
     """
     runtime.initialize()
-    await verify_bugs(runtime, verify_bug_status, output, no_verify_blocking_bugs)
+    await verify_bugs(runtime, verify_bug_status, output, no_verify_blocking_bugs, art_managed_trackers_only)
 
 
-async def verify_bugs(runtime, verify_bug_status, output, no_verify_blocking_bugs):
+async def verify_bugs(
+    runtime, verify_bug_status, output, no_verify_blocking_bugs, art_managed_trackers_only: bool = True
+):
     validator = BugValidator(runtime, output)
-    find_bugs_obj = FindBugsSweep(cve_only=False)
+    find_bugs_obj = FindBugsSweep(cve_only=False, art_managed_trackers_only=art_managed_trackers_only)
     ocp_bugs = []
     logger.info(f'Using {runtime.assembly} assembly to search bugs')
     for b in [runtime.get_bug_tracker('jira'), runtime.get_bug_tracker('bugzilla')]:
         bugs = find_bugs_obj.search(bug_tracker_obj=b, verbose=runtime.debug)
+        if find_bugs_obj.art_managed_trackers_only:
+            bugs = filter_art_managed_jira_trackers(runtime, bugs, bug_tracker_type=b.type)
         logger.info(f"Found {len(bugs)} {b.type} bugs: {[b.id for b in bugs]}")
         ocp_bugs.extend(bugs)
 

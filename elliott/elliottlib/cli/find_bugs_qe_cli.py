@@ -6,23 +6,29 @@ from artcommonlib import logutil
 
 from elliottlib import Runtime
 from elliottlib.cli.common import cli
-from elliottlib.cli.find_bugs_sweep_cli import FindBugsMode
+from elliottlib.cli.find_bugs_sweep_cli import FindBugsMode, filter_art_managed_jira_trackers
 
 LOGGER = logutil.get_logger(__name__)
 
 
 class FindBugsQE(FindBugsMode):
-    def __init__(self):
+    def __init__(self, art_managed_trackers_only: bool = True):
         super().__init__(
             status={'MODIFIED'},
             cve_only=False,
+            art_managed_trackers_only=art_managed_trackers_only,
         )
 
 
 @cli.command("find-bugs:qe", short_help="Change MODIFIED bugs to ON_QA and close reconciliation bugs")
 @click.option("--noop", "--dry-run", is_flag=True, default=False, help="Don't change anything")
+@click.option(
+    "--art-managed-trackers-only/--no-art-managed-trackers-only",
+    default=True,
+    help="Filter image component CVE trackers to ART-managed images only",
+)
 @click.pass_obj
-def find_bugs_qe_cli(runtime: Runtime, noop):
+def find_bugs_qe_cli(runtime: Runtime, noop, art_managed_trackers_only):
     """Find MODIFIED bugs for the target-releases, and set them to ON_QA.
         with a release comment on each bug.
 
@@ -33,7 +39,7 @@ def find_bugs_qe_cli(runtime: Runtime, noop):
 
     """
     runtime.initialize()
-    find_bugs_obj = FindBugsQE()
+    find_bugs_obj = FindBugsQE(art_managed_trackers_only=art_managed_trackers_only)
     exit_code = 0
     bug_tracker = runtime.get_bug_tracker('jira')
 
@@ -106,6 +112,8 @@ def find_bugs_qe(runtime, find_bugs_obj, noop, bug_tracker):
     LOGGER.info(f"Searching {bug_tracker.type} for bugs with status {statuses} and target releases: {tr}")
 
     bugs = find_bugs_obj.search(bug_tracker_obj=bug_tracker, verbose=runtime.debug)
+    if find_bugs_obj.art_managed_trackers_only:
+        bugs = filter_art_managed_jira_trackers(runtime, bugs, bug_tracker_type=bug_tracker.type)
     LOGGER.info(f"Found {len(bugs)} bugs: {', '.join(sorted(str(b.id) for b in bugs))}")
 
     release_comment = (

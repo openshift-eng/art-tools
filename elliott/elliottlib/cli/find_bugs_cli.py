@@ -41,6 +41,11 @@ type_bug_set = Set[Bug]
     help='Output in the specified format',
 )
 @click.option("--cve-only", is_flag=True, help="Only find CVE trackers")
+@click.option(
+    "--art-managed-trackers-only/--no-art-managed-trackers-only",
+    default=True,
+    help="Filter image component CVE trackers to ART-managed images only",
+)
 @click.pass_obj
 @click_coroutine
 async def find_bugs_cli(
@@ -49,6 +54,7 @@ async def find_bugs_cli(
     permissive,
     output,
     cve_only,
+    art_managed_trackers_only,
 ):
     """Find OCP bugs for the given group and assembly, eligible for release.
 
@@ -78,6 +84,7 @@ async def find_bugs_cli(
         output=output,
         cve_only=cve_only,
         exclude_trackers=exclude_trackers,
+        art_managed_trackers_only=art_managed_trackers_only,
     )
     await cli.run()
 
@@ -90,12 +97,14 @@ class FindBugsCli:
         output: str,
         cve_only: bool,
         exclude_trackers: bool,
+        art_managed_trackers_only: bool,
     ):
         self.runtime = runtime
         self.permissive = permissive
         self.output = output
         self.cve_only = cve_only
         self.exclude_trackers = exclude_trackers
+        self.art_managed_trackers_only = art_managed_trackers_only
         self.bug_tracker = None
 
     async def run(self):
@@ -116,7 +125,7 @@ class FindBugsCli:
         :return: A dictionary where keys are advisory kinds and values are sets of Bug objects.
         """
 
-        find_bugs_obj = FindBugsSweep(cve_only=self.cve_only)
+        find_bugs_obj = FindBugsSweep(cve_only=self.cve_only, art_managed_trackers_only=self.art_managed_trackers_only)
         statuses = sorted(find_bugs_obj.status)
         tr = self.bug_tracker.target_release()
         LOGGER.info(f"Searching {self.bug_tracker.type} for bugs with status {statuses} and target releases: {tr}\n")

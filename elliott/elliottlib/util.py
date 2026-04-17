@@ -208,6 +208,10 @@ def minor_version_tuple(bz_target):
     return int(match.groups()[0]), int(match.groups()[1])
 
 
+def is_ocp_delivery_repo(name: str) -> bool:
+    return name.startswith(("openshift4/", "openshift5/"))
+
+
 def get_component_by_delivery_repo(runtime, delivery_repo_name: str) -> Optional[str]:
     """Get the component name from the delivery repo name
     For example, "openshift4/ose-sriov-network-device-plugin-rhel9" -> "sriov-network-device-plugin-container"
@@ -223,6 +227,16 @@ def get_component_by_delivery_repo(runtime, delivery_repo_name: str) -> Optional
         if _strip(delivery_repo_name) in [_strip(r) for r in image.config.delivery.delivery_repo_names]:
             return image.get_component_name()
     return None
+
+
+def normalize_component_by_ocp_delivery_repo(runtime, component_or_delivery_repo_name: str) -> str:
+    """Translate delivery repo names to component names when possible.
+
+    Returns the original value when it doesn't look like a delivery repo or when no mapping is found.
+    """
+    if not is_ocp_delivery_repo(component_or_delivery_repo_name):
+        return component_or_delivery_repo_name
+    return get_component_by_delivery_repo(runtime, component_or_delivery_repo_name) or component_or_delivery_repo_name
 
 
 def get_golang_version_from_log(log, log_url):
