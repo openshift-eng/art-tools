@@ -680,18 +680,9 @@ class PromotePipeline:
 
     async def extract_and_publish_clients(self, client_type: str, release_infos: Dict):
         logger = self._logger
-        # make sure login to quay
-        if "QUAY_PASSWORD" in os.environ:
-            cmd = [
-                "docker",
-                "login",
-                "-u",
-                "openshift-release-dev+art_quay_dev",
-                "-p",
-                f"{os.environ['QUAY_PASSWORD']}",
-                "quay.io",
-            ]
-            await exectools.cmd_assert_async(cmd, env=os.environ.copy(), stdout=sys.stderr)
+        registry_config = os.environ.get("QUAY_AUTH_FILE")
+        if registry_config:
+            logger.info("Using QUAY_AUTH_FILE for registry authentication: %s", registry_config)
         base_to_mirror_dir = f"{self._working_dir}/to_mirror/openshift-v4"
         message_digests = []
         for arch, release_info in release_infos.items():
@@ -704,11 +695,21 @@ class PromotePipeline:
                     for manifest in release_info.get("manifests", [])
                 ]
                 message_digest = await self.publish_multi_client(
-                    base_to_mirror_dir, pullspec, release_name, manifest_arches, client_type
+                    base_to_mirror_dir,
+                    pullspec,
+                    release_name,
+                    manifest_arches,
+                    client_type,
+                    registry_config=registry_config,
                 )
             else:
                 message_digest = await self.publish_client(
-                    base_to_mirror_dir, pullspec, release_name, arch, client_type
+                    base_to_mirror_dir,
+                    pullspec,
+                    release_name,
+                    arch,
+                    client_type,
+                    registry_config=registry_config,
                 )
             message_digests.append(message_digest)
         return message_digests
@@ -923,7 +924,15 @@ class PromotePipeline:
 
         self._logger.info(f"Generated sha256sum.txt with {len(sha_entries)} entries at {sha256sum_file_path}")
 
-    async def publish_client(self, base_to_mirror_dir: str, pullspec, release_name, build_arch, client_type):
+    async def publish_client(
+        self,
+        base_to_mirror_dir: str,
+        pullspec,
+        release_name,
+        build_arch,
+        client_type,
+        registry_config: Optional[str] = None,
+    ):
         # Anything under this directory will be sync'd to the mirror
         shutil.rmtree(f"{base_to_mirror_dir}/{build_arch}", ignore_errors=True)
 
@@ -933,28 +942,31 @@ class PromotePipeline:
         os.makedirs(client_mirror_dir)
 
         # extract release clients tools
-        extract_release_client_tools(pullspec, f"--to={client_mirror_dir}", None)
+        extract_release_client_tools(pullspec, f"--to={client_mirror_dir}", None, registry_config=registry_config)
 
         # Get cli installer operator-registry pull-spec from the release
         for release_component_tag_name, source_name in constants.MIRROR_CLIENTS.items():
-            image_stat, cli_pull_spec = get_release_image_pullspec(pullspec, release_component_tag_name)
+            image_stat, cli_pull_spec = get_release_image_pullspec(
+                pullspec,
+                release_component_tag_name,
+                registry_config=registry_config,
+            )
             if image_stat == 0:  # image exists
-                _, image_info = get_release_image_info_from_pullspec(cli_pull_spec)
+                _, image_info = get_release_image_info_from_pullspec(cli_pull_spec, registry_config=registry_config)
                 # Retrieve the commit from image info
                 commit = image_info["config"]["config"]["Labels"]["io.openshift.build.commit.id"]
                 source_url = image_info["config"]["config"]["Labels"]["io.openshift.build.source-location"]
-                # URL to download the tarball a specific commit
-                response = requests.get(f"{source_url}/archive/{commit}.tar.gz", stream=True)
-                if response.ok:
-                    with open(f"{client_mirror_dir}/{source_name}-src-{release_name}-{build_arch}.tar.gz", "wb") as f:
-                        f.write(response.raw.read())
-                else:
-                    response.raise_for_status()
+                # URL to download the tarball for a specific commit
+                tarball_url = f"{source_url}/archive/{commit}.tar.gz"
+                tarball_path = f"{client_mirror_dir}/{source_name}-src-{release_name}-{build_arch}.tar.gz"
+                self._download_source_tarball(tarball_url, tarball_path)
             else:
                 self._logger.error(f"Error get {release_component_tag_name} image from release pullspec")
 
         # Upload baremetal installer binary to mirror
-        self.publish_baremetal_installer_binary(pullspec, client_mirror_dir, build_arch)
+        self.publish_baremetal_installer_binary(
+            pullspec, client_mirror_dir, build_arch, registry_config=registry_config
+        )
 
         # Starting from 4.14, oc-mirror will be synced for all arches. See ART-6820 and ART-6863
         # oc-mirror was introduced in 4.10, so skip for <= 4.9.
@@ -962,12 +974,18 @@ class PromotePipeline:
         if (major, minor) >= (4, 14) or ((major, minor) >= (4, 10) and build_arch == 'x86_64'):
             # oc image  extract requires an empty destination directory. So do this before extracting tools.
             # oc adm release extract --tools does not require an empty directory.
-            image_stat, oc_mirror_pullspec = get_release_image_pullspec(pullspec, "oc-mirror")
+            image_stat, oc_mirror_pullspec = get_release_image_pullspec(
+                pullspec,
+                "oc-mirror",
+                registry_config=registry_config,
+            )
             if image_stat == 0:  # image exist
                 # extract image to workdir, if failed it will raise error in function
                 multi_rhel_path = [f"--path=/usr/bin/oc-mirror*:{client_mirror_dir}"]
                 extract_release_binary(
-                    oc_mirror_pullspec, multi_rhel_path
+                    oc_mirror_pullspec,
+                    multi_rhel_path,
+                    registry_config=registry_config,
                 )  # will exit with 0 even if no files are exacted
 
                 # if oc-mirror.rhel8 exists, rename it to oc-mirror
@@ -992,7 +1010,7 @@ class PromotePipeline:
         self.create_symlink(client_mirror_dir, False, False)
 
         # extract opm binaries
-        self.extract_opm(client_mirror_dir, release_name, pullspec, build_arch)
+        self.extract_opm(client_mirror_dir, release_name, pullspec, build_arch, registry_config=registry_config)
 
         util.log_dir_tree(client_mirror_dir)  # print dir tree
 
@@ -1012,6 +1030,14 @@ class PromotePipeline:
         await util.invalidate_cloudfront_cache("/pub/openshift-v4/clients/ocp-dev-preview/latest/*")
 
         return f"{build_arch}/clients/{client_type}/{release_name}/sha256sum.txt"
+
+    @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(30))
+    def _download_source_tarball(self, url: str, dest_path: str):
+        self._logger.info("Downloading source tarball from %s", url)
+        response = requests.get(url, stream=True, timeout=120)
+        response.raise_for_status()
+        with open(dest_path, "wb") as f:
+            f.write(response.raw.read())
 
     async def sigstore_sign(
         self,
@@ -1100,8 +1126,18 @@ class PromotePipeline:
         if errors := await signatory.sign_component_images(component_images):
             raise IOError(f"Component image signing failed: {errors}")
 
-    def publish_baremetal_installer_binary(self, release_pullspec: str, client_mirror_dir: str, build_arch: str):
-        _, baremetal_installer_pullspec = get_release_image_pullspec(release_pullspec, 'baremetal-installer')
+    def publish_baremetal_installer_binary(
+        self,
+        release_pullspec: str,
+        client_mirror_dir: str,
+        build_arch: str,
+        registry_config: Optional[str] = None,
+    ):
+        _, baremetal_installer_pullspec = get_release_image_pullspec(
+            release_pullspec,
+            'baremetal-installer',
+            registry_config=registry_config,
+        )
         self._logger.info('baremetal-installer pullspec: %s', baremetal_installer_pullspec)
 
         # Check rhel version (used for archive naming)
@@ -1116,7 +1152,9 @@ class PromotePipeline:
         # oc adm release extract --command=openshift-baremetal-install -n=ocp <release-pullspec>
         self._logger.info('Extracting baremetal-install')
         go_arch = go_arch_for_brew_arch(build_arch)
-        extract_baremetal_installer(release_pullspec, client_mirror_dir, go_arch, binary_name)
+        extract_baremetal_installer(
+            release_pullspec, client_mirror_dir, go_arch, binary_name, registry_config=registry_config
+        )
 
         # Create tarball
         archive_name = f'openshift-install-{rhel_version}-{go_arch}.tar.gz'
@@ -1127,18 +1165,28 @@ class PromotePipeline:
         # Remove baremetal-installer binary
         os.remove(f'{client_mirror_dir}/{binary_name}')
 
-    def extract_opm(self, client_mirror_dir, release_name, release_pullspec, arch):
+    def extract_opm(
+        self, client_mirror_dir, release_name, release_pullspec, arch, registry_config: Optional[str] = None
+    ):
         major, minor = isolate_major_minor_in_group(self.group)
         path_args = []
         if (major, minor) >= (4, 16):
             # from 4.16 opm has multi rhel binaries, will use operator-framework-tools
             base_path = '/tools/'
-            _, operator_pullspec = get_release_image_pullspec(release_pullspec, "operator-framework-tools")
+            _, operator_pullspec = get_release_image_pullspec(
+                release_pullspec,
+                "operator-framework-tools",
+                registry_config=registry_config,
+            )
             binaries = ['opm-rhel8', 'opm-rhel9']
             platforms = ['linux', 'linux-rhel9']
         else:
             base_path = '/usr/bin/registry/'
-            _, operator_pullspec = get_release_image_pullspec(release_pullspec, "operator-registry")
+            _, operator_pullspec = get_release_image_pullspec(
+                release_pullspec,
+                "operator-registry",
+                registry_config=registry_config,
+            )
             binaries = ['opm']
             platforms = ['linux']
         # For x86_64, we have binaries for macOS and Windows
@@ -1147,7 +1195,7 @@ class PromotePipeline:
             platforms += ['mac', 'windows']
         for binary in binaries:
             path_args.append(f'--path={base_path}{binary}:{client_mirror_dir}')
-        extract_release_binary(operator_pullspec, path_args)
+        extract_release_binary(operator_pullspec, path_args, registry_config=registry_config)
         # Compress binaries into tar.gz files and calculate sha256 digests
         for idx, binary in enumerate(binaries):
             platform = platforms[idx]
@@ -1161,7 +1209,15 @@ class PromotePipeline:
                 f"opm-{platform}-{release_name}.tar.gz", f"{client_mirror_dir}/opm-{platform}.tar.gz"
             )  # create symlink
 
-    async def publish_multi_client(self, base_to_mirror_dir: str, pullspec: str, release_name, arch_list, client_type):
+    async def publish_multi_client(
+        self,
+        base_to_mirror_dir: str,
+        pullspec: str,
+        release_name,
+        arch_list,
+        client_type,
+        registry_config: Optional[str] = None,
+    ):
         # Anything under this directory will be sync'd to the mirror
         shutil.rmtree(f"{base_to_mirror_dir}/multi", ignore_errors=True)
         release_mirror_dir = f"{base_to_mirror_dir}/multi/clients/{client_type}/{release_name}"
@@ -1172,9 +1228,11 @@ class PromotePipeline:
             client_mirror_dir = f"{release_mirror_dir}/{go_arch}"
             os.makedirs(client_mirror_dir)
             # extract release clients tools
-            extract_release_client_tools(pullspec, f"--to={client_mirror_dir}", go_arch)
+            extract_release_client_tools(
+                pullspec, f"--to={client_mirror_dir}", go_arch, registry_config=registry_config
+            )
             # extract baremetal installer binary
-            self.publish_baremetal_installer_binary(pullspec, client_mirror_dir, arch)
+            self.publish_baremetal_installer_binary(pullspec, client_mirror_dir, arch, registry_config=registry_config)
             # create symlink for clients
             self.create_symlink(path_to_dir=client_mirror_dir, log_tree=True, log_shasum=False)
 

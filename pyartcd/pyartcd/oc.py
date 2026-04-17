@@ -97,13 +97,15 @@ async def qci_registry_login():
 
 @retry(reraise=True, stop=stop_after_attempt(3))
 def common_oc_wrapper(
-    cmd_result_name: str, cli_verb: str, oc_args: List[str], check_status: bool = True, return_value: bool = False
+    cmd_result_name: str,
+    cli_verb: str,
+    oc_args: List[str],
+    check_status: bool = True,
+    return_value: bool = False,
+    registry_config: Optional[str] = None,
 ) -> (int, str):
-    # cmd_result_name: Result obj name in log
-    # cli_verb: first command group
-    # oc_args: args list of command
-    # check_status: whether check status and print output in log
-    # return_value: whether need return value sets
+    if registry_config:
+        oc_args = [f"--registry-config={registry_config}"] + oc_args
     logger.info(f"run: oc {cli_verb} {' '.join(oc_args)}")
     with octool.tracking() as tracker:
         try:
@@ -122,36 +124,47 @@ def common_oc_wrapper(
         return r.status(), r.out().strip()
 
 
-def get_release_image_info_from_pullspec(pullspec: str) -> (int, str):
+def get_release_image_info_from_pullspec(pullspec: str, registry_config: Optional[str] = None) -> (int, str):
     # oc image info --output=json <pullspec>
     cmd_args = ['info', "--output=json", pullspec]
-    res, out = common_oc_wrapper("single_image_info", "image", cmd_args, True, True)
+    res, out = common_oc_wrapper("single_image_info", "image", cmd_args, True, True, registry_config=registry_config)
     return res, json.loads(out)
 
 
-def extract_release_binary(image_pullspec: str, path_args: List[str]) -> (int, str):
+def extract_release_binary(
+    image_pullspec: str, path_args: List[str], registry_config: Optional[str] = None
+) -> (int, str):
     # oc image extract --confirm --only-files --path=/usr/bin/..:<workdir> <pullspec>
     cmd_args = ['extract', '--confirm', '--only-files'] + path_args + [image_pullspec]
-    return common_oc_wrapper("extract_image", "image", cmd_args, True, True)
+    return common_oc_wrapper("extract_image", "image", cmd_args, True, True, registry_config=registry_config)
 
 
-def get_release_image_pullspec(release_pullspec: str, image: str) -> (int, str):
+def get_release_image_pullspec(release_pullspec: str, image: str, registry_config: Optional[str] = None) -> (int, str):
     # oc adm release info --image-for=<image> <pullspec>
     cmd_args = ['release', 'info', f'--image-for={image}', release_pullspec]
-    return common_oc_wrapper("image_info_in_release", "adm", cmd_args, True, True)
+    return common_oc_wrapper("image_info_in_release", "adm", cmd_args, True, True, registry_config=registry_config)
 
 
-def extract_release_client_tools(release_pullspec: str, path_arg: str, single_arch: Optional[str] = None) -> (int, str):
+def extract_release_client_tools(
+    release_pullspec: str,
+    path_arg: str,
+    single_arch: Optional[str] = None,
+    registry_config: Optional[str] = None,
+) -> (int, str):
     # oc adm release extract --tools --command-os=* -n ocp --to=<workdir> --filter-by-os=<arch> --from <pullspec> --to <path>
     args = ["release", "extract", "--tools", "--command-os=*", "-n=ocp"]
     if single_arch:
         args += [f"--filter-by-os={single_arch}"]
     args += [f"--from={release_pullspec}", path_arg]
-    common_oc_wrapper("extract_tools", "adm", args, True, False)
+    common_oc_wrapper("extract_tools", "adm", args, True, False, registry_config=registry_config)
 
 
 def extract_baremetal_installer(
-    release_pullspec: str, path: str, arch: str, cmd: str = 'openshift-baremetal-install'
+    release_pullspec: str,
+    path: str,
+    arch: str,
+    cmd: str = 'openshift-baremetal-install',
+    registry_config: Optional[str] = None,
 ) -> (int, str):
     """
     Extract baremetal-installer binary to specified location
@@ -181,4 +194,5 @@ def extract_baremetal_installer(
         oc_args=args,
         check_status=True,
         return_value=True,
+        registry_config=registry_config,
     )
