@@ -956,13 +956,10 @@ class PromotePipeline:
                 # Retrieve the commit from image info
                 commit = image_info["config"]["config"]["Labels"]["io.openshift.build.commit.id"]
                 source_url = image_info["config"]["config"]["Labels"]["io.openshift.build.source-location"]
-                # URL to download the tarball a specific commit
-                response = requests.get(f"{source_url}/archive/{commit}.tar.gz", stream=True)
-                if response.ok:
-                    with open(f"{client_mirror_dir}/{source_name}-src-{release_name}-{build_arch}.tar.gz", "wb") as f:
-                        f.write(response.raw.read())
-                else:
-                    response.raise_for_status()
+                # URL to download the tarball for a specific commit
+                tarball_url = f"{source_url}/archive/{commit}.tar.gz"
+                tarball_path = f"{client_mirror_dir}/{source_name}-src-{release_name}-{build_arch}.tar.gz"
+                self._download_source_tarball(tarball_url, tarball_path)
             else:
                 self._logger.error(f"Error get {release_component_tag_name} image from release pullspec")
 
@@ -1033,6 +1030,14 @@ class PromotePipeline:
         await util.invalidate_cloudfront_cache("/pub/openshift-v4/clients/ocp-dev-preview/latest/*")
 
         return f"{build_arch}/clients/{client_type}/{release_name}/sha256sum.txt"
+
+    @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(30))
+    def _download_source_tarball(self, url: str, dest_path: str):
+        self._logger.info("Downloading source tarball from %s", url)
+        response = requests.get(url, stream=True, timeout=120)
+        response.raise_for_status()
+        with open(dest_path, "wb") as f:
+            f.write(response.raw.read())
 
     async def sigstore_sign(
         self,
