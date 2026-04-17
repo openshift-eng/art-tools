@@ -202,7 +202,7 @@ async def verify_bugs_cli(
     - Bug Status (--verify-bug-status): All bugs are at least in VERIFIED state
 
     """
-    runtime.initialize()
+    runtime.initialize(mode="images")
     await verify_bugs(runtime, verify_bug_status, output, no_verify_blocking_bugs, art_managed_trackers_only)
 
 

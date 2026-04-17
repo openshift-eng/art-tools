@@ -104,6 +104,27 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ValueError, "doesn't have a valid whiteboard component"):
             sweep_cli.filter_art_managed_jira_trackers(runtime, [bug])
 
+    def test_filter_art_managed_jira_trackers_filters_unmapped_delivery_repo(self):
+        runtime = MagicMock()
+        payload_image = MagicMock()
+        payload_image.get_component_name.return_value = "payload-container"
+        runtime.image_metas.return_value = [payload_image]
+
+        tracker = flexmock(
+            id="OCPBUGS-8",
+            is_tracker_bug=lambda: True,
+            whiteboard_component="openshift5/unmapped-image-rhel9",
+        )
+
+        with patch.object(
+            sweep_cli,
+            "normalize_component_by_ocp_delivery_repo",
+            side_effect=lambda runtime, name: name,
+        ):
+            actual = sweep_cli.filter_art_managed_jira_trackers(runtime, [tracker])
+
+        self.assertEqual(actual, [])
+
     @patch("elliottlib.cli.find_bugs_sweep_cli.get_assembly_bug_ids", return_value=(set(), set()))
     @patch("elliottlib.cli.find_bugs_sweep_cli.get_sweep_cutoff_timestamp", new_callable=AsyncMock, return_value=0)
     async def test_get_bugs_sweep_opt_out_skips_art_managed_filter(self, *_):

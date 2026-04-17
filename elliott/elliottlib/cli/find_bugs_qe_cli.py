@@ -38,7 +38,7 @@ def find_bugs_qe_cli(runtime: Runtime, noop, art_managed_trackers_only):
         $ elliott -g openshift-4.6 find-bugs:qe
 
     """
-    runtime.initialize()
+    runtime.initialize(mode="images")
     find_bugs_obj = FindBugsQE(art_managed_trackers_only=art_managed_trackers_only)
     exit_code = 0
     bug_tracker = runtime.get_bug_tracker('jira')

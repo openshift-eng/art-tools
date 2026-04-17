@@ -15,7 +15,7 @@ class FindBugsQETestCase(unittest.TestCase):
         jira_bug = flexmock(id='OCPBUGS-123', status="MODIFIED", is_tracker_bug=lambda: False, security_level=None)
         reconciliation_bug = flexmock(id='OCPBUGS-456', status="Verified", is_tracker_bug=lambda: False)
 
-        flexmock(Runtime).should_receive("initialize").and_return(None)
+        flexmock(Runtime).should_receive("initialize").with_args(mode="images").and_return(None)
         flexmock(Runtime).should_receive("get_major_minor").and_return(4, 6)
         flexmock(JIRABugTracker).should_receive("get_config").and_return(
             {

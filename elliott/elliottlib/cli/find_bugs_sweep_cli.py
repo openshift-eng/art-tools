@@ -79,8 +79,14 @@ def filter_art_managed_jira_trackers(
         if not bug.whiteboard_component:
             raise ValueError(f"Bug {bug.id} doesn't have a valid whiteboard component.")
 
-        normalized_component = normalize_component_by_ocp_delivery_repo(runtime, bug.whiteboard_component)
-        if not normalized_component.endswith("-container"):
+        original_component = bug.whiteboard_component
+        normalized_component = normalize_component_by_ocp_delivery_repo(runtime, original_component)
+        is_image_tracker = (
+            original_component.endswith("-container")
+            or is_ocp_delivery_repo(original_component)
+            or normalized_component.endswith("-container")
+        )
+        if not is_image_tracker:
             art_trackers.append(bug)
             continue
 
