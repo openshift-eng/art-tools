@@ -1228,6 +1228,58 @@ class ImageMetadata(Metadata):
 
         return modules_from_config
 
+    def get_pinned_nvrs(self) -> dict[str, str]:
+        """
+        Extract explicitly pinned NVRs from lockfile configuration.
+
+        Parses konflux.cachi2.lockfile.rpms and identifies entries that are full NVRs
+        (name-version-release) rather than just package names. Returns a mapping of
+        package name to version-release string for pinned versions.
+
+        Returns:
+            dict[str, str]: Mapping of package name to version-release for pinned NVRs.
+                           Example: {"foo": "1.0-1.el9", "bar": "2.3-4.el9"}
+        """
+        pinned_versions = {}
+        lockfile_rpms = self.config.konflux.cachi2.lockfile.get('rpms', [])
+
+        if lockfile_rpms in [Missing, None]:
+            return pinned_versions
+
+        for rpm in lockfile_rpms:
+            try:
+                parsed = parse_nvr(rpm)
+                name = parsed.get('name')
+                version = parsed.get('version')
+                release = parsed.get('release')
+
+                # Validate it's a real NVR (not just something with dashes like "kernel-rt-core")
+                # Version should contain digits or dots, release should contain at least one digit
+                if name and version and release:
+                    if re.search(r'[\d.]', version) and re.search(r'\d', release):
+                        pinned_versions[name] = f"{version}-{release}"
+                    else:
+                        self.logger.warning(
+                            f'{self.distgit_key} skipping invalid NVR "{rpm}" in lockfile config: '
+                            f'version or release does not match expected RPM format'
+                        )
+            except ValueError as e:
+                # Not a valid NVR format (just a package name like "foo")
+                # Only log if it looks like it was intended to be an NVR (has multiple dashes)
+                if rpm.count('-') >= 2:
+                    self.logger.warning(
+                        f'{self.distgit_key} failed to parse "{rpm}" as NVR in lockfile config: {e}'
+                    )
+                # Otherwise it's just a package name, silently skip
+
+        if pinned_versions:
+            self.logger.info(
+                f'{self.distgit_key} found {len(pinned_versions)} pinned NVRs in lockfile config: '
+                f'{list(pinned_versions.keys())}'
+            )
+
+        return pinned_versions
+
     def get_enabled_repos(self) -> set[str]:
         """
         Get enabled repositories for lockfile generation.

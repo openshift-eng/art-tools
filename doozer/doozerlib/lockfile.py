@@ -272,7 +272,9 @@ class RpmInfoCollector:
         self.loaded_repos.update({r.name: r for r in repodatas})
         self.logger.info(f"Finished loading repos: {', '.join(repos_to_fetch)} for arch {arch}")
 
-    def _fetch_rpms_info_per_arch(self, rpm_names: set[str], repo_names: set[str], arch: str) -> list[RpmInfo]:
+    def _fetch_rpms_info_per_arch(
+        self, rpm_names: set[str], repo_names: set[str], arch: str, pinned_nvrs: dict[str, str] = None
+    ) -> list[RpmInfo]:
         """
         Resolve RPM metadata for a specific architecture from the given repodata names.
 
@@ -281,10 +283,16 @@ class RpmInfoCollector:
         from ``sort_repos_for_lockfile_resolution`` acts as tiebreaker (RHEL upstream repos
         are preferred over rhocp plashets).
 
+        Packages with explicitly pinned versions (via pinned_nvrs) are preserved at their
+        pinned version instead of being upgraded to the latest.
+
         Args:
             rpm_names (set[str]): RPM names or NVRs to resolve.
             repo_names (set[str]): Names of repodata sources to search.
             arch (str): Target architecture.
+            pinned_nvrs (dict[str, str]): Optional mapping of package name to version-release
+                                         for explicitly pinned RPMs from YAML config.
+                                         Example: {"foo": "1.0-1.el9"}
 
         Returns:
             list[RpmInfo]: Resolved RPM package metadata.
@@ -294,6 +302,7 @@ class RpmInfoCollector:
         # the upstream RHEL entry is kept.
         best_by_name: dict[str, RpmInfo] = {}
         resolved_items: set[str] = set()
+        pinned_nvrs = pinned_nvrs or {}
 
         for repo_name in sort_repos_for_lockfile_resolution(repo_names):
             repodata = self.loaded_repos.get(f'{repo_name}-{arch}')
@@ -319,9 +328,19 @@ class RpmInfoCollector:
             baseurl = repo.baseurl(repotype="unsigned", arch=arch)
             for rpm in found_rpms:
                 info = RpmInfo.from_rpm(rpm, repoid=content_set_id, baseurl=baseurl)
-                existing = best_by_name.get(rpm.name)
-                if existing is None or info > existing:
-                    best_by_name[rpm.name] = info
+                rpm_ver = f"{rpm.version}-{rpm.release}"
+
+                # Check if this package has a pinned version in the config
+                if rpm.name in pinned_nvrs:
+                    # For pinned packages: only add if version matches AND not already added
+                    # (use first repo with pinned version - RHEL preferred over rhocp)
+                    if rpm_ver == pinned_nvrs[rpm.name] and rpm.name not in best_by_name:
+                        best_by_name[rpm.name] = info
+                else:
+                    # For non-pinned packages: keep highest version
+                    existing = best_by_name.get(rpm.name)
+                    if existing is None or info > existing:
+                        best_by_name[rpm.name] = info
 
         missing = rpm_names - resolved_items
         if missing:
@@ -333,7 +352,7 @@ class RpmInfoCollector:
 
     @start_as_current_span_async(TRACER, "lockfile.fetch_rpms_info")
     async def fetch_rpms_info(
-        self, arches: list[str], repositories: set[str], rpm_names: set[str]
+        self, arches: list[str], repositories: set[str], rpm_names: set[str], pinned_nvrs: dict[str, str] = None
     ) -> dict[str, list[RpmInfo]]:
         """
         Resolve RPM info across multiple architectures and repositories.
@@ -344,6 +363,8 @@ class RpmInfoCollector:
             arches (list[str]): Target architectures.
             repositories (set[str]): Names of repositories to search.
             rpm_names (set[str]): Names or NVRs of RPMs to resolve.
+            pinned_nvrs (dict[str, str]): Optional mapping of package name to version-release
+                                         for explicitly pinned RPMs from YAML config.
 
         Returns:
             dict[str, list[RpmInfo]]: Mapping of architecture to resolved RPM metadata.
@@ -357,7 +378,7 @@ class RpmInfoCollector:
         results = await asyncio.gather(
             *[
                 asyncio.get_running_loop().run_in_executor(
-                    None, self._fetch_rpms_info_per_arch, rpm_names, repositories, arch
+                    None, self._fetch_rpms_info_per_arch, rpm_names, repositories, arch, pinned_nvrs
                 )
                 for arch in arches
             ]
@@ -695,9 +716,10 @@ class RPMLockfileGenerator:
         }
 
         modules_to_install = image_meta.get_lockfile_modules_to_install()
+        pinned_nvrs = image_meta.get_pinned_nvrs()
 
         rpms_info_by_arch, modules_info_by_arch = await asyncio.gather(
-            self.builder.fetch_rpms_info(arches, enabled_repos, rpms_to_install),
+            self.builder.fetch_rpms_info(arches, enabled_repos, rpms_to_install, pinned_nvrs),
             self.builder.fetch_modules_info(arches, enabled_repos, modules_to_install),
         )
 
