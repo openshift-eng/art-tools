@@ -14,7 +14,7 @@ from artcommonlib.telemetry import start_as_current_span_async
 from opentelemetry import trace
 
 from doozerlib.image import ImageMetadata
-from doozerlib.repodata import Repodata, Rpm
+from doozerlib.repodata import Repodata, Rpm, RpmModule
 from doozerlib.repos import Repos
 
 TRACER = trace.get_tracer(__name__)
@@ -272,7 +272,9 @@ class RpmInfoCollector:
         self.loaded_repos.update({r.name: r for r in repodatas})
         self.logger.info(f"Finished loading repos: {', '.join(repos_to_fetch)} for arch {arch}")
 
-    def _fetch_rpms_info_per_arch(self, rpm_names: set[str], repo_names: set[str], arch: str) -> list[RpmInfo]:
+    def _fetch_rpms_info_per_arch(
+        self, rpm_names: set[str], repo_names: set[str], arch: str, enabled_modules: set[str] | None = None
+    ) -> list[RpmInfo]:
         """
         Resolve RPM metadata for a specific architecture from the given repodata names.
 
@@ -284,10 +286,17 @@ class RpmInfoCollector:
         ``sort_repos_for_lockfile_resolution`` acts as tiebreaker (RHEL upstream repos
         are preferred over rhocp plashets).
 
+        Non-modular RPMs are preferred over modular ones when both exist for the same
+        package name. This prevents the "highest EVR" logic from pulling in modular RPMs
+        that would be blocked by dnf modular filtering at build time. RPMs from modules
+        listed in ``enabled_modules`` (i.e. the image's ``modules:`` config) are exempt
+        and compete on EVR normally — the user is explicitly requesting those modules.
+
         Args:
             rpm_names (set[str]): RPM names or NVRs to resolve.
             repo_names (set[str]): Names of repodata sources to search.
             arch (str): Target architecture.
+            enabled_modules (set[str] | None): Module names from the image's ``modules:`` config.
 
         Returns:
             list[RpmInfo]: Resolved RPM package metadata.
@@ -298,7 +307,20 @@ class RpmInfoCollector:
             if is_nvr:
                 nvr_to_name[item] = pkg_name
 
+        # Build a set of ALL modular NEVRAs so we can identify modular RPMs.
+        # For non-enabled modules, non-modular versions are preferred.
+        # For enabled modules, RPMs are resolved directly from module metadata
+        # in a second pass, bypassing EVR comparison entirely.
+        enabled_module_names = {m.split(':')[0] for m in (enabled_modules or set())}
+        all_modular_nevras: set[str] = set()
+        for repo_key, repodata in self.loaded_repos.items():
+            if not repo_key.endswith(f'-{arch}'):
+                continue
+            for module in repodata.modules:
+                all_modular_nevras.update(module.rpms)
+
         best_by_name: dict[str, RpmInfo] = {}
+        best_is_modular: dict[str, bool] = {}
         pinned_by_nvr: dict[str, RpmInfo] = {}
         resolved_items: set[str] = set()
 
@@ -326,20 +348,61 @@ class RpmInfoCollector:
             baseurl = repo.baseurl(repotype="unsigned", arch=arch)
             for rpm in found_rpms:
                 info = RpmInfo.from_rpm(rpm, repoid=content_set_id, baseurl=baseurl)
+                is_modular = rpm.nevra in all_modular_nevras
 
                 for nvr_str, pkg_name in nvr_to_name.items():
                     if rpm.name == pkg_name and rpm.nvr == nvr_str and nvr_str not in pinned_by_nvr:
                         pinned_by_nvr[nvr_str] = info
 
                 existing = best_by_name.get(rpm.name)
-                if existing is None or info > existing:
+                if existing is None:
                     best_by_name[rpm.name] = info
+                    best_is_modular[rpm.name] = is_modular
+                elif best_is_modular.get(rpm.name) and not is_modular:
+                    best_by_name[rpm.name] = info
+                    best_is_modular[rpm.name] = False
+                elif not best_is_modular.get(rpm.name) and is_modular:
+                    pass  # Keep existing non-modular
+                elif info > existing:
+                    best_by_name[rpm.name] = info
+                    best_is_modular[rpm.name] = is_modular
 
         missing = rpm_names - resolved_items
         if missing:
             self.logger.warning(
                 f"Could not find {','.join(sorted(missing))} in {', '.join(repo_names)} for arch {arch}"
             )
+
+        # Fix: when get_rpms() returned a modular RPM from a non-enabled module
+        # (because it was the highest EVR in that repo), search primary_rpms
+        # directly for a non-modular alternative with a lower EVR.
+        for pkg_name in list(best_by_name):
+            if not best_is_modular.get(pkg_name):
+                continue
+            for repo_name in sort_repos_for_lockfile_resolution(repo_names):
+                repodata = self.loaded_repos.get(f'{repo_name}-{arch}')
+                if repodata is None:
+                    continue
+                for rpm in repodata.primary_rpms:
+                    if rpm.name == pkg_name and (rpm.arch == arch or rpm.arch == 'noarch'):
+                        if rpm.nevra not in all_modular_nevras:
+                            repo = self.repos._repos.get(repo_name)
+                            if repo is None:
+                                continue
+                            content_set_id = repo.content_set(arch) or f'{repo_name}-{arch}'
+                            baseurl = repo.baseurl(repotype="unsigned", arch=arch)
+                            best_by_name[pkg_name] = RpmInfo.from_rpm(rpm, repoid=content_set_id, baseurl=baseurl)
+                            best_is_modular[pkg_name] = False
+                            break
+                if not best_is_modular.get(pkg_name):
+                    break
+
+        # Second pass: for enabled modules, resolve RPMs directly from module
+        # metadata instead of relying on EVR comparison from primary.xml.
+        # This ensures correct module context selection and overrides any
+        # non-modular versions that dnf would filter out at build time.
+        if enabled_module_names:
+            self._resolve_enabled_module_rpms(best_by_name, enabled_modules or set(), repo_names, arch, rpm_names)
 
         results: dict[tuple[str, str], RpmInfo] = {}
         for info in best_by_name.values():
@@ -349,9 +412,141 @@ class RpmInfoCollector:
 
         return sorted(results.values())
 
+    def _resolve_enabled_module_rpms(
+        self,
+        best_by_name: dict[str, RpmInfo],
+        enabled_modules: set[str],
+        repo_names: set[str],
+        arch: str,
+        rpm_names: set[str],
+    ) -> None:
+        """
+        For enabled modules, resolve RPMs directly from module metadata.
+
+        Instead of relying on EVR comparison from primary.xml (which picks
+        wrong module contexts based on meaningless context hashes), this method:
+        1. Finds all contexts for each enabled module
+        2. Picks the context whose requirements match already-resolved packages
+        3. Force-resolves RPMs from that context, overriding first-pass results
+
+        This ensures the lockfile contains modular RPMs from a consistent context
+        that matches the base packages (e.g. perl:5.26 context when perl-interpreter
+        5.26 is resolved).
+        """
+        # Resolve bare module names to their default streams from repodata.
+        # When a stream is specified (e.g. perl:5.26), use that stream.
+        # When no stream is specified (e.g. perl), use the default stream from
+        # modulemd-defaults metadata (e.g. perl:5.26 is the default on el8).
+        enabled_streams = {m for m in enabled_modules if ':' in m}
+        bare_names = {m for m in enabled_modules if ':' not in m}
+
+        # Look up default streams for bare names
+        for repo_name in repo_names:
+            repodata = self.loaded_repos.get(f'{repo_name}-{arch}')
+            if repodata is None:
+                continue
+            for name in list(bare_names):
+                default_stream = repodata.default_streams.get(name)
+                if default_stream:
+                    enabled_streams.add(f'{name}:{default_stream}')
+                    bare_names.discard(name)
+
+        module_contexts: dict[str, list[RpmModule]] = {}
+        for repo_name in repo_names:
+            repodata = self.loaded_repos.get(f'{repo_name}-{arch}')
+            if repodata is None:
+                continue
+            for module in repodata.modules:
+                if module.name_stream in enabled_streams or module.name in bare_names:
+                    module_contexts.setdefault(module.name_stream, []).append(module)
+
+        if not module_contexts:
+            return
+
+        # Resolved versions from first pass (for context matching)
+        resolved_versions: dict[str, str] = {name: info.version for name, info in best_by_name.items()}
+
+        for name_stream, contexts in module_contexts.items():
+            matching_contexts = self._pick_matching_module_contexts(contexts, resolved_versions)
+            if not matching_contexts:
+                continue
+
+            # Collect RPMs from ALL matching contexts (same requirements).
+            # Different packages may appear in different contexts of the same stream.
+            target_nevras: set[str] = set()
+            for ctx in matching_contexts:
+                target_nevras.update(ctx.rpms)
+            overridden: set[str] = set()
+
+            for repo_name in repo_names:
+                repodata = self.loaded_repos.get(f'{repo_name}-{arch}')
+                if repodata is None:
+                    continue
+                repo = self.repos._repos.get(repo_name)
+                if repo is None:
+                    continue
+                content_set_id = repo.content_set(arch) or f'{repo_name}-{arch}'
+                baseurl = repo.baseurl(repotype="unsigned", arch=arch)
+
+                for rpm in repodata.primary_rpms:
+                    if rpm.nevra in target_nevras and rpm.name not in overridden:
+                        best_by_name[rpm.name] = RpmInfo.from_rpm(rpm, repoid=content_set_id, baseurl=baseurl)
+                        overridden.add(rpm.name)
+
+            if overridden:
+                ctx_ids = ','.join(sorted({str(c.context) for c in matching_contexts}))
+                self.logger.info(
+                    f"Resolved {len(overridden)} RPMs from module {name_stream} "
+                    f"context(s) {ctx_ids}: {','.join(sorted(overridden))}"
+                )
+
+    @staticmethod
+    def _pick_matching_module_contexts(contexts: list[RpmModule], resolved_versions: dict[str, str]) -> list[RpmModule]:
+        """
+        Pick module contexts whose requirements match already-resolved packages.
+
+        Returns ALL contexts with the best match score, since different packages
+        may appear in different contexts of the same module stream (e.g.
+        perl-Net-SSLeay in one context, perl-Mozilla-CA in another, both
+        requiring perl:5.26).
+
+        Falls back to all contexts with the highest module version if no
+        requirements match.
+        """
+        scored: list[tuple[int, RpmModule]] = []
+
+        for ctx in contexts:
+            if not ctx.requires:
+                scored.append((0, ctx))
+                continue
+            score = 0
+            for dep_module, dep_streams in ctx.requires.items():
+                for pkg_name, pkg_version in resolved_versions.items():
+                    if dep_module in pkg_name:
+                        for stream in dep_streams:
+                            if pkg_version.startswith(stream):
+                                score += 1
+                                break
+            scored.append((score, ctx))
+
+        if not scored:
+            return []
+
+        best_score = max(s for s, _ in scored)
+        if best_score > 0:
+            return [ctx for s, ctx in scored if s == best_score]
+
+        # No requirements matched — return contexts with highest module version
+        max_version = max(ctx.version for _, ctx in scored)
+        return [ctx for _, ctx in scored if ctx.version == max_version]
+
     @start_as_current_span_async(TRACER, "lockfile.fetch_rpms_info")
     async def fetch_rpms_info(
-        self, arches: list[str], repositories: set[str], rpm_names: set[str]
+        self,
+        arches: list[str],
+        repositories: set[str],
+        rpm_names: set[str],
+        enabled_modules: set[str] | None = None,
     ) -> dict[str, list[RpmInfo]]:
         """
         Resolve RPM info across multiple architectures and repositories.
@@ -362,6 +557,7 @@ class RpmInfoCollector:
             arches (list[str]): Target architectures.
             repositories (set[str]): Names of repositories to search.
             rpm_names (set[str]): Names or NVRs of RPMs to resolve.
+            enabled_modules (set[str] | None): Module names from the image's ``modules:`` config.
 
         Returns:
             dict[str, list[RpmInfo]]: Mapping of architecture to resolved RPM metadata.
@@ -375,7 +571,7 @@ class RpmInfoCollector:
         results = await asyncio.gather(
             *[
                 asyncio.get_running_loop().run_in_executor(
-                    None, self._fetch_rpms_info_per_arch, rpm_names, repositories, arch
+                    None, self._fetch_rpms_info_per_arch, rpm_names, repositories, arch, enabled_modules
                 )
                 for arch in arches
             ]
@@ -715,7 +911,7 @@ class RPMLockfileGenerator:
         modules_to_install = image_meta.get_lockfile_modules_to_install()
 
         rpms_info_by_arch, modules_info_by_arch = await asyncio.gather(
-            self.builder.fetch_rpms_info(arches, enabled_repos, rpms_to_install),
+            self.builder.fetch_rpms_info(arches, enabled_repos, rpms_to_install, enabled_modules=modules_to_install),
             self.builder.fetch_modules_info(arches, enabled_repos, modules_to_install),
         )
 
