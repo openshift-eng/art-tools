@@ -2,7 +2,10 @@ from datetime import datetime, timedelta, timezone
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from pyartcd.pipelines.monitor_nightly_delays import MonitorNightlyDelaysPipeline
+from pyartcd.pipelines.monitor_nightly_delays import (
+    TRT_NIGHTLY_DELAY_SLACK_CHANNEL,
+    MonitorNightlyDelaysPipeline,
+)
 
 from pyartcd import util
 
@@ -123,7 +126,8 @@ class TestMonitorNightlyDelaysPipeline(IsolatedAsyncioTestCase):
 
         # Then: Alert should be sent to TRT channel
         calls = mock_slack_client.bind_channel.call_args_list
-        self.assertTrue(any('#forum-ocp-release-oversight' in str(call) for call in calls))
+        # self.assertTrue(any('#forum-ocp-release-oversight' in str(call) for call in calls))
+        self.assertTrue(any(TRT_NIGHTLY_DELAY_SLACK_CHANNEL in str(call) for call in calls))
 
         alert_calls = mock_slack_client.say.call_args_list
         self.assertTrue(len(alert_calls) >= 1)
