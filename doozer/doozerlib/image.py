@@ -1150,6 +1150,7 @@ class ImageMetadata(Metadata):
                     'outcome': "success",
                     'engine': self.runtime.build_system,
                     'name': self.distgit_key,
+                    'assembly': self.runtime.assembly,
                 }
                 build = await self.runtime.konflux_db.get_latest_build(**base_search_params)
 
