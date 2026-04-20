@@ -936,7 +936,7 @@ class TestKonfluxOcpPipelineRebaseFailures(unittest.IsolatedAsyncioTestCase):
 
     @patch('pyartcd.pipelines.ocp4_konflux.exectools.cmd_assert_async')
     async def test_rebase_failure_increments_counters_only_for_direct_failures(self, mock_cmd):
-        """Redis rebase-fail counters only receive failed-images, not skipped-due-to-parent entries."""
+        """rebase_images passes direct failures and skipped children so counters can treat skips as no-ops."""
         self._write_rebase_state(['parent-img'], ['child-a', 'child-b'])
         mock_cmd.side_effect = ChildProcessError('rebase failed')
 
@@ -944,7 +944,26 @@ class TestKonfluxOcpPipelineRebaseFailures(unittest.IsolatedAsyncioTestCase):
         with patch.object(pipeline, 'update_rebase_fail_counters', new_callable=AsyncMock) as mock_counters:
             await pipeline.rebase_images('4.14.0', '1')
 
-        mock_counters.assert_called_once_with(['parent-img'])
+        mock_counters.assert_called_once_with(['parent-img'], ['child-a', 'child-b'])
+
+    @patch('pyartcd.pipelines.ocp4_konflux.increment_rebase_fail_counter', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.ocp4_konflux.reset_rebase_fail_counter', new_callable=AsyncMock)
+    async def test_update_rebase_fail_counters_skipped_children_unchanged_in_redis(self, mock_reset, mock_incr):
+        """Children skipped because a parent failed are not reset nor incremented (no-op)."""
+        from pyartcd.pipelines.ocp4_konflux import BuildStrategy
+
+        pipeline = self._make_pipeline()
+        pipeline.group_images = ['parent-img', 'child-a', 'healthy']
+        pipeline.build_plan.image_build_strategy = BuildStrategy.ALL
+
+        await pipeline.update_rebase_fail_counters(['parent-img'], ['child-a'])
+
+        reset_names = {c.args[0] for c in mock_reset.call_args_list}
+        incr_names = {c.args[0] for c in mock_incr.call_args_list}
+        self.assertEqual(reset_names, {'healthy'})
+        self.assertEqual(incr_names, {'parent-img'})
+        self.assertNotIn('child-a', reset_names)
+        self.assertNotIn('child-a', incr_names)
 
     @patch('pyartcd.pipelines.ocp4_konflux.exectools.cmd_assert_async')
     async def test_build_after_rebase_uses_exclude_for_failed_and_skipped(self, mock_cmd):

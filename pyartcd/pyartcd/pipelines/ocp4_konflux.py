@@ -167,23 +167,47 @@ class KonfluxOcpPipeline:
         elif build_strategy == BuildStrategy.EXCEPT:
             return [f'--{kind}=', f'--exclude={",".join(excludes)}']
 
-    async def update_rebase_fail_counters(self, failed_images):
+    async def update_rebase_fail_counters(
+        self,
+        failed_images: list[str],
+        skipped_due_to_parent: Optional[list[str]] = None,
+    ):
+        """
+        Adjust Redis rebase-fail counters after a Konflux rebase run.
+
+        - Images that rebased successfully: reset counter.
+        - Images that failed rebase directly: increment counter.
+        - Images skipped because a parent failed first: no change (rebase was not meaningfully attempted).
+        """
         if self.assembly != 'stream':
             # Only update fail counters for stream assembly
             return
 
-        # Reset fail counters for images that were rebased successfully
+        failed_set = set(failed_images)
+        skipped_set = set(skipped_due_to_parent or [])
+
+        # Reset fail counters only for images that actually rebased successfully
         match self.build_plan.image_build_strategy:
             case BuildStrategy.ALL:
-                successful_images = [image for image in self.group_images if image not in failed_images]
+                successful_images = [
+                    image
+                    for image in self.group_images
+                    if image not in failed_set and image not in skipped_set
+                ]
             case BuildStrategy.EXCEPT:
                 successful_images = [
                     image
                     for image in self.group_images
-                    if image not in self.build_plan.images_excluded and image not in failed_images
+                    if image not in self.build_plan.images_excluded
+                    and image not in failed_set
+                    and image not in skipped_set
                 ]
             case BuildStrategy.ONLY:
-                successful_images = [image for image in self.image_list if image not in failed_images]
+                successful_images = [
+                    image
+                    for image in self.image_list
+                    if image not in failed_set and image not in skipped_set
+                ]
             case _:
                 raise ValueError(
                     f"Unknown build strategy: {self.build_plan.image_build_strategy}. Valid strategies: {[s.value for s in BuildStrategy]}"
@@ -192,7 +216,7 @@ class KonfluxOcpPipeline:
             *[reset_rebase_fail_counter(image, self.version, 'konflux') for image in successful_images]
         )
 
-        # Increment fail counters for failing images
+        # Increment fail counters only for images that failed rebase directly
         job_url = os.getenv('BUILD_URL')
         await asyncio.gather(
             *[increment_rebase_fail_counter(image, self.version, 'konflux', job_url=job_url) for image in failed_images]
@@ -271,7 +295,7 @@ class KonfluxOcpPipeline:
                     'Following images were skipped because a parent failed to rebase and won\'t be built: %s',
                     ','.join(skipped_due_to_parent),
                 )
-            await self.update_rebase_fail_counters(failed_images)
+            await self.update_rebase_fail_counters(failed_images, skipped_due_to_parent)
 
             # Exclude images that failed or were skipped due to parent from the build step
             if self.build_plan.image_build_strategy == BuildStrategy.ALL:
