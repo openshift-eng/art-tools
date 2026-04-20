@@ -168,6 +168,7 @@ class UpdateGolangPipeline:
         data_gitref: str | None = None,
         skip_pr: bool = False,
         external_golang_rpms: bool = False,
+        network_mode: str | None = None,
     ):
         self.runtime = runtime
         self.dry_run = runtime.dry_run
@@ -185,6 +186,7 @@ class UpdateGolangPipeline:
         self.data_gitref = data_gitref
         self.skip_pr = skip_pr
         self.external_golang_rpms = external_golang_rpms
+        self.network_mode = network_mode
         self._slack_client = self.runtime.new_slack_client()
         self._doozer_working_dir = self.runtime.working_dir / "doozer-working"
         self._doozer_env_vars = os.environ.copy()
@@ -743,6 +745,8 @@ class UpdateGolangPipeline:
                 f"bumping to {version}-{release}",
             ]
         )
+        if self.network_mode:
+            cmd.extend(["--network-mode", self.network_mode])
         if not self.dry_run:
             cmd.append("--push")
         await exectools.cmd_assert_async(cmd, env=self._doozer_env_vars)
@@ -772,6 +776,8 @@ class UpdateGolangPipeline:
         )
         if self.kubeconfig:
             cmd.extend(['--konflux-kubeconfig', self.kubeconfig])
+        if self.network_mode:
+            cmd.extend(["--network-mode", self.network_mode])
         if self.dry_run:
             cmd.append("--dry-run")
         await exectools.cmd_assert_async(cmd, env=self._doozer_env_vars)
@@ -880,6 +886,12 @@ class UpdateGolangPipeline:
     default=False,
     help='Use golang RPMs from external repos (not tagged in rhaos build tags). Skips tagging and availability checks. Defaults to False.',
 )
+@click.option(
+    '--network-mode',
+    type=click.Choice(['hermetic', 'internal-only', 'open']),
+    default=None,
+    help='Override network mode for Konflux builds. Takes precedence over image and group config settings.',
+)
 @pass_runtime
 @click_coroutine
 async def update_golang(
@@ -899,6 +911,7 @@ async def update_golang(
     data_gitref: str,
     skip_pr: bool,
     external_golang_rpms: bool,
+    network_mode: str | None,
 ):
     if not runtime.dry_run and not confirm:
         _LOGGER.info('--confirm is not set, running in dry-run mode')
@@ -923,4 +936,5 @@ async def update_golang(
         data_gitref,
         skip_pr,
         external_golang_rpms,
+        network_mode,
     ).run()
