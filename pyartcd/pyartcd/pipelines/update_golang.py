@@ -919,6 +919,10 @@ async def update_golang(
     cves_list = cves.split(',') if cves else None
     if force_update_tracker and not cves_list:
         raise ValueError('CVEs must be provided with --force-update-tracker')
+    if network_mode and build_system == 'brew':
+        raise click.BadParameter(
+            '--network-mode only applies when --build-system is "konflux" or "both".'
+        )
 
     await UpdateGolangPipeline(
         runtime,
