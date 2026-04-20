@@ -26,6 +26,7 @@ from artcommonlib.variants import BuildVariant
 from dockerfile_parse import DockerfileParser
 from doozerlib import constants, util
 from doozerlib.backend.build_repo import BuildRepo
+from doozerlib.exceptions import ParentRebaseFailedError
 from doozerlib.image import ImageMetadata, extract_builder_info_from_pullspec
 from doozerlib.lockfile import ArtifactLockfileGenerator, RPMLockfileGenerator
 from doozerlib.record_logger import RecordLogger
@@ -309,9 +310,7 @@ class KonfluxRebaser:
                 parent.distgit_key for parent in parent_members if parent is not None and not parent.rebase_status
             ]
             if failed_parents:
-                raise IOError(
-                    f"Couldn't rebase {metadata.distgit_key} because the following parent images failed to rebase: {', '.join(failed_parents)}"
-                )
+                raise ParentRebaseFailedError(metadata.distgit_key, failed_parents)
             downstream_parents, parent_private_fix = await self._resolve_parents(metadata, dfp)
             # If any of the parent images are private, this image is private
             if parent_private_fix:

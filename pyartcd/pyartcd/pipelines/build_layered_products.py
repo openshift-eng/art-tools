@@ -199,17 +199,26 @@ class BuildLayeredProductsPipeline:
 
             with state_path.open('r') as f:
                 state = yaml.safe_load(f)
-            failed_images = state.get('images:konflux:rebase', {}).get('failed-images', [])
-            if not failed_images:
+            konflux_rebase = state.get('images:konflux:rebase', {})
+            failed_images = konflux_rebase.get('failed-images', [])
+            skipped_due_to_parent = konflux_rebase.get('skipped-due-to-parent-rebase-failure', [])
+            excluded = list(dict.fromkeys(failed_images + skipped_due_to_parent))
+            if not excluded:
                 raise
 
-            self._logger.warning(
-                'Following images failed to rebase and will be excluded from build: %s',
-                ','.join(failed_images),
-            )
+            if failed_images:
+                self._logger.warning(
+                    'Following images failed to rebase and will be excluded from build: %s',
+                    ','.join(failed_images),
+                )
+            if skipped_due_to_parent:
+                self._logger.warning(
+                    'Following images were skipped because a parent failed to rebase and will be excluded from build: %s',
+                    ','.join(skipped_due_to_parent),
+                )
 
             requested = [img.strip() for img in image_list.split(',') if img.strip()]
-            remaining = [img for img in requested if img not in failed_images]
+            remaining = [img for img in requested if img not in excluded]
             return ','.join(remaining)
 
     async def _build(self, image_list: str, product: str):
