@@ -132,7 +132,9 @@ class KonfluxRebaseCli:
                 image_name = metas[index].distgit_key
                 if isinstance(result, ParentRebaseFailedError):
                     skipped_due_to_parent.append(image_name)
-                    LOGGER.warning("Skipping rebase for %s: parent rebase(s) failed: %s", image_name, result.failed_parents)
+                    LOGGER.warning(
+                        "Skipping rebase for %s: parent rebase(s) failed: %s", image_name, result.failed_parents
+                    )
                 else:
                     failed_images.append(image_name)
                     LOGGER.error(f"Failed to rebase {image_name}: {result}")

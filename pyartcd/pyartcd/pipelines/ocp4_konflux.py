@@ -190,9 +190,7 @@ class KonfluxOcpPipeline:
         match self.build_plan.image_build_strategy:
             case BuildStrategy.ALL:
                 successful_images = [
-                    image
-                    for image in self.group_images
-                    if image not in failed_set and image not in skipped_set
+                    image for image in self.group_images if image not in failed_set and image not in skipped_set
                 ]
             case BuildStrategy.EXCEPT:
                 successful_images = [
@@ -204,9 +202,7 @@ class KonfluxOcpPipeline:
                 ]
             case BuildStrategy.ONLY:
                 successful_images = [
-                    image
-                    for image in self.image_list
-                    if image not in failed_set and image not in skipped_set
+                    image for image in self.image_list if image not in failed_set and image not in skipped_set
                 ]
             case _:
                 raise ValueError(
