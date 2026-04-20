@@ -80,6 +80,7 @@ class TestKonfluxBundleCli(unittest.IsolatedAsyncioTestCase):
         mock_rebaser_class.return_value = mock.Mock()
         mock_builder = mock.Mock()
         mock_builder._konflux_client.ensure_git_auth_secret = mock.AsyncMock(return_value="test-secret")
+        mock_builder._konflux_client.token_refresh_loop = mock.AsyncMock()
         mock_builder._konflux_client.delete_git_auth_secret = mock.AsyncMock()
         mock_builder._konflux_client.cleanup_stale_git_auth_secrets = mock.AsyncMock()
         mock_builder_class.return_value = mock_builder
@@ -107,6 +108,7 @@ class TestKonfluxBundleCli(unittest.IsolatedAsyncioTestCase):
         mock_rebaser_class.return_value = mock.Mock()
         mock_builder = mock.Mock()
         mock_builder._konflux_client.ensure_git_auth_secret = mock.AsyncMock(return_value="test-secret")
+        mock_builder._konflux_client.token_refresh_loop = mock.AsyncMock()
         mock_builder._konflux_client.delete_git_auth_secret = mock.AsyncMock()
         mock_builder._konflux_client.cleanup_stale_git_auth_secrets = mock.AsyncMock()
         mock_builder_class.return_value = mock_builder
