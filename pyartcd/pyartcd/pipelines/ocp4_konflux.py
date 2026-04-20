@@ -134,6 +134,7 @@ class KonfluxOcpPipeline:
 
         self.group_images = []
         self.rebase_failures = []
+        self.rebase_skipped_due_to_parent = []
 
         self.slack_client = runtime.new_slack_client()
 
@@ -166,23 +167,43 @@ class KonfluxOcpPipeline:
         elif build_strategy == BuildStrategy.EXCEPT:
             return [f'--{kind}=', f'--exclude={",".join(excludes)}']
 
-    async def update_rebase_fail_counters(self, failed_images):
+    async def update_rebase_fail_counters(
+        self,
+        failed_images: list[str],
+        skipped_due_to_parent: Optional[list[str]] = None,
+    ):
+        """
+        Adjust Redis rebase-fail counters after a Konflux rebase run.
+
+        - Images that rebased successfully: reset counter.
+        - Images that failed rebase directly: increment counter.
+        - Images skipped because a parent failed first: no change (rebase was not meaningfully attempted).
+        """
         if self.assembly != 'stream':
             # Only update fail counters for stream assembly
             return
 
-        # Reset fail counters for images that were rebased successfully
+        failed_set = set(failed_images)
+        skipped_set = set(skipped_due_to_parent or [])
+
+        # Reset fail counters only for images that actually rebased successfully
         match self.build_plan.image_build_strategy:
             case BuildStrategy.ALL:
-                successful_images = [image for image in self.group_images if image not in failed_images]
+                successful_images = [
+                    image for image in self.group_images if image not in failed_set and image not in skipped_set
+                ]
             case BuildStrategy.EXCEPT:
                 successful_images = [
                     image
                     for image in self.group_images
-                    if image not in self.build_plan.images_excluded and image not in failed_images
+                    if image not in self.build_plan.images_excluded
+                    and image not in failed_set
+                    and image not in skipped_set
                 ]
             case BuildStrategy.ONLY:
-                successful_images = [image for image in self.image_list if image not in failed_images]
+                successful_images = [
+                    image for image in self.image_list if image not in failed_set and image not in skipped_set
+                ]
             case _:
                 raise ValueError(
                     f"Unknown build strategy: {self.build_plan.image_build_strategy}. Valid strategies: {[s.value for s in BuildStrategy]}"
@@ -191,7 +212,7 @@ class KonfluxOcpPipeline:
             *[reset_rebase_fail_counter(image, self.version, 'konflux') for image in successful_images]
         )
 
-        # Increment fail counters for failing images
+        # Increment fail counters only for images that failed rebase directly
         job_url = os.getenv('BUILD_URL')
         await asyncio.gather(
             *[increment_rebase_fail_counter(image, self.version, 'konflux', job_url=job_url) for image in failed_images]
@@ -254,30 +275,43 @@ class KonfluxOcpPipeline:
         except ChildProcessError:
             with open(f'{self.runtime.doozer_working}/state.yaml') as state_yaml:
                 state = yaml.safe_load(state_yaml)
-            failed_images = state.get('images:konflux:rebase', {}).get('failed-images', [])
-            if not failed_images:
+            konflux_rebase = state.get('images:konflux:rebase', {})
+            failed_images = konflux_rebase.get('failed-images', [])
+            skipped_due_to_parent = konflux_rebase.get('skipped-due-to-parent-rebase-failure', [])
+            excluded_from_build = list(dict.fromkeys(failed_images + skipped_due_to_parent))
+            if not excluded_from_build:
                 raise  # Something else went wrong
 
-            # Some images failed to rebase: log them, and track them in Redis
-            LOGGER.warning(f'Following images failed to rebase and won\'t be built: {",".join(failed_images)}')
-            await self.update_rebase_fail_counters(failed_images)
+            # Some images failed to rebase: log them, and track direct failures in Redis (not dependents skipped
+            # because a parent failed — those are listed separately).
+            if failed_images:
+                LOGGER.warning(f'Following images failed to rebase and won\'t be built: {",".join(failed_images)}')
+            if skipped_due_to_parent:
+                LOGGER.warning(
+                    'Following images were skipped because a parent failed to rebase and won\'t be built: %s',
+                    ','.join(skipped_due_to_parent),
+                )
+            await self.update_rebase_fail_counters(failed_images, skipped_due_to_parent)
 
-            # Exclude images that failed to rebase from the build step
+            # Exclude images that failed or were skipped due to parent from the build step
             if self.build_plan.image_build_strategy == BuildStrategy.ALL:
                 # Move from building all to excluding failed images
                 self.build_plan.image_build_strategy = BuildStrategy.EXCEPT
-                self.build_plan.images_excluded = failed_images
+                self.build_plan.images_excluded = excluded_from_build
 
             elif self.build_plan.image_build_strategy == BuildStrategy.ONLY:
                 # Remove failed images from included ones
-                self.build_plan.images_included = [i for i in self.build_plan.images_included if i not in failed_images]
+                self.build_plan.images_included = [
+                    i for i in self.build_plan.images_included if i not in excluded_from_build
+                ]
 
             else:  # strategy = EXCLUDE
                 # Append failed images to excluded ones
-                self.build_plan.images_excluded.extend(failed_images)
+                self.build_plan.images_excluded.extend(excluded_from_build)
 
-            # Track rebase failures for later steps
+            # Track rebase issues for later steps (direct failures match Redis counters)
             self.rebase_failures = failed_images
+            self.rebase_skipped_due_to_parent = skipped_due_to_parent
 
     async def build_images(self):
         if not self.building_images():
@@ -621,9 +655,14 @@ class KonfluxOcpPipeline:
             ]
         )
 
-        # If any image failed to rebase, raise an exception to make the pipeline unstable
-        if self.rebase_failures:
-            raise RuntimeError(f'Following images failed to rebase: {",".join(self.rebase_failures)}')
+        # If any image failed to rebase or was skipped due to a parent failure, raise to make the pipeline unstable
+        if self.rebase_failures or self.rebase_skipped_due_to_parent:
+            parts = []
+            if self.rebase_failures:
+                parts.append(f'failed to rebase: {",".join(self.rebase_failures)}')
+            if self.rebase_skipped_due_to_parent:
+                parts.append(f'skipped (parent rebase failed): {",".join(self.rebase_skipped_due_to_parent)}')
+            raise RuntimeError('Following images ' + '; '.join(parts))
 
     def trigger_bundle_build(self):
         if self.skip_bundle_build:

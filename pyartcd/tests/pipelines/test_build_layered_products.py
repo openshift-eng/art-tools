@@ -87,6 +87,27 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
 
         self.assertEqual(result, 'oadp-velero-restic-restore-helper')
 
+    async def test_rebase_failure_excludes_skipped_due_to_parent_images(self):
+        """Images listed only as skipped due to parent rebase failure are excluded from the build list."""
+        state = {
+            'images:konflux:rebase': {
+                'failed-images': ['parent-image'],
+                'skipped-due-to-parent-rebase-failure': ['child-image'],
+            }
+        }
+        state_path = Path(self.runtime.doozer_working, 'state.yaml')
+        with state_path.open('w') as f:
+            yaml.safe_dump(state, f)
+
+        with patch(
+            'pyartcd.pipelines.build_layered_products.exectools.cmd_assert_async',
+            new_callable=AsyncMock,
+            side_effect=ChildProcessError('exit code 1'),
+        ):
+            result = await self.pipeline._rebase('parent-image,child-image,other-image')
+
+        self.assertEqual(result, 'other-image')
+
     async def test_rebase_failure_all_images_failed(self):
         """When all requested images fail rebase, an empty string is returned."""
         state = {'images:konflux:rebase': {'failed-images': ['img-a', 'img-b']}}

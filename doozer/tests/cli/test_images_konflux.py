@@ -4,8 +4,8 @@ from unittest import mock
 
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord
 from artcommonlib.model import Model
-from doozerlib.cli.images_konflux import KonfluxBundleCli
-from doozerlib.exceptions import DoozerFatalError
+from doozerlib.cli.images_konflux import KonfluxBundleCli, KonfluxRebaseCli
+from doozerlib.exceptions import DoozerFatalError, ParentRebaseFailedError
 from doozerlib.runtime import Runtime
 from doozerlib.source_resolver import SourceResolver
 
@@ -113,3 +113,59 @@ class TestKonfluxBundleCli(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(DoozerFatalError):
             await self.bundle_cli.run()
+
+
+class TestKonfluxRebaseCli(unittest.IsolatedAsyncioTestCase):
+    """Tests for beta:images:konflux:rebase state recording."""
+
+    @mock.patch("doozerlib.cli.images_konflux.trace.get_current_span")
+    @mock.patch("doozerlib.cli.images_konflux.KonfluxRebaser")
+    async def test_run_records_direct_failures_separately_from_skipped_due_to_parent(
+        self, mock_rebaser_cls, mock_get_span
+    ):
+        """Direct rebase failures go to failed-images; cascade failures use skipped-due-to-parent-rebase-failure."""
+        mock_get_span.return_value = mock.Mock()
+
+        parent = mock.Mock()
+        parent.distgit_key = "parent-img"
+        child = mock.Mock()
+        child.distgit_key = "child-img"
+
+        runtime = mock.Mock(spec=Runtime)
+        runtime.working_dir = "/tmp"
+        runtime.upcycle = False
+        runtime.initialize = mock.Mock()
+        runtime.source_resolver = mock.Mock(spec=SourceResolver)
+        runtime.ordered_image_metas = mock.Mock(return_value=[parent, child])
+        runtime.state = {}
+
+        mock_rebaser = mock_rebaser_cls.return_value
+        mock_rebaser.rpm_lockfile_generator.ensure_repositories_loaded = mock.AsyncMock()
+
+        async def rebase_to_side_effect(meta, *_args, **_kwargs):
+            if meta.distgit_key == "parent-img":
+                raise RuntimeError("upstream merge conflict")
+            raise ParentRebaseFailedError(meta.distgit_key, ["parent-img"])
+
+        mock_rebaser.rebase_to = mock.AsyncMock(side_effect=rebase_to_side_effect)
+
+        cli = KonfluxRebaseCli(
+            runtime=runtime,
+            version="4.14.0",
+            release="1",
+            embargoed=False,
+            force_yum_updates=False,
+            repo_type="unsigned",
+            image_repo="test-repo",
+            message="test",
+            push=False,
+        )
+
+        with self.assertRaises(DoozerFatalError):
+            await cli.run()
+
+        self.assertEqual(runtime.state["images:konflux:rebase"]["failed-images"], ["parent-img"])
+        self.assertEqual(
+            runtime.state["images:konflux:rebase"]["skipped-due-to-parent-rebase-failure"],
+            ["child-img"],
+        )

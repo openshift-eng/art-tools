@@ -1,7 +1,10 @@
 import os
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import yaml
 from pyartcd.jenkins import Jobs
 from pyartcd.pipelines import ocp
 
@@ -881,3 +884,124 @@ class TestKonfluxOcpPipeline(unittest.IsolatedAsyncioTestCase):
         self.assertIn('open', rebase_call)
         self.assertIn('--network-mode', build_call)
         self.assertIn('open', build_call)
+
+
+class TestKonfluxOcpPipelineRebaseFailures(unittest.IsolatedAsyncioTestCase):
+    """Konflux rebase state: direct failures vs skipped children, and build image selection."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.runtime = MagicMock()
+        self.runtime.dry_run = False
+        self.runtime.doozer_working = str(Path(self.tmpdir) / 'doozer_working')
+        Path(self.runtime.doozer_working).mkdir(parents=True)
+
+    def _make_pipeline(self, **kwargs):
+        from pyartcd.pipelines.ocp4_konflux import KonfluxOcpPipeline
+
+        defaults = {
+            'runtime': self.runtime,
+            'assembly': 'stream',
+            'version': '4.14',
+            'data_path': 'test-path',
+            'image_build_strategy': 'all',
+            'image_list': '',
+            'rpm_build_strategy': 'none',
+            'rpm_list': '',
+            'data_gitref': '',
+            'kubeconfig': None,
+            'skip_rebase': False,
+            'skip_bundle_build': False,
+            'arches': (),
+            'plr_template': '',
+            'lock_identifier': 'test',
+            'skip_plashets': False,
+            'build_priority': 'auto',
+            'use_mass_rebuild_locks': False,
+            'network_mode': None,
+        }
+        defaults.update(kwargs)
+        return KonfluxOcpPipeline(**defaults)
+
+    def _write_rebase_state(self, failed, skipped):
+        state = {
+            'images:konflux:rebase': {
+                'failed-images': failed,
+                'skipped-due-to-parent-rebase-failure': skipped,
+            }
+        }
+        state_path = Path(self.runtime.doozer_working) / 'state.yaml'
+        with state_path.open('w') as f:
+            yaml.safe_dump(state, f)
+
+    @patch('pyartcd.pipelines.ocp4_konflux.exectools.cmd_assert_async')
+    async def test_rebase_failure_increments_counters_only_for_direct_failures(self, mock_cmd):
+        """rebase_images passes direct failures and skipped children so counters can treat skips as no-ops."""
+        self._write_rebase_state(['parent-img'], ['child-a', 'child-b'])
+        mock_cmd.side_effect = ChildProcessError('rebase failed')
+
+        pipeline = self._make_pipeline()
+        with patch.object(pipeline, 'update_rebase_fail_counters', new_callable=AsyncMock) as mock_counters:
+            await pipeline.rebase_images('4.14.0', '1')
+
+        mock_counters.assert_called_once_with(['parent-img'], ['child-a', 'child-b'])
+
+    @patch('pyartcd.pipelines.ocp4_konflux.increment_rebase_fail_counter', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.ocp4_konflux.reset_rebase_fail_counter', new_callable=AsyncMock)
+    async def test_update_rebase_fail_counters_skipped_children_unchanged_in_redis(self, mock_reset, mock_incr):
+        """Children skipped because a parent failed are not reset nor incremented (no-op)."""
+        from pyartcd.pipelines.ocp4_konflux import BuildStrategy
+
+        pipeline = self._make_pipeline()
+        pipeline.group_images = ['parent-img', 'child-a', 'healthy']
+        pipeline.build_plan.image_build_strategy = BuildStrategy.ALL
+
+        await pipeline.update_rebase_fail_counters(['parent-img'], ['child-a'])
+
+        reset_names = {c.args[0] for c in mock_reset.call_args_list}
+        incr_names = {c.args[0] for c in mock_incr.call_args_list}
+        self.assertEqual(reset_names, {'healthy'})
+        self.assertEqual(incr_names, {'parent-img'})
+        self.assertNotIn('child-a', reset_names)
+        self.assertNotIn('child-a', incr_names)
+
+    @patch('pyartcd.pipelines.ocp4_konflux.exectools.cmd_assert_async')
+    async def test_build_after_rebase_uses_exclude_for_failed_and_skipped(self, mock_cmd):
+        """Build phase runs beta:images:konflux:build with --exclude covering every unrebased image."""
+        from pyartcd.pipelines.ocp4_konflux import BuildStrategy
+
+        self._write_rebase_state(['parent-img'], ['child-a', 'child-b'])
+        mock_cmd.side_effect = [ChildProcessError('rebase failed'), None]
+
+        pipeline = self._make_pipeline()
+        with patch.object(pipeline, 'update_rebase_fail_counters', new_callable=AsyncMock):
+            await pipeline.rebase_images('4.14.0', '1')
+        await pipeline.build_images()
+
+        self.assertEqual(mock_cmd.call_count, 2)
+        build_cmd = mock_cmd.call_args_list[1][0][0]
+        exclude_args = [arg for arg in build_cmd if arg.startswith('--exclude=')]
+        self.assertEqual(len(exclude_args), 1)
+        excluded = set(exclude_args[0].split('=', 1)[1].split(','))
+        self.assertEqual(excluded, {'parent-img', 'child-a', 'child-b'})
+        self.assertEqual(pipeline.build_plan.image_build_strategy, BuildStrategy.EXCEPT)
+
+    @patch('pyartcd.pipelines.ocp4_konflux.exectools.cmd_assert_async')
+    async def test_build_after_rebase_only_strategy_keeps_surviving_images(self, mock_cmd):
+        """ONLY strategy: build runs --images= for images that neither failed nor were skipped due to parent."""
+        from pyartcd.pipelines.ocp4_konflux import BuildStrategy
+
+        self._write_rebase_state(['parent-img'], ['child-a'])
+        mock_cmd.side_effect = [ChildProcessError('rebase failed'), None]
+
+        pipeline = self._make_pipeline(image_build_strategy='only', image_list='parent-img,child-a,survivor')
+        pipeline.build_plan.image_build_strategy = BuildStrategy.ONLY
+        pipeline.build_plan.images_included = ['parent-img', 'child-a', 'survivor']
+
+        with patch.object(pipeline, 'update_rebase_fail_counters', new_callable=AsyncMock):
+            await pipeline.rebase_images('4.14.0', '1')
+        await pipeline.build_images()
+
+        build_cmd = mock_cmd.call_args_list[1][0][0]
+        self.assertIn('--images=survivor', build_cmd)
+        self.assertEqual(pipeline.build_plan.images_included, ['survivor'])
