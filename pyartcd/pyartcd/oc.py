@@ -170,8 +170,6 @@ def extract_release_client_tools(
 ) -> (int, str):
     # oc adm release extract --tools --command-os=* -n ocp --to=<workdir> --filter-by-os=<arch> --from <pullspec> --to <path>
     args = ["release", "extract", "--tools", "--command-os=*", "-n=ocp"]
-    if registry_config:
-        args.append(f"--registry-config={registry_config}")
     if single_arch:
         args += [f"--filter-by-os={single_arch}"]
     args += [f"--from={release_pullspec}", path_arg]
@@ -208,8 +206,6 @@ def extract_baremetal_installer(
         cmd_os,
         f'--to={path}',
     ]
-    if registry_config:
-        args.append(f"--registry-config={registry_config}")
     return common_oc_wrapper(
         cmd_result_name='extract_baremetal',
         cli_verb='adm',
