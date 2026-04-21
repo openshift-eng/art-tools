@@ -6,7 +6,9 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import click
 import koji
+from artcommonlib.constants import KONFLUX_DEFAULT_IMAGE_REPO
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord
+from artcommonlib.rpm_utils import parse_nvr
 from pyartcd.pipelines.update_golang import (
     UpdateGolangPipeline,
     extract_and_validate_golang_nvrs,
@@ -377,6 +379,116 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
 
         branch = UpdateGolangPipeline.get_golang_branch(9, "1.21.5")
         self.assertEqual(branch, "rhel-9-golang-1.21")
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    def test_konflux_streams_pullspec_art_images_base_registry(self, mock_konflux_db):
+        """Konflux streams.yml image uses registry.redhat.io/openshift/art-images-base with NVR tag."""
+        mock_runtime = Mock(
+            dry_run=False,
+            working_dir=Path("/tmp/working"),
+        )
+        mock_runtime.new_slack_client.return_value = Mock()
+
+        pipeline = UpdateGolangPipeline(
+            runtime=mock_runtime,
+            ocp_version="4.16",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.25.8-1.el9"],
+            art_jira="ART-1234",
+            tag_builds=True,
+            build_system="konflux",
+        )
+        parsed = {
+            "name": "openshift-golang-builder-container",
+            "version": "v1.25.8",
+            "release": "202604150744.p2.gf28329a.el9",
+        }
+        self.assertEqual(
+            pipeline._streams_image_pullspec(parsed),
+            "registry.redhat.io/openshift/art-images-base:openshift-golang-builder-container-v1.25.8-202604150744.p2.gf28329a.el9",
+        )
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    def test_konflux_quay_golang_builder_pullspec_uses_konflux_default_repo(self, mock_konflux_db):
+        """Pre-release builder location uses KONFLUX_DEFAULT_IMAGE_REPO (for fallback / coordination)."""
+        mock_runtime = Mock(
+            dry_run=False,
+            working_dir=Path("/tmp/working"),
+        )
+        mock_runtime.new_slack_client.return_value = Mock()
+
+        pipeline = UpdateGolangPipeline(
+            runtime=mock_runtime,
+            ocp_version="4.16",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.25.8-1.el9"],
+            art_jira="ART-1234",
+            tag_builds=True,
+            build_system="konflux",
+        )
+        parsed = {
+            "name": "openshift-golang-builder-container",
+            "version": "v1.25.8",
+            "release": "202604150744.p2.gf28329a.el9",
+        }
+        self.assertEqual(
+            pipeline._konflux_quay_golang_builder_pullspec(parsed),
+            f'{KONFLUX_DEFAULT_IMAGE_REPO}:golang-builder-v1.25.8-202604150744.p2.gf28329a.el9',
+        )
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    def test_brew_streams_image_pullspec_brew_short_name(self, mock_konflux_db):
+        """Brew streams.yml image uses openshift/golang-builder with version-release (not registry.redhat.io)."""
+        mock_runtime = Mock(
+            dry_run=False,
+            working_dir=Path("/tmp/working"),
+        )
+        mock_runtime.new_slack_client.return_value = Mock()
+
+        pipeline = UpdateGolangPipeline(
+            runtime=mock_runtime,
+            ocp_version="4.16",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.20.12-2.el8"],
+            art_jira="ART-1234",
+            tag_builds=True,
+            build_system="brew",
+        )
+        parsed = {
+            "name": "openshift-golang-builder-container",
+            "version": "v1.20.12",
+            "release": "202403212137.el8.g144a3f8",
+        }
+        self.assertEqual(
+            pipeline._streams_image_pullspec(parsed),
+            "openshift/golang-builder:v1.20.12-202403212137.el8.g144a3f8",
+        )
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    def test_brew_streams_image_pullspec_default_build_system_matches_get_builder(self, mock_konflux_db):
+        """Default build_system is brew; _streams_image_pullspec matches _get_builder_pullspec(..., brew)."""
+        mock_runtime = Mock(
+            dry_run=False,
+            working_dir=Path("/tmp/working"),
+        )
+        mock_runtime.new_slack_client.return_value = Mock()
+
+        pipeline = UpdateGolangPipeline(
+            runtime=mock_runtime,
+            ocp_version="4.16",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.21.0-1.el9"],
+            art_jira="ART-1234",
+            tag_builds=True,
+        )
+        parsed = parse_nvr("openshift-golang-builder-container-v1.21.0-202501011200.el9.gabcdef1.el9")
+        expected = pipeline._get_builder_pullspec(parsed, "brew")
+        self.assertEqual(pipeline._streams_image_pullspec(parsed), expected)
+        self.assertEqual(expected, "openshift/golang-builder:v1.21.0-202501011200.el9.gabcdef1.el9")
 
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     def test_brew_login_when_logged_out(self, mock_konflux_db):
