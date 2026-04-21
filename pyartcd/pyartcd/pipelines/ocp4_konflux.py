@@ -13,15 +13,15 @@ import yaml
 from artcommonlib import exectools, redis
 from artcommonlib.build_visibility import is_release_embargoed
 from artcommonlib.constants import (
-    KONFLUX_ART_IMAGES,
-    KONFLUX_ART_IMAGES_SHARE,
+    KONFLUX_DEFAULT_IMAGE_REPO,
+    KONFLUX_DEFAULT_IMAGE_SHARE_REPO,
     REGISTRY_BREW,
     REGISTRY_CI_OPENSHIFT,
     REGISTRY_QUAY_OCP_RELEASE_DEV,
     REGISTRY_QUAY_OPENSHIFT,
     REGISTRY_REDHAT_IO,
 )
-from artcommonlib.registry_config import RegistryConfig
+from artcommonlib.registry_config import RegistryConfig, RegistryCredential
 from artcommonlib.util import (
     new_roundtrip_yaml_handler,
     run_safe,
@@ -30,7 +30,7 @@ from artcommonlib.util import (
     validate_build_priority,
 )
 
-from pyartcd import constants, jenkins, locks, oc, util
+from pyartcd import constants, jenkins, locks, util
 from pyartcd import record as record_util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import Lock
@@ -444,17 +444,8 @@ class KonfluxOcpPipeline:
         if built_images.get('ose-openshift-apiserver', None):
             LOGGER.warning('apiserver rebuilt: mirroring streams to CI...')
 
-            # Use the global QUAY_AUTH_FILE set by run() wrapper
-            # It already contains all necessary registry credentials
-            quay_auth_file = os.getenv('QUAY_AUTH_FILE')
-            if not quay_auth_file:
-                raise ValueError(
-                    "QUAY_AUTH_FILE environment variable is required for registry authentication. "
-                    "This should be set by the global registry auth wrapper in run()."
-                )
-
             cmd = self._doozer_base_command.copy()
-            cmd.extend(['images:streams', 'mirror', '--registry-auth', quay_auth_file])
+            cmd.extend(['images:streams', 'mirror', '--registry-auth', self._registry_auth_file])
             await exectools.cmd_assert_async(cmd)
 
     async def sweep_bugs(self):
@@ -766,7 +757,7 @@ class KonfluxOcpPipeline:
             LOGGER.info('Not mirroring images in dry run mode')
             return
 
-        LOGGER.info(f'Mirroring images to {KONFLUX_ART_IMAGES_SHARE}...')
+        LOGGER.info(f'Mirroring images to {KONFLUX_DEFAULT_IMAGE_SHARE_REPO}...')
 
         record_log = self.parse_record_log()
         if not record_log:
@@ -790,7 +781,7 @@ class KonfluxOcpPipeline:
 
             image_tag = build["image_tag"]
             latest_tag = f'{build["name"]}-{self.version}'
-            await sync_to_quay(image_pullspec, KONFLUX_ART_IMAGES_SHARE, [image_tag, latest_tag])
+            await sync_to_quay(image_pullspec, KONFLUX_DEFAULT_IMAGE_SHARE_REPO, [image_tag, latest_tag])
 
         await asyncio.gather(*[sync_build(build) for build in builds_to_mirror])
 
@@ -811,89 +802,59 @@ class KonfluxOcpPipeline:
                 "Ensure Jenkins credentials are properly bound."
             )
 
-        # Create temp file for CI registry credentials with valid JSON structure
-        # oc registry login --to=file reads the existing file to merge credentials
-        fd, ci_auth_file = tempfile.mkstemp(suffix='.json', text=True)
-        with os.fdopen(fd, 'w') as f:
-            json.dump({"auths": {}}, f)
+        # Build source files list
+        source_files = [quay_auth_file]
+        if redhat_registry_auth_file:
+            source_files.append(redhat_registry_auth_file)
 
-        try:
-            # Login to cluster registry and QCI to create CI auth file
-            await oc.registry_login(to_file=ci_auth_file)
-            await oc.qci_registry_login(to_file=ci_auth_file)
+        # Build explicit credentials for QCI push (DPTP's CI registry)
+        credentials = [
+            RegistryCredential(REGISTRY_QUAY_OPENSHIFT, os.environ['QCI_USER'], os.environ['QCI_PASSWORD']),
+        ]
 
-            # Build source files list
-            source_files = [quay_auth_file]
-            if redhat_registry_auth_file:
-                source_files.append(redhat_registry_auth_file)
-            source_files.append(ci_auth_file)
+        # Global registry config for ALL pipeline operations
+        # kubeconfig obtains CI registry credentials via `oc registry login`
+        # This ensures all oc commands (including doozer's internal calls) use explicit credentials
+        with RegistryConfig(
+            kubeconfig=os.environ.get('KUBECONFIG'),
+            source_files=source_files,
+            registries=[
+                REGISTRY_QUAY_OCP_RELEASE_DEV,  # For: ART release images
+                KONFLUX_DEFAULT_IMAGE_REPO,  # For: Konflux builds (cosign attestations)
+                KONFLUX_DEFAULT_IMAGE_SHARE_REPO,  # For: Konflux image sharing (sync_images)
+                REGISTRY_REDHAT_IO,  # For: RHEL base images
+                REGISTRY_BREW,  # For: parent images (uses registry.redhat.io creds via alias)
+                REGISTRY_CI_OPENSHIFT,  # For: CI operations
+            ],
+            credentials=credentials,
+        ) as global_auth_file:
+            self._registry_auth_file = global_auth_file
 
-            # Global registry config for ALL pipeline operations
-            # This ensures all oc commands (including doozer's internal calls) use explicit credentials
-            with RegistryConfig(
-                source_files=source_files,
-                registries=[
-                    REGISTRY_QUAY_OCP_RELEASE_DEV,  # For: ART release images
-                    REGISTRY_QUAY_OPENSHIFT,  # For: QCI push (DPTP's CI registry)
-                    KONFLUX_ART_IMAGES,  # For: Konflux builds (cosign attestations)
-                    KONFLUX_ART_IMAGES_SHARE,  # For: Konflux image sharing (sync_images)
-                    REGISTRY_REDHAT_IO,  # For: RHEL base images
-                    REGISTRY_BREW,  # For: parent images (uses registry.redhat.io creds via alias)
-                    REGISTRY_CI_OPENSHIFT,  # For: CI operations
-                ],
-            ) as global_auth_file:
-                # Create a temp directory for Docker config (cosign needs $DOCKER_CONFIG/config.json)
-                docker_config_dir = tempfile.mkdtemp(prefix='docker_config_')
-                docker_config_file = os.path.join(docker_config_dir, 'config.json')
+            # cosign requires DOCKER_CONFIG pointing to a dir containing config.json
+            docker_config_dir = tempfile.mkdtemp(prefix='docker_config_')
+            docker_config_file = os.path.join(docker_config_dir, 'config.json')
+
+            try:
+                shutil.copy2(global_auth_file, docker_config_file)
+
+                original_docker_config = os.environ.get('DOCKER_CONFIG')
+                os.environ['DOCKER_CONFIG'] = docker_config_dir
+
+                LOGGER.info(
+                    f'Set registry auth file={global_auth_file} for pipeline operations '
+                    f'(cherry-picked from {len(source_files)} source file(s))'
+                )
 
                 try:
-                    # Copy the merged auth file to Docker config location for cosign
-                    shutil.copy2(global_auth_file, docker_config_file)
-
-                    # Save original environment variables
-                    original_registry_auth = os.environ.get('REGISTRY_AUTH_FILE')
-                    original_quay_auth = os.environ.get('QUAY_AUTH_FILE')
-                    original_docker_config = os.environ.get('DOCKER_CONFIG')
-
-                    # Set global auth file for all registry operations
-                    # REGISTRY_AUTH_FILE: Used by oc/podman commands
-                    # QUAY_AUTH_FILE: Used by doozer when passing --registry-auth or calling oc
-                    # DOCKER_CONFIG: Used by cosign for attestation downloads
-                    os.environ['REGISTRY_AUTH_FILE'] = global_auth_file
-                    os.environ['QUAY_AUTH_FILE'] = global_auth_file
-                    os.environ['DOCKER_CONFIG'] = docker_config_dir
-
-                    LOGGER.info(
-                        f'Set global registry auth file={global_auth_file} for all pipeline operations '
-                        f'(cherry-picked from {len(source_files)} source file(s))'
-                    )
-
-                    try:
-                        await self._run_pipeline()
-                    finally:
-                        # Restore original environment variables
-                        if original_registry_auth:
-                            os.environ['REGISTRY_AUTH_FILE'] = original_registry_auth
-                        elif 'REGISTRY_AUTH_FILE' in os.environ:
-                            del os.environ['REGISTRY_AUTH_FILE']
-
-                        if original_quay_auth:
-                            os.environ['QUAY_AUTH_FILE'] = original_quay_auth
-                        elif 'QUAY_AUTH_FILE' in os.environ:
-                            del os.environ['QUAY_AUTH_FILE']
-
-                        if original_docker_config:
-                            os.environ['DOCKER_CONFIG'] = original_docker_config
-                        elif 'DOCKER_CONFIG' in os.environ:
-                            del os.environ['DOCKER_CONFIG']
+                    await self._run_pipeline()
                 finally:
-                    # Clean up Docker config directory
-                    if os.path.exists(docker_config_dir):
-                        shutil.rmtree(docker_config_dir)
-        finally:
-            # Clean up temp CI auth file
-            if os.path.exists(ci_auth_file):
-                os.unlink(ci_auth_file)
+                    if original_docker_config:
+                        os.environ['DOCKER_CONFIG'] = original_docker_config
+                    elif 'DOCKER_CONFIG' in os.environ:
+                        del os.environ['DOCKER_CONFIG']
+            finally:
+                if os.path.exists(docker_config_dir):
+                    shutil.rmtree(docker_config_dir)
 
     async def _run_pipeline(self):
         """Core pipeline logic wrapped by global registry auth config."""

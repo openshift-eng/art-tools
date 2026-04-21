@@ -3,7 +3,8 @@ Container registry credential manager for oc / Podman-style tools.
 
 RegistryConfig creates a temporary Docker config.json file containing only
 the specified registry credentials, built by cherry-picking entries from
-source auth files and/or providing explicit username:password pairs.
+source auth files, kubeconfig-based ``oc registry login``, and/or explicit
+username:password pairs.
 
 Usage examples:
 
@@ -11,6 +12,17 @@ Usage examples:
     with RegistryConfig(
         source_files=['/path/to/auth.json'],
         registries=['registry.redhat.io', 'quay.io/openshift-release-dev'],
+    ) as auth_file:
+        cmd.extend(['--registry-config', auth_file])
+
+    # Use kubeconfig to obtain CI registry credentials
+    with RegistryConfig(
+        kubeconfig=os.environ.get('KUBECONFIG'),
+        source_files=['/path/to/quay_auth.json'],
+        registries=[
+            'quay.io/openshift-release-dev',
+            'registry.ci.openshift.org',
+        ],
     ) as auth_file:
         cmd.extend(['--registry-config', auth_file])
 
@@ -48,6 +60,8 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
+
+from artcommonlib import exectools
 
 logger = logging.getLogger(__name__)
 
@@ -119,15 +133,20 @@ class RegistryConfig:
     Context manager that builds a temporary Docker auth config.json.
 
     Constructs a minimal auth file containing only the requested registries,
-    sourced from existing auth files and/or explicit credentials.
+    sourced from existing auth files, kubeconfig-based ``oc registry login``,
+    and/or explicit credentials.
 
     When a registry appears in both source files and credentials, the
     explicit credential takes precedence.  When a registry appears in
     multiple source files, the first file wins.
 
     Arg(s):
+        kubeconfig (str | None): Path to a kubeconfig file. When provided,
+            ``oc --kubeconfig=<path> registry login`` is run during ``__enter__``
+            to obtain CI registry credentials, which are added as an additional
+            source.
         source_files (list[str] | None): Paths to existing auth.json files to extract from.
-        registries (list[str] | None): Registry paths to cherry-pick from source_files.
+        registries (list[str] | None): Registry paths to cherry-pick from source_files / kubeconfig.
         credentials (list[RegistryCredential] | None): Explicit username/password credentials.
     """
 
@@ -136,22 +155,25 @@ class RegistryConfig:
         source_files: Optional[list[str]] = None,
         registries: Optional[list[str]] = None,
         credentials: Optional[list[RegistryCredential]] = None,
+        kubeconfig: Optional[str] = None,
     ) -> None:
         """
         Initialize the RegistryConfig context manager.
 
         Arg(s):
             source_files (list[str] | None): Paths to existing auth.json files.
-            registries (list[str] | None): Registry paths to extract from source_files.
+            registries (list[str] | None): Registry paths to extract from source_files / kubeconfig.
             credentials (list[RegistryCredential] | None): Explicit credentials.
+            kubeconfig (str | None): Path to a kubeconfig file for ``oc registry login``.
 
         Raises:
             ValueError: If no registries or credentials are provided, or if
-                        registries are specified without source_files.
+                        registries are specified without source_files or kubeconfig.
         """
         self._source_files = list(source_files) if source_files else []
         self._registries = [_normalize_registry_path(r) for r in registries] if registries else []
         self._credentials = list(credentials) if credentials else []
+        self._kubeconfig = kubeconfig
         self._temp_auth_file: Optional[Path] = None
         self._merged_auths: dict[str, dict[str, str]] = {}
 
@@ -159,9 +181,9 @@ class RegistryConfig:
         if not self._registries and not self._credentials:
             raise ValueError("RegistryConfig requires at least one registry or credential")
 
-        # Can't extract registries without source files
-        if self._registries and not self._source_files:
-            raise ValueError("source_files must be provided when registries are specified")
+        # Can't extract registries without a credential source
+        if self._registries and not self._source_files and not self._kubeconfig:
+            raise ValueError("source_files or kubeconfig must be provided when registries are specified")
 
     def __enter__(self) -> str:
         """
@@ -173,6 +195,44 @@ class RegistryConfig:
         Raises:
             ValueError: If a requested registry is not found in any source file.
             FileNotFoundError: If a source file does not exist.
+            RuntimeError: If ``oc registry login`` fails.
+        """
+        self._resolve_and_write()
+        return str(self._temp_auth_file)
+
+    def _run_oc_registry_login(self) -> str:
+        """
+        Run ``oc --kubeconfig=<path> registry login`` to obtain CI registry
+        credentials. The credentials are written to a temp file which is
+        appended to ``self._source_files``. The caller is responsible for
+        removing the temp file and the corresponding entry from
+        ``self._source_files`` after loading.
+
+        Return Value(s):
+            str: Path to the temp file containing the oc login credentials.
+
+        Raises:
+            RuntimeError: If ``oc registry login`` fails.
+        """
+        fd, temp_path = tempfile.mkstemp(prefix="oc_login_auth_", suffix=".json", text=True)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump({"auths": {}}, f)
+
+        cmd = f"oc --kubeconfig {self._kubeconfig} registry login --to={temp_path}"
+        rc, _, stderr = exectools.cmd_gather(cmd)
+        if rc != 0:
+            os.unlink(temp_path)
+            raise RuntimeError(f"Failed to run 'oc registry login' with kubeconfig '{self._kubeconfig}': {stderr}")
+
+        self._source_files.append(temp_path)
+        logger.info("Obtained CI registry credentials via kubeconfig '%s'", self._kubeconfig)
+        return temp_path
+
+    def _resolve_and_write(self) -> None:
+        """
+        Core credential resolution logic: optionally run ``oc registry login``
+        to obtain CI credentials, load source files, match registries, apply
+        explicit credentials, and write the merged auth file.
         """
         merged: dict[str, dict[str, str]] = {}
 
@@ -182,8 +242,24 @@ class RegistryConfig:
             'brew.registry.redhat.io': 'registry.redhat.io',
         }
 
+        # Step 0: if kubeconfig is set, run oc registry login into a temp file
+        # and add it to the source files list
+        oc_login_file = None
+        if self._kubeconfig:
+            oc_login_file = self._run_oc_registry_login()
+
         # Step 1: resolve registries from source files
-        source_auths = self._load_source_files()
+        try:
+            source_auths = self._load_source_files()
+        finally:
+            if oc_login_file:
+                self._source_files.remove(oc_login_file)
+                try:
+                    os.unlink(oc_login_file)
+                    logger.debug("Removed oc login temp file %s", oc_login_file)
+                except OSError as err:
+                    logger.warning("Could not remove %s: %s", oc_login_file, err)
+                    raise
         for registry in self._registries:
             if registry in merged:
                 logger.debug("Registry '%s' already resolved, skipping duplicate", registry)
@@ -238,7 +314,6 @@ class RegistryConfig:
 
         self._merged_auths = merged
         self._write_temp_file()
-        return str(self._temp_auth_file)
 
     def _load_source_files(self) -> dict[str, dict[str, dict]]:
         """
@@ -338,7 +413,7 @@ class RegistryConfig:
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
         """
-        Clean up the temporary auth file.
+        Clean up the merged auth temp file.
         """
         self._merged_auths = {}
         path = self._temp_auth_file

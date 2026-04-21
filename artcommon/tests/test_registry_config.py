@@ -578,7 +578,7 @@ class TestRegistryConfigValidation(unittest.TestCase):
     def test_registries_without_source_files_raises(self):
         with self.assertRaises(ValueError) as cm:
             RegistryConfig(registries=["quay.io"])
-        self.assertIn("source_files must be provided", str(cm.exception))
+        self.assertIn("source_files or kubeconfig must be provided", str(cm.exception))
 
     def test_registries_with_empty_source_files_raises(self):
         with self.assertRaises(ValueError):
@@ -1007,6 +1007,230 @@ class TestRegistryConfigRealWorldScenarios(unittest.TestCase):
         ) as auth_file:
             data = _read_auth_file(auth_file)
             self.assertEqual(len(data["auths"]), 3)
+
+
+# ---------------------------------------------------------------------------
+# RegistryConfig — kubeconfig support
+# ---------------------------------------------------------------------------
+
+
+def _mock_cmd_gather_success(auths_to_write: dict):
+    """
+    Return a mock for exectools.cmd_gather that simulates a successful
+    ``oc registry login --to=<path>`` by writing credentials to the --to path.
+    """
+
+    def _mock(cmd, **kwargs):
+        if isinstance(cmd, str):
+            parts = cmd.split()
+        else:
+            parts = cmd
+        to_path = None
+        for part in parts:
+            if part.startswith("--to="):
+                to_path = part[5:]
+                break
+        if to_path:
+            with open(to_path, "w") as f:
+                json.dump({"auths": auths_to_write}, f)
+        return (0, "", "")
+
+    return _mock
+
+
+class TestRegistryConfigKubeconfig(unittest.TestCase):
+    """
+    Tests for the kubeconfig parameter.
+    """
+
+    def test_kubeconfig_only_registries_no_source_files(self):
+        """
+        kubeconfig alone satisfies the source requirement for registries.
+        """
+        ci_registry_auth = _b64("ci-user", "ci-pass")
+
+        from unittest.mock import patch
+
+        mock = _mock_cmd_gather_success({"registry.ci.openshift.org": {"auth": ci_registry_auth}})
+        with patch("artcommonlib.registry_config.exectools.cmd_gather", side_effect=mock):
+            with RegistryConfig(
+                kubeconfig="/fake/kubeconfig",
+                registries=["registry.ci.openshift.org"],
+            ) as auth_file:
+                data = _read_auth_file(auth_file)
+                self.assertIn("registry.ci.openshift.org", data["auths"])
+                self.assertEqual(data["auths"]["registry.ci.openshift.org"]["auth"], ci_registry_auth)
+
+    def test_kubeconfig_combined_with_source_files(self):
+        """
+        kubeconfig credentials are merged with existing source files.
+        """
+        quay_auth_path = _write_auth_file(
+            {
+                "quay.io/openshift-release-dev": {"auth": _b64("quay-user", "quay-pass")},
+            }
+        )
+        ci_registry_auth = _b64("ci-user", "ci-pass")
+
+        from unittest.mock import patch
+
+        mock = _mock_cmd_gather_success({"registry.ci.openshift.org": {"auth": ci_registry_auth}})
+        try:
+            with patch("artcommonlib.registry_config.exectools.cmd_gather", side_effect=mock):
+                with RegistryConfig(
+                    kubeconfig="/fake/kubeconfig",
+                    source_files=[quay_auth_path],
+                    registries=[
+                        "quay.io/openshift-release-dev",
+                        "registry.ci.openshift.org",
+                    ],
+                ) as auth_file:
+                    data = _read_auth_file(auth_file)
+                    self.assertEqual(len(data["auths"]), 2)
+                    self.assertIn("quay.io/openshift-release-dev", data["auths"])
+                    self.assertIn("registry.ci.openshift.org", data["auths"])
+                    decoded_quay = base64.b64decode(data["auths"]["quay.io/openshift-release-dev"]["auth"]).decode()
+                    self.assertEqual(decoded_quay, "quay-user:quay-pass")
+        finally:
+            os.unlink(quay_auth_path)
+
+    def test_kubeconfig_combined_with_credentials(self):
+        """
+        Explicit credentials override kubeconfig-sourced entries.
+        """
+        ci_registry_auth = _b64("ci-from-kubeconfig", "kube-pass")
+
+        from unittest.mock import patch
+
+        mock = _mock_cmd_gather_success({"registry.ci.openshift.org": {"auth": ci_registry_auth}})
+        with patch("artcommonlib.registry_config.exectools.cmd_gather", side_effect=mock):
+            with RegistryConfig(
+                kubeconfig="/fake/kubeconfig",
+                registries=["registry.ci.openshift.org"],
+                credentials=[
+                    RegistryCredential("registry.ci.openshift.org", "override-user", "override-pass"),
+                ],
+            ) as auth_file:
+                data = _read_auth_file(auth_file)
+                decoded = base64.b64decode(data["auths"]["registry.ci.openshift.org"]["auth"]).decode()
+                self.assertEqual(decoded, "override-user:override-pass")
+
+    def test_kubeconfig_passes_correct_command(self):
+        """
+        Verify the oc command includes the kubeconfig path.
+        """
+        captured_cmd = []
+
+        def mock_cmd_gather(cmd, **kwargs):
+            captured_cmd.append(cmd)
+            if isinstance(cmd, str):
+                parts = cmd.split()
+            else:
+                parts = cmd
+            to_path = None
+            for part in parts:
+                if part.startswith("--to="):
+                    to_path = part[5:]
+                    break
+            if to_path:
+                with open(to_path, "w") as f:
+                    json.dump({"auths": {"registry.ci.openshift.org": {"auth": _b64("u", "p")}}}, f)
+            return (0, "", "")
+
+        from unittest.mock import patch
+
+        with patch("artcommonlib.registry_config.exectools.cmd_gather", side_effect=mock_cmd_gather):
+            with RegistryConfig(
+                kubeconfig="/my/custom/kubeconfig",
+                registries=["registry.ci.openshift.org"],
+            ):
+                pass
+
+        self.assertEqual(len(captured_cmd), 1)
+        self.assertIn("/my/custom/kubeconfig", captured_cmd[0])
+        self.assertIn("registry login", captured_cmd[0])
+
+    def test_kubeconfig_failure_raises_runtime_error(self):
+        """
+        If oc registry login fails, a RuntimeError is raised.
+        """
+
+        def mock_cmd_gather(cmd, **kwargs):
+            return (1, "", "error: dial tcp: connection refused")
+
+        from unittest.mock import patch
+
+        with patch("artcommonlib.registry_config.exectools.cmd_gather", side_effect=mock_cmd_gather):
+            with self.assertRaises(RuntimeError) as cm:
+                with RegistryConfig(
+                    kubeconfig="/bad/kubeconfig",
+                    registries=["registry.ci.openshift.org"],
+                ):
+                    pass
+            self.assertIn("Failed to run", str(cm.exception))
+            self.assertIn("/bad/kubeconfig", str(cm.exception))
+
+    def test_kubeconfig_temp_files_cleaned_up(self):
+        """
+        Both the merged auth file and the kubeconfig temp file are cleaned up on exit.
+        """
+        ci_registry_auth = _b64("ci-user", "ci-pass")
+
+        from unittest.mock import patch
+
+        mock = _mock_cmd_gather_success({"registry.ci.openshift.org": {"auth": ci_registry_auth}})
+        auth_file_path = None
+        with patch("artcommonlib.registry_config.exectools.cmd_gather", side_effect=mock):
+            with RegistryConfig(
+                kubeconfig="/fake/kubeconfig",
+                registries=["registry.ci.openshift.org"],
+            ) as auth_file:
+                auth_file_path = auth_file
+                self.assertTrue(os.path.exists(auth_file))
+
+        self.assertFalse(os.path.exists(auth_file_path))
+
+    def test_kubeconfig_temp_files_cleaned_up_on_exception(self):
+        """
+        Temp files are cleaned up even if an exception occurs inside the context.
+        """
+        ci_registry_auth = _b64("ci-user", "ci-pass")
+
+        from unittest.mock import patch
+
+        mock = _mock_cmd_gather_success({"registry.ci.openshift.org": {"auth": ci_registry_auth}})
+        auth_file_path = None
+        try:
+            with patch("artcommonlib.registry_config.exectools.cmd_gather", side_effect=mock):
+                with RegistryConfig(
+                    kubeconfig="/fake/kubeconfig",
+                    registries=["registry.ci.openshift.org"],
+                ) as auth_file:
+                    auth_file_path = auth_file
+                    raise RuntimeError("boom")
+        except RuntimeError:
+            pass
+
+        self.assertIsNotNone(auth_file_path)
+        self.assertFalse(os.path.exists(auth_file_path))
+
+    def test_kubeconfig_validation_registries_without_sources_or_kubeconfig(self):
+        """
+        Registries without source_files or kubeconfig should still raise.
+        """
+        with self.assertRaises(ValueError) as cm:
+            RegistryConfig(registries=["quay.io"])
+        self.assertIn("source_files or kubeconfig", str(cm.exception))
+
+    def test_kubeconfig_with_registries_allows_init(self):
+        """
+        kubeconfig + registries (no source_files) should pass init validation.
+        """
+        config = RegistryConfig(
+            kubeconfig="/some/kubeconfig",
+            registries=["registry.ci.openshift.org"],
+        )
+        self.assertIsNotNone(config)
 
 
 if __name__ == "__main__":
