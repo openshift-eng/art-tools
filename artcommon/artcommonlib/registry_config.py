@@ -62,6 +62,7 @@ from pathlib import Path
 from typing import Optional
 
 from artcommonlib import exectools
+from artcommonlib.constants import REGISTRY_BREW, REGISTRY_REDHAT_IO
 
 logger = logging.getLogger(__name__)
 
@@ -239,7 +240,7 @@ class RegistryConfig:
         # Registry aliases: registries that share authentication realms
         # When the requested registry is not found, try these fallbacks
         registry_aliases = {
-            'brew.registry.redhat.io': 'registry.redhat.io',
+            REGISTRY_BREW: REGISTRY_REDHAT_IO,
         }
 
         # Step 0: if kubeconfig is set, run oc registry login into a temp file
