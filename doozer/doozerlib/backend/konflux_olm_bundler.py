@@ -14,7 +14,7 @@ import yaml
 from artcommonlib import exectools
 from artcommonlib import util as artlib_util
 from artcommonlib.assembly import AssemblyTypes
-from artcommonlib.constants import KONFLUX_ART_IMAGES_SHARE
+from artcommonlib.constants import KONFLUX_DEFAULT_IMAGE_SHARE_REPO
 from artcommonlib.konflux.konflux_build_record import (
     KonfluxBuildOutcome,
     KonfluxBuildRecord,
@@ -771,7 +771,9 @@ class KonfluxOlmBundleBuilder:
                         )
 
                     # Sync the bundle to art-images-share
-                    await sync_to_quay(f"{image_pullspec.split(':')[0]}@{image_digest}", KONFLUX_ART_IMAGES_SHARE)
+                    await sync_to_quay(
+                        f"{image_pullspec.split(':')[0]}@{image_digest}", KONFLUX_DEFAULT_IMAGE_SHARE_REPO
+                    )
 
                     # Run EC verification after a successful bundle build
                     is_ocp_group = self.group.startswith("openshift-")

@@ -9,7 +9,12 @@ import click
 import koji
 from artcommonlib import exectools
 from artcommonlib.brew import BuildStates
-from artcommonlib.constants import BREW_HUB, GOLANG_BUILDER_IMAGE_NAME, PRODUCT_NAMESPACE_MAP
+from artcommonlib.constants import (
+    BREW_HUB,
+    GOLANG_BUILDER_IMAGE_NAME,
+    KONFLUX_DEFAULT_IMAGE_REPO,
+    PRODUCT_NAMESPACE_MAP,
+)
 from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.konflux.konflux_db import KonfluxDb
@@ -488,7 +493,7 @@ class UpdateGolangPipeline:
             return f'openshift/golang-builder:{parsed_nvr["version"]}-{parsed_nvr["release"]}'
         else:  # konflux or both (both uses konflux pullspec)
             # TODO: This is temporary. In the future we need a location to share with multiple teams.
-            return f'quay.io/redhat-user-workloads/ocp-art-tenant/art-images:golang-builder-{parsed_nvr["version"]}-{parsed_nvr["release"]}'
+            return f'{KONFLUX_DEFAULT_IMAGE_REPO}:golang-builder-{parsed_nvr["version"]}-{parsed_nvr["release"]}'
 
     async def update_golang_streams(self, go_version, builder_nvrs):
         """

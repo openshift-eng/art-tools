@@ -57,9 +57,9 @@ REGISTRY_QUAY_CI = "quay.io/openshift/ci"
 REGISTRY_CI_OPENSHIFT = "registry.ci.openshift.org"
 REGISTRY_REDHAT_IO = "registry.redhat.io"
 REGISTRY_BREW = "brew.registry.redhat.io"
-KONFLUX_ART_IMAGES = "quay.io/redhat-user-workloads/ocp-art-tenant/art-images"
-KONFLUX_ART_IMAGES_SHARE = "quay.io/redhat-user-workloads/ocp-art-tenant/art-images-share"
-KONFLUX_ART_FBC = "quay.io/redhat-user-workloads/ocp-art-tenant/art-fbc"
+KONFLUX_DEFAULT_IMAGE_REPO = "quay.io/redhat-user-workloads/ocp-art-tenant/art-images"
+KONFLUX_DEFAULT_IMAGE_SHARE_REPO = "quay.io/redhat-user-workloads/ocp-art-tenant/art-images-share"
+KONFLUX_DEFAULT_FBC_REPO = "quay.io/redhat-user-workloads/ocp-art-tenant/art-fbc"
 
 KONFLUX_DEFAULT_BUILD_PRIORITY = 5
 
