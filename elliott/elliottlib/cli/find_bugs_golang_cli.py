@@ -551,15 +551,13 @@ class FindBugsGolangCli:
 
             fixed_in_version_cve_id = set()
             if cve_id in self.cve_ids:
-                go_version = None
                 for nvr in self.fixed_in_nvrs:
                     parsed_nvr = parse_nvr(nvr)
                     patch = get_patch_from_release(parsed_nvr['release'])
                     version = Version.parse(f"{parsed_nvr['version']}-{patch}")
-                    go_version = version
-                fixed_in_version_cve_id = {go_version} if go_version else set()
+                    fixed_in_version_cve_id.add(version)
                 logger.info(
-                    f"Found fixed in version for {cve_id} from changelog of fixed in NVRs: {_fmt(fixed_in_version_cve_id)}"
+                    f"Found fixed in versions for {cve_id} from changelog of fixed in NVRs: {_fmt(fixed_in_version_cve_id)}"
                 )
 
             golang_cves_fixed_in[cve_id] = fixed_in_version_go_db | fixed_in_version_cve_id
