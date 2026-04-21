@@ -3,31 +3,23 @@ import glob
 import json
 import os
 import re
-import shutil
-import tempfile
 
 import click
 import yaml
 from artcommonlib import exectools, redis, rhcos
 from artcommonlib.arch_util import go_arch_for_brew_arch, go_suffix_for_arch
-from artcommonlib.constants import (
-    KONFLUX_ART_IMAGES,
-    KONFLUX_ART_IMAGES_SHARE,
-    REGISTRY_CI_OPENSHIFT,
-    REGISTRY_QUAY_OCP_RELEASE_DEV,
-)
 from artcommonlib.exectools import limit_concurrency
 from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.redis import RedisError
-from artcommonlib.registry_config import RegistryConfig
 from artcommonlib.release_util import SoftwareLifecyclePhase
 from artcommonlib.telemetry import start_as_current_span_async
 from artcommonlib.util import split_git_url, uses_konflux_imagestream_override
 from opentelemetry import trace
 
-from pyartcd import constants, jenkins, locks, oc
+from pyartcd import constants, jenkins, locks
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.jenkins import get_build_url
+from pyartcd.oc import registry_login
 from pyartcd.runtime import GroupRuntime, Runtime
 from pyartcd.util import branch_arches
 
@@ -151,85 +143,6 @@ class BuildSyncPipeline:
 
     @start_as_current_span_async(TRACER, "build-sync.run")
     async def run(self):
-        # Unset XDG_RUNTIME_DIR to prevent use of default registry auth
-        if 'XDG_RUNTIME_DIR' in os.environ:
-            self.logger.info('Unsetting XDG_RUNTIME_DIR to prevent use of default registry auth')
-            del os.environ['XDG_RUNTIME_DIR']
-
-        # Get Jenkins credentials
-        quay_auth_file = os.getenv('QUAY_AUTH_FILE')
-        if not quay_auth_file:
-            raise ValueError(
-                "QUAY_AUTH_FILE environment variable is required. This should be set via Jenkins credentials binding."
-            )
-
-        # Create temp file for CI registry credentials with valid JSON structure
-        fd, ci_auth_file = tempfile.mkstemp(suffix='.json', text=True)
-        with os.fdopen(fd, 'w') as f:
-            json.dump({"auths": {}}, f)
-
-        try:
-            # Login to CI registry (requires KUBECONFIG from buildlib.withAppCiAsArtPublish)
-            await oc.registry_login(to_file=ci_auth_file)
-
-            # Build source files list
-            source_files = [quay_auth_file, ci_auth_file]
-
-            # Global registry config for ALL pipeline operations
-            with RegistryConfig(
-                source_files=source_files,
-                registries=[
-                    REGISTRY_QUAY_OCP_RELEASE_DEV,
-                    KONFLUX_ART_IMAGES,
-                    KONFLUX_ART_IMAGES_SHARE,
-                    REGISTRY_CI_OPENSHIFT,
-                ],
-            ) as global_auth_file:
-                # Create temp directory for Docker config (cosign needs $DOCKER_CONFIG/config.json)
-                docker_config_dir = tempfile.mkdtemp(prefix='docker_config_')
-                docker_config_file = os.path.join(docker_config_dir, 'config.json')
-
-                try:
-                    shutil.copy2(global_auth_file, docker_config_file)
-
-                    # Save original environment variables
-                    original_registry_auth = os.environ.get('REGISTRY_AUTH_FILE')
-                    original_quay_auth = os.environ.get('QUAY_AUTH_FILE')
-                    original_docker_config = os.environ.get('DOCKER_CONFIG')
-
-                    # Set global auth file for all registry operations
-                    os.environ['REGISTRY_AUTH_FILE'] = global_auth_file
-                    os.environ['QUAY_AUTH_FILE'] = global_auth_file
-                    os.environ['DOCKER_CONFIG'] = docker_config_dir
-
-                    try:
-                        await self._run_pipeline()
-                    finally:
-                        # Restore original environment variables
-                        if original_registry_auth:
-                            os.environ['REGISTRY_AUTH_FILE'] = original_registry_auth
-                        elif 'REGISTRY_AUTH_FILE' in os.environ:
-                            del os.environ['REGISTRY_AUTH_FILE']
-
-                        if original_quay_auth:
-                            os.environ['QUAY_AUTH_FILE'] = original_quay_auth
-                        elif 'QUAY_AUTH_FILE' in os.environ:
-                            del os.environ['QUAY_AUTH_FILE']
-
-                        if original_docker_config:
-                            os.environ['DOCKER_CONFIG'] = original_docker_config
-                        elif 'DOCKER_CONFIG' in os.environ:
-                            del os.environ['DOCKER_CONFIG']
-                finally:
-                    if os.path.exists(docker_config_dir):
-                        shutil.rmtree(docker_config_dir)
-        finally:
-            if os.path.exists(ci_auth_file):
-                os.unlink(ci_auth_file)
-
-    @start_as_current_span_async(TRACER, "build-sync._run_pipeline")
-    async def _run_pipeline(self):
-        """Core pipeline logic wrapped by global registry auth config."""
         current_span = trace.get_current_span()
         current_span.set_attribute("build-sync.version", self.version)
         current_span.set_attribute("build-sync.assembly", self.assembly)
@@ -252,6 +165,9 @@ class BuildSyncPipeline:
             # Comment on PR if triggered from gen assembly
             text_body = f"Build sync job [run]({self.job_run}) has been triggered"
             await self.comment_on_assembly_pr(text_body)
+
+        # Make sure we're logged into the OC registry
+        await registry_login()
 
         # Should we retrigger current nightly?
         if self.retrigger_current_nightly:
