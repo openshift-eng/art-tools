@@ -260,7 +260,6 @@ class RegistryConfig:
                     logger.debug("Removed oc login temp file %s", oc_login_file)
                 except OSError as err:
                     logger.warning("Could not remove %s: %s", oc_login_file, err)
-                    raise
         for registry in self._registries:
             if registry in merged:
                 logger.debug("Registry '%s' already resolved, skipping duplicate", registry)
