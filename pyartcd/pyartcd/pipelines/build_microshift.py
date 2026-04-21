@@ -1,8 +1,10 @@
 import asyncio
 import copy
 import io
+import json
 import logging
 import os
+import tempfile
 import traceback
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
@@ -11,9 +13,14 @@ import click
 from artcommonlib import exectools
 from artcommonlib.arch_util import brew_arch_for_go_arch
 from artcommonlib.assembly import AssemblyTypes, assembly_config_struct
+from artcommonlib.constants import (
+    REGISTRY_CI_OPENSHIFT,
+    REGISTRY_QUAY_OCP_RELEASE_DEV,
+)
 from artcommonlib.gitdata import SafeFormatter
 from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.model import Model
+from artcommonlib.registry_config import RegistryConfig
 from artcommonlib.util import get_ocp_version_from_group, new_roundtrip_yaml_handler
 from doozerlib.util import get_nightly_pullspec
 from elliottlib.errata import push_cdn_stage
@@ -63,10 +70,13 @@ class BuildMicroShiftPipeline:
         skip_prepare_advisory: bool,
         data_path: str,
         slack_client,
+        data_gitref: str | None = None,
         logger: Optional[logging.Logger] = None,
     ):
         self.runtime = runtime
         self.group = group
+        self.data_gitref = data_gitref or ""
+        self.doozer_group = f"{self.group}@{self.data_gitref}" if self.data_gitref else self.group
         self.assembly = assembly
         self.assembly_type = AssemblyTypes.STREAM
         self.payloads = payloads
@@ -94,13 +104,51 @@ class BuildMicroShiftPipeline:
             self._elliott_env_vars["ELLIOTT_DATA_PATH"] = data_path
 
     async def run(self):
-        # Make sure our api.ci token is fresh
-        await oc.registry_login()
+        # Get Jenkins credentials for Quay
+        quay_auth_file = os.getenv('QUAY_AUTH_FILE')
+        if not quay_auth_file:
+            raise ValueError(
+                "QUAY_AUTH_FILE environment variable is required. This should be set via Jenkins credentials binding."
+            )
 
-        group_config = await load_group_config(self.group, self.assembly, env=self._doozer_env_vars)
+        # Create temp file for CI registry credentials
+        fd, ci_auth_file = tempfile.mkstemp(suffix='.json', text=True)
+        with os.fdopen(fd, 'w') as f:
+            json.dump({"auths": {}}, f)
+
+        try:
+            # Login to CI registry (requires KUBECONFIG from buildlib.withAppCiAsArtPublish)
+            await oc.registry_login(to_file=ci_auth_file)
+
+            # Build source files list
+            source_files = [quay_auth_file, ci_auth_file]
+
+            # Global registry config for pipeline operations
+            with RegistryConfig(
+                source_files=source_files,
+                registries=[
+                    REGISTRY_QUAY_OCP_RELEASE_DEV,
+                    REGISTRY_CI_OPENSHIFT,
+                ],
+            ) as global_auth_file:
+                await self._run_with_auth(global_auth_file)
+        finally:
+            if os.path.exists(ci_auth_file):
+                os.unlink(ci_auth_file)
+
+    async def _run_with_auth(self, registry_config_file: str):
+        """Core pipeline logic with registry authentication."""
+        # Override QUAY_AUTH_FILE in doozer/elliott env to use the merged auth file
+        # This ensures doozer's microshift-rebase script can access both Quay and CI registries
+        self._doozer_env_vars["QUAY_AUTH_FILE"] = registry_config_file
+        self._elliott_env_vars["QUAY_AUTH_FILE"] = registry_config_file
+
+        group_config = await load_group_config(
+            self.group, self.assembly, env=self._doozer_env_vars, doozer_data_gitref=self.data_gitref
+        )
         advisories = group_config.get("advisories", {})
         self.releases_config = await load_releases_config(
-            group=self.group,
+            group=self.doozer_group,
             data_path=self._doozer_env_vars.get("DOOZER_DATA_PATH", None) or constants.OCP_BUILD_DATA_URL,
         )
         self.assembly_type = get_assembly_type(self.releases_config, self.assembly)
@@ -110,7 +158,7 @@ class BuildMicroShiftPipeline:
             )
 
         if self.assembly_type is AssemblyTypes.STREAM:
-            await self._rebase_and_build_for_stream()
+            await self._rebase_and_build_for_stream(registry_config_file)
         else:
             # Check if microshift advisory is defined in assembly
             if ('microshift' not in advisories or advisories.get("microshift") <= 0) and not self.skip_prepare_advisory:
@@ -121,7 +169,7 @@ class BuildMicroShiftPipeline:
                 await self.slack_client.say_in_thread(
                     f"Microshift advisory {self.advisory_num} saved to assembly: {pr_url}"
                 )
-            await self._rebase_and_build_for_named_assembly()
+            await self._rebase_and_build_for_named_assembly(registry_config_file)
             await self._trigger_microshift_sync()
             await self._trigger_build_microshift_bootc()
             if not self.skip_prepare_advisory:
@@ -206,7 +254,7 @@ class BuildMicroShiftPipeline:
             await errata_api.close()
         return advisory_id
 
-    async def _rebase_and_build_for_stream(self):
+    async def _rebase_and_build_for_stream(self, registry_config_file: str):
         # Do a sanity check
         if self.assembly_type != AssemblyTypes.STREAM:
             raise ValueError(f"Cannot process assembly type {self.assembly_type.value}")
@@ -221,7 +269,7 @@ class BuildMicroShiftPipeline:
         if not self.payloads:
             raise ValueError("Release payloads must be specified to rebase against assembly stream.")
 
-        payload_infos = await self.parse_release_payloads(self.payloads)
+        payload_infos = await self.parse_release_payloads(self.payloads, registry_config_file)
         if "x86_64" not in payload_infos or "aarch64" not in payload_infos:
             raise ValueError("x86_64 payload and aarch64 payload are required for rebasing microshift.")
 
@@ -247,7 +295,7 @@ class BuildMicroShiftPipeline:
             await self._notify_microshift_alerts(f"{version}-{release}")
             raise
 
-    async def _rebase_and_build_for_named_assembly(self):
+    async def _rebase_and_build_for_named_assembly(self, registry_config_file: str):
         # Do a sanity check
         if self.assembly_type == AssemblyTypes.STREAM:
             raise ValueError(f"Cannot process assembly type {self.assembly_type.value}")
@@ -443,7 +491,7 @@ class BuildMicroShiftPipeline:
             self._logger.info(f"Changed {advisory_id} to QE")
             push_cdn_stage(advisory_id)
 
-    async def parse_release_payloads(self, payloads: Iterable[str]):
+    async def parse_release_payloads(self, payloads: Iterable[str], registry_config: Optional[str] = None):
         result = {}
         pullspecs = []
         for payload in payloads:
@@ -453,7 +501,9 @@ class BuildMicroShiftPipeline:
             else:
                 # payload is a pullspec
                 pullspecs.append(payload)
-        payload_infos = await asyncio.gather(*(oc.get_release_image_info(pullspec) for pullspec in pullspecs))
+        payload_infos = await asyncio.gather(
+            *(oc.get_release_image_info(pullspec, registry_config=registry_config) for pullspec in pullspecs)
+        )
         for info in payload_infos:
             arch = info["config"]["architecture"]
             brew_arch = brew_arch_for_go_arch(arch)
@@ -691,6 +741,12 @@ class BuildMicroShiftPipeline:
     is_flag=True,
     help="(For named assemblies) Skip create advisory and prepare advisory logic",
 )
+@click.option(
+    "--data-gitref",
+    required=False,
+    default="",
+    help="Doozer data path git [branch / tag / sha] to use",
+)
 @pass_runtime
 @click_coroutine
 async def build_microshift(
@@ -702,6 +758,7 @@ async def build_microshift(
     no_rebase: bool,
     force: bool,
     skip_prepare_advisory: bool,
+    data_gitref: str | None = None,
 ):
     # slack client is dry-run aware and will not send messages if dry-run is enabled
     slack_client = runtime.new_slack_client()
@@ -717,6 +774,7 @@ async def build_microshift(
             skip_prepare_advisory=skip_prepare_advisory,
             data_path=data_path,
             slack_client=slack_client,
+            data_gitref=data_gitref,
         )
         await pipeline.run()
     except Exception as err:

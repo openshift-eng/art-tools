@@ -50,7 +50,16 @@ REDIS_PORT = '6379'
 # Telemetry
 OTEL_EXPORTER_OTLP_ENDPOINT = "http://otel-collector-psi-rhv.hosts.prod.psi.rdu2.redhat.com:4317"
 
+# Registry paths for authentication and image operations
+REGISTRY_QUAY_OCP_RELEASE_DEV = "quay.io/openshift-release-dev"
+REGISTRY_QUAY_OPENSHIFT = "quay.io/openshift"
+REGISTRY_QUAY_CI = "quay.io/openshift/ci"
+REGISTRY_CI_OPENSHIFT = "registry.ci.openshift.org"
+REGISTRY_REDHAT_IO = "registry.redhat.io"
+REGISTRY_BREW = "brew.registry.redhat.io"
+KONFLUX_ART_IMAGES = "quay.io/redhat-user-workloads/ocp-art-tenant/art-images"
 KONFLUX_ART_IMAGES_SHARE = "quay.io/redhat-user-workloads/ocp-art-tenant/art-images-share"
+KONFLUX_ART_FBC = "quay.io/redhat-user-workloads/ocp-art-tenant/art-fbc"
 
 KONFLUX_DEFAULT_BUILD_PRIORITY = 5
 
