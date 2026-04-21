@@ -808,8 +808,15 @@ class KonfluxOcpPipeline:
             source_files.append(redhat_registry_auth_file)
 
         # Build explicit credentials for QCI push (DPTP's CI registry)
+        qci_user = os.environ.get('QCI_USER')
+        qci_password = os.environ.get('QCI_PASSWORD')
+        if not qci_user or not qci_password:
+            raise ValueError(
+                "QCI_USER and QCI_PASSWORD environment variables are required but not set. "
+                "Ensure Jenkins credentials are properly bound."
+            )
         credentials = [
-            RegistryCredential(REGISTRY_QUAY_OPENSHIFT, os.environ['QCI_USER'], os.environ['QCI_PASSWORD']),
+            RegistryCredential(REGISTRY_QUAY_OPENSHIFT, qci_user, qci_password),
         ]
 
         # Global registry config for ALL pipeline operations
