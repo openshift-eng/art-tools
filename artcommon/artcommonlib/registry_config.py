@@ -201,33 +201,47 @@ class RegistryConfig:
         self._resolve_and_write()
         return str(self._temp_auth_file)
 
-    def _run_oc_registry_login(self) -> str:
+    def _run_oc_registry_login(self) -> dict[str, dict]:
         """
         Run ``oc --kubeconfig=<path> registry login`` to obtain CI registry
-        credentials. The credentials are written to a temp file which is
-        appended to ``self._source_files``. The caller is responsible for
-        removing the temp file and the corresponding entry from
-        ``self._source_files`` after loading.
+        credentials. The temp file used by ``oc registry login`` is created,
+        read, and removed entirely within this method.
 
         Return Value(s):
-            str: Path to the temp file containing the oc login credentials.
+            dict: The ``auths`` section from the login output (registry -> auth entry).
 
         Raises:
             RuntimeError: If ``oc registry login`` fails.
+            ValueError: If the login output has invalid JSON or format.
         """
         fd, temp_path = tempfile.mkstemp(prefix="oc_login_auth_", suffix=".json", text=True)
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump({"auths": {}}, f)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump({"auths": {}}, f)
 
-        cmd = f"oc --kubeconfig {self._kubeconfig} registry login --to={temp_path}"
-        rc, _, stderr = exectools.cmd_gather(cmd)
-        if rc != 0:
-            os.unlink(temp_path)
-            raise RuntimeError(f"Failed to run 'oc registry login' with kubeconfig '{self._kubeconfig}': {stderr}")
+            cmd = f"oc --kubeconfig {self._kubeconfig} registry login --to={temp_path}"
+            rc, _, stderr = exectools.cmd_gather(cmd)
+            if rc != 0:
+                raise RuntimeError(
+                    f"Failed to run 'oc registry login' with kubeconfig '{self._kubeconfig}': {stderr}"
+                )
 
-        self._source_files.append(temp_path)
-        logger.info("Obtained CI registry credentials via kubeconfig '%s'", self._kubeconfig)
-        return temp_path
+            with open(temp_path, encoding="utf-8") as f:
+                data = json.load(f)
+
+            if not isinstance(data, dict) or "auths" not in data:
+                raise ValueError(
+                    f"oc registry login output missing 'auths' key. Expected Docker config.json format."
+                )
+
+            logger.info("Obtained CI registry credentials via kubeconfig '%s'", self._kubeconfig)
+            return data["auths"]
+        finally:
+            try:
+                os.unlink(temp_path)
+                logger.debug("Removed oc login temp file %s", temp_path)
+            except OSError as err:
+                logger.warning("Could not remove %s: %s", temp_path, err)
 
     def _resolve_and_write(self) -> None:
         """
@@ -243,23 +257,20 @@ class RegistryConfig:
             REGISTRY_BREW: REGISTRY_REDHAT_IO,
         }
 
-        # Step 0: if kubeconfig is set, run oc registry login into a temp file
-        # and add it to the source files list
-        oc_login_file = None
+        # Step 0: if kubeconfig is set, add CI credentials directly to merged
         if self._kubeconfig:
-            oc_login_file = self._run_oc_registry_login()
-
-        # Step 1: resolve registries from source files
-        try:
-            source_auths = self._load_source_files()
-        finally:
-            if oc_login_file:
-                self._source_files.remove(oc_login_file)
+            oc_auths = self._run_oc_registry_login()
+            for key, value in oc_auths.items():
                 try:
-                    os.unlink(oc_login_file)
-                    logger.debug("Removed oc login temp file %s", oc_login_file)
-                except OSError as err:
-                    logger.warning("Could not remove %s: %s", oc_login_file, err)
+                    normalized = _normalize_registry_path(key)
+                except ValueError:
+                    continue
+                if normalized in self._registries:
+                    merged[normalized] = value
+                    logger.info("Resolved credentials for '%s' from kubeconfig", normalized)
+
+        # Step 1: resolve remaining registries from source files
+        source_auths = self._load_source_files()
         for registry in self._registries:
             if registry in merged:
                 logger.debug("Registry '%s' already resolved, skipping duplicate", registry)
