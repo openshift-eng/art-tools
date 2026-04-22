@@ -100,6 +100,7 @@ class Runtime(GroupRuntime):
         self.db = None
         self.session_pool = {}
         self.session_pool_available = {}
+        self.registry_config: Optional[str] = None
         self.brew_event = None
         self.assembly_basis_event = None
         self.assembly_type = None
@@ -150,6 +151,9 @@ class Runtime(GroupRuntime):
 
         for key, val in kwargs.items():
             self.__dict__[key] = val
+
+        if not self.registry_config:
+            self.registry_config = os.getenv("QUAY_AUTH_FILE")
 
         # Convert variant string to BuildVariant enum if it's a string
         if isinstance(self.variant, str):
