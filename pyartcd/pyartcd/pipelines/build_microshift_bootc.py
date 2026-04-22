@@ -1,6 +1,5 @@
 import asyncio
 import copy
-import glob
 import io
 import json
 import logging
@@ -20,7 +19,7 @@ import click
 import requests
 from artcommonlib import exectools
 from artcommonlib.arch_util import brew_arch_for_go_arch
-from artcommonlib.assembly import AssemblyTypes
+from artcommonlib.assembly import AssemblyTypes, assembly_config_struct
 from artcommonlib.config.repo import RepoList
 from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
 from artcommonlib.github_auth import get_github_client_for_org
@@ -35,7 +34,6 @@ from artcommonlib.util import (
     sync_to_quay,
 )
 from doozerlib.backend.konflux_client import API_VERSION, KIND_SNAPSHOT
-from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
 from doozerlib.constants import KONFLUX_DEFAULT_IMAGE_REPO
 from doozerlib.util import isolate_git_commit_in_release
 from elliottlib.shipment_model import ShipmentConfig, Snapshot, SnapshotSpec
@@ -86,9 +84,6 @@ class BuildMicroShiftBootcPipeline:
         self.prepare_shipment = prepare_shipment
         self.slack_client = slack_client
         self._logger = logger or runtime.logger
-
-        # Track existing shipment timestamp to avoid creating new files on MR updates
-        self.existing_shipment_timestamp = None
 
         self._working_dir = self.runtime.working_dir.absolute()
         self.releases_config = None
@@ -141,6 +136,11 @@ class BuildMicroShiftBootcPipeline:
             f'--working-dir={self._working_dir / "elliott-working"}',
             f'--data-path={data_path or constants.OCP_BUILD_DATA_URL}',
         ]
+
+    @property
+    def assembly_group_config(self) -> Model:
+        """Get the assembly-specific group configuration"""
+        return assembly_config_struct(Model(self.releases_config), self.assembly, "group", {})
 
     async def run(self):
         # Make sure our api.ci token is fresh
@@ -734,8 +734,7 @@ class BuildMicroShiftBootcPipeline:
         await self._setup_shipment_data_repo()
 
         # Step 3: Check for existing shipment branch and try to load existing config
-        source_branch = f"prepare-microshift-bootc-shipment-{self.assembly}"
-        shipment_config = await self._load_or_init_shipment_config(source_branch)
+        shipment_config = await self._load_or_init_shipment_config()
 
         # Step 4: Use the provided bootc build
         self._logger.info("Using bootc build: %s", bootc_build.nvr)
@@ -787,71 +786,38 @@ class BuildMicroShiftBootcPipeline:
 
         self._logger.info("Shipment environment setup completed")
 
-    async def _load_or_init_shipment_config(self, source_branch: str) -> ShipmentConfig:
-        """Load existing shipment config from branch or initialize new one"""
-        # Check if branch already exists upstream
-        branch_exists = await self.shipment_data_repo.does_branch_exist_on_remote(source_branch, remote="origin")
+    async def _load_or_init_shipment_config(self) -> ShipmentConfig:
+        """Load existing shipment config from branch or initialize new one
 
-        if branch_exists:
-            self._logger.info('Branch %s exists, checking for existing shipment config...', source_branch)
+        If a shipment MR already exists (URL in config), reuse the existing branch.
+        Otherwise, create a new branch with timestamp.
+        """
+        # Check if shipment already exists in assembly config
+        assembly_shipment_config = self.assembly_group_config.get("shipment", {})
+        existing_mr_url = assembly_shipment_config.get("url")
+
+        if existing_mr_url:
+            # Extract branch name from existing MR
+            # The MR URL contains the branch name in the source_branch field
+            # We need to fetch the MR details to get the branch name
+            parsed_url = urlparse(existing_mr_url)
+            mr_id = parsed_url.path.split('/')[-1]
+            project_path = parsed_url.path.strip('/').split('/-/merge_requests')[0]
+
+            # Use the cached GitLab client
+            project = self._gitlab.get_project(project_path)
+            mr = project.mergerequests.get(mr_id)
+            source_branch = mr.source_branch
+
+            self._logger.info('Found existing shipment MR, using branch: %s', source_branch)
             await self.shipment_data_repo.fetch_switch_branch(source_branch, remote="origin")
 
-            # Try to find existing shipment YAML file
-            shipment_config = await self._load_existing_shipment_config()
-            if shipment_config:
-                self._logger.info("Found existing shipment configuration, reusing it")
-                return shipment_config
-            else:
-                self._logger.info("No existing shipment configuration found in branch, will initialize new one")
+            # Initialize new config - we'll load the snapshot from existing files later if needed
+            return await self._init_shipment_config()
         else:
-            self._logger.info('Branch %s does not exist, will create new branch and shipment config', source_branch)
-
-        # Initialize new shipment configuration if not found
-        return await self._init_shipment_config()
-
-    async def _load_existing_shipment_config(self) -> Optional[ShipmentConfig]:
-        """Try to load existing shipment config from current branch"""
-        try:
-            # Look for shipment files in the expected directory structure
-            # Pattern: shipment/{product}/{group}/{application}/prod/{assembly}.microshift-bootc.*.yaml
-            application = KonfluxImageBuilder.get_application_name(self.group)
-            env = 'prod'
-
-            shipment_dir = (
-                self.shipment_data_repo._directory / "shipment" / self.product / self.group / application / env
-            )
-
-            if not shipment_dir.exists():
-                self._logger.info("Shipment directory does not exist: %s", shipment_dir)
-                return None
-
-            # Look for files matching the pattern: {assembly}.microshift-bootc.*.yaml
-            pattern = f"{self.assembly}.microshift-bootc.*.yaml"
-            matching_files = glob.glob(str(shipment_dir / pattern))
-
-            if not matching_files:
-                self._logger.info("No existing shipment files found matching pattern: %s", pattern)
-                return None
-
-            # Use the most recent file (by filename, which includes timestamp)
-            latest_file = max(matching_files)
-            self._logger.info("Loading existing shipment config from: %s", latest_file)
-
-            # Extract timestamp from filename: {assembly}.microshift-bootc.{timestamp}.yaml
-            filename = Path(latest_file).name
-            timestamp_part = filename.replace(f"{self.assembly}.microshift-bootc.", "").replace(".yaml", "")
-            self.existing_shipment_timestamp = timestamp_part
-
-            with open(latest_file, 'r') as f:
-                shipment_data = yaml.load(f.read())
-
-            # Convert to ShipmentConfig object
-            shipment_config = ShipmentConfig(**shipment_data)
-            return shipment_config
-
-        except Exception as e:
-            self._logger.warning("Failed to load existing shipment config: %s", e)
-            return None
+            # No existing MR - this is the first run, initialize new config
+            self._logger.info('No existing shipment MR found, will initialize new shipment config')
+            return await self._init_shipment_config()
 
     async def _init_shipment_config(self) -> ShipmentConfig:
         """Initialize shipment configuration using elliott shipment init"""
@@ -929,23 +895,36 @@ class BuildMicroShiftBootcPipeline:
         """Create or update shipment MR with the given shipment config. Returns None if no changes."""
         self._logger.info("Creating or updating shipment MR...")
 
-        # Branch handling is now done in _load_or_init_shipment_config
-        source_branch = f"prepare-microshift-bootc-shipment-{self.assembly}"
-        target_branch = "main"
-        # Use existing timestamp if available (updating existing MR), otherwise create new one
-        timestamp = self.existing_shipment_timestamp or datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
+        # Check if shipment already exists in assembly config
+        assembly_shipment_config = self.assembly_group_config.get("shipment", {})
+        existing_mr_url = assembly_shipment_config.get("url")
 
-        # Check if branch exists and switch to it, or create it
-        branch_exists = await self.shipment_data_repo.does_branch_exist_on_remote(source_branch, remote="origin")
-        if branch_exists:
+        target_branch = "main"
+
+        if existing_mr_url:
+            # Extract branch name from existing MR (already done in _load_or_init_shipment_config)
+            parsed_url = urlparse(existing_mr_url)
+            mr_id = parsed_url.path.split('/')[-1]
+            project_path = parsed_url.path.strip('/').split('/-/merge_requests')[0]
+
+            # Use the cached GitLab client
+            project = self._gitlab.get_project(project_path)
+            mr = project.mergerequests.get(mr_id)
+            source_branch = mr.source_branch
+
+            self._logger.info('Reusing existing shipment branch: %s', source_branch)
             await self.shipment_data_repo.fetch_switch_branch(source_branch, remote="origin")
         else:
+            # Create new branch with timestamp
+            timestamp = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
+            source_branch = f"prepare-microshift-bootc-shipment-{self.assembly}-{timestamp}"
+            self._logger.info('Creating new shipment branch: %s', source_branch)
             await self.shipment_data_repo.create_branch(source_branch)
 
         # Update shipment data repo with shipment config
         release_name = get_release_name_for_assembly(self.group, self.releases_config, self.assembly)
         commit_message = f"Add microshift-bootc shipment configuration for {release_name}"
-        updated = await self._update_shipment_data(shipment_config, timestamp, commit_message, source_branch)
+        updated = await self._update_shipment_data(shipment_config, commit_message, source_branch)
         if not updated:
             self._logger.info("No changes in shipment data. MR will not be created or updated.")
             return None
@@ -963,7 +942,7 @@ class BuildMicroShiftBootcPipeline:
         mr_description = f"Created by job: {job_url}\n\n{commit_message}"
 
         if self.runtime.dry_run:
-            action = "updated" if branch_exists else "created"
+            action = "updated" if existing_mr_url else "created"
             self._logger.info("[DRY-RUN] Would have %s MR with title: %s", action, mr_title)
             mr_url = f"{self.gitlab_url}/placeholder/placeholder/-/merge_requests/placeholder"
         else:
@@ -996,10 +975,11 @@ class BuildMicroShiftBootcPipeline:
 
         return mr_url
 
-    async def _update_shipment_data(
-        self, shipment_config: ShipmentConfig, timestamp: str, commit_message: str, branch: str
-    ) -> bool:
+    async def _update_shipment_data(self, shipment_config: ShipmentConfig, commit_message: str, branch: str) -> bool:
         """Update shipment data repo with the given shipment config file"""
+        # Extract timestamp from branch name (last segment after splitting by "-")
+        # Branch format: prepare-microshift-bootc-shipment-{assembly}-{timestamp}
+        timestamp = branch.split("-")[-1]
         filename = f"{self.assembly}.microshift-bootc.{timestamp}.yaml"
         product = shipment_config.shipment.metadata.product
         group = shipment_config.shipment.metadata.group
