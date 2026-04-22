@@ -639,6 +639,26 @@ class ReleaseFromFbcPipeline:
         self.shipment_mr_url = mr_url
         return mr_url
 
+    async def set_shipment_mr_ready(self):
+        """
+        Mark the shipment MR as ready by removing the Draft prefix from the title.
+        This should be called at the end of the pipeline when all work is complete.
+        """
+        mr = await self._gitlab.set_mr_ready(self.shipment_mr_url)
+
+        if mr and not self.dry_run:
+            self.logger.info("Waiting for 30 seconds to ensure MR is updated...")
+            await asyncio.sleep(30)
+
+            try:
+                pipeline_url = await self._gitlab.trigger_ci_pipeline(mr)
+                if pipeline_url:
+                    self.logger.info(f"CI pipeline triggered: {pipeline_url}")
+                else:
+                    self.logger.warning(f"Failed to trigger CI pipeline for MR branch {mr.source_branch}")
+            except Exception as e:
+                self.logger.warning(f"Failed to trigger CI MR pipeline for branch {mr.source_branch}: {e}")
+
     async def update_shipment_data(
         self, shipments_by_kind: Dict[str, ShipmentConfig], env: str, commit_message: str, branch: str
     ) -> bool:
@@ -922,6 +942,7 @@ class ReleaseFromFbcPipeline:
                 mr_url = await self.create_shipment_mr(shipments_by_kind, env="prod")
                 if mr_url:
                     self.logger.info(f"Created shipment MR: {mr_url}")
+                    await self.set_shipment_mr_ready()
             except Exception as e:
                 self.logger.exception(f"Failed to create MR: {e}")
                 if not self.dry_run:
