@@ -7,14 +7,15 @@ import openshift_client as octool
 from artcommonlib import exectools
 from tenacity import retry, stop_after_attempt
 
-from pyartcd.runtime import Runtime
-
 logger = logging.getLogger(__name__)
 
 
 @retry(reraise=True, stop=stop_after_attempt(3))
-async def get_image_info(pullspec: str, raise_if_not_found: bool = False):
-    cmd = ["oc", "image", "info", "--show-multiarch", "-o", "json", "--", pullspec]
+async def get_image_info(pullspec: str, raise_if_not_found: bool = False, registry_config: Optional[str] = None):
+    cmd = ["oc", "image", "info", "--show-multiarch", "-o", "json"]
+    if registry_config:
+        cmd.append(f"--registry-config={registry_config}")
+    cmd.extend(["--", pullspec])
     env = os.environ.copy()
     env["GOTRACEBACK"] = "all"
     rc, stdout, stderr = await exectools.cmd_gather_async(cmd, check=False, env=env)
@@ -35,8 +36,13 @@ async def get_image_info(pullspec: str, raise_if_not_found: bool = False):
 
 
 @retry(reraise=True, stop=stop_after_attempt(3))
-async def get_release_image_info(pullspec: str, raise_if_not_found: bool = False):
-    cmd = ["oc", "adm", "release", "info", "-o", "json", "--", pullspec]
+async def get_release_image_info(
+    pullspec: str, raise_if_not_found: bool = False, registry_config: Optional[str] = None
+):
+    cmd = ["oc", "adm", "release", "info", "-o", "json"]
+    if registry_config:
+        cmd.append(f"--registry-config={registry_config}")
+    cmd.extend(["--", pullspec])
     env = os.environ.copy()
     env["GOTRACEBACK"] = "all"
     rc, stdout, stderr = await exectools.cmd_gather_async(cmd, check=False, env=env)
@@ -53,28 +59,64 @@ async def get_release_image_info(pullspec: str, raise_if_not_found: bool = False
     return info
 
 
-async def registry_login(runtime: Runtime):
+async def registry_login(to_file: str | None = None):
+    """
+    Login into OC registry using KUBECONFIG env var.
+
+    Arg(s):
+        to_file (str | None): Optional path to write credentials to (uses --to flag).
+                               If not provided, writes to default location.
+    """
+
     try:
-        await exectools.cmd_gather_async(f'oc --kubeconfig {os.environ["KUBECONFIG"]} registry login')
+        to_arg = f'--to={to_file}' if to_file else ''
+        await exectools.cmd_gather_async(f'oc --kubeconfig {os.environ["KUBECONFIG"]} registry login {to_arg}'.strip())
 
     except KeyError:
-        runtime.logger.error('KUBECONFIG env var must be defined!')
+        logger.error('KUBECONFIG env var must be defined!')
         raise
 
     except ChildProcessError:
-        runtime.logger.error('Failed to login into OC registry')
+        logger.error('Failed to login into OC registry')
+        raise
+
+
+async def qci_registry_login(to_file: str | None = None):
+    """
+    Log in to quay.io with credentials necessary to push to DPTP's QCI registry (quay.io/openshift/ci).
+
+    Arg(s):
+        to_file (str | None): Optional path to write credentials to (uses --to flag).
+                               If not provided, writes to default location.
+    """
+
+    try:
+        to_arg = f'--to={to_file}' if to_file else ''
+        await exectools.cmd_gather_async(
+            f'oc registry login --registry=quay.io/openshift '
+            f'--auth-basic={os.environ["QCI_USER"]}:{os.environ["QCI_PASSWORD"]} {to_arg}'.strip()
+        )
+
+    except KeyError:
+        logger.error('QCI_USER and QCI_PASSWORD env vars must be defined!')
+        raise
+
+    except ChildProcessError:
+        logger.error('Failed to login into QCI registry')
         raise
 
 
 @retry(reraise=True, stop=stop_after_attempt(3))
 def common_oc_wrapper(
-    cmd_result_name: str, cli_verb: str, oc_args: List[str], check_status: bool = True, return_value: bool = False
+    cmd_result_name: str,
+    cli_verb: str,
+    oc_args: List[str],
+    check_status: bool = True,
+    return_value: bool = False,
+    registry_config: Optional[str] = None,
 ) -> (int, str):
-    # cmd_result_name: Result obj name in log
-    # cli_verb: first command group
-    # oc_args: args list of command
-    # check_status: whether check status and print output in log
-    # return_value: whether need return value sets
+    if registry_config:
+        oc_args = [f"--registry-config={registry_config}"] + oc_args
     logger.info(f"run: oc {cli_verb} {' '.join(oc_args)}")
     with octool.tracking() as tracker:
         try:
@@ -93,42 +135,60 @@ def common_oc_wrapper(
         return r.status(), r.out().strip()
 
 
-def get_release_image_info_from_pullspec(pullspec: str) -> (int, str):
+def get_release_image_info_from_pullspec(pullspec: str, registry_config: Optional[str] = None) -> (int, str):
     # oc image info --output=json <pullspec>
-    cmd_args = ['info', "--output=json", pullspec]
+    cmd_args = ['info', "--output=json"]
+    if registry_config:
+        cmd_args.append(f"--registry-config={registry_config}")
+    cmd_args.append(pullspec)
     res, out = common_oc_wrapper("single_image_info", "image", cmd_args, True, True)
     return res, json.loads(out)
 
 
-def extract_release_binary(image_pullspec: str, path_args: List[str]) -> (int, str):
+def extract_release_binary(
+    image_pullspec: str, path_args: List[str], registry_config: Optional[str] = None
+) -> (int, str):
     # oc image extract --confirm --only-files --path=/usr/bin/..:<workdir> <pullspec>
-    cmd_args = ['extract', '--confirm', '--only-files'] + path_args + [image_pullspec]
+    cmd_args = ['extract', '--confirm', '--only-files']
+    if registry_config:
+        cmd_args.append(f"--registry-config={registry_config}")
+    cmd_args.extend(path_args + [image_pullspec])
     return common_oc_wrapper("extract_image", "image", cmd_args, True, True)
 
 
-def get_release_image_pullspec(release_pullspec: str, image: str) -> (int, str):
+def get_release_image_pullspec(release_pullspec: str, image: str, registry_config: Optional[str] = None) -> (int, str):
     # oc adm release info --image-for=<image> <pullspec>
-    cmd_args = ['release', 'info', f'--image-for={image}', release_pullspec]
+    cmd_args = ['release', 'info', f'--image-for={image}']
+    if registry_config:
+        cmd_args.append(f"--registry-config={registry_config}")
+    cmd_args.append(release_pullspec)
     return common_oc_wrapper("image_info_in_release", "adm", cmd_args, True, True)
 
 
-def extract_release_client_tools(release_pullspec: str, path_arg: str, single_arch: Optional[str] = None) -> (int, str):
+def extract_release_client_tools(
+    release_pullspec: str, path_arg: str, single_arch: Optional[str] = None, registry_config: Optional[str] = None
+) -> (int, str):
     # oc adm release extract --tools --command-os=* -n ocp --to=<workdir> --filter-by-os=<arch> --from <pullspec> --to <path>
     args = ["release", "extract", "--tools", "--command-os=*", "-n=ocp"]
     if single_arch:
         args += [f"--filter-by-os={single_arch}"]
     args += [f"--from={release_pullspec}", path_arg]
-    common_oc_wrapper("extract_tools", "adm", args, True, False)
+    common_oc_wrapper("extract_tools", "adm", args, True, False, registry_config=registry_config)
 
 
 def extract_baremetal_installer(
-    release_pullspec: str, path: str, arch: str, cmd: str = 'openshift-baremetal-install'
+    release_pullspec: str,
+    path: str,
+    arch: str,
+    cmd: str = 'openshift-baremetal-install',
+    registry_config: Optional[str] = None,
 ) -> (int, str):
     """
     Extract baremetal-installer binary to specified location
     :param release_pullspec: e.g. quay.io/openshift-release-dev/ocp-release:4.14.0-ec.2-x86_64
     :param path: e.g. /path/to/extracted/binary
     :param arch: "amd64", "s390x", "ppc64le", "arm64"
+    :param registry_config: optional path to a Docker config.json for registry auth
     """
 
     cmd_os = f'linux/{arch}'
@@ -152,4 +212,5 @@ def extract_baremetal_installer(
         oc_args=args,
         check_status=True,
         return_value=True,
+        registry_config=registry_config,
     )

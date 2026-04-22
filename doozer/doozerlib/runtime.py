@@ -1,9 +1,9 @@
 import atexit
 import datetime
+import functools
 import io
 import itertools
 import os
-import pathlib
 import re
 import shutil
 import signal
@@ -20,16 +20,19 @@ from artcommonlib import exectools, gitdata
 from artcommonlib.assembly import (
     AssemblyTypes,
     assembly_basis_event,
-    assembly_group_config,
     assembly_streams_config,
     assembly_type,
 )
-from artcommonlib.konflux.konflux_build_record import KonfluxRecord
+from artcommonlib.config import BuildDataLoader
+from artcommonlib.config.plashet import PlashetConfig
+from artcommonlib.config.repo import ContentSet, Repo, RepoList, RepoSync
 from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
 from artcommonlib.runtime import GroupRuntime
-from artcommonlib.util import deep_merge, isolate_el_version_in_brew_tag
+from artcommonlib.util import isolate_el_version_in_brew_tag
+from artcommonlib.variants import BuildVariant
 from jira import JIRA
+from semver import Version
 
 from doozerlib import brew, dblib, state, util
 from doozerlib.brew import brew_event_from_datetime
@@ -87,6 +90,7 @@ class Runtime(GroupRuntime):
         self.verbose = False
         self.load_wip = False
         self.load_disabled = False
+        self.variant = BuildVariant.OCP  # Default to OCP variant
         self.data_path = None
         self.data_dir = None
         self.group_commitish = None
@@ -96,6 +100,7 @@ class Runtime(GroupRuntime):
         self.db = None
         self.session_pool = {}
         self.session_pool_available = {}
+        self.registry_config: Optional[str] = None
         self.brew_event = None
         self.assembly_basis_event = None
         self.assembly_type = None
@@ -107,6 +112,9 @@ class Runtime(GroupRuntime):
         self._build_status_detector = None
         self.disable_gssapi = False
         self._build_data_product_cache: Model = None
+        # Defaults for cloning behavior (updated in initialize())
+        self.prevent_cloning = False
+        self.clone_source = None
 
         # init cli options
         self.group = None
@@ -144,11 +152,21 @@ class Runtime(GroupRuntime):
         for key, val in kwargs.items():
             self.__dict__[key] = val
 
+        if not self.registry_config:
+            self.registry_config = os.getenv("QUAY_AUTH_FILE")
+
+        # Convert variant string to BuildVariant enum if it's a string
+        if isinstance(self.variant, str):
+            self.variant = BuildVariant(self.variant.lower())
+
+        self.network_mode_override = None
+
         if self.latest_parent_version:
             self.ignore_missing_base = True
 
         self._remove_tmp_working_dir = False
         self._group_config = None
+        self.product = None
 
         self.cwd = os.getcwd()
 
@@ -220,20 +238,8 @@ class Runtime(GroupRuntime):
             self.rhpkg_config = ''
 
     def get_releases_config(self):
-        if self.releases_config is not None:
-            return self.releases_config
-
-        load = self.gitdata.load_data(key='releases')
-        data = load.data if load else {}
-        if self.releases:  # override filename specified on command line.
-            rcp = pathlib.Path(self.releases)
-            data = yaml.safe_load(rcp.read_text())
-
-        if load:
-            self.releases_config = Model(data)
-        else:
-            self.releases_config = Model()
-
+        if self.releases_config is None:
+            self.releases_config = Model(self._build_data_loader.load_releases_config(self.releases))
         return self.releases_config
 
     @property
@@ -244,29 +250,98 @@ class Runtime(GroupRuntime):
     def group_config(self, config: Model):
         self._group_config = config
 
+    @functools.lru_cache(maxsize=1)
     def get_group_config(self) -> Model:
-        # group.yml can contain a `vars` section which should be a
-        # single level dict containing keys to str.format(**dict) replace
-        # into the YAML content. If `vars` found, the format will be
-        # preformed and the YAML model will reloaded from that result
-        tmp_config = Model(self.gitdata.load_data(key='group').data)
-        replace_vars = self._get_replace_vars(tmp_config)
-        try:
-            group_yml = yaml.safe_dump(tmp_config.primitive(), default_flow_style=False)
-            raw_group_config = yaml.full_load(group_yml.format(**replace_vars))
-            tmp_config = Model(dict(raw_group_config))
-            if self.build_system == 'konflux' and tmp_config.konflux is not Missing:
-                tmp_config = Model(deep_merge(tmp_config.primitive(), tmp_config.konflux.primitive()))
-        except KeyError as e:
-            raise ValueError('group.yml contains template key `{}` but no value was provided'.format(e.args[0]))
+        """
+        Load and cache group configuration. Automatically merges OKD config when variant=okd.
+        Cached to prevent reloading from disk when initialize() is called multiple times.
+        """
+        replace_vars = self.get_replace_vars(None)
+        group_config = self._build_data_loader.load_group_config(
+            self.assembly,
+            self.get_releases_config(),
+            additional_vars=replace_vars,
+        )
 
-        return assembly_group_config(self.get_releases_config(), self.assembly, tmp_config)
+        # For OKD variant, automatically merge the optional okd: field
+        from artcommonlib.util import deep_merge
+        from artcommonlib.variants import BuildVariant
 
-    def get_errata_config(self, **kwargs):
-        return self.gitdata.load_data(key='erratatool', **kwargs).data
+        if self.variant == BuildVariant.OKD and 'okd' in group_config:
+            self._logger.info('Merging OKD group configuration')
+            group_config = deep_merge(group_config, group_config['okd'])
+            # Update runtime.branch if OKD specifies a different branch
+            if 'branch' in group_config:
+                self.branch = group_config['branch']
+                self._logger.info(f'Updated runtime branch to OKD variant: {self.branch}')
 
-    def _get_replace_vars(self, group_config: Model):
-        replace_vars = group_config.vars or Model()
+        return Model(group_config)
+
+    def get_errata_config(self):
+        replace_vars = self.get_replace_vars(self.group_config)
+        return self._build_data_loader.load_config("erratatool", default={}, replace_vars=replace_vars)
+
+    def get_plashet_config(self):
+        plashet_config_dict = self.group_config.get('plashet')
+        if not plashet_config_dict:
+            return None
+        return PlashetConfig.model_validate(plashet_config_dict)
+
+    def _get_repos_config(self) -> RepoList:
+        """
+        Get repository configuration from group_config.
+
+        Supports both new-style (all_repos) and old-style (repos) configurations:
+        - New-style: repos are defined in separate YAML files under repos/ directory
+          and loaded via !include in group.ext.yml as group_config['all_repos']
+        - Old-style: repos are defined directly in group.yml under the 'repos' key
+          and are converted to new-style RepoList format
+
+        :return: RepoList containing repo configurations
+        """
+        if 'all_repos' in self.group_config:
+            # New-style repo config: repos are defined in separate files and included via group.ext.yml
+            self._logger.info("Using new-style repo configurations from all_repos")
+            all_repos = self.group_config['all_repos']
+
+            # Parse using Pydantic models
+            repo_list = RepoList.model_validate(all_repos)
+            self._logger.info(f"Loaded {len(repo_list.root)} repos from all_repos")
+            return repo_list
+        else:
+            # Old-style repo config: repos are defined in group.yml
+            # Convert to new-style format using Pydantic models
+            self._logger.info("Using old-style repo configurations from group.yml, converting to new-style format")
+            old_repos = self.group_config.repos
+            new_repos = []
+
+            for repo_name, repo_data in old_repos.items():
+                # Parse content_set and reposync if present
+                content_set = None
+                if 'content_set' in repo_data:
+                    content_set = ContentSet.model_validate(repo_data['content_set'])
+
+                reposync = RepoSync()
+                if 'reposync' in repo_data:
+                    reposync = RepoSync.model_validate(repo_data['reposync'])
+
+                # Create Repo object using constructor
+                repo = Repo(
+                    name=repo_name,
+                    type='external',
+                    disabled=False,
+                    conf=repo_data.get('conf'),
+                    content_set=content_set,
+                    reposync=reposync,
+                )
+                new_repos.append(repo)
+
+            repo_list = RepoList.model_validate(new_repos)
+            self._logger.info(f"Converted {len(repo_list.root)} old-style repos to new-style format")
+            return repo_list
+
+    def get_replace_vars(self, group_config: Model | None):
+        replace_vars: dict = group_config.vars.primitive() if group_config and group_config.vars else {}
         # If assembly mode is enabled, `runtime_assembly` will become the assembly name.
         replace_vars['runtime_assembly'] = ''
         # If running against an assembly for a named release, release_name will become the release name.
@@ -274,9 +349,12 @@ class Runtime(GroupRuntime):
         if self.assembly:
             replace_vars['runtime_assembly'] = self.assembly
             if self.assembly_type is not AssemblyTypes.STREAM:
-                replace_vars['release_name'] = util.get_release_name_for_assembly(
+                release_name = replace_vars['release_name'] = util.get_release_name_for_assembly(
                     self.group, self.get_releases_config(), self.assembly
                 )
+                # for example: replace_vars = {'CVES': 'None', 'IMPACT': 'Low', 'MAJOR': 4, 'MINOR': 12, 'RHCOS_EL_MAJOR': 8, 'RHCOS_EL_MINOR': 6, 'release_name': '4.12.77', 'runtime_assembly': '4.12.77'}
+                if 'PATCH' not in replace_vars:
+                    replace_vars['PATCH'] = Version.parse(release_name).patch
         return replace_vars
 
     def init_state(self):
@@ -284,7 +362,6 @@ class Runtime(GroupRuntime):
         if os.path.isfile(self.state_file):
             with io.open(self.state_file, 'r', encoding='utf-8') as f:
                 self.state = yaml.full_load(f)
-            self.state.update(state.TEMPLATE_BASE_STATE)
 
     def save_state(self):
         with io.open(self.state_file, 'w', encoding='utf-8') as f:
@@ -323,6 +400,9 @@ class Runtime(GroupRuntime):
             exit(1)
 
         self.mode = mode
+        # Store initialization parameters for use by late_resolve_image
+        self.prevent_cloning = prevent_cloning
+        self.clone_source = clone_source
 
         # We could mark these as required and the click library would do this for us,
         # but this seems to prevent getting help from the various commands (unless you
@@ -421,8 +501,6 @@ class Runtime(GroupRuntime):
 
         # get_releases_config also inits self.releases_config
         self.assembly_type = assembly_type(self.get_releases_config(), self.assembly)
-
-        self.group_dir = self.gitdata.data_dir
         self.group_config = self.get_group_config()
 
         if self.group_config.name != self.group:
@@ -430,6 +508,7 @@ class Runtime(GroupRuntime):
                 f"Name in group.yml ({self.group_config.name}) does not match group name ({self.group}). Someone "
                 "may have copied this group without updating group.yml (make sure to check branch)"
             )
+        self.product = self.group_config.product or "ocp"
 
         self.hotfix = (
             False  # True indicates builds should be tagged with associated hotfix tag for the artifacts branch
@@ -445,20 +524,24 @@ class Runtime(GroupRuntime):
             # ignore this argument throughout doozer.
             self.assembly = None
 
-        replace_vars = self._get_replace_vars(self.group_config).primitive()
+        replace_vars = self.get_replace_vars(self.group_config)
 
         # only initialize group and assembly configs and nothing else
         if config_only:
             return
 
         # Read in the streams definition for this group if one exists
-        streams_data = self.gitdata.load_data(key='streams', replace_vars=replace_vars)
+        streams_data = self._build_data_loader.load_config("streams", default={}, replace_vars=replace_vars)
         if streams_data:
-            org_stream_model = Model(dict_to_model=streams_data.data)
+            org_stream_model = Model(dict_to_model=streams_data)
             self.streams = assembly_streams_config(self.get_releases_config(), self.assembly, org_stream_model)
 
         strict_mode = True
-        if not self.assembly or self.assembly in ['stream', 'test', 'microshift']:
+        if (
+            self.assembly_type == AssemblyTypes.STREAM
+            or not self.assembly
+            or self.assembly in ['stream', 'test', 'microshift']
+        ):
             strict_mode = False
 
         self.assembly_basis_event = assembly_basis_event(
@@ -523,7 +606,7 @@ class Runtime(GroupRuntime):
                 for key, val in source_dict.items():
                     self.source_resolver.register_source_alias(key, val)
 
-        with Dir(self.group_dir):
+        with Dir(self.data_dir):
             # Flattens multiple comma/space delimited lists like [ 'x', 'y,z' ] into [ 'x', 'y', 'z' ]
             def flatten_list(names):
                 if not names:
@@ -539,7 +622,16 @@ class Runtime(GroupRuntime):
                 return d.get('mode', 'enabled') in ['wip', 'enabled']
 
             def filter_enabled(n, d):
-                return d.get('mode', 'enabled') == 'enabled'
+                mode = d.get('mode', 'enabled')
+
+                # For OKD variant, check okd.mode if present (enabled/disabled), otherwise fall back to top-level mode
+                if self.variant == BuildVariant.OKD:
+                    okd_mode = d.get('okd', {}).get('mode')
+                    if okd_mode is not None:
+                        return okd_mode == 'enabled'
+
+                # For OCP variant or OKD fallback, use top-level mode
+                return mode == 'enabled'
 
             def filter_disabled(n, d):
                 return d.get('mode', 'enabled') in ['enabled', 'disabled']
@@ -561,8 +653,13 @@ class Runtime(GroupRuntime):
                 # We should only really be building the latest release with unsigned RPMs, so default to True
                 self.gpgcheck = True
 
-            self.repos = Repos(self.group_config.repos, self.arches, self.gpgcheck)
-            self.freeze_automation = self.group_config.freeze_automation or FREEZE_AUTOMATION_NO
+            # Load repos configuration: new-style from all_repos or old-style from group.yml
+            repos_config = self._get_repos_config()
+            plashet_config = self.get_plashet_config()
+            self.repos = Repos(
+                repos_config, self.arches, self.gpgcheck, plashet_config=plashet_config, template_vars=replace_vars
+            )
+            self.freeze_automation = self.group_config.freeze_automation or FREEZE_AUTOMATION_NO  # type: ignore
 
             if validate_content_sets:
                 # as of 2023-06-09 authentication is required to validate content sets with rhsm-pulp
@@ -680,7 +777,7 @@ class Runtime(GroupRuntime):
                         self.component_map[metadata.get_component_name()] = metadata
                 if not self.image_map:
                     self._logger.warning(
-                        "No image metadata directories found for given options within: {}".format(self.group_dir)
+                        "No image metadata directories found for given options within: {}".format(self.data_dir)
                     )
 
                 for image in self.image_map.values():
@@ -714,7 +811,7 @@ class Runtime(GroupRuntime):
                     self.component_map[metadata.get_component_name()] = metadata
                 if not self.rpm_map:
                     self._logger.warning(
-                        "No rpm metadata directories found for given options within: {}".format(self.group_dir)
+                        "No rpm metadata directories found for given options within: {}".format(self.data_dir)
                     )
 
         # Make sure that the metadata is not asking us to check out the same exact distgit & branch.
@@ -735,20 +832,31 @@ class Runtime(GroupRuntime):
 
         self.initialized = True
 
+    def get_bug_config(self):
+        replace_vars = self.get_replace_vars(self.group_config)
+        bug_config = self._build_data_loader.load_config("bug", default={}, replace_vars=replace_vars)
+        return bug_config
+
     def build_jira_client(self) -> JIRA:
         """
         :return: Returns a JIRA client setup for the server in bug.yaml
         """
+        from artcommonlib.jira_config import DEFAULT_JIRA_EMAIL, JIRA_SERVER_URL
+
         major, minor = self.get_major_minor_fields()
-        if major == 4 and minor < 6:
-            raise ValueError("ocp-build-data/bug.yml is not expected to be available for 4.X versions < 4.6")
-        bug_config = Model(self.gitdata.load_data(key='bug').data)
-        server = bug_config.jira_config.server or 'https://issues.redhat.com'
+        if (major, minor) < (4, 6):
+            raise ValueError("JIRA client is not supported for OCP versions < 4.6")
+        # JIRA server is hardcoded in artcommonlib.jira_config (not read from bug.yml)
+        server = JIRA_SERVER_URL
 
         token_auth = os.environ.get("JIRA_TOKEN")
         if not token_auth:
             raise ValueError(f"Jira activity requires login credentials for {server}. Set a JIRA_TOKEN env var")
-        client = JIRA(server, token_auth=token_auth)
+        # Get email for basic auth
+        jira_email = os.environ.get("JIRA_EMAIL", DEFAULT_JIRA_EMAIL)
+
+        jira_options = {'server': server}
+        client = JIRA(options=jira_options, basic_auth=(jira_email, token_auth))
         return client
 
     def build_retrying_koji_client(self):
@@ -861,12 +969,15 @@ class Runtime(GroupRuntime):
         """
         :return: Returns a list of architectures that are enabled globally in group.yml, for konflux.
         """
-        # For now, cli override (LIMIT_ARCHES) and arches_override in group config are not supported
-        arches = list(self.group_config.konflux.arches)
 
-        if not arches:
-            # Fall back to default arches param, if konflux_arches is missing
-            return list(self.arches)
+        if self.arches:
+            # CLI override takes precedence
+            arches = list(self.arches)
+
+        else:
+            # Use konflux arches if defined
+            arches = list(self.group_config.konflux.arches)
+
         return arches
 
     def get_product_config(self) -> Model:
@@ -1007,7 +1118,7 @@ class Runtime(GroupRuntime):
         if distgit_name not in self.image_map:
             if not required:
                 return None
-            raise DoozerFatalError("Unable to find image metadata in group / included images: %s" % distgit_name)
+            raise IOError("Unable to find image metadata in group / included images: %s" % distgit_name)
         return self.image_map[distgit_name]
 
     def late_resolve_image(self, distgit_name, add=False, required=True):
@@ -1022,19 +1133,43 @@ class Runtime(GroupRuntime):
         if distgit_name in self.image_map:
             return self.image_map[distgit_name]
 
-        replace_vars = self._get_replace_vars(self.group_config).primitive()
+        replace_vars = self.get_replace_vars(self.group_config)
         data_obj = self.gitdata.load_data(path='images', key=distgit_name, replace_vars=replace_vars)
         if not data_obj:
             raise DoozerFatalError('Unable to resolve image metadata for {}'.format(distgit_name))
 
         mode = data_obj.data.get("mode", "enabled")
-        if mode == "disabled" and not self.load_disabled or mode == "wip" and not self.load_wip:
+
+        # Check if image has OKD mode override that enables it (only when variant is OKD)
+        okd_config = data_obj.data.get("okd", {})
+        okd_enabled = mode == "disabled" and okd_config.get("mode") == "enabled" and self.variant == BuildVariant.OKD
+
+        # Skip loading if disabled (unless okd.mode: enabled with variant=OKD or load_disabled is set)
+        if mode == "disabled" and not self.load_disabled and not okd_enabled:
             if required:
                 raise DoozerFatalError('Attempted to load image {} but it has mode {}'.format(distgit_name, mode))
             self._logger.warning("Image %s will not be loaded because it has mode %s", distgit_name, mode)
             return None
 
-        meta = ImageMetadata(self, data_obj, self.upstream_commitish_overrides.get(data_obj.key))
+        # Skip loading if wip
+        if mode == "wip" and not self.load_wip:
+            if required:
+                raise DoozerFatalError('Attempted to load image {} but it has mode {}'.format(distgit_name, mode))
+            self._logger.warning("Image %s will not be loaded because it has mode %s", distgit_name, mode)
+            return None
+
+        # Only process dependents if this image will be added to image_map.
+        # When add=False, we're just loading the image to query its latest build,
+        # so we should not trigger loading its dependents as a side effect.
+        # Use the same clone_source and prevent_cloning settings as the main initialization
+        meta = ImageMetadata(
+            self,
+            data_obj,
+            self.upstream_commitish_overrides.get(data_obj.key),
+            clone_source=self.clone_source,
+            prevent_cloning=self.prevent_cloning,
+            process_dependents=add,
+        )
         if add:
             self.image_map[distgit_name] = meta
         self.component_map[meta.get_component_name()] = meta
@@ -1254,7 +1389,16 @@ class Runtime(GroupRuntime):
             reclone=self.upcycle,
             logger=self._logger,
         )
-        self.data_dir = self.gitdata.data_dir
+        self._build_data_loader = BuildDataLoader(
+            data_path=self.data_path,
+            clone_dir=self.working_dir,
+            commitish=self.group_commitish,
+            build_system=self.build_system,
+            upcycle=self.upcycle,
+            gitdata=self.gitdata,
+            logger=self._logger,
+        )
+        self.data_dir = self._build_data_loader.data_dir
 
     def get_rpm_config(self) -> dict:
         config = {}

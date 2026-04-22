@@ -24,17 +24,32 @@ LOGGER = logutil.get_logger(__name__)
 
 
 @cli.command('olm-bundle:list-olm-operators', short_help='List all images that are OLM operators')
+@click.option(
+    '--output-format',
+    type=click.Choice(['component', 'distgit-key'], case_sensitive=False),
+    default='component',
+    help='Output format: component name (default) or distgit key',
+)
 @pass_runtime
-def list_olm_operators(runtime: Runtime):
+def list_olm_operators(runtime: Runtime, output_format: str):
     """
-    Example:
+    List all OLM operator images.
+
+    By default, outputs component names (e.g., ose-ptp-operator-container).
+    Use --output-format=distgit-key to output distgit keys (e.g., ptp-operator).
+
+    Examples:
     $ doozer --group openshift-4.5 olm-bundle:list-olm-operators
+    $ doozer --group openshift-4.5 olm-bundle:list-olm-operators --output-format=distgit-key
     """
-    runtime.initialize(clone_distgits=False)
+    runtime.initialize(clone_distgits=False, clone_source=False, prevent_cloning=True)
 
     for image in runtime.image_metas():
         if image.enabled and image.config['update-csv'] is not Missing:
-            print(image.get_component_name())
+            if output_format == 'distgit-key':
+                print(image.distgit_key)
+            else:
+                print(image.get_component_name())
 
 
 @cli.command(
@@ -74,7 +89,7 @@ def olm_bundles_print(runtime: Runtime, skip_missing, pattern: Optional[str]):
 
     runtime.initialize(config_only=True)
     clone_distgits = bool(runtime.group_config.canonical_builders_from_upstream)
-    runtime.initialize(clone_distgits=clone_distgits)
+    runtime.initialize(clone_distgits=clone_distgits, prevent_cloning=not clone_distgits)
 
     # If user omitted braces, add them.
     if "{" not in pattern:
@@ -189,13 +204,13 @@ def rebase_and_build_olm_bundle(runtime: Runtime, operator_nvrs: Tuple[str, ...]
             images.append(image_name)
             operator_builds.append(build)
         runtime.images = images
-        runtime.initialize(clone_distgits=False)
+        runtime.initialize(clone_distgits=False, clone_source=False, prevent_cloning=True)
     else:
         # We initialize with config_only first to check if we need to clone distgits or not
         # Cloning distgits is necessary for meta.get_latest_build() to work correctly
         runtime.initialize(config_only=True)
         clone_distgits = bool(runtime.group_config.canonical_builders_from_upstream)
-        runtime.initialize(clone_distgits=clone_distgits)
+        runtime.initialize(clone_distgits=clone_distgits, prevent_cloning=not clone_distgits)
 
         # Since no operator nvs are explicitly given
         # fetch all latest operator builds from Brew
@@ -316,8 +331,8 @@ def rebase_and_build_olm_bundle(runtime: Runtime, operator_nvrs: Tuple[str, ...]
             runtime.konflux_db.add_build(build_record)
             LOGGER.info('Brew build info stored successfully')
 
-        except Exception as err:
-            LOGGER.error('Failed writing record to the konflux DB: %s', err)
+        except Exception:
+            LOGGER.exception('Failed writing record to the konflux DB')
 
     olm_bundles = [OLMBundle(runtime, op, dry_run=dry_run) for op in operator_builds]
     get_branches_results = [bundle.does_bundle_branch_exist() for bundle in olm_bundles]

@@ -1,8 +1,6 @@
 import subprocess
 import unittest
 
-from doozerlib.backend.konflux_client import API_VERSION, KIND_SNAPSHOT
-
 from functional_tests import constants
 
 

@@ -1,4 +1,0 @@
-coverage
-pytest == 8.0.2
-tox
-ruff

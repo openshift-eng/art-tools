@@ -8,6 +8,7 @@ from typing import Dict, Iterable, List, Optional, Set
 import click
 from artcommonlib import arch_util
 from artcommonlib.assembly import assembly_config_struct
+from artcommonlib.gitdata import SafeFormatter
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import new_roundtrip_yaml_handler
 from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
@@ -16,13 +17,12 @@ from errata_tool import Erratum
 from elliottlib import constants
 from elliottlib.bzutil import Bug, BugTracker, get_flaws, get_highest_security_impact, sort_cve_bugs
 from elliottlib.cli.common import cli, click_coroutine, find_default_advisory, use_default_advisory_option
-from elliottlib.cli.find_bugs_sweep_cli import get_component_by_delivery_repo
-from elliottlib.errata import is_security_advisory
+from elliottlib.errata import get_errata_live_id, is_security_advisory
 from elliottlib.errata_async import AsyncErrataAPI, AsyncErrataUtils
 from elliottlib.runtime import Runtime
 from elliottlib.shipment_model import CveAssociation, ReleaseNotes
 from elliottlib.shipment_utils import get_shipment_config_from_mr, set_bugzilla_bug_ids
-from elliottlib.util import get_advisory_boilerplate
+from elliottlib.util import get_advisory_boilerplate, get_component_by_delivery_repo
 
 YAML = new_roundtrip_yaml_handler()
 
@@ -44,6 +44,122 @@ def get_konflux_component_by_component(runtime: Runtime, component_name: str) ->
 
     application = KonfluxImageBuilder.get_application_name(runtime.group)
     return KonfluxImageBuilder.get_component_name(application, image_meta.distgit_key)
+
+
+def _get_components_using_builder(runtime: Runtime, attached_components: Set[str], logger) -> Set[str]:
+    """
+    Find components that use the golang builder by checking their image configurations.
+
+    Args:
+        runtime: Runtime instance with image metadata
+        attached_components: Set of component names to filter from
+        logger: Logger instance for logging
+
+    Returns:
+        Set of component names that use the golang builder
+    """
+    if not runtime.image_metas():
+        logger.warning("No image metadata available for builder analysis")
+        return set()
+
+    matching_components = set()
+    components_using_builder = []  # For detailed logging
+    components_not_using_builder = []  # For detailed logging
+    components_filtered_out = []  # Components that use builder but not in shipment
+
+    logger.info(f"Analyzing {len(runtime.image_metas())} image metadata entries for golang builder usage")
+
+    # Get Konflux component names for all images that use the builder
+    for image_meta in runtime.image_metas():
+        image_name = image_meta.distgit_key
+
+        # Check if this image uses the golang builder in its configuration
+        if _image_uses_builder(image_meta, logger):
+            # Get the Konflux component name for this image
+            application = KonfluxImageBuilder.get_application_name(runtime.group)
+            konflux_component_name = KonfluxImageBuilder.get_component_name(application, image_meta.distgit_key)
+
+            components_using_builder.append(f"{image_name} -> {konflux_component_name}")
+
+            # Only include if it's in the attached components
+            if konflux_component_name in attached_components:
+                matching_components.add(konflux_component_name)
+            else:
+                components_filtered_out.append(f"{image_name} -> {konflux_component_name}")
+        else:
+            components_not_using_builder.append(image_name)
+
+    # Log detailed analysis results
+    logger.info(f"Images using golang builder: {len(components_using_builder)} total")
+
+    if components_filtered_out:
+        logger.info(f"Images using golang builder but NOT in shipment ({len(components_filtered_out)} filtered out):")
+        for component in components_filtered_out:
+            logger.info(f"  - {component}")
+
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug(f"Images NOT using golang builder ({len(components_not_using_builder)} total):")
+        for component in components_not_using_builder[:10]:  # Limit to first 10 to avoid spam
+            logger.debug(f"  - {component}")
+        if len(components_not_using_builder) > 10:
+            logger.debug(f"  - ... and {len(components_not_using_builder) - 10} more")
+
+    logger.info(f"Final result: {len(matching_components)} components in shipment use golang builder")
+
+    return matching_components
+
+
+def _image_uses_builder(image_meta, logger) -> bool:
+    """
+    Check if an image metadata uses the golang builder.
+
+    Args:
+        image_meta: ImageMetadata instance
+        logger: Logger instance for logging
+
+    Returns:
+        True if the image uses the golang builder
+    """
+    try:
+        # Get the image configuration
+        config = image_meta.config
+        image_name = image_meta.distgit_key
+
+        # Check in the from.builder section for streams containing "golang"
+        from_streams = []
+        if 'from' in config and 'builder' in config['from']:
+            for builder_config in config['from']['builder']:
+                if isinstance(builder_config, dict) and 'stream' in builder_config:
+                    stream_name = builder_config['stream']
+                    from_streams.append(stream_name)
+                    # Check if the stream name contains "golang"
+                    if "golang" in stream_name:
+                        # Check if this image should be included based on for_release field
+                        # Include if for_release is not explicitly false
+                        for_release = config.get('for_release', True)  # Default to True if not specified
+                        if for_release is not False:
+                            logger.debug(
+                                f"Image '{image_name}' uses golang builder via from.builder stream: '{stream_name}' (for_release: {for_release})"
+                            )
+                            return True
+                        else:
+                            logger.debug(
+                                f"Image '{image_name}' uses golang builder but has for_release: false, excluding"
+                            )
+
+        # Log debug info if no matches found
+        if from_streams:
+            logger.debug(f"Image '{image_name}' has streams {from_streams} but none contain 'golang'")
+        elif 'from' in config:
+            logger.debug(f"Image '{image_name}' has from section but no valid builder streams")
+        else:
+            logger.debug(f"Image '{image_name}' has no from section in config")
+
+        return False
+    except Exception as e:
+        logger.debug(f"Error checking builder for image '{getattr(image_meta, 'distgit_key', 'unknown')}': {e}")
+        # If there's any error accessing the config, assume it doesn't use the builder
+        return False
 
 
 class AttachCveFlaws:
@@ -77,6 +193,11 @@ class AttachCveFlaws:
 
         self.errata_api: Optional[AsyncErrataAPI] = None
         self.major, self.minor, self.patch = self.runtime.get_major_minor_patch()
+        self._replace_vars = {"MAJOR": self.major, "MINOR": self.minor, "PATCH": self.patch}
+        rpm_advisory = self.runtime.group_config.advisories.get("rpm")
+        if rpm_advisory is not None:
+            live_id = get_errata_live_id(rpm_advisory)
+            self._replace_vars.update({"RPM_ADVISORY": live_id})
 
     async def run(self):
         if self.runtime.build_system == 'konflux':
@@ -132,7 +253,19 @@ class AttachCveFlaws:
         self.logger.info(f"Fetching shipment configs from merge request: {mr_url}")
 
         # Fetch the shipment configs from the merge request
-        release_notes = self.get_release_notes_from_mr(mr_url)
+        shipment_config = get_shipment_config_from_mr(mr_url, self.default_advisory_type)
+        if not shipment_config:
+            raise ValueError(f"No shipment config found for kind: {self.default_advisory_type}")
+
+        release_notes = shipment_config.shipment.data.releaseNotes
+        if not release_notes:
+            raise ValueError(f"No release notes found in shipment config for {self.default_advisory_type}")
+
+        # Extract component names from the shipment snapshot
+        attached_components = set()
+        if shipment_config.shipment.snapshot and shipment_config.shipment.snapshot.spec.components:
+            attached_components = {comp.name for comp in shipment_config.shipment.snapshot.spec.components}
+        self.logger.info(f"Found {len(attached_components)} components in shipment")
 
         # Fetch the bug IDs from the release notes
         bug_ids = [issue.id for issue in release_notes.issues.fixed] if release_notes.issues else []
@@ -143,21 +276,12 @@ class AttachCveFlaws:
         self.logger.info(f"Found {len(tracker_bugs)} tracker bugs in shipment")
 
         # Get flaw bugs
-        tracker_flaws, flaw_bugs = (
-            get_flaws(
-                self.runtime.get_bug_tracker('bugzilla'),
-                tracker_bugs,
-                self.runtime.assembly_type,
-                self.runtime.assembly,
-            )
-            if tracker_bugs
-            else ({}, [])
-        )
+        tracker_flaws, flaw_bugs = get_flaws(self.runtime, tracker_bugs) if tracker_bugs else ({}, [])
         self.logger.info(f"Found {len(flaw_bugs)} eligible flaw bugs for shipment to be attached")
 
         # Update the release notes
         updated_release_notes = copy.deepcopy(release_notes)
-        self.update_release_notes(updated_release_notes, flaw_bugs, tracker_bugs, tracker_flaws)
+        self.update_release_notes(updated_release_notes, flaw_bugs, tracker_bugs, tracker_flaws, attached_components)
         if updated_release_notes == release_notes:
             self.logger.info("No changes made to the release notes")
             return None
@@ -176,6 +300,29 @@ class AttachCveFlaws:
             raise ValueError(f"No release notes found in shipment config for {self.default_advisory_type}")
 
         return release_notes
+
+    @staticmethod
+    def _contains_placeholders(text: str) -> bool:
+        """
+        Check if text contains template placeholders that should be replaced by promote job.
+        These placeholders are populated by the promote job, and we should preserve the text
+        if they've been replaced with real values.
+
+        Args:
+            text: The text to check for placeholders
+
+        Returns:
+            True if text contains placeholders, False otherwise
+        """
+        placeholders = [
+            "{IMAGE_ADVISORY}",
+            "{x864_DIGEST}",
+            "{s390x_DIGEST}",
+            "{ppc64le_DIGEST}",
+            "{aarch64_DIGEST}",
+        ]
+
+        return any(placeholder in text for placeholder in placeholders)
 
     def get_attached_trackers(self, bugs_ids: List[str], bug_tracker: BugTracker) -> List[Bug]:
         """
@@ -202,11 +349,12 @@ class AttachCveFlaws:
         flaw_bugs: Iterable[Bug],
         tracker_bugs: List[Bug],
         tracker_flaws: Dict[int, Iterable],
+        attached_components: Set[str] = None,
     ):
         """
         Update the release notes to convert it to an RHSA type. Also adds CVE associations and flaw bugs.
         """
-
+        formatter = SafeFormatter()
         if flaw_bugs:
             if release_notes.type != 'RHSA':
                 # Set the release notes type to RHSA
@@ -214,8 +362,14 @@ class AttachCveFlaws:
                 release_notes.type = 'RHSA'
 
             # Add the CVE component mapping to the cve field
-            cve_component_mapping = self.get_cve_component_mapping(
-                self.runtime, flaw_bugs, tracker_bugs, tracker_flaws, konflux=True
+            cve_component_mapping = AttachCveFlaws.get_cve_component_mapping(
+                self.runtime,
+                flaw_bugs,
+                tracker_bugs,
+                tracker_flaws,
+                attached_components,
+                konflux=True,
+                logger=self.logger,
             )
             release_notes.cves = [
                 CveAssociation(key=cve_id, component=component)
@@ -233,20 +387,27 @@ class AttachCveFlaws:
                 art_advisory_key=self.advisory_kind,
                 errata_type='RHSA',
             )
-            release_notes.synopsis = cve_boilerplate['synopsis'].format(MINOR=self.minor, PATCH=self.patch)
             highest_impact = get_highest_security_impact(flaw_bugs)
-            release_notes.topic = cve_boilerplate['topic'].format(
-                IMPACT=highest_impact, MINOR=self.minor, PATCH=self.patch
-            )
-            release_notes.solution = cve_boilerplate['solution'].format(MINOR=self.minor)
-
-            # Update description
+            self._replace_vars["IMPACT"] = highest_impact
             formatted_cve_list = '\n'.join(
                 [f'* {b.summary.replace(b.alias[0], "").strip()} ({b.alias[0]})' for b in flaw_bugs]
             )
-            release_notes.description = cve_boilerplate['description'].format(
-                CVES=formatted_cve_list, MINOR=self.minor, PATCH=self.patch
-            )
+            self._replace_vars['CVES'] = formatted_cve_list
+            release_notes.synopsis = formatter.format(cve_boilerplate['synopsis'], **self._replace_vars)
+            release_notes.topic = formatter.format(cve_boilerplate['topic'], **self._replace_vars)
+
+            # Preserve existing solution if it contains real values (not placeholders)
+            # This prevents reverting payload SHAs and advisory URLs that were already populated by promote
+            if release_notes.solution and not self._contains_placeholders(release_notes.solution):
+                self.logger.info("Preserving existing solution (contains real values, not placeholders)")
+            else:
+                release_notes.solution = formatter.format(cve_boilerplate['solution'], **self._replace_vars)
+            # Preserve existing description if it contains real values (not placeholders)
+            if release_notes.description and not self._contains_placeholders(release_notes.description):
+                self.logger.info("Preserving existing description (contains real values, not placeholders)")
+            else:
+                release_notes.description = formatter.format(cve_boilerplate['description'], **self._replace_vars)
+
         elif self.reconcile:
             # Convert RHSA back to RHBA
             if release_notes.type == 'RHBA':
@@ -271,10 +432,20 @@ class AttachCveFlaws:
                 art_advisory_key=self.advisory_kind,
                 errata_type='RHBA',
             )
-            release_notes.synopsis = boilerplate['synopsis'].format(MINOR=self.minor, PATCH=self.patch)
-            release_notes.topic = boilerplate['topic'].format(MINOR=self.minor, PATCH=self.patch)
-            release_notes.solution = boilerplate['solution'].format(MINOR=self.minor, PATCH=self.patch)
-            release_notes.description = boilerplate['description'].format(MINOR=self.minor, PATCH=self.patch)
+            release_notes.synopsis = formatter.format(boilerplate['synopsis'], **self._replace_vars)
+            release_notes.topic = formatter.format(boilerplate['topic'], **self._replace_vars)
+
+            # Preserve existing solution/description if they contain real values (not placeholders)
+            # This prevents reverting payload SHAs and advisory URLs during reconciliation
+            if release_notes.solution and not self._contains_placeholders(release_notes.solution):
+                self.logger.info("Preserving existing solution during reconciliation (contains real values)")
+            else:
+                release_notes.solution = formatter.format(boilerplate['solution'], **self._replace_vars)
+            # Preserve existing description if it contains real values (not placeholders)
+            if release_notes.description and not self._contains_placeholders(release_notes.description):
+                self.logger.info("Preserving existing description during reconciliation (contains real values)")
+            else:
+                release_notes.description = formatter.format(boilerplate['description'], **self._replace_vars)
 
     async def handle_brew_cve_flaws(self):
         """
@@ -301,9 +472,8 @@ class AttachCveFlaws:
                 advisory_bug_ids = bug_tracker.advisory_bug_ids(advisory)
                 attached_trackers.extend(self.get_attached_trackers(advisory_bug_ids, bug_tracker))
 
-            tracker_flaws, flaw_bugs = get_flaws(
-                flaw_bug_tracker, attached_trackers, self.runtime.assembly_type, self.runtime.assembly
-            )
+            tracker_flaws, flaw_bugs = get_flaws(self.runtime, attached_trackers) if attached_trackers else ({}, [])
+            self.logger.info(f"Found {len(flaw_bugs)} eligible flaw bugs for advisory {advisory_id} to be attached")
 
             try:
                 if flaw_bugs:
@@ -347,10 +517,14 @@ class AttachCveFlaws:
         tracker_flaws: Dict[int, Iterable],
         attached_components: Set = None,
         konflux: bool = False,
+        logger=None,
     ) -> Dict[str, Set[str]]:
         """
         Get a mapping of CVE IDs to component names based on the attached tracker bugs and flaw bugs.
         """
+
+        if logger is None:
+            logger = logging.getLogger(__name__)
 
         attached_components = attached_components if attached_components else set()
         cve_components_mapping: Dict[str, Set[str]] = {}
@@ -368,20 +542,44 @@ class AttachCveFlaws:
                     raise ValueError(f"Component {whiteboard_component} could not be translated")
                 whiteboard_component = new_component
 
+            component_names = None  # Initialize to ensure it's always defined
+
             if konflux:
                 new_component = get_konflux_component_by_component(runtime, whiteboard_component)
                 if not new_component:
-                    raise ValueError(f"Component {whiteboard_component} could not be translated")
-                whiteboard_component = new_component
+                    # Special case for builder containers: they should map to all components that use this builder
+                    if whiteboard_component == "openshift-golang-builder-container":
+                        # Check which components actually use the golang builder
+                        logger.info(f"Processing builder container CVE for '{whiteboard_component}' (golang builder)")
 
-            if whiteboard_component == "rhcos":
-                # rhcos trackers are special, since they have per-architecture component names
-                # (rhcos-x86_64, rhcos-aarch64, ...) in Brew,
-                # but the tracker bug has a generic "rhcos" component name
-                # so we need to associate this CVE with all per-architecture component names
-                component_names = attached_components & arch_util.RHCOS_BREW_COMPONENTS
-            else:
-                component_names = {whiteboard_component}
+                        logger.info(f"Total components in shipment: {len(attached_components)}")
+
+                        components_using_builder = _get_components_using_builder(runtime, attached_components, logger)
+                        if components_using_builder:
+                            logger.info(
+                                f"Found {len(components_using_builder)} components using golang builder: {sorted(components_using_builder)}"
+                            )
+                            component_names = components_using_builder
+                        else:
+                            logger.warning(
+                                f"No components found using golang builder, falling back to all {len(attached_components)} components in shipment"
+                            )
+                            # Fallback to all components if we can't determine usage
+                            component_names = attached_components.copy()
+                    else:
+                        raise ValueError(f"Component {whiteboard_component} could not be translated")
+                else:
+                    whiteboard_component = new_component
+
+            if component_names is None:  # Only set if not already set for builder containers
+                if whiteboard_component == "rhcos":
+                    # rhcos trackers are special, since they have per-architecture component names
+                    # (rhcos-x86_64, rhcos-aarch64, ...) in Brew,
+                    # but the tracker bug has a generic "rhcos" component name
+                    # so we need to associate this CVE with all per-architecture component names
+                    component_names = attached_components & arch_util.RHCOS_BREW_COMPONENTS
+                else:
+                    component_names = {whiteboard_component}
 
             flaw_id_bugs = {flaw_bug.id: flaw_bug for flaw_bug in flaw_bugs}
             for flaw_id in tracker_flaws[tracker.id]:
@@ -392,6 +590,15 @@ class AttachCveFlaws:
                     raise ValueError(f"Bug {flaw_id} should have exactly 1 CVE alias.")
                 cve = alias[0]
                 cve_components_mapping.setdefault(cve, set()).update(component_names)
+
+                # Log the final CVE to component mapping
+                logger.info(
+                    f"Mapped CVE {cve} (from tracker {tracker.id}) to {len(component_names)} components: {sorted(component_names)}"
+                )
+
+        logger.info(f"Final CVE component mapping: {len(cve_components_mapping)} CVEs mapped to components")
+        for cve, components in cve_components_mapping.items():
+            logger.info(f"  {cve} -> {len(components)} components: {sorted(components)}")
 
         return cve_components_mapping
 
@@ -405,8 +612,8 @@ class AttachCveFlaws:
         # `Erratum.errata_builds` doesn't include RHCOS builds. Use AsyncErrataAPI instead.
         attached_builds = await self.errata_api.get_builds_flattened(advisory.errata_id)
         attached_components = {parse_nvr(build)["name"] for build in attached_builds}
-        cve_components_mapping = self.get_cve_component_mapping(
-            self.runtime, flaw_bugs, attached_tracker_bugs, tracker_flaws, attached_components
+        cve_components_mapping = AttachCveFlaws.get_cve_component_mapping(
+            self.runtime, flaw_bugs, attached_tracker_bugs, tracker_flaws, attached_components, logger=self.logger
         )
 
         await AsyncErrataUtils.associate_builds_with_cves(
@@ -421,19 +628,20 @@ class AttachCveFlaws:
         :param flaw_bugs: Collection of flaw bug objects to be attached to the advisory
         :returns: updated advisory object and a boolean indicating if advisory was updated
         """
-
         updated = False
+        formatter = SafeFormatter()
         if not is_security_advisory(advisory):
             self.logger.info('Advisory type is {}, converting it to RHSA'.format(advisory.errata_type))
             updated = True
-            security_impact = 'Low'
+            low_impact = 'Low'
+            self._replace_vars['IMPACT'] = low_impact
             advisory.update(
                 errata_type='RHSA',
                 security_reviewer=cve_boilerplate['security_reviewer'],
-                synopsis=cve_boilerplate['synopsis'].format(MINOR=self.minor, PATCH=self.patch),
-                topic=cve_boilerplate['topic'].format(IMPACT=security_impact, MINOR=self.minor, PATCH=self.patch),
-                solution=cve_boilerplate['solution'].format(MINOR=self.minor),
-                security_impact=security_impact,
+                synopsis=formatter.format(cve_boilerplate['synopsis'], **self._replace_vars),
+                topic=formatter.format(cve_boilerplate['topic'], **self._replace_vars),
+                solution=formatter.format(cve_boilerplate['solution'], **self._replace_vars),
+                security_impact=low_impact,
             )
 
         flaw_bugs = sort_cve_bugs(flaw_bugs)
@@ -447,9 +655,8 @@ class AttachCveFlaws:
             formatted_cve_list = '\n'.join(
                 [f'* {b.summary.replace(b.alias[0], "").strip()} ({b.alias[0]})' for b in flaw_bugs]
             )
-            formatted_description = cve_boilerplate['description'].format(
-                CVES=formatted_cve_list, MINOR=self.minor, PATCH=self.patch
-            )
+            self._replace_vars['CVES'] = formatted_cve_list
+            formatted_description = formatter.format(cve_boilerplate['description'], **self._replace_vars)
             advisory.update(description=formatted_description)
 
         highest_impact = get_highest_security_impact(flaw_bugs)
@@ -458,15 +665,16 @@ class AttachCveFlaws:
                 self.logger.info(
                     f'Adjusting advisory security impact from {advisory.security_impact} to {highest_impact}'
                 )
+                self._replace_vars['IMPACT'] = highest_impact
                 advisory.update(security_impact=highest_impact)
                 updated = True
             else:
                 self.logger.info(
                     f'Advisory current security impact {advisory.security_impact} is higher than {highest_impact} no need to adjust'
                 )
-
+                self._replace_vars['IMPACT'] = highest_impact = advisory.security_impact
         if highest_impact not in advisory.topic:
-            topic = cve_boilerplate['topic'].format(IMPACT=highest_impact, MINOR=self.minor, PATCH=self.patch)
+            topic = formatter.format(cve_boilerplate['topic'], **self._replace_vars)
             self.logger.info('Topic updated to include impact of {}'.format(highest_impact))
             advisory.update(topic=topic)
 

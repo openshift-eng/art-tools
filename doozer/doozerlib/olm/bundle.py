@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 import yaml
 from artcommonlib import exectools, pushd
 from artcommonlib.brew import BuildStates
+from artcommonlib.oc_image_info import oc_image_info__cached__lru
 from dockerfile_parse import DockerfileParser
 from koji import ClientSession
 from tenacity import retry, stop_after_attempt, wait_fixed
@@ -472,18 +473,18 @@ class OLMBundle(object):
 
         pull_spec = '{}/{}'.format(registry, image)
         try:
-            image_info = util.oc_image_info_for_arch__caching(pull_spec)
+            image_info = util.oc_image_info_for_arch(pull_spec)
         except:
             self.runtime.logger.error(
                 f'Unable to find image from CSV: {pull_spec}. Image may have failed to build after CSV rebase.'
             )
             raise
 
-        if self.runtime.group_config.operator_image_ref_mode == 'manifest-list':
-            return image_info['listDigest']
+        if self.runtime.group_config.operator_image_ref_mode == 'by-arch':
+            # @TODO: decide how to handle 4.2 multi-arch. hardcoding amd64 for now
+            return image_info['contentDigest']
 
-        # @TODO: decide how to handle 4.2 multi-arch. hardcoding amd64 for now
-        return image_info['contentDigest']
+        return image_info['listDigest']
 
     def append_related_images_spec(self, contents, images):
         """Create a new section under contents' "spec" called "relatedImages", listing all given
@@ -621,6 +622,7 @@ class OLMBundle(object):
             'com.redhat.delivery.operator.bundle': 'true',
             'com.redhat.openshift.versions': versions.format(**self.runtime.group_config.vars),
         }
+        # TODO: deprecate pre-release mode support
         if self.operator_index_mode == 'pre-release':
             labels['com.redhat.prerelease'] = 'true'
         return labels
@@ -662,15 +664,16 @@ class OLMBundle(object):
         return self.operator_csv_config['valid-subscription-label']
 
     def delivery_labels_match(self, bundle_image_pullspec):
-        cmd = f"oc image info {bundle_image_pullspec} -o json"
-        rc, out, err = exectools.cmd_gather(cmd)
-        if rc != 0:
-            raise ValueError(f"Error running {cmd}: {err}")
+        try:
+            out = oc_image_info__cached__lru(bundle_image_pullspec)
+        except ChildProcessError as e:
+            raise ValueError(f"Error running oc image info for {bundle_image_pullspec}: {e}") from e
         image_info = json.loads(out)
         image_labels = image_info['config']['config']['Labels']
         for label, value in self.redhat_delivery_tags.items():
             if image_labels.get(label, '') != value:
                 return False
+        # TODO: deprecate pre-release mode support
         if self.operator_index_mode != 'pre-release':
             # It doesn't matter what the value of com.redhat.prerelease is
             # ET marks it as prerelease if the label is present

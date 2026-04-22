@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import os
 import typing
 
 from artcommonlib import constants
@@ -91,6 +90,7 @@ class BigQueryClient:
         where_clauses: typing.List[BinaryExpression] = None,
         order_by_clause: typing.Optional[UnaryExpression] = None,
         limit=None,
+        exclude_columns: typing.Optional[typing.List[str]] = None,
     ) -> RowIterator:
         """
         Execute a SELECT statement and return a generator object with the results.
@@ -101,9 +101,18 @@ class BigQueryClient:
         order_by_clause is an optional sqlalchemy.UnaryExpression that translates into '"start_time" DESC' or the like
 
         limit is an optional value to include in a LIMIT clause
+
+        exclude_columns is an optional list of column names to exclude from the SELECT statement
+        (using BigQuery's EXCEPT syntax). Useful for excluding large columns like installed_rpms
+        and installed_packages to reduce query costs and latency.
         """
 
-        query = f"SELECT * FROM `{self.table_ref}`"
+        if exclude_columns:
+            # Use BigQuery's EXCEPT syntax to exclude specified columns
+            exclude_clause = ', '.join(exclude_columns)
+            query = f"SELECT * EXCEPT ({exclude_clause}) FROM `{self.table_ref}`"
+        else:
+            query = f"SELECT * FROM `{self.table_ref}`"
 
         if where_clauses:
             where_conditions = " AND ".join(
@@ -112,10 +121,16 @@ class BigQueryClient:
                     for where_clause in where_clauses
                 ]
             )
+            # Un-escape %% to % - BigQuery doesn't need MySQL-style percent escaping
+            where_conditions = where_conditions.replace('%%', '%')
             query += f' WHERE {where_conditions}'
 
         if order_by_clause is not None:
-            order_by_string = order_by_clause.compile(dialect=mysql.dialect(), compile_kwargs={'literal_binds': True})
+            order_by_string = str(
+                order_by_clause.compile(dialect=mysql.dialect(), compile_kwargs={'literal_binds': True})
+            )
+            # Un-escape %% to % - BigQuery doesn't need MySQL-style percent escaping
+            order_by_string = order_by_string.replace('%%', '%')
             query += f' ORDER BY {order_by_string}'
 
         if limit is not None:

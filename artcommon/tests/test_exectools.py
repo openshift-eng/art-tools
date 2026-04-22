@@ -4,21 +4,16 @@ Test functions related to controlled command execution
 """
 
 import asyncio
+import json
+import logging
 import subprocess
+import sys
+import tempfile
 import time
 import unittest
 from unittest import IsolatedAsyncioTestCase, mock
 
 from artcommonlib import exectools
-
-try:
-    from importlib import reload
-except ImportError:
-    pass
-import logging
-import os
-import shutil
-import tempfile
 
 
 class RetryTestCase(IsolatedAsyncioTestCase):
@@ -236,6 +231,219 @@ class TestExectools(IsolatedAsyncioTestCase):
             create_subprocess_exec.assert_awaited_once_with(*cmd, cwd=fake_cwd)
             self.assertEqual(rc, 0)
 
+    @mock.patch("artcommonlib.exectools.cmd_assert_async")
+    async def test_manifest_tool_uses_explicit_auth_file(self, cmd_assert_async: mock.AsyncMock):
+        await exectools.manifest_tool(
+            ["push", "from-spec", "--", "/tmp/manifest-list.yaml"],
+            auth_file="/tmp/quay-auth.json",
+        )
+
+        cmd_assert_async.assert_awaited_once_with(
+            ["manifest-tool", "--docker-cfg=/tmp/quay-auth.json", "push", "from-spec", "--", "/tmp/manifest-list.yaml"],
+            stdout=sys.stderr,
+            stderr=sys.stderr,
+        )
+
+    @mock.patch("artcommonlib.exectools.cmd_assert_async")
+    async def test_manifest_tool_ignores_xdg_runtime_auth_file(self, cmd_assert_async: mock.AsyncMock):
+        with mock.patch.dict(exectools.os.environ, {"XDG_RUNTIME_DIR": "/run/user/984"}, clear=True):
+            await exectools.manifest_tool(["push", "from-spec", "--", "/tmp/manifest-list.yaml"])
+
+        cmd_assert_async.assert_awaited_once_with(
+            ["manifest-tool", "push", "from-spec", "--", "/tmp/manifest-list.yaml"],
+            stdout=sys.stderr,
+            stderr=sys.stderr,
+        )
+
+    @mock.patch("artcommonlib.exectools.cmd_assert_async")
+    async def test_manifest_tool_uses_explicit_auth_file_over_env(self, cmd_assert_async: mock.AsyncMock):
+        with mock.patch.dict(exectools.os.environ, {"QUAY_AUTH_FILE": "/tmp/env-auth.json"}, clear=True):
+            await exectools.manifest_tool(
+                ["push", "from-spec", "--", "/tmp/manifest-list.yaml"],
+                auth_file="/tmp/explicit-auth.json",
+            )
+
+        cmd_assert_async.assert_awaited_once_with(
+            [
+                "manifest-tool",
+                "--docker-cfg=/tmp/explicit-auth.json",
+                "push",
+                "from-spec",
+                "--",
+                "/tmp/manifest-list.yaml",
+            ],
+            stdout=sys.stderr,
+            stderr=sys.stderr,
+        )
+
+    @mock.patch("artcommonlib.exectools.cmd_assert_async")
+    async def test_manifest_tool_ignores_quay_auth_file_env(self, cmd_assert_async: mock.AsyncMock):
+        with mock.patch.dict(exectools.os.environ, {"QUAY_AUTH_FILE": "/tmp/env-auth.json"}, clear=True):
+            await exectools.manifest_tool(["push", "from-spec", "--", "/tmp/manifest-list.yaml"])
+
+        cmd_assert_async.assert_awaited_once_with(
+            ["manifest-tool", "push", "from-spec", "--", "/tmp/manifest-list.yaml"],
+            stdout=sys.stderr,
+            stderr=sys.stderr,
+        )
+
+    def test_manifest_tool_auth_aliases_require_repo_boundary(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manifest_spec = f"{temp_dir}/manifest-list.yaml"
+            with open(manifest_spec, "w", encoding="utf-8") as f:
+                f.write("image: quay.io/ns2/repo:test-tag\n")
+
+            aliases = exectools._manifest_tool_auth_aliases(
+                {"quay.io/ns": {"auth": "Zm9vOmJhcg=="}},
+                ["push", "from-spec", "--", manifest_spec],
+            )
+
+        self.assertEqual(aliases, {})
+
+    @mock.patch("artcommonlib.exectools.logger.warning")
+    @mock.patch("artcommonlib.exectools.manifest_tool_auth_file")
+    @mock.patch("artcommonlib.exectools.cmd_assert_async")
+    async def test_manifest_tool_dry_run_avoids_auth_file_side_effects(
+        self,
+        cmd_assert_async: mock.AsyncMock,
+        manifest_tool_auth_file: mock.MagicMock,
+        logger_warning: mock.MagicMock,
+    ):
+        await exectools.manifest_tool(
+            ["push", "from-spec", "--", "/tmp/manifest-list.yaml"],
+            dry_run=True,
+            auth_file="/tmp/quay-auth.json",
+        )
+
+        manifest_tool_auth_file.assert_not_called()
+        cmd_assert_async.assert_not_awaited()
+        logger_warning.assert_called_once_with(
+            "[DRY RUN] Would have run %s",
+            ["manifest-tool", "--docker-cfg=/tmp/quay-auth.json", "push", "from-spec", "--", "/tmp/manifest-list.yaml"],
+        )
+
+    @mock.patch("artcommonlib.exectools.manifest_tool_auth_file")
+    @mock.patch("artcommonlib.exectools.cmd_assert_async")
+    async def test_manifest_tool_string_options_preserve_paths_with_spaces(
+        self,
+        cmd_assert_async: mock.AsyncMock,
+        manifest_tool_auth_file: mock.MagicMock,
+    ):
+        context_manager = mock.MagicMock()
+        context_manager.__enter__.return_value = "/tmp/my auth.json"
+        context_manager.__exit__.return_value = False
+        manifest_tool_auth_file.return_value = context_manager
+
+        await exectools.manifest_tool(
+            'push from-spec -- "/tmp/manifest list.yaml"',
+            auth_file="/tmp/ignored-auth.json",
+        )
+
+        cmd_assert_async.assert_awaited_once_with(
+            ["manifest-tool", "--docker-cfg=/tmp/my auth.json", "push", "from-spec", "--", "/tmp/manifest list.yaml"],
+            stdout=sys.stderr,
+            stderr=sys.stderr,
+        )
+
+    @mock.patch("artcommonlib.exectools.cmd_assert_async")
+    async def test_manifest_tool_adds_quay_host_compat_entry(self, cmd_assert_async: mock.AsyncMock):
+        captured_auth = {}
+
+        async def _capture_auth(cmd, **_kwargs):
+            self.assertEqual(cmd[0], "manifest-tool")
+            self.assertTrue(cmd[1].startswith("--docker-cfg="))
+            compat_auth_file = cmd[1].split("=", 1)[1]
+            with open(compat_auth_file, encoding="utf-8") as f:
+                captured_auth.update(json.load(f))
+
+        cmd_assert_async.side_effect = _capture_auth
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            auth_file = f"{temp_dir}/auth.json"
+            manifest_spec = f"{temp_dir}/manifest-list.yaml"
+            with open(auth_file, "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "auths": {
+                            "quay.io/openshift-release-dev": {
+                                "auth": "Zm9vOmJhcg==",
+                            }
+                        }
+                    },
+                    f,
+                )
+            with open(manifest_spec, "w", encoding="utf-8") as f:
+                f.write("image: quay.io/openshift-release-dev/ocp-v4.0-art-dev:test-tag\n")
+
+            await exectools.manifest_tool(
+                ["push", "from-spec", "--", manifest_spec],
+                auth_file=auth_file,
+            )
+
+        self.assertEqual(captured_auth["auths"]["quay.io"], {"auth": "Zm9vOmJhcg=="})
+        self.assertEqual(captured_auth["auths"]["quay.io/openshift-release-dev"], {"auth": "Zm9vOmJhcg=="})
+
+    @mock.patch("artcommonlib.exectools.cmd_assert_async")
+    async def test_manifest_tool_selects_best_matching_repo_cred(self, cmd_assert_async: mock.AsyncMock):
+        captured_auth = {}
+
+        async def _capture_auth(cmd, **_kwargs):
+            compat_auth_file = cmd[1].split("=", 1)[1]
+            with open(compat_auth_file, encoding="utf-8") as f:
+                captured_auth.update(json.load(f))
+
+        cmd_assert_async.side_effect = _capture_auth
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            auth_file = f"{temp_dir}/auth.json"
+            manifest_spec = f"{temp_dir}/manifest-list.yaml"
+            with open(auth_file, "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "auths": {
+                            "quay.io/redhat-user-workloads/ocp-art-tenant/art-images": {
+                                "auth": "YXJ0OnRva2Vu",
+                            },
+                            "quay.io/openshift-release-dev": {
+                                "auth": "cmVsZWFzZTpkZXY=",
+                            },
+                        }
+                    },
+                    f,
+                )
+            with open(manifest_spec, "w", encoding="utf-8") as f:
+                f.write("image: quay.io/redhat-user-workloads/ocp-art-tenant/art-images:test-tag\n")
+
+            await exectools.manifest_tool(
+                ["push", "from-spec", "--", manifest_spec],
+                auth_file=auth_file,
+            )
+
+        self.assertEqual(captured_auth["auths"]["quay.io"], {"auth": "YXJ0OnRva2Vu"})
+
+    @mock.patch("artcommonlib.exectools.cmd_assert_async")
+    async def test_manifest_tool_reuses_cached_compat_auth_file(self, cmd_assert_async: mock.AsyncMock):
+        compat_paths = []
+
+        async def _capture_auth(cmd, **_kwargs):
+            compat_paths.append(cmd[1].split("=", 1)[1])
+
+        cmd_assert_async.side_effect = _capture_auth
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            auth_file = f"{temp_dir}/auth.json"
+            manifest_spec = f"{temp_dir}/manifest-list.yaml"
+            with open(auth_file, "w", encoding="utf-8") as f:
+                json.dump({"auths": {"quay.io/openshift-release-dev": {"auth": "Zm9vOmJhcg=="}}}, f)
+            with open(manifest_spec, "w", encoding="utf-8") as f:
+                f.write("image: quay.io/openshift-release-dev/ocp-v4.0-art-dev:test-tag\n")
+
+            await exectools.manifest_tool(["push", "from-spec", "--", manifest_spec], auth_file=auth_file)
+            await exectools.manifest_tool(["push", "from-spec", "--", manifest_spec], auth_file=auth_file)
+
+        self.assertEqual(len(compat_paths), 2)
+        self.assertEqual(compat_paths[0], compat_paths[1])
+
     def test_parallel_exec(self):
         items = [1, 2, 3]
         results = exectools.parallel_exec(lambda k, v: k, items, n_threads=4)
@@ -273,6 +481,55 @@ class TestExectools(IsolatedAsyncioTestCase):
 
         # With limit=2 and 5 tasks of 0.1s each, should take at least 0.25s
         self.assertGreaterEqual(duration, 0.25)
+
+
+class TestRedactEnvForLogging(unittest.TestCase):
+    def test_redacts_password_keys(self):
+        env = {"GIT_PASSWORD": "ghs_secret123", "DB_PASSWORD": "hunter2"}
+        result = exectools._redact_env_for_logging(env)
+        self.assertEqual(result["GIT_PASSWORD"], "***REDACTED***")
+        self.assertEqual(result["DB_PASSWORD"], "***REDACTED***")
+
+    def test_redacts_token_keys(self):
+        env = {"GITHUB_TOKEN": "ghp_abc", "SLACK_BOT_TOKEN": "xoxb-123"}
+        result = exectools._redact_env_for_logging(env)
+        self.assertEqual(result["GITHUB_TOKEN"], "***REDACTED***")
+        self.assertEqual(result["SLACK_BOT_TOKEN"], "***REDACTED***")
+
+    def test_redacts_secret_and_key_and_credential(self):
+        env = {"API_SECRET": "s3cr3t", "PRIVATE_KEY": "pem-data", "SERVICE_CREDENTIAL": "cred"}
+        result = exectools._redact_env_for_logging(env)
+        for k in env:
+            self.assertEqual(result[k], "***REDACTED***")
+
+    def test_preserves_non_sensitive_keys(self):
+        env = {"GIT_SSH_COMMAND": "ssh -oBatchMode=yes", "GIT_TERMINAL_PROMPT": "0", "GIT_ASKPASS": "/tmp/script.sh"}
+        result = exectools._redact_env_for_logging(env)
+        self.assertEqual(result, env)
+
+    def test_case_insensitive(self):
+        env = {"git_password": "secret", "Github_Token": "tok"}
+        result = exectools._redact_env_for_logging(env)
+        self.assertEqual(result["git_password"], "***REDACTED***")
+        self.assertEqual(result["Github_Token"], "***REDACTED***")
+
+    def test_empty_dict(self):
+        self.assertEqual(exectools._redact_env_for_logging({}), {})
+
+    def test_cmd_gather_does_not_log_secrets(self):
+        secret_val = "ghs_SuperSecretToken123"
+        env = {"GIT_PASSWORD": secret_val, "GIT_ASKPASS": "/tmp/askpass.sh"}
+        with mock.patch("subprocess.Popen") as MockPopen:
+            mock_popen = MockPopen.return_value
+            mock_popen.communicate.return_value = (b"ok\n", b"")
+            mock_popen.returncode = 0
+
+            with self.assertLogs(level=logging.DEBUG) as cm:
+                exectools.cmd_gather(["/usr/bin/echo", "hi"], set_env=env)
+                log_text = "\n".join(cm.output)
+                self.assertNotIn(secret_val, log_text)
+                self.assertIn("***REDACTED***", log_text)
+                self.assertIn("/tmp/askpass.sh", log_text)
 
 
 if __name__ == "__main__":

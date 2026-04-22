@@ -30,7 +30,7 @@ import elliottlib.exceptions
 
 # ours
 from elliottlib import Runtime
-from elliottlib.cli.advisory_commons_cli import advisory_commons_cli
+from elliottlib.cli.advisory_date_cli import advisory_date_cli
 from elliottlib.cli.advisory_drop_cli import advisory_drop_cli
 from elliottlib.cli.advisory_images_cli import advisory_images_cli
 from elliottlib.cli.attach_bugs_cli import attach_bugs_cli
@@ -47,16 +47,18 @@ from elliottlib.cli.find_bugs_golang_cli import find_bugs_golang_cli
 from elliottlib.cli.find_bugs_kernel_cli import find_bugs_kernel_cli
 from elliottlib.cli.find_bugs_kernel_clones_cli import find_bugs_kernel_clones_cli
 from elliottlib.cli.find_bugs_qe_cli import find_bugs_qe_cli
+from elliottlib.cli.find_bugs_second_fix_cli import find_bugs_second_fix_cli
 from elliottlib.cli.find_bugs_sweep_cli import find_bugs_sweep_cli
 from elliottlib.cli.find_builds_cli import find_builds_cli
-from elliottlib.cli.find_konflux_builds_cli import find_k_builds_cli
 from elliottlib.cli.find_unconsumed_rpms import find_unconsumed_rpms_cli
 from elliottlib.cli.get_golang_report_cli import get_golang_report_cli
 from elliottlib.cli.get_golang_versions_cli import get_golang_versions_cli
+from elliottlib.cli.get_network_mode_cli import get_network_mode_cli
 from elliottlib.cli.konflux_release_cli import konflux_release_cli
 from elliottlib.cli.konflux_release_watch_cli import watch_release_cli
 from elliottlib.cli.move_builds_cli import move_builds_cli
 from elliottlib.cli.pin_builds_cli import assembly_pin_builds_cli
+from elliottlib.cli.process_release_from_fbc_bugs_cli import process_release_from_fbc_bugs_cli
 from elliottlib.cli.remove_bugs_cli import remove_bugs_cli
 from elliottlib.cli.remove_builds_cli import remove_builds_cli
 from elliottlib.cli.repair_bugs_cli import repair_bugs_cli
@@ -286,7 +288,7 @@ cli.add_command(verify_conforma_cli)
 cli.add_command(find_bugs_sweep_cli)
 cli.add_command(find_bugs_cli)
 cli.add_command(find_builds_cli)
-cli.add_command(find_k_builds_cli)
+cli.add_command(get_network_mode_cli)
 cli.add_command(tag_builds_cli)
 cli.add_command(tarball_sources_cli)
 cli.add_command(verify_cvp_cli)
@@ -301,7 +303,7 @@ cli.add_command(find_bugs_qe_cli)
 cli.add_command(get_golang_versions_cli)
 cli.add_command(validate_rhsa_cli)
 cli.add_command(rhcos_cli)
-cli.add_command(advisory_commons_cli)
+cli.add_command(advisory_date_cli)
 cli.add_command(find_bugs_blocker_cli)
 cli.add_command(remove_bugs_cli)
 cli.add_command(repair_bugs_cli)
@@ -317,6 +319,8 @@ cli.add_command(konflux_release_cli)
 cli.add_command(assembly_pin_builds_cli)
 cli.add_command(shipment_cli)
 cli.add_command(watch_release_cli)
+cli.add_command(find_bugs_second_fix_cli)
+cli.add_command(process_release_from_fbc_bugs_cli)
 
 # -----------------------------------------------------------------------------
 # CLI Entry point

@@ -2,12 +2,14 @@ import asyncio
 import json
 import logging
 import os
+import sys
 import traceback
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import click
 from artcommonlib import exectools
+from artcommonlib.constants import KONFLUX_DEFAULT_NAMESPACE
 from artcommonlib.konflux.konflux_build_record import (
     KonfluxBuildOutcome,
     KonfluxBuildRecord,
@@ -15,6 +17,11 @@ from artcommonlib.konflux.konflux_build_record import (
     KonfluxFbcBuildRecord,
 )
 from artcommonlib.konflux.konflux_db import KonfluxDb
+from artcommonlib.model import Missing
+from artcommonlib.util import (
+    resolve_konflux_kubeconfig_by_product,
+    resolve_konflux_namespace_by_product,
+)
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from doozerlib import constants, opm
@@ -46,6 +53,7 @@ class FbcImportCli:
         push: bool,
         registry_auth: Optional[str],
         fbc_repo: str,
+        major_minor: Optional[str],
         message: str,
         dest_dir: str | None,
     ):
@@ -54,6 +62,7 @@ class FbcImportCli:
         self.push = push
         self.registry_auth = registry_auth
         self.fbc_repo = fbc_repo or constants.ART_FBC_GIT_REPO
+        self.major_minor = major_minor
         self.message = message
         self.dest_dir = (
             Path(dest_dir) if dest_dir else Path(runtime.working_dir, constants.WORKING_SUBDIR_KONFLUX_FBC_SOURCES)
@@ -79,13 +88,22 @@ class FbcImportCli:
         assert runtime.group_config is not None, "group_config is not loaded; Doozer bug?"
         if not runtime.assembly:
             raise ValueError("Assemblies feature is disabled for this group. This is no longer supported.")
-        if (
-            not runtime.group_config.vars
-            or "MAJOR" not in runtime.group_config.vars
-            or "MINOR" not in runtime.group_config.vars
-        ):
-            raise ValueError("MAJOR and MINOR must be set in group vars.")
-        major, minor = int(runtime.group_config.vars.MAJOR), int(runtime.group_config.vars.MINOR)
+        if self.major_minor:
+            try:
+                major_str, minor_str = self.major_minor.split(".")
+                major, minor = int(major_str), int(minor_str)
+            except (ValueError, AttributeError):
+                raise ValueError(
+                    f"Invalid major-minor format: {self.major_minor}. Expected format: MAJOR.MINOR (e.g. 4.17)"
+                )
+        else:
+            if (
+                not runtime.group_config.vars
+                or "MAJOR" not in runtime.group_config.vars
+                or "MINOR" not in runtime.group_config.vars
+            ):
+                raise ValueError("MAJOR and MINOR must be set in group vars.")
+            major, minor = int(runtime.group_config.vars.MAJOR), int(runtime.group_config.vars.MINOR)
 
         operator_metadatas = [
             operator_meta for operator_meta in runtime.ordered_image_metas() if operator_meta.is_olm_operator
@@ -133,6 +151,11 @@ class FbcImportCli:
     "--fbc-repo", metavar='FBC_REPO', help="The git repository to push the FBC to.", default=constants.ART_FBC_GIT_REPO
 )
 @click.option("--registry-auth", metavar='AUTH', help="The registry authentication file to use for the index image.")
+@click.option(
+    "--major-minor",
+    metavar='MAJOR.MINOR',
+    help="Override the MAJOR.MINOR version from group config (e.g. 4.17).",
+)
 @option_commit_message
 @click.argument("dest_dir", metavar='DEST_DIR', required=False, default=None)
 @pass_runtime
@@ -143,6 +166,7 @@ async def fbc_import(
     push: bool,
     fbc_repo: str,
     registry_auth: Optional[str],
+    major_minor: Optional[str],
     message: str,
     dest_dir: Optional[str],
 ):
@@ -159,6 +183,7 @@ async def fbc_import(
         push=push,
         fbc_repo=fbc_repo,
         registry_auth=registry_auth,
+        major_minor=major_minor,
         message=message,
         dest_dir=dest_dir,
     )
@@ -173,7 +198,7 @@ class FbcMergeCli:
         runtime: Runtime,
         konflux_kubeconfig: Optional[str],
         konflux_context: Optional[str],
-        konflux_namespace: str,
+        konflux_namespace: Optional[str],
         dry_run: bool,
         fragments: Tuple[str, ...],
         dest_dir: Optional[str],
@@ -182,8 +207,10 @@ class FbcMergeCli:
         registry_auth: Optional[str],
         message: Optional[str],
         skip_checks: bool,
+        skip_fips_check: bool,
         plr_template: Optional[str],
         target_index: Optional[str],
+        major_minor: Optional[str],
     ):
         """
         Initialize the FBCFragmentMergerCli.
@@ -200,8 +227,10 @@ class FbcMergeCli:
         self.registry_auth = registry_auth
         self.message = message
         self.skip_checks = skip_checks
+        self.skip_fips_check = skip_fips_check
         self.plr_template = plr_template
         self.target_index = target_index
+        self.major_minor = major_minor
 
     @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
     async def _list_tags(self):
@@ -210,17 +239,27 @@ class FbcMergeCli:
         return json.loads(out)["Tags"]
 
     async def run(self):
-        # Initialize runtime
+        # Initialize runtime if not already initialized
         runtime = self.runtime
-        runtime.initialize(mode="none", clone_distgits=False, config_only=True)
+        if not getattr(runtime, 'initialized', False) or getattr(runtime, 'mode', None) != 'images':
+            runtime.initialize(mode="images", clone_distgits=False, build_system="konflux", config_only=True)
         assert runtime.group_config is not None, "group_config is not loaded; Doozer bug?"
-        if (
-            not runtime.group_config.vars
-            or "MAJOR" not in runtime.group_config.vars
-            or "MINOR" not in runtime.group_config.vars
-        ):
-            raise ValueError("MAJOR and MINOR must be set in group vars.")
-        major, minor = int(runtime.group_config.vars.MAJOR), int(runtime.group_config.vars.MINOR)
+        if self.major_minor:
+            try:
+                major_str, minor_str = self.major_minor.split(".")
+                major, minor = int(major_str), int(minor_str)
+            except (ValueError, AttributeError):
+                raise ValueError(
+                    f"Invalid major-minor format: {self.major_minor}. Expected format: MAJOR.MINOR (e.g. 4.17)"
+                )
+        else:
+            if (
+                not runtime.group_config.vars
+                or "MAJOR" not in runtime.group_config.vars
+                or "MINOR" not in runtime.group_config.vars
+            ):
+                raise ValueError("MAJOR and MINOR must be set in group vars.")
+            major, minor = int(runtime.group_config.vars.MAJOR), int(runtime.group_config.vars.MINOR)
         target_index = self.target_index or f"{self.DEFAULT_STAGE_FBC_REPO}:ocp-{major}.{minor}"
         working_dir = (
             Path(self.dest_dir)
@@ -240,6 +279,34 @@ class FbcMergeCli:
             if not matching_tags:
                 raise IOError("No matching tags found")
             LOGGER.info("Found %s matching tags: %s", len(matching_tags), matching_tags)
+            # Get all operators with bundles (enabled images with update-csv config)
+            # This matches the logic in olm_bundle.py:list_olm_operators
+            operators_with_bundles = [
+                image.get_component_name()
+                for image in runtime.ordered_image_metas()
+                if image.enabled and image.config.get('update-csv') is not Missing
+            ]
+
+            if operators_with_bundles:
+                # Extract operator names from matching_tags (format: ocp__{major}.{minor}__{operator_name})
+                prefix_len = len(prefix)
+                operators_in_tags = {tag[prefix_len:] for tag in matching_tags}
+                # Find missing operators
+                missing_operators = set(operators_with_bundles) - operators_in_tags
+
+                if missing_operators:
+                    error_msg = (
+                        f"The following operators with bundles are missing from matching tags: {sorted(missing_operators)}\n"
+                        f"Operators with bundles in this release: {sorted(operators_with_bundles)}\n"
+                        f"Matching tags: {sorted(matching_tags)}"
+                    )
+                    LOGGER.error(error_msg)
+                    raise IOError(error_msg)
+                else:
+                    LOGGER.info(
+                        "All operators with bundles in this release are present in matching tags (%s operators)",
+                        len(operators_with_bundles),
+                    )
             fragments = [f"{self.DEFAULT_STAGE_FBC_REPO}:{tag}" for tag in matching_tags]
 
         merger = KonfluxFbcFragmentMerger(
@@ -258,9 +325,32 @@ class FbcMergeCli:
             konflux_kubeconfig=self.konflux_kubeconfig,
             konflux_namespace=self.konflux_namespace,
             skip_checks=self.skip_checks,
+            skip_fips_check=self.skip_fips_check,
             plr_template=self.plr_template,
+            major_minor_override=(major, minor) if self.major_minor else None,
         )
-        await merger.run(fragments, target_index)
+        # Mint a per-invocation GitHub App token for git-clone auth
+        git_auth_secret = await merger._konflux_client.ensure_git_auth_secret(
+            namespace=self.konflux_namespace,
+        )
+        refresh_task = asyncio.create_task(merger._konflux_client.token_refresh_loop(namespace=self.konflux_namespace))
+        try:
+            await merger.run(fragments, target_index, git_auth_secret=git_auth_secret)
+        finally:
+            refresh_task.cancel()
+            try:
+                await refresh_task
+            except asyncio.CancelledError:
+                pass
+            try:
+                await merger._konflux_client.delete_git_auth_secret(
+                    namespace=self.konflux_namespace,
+                )
+                await merger._konflux_client.cleanup_stale_git_auth_secrets(
+                    namespace=self.konflux_namespace,
+                )
+            except Exception as e:
+                LOGGER.warning("Failed to cleanup git-auth secrets: %s", e)
 
 
 @cli.command("beta:fbc:merge", short_help="Merge FBC fragments from multiple index images into a single FBC repository")
@@ -284,10 +374,8 @@ class FbcMergeCli:
 @click.option(
     '--konflux-namespace',
     metavar='NAMESPACE',
-    default=constants.KONFLUX_DEFAULT_NAMESPACE,
-    help='The namespace to use for Konflux cluster connections.',
+    help='The namespace to use for Konflux cluster connections. If not provided, will be auto-detected based on group (e.g., ocp-art-tenant for openshift- groups, art-oadp-tenant for oadp- groups).',
 )
-@click.option('--skip-checks', default=False, is_flag=True, help='Skip all post build checks')
 @click.option(
     '--fbc-repo',
     metavar='FBC_REPO',
@@ -308,11 +396,17 @@ class FbcMergeCli:
     help='Use a custom PipelineRun template to build the FBC fragement. Overrides the default template from openshift-priv/art-konflux-template',
 )
 @click.option('--skip-checks', is_flag=True, default=False, help='Skip all post build checks')
+@click.option('--skip-fips-check', is_flag=True, default=False, help='Skip the FIPS compliance check task')
 @click.option(
     '--target-index',
     metavar='TARGET_INDEX',
     default=None,
     help='The target index image to merge fragments into. If not specified, a default index will be used.',
+)
+@click.option(
+    "--major-minor",
+    metavar='MAJOR.MINOR',
+    help="Override the MAJOR.MINOR version from group config (e.g. 4.17).",
 )
 @click.argument("fragments", nargs=-1, required=False)
 @click_coroutine
@@ -320,7 +414,7 @@ async def fbc_merge(
     runtime: Runtime,
     konflux_kubeconfig: Optional[str],
     konflux_context: Optional[str],
-    konflux_namespace: str,
+    konflux_namespace: Optional[str],
     fragments: Tuple[str, ...],
     message: str,
     dry_run: bool,
@@ -329,14 +423,23 @@ async def fbc_merge(
     dest_dir: Optional[str],
     registry_auth: Optional[str],
     skip_checks: bool,
+    skip_fips_check: bool,
     plr_template: Optional[str],
     target_index: Optional[str],
+    major_minor: Optional[str],
 ):
     """
     Merge FBC fragments from multiple index images into a single FBC repository.
 
     If no input is provided, use quay.io/openshift-art/stage-fbc-fragments:ocp__{MAJOR}.{MINOR}__*.
     """
+    # Initialize runtime to populate runtime.product before using resolver functions
+    runtime.initialize(build_system='konflux', config_only=True)
+
+    # Resolve kubeconfig and namespace using product-based utility functions
+    resolved_kubeconfig = resolve_konflux_kubeconfig_by_product(runtime.product, konflux_kubeconfig)
+    resolved_namespace = resolve_konflux_namespace_by_product(runtime.product, konflux_namespace)
+
     cli = FbcMergeCli(
         runtime=runtime,
         fragments=fragments,
@@ -346,12 +449,14 @@ async def fbc_merge(
         fbc_branch=fbc_branch,
         dest_dir=dest_dir,
         registry_auth=registry_auth,
-        konflux_kubeconfig=konflux_kubeconfig,
+        konflux_kubeconfig=resolved_kubeconfig,
         konflux_context=konflux_context,
-        konflux_namespace=konflux_namespace,
+        konflux_namespace=resolved_namespace,
         skip_checks=skip_checks,
+        skip_fips_check=skip_fips_check,
         plr_template=plr_template,
         target_index=target_index,
+        major_minor=major_minor,
     )
     await cli.run()
 
@@ -376,6 +481,8 @@ class FbcRebaseAndBuildCli:
         output: str,
         reset_to_prod: bool,
         prod_registry_auth: Optional[str] = None,
+        major_minor: Optional[str] = None,
+        insert_missing_entry: bool = False,
     ):
         self.runtime = runtime
         self.version = version
@@ -394,6 +501,8 @@ class FbcRebaseAndBuildCli:
         self.output = output
         self.reset_to_prod = reset_to_prod
         self.prod_registry_auth = prod_registry_auth
+        self.major_minor = major_minor
+        self.insert_missing_entry = insert_missing_entry
         self._logger = LOGGER.getChild("FbcRebaseAndBuildCli")
         self._db_for_bundles = KonfluxDb()
         self._db_for_bundles.bind(KonfluxBundleBuildRecord)
@@ -413,7 +522,7 @@ class FbcRebaseAndBuildCli:
         if operator_nvrs:
             # Get build records for the given operator nvrs
             LOGGER.info("Fetching given nvrs from Konflux DB...")
-            records = await self.runtime.konflux_db.get_build_records_by_nvrs(operator_nvrs)
+            records = await self.runtime.konflux_db.get_build_records_by_nvrs(operator_nvrs, exclude_large_columns=True)
             for record in records:
                 assert record is not None and isinstance(record, KonfluxBuildRecord), "Invalid record. Doozer bug?"
                 dgk_records[record.name] = record
@@ -431,7 +540,9 @@ class FbcRebaseAndBuildCli:
             operator_metas: List[ImageMetadata] = [
                 operator_meta for operator_meta in self.runtime.ordered_image_metas() if operator_meta.is_olm_operator
             ]
-            records = await asyncio.gather(*(metadata.get_latest_build() for metadata in operator_metas))
+            records = await asyncio.gather(
+                *(metadata.get_latest_build(exclude_large_columns=True) for metadata in operator_metas)
+            )
             not_found = [metadata.distgit_key for metadata, record in zip(operator_metas, records) if record is None]
             if not_found:
                 raise DoozerFatalError(f"Couldn't find build records for {not_found}")
@@ -501,6 +612,7 @@ class FbcRebaseAndBuildCli:
         where = {
             "name": fbc_name,
             "group": self.runtime.group,
+            "assembly": self.runtime.assembly,
             "outcome": str(KonfluxBuildOutcome.SUCCESS),
         }
 
@@ -523,6 +635,7 @@ class FbcRebaseAndBuildCli:
         builder: KonfluxFbcBuilder,
         operator_meta: ImageMetadata,
         bundle_build: KonfluxBundleBuildRecord,
+        git_auth_secret: Optional[str] = None,
     ) -> str:
         """Rebase and build FBC for the given operator and bundle build.
 
@@ -530,6 +643,7 @@ class FbcRebaseAndBuildCli:
         :param builder: FBC builder instance
         :param operator_meta: Operator metadata
         :param bundle_build: Bundle build record
+        :param git_auth_secret: Name of the transient git-auth Secret for PipelineRuns
         :return: NVR of the FBC build
         """
         existing_fbc_build = await self._check_existing_fbc_build(operator_meta, bundle_build)
@@ -546,7 +660,7 @@ class FbcRebaseAndBuildCli:
         self._logger.info(f"Rebasing fbc for {operator_meta.name}...")
         nvr = await rebaser.rebase(operator_meta, bundle_build, self.version, self.release)
         self._logger.info(f"Building fbc for {operator_meta.name}...")
-        await builder.build(operator_meta)
+        await builder.build(operator_meta, operator_nvr=bundle_build.operator_nvr, git_auth_secret=git_auth_secret)
         return nvr
 
     async def run(self):
@@ -581,11 +695,22 @@ class FbcRebaseAndBuildCli:
         self._logger.info(f"Processing {len(dgk_operator_builds)} operator(s): {list(dgk_operator_builds.keys())}")
 
         # Set up rebase and build components once
+        if self.major_minor:
+            try:
+                major_str, minor_str = self.major_minor.split(".")
+                ocp_version = (int(major_str), int(minor_str))
+            except (ValueError, AttributeError):
+                raise ValueError(
+                    f"Invalid major-minor format: {self.major_minor}. Expected format: MAJOR.MINOR (e.g. 4.17)"
+                )
+        else:
+            ocp_version = (runtime.group_config.vars.MAJOR, runtime.group_config.vars.MINOR)
+
         importer = KonfluxFbcImporter(
             base_dir=Path(runtime.working_dir, constants.WORKING_SUBDIR_KONFLUX_FBC_SOURCES),
             group=runtime.group,
             assembly=assembly,
-            ocp_version=(runtime.group_config.vars.MAJOR, runtime.group_config.vars.MINOR),
+            ocp_version=ocp_version,
             upcycle=runtime.upcycle,
             push=False,  # We will push after rebase
             commit_message=self.commit_message,
@@ -603,6 +728,8 @@ class FbcRebaseAndBuildCli:
             push=not self.dry_run,
             fbc_repo=self.fbc_repo,
             upcycle=runtime.upcycle,
+            ocp_version_override=ocp_version if self.major_minor else None,
+            insert_missing_entry=self.insert_missing_entry,
             record_logger=runtime.record_logger,
         )
 
@@ -610,6 +737,7 @@ class FbcRebaseAndBuildCli:
             base_dir=Path(runtime.working_dir, constants.WORKING_SUBDIR_KONFLUX_FBC_SOURCES),
             group=runtime.group,
             assembly=runtime.assembly,
+            product=runtime.product,
             db=self._fbc_db,
             fbc_repo=self.fbc_repo,
             konflux_kubeconfig=self.konflux_kubeconfig,
@@ -619,27 +747,81 @@ class FbcRebaseAndBuildCli:
             skip_checks=self.skip_checks,
             pipelinerun_template_url=self.plr_template,
             dry_run=self.dry_run,
+            major_minor_override=ocp_version if self.major_minor else None,
             record_logger=runtime.record_logger,
         )
 
+        # Mint a per-invocation GitHub App token for git-clone auth
+        git_auth_secret = await builder._konflux_client.ensure_git_auth_secret(
+            namespace=self.konflux_namespace,
+        )
+        refresh_task = asyncio.create_task(builder._konflux_client.token_refresh_loop(namespace=self.konflux_namespace))
+
         tasks = [
-            self._rebase_and_build(importer, rebaser, builder, self.runtime.image_map[dgk], bundle_build)
+            self._rebase_and_build(
+                importer,
+                rebaser,
+                builder,
+                self.runtime.image_map[dgk],
+                bundle_build,
+                git_auth_secret=git_auth_secret,
+            )
             for dgk, bundle_build in dgk_bundle_builds.items()
         ]
 
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        failed_tasks = []
-        for dgk, result in zip(dgk_bundle_builds, results):
-            if isinstance(result, Exception):
-                failed_tasks.append(dgk)
-                stack_trace = ''.join(traceback.TracebackException.from_exception(result).format())
-                LOGGER.error(f"Failed to rebase/build FBC for {dgk}: {result}; {stack_trace}")
+        try:
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            successful_nvrs = []
+            failed_tasks = []
+            errors = []
 
-        if failed_tasks:
-            raise DoozerFatalError(f"Failed to rebase/build FBC for bundles: {', '.join(failed_tasks)}")
+            for dgk, result in zip(dgk_bundle_builds, results):
+                if isinstance(result, Exception):
+                    failed_tasks.append(dgk)
+                    stack_trace = ''.join(traceback.TracebackException.from_exception(result).format())
+                    error_msg = f"Failed to rebase/build FBC for {dgk}: {result}"
+                    error_details = {
+                        "operator": dgk,
+                        "operator_nvr": dgk_operator_builds[dgk].nvr,
+                        "bundle_nvr": dgk_bundle_builds[dgk].nvr,
+                        "error": str(result),
+                        "traceback": stack_trace,
+                    }
+                    errors.append(error_details)
+                    LOGGER.error(f"{error_msg}; {stack_trace}")
+                else:
+                    successful_nvrs.append(result)
+        finally:
+            refresh_task.cancel()
+            try:
+                await refresh_task
+            except asyncio.CancelledError:
+                pass
+            try:
+                await builder._konflux_client.delete_git_auth_secret(
+                    namespace=self.konflux_namespace,
+                )
+                await builder._konflux_client.cleanup_stale_git_auth_secrets(
+                    namespace=self.konflux_namespace,
+                )
+            except Exception as e:
+                LOGGER.warning("Failed to cleanup git-auth secrets: %s", e)
+
         if self.output == 'json':
-            click.echo(json.dumps({"nvrs": results}, indent=4))
-        LOGGER.info("FBC rebase and build process completed successfully for all operators")
+            output_data = {
+                "nvrs": successful_nvrs,
+                "errors": errors,
+                "failed_count": len(failed_tasks),
+                "success_count": len(successful_nvrs),
+            }
+            click.echo(json.dumps(output_data, indent=4))
+            if failed_tasks:
+                LOGGER.error(f"Failed to rebase/build FBC for bundles: {', '.join(failed_tasks)}")
+                sys.exit(1)
+        else:
+            if failed_tasks:
+                raise DoozerFatalError(f"Failed to rebase/build FBC for bundles: {', '.join(failed_tasks)}")
+            LOGGER.info("FBC rebase and build process completed successfully for all operators")
 
 
 @cli.command("beta:fbc:rebase-and-build", short_help="Rebase FBC source content and then build it")
@@ -666,7 +848,7 @@ class FbcRebaseAndBuildCli:
 @click.option(
     '--konflux-namespace',
     metavar='NAMESPACE',
-    default=constants.KONFLUX_DEFAULT_NAMESPACE,
+    default=KONFLUX_DEFAULT_NAMESPACE,
     help='The namespace to use for Konflux cluster connections.',
 )
 @click.option('--image-repo', default=constants.KONFLUX_DEFAULT_FBC_REPO, help='Push images to the specified repo.')
@@ -704,6 +886,17 @@ class FbcRebaseAndBuildCli:
     " This might be needed if --reset-to-prod is used and the production index image requires authentication."
     " If not set, the KONFLUX_OPERATOR_INDEX_AUTH_FILE environment variable will be used if set.",
 )
+@click.option(
+    "--major-minor",
+    metavar='MAJOR.MINOR',
+    help="Override the MAJOR.MINOR version from group config (e.g. 4.17).",
+)
+@click.option(
+    "--insert-missing-entry",
+    is_flag=True,
+    default=False,
+    help="Insert the new bundle entry in version order instead of appending. Use this to fix missing entries that were removed from the catalog.",
+)
 @click.argument('operator_nvrs', nargs=-1, required=False)
 @pass_runtime
 @click_coroutine
@@ -724,6 +917,8 @@ async def fbc_rebase_and_build(
     output: str,
     reset_to_prod: bool,
     prod_registry_auth: Optional[str],
+    major_minor: Optional[str],
+    insert_missing_entry: bool,
     operator_nvrs: Tuple[str, ...],
 ):
     """
@@ -737,7 +932,9 @@ async def fbc_rebase_and_build(
         konflux_kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
 
     if not konflux_kubeconfig:
-        raise ValueError("Must pass kubeconfig using --konflux-kubeconfig or KONFLUX_SA_KUBECONFIG env var")
+        LOGGER.info(
+            "--konflux-kubeconfig and KONFLUX_SA_KUBECONFIG env var are not set. Will rely on oc being logged in"
+        )
 
     if reset_to_prod and not prod_registry_auth:
         prod_registry_auth = os.environ.get('KONFLUX_OPERATOR_INDEX_AUTH_FILE')
@@ -760,5 +957,7 @@ async def fbc_rebase_and_build(
         output=output,
         reset_to_prod=reset_to_prod,
         prod_registry_auth=prod_registry_auth,
+        major_minor=major_minor,
+        insert_missing_entry=insert_missing_entry,
     )
     await cli.run()

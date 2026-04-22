@@ -1,32 +1,206 @@
 import asyncio
+import base64
 import datetime
+import hashlib
+import json
 import logging
 import os
 import random
+import re
+import shutil
+import tempfile
+import threading
 import time
-import traceback
-from typing import Dict, List, Optional, Sequence, Union, cast
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Dict, List, NamedTuple, Optional, Sequence, Union, cast
+from urllib.parse import parse_qs, urlparse
 
-import aiohttp
 import jinja2
 from artcommonlib import exectools
 from artcommonlib import util as art_util
+from artcommonlib.constants import KONFLUX_DEFAULT_NAMESPACE
+from artcommonlib.github_auth import get_github_app_token_for_org
 from async_lru import alru_cache
 from doozerlib import constants
+from doozerlib.backend.konflux_watcher import KonfluxWatcher
+from doozerlib.backend.pipelinerun_utils import PipelineRunInfo
 from kubernetes import config, watch
-from kubernetes.client import ApiClient, Configuration, CoreV1Api
+from kubernetes.client import ApiClient, ApiException, Configuration, CoreV1Api, V1ObjectMeta, V1Secret
 from kubernetes.dynamic import DynamicClient, exceptions, resource
 from ruamel.yaml import YAML
 
 yaml = YAML(typ="safe")
 LOGGER = logging.getLogger(__name__)
 
+# Prefix and label for transient git-auth secrets created per doozer invocation.
+# Each invocation mints a GitHub App installation token and stores it in a
+# uniquely-named Secret so concurrent builds never contend on the same object.
+_GIT_AUTH_SECRET_PREFIX = "art-transient-pipeline-auth-"
+_GIT_AUTH_SECRET_LABEL_KEY = "art.openshift.io/git-auth"
+_GIT_AUTH_SECRET_LABEL_VALUE = "true"
+_GIT_AUTH_GENERATED_BY_LABEL_KEY = "art.openshift.io/generated-by"
+_GIT_AUTH_GENERATED_BY_LABEL_VALUE = "art-automation"
+
+# Label key used to filter PipelineRuns for this process
+_COMMON_RUNTIME_LABEL_KEY = "doozer-watch-id"
+# Label value is set once on first use and remains fixed for the process lifetime
+_COMMON_RUNTIME_LABEL_VALUE = None
+_COMMON_RUNTIME_LABEL_LOCK = threading.Lock()
+
+
+def get_common_runtime_watcher_labels() -> Dict[str, str]:
+    """
+    Get the common runtime watcher labels that identify PipelineRuns for this doozer invocation.
+
+    The label value is generated once on first call and remains fixed for the process lifetime.
+    Uses nanoseconds since epoch for uniqueness.
+
+    :return: Dict of label key-value pairs
+    """
+    global _COMMON_RUNTIME_LABEL_VALUE
+    with _COMMON_RUNTIME_LABEL_LOCK:
+        if _COMMON_RUNTIME_LABEL_VALUE is None:
+            # Use nanoseconds since epoch for uniqueness
+            _COMMON_RUNTIME_LABEL_VALUE = str(time.time_ns())
+        return {_COMMON_RUNTIME_LABEL_KEY: _COMMON_RUNTIME_LABEL_VALUE}
+
+
+@dataclass
+class ECVerificationResult:
+    """Result of an enterprise-contract verification run."""
+
+    ec_status: object  # KonfluxECStatus (imported lazily to avoid circular imports)
+    ec_pipeline_url: str
+    ec_failed: bool
+
+
+class GitHubApiUrlInfo(NamedTuple):
+    """Parsed GitHub API URL components."""
+
+    owner: str
+    repo: str
+    file_path: str
+    ref: str
+
+
+def parse_github_api_url(api_url: str) -> GitHubApiUrlInfo:
+    """Parse a GitHub API contents URL into its components.
+
+    Expected format: https://api.github.com/repos/{owner}/{repo}/contents/{path}?ref={ref}
+
+    :param api_url: GitHub API URL for file contents
+    :return: GitHubApiUrlInfo with owner, repo, file_path, and ref
+    :raises ValueError: If the URL doesn't match the expected format
+    """
+    parsed = urlparse(api_url)
+
+    if parsed.netloc != 'api.github.com':
+        raise ValueError(f'Expected api.github.com URL, got: {parsed.netloc}')
+
+    # Path format: /repos/{owner}/{repo}/contents/{file_path}
+    match = re.match(r'^/repos/([^/]+)/([^/]+)/contents/(.+)$', parsed.path)
+    if not match:
+        raise ValueError(f'URL path does not match expected format: {parsed.path}')
+
+    owner, repo, file_path = match.groups()
+
+    # Parse query string for ref
+    query_params = parse_qs(parsed.query)
+    ref = query_params.get('ref', ['main'])[0]
+
+    return GitHubApiUrlInfo(owner=owner, repo=repo, file_path=file_path, ref=ref)
+
+
+# Global lock and cache for template repository clones
+_TEMPLATE_REPO_LOCK = threading.Lock()
+_TEMPLATE_REPO_CACHE: Dict[str, Path] = {}  # Maps repo URL to local path
+
+
+def _get_template_cache_dir() -> Path:
+    """Get or create the cache directory for template repositories.
+
+    Uses DOOZER_CACHE_DIR if set, otherwise uses system temp directory.
+
+    :return: Path to the cache directory
+    """
+    cache_base = os.getenv('DOOZER_CACHE_DIR') or tempfile.gettempdir()
+    cache_dir = Path(cache_base) / 'konflux-plr-templates'
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    return cache_dir
+
+
+def _clone_or_update_template_repo(git_url: str, ref: str) -> Path:
+    """Clone or update a template repository locally.
+
+    Uses a global cache to avoid cloning the same repo multiple times.
+    The repo is cloned once and then fetched/checked out to the desired ref.
+
+    :param git_url: HTTPS URL to the git repository
+    :param ref: Branch, tag, or commit to checkout
+    :return: Path to the local repository clone
+    """
+    # Create a unique directory name based on the repo URL
+    repo_hash = hashlib.sha256(git_url.encode()).hexdigest()[:12]
+    # Extract repo name for readability
+    repo_name = git_url.rstrip('/').split('/')[-1].replace('.git', '')
+    cache_key = f"{repo_name}-{repo_hash}"
+
+    with _TEMPLATE_REPO_LOCK:
+        if cache_key in _TEMPLATE_REPO_CACHE:
+            repo_path = _TEMPLATE_REPO_CACHE[cache_key]
+            if repo_path.exists():
+                LOGGER.debug(f"Using cached template repo at {repo_path}")
+                # Fetch latest and checkout the ref
+                try:
+                    exectools.cmd_assert(f'git -C {repo_path} fetch --all --prune', retries=3)
+                    exectools.cmd_assert(f'git -C {repo_path} checkout {ref}', retries=3)
+                    # If ref is a branch, pull latest
+                    exectools.cmd_gather(f'git -C {repo_path} pull --ff-only 2>/dev/null || true')
+                    return repo_path
+                except Exception as e:
+                    LOGGER.warning(f"Failed to update cached repo, will re-clone: {e}")
+                    # Fall through to clone
+
+        # Clone the repository with retries
+        cache_dir = _get_template_cache_dir()
+        repo_path = cache_dir / cache_key
+
+        # Retry clone operation with deletion between attempts to handle race conditions
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                # Remove any existing directory to avoid "already exists" errors
+                if repo_path.exists():
+                    shutil.rmtree(repo_path, ignore_errors=True)
+
+                LOGGER.info(f"Cloning template repo {git_url} to {repo_path} (attempt {attempt + 1}/{max_retries})")
+                exectools.cmd_assert(f'git clone --no-single-branch {git_url} {repo_path}')
+                exectools.cmd_assert(f'git -C {repo_path} checkout {ref}')
+                break  # Success, exit retry loop
+            except ChildProcessError as e:
+                if attempt < max_retries - 1:
+                    # Not the last attempt, wait and retry
+                    LOGGER.warning(f"Clone attempt {attempt + 1} failed: {e}. Retrying in 5 seconds...")
+                    time.sleep(5)
+                    continue
+                else:
+                    # Last attempt failed, raise the error
+                    LOGGER.error(f"All {max_retries} clone attempts failed for {git_url}")
+                    raise
+
+        _TEMPLATE_REPO_CACHE[cache_key] = repo_path
+        return repo_path
+
+
 API_VERSION = "appstudio.redhat.com/v1alpha1"
+API_VERSION_V1BETA2 = "appstudio.redhat.com/v1beta2"
 KIND_SNAPSHOT = "Snapshot"
 KIND_COMPONENT = "Component"
 KIND_APPLICATION = "Application"
 KIND_RELEASE = "Release"
 KIND_RELEASE_PLAN = "ReleasePlan"
+KIND_INTEGRATION_TEST_SCENARIO = "IntegrationTestScenario"
 
 DEFAULT_WAIT_HOURS_RELEASE = 5
 
@@ -54,10 +228,13 @@ class KonfluxClient:
         self.default_namespace = default_namespace
         self.dry_run = dry_run
         self._logger = logger
+        self._config = config  # Store Configuration for watcher
         # In case of a network outage,  the client may hang indefinitely without raising any exception.
         # This is a workaround to set a timeout for the requests.
         # https://github.com/kubernetes-client/python/blob/master/examples/watch/timeout-settings.md
         self.request_timeout = 60 * 5  # 5 minutes
+        # Cached per-invocation git-auth secret name (created once, reused for all PLRs)
+        self._git_auth_secret_name: Optional[str] = None
 
     def verify_connection(self):
         try:
@@ -66,6 +243,242 @@ class KonfluxClient:
         except Exception as e:
             self._logger.error(f"Failed to authenticate to the Kubernetes cluster: {e}")
             raise
+
+    async def ensure_git_auth_secret(self, namespace: Optional[str] = None, org: str = "openshift-priv") -> str:
+        """Mint a GitHub App installation token and store it in a per-invocation
+        Kubernetes Secret for use as a git-clone basic-auth credential.
+
+        The secret is created once per KonfluxClient instance and reused for all
+        PipelineRuns in the same doozer invocation — no contention between
+        concurrent builds.
+
+        Falls back to the static "pipelines-as-code-secret" when GitHub App
+        credentials are not configured (GITHUB_APP_ID unset).
+
+        :param namespace: Target namespace. Defaults to self.default_namespace.
+        :param org: GitHub org whose installation token to mint.
+                    Defaults to "openshift-priv" (where Konflux build sources live).
+        :return: The secret name to wire into PipelineRun workspaces.
+        """
+        if self._git_auth_secret_name:
+            return self._git_auth_secret_name
+
+        if not os.environ.get("GITHUB_APP_ID"):
+            self._logger.info("GITHUB_APP_ID not set; falling back to static pipelines-as-code-secret")
+            return "pipelines-as-code-secret"
+
+        namespace = namespace or self.default_namespace
+
+        # Mint a short-lived installation token (valid ~1 hour).
+        # A background refresh loop (token_refresh_loop) keeps the secret
+        # up-to-date for PipelineRuns that sit in the Kueue queue longer than
+        # the token's lifetime.
+        token = await exectools.to_thread(get_github_app_token_for_org, org)
+
+        # Nanosecond epoch avoids name collisions when multiple doozer
+        # invocations start within the same second.  A human-readable
+        # timestamp would need sanitising for k8s naming rules and still
+        # risk collisions at second granularity, so raw nanoseconds are
+        # the safest choice.  Use the helper below to decode:
+        #   python3 -c "import datetime as d; print(d.datetime.fromtimestamp(<ns>/1e9, d.timezone.utc))"
+        epoch_ns = time.time_ns()
+        secret_name = f"{_GIT_AUTH_SECRET_PREFIX}{epoch_ns}"
+        now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+        secret = V1Secret(
+            api_version="v1",
+            kind="Secret",
+            type="kubernetes.io/basic-auth",
+            metadata=V1ObjectMeta(
+                name=secret_name,
+                namespace=namespace,
+                labels={
+                    _GIT_AUTH_SECRET_LABEL_KEY: _GIT_AUTH_SECRET_LABEL_VALUE,
+                    _GIT_AUTH_GENERATED_BY_LABEL_KEY: _GIT_AUTH_GENERATED_BY_LABEL_VALUE,
+                },
+                annotations={
+                    "art.openshift.io/created-at": now,
+                    "art-jenkins-job-url": os.getenv("BUILD_URL", "n/a"),
+                },
+            ),
+            # basic-auth secrets expect "username" and "password" keys
+            data={
+                "username": base64.b64encode(b"x-access-token").decode(),
+                "password": base64.b64encode(token.encode()).decode(),
+            },
+        )
+
+        if self.dry_run:
+            self._logger.warning(f"[DRY RUN] Would have created git-auth Secret {namespace}/{secret_name}")
+        else:
+            await exectools.to_thread(
+                self.corev1_client.create_namespaced_secret,
+                namespace=namespace,
+                body=secret,
+                _request_timeout=self.request_timeout,
+            )
+            self._logger.info(f"Created git-auth Secret {namespace}/{secret_name}")
+
+        self._git_auth_secret_name = secret_name
+        return secret_name
+
+    async def delete_git_auth_secret(self, namespace: Optional[str] = None) -> None:
+        """Delete the transient git-auth secret created by this invocation.
+
+        No-op when no transient secret was created (e.g. fallback to the static
+        pipelines-as-code-secret).  A 404 from the API is silently ignored so
+        that concurrent or repeated calls are safe.
+
+        :param namespace: Target namespace. Defaults to self.default_namespace.
+        """
+        secret_name = self._git_auth_secret_name
+        if not secret_name or not secret_name.startswith(_GIT_AUTH_SECRET_PREFIX):
+            return
+
+        namespace = namespace or self.default_namespace
+
+        if self.dry_run:
+            self._logger.warning(f"[DRY RUN] Would have deleted git-auth Secret {namespace}/{secret_name}")
+        else:
+            try:
+                await exectools.to_thread(
+                    self.corev1_client.delete_namespaced_secret,
+                    name=secret_name,
+                    namespace=namespace,
+                    _request_timeout=self.request_timeout,
+                )
+                self._logger.info(f"Deleted git-auth Secret {namespace}/{secret_name}")
+            except ApiException as e:
+                if e.status == 404:
+                    self._logger.debug(f"Secret {secret_name} already deleted by another process")
+                else:
+                    self._logger.warning(f"Failed to delete git-auth Secret {secret_name}: {e}")
+
+        self._git_auth_secret_name = None
+
+    async def refresh_git_auth_secret(self, namespace: Optional[str] = None, org: str = "openshift-priv") -> None:
+        """Re-mint the GitHub App installation token and update the existing
+        Kubernetes Secret in-place.
+
+        This keeps the token valid for PipelineRuns that have been queued
+        longer than the token's 1-hour lifetime. Tekton reads Secret data
+        when the Pod is actually scheduled, so updating the Secret while a
+        PipelineRun is Pending ensures the git-clone task gets a valid token.
+
+        No-op when:
+        - No transient secret was created (static fallback)
+        - Running in dry-run mode
+
+        :param namespace: Target namespace. Defaults to self.default_namespace.
+        :param org: GitHub org whose installation token to mint.
+        """
+        secret_name = self._git_auth_secret_name
+        if not secret_name or not secret_name.startswith(_GIT_AUTH_SECRET_PREFIX):
+            return
+
+        if self.dry_run:
+            self._logger.warning(f"[DRY RUN] Would have refreshed git-auth Secret {secret_name}")
+            return
+
+        namespace = namespace or self.default_namespace
+
+        token = await exectools.to_thread(get_github_app_token_for_org, org)
+        now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+        try:
+            existing = await exectools.to_thread(
+                self.corev1_client.read_namespaced_secret,
+                name=secret_name,
+                namespace=namespace,
+                _request_timeout=self.request_timeout,
+            )
+            existing.data["password"] = base64.b64encode(token.encode()).decode()
+            existing.metadata.annotations["art.openshift.io/created-at"] = now
+            await exectools.to_thread(
+                self.corev1_client.replace_namespaced_secret,
+                name=secret_name,
+                namespace=namespace,
+                body=existing,
+                _request_timeout=self.request_timeout,
+            )
+            self._logger.info(f"Refreshed git-auth Secret {namespace}/{secret_name}")
+        except ApiException as e:
+            if e.status == 404:
+                self._logger.debug(f"Secret {secret_name} already deleted; skipping refresh")
+                self._git_auth_secret_name = None
+            else:
+                raise
+
+    async def token_refresh_loop(
+        self,
+        namespace: Optional[str] = None,
+        org: str = "openshift-priv",
+        interval_seconds: int = 45 * 60,
+    ) -> None:
+        """Periodically refresh the transient git-auth secret.
+
+        Runs until cancelled. Intended to be launched as an asyncio task
+        alongside PipelineRun build tasks so that the token stays valid
+        for jobs queued longer than the 1-hour token lifetime.
+
+        :param namespace: Target namespace. Defaults to self.default_namespace.
+        :param org: GitHub org whose installation token to mint.
+        :param interval_seconds: Seconds between refreshes (default 45 min).
+        """
+        while True:
+            await asyncio.sleep(interval_seconds)
+            try:
+                await self.refresh_git_auth_secret(namespace=namespace, org=org)
+            except Exception as exc:
+                self._logger.warning(f"Failed to refresh git-auth secret (will retry next cycle): {exc}")
+
+    async def cleanup_stale_git_auth_secrets(self, namespace: Optional[str] = None, max_age_hours: int = 24) -> None:
+        """Delete transient git-auth secrets older than *max_age_hours*.
+
+        Safe to call from concurrent doozer invocations: if two jobs race to
+        delete the same secret the loser simply gets a 404, which is ignored.
+
+        :param namespace: Target namespace. Defaults to self.default_namespace.
+        :param max_age_hours: Secrets older than this are deleted.
+        """
+        namespace = namespace or self.default_namespace
+        label_selector = (
+            f"{_GIT_AUTH_SECRET_LABEL_KEY}={_GIT_AUTH_SECRET_LABEL_VALUE},"
+            f"{_GIT_AUTH_GENERATED_BY_LABEL_KEY}={_GIT_AUTH_GENERATED_BY_LABEL_VALUE}"
+        )
+
+        secrets = await exectools.to_thread(
+            self.corev1_client.list_namespaced_secret,
+            namespace=namespace,
+            label_selector=label_selector,
+            _request_timeout=self.request_timeout,
+        )
+
+        cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=max_age_hours)
+
+        for secret in secrets.items:
+            created = secret.metadata.creation_timestamp
+            if created and created >= cutoff:
+                continue
+
+            if self.dry_run:
+                self._logger.warning(f"[DRY RUN] Would have deleted stale git-auth Secret {secret.metadata.name}")
+                continue
+
+            try:
+                await exectools.to_thread(
+                    self.corev1_client.delete_namespaced_secret,
+                    name=secret.metadata.name,
+                    namespace=namespace,
+                    _request_timeout=self.request_timeout,
+                )
+                self._logger.info(f"Deleted stale git-auth Secret {secret.metadata.name}")
+            except ApiException as e:
+                # Another concurrent invocation may have already deleted it
+                if e.status == 404:
+                    self._logger.debug(f"Secret {secret.metadata.name} already deleted by another process")
+                else:
+                    self._logger.warning(f"Failed to delete stale Secret {secret.metadata.name}: {e}")
 
     @staticmethod
     def from_kubeconfig(
@@ -408,20 +821,347 @@ class KonfluxClient:
         component = self._new_component(name, application, component_name, image_repo, source_url, revision)
         return await self._create_or_replace(component)
 
-    @alru_cache
-    async def _get_pipelinerun_template(self, template_url: str):
-        """Get a PipelineRun template.
+    @staticmethod
+    def _new_integration_test_scenario(
+        name: str,
+        application_name: str,
+        application_uid: str,
+        policy_configuration: str,
+        ec_pipeline_url: str = constants.KONFLUX_EC_PIPELINE_GIT_URL,
+        ec_pipeline_revision: str = constants.KONFLUX_EC_PIPELINE_REVISION,
+        ec_pipeline_path: str = constants.KONFLUX_EC_PIPELINE_PATH,
+    ) -> dict:
+        """Create an IntegrationTestScenario manifest for enterprise-contract verification.
 
-        :param template_url: The URL to the template.
-        :return: The template.
+        :param name: The name of the ITS resource.
+        :param application_name: The application name.
+        :param application_uid: The UID of the Application resource (for ownerReference).
+        :param policy_configuration: The EC policy configuration (e.g. rhtap-releng-tenant/registry-ocp-art-stage).
+        :param ec_pipeline_url: The git URL for the EC pipeline.
+        :param ec_pipeline_revision: The git revision for the EC pipeline.
+        :param ec_pipeline_path: The path to the EC pipeline in the git repo.
+        :return: The ITS manifest dict.
         """
-        self._logger.info(f"Pulling Konflux PLR template from: {template_url}")
-        async with aiohttp.ClientSession() as session:
-            async with session.get(template_url) as response:
-                response.raise_for_status()
-                template_text = await response.text()
-                template = jinja2.Template(template_text, autoescape=True)
-                return template
+        return {
+            "apiVersion": API_VERSION_V1BETA2,
+            "kind": KIND_INTEGRATION_TEST_SCENARIO,
+            "metadata": {
+                "name": name,
+                "labels": {
+                    "test.appstudio.openshift.io/optional": "true",
+                },
+                "annotations": {
+                    "test.appstudio.openshift.io/kind": "enterprise-contract",
+                },
+                "ownerReferences": [
+                    {
+                        "apiVersion": API_VERSION,
+                        "kind": KIND_APPLICATION,
+                        "name": application_name,
+                        "uid": application_uid,
+                    }
+                ],
+            },
+            "spec": {
+                "application": application_name,
+                "contexts": [
+                    {
+                        "name": "disabled",
+                        "description": "disables the execution of the given integration test "
+                        "if it's the only context that's defined",
+                    },
+                ],
+                "params": [
+                    {"name": "POLICY_CONFIGURATION", "value": policy_configuration},
+                    {"name": "SINGLE_COMPONENT", "value": "true"},
+                ],
+                "resolverRef": {
+                    "resolver": "git",
+                    "params": [
+                        {"name": "url", "value": ec_pipeline_url},
+                        {"name": "revision", "value": ec_pipeline_revision},
+                        {"name": "pathInRepo", "value": ec_pipeline_path},
+                    ],
+                    "resourceKind": "pipeline",
+                },
+            },
+        }
+
+    async def ensure_integration_test_scenario(
+        self,
+        name: str,
+        application_name: str,
+        policy_configuration: str,
+    ) -> resource.ResourceInstance:
+        """Ensure an IntegrationTestScenario exists for the given application.
+
+        Creates or patches the ITS resource idempotently. Safe for concurrent calls.
+
+        :param name: The name of the ITS resource.
+        :param application_name: The application name.
+        :param policy_configuration: The EC policy configuration.
+        :return: The ITS resource.
+        """
+        app = await self.get_application(application_name, strict=True)
+        application_uid = app.metadata.uid
+
+        its = self._new_integration_test_scenario(
+            name=name,
+            application_name=application_name,
+            application_uid=application_uid,
+            policy_configuration=policy_configuration,
+        )
+        return await self._create_or_patch(its)
+
+    @staticmethod
+    def _new_ec_pipelinerun(
+        generate_name: str,
+        namespace: str,
+        application_name: str,
+        component_name: str,
+        snapshot_json: str,
+        its_name: str,
+        policy_configuration: str,
+        watch_labels: dict,
+        ec_pipeline_url: str = constants.KONFLUX_EC_PIPELINE_GIT_URL,
+        ec_pipeline_revision: str = constants.KONFLUX_EC_PIPELINE_REVISION,
+        ec_pipeline_path: str = constants.KONFLUX_EC_PIPELINE_PATH,
+    ) -> dict:
+        """Create a PipelineRun manifest for enterprise-contract verification.
+
+        :param generate_name: The generateName prefix for the PipelineRun.
+        :param namespace: The namespace for the PipelineRun.
+        :param application_name: The application name.
+        :param component_name: The component name.
+        :param snapshot_json: JSON-encoded snapshot spec for the SNAPSHOT param.
+        :param its_name: The name of the IntegrationTestScenario.
+        :param policy_configuration: The EC policy configuration.
+        :param watch_labels: Labels for the KonfluxWatcher to track this PLR.
+        :param ec_pipeline_url: The git URL for the EC pipeline.
+        :param ec_pipeline_revision: The git revision for the EC pipeline.
+        :param ec_pipeline_path: The path to the EC pipeline in the git repo.
+        :return: The PipelineRun manifest dict.
+        """
+        labels = {
+            "appstudio.openshift.io/application": application_name,
+            "appstudio.openshift.io/component": component_name,
+            "test.appstudio.openshift.io/scenario": its_name,
+            "kueue.x-k8s.io/priority-class": "build-priority-2",
+        }
+        labels.update(watch_labels)
+
+        return {
+            "apiVersion": "tekton.dev/v1",
+            "kind": "PipelineRun",
+            "metadata": {
+                "generateName": generate_name,
+                "namespace": namespace,
+                "labels": labels,
+                "annotations": {
+                    "test.appstudio.openshift.io/kind": "enterprise-contract",
+                    "art-jenkins-job-url": os.getenv("BUILD_URL", "n/a"),
+                },
+            },
+            "spec": {
+                "pipelineRef": {
+                    "resolver": "git",
+                    "params": [
+                        {"name": "url", "value": ec_pipeline_url},
+                        {"name": "revision", "value": ec_pipeline_revision},
+                        {"name": "pathInRepo", "value": ec_pipeline_path},
+                    ],
+                },
+                "params": [
+                    {"name": "POLICY_CONFIGURATION", "value": policy_configuration},
+                    {"name": "SINGLE_COMPONENT", "value": "true"},
+                    {"name": "SNAPSHOT", "value": snapshot_json},
+                ],
+                "taskRunTemplate": {
+                    "serviceAccountName": f"build-pipeline-{component_name}",
+                },
+                "timeouts": {
+                    "pipeline": "1h",
+                },
+            },
+        }
+
+    async def start_ec_pipeline_run(
+        self,
+        namespace: str,
+        application_name: str,
+        component_name: str,
+        image_pullspec: str,
+        source_url: str,
+        commit_sha: str,
+        its_name: str,
+        policy_configuration: str,
+    ) -> PipelineRunInfo:
+        """Start an enterprise-contract verification PipelineRun.
+
+        :param namespace: The namespace for the PipelineRun.
+        :param application_name: The application name.
+        :param component_name: The component name.
+        :param image_pullspec: The built image pullspec (repo@digest).
+        :param source_url: The source git URL.
+        :param commit_sha: The source commit SHA.
+        :param its_name: The name of the IntegrationTestScenario.
+        :param policy_configuration: The EC policy configuration.
+        :return: The PipelineRunInfo for the created EC PipelineRun.
+        """
+        snapshot_spec = {
+            "application": application_name,
+            "components": [
+                {
+                    "name": component_name,
+                    "containerImage": image_pullspec,
+                    "source": {
+                        "git": {
+                            "url": source_url,
+                            "revision": commit_sha,
+                        }
+                    },
+                }
+            ],
+        }
+        snapshot_json = json.dumps(snapshot_spec)
+
+        watch_labels = get_common_runtime_watcher_labels()
+        generate_name = f"{application_name}-ec-{component_name}-"
+        # K8s names must be <= 253 chars; generateName adds 5 random chars
+        if len(generate_name) > 248:
+            generate_name = generate_name[:248]
+
+        manifest = self._new_ec_pipelinerun(
+            generate_name=generate_name,
+            namespace=namespace,
+            application_name=application_name,
+            component_name=component_name,
+            snapshot_json=snapshot_json,
+            its_name=its_name,
+            policy_configuration=policy_configuration,
+            watch_labels=watch_labels,
+        )
+
+        if self.dry_run:
+            fake_plr = resource.ResourceInstance(self.dyn_client, manifest)
+            fake_plr.metadata.name = f"{component_name}-ec-dry-run"
+            self._logger.warning(f"[DRY RUN] Would have created EC PipelineRun: {fake_plr.metadata.name}")
+            return PipelineRunInfo(fake_plr, {})
+
+        plr = await self._create(manifest, async_req=True)
+        plr_info = PipelineRunInfo(plr, {})
+        self._logger.info(f"Created EC PipelineRun: {self.resource_url(plr.to_dict())}")
+        return plr_info
+
+    async def verify_enterprise_contract(
+        self,
+        namespace: str,
+        application_name: str,
+        component_name: str,
+        image_pullspec: str,
+        source_url: str,
+        commit_sha: str,
+        ec_policy: str,
+        logger: logging.Logger,
+    ) -> ECVerificationResult:
+        """Run enterprise-contract verification for a built image.
+
+        Ensures an IntegrationTestScenario exists, starts an EC PipelineRun,
+        waits for completion, and returns the result. This is the shared entry
+        point used by image, FBC, and bundle builders.
+        """
+        from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxECStatus
+
+        ec_status = KonfluxECStatus.NOT_APPLICABLE
+        ec_pipeline_url = ''
+        ec_failed = False
+
+        try:
+            policy_suffix = ec_policy.split('/')[-1]
+            its_name = f"{application_name}-ec-{policy_suffix}"
+
+            logger.info("Ensuring IntegrationTestScenario %s exists...", its_name)
+            await self.ensure_integration_test_scenario(
+                name=its_name,
+                application_name=application_name,
+                policy_configuration=ec_policy,
+            )
+
+            logger.info("Starting EC verification PipelineRun...")
+            ec_plr_info = await self.start_ec_pipeline_run(
+                namespace=namespace,
+                application_name=application_name,
+                component_name=component_name,
+                image_pullspec=image_pullspec,
+                source_url=source_url,
+                commit_sha=commit_sha,
+                its_name=its_name,
+                policy_configuration=ec_policy,
+            )
+            ec_plr_name = ec_plr_info.name
+
+            logger.info("Waiting for EC PipelineRun %s to complete...", ec_plr_name)
+            ec_plr_info = await self.wait_for_pipelinerun(ec_plr_name, namespace=namespace)
+
+            ec_pipeline_url = self.resource_url(ec_plr_info.to_dict())
+            ec_condition = ec_plr_info.find_condition('Succeeded')
+            ec_outcome = KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition(ec_condition)
+            if ec_outcome is not KonfluxBuildOutcome.SUCCESS:
+                logger.error("EC verification failed. PLR: %s", ec_pipeline_url)
+                ec_status = KonfluxECStatus.FAILED
+                ec_failed = True
+            else:
+                logger.info("EC verification passed. PLR: %s", ec_pipeline_url)
+                ec_status = KonfluxECStatus.PASSED
+
+        except Exception:
+            logger.exception("EC verification error")
+            ec_status = KonfluxECStatus.FAILED
+            ec_failed = True
+
+        return ECVerificationResult(ec_status=ec_status, ec_pipeline_url=ec_pipeline_url, ec_failed=ec_failed)
+
+    @staticmethod
+    @alru_cache
+    async def _get_pipelinerun_template(template_url: str):
+        """Get a PipelineRun template by cloning the repository locally.
+
+        This method clones the template repository locally instead of using the GitHub API,
+        which avoids authentication issues and rate limiting. The repository is cached
+        for subsequent calls.
+
+        :param template_url: The GitHub API URL to the template (for backwards compatibility).
+                            Format: https://api.github.com/repos/{owner}/{repo}/contents/{path}?ref={ref}
+        :return: The jinja2 template.
+        :raises ValueError: If the URL format is invalid.
+        :raises FileNotFoundError: If the template file doesn't exist in the repo.
+        """
+        LOGGER.info(f"Pulling Konflux PLR template from: {template_url}")
+
+        # Parse the GitHub API URL to extract components
+        if not template_url.startswith('https://api.github.com'):
+            raise ValueError('Template URL must be a GitHub API URL (https://api.github.com/...)')
+
+        url_info = parse_github_api_url(template_url)
+
+        # Construct the git URL for cloning using HTTPS
+        # For private repos, git will use credentials from git credential helper or GITHUB_TOKEN
+        git_url = f'https://github.com/{url_info.owner}/{url_info.repo}.git'
+
+        # Clone or update the repository
+        # Run the blocking git operations in a thread pool to avoid blocking the event loop
+        loop = asyncio.get_event_loop()
+        repo_path = await loop.run_in_executor(None, _clone_or_update_template_repo, git_url, url_info.ref)
+
+        # Read the template file from the local clone
+        template_file = repo_path / url_info.file_path
+        if not template_file.exists():
+            raise FileNotFoundError(f'Template file not found: {template_file}')
+
+        LOGGER.debug(f"Reading template from local file: {template_file}")
+        template_text = template_file.read_text()
+        template = jinja2.Template(template_text, autoescape=True)
+        return template
 
     async def _new_pipelinerun_for_image_build(
         self,
@@ -438,6 +1178,8 @@ class KonfluxClient:
         git_auth_secret: str = "pipelines-as-code-secret",
         additional_tags: Optional[Sequence[str]] = None,
         skip_checks: bool = False,
+        skip_fips_check: bool = False,
+        build_priority: str = None,
         hermetic: Optional[bool] = None,
         sast: Optional[bool] = None,
         dockerfile: Optional[str] = None,
@@ -479,6 +1221,16 @@ class KonfluxClient:
         obj["metadata"]["labels"]["appstudio.openshift.io/application"] = application_name
         obj["metadata"]["labels"]["appstudio.openshift.io/component"] = component_name
 
+        # Add doozer watch labels for filtering by watcher
+        watch_labels = get_common_runtime_watcher_labels()
+        obj["metadata"]["labels"].update(watch_labels)
+
+        # Add Kueue build priority label if specified
+        if build_priority:
+            priority_class = f"build-priority-{build_priority}"
+            obj["metadata"]["labels"]["kueue.x-k8s.io/priority-class"] = priority_class
+            self._logger.info(f"Set Kueue priority class label: {priority_class}")
+
         def _modify_param(params: List, name: str, value: Union[str, bool, list[str]]):
             """Modify a parameter in the params list. If the parameter does not exist, it is added.
 
@@ -519,8 +1271,8 @@ class KonfluxClient:
 
         obj["spec"]["taskRunTemplate"]["serviceAccountName"] = service_account or f"build-pipeline-{component_name}"
 
-        # Check if RPM lockfile prefetch is being used
-        rpm_lockfile_prefetch_enabled = prefetch and any(item.get("type") == "rpm" for item in prefetch)
+        # Check if verbose prefetch is being used (RPM, generic, or yarn types)
+        verbose_prefetch_enabled = prefetch and any(item.get("type") in ("rpm", "generic", "yarn") for item in prefetch)
 
         # Task specific parameters to override in the template
         has_build_images_task = False
@@ -533,11 +1285,16 @@ class KonfluxClient:
                     _modify_param(task["params"], "SBOM_TYPE", "spdx")
                 case "prefetch-dependencies":
                     _modify_param(task["params"], "sbom-type", "spdx")
-                    if rpm_lockfile_prefetch_enabled:
+                    if verbose_prefetch_enabled:
                         _modify_param(task["params"], "dev-package-managers", "true")
                         _modify_param(task["params"], "log-level", "debug")
                 case "apply-tags":
                     _modify_param(task["params"], "ADDITIONAL_TAGS", list(additional_tags))
+                case "sast-shell-check":
+                    if namespace == "art-logging-tenant" and "vector" in component_name:
+                        # For the component "vector" in the logging namepace, we need to set the TARGET_DIRS
+                        # https://gitlab.cee.redhat.com/openshift-logging/sustaining-eng/konflux-log-collection/-/merge_requests/67/diffs
+                        _modify_param(task["params"], "TARGET_DIRS", "./cluster-logging-operator")
                 case "clone-repository":
                     _modify_param(
                         task["params"],
@@ -566,6 +1323,16 @@ class KonfluxClient:
 
             obj["spec"]["pipelineSpec"]["tasks"] = tasks
 
+        if skip_fips_check:
+            tasks = []
+            for task in obj["spec"]["pipelineSpec"]["tasks"]:
+                task_name = task.get("name")
+                if task_name == "fbc-fips-check-oci-ta":
+                    self._logger.info("Removing fbc-fips-check-oci-ta task since skip_fips_check is enabled")
+                    continue
+                tasks.append(task)
+            obj["spec"]["pipelineSpec"]["tasks"] = tasks
+
         # https://konflux.pages.redhat.com/docs/users/how-tos/configuring/overriding-compute-resources.html
         # ose-installer-artifacts fails with OOM with default values, hence bumping memory limit
         task_run_specs = []
@@ -586,6 +1353,19 @@ class KonfluxClient:
                             },
                         }
                     ],
+                }
+            ]
+            task_run_specs += [
+                {
+                    "pipelineTaskName": "prefetch-dependencies",
+                    "computeResources": {
+                        "requests": {
+                            "memory": "10Gi",
+                        },
+                        "limits": {
+                            "memory": "10Gi",
+                        },
+                    },
                 }
             ]
         if has_sast_task:
@@ -624,6 +1404,8 @@ class KonfluxClient:
         git_auth_secret: str = "pipelines-as-code-secret",
         additional_tags: Sequence[str] = [],
         skip_checks: bool = False,
+        skip_fips_check: bool = False,
+        build_priority: str = None,
         hermetic: Optional[bool] = None,
         dockerfile: Optional[str] = None,
         pipelinerun_template_url: str = constants.KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL,
@@ -631,7 +1413,7 @@ class KonfluxClient:
         artifact_type: Optional[str] = None,
         service_account: Optional[str] = None,
         rebuild: Optional[bool] = None,
-    ):
+    ) -> PipelineRunInfo:
         """
         Start a PipelineRun for building an image.
 
@@ -650,6 +1432,7 @@ class KonfluxClient:
         :param git_auth_secret: The git auth secret.
         :param additional_tags: Additional tags to apply to the image.
         :param skip_checks: Whether to skip checks.
+        :param skip_fips_check: Whether to skip the FIPS compliance check.
         :param hermetic: Whether to build the image in a hermetic environment. If None, the default value is used.
         :param dockerfile: Optional Dockerfile name
         :param pipelinerun_template_url: The URL to the PipelineRun template.
@@ -657,8 +1440,10 @@ class KonfluxClient:
         :param artifact_type: The type of artifact artifact_type for ecosystem-cert-preflight-checks. Select from application, operatorbundle, or introspect.
         :param service_account: The service account to use for the PipelineRun.
         :param rebuild: Forces rebuild of the image, even if it already exists. If None, the default behavior is to not changed.
-        :return: The PipelineRun resource.
+        :param build_priority: The Kueue build priority (1-10, where 1 is highest priority). If specified, adds the kueue.x-k8s.io/priority-class label.
+        :return: The PipelineRun resource as a PipelineRunInfo.
         """
+
         unsupported_arches = set(building_arches) - set(self.SUPPORTED_ARCHES)
         if unsupported_arches:
             raise ValueError(f"Unsupported architectures: {unsupported_arches}")
@@ -681,6 +1466,7 @@ class KonfluxClient:
             build_platforms=build_platforms,
             git_auth_secret=git_auth_secret,
             skip_checks=skip_checks,
+            skip_fips_check=skip_fips_check,
             hermetic=hermetic,
             additional_tags=additional_tags,
             dockerfile=dockerfile,
@@ -691,50 +1477,44 @@ class KonfluxClient:
             artifact_type=artifact_type,
             service_account=service_account,
             rebuild=rebuild,
+            build_priority=build_priority,
         )
         if self.dry_run:
             fake_pipelinerun = resource.ResourceInstance(self.dyn_client, pipelinerun_manifest)
             fake_pipelinerun.metadata.name = f"{component_name}-dry-run"
             LOGGER.warning(f"[DRY RUN] Would have created PipelineRun: {fake_pipelinerun.metadata.name}")
-            return fake_pipelinerun
+            return PipelineRunInfo(fake_pipelinerun, {})
 
         pipelinerun = await self._create(pipelinerun_manifest, async_req=True)
-        LOGGER.debug(f"Created PipelineRun: {self.resource_url(pipelinerun)}")
-        return pipelinerun
+        pipelinerun_info = PipelineRunInfo(pipelinerun, {})
+        LOGGER.debug(f"Created PipelineRun: {self.resource_url(pipelinerun.to_dict())}")
+        return pipelinerun_info
 
     @staticmethod
-    def resource_url(resource_instance: resource.ResourceInstance) -> str:
-        """Returns the URL to the Konflux UI for the given resource instance.
-        :param resource_instance: The resource instance.
+    def resource_url(resource_dict: Dict) -> str:
+        """Returns the URL to the Konflux UI for the given resource dictionary.
+        :param resource_dict: The resource dictionary (from PipelineRunInfo.to_dict(), ResourceInstance.to_dict(), etc).
         :return: The URL.
         """
-        kind = resource_instance.kind.lower()
-        name = resource_instance.metadata.name
-        namespace = resource_instance.metadata.namespace or constants.KONFLUX_DEFAULT_NAMESPACE
-        application = resource_instance.metadata.labels.get("appstudio.openshift.io/application", "unknown-application")
+        kind = resource_dict.get('kind', '').lower()
+        metadata = resource_dict.get('metadata', {})
+        name = metadata.get('name', '')
+        namespace = metadata.get('namespace') or KONFLUX_DEFAULT_NAMESPACE
+        labels = metadata.get('labels', {})
+        application = labels.get("appstudio.openshift.io/application", "unknown-application")
         return f"{constants.KONFLUX_UI_HOST}/ns/{namespace}/applications/{application}/{kind}s/{name}"
 
     async def wait_for_pipelinerun(
         self,
         pipelinerun_name: str,
         namespace: Optional[str] = None,
-        overall_timeout_timedelta: Optional[datetime.timedelta] = None,
-        pending_timeout_timedelta: Optional[datetime.timedelta] = None,
-    ) -> tuple[resource.ResourceInstance, list[Dict]]:
+    ) -> PipelineRunInfo:
         """
-        Wait for a PipelineRun to complete.
-
+        Wait for a PipelineRun to complete. Timeout must be specified via the 'art-overall-timeout-minutes' annotation on the PipelineRun.
         :param pipelinerun_name: The name of the PipelineRun.
         :param namespace: The namespace of the PipelineRun.
-        :param overall_timeout_timedelta: Maximum time to wait for pipeline to complete before canceling it (defaults to 5 hour)
-        :param pending_timeout_timedelta: Maximum time to wait for a pending pod in a pipeline to run before cancelling the pipeline (defaults to 2 hour)
-        :return: The PipelineRun ResourceInstance and a List[Dict] with a copy of an associated Pod.
+        :return: The PipelineRunInfo object.
         """
-        if overall_timeout_timedelta is None:
-            overall_timeout_timedelta = datetime.timedelta(hours=5)
-
-        if pending_timeout_timedelta is None:
-            pending_timeout_timedelta = datetime.timedelta(hours=2)
 
         namespace = namespace or self.default_namespace
         if self.dry_run:
@@ -746,215 +1526,20 @@ class KonfluxClient:
                 "status": {"conditions": [{"status": "True", "type": "Succeeded"}]},
             }
             self._logger.warning(f"[DRY RUN] Would have waited for PipelineRun {pipelinerun_name} to complete")
-            return resource.ResourceInstance(self.dyn_client, pipelinerun), resource.ResourceList(
-                self.dyn_client, api_version="v1", kind="Pod"
-            )
+            return PipelineRunInfo(pipelinerun, {})
 
-        api = await self._get_api("tekton.dev/v1", "PipelineRun")
-        pod_resource = await self._get_api("v1", "Pod")
-        corev1_client = await self._get_corev1()
+        # Get or create a shared watcher for this namespace
+        watch_labels = get_common_runtime_watcher_labels()
+        watcher = await KonfluxWatcher.get_shared_watcher(
+            namespace=namespace,
+            cfg=self._config,
+            watch_labels=watch_labels,
+        )
 
-        def _inner():
-            watcher = watch.Watch()
-            succeeded_status = "Not Found"
-            succeeded_reason = "Not Found"
-            timeout_datetime = datetime.datetime.now(tz=datetime.timezone.utc) + overall_timeout_timedelta
-
-            # If a pipelinerun runs more than an hour, successful pods
-            # might be garbage collected. Keep track of pod state across
-            # the pipeline run so that we can record information in bigquery.
-            pod_history: Dict[str, Dict] = dict()
-
-            while True:
-                try:
-                    for event in watcher.stream(
-                        api.get,
-                        # Specifying resource_version=0 tells the API to pull the current
-                        # version of the object, give us an update, and then watch for new
-                        # events. Combined with timeout_seconds, it ensures we periodically print an
-                        # update about the current running pods for the pipeline
-                        resource_version=0,
-                        namespace=namespace,
-                        serialize=False,
-                        field_selector=f"metadata.name={pipelinerun_name}",
-                        # timeout_seconds specifies a server side timeout. If there
-                        # is no activity during this period, the for loop will exit
-                        # gracefully. This ensures we will at least log *something*
-                        # while waiting for a long pipelinerun. If we somehow miss
-                        # an event, it also ensures we will come back and check
-                        # the object with an explicit get at least once per period.
-                        timeout_seconds=5 * 60,
-                        _request_timeout=self.request_timeout,
-                    ):
-                        assert isinstance(event, Dict)
-                        cancel_pipelinerun = (
-                            False  # If set to true, an attempt will be made to cancel the pipelinerun within the loop
-                        )
-                        obj = resource.ResourceInstance(api, event["object"])
-                        # status takes some time to appear
-                        try:
-                            succeeded_condition = art_util.KubeCondition.find_condition(obj, 'Succeeded')
-                            if succeeded_condition:
-                                succeeded_status = succeeded_condition.status
-                                succeeded_reason = succeeded_condition.reason
-                        except AttributeError:
-                            pass
-
-                        pod_desc = []
-                        pods = pod_resource.get(
-                            namespace=namespace,
-                            label_selector=f"tekton.dev/pipeline={pipelinerun_name}",
-                            _request_timeout=self.request_timeout,
-                        )
-                        current_time = datetime.datetime.now(tz=datetime.timezone.utc)
-                        for pod_instance in pods.items:
-                            pod_name = pod_instance.metadata.name
-                            try:
-                                # Convert to normal dict for pod_history
-                                pod_history[pod_name] = pod_instance.to_dict()
-                                pod_phase = pod_instance.status.phase
-                                if pod_phase == 'Succeeded':
-                                    # Cut down on log output. No need to see successful pods again and again.
-                                    continue
-                                # Calculate the pod age based on the creation timestamp
-                                creation_time_str = pod_instance.metadata.get('creationTimestamp')
-                                if creation_time_str:
-                                    creation_time = datetime.datetime.strptime(
-                                        creation_time_str, "%Y-%m-%dT%H:%M:%SZ"
-                                    ).replace(tzinfo=datetime.timezone.utc)
-                                else:
-                                    creation_time = current_time
-                                age = current_time - creation_time
-
-                                if pod_phase == 'Pending' and age > pending_timeout_timedelta:
-                                    self._logger.error(
-                                        "PipelineRun %s pod %s pending beyond threshold %s; cancelling run",
-                                        pipelinerun_name,
-                                        pod_name,
-                                        str(pending_timeout_timedelta),
-                                    )
-                                    cancel_pipelinerun = True
-
-                                age_str = f"{age.days}d {age.seconds // 3600}h {(age.seconds // 60) % 60}m"
-                                pod_desc.append(f"\tPod {pod_name} [phase={pod_phase}][age={age_str}]")
-                            except:
-                                e_str = traceback.format_exc()
-                                pod_desc.append(f"\tPod {pod_name} - unable to report information: {e_str}")
-
-                        # Count all successful pods, not just ones that are still around.
-                        successful_pods = 0
-                        for _, pod in pod_history.items():
-                            if pod.get('status', {}).get('phase') == 'Succeeded':
-                                successful_pods += 1
-
-                        self._logger.info(
-                            "PipelineRun %s [status=%s][reason=%s]; pods[total=%d][successful=%d][extant=%d]\n%s",
-                            pipelinerun_name,
-                            succeeded_status,
-                            succeeded_reason,
-                            len(pod_history),
-                            successful_pods,
-                            len(pods.items),
-                            '\n'.join(pod_desc),
-                        )
-
-                        if succeeded_status not in ["Unknown", "Not Found"]:
-                            # allow final pods to update their status if they can
-                            time.sleep(5)
-                            pods_instances = pod_resource.get(
-                                namespace=namespace,
-                                label_selector=f"tekton.dev/pipeline={pipelinerun_name}",
-                                _request_timeout=self.request_timeout,
-                            )
-                            # We will convert ResourceInstances to Dicts so that they can be manipulated with
-                            # extra information.
-                            for pod_instance in pods_instances.items:
-                                pod = (
-                                    pod_instance.to_dict()
-                                )  # Convert to normal dict so that we can store log_output later.
-                                pod_name = pod.get('metadata').get('name')
-                                pod_status = pod.get('status', {})
-                                pod_phase = pod_status.get('phase')
-                                # Update pod history with the final snapshot
-                                pod_history[pod_name] = pod
-                                if pod_phase != 'Succeeded':
-                                    self._logger.warning(
-                                        f'PipelineRun {pipelinerun_name} finished with pod {pod_name} in unexpected phase: {pod_phase}'
-                                    )
-
-                                    # Now iterate through containers and record logs for unexpected exit_code values
-                                    container_statuses = pod_status.get("containerStatuses", [])
-                                    for container_status in container_statuses:
-                                        container_name = container_status.get("name")
-                                        state = container_status.get("state", {})
-                                        terminated = state.get("terminated", {})
-                                        exit_code = terminated.get("exitCode")
-                                        if exit_code is None or exit_code != 0:
-                                            try:
-                                                log_response = corev1_client.read_namespaced_pod_log(
-                                                    name=pod_name,
-                                                    namespace=namespace,
-                                                    container=container_name,
-                                                    _request_timeout=self.request_timeout,
-                                                )
-                                                # stuff log information into the container_status, so that it can be
-                                                # included in the bigquery database.
-                                                container_status['log_output'] = log_response
-                                                self._logger.warning(
-                                                    f'Pod {pod_name} container {container_name} exited with {exit_code}; logs:\n------START LOGS {pod_name}:{container_name}------\n{log_response}\n------END LOGS {pod_name}:{container_name}------\n'
-                                                )
-                                            except:
-                                                e_str = traceback.format_exc()
-                                                self._logger.warning(
-                                                    f'Failed to retrieve logs for pod {pod_name} container {container_name}: {e_str}'
-                                                )
-
-                            watcher.stop()
-                            return obj, list(pod_history.values())
-
-                        if datetime.datetime.now(tz=datetime.timezone.utc) > timeout_datetime:
-                            self._logger.error(
-                                "PipelineRun %s has run longer than timeout %s; cancelling run",
-                                pipelinerun_name,
-                                str(overall_timeout_timedelta),
-                            )
-                            cancel_pipelinerun = True
-
-                        if cancel_pipelinerun:
-                            self._logger.info("PipelineRun %s is being cancelled", pipelinerun_name)
-                            try:
-                                # Setting spec.status in the PipelineRun should cause tekton to start canceling the pipeline.
-                                # This includes terminating pods associated with the run.
-                                api.patch(
-                                    name=obj.metadata.name,
-                                    namespace=namespace,
-                                    body={
-                                        'spec': {
-                                            'status': 'Cancelled',
-                                        },
-                                    },
-                                    content_type="application/merge-patch+json",
-                                    _request_timeout=self.request_timeout,
-                                )
-                            except:
-                                self._logger.error('Error trying to cancel PipelineRun %s', pipelinerun_name)
-                                traceback.print_exc()
-
-                    self._logger.info(
-                        "No updates for PipelineRun %s during watch timeout period; requerying", pipelinerun_name
-                    )
-                except TimeoutError:
-                    self._logger.error("Timeout waiting for PipelineRun %s to complete", pipelinerun_name)
-                    continue
-                except exceptions.ApiException as e:
-                    if e.status == 410:
-                        # If the last result is too old, an `ApiException` exception will be thrown with
-                        # `code` 410. In that case we have to recover by retrying without resource_version.
-                        self._logger.debug("%s: Resource version is too old. Recovering...", pipelinerun_name)
-                        continue
-                    raise
-
-        return await exectools.to_thread(_inner)
+        # Use the watcher to wait for the PipelineRun to complete
+        return await watcher.wait_for_pipelinerun_termination(
+            pipelinerun_name=pipelinerun_name,
+        )
 
     async def wait_for_release(
         self,
@@ -989,7 +1574,7 @@ class KonfluxClient:
             return resource.ResourceInstance(self.dyn_client, release)
 
         release_obj = await self._get(API_VERSION, KIND_RELEASE, release_name)
-        url = self.resource_url(release_obj)
+        url = self.resource_url(release_obj.to_dict())
         self._logger.info("Found release at %s", url)
 
         def _inner():

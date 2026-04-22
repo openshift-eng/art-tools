@@ -1,6 +1,6 @@
-import asyncio
 import logging
 import os
+import sys
 
 import click
 import yaml
@@ -25,6 +25,10 @@ class Ocp4ScanPipeline:
         self.logger = logging.getLogger(__name__)
         self._doozer_working = self.runtime.working_dir / "doozer_working"
         self.changes = {}
+        self.report = {}
+        self.issues = []
+        self.command_failed = False
+        self.command_failure_message = ''
 
         self.rhcos_updated = False
         self.rhcos_outdated = False
@@ -66,6 +70,9 @@ class Ocp4ScanPipeline:
         # Handle RHCOS changes or inconsistencies
         await self.handle_rhcos_changes()
 
+        self._report_issues()
+        self._finalize()
+
     def check_params(self):
         """
         Make sure non-stream assemblies, custom forks and branches are only used with dry run mode
@@ -98,11 +105,20 @@ class Ocp4ScanPipeline:
         if self.runtime.dry_run:
             cmd.append('--dry-run')
 
-        _, out, _ = await exectools.cmd_gather_async(cmd, stderr=None)
+        rc, out, _ = await exectools.cmd_gather_async(cmd, stderr=None, check=False)
         self.logger.info('scan-sources output for openshift-%s:\n%s', self.version, out)
 
-        yaml_data = yaml.safe_load(out)
-        self.changes = util.get_changes(yaml_data)
+        self.command_failed = rc != 0
+        if self.command_failed:
+            self.command_failure_message = f'scan-sources command failed with exit code {rc}'
+            self.logger.error(self.command_failure_message)
+
+        self.report = yaml.safe_load(out) or {}
+        if not isinstance(self.report, dict):
+            raise ValueError('scan-sources output did not contain a YAML mapping')
+
+        self.issues = self.report.get('issues', [])
+        self.changes = util.get_changes(self.report)
         if self.changes:
             self.logger.info('Detected source changes:\n%s', yaml.safe_dump(self.changes))
         else:
@@ -115,6 +131,32 @@ class Ocp4ScanPipeline:
                     self.rhcos_updated = True
                 if rhcos_change['reason'].get('outdated', None):
                     self.rhcos_outdated = True
+
+    def _report_issues(self):
+        if not self.issues:
+            return
+
+        image_names = sorted({issue.get('name') for issue in self.issues if issue.get('name')})
+
+        if 1 <= len(image_names) <= 10:
+            jenkins.update_description(f'Scan failures: {", ".join(image_names)}<br/>')
+        elif image_names:
+            jenkins.update_description(f'{len(image_names)} images had scan failures. Check scan-sources output<br/>')
+        else:
+            jenkins.update_description('Scan failures detected. Check scan-sources output<br/>')
+
+    def _finalize(self):
+        if self.command_failed:
+            raise RuntimeError(self.command_failure_message)
+
+        if not self.issues:
+            return
+
+        if self.changes:
+            self.logger.warning('scan-sources reported issues but also found valid changes; marking job unstable')
+            sys.exit(2)
+
+        raise RuntimeError('scan-sources reported issues but found no valid changes')
 
     async def get_rhcos_inconsistencies(self):
         """
@@ -140,38 +182,65 @@ class Ocp4ScanPipeline:
         if not self.changes:
             return
 
-        jenkins.update_title(' [SOURCE CHANGES]')
-        self.logger.info('Detected at least one updated image')
+        self.logger.info('Detected source changes')
 
-        image_list = self.changes.get('images', [])
-        rpm_list = self.changes.get('rpms', [])
+        # Determine major version to call the appropriate job
+        major_version = int(self.version.split('.')[0])
 
-        # Do NOT trigger konflux builds in dry-run mode
-        if self.runtime.dry_run:
-            self.logger.info('Would have triggered a %s ocp4 build', self.version)
+        # Trigger jobs based on major version
+        # Note: OCP5 uses the same ocp4-konflux job as OCP4
+        match major_version:
+            case 5 | 4:
+                self.trigger_ocp4()
+            case _:
+                raise ValueError(f'Unsupported OCP major version: {major_version}')
+
+    def trigger_ocp4(self):
+        changed_rpm = self.changes.get('rpms', [])
+
+        # Filter out okd-only images (mode: disabled, okd.mode: enabled)
+        # These are handled by the okd-scan pipeline instead
+        changed_ocp_images = [
+            image['name']
+            for image in self.report.get('images', [])
+            if image.get('changed') and not image.get('okd_only')
+        ]
+
+        if not changed_ocp_images and not changed_rpm:
+            self.logger.info('No OCP images/RPMs to build')
             return
 
-        # Update build description
-        jenkins.update_description(f'Changed {len(image_list)} images<br/>')
+        # Update Jenkins title and description
+        jenkins.update_title(' [SOURCE CHANGES]')
+        if changed_rpm:
+            jenkins.update_description(f'Changed {len(changed_rpm)} RPMs<br/>')
+        if changed_ocp_images:
+            jenkins.update_description(f'Changed {len(changed_ocp_images)} OCP images<br/>')
+
+        if self.runtime.dry_run:
+            self.logger.info('Would have triggered a %s ocp4 build for %s', self.version, ','.join(changed_ocp_images))
+            return
 
         # Trigger ocp4-konflux
-        self.logger.info('Triggering a %s ocp4-konflux build', self.version)
+        self.logger.info('Triggering a %s ocp4-konflux build with %d images', self.version, len(changed_ocp_images))
         jenkins.start_ocp4_konflux(
             build_version=self.version,
             assembly='stream',
-            image_list=image_list,
-            rpm_list=rpm_list,
+            image_list=changed_ocp_images,
+            rpm_list=changed_rpm,
         )
 
     async def handle_rhcos_changes(self):
-        rhcos_changes = False
-
         if self.rhcos_inconsistent or self.rhcos_outdated:
-            rhcos_changes = True
+            # Update Jenkins title and description
+            jenkins.update_title(' [RHCOS CHANGES]')
+
             if self.rhcos_inconsistent:
                 self.logger.info('Detected inconsistent RHCOS RPMs:\n%s', self.inconsistent_rhcos_rpms)
+                jenkins.update_description('RHCOS inconsistent<br/>')
             if self.rhcos_outdated:
                 self.logger.info('Detected outdated RHCOS RPMs:\n%s', self.changes.get('rhcos', None))
+                jenkins.update_description('RHCOS outdated<br/>')
 
             if self.runtime.dry_run:
                 self.logger.info('Would have triggered a %s RHCOS build', self.version)
@@ -185,7 +254,6 @@ class Ocp4ScanPipeline:
             jenkins.start_rhcos(build_version=self.version, new_build=False, job_name=job_name)
 
         elif self.rhcos_updated:
-            rhcos_changes = True
             self.logger.info('Detected at least one updated RHCOS')
 
             if self.runtime.dry_run:
@@ -198,9 +266,6 @@ class Ocp4ScanPipeline:
                 assembly="stream",
                 build_system="konflux",
             )
-
-        if rhcos_changes:
-            jenkins.update_title(' [RHCOS CHANGES]')
 
 
 @cli.command('beta:konflux:ocp4-scan')
@@ -238,11 +303,7 @@ async def ocp4_scan(runtime: Runtime, version: str, assembly: str, data_path: st
     else:
         lock = Lock.SCAN_KONFLUX
         lock_name = lock.value.format(version=version)
-        lock_identifier = jenkins.get_build_path()
-        if not lock_identifier:
-            runtime.logger.warning(
-                'Env var BUILD_URL has not been defined: a random identifier will be used for the locks'
-            )
+        lock_identifier = jenkins.get_build_path_or_random()
 
         # Scheduled builds are already being skipped if the lock is already acquired.
         # For manual builds, we need to check if the build and scan locks are already acquired,
@@ -250,7 +311,7 @@ async def ocp4_scan(runtime: Runtime, version: str, assembly: str, data_path: st
         # Should that happen, signal it by appending a [SKIPPED][LOCKED] to the build title
         async def run_with_build_lock():
             build_lock = Lock.BUILD_KONFLUX
-            build_lock_name = build_lock.value.format(version=version)
+            build_lock_name = build_lock.value.format(version=version, assembly=assembly)
             await locks.run_with_lock(
                 coro=pipeline.run(),
                 lock=build_lock,

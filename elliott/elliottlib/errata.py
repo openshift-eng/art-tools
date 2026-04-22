@@ -104,6 +104,13 @@ def get_raw_erratum(advisory_id):
     return ErrataConnector()._get(f"/api/v1/erratum/{advisory_id}")
 
 
+def update_erratum(advisory_id, data):
+    """
+    Update an erratum
+    """
+    return ErrataConnector()._put(f"/api/v1/erratum/{advisory_id}", json=data)
+
+
 def add_jira_issue(advisory_id, jira_issue_id):
     """
     Attach a jira issue to advisory
@@ -200,6 +207,17 @@ def get_bug_ids(advisory_id) -> dict:
     bugzilla_ids = [bug['bug']['id'] for bug in raw_erratum['bugs']['bugs']]
     jira_ids = raw_erratum['jira_issues']['idsfixed']
     return {'bugzilla': bugzilla_ids, 'jira': jira_ids}
+
+
+def get_errata_live_id(advisory_id):
+    """
+    Extract live ID from advisory info
+    """
+    raw_erratum = get_raw_erratum(advisory_id)
+    erratum = raw_erratum.get('errata')
+    for key in erratum:
+        live_id = erratum[key].get("fulladvisory").rsplit("-", 1)[0]
+        return live_id
 
 
 def get_erratum_content_type(advisory_id: str):

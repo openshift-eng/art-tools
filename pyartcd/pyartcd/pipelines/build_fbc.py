@@ -1,15 +1,47 @@
 import logging
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 
 import click
 from artcommonlib import exectools
+from artcommonlib.constants import PRODUCT_KUBECONFIG_MAP
+from artcommonlib.util import resolve_konflux_kubeconfig_by_product, resolve_konflux_namespace_by_product
 
-from pyartcd import constants
+from pyartcd import constants, jenkins, locks
 from pyartcd.cli import cli, click_coroutine, pass_runtime
+from pyartcd.locks import Lock
 from pyartcd.record import parse_record_log
 from pyartcd.runtime import Runtime
+from pyartcd.slack import SlackClient
+from pyartcd.util import load_group_config
+
+
+def _generate_fbc_lock_name(
+    group: str,
+    major_minor: Optional[str] = None,
+) -> str:
+    """Generate FBC lock name with OCP version for non-OpenShift groups.
+
+    Args:
+        group: The doozer group name (e.g., "openshift-4.17", "oadp-1.4")
+        major_minor: Major.minor version (e.g., "4.17") - required for non-OpenShift groups
+
+    Returns:
+        Lock name following the pattern:
+        - For OpenShift: "lock:fbc-build:{group}"
+        - For non-OpenShift: "lock:fbc-build:{group}-ocp-{major_minor}"
+    """
+    if group.startswith('openshift-'):
+        # For OpenShift products, use the traditional lock naming
+        return f"lock:fbc-build:{group}"
+    else:
+        # For non-OpenShift products, include the target OCP version
+        if not major_minor:
+            raise ValueError(f"--major-minor is required for non-OpenShift group '{group}'")
+
+        return f"lock:fbc-build:{group}-ocp-{major_minor}"
 
 
 class BuildFbcPipeline:
@@ -30,10 +62,15 @@ class BuildFbcPipeline:
         reset_to_prod: bool,
         prod_registry_auth: Optional[str],
         force: bool,
+        group: str,
+        major_minor: Optional[str],
+        ignore_locks: bool,
+        insert_missing_entry: bool,
     ):
         self.runtime = runtime
         self.version = version
         self.assembly = assembly
+        self.group = group
         self.data_path = data_path
         self.data_gitref = data_gitref
         self.only = only
@@ -46,18 +83,63 @@ class BuildFbcPipeline:
         self.reset_to_prod = reset_to_prod
         self.prod_registry_auth = prod_registry_auth
         self.force = force
+        self.major_minor = major_minor
+        self.ignore_locks = ignore_locks
+        self.insert_missing_entry = insert_missing_entry
 
         self._logger = logging.getLogger(__name__)
         self._slack_client = runtime.new_slack_client()
-        self._slack_client.bind_channel(version)
+
+    async def _check_production_index_exists(self) -> bool:
+        """Check if the production operator index image exists for the target OCP version.
+
+        Returns True if the image exists or the check is inconclusive, False if it clearly does not exist.
+        """
+        ocp_mm = self.major_minor if self.major_minor else self.version
+        parts = ocp_mm.split('.')
+        major, minor = parts[0], parts[1]
+
+        index_image = f"registry.redhat.io/redhat/redhat-operator-index:v{major}.{minor}"
+        self._logger.info('Checking if production index image exists: %s', index_image)
+
+        cmd = ['skopeo', 'inspect', '--no-tags', f'docker://{index_image}']
+        auth = self.prod_registry_auth or os.environ.get('KONFLUX_OPERATOR_INDEX_AUTH_FILE')
+        if auth:
+            cmd.extend(['--authfile', auth])
+
+        rc, _, err = await exectools.cmd_gather_async(cmd, check=False)
+        if rc != 0:
+            self._logger.info('Production index image %s does not exist: %s', index_image, err.strip())
+            return False
+        return True
 
     async def run(self):
+        # Bind Slack channel based on product field from group config
+        group = f"openshift-{self.version}" if not self.group else self.group
+        group_config = await load_group_config(
+            group=group, assembly=self.assembly, doozer_data_path=self.data_path, doozer_data_gitref=self.data_gitref
+        )
+        product = group_config.get('product') or 'ocp'
+        if product != 'ocp':
+            self._slack_client.bind_channel(SlackClient.DEFAULT_CHANNEL_LAYERED_OPERATORS)
+        else:
+            self._slack_client.bind_channel(self.version)
+        self._logger.info('Slack channel bound to %s (product: %s)', self._slack_client.channel, product)
+
+        # Early check: verify the production operator index image exists for the target OCP version.
+        # For new OCP versions (e.g. 5.0), neither the index image nor the base images are published yet,
+        # which causes all Konflux FBC builds to fail. Exit silently rather than wasting time.
+        if not await self._check_production_index_exists():
+            self._logger.info('Production operator index image not available yet. Skipping FBC build.')
+            return
+
         try:
             release_str = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
             self._logger.info('Rebasing and building FBC repo with release %s', release_str)
             build_records = await self._rebase_and_build(
                 release=release_str,
                 commit_message='Rebase FBC segment with release {}'.format(release_str),
+                group_config=group_config,
             )
 
             # Parse doozer record.log
@@ -70,17 +152,20 @@ class BuildFbcPipeline:
         except Exception as e:
             self._logger.error('Encountered error: %s', e)
             await self._slack_client.say(
-                f'*:heavy_exclamation_mark: Error building FBC for {self.version} assembly {self.assembly}*\n'
+                f'*:heavy_exclamation_mark: Error building FBC for {group} {self.version} assembly {self.assembly}*\n'
             )
             raise
 
     async def _run_doozer(self, opts: List[str], only: str, exclude: str):
+        # If unspecified, assume it's for openshift
+        group = f"openshift-{self.version}" if not self.group else self.group
+
         cmd = [
             'doozer',
             '--build-system=konflux',
             f'--working-dir={self.runtime.doozer_working}',
             f'--assembly={self.assembly}',
-            f'--group=openshift-{self.version}{"@" + self.data_gitref if self.data_gitref else ""}',
+            f'--group={group}{"@" + self.data_gitref if self.data_gitref else ""}',
         ]
         if self.data_path:
             cmd.append(f'--data-path={self.data_path}')
@@ -92,7 +177,7 @@ class BuildFbcPipeline:
         self._logger.info(f'Running doozer command: {" ".join(cmd)}')
         await exectools.cmd_assert_async(cmd)
 
-    async def _rebase_and_build(self, release: str, commit_message: str):
+    async def _rebase_and_build(self, release: str, commit_message: str, group_config: dict):
         doozer_opts = [
             'beta:fbc:rebase-and-build',
             '--version',
@@ -106,8 +191,21 @@ class BuildFbcPipeline:
             doozer_opts.append('--dry-run')
         if self.fbc_repo:
             doozer_opts.extend(['--fbc-repo', self.fbc_repo])
-        if self.kubeconfig:
-            doozer_opts.extend(['--konflux-kubeconfig', self.kubeconfig])
+        product = group_config.get('product') or 'ocp'
+
+        # Set namespace based on product
+        namespace = resolve_konflux_namespace_by_product(product)
+        doozer_opts.extend(['--konflux-namespace', namespace])
+
+        # Use kubeconfig from CLI parameter or product-specific environment variable
+        final_kubeconfig = resolve_konflux_kubeconfig_by_product(product, self.kubeconfig)
+        if not final_kubeconfig:
+            available_env_vars = list(PRODUCT_KUBECONFIG_MAP.values())
+            raise ValueError(
+                f"Kubeconfig required for Konflux builds. Provide --kubeconfig parameter or set one of: {', '.join(available_env_vars)}"
+            )
+
+        doozer_opts.extend(['--konflux-kubeconfig', final_kubeconfig])
         if self.plr_template:
             plr_template_owner, plr_template_branch = (
                 self.plr_template.split("@") if self.plr_template else ["openshift-priv", "main"]
@@ -126,6 +224,10 @@ class BuildFbcPipeline:
             doozer_opts.extend(['--prod-registry-auth', self.prod_registry_auth])
         if self.force:
             doozer_opts.append('--force')
+        if self.major_minor:
+            doozer_opts.extend(['--major-minor', self.major_minor])
+        if self.insert_missing_entry:
+            doozer_opts.append('--insert-missing-entry')
         if self.operator_nvrs:
             doozer_opts.extend([nvr for nvr in self.operator_nvrs.split(',')])
         try:
@@ -174,6 +276,13 @@ class BuildFbcPipeline:
     default=constants.OCP_BUILD_DATA_URL,
     help='ocp-build-data fork to use (e.g. assembly definition in your own fork)',
 )
+@click.option(
+    "-g",
+    "--group",
+    metavar='NAME',
+    required=True,
+    help="The group of components on which to operate. e.g. openshift-4.9",
+)
 @click.option('--data-gitref', required=False, help='(Optional) Doozer data path git [branch / tag / sha] to use')
 @click.option(
     '--only',
@@ -213,6 +322,23 @@ class BuildFbcPipeline:
     help="The registry authentication file to use for the production index image.",
 )
 @click.option("--force", is_flag=True, help="Force rebase and build even if already up-to-date")
+@click.option(
+    "--major-minor",
+    metavar='MAJOR.MINOR',
+    help="Override the MAJOR.MINOR version from group config (e.g. 4.17).",
+)
+@click.option(
+    '--ignore-locks',
+    is_flag=True,
+    default=False,
+    help='Do not wait for other FBC builds in this group to complete (use only if you know they will not conflict)',
+)
+@click.option(
+    '--insert-missing-entry',
+    is_flag=True,
+    default=False,
+    help='Insert the new bundle entry in version order instead of appending. Use this to fix missing entries that were removed from the catalog.',
+)
 @pass_runtime
 @click_coroutine
 async def build_fbc(
@@ -231,7 +357,15 @@ async def build_fbc(
     reset_to_prod: bool,
     prod_registry_auth: Optional[str],
     force: bool,
+    group: str,
+    major_minor: Optional[str],
+    ignore_locks: bool,
+    insert_missing_entry: bool,
 ):
+    # Validate that --major-minor is provided for non-OpenShift groups
+    if not group.startswith('openshift-') and not major_minor:
+        raise click.BadParameter(f"--major-minor is required for non-OpenShift group '{group}'")
+
     pipeline = BuildFbcPipeline(
         runtime=runtime,
         version=version,
@@ -248,5 +382,26 @@ async def build_fbc(
         reset_to_prod=reset_to_prod,
         prod_registry_auth=prod_registry_auth,
         force=force,
+        group=group,
+        major_minor=major_minor,
+        ignore_locks=ignore_locks,
+        insert_missing_entry=insert_missing_entry,
     )
-    await pipeline.run()
+
+    lock_identifier = jenkins.get_build_path_or_random()
+
+    if ignore_locks:
+        await pipeline.run()
+    else:
+        # Generate appropriate lock name based on group type (includes OCP version for non-OpenShift groups)
+        lock_name = _generate_fbc_lock_name(
+            group=group,
+            major_minor=major_minor,
+        )
+
+        await locks.run_with_lock(
+            coro=pipeline.run(),
+            lock=Lock.FBC_BUILD,
+            lock_name=lock_name,
+            lock_id=lock_identifier,
+        )

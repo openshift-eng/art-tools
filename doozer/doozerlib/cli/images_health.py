@@ -2,153 +2,209 @@ import asyncio
 import datetime
 import json
 import logging
-import urllib.parse
+from enum import Enum
 
 import click
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBuildRecord
-from sqlalchemy.testing.plugin.plugin_base import engines
+from artcommonlib.model import Missing
+from artcommonlib.variants import BuildVariant
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 from doozerlib import Runtime
 from doozerlib.cli import cli, click_coroutine, pass_runtime
-from doozerlib.constants import ART_BUILD_HISTORY_URL
 
 DELTA_DAYS = 90  # look at latest 90 days
+LIMIT_BUILD_RESULTS = 100  # how many build records to fetch from DB
+
+
+class ConcernCode(Enum):
+    NEVER_BUILT = 'NEVER_BUILT'
+    LATEST_ATTEMPT_FAILED = 'LATEST_ATTEMPT_FAILED'
+    FAILING_AT_LEAST_FOR = 'FAILING_AT_LEAST_FOR'
+    LATEST_BUILD_SUCCEEDED = 'LATEST_BUILT_SUCCEEDED'
+
+
+class Concern:
+    def __init__(
+        self,
+        image_name: str,
+        code: str,
+        latest_success_idx: int = None,
+        latest_failed_job_url: str = None,
+        latest_attempt_task_url: str = None,
+        latest_successful_task_url: str = None,
+        latest_failed_nvr: str = None,
+        latest_built_nvr: str = None,
+        latest_failed_build_record_id: str = None,
+        latest_failed_build_time: datetime.datetime = None,
+        group: str = None,
+        for_release: bool = True,
+    ):
+        self.image_name = image_name
+        self.code = code
+        self.latest_success_idx = latest_success_idx
+        self.latest_failed_job_url = latest_failed_job_url
+        self.latest_attempt_task_url = latest_attempt_task_url
+        self.latest_successful_task_url = latest_successful_task_url
+        self.latest_failed_nvr = latest_failed_nvr
+        self.latest_built_nvr = latest_built_nvr
+        self.latest_failed_build_record_id = latest_failed_build_record_id
+        self.latest_failed_build_time = latest_failed_build_time
+        self.group = group
+        self.for_release = for_release
+
+    def to_dict(self):
+        return self.__dict__.copy()
 
 
 class ImagesHealthPipeline:
-    def __init__(self, runtime: Runtime, limit: int, url_markup: str):
+    def __init__(
+        self,
+        runtime: Runtime,
+        limit: int,
+        group: str = None,
+        assembly: str = None,
+        variant: BuildVariant = BuildVariant.OCP,
+    ):
         self.runtime = runtime
         self.limit = limit
-        self.url_markup = url_markup
         self.start_search = datetime.datetime.now(tz=datetime.timezone.utc) - datetime.timedelta(days=DELTA_DAYS)
-        self.concerns = {}
+        self.concerns = []
         self.logger = logging.getLogger(__name__)
         self.runtime.konflux_db.bind(KonfluxBuildRecord)
-
-    def generate_art_dash_history_link(self, dg_name, engine):
-        base_url = f"{ART_BUILD_HISTORY_URL}/"
-
-        # Validating essential parameters
-        if not dg_name or not self.runtime or not self.runtime.group_config or not self.runtime.group_config.name:
-            raise ValueError("Missing essential parameters for generating Art-Dash link")
-
-        formatted_dg_name = dg_name.split("/")[-1]
-        engine = engine
-        params = {
-            "group": self.runtime.group_config.name,
-            "name": f'^{formatted_dg_name}$',
-            "engine": engine,
-            "assembly": "stream",
-            "outcome": "completed",
-            "art-job-url": "",
-            "after": f'{self.start_search.year}-{self.start_search.month}-{self.start_search.day}',
-        }
-
-        query_string = urllib.parse.urlencode(params)
-        return f"{base_url}?{query_string}"
+        # Set group and assembly overrides
+        self.group = group or self.runtime.group_config.name  # default to runtime group
+        self.assembly = assembly or 'stream'  # default to 'stream' assembly
+        self.variant = variant
 
     async def run(self):
-        # Gather concerns for all images in both Brew and Konflux build systems
-        tasks = [
-            self.get_concerns(image_meta, 'brew')
-            for image_meta in self.runtime.image_metas()
-            if not image_meta.mode == 'disabled'
-        ]
-        tasks.extend(
-            [
-                self.get_concerns(image_meta, 'konflux')
-                for image_meta in self.runtime.image_metas()
-                if not image_meta.config.konflux.mode == 'disabled' and not image_meta.mode == 'disabled'
-            ]
-        )
+        # Gather concerns for all images we build with Konflux
+        tasks = []
+
+        # Filter out images that are disabled for this variant
+        for image_meta in self.runtime.image_metas():
+            if self.variant is BuildVariant.OKD:
+                # For OKD variant, determine effective mode: okd.mode overrides general mode
+                effective_mode = image_meta.mode  # Default to general mode
+                if image_meta.config.okd is not Missing and image_meta.config.okd.mode is not Missing:
+                    effective_mode = image_meta.config.okd.mode  # Override with OKD-specific mode if present
+
+                if effective_mode == 'disabled':
+                    self.logger.info('Skipping OKD disabled image: %s', image_meta.distgit_key)
+                    continue
+
+                # For OKD, skip non-payload images (they are not built/released)
+                for_payload = image_meta.config.for_payload
+                if for_payload is Missing:
+                    for_payload = False
+                if not for_payload:
+                    self.logger.info('Skipping OKD non-payload image: %s', image_meta.distgit_key)
+                    continue
+            elif image_meta.config.konflux.mode == 'disabled' or image_meta.mode == 'disabled':
+                self.logger.info('Skipping disabled image: %s', image_meta.distgit_key)
+                continue
+            tasks.append(self.get_concerns(image_meta))
+
         await asyncio.gather(*tasks)
 
         # We should now have a dict of qualified_key => [concern, ...]
         if not self.concerns:
             self.logger.info('No concerns to report!')
-        click.echo(json.dumps(self.concerns, indent=4))
+        click.echo(
+            json.dumps(self.concerns, indent=4, default=lambda o: o.to_dict() if isinstance(o, Concern) else str(o))
+        )
 
-    def url_text(self, url, text):
-        if self.url_markup == 'slack':
-            return f'<{url}|{text}>'
-        if self.url_markup == 'github':
-            return f'[{text}]({url})'
-        raise IOError(f'Unknown markup mode: {self.url_markup}')
+    async def get_concerns(self, image_meta):
+        for_release = image_meta.config.for_release
+        if for_release is Missing:
+            for_release = True
 
-    async def get_concerns(self, image_meta, engine):
-        key = image_meta.distgit_key
-        builds = await self.query(image_meta, engine)
+        builds = await self.query(image_meta)
         if not builds:
-            self.logger.info(
-                'Image build for %s has never been attempted during last %s days', image_meta.distgit_key, DELTA_DAYS
+            message = f'Image build for {image_meta.distgit_key} has never been attempted during last {DELTA_DAYS} days'
+            self.logger.info(message)
+            self.add_concern(
+                Concern(
+                    image_name=image_meta.distgit_key,
+                    code=ConcernCode.NEVER_BUILT.value,
+                    for_release=for_release,
+                )
             )
             return
 
         latest_success_idx = -1
         latest_success_bi_task_url = ''
-        latest_success_bi_dt = ''
 
         for idx, build in enumerate(builds):
             if build.outcome == KonfluxBuildOutcome.SUCCESS:
                 latest_success_idx = idx
                 latest_success_bi_task_url = build.build_pipeline_url
-                latest_success_bi_dt = build.start_time
                 break
 
-        latest_attempt_build_url = builds[0].art_job_url
         latest_attempt_task_url = builds[0].build_pipeline_url
-        oldest_attempt_bi_dt = builds[-1].start_time
 
-        if latest_success_idx != 0:
-            msg = (
-                f'Latest attempt {self.url_text(latest_attempt_task_url, "failed")} '
-                f'({self.url_text(latest_attempt_build_url, "jenkins job")}); '
+        if latest_success_idx == 0:
+            # The latest attempt was a success
+            self.add_concern(
+                Concern(
+                    code=ConcernCode.LATEST_BUILD_SUCCEEDED.value,
+                    image_name=image_meta.distgit_key,
+                    latest_built_nvr=builds[0].nvr,
+                )
             )
 
-            # The latest attempt was a failure
-            if latest_success_idx == -1:
-                # No success record was found
-                msg += f'Failing for at least the last {len(builds)} attempts / {oldest_attempt_bi_dt}'
-            elif latest_success_idx > 1:
-                msg += (
-                    f'Last {self.url_text(latest_success_bi_task_url, "success")} was {latest_success_idx} attempts ago'
-                )
-            elif latest_success_idx == 1:
-                # Do nothing
-                return  # skipping notifications when only latest attempt failed
-
-            # Add concern
-            msg += f'. {self.url_text(self.generate_art_dash_history_link(key, engine), "Details")}'
-            self.add_concern(key, engine, msg)
+        elif latest_success_idx == -1:
+            # No success record was found: add a concern
+            self.add_concern(
+                Concern(
+                    image_name=image_meta.distgit_key,
+                    code=ConcernCode.FAILING_AT_LEAST_FOR.value,
+                    latest_failed_job_url=builds[0].art_job_url,
+                    latest_attempt_task_url=latest_attempt_task_url,
+                    latest_failed_nvr=builds[0].nvr,
+                    latest_failed_build_record_id=builds[0].record_id,
+                    latest_failed_build_time=builds[0].start_time,
+                    for_release=for_release,
+                ),
+            )
 
         else:
-            if latest_success_bi_dt < datetime.datetime.now(tz=datetime.timezone.utc) - datetime.timedelta(days=14):
-                msg = (
-                    f'Last build {latest_attempt_task_url} for {image_meta.distgit_key} '
-                    f'(jenkins job {latest_attempt_build_url} was over two weeks ago.'
-                )
-                self.logger.warning(msg)
+            # The latest attempt was a failure: add a concern
+            self.add_concern(
+                Concern(
+                    image_name=image_meta.distgit_key,
+                    code=ConcernCode.LATEST_ATTEMPT_FAILED.value,
+                    latest_success_idx=latest_success_idx,
+                    latest_successful_task_url=latest_success_bi_task_url,
+                    latest_failed_job_url=builds[0].art_job_url,
+                    latest_attempt_task_url=latest_attempt_task_url,
+                    latest_failed_nvr=builds[0].nvr,
+                    latest_failed_build_record_id=builds[0].record_id,
+                    latest_failed_build_time=builds[0].start_time,
+                    for_release=for_release,
+                ),
+            )
 
-    def add_concern(self, image_dgk, engine, msg):
-        if not self.concerns.get(engine):
-            self.concerns[engine] = {}
-        self.concerns[engine][image_dgk] = msg
+    def add_concern(self, concern: Concern):
+        concern.group = self.runtime.group
+        self.concerns.append(concern)
 
     @retry(reraise=True, stop=stop_after_attempt(10), wait=wait_fixed(3))
-    async def query(self, image_meta, engine):
+    async def query(self, image_meta):
         """
         For 'stream' assembly only, query 'builds' table  for component 'name' from BigQuery
         """
+
+        self.logger.info('Querying builds for image: %s', image_meta.distgit_key)
         results = [
             build
             async for build in self.runtime.konflux_db.search_builds_by_fields(
                 start_search=self.start_search,
                 where={
                     'name': image_meta.distgit_key,
-                    'group': self.runtime.group_config.name,
-                    'engine': engine,
-                    'assembly': 'stream',
+                    'group': self.group,
+                    'engine': 'konflux',
+                    'assembly': self.assembly,
                 },
                 order_by='start_time',
                 limit=self.limit,
@@ -158,10 +214,13 @@ class ImagesHealthPipeline:
 
 
 @cli.command("images:health", short_help="Create a health report for this image group (requires DB read)")
-@click.option('--limit', default=100, help='How far back in the database to search for builds')
-@click.option('--url-markup', default='slack', help='How to markup hyperlinks (slack, github)')
+@click.option('--limit', default=LIMIT_BUILD_RESULTS, help='How far back in the database to search for builds')
+@click.option('--group', required=False, help='(Optional) override the group name from the config')
+@click.option('--assembly', required=False, help='(Optional) override the runtime assembly name')
 @click_coroutine
 @pass_runtime
-async def images_health(runtime, limit, url_markup):
-    runtime.initialize(clone_distgits=False, clone_source=False)
-    await ImagesHealthPipeline(runtime, limit, url_markup).run()
+async def images_health(runtime, limit, group, assembly):
+    runtime.initialize(clone_distgits=False, clone_source=False, prevent_cloning=True)
+    await ImagesHealthPipeline(
+        runtime=runtime, limit=limit, group=group, assembly=assembly, variant=runtime.variant
+    ).run()

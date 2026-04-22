@@ -1,39 +1,59 @@
-.PHONY: venv tox lint test pylint format format-check
+.PHONY: venv tox lint test pylint format format-check reinstall clean-reinstall unit unit-artcommon unit-doozer unit-elliott unit-pyartcd unit-ocp-build-data-validator
 
 venv:
 	uv venv --python 3.11
+	# Install base requirements files first to ensure all runtime dependencies are available
 	./install.sh
-	uv pip install -r doozer/requirements-dev.txt -r pyartcd/requirements-dev.txt -r ocp-build-data-validator/requirements-dev.txt
-	cd elliott && uv pip install '.[tests]'
+
 
 format-check:
-	uv run -m ruff check --select I --output-format concise --config ruff.toml
-	uv run -m ruff format --check --config ruff.toml
+	uv run ruff check --output-format concise
+	uv run ruff format --check
 
 format:
-	uv run -m ruff check --select I --fix --config ruff.toml
-	uv run -m ruff format --config ruff.toml
+	uv run ruff check --fix
+	uv run ruff format
 
 lint: format-check
-	uv run -m ruff check --output-format concise --config ruff.toml
+	uv run ruff check --output-format concise
 
 pylint:
-	uv run -m pylint --errors-only .
+	uv run pylint --errors-only .
+
+unit-artcommon:
+	uv run pytest --verbose --color=yes artcommon/tests/
+
+unit-doozer:
+	uv run pytest --verbose --color=yes doozer/tests/
+
+unit-elliott:
+	uv run pytest --verbose --color=yes elliott/tests/
+
+unit-pyartcd:
+	uv run pytest --verbose --color=yes pyartcd/tests/
+
+unit-ocp-build-data-validator:
+	uv run pytest --verbose --color=yes ocp-build-data-validator/tests/
 
 unit:
-	uv run -m pytest --verbose --color=yes artcommon/tests/
-	uv run -m pytest --verbose --color=yes doozer/tests/
-	uv run -m pytest --verbose --color=yes elliott/tests/
-	uv run -m pytest --verbose --color=yes pyartcd/tests/
-	uv run -m pytest --verbose --color=yes ocp-build-data-validator/tests/
+	./run-tests-parallel.sh
 
 functional-elliott:
-	uv run -m pytest --verbose --color=yes elliott/functional_tests/
+	uv run pytest --verbose --color=yes elliott/functional_tests/
 
 functional-doozer:
-	uv run -m pytest --verbose --color=yes doozer/tests_functional
+	uv run pytest --verbose --color=yes doozer/tests_functional
 
 test: lint unit
+
+reinstall:
+	# Force reinstall all editable packages (use when source code structure changes)
+	uv sync --reinstall
+
+clean-reinstall:
+	# Complete clean reinstall (removes venv and recreates)
+	rm -rf .venv
+	$(MAKE) venv
 
 gen-shipment-schema:
 	echo 'from elliottlib.shipment_model import ShipmentConfig; import json; print(json.dumps(ShipmentConfig.model_json_schema(mode="validation"), indent=2))' | uv run python > ocp-build-data-validator/validator/json_schemas/shipment.schema.json

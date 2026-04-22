@@ -15,7 +15,7 @@ from artcommonlib.build_visibility import BuildVisibility, get_visibility_suffix
 from artcommonlib.model import Missing
 from artcommonlib.release_util import isolate_assembly_in_release
 
-from doozerlib import brew
+from doozerlib import brew, util
 from doozerlib.constants import BREWWEB_URL
 from doozerlib.distgit import RPMDistGitRepo
 from doozerlib.rpmcfg import RPMMetadata
@@ -55,10 +55,12 @@ class RPMBuilder:
         )
         # cleanup distgit dir
         logger.info("Cleaning up distgit repo...")
-        await exectools.cmd_assert_async(
-            ["git", "reset", "--hard", "origin/" + dg.branch],
-            cwd=dg.distgit_dir,
-        )
+        # Only reset if the remote branch exists (dg.sha will be None for newly created orphan branches)
+        if dg.sha:
+            await exectools.cmd_assert_async(
+                ["git", "reset", "--hard", "origin/" + dg.branch],
+                cwd=dg.distgit_dir,
+            )
         await exectools.cmd_assert_async(
             ["git", "rm", "--ignore-unmatch", "-rf", "."],
             cwd=dg.distgit_dir,
@@ -116,6 +118,17 @@ class RPMBuilder:
             )
 
         rpm.specfile = str(dg_specfile_path)
+
+        if rpm.runtime.group_config.build_profiles.enable_go_cover is True:
+            # Inject the coverage HTTP server source into every Go main package
+            # directory so that it is compiled into the binary via its init() function.
+            util.inject_coverage_server(Path(rpm.source_path), logger)
+
+            # The openshift RPM builds from openshift-priv/kubernetes.git and
+            # contains cmd/kubelet/.  Inject the coverage producer into the
+            # kubelet so it can discover and upload coverage data from the node.
+            if rpm.config.name == 'openshift':
+                util.inject_coverage_producer(Path(rpm.source_path), logger)
 
         # create tarball source as Source0
         logger.info("Creating tarball source...")
@@ -377,7 +390,22 @@ class RPMBuilder:
             elif line.startswith("%setup"):
                 lines[i] = f"%setup -q -n {rpm.config.name}-{rpm.version}\n"
             elif line.startswith("%autosetup"):
-                lines[i] = f"%autosetup -S git -n {rpm.config.name}-{rpm.version} -p1\n"
+                # Preserve original options, only override -n and add -p1 if -p not present
+                original_line = lines[i].strip()
+
+                # Replace -n option with our value, or add it if not present
+                if re.search(r'-n\s+\S+', original_line):
+                    # Replace existing -n option
+                    new_line = re.sub(r'-n\s+\S+', f'-n {rpm.config.name}-{rpm.version}', original_line)
+                else:
+                    # Add -n option after %autosetup
+                    new_line = original_line.replace('%autosetup', f'%autosetup -n {rpm.config.name}-{rpm.version}', 1)
+
+                # Add -p1 if no -p option is present
+                if not re.search(r'-p\d*', new_line):
+                    new_line = new_line + ' -p1'
+
+                lines[i] = new_line + '\n'
             elif line.startswith("%changelog"):
                 changelog_added = True
                 lines[i] = f"{lines[i].strip()}\n{changelog_title}\n- Update to source commit {source_commit_url}\n"
@@ -393,8 +421,10 @@ if [[ -n "$REAL_GO_PATH" ]]; then
     mkdir -p $GOSHIM_DIR
     ln -s $REAL_GO_PATH $GOSHIM_DIR/go.real
     export PATH=$GOSHIM_DIR:$PATH
-    # Use single quotes 'EOF' to avoid variable expansion.
+    # Use single quotes 'EOF' to avoid variable expansion within script content.
 cat > $GOSHIM_DIR/go << 'EOF'
+#!/bin/sh
+export GO_COMPLIANCE_COVER={'1' if rpm.runtime.group_config.build_profiles.enable_go_cover is True else '0'}
 {rpm_builder_go_wrapper_sh}
 EOF
     chmod +x $GOSHIM_DIR/go

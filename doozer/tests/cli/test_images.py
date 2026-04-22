@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import MagicMock, Mock, patch
 
 from artcommonlib.gitdata import DataObj
-from artcommonlib.model import Model
+from artcommonlib.variants import BuildVariant
 from click.testing import CliRunner
 from doozerlib import Runtime
 from doozerlib.cli.images import images_show_ancestors
@@ -30,6 +30,7 @@ class TestImagesCli(unittest.TestCase):
         runtime.assembly_basis_event = None
         runtime.late_resolve_image.return_value = None
         runtime.image_map = MagicMock()
+        runtime.variant = BuildVariant.OCP  # Add variant attribute
         image_map = {}
 
         # Image definitions

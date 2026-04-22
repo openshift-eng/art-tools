@@ -1,15 +1,13 @@
-import datetime
 import io
 import logging
 import re
 import tempfile
 import unittest
 from pathlib import Path
-from threading import Lock
 from unittest.mock import MagicMock, Mock, patch
 
 from artcommonlib.assembly import AssemblyTypes
-from artcommonlib.model import Missing, Model
+from artcommonlib.model import Model
 from doozerlib import distgit
 from doozerlib.image import ImageMetadata
 from flexmock import flexmock

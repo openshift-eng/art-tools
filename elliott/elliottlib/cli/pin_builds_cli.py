@@ -1,11 +1,10 @@
-import os
 from typing import List, Optional
 
 import click
-import requests
 import yaml
 from artcommonlib import logutil
 from artcommonlib.arch_util import brew_arch_for_go_arch
+from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.model import ListModel, Model
 from artcommonlib.release_util import isolate_el_version_in_release
@@ -13,6 +12,7 @@ from artcommonlib.rhcos import get_container_configs, get_container_pullspec
 from artcommonlib.rpm_utils import parse_nvr
 from doozerlib.brew import get_build_objects
 from doozerlib.rhcos import RHCOSBuildFinder
+from github import Github
 
 from elliottlib import Runtime
 from elliottlib.cli.common import cli, click_coroutine
@@ -21,12 +21,12 @@ LOGGER = logutil.get_logger(__name__)
 
 
 class AssemblyPinBuildsCli:
-    def __init__(self, runtime: Runtime, nvrs: List[str], pr: str, why: str, github_token: str):
+    def __init__(self, runtime: Runtime, nvrs: List[str], pr: str, why: str, github_client: Github | None):
         self.runtime = runtime
         self.nvrs = nvrs
         self.pr = pr
         self.why = why
-        self.github_token = github_token
+        self.github_client = github_client
         self.assembly_config = None
 
     async def run(self):
@@ -114,7 +114,7 @@ class AssemblyPinBuildsCli:
         if not (images and rpms):
             raise ValueError(f"No ART components found building from {repo_url}")
 
-        merge_commit, branch = self.get_pr_merge_commit(self.pr, self.github_token)
+        merge_commit, branch = self.get_pr_merge_commit(self.pr, self.github_client)
         # we don't need to validate version of branch since we will validate it in the db
         LOGGER.info(f"PR merged to {branch} with commit {merge_commit}")
 
@@ -140,28 +140,15 @@ class AssemblyPinBuildsCli:
         return nvrs
 
     @staticmethod
-    def get_pr_merge_commit(pr_url, auth_token):
-        repo_url = pr_url.split("/pull")[0]
-        org_repo_suffix = repo_url.split("github.com/")[1]
-        github_api_repo_url = "https://api.github.com/repos"
-        pr_api_url = f"{github_api_repo_url}/{org_repo_suffix}/pulls/{pr_url.split('/')[-1]}"
-        LOGGER.info('Fetching url %s', pr_api_url)
-        response = requests.get(
-            pr_api_url,
-            headers={
-                "Authorization": f"token {auth_token}",
-                "Accept": "application/json",
-            },
-        )
-        response.raise_for_status()
-        json_data = response.json()
-        sha, branch = None, None
-        try:
-            sha = json_data["merge_commit_sha"]
-            branch = json_data["base"]["ref"]
-        except KeyError:
+    def get_pr_merge_commit(pr_url: str, github_client: Github) -> tuple[str, str]:
+        org_repo = pr_url.split("github.com/")[1].split("/pull")[0]
+        pr_number = int(pr_url.rstrip("/").split("/")[-1])
+        LOGGER.info("Fetching PR %s#%d via PyGithub", org_repo, pr_number)
+        repo = github_client.get_repo(org_repo)
+        pr = repo.get_pull(pr_number)
+        if not pr.merge_commit_sha:
             raise ValueError(f"Could not find merge commit SHA for PR {pr_url}. Are you sure it merged?")
-        return sha, branch
+        return pr.merge_commit_sha, pr.base.ref
 
     def validate_nvrs_in_brew(self, nvrs_to_fetch):
         LOGGER.info("Validating image and rpm NVRs exist in brew...")
@@ -175,7 +162,9 @@ class AssemblyPinBuildsCli:
     async def validate_nvrs_in_konflux_db(self, nvrs_to_fetch):
         LOGGER.info("Fetching NVRs from DB...")
         where = {"group": self.runtime.group, "engine": self.runtime.build_system}
-        await self.runtime.konflux_db.get_build_records_by_nvrs(nvrs_to_fetch, where=where, strict=True)
+        await self.runtime.konflux_db.get_build_records_by_nvrs(
+            nvrs_to_fetch, where=where, strict=True, exclude_large_columns=True
+        )
 
     def pin_images(self, art_images_by_comp, images):
         changed = False
@@ -333,13 +322,12 @@ async def assembly_pin_builds_cli(runtime: Runtime, nvrs: List[str], pr: Optiona
     if sum([bool(nvrs), bool(pr)]) != 1:
         raise click.UsageError("Exactly one of NVRs or PR is required.")
 
-    github_token = None
+    github_client = None
     if pr:
-        github_token = os.environ.get('GITHUB_TOKEN')
-        if not github_token:
-            raise ValueError("GITHUB_TOKEN must be set in the environment to query PR information")
+        org = pr.split("github.com/")[1].split("/")[0]
+        github_client = get_github_client_for_org(org)
 
-    pipeline = AssemblyPinBuildsCli(runtime, nvrs, pr, why, github_token)
+    pipeline = AssemblyPinBuildsCli(runtime, nvrs, pr, why, github_client)
     out, changed = await pipeline.run()
     if changed:
         LOGGER.info("Assembly config updated. Pins added.")

@@ -37,7 +37,7 @@ context_settings = dict(help_option_names=['-h', '--help'])
     metavar='PATH',
     default=None,
     help="Git repo or directory containing group metadata for shipping a konflux release e.g."
-    f" {SHIPMENT_DATA_URL_TEMPLATE.format('ocp')}. Defaults to `main` branch for a repo - to point to a "
+    f" {SHIPMENT_DATA_URL_TEMPLATE}. Defaults to `main` branch for a repo - to point to a "
     "different branch/commit use repo@commitish",
 )
 @click.option(
@@ -95,6 +95,13 @@ context_settings = dict(help_option_names=['-h', '--help'])
     default='brew',
     envvar='BUILD_SYSTEM',
     help="Which build system (Brew/Konflux) to consider when searching for builds.",
+)
+@click.option(
+    "--registry-config",
+    "registry_config",
+    metavar='PATH',
+    default=None,
+    help="Path to a Docker config.json for registry auth (passed to oc --registry-config).",
 )
 @click.pass_context
 def cli(ctx, **kwargs):

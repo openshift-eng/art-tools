@@ -4,10 +4,10 @@ import os
 import sys
 from multiprocessing import Pool, cpu_count
 
-from . import cgit, distgit, exceptions, format, github, global_session, releases, schema, support
+from . import exceptions, format, github, global_session, releases, schema, support
 
 
-def validate(file, exclude_vpn, schema_only, images_dir):
+def validate(file, schema_only, images_dir):
     if not os.path.exists(file):
         support.fail_validation(f"File not found: {file}", None)
 
@@ -25,11 +25,16 @@ def validate(file, exclude_vpn, schema_only, images_dir):
         msg = 'Schema mismatch: {}\nReturned error: {}'.format(file, err)
         support.fail_validation(msg, parsed)
 
-    if support.get_artifact_type(file) not in ['image', 'rpm', 'releases']:
+    if support.get_artifact_type(file) not in ['image', 'rpm', 'releases', 'group']:
         print(f'✅ Validated {file}')
         return
 
     if schema_only:
+        print(f'✅ Validated {file}')
+        return
+
+    if support.get_artifact_type(file) == 'group':
+        # group.yml schema validation is already done above
         print(f'✅ Validated {file}')
         return
 
@@ -48,19 +53,6 @@ def validate(file, exclude_vpn, schema_only, images_dir):
         msg = ('GitHub validation failed for {} ({})\nReturned error: {}').format(file, url, err)
         support.fail_validation(msg, parsed)
 
-    if exclude_vpn:
-        print('Skipping distgit and cgit validations')
-    else:
-        (url, err) = cgit.validate(file, parsed, group_cfg)
-        if err:
-            msg = ('CGit validation failed for {} ({})\nReturned error: {}').format(file, url, err)
-            support.fail_validation(msg, parsed)
-
-            (url, err) = distgit.validate(file, parsed, group_cfg)
-            if err:
-                msg = ('DistGit validation failed for {} ({})\nReturned error: {}').format(file, url, err)
-                support.fail_validation(msg, parsed)
-
     print(f'✅ Validated {file}')
 
 
@@ -74,13 +66,6 @@ def main():
         default=False,
         action='store_true',
         help='Run in single thread, so code.interact() works',
-    )
-    parser.add_argument(
-        '--exclude-vpn',
-        dest='exclude_vpn',
-        default=False,
-        action='store_true',
-        help='Exclude validations that require vpn access',
     )
     parser.add_argument(
         '--schema-only', dest='schema_only', default=False, action='store_true', help='Only run schema validations'
@@ -103,13 +88,13 @@ def main():
     print(f"Validating {len(args.files)} file(s)...")
     if args.single_thread:
         for f in args.files:
-            validate(f, args.exclude_vpn, args.schema_only, args.images_dir)
+            validate(f, args.schema_only, args.images_dir)
     else:
         try:
             rc = 0
-            pool = Pool(cpu_count(), initializer=global_session.set_global_session)
+            pool = Pool(min(cpu_count(), len(args.files)), initializer=global_session.set_global_session)
             atexit.register(pool.close)
-            pool.starmap(validate, [(f, args.exclude_vpn, args.schema_only, args.images_dir) for f in args.files])
+            pool.starmap(validate, [(f, args.schema_only, args.images_dir) for f in args.files])
         except exceptions.ValidationFailedWIP as e:
             print(str(e), file=sys.stderr)
         except (exceptions.ValidationFailed, Exception) as e:

@@ -182,6 +182,12 @@ def print_version(ctx, param, value):
 )
 @click.option('--load-disabled', default=False, is_flag=True, help='Treat disabled images/rpms as if they were enabled')
 @click.option(
+    '--variant',
+    type=click.Choice(['ocp', 'okd'], case_sensitive=False),
+    default='ocp',
+    help='Build variant (ocp or okd). Affects metadata resolution and branch selection.',
+)
+@click.option(
     '--local/--osbs',
     default=False,
     is_flag=True,
@@ -213,6 +219,13 @@ def print_version(ctx, param, value):
     default='brew',
     envvar='BUILD_SYSTEM',
     help="Which build system (Brew/Konflux) to consider when searching for builds.",
+)
+@click.option(
+    "--registry-config",
+    "registry_config",
+    metavar='PATH',
+    default=None,
+    help="Path to a Docker config.json for registry auth (passed to oc/cosign commands).",
 )
 @click.pass_context
 def cli(ctx, **kwargs):
@@ -300,9 +313,6 @@ def validate_semver_major_minor_patch(ctx, param, version):
     :param version: The version specified on the command line
     :return:
     """
-    if version == 'auto' or version is None:
-        return version
-
     vsplit = version.split(".")
     try:
         int(vsplit[0].removeprefix('v'))
@@ -315,6 +325,29 @@ def validate_semver_major_minor_patch(ctx, param, version):
         raise click.BadParameter('Expected X, X.Y, or X.Y.Z (with optional "v" prefix)')
 
     return f'{vsplit[0]}.{minor_version}.{patch_version}'
+
+
+def validate_semver_major_minor(ctx, param, version):
+    """
+    For non-None, non-auto values, ensures that the incoming parameter meets
+    the criteria X.Y (with optional "v" prefix). Used by microshift-bootc
+    which uses 2-segment versions (e.g. v4.20).
+    :param ctx: Click context
+    :param param: The parameter specified on the command line
+    :param version: The version specified on the command line
+    :return:
+    """
+    vsplit = version.split(".")
+    if len(vsplit) != 2:
+        raise click.BadParameter('Expected X.Y (with optional "v" prefix)')
+
+    try:
+        int(vsplit[0].removeprefix('v'))
+        minor_version = int(vsplit[1])
+    except ValueError:
+        raise click.BadParameter('Expected integers in version fields')
+
+    return f'{vsplit[0]}.{minor_version}'
 
 
 def validate_rpm_version(ctx, param, version: str):
@@ -381,4 +414,11 @@ option_push = click.option(
     default=False,
     is_flag=True,
     help='Pushes to distgit after local changes (--no-push by default).',
+)
+option_registry_auth = click.option(
+    '--registry-auth',
+    '--pull-secret',
+    metavar='PATH',
+    type=click.Path(exists=True, dir_okay=False, readable=True),
+    help='Path to registry authentication file (pull secret JSON)',
 )

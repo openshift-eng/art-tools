@@ -1,21 +1,92 @@
+import asyncio
 import hashlib
 import json
+import pathlib
+import re
 from collections import OrderedDict
 from copy import copy
+from functools import lru_cache
 from multiprocessing import Event
 from typing import Any, Dict, List, Optional, Set, Tuple, cast
 
 from artcommonlib import util as artlib_util
+from artcommonlib.constants import GOLANG_BUILDER_IMAGE_NAME
+from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
+from artcommonlib.release_util import isolate_el_version_in_release
 from artcommonlib.rpm_utils import parse_nvr, to_nevra
 from artcommonlib.util import deep_merge
+from dockerfile_parse import DockerfileParser
 
 import doozerlib
 from doozerlib import brew, coverity, util
 from doozerlib.build_info import BrewBuildRecordInspector
 from doozerlib.distgit import pull_image
 from doozerlib.metadata import Metadata, RebuildHint, RebuildHintCode
+from doozerlib.source_resolver import SourceResolver
+
+
+@lru_cache(maxsize=256)
+def extract_builder_info_from_pullspec(pullspec: str) -> tuple[int | None, tuple[int, int] | None]:
+    """
+    Extract RHEL version and golang version from a container image pullspec.
+
+    This function is cached to avoid repeated image inspections for the same pullspec.
+
+    First attempts to extract versions from the pullspec tag, then falls back to
+    inspecting the image's 'release' and 'version' labels.
+
+    Args:
+        pullspec: Full image pullspec (e.g., registry.ci.openshift.org/ocp/builder:rhel-9-golang-1.21)
+
+    Returns:
+        Tuple of (rhel_version, golang_version) where:
+        - rhel_version: int or None (e.g., 9)
+        - golang_version: tuple of (major, minor) or None (e.g., (1, 21))
+    """
+    rhel_version = None
+    golang_version = None
+
+    try:
+        # Try to extract versions from the tag (fast path)
+        if ':' in pullspec:
+            # Strip digest (@sha256:...) if present before extracting tag
+            pullspec_without_digest = pullspec.split('@')[0]
+            tag = pullspec_without_digest.split(':')[-1]
+            # Extract RHEL version from patterns like rhel-9, rhel9, ubi-9, ubi9, centos-9, centos9
+            match = re.search(r'(?:rhel|ubi|centos)-?(\d+)', tag)
+            if match:
+                rhel_version = int(match.group(1))
+                # Try to extract golang version from tag (e.g., golang-1.21 or golang-1.21.3)
+                golang_match = re.search(r'golang-?(\d+)\.(\d+)', tag)
+                if golang_match:
+                    golang_version = (int(golang_match.group(1)), int(golang_match.group(2)))
+                    # Got both values from tag parsing - return immediately
+                    return rhel_version, golang_version
+
+        # At this point, we're missing at least one value - fall back to inspecting image labels
+        image_info = cast(Dict, util.oc_image_info_for_arch(pullspec))
+        labels = image_info['config']['config']['Labels']
+
+        # Extract RHEL version from release label if we don't have it yet
+        if not rhel_version:
+            release_label = labels.get('release')
+            if release_label:
+                rhel_version = isolate_el_version_in_release(release_label)
+
+        # Extract golang version from version label if we don't have it yet
+        if not golang_version:
+            version_label = labels.get('version')
+            if version_label:
+                version_fields = util.extract_version_fields(version_label, at_least=2)
+                golang_version = (version_fields[0], version_fields[1])
+
+    except Exception:
+        # Return whatever we managed to extract before the error
+        pass
+
+    return rhel_version, golang_version
 
 
 class ImageMetadata(Metadata):
@@ -26,6 +97,7 @@ class ImageMetadata(Metadata):
         commitish: Optional[str] = None,
         clone_source: Optional[bool] = False,
         prevent_cloning: Optional[bool] = False,
+        process_dependents: Optional[bool] = True,
     ):
         super(ImageMetadata, self).__init__('image', runtime, data_obj, commitish, prevent_cloning=prevent_cloning)
         self.required = self.config.get('required', False)
@@ -33,12 +105,18 @@ class ImageMetadata(Metadata):
         self.children = []  # list of ImageMetadata which use this image as a parent.
         self.dependencies: Set[str] = set()
         dependents = self.config.get('dependents', [])
-        for d in dependents:
-            dependent = self.runtime.late_resolve_image(d, add=True, required=False)
-            if not dependent:
-                continue
-            dependent.dependencies.add(self.distgit_key)
-            self.children.append(dependent)
+
+        # Only process dependents if this image is being added to image_map for building.
+        # When loading an image just to query its latest build (process_dependents=False),
+        # we should not add its dependents to image_map as a side effect.
+        # This prevents unwanted circular dependencies and incorrect CSV image references.
+        if process_dependents:
+            for d in dependents:
+                dependent = self.runtime.late_resolve_image(d, add=True, required=False)
+                if not dependent:
+                    continue
+                dependent.dependencies.add(self.distgit_key)
+                self.children.append(dependent)
         self.rebase_event = Event()
         """ Event that is set when this image is being rebased. """
         self.rebase_status = False
@@ -47,8 +125,32 @@ class ImageMetadata(Metadata):
         """ Event that is set when this image is being built. """
         self.build_status = False
         """ True if this image has been successfully built. """
-        if clone_source:
+
+        # Apply alternative upstream config if canonical builders is enabled
+        # This must happen early so config is correct for all subsequent operations
+        if self.canonical_builders_enabled:
+            if prevent_cloning:
+                self.logger.warning(
+                    '[%s] canonical_builders_from_upstream is enabled but prevent_cloning=True. '
+                    'Skipping upstream RHEL version detection; alternative_upstream config will not be applied.',
+                    self.distgit_key,
+                )
+            else:
+                if not clone_source:
+                    self.logger.warning(
+                        '[%s] canonical_builders_from_upstream is enabled but clone_source=False. '
+                        'Source will be cloned anyway to determine upstream RHEL version.',
+                        self.distgit_key,
+                    )
+                # When canonical_builders_from_upstream is enabled, we need to determine
+                # the upstream RHEL version and merge alternative_upstream config if needed.
+                # This will clone source as part of the process.
+                self._apply_alternative_upstream_config()
+        elif clone_source:
+            # Normal case: clone source if requested (and canonical builders not enabled)
             runtime.source_resolver.resolve_source(self)
+
+        self.installed_rpms = None
 
     @property
     def image_name(self):
@@ -94,18 +196,39 @@ class ImageMetadata(Metadata):
         :raises IOError: If the image is not an OLM operator.
         """
         short_name = self.get_olm_bundle_short_name()
-        if not short_name.startswith('ose-'):
+
+        # Use product name as the namespace prefix
+        product = self.runtime.group_config.product if self.runtime.group_config.product else "openshift"
+
+        # Only add "ose-" prefix for OpenShift products
+        if product == "openshift" and not short_name.startswith('ose-'):
             short_name = 'ose-' + short_name
-        return f"openshift/{short_name}"
+
+        return f"{product}/{short_name}"
 
     def get_olm_bundle_delivery_repo_name(self):
         """Returns the delivery repository name for the OLM bundle of this OLM operator.
 
+        If delivery.delivery_repo_name_override is true, the first entry from delivery.delivery_repo_names
+        is used as the delivery repo name. Exactly one entry must be present in that case.
+
         :return: The delivery repository name for the OLM bundle.
-        :raises IOError: If the image is not an OLM operator.
+        :raises IOError: If the image is not an OLM operator, or if the delivery repo name cannot be determined.
         """
         if not self.is_olm_operator:
             raise IOError(f"[{self.distgit_key}] No update-csv config found in the image's metadata")
+        if self.config.delivery.delivery_repo_name_override:
+            delivery_repo_names = self.config.delivery.delivery_repo_names
+            if delivery_repo_names is Missing or not delivery_repo_names:
+                raise IOError(
+                    f"[{self.distgit_key}] delivery_repo_name_override is set but delivery.delivery_repo_names is empty"
+                )
+            if len(delivery_repo_names) != 1:
+                raise IOError(
+                    f"[{self.distgit_key}] delivery_repo_name_override is set but delivery.delivery_repo_names has "
+                    f"{len(delivery_repo_names)} entries (expected exactly 1)"
+                )
+            return cast(str, delivery_repo_names[0])
         repo_name = self.config.delivery.bundle_delivery_repo_name
         if repo_name is Missing:
             raise IOError(
@@ -245,20 +368,50 @@ class ImageMetadata(Metadata):
         return self.image_name.replace("/", "-")
 
     def pull_url(self):
-        # Don't trust what is the Dockerfile for version & release. This field may not even be present.
-        # Query brew to find the most recently built release for this component version.
-        _, version, release = self.get_latest_build_info(el_target=self.branch_el_target())
+        """
+        Get the pullspec for the latest build of this image.
 
-        # we need to pull images from proxy if 'brew_image_namespace' is enabled:
-        # https://source.redhat.com/groups/public/container-build-system/container_build_system_wiki/pulling_pre_quay_switch_over_osbs_built_container_images_using_the_osbs_registry_proxy
-        if self.runtime.group_config.urls.brew_image_namespace is not Missing:
-            name = self.runtime.group_config.urls.brew_image_namespace + '/' + self.config.name.replace('/', '-')
+        Returns the pullspec from Konflux if build_system is 'konflux',
+        otherwise returns the Brew pullspec.
+        """
+        if self.runtime.build_system == 'konflux':
+            # Bind Konflux DB if not already bound
+            if not hasattr(self.runtime, '_konflux_db_bound'):
+                self.runtime.konflux_db.bind(KonfluxBuildRecord)
+                self.runtime._konflux_db_bound = True
+
+            # Get the latest Konflux build synchronously
+            async def get_latest_konflux_build():
+                return await self.runtime.konflux_db.get_latest_build(
+                    name=self.distgit_key,
+                    group=self.runtime.group,
+                    assembly=self.runtime.assembly,
+                    artifact_type=ArtifactType.IMAGE,
+                    engine=Engine.KONFLUX,
+                    outcome=KonfluxBuildOutcome.SUCCESS,
+                    exclude_large_columns=True,
+                )
+
+            build = asyncio.run(get_latest_konflux_build())
+            if not build:
+                raise IOError(f'No Konflux build found for {self.distgit_key} in group {self.runtime.group}')
+            return build.image_pullspec
         else:
-            name = self.config.name
+            # Brew build system (existing behavior)
+            # Don't trust what is the Dockerfile for version & release. This field may not even be present.
+            # Query brew to find the most recently built release for this component version.
+            _, version, release = self.get_latest_build_info(el_target=self.branch_el_target())
 
-        return "{host}/{name}:{version}-{release}".format(
-            host=self.runtime.group_config.urls.brew_image_host, name=name, version=version, release=release
-        )
+            # we need to pull images from proxy if 'brew_image_namespace' is enabled:
+            # https://source.redhat.com/groups/public/container-build-system/container_build_system_wiki/pulling_pre_quay_switch_over_osbs_built_container_images_using_the_osbs_registry_proxy
+            if self.runtime.group_config.urls.brew_image_namespace is not Missing:
+                name = self.runtime.group_config.urls.brew_image_namespace + '/' + self.config.name.replace('/', '-')
+            else:
+                name = self.config.name
+
+            return "{host}/{name}:{version}-{release}".format(
+                host=self.runtime.group_config.urls.brew_image_host, name=name, version=version, release=release
+            )
 
     def pull_image(self):
         pull_image(self.pull_url())
@@ -449,7 +602,7 @@ class ImageMetadata(Metadata):
                 builder_brew_build = ImageMetadata.builder_image_builds.get(builder_image_url, None)
 
                 if not builder_brew_build:
-                    latest_builder_image_info = Model(util.oc_image_info_for_arch__caching(builder_image_url))
+                    latest_builder_image_info = Model(util.oc_image_info_for_arch(builder_image_url))
                     builder_info_labels = latest_builder_image_info.config.config.Labels
                     builder_nvr_list = [
                         builder_info_labels['com.redhat.component'],
@@ -560,6 +713,7 @@ class ImageMetadata(Metadata):
     def calculate_config_digest(self, group_config, streams):
         ignore_keys = [
             "owners",
+            "okd",
             "scan_sources",
             "content.source.ci_alignment",
             "content.source.git",
@@ -595,7 +749,8 @@ class ImageMetadata(Metadata):
 
         repos = set(image_config.get("enabled_repos", []) + image_config.get("non_shipping_repos", []))
         if repos:
-            message["repos"] = {repo: group_config["repos"][repo] for repo in repos}
+            # Use runtime.repos which handles both old-style and new-style configurations
+            message["repos"] = {repo: self.runtime.repos[repo].to_dict() for repo in repos}
 
         builders = image_config.get("from", {}).get("builder", [])
         from_stream = image_config.get("from", {}).get("stream")
@@ -630,6 +785,174 @@ class ImageMetadata(Metadata):
             )
             return False
         return canonical_builders_from_upstream
+
+    def get_konflux_build_attempts(self) -> int:
+        """
+        Returns the number of build attempts to use for Konflux builds.
+
+        Checks configuration in the following order:
+        1. Image metadata configuration (konflux.build_attempts)
+        2. Group configuration (konflux.build_attempts)
+        3. Default value (3 attempts)
+
+        Returns:
+            int: Number of build attempts
+        """
+        DEFAULT_BUILD_ATTEMPTS = 3
+
+        # Check component-level override first
+        if (component_override := self.config.konflux.build_attempts) not in [Missing, None]:
+            attempts = int(component_override)
+            source = "metadata config"
+        # Check group-level override
+        elif (group_override := self.runtime.group_config.konflux.build_attempts) not in [Missing, None]:
+            attempts = int(group_override)
+            source = "group config"
+        else:
+            attempts = DEFAULT_BUILD_ATTEMPTS
+            source = "default"
+
+        self.logger.info("Using %d Konflux build attempts for %s (source: %s)", attempts, self.distgit_key, source)
+
+        return attempts
+
+    def _apply_alternative_upstream_config(self) -> None:
+        """
+        When canonical_builders_enabled, merge alternative_upstream config based on upstream RHEL version.
+        This must happen early in initialization so config is correct for all subsequent operations.
+
+        This method determines both ART and upstream intended RHEL versions, then merges the appropriate
+        alternative_upstream config stanza if the versions differ. If versions match, no merge is needed.
+
+        Raises:
+            IOError: If image doesn't have upstream source
+            IOError: If source is not available or upstream RHEL version cannot be determined
+            IOError: If RHEL versions differ but no matching alternative_upstream config is found
+        """
+        # Check if this image has upstream source
+        if not self.has_source():
+            raise IOError(
+                f'[{self.distgit_key}] canonical_builders_from_upstream is enabled but image does not have '
+                'upstream source. Cannot determine upstream RHEL version.'
+            )
+
+        # Determine ART intended RHEL version using branch_el_target()
+        art_intended_el_version = self.branch_el_target()
+
+        # Get the source resolution
+        source_resolution = self.runtime.source_resolver.resolve_source(self)
+        if not source_resolution:
+            raise IOError(
+                f'[{self.distgit_key}] canonical_builders_from_upstream is enabled but source could not be resolved. '
+                'Cannot determine upstream RHEL version.'
+            )
+
+        # Get the source directory
+        source_dir = SourceResolver.get_source_dir(source_resolution, self)
+
+        # Determine upstream intended RHEL version and golang version from upstream Dockerfile
+        upstream_intended_el_version, _ = self._determine_upstream_builder_info(source_dir)
+
+        if not upstream_intended_el_version:
+            raise IOError(
+                f'[{self.distgit_key}] Could not determine upstream RHEL version. '
+                'Cannot apply alternative_upstream config.'
+            )
+
+        # If ART and upstream RHEL versions match, no config merge needed
+        if upstream_intended_el_version == art_intended_el_version:
+            self.logger.info(
+                '[%s] ART and upstream intended RHEL versions match (el%s). No alternative config merge needed.',
+                self.distgit_key,
+                art_intended_el_version,
+            )
+            return
+
+        # RHEL versions differ - look for matching alternative_upstream config
+        alt_configs = self.config.alternative_upstream
+        matched = False
+        for alt_config in alt_configs or []:
+            if alt_config['when'] == f'el{upstream_intended_el_version}':
+                self.logger.info(
+                    '[%s] Merging rhel%s alternative_upstream config to match upstream',
+                    self.distgit_key,
+                    upstream_intended_el_version,
+                )
+                # Merge the alternative config
+                self.config = Model(deep_merge(self.config.primitive(), alt_config.primitive()))
+                matched = True
+                break
+
+        if not matched:
+            # For OKD variant, RHEL version mismatches are expected (e.g., OKD 5.0 uses el10 while upstream uses el9)
+            # Log a warning instead of raising an error to allow canonical builders to work
+            from artcommonlib.variants import BuildVariant
+
+            if self.runtime.variant == BuildVariant.OKD:
+                self.logger.warning(
+                    '[%s] OKD variant: Upstream uses el%s but ART uses el%s. '
+                    'No alternative_upstream config found, but continuing anyway for OKD.',
+                    self.distgit_key,
+                    upstream_intended_el_version,
+                    art_intended_el_version,
+                )
+                return
+
+            raise IOError(
+                f'[{self.distgit_key}] Upstream uses el{upstream_intended_el_version} but ART uses '
+                f'el{art_intended_el_version}, and no matching alternative_upstream config was found. '
+                f'Please add an alternative_upstream config with "when: el{upstream_intended_el_version}".'
+            )
+
+        # Update targets after config merge
+        self.targets = self.determine_targets()
+
+    def _determine_upstream_builder_info(
+        self, source_dir: pathlib.Path
+    ) -> Tuple[Optional[int], Optional[Tuple[int, int]]]:
+        """
+        Determine the upstream intended RHEL version and golang version from the last build layer in the upstream Dockerfile.
+
+        Delegates to extract_builder_info_from_pullspec() for the actual extraction logic.
+
+        Args:
+            source_dir: Path to the upstream source directory (already includes content.source.path if applicable)
+
+        Returns:
+            Tuple of (rhel_version, golang_version) where:
+            - rhel_version: int or None (e.g., 9)
+            - golang_version: tuple of (major, minor) or None (e.g., (1, 21))
+        """
+        df_name = self.config.content.source.dockerfile
+        if not df_name:
+            df_name = 'Dockerfile'
+
+        df_path = source_dir.joinpath(df_name)
+        rhel_version = None
+        golang_version = None
+
+        try:
+            with open(df_path) as f:
+                dfp = DockerfileParser(fileobj=f)
+                parent_images = dfp.parent_images
+
+            # Try the last build layer first (the runtime base), then fall back to earlier layers (builders).
+            # Some base images (e.g. aws-efs-utils-base) don't encode RHEL version in their tag and may
+            # not be inspectable, but builder images (e.g. rhel-9-golang-1.25) almost always do.
+            for pullspec in reversed(parent_images):
+                rhel_version, golang_version = extract_builder_info_from_pullspec(pullspec)
+                if rhel_version:
+                    break
+
+        except Exception as e:
+            self.logger.warning('[%s] Failed determining upstream builder info: %s', self.distgit_key, e)
+
+        if not rhel_version:
+            self.logger.warning('[%s] Could not determine rhel version from upstream', self.distgit_key)
+        if not golang_version:
+            self.logger.debug('[%s] Could not determine golang version from upstream', self.distgit_key)
+
+        return rhel_version, golang_version
 
     def _default_brew_target(self):
         """Returns derived brew target name from the distgit branch name"""
@@ -667,18 +990,21 @@ class ImageMetadata(Metadata):
         if cachi2_config_override not in [Missing, None]:
             # If cachi2 override is defined in image metadata
             cachi2_enabled = cachi2_config_override
-            self.logger.info("cachi2 enabled from metadata config")
+            source = "metadata config"
+
         elif cachi2_group_override not in [Missing, None]:
             # If cachi2 override is defined in group metadata
             cachi2_enabled = cachi2_group_override
-            self.logger.info("cachi2 enabled from group config")
+            source = "group config"
+
         else:
             # Enable cachi2 based on cachito config
-            self.logger.info("cachi2 override not found. fallback to use cachito config")
             cachi2_enabled = artlib_util.is_cachito_enabled(
                 metadata=self, group_config=self.runtime.group_config, logger=self.logger
             )
+            source = "cachito config"
 
+        self.logger.info("cachi2 %s from %s", "enabled" if cachi2_enabled else "disabled", source)
         return cachi2_enabled
 
     def is_lockfile_generation_enabled(self) -> bool:
@@ -686,9 +1012,10 @@ class ImageMetadata(Metadata):
         Determines whether lockfile generation is enabled for the current image configuration.
 
         The method checks preconditions in the following order:
-        1. Cachi2 feature must be enabled
-        2. enabled_repos must be defined and not empty
-        3. Lockfile generation overrides:
+        1. Network mode must be "hermetic" (lockfiles only for hermetic builds)
+        2. Cachi2 feature must be enabled
+        3. enabled_repos must be defined and not empty
+        4. Lockfile generation overrides:
            - Image metadata configuration (`self.config.konflux.cachi2.lockfile.enabled`)
            - Group configuration (`self.runtime.group_config.konflux.cachi2.lockfile.enabled`)
         If no override is set, lockfile generation defaults to enabled.
@@ -696,6 +1023,12 @@ class ImageMetadata(Metadata):
         Returns:
             bool: True if lockfile generation is enabled, False otherwise.
         """
+        # Early network mode check - lockfiles only for hermetic builds
+        network_mode = self.get_konflux_network_mode()
+        if network_mode != "hermetic":
+            self.logger.info(f"Lockfile generation disabled: network mode is '{network_mode}' (requires 'hermetic')")
+            return False
+
         lockfile_enabled = True
 
         # First check: cachi2 must be enabled
@@ -710,78 +1043,89 @@ class ImageMetadata(Metadata):
             return False
 
         # Third check: lockfile-specific overrides
+        source = None
         lockfile_config_override = self.config.konflux.cachi2.lockfile.enabled
+
         if lockfile_config_override not in [Missing, None]:
             lockfile_enabled = bool(lockfile_config_override)
-            self.logger.info(f"Lockfile generation set from metadata config {lockfile_enabled}")
-        else:
-            lockfile_group_override = self.runtime.group_config.konflux.cachi2.lockfile.enabled
-            if lockfile_group_override not in [Missing, None]:
-                lockfile_enabled = bool(lockfile_group_override)
-                self.logger.info(f"Lockfile generation set from group config {lockfile_enabled}")
+            source = "metadata config"
+
+        elif (lockfile_group_override := self.runtime.group_config.konflux.cachi2.lockfile.enabled) not in [
+            Missing,
+            None,
+        ]:
+            lockfile_enabled = bool(lockfile_group_override)
+            source = "group config"
+
+        self.logger.info(f"Lockfile generation set from {source} {lockfile_enabled}")
 
         return lockfile_enabled
 
-    def is_lockfile_force_enabled(self) -> bool:
+    def is_dnf_modules_enable_enabled(self) -> bool:
         """
-        Determines whether lockfile force generation is enabled for the current image configuration.
+        Determines whether DNF module enablement command injection is enabled.
 
-        The method checks configuration in the following order:
-        1. Image metadata configuration (`self.config.konflux.cachi2.lockfile.force`)
-        2. Group configuration (`self.runtime.group_config.konflux.cachi2.lockfile.force`)
+        Checks configuration in the following order:
+        1. Image metadata configuration (konflux.cachi2.lockfile.dnf_modules_enable)
+        2. Group configuration (runtime.group_config.konflux.cachi2.lockfile.dnf_modules_enable)
 
-        If neither is set, force generation defaults to disabled.
+        If neither is set, DNF modules enablement defaults to enabled (True).
 
         Returns:
-            bool: True if lockfile force generation is enabled, False otherwise.
+            bool: True if DNF module enablement injection is enabled, False otherwise.
         """
-        lockfile_force_config_override = self.config.konflux.cachi2.lockfile.force
-        if lockfile_force_config_override not in [Missing, None]:
-            lockfile_force = bool(lockfile_force_config_override)
-            self.logger.info(f"Lockfile force generation set from metadata config: {lockfile_force}")
-            return lockfile_force
+        dnf_modules_enable_config_override = self.config.konflux.cachi2.lockfile.dnf_modules_enable
+        if dnf_modules_enable_config_override not in [Missing, None]:
+            dnf_modules_enable = bool(dnf_modules_enable_config_override)
+            self.logger.info(f"DNF modules enablement set from metadata config: {dnf_modules_enable}")
+            return dnf_modules_enable
 
-        lockfile_force_group_override = self.runtime.group_config.konflux.cachi2.lockfile.force
-        if lockfile_force_group_override not in [Missing, None]:
-            lockfile_force = bool(lockfile_force_group_override)
-            self.logger.info(f"Lockfile force generation set from group config: {lockfile_force}")
-            return lockfile_force
-
-        return False
-
-    def is_lockfile_parent_inspect_enabled(self) -> bool:
-        """
-        Determines whether lockfile parent inspection is enabled for the current image configuration.
-
-        The method checks configuration in the following order:
-        1. Image metadata configuration (`self.config.konflux.cachi2.lockfile.inspect_parent`)
-        2. Group configuration (`self.runtime.group_config.konflux.cachi2.lockfile.inspect_parent`)
-
-        If neither is set, parent inspection defaults to enabled (True).
-
-        Returns:
-            bool: True if lockfile parent inspection is enabled, False otherwise.
-        """
-        lockfile_inspect_parent_config_override = self.config.konflux.cachi2.lockfile.inspect_parent
-        if lockfile_inspect_parent_config_override not in [Missing, None]:
-            lockfile_inspect_parent = bool(lockfile_inspect_parent_config_override)
-            self.logger.info(f"Lockfile parent inspection set from metadata config: {lockfile_inspect_parent}")
-            return lockfile_inspect_parent
-
-        lockfile_inspect_parent_group_override = self.runtime.group_config.konflux.cachi2.lockfile.inspect_parent
-        if lockfile_inspect_parent_group_override not in [Missing, None]:
-            lockfile_inspect_parent = bool(lockfile_inspect_parent_group_override)
-            self.logger.info(f"Lockfile parent inspection set from group config: {lockfile_inspect_parent}")
-            return lockfile_inspect_parent
+        dnf_modules_enable_group_override = self.runtime.group_config.konflux.cachi2.lockfile.dnf_modules_enable
+        if dnf_modules_enable_group_override not in [Missing, None]:
+            dnf_modules_enable = bool(dnf_modules_enable_group_override)
+            self.logger.info(f"DNF modules enablement set from group config: {dnf_modules_enable}")
+            return dnf_modules_enable
 
         return True
 
-    async def fetch_rpms_from_build(self) -> set[str]:
+    def is_cross_arch_enabled(self) -> bool:
+        """
+        Determines whether cross-architecture lockfile inclusion is enabled.
+
+        Checks configuration in the following order:
+        1. Image metadata configuration (konflux.cachi2.lockfile.cross_arch)
+        2. Group configuration (runtime.group_config.konflux.cachi2.lockfile.cross_arch)
+
+        If neither is set, cross-architecture inclusion defaults to disabled (False).
+
+        Returns:
+            bool: True if cross-architecture lockfile inclusion is enabled, False otherwise.
+        """
+        cross_arch_config_override = self.config.konflux.cachi2.lockfile.cross_arch
+        if cross_arch_config_override not in [Missing, None]:
+            cross_arch = bool(cross_arch_config_override)
+            self.logger.info(f"Cross-architecture lockfile inclusion set from metadata config: {cross_arch}")
+            return cross_arch
+
+        cross_arch_group_override = self.runtime.group_config.konflux.cachi2.lockfile.cross_arch
+        if cross_arch_group_override not in [Missing, None]:
+            cross_arch = bool(cross_arch_group_override)
+            self.logger.info(f"Cross-architecture lockfile inclusion set from group config: {cross_arch}")
+            return cross_arch
+
+        return False
+
+    async def fetch_rpms_from_build(self, lockfile_seed_nvrs: Optional[list[str]] = None) -> set[str]:
         """
         Fetch RPM packages from database installed_rpms field.
 
         Returns either the full image RPM set or difference from parent packages,
         based on the inspect_parent configuration. Caches result in installed_rpms attribute.
+
+        Args:
+            lockfile_seed_nvrs: NVRs of builds whose installed RPMs should seed lockfile
+                generation. When provided, the method checks these NVRs first and uses the
+                matching build record instead of the latest build.
 
         Returns:
             set[str]: Source RPM package names - full set if inspect_parent=False,
@@ -792,14 +1136,25 @@ class ImageMetadata(Metadata):
             return set(self.installed_rpms)
 
         try:
-            base_search_params = {
-                'group': self.runtime.group,
-                'outcome': "success",
-                'engine': self.runtime.build_system,
-            }
+            build = None
+            if lockfile_seed_nvrs:
+                for nvr in lockfile_seed_nvrs:
+                    candidate = await self.runtime.konflux_db.get_build_record_by_nvr(nvr=nvr, strict=False)
+                    if candidate and candidate.name == self.distgit_key:
+                        self.logger.info(f"Using seed NVR {nvr} for {self.distgit_key}")
+                        build = candidate
+                        break
 
-            base_search_params['name'] = self.distgit_key
-            build = await self.runtime.konflux_db.get_latest_build(**base_search_params)
+            if build is None:
+                base_search_params = {
+                    'group': self.runtime.group,
+                    'outcome': "success",
+                    'engine': self.runtime.build_system,
+                    'name': self.distgit_key,
+                    'assembly': self.runtime.assembly,
+                }
+                build = await self.runtime.konflux_db.get_latest_build(**base_search_params)
+
             if not build:
                 self.logger.debug(f"No build record found for {self.distgit_key}/{self.runtime.group}")
                 self.installed_rpms = []
@@ -814,37 +1169,15 @@ class ImageMetadata(Metadata):
                 self.installed_rpms = []
                 return set()
 
-            # Check if we should skip parent inspection
-            if not self.is_lockfile_parent_inspect_enabled():
-                # Skip parent inspection: return full image RPM list
-                self.installed_rpms = list(rpms)
-                return rpms
+            self.installed_rpms = list(rpms)
+            return rpms
 
-            parents = self.get_parent_members()
-            if not parents:
-                self.logger.warning(f'No parent found for {self.distgit_key}; using full RPM set')
-                self.installed_rpms = list(rpms)
-                return rpms
-
-            parent_name = next(iter(parents))
-            try:
-                base_search_params['name'] = parent_name
-                parent_build = await self.runtime.konflux_db.get_latest_build(**base_search_params)
-                parent_rpms = set(parent_build.installed_rpms or []) if parent_build else set()
-
-                diff_rpms = rpms - parent_rpms
-                self.installed_rpms = list(diff_rpms)
-                return diff_rpms
-            except Exception as e:
-                self.logger.error(f"Failed to fetch parent RPMs for {parent_name}/{self.runtime.group}: {e}")
-                self.installed_rpms = list(rpms)
-                return rpms
         except Exception as e:
             self.logger.error(f"Failed to fetch RPMs for {self.distgit_key}/{self.runtime.group}: {e}")
             self.installed_rpms = []
             return set()
 
-    async def get_lockfile_rpms_to_install(self) -> set[str]:
+    async def get_lockfile_rpms_to_install(self, lockfile_seed_nvrs: Optional[list[str]] = None) -> set[str]:
         """
         Get the union of RPMs from build and lockfile configuration for lockfile generation.
 
@@ -855,13 +1188,16 @@ class ImageMetadata(Metadata):
         The method follows the same pattern as other lockfile-related methods,
         checking if lockfile generation is enabled before proceeding.
 
+        Args:
+            lockfile_seed_nvrs: Passed through to fetch_rpms_from_build.
+
         Returns:
             set[str]: Union of RPM package names from both sources, or empty set if
                      lockfile generation is not enabled
         """
 
         # Get RPMs from build
-        rpms_from_build = await self.fetch_rpms_from_build()
+        rpms_from_build = await self.fetch_rpms_from_build(lockfile_seed_nvrs=lockfile_seed_nvrs)
 
         # Get RPMs from lockfile config
         rpms_from_config = set()
@@ -874,14 +1210,46 @@ class ImageMetadata(Metadata):
         # Return union of both sources
         return rpms_from_build.union(rpms_from_config)
 
+    def get_lockfile_modules_to_install(self) -> set[str]:
+        """
+        Get module names for lockfile generation from configuration.
+
+        Follows the same pattern as get_lockfile_rpms_to_install() for consistency.
+        Configuration path: konflux.cachi2.lockfile.modules
+
+        Returns:
+            set[str]: Module names specified in lockfile configuration
+        """
+        modules_from_config = set()
+        lockfile_modules = self.config.konflux.cachi2.lockfile.get('modules', [])
+
+        if lockfile_modules not in [Missing, None]:
+            modules_from_config = set(lockfile_modules)
+            if modules_from_config:
+                self.logger.info(f'{self.distgit_key} adding {len(modules_from_config)} modules from lockfile config')
+
+        return modules_from_config
+
     def get_enabled_repos(self) -> set[str]:
         """
         Get enabled repositories for lockfile generation.
 
+        A repo is considered enabled only if it is BOTH:
+        1. Enabled in group.yml (Repo.enabled == True)
+        2. Listed in this image's enabled_repos config
+
         Returns:
             set[str]: Repository names enabled for this image
         """
-        return set(self.config.get("enabled_repos", []))
+        image_enabled_repos = set(self.config.get("enabled_repos", []))
+        if not image_enabled_repos:
+            return set()
+
+        # Get globally enabled repos from group config
+        globally_enabled = {r.name for r in self.runtime.repos.values() if r.enabled}
+
+        # Return intersection - repos must be enabled in BOTH places
+        return globally_enabled & image_enabled_repos
 
     def is_artifact_lockfile_enabled(self) -> bool:
         """
@@ -924,13 +1292,82 @@ class ImageMetadata(Metadata):
 
         return artifact_lockfile_enabled
 
+    def is_base_image(self) -> bool:
+        """
+        Determines whether this image is configured as a base image.
+
+        Base images are identified by the base_only: true configuration field.
+        These images require special snapshot-to-release workflow processing
+        to generate dual URLs for streams.yml updates.
+
+        Returns:
+            bool: True if this is a base image (base_only: true), False otherwise
+        """
+        base_only_config = getattr(self.config, 'base_only', Missing)
+        if base_only_config not in [Missing, None]:
+            return bool(base_only_config)
+        return False
+
+    def is_golang_builder(self) -> bool:
+        """
+        Determines whether this image is a golang builder image.
+
+        Returns:
+            bool: True if this is a golang builder image, False otherwise
+        """
+        if not hasattr(self.config, 'name'):
+            return False
+
+        image_name = self.config.name
+        return image_name == GOLANG_BUILDER_IMAGE_NAME or image_name == 'openshift/golang-builder'
+
+    def should_trigger_base_image_release(self) -> bool:
+        """
+        Determines whether this image should trigger the base image release workflow.
+
+        Returns:
+            bool: True if base image release workflow should be triggered, False otherwise
+        """
+        return self.is_base_image() or self.is_golang_builder()
+
+    def is_snapshot_release_enabled(self) -> bool:
+        """
+        Determines whether snapshot-to-release workflow is enabled for this image.
+
+        The snapshot_release flag controls whether base images should trigger
+        the snapshot-to-release workflow when builds complete.
+
+        Returns:
+            bool: True if snapshot_release: true is configured, True by default if not specified
+        """
+        snapshot_release_config = getattr(self.config, 'snapshot_release', Missing)
+        if snapshot_release_config not in [Missing, None]:
+            return bool(snapshot_release_config)
+        return True
+
     def get_required_artifacts(self) -> list:
-        """Get list of required artifact URLs from image config."""
+        """
+        Get list of required artifacts from image config.
+
+        Returns:
+            list[dict]: List of dicts with 'url' and 'filename' keys.
+                        Normalizes both string URLs and object formats.
+        """
         if not self.is_artifact_lockfile_enabled():
             return []
 
-        resource_urls = self.config.konflux.cachi2.artifact_lockfile.resources
-        if resource_urls in [Missing, None]:
+        resources = self.config.konflux.cachi2.artifact_lockfile.resources
+        if resources in [Missing, None]:
             return []
 
-        return resource_urls  # Direct URL list
+        # Normalize to list of dicts
+        normalized = []
+        for resource in resources:
+            if isinstance(resource, str):
+                # Simple URL string - filename will be extracted from URL
+                normalized.append({'url': resource, 'filename': None})
+            elif isinstance(resource, dict):
+                # Object format with url and optional filename
+                normalized.append({'url': resource['url'], 'filename': resource.get('filename', None)})
+
+        return normalized

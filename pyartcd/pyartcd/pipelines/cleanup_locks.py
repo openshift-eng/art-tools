@@ -24,6 +24,15 @@ async def cleanup_locks(runtime: Runtime):
         for lock_name in active_locks:
             # Lock ID is a build URL minus Jenkins server base URL
             build_path = await lock_manager.get_lock_id(lock_name)
+
+            # Skip locks with random identifiers (created outside of Jenkins)
+            # These locks cannot be validated against Jenkins builds and should not be cleaned up
+            if build_path and build_path.startswith('random-'):
+                runtime.logger.info(
+                    "Skipping lock %s with random identifier %s (not a Jenkins build)", lock_name, build_path
+                )
+                continue
+
             build_url = f'{constants.JENKINS_UI_URL}/{build_path}'
             runtime.logger.info("Found build_url for lock %s: %s ", lock_name, build_url)
 

@@ -5,16 +5,18 @@ from typing import Dict, List, Sequence, Set, Tuple
 import aiohttp
 import click
 from artcommonlib import exectools, logutil
-from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch, go_suffix_for_arch
-from artcommonlib.constants import KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
+from artcommonlib.arch_util import brew_arch_for_go_arch
+from artcommonlib.constants import COREOS_RHEL10_STREAMS
 from artcommonlib.format_util import green_print, red_print, yellow_print
 from artcommonlib.model import Model
+from artcommonlib.oc_image_info import oc_image_info__cached_async
+from artcommonlib.util import uses_konflux_imagestream_override
 from tenacity import retry, stop_after_attempt, wait_fixed
 
-from doozerlib import constants
 from doozerlib.cli import cli, click_coroutine
 from doozerlib.rhcos import RHCOSBuildInspector
 from doozerlib.runtime import Runtime
+from doozerlib.util import rc_api_url
 
 logger = logutil.get_logger(__name__)
 
@@ -119,7 +121,7 @@ async def get_nightlies(
     if latest:
         allow_pending = True
         allow_rejected = True
-    runtime.initialize(clone_distgits=False)
+    runtime.initialize(clone_distgits=False, prevent_cloning=True)
     include_arches: Set[str] = determine_arch_list(runtime, set(exclude_arches))
 
     # make lists of nightly objects per arch
@@ -287,26 +289,9 @@ def get_nightly_tag_base(major: int, minor: int, build_system: str) -> str:
     Get the nightly tag base for the given major, minor version and build system.
     """
     nightly_suffix = "nightly"
-    if build_system == "konflux" and f"{major}.{minor}" not in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
+    if build_system == "konflux" and not uses_konflux_imagestream_override(f"{major}.{minor}"):
         nightly_suffix = "konflux-nightly"
     return f"{major}.{minor}.0-0.{nightly_suffix}"
-
-
-def rc_api_url(tag: str, arch: str, private_nightly: bool) -> str:
-    """
-    base url for a release tag in release controller.
-
-    @param tag  The RC release stream as a string (e.g. "4.9.0-0.nightly")
-    @param arch  architecture we are interested in (e.g. "s390x")
-    @return e.g. "https://s390x.ocp.releases.ci.openshift.org/api/v1/releasestream/4.9.0-0.nightly-s390x"
-    """
-    arch = go_arch_for_brew_arch(arch)
-    arch_suffix = go_suffix_for_arch(arch, private_nightly)
-
-    if private_nightly:
-        return f"{constants.RC_BASE_PRIV_URL.format(arch=arch)}/api/v1/releasestream/{tag}{arch_suffix}"
-
-    return f"{constants.RC_BASE_URL.format(arch=arch)}/api/v1/releasestream/{tag}{arch_suffix}"
 
 
 # only look up the same container image info once and store it here
@@ -405,8 +390,9 @@ class Nightly:
     async def retrieve_image_info_async(self, pullspec: str) -> Model:
         """pull/cache/return json info for a container pullspec (enable concurrency)"""
         if pullspec not in image_info_cache:
-            _, image_json_str, _ = await exectools.cmd_gather_async(
-                f"oc image info {pullspec} -o=json --filter-by-os=amd64",
+            image_json_str = await oc_image_info__cached_async(
+                pullspec,
+                '--filter-by-os=amd64',
             )
             image_info_cache[pullspec] = Model(json.loads(image_json_str))
         return image_info_cache[pullspec]
@@ -463,8 +449,12 @@ class Nightly:
                 raise Exception(
                     f"No rhcos_inspector for nightly {nightly}, should have called populate_nightly_content first"
                 )
+            # Filter out RHEL 10 streams to only compare RHEL 9 RPMs (consistent with other RHCOS checks)
+            logger.info("Ignoring RHEL 10 rpms from RHCOS deeper comparison..")
             nightly._rhcos_rpms = {
-                nevra[0]: (nevra[2], nevra[3]) for nevra in nightly.rhcos_inspector.get_os_metadata_rpm_list()
+                nevra[0]: (nevra[2], nevra[3])
+                for nevra in nightly.rhcos_inspector.get_os_metadata_rpm_list()
+                if nevra[-1] not in COREOS_RHEL10_STREAMS
             }
 
         logger.debug(f"comparing {self.rhcos_inspector} and {other.rhcos_inspector}")

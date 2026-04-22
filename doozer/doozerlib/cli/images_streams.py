@@ -5,6 +5,7 @@ import os
 import random
 import re
 import time
+from datetime import datetime
 from typing import Dict, Optional, Set, Tuple
 
 import click
@@ -12,19 +13,28 @@ import yaml
 from artcommonlib import exectools
 from artcommonlib.format_util import green_print, yellow_print
 from artcommonlib.git_helper import git_clone
+from artcommonlib.github_auth import get_github_client_for_org, get_github_git_auth_env
+from artcommonlib.jira_config import get_jira_browse_url
 from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
-from artcommonlib.util import convert_remote_git_to_https, convert_remote_git_to_ssh, remove_prefix, split_git_url
+from artcommonlib.util import convert_remote_git_to_https, ensure_github_https_url, remove_prefix, split_git_url
 from dockerfile_parse import DockerfileParser
-from github import Github, GithubException, PullRequest, UnknownObjectException
+from elliottlib.bzutil import JIRABugTracker
+from github import Auth, Github, GithubException, PullRequest, UnknownObjectException
 from jira import JIRA, Issue
 from tenacity import retry, stop_after_attempt, wait_fixed
 
-from doozerlib import constants, util
-from doozerlib.cli import cli, pass_runtime
+from doozerlib import util
+from doozerlib.cli import cli, option_registry_auth, pass_runtime
 from doozerlib.image import ImageMetadata
 from doozerlib.source_resolver import SourceResolver
-from doozerlib.util import extract_version_fields, get_docker_config_json, what_is_in_master
+from doozerlib.util import (
+    extract_version_fields,
+    get_docker_config_json,
+    oc_image_info,
+    oc_image_info_for_arch,
+    what_is_in_master,
+)
 from pyartcd import jenkins
 
 transform_rhel_7_base_repos = 'rhel-7/base-repos'
@@ -103,10 +113,68 @@ def images_streams():
     '--force', default=False, is_flag=True, help='Force the mirror operation even if not defined in config upstream.'
 )
 @click.option('--dry-run', default=False, is_flag=True, help='Do not build anything, but only print build operations.')
+@option_registry_auth
 @pass_runtime
-def images_streams_mirror(runtime, streams, only_if_missing, live_test_mode, force, dry_run):
-    runtime.initialize(clone_distgits=False, clone_source=False)
+def images_streams_mirror(
+    runtime,
+    streams: Tuple[str, ...],
+    only_if_missing: bool,
+    live_test_mode: bool,
+    force: bool,
+    dry_run: bool,
+    registry_auth: Optional[str],
+):
+    runtime.initialize(clone_distgits=False, clone_source=False, prevent_cloning=True)
     runtime.assert_mutation_is_permitted()
+
+    # Determine which registry config to use:
+    # 1. If --registry-auth is provided, use it directly (it's already a file path)
+    # 2. Otherwise, fall back to --registry-config-dir (global option, needs conversion to file path)
+    registry_config_file = None
+    if registry_auth:
+        registry_config_file = registry_auth
+    elif runtime.registry_config_dir is not None:
+        registry_config_file = get_docker_config_json(runtime.registry_config_dir)
+
+    def mirror_image(cmd_start: str, upstream_dest: str):
+        full_cmd_1 = f'{cmd_start} {upstream_dest}'
+        if dry_run:
+            print(f'For {upstream_entry_name}, would have run: {full_cmd_1}')
+        else:
+            exectools.cmd_assert(full_cmd_1, retries=3, realtime=True)
+
+        if upstream_dest.startswith('registry.ci.openshift.org/'):
+            # If the image is being mirrored the CI imagestreams, we must also mirror it
+            # to the quay.io/openshift/ci (aka QCI) repository. QCI is the location from which
+            # imagestream references will be resolved for CI operations. Eventually, the
+            # internal registry on the app.ci cluster will not be used at all.
+            # upstream_dest might look something like: registry.ci.openshift.org/ocp/{MAJOR}.{MINOR}:base-rhel9
+            # We want to transform this into: quay.io/openshift/ci:<datetime>_prune_art__ocp_{MAJOR}.{MINOR}:base-rhel9
+            # This tag convention allows images to be pruned over time if they are no longer being
+            # used. See https://github.com/openshift/release/blob/244558fe310225fa8d9895c0c70a279cc104c612/hack/qci_registry_pruner.py#L3-L25
+            # We also mirror to a floating tag that will be overwritten as new images are
+            # mirrored: quay.io/openshift/ci:art__ocp_{MAJOR}.{MINOR}:base-rhel9 . This ensures that
+            # at least one copy of the image will stay around until a new version is mirrored
+            # to the same tag, regardless of whether the prune tag is removed.
+
+            _, org_repo_tag = upstream_dest.split('/', 1)  # isolate "ocp/{MAJOR}.{MINOR}:base-rhel9"
+
+            # Use re.sub() to replace any character in the set [:/] with '_'
+            org_repo_tag = re.sub(r"[:/]", "_", org_repo_tag)  # => ocp_{MAJOR}.{MINOR}_base-rhel9
+            prune_timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+            prunable_qci_upstream_dest = f"quay.io/openshift/ci:{prune_timestamp}_prune_art__{org_repo_tag}"
+            full_cmd_2 = f'{cmd_start} {prunable_qci_upstream_dest}'
+            if dry_run:
+                print(f'For {upstream_entry_name}, would have run: {full_cmd_2}')
+            else:
+                exectools.cmd_assert(full_cmd_2, retries=3, realtime=True)
+
+            floating_qci_upstream_dest = f"quay.io/openshift/ci:art__{org_repo_tag}"
+            full_cmd_3 = f'{cmd_start} {floating_qci_upstream_dest}'
+            if dry_run:
+                print(f'For {upstream_entry_name}, would have run: {full_cmd_3}')
+            else:
+                exectools.cmd_assert(full_cmd_3, retries=3, realtime=True)
 
     upstreaming_entries = _get_upstreaming_entries(runtime, streams)
 
@@ -116,30 +184,6 @@ def images_streams_mirror(runtime, streams, only_if_missing, live_test_mode, for
             mirror_arm = False
             if upstream_dest is Missing:
                 raise IOError(f'Unable to mirror {upstream_entry_name} since upstream_image is not defined')
-
-            # If upstream_image_mirror is set, try to mirror the upstream_image
-            # to the locations specified. Note that this is NOT upstream_image_base .
-            # This should be the fully transformed result. Usually this is used
-            # to mirror public builder images to the private image builders.
-            # It is also important to note that there is no guarantee that the upstream_image
-            # image exists yet. If the image does not yet exist, this code should fail
-            # quietly.
-            if config.upstream_image_mirror is not Missing:
-                check_cmd = f'oc image info {config.upstream_image}'
-                rc, _, _ = exectools.cmd_gather(check_cmd)
-                if rc != 0:
-                    print(
-                        f'upstream_image {config.upstream_image} could not be found (this can be normal if no attempt has been made to create this image yet). Ignoring upstream_image_mirror until it does.'
-                    )
-                else:
-                    for upstream_image_mirror_dest in config.upstream_image_mirror:
-                        priv_cmd = f'oc image mirror {config.upstream_image} {upstream_image_mirror_dest}'
-                        if runtime.registry_config_dir is not None:
-                            priv_cmd += f" --registry-config={get_docker_config_json(runtime.registry_config_dir)}"
-                        if dry_run:
-                            print(f'For {upstream_entry_name}, would have run: {priv_cmd}')
-                        else:
-                            exectools.cmd_assert(priv_cmd, retries=3, realtime=True)
 
             # If the configuration specifies an upstream_image_base, then ART is responsible for mirroring
             # that location and NOT the upstream_image. A buildconfig from gen-buildconfig is responsible
@@ -157,21 +201,45 @@ def images_streams_mirror(runtime, streams, only_if_missing, live_test_mode, for
                 # appears to be short image name like: openshift/golang-builder:v1.19.13-202404160932.g3172d57.el9
                 src_image_pullspec = runtime.resolve_brew_image_url(src_image)
 
+            # Check all destinations: maps destination -> exists boolean
+            destinations_to_check = {}
+
             if only_if_missing:
-                check_cmd = f'oc image info {upstream_dest}'
-                rc, check_out, check_err = exectools.cmd_gather(check_cmd)
+                # Check main destination (AMD64)
+                amd64_info = oc_image_info_for_arch(
+                    upstream_dest, go_arch='amd64', registry_config=registry_config_file, strict=False
+                )
+                destinations_to_check[upstream_dest] = amd64_info is not None
+
+                # Check ARM64 if needed
                 if mirror_arm:
-                    check_cmd_arm = f'oc image info {upstream_dest}-arm64'
-                    rc_arm, check_out, check_err = exectools.cmd_gather(check_cmd_arm)
-                    if rc == 0 and rc_arm == 0:
-                        print(
-                            f'Image {upstream_dest} and {upstream_dest}-arm64 seems to exist already; skipping because of --only-if-missing'
-                        )
-                        continue
+                    arm64_info = oc_image_info(
+                        f'{upstream_dest}-arm64', registry_config=registry_config_file, strict=False
+                    )
+                    destinations_to_check[f'{upstream_dest}-arm64'] = arm64_info is not None
+
+                # Check upstream_image_mirror destinations
+                if config.upstream_image_mirror is not Missing:
+                    for mirror_dest in config.upstream_image_mirror:
+                        mirror_info = oc_image_info(mirror_dest, registry_config=registry_config_file, strict=False)
+                        destinations_to_check[mirror_dest] = mirror_info is not None
+
+                # Check if ALL destinations exist
+                all_exist = all(destinations_to_check.values())
+
+                if all_exist:
+                    runtime.logger.info(
+                        f'All destinations for {upstream_entry_name} exist; skipping because of --only-if-missing'
+                    )
+                    continue
+
                 else:
-                    if rc == 0:
-                        print(f'Image {upstream_dest} seems to exist already; skipping because of --only-if-missing')
-                        continue
+                    runtime.logger.info(
+                        f'Some destinations for {upstream_entry_name} are missing; will proceed with mirroring:'
+                    )
+                    for dest, exists in destinations_to_check.items():
+                        status = '✓ exists' if exists else '✗ missing'
+                        runtime.logger.info(f'  - {dest} ({status})')
 
             if live_test_mode:
                 upstream_dest += '.test'
@@ -180,25 +248,39 @@ def images_streams_mirror(runtime, streams, only_if_missing, live_test_mode, for
             if config.mirror_manifest_list is True:
                 as_manifest_list = '--keep-manifest-list'
 
-            cmd = f'oc image mirror {as_manifest_list} {src_image_pullspec} {upstream_dest}'
+            cmd = f'oc image mirror {as_manifest_list} {src_image_pullspec}'
 
-            if runtime.registry_config_dir is not None:
-                cmd += f" --registry-config={get_docker_config_json(runtime.registry_config_dir)}"
-            if dry_run:
-                print(f'For {upstream_entry_name}, would have run: {cmd}')
-            else:
-                exectools.cmd_assert(cmd, retries=3, realtime=True)
+            if registry_config_file is not None:
+                cmd += f" --registry-config={registry_config_file}"
+
+            # Mirror to main destination only if not in only-if-missing mode OR destination doesn't exist
+            if not only_if_missing or not destinations_to_check.get(upstream_dest, False):
+                mirror_image(cmd, upstream_dest)
 
             # mirror arm64 builder and base images for CI
             if mirror_arm:
                 # oc image mirror will filter out missing arches (as long as the manifest is there) regardless of specifying --skip-missing
-                arm_cmd = f'oc image mirror --filter-by-os linux/arm64 {src_image_pullspec} {upstream_dest}-arm64'
-                if runtime.registry_config_dir is not None:
-                    arm_cmd += f" --registry-config={get_docker_config_json(runtime.registry_config_dir)}"
-                if dry_run:
-                    print(f'For {upstream_entry_name}, would have run: {arm_cmd}')
-                else:
-                    exectools.cmd_assert(arm_cmd, retries=3, realtime=True, timeout=1800)
+                arm_cmd = f'oc image mirror --filter-by-os linux/arm64 {src_image_pullspec}'
+                if registry_config_file is not None:
+                    arm_cmd += f" --registry-config={registry_config_file}"
+                # Mirror ARM64 only if not in only-if-missing mode OR destination doesn't exist
+                if not only_if_missing or not destinations_to_check.get(f'{upstream_dest}-arm64', False):
+                    mirror_image(arm_cmd, f'{upstream_dest}-arm64')
+
+            # If upstream_image_mirror is set, mirror the upstream_image (which we just updated above)
+            # to the locations specified. Note that this is NOT upstream_image_base.
+            # This should be the fully transformed result. Usually this is used
+            # to mirror public builder images to the private image builders.
+            # Now that we've mirrored the source to upstream_image, we mirror
+            # upstream_image to all the upstream_image_mirror destinations so they all get the same version.
+            if config.upstream_image_mirror is not Missing:
+                for upstream_image_mirror_dest in config.upstream_image_mirror:
+                    # Mirror to each destination only if not in only-if-missing mode OR destination doesn't exist
+                    if not only_if_missing or not destinations_to_check.get(upstream_image_mirror_dest, False):
+                        priv_cmd = f'oc image mirror {config.upstream_image}'
+                        if registry_config_file is not None:
+                            priv_cmd += f" --registry-config={registry_config_file}"
+                        mirror_image(priv_cmd, upstream_image_mirror_dest)
 
 
 @images_streams.command(
@@ -215,7 +297,7 @@ def images_streams_mirror(runtime, streams, only_if_missing, live_test_mode, for
 @click.option('--live-test-mode', default=False, is_flag=True, help='Scan for live-test mode buildconfigs')
 @pass_runtime
 def images_streams_check_upstream(runtime, streams, live_test_mode):
-    runtime.initialize(clone_distgits=False, clone_source=False)
+    runtime.initialize(clone_distgits=False, clone_source=False, prevent_cloning=True)
 
     istags_status = []
     if not streams:
@@ -301,7 +383,7 @@ def get_eligible_buildconfigs(runtime, streams, live_test_mode):
 @click.option('--dry-run', default=False, is_flag=True, help='Do not build anything, but only print build operations.')
 @pass_runtime
 def images_streams_start_buildconfigs(runtime, streams, as_user, live_test_mode, dry_run):
-    runtime.initialize(clone_distgits=False, clone_source=False)
+    runtime.initialize(clone_distgits=False, clone_source=False, prevent_cloning=True)
 
     group_label = runtime.group_config.name
     if live_test_mode:
@@ -362,14 +444,16 @@ def _get_upstreaming_entries(runtime, stream_names=None):
         # Some images also have their own upstream information. This allows them to
         # be mirrored out into upstream, optionally transformed, and made available as builder images for
         # other images without being in streams.yml.
+
         for image_meta in runtime.ordered_image_metas():
             if image_meta.config.content.source.ci_alignment.upstream_image is not Missing:
                 upstream_entry = Model(
                     dict_to_model=image_meta.config.content.source.ci_alignment.primitive()
                 )  # Make a copy
-                upstream_entry['image'] = (
-                    image_meta.pull_url()
-                )  # Make the image metadata entry match what would exist in streams.yml.
+
+                # Use pull_url() which handles both Brew and Konflux build systems
+                upstream_entry['image'] = image_meta.pull_url()
+
                 if upstream_entry.final_user is Missing:
                     upstream_entry.final_user = image_meta.config.final_stage_user
                 upstreaming_entries[image_meta.distgit_key] = upstream_entry
@@ -407,7 +491,7 @@ def images_streams_gen_buildconfigs(runtime, streams, output, as_user, apply, li
     CI to compile with the same golang version ART is using and use identical UBI8 images, etc. To accomplish
     this, streams.yml contains metadata which is extraneous to the product build, but critical to enable
     a high fidelity CI signal.
-    It may seem at first that all we would need to do was mirror the internal brew images we use
+    It may seem at first that all we would need to do was mirror the internal build images (Brew or Konflux)
     somewhere accessible by CI, but it is not that simple:
     1. When a CI build yum installs, it needs to pull RPMs from an RPM mirroring service that runs in
        CI. That mirroring service subsequently pulls and caches files ART syncs using reposync.
@@ -415,7 +499,7 @@ def images_streams_gen_buildconfigs(runtime, streams, output, as_user, apply, li
        images are configured in ci-operator config's 'build_root' and they are used to build
        and run test cases. Sometimes called 'CI release' image, these images contain tools that
        are not part of the typical golang builder (e.g. tito).
-    Both of these differences require us to 'transform' the image ART uses in brew into an image compatible
+    Both of these differences require us to 'transform' the ART build images into images compatible
     for use in CI. A challenge to this transformation is that they must be performed in the CI context
     as they depend on the services only available in ci (e.g. base-4-6-rhel8.ocp.svc is used to
     find the current yum repo configuration which should be used).
@@ -428,13 +512,15 @@ def images_streams_gen_buildconfigs(runtime, streams, output, as_user, apply, li
     to know the image is in use. These daemonsets can like be eliminated when CI infra moves fully to
     4.x.
     """
-    runtime.initialize(clone_distgits=False, clone_source=False)
+    runtime.initialize(clone_distgits=False, clone_source=False, prevent_cloning=True)
     runtime.assert_mutation_is_permitted()
 
     major = runtime.group_config.vars['MAJOR']
     minor = runtime.group_config.vars['MINOR']
 
-    rpm_repos_conf = runtime.group_config.repos or {}
+    # Use runtime.repos which handles both old-style and new-style repo configs
+    # Convert to Model objects to maintain compatibility with existing dot notation code
+    rpm_repos_conf = {name: Model(repo.to_dict()) for name, repo in runtime.repos.items()}
 
     group_label = runtime.group_config.name
     if live_test_mode:
@@ -736,7 +822,8 @@ def prs():
 
 
 @prs.command(
-    'list', short_help='List all open reconciliation prs for upstream repos (requires GITHUB_TOKEN env var to be set.'
+    'list',
+    short_help='List all open reconciliation prs for upstream repos (requires GitHub App credentials or GITHUB_TOKEN).',
 )
 @click.option(
     '--as',
@@ -755,11 +842,11 @@ def prs():
 )
 @pass_runtime
 def prs_list(runtime, as_user, include_master):
-    runtime.initialize(clone_distgits=False, clone_source=False)
+    runtime.initialize(clone_distgits=False, clone_source=False, prevent_cloning=True)
     major = runtime.group_config.vars['MAJOR']
     minor = runtime.group_config.vars['MINOR']
     retdata = {}
-    github_client = Github(os.getenv(constants.GITHUB_TOKEN))
+    github_client = get_github_client_for_org("openshift")
     pr_query = f'org:openshift author:{as_user} type:pr state:open ART in:title'
     query = f'{pr_query} base:release-{major}.{minor}'
     if include_master:
@@ -769,7 +856,7 @@ def prs_list(runtime, as_user, include_master):
     runtime.logger.info(f'Total PRs: {prs.totalCount}')
     for pr in prs:
         current_pr = pr.repository.get_pull(pr.number)
-        branch = current_pr.head.ref  # forked branch name art-consistency-{runtime.group_config.name}-{dgk}
+        branch = current_pr.head.ref  # forked branch name art-consistency-{runtime.group_config.name}-{dgk}g
         if runtime.group_config.name in branch:
             owners_email = next(
                 (
@@ -800,7 +887,7 @@ def connect_issue_with_pr(pr: PullRequest.PullRequest, issue: str):
             if issue in comment.body:
                 return  # an exist comment already have the issue
         pr.create_issue_comment(
-            f"ART wants to connect issue [{issue}](https://issues.redhat.com/browse/{issue}) to this PR, \
+            f"ART wants to connect issue [{issue}]({get_jira_browse_url(issue)}) to this PR, \
                                 but found it is currently hooked up to {exist_issues}. Please consult with #forum-ocp-art if it is not clear what there is to do."
         )
     else:  # update pr title
@@ -816,8 +903,8 @@ def reconcile_jira_issues(runtime, pr_map: Dict[str, Tuple[PullRequest.PullReque
         dry_run: If true, new desired jira issues would only be printed to the console.
     """
     major, minor = runtime.get_major_minor_fields()
-    if (major == 4 and minor < 16) or major < 4:
-        # Only enabled for 4.13 and beyond at the moment.
+    if (major, minor) < (4, 16):
+        # Only enabled for 4.16 and beyond
         return
 
     new_issues: Dict[str, Issue] = dict()
@@ -925,9 +1012,6 @@ This ticket was created by ART pipline run [sync-ci-images|{jenkins_build_url}]
             'issuetype': {'name': 'Bug'},
             'labels': ['art:reconciliation', f'art:package:{image_meta.get_component_name()}'],
             'versions': [{'name': release_version}],  # Affects Version/s
-            'customfield_12319940': [
-                {'name': Model(runtime.gitdata.load_data(key='bug').data).target_release[-1]}
-            ],  # customfield_12319940 is Target Version in jira
             'components': [{'name': component}],
             'summary': summary,
             'description': description,
@@ -938,7 +1022,24 @@ This ticket was created by ART pipline run [sync-ci-images|{jenkins_build_url}]
             issue = jira_client.create_issue(
                 fields,
             )
-            # check depend issues and set depend to a higher version issue if ture
+            try:
+                # retrieve the target version string (e.g., 'z' or '4.21.0')
+                target_version_segment = Model(runtime.gitdata.load_data(key='bug').data).target_release[-1]
+
+                # Build the update payload using the retrieved string
+                issue_update = {
+                    JIRABugTracker.field_target_version: [{'name': target_version_segment}],
+                }
+                runtime.logger.info(
+                    f"Attempting to update issue {issue.key} Target Version to: {target_version_segment}"
+                )
+                issue.update(fields=issue_update)
+                runtime.logger.info(f"Successfully updated Target Version for issue {issue.key}.")
+
+            except Exception as e:
+                runtime.logger.error(f"An error occurred while updating the Target Version on issue {issue.key}: {e}")
+
+            # check depend issues and set depend to a higher version issue if true
             look_for_summary = f'Update {major}.{minor + 1} {image_meta.name} image to be consistent with ART'
             depend_issues = search_issues(f"project={project} AND summary ~ '{look_for_summary}'")
             # jira title search is fuzzy, so we need to check if an issue is really the one we want
@@ -950,16 +1051,14 @@ This ticket was created by ART pipline run [sync-ci-images|{jenkins_build_url}]
             connect_issue_with_pr(pr, issue.key)
             try:
                 # Retrieve the value of the custom field
-                release_notes_text_cf_value = getattr(issue.fields, 'customfield_12317313', None)
-                release_notes_type_cf_value = getattr(issue.fields, 'customfield_12320850', None)
+                release_notes_text_cf_value = getattr(issue.fields, JIRABugTracker.field_release_notes_text, None)
+                release_notes_type_cf_value = getattr(issue.fields, JIRABugTracker.field_release_notes_type, None)
 
                 if release_notes_type_cf_value is None and release_notes_text_cf_value is None:
                     # Data to update (e.g., changing the Release Notes Type and Release Notes Text)
                     issue_update = {
-                        'customfield_12317313': 'N/A',  # customfield_12317313 is Release Notes Text in JIRA
-                        'customfield_12320850': {
-                            'value': 'Release Note Not Required'
-                        },  # customfield_12320850 is Release Notes Type in JIRA
+                        JIRABugTracker.field_release_notes_text: 'N/A',
+                        JIRABugTracker.field_release_notes_type: {'value': 'Release Note Not Required'},
                     }
                     # Now update the issue using the retrieved issue object
                     issue.update(fields=issue_update)
@@ -983,7 +1082,7 @@ This ticket was created by ART pipline run [sync-ci-images|{jenkins_build_url}]
 @prs.command(
     'open', short_help='Open PRs against upstream component repos that have a FROM that differs from ART metadata.'
 )
-@click.option('--github-access-token', metavar='TOKEN', required=True, help='Github access token for user.')
+@click.option('--github-access-token', metavar='TOKEN', required=False, help='Github access token for user.')
 @click.option('--bug', metavar='BZ#', required=False, default=None, help='Title with Bug #: prefix')
 @click.option(
     '--interstitial',
@@ -999,9 +1098,16 @@ This ticket was created by ART pipline run [sync-ci-images|{jenkins_build_url}]
     help='Do not consider what is in master branch when determining what branch to target',
 )
 @click.option(
+    '--force-merge',
+    default=False,
+    is_flag=True,
+    help='DANGER! Use only with approval. Do not wait for standard CI PR merge. Call merge API directly.',
+)
+@click.option(
     '--ignore-missing-images', default=False, is_flag=True, help='Do not exit if an image is missing upstream.'
 )
 @click.option('--draft-prs', default=False, is_flag=True, help='Open PRs as draft PRs')
+@click.option('--dry-run', default=False, is_flag=True, help='Do everything except any remote writes/pushes')
 @click.option('--moist-run', default=False, is_flag=True, help='Do everything except opening the final PRs')
 @click.option(
     '--add-auto-labels',
@@ -1022,14 +1128,22 @@ def images_streams_prs(
     bug,
     interstitial,
     ignore_ci_master,
+    force_merge,
     ignore_missing_images,
     draft_prs,
+    dry_run,
     moist_run,
     add_auto_labels,
     add_label,
 ):
-    runtime.initialize(clone_distgits=False, clone_source=False)
-    g = Github(login_or_token=github_access_token)
+    runtime.initialize(clone_distgits=False, clone_source=False, prevent_cloning=True)
+    if not github_access_token:
+        raise click.BadParameter(
+            "This command requires a personal access token (--github-access-token) "
+            "because it forks repos and opens PRs as a user. GitHub App tokens cannot be used.",
+            param_hint="'--github-access-token'",
+        )
+    g = Github(auth=Auth.Token(github_access_token))
     github_user = g.get_user()
 
     major = runtime.group_config.vars['MAJOR']
@@ -1082,7 +1196,7 @@ def images_streams_prs(
                 # We don't know yet whether this image exists; perhaps a buildconfig is
                 # failing. Don't open PRs for images that don't yet exist.
                 try:
-                    util.oc_image_info_for_arch__caching(upstream_image)
+                    util.oc_image_info_for_arch(upstream_image)
                 except:
                     yellow_print(
                         f'Unable to access upstream image {upstream_image} for {dgk}-- check whether buildconfigs are running successfully.'
@@ -1109,14 +1223,24 @@ def images_streams_prs(
         else:
             builders = from_config.builder or []
             for builder in builders:
-                upstream_image = resolve_upstream_from(runtime, builder)
+                try:
+                    upstream_image = resolve_upstream_from(runtime, builder)
+                except Exception as e:
+                    message = f'Error while resolving upstream image for {builder} in {dgk} for {major}.{minor}: {e}'
+                    logger.error(message)
+                    raise IOError(message)
                 if not upstream_image:
                     logger.warning(f'Unable to resolve upstream image for: {builder}')
                     break
                 check_if_upstream_image_exists(upstream_image)
                 desired_parents.append(upstream_image)
 
-            parent_upstream_image = resolve_upstream_from(runtime, from_config)
+            try:
+                parent_upstream_image = resolve_upstream_from(runtime, from_config)
+            except Exception as e:
+                message = f'Error while resolving upstream image for {from_config} in {dgk} for {major}.{minor}: {e}'
+                logger.error(message)
+                raise IOError(message)
             if len(desired_parents) != len(builders) or not parent_upstream_image:
                 logger.warning('Unable to find all ART equivalent upstream images for this image')
                 continue
@@ -1129,7 +1253,12 @@ def images_streams_prs(
         desired_ci_build_root_coordinate = None
         desired_ci_build_root_image = ''
         if streams_pr_config.ci_build_root is not Missing:
-            desired_ci_build_root_image = resolve_upstream_from(runtime, streams_pr_config.ci_build_root)
+            try:
+                desired_ci_build_root_image = resolve_upstream_from(runtime, streams_pr_config.ci_build_root)
+            except Exception as e:
+                message = f'Error while resolving ci_build_root {streams_pr_config.ci_build_root} in {dgk} for {major}.{minor}: {e}'
+                logger.error(message)
+                raise IOError(message)
             check_if_upstream_image_exists(desired_ci_build_root_image)
 
             # Split the pullspec into an openshift namespace, imagestream, and tag.
@@ -1199,7 +1328,13 @@ def images_streams_prs(
             fork_repo = g.get_repo(fork_repo_name)
         except UnknownObjectException:
             # Repo doesn't exist; fork it
-            fork_repo = github_user.create_fork(public_source_repo)
+            if dry_run:
+                logger.info(
+                    f'DRY RUN: Would have forked {public_source_repo.full_name} to {fork_repo_name}. Moving to next image since fork is required to continue.'
+                )
+                continue
+            else:
+                fork_repo = github_user.create_fork(public_source_repo)
 
         fork_branch_name = f'art-consistency-{runtime.group_config.name}-{dgk}'
         fork_branch_head = f'{github_user.login}:{fork_branch_name}'
@@ -1216,15 +1351,17 @@ def images_streams_prs(
             if ge.status != 404:
                 raise
 
-        public_repo_url = convert_remote_git_to_ssh(public_repo_url)
+        public_repo_url = ensure_github_https_url(public_repo_url)
+        fork_url = ensure_github_https_url(fork_repo.git_url)
         clone_dir = os.path.join(runtime.working_dir, 'clones', dgk)
+        git_auth_env = get_github_git_auth_env(url=public_repo_url)
         # Clone the private url to make the best possible use of our doozer_cache
         git_clone(source_repo_url, clone_dir, git_cache_dir=runtime.git_cache_dir)
 
         with Dir(clone_dir):
-            exectools.cmd_assert(f'git remote add public {public_repo_url}')
-            exectools.cmd_assert(f'git remote add fork {convert_remote_git_to_ssh(fork_repo.git_url)}')
-            exectools.cmd_assert('git fetch --all', retries=3)
+            exectools.cmd_assert(f'git remote add public {public_repo_url}', set_env=git_auth_env)
+            exectools.cmd_assert(f'git remote add fork {fork_url}', set_env=git_auth_env)
+            exectools.cmd_assert('git fetch --all', retries=3, set_env=git_auth_env)
 
             # The path to the Dockerfile in the target branch
             if image_meta.config.content.source.dockerfile is not Missing:
@@ -1421,7 +1558,9 @@ open_prs: {open_prs}
                         f'git commit -m "{commit_msg}"'
                     )  # Add a commit atop the public branch's current state
                     # Create or update the remote fork branch
-                    exectools.cmd_assert(f'git push --force fork {work_branch_name}:{fork_branch_name}', retries=3)
+                    exectools.cmd_assert(
+                        f'git push --force fork {work_branch_name}:{fork_branch_name}', retries=3, set_env=git_auth_env
+                    )
 
             # At this point, we have a fork branch in the proper state
             pr_body = f"""{first_commit_line}
@@ -1564,6 +1703,9 @@ If you have any questions about this pull request, please reach out to `@release
                     yellow_print(
                         f'A PR is already open requesting desired reconciliation with ART: {existing_pr.html_url}'
                     )
+                    if force_merge:
+                        existing_pr.merge()
+                        yellow_print(f'Force merge is enabled. Triggering merge for: {existing_pr.html_url}')
                 continue
 
             # Otherwise, we need to create a pull request

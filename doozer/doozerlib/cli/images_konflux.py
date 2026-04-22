@@ -1,12 +1,13 @@
 import asyncio
 import json
 import logging
-import os
+import sys
 import traceback
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import click
+from artcommonlib.constants import KONFLUX_DEFAULT_NAMESPACE
 from artcommonlib.konflux.konflux_build_record import (
     KonfluxBuildOutcome,
     KonfluxBuildRecord,
@@ -14,6 +15,8 @@ from artcommonlib.konflux.konflux_build_record import (
 )
 from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.telemetry import start_as_current_span_async
+from artcommonlib.util import validate_build_priority
+from artcommonlib.variants import BuildVariant
 from opentelemetry import trace
 
 from doozerlib import constants
@@ -26,14 +29,28 @@ from doozerlib.cli import (
     option_commit_message,
     option_push,
     pass_runtime,
+    validate_semver_major_minor,
     validate_semver_major_minor_patch,
 )
-from doozerlib.exceptions import DoozerFatalError
+from doozerlib.exceptions import DoozerFatalError, ParentRebaseFailedError
 from doozerlib.image import ImageMetadata
 from doozerlib.runtime import Runtime
 
 TRACER = trace.get_tracer(__name__)
 LOGGER = logging.getLogger(__name__)
+
+
+def _validate_version(ctx, param, version):
+    """
+    Accept both X.Y (microshift-bootc) and X.Y.Z versions, preserving segment count.
+    """
+    if version is None or version == "auto":
+        return version
+
+    if len(version.split(".")) == 2:  # used by microshift-bootc
+        return validate_semver_major_minor(ctx, param, version)
+
+    return validate_semver_major_minor_patch(ctx, param, version)
 
 
 class KonfluxRebaseCli:
@@ -48,6 +65,8 @@ class KonfluxRebaseCli:
         image_repo: str,
         message: str,
         push: bool,
+        lockfile_seed_nvrs: Optional[List[str]] = None,
+        extra_labels: Optional[dict[str, str]] = None,
     ):
         self.runtime = runtime
         self.version = version
@@ -60,7 +79,9 @@ class KonfluxRebaseCli:
         self.image_repo = image_repo
         self.message = message
         self.push = push
+        self.extra_labels = extra_labels or {}
         self.upcycle = runtime.upcycle
+        self.lockfile_seed_nvrs = lockfile_seed_nvrs
 
     @start_as_current_span_async(TRACER, "beta:images:konflux:rebase")
     async def run(self):
@@ -81,6 +102,9 @@ class KonfluxRebaseCli:
             repo_type=self.repo_type,
             upcycle=self.upcycle,
             force_private_bit=self.embargoed,
+            image_repo=self.image_repo,
+            lockfile_seed_nvrs=self.lockfile_seed_nvrs,
+            extra_labels=self.extra_labels,
         )
 
         await rebaser.rpm_lockfile_generator.ensure_repositories_loaded(metas, base_dir)
@@ -94,7 +118,6 @@ class KonfluxRebaseCli:
                         self.version,
                         self.release,
                         force_yum_updates=self.force_yum_updates,
-                        image_repo=self.image_repo,
                         commit_message=self.message,
                         push=self.push,
                     )
@@ -102,14 +125,27 @@ class KonfluxRebaseCli:
             )
         results = await asyncio.gather(*tasks, return_exceptions=True)
         failed_images = []
+        skipped_due_to_parent = []
         for index, result in enumerate(results):
             if isinstance(result, Exception):
                 image_name = metas[index].distgit_key
-                failed_images.append(image_name)
-                LOGGER.error(f"Failed to rebase {image_name}: {result}")
-        if failed_images:
-            runtime.state['images:konflux:rebase'] = {'failed-images': failed_images}
-            raise DoozerFatalError(f"Failed to rebase images: {failed_images}")
+                if isinstance(result, ParentRebaseFailedError):
+                    skipped_due_to_parent.append(image_name)
+                    LOGGER.warning(
+                        "Skipping rebase for %s: parent rebase(s) failed: %s", image_name, result.failed_parents
+                    )
+                else:
+                    failed_images.append(image_name)
+                    LOGGER.error(f"Failed to rebase {image_name}: {result}")
+                    LOGGER.error(f"Stack trace for {image_name}:")
+                    LOGGER.error(''.join(traceback.format_exception(type(result), result, result.__traceback__)))
+        if failed_images or skipped_due_to_parent:
+            payload = {'failed-images': failed_images}
+            if skipped_due_to_parent:
+                payload['skipped-due-to-parent-rebase-failure'] = skipped_due_to_parent
+            runtime.state['images:konflux:rebase'] = payload
+            summary = failed_images + [f"{k} (parent failure)" for k in skipped_due_to_parent]
+            raise DoozerFatalError(f"Failed to rebase images: {summary}")
         LOGGER.info("Rebase complete")
 
 
@@ -118,7 +154,7 @@ class KonfluxRebaseCli:
     "--version",
     metavar='VERSION',
     required=True,
-    callback=validate_semver_major_minor_patch,
+    callback=_validate_version,
     help="Version string to populate in Dockerfiles.",
 )
 @click.option("--release", metavar='RELEASE', required=True, help="Release string to populate in Dockerfiles.")
@@ -141,6 +177,26 @@ class KonfluxRebaseCli:
     help="Repo group type to use (e.g. signed, unsigned).",
 )
 @click.option('--image-repo', default=constants.KONFLUX_DEFAULT_IMAGE_REPO, help='Image repo for base images')
+@click.option(
+    '--network-mode',
+    type=click.Choice(['hermetic', 'internal-only', 'open']),
+    help='Override network mode for Konflux builds. Takes precedence over image and group config settings.',
+)
+@click.option(
+    '--lockfile-seed-nvrs',
+    default=None,
+    metavar='NVRS',
+    help='NVRs of builds whose installed RPMs should seed lockfile generation. '
+    'The distgit key is resolved internally from the build DB. '
+    'Format: NVR[,NVR,...]. '
+    'Example: ironic-container-v4.22.0-assembly.test',
+)
+@click.option(
+    '--extra-label',
+    multiple=True,
+    metavar='KEY=VALUE',
+    help='Extra labels to add to the Dockerfile. Can be specified multiple times. e.g. --extra-label assembly=4.18.1',
+)
 @option_commit_message
 @option_push
 @pass_runtime
@@ -153,12 +209,30 @@ async def images_konflux_rebase(
     force_yum_updates: bool,
     repo_type: str,
     image_repo: str,
+    network_mode: Optional[str],
+    lockfile_seed_nvrs: Optional[str],
+    extra_label: tuple,
     message: str,
     push: bool,
 ):
     """
     Refresh a group's konflux content from source content.
     """
+    if network_mode:
+        runtime.network_mode_override = network_mode
+
+    parsed_seed_nvrs = None
+    if lockfile_seed_nvrs:
+        parsed_seed_nvrs = [nvr.strip() for nvr in lockfile_seed_nvrs.split(',') if nvr.strip()]
+
+    # Parse extra labels from KEY=VALUE format
+    extra_labels = {}
+    for label in extra_label:
+        if '=' not in label:
+            raise click.BadParameter(f"Extra label must be in KEY=VALUE format, got: {label}")
+        key, value = label.split('=', 1)
+        extra_labels[key] = value
+
     cli = KonfluxRebaseCli(
         runtime=runtime,
         version=version,
@@ -169,6 +243,8 @@ async def images_konflux_rebase(
         image_repo=image_repo,
         message=message,
         push=push,
+        lockfile_seed_nvrs=parsed_seed_nvrs,
+        extra_labels=extra_labels,
     )
     await cli.run()
 
@@ -185,6 +261,8 @@ class KonfluxBuildCli:
         skip_checks: bool,
         dry_run: bool,
         plr_template: str,
+        build_priority: Optional[str],
+        skip_ec_verify: bool = False,
     ):
         self.runtime = runtime
         self.konflux_kubeconfig = konflux_kubeconfig
@@ -195,11 +273,18 @@ class KonfluxBuildCli:
         self.skip_checks = skip_checks
         self.dry_run = dry_run
         self.plr_template = plr_template
+        self.build_priority = build_priority
+        self.skip_ec_verify = skip_ec_verify
+
+        validate_build_priority(self.build_priority)
 
     @start_as_current_span_async(TRACER, "images:konflux:build")
     async def run(self):
         runtime = self.runtime
+
+        # OKD configuration is automatically merged in get_group_config() when variant=okd
         runtime.initialize(mode='images', clone_distgits=False)
+
         runtime.konflux_db.bind(KonfluxBuildRecord)
         assert runtime.source_resolver is not None, "source_resolver is not initialized. Doozer bug?"
         metas = runtime.ordered_image_metas()
@@ -208,9 +293,16 @@ class KonfluxBuildCli:
         span = trace.get_current_span()
         span.update_name(f"images:konflux:build.{len(metas)}metas")
         span.set_attribute("doozer.images.count", len(metas))
+
+        if self.runtime.variant is BuildVariant.OKD:
+            major, minor = runtime.get_major_minor_fields()
+            group = f'okd-{major}.{minor}'
+        else:
+            group = runtime.group
+
         config = KonfluxImageBuilderConfig(
             base_dir=Path(runtime.working_dir, constants.WORKING_SUBDIR_KONFLUX_BUILD_SOURCES),
-            group_name=runtime.group,
+            group_name=group,
             kubeconfig=self.konflux_kubeconfig,
             context=self.konflux_context,
             namespace=self.konflux_namespace,
@@ -219,19 +311,46 @@ class KonfluxBuildCli:
             skip_checks=self.skip_checks,
             dry_run=self.dry_run,
             plr_template=self.plr_template,
+            build_priority=self.build_priority,
+            skip_ec_verify=self.skip_ec_verify,
         )
         builder = KonfluxImageBuilder(config=config, record_logger=runtime.record_logger)
+
+        # Mint a per-invocation GitHub App token and create a transient Secret.
+        # All PipelineRuns in this batch share the same secret — no contention.
+        git_auth_secret = await builder._konflux_client.ensure_git_auth_secret(
+            namespace=self.konflux_namespace,
+        )
+        refresh_task = asyncio.create_task(builder._konflux_client.token_refresh_loop(namespace=self.konflux_namespace))
+
         tasks = []
         for image_meta in metas:
-            tasks.append(asyncio.create_task(builder.build(image_meta)))
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        failed_images = []
-        for index, result in enumerate(results):
-            if isinstance(result, Exception):
-                image_name = metas[index].distgit_key
-                failed_images.append(image_name)
-                stack_trace = ''.join(traceback.TracebackException.from_exception(result).format())
-                LOGGER.error(f"Failed to build {image_name}: {result}; {stack_trace}")
+            tasks.append(asyncio.create_task(builder.build(image_meta, git_auth_secret=git_auth_secret)))
+        try:
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            failed_images = []
+            for index, result in enumerate(results):
+                if isinstance(result, Exception):
+                    image_name = metas[index].distgit_key
+                    failed_images.append(image_name)
+                    stack_trace = ''.join(traceback.TracebackException.from_exception(result).format())
+                    LOGGER.error(f"Failed to build {image_name}: {result}; {stack_trace}")
+        finally:
+            refresh_task.cancel()
+            try:
+                await refresh_task
+            except asyncio.CancelledError:
+                pass
+            try:
+                await builder._konflux_client.delete_git_auth_secret(
+                    namespace=self.konflux_namespace,
+                )
+                await builder._konflux_client.cleanup_stale_git_auth_secrets(
+                    namespace=self.konflux_namespace,
+                )
+            except Exception as e:
+                LOGGER.warning("Failed to cleanup git-auth secrets: %s", e)
+
         if failed_images:
             raise DoozerFatalError(f"Failed to build images: {failed_images}")
         LOGGER.info("Build complete")
@@ -249,7 +368,7 @@ class KonfluxBuildCli:
 @click.option(
     '--konflux-namespace',
     metavar='NAMESPACE',
-    default=constants.KONFLUX_DEFAULT_NAMESPACE,
+    default=KONFLUX_DEFAULT_NAMESPACE,
     help='The namespace to use for Konflux cluster connections.',
 )
 @click.option('--image-repo', default=constants.KONFLUX_DEFAULT_IMAGE_REPO, help='Push images to the specified repo.')
@@ -260,6 +379,25 @@ class KonfluxBuildCli:
     required=False,
     default=constants.KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL,
     help='Use a custom PipelineRun template to build the bundle. Overrides the default template from openshift-priv/art-konflux-template',
+)
+@click.option(
+    '--build-priority',
+    type=str,
+    metavar='PRIORITY',
+    default='auto',
+    required=True,
+    help='Kueue build priority. Use "auto" for automatic resolution from image/group config, or specify a number 1-10 (where 1 is highest priority). Takes precedence over group and image config settings.',
+)
+@click.option(
+    '--network-mode',
+    type=click.Choice(['hermetic', 'internal-only', 'open']),
+    help='Override network mode for Konflux builds. Takes precedence over image and group config settings.',
+)
+@click.option(
+    '--skip-ec-verify',
+    default=False,
+    is_flag=True,
+    help='Skip enterprise-contract verification after builds.',
 )
 @pass_runtime
 @click_coroutine
@@ -272,17 +410,25 @@ async def images_konflux_build(
     skip_checks: bool,
     dry_run: bool,
     plr_template: str,
+    build_priority: Optional[str],
+    network_mode: Optional[str],
+    skip_ec_verify: bool,
 ):
+    if network_mode:
+        runtime.network_mode_override = network_mode
+
     cli = KonfluxBuildCli(
         runtime=runtime,
         konflux_kubeconfig=konflux_kubeconfig,
         konflux_context=konflux_context,
         konflux_namespace=konflux_namespace,
         image_repo=image_repo,
-        registry_auth_file=os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE"),
+        registry_auth_file=runtime.registry_config,
         skip_checks=skip_checks,
         dry_run=dry_run,
         plr_template=plr_template,
+        build_priority=build_priority,
+        skip_ec_verify=skip_ec_verify,
     )
     await cli.run()
 
@@ -330,7 +476,7 @@ class KonfluxBundleCli:
         if self.operator_nvrs:
             # Get build records for the given operator nvrs
             LOGGER.info("Fetching given nvrs from Konflux DB...")
-            records = await runtime.konflux_db.get_build_records_by_nvrs(self.operator_nvrs)
+            records = await runtime.konflux_db.get_build_records_by_nvrs(self.operator_nvrs, exclude_large_columns=True)
             for record in records:
                 assert record is not None and isinstance(record, KonfluxBuildRecord), "Invalid record. Doozer bug?"
                 dgk_records[record.name] = record
@@ -348,7 +494,9 @@ class KonfluxBundleCli:
             operator_metas: List[ImageMetadata] = [
                 operator_meta for operator_meta in runtime.ordered_image_metas() if operator_meta.is_olm_operator
             ]
-            records = await asyncio.gather(*(metadata.get_latest_build() for metadata in operator_metas))
+            records = await asyncio.gather(
+                *(metadata.get_latest_build(exclude_large_columns=True) for metadata in operator_metas)
+            )
             not_found = [metadata.distgit_key for metadata, record in zip(operator_metas, records) if record is None]
             if not_found:
                 raise IOError(f"Couldn't find build records for {not_found}")
@@ -388,6 +536,7 @@ class KonfluxBundleCli:
         builder: KonfluxOlmBundleBuilder,
         image_meta: ImageMetadata,
         operator_build: KonfluxBuildRecord,
+        git_auth_secret: Optional[str] = None,
     ) -> str:
         logger = LOGGER.getChild(f"[{image_meta.distgit_key}]")
         input_release = self.release
@@ -411,7 +560,7 @@ class KonfluxBundleCli:
         logger.info("Rebasing OLM bundle...")
         nvr = await rebaser.rebase(image_meta, operator_build, input_release)
         logger.info("Building OLM bundle...")
-        await builder.build(image_meta)
+        await builder.build(image_meta, git_auth_secret=git_auth_secret)
         logger.info("Bundle build complete")
         return nvr
 
@@ -444,6 +593,7 @@ class KonfluxBundleCli:
             upcycle=runtime.upcycle,
             image_repo=self.image_repo,
             dry_run=self.dry_run,
+            record_logger=runtime.record_logger,
         )
 
         builder = KonfluxOlmBundleBuilder(
@@ -459,25 +609,75 @@ class KonfluxBundleCli:
             skip_checks=self.skip_checks,
             pipelinerun_template_url=self.plr_template,
             dry_run=self.dry_run,
+            assembly_type=runtime.assembly_type,
             record_logger=runtime.record_logger,
         )
+
+        # Mint a per-invocation GitHub App token for git-clone auth
+        git_auth_secret = await builder._konflux_client.ensure_git_auth_secret(
+            namespace=self.konflux_namespace,
+        )
+        refresh_task = asyncio.create_task(builder._konflux_client.token_refresh_loop(namespace=self.konflux_namespace))
 
         tasks = []
         for dgk, record in dgk_records.items():
             image_meta = runtime.image_map[dgk]
-            tasks.append(asyncio.create_task(self._rebase_and_build(rebaser, builder, image_meta, record)))
+            tasks.append(
+                asyncio.create_task(
+                    self._rebase_and_build(rebaser, builder, image_meta, record, git_auth_secret=git_auth_secret)
+                )
+            )
 
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        failed_tasks = []
-        for dgk, result in zip(dgk_records, results):
-            if isinstance(result, Exception):
-                failed_tasks.append(dgk)
-                stack_trace = ''.join(traceback.TracebackException.from_exception(result).format())
-                LOGGER.error(f"Failed to rebase/build OLM bundle for {dgk}: {result}; {stack_trace}")
-        if failed_tasks:
-            raise DoozerFatalError(f"Failed to rebase/build bundles: {failed_tasks}")
+        try:
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            successful_nvrs = []
+            failed_tasks = []
+            errors = []
+            for dgk, result in zip(dgk_records, results):
+                if isinstance(result, Exception):
+                    failed_tasks.append(dgk)
+                    stack_trace = ''.join(traceback.TracebackException.from_exception(result).format())
+                    errors.append(
+                        {
+                            "operator": dgk,
+                            "operator_nvr": dgk_records[dgk].nvr,
+                            "bundle_nvr": None,
+                            "error": str(result),
+                            "traceback": stack_trace,
+                        }
+                    )
+                    LOGGER.error(f"Failed to rebase/build OLM bundle for {dgk}: {result}; {stack_trace}")
+                else:
+                    successful_nvrs.append(result)
+        finally:
+            refresh_task.cancel()
+            try:
+                await refresh_task
+            except asyncio.CancelledError:
+                pass
+            try:
+                await builder._konflux_client.delete_git_auth_secret(
+                    namespace=self.konflux_namespace,
+                )
+                await builder._konflux_client.cleanup_stale_git_auth_secrets(
+                    namespace=self.konflux_namespace,
+                )
+            except Exception as e:
+                LOGGER.warning("Failed to cleanup git-auth secrets: %s", e)
+
         if self.output == 'json':
-            click.echo(json.dumps({"nvrs": results}, indent=4))
+            output_data = {
+                "nvrs": successful_nvrs,
+                "errors": errors,
+                "failed_count": len(failed_tasks),
+                "success_count": len(successful_nvrs),
+            }
+            click.echo(json.dumps(output_data, indent=4))
+            if failed_tasks:
+                LOGGER.error(f"Failed to rebase/build bundles: {failed_tasks}")
+                sys.exit(1)
+        elif failed_tasks:
+            raise DoozerFatalError(f"Failed to rebase/build bundles: {failed_tasks}")
         LOGGER.info("Build complete")
 
 
@@ -507,7 +707,7 @@ class KonfluxBundleCli:
 @click.option(
     '--konflux-namespace',
     metavar='NAMESPACE',
-    default=constants.KONFLUX_DEFAULT_NAMESPACE,
+    default=KONFLUX_DEFAULT_NAMESPACE,
     help='The namespace to use for Konflux cluster connections.',
 )
 @click.option('--image-repo', default=constants.KONFLUX_DEFAULT_IMAGE_REPO, help='Push images to the specified repo.')

@@ -14,16 +14,24 @@ class Lock(enum.Enum):
     OLM_BUNDLE = 'lock:olm-bundle:{version}'
     OLM_BUNDLE_KONFLUX = 'lock:olm-bundle-konflux:{version}'
     MIRRORING_RPMS = 'lock:mirroring-rpms:{version}'
-    PLASHET = 'lock:compose:{assembly}:{version}'
+    PLASHET = 'lock:compose:{assembly}:{group}'
     BUILD = 'lock:build:{version}'
-    BUILD_KONFLUX = 'lock:build-konflux:{version}'
+    BUILD_KONFLUX = 'lock:build-konflux:{version}:{assembly}'
     MASS_REBUILD = 'lock:mass-rebuild-serializer'
     KONFLUX_MASS_REBUILD = 'lock:konflux-mass-rebuild-serializer'
     SIGNING = 'lock:signing:{signing_env}'
     BUILD_SYNC = 'lock:build-sync:{version}'
     BUILD_SYNC_KONFLUX = 'lock:build-sync-konflux:{version}'
+    BUILD_SYNC_MULTI = 'lock:build-sync-multi:{version}'
     SCAN = 'lock:scan:{version}'
     SCAN_KONFLUX = 'lock:scan-konflux:{version}'
+    FBC_BUILD = 'lock:fbc-build:{group}'
+    LAYERED_PRODUCTS_BUILD = 'lock:layered-products-build:{group}'
+    LAYERED_PRODUCTS_SCAN = 'lock:layered-products-scan:{group}'
+    BUILD_OKD = 'lock:build-okd:{version}'
+    SCAN_OKD = 'lock:scan-okd:{version}'
+    SCAN_PLASHET_RPMS = 'lock:scan-plashet-rpms:{assembly}:{group}'
+    SCAN_OPERATOR = 'lock:scan-operator:{version}'
 
 
 class Keys(enum.Enum):
@@ -84,7 +92,7 @@ LOCK_POLICY = {
     },
     Lock.SIGNING: {
         'retry_count': 36000,
-        'retry_delay_min': 0.1,
+        'retry_delay_min': 0.4,
         'lock_timeout': DEFAULT_LOCK_TIMEOUT,
     },
     Lock.BUILD_SYNC: {
@@ -97,12 +105,52 @@ LOCK_POLICY = {
         'retry_delay_min': 0.1,
         'lock_timeout': DEFAULT_LOCK_TIMEOUT,
     },
+    Lock.BUILD_SYNC_MULTI: {
+        'retry_count': 36000,
+        'retry_delay_min': 0.1,
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
+    },
     Lock.SCAN: {
         'retry_count': 36000,
         'retry_delay_min': 0.1,
         'lock_timeout': DEFAULT_LOCK_TIMEOUT,
     },
     Lock.SCAN_KONFLUX: {
+        'retry_count': 36000,
+        'retry_delay_min': 0.1,
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
+    },
+    Lock.FBC_BUILD: {
+        'retry_count': 36000,
+        'retry_delay_min': 0.1,
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
+    },
+    Lock.LAYERED_PRODUCTS_BUILD: {
+        'retry_count': 36000,
+        'retry_delay_min': 0.1,
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
+    },
+    Lock.LAYERED_PRODUCTS_SCAN: {
+        'retry_count': 36000,
+        'retry_delay_min': 0.1,
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
+    },
+    Lock.BUILD_OKD: {
+        'retry_count': 36000 * 1,
+        'retry_delay_min': 0.1,
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
+    },
+    Lock.SCAN_OKD: {
+        'retry_count': 36000,
+        'retry_delay_min': 0.1,
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
+    },
+    Lock.SCAN_OPERATOR: {
+        'retry_count': 36000,
+        'retry_delay_min': 0.1,
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
+    },
+    Lock.SCAN_PLASHET_RPMS: {
         'retry_count': 36000,
         'retry_delay_min': 0.1,
         'lock_timeout': DEFAULT_LOCK_TIMEOUT,
@@ -167,8 +215,17 @@ class LockManager(Aioredlock):
             await super().unlock(lock)
             self.logger.info('Lock released')
         except LockError:
+            # Log the error but don't re-raise - lock release failures during cleanup
+            # should not crash the job. The lock will expire eventually.
             self.logger.error('Failed releasing lock %s', lock.resource)
-            raise
+
+    async def is_locked(self, resource_or_lock):
+        locked = await super().is_locked(resource_or_lock)
+        if locked:
+            resource = resource_or_lock.resource if hasattr(resource_or_lock, 'resource') else resource_or_lock
+            lock_id = await self.get_lock_id(resource)
+            self.logger.info('Resource %s is currently locked by %s', resource, lock_id)
+        return locked
 
     async def get_lock_id(self, resource) -> str:
         self.logger.debug('Retrieving identifier for lock %s', resource)

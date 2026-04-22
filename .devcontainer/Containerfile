@@ -1,4 +1,4 @@
-FROM registry.fedoraproject.org/fedora:38
+FROM registry.fedoraproject.org/fedora:43
 LABEL name="art-tools-dev" \
   description="art-tools development container image" \
   maintainer="OpenShift Automated Release Tooling (ART) Team <aos-team-art@redhat.com>"
@@ -8,21 +8,18 @@ ENV \
   DOOZER_DATA_PATH=https://github.com/openshift-eng/ocp-build-data \
   PATH="/usr/local/go/bin:$PATH"
 
-ARG \
-  LANG="en_US.UTF-8" \
-  LC_ALL="en_US.UTF-8" \
-  OC_VERSION=latest \
-  GO_VERSION=1.24.4 \
-  ACT_VERSION=v0.2.78 \
-  # User configuration
-  # These values can be overridden at build time
-  # to customize the user and group IDs
-  # for the development user in the container.
-  # This is useful for matching the host user to avoid permission issues
-  # when mounting volumes or sharing files between the host and container.
-  USERNAME=dev \
-  USER_UID=1000 \
-  USER_GID=$USER_UID
+ARG OC_VERSION=latest
+ARG GO_VERSION=1.24.4
+ARG ACT_VERSION=v0.2.78
+# User configuration
+# These values can be overridden at build time
+# to customize the user and group IDs
+# for the development user in the container.
+# This is useful for matching the host user to avoid permission issues
+# when mounting volumes or sharing files between the host and container.
+ARG USERNAME=dev
+ARG USER_UID=1000
+ARG USER_GID=$USER_UID
 
 # Trust the Red Hat IT Root CAs and set up rcm-tools repo
 RUN curl -fLo /etc/pki/ca-trust/source/anchors/IT-Root-CAs.pem https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem \
@@ -39,14 +36,20 @@ RUN dnf install -y \
   glibc-langpack-en \
   # development dependencies
   gcc gcc-c++ krb5-devel \
-  python3-devel python3-pip python3-wheel python3-autopep8 \
+  python3.11-devel python3-pip python3-wheel python3-autopep8 \
   # other tools for development and troubleshooting
   bash-completion vim tmux procps-ng psmisc wget net-tools iproute socat \
   # install rcm-tools
   koji brewkoji rhpkg \
   # add sigstore cosign tool (commented out for now) \
   && dnf clean all \
-  && ln -sfn /usr/bin/python3 /usr/bin/python
+  && ln -sfn /usr/bin/python3.11 /usr/bin/python3 \
+  && ln -sfn /usr/bin/python3.11 /usr/bin/python
+
+# Set locale early for any package installs that might rely on it
+ENV \
+  LANG="en_US.UTF-8" \
+  LC_ALL="en_US.UTF-8"
 
 # Include oc client
 RUN wget -O /tmp/openshift-client-linux-"$OC_VERSION".tar.gz https://mirror.openshift.com/pub/openshift-v4/clients/ocp-dev-preview/"$OC_VERSION"/openshift-client-linux.tar.gz \
@@ -66,8 +69,9 @@ RUN curl -sSfL -o act.tar.gz https://github.com/nektos/act/releases/download/${A
   chmod +x /usr/local/bin/act && \
   rm act.tar.gz
 
-# Set locale early for any package installs that might rely on it
-RUN echo $LANG > /etc/locale.conf
+# Install uv
+RUN curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh
+ENV PATH="/usr/local/bin:$PATH"
 
 # Create the "dev" user with necessary permissions and directories
 RUN groupadd --gid "$USER_GID" "$USERNAME" \
@@ -81,14 +85,12 @@ RUN groupadd --gid "$USER_GID" "$USERNAME" \
 # Configure Kerberos
 COPY artcommon/configs/krb5-redhat.conf /etc/krb5.conf.d/
 
+# Set workdir
 WORKDIR /workspaces/art-tools
-ADD . .
-
-RUN chown -R "$USERNAME:$USER_GID" /workspaces/art-tools
-
-# Use --ignore-installed to avoid conflicts with rpm-installed Python packages
-RUN pip3 install --ignore-installed -U "pip>=22.3" "setuptools>=64" \
-  && pip3 install --ignore-installed ruff pylint pytest flexmock click jsonschema schema \
-  && pip3 install --ignore-installed -e ./artcommon -e ./doozer -e ./elliott -e ./pyartcd
+COPY --chown="$USER_UID:$USER_GID" . .
 
 USER "$USER_UID"
+
+ENV VIRTUAL_ENV=/workspaces/art-tools/.venv
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+RUN uv sync

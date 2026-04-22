@@ -1,15 +1,16 @@
 import asyncio
 import json
+import os
 import re
 import sys
-from typing import Dict, List, Set, Union
 
 import click
 import koji
 import requests
 from artcommonlib import logutil
 from artcommonlib.arch_util import BREW_ARCHES
-from artcommonlib.assembly import assembly_metadata_config, assembly_rhcos_config
+from artcommonlib.assembly import assembly_excluded_components, assembly_metadata_config, assembly_rhcos_config
+from artcommonlib.constants import COREOS_RHEL10_STREAMS
 from artcommonlib.format_util import green_print, red_print, yellow_print
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord, KonfluxBundleBuildRecord
 from artcommonlib.release_util import isolate_el_version_in_release
@@ -196,8 +197,7 @@ async def find_builds_cli(
             click.echo(data)
         return
 
-    replace_vars = runtime.group_config.vars.primitive() if runtime.group_config.vars else {}
-    et_data = runtime.get_errata_config(replace_vars=replace_vars)
+    et_data = runtime.get_errata_config()
     tag_pv_map = et_data.get('brew_tag_product_version_mapping')
 
     if default_advisory_type is not None:
@@ -230,7 +230,7 @@ async def find_builds_cli(
             nvrps = await _fetch_builds_by_kind_rpm(runtime, tag_pv_map, brew_session, include_shipped, member_only)
 
     LOGGER.info('Fetching info for builds from Errata')
-    builds: List[brew.Build] = parallel_results_with_progress(
+    builds: list[brew.Build] = parallel_results_with_progress(
         nvrps,
         lambda nvrp: errata.get_brew_build(f'{nvrp[0]}-{nvrp[1]}-{nvrp[2]}', nvrp[3], session=requests.Session()),
     )
@@ -360,13 +360,17 @@ def get_rhcos_nvrs_from_assembly(runtime: Runtime, brew_session: koji.ClientSess
 
     # Keys under rhcos_config are not necessary payload tags. One exception is `dependencies`
     # make sure we only process payload tags
-    rhcos_payload_tags = [c['name'] for c in get_container_configs(runtime)]
+    # Exclude rhcos_payload_tags that are in COREOS_RHEL10_STREAMS
+    rhcos_payload_tags = [c['name'] for c in get_container_configs(runtime) if c['name'] not in COREOS_RHEL10_STREAMS]
     for key, config in rhcos_config.items():
         if key not in rhcos_payload_tags:
             continue
+        if key in ["rhel-coreos-10", "rhel-coreos-10-extensions"]:
+            continue
 
         for arch, pullspec in config['images'].items():
-            build_id = get_build_id_from_rhcos_pullspec(pullspec)
+            registry_config = os.getenv("QUAY_AUTH_FILE")
+            build_id = get_build_id_from_rhcos_pullspec(pullspec, registry_config=registry_config)
             if arch not in build_ids_by_arch:
                 build_ids_by_arch[arch] = set()
             build_ids_by_arch[arch].add(build_id)
@@ -448,7 +452,7 @@ def _fetch_nvrps_by_nvr_or_id(
     return nvrps
 
 
-def _gen_nvrp_tuples(builds: List[Dict], tag_pv_map: Dict[str, str]):
+def _gen_nvrp_tuples(builds: list[dict], tag_pv_map: dict[str, str]):
     """Returns a list of (name, version, release, product_version) tuples of each build"""
     nvrps = [(b['name'], b['version'], b['release'], tag_pv_map[b['tag_name']]) for b in builds]
     return nvrps
@@ -467,7 +471,7 @@ def _json_dump(as_json: str, data: dict):
             json.dump(data, json_file, indent=4, sort_keys=True)
 
 
-def _find_shipped_builds(build_ids: List[Union[str, int]], brew_session: koji.ClientSession) -> Set[Union[str, int]]:
+def _find_shipped_builds(build_ids: list[str | int], brew_session: koji.ClientSession) -> set[str | int]:
     """Finds shipped builds
     :param builds: list of Brew build IDs or NVRs
     :param brew_session: Brew session
@@ -486,15 +490,21 @@ def _find_shipped_builds(build_ids: List[Union[str, int]], brew_session: koji.Cl
 
 async def _fetch_builds_by_kind_image(
     runtime: Runtime,
-    tag_pv_map: Dict[str, str],
+    tag_pv_map: dict[str, str],
     brew_session: koji.ClientSession,
     payload_only: bool,
     non_payload_only: bool,
     include_shipped: bool,
 ):
-    image_metas: List[ImageMetadata] = []
+    excluded = assembly_excluded_components(runtime.get_releases_config(), runtime.assembly, 'image')
+    image_metas: list[ImageMetadata] = []
     for image in runtime.image_metas():
         if image.base_only or not image.is_release:
+            continue
+        if image.distgit_key in excluded:
+            if image.is_payload:
+                raise ElliottFatalError(f'Payload image {image.distgit_key} cannot be excluded in assembly definition')
+            LOGGER.info(f'Excluding image {image.distgit_key} per assembly definition')
             continue
         if (payload_only and not image.is_payload) or (non_payload_only and image.is_payload):
             continue
@@ -504,8 +514,10 @@ async def _fetch_builds_by_kind_image(
         'Generating list of images: ', f'Hold on a moment, fetching Brew builds for {len(image_metas)} components...'
     )
 
-    tasks = [image.get_latest_build(el_target=image.branch_el_target()) for image in image_metas]
-    brew_latest_builds: List[Dict] = list(await asyncio.gather(*tasks))
+    tasks = [
+        image.get_latest_build(el_target=image.branch_el_target(), exclude_large_columns=True) for image in image_metas
+    ]
+    brew_latest_builds: list[dict] = list(await asyncio.gather(*tasks))
     _ensure_accepted_tags(brew_latest_builds, brew_session, tag_pv_map)
     shipped = set()
     if include_shipped:
@@ -520,7 +532,7 @@ async def _fetch_builds_by_kind_image(
 
 
 def _ensure_accepted_tags(
-    builds: List[Dict], brew_session: koji.ClientSession, tag_pv_map: Dict[str, str], raise_exception: bool = True
+    builds: list[dict], brew_session: koji.ClientSession, tag_pv_map: dict[str, str], raise_exception: bool = True
 ):
     """
     Build dicts returned by koji.listTagged API have their tag names, however other APIs don't set that field.
@@ -547,7 +559,7 @@ def _ensure_accepted_tags(
 
 async def _fetch_builds_by_kind_rpm(
     runtime: Runtime,
-    tag_pv_map: Dict[str, str],
+    tag_pv_map: dict[str, str],
     brew_session: koji.ClientSession,
     include_shipped: bool,
     member_only: bool,
@@ -580,15 +592,23 @@ async def _fetch_builds_by_kind_rpm(
                 f"Assembly {runtime.assembly} is not appliable for build sweep because it contains RHCOS specific dependencies for a custom release."
             )
 
-    builds: List[Dict] = []
+    excluded = assembly_excluded_components(runtime.get_releases_config(), runtime.assembly, 'rpm')
+    excluded_component_names: set[str] = set()
+    for dk in excluded:
+        rpm_meta = runtime.rpm_map.get(dk)
+        if rpm_meta:
+            excluded_component_names.add(rpm_meta.get_component_name())
+            LOGGER.info(f'Excluding rpm {dk} per assembly definition')
+
+    builds: list[dict] = []
 
     pinned_nvrs = set()
     if member_only:  # Sweep only member rpms
         for tag in tag_pv_map:
             tasks = [
-                rpm.get_latest_build(default=None, el_target=tag)
+                rpm.get_latest_build(default=None, el_target=tag, exclude_large_columns=True)
                 for rpm in runtime.rpm_metas()
-                if tag in rpm.determine_targets()
+                if tag in rpm.determine_targets() and rpm.distgit_key not in excluded
             ]
             builds_for_tag = await asyncio.gather(*tasks)
             builds.extend(filter(lambda b: b is not None, builds_for_tag))
@@ -597,7 +617,7 @@ async def _fetch_builds_by_kind_rpm(
         builder = BuildFinder(brew_session, logger=LOGGER)
         for tag in tag_pv_map:
             # keys are rpm component names, values are nvres
-            component_builds: Dict[str, Dict] = builder.from_tag(
+            component_builds: dict[str, dict] = builder.from_tag(
                 "rpm", tag, inherit=False, assembly=assembly, event=runtime.brew_event
             )
             # Remove "tag_name" field from the build dict because it may be outdated. _ensure_accepted_tags() will update it.
@@ -642,6 +662,8 @@ async def _fetch_builds_by_kind_rpm(
                         )
                 component_builds.update(group_deps)
                 pinned_nvrs.update([b['nvr'] for b in group_deps.values()])
+            for name in excluded_component_names:
+                component_builds.pop(name, None)
             builds.extend(component_builds.values())
 
     LOGGER.info(f"Found {len(builds)} qualified rpm builds")
@@ -672,14 +694,14 @@ async def _fetch_builds_by_kind_rpm(
 
 
 def _filter_out_attached_builds(
-    build_objects: List[brew.Build], include_shipped: bool = False
-) -> (List[brew.Build], Dict[int, Set[str]]):
+    build_objects: list[brew.Build], include_shipped: bool = False
+) -> tuple[list[brew.Build], dict[int, set[str]]]:
     """
     Filter out builds that are already attached to an ART advisory
     """
-    unattached_builds: List[brew.Build] = []
+    unattached_builds: list[brew.Build] = []
     errata_version_cache = {}  # avoid reloading the same errata for multiple builds
-    attached_to_advisories: Dict[int, Set[str]] = dict()
+    attached_to_advisories: dict[int, set[str]] = dict()
     for b in build_objects:
         # check if build is attached to any existing advisory for this version
         in_same_version = False
@@ -711,37 +733,54 @@ def _filter_out_attached_builds(
     return unattached_builds, attached_to_advisories
 
 
-async def find_builds_konflux(runtime, payload):
+async def find_builds_konflux(runtime, payload) -> list[dict]:
     """
-    Find konflux builds for group/assembly
-    """
+    Find konflux builds for group/assembly.
 
+    Args:
+        runtime: The runtime object providing access to image metadata and the Konflux database.
+        payload: If True, only include payload images; if False, only non-payload images.
+
+    Returns:
+        list[dict]: List of build records for each image.
+    """
     runtime.konflux_db.bind(KonfluxBuildRecord)
 
-    image_metas: List[ImageMetadata] = []
+    excluded = assembly_excluded_components(runtime.get_releases_config(), runtime.assembly, 'image')
+    image_metas: list[ImageMetadata] = []
     for image in runtime.image_metas():
         if image.base_only or not image.is_release:
+            continue
+        if image.distgit_key in excluded:
+            if image.is_payload:
+                raise ElliottFatalError(f'Payload image {image.distgit_key} cannot be excluded in assembly definition')
+            LOGGER.info(f'Excluding image {image.distgit_key} per assembly definition')
             continue
         if (payload and not image.is_payload) or (not payload and image.is_payload):
             continue
         image_metas.append(image)
 
     LOGGER.info("Fetching NVRs from DB...")
-    tasks = [image.get_latest_build(el_target=image.branch_el_target()) for image in image_metas]
-    records: List[Dict] = [r for r in await asyncio.gather(*tasks) if r is not None]
-    if len(records) != len(image_metas):
-        raise ElliottFatalError(f"Failed to find Konflux builds for {len(image_metas) - len(records)} images")
+    tasks = [
+        image.get_latest_build(el_target=image.branch_el_target(), exclude_large_columns=True) for image in image_metas
+    ]
+    records = await asyncio.gather(*tasks)
+    images_not_found: list[str] = [image_metas[i].name for i, r in enumerate(records) if r is None]
+    if images_not_found:
+        message = f"Failed to find Konflux builds for {len(images_not_found)} images: {images_not_found}"
+        LOGGER.error(message)
+        raise ElliottFatalError(message)
     return records
 
 
-async def find_builds_konflux_all_types(runtime) -> Dict[str, List]:
+async def find_builds_konflux_all_types(runtime: Runtime) -> dict[str, list]:
     """
     Find Konflux builds for a group/assembly, separating payload and non-payload images,
     and fetch related OLM bundle builds.
 
     This function:
     - Iterates over image metadata from the runtime, filtering out base-only and non-release images.
-    - For each image, determines if it is a payload image and collects its build record.
+    - For each image, queries for the latest build.
     - Separates the results into payload and non-payload image builds.
     - For OLM operator images, fetches the related bundle build records from the database.
     - Returns a dictionary with four categorized lists:
@@ -754,7 +793,7 @@ async def find_builds_konflux_all_types(runtime) -> Dict[str, List]:
         runtime: The runtime object providing access to image metadata and the Konflux database.
 
     Returns:
-        Dict[str, List]: A dictionary containing four lists:
+        dict[str, list]: A dictionary containing four lists:
             - 'payload': List of build nvrs for payload images.
             - 'non_payload': List of build nvrs for non-payload images.
             - 'olm_builds': List of NVRs for OLM bundle builds found.
@@ -762,9 +801,15 @@ async def find_builds_konflux_all_types(runtime) -> Dict[str, List]:
     """
     runtime.konflux_db.bind(KonfluxBuildRecord)
 
+    excluded = assembly_excluded_components(runtime.get_releases_config(), runtime.assembly, 'image')
     image_metas: list[tuple[bool, ImageMetadata]] = []
     for image in runtime.image_metas():
         if image.base_only or not image.is_release:
+            continue
+        if image.distgit_key in excluded:
+            if image.is_payload:
+                raise ElliottFatalError(f'Payload image {image.distgit_key} cannot be excluded in assembly definition')
+            LOGGER.info(f'Excluding image {image.distgit_key} per assembly definition')
             continue
         image_metas.append((image.is_payload, image))
 
@@ -776,13 +821,13 @@ async def find_builds_konflux_all_types(runtime) -> Dict[str, List]:
     for is_payload, image in image_metas:
         olm_flags.append(image.is_olm_operator)
         payload_flags.append(is_payload)
-        tasks.append(image.get_latest_build(el_target=image.branch_el_target()))
-    results = await asyncio.gather(*[task for task in tasks])
-    records_with_olm = [
-        (is_olm, is_payload, r) for is_olm, is_payload, r in zip(olm_flags, payload_flags, results) if r is not None
-    ]
-    if len(records_with_olm) != len(image_metas):
-        raise ElliottFatalError(f"Failed to find Konflux builds for {len(image_metas) - len(records_with_olm)} images")
+        tasks.append(image.get_latest_build(el_target=image.branch_el_target(), exclude_large_columns=True))
+    results = await asyncio.gather(*tasks)
+    images_not_found: list[str] = [image_metas[i][1].name for i, r in enumerate(results) if r is None]
+    if images_not_found:
+        message = f"Failed to find Konflux builds for {len(images_not_found)} images: {images_not_found}"
+        LOGGER.error(message)
+        raise ElliottFatalError(message)
 
     # get related bundle records in KonfluxBundleBuildRecord
     LOGGER.info("Fetching bundle NVRs from DB ...")
@@ -790,6 +835,7 @@ async def find_builds_konflux_all_types(runtime) -> Dict[str, List]:
 
     operator_builds = []
     olm_tasks = []
+    records_with_olm = [(is_olm, is_payload, r) for is_olm, is_payload, r in zip(olm_flags, payload_flags, results)]
     for is_olm, is_payload, record in records_with_olm:
         if is_olm:
             operator_builds.append(record)

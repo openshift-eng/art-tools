@@ -8,10 +8,11 @@ from typing import Dict, List, Tuple
 
 import click
 from artcommonlib import logutil
+from artcommonlib.constants import KONFLUX_DEFAULT_NAMESPACE
 from artcommonlib.exectools import cmd_assert_async, cmd_gather_async
+from artcommonlib.model import Model
 from artcommonlib.rhcos import get_container_configs
 from artcommonlib.util import new_roundtrip_yaml_handler
-from doozerlib.constants import KONFLUX_DEFAULT_NAMESPACE
 
 from elliottlib.cli.common import cli, click_coroutine
 from elliottlib.cli.snapshot_cli import CreateSnapshotCli, get_build_records_by_nvrs
@@ -136,12 +137,12 @@ class ConformaVerifyCli:
                 "Expected exactly one snapshot, got %d. Do not provide NVRs of multiple kinds (image/bundle/fbc).",
                 len(snapshots),
             )
-        snapshot_spec = snapshots[0].spec
+        snapshot_spec = Model(snapshots[0]).spec
 
         pullspec_by_name = {comp.name: comp.containerImage for comp in snapshot_spec.components}
 
         # we need to fetch build records so we can map nvrs to pullspecs
-        build_records_by_nvrs = await get_build_records_by_nvrs(self.runtime, batch_nvrs, strict=True)
+        build_records_by_nvrs = await get_build_records_by_nvrs(self.runtime, batch_nvrs)
         nvrs_by_pullspec = {str(record.image_pullspec): record.nvr for record in build_records_by_nvrs.values()}
 
         with tempfile.NamedTemporaryFile(delete=False) as temp_file:
@@ -185,7 +186,7 @@ class ConformaVerifyCli:
                 "Expected exactly one snapshot, got %d. Do not provide NVRs of multiple kinds (image/bundle/fbc).",
                 len(snapshots),
             )
-        snapshot_spec = snapshots[0].spec
+        snapshot_spec = Model(snapshots[0]).spec
 
         self.policy_path = self.get_policy_url(snapshot_spec.application, self.env)
         LOGGER.info(
@@ -199,7 +200,9 @@ class ConformaVerifyCli:
 
         if self.pullspec:
             rhcos_images = {c['name'] for c in get_container_configs(self.runtime)}
-            nvr_map = await get_nvrs_from_release(self.pullspec, rhcos_images, LOGGER)
+            nvr_map = await get_nvrs_from_release(
+                self.pullspec, rhcos_images, LOGGER, registry_config=self.runtime.registry_config
+            )
             self.nvrs = []
             for component, (v, r) in nvr_map.items():
                 self.nvrs.append(f"{component}-{v}-{r}")
@@ -598,7 +601,7 @@ async def verify_conforma_cli(
         konflux_kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
 
     if not pull_secret:
-        pull_secret = os.environ.get('KONFLUX_ART_IMAGES_AUTH_FILE')
+        pull_secret = os.environ.get('QUAY_AUTH_FILE')
 
     pipeline = ConformaVerifyCli(
         runtime=runtime,

@@ -4,7 +4,6 @@ from typing import Dict, List, Optional
 
 import click
 import koji
-from artcommonlib import exectools
 from artcommonlib.arch_util import brew_arch_for_go_arch
 from artcommonlib.assembly import AssemblyTypes, assembly_rhcos_config, assembly_type
 
@@ -114,7 +113,9 @@ class FindUnconsumedRpms:
             image for image in self._runtime.image_metas() if not image.base_only and image.is_release
         ]
         logger.info("Fetching Brew builds for %s component(s)...", len(image_metas))
-        brew_builds: List[Dict] = await asyncio.gather(*[image.get_latest_build() for image in image_metas])
+        brew_builds: List[Dict] = await asyncio.gather(
+            *[image.get_latest_build(exclude_large_columns=True) for image in image_metas]
+        )
 
         logger.info("Retrieve RPMs in %s image build(s)...", len(brew_builds))
         build_archives = FindUnconsumedRpms._list_archives_by_builds([b["id"] for b in brew_builds], "image", koji_api)
@@ -127,8 +128,7 @@ class FindUnconsumedRpms:
         rpm_component_names = {b["name"] for b in rpm_builds}
 
         # Compare tagged rpms
-        replace_vars = self._runtime.group_config.vars.primitive() if self._runtime.group_config.vars else {}
-        et_data = self._runtime.get_errata_config(replace_vars=replace_vars)
+        et_data = self._runtime.get_errata_config()
         tag_pv_map = et_data.get('brew_tag_product_version_mapping')
         finder = BuildFinder(koji_api, logger=logger)
         extra_components = {}

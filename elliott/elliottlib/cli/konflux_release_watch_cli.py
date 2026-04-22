@@ -1,12 +1,15 @@
-import os
 import sys
 from datetime import timedelta
 
 import click
 from artcommonlib import logutil
-from artcommonlib.util import KubeCondition, new_roundtrip_yaml_handler
+from artcommonlib.util import (
+    KubeCondition,
+    new_roundtrip_yaml_handler,
+    resolve_konflux_kubeconfig_by_product,
+    resolve_konflux_namespace_by_product,
+)
 from doozerlib.backend.konflux_client import KonfluxClient
-from doozerlib.constants import KONFLUX_DEFAULT_NAMESPACE
 
 from elliottlib.cli.common import click_coroutine
 from elliottlib.cli.konflux_release_cli import konflux_release_cli
@@ -38,7 +41,10 @@ class WatchReleaseCli:
         :return: A tuple of (success: bool, release_obj: dict)
         """
 
-        self.runtime.initialize(no_group=True, build_system='konflux')
+        # Initialize runtime if not already initialized (for direct class usage in tests)
+        if not getattr(self.runtime, 'initialized', False):
+            self.runtime.initialize(no_group=True, build_system='konflux')
+
         release_obj = await self.konflux_client.wait_for_release(
             self.release, overall_timeout_timedelta=timedelta(hours=self.timeout)
         )
@@ -58,7 +64,27 @@ class WatchReleaseCli:
         message = released_condition.message
         if message == "Release processing failed on managed pipelineRun":
             managed_plr = release_obj['status'].get('managedProcessing', {}).get('pipelineRun', '')
-            message += f" {managed_plr}"
+            if '/' not in managed_plr:
+                LOGGER.warning("Unexpected managed pipelineRun format: %r", managed_plr)
+                tenant, plr_name = "unknown-tenant", managed_plr or "unknown-pipelinerun"
+            else:
+                tenant, plr_name = managed_plr.split('/', 1)
+            application_name = (
+                release_obj['metadata']
+                .get('labels', {})
+                .get("appstudio.openshift.io/application", "unknown-application")
+            )
+            managed_plr_resource = {
+                "kind": "PipelineRun",
+                "metadata": {
+                    "name": plr_name,
+                    "namespace": tenant,
+                    "labels": {
+                        "appstudio.openshift.io/application": application_name,
+                    },
+                },
+            }
+            message += f" {KonfluxClient.resource_url(managed_plr_resource)}"
         LOGGER.error(message)
         return False, release_obj
 
@@ -76,8 +102,7 @@ class WatchReleaseCli:
 @click.option(
     '--konflux-namespace',
     metavar='NAMESPACE',
-    default=KONFLUX_DEFAULT_NAMESPACE,
-    help='The namespace to use for Konflux cluster connections.',
+    help='The namespace to use for Konflux cluster connections. If not provided, will be auto-detected based on group (e.g., ocp-art-tenant for openshift- groups, art-oadp-tenant for oadp- groups).',
 )
 @click.option(
     '--timeout',
@@ -106,15 +131,16 @@ async def watch_release_cli(
 
     $ elliott release watch ose-4-18-stage-202503131819 --konflux-namespace ocp-art-tenant
     """
-    if not konflux_kubeconfig:
-        konflux_kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
+    # Initialize runtime to populate runtime.product before using resolver functions
+    runtime.initialize(build_system='konflux')
 
-    if not konflux_kubeconfig:
-        raise ValueError("Must pass kubeconfig using --konflux-kubeconfig or KONFLUX_SA_KUBECONFIG env var")
+    # Resolve kubeconfig and namespace using product-based utility functions
+    resolved_kubeconfig = resolve_konflux_kubeconfig_by_product(runtime.product, konflux_kubeconfig)
+    resolved_namespace = resolve_konflux_namespace_by_product(runtime.product, konflux_namespace)
 
     konflux_config = {
-        'kubeconfig': konflux_kubeconfig,
-        'namespace': konflux_namespace,
+        'kubeconfig': resolved_kubeconfig,
+        'namespace': resolved_namespace,
         'context': konflux_context,
     }
 

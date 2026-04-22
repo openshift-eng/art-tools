@@ -173,6 +173,17 @@
       "$ref": "#/properties/base_only"
     },
     "base_only-": {},
+    "snapshot_release": {
+      "description": "If true, enables snapshot-to-release workflow for base images. Only applies to base_only images",
+      "type": "boolean"
+    },
+    "snapshot_release!": {
+      "$ref": "#/properties/snapshot_release"
+    },
+    "snapshot_release?": {
+      "$ref": "#/properties/snapshot_release"
+    },
+    "snapshot_release-": {},
     "cachito": {
       "description": "Cachito integration configuration",
       "$ref": "cachito.schema.json"
@@ -715,6 +726,17 @@
       "$ref": "#/properties/odcs"
     },
     "odcs-": {},
+    "okd": {
+      "description": "If present, this config is specific to OKD content overrides.",
+      "type": "object"
+    },
+    "okd!": {
+      "$ref": "#/properties/okd"
+    },
+    "okd?": {
+      "$ref": "#/properties/okd"
+    },
+    "okd-": {},
     "no_oit_comments": {
       "description": "Deprecated. Only used in 3.11 and 4.6",
       "type": "boolean"
@@ -1197,17 +1219,6 @@
                   "$ref": "#/properties/konflux/properties/cachi2/properties/lockfile/properties/enabled"
                 },
                 "enabled-": {},
-                "force": {
-                  "description": "Force lockfile generation even when conditions aren't met",
-                  "type": "boolean"
-                },
-                "force?": {
-                  "$ref": "#/properties/konflux/properties/cachi2/properties/lockfile/properties/force"
-                },
-                "force!": {
-                  "$ref": "#/properties/konflux/properties/cachi2/properties/lockfile/properties/force"
-                },
-                "force-": {},
                 "rpms": {
                   "description": "Array of RPM package names to include in lockfile generation",
                   "type": "array",
@@ -1223,17 +1234,43 @@
                   "$ref": "#/properties/konflux/properties/cachi2/properties/lockfile/properties/rpms"
                 },
                 "rpms-": {},
-                "inspect_parent": {
-                  "description": "Inspect parent RPMs during lockfile generation (default: true)",
+                "modules": {
+                  "description": "Array of module names to include in lockfile generation",
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "modules?": {
+                  "$ref": "#/properties/konflux/properties/cachi2/properties/lockfile/properties/modules"
+                },
+                "modules!": {
+                  "$ref": "#/properties/konflux/properties/cachi2/properties/lockfile/properties/modules"
+                },
+                "modules-": {},
+                "dnf_modules_enable": {
+                  "description": "Enable automatic DNF module enablement commands injection (default: true)",
                   "type": "boolean"
                 },
-                "inspect_parent?": {
-                  "$ref": "#/properties/konflux/properties/cachi2/properties/lockfile/properties/inspect_parent"
+                "dnf_modules_enable?": {
+                  "$ref": "#/properties/konflux/properties/cachi2/properties/lockfile/properties/dnf_modules_enable"
                 },
-                "inspect_parent!": {
-                  "$ref": "#/properties/konflux/properties/cachi2/properties/lockfile/properties/inspect_parent"
+                "dnf_modules_enable!": {
+                  "$ref": "#/properties/konflux/properties/cachi2/properties/lockfile/properties/dnf_modules_enable"
                 },
-                "inspect_parent-": {}
+                "dnf_modules_enable-": {},
+                "cross_arch": {
+                  "description": "Include RPMs from all architectures in lockfile (default: false)",
+                  "type": "boolean"
+                },
+                "cross_arch?": {
+                  "$ref": "#/properties/konflux/properties/cachi2/properties/lockfile/properties/cross_arch"
+                },
+                "cross_arch!": {
+                  "$ref": "#/properties/konflux/properties/cachi2/properties/lockfile/properties/cross_arch"
+                },
+                "cross_arch-": {}
               },
               "additionalProperties": false
             },
@@ -1259,11 +1296,32 @@
                 },
                 "enabled-": {},
                 "resources": {
-                  "description": "Array of resource URLs to include in artifact lockfile generation",
+                  "description": "Array of resource URLs or objects with URL and optional filename",
                   "type": "array",
                   "items": {
-                    "type": "string",
-                    "format": "uri"
+                    "oneOf": [
+                      {
+                        "type": "string",
+                        "format": "uri",
+                        "description": "Simple URL - filename extracted from URL"
+                      },
+                      {
+                        "type": "object",
+                        "required": ["url"],
+                        "properties": {
+                          "url": {
+                            "type": "string",
+                            "format": "uri",
+                            "description": "Download URL"
+                          },
+                          "filename": {
+                            "type": "string",
+                            "description": "Custom destination filename (optional)"
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    ]
                   }
                 },
                 "resources?": {
@@ -1327,6 +1385,23 @@
             "legacy"
           ]
         },
+        "build_timeout": {
+          "description": "Build timeout in minutes for konflux builds",
+          "type": "integer",
+          "minimum": 1
+        },
+        "build_attempts": {
+          "description": "The number of times a build should be attempted before giving up",
+          "type": "integer",
+          "minimum": 1
+        },
+        "build_attempts?": {
+          "$ref": "#/properties/konflux/properties/build_attempts"
+        },
+        "build_attempts!": {
+          "$ref": "#/properties/konflux/properties/build_attempts"
+        },
+        "build_attempts-": {},
         "content": {
           "$ref": "image_content.base.schema.json"
         }

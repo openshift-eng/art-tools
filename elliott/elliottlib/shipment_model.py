@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import List, Literal, Optional, Self, Union
+from typing import List, Literal, Optional, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
 from ruamel.yaml import scalarstring
@@ -76,10 +76,10 @@ class ReleaseNotes(StrictBaseModel):
 
     type: Literal['RHEA', 'RHBA', 'RHSA']  # Advisory type
     live_id: int = None
-    synopsis: str
-    topic: str
-    description: str
-    solution: str
+    synopsis: str = None
+    topic: str = None
+    description: str = None
+    solution: str = None
     issues: Optional[Issues] = None
     cves: Optional[List[CveAssociation]] = None
     references: Optional[List[str]] = None
@@ -88,7 +88,7 @@ class ReleaseNotes(StrictBaseModel):
     # configure them to be LiteralScalarString
     @field_serializer('topic', 'solution', 'description')
     def serialize_text_fields(self, field: str, _info):
-        if '\n' in field:
+        if field and '\n' in field:
             return scalarstring.LiteralScalarString(field)
         return field
 
@@ -106,11 +106,18 @@ class EnvAdvisory(StrictBaseModel):
     url: Optional[str] = None
 
 
+class EnvResult(StrictBaseModel):
+    """Information about the release result for the environment"""
+
+    pipeline: Optional[str] = None
+
+
 class ShipmentEnv(StrictBaseModel):
     """Environment specific configuration for a release"""
 
     releasePlan: str
     advisory: Optional[EnvAdvisory] = None
+    result: Optional[EnvResult] = None
 
     def shipped(self):
         return bool(self.advisory)
@@ -156,7 +163,8 @@ class Shipment(StrictBaseModel):
         release_notes_present = self.data and self.data.releaseNotes
         if self.metadata.fbc and release_notes_present:
             raise ValueError('FBC shipment is not expected to have data.releaseNotes defined')
-        if not self.metadata.fbc and not release_notes_present:
+        # Only require releaseNotes for OpenShift products (groups starting with 'openshift-')
+        if not self.metadata.fbc and not release_notes_present and self.metadata.group.startswith('openshift-'):
             raise ValueError('A regular shipment is expected to have data.releaseNotes defined')
         return self
 

@@ -48,7 +48,7 @@ from dockerfile_parse import DockerfileParser
 from tenacity import before_sleep_log, retry, retry_if_not_result, stop_after_attempt, wait_fixed
 
 import doozerlib
-from doozerlib import state, util
+from doozerlib import constants, state, util
 from doozerlib.build_info import BrewBuildRecordInspector
 from doozerlib.comment_on_pr import CommentOnPr
 from doozerlib.dblib import Record
@@ -61,23 +61,6 @@ from doozerlib.util import extract_version_fields
 if TYPE_CHECKING:
     from doozerlib.image import ImageMetadata
     from doozerlib.metadata import Metadata
-
-# doozer used to be part of OIT
-OIT_COMMENT_PREFIX = '#oit##'
-OIT_BEGIN = '##OIT_BEGIN'
-OIT_END = '##OIT_END'
-
-CONTAINER_YAML_HEADER = """
-# This file is managed by doozer: https://github.com/openshift-eng/doozer
-# operated by the OpenShift Automated Release Tooling team (#forum-ocp-art on CoreOS Slack).
-
-# Any manual changes will be overwritten by doozer on the next build.
-#
-# See https://source.redhat.com/groups/public/container-build-system/container_build_system_wiki/odcs_integration_with_osbs
-# for more information on maintaining this file and the format and examples
-
----
-"""
 
 # Always ignore these files/folders when rebasing into distgit
 # May be added to based on group/image config
@@ -221,62 +204,43 @@ class DistGitRepo(object):
                     timeout = str(self.runtime.global_opts['rhpkg_clone_timeout'])
                     rhpkg_clone_depth = int(self.runtime.global_opts.get('rhpkg_clone_depth', '0'))
 
-                    if self.metadata.namespace == 'containers':
-                        # Containers don't generally require distgit lookaside. We can rely on normal
-                        # git clone & leverage git caches to greatly accelerate things if the user supplied it.
-                        gitargs = ['--branch', distgit_branch]
+                    # Use git clone for both containers and RPMs to leverage git caches
+                    gitargs = ['--branch', distgit_branch]
 
-                        if not distgit_commitish:
-                            gitargs.append('--single-branch')
+                    if not distgit_commitish:
+                        gitargs.append('--single-branch')
 
-                        if not distgit_commitish and rhpkg_clone_depth > 0:
-                            gitargs.extend(["--depth", str(rhpkg_clone_depth)])
+                    if not distgit_commitish and rhpkg_clone_depth > 0:
+                        gitargs.extend(["--depth", str(rhpkg_clone_depth)])
 
-                        try:
-                            git_clone(
-                                self.metadata.distgit_remote_url(),
-                                self.distgit_dir,
-                                gitargs=gitargs,
-                                set_env=GIT_NO_PROMPTS,
-                                timeout=timeout,
-                                git_cache_dir=self.runtime.git_cache_dir,
-                            )
-                        except ChildProcessError as err:
-                            # Create branch on demand
-                            if (
-                                len(err.args) > 1
-                                and self.has_source()
-                                and re.fullmatch(r'rhaos-\d+\.\d+-rhel-\d+', distgit_branch)
-                            ):
-                                _, _, clone_error = err.args[1]
-                                if f"Remote branch {distgit_branch} not found" in clone_error:
-                                    self.logger.info(f"Creating distgit branch {distgit_branch} for {self.name}")
-                                    exectools.cmd_assert(f"git init {self.distgit_dir}")
-                                    exectools.cmd_assert(
-                                        f'git -C {self.distgit_dir} remote add origin {self.metadata.distgit_remote_url()}'
-                                    )
-                                    exectools.cmd_assert(
-                                        f'git -C {self.distgit_dir} checkout --orphan {distgit_branch}'
-                                    )
-                    else:
-                        # Use rhpkg -- presently no idea how to cache.
-                        cmd_list = ["timeout", timeout]
-                        cmd_list.append("rhpkg")
-
-                        if self.runtime.rhpkg_config_lst:
-                            cmd_list.extend(self.runtime.rhpkg_config_lst)
-
-                        if self.runtime.user is not None:
-                            cmd_list.append("--user=%s" % self.runtime.user)
-
-                        cmd_list.extend(["clone", self.metadata.qualified_name, self.distgit_dir])
-                        cmd_list.extend(["--branch", distgit_branch])
-
-                        if not distgit_commitish and rhpkg_clone_depth > 0:
-                            cmd_list.extend(["--depth", str(rhpkg_clone_depth)])
-
-                        # Clone the distgit repository. Occasional flakes in clone, so use retry.
-                        exectools.cmd_assert(cmd_list, retries=3, set_env=GIT_NO_PROMPTS)
+                    try:
+                        git_clone(
+                            self.metadata.distgit_remote_url(),
+                            self.distgit_dir,
+                            gitargs=gitargs,
+                            set_env=GIT_NO_PROMPTS,
+                            timeout=timeout,
+                            git_cache_dir=self.runtime.git_cache_dir,
+                        )
+                    except ChildProcessError as err:
+                        # Create branch on demand
+                        if (
+                            len(err.args) > 1
+                            and self.has_source()
+                            and re.fullmatch(r'rhaos-\d+\.\d+-rhel-\d+', distgit_branch)
+                        ):
+                            _, _, clone_error = err.args[1]
+                            if f"Remote branch {distgit_branch} not found" in clone_error:
+                                self.logger.info(f"Creating distgit branch {distgit_branch} for {self.name}")
+                                exectools.cmd_assert(f"git init {self.distgit_dir}")
+                                exectools.cmd_assert(
+                                    f'git -C {self.distgit_dir} remote add origin {self.metadata.distgit_remote_url()}'
+                                )
+                                exectools.cmd_assert(f'git -C {self.distgit_dir} checkout --orphan {distgit_branch}')
+                            else:
+                                raise
+                        else:
+                            raise
 
                     if distgit_commitish:
                         with Dir(self.distgit_dir):
@@ -391,7 +355,7 @@ class DistGitRepo(object):
         self.sha = sha.strip()
         return self.sha
 
-    def cgit_file_available(self, filename: str = ".oit/signed.repo") -> Tuple[bool, str]:
+    def cgit_file_available(self, filename: str = ".oit/art-signed.repo") -> Tuple[bool, str]:
         """Check if the specified file associated with the commit hash pushed to distgit is available on cgit
         :return: (existence, url)
         """
@@ -412,7 +376,7 @@ class DistGitRepo(object):
         stop=stop_after_attempt(60),
         before_sleep=before_sleep_log(logger, logging.WARNING),
     )
-    def wait_on_cgit_file(self, filename: str = ".oit/signed.repo"):
+    def wait_on_cgit_file(self, filename: str = ".oit/art-signed.repo"):
         """Poll cgit for the specified file associated with the commit hash pushed to distgit"""
         existence, _ = self.cgit_file_available(filename)
         return existence
@@ -454,7 +418,7 @@ class DistGitRepo(object):
         # timeout value counterproductive. Limit to 5 simultaneous pushes.
         timeout = str(self.runtime.global_opts['rhpkg_push_timeout'])
         await exectools.cmd_assert_async(
-            ["timeout", f"{timeout}", "git", "push", "--follow-tags"], cwd=self.distgit_dir
+            ["timeout", f"{timeout}", "git", "push", "origin", "HEAD", "--follow-tags"], cwd=self.distgit_dir
         )
 
     def get_branch_el(self) -> Optional[int]:
@@ -516,7 +480,10 @@ class ImageDistGitRepo(DistGitRepo):
         self.upstream_intended_el_version = None
         self.should_match_upstream = False
 
-        if self.metadata.canonical_builders_enabled:
+        # Skip canonical builders initialization for performance when autoclone=False
+        # (e.g., for commands like images:list that don't need this information)
+        # This avoids expensive oc image info operations
+        if self.metadata.canonical_builders_enabled and autoclone:
             # If the image is distgit-only, this logic does not apply
             if self.has_source():
                 source_path = self.runtime.source_resolver.resolve_source(self.metadata).source_path
@@ -580,7 +547,7 @@ class ImageDistGitRepo(DistGitRepo):
         # generate yaml data with header
         content_yml = yaml.safe_dump(container_config, default_flow_style=False)
         with self.dg_path.joinpath('container.yaml').open('w', encoding="utf-8") as rc:
-            rc.write(CONTAINER_YAML_HEADER + content_yml)
+            rc.write(constants.CONTAINER_YAML_HEADER + content_yml)
 
     def _generate_osbs_image_config(self, version: str) -> Dict:
         """
@@ -810,7 +777,7 @@ class ImageDistGitRepo(DistGitRepo):
         non_shipping_repos = self.config.get('non_shipping_repos', [])
 
         for t in repos.repotypes:
-            with self.dg_path.joinpath('.oit', f'{t}.repo').open('w', encoding="utf-8") as rc:
+            with self.dg_path.joinpath('.oit', f'art-{t}.repo').open('w', encoding="utf-8") as rc:
                 content = repos.repo_file(t, enabled_repos=enabled_repos)
                 rc.write(content)
 
@@ -1300,7 +1267,7 @@ class ImageDistGitRepo(DistGitRepo):
 
         cmd = builder
         self.logger.info("Building image: %s" % target_image)
-        cmd += '{dir}/.oit/{repo_type}.repo:/etc/yum.repos.d/{repo_type}.repo -t {name}{tag} -t {name}:latest .'
+        cmd += '{dir}/.oit/art-{repo_type}.repo:/etc/yum.repos.d/{repo_type}.repo -t {name}{tag} -t {name}:latest .'
 
         name_split = target_image.split(':')
         name = name_split[0]
@@ -1503,8 +1470,8 @@ class ImageDistGitRepo(DistGitRepo):
             self.runtime.konflux_db.add_build(build_record)
             self.logger.info('Brew build info stored successfully')
 
-        except Exception as err:
-            self.logger.error('Failed writing record to the konflux DB: %s', err)
+        except Exception:
+            self.logger.exception('Failed writing record to the konflux DB')
 
     def _logs_dir(self, task_id=None):
         segments = [self.runtime.brew_logs_dir, self.metadata.distgit_key]
@@ -1665,7 +1632,7 @@ class ImageDistGitRepo(DistGitRepo):
 
         try:
             self.logger.debug('Retrieving image info for image %s', original_parent)
-            labels = util.oc_image_info_for_arch__caching(original_parent)['config']['config']['Labels']
+            labels = util.oc_image_info_for_arch(original_parent)['config']['config']['Labels']
 
             # Get builder X.Y
             major, minor, _ = extract_version_fields(labels['version'])
@@ -1890,7 +1857,7 @@ class ImageDistGitRepo(DistGitRepo):
 
             # We will infer the rhel version from the last build layer in the upstream Dockerfile
             last_layer_pullspec = parent_images[-1]
-            image_labels = util.oc_image_info_for_arch__caching(last_layer_pullspec)['config']['config']['Labels']
+            image_labels = util.oc_image_info_for_arch(last_layer_pullspec)['config']['config']['Labels']
             if 'version' not in image_labels or 'release' not in image_labels:
                 # This does not appear to be a brew image. We can't determine RHEL.
                 return None
@@ -2203,16 +2170,16 @@ class ImageDistGitRepo(DistGitRepo):
 
             # Remove any programmatic oit comments from previous management
             df_lines = dfp.content.splitlines(False)
-            df_lines = [line for line in df_lines if not line.strip().startswith(OIT_COMMENT_PREFIX)]
+            df_lines = [line for line in df_lines if not line.strip().startswith(constants.OIT_COMMENT_PREFIX)]
 
             filtered_content = []
             in_mod_block = False
             for line in df_lines:
                 # Check for begin/end of mod block, skip any lines inside
-                if OIT_BEGIN in line:
+                if constants.OIT_BEGIN in line:
                     in_mod_block = True
                     continue
-                elif OIT_END in line:
+                elif constants.OIT_END in line:
                     in_mod_block = False
                     continue
 
@@ -2269,6 +2236,14 @@ class ImageDistGitRepo(DistGitRepo):
             if self.config.envs:
                 # Allow environment variables to be specified in the ART image metadata
                 metadata_envs.update(self.config.envs.primitive())
+
+            if self.runtime.group_config.build_profiles.enable_go_cover is True:
+                # This must be implemented by the ART golang wrappers
+                # in order to have any effect.
+                metadata_envs['GO_COMPLIANCE_COVER'] = '1'
+                # Inject the coverage HTTP server source into every Go main package
+                # directory so that it is compiled into the binary via its init() function.
+                util.inject_coverage_server(dg_path, self.logger)
 
             df_fileobj = self._update_yum_update_commands(force_yum_updates, io.StringIO(df_content))
             with dg_path.joinpath('Dockerfile').open('w', encoding="utf-8") as df:
@@ -2507,13 +2482,15 @@ class ImageDistGitRepo(DistGitRepo):
             version = version[1:]  # strip off leading v
 
         x, y, z = version.split('.')[0:3]
+        date_time = release.split('.')[0]  # Extract datestamp (YYYYMMDDHHMM[SS])
 
         replace_args = {
             'MAJOR': x,
             'MINOR': y,
             'SUBMINOR': z,
             'RELEASE': release,
-            'FULL_VER': '{}-{}'.format(version, release.split('.')[0]),
+            'DATE_TIME': date_time,
+            'FULL_VER': '{}-{}'.format(version, date_time),
         }
 
         manifests_base = os.path.join(self.distgit_dir, csv_config['manifests-dir'])
@@ -2552,10 +2529,16 @@ class ImageDistGitRepo(DistGitRepo):
                     for sr in u_list:
                         s = sr.get('search', None)
                         r = sr.get('replace', None)
-                        if not s or not r:
+                        if s is None or r is None:
                             raise DoozerFatalError(
                                 'Must provide `search` and `replace` fields in art.yaml `update_list`'
                             )
+                        if not isinstance(s, str) or not isinstance(r, str):
+                            raise DoozerFatalError(
+                                '`search` and `replace` fields in art.yaml `update_list` must be strings'
+                            )
+                        if not s:
+                            raise DoozerFatalError('`search` field in art.yaml `update_list` cannot be empty')
 
                         original_string = sr_file_str
                         sr_file_str = sr_file_str.replace(s, r)

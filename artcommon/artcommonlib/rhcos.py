@@ -1,8 +1,11 @@
 import json
 
-from artcommonlib import exectools, logutil
+from artcommonlib import logutil
+from artcommonlib.arch_util import go_arch_for_brew_arch
 from artcommonlib.model import ListModel, Model
+from artcommonlib.oc_image_info import oc_image_info__cached
 from artcommonlib.runtime import GroupRuntime
+from artcommonlib.util import get_art_prod_image_repo_for_version
 
 # Historically the only RHCOS container was 'machine-os-content'; see
 # https://github.com/openshift/machine-config-operator/blob/master/docs/OSUpgrades.md
@@ -83,14 +86,14 @@ def get_container_pullspec(build_meta: dict, container_conf: Model) -> str:
     return container['image']
 
 
-def get_build_id_from_rhcos_pullspec(pullspec, layered_id: bool = True) -> str:
+def get_build_id_from_rhcos_pullspec(pullspec, registry_config: str = None) -> str:
     """
     Extract the RHCOS build ID from an image pullspec.
     - Starting from 4.16, the version is extracted from a new label "org.opencontainers.image.version". Prefer this if present and fall back to the "version" label if not.
     - Starting with 4.19, we also support layered RHCOS images, which have a label "coreos.build.manifest-list-tag" that contains the build ID for the image. The base rhel layer buildID is preserved in the "org.opencontainers.image.version" label.
 
     :param pullspec: The image pullspec to extract the build ID from.
-    :param layered_id: If True, will attempt to extract the build ID from the "coreos.build.manifest-list-tag" label first if available, otherwise will use the "org.opencontainers.image.version" label.
+    :param registry_config: Optional path to registry auth config file.
 
     :return: The extracted build ID as a string.
 
@@ -101,23 +104,63 @@ def get_build_id_from_rhcos_pullspec(pullspec, layered_id: bool = True) -> str:
 
     logger.info(f"Looking up BuildID from RHCOS pullspec: {pullspec}")
 
-    image_info_str, _ = exectools.cmd_assert(f'oc image info -o json {pullspec}', retries=3)
+    image_info_str = oc_image_info__cached(pullspec, registry_config=registry_config)
     image_info = Model(json.loads(image_info_str))
     labels = image_info.config.config.Labels
 
-    # for layered rhcos it has label coreos.build.manifest-list-tag=4.19-9.6-202505081313-node-image-extensions
-    # brew build name looks like rhcos-x86_64-4.19.9.6.202505081313-0 we need build_id 4.19.9.6.202505081313-0
+    # only layered rhcos will have coreos.build.manifest-list-tag
     manifest_tag_label = labels.get('coreos.build.manifest-list-tag')
     image_version_label = labels.get('org.opencontainers.image.version')
-    if layered_id and manifest_tag_label:
+    if manifest_tag_label and "node-image" in manifest_tag_label:
+        # Layered RHCOS (node image or extensions) has manifest-list-tag like:
+        #   node image:  4.21-9.6-202602041851-node-image
+        #   extensions:  4.19-9.6-202505081313-node-image-extensions
+        # Parse into OCP ystream build_id: 4.21.9.6.202602041851-0
         list_tag = manifest_tag_label.split('-')
         build_id = f"{list_tag[0]}.{list_tag[1]}.{list_tag[2]}-0"
     elif image_version_label:
+        # for non-layered rhcos, org.opencontainers.image.version contains the build_id directly
         build_id = image_version_label
     else:
+        # for 4.12 old build labels looks like version=412.86.202511191939-0
         build_id = labels.version
 
     if not build_id:
         raise Exception(f'Unable to determine build_id from: {pullspec}. Retrieved image info: {image_info_str}')
-
+    logger.info(f"Found BuildID: {build_id}")
     return build_id
+
+
+def get_latest_layered_rhcos_build(container_conf: Model, arch: str, registry_config: str = None):
+    """
+    Get the latest Layered RHCOS build ID and pullspec for the specified rhcos container configuration.
+
+    :param container_conf: Payload tag config Model from group.yml (exposes rhel_build_id_index, rhcos_index_tag, etc.)
+    :param arch: Brew architecture (e.g., 'x86_64', 'aarch64')
+    :param registry_config: Optional path to registry auth config file
+    :return: Tuple of (build_id, pullspec)
+    """
+    brew_arch = go_arch_for_brew_arch(arch)
+
+    # Get build_id from rhel_build_id_index
+    rhel_info_str = oc_image_info__cached(
+        container_conf.rhel_build_id_index, f'--filter-by-os={brew_arch}', registry_config=registry_config
+    )
+    rhel_info = json.loads(rhel_info_str)
+    build_id = rhel_info['config']['config']['Labels']["org.opencontainers.image.version"]
+
+    if container_conf.rhel_build_id_index == container_conf.rhcos_index_tag:
+        digest = rhel_info['digest']
+    else:
+        rhcos_info_str = oc_image_info__cached(
+            container_conf.rhcos_index_tag, f'--filter-by-os={brew_arch}', registry_config=registry_config
+        )
+        digest = json.loads(rhcos_info_str)['digest']
+
+    # NOTE: RHCOS images are always hosted in the OCP 4.x art-dev repository, even for OCP 5.x,
+    # until RHCOS 5.x becomes available. This is because RHCOS versioning is independent of OCP versioning.
+    # When RHCOS 5.x is released, this code will need to be updated to determine the RHCOS major version
+    # (which may differ from OCP major version) and pass it to get_art_prod_image_repo_for_version().
+    art_repo = get_art_prod_image_repo_for_version(major=4, repo_type="dev")
+    pullspec = f"{art_repo}@{digest}"
+    return build_id, pullspec

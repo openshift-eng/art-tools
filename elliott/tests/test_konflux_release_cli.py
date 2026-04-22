@@ -162,6 +162,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
         self.runtime.group = "openshift-4.18"
         self.runtime.product = "ocp"
         self.runtime.assembly = "4.18.2"
+        self.runtime.initialized = False  # Ensure initialization guard works
         self.runtime.get_major_minor.return_value = (4, 18)
         self.runtime.shipment_gitdata = MagicMock()
 
@@ -243,7 +244,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
         self.konflux_client._get.return_value = MagicMock()
 
         # Mock snapshot creation
-        created_snapshot_name = "ose-4-18-prod-4-18-2-image-timestamp"
+        created_snapshot_name = "ocp-prod-4-18-2-image-timestamp"
         created_snapshot = MagicMock()
         created_snapshot.metadata.name = created_snapshot_name
 
@@ -270,7 +271,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
             "apiVersion": API_VERSION,
             "kind": KIND_RELEASE,
             'metadata': {
-                'name': 'ose-4-18-prod-4-18-2-image-timestamp',
+                'name': 'ocp-prod-4-18-2-image-timestamp',
                 'namespace': self.konflux_config['namespace'],
                 'labels': {'appstudio.openshift.io/application': 'openshift-4-18'},
                 "annotations": {
@@ -402,7 +403,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
         self.konflux_client._get.return_value = MagicMock()
 
         # Mock snapshot creation
-        created_snapshot_name = "ose-4-18-stage-4-18-2-image-timestamp"
+        created_snapshot_name = "ocp-stage-4-18-2-image-timestamp"
         created_snapshot = MagicMock()
         created_snapshot.metadata.name = created_snapshot_name
 
@@ -429,7 +430,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
             "apiVersion": API_VERSION,
             "kind": KIND_RELEASE,
             'metadata': {
-                'name': 'ose-4-18-stage-4-18-2-image-timestamp',
+                'name': 'ocp-stage-4-18-2-image-timestamp',
                 'namespace': self.konflux_config['namespace'],
                 'labels': {'appstudio.openshift.io/application': 'openshift-4-18'},
                 "annotations": {
@@ -601,7 +602,10 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError) as context:
             await cli.run()
 
-        self.assertIn("A regular shipment is expected to have data.releaseNotes defined", str(context.exception))
+        self.assertIn(
+            "A regular shipment is expected to have data.releaseNotes defined",
+            str(context.exception),
+        )
 
     @patch("elliottlib.cli.konflux_release_cli.get_utc_now_formatted_str", return_value="timestamp")
     @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
@@ -678,7 +682,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
 
         mock_logger.warning.assert_called_once_with(
             "existing release metadata is not empty for prod: "
-            "{'releasePlan': 'test-prod-rp', 'advisory': {'internal_url': 'https://foo-bar-internal', 'url': 'https://foo-bar'}}. If you want to proceed, either remove the release metadata from the shipment config or use the --force flag."
+            "{'releasePlan': 'test-prod-rp', 'advisory': {'internal_url': 'https://foo-bar-internal', 'url': 'https://foo-bar'}, 'result': None}. If you want to proceed, either remove the release metadata from the shipment config or use the --force flag."
         )
 
         # assert that release did not get created

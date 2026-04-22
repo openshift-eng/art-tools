@@ -2,8 +2,10 @@ import functools
 import logging
 import os
 import time
+import uuid
 from enum import Enum
 from typing import Optional
+from urllib.parse import unquote, urlparse
 
 import requests
 from jenkinsapi.build import Build
@@ -12,6 +14,7 @@ from jenkinsapi.jenkins import Jenkins
 from jenkinsapi.job import Job
 from jenkinsapi.queue import QueueItem
 from jenkinsapi.utils.crumb_requester import CrumbRequester
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 from pyartcd import constants
 
@@ -25,21 +28,29 @@ jenkins_client: Optional[Jenkins] = None
 class Jobs(Enum):
     BUILD_SYNC = 'aos-cd-builds/build%2Fbuild-sync'
     BUILD_SYNC_KONFLUX = 'aos-cd-builds/build%2Fbuild-sync-konflux'
+    BUILD_SYNC_MULTI = 'aos-cd-builds/build%2Fbuild-sync-multi'
     BUILD_MICROSHIFT = 'aos-cd-builds/build%2Fbuild-microshift'
     BUILD_MICROSHIFT_BOOTC = 'aos-cd-builds/build%2Fbuild-microshift-bootc'
     OCP4 = 'aos-cd-builds/build%2Focp4'
+    OKD = 'aos-cd-builds/build%2Fokd'
+    OKD_SCAN_KONFLUX = 'aos-cd-builds/build%2Fokd-scan'
     OCP4_KONFLUX = 'aos-cd-builds/build%2Focp4-konflux'
     OCP4_SCAN = 'aos-cd-builds/build%2Focp4_scan'
     OCP4_SCAN_KONFLUX = 'aos-cd-builds/build%2Focp4-scan-konflux'
     RHCOS = 'aos-cd-builds/build%2Frhcos'
     OLM_BUNDLE = 'aos-cd-builds/build%2Folm_bundle'
     OLM_BUNDLE_KONFLUX = 'aos-cd-builds/build%2Folm_bundle_konflux'
+    BASE_IMAGE_RELEASE = 'aos-cd-builds/build%2Fbase-image-release'
     SYNC_FOR_CI = 'scheduled-builds/sync-for-ci'
     MICROSHIFT_SYNC = 'aos-cd-builds/build%2Fmicroshift_sync'
     CINCINNATI_PRS = 'aos-cd-builds/build%2Fcincinnati-prs'
     RHCOS_SYNC = 'aos-cd-builds/build%2Frhcos_sync'
     BUILD_PLASHETS = 'aos-cd-builds/build%2Fbuild-plashets'
     BUILD_FBC = 'aos-cd-builds/build%2Fbuild-fbc'
+    LAYERED_PRODUCTS = 'aos-cd-builds/build%2Flayered-products'
+    LAYERED_PRODUCTS_SCAN = 'aos-cd-builds/build%2Flayered-products-scan'
+    SCAN_PLASHET_RPMS = 'scanning/scanning%2Fplashet-rpms'
+    SCAN_OPERATOR = 'aos-cd-builds/build%2Fscan-operator'
 
 
 def get_jenkins_url():
@@ -92,6 +103,19 @@ def get_build_path():
     return '/'.join(url.split('/')[3:]) if url else None
 
 
+def get_build_path_or_random():
+    """
+    Returns the build path if BUILD_URL env var is set, otherwise generates a random UUID.
+    This is useful for lock identifiers when running outside of Jenkins.
+    """
+
+    build_path = get_build_path()
+    if not build_path:
+        logger.warning('Env var BUILD_URL has not been defined: using a random identifier for the locks')
+        return f'random-{uuid.uuid4()}'
+    return build_path
+
+
 def get_build_id() -> str:
     return os.environ.get("BUILD_ID")
 
@@ -108,6 +132,79 @@ def get_build_id_from_url(build_url: str) -> int:
 
 def get_job_name():
     return os.environ.get("JOB_NAME")
+
+
+def get_job_name_and_build_number_from_path(build_path: str) -> tuple[Optional[str], Optional[str]]:
+    if not build_path:
+        logger.warning('Empty build path received')
+        return None, None
+
+    path = build_path
+    if build_path.startswith('http://') or build_path.startswith('https://'):
+        path = urlparse(build_path).path
+
+    # path is now something like '/job/aos-cd-builds/job/build%252Focp4-konflux/16686/'
+    path = path.strip('/')
+
+    try:
+        job_path_str, build_number = path.rsplit("/", 1)
+    except ValueError:
+        logger.warning('Invalid build path: %s', build_path)
+        return None, None
+
+    # If job_path_str is like 'job/aos-cd-builds/job/build%2Focp4-konflux'
+    # We need to convert it to a job name like 'aos-cd-builds/build%2Focp4-konflux'
+    job_name = job_path_str
+    if job_name.startswith('job/'):
+        job_name = job_name[4:]
+    job_name = job_name.replace('/job/', '/')
+
+    # The job name from URL path is double-encoded. We need to decode it once.
+    job_name = unquote(job_name)
+
+    return job_name, build_number
+
+
+def get_build_parameters(build_path: str) -> Optional[dict]:
+    """
+    Fetches build data using API endpoint {JENKINS_SERVER_URL}/{BUILD_PATH}/api/json
+    and returns the build parameters
+    """
+
+    init_jenkins()
+
+    job_name, build_number = get_job_name_and_build_number_from_path(build_path)
+    if not job_name:
+        return None
+
+    try:
+        job = jenkins_client.get_job(job_name)
+    except (requests.exceptions.HTTPError, NotFound) as err:
+        # Check for 404
+        if isinstance(err, requests.exceptions.HTTPError):
+            if err.response.status_code == 404:
+                logger.warning('Job %s not found', job_name)
+                return None
+        else:  # issubclass(type(err), NotFound)
+            logger.warning('Job %s not found', job_name)
+            return None
+        # Reraise other errors
+        raise
+
+    try:
+        build = job.get_build(int(build_number))
+    except (NotFound, ValueError):
+        return None
+
+    params = {}
+    build_data = build._data
+    for action in build_data.get('actions', []):
+        if action.get('_class') == 'hudson.model.ParametersAction':
+            for param in action.get('parameters', []):
+                if 'value' in param:
+                    params[param['name']] = param['value']
+            break  # Found parameters, no need to check other actions
+    return params
 
 
 def check_env_vars(func):
@@ -178,7 +275,6 @@ def set_build_description(build: Build, description: str):
 def is_build_running(build_path: str) -> bool:
     """
     Fetches build data using API endpoint {JENKINS_SERVER_URL}/{BUILD_PATH}/api/json
-    E.g. https://art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com/job/aos-cd-builds/job/build%252Focp4/46902/api/json
 
     The resulting JSON has a field called "inProgress" that is true if the build is still ongoing
 
@@ -188,20 +284,49 @@ def is_build_running(build_path: str) -> bool:
     """
 
     init_jenkins()
-    job_path, build_number = build_path.rstrip("/").rsplit("/", 1)
-    job_name = job_path.rsplit("/", 1)[1]
-    job_url = jenkins_client.base_server_url() + "/" + job_path
+
+    job_name, build_number = get_job_name_and_build_number_from_path(build_path)
+    if not job_name:
+        return False
+
     try:
-        job = Job(job_url, job_name, jenkins_client)
-    except requests.exceptions.HTTPError as err:
-        if err.response.status_code == 404:
+        job = jenkins_client.get_job(job_name)
+    except (requests.exceptions.HTTPError, NotFound) as err:
+        if isinstance(err, requests.exceptions.HTTPError):
+            if err.response.status_code == 404:
+                return False
+        else:
             return False
         raise
+
     try:
         build = job.get_build(int(build_number))
-    except NotFound:
+    except (NotFound, ValueError):
         return False
     return build.is_running()
+
+
+def get_propagatable_params() -> dict:
+    """
+    Get parameters that should automatically propagate to downstream jobs.
+    Only non-empty parameters are included.
+
+    Returns:
+        dict: Parameters to propagate (e.g., {'ART_TOOLS_COMMIT': 'user@branch'})
+    """
+    propagatable = {}
+
+    # Check for ART_TOOLS_COMMIT
+    art_tools_commit = os.getenv('ART_TOOLS_COMMIT', '').strip()
+    if art_tools_commit:
+        propagatable['ART_TOOLS_COMMIT'] = art_tools_commit
+
+    # Check for PLR_TEMPLATE_COMMIT
+    plr_template_commit = os.getenv('PLR_TEMPLATE_COMMIT', '').strip()
+    if plr_template_commit:
+        propagatable['PLR_TEMPLATE_COMMIT'] = plr_template_commit
+
+    return propagatable
 
 
 @check_env_vars
@@ -288,12 +413,35 @@ def start_ocp4(
     )
 
 
+def start_okd(
+    build_version: str,
+    assembly: str,
+    image_list: list,
+    **kwargs,
+):
+    if not image_list:
+        return
+
+    params = {
+        'BUILD_VERSION': build_version,
+        'ASSEMBLY': assembly,
+        'IMAGE_LIST': ','.join(image_list),
+    }
+
+    return start_build(
+        job=Jobs.OKD,
+        params=params,
+        **kwargs,
+    )
+
+
 def start_ocp4_konflux(
     build_version: str,
     assembly: str,
     image_list: list,
     rpm_list: list = None,
     limit_arches: list = None,
+    dry_run: bool = False,
     **kwargs,
 ) -> Optional[str]:
     params = {
@@ -316,6 +464,8 @@ def start_ocp4_konflux(
 
     # SKIP_PLASHETS defaults to True for manual builds, setting to False for scheduled
     params['SKIP_PLASHETS'] = False
+
+    params['DRY_RUN'] = dry_run
 
     return start_build(
         job=Jobs.OCP4_KONFLUX,
@@ -341,6 +491,29 @@ def start_ocp4_scan_konflux(version: str, **kwargs) -> Optional[str]:
     }
     return start_build(
         job=Jobs.OCP4_SCAN_KONFLUX,
+        params=params,
+        **kwargs,
+    )
+
+
+def start_okd_scan_konflux(version: str, **kwargs) -> Optional[str]:
+    params = {
+        'VERSION': version,
+    }
+    return start_build(
+        job=Jobs.OKD_SCAN_KONFLUX,
+        params=params,
+        **kwargs,
+    )
+
+
+def start_scan_plashet_rpms(group: str, assembly: str = 'stream', **kwargs) -> Optional[str]:
+    params = {
+        'GROUP': group,
+        'ASSEMBLY': assembly,
+    }
+    return start_build(
+        job=Jobs.SCAN_PLASHET_RPMS,
         params=params,
         **kwargs,
     )
@@ -384,6 +557,35 @@ def start_build_sync(
             job=Jobs.BUILD_SYNC_KONFLUX,
             params=params | kwargs,
         )
+
+
+def start_build_sync_multi(
+    version: str,
+    multi_model: Optional[str] = None,
+    assembly: str = 'stream',
+    doozer_data_path: Optional[str] = None,
+    doozer_data_gitref: Optional[str] = None,
+    exclude_arches: list = None,
+    **kwargs,
+) -> Optional[str]:
+    params = {
+        'BUILD_VERSION': version,
+        'ASSEMBLY': assembly,
+    }
+    if multi_model:
+        params['MULTI_MODEL'] = multi_model
+    if doozer_data_path:
+        params['DOOZER_DATA_PATH'] = doozer_data_path
+    if doozer_data_gitref:
+        params['DOOZER_DATA_GITREF'] = doozer_data_gitref
+    if exclude_arches:
+        params['EXCLUDE_ARCHES'] = ','.join(exclude_arches)
+
+    return start_build(
+        job=Jobs.BUILD_SYNC_MULTI,
+        params=params,
+        **kwargs,
+    )
 
 
 def start_cincinnati_prs(
@@ -446,21 +648,64 @@ def start_olm_bundle_konflux(
     operator_nvrs: list,
     doozer_data_path: str = constants.OCP_BUILD_DATA_URL,
     doozer_data_gitref: str = '',
+    group: Optional[str] = None,
+    propagate_params: Optional[dict] = None,
     **kwargs,
 ) -> Optional[str]:
     if not operator_nvrs:
         logger.warning('Empty operator NVR received: skipping olm-bundle')
         return
 
+    params = {
+        'BUILD_VERSION': build_version,
+        'ASSEMBLY': assembly,
+        'DOOZER_DATA_PATH': doozer_data_path,
+        'DOOZER_DATA_GITREF': doozer_data_gitref,
+        'OPERATOR_NVRS': ','.join(operator_nvrs),
+    }
+
+    if group:
+        params['GROUP'] = group
+
+    # Automatically propagate parameters if provided
+    # Note: params.update() will override existing parameter values if keys match
+    if propagate_params:
+        params.update(propagate_params)
+        logger.info("Propagating parameters to olm_bundle_konflux: %s", propagate_params)
+
     return start_build(
         job=Jobs.OLM_BUNDLE_KONFLUX,
-        params={
-            'BUILD_VERSION': build_version,
-            'ASSEMBLY': assembly,
-            'DOOZER_DATA_PATH': doozer_data_path,
-            'DOOZER_DATA_GITREF': doozer_data_gitref,
-            'OPERATOR_NVRS': ','.join(operator_nvrs),
-        },
+        params=params,
+        **kwargs,
+    )
+
+
+def start_base_image_release(
+    build_version: str,
+    assembly: str,
+    base_image_nvrs: list,
+    doozer_data_path: str = constants.OCP_BUILD_DATA_URL,
+    doozer_data_gitref: str = '',
+    dry_run: bool = False,
+    **kwargs,
+) -> Optional[str]:
+    if not base_image_nvrs:
+        logger.warning('Empty base image NVR list: skipping base image release')
+        return
+
+    params = {
+        'BUILD_VERSION': build_version,
+        'ASSEMBLY': assembly,
+        'NVRS': ','.join(base_image_nvrs),
+        'DOOZER_DATA_PATH': doozer_data_path,
+        'DOOZER_DATA_GITREF': doozer_data_gitref,
+        'DRY_RUN': str(dry_run).lower(),
+        'ART_TOOLS_COMMIT': os.environ.get('ART_TOOLS_COMMIT', '').strip(),
+    }
+
+    return start_build(
+        job=Jobs.BASE_IMAGE_RELEASE,
+        params=params,
         **kwargs,
     )
 
@@ -487,14 +732,19 @@ def start_microshift_sync(version: str, assembly: str, dry_run: bool, **kwargs):
     )
 
 
-def start_build_microshift_bootc(version: str, assembly: str, dry_run: bool, **kwargs):
+def start_build_microshift_bootc(
+    version: str, assembly: str, dry_run: bool, doozer_data_gitref: Optional[str] = None, **kwargs
+):
+    params = {
+        'BUILD_VERSION': version,
+        'ASSEMBLY': assembly,
+        'DRY_RUN': dry_run,
+    }
+    if doozer_data_gitref:
+        params['DOOZER_DATA_GITREF'] = doozer_data_gitref
     return start_build(
         job=Jobs.BUILD_MICROSHIFT_BOOTC,
-        params={
-            'BUILD_VERSION': version,
-            'ASSEMBLY': assembly,
-            'DRY_RUN': dry_run,
-        },
+        params=params,
         **kwargs,
     )
 
@@ -511,20 +761,22 @@ def start_rhcos_sync(release_tag_or_pullspec: str, dry_run: bool, **kwargs) -> O
 
 
 def start_build_plashets(
-    version, release, assembly, repos=None, data_path='', data_gitref='', copy_links=False, dry_run=False, **kwargs
+    group, release, assembly, repos=None, data_path='', data_gitref='', copy_links=False, dry_run=False, **kwargs
 ) -> Optional[str]:
+    params = {
+        'GROUP': group,
+        'RELEASE': release,
+        'ASSEMBLY': assembly,
+        'REPOS': ','.join(repos) if repos else '',
+        'DATA_PATH': data_path,
+        'DATA_GITREF': data_gitref,
+        'COPY_LINKS': copy_links,
+        'DRY_RUN': dry_run,
+    }
+
     return start_build(
         job=Jobs.BUILD_PLASHETS,
-        params={
-            'VERSION': version,
-            'RELEASE': release,
-            'ASSEMBLY': assembly,
-            'REPOS': ','.join(repos) if repos else '',
-            'DATA_PATH': data_path,
-            'DATA_GITREF': data_gitref,
-            'COPY_LINKS': copy_links,
-            'DRY_RUN': dry_run,
-        },
+        params=params,
         **kwargs,
     )
 
@@ -534,21 +786,87 @@ def start_build_fbc(
     assembly: str,
     operator_nvrs: list,
     dry_run: bool,
+    force_build: Optional[bool] = None,
+    group: Optional[str] = None,
+    ocp_target_version: Optional[str] = None,
+    propagate_params: Optional[dict] = None,
     **kwargs,
 ) -> Optional[str]:
+    params = {
+        'BUILD_VERSION': version,
+        'ASSEMBLY': assembly,
+        'OPERATOR_NVRS': ','.join(operator_nvrs),
+        'DRY_RUN': dry_run,
+    }
+    if group:
+        params['GROUP'] = group
+    if ocp_target_version:
+        params['OCP_TARGET_VERSION'] = ocp_target_version
+    if force_build:
+        params["FORCE_BUILD"] = force_build
+
+    # Automatically propagate parameters if provided
+    # Note: params.update() will override existing parameter values if keys match
+    if propagate_params:
+        params.update(propagate_params)
+        logger.info("Propagating parameters to build-fbc: %s", propagate_params)
+
     return start_build(
         job=Jobs.BUILD_FBC,
-        params={
-            'BUILD_VERSION': version,
-            'ASSEMBLY': assembly,
-            'OPERATOR_NVRS': ','.join(operator_nvrs),
-            'DRY_RUN': dry_run,
-        },
+        params=params,
+        **kwargs,
+    )
+
+
+def start_layered_products(
+    group: str,
+    assembly: str,
+    image_list: list = None,
+    **kwargs,
+) -> Optional[str]:
+    params = {
+        'GROUP': group,
+        'ASSEMBLY': assembly,
+    }
+
+    # Build only changed images or none
+    if image_list:
+        params['IMAGE_LIST'] = ','.join(image_list)
+
+    return start_build(
+        job=Jobs.LAYERED_PRODUCTS,
+        params=params,
+        **kwargs,
+    )
+
+
+def start_layered_products_scan_konflux(group: str, assembly: str = "stream", **kwargs) -> Optional[str]:
+    params = {
+        'GROUP': group,
+        'ASSEMBLY': assembly,
+    }
+
+    return start_build(
+        job=Jobs.LAYERED_PRODUCTS_SCAN,
+        params=params,
+        **kwargs,
+    )
+
+
+def start_scan_operator(version: str, **kwargs) -> Optional[str]:
+    params = {
+        'VERSION': version,
+    }
+
+    return start_build(
+        job=Jobs.SCAN_OPERATOR,
+        params=params,
         **kwargs,
     )
 
 
 @check_env_vars
+@retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
 def update_title(title: str, append: bool = True):
     """
     Set build title to <title>. If append is True, retrieve current title,
@@ -572,6 +890,7 @@ def update_title(title: str, append: bool = True):
 
 
 @check_env_vars
+@retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
 def update_description(description: str, append: bool = True):
     """
     Set build description to <description>. If append is True, retrieve current description,

@@ -34,7 +34,9 @@ class VerifyPayloadPipeline:
         rhcos_images = {c['name'] for c in rhcos.get_container_configs(self.runtime)}
 
         # Get the payload or imagestream NVRs
-        self.all_payload_nvrs = await get_nvrs_from_release(self.payload_or_imagestream, rhcos_images, self.logger)
+        self.all_payload_nvrs = await get_nvrs_from_release(
+            self.payload_or_imagestream, rhcos_images, self.logger, registry_config=self.runtime.registry_config
+        )
 
         # Check if the payload or imagestream is a Konflux assembly or a Brew assembly
         assembly_basis = assembly_config_struct(releases_config, self.runtime.assembly, "basis", {})

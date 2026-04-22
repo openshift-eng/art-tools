@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import ANY, MagicMock, patch
 
 from artcommonlib.gitdata import DataObj
+from artcommonlib.variants import BuildVariant
 from doozerlib import constants
 from doozerlib.distgit import ImageDistGitRepo
 from doozerlib.image import ImageMetadata
@@ -32,6 +33,7 @@ class TestOSBS2Builder(unittest.IsolatedAsyncioTestCase):
 
     def test_construct_build_source_url(self):
         runtime = MagicMock(build_system="brew")
+        runtime.variant = BuildVariant.OCP
         osbs2 = OSBS2Builder(runtime)
         meta = self._make_image_meta(runtime)
         dg = ImageDistGitRepo(meta, autoclone=False)
@@ -46,6 +48,7 @@ class TestOSBS2Builder(unittest.IsolatedAsyncioTestCase):
 
     async def test_start_build(self):
         runtime = MagicMock(build_system="brew")
+        runtime.variant = BuildVariant.OCP
         osbs2 = OSBS2Builder(runtime)
         meta = self._make_image_meta(runtime)
         dg = ImageDistGitRepo(meta, autoclone=False)
@@ -61,7 +64,7 @@ class TestOSBS2Builder(unittest.IsolatedAsyncioTestCase):
         koji_api.buildContainer.return_value = 12345
 
         task_id, task_url = osbs2._start_build(dg, "rhaos-4.12-rhel-8-containers-candidate", profile, koji_api)
-        dg.cgit_file_available.assert_called_once_with(".oit/signed.repo")
+        dg.cgit_file_available.assert_called_once_with(".oit/art-signed.repo")
         koji_api.gssapi_login.assert_called_once_with()
         koji_api.buildContainer.assert_called_once_with(
             f"{constants.DISTGIT_GIT_URL}/containers/foo#deadbeef",
@@ -88,6 +91,7 @@ class TestOSBS2Builder(unittest.IsolatedAsyncioTestCase):
         koji_api.getTaskResult = MagicMock(return_value={"koji_builds": [42]})
         koji_api.getBuild = MagicMock(return_value={"id": 42, "nvr": "foo-v4.12.0-12345.p0.assembly.test"})
         runtime = MagicMock(build_system="brew")
+        runtime.variant = BuildVariant.OCP
         runtime.build_retrying_koji_client = MagicMock(return_value=koji_api)
         osbs2 = OSBS2Builder(runtime)
         meta = self._make_image_meta(runtime)

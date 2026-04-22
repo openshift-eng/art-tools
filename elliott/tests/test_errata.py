@@ -9,10 +9,10 @@ from unittest import mock
 from unittest.mock import Mock, patch
 
 import errata_tool
-from elliottlib import brew, constants, errata, exceptions
+from elliottlib import errata
 from flexmock import flexmock
 
-from tests import test_structures
+from . import test_structures
 
 unshipped_builds = [
     Mock(

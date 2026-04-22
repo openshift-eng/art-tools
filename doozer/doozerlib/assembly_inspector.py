@@ -15,7 +15,7 @@ from artcommonlib.rhcos import RhcosMissingContainerException, get_container_con
 from artcommonlib.rpm_utils import compare_nvr, parse_nvr
 from koji import ClientSession
 
-from doozerlib import Runtime, brew, util
+from doozerlib import Runtime, brew
 from doozerlib.build_info import BuildRecordInspector
 from doozerlib.plashet import PlashetBuilder
 from doozerlib.rhcos import RHCOSBuildFinder, RHCOSBuildInspector
@@ -44,7 +44,7 @@ class AssemblyInspector:
             str, Dict[str, Optional[Dict]]
         ] = {}  # Dict[tag] -> Dict[distgit_key] -> Optional[BuildDict]
         self._permits = assembly_permits(self.runtime.releases_config, self.runtime.group_config, self.runtime.assembly)
-        self._rpm_deliveries: Dict[str, RPMDelivery] = {}  # Dict[package_name] => per package RpmDelivery config
+        self._rpm_deliveries: Dict[str, List[RPMDelivery]] = {}  # Dict[package_name] => list of RpmDelivery configs
         self._release_build_record_inspectors: Dict[str, Optional[BuildRecordInspector]] = dict()
 
     async def initialize(self, lookup_mode: Optional[str] = "both"):
@@ -79,9 +79,7 @@ class AssemblyInspector:
             for entry in rpm_deliveries:
                 packages = entry.packages
                 for package in packages:
-                    if package in self._rpm_deliveries:
-                        raise ValueError(f"Duplicate package {package} defined in rpm_deliveries config")
-                    self._rpm_deliveries[package] = entry
+                    self._rpm_deliveries.setdefault(package, []).append(entry)
 
     def get_type(self) -> AssemblyTypes:
         return self.assembly_type
@@ -117,22 +115,22 @@ class AssemblyInspector:
         issues: List[AssemblyIssue] = []
         for package_name, rpm_build in rpm_packages.items():
             if package_name in self._rpm_deliveries:
-                rpm_delivery_config = self._rpm_deliveries[package_name]
                 self.runtime.logger.info("Getting tags for rpm build %s...", rpm_build['nvr'])
                 tag_names = {
                     tag["name"]
                     for tag in self.brew_session.listTags(brew.KojiWrapperOpts(caching=True), build=rpm_build["id"])
                 }
-                # If the rpm is tagged into the stop-ship tag, it is never permissible
-                if rpm_delivery_config.stop_ship_tag and rpm_delivery_config.stop_ship_tag in tag_names:
-                    issues.append(
-                        AssemblyIssue(
-                            f'{component_description} has {rpm_build["nvr"]}, which has been tagged into the stop-ship tag: {rpm_delivery_config.stop_ship_tag}',
-                            component=component,
-                            code=AssemblyIssueCode.UNSHIPPABLE_KERNEL,
+                for rpm_delivery_config in self._rpm_deliveries[package_name]:
+                    # If the rpm is tagged into the stop-ship tag, it is never permissible
+                    if rpm_delivery_config.stop_ship_tag and rpm_delivery_config.stop_ship_tag in tag_names:
+                        issues.append(
+                            AssemblyIssue(
+                                f'{component_description} has {rpm_build["nvr"]}, which has been tagged into the stop-ship tag: {rpm_delivery_config.stop_ship_tag}',
+                                component=component,
+                                code=AssemblyIssueCode.UNSHIPPABLE_KERNEL,
+                            )
                         )
-                    )
-                    continue
+                        continue
         return issues
 
     def check_installed_rpms_in_image(
@@ -280,6 +278,15 @@ class AssemblyInspector:
                 if assembly_nvr != installed_nvr:
                     # We could consider permitting this in AssemblyTypes.CUSTOM, but it means that the RHCOS build
                     # could not be effectively reproduced by the rebuild job.
+                    if package_name == 'ose-aws-ecr-image-credential-provider':
+                        # FIXME: This package is special. It is built in the OCP build system, but it is
+                        # consumed in RHCOS RHEL layer. However, the version of the package that
+                        # RHCOS consumes is not necessarily the latest build in the OCP build system.
+                        # So we permit this discrepancy.
+                        self.runtime.logger.warning(
+                            f'RHCOS {rhcos_build.build_id} ({rhcos_build.brew_arch}) has {installed_nvr} installed but assembly expects {assembly_nvr}; permitting this discrepancy because {package_name} is special'
+                        )
+                        continue
                     issues.append(
                         AssemblyIssue(
                             f'Expected {rhcos_build.build_id}/{rhcos_build.brew_arch} image to contain assembly selected RPM build {assembly_nvr} but found {installed_nvr} installed',
@@ -566,11 +573,7 @@ class AssemblyInspector:
         """Get external rpm build dicts from rhaos candidate Brew tags.
         :return: a dict. key is Brew tag name, value is another (component_name, rpm_build) dict
         """
-        replace_vars = self.runtime.group_config.vars.primitive() if self.runtime.group_config.vars else {}
-
-        # for example: replace_vars = {'CVES': 'None', 'IMPACT': 'Low', 'MAJOR': 4, 'MINOR': 12, 'RHCOS_EL_MAJOR': 8, 'RHCOS_EL_MINOR': 6, 'release_name': '4.12.77', 'runtime_assembly': '4.12.77'}
-        replace_vars['PATCH'] = replace_vars['release_name'].split('.')[-1]
-        et_data = self.runtime.get_errata_config(replace_vars=replace_vars)
+        et_data = self.runtime.get_errata_config()
         tag_pv_map = cast(Optional[Dict[str, str]], et_data.get('brew_tag_product_version_mapping'))
         if not tag_pv_map:
             return {}
@@ -598,7 +601,9 @@ class AssemblyInspector:
                 cache[tag] = component_builds
         return cache
 
-    def get_rhcos_build(self, arch: str, private: bool = False, custom: bool = False) -> RHCOSBuildInspector:
+    def get_rhcos_build(
+        self, arch: str, private: bool = False, custom: bool = False, registry_config: str = None
+    ) -> RHCOSBuildInspector:
         """
         :param arch: The CPU architecture of the build to retrieve.
         :param private: If this should be a private build (NOT CURRENTLY SUPPORTED)
@@ -635,7 +640,12 @@ class AssemblyInspector:
             try:
                 version = self.runtime.get_minor_version()
                 build_id, pullspec = RHCOSBuildFinder(
-                    runtime, version, brew_arch, private, custom=custom
+                    runtime,
+                    version,
+                    brew_arch,
+                    private,
+                    custom=custom,
+                    registry_config=registry_config,
                 ).latest_container(container_conf)
                 if not pullspec:
                     raise IOError(f"No RHCOS latest found for {version} / {brew_arch}")
@@ -646,4 +656,4 @@ class AssemblyInspector:
                     # their absence will be noted when generating payloads anyway.
                     raise
 
-        return RHCOSBuildInspector(runtime, pullspec_for_tag, brew_arch, build_id)
+        return RHCOSBuildInspector(runtime, pullspec_for_tag, brew_arch, build_id, registry_config=registry_config)

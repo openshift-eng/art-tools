@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import sys
 import traceback
@@ -11,14 +12,17 @@ from typing import Any, Callable, Dict, Iterable, List, NamedTuple, Optional, Se
 from unittest.mock import MagicMock
 
 import aiofiles
+import aiohttp
 import click
 import nest_asyncio
 import openshift_client as oc
 import yaml
 from artcommonlib import exectools, rhcos
 from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch, go_suffix_for_arch
-from artcommonlib.assembly import AssemblyIssue, AssemblyIssueCode, AssemblyTypes, assembly_basis
-from artcommonlib.constants import KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
+from artcommonlib.assembly import AssemblyIssue, AssemblyIssueCode, AssemblyTypes, assembly_basis, assembly_basis_event
+from artcommonlib.constants import (
+    COREOS_RHEL10_STREAMS,
+)
 from artcommonlib.exectools import manifest_tool
 from artcommonlib.format_util import red_print
 from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
@@ -26,27 +30,65 @@ from artcommonlib.model import Model
 from artcommonlib.rhcos import RhcosMissingContainerException
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.telemetry import start_as_current_span_async
-from artcommonlib.util import convert_remote_git_to_https
+from artcommonlib.util import (
+    convert_remote_git_to_https,
+    get_art_prod_image_repo_for_version,
+    uses_konflux_imagestream_override,
+)
 from elliottlib.util import chunk
 from opentelemetry import trace
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 from doozerlib.assembly_inspector import AssemblyInspector
 from doozerlib.brew import KojiWrapperMetaReturn
-from doozerlib.build_info import BuildRecordInspector, ImageInspector
+from doozerlib.build_info import (
+    BuildRecordInspector,
+    ImageInspector,
+)
 from doozerlib.cli import cli, click_coroutine, pass_runtime
+from doozerlib.cli.release_gen_assembly import GenAssemblyCli
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.image import ImageMetadata
 from doozerlib.rhcos import RHCOSBuildInspector
 from doozerlib.runtime import Runtime
 from doozerlib.util import (
+    check_nightly_exists,
     extract_version_fields,
     find_manifest_list_sha,
+    get_nightly_pullspec,
     isolate_nightly_name_components,
     what_is_in_master,
 )
 
 TRACER = trace.get_tracer(__name__)
+logger = logging.getLogger(__name__)
+
+
+async def check_multi_nightly_exists_for_model(model_nightly_name: str) -> bool:
+    """
+    Check if a multi-arch nightly payload already exists that corresponds to a model nightly.
+
+    This function constructs the expected multi nightly name from a model (e.g., amd64) nightly
+    and checks if it already exists in the multi release controller.
+
+    :param model_nightly_name: Source nightly name (e.g., '4.21.0-0.nightly-2025-11-12-194750')
+    :return: True if the corresponding multi payload already exists, False otherwise
+    """
+    # Extract version from model nightly
+    major_minor, _, _ = isolate_nightly_name_components(model_nightly_name)
+
+    # Extract timestamp from model nightly (last 4 parts: YYYY-MM-DD-HHMMSS)
+    parts = model_nightly_name.split('-')
+    if len(parts) >= 6:
+        multi_ts = '-'.join(parts[-4:])
+    else:
+        return False
+
+    # Construct expected multi nightly name
+    target_multi_name = f"{major_minor}.0-0.nightly-multi-{multi_ts}"
+
+    # Check if it exists using the generalized function
+    return await check_nightly_exists(target_multi_name, private_nightly=False)
 
 
 class RepositoryType(Enum):
@@ -75,15 +117,15 @@ class RepositoryType(Enum):
     "--repository",
     metavar="REPO",
     required=False,
-    default="ocp-v4.0-art-dev",
-    help="Quay REPOSITORY in ORGANIZATION to mirror into.\ndefault=ocp-v4.0-art-dev",
+    default=None,
+    help="Quay REPOSITORY in ORGANIZATION to mirror into. If not specified, computed from OCP version (e.g., ocp-v5.0-art-dev for OCP 5.x)",
 )
 @click.option(
     "--private-repository",
     metavar="REPO",
     required=False,
-    default="ocp-v4.0-art-dev-priv",
-    help="Private Quay REPOSITORY in ORGANIZATION to mirror into.\ndefault=ocp-v4.0-art-dev-priv",
+    default=None,
+    help="Private Quay REPOSITORY in ORGANIZATION to mirror into. If not specified, computed from OCP version (e.g., ocp-v5.0-art-dev-priv for OCP 5.x)",
 )
 @click.option(
     "--release-repository",
@@ -137,6 +179,15 @@ class RepositoryType(Enum):
     is_flag=True,
     help="Allow embargoed builds to sync publicly in named assemblies",
 )
+@click.option(
+    "--multi-model",
+    metavar="SPEC",
+    required=False,
+    help="Model nightly to introspect and create multi-arch payload from. "
+    "Accepts either a direct nightly name (e.g., '4.21.0-0.nightly-2025-11-12-194750') "
+    "or an architecture with offset (e.g., 'amd64:0' for latest amd64 nightly, 'amd64:1' for previous). "
+    "Supported architectures: amd64, s390x, ppc64le, arm64.",
+)
 @click_coroutine
 @pass_runtime
 async def release_gen_payload(
@@ -155,6 +206,7 @@ async def release_gen_payload(
     apply_multi_arch: bool,
     moist_run: bool,
     embargo_permit_ack: bool,
+    multi_model: str,
 ):
     """
 Computes a set of imagestream tags which can be assembled into an OpenShift release for this
@@ -208,10 +260,26 @@ read and propagate/expose this annotation in its display of the release image.
     # Initialize group config: we need this to determine the canonical builders behavior
     runtime.initialize(config_only=True)
 
-    if runtime.group_config.canonical_builders_from_upstream and runtime.build_system == 'brew':
+    # For multi-model mode, we don't need to clone sources - just introspect an existing nightly
+    if multi_model:
+        runtime.initialize(
+            mode="both", clone_distgits=False, clone_source=False, prevent_cloning=True, build_system='konflux'
+        )
+    elif runtime.group_config.canonical_builders_from_upstream and runtime.build_system == 'brew':
         runtime.initialize(mode="both", clone_distgits=True, clone_source=False, prevent_cloning=False)
     else:
         runtime.initialize(mode="both", clone_distgits=False, clone_source=False, prevent_cloning=True)
+
+    # Compute repository names if not specified
+    if repository is None:
+        major_version = int(runtime.group_config.vars['MAJOR'])
+        repository = get_art_prod_image_repo_for_version(major_version, "dev").split("/")[-1]
+        runtime.logger.info(f"Repository not specified, using computed value: {repository}")
+
+    if private_repository is None:
+        major_version = int(runtime.group_config.vars['MAJOR'])
+        private_repository = get_art_prod_image_repo_for_version(major_version, "dev-priv").split("/")[-1]
+        runtime.logger.info(f"Private repository not specified, using computed value: {private_repository}")
 
     await GenPayloadCli(
         runtime,
@@ -229,6 +297,7 @@ read and propagate/expose this annotation in its display of the release image.
         apply_multi_arch,
         moist_run,
         embargo_permit_ack,
+        multi_model,
     ).run()
 
 
@@ -237,7 +306,7 @@ def default_imagestream_base_name(version: str, runtime: Runtime) -> str:
 
 
 def default_imagestream_base_name_generic(version: str, build_system) -> str:
-    if version in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS or build_system == 'brew':
+    if uses_konflux_imagestream_override(version) or build_system == 'brew':
         return f"{version}-art-latest"
     else:  # konflux
         return f"{version}-konflux-art-latest"
@@ -253,7 +322,7 @@ def assembly_imagestream_base_name(runtime: Runtime) -> str:
 def assembly_imagestream_base_name_generic(version, assembly_name, assembly_type, build_system):
     if assembly_name == 'stream' and assembly_type is AssemblyTypes.STREAM:
         return default_imagestream_base_name_generic(version, build_system)
-    elif version in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS or build_system == 'brew':
+    elif uses_konflux_imagestream_override(version) or build_system == 'brew':
         return f"{version}-art-assembly-{assembly_name}"
     else:  # konflux
         return f"{version}-konflux-art-assembly-{assembly_name}"
@@ -385,6 +454,7 @@ class GenPayloadCli:
         apply_multi_arch: bool = False,
         moist_run: bool = False,
         embargo_permit_ack: bool = False,
+        multi_model: str = None,
     ):
         self.runtime = runtime
         self.package_rpm_finder = PackageRpmFinder(runtime)
@@ -407,6 +477,8 @@ class GenPayloadCli:
         self.apply = apply  # actually update the IS
         self.apply_multi_arch = apply_multi_arch  # update the "multi" IS as well
         self.moist_run = moist_run  # mirror the images but do not update the IS
+        self.multi_model = multi_model  # multi-model spec (e.g., "amd64:0" or full nightly name)
+        self.resolved_multi_model_nightly = None  # resolved nightly name after processing multi_model spec
 
         # store generated payload entries: {arch -> dict of payload entries}
         self.payload_entries_for_arch: Dict[str, Dict[str, PayloadEntry]] = {}
@@ -419,6 +491,9 @@ class GenPayloadCli:
         self.payload_permitted = False
         # Allows embargoed builds to be released
         self.embargo_permit_ack = embargo_permit_ack
+        # Track mismatched siblings.
+        # This will be used to prevent syncing out mismatched siblings for development releases per ART-13996
+        self.mismatched_siblings = []
 
     @start_as_current_span_async(TRACER, "releases:gen-payload")
     async def run(self):
@@ -438,6 +513,35 @@ class GenPayloadCli:
         )
 
         self.validate_parameters()
+
+        # Multi-model mode: use gen-assembly to create assembly definition, then build multi-arch payload
+        if self.multi_model:
+            # Resolve the multi-model specification (could be 'arch:offset' or direct nightly name)
+            resolved_nightly = await self._resolve_multi_model_spec(self.multi_model)
+            self.logger.info(f"Resolved multi-model spec '{self.multi_model}' to nightly: {resolved_nightly}")
+
+            # Store the resolved nightly for later use
+            self.resolved_multi_model_nightly = resolved_nightly
+
+            # Check if the target multi-arch payload already exists
+            if await check_multi_nightly_exists_for_model(resolved_nightly):
+                self.logger.info(f"Multi-arch payload for {resolved_nightly} already exists. Exiting successfully.")
+                exit(0)
+
+            self.logger.info(f"Multi-model mode: generating assembly definition from {resolved_nightly}")
+            assembly_def = await self._create_assembly_from_model(resolved_nightly)
+
+            # Apply the assembly definition to runtime
+            self._apply_multi_model_assembly(assembly_def)
+
+            # Automatically permit all issues in multi-model mode since we're modeling an existing tested nightly
+            self.emergency_ignore_issues = True
+            self.logger.info("Multi-model mode: automatically permitting all issues (emergency_ignore_issues=True)")
+
+            # Now proceed with normal assembly-based multi-arch payload generation
+            # Fall through to normal flow below
+
+        # Normal mode: proceed with assembly inspection and validation
         self.logger.info(f"Collecting latest information associated with the assembly: {rt.assembly}")
         with TRACER.start_as_current_span("Calls AssemblyInspector.__init__"):
             assembly_inspector = AssemblyInspector(rt, rt.build_retrying_koji_client())
@@ -446,7 +550,21 @@ class GenPayloadCli:
         self.payload_entries_for_arch, self.private_payload_entries_for_arch = await self.generate_payload_entries(
             assembly_inspector
         )
-        assembly_report: Dict = await self.generate_assembly_report(assembly_inspector)
+
+        if self.multi_model:
+            # The model nightly already passed consistency checks in regular build-sync;
+            # re-running them here is expensive and can flake without adding value.
+            self.payload_permitted = True
+            assembly_report: Dict = dict(
+                non_release_images=[m.distgit_key for m in rt.get_non_release_image_metas()],
+                release_images=[m.distgit_key for m in rt.get_for_release_image_metas()],
+                missing_image_builds=[],
+                viable=True,
+                assembly_issues={},
+            )
+            self.logger.info("Multi-model mode: skipping assembly consistency checks")
+        else:
+            assembly_report: Dict = await self.generate_assembly_report(assembly_inspector)
 
         self.logger.info('\n%s', yaml.dump(assembly_report, default_flow_style=False, indent=2))
         with self.output_path.joinpath("assembly-report.yaml").open(mode="w") as report_file:
@@ -464,12 +582,206 @@ class GenPayloadCli:
         )
         exit(1)
 
+    async def _create_assembly_from_model(self, multi_model_nightly: str) -> Dict:
+        """
+        Use gen-assembly logic to create an assembly definition from a multi-model nightly.
+        This reuses all of gen-assembly's proven logic for extracting brew_event,
+        RHCOS images, and image overrides.
+
+        :param multi_model_nightly: Nightly name to model
+        :return: Assembly definition dict
+        """
+        rt = self.runtime
+
+        # Multi-model mode only supports Konflux
+        if rt.build_system != 'konflux':
+            self.logger.warning(
+                f"Multi-model mode requires Konflux build system, but runtime is set to '{rt.build_system}'. "
+                f"Overriding to 'konflux' for multi-model processing."
+            )
+            # Override for multi-model processing (not restored - keep as 'konflux' for entire payload generation)
+            rt.build_system = 'konflux'
+
+        # Create a temporary assembly name for the multi-model
+        # Use a simple name that won't be parsed as a SemVer version
+        # Extract just the timestamp part to keep it unique
+        parts = multi_model_nightly.split('-')
+        timestamp_suffix = '-'.join(parts[-4:]) if len(parts) >= 4 else multi_model_nightly
+        multi_model_assembly_name = f"multi_model.{timestamp_suffix}"
+
+        # Create GenAssemblyCli instance to generate the assembly definition
+        # Use a dummy release_date to prevent gen-assembly from querying the release schedule
+        dummy_release_date = datetime.now(tz=timezone.utc).strftime("%Y-%b-%d")
+
+        gen_assembly = GenAssemblyCli(
+            runtime=rt,
+            gen_assembly_name=multi_model_assembly_name,
+            nightlies=(multi_model_nightly,),  # Single nightly to model from
+            standards=(),
+            custom=False,  # Not a custom assembly
+            in_flight=None,
+            previous_list=(),
+            auto_previous=False,
+            graph_url=None,
+            graph_content_stable=None,
+            graph_content_candidate=None,
+            suggestions_url=None,
+            gen_microshift=False,
+            release_date=dummy_release_date,  # Prevent release schedule lookup
+            registry_config=os.getenv("QUAY_AUTH_FILE"),
+        )
+
+        # Run gen-assembly logic to create the assembly definition
+        self.logger.info(f"Running gen-assembly logic to analyze {multi_model_nightly}")
+        assembly_def = await gen_assembly.run()
+
+        self.logger.info("Generated assembly definition from multi-model nightly")
+
+        # Don't restore build_system - keep it as 'konflux' for the rest of payload generation
+        return assembly_def
+
+    def _apply_multi_model_assembly(self, assembly_def: Dict):
+        """
+        Apply the multi-model-generated assembly definition to runtime so gen-payload
+        can use its normal assembly-based logic.
+
+        :param assembly_def: Assembly definition generated from multi-model nightly
+        """
+        rt = self.runtime
+
+        # Extract the assembly name from the definition
+        multi_model_assembly_name = list(assembly_def['releases'].keys())[0]
+
+        # Fix basis.time format if it's a datetime object (convert to ISO 8601 string)
+        assembly_config = assembly_def['releases'][multi_model_assembly_name]['assembly']
+        if 'basis' in assembly_config and 'time' in assembly_config['basis']:
+            basis_time = assembly_config['basis']['time']
+            if isinstance(basis_time, datetime):
+                # Convert to ISO 8601 format string
+                assembly_config['basis']['time'] = basis_time.isoformat()
+                self.logger.info(f"Converted basis.time to ISO format: {assembly_config['basis']['time']}")
+
+        # Update runtime's releases_config with the new assembly
+        rt.releases_config.releases[multi_model_assembly_name] = assembly_def['releases'][multi_model_assembly_name]
+
+        # Update runtime to use this assembly
+        rt.assembly = multi_model_assembly_name
+        # Keep assembly_type as STREAM to avoid SemVer parsing issues
+        rt.assembly_type = AssemblyTypes.STREAM
+
+        # CRITICAL: Recalculate assembly_basis_event after changing the assembly
+        # Without this, get_latest_build() won't filter to the basis time and will
+        # return the absolute latest Konflux builds instead of the builds from the nightly
+        rt.assembly_basis_event = assembly_basis_event(
+            rt.get_releases_config(), rt.assembly, strict=False, build_system=rt.build_system
+        )
+        self.logger.info(f"Recalculated assembly_basis_event: {rt.assembly_basis_event}")
+
+        self.logger.info(f"Applied multi-model assembly '{multi_model_assembly_name}' to runtime (as STREAM type)")
+
+    async def _resolve_multi_model_spec(self, multi_model_spec: str) -> str:
+        """
+        Resolve a multi-model specification to an actual nightly release name.
+
+        Supports two formats:
+        1. Direct nightly name: '4.22.0-0.nightly-2025-12-05-101036'
+        2. Architecture with offset: 'amd64:0', 's390x:1', 'ppc64le:2', 'arm64:0'
+
+        For format 2, queries the release controller API to find the Nth nightly in the stream.
+
+        :param multi_model_spec: Either a nightly name or 'arch:offset' format
+        :return: Resolved nightly name
+        """
+        # Check if this is an arch:offset specification
+        if ':' in multi_model_spec and not multi_model_spec.startswith('4.'):
+            parts = multi_model_spec.split(':', 1)
+            if len(parts) != 2:
+                raise DoozerFatalError(
+                    f"Invalid multi-model specification: {multi_model_spec}. Expected 'arch:offset' or nightly name."
+                )
+
+            arch, offset_str = parts
+
+            # Validate architecture
+            valid_arches = ['amd64', 's390x', 'ppc64le', 'arm64']
+            if arch not in valid_arches:
+                raise DoozerFatalError(f"Invalid architecture '{arch}'. Must be one of: {valid_arches}")
+
+            # Validate offset
+            try:
+                offset = int(offset_str)
+                if offset < 0:
+                    raise ValueError("Offset must be non-negative")
+            except ValueError as e:
+                raise DoozerFatalError(f"Invalid offset '{offset_str}'. Must be a non-negative integer: {e}")
+
+            # Query release controller to resolve the nightly
+            return await self._query_release_controller_for_nightly(arch, offset)
+        else:
+            # Direct nightly name - return as is
+            return multi_model_spec
+
+    async def _query_release_controller_for_nightly(self, arch: str, offset: int) -> str:
+        """
+        Query the release controller API to find the Nth nightly in a stream.
+
+        :param arch: Architecture (amd64, s390x, ppc64le, arm64)
+        :param offset: Index in the nightly stream (0 = latest, 1 = previous, etc.)
+        :return: Nightly release name
+        """
+        minor_version = self.runtime.get_minor_version()
+        stream_name = f"{minor_version}.0-0.nightly"
+        tags_url = f"https://{arch}.ocp.releases.ci.openshift.org/api/v1/releasestream/{stream_name}/tags"
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                self.logger.info(f"Querying release stream tags: {tags_url}")
+
+                async with session.get(tags_url) as resp:
+                    if resp.status != 200:
+                        raise DoozerFatalError(f"Failed to query release stream tags at {tags_url}: HTTP {resp.status}")
+                    stream_data = await resp.json()
+
+                # Get the tags list (releases are called "tags" in this API)
+                releases = stream_data.get('tags', [])
+                if not releases:
+                    raise DoozerFatalError(f"No releases found in stream '{stream_name}' for {arch}")
+
+                if offset >= len(releases):
+                    raise DoozerFatalError(
+                        f"Offset {offset} is out of range. Stream '{stream_name}' only has {len(releases)} releases."
+                    )
+
+                nightly_name = releases[offset]['name']
+                self.logger.info(f"Resolved {arch}:{offset} to nightly: {nightly_name}")
+                return nightly_name
+
+        except aiohttp.ClientError as e:
+            raise DoozerFatalError(f"HTTP client error querying release controller for {arch}:{offset}: {e}")
+        except json.JSONDecodeError as e:
+            raise DoozerFatalError(f"Failed to parse JSON response from release controller: {e}")
+        except DoozerFatalError:
+            raise
+        except Exception as e:
+            raise DoozerFatalError(f"Error querying release controller for {arch}:{offset}: {e}")
+
     def validate_parameters(self):
         """
         Sanity check the assembly requested and adjust state accordingly.
         """
 
         rt = self.runtime
+
+        # Validate --multi-model parameter
+        if self.multi_model:
+            if rt.assembly != "stream":
+                raise DoozerFatalError("--multi-model is only supported with assembly 'stream'")
+            if rt.images or rt.exclude:
+                raise DoozerFatalError("--multi-model is incompatible with -i (include) or -x (exclude) image filters")
+            # For multi-model mode, always create multi-arch payload regardless of --arches
+            self.apply_multi_arch = True
+            self.logger.info("Multi-model mode: will generate multi-arch payload regardless of --arches parameter")
+
         if rt.assembly not in {None, "stream", "test"} and rt.assembly not in rt.releases_config.releases:
             raise DoozerFatalError(f"Assembly '{rt.assembly}' is not explicitly defined.")
 
@@ -487,7 +799,7 @@ class GenPayloadCli:
             )
 
         # check that we can produce a full multi nightly if requested
-        if self.apply_multi_arch and (rt.images or rt.exclude or self.exclude_arch):
+        if self.apply_multi_arch and (rt.images or rt.exclude or self.exclude_arch) and not self.multi_model:
             raise DoozerFatalError(
                 "Cannot create a multi nightly without including the full set of images. "
                 "Either include all images/arches or omit --apply-multi-arch"
@@ -543,6 +855,8 @@ class GenPayloadCli:
         # check that images for this assembly/group have installed rpms that are not allowed to assemble.
         self.detect_installed_rpms_issues(assembly_inspector)
 
+        self.detect_hermetic_mismatches(assembly_inspector)
+
         # update issues found for payload images and check RPM consistency
         await self.detect_extend_payload_entry_issues(assembly_inspector)
 
@@ -559,18 +873,37 @@ class GenPayloadCli:
         """
         span = trace.get_current_span()
         self.logger.debug("Checking for mismatched sibling sources...")
-        group_images: List = list(assembly_inspector.get_group_release_images().values())
+        group_images: List = [
+            img
+            for img in assembly_inspector.get_group_release_images().values()
+            if img and img.get_image_meta().is_payload
+        ]
         issues = []
         for mismatched, sibling in self.payload_generator.find_mismatched_siblings(group_images):
+            component = mismatched.get_image_meta().distgit_key
+            sibling_component = sibling.get_image_meta().distgit_key
+
             issue = AssemblyIssue(
                 f"{mismatched.get_nvr()} was built from a different upstream "
                 f"source commit ({mismatched.get_source_git_commit()[:7]}) "
                 f"than one of its siblings {sibling.get_nvr()} "
                 f"from {sibling.get_source_git_commit()[:7]}",
-                component=mismatched.get_image_meta().distgit_key,
+                component=component,
                 code=AssemblyIssueCode.MISMATCHED_SIBLINGS,
             )
             issues.append(issue)
+
+            if assembly_inspector.does_permit(issue):
+                # If mismatched siblings are permitted, exclude them from the payload update
+                # We need to skip both the mismatched component and its sibling to ensure
+                # all siblings from the same repo are excluded when there are mismatches
+                self.logger.warning(f"Ignoring {mismatched.get_nvr()} mismatch due to configured permit")
+                if component not in self.mismatched_siblings:
+                    self.mismatched_siblings.append(component)
+                if sibling_component not in self.mismatched_siblings:
+                    self.mismatched_siblings.append(sibling_component)
+                    self.logger.warning(f"Also excluding sibling {sibling.get_nvr()} due to mismatch")
+
         self.assembly_issues.extend(issues)
         span.set_attribute("doozer.result.issues", list(map(lambda it: it.to_dict(), issues)))
 
@@ -674,10 +1007,10 @@ class GenPayloadCli:
                 else:  # konflux
                     non_latest_rpms = await build_inspector.find_non_latest_rpms(self.package_rpm_finder)
 
-                for arch, non_latest_rpms in non_latest_rpms.items():
+                for arch, arch_non_latest_rpms in non_latest_rpms.items():
                     # This could indicate an issue with scan-sources or that an image is no longer successfully building
                     # It could also mean that images are pinning content, which may be expected, so allow permits.
-                    for installed_nevra, newest_nevra, repo in non_latest_rpms:
+                    for installed_nevra, newest_nevra, repo in arch_non_latest_rpms:
                         nevr, _ = installed_nevra.rsplit(".", maxsplit=1)
                         rpm_name = parse_nvr(nevr)['name']
                         is_exempt, pattern = image_meta.is_rpm_exempt(rpm_name)
@@ -721,6 +1054,33 @@ class GenPayloadCli:
                     assembly_inspector.check_installed_rpms_in_image(dg_key, bbii, self.package_rpm_finder)
                 )
 
+    @TRACER.start_as_current_span("GenPayloadCli.detect_hermetic_mismatches")
+    def detect_hermetic_mismatches(self, assembly_inspector: AssemblyInspector):
+        """
+        For Konflux builds, check that images configured as hermetic were
+        actually built hermetically. Only flags the case where the config
+        requires hermetic but the build was non-hermetic.
+        """
+        if self.runtime.build_system != 'konflux':
+            return
+
+        self.logger.debug("Detecting hermetic mode mismatches...")
+        for dg_key, bbii in assembly_inspector.get_group_release_images().items():
+            if not bbii:
+                continue
+            image_meta = bbii.get_image_meta()
+            configured_mode = image_meta.get_konflux_network_mode()
+
+            if configured_mode == "hermetic" and not bbii.get_build_obj().hermetic:
+                self.assembly_issues.append(
+                    AssemblyIssue(
+                        f"Image {dg_key} build {bbii.get_nvr()} was built non-hermetically "
+                        f"but configured network mode is 'hermetic'",
+                        component=dg_key,
+                        code=AssemblyIssueCode.MISMATCHED_NETWORK_MODE,
+                    )
+                )
+
     def full_component_repo(self, repo_type: RepositoryType = RepositoryType.PUBLIC) -> str:
         """
         Full pullspec for the component repo
@@ -741,6 +1101,7 @@ class GenPayloadCli:
 
         public_entries_for_arch: Dict[str, Dict[str, PayloadEntry]] = dict()  # arch => img tag => PayloadEntry
         private_entries_for_arch: Dict[str, Dict[str, PayloadEntry]] = dict()  # arch => img tag => PayloadEntry
+        registry_config = os.getenv("QUAY_AUTH_FILE")
 
         arches = (
             self.runtime.group_config.konflux.arches if self.runtime.build_system == 'konflux' else self.runtime.arches
@@ -755,7 +1116,9 @@ class GenPayloadCli:
             entries: Dict[str, PayloadEntry]  # Key of this dict is release payload tag name
             payload_issues: List[AssemblyIssue]
             public_repo = self.full_component_repo(repo_type=RepositoryType.PUBLIC)
-            entries, payload_issues = self.payload_generator.find_payload_entries(assembly_inspector, arch, public_repo)
+            entries, payload_issues = self.payload_generator.find_payload_entries(
+                assembly_inspector, arch, public_repo, registry_config=registry_config
+            )
 
             public_entries: Dict[str, PayloadEntry] = dict()
             for k, v in entries.items():
@@ -816,7 +1179,10 @@ class GenPayloadCli:
             self.assembly_issues.extend(embargo_issues)
 
             private_entries, private_payload_issues = self.payload_generator.find_payload_entries(
-                assembly_inspector, arch, self.full_component_repo(repo_type=RepositoryType.PRIVATE)
+                assembly_inspector,
+                arch,
+                self.full_component_repo(repo_type=RepositoryType.PRIVATE),
+                registry_config=registry_config,
             )
             private_entries_for_arch[arch] = private_entries
 
@@ -1017,17 +1383,33 @@ class GenPayloadCli:
         await asyncio.sleep(120)
 
         # Updating public and private image streams
-        for private_mode, payload_entries_for_each_arch_iter in [
-            (False, self.payload_entries_for_arch),
-            (True, self.private_payload_entries_for_arch),
-        ]:
-            tasks = []
-            for arch, payload_entries in payload_entries_for_each_arch_iter.items():
-                self.logger.info(f"Building payload files for architecture: {arch}; private: {private_mode}")
-                tasks.append(
-                    self.generate_specific_payload_imagestreams(arch, private_mode, payload_entries, multi_specs)
-                )
-            await asyncio.gather(*tasks)
+        # Skip single-arch imagestream updates in multi-model mode - only create multi-arch payload
+        if not self.multi_model:
+            for private_mode, payload_entries_for_each_arch_iter in [
+                (False, self.payload_entries_for_arch),
+                (True, self.private_payload_entries_for_arch),
+            ]:
+                tasks = []
+                for arch, payload_entries in payload_entries_for_each_arch_iter.items():
+                    self.logger.info(f"Building payload files for architecture: {arch}; private: {private_mode}")
+                    tasks.append(
+                        self.generate_specific_payload_imagestreams(arch, private_mode, payload_entries, multi_specs)
+                    )
+                await asyncio.gather(*tasks)
+        else:
+            # In multi-model mode, still populate multi_specs for multi-arch creation
+            # but don't write/update single-arch imagestreams
+            self.logger.info(
+                "Multi-model mode: skipping single-arch imagestream updates, only creating multi-arch payload"
+            )
+            for private_mode, payload_entries_for_each_arch_iter in [
+                (False, self.payload_entries_for_arch),
+                (True, self.private_payload_entries_for_arch),
+            ]:
+                for arch, payload_entries in payload_entries_for_each_arch_iter.items():
+                    for payload_tag_name, payload_entry in payload_entries.items():
+                        multi_specs[private_mode].setdefault(payload_tag_name, dict())
+                        multi_specs[private_mode][payload_tag_name][arch] = payload_entry
 
         if self.apply_multi_arch:
             if self.runtime.group_config.multi_arch.enabled:
@@ -1054,13 +1436,21 @@ class GenPayloadCli:
                 'login',
                 '--registry',
                 'quay.io/redhat-user-workloads',
-                f'--registry-config={os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")}',
+                f'--registry-config={os.getenv("QUAY_AUTH_FILE")}',
             ]
             await exectools.cmd_assert_async(cmd)
 
         for payload_entry in payload_entries.values():
+            if payload_entry.image_meta and payload_entry.image_meta.distgit_key in self.mismatched_siblings:
+                self.logger.warning(
+                    f"Skipping mirroring of {payload_entry.image_meta.distgit_key} "
+                    f"due to mismatched sibling source commits."
+                )
+                continue
+
             if not payload_entry.image_inspector:
                 continue  # Nothing to mirror (e.g. RHCOS)
+
             mirror_src_for_dest[payload_entry.dest_pullspec] = payload_entry.image_inspector.get_pullspec()
             if payload_entry.dest_manifest_list_pullspec:
                 # For heterogeneous release payloads, if a component builds for all arches
@@ -1089,7 +1479,7 @@ class GenPayloadCli:
                     f'--filename={str(src_dest_path)}',
                 ]
                 if self.runtime.build_system == 'konflux':
-                    cmd.append(f'--registry-config={os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE")}')
+                    cmd.append(f'--registry-config={os.getenv("QUAY_AUTH_FILE")}')
                 await asyncio.wait_for(exectools.cmd_assert_async(cmd), timeout=7200)
 
         # Mirror the images in chunks to avoid erroring out due to possible registry issues
@@ -1126,7 +1516,18 @@ class GenPayloadCli:
             incomplete_payload_update = True
 
         for payload_tag_name, payload_entry in payload_entries.items():
-            multi_specs[private_mode].setdefault(payload_tag_name, dict())
+            # Skip mismatched siblings - they were not mirrored and should not be in the imagestream
+            if (
+                payload_entry.image_meta
+                and payload_entry.image_meta.distgit_key in self.mismatched_siblings
+                and self.runtime.assembly_type == AssemblyTypes.STREAM
+            ):
+                self.logger.warning(
+                    f"Skipping imagestream tag for {payload_entry.image_meta.distgit_key} "
+                    f"due to mismatched sibling source commits."
+                )
+                incomplete_payload_update = True
+                continue
 
             if (
                 private_mode is False
@@ -1140,6 +1541,8 @@ class GenPayloadCli:
                 incomplete_payload_update = True
                 continue
 
+            # Only add to multi_specs after we've passed all the skip checks
+            multi_specs[private_mode].setdefault(payload_tag_name, dict())
             istags.append(self.payload_generator.build_payload_istag(payload_tag_name, payload_entry))
             multi_specs[private_mode][payload_tag_name][arch] = payload_entry
 
@@ -1434,7 +1837,21 @@ class GenPayloadCli:
         the same.
         """
 
-        multi_ts = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d-%H%M%S")
+        # For multi-model mode, extract timestamp from the resolved multi-model nightly name
+        if self.multi_model:
+            # Multi-model nightly format: 4.21.0-0.nightly-2025-11-12-194750
+            # Extract the timestamp: 2025-11-12-194750 (skip the "nightly" part)
+            # Use the resolved nightly name, not the original spec
+            nightly_name = self.resolved_multi_model_nightly or self.multi_model
+            parts = nightly_name.split('-')
+            if len(parts) >= 6:
+                # Last 4 parts are: YYYY, MM, DD, HHMMSS (skip "nightly" which is 5th from last)
+                multi_ts = '-'.join(parts[-4:])
+            else:
+                raise DoozerFatalError(f"Could not extract timestamp from multi-model nightly {nightly_name}")
+        else:
+            multi_ts = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d-%H%M%S")
+
         if self.runtime.assembly_type is AssemblyTypes.STREAM:
             # We are publicizing a nightly. Unlike single-arch payloads, the release controller does
             # not react to 4.x-art-latest updates and create a timestamp-based name. We create the
@@ -1543,10 +1960,10 @@ class GenPayloadCli:
         # write the manifest list to a file and push it to the registry.
         async with aiofiles.open(component_manifest_path, mode="w+") as ml:
             await ml.write(yaml.safe_dump(dict(image=output_pullspec, manifests=manifests), default_flow_style=False))
-        await manifest_tool(f'push from-spec {str(component_manifest_path)}')
+        await manifest_tool(f'push from-spec {str(component_manifest_path)}', auth_file=os.getenv("QUAY_AUTH_FILE"))
 
         # we are pushing a new manifest list, so return its sha256 based pullspec
-        sha = await find_manifest_list_sha(output_pullspec)
+        sha = await find_manifest_list_sha(output_pullspec, registry_config=os.getenv("QUAY_AUTH_FILE"))
         return exchange_pullspec_tag_for_shasum(output_pullspec, sha)
 
     async def create_multi_release_image(
@@ -1573,26 +1990,39 @@ class GenPayloadCli:
 
         @retry(reraise=True, stop=stop_after_attempt(10), wait=wait_fixed(60))
         async def _run(to_image, to_image_base):
-            return await exectools.cmd_assert_async(
-                [
-                    "oc",
-                    "adm",
-                    "release",
-                    "new",
-                    f"--name={multi_release_name}",
-                    "--reference-mode=source",
-                    "--keep-manifest-list",
-                    f"--from-image-stream-file={str(multi_release_is_path)}",
-                    f"--to-image-base={to_image_base}",
-                    f"--to-image={to_image}",
-                    "--metadata",
-                    json.dumps({"release.openshift.io/architecture": "multi"}),
-                ]
-            )
+            cmd = [
+                "oc",
+                "adm",
+                "release",
+                "new",
+                f"--name={multi_release_name}",
+                "--reference-mode=source",
+                "--keep-manifest-list",
+                f"--from-image-stream-file={str(multi_release_is_path)}",
+                f"--to-image-base={to_image_base}",
+                f"--to-image={to_image}",
+                "--metadata",
+                json.dumps({"release.openshift.io/architecture": "multi"}),
+            ]
+            registry_config = os.getenv("QUAY_AUTH_FILE")
+            if registry_config:
+                cmd.append(f"--registry-config={registry_config}")
+            return await exectools.cmd_assert_async(cmd)
 
         # This will map arch names to a release payload pullspec we create for that arch
         # (i.e. based on the arch's CVO image)
         arch_release_dests: Dict[str, str] = dict()
+
+        # CVO is required for multi-arch releases - if it's missing (e.g., due to embargo),
+        # we cannot build a release payload
+        if "cluster-version-operator" not in multi_specs[private_mode]:
+            raise DoozerFatalError(
+                "cluster-version-operator is missing from multi-arch payload specs. "
+                "Cannot build multi-arch release without CVO. "
+                f"This may be due to embargo (for {'public' if not private_mode else 'private'} payload), "
+                "or other filtering."
+            )
+
         for arch, cvo_entry in multi_specs[private_mode]["cluster-version-operator"].items():
             arch_release_dests[arch] = f"{multi_release_dest}-{arch}"
             # Create the arch specific release payload containing tags pointing to manifest list
@@ -1629,10 +2059,10 @@ class GenPayloadCli:
         async with aiofiles.open(release_payload_ml_path, mode="w+") as ml:
             await ml.write(yaml.safe_dump(ml_dict, default_flow_style=False))
 
-        await manifest_tool(f'push from-spec {str(release_payload_ml_path)}')
+        await manifest_tool(f'push from-spec {str(release_payload_ml_path)}', auth_file=os.getenv("QUAY_AUTH_FILE"))
 
         # if we are actually pushing a manifest list, then we should derive a sha256 based pullspec
-        sha = await find_manifest_list_sha(multi_release_dest)
+        sha = await find_manifest_list_sha(multi_release_dest, registry_config=os.getenv("QUAY_AUTH_FILE"))
         return exchange_pullspec_tag_for_shasum(multi_release_dest, sha)
 
     async def apply_multi_imagestream_update(
@@ -1679,9 +2109,20 @@ class GenPayloadCli:
                 # nightly to a new one.
                 def is_accepted(tag):
                     # Returns true if the imagestream tag has been accepted.
-                    return tag.get('annotations', dict()).get('release.openshift.io/phase', 'Unknown') == 'Accepted'
+                    annotations = tag.get('annotations') or {}  # Handle `annotations: null`
+                    return annotations.get('release.openshift.io/phase', 'Unknown') == 'Accepted'
 
-                release_tags: List = obj_model.spec["tags"]._primitive()
+                imagestream_tags: List = obj_model.spec["tags"]._primitive()
+
+                # Filter out only nightly tags, other (i.e. non-nightly) tags like "tickle" are preserved
+                release_tags = []
+                other_tags = []
+                for tag in imagestream_tags:
+                    if 'nightly-multi' in tag.get('name', ''):
+                        release_tags.append(tag)
+                    else:
+                        other_tags.append(tag)
+
                 new_release_tags = release_tags[-5:]  # Preserve the most recent five
 
                 latest_accepted = list(filter(is_accepted, new_release_tags))
@@ -1711,13 +2152,14 @@ class GenPayloadCli:
                             # More frequent nightlies for master
                             next_nightly_delay = timedelta(hours=6)
 
-                        if current_time < last_nightly_time + next_nightly_delay:
+                        # In multi-model mode, skip rate-limiting to allow on-demand multi-arch payload generation
+                        if not self.multi_model and current_time < last_nightly_time + next_nightly_delay:
                             self.logger.info(
                                 f'The last nightly {last_nightly_tagname} is less than {next_nightly_delay}h old; skipping release controller update'
                             )
                             return
 
-                obj_model.spec["tags"] = new_release_tags
+                obj_model.spec["tags"] = other_tags + new_release_tags
 
                 # When spec tags are removed, their entry under the imagestream.status field should also
                 # be removed by the imagestream controller. The release controller will delete the
@@ -1793,8 +2235,16 @@ class PayloadGenerator:
             # If an artist overrides one sibling's git url, but not another, the following
             # scan would not be able to detect that they were siblings. Instead, we rely on the
             # original image metadata to determine sibling-ness.
-            source_url = build_record_inspector.get_image_meta().raw_config.content.source.git.url
+            raw_source = build_record_inspector.get_image_meta().raw_config.content.source
 
+            if raw_source.allow_mismatched_siblings:
+                logger.info(
+                    "Skipping sibling check for %s (allow_mismatched_siblings is set)",
+                    build_record_inspector.get_image_meta().distgit_key,
+                )
+                continue
+
+            source_url = raw_source.git.url
             source_git_commit = build_record_inspector.get_source_git_commit()
             if not source_url or not source_git_commit:
                 # This is true for distgit only components.
@@ -1835,8 +2285,11 @@ class PayloadGenerator:
         rpm_uses: Dict[str, Set[str]] = {}
 
         for rhcos_build in rhcos_builds:
-            for nvr in rhcos_build.get_rpm_nvrs():
-                rpm_name = parse_nvr(nvr)["name"]
+            for name, epoch, version, release, arch, repo_name in rhcos_build.get_os_metadata_rpm_list():
+                if repo_name in COREOS_RHEL10_STREAMS:
+                    continue
+                rpm_name = name
+                nvr = f"{name}-{version}-{release}"
                 if rpm_name not in rpm_uses:
                     rpm_uses[rpm_name] = dict()
                 if nvr not in rpm_uses[rpm_name]:
@@ -1861,16 +2314,19 @@ class PayloadGenerator:
         # rpm_list will be a list of rpms.
         # Each entry is another list in the format of [name, epoch, version, release, arch].
         rpm_list = rhcos_build.get_os_metadata_rpm_list()
-        rpms_dict = {entry[0]: entry for entry in rpm_list}
+        rpms_dict = {entry[0]: entry[:-1] for entry in rpm_list if entry[-1] not in COREOS_RHEL10_STREAMS}
 
         def _to_nvr(nevra):
             return f'{nevra[0]}-{nevra[2]}-{nevra[3]}'
 
         if {"kernel-core", "kernel-rt-core"} <= rpms_dict.keys():
+            kernel_entry = rpms_dict["kernel-core"]
+            kernel_rt_entry = rpms_dict["kernel-rt-core"]
+
             # ["kernel-core", 0, "4.18.0", "372.43.1.el8_6", "x86_64"] => ["4.18.0", "372.43.1.el8_6"]
-            kernel_v, kernel_r = rpms_dict["kernel-core"][2:4]
+            kernel_v, kernel_r = kernel_entry[2:4]
             # ["kernel-rt-core", 0, "4.18.0", "4.18.0-372.41.1.rt7.198.el8_6", "x86_64"] => ["4.18.0", "4.18.0-372.41.1.rt7.198.el8_6"]
-            kernel_rt_v, kernel_rt_r = rpms_dict["kernel-rt-core"][2:4]
+            kernel_rt_v, kernel_rt_r = kernel_rt_entry[2:4]
             inconsistency = False
             if kernel_v != kernel_rt_v:
                 inconsistency = True
@@ -1884,8 +2340,8 @@ class PayloadGenerator:
             if inconsistency:
                 inconsistencies.append(
                     {
-                        "kernel-core": _to_nvr(rpms_dict["kernel-core"]),
-                        "kernel-rt-core": _to_nvr(rpms_dict["kernel-rt-core"]),
+                        "kernel-core": _to_nvr(kernel_entry[:-1]),
+                        "kernel-rt-core": _to_nvr(kernel_rt_entry[:-1]),
                     }
                 )
         return inconsistencies
@@ -1915,7 +2371,10 @@ class PayloadGenerator:
         # index by name the RPMs installed in the RHCOS build
         rhcos_rpm_vrs: Dict[str, str] = {}  # name -> version-release
         for rpm in primary_rhcos_build.get_os_metadata_rpm_list():
-            name, _, version, release, _ = rpm
+            name, _, version, release, _, repo_name = rpm
+            if repo_name in COREOS_RHEL10_STREAMS:
+                # skip el10 rhcos kernels check
+                continue
             rhcos_rpm_vrs[name] = f"{version}-{release}"
 
         # check that each member consistency condition is met
@@ -1936,7 +2395,12 @@ class PayloadGenerator:
             for pkg in consistent_pkgs:
                 issues.append(
                     self.validate_pkg_consistency_req(
-                        payload_tag, pkg, bbii, rhcos_rpm_vrs, str(primary_rhcos_build), package_rpm_finder
+                        payload_tag,
+                        pkg,
+                        bbii,
+                        rhcos_rpm_vrs,
+                        str(primary_rhcos_build),
+                        package_rpm_finder or self.package_rpm_finder,
                     )
                 )
 
@@ -1951,20 +2415,83 @@ class PayloadGenerator:
         rhcos_build_id: str,
         package_rpm_finder=None,
     ) -> Optional[AssemblyIssue]:
-        """check that the specified package in the member is consistent with the RHCOS build"""
+        """
+        Check that the specified package in the member is consistent with the RHCOS build.
+
+        For Konflux builds, this also detects when multiple versions of the same package
+        are installed (e.g., two different kernel versions), which should never happen.
+        """
         logger = bri.runtime.logger
         payload_tag_nvr: str = bri.get_nvr()
         logger.debug(f"Checking consistency of {pkg} for {payload_tag_nvr} against {rhcos_build_id}")
-        member_nvrs: Dict[str, Dict] = bri.get_all_installed_package_build_dicts(package_rpm_finder)  # by name
-        try:
-            build = member_nvrs[pkg]
-        except KeyError:
-            return AssemblyIssue(
-                f"RHCOS consistency configuration specifies that payload tag '{payload_tag}' "
-                f"should install package '{pkg}', but it does not",
-                payload_tag,
-                AssemblyIssueCode.FAILED_CONSISTENCY_REQUIREMENT,
-            )
+
+        # For Konflux, get ALL installed package NVRs to detect duplicates
+        # For Brew, use the old method (only one version per package is expected)
+        if self.runtime.build_system == 'konflux':
+            # Access the build record directly to get all installed packages
+            build_record = bri.get_build_obj()  # Returns KonfluxBuildRecord
+            installed_packages = build_record.installed_packages  # List of package NVRs
+
+            # Filter for packages matching the name we're checking
+            matching_packages = [pkg_nvr for pkg_nvr in installed_packages if parse_nvr(pkg_nvr)['name'] == pkg]
+
+            if not matching_packages:
+                return AssemblyIssue(
+                    f"RHCOS consistency configuration specifies that payload tag '{payload_tag}' "
+                    f"should install package '{pkg}', but it does not",
+                    payload_tag,
+                    AssemblyIssueCode.FAILED_CONSISTENCY_REQUIREMENT,
+                )
+
+            # Check if there are multiple versions of the same package installed
+            if len(matching_packages) > 1:
+                return AssemblyIssue(
+                    f"Payload tag '{payload_tag}' has multiple versions of package '{pkg}' installed: "
+                    f"{', '.join(matching_packages)}. Only one version should be present.",
+                    payload_tag,
+                    AssemblyIssueCode.FAILED_CONSISTENCY_REQUIREMENT,
+                )
+
+            # Get the single package build dict
+            pkg_finder = package_rpm_finder or self.package_rpm_finder
+            pkg_finder._cache_packages(matching_packages)
+            build = pkg_finder._packages_build_dicts[matching_packages[0]]
+
+        else:  # Brew
+            # First, check for duplicate packages in Brew builds
+            # Although OSBS should enforce single versions, check to be safe
+            all_rpm_dicts = bri.get_all_installed_rpm_dicts()
+            matching_package_nvrs = set()
+            for rpm_dict in all_rpm_dicts:
+                rpm_nvr = rpm_dict['nvr']
+                parsed = parse_nvr(rpm_nvr)
+                if parsed['name'] == pkg:
+                    # Extract package NVR from RPM NVR (RPMs have arch suffix)
+                    # e.g., kernel-5.14.0-427.116.1.el9_4.x86_64 -> kernel-5.14.0-427.116.1.el9_4
+                    package_nvr = f"{parsed['name']}-{parsed['version']}-{parsed['release']}"
+                    matching_package_nvrs.add(package_nvr)
+
+            if not matching_package_nvrs:
+                return AssemblyIssue(
+                    f"RHCOS consistency configuration specifies that payload tag '{payload_tag}' "
+                    f"should install package '{pkg}', but it does not",
+                    payload_tag,
+                    AssemblyIssueCode.FAILED_CONSISTENCY_REQUIREMENT,
+                )
+
+            if len(matching_package_nvrs) > 1:
+                return AssemblyIssue(
+                    f"Payload tag '{payload_tag}' has multiple versions of package '{pkg}' installed: "
+                    f"{', '.join(sorted(matching_package_nvrs))}. Only one version should be present.",
+                    payload_tag,
+                    AssemblyIssueCode.FAILED_CONSISTENCY_REQUIREMENT,
+                )
+
+            # Get the build dict using the old method (now we know there's only one)
+            member_nvrs: Dict[str, Dict] = bri.get_all_installed_package_build_dicts(
+                package_rpm_finder or self.package_rpm_finder
+            )  # by name
+            build = member_nvrs[pkg]  # We know this exists now
 
         # get names of all the actual RPMs included in this package build, because that's what we
         # have for comparison in the RHCOS metadata (not the package name).
@@ -1985,7 +2512,7 @@ class PayloadGenerator:
                 return AssemblyIssue(
                     f"RHCOS and '{payload_tag}' should use the same build of "
                     f"package '{pkg}', but {rhcos_build_id} has {name}-{vr} and "
-                    f"{payload_tag_nvr} has {build['nvr']}",
+                    f"{payload_tag_nvr} has {name}-{required_vr} in {build['nvr']}",
                     payload_tag,
                     AssemblyIssueCode.FAILED_CONSISTENCY_REQUIREMENT,
                 )
@@ -2007,7 +2534,7 @@ class PayloadGenerator:
         return f"{dest_repo}:{tag}"
 
     def find_payload_entries(
-        self, assembly_inspector: AssemblyInspector, arch: str, dest_repo: str
+        self, assembly_inspector: AssemblyInspector, arch: str, dest_repo: str, registry_config: str = None
     ) -> (Dict[str, PayloadEntry], List[AssemblyIssue]):
         """
         Returns a list of images which should be included in the architecture specific release payload.
@@ -2015,12 +2542,15 @@ class PayloadGenerator:
         :param assembly_inspector: An analyzer for the assembly to generate entries for.
         :param arch: The brew architecture name to create the list for.
         :param dest_repo: The registry/org/repo into which the image should be mirrored.
+        :param registry_config: Optional path to registry auth config file.
         :return: Map[payload_tag_name] -> PayloadEntry.
         """
 
         members: Dict[str, PayloadEntry] = self._find_initial_payload_entries(assembly_inspector, arch, dest_repo)
         members = self._replace_missing_payload_entries(members, arch)
-        rhcos_members, issues = self._find_rhcos_payload_entries(assembly_inspector, arch)
+        rhcos_members, issues = self._find_rhcos_payload_entries(
+            assembly_inspector, arch, registry_config=registry_config
+        )
         members.update(rhcos_members)
         return members, issues
 
@@ -2069,7 +2599,7 @@ class PayloadGenerator:
     @staticmethod
     @TRACER.start_as_current_span("PayloadGenerator._find_rhcos_payload_entries")
     def _find_rhcos_payload_entries(
-        assembly_inspector: AssemblyInspector, arch: str
+        assembly_inspector: AssemblyInspector, arch: str, registry_config: str = None
     ) -> Tuple[Dict[str, PayloadEntry], List[AssemblyIssue]]:
         span = trace.get_current_span()
         span.set_attributes(
@@ -2079,7 +2609,7 @@ class PayloadGenerator:
         )
         members: Dict[str, PayloadEntry] = dict()
         issues: List[AssemblyIssue] = list()
-        rhcos_build: RHCOSBuildInspector = assembly_inspector.get_rhcos_build(arch)
+        rhcos_build: RHCOSBuildInspector = assembly_inspector.get_rhcos_build(arch, registry_config=registry_config)
         for container_config in rhcos_build.get_container_configs():
             try:
                 members[container_config.name] = PayloadEntry(
@@ -2283,23 +2813,19 @@ class PayloadGenerator:
 
         issues: List[str]
         runtime.logger.info(f"Processing nightly: {nightly}")
-        major_minor, brew_cpu_arch, priv = isolate_nightly_name_components(nightly)
 
+        major_minor, _, _ = isolate_nightly_name_components(nightly)
         if major_minor != runtime.get_minor_version():
             return terminal_issue(f"Specified nightly {nightly} does not match group major.minor")
 
-        # For 4.20, remove the -konflux suffix as Konflux builds are being mirrored to standard imagestreams
-        if runtime.build_system == 'brew' or major_minor in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS:
-            release_suffix = 'release'
-        else:
-            release_suffix = 'konflux-release'
-
-        rc_suffix = go_suffix_for_arch(brew_cpu_arch, priv)
+        try:
+            pullspec = get_nightly_pullspec(nightly, runtime.build_system)
+        except ValueError as e:
+            return terminal_issue(str(e))
 
         retries: int = 3
         release_json_str = ""
         rc = -1
-        pullspec = f"registry.ci.openshift.org/ocp{rc_suffix}/{release_suffix}{rc_suffix}:{nightly}"
         while retries > 0:
             rc, release_json_str, err = await exectools.cmd_gather_async(
                 f"oc adm release info {pullspec} -o=json", check=False
@@ -2318,7 +2844,10 @@ class PayloadGenerator:
 
         payload_entries: Dict[str, PayloadEntry]
         issues: List[AssemblyIssue]
-        payload_entries, issues = self.find_payload_entries(assembly_inspector, arch, "")
+        registry_config = os.getenv("QUAY_AUTH_FILE")
+        payload_entries, issues = self.find_payload_entries(
+            assembly_inspector, arch, "", registry_config=registry_config
+        )
         rhcos_container_configs = {tag.name: tag for tag in rhcos.get_container_configs(runtime)}
         for component_tag in release_info.references.spec.tags:  # For each tag in the imagestream
             payload_tag_name: str = component_tag.name  # e.g. "aws-ebs-csi-driver"

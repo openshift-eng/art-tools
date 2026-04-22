@@ -69,6 +69,14 @@ def get_distgit_notify(record_log: dict) -> dict:
     return result
 
 
+def get_branch_protection_notify(record_log: dict) -> list[dict]:
+    """
+    Returns a list of branch_protection_missing records from the record log.
+    Each entry contains distgit, source_url, branch, and owners.
+    """
+    return record_log.get("branch_protection_missing", [])
+
+
 def get_failed_builds(record_log: dict, full_record: bool = False) -> dict:
     """
     Returns a map of distgit => task_url OR full record.log dict entry IFF the distgit's build failed

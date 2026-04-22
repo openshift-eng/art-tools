@@ -65,7 +65,6 @@ class TestArtNotifyPipeline(unittest.TestCase):
         with self.assertRaises(ValueError):
             pipeline._get_konflux_task_update_pr()
 
-    @patch('pyartcd.pipelines.art_notify.ArtNotifyPipeline._notify_rebase_failures', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.art_notify.ArtNotifyPipeline._notify_messages')
     @patch('pyartcd.pipelines.art_notify.SSLCertificateChecker.check_expired_certificates', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.art_notify.ArtNotifyPipeline._get_messages')
@@ -80,25 +79,20 @@ class TestArtNotifyPipeline(unittest.TestCase):
         mock_get_messages,
         mock_check_expired_certificates,
         mock_notify_messages,
-        mock_notify_rebase_failures,
     ):
-        # Mock the return values of the methods
         mock_get_konflux_task_update_pr.return_value = 'konflux_pr_text'
         mock_get_failed_jobs_text.return_value = 'failed_jobs_text'
         mock_get_messages.return_value = ['messages']
         mock_check_expired_certificates.return_value = 'expired_certificates'
 
-        # Initialize the pipeline and call the run method
         pipeline = ArtNotifyPipeline(runtime=MagicMock(), channel='test-channel')
         import asyncio
 
         asyncio.run(pipeline.run())
 
-        # Assert that the methods were called with the correct arguments
         mock_notify_messages.assert_called_once_with(
             'failed_jobs_text', ['messages'], ['expired_certificates', 'konflux_pr_text']
         )
-        mock_notify_rebase_failures.assert_called_once()
 
 
 if __name__ == '__main__':

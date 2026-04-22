@@ -1,0 +1,18 @@
+from typing import List
+
+from artcommonlib import constants
+from pydantic import BaseModel, Field
+
+
+class PlashetConfig(BaseModel):
+    base_dir: str
+    plashet_dir: str
+    create_symlinks: bool = False
+    symlink_name: str = 'latest'
+    create_repo_subdirs: bool = False
+    repo_subdir: str = 'os'
+    arches: List[str] | None = None
+    base_url: str = constants.DEFAULT_PLASHET_BASE_URL
+    download_url: str | None = Field(
+        default=None, deprecated=True, description='Deprecated: use Repo.construct_download_url() method instead'
+    )

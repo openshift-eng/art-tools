@@ -59,6 +59,8 @@ class RebuildHintCode(Enum):
     PACKAGE_CHANGE = (True, 13)
     ARCHES_CHANGE = (True, 14)
     DEPENDENCY_NEWER = (True, 15)
+    TASK_BUNDLE_OUTDATED = (True, 16)
+    NETWORK_MODE_CHANGE = (True, 17)
 
 
 class RebuildHint(NamedTuple):
@@ -636,15 +638,3 @@ class Metadata(MetadataBase):
             if fnmatch.fnmatch(rpm_name, pattern):
                 return True, pattern
         return False, None
-
-    def get_konflux_network_mode(self):
-        group_config_network_mode = self.runtime.group_config.konflux.get("network_mode")
-        image_config_network_mode = self.config.konflux.get("network_mode")
-
-        # Image config supersedes group config, but set to "open" by default, if missing.
-        network_mode = image_config_network_mode or group_config_network_mode or "open"
-
-        valid_network_modes = ["hermetic", "internal-only", "open"]
-        if network_mode not in valid_network_modes:
-            raise ValueError(f"Invalid network mode; {network_mode}. Valid modes: {valid_network_modes}")
-        return network_mode

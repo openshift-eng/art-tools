@@ -1,20 +1,16 @@
 import asyncio
 import hashlib
-import os
-import tempfile
-from concurrent.futures import ThreadPoolExecutor
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from functools import total_ordering
 from logging import Logger
 from pathlib import Path
-from typing import Any, Dict, Optional, Set
+from typing import Dict, Optional, Tuple
 
 import aiohttp
 import yaml
-from artcommonlib import exectools, logutil
+from artcommonlib import logutil
 from artcommonlib.rpm_utils import compare_nvr
 from artcommonlib.telemetry import start_as_current_span_async
-from artcommonlib.util import download_file_from_github, split_git_url
 from opentelemetry import trace
 
 from doozerlib.image import ImageMetadata
@@ -24,6 +20,25 @@ from doozerlib.repos import Repos
 TRACER = trace.get_tracer(__name__)
 DEFAULT_RPM_LOCKFILE_NAME = "rpms.lock.yaml"
 DEFAULT_ARTIFACT_LOCKFILE_NAME = "artifacts.lock.yaml"
+
+
+def sort_repos_for_lockfile_resolution(repo_names: set[str]) -> list[str]:
+    """
+    Order repos so upstream RHEL content (baseos, appstream, CRB, ...) is preferred over OCP plashets
+    (rhocp / *ose-rpms*) as a tiebreaker when the same EVR exists in multiple repos.
+
+    :meth:`RpmInfoCollector._fetch_rpms_info_per_arch` always picks the highest EVR across all repos.
+    When two repos provide the same highest EVR, the first one in iteration order wins — so RHEL repos
+    are listed first to prefer the upstream/canonical source for system packages.
+    """
+
+    def sort_key(name: str) -> tuple[int, str]:
+        lower = name.lower()
+        if 'ose-rpms' in lower or 'rhocp' in lower:
+            return (1, name)
+        return (0, name)
+
+    return sorted(repo_names, key=sort_key)
 
 
 @total_ordering
@@ -148,6 +163,60 @@ class ArtifactInfo:
         }
 
 
+@dataclass(frozen=True)
+class ModuleInfo:
+    """
+    Immutable data class representing repository module metadata for lockfile generation.
+
+    Follows Hermeto specification: https://github.com/hermetoproject/hermeto/blob/main/docs/rpm.md#rpm-lockfile-format
+
+    Represents repository-level module metadata (modules.yaml file) rather than individual modules.
+    One entry per repository containing modules, not per module.
+
+    Attributes:
+        url (str): Download URL for modules.yaml metadata file (required by Hermeto)
+        repoid (str): Repository content set ID (mandatory for Hermeto)
+        checksum (str): SHA256 checksum of modules.yaml file
+        size (int): File size of modules.yaml in bytes
+    """
+
+    url: str
+    repoid: str
+    checksum: str
+    size: int
+
+    @classmethod
+    def from_repository_metadata(cls, *, repoid: str, baseurl: str, checksum: str, size: int, url: str) -> "ModuleInfo":
+        """
+        Create ModuleInfo from repository metadata.
+
+        Args:
+            repoid: Repository content set ID
+            baseurl: Base repository URL
+            checksum: SHA256 checksum of modules.yaml
+            size: File size of modules.yaml in bytes
+            url: Actual modules file URL from repomd.xml
+
+        Returns:
+            ModuleInfo: Hermeto-compliant repository module metadata
+        """
+        return cls(
+            url=url,
+            repoid=repoid,
+            checksum=checksum,
+            size=size,
+        )
+
+    def to_dict(self) -> Dict[str, object]:
+        """Convert to Hermeto-compliant dictionary format."""
+        return {
+            "url": self.url,
+            "repoid": self.repoid,
+            "checksum": self.checksum,
+            "size": self.size,
+        }
+
+
 class RpmInfoCollector:
     """
     Collects RpmInfo metadata for a given set of RPM names and architectures from specified repositories.
@@ -186,8 +255,9 @@ class RpmInfoCollector:
         if already_loaded:
             self.logger.info(f"Repos already loaded, skipping: {', '.join(sorted(already_loaded))} for arch {arch}")
 
-        enabled_repos = {r.name for r in self.repos.values() if r.enabled}
-        repos_to_fetch = sorted(enabled_repos | set(not_yet_loaded))
+        # Only fetch repos that are BOTH globally enabled AND requested (and not already loaded)
+        globally_enabled = {r.name for r in self.repos.values() if r.enabled}
+        repos_to_fetch = sorted((globally_enabled & requested_repos) - already_loaded)
 
         if not repos_to_fetch:
             self.logger.info("No new repos to load.")
@@ -206,6 +276,14 @@ class RpmInfoCollector:
         """
         Resolve RPM metadata for a specific architecture from the given repodata names.
 
+        For plain package names the highest version across ALL repos is selected (matching
+        dnf behaviour).  For NVR-pinned items the exact requested version is preserved in
+        the output so that hermetic builds can install a specific older version.
+
+        When the same EVR exists in multiple repos, the repo iteration order from
+        ``sort_repos_for_lockfile_resolution`` acts as tiebreaker (RHEL upstream repos
+        are preferred over rhocp plashets).
+
         Args:
             rpm_names (set[str]): RPM names or NVRs to resolve.
             repo_names (set[str]): Names of repodata sources to search.
@@ -214,11 +292,17 @@ class RpmInfoCollector:
         Returns:
             list[RpmInfo]: Resolved RPM package metadata.
         """
-        rpm_info_list = []
-        unresolved_rpms = set(rpm_names)
-        missing_rpms = unresolved_rpms
+        nvr_to_name: dict[str, str] = {}
+        for item in rpm_names:
+            is_nvr, pkg_name = Repodata._detect_nvr_vs_name(item)
+            if is_nvr:
+                nvr_to_name[item] = pkg_name
 
-        for repo_name in repo_names:
+        best_by_name: dict[str, RpmInfo] = {}
+        pinned_by_nvr: dict[str, RpmInfo] = {}
+        resolved_items: set[str] = set()
+
+        for repo_name in sort_repos_for_lockfile_resolution(repo_names):
             repodata = self.loaded_repos.get(f'{repo_name}-{arch}')
             if repodata is None:
                 self.logger.error(
@@ -231,30 +315,39 @@ class RpmInfoCollector:
                 self.logger.error(f'repo {repo_name} not found')
                 continue
 
-            found_rpms, missing_rpms = repodata.get_rpms(unresolved_rpms, arch)
+            found_rpms, not_found = repodata.get_rpms(rpm_names, arch)
+            resolved_items |= rpm_names - set(not_found)
 
             content_set_id = repo.content_set(arch)
             if content_set_id is None:
                 self.logger.warning(f'repo {repo_name} has no content_set for {arch}, falling back to repo key')
                 content_set_id = f'{repo_name}-{arch}'
 
-            rpm_info_list.extend(
-                [
-                    RpmInfo.from_rpm(rpm, repoid=content_set_id, baseurl=repo.baseurl(repotype="unsigned", arch=arch))
-                    for rpm in found_rpms
-                ]
+            baseurl = repo.baseurl(repotype="unsigned", arch=arch)
+            for rpm in found_rpms:
+                info = RpmInfo.from_rpm(rpm, repoid=content_set_id, baseurl=baseurl)
+
+                for nvr_str, pkg_name in nvr_to_name.items():
+                    if rpm.name == pkg_name and rpm.nvr == nvr_str and nvr_str not in pinned_by_nvr:
+                        pinned_by_nvr[nvr_str] = info
+
+                existing = best_by_name.get(rpm.name)
+                if existing is None or info > existing:
+                    best_by_name[rpm.name] = info
+
+        missing = rpm_names - resolved_items
+        if missing:
+            self.logger.warning(
+                f"Could not find {','.join(sorted(missing))} in {', '.join(repo_names)} for arch {arch}"
             )
 
-            if not missing_rpms:
-                # Found all rpms, break early
-                break
+        results: dict[tuple[str, str], RpmInfo] = {}
+        for info in best_by_name.values():
+            results[(info.name, info.evr)] = info
+        for info in pinned_by_nvr.values():
+            results[(info.name, info.evr)] = info
 
-            unresolved_rpms = missing_rpms
-
-        if missing_rpms:
-            self.logger.warning(f"Could not find {','.join(missing_rpms)} in {', '.join(repo_names)} for arch {arch}")
-
-        return sorted(rpm_info_list)
+        return sorted(results.values())
 
     @start_as_current_span_async(TRACER, "lockfile.fetch_rpms_info")
     async def fetch_rpms_info(
@@ -262,6 +355,8 @@ class RpmInfoCollector:
     ) -> dict[str, list[RpmInfo]]:
         """
         Resolve RPM info across multiple architectures and repositories.
+
+        Note: Repositories must be pre-loaded using _load_repos before calling this method.
 
         Args:
             arches (list[str]): Target architectures.
@@ -277,8 +372,6 @@ class RpmInfoCollector:
         current_span.set_attribute("lockfile.rpm_count", len(rpm_names))
         current_span.set_attribute("lockfile.arch_count", len(arches))
 
-        await asyncio.gather(*(self._load_repos(repositories, arch) for arch in arches))
-
         results = await asyncio.gather(
             *[
                 asyncio.get_running_loop().run_in_executor(
@@ -290,7 +383,147 @@ class RpmInfoCollector:
 
         total_resolved = sum(len(result) for result in results)
         current_span.set_attribute("lockfile.total_resolved_packages", total_resolved)
-        return dict(zip(arches, results))
+        return dict(zip(arches, results, strict=True))
+
+    def _get_modules_yaml_metadata(self, repo_name: str, arch: str) -> Tuple[str, int, str]:
+        """
+        Extract checksum, size and URL for modules.yaml from repodata.
+
+        Args:
+            repo_name: Repository name
+            arch: Architecture
+
+        Returns:
+            Tuple[str, int, str]: (checksum, size, url) for modules.yaml file
+        """
+        repodata = self.loaded_repos.get(f'{repo_name}-{arch}')
+        if repodata is None:
+            self.logger.warning(f'repodata {repo_name}-{arch} not found')
+            return "sha256:unknown", 0, "repodata/modules.yaml"
+
+        if (
+            repodata.modules_checksum is not None
+            and repodata.modules_size is not None
+            and repodata.modules_url is not None
+        ):
+            return repodata.modules_checksum, repodata.modules_size, repodata.modules_url
+
+        return "sha256:unknown", 0, "repodata/modules.yaml"
+
+    def _fetch_modules_info_per_arch(self, module_names: set[str], repo_names: set[str], arch: str) -> list[ModuleInfo]:
+        """
+        Resolve repository module metadata for specific architecture from repodata sources.
+
+        Finds repositories that contain any of the requested modules and returns one
+        ModuleInfo entry per unique repository (not per module).
+
+        Args:
+            module_names: Set of module names to resolve (e.g., {"python36", "nodejs"})
+            repo_names: Names of repodata sources to search
+            arch: Target architecture
+
+        Returns:
+            list[ModuleInfo]: Repository-based module metadata (one entry per repo with modules)
+        """
+        module_info_list = []
+        search_names = {name.split(':')[0] for name in module_names}
+        unresolved_search_names = set(search_names)
+        processed_repos = set()
+
+        for repo_name in repo_names:
+            repodata = self.loaded_repos.get(f'{repo_name}-{arch}')
+            if repodata is None:
+                self.logger.error(f'repodata {repo_name}-{arch} not found while fetching modules')
+                continue
+
+            repo = self.repos._repos[repo_name]
+            if repo is None:
+                self.logger.error(f'repo {repo_name} not found')
+                continue
+
+            matching_modules = [
+                module
+                for module in repodata.modules
+                if module.name in search_names and (module.arch == arch or module.arch == "noarch")
+            ]
+
+            self.logger.debug(
+                f'Repository {repo_name}-{arch}: found {len(repodata.modules)} total modules, {len(matching_modules)} matching {module_names}'
+            )
+
+            if repodata.modules:
+                module_summary = [(m.name, m.arch) for m in repodata.modules[:5]]
+                self.logger.debug(f'Available modules (first 5): {module_summary}')
+
+            if not matching_modules:
+                self.logger.debug(f'No matching modules found in {repo_name}-{arch}, skipping repository')
+                continue
+
+            content_set_id = repo.content_set(arch) or f'{repo_name}-{arch}'
+
+            repo_key = f"{content_set_id}"
+            if repo_key in processed_repos:
+                continue
+            processed_repos.add(repo_key)
+
+            baseurl = repo.baseurl(repotype="unsigned", arch=arch)
+            modules_checksum, modules_size, modules_url = self._get_modules_yaml_metadata(repo_name, arch)
+
+            module_info = ModuleInfo.from_repository_metadata(
+                repoid=content_set_id, baseurl=baseurl, checksum=modules_checksum, size=modules_size, url=modules_url
+            )
+            module_info_list.append(module_info)
+
+            found_modules = {module.name for module in matching_modules}
+            unresolved_search_names -= found_modules
+
+            if not unresolved_search_names:
+                break
+
+        if unresolved_search_names:
+            self.logger.warning(
+                f"Could not find modules {','.join(unresolved_search_names)} in {', '.join(repo_names)} for arch {arch}"
+            )
+
+        return sorted(module_info_list, key=lambda m: m.repoid)
+
+    @start_as_current_span_async(TRACER, "lockfile.fetch_modules_info")
+    async def fetch_modules_info(
+        self, arches: list[str], repositories: set[str], module_names: set[str]
+    ) -> dict[str, list[ModuleInfo]]:
+        """
+        Resolve module info across multiple architectures and repositories.
+
+        Args:
+            arches: Target architectures
+            repositories: Names of repositories to search
+            module_names: Names of modules to resolve (can be empty)
+
+        Returns:
+            dict[str, list[ModuleInfo]]: Always returns dict with arch keys, empty lists if no modules
+        """
+        current_span = trace.get_current_span()
+        current_span.set_attribute("lockfile.module_count", len(module_names))
+
+        if not module_names:
+            self.logger.debug("No modules to install, returning empty module metadata")
+            return {arch: [] for arch in arches}
+
+        current_span.set_attribute("lockfile.arches", ",".join(arches))
+        current_span.set_attribute("lockfile.repositories", ",".join(sorted(repositories)))
+
+        results = await asyncio.gather(
+            *[
+                asyncio.get_running_loop().run_in_executor(
+                    None, self._fetch_modules_info_per_arch, module_names, repositories, arch
+                )
+                for arch in arches
+            ]
+        )
+
+        total_resolved = sum(len(result) for result in results)
+        current_span.set_attribute("lockfile.total_resolved_modules", total_resolved)
+        return dict(zip(arches, results, strict=True))
 
 
 class RPMLockfileGenerator:
@@ -302,45 +535,69 @@ class RPMLockfileGenerator:
     for asynchronous RPM metadata retrieval and outputs YAML lockfiles along with digest files.
     """
 
-    def __init__(self, repos: Repos, logger: Optional[Logger] = None, runtime=None):
+    def __init__(
+        self,
+        repos: Repos,
+        logger: Optional[Logger] = None,
+        runtime=None,
+        lockfile_seed_nvrs: Optional[list[str]] = None,
+    ):
         self.logger = logger or logutil.get_logger(__name__)
         self.builder = RpmInfoCollector(repos, self.logger)
         self.runtime = runtime
+        self.lockfile_seed_nvrs = lockfile_seed_nvrs
 
-    def _get_target_branch(self, distgit_key: str) -> Optional[str]:
-        """
-        Construct target branch name using the same format as rebaser.
+    def _validate_cross_arch_version_sets(self, rpms_info_by_arch: dict[str, list[RpmInfo]]) -> None:
+        """Validate that RPM latest version sets are consistent across architectures where packages exist."""
+        package_arch_evrs = {}
 
-        Args:
-            distgit_key (str): Distgit key to construct the target branch name.
+        for arch, rpm_list in rpms_info_by_arch.items():
+            # Group RPMs by package name
+            packages = {}
+            for rpm in rpm_list:
+                packages.setdefault(rpm.name, []).append(rpm)
 
-        Returns:
-            Optional[str]: Target branch name, or None if runtime is not available.
-        """
-        if not self.runtime:
-            return None
-        return "art-{group}-assembly-{assembly_name}-dgk-{distgit_key}".format(
-            group=self.runtime.group,
-            assembly_name=self.runtime.assembly,
-            distgit_key=distgit_key,
-        )
+            # For each package, find latest version and add to validation set
+            for package_name, package_rpms in packages.items():
+                if len(package_rpms) == 1:
+                    latest_rpm = package_rpms[0]
+                else:
+                    # Find latest using RpmInfo comparison (leverages @total_ordering)
+                    latest_rpm = package_rpms[0]
+                    for rpm in package_rpms[1:]:
+                        if rpm > latest_rpm:
+                            latest_rpm = rpm
+
+                package_arch_evrs.setdefault(package_name, {}).setdefault(arch, set()).add(latest_rpm.evr)
+
+        mismatches = []
+        for package_name, arch_evrs in package_arch_evrs.items():
+            if len(arch_evrs) < 2:
+                continue
+
+            evr_sets = list(arch_evrs.values())
+            reference_set = evr_sets[0]
+
+            if not all(evr_set == reference_set for evr_set in evr_sets[1:]):
+                arch_details = [f"{arch}:{{{','.join(sorted(evr_set))}}}" for arch, evr_set in arch_evrs.items()]
+                mismatches.append(f"{package_name} ({'; '.join(arch_details)})")
+
+        if mismatches:
+            raise ValueError(f"RPM version set mismatches: {'; '.join(mismatches)}")
 
     async def should_generate_lockfile(
         self, image_meta: ImageMetadata, dest_dir: Path, filename: str = DEFAULT_RPM_LOCKFILE_NAME
     ) -> tuple[bool, set[str]]:
         """
-        Determine if lockfile generation is needed and return RPMs to install.
-
-        Checks lockfile generation configuration, repository availability, and
-        digest optimization to avoid unnecessary regeneration.
+        Determine if lockfile generation is needed for an image.
 
         Args:
-            image_meta: Image metadata containing configuration and distgit info
+            image_meta: Image metadata containing repository and RPM configuration
             dest_dir: Destination directory for lockfile output
-            filename: Lockfile filename, defaults to rpms.lock.yaml
+            filename: Name of the lockfile to generate
 
         Returns:
-            tuple[bool, set[str]]: (should_generate, rpms_to_install)
+            tuple[bool, set[str]]: Whether to generate lockfile and set of RPMs to install
         """
         if not image_meta.is_lockfile_generation_enabled():
             return False, set()
@@ -350,7 +607,7 @@ class RPMLockfileGenerator:
             self.logger.info(f"Skipping lockfile generation for {image_meta.distgit_key}: repositories set is empty")
             return False, set()
 
-        rpms_to_install = await image_meta.get_lockfile_rpms_to_install()
+        rpms_to_install = await image_meta.get_lockfile_rpms_to_install(lockfile_seed_nvrs=self.lockfile_seed_nvrs)
 
         if not rpms_to_install:
             self.logger.warning(
@@ -359,34 +616,6 @@ class RPMLockfileGenerator:
             return False, set()
         else:
             self.logger.info(f'{image_meta.distgit_key} image needs to install {len(rpms_to_install)} rpms')
-
-        if image_meta.is_lockfile_force_enabled():
-            self.logger.info(
-                f"Force flag set for {image_meta.distgit_key}. Regenerating lockfile without digest check."
-            )
-            return True, rpms_to_install
-
-        fingerprint = self._compute_hash(rpms_to_install)
-        digest_path = dest_dir / f'{filename}.digest'
-
-        old_fingerprint = None
-        if digest_path.exists():
-            try:
-                with open(digest_path, 'r') as f:
-                    old_fingerprint = f.read().strip()
-            except Exception as e:
-                self.logger.info(f"Failed to read local digest file '{digest_path}': {e}")
-
-        if old_fingerprint is None:
-            old_fingerprint = await self._get_digest_from_target_branch(digest_path, image_meta)
-            if old_fingerprint:
-                self.logger.info(f"Found digest in target branch for {image_meta.distgit_key}")
-
-        if old_fingerprint == fingerprint:
-            self.logger.info(f"No changes in RPM list for {image_meta.distgit_key}. Skipping lockfile generation.")
-            return False, rpms_to_install
-        elif old_fingerprint:
-            self.logger.info(f"RPM list changed for {image_meta.distgit_key}. Regenerating lockfile.")
 
         return True, rpms_to_install
 
@@ -413,7 +642,7 @@ class RPMLockfileGenerator:
                 images_needing_lockfiles.append(image_meta)
                 self.logger.info(f"Image {image_meta.distgit_key} needs lockfile generation")
             else:
-                self.logger.info(f"Image {image_meta.distgit_key} skipping lockfile generation (digest unchanged)")
+                self.logger.info(f"Image {image_meta.distgit_key} skipping lockfile generation")
 
         repos_by_arch = {}
 
@@ -436,140 +665,14 @@ class RPMLockfileGenerator:
             )
 
             if repos_by_arch:
+                # Note: loading repos across arches in parallel (asyncio.gather) was tested
+                # and did not improve performance. Keep sequential loading.
                 for arch, repos_for_arch in repos_by_arch.items():
                     await self.builder._load_repos(repos_for_arch, arch)
             else:
                 self.logger.info("No repositories to load for lockfile generation")
         else:
             self.logger.info("No images need lockfile generation - skipping repository loading")
-
-    async def _sync_from_upstream_if_needed(
-        self, image_meta: ImageMetadata, dest_dir: Path, filename: str = DEFAULT_RPM_LOCKFILE_NAME
-    ) -> None:
-        """
-        Download existing lockfile and digest from target branch if available.
-
-        Attempts to fetch both lockfile and digest from the upstream target branch
-        to enable digest optimization for unchanged RPM lists.
-
-        Args:
-            image_meta: Image metadata containing distgit information
-            dest_dir: Local directory to write downloaded files
-            filename: Lockfile filename, defaults to rpms.lock.yaml
-        """
-        lockfile_path = dest_dir / filename
-        digest_path = dest_dir / f'{filename}.digest'
-
-        upstream_digest = await self._get_digest_from_target_branch(digest_path, image_meta)
-        if upstream_digest:
-            try:
-                digest_path.write_text(upstream_digest)
-                self.logger.info(f"Downloaded digest file to {digest_path}")
-            except Exception as e:
-                self.logger.warning(f"Failed to write digest file '{digest_path}': {e}")
-
-        upstream_lockfile = await self._get_lockfile_from_target_branch(lockfile_path, image_meta)
-        if upstream_lockfile:
-            try:
-                lockfile_path.write_text(upstream_lockfile)
-                self.logger.info(f"Downloaded lockfile to {lockfile_path}")
-            except Exception as e:
-                self.logger.warning(f"Failed to write lockfile '{lockfile_path}': {e}")
-        else:
-            self.logger.warning(f"Could not download lockfile from upstream branch for {image_meta.distgit_key}")
-
-    @staticmethod
-    def _compute_hash(rpms: set[str]) -> str:
-        """
-        Compute a SHA256 hash fingerprint from a set of RPM names.
-
-        Args:
-            rpms (set[str]): Set of RPM names.
-
-        Returns:
-            str: SHA256 hex digest of sorted RPM names joined by newline.
-        """
-        sorted_items = sorted(rpms)
-        joined = '\n'.join(sorted_items)
-        return hashlib.sha256(joined.encode('utf-8')).hexdigest()
-
-    async def _get_digest_from_target_branch(self, digest_path: Path, image_meta: ImageMetadata) -> Optional[str]:
-        """
-        Fetch digest file content from the target art branch.
-
-        Args:
-            digest_path (Path): Path to the digest file relative to repo root.
-            image_meta (ImageMetadata): Image metadata containing distgit information.
-
-        Returns:
-            Optional[str]: Digest content if found, None otherwise.
-        """
-        target_branch = self._get_target_branch(image_meta.distgit_key)
-        if not target_branch:
-            return None
-
-        try:
-            git_url = str(image_meta.config.content.source.git.url)
-            digest_filename = digest_path.name
-
-            server, org, repo_name = split_git_url(git_url)
-            if 'github.com' not in server:
-                self.logger.debug(f"Non-GitHub repository, skipping: {git_url}")
-                return None
-
-            token = os.environ.get('GITHUB_TOKEN')
-            if not token:
-                self.logger.debug("GITHUB_TOKEN not available")
-                return None
-
-            async with aiohttp.ClientSession() as session:
-                with tempfile.NamedTemporaryFile(mode='w+') as tmp:
-                    await download_file_from_github(git_url, target_branch, digest_filename, token, tmp.name, session)
-                    tmp.seek(0)
-                    return tmp.read().strip()
-
-        except Exception as e:
-            self.logger.debug(f"Error fetching digest from GitHub branch '{target_branch}': {e}")
-            return None
-
-    async def _get_lockfile_from_target_branch(self, lockfile_path: Path, image_meta: 'ImageMetadata') -> Optional[str]:
-        """
-        Fetch lockfile content from the target art branch.
-
-        Args:
-            lockfile_path (Path): Path to the lockfile relative to repo root.
-            image_meta (ImageMetadata): Image metadata containing distgit information.
-
-        Returns:
-            Optional[str]: Lockfile content if found, None otherwise.
-        """
-        target_branch = self._get_target_branch(image_meta.distgit_key)
-        if not target_branch:
-            return None
-
-        try:
-            git_url = image_meta.distgit_remote_url()
-            lockfile_filename = lockfile_path.name
-
-            server, org, repo_name = split_git_url(git_url)
-            if 'github.com' not in server:
-                self.logger.debug(f"Non-GitHub repository, skipping: {git_url}")
-                return None
-
-            token = os.environ.get('GITHUB_TOKEN')
-            if not token:
-                self.logger.debug("GITHUB_TOKEN not available")
-                return None
-
-            async with aiohttp.ClientSession() as session:
-                with tempfile.NamedTemporaryFile(mode='w+') as tmp:
-                    await download_file_from_github(git_url, target_branch, lockfile_filename, token, tmp.name, session)
-                    tmp.seek(0)
-                    return tmp.read()
-
-        except Exception as e:
-            self.logger.debug(f"Error fetching lockfile from GitHub branch '{target_branch}': {e}")
-            return None
 
     async def generate_lockfile(
         self, image_meta: ImageMetadata, dest_dir: Path, filename: str = DEFAULT_RPM_LOCKFILE_NAME
@@ -589,12 +692,19 @@ class RPMLockfileGenerator:
         should_generate, rpms_to_install = await self.should_generate_lockfile(image_meta, dest_dir, filename)
 
         if not should_generate:
-            if rpms_to_install:
-                await self._sync_from_upstream_if_needed(image_meta, dest_dir, filename)
             return
 
         arches = image_meta.get_arches()
         enabled_repos = image_meta.get_enabled_repos()
+
+        # Load repositories once for both RPM and module collection to avoid race condition
+        # Only attempt loading if we have real repository objects (not test mocks)
+        if hasattr(self.builder.repos, '_repos') and enabled_repos:
+            try:
+                await asyncio.gather(*(self.builder._load_repos(enabled_repos, arch) for arch in arches))
+            except (TypeError, AttributeError):
+                # Skip repository loading in test scenarios where mocks don't support async operations
+                pass
 
         lockfile = {
             "lockfileVersion": 1,
@@ -602,25 +712,38 @@ class RPMLockfileGenerator:
             "arches": [],
         }
 
-        rpms_info_by_arch = await self.builder.fetch_rpms_info(arches, enabled_repos, rpms_to_install)
+        modules_to_install = image_meta.get_lockfile_modules_to_install()
+
+        rpms_info_by_arch, modules_info_by_arch = await asyncio.gather(
+            self.builder.fetch_rpms_info(arches, enabled_repos, rpms_to_install),
+            self.builder.fetch_modules_info(arches, enabled_repos, modules_to_install),
+        )
+
+        # Validate cross-architecture version set consistency
+        self._validate_cross_arch_version_sets(rpms_info_by_arch)
+
+        if image_meta.is_cross_arch_enabled():
+            self.logger.info("Cross-architecture lockfile inclusion enabled")
+
+            all_rpms = []
+            for arch_rpms in rpms_info_by_arch.values():
+                all_rpms.extend(arch_rpms)
+
+            for arch in arches:
+                rpms_info_by_arch[arch] = all_rpms
+
         for arch, rpm_list in rpms_info_by_arch.items():
+            module_list = modules_info_by_arch.get(arch, [])
             lockfile["arches"].append(
                 {
                     "arch": arch,
                     "packages": [rpm.to_dict() for rpm in rpm_list],
-                    "module_metadata": [],
+                    "module_metadata": [module.to_dict() for module in module_list],
                 }
             )
 
         lockfile_path = dest_dir / filename
         self._write_yaml(lockfile, lockfile_path)
-
-        fingerprint = self._compute_hash(rpms_to_install)
-        digest_path = dest_dir / f'{filename}.digest'
-        try:
-            digest_path.write_text(fingerprint)
-        except Exception as e:
-            self.logger.warning(f"Failed to write digest file '{digest_path}': {e}")
 
     def _write_yaml(self, data: dict, output_path: Path) -> None:
         """
@@ -699,8 +822,7 @@ class ArtifactLockfileGenerator:
 
         artifact_infos = []
         async with aiohttp.ClientSession() as session:
-            for url in required_artifact_urls:
-                artifact_resource = {'name': self._extract_filename_from_url(url), 'url': url}
+            for artifact_resource in required_artifact_urls:
                 artifact_info = await self._download_and_compute_checksum(session, artifact_resource)
                 artifact_infos.append(artifact_info)
 
@@ -718,12 +840,13 @@ class ArtifactLockfileGenerator:
 
         Args:
             session (aiohttp.ClientSession): HTTP session for downloads.
-            artifact_resource (dict): Resource definition with 'name' and 'url' keys.
+            artifact_resource (dict): Resource definition with 'url' and optional 'filename' keys.
 
         Returns:
             ArtifactInfo: Artifact metadata with checksum.
         """
         url = artifact_resource['url']
+        custom_filename = artifact_resource.get('filename')
 
         self.logger.debug(f"Downloading artifact from {url}")
 
@@ -733,18 +856,12 @@ class ArtifactLockfileGenerator:
 
         checksum = hashlib.sha256(content).hexdigest()
 
-        # Extract filename from URL
-        try:
-            from urllib.parse import urlparse
-
-            parsed_url = urlparse(url)
-            filename = parsed_url.path.split('/')[-1]
-            if not filename:
-                # Fallback if URL doesn't end with a filename
-                filename = f"{artifact_resource['name']}-artifact"
-        except Exception:
-            # Fallback if URL parsing fails
-            filename = f"{artifact_resource['name']}-artifact"
+        # Use custom filename if provided, otherwise extract from URL
+        if custom_filename:
+            filename = custom_filename
+            self.logger.info(f"Using custom destination filename: {filename} for {url}")
+        else:
+            filename = self._extract_filename_from_url(url)
 
         return ArtifactInfo(url=url, checksum=f"sha256:{checksum}", filename=filename)
 

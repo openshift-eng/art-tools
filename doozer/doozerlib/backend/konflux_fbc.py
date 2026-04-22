@@ -2,6 +2,7 @@ import asyncio
 import itertools
 import logging
 import os
+import re
 import shutil
 import ssl
 from collections import defaultdict
@@ -10,16 +11,20 @@ from io import StringIO
 from os import PathLike
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any, Collection, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import Any, Collection, Dict, Iterable, List, NamedTuple, Optional, Sequence, Set, Tuple
 
 import httpx
 import truststore
+from artcommonlib import exectools, git_helper
 from artcommonlib import util as artlib_util
+from artcommonlib.assembly import AssemblyTypes, assembly_config_struct, assembly_type
+from artcommonlib.constants import KONFLUX_DEFAULT_IMAGE_SHARE_REPO
 from artcommonlib.konflux.konflux_build_record import (
     Engine,
     KonfluxBuildOutcome,
     KonfluxBuildRecord,
     KonfluxBundleBuildRecord,
+    KonfluxECStatus,
     KonfluxFbcBuildRecord,
 )
 from artcommonlib.konflux.konflux_db import KonfluxDb
@@ -28,10 +33,22 @@ from dockerfile_parse import DockerfileParser
 from doozerlib import constants, opm, util
 from doozerlib.backend.build_repo import BuildRepo
 from doozerlib.backend.konflux_client import KonfluxClient
+from doozerlib.backend.pipelinerun_utils import PipelineRunInfo
+from doozerlib.constants import KONFLUX_DEFAULT_IMAGE_REPO
 from doozerlib.image import ImageMetadata
 from doozerlib.record_logger import RecordLogger
-from kubernetes.dynamic import resource
+from elliottlib.shipment_utils import get_shipment_config_from_mr
+from semver import VersionInfo
 from tenacity import retry, stop_after_attempt, wait_fixed
+
+
+class AssemblyBundleCsvInfo(NamedTuple):
+    """Catalog info extracted from an assembly's FBC component."""
+
+    csv_name: str
+    skip_range: Optional[str]
+    bundle_blob: Optional[Dict]  # The olm.bundle blob to add to the catalog
+
 
 LOGGER = logging.getLogger(__name__)
 yaml = opm.yaml
@@ -39,6 +56,98 @@ yaml = opm.yaml
 PRODUCTION_INDEX_PULLSPEC_FORMAT = "registry.redhat.io/redhat/redhat-operator-index:v{major}.{minor}"
 BASE_IMAGE_RHEL9_PULLSPEC_FORMAT = "registry.redhat.io/openshift4/ose-operator-registry-rhel9:v{major}.{minor}"
 BASE_IMAGE_RHEL8_PULLSPEC_FORMAT = "registry.redhat.io/openshift4/ose-operator-registry:v{major}.{minor}"
+FBC_BUILD_PRIORITY = "2"
+
+
+def _generate_fbc_branch_name(
+    group: str, assembly: str, distgit_key: str, ocp_version: Optional[Tuple[int, int]] = None
+) -> str:
+    """Generate FBC branch name with optional OCP version for non-OpenShift products.
+
+    Args:
+        group: The doozer group name (e.g., "openshift-4.17", "oadp-1.4")
+        assembly: Assembly name (e.g., "stream", "4.17.1")
+        distgit_key: Operator distgit key (e.g., "cluster-nfd-operator")
+        ocp_version: Target OCP version tuple (major, minor) for non-OpenShift products
+
+    Returns:
+        Branch name following the pattern:
+        - For OpenShift: "art-{group}-assembly-{assembly}-fbc-{distgit_key}"
+        - For non-OpenShift: "art-{group}-ocp-{ocp_major}.{ocp_minor}-assembly-{assembly}-fbc-{distgit_key}"
+    """
+    if group.startswith('openshift-'):
+        # For OpenShift products, use the traditional naming
+        return f"art-{group}-assembly-{assembly}-fbc-{distgit_key}"
+    else:
+        # For non-OpenShift products, include the target OCP version
+        if ocp_version is None:
+            raise ValueError(f"ocp_version is required for non-OpenShift group '{group}'")
+        ocp_version_str = f"{ocp_version[0]}.{ocp_version[1]}"
+        return f"art-{group}-ocp-{ocp_version_str}-assembly-{assembly}-fbc-{distgit_key}"
+
+
+async def _fetch_csv_from_git(
+    git_url: str,
+    revision: str,
+    work_dir: Path,
+    logger: logging.Logger,
+) -> Optional[Dict]:
+    """
+    Clone a git repo at a specific revision and extract the clusterserviceversion.yaml.
+
+    Args:
+        git_url: The git repository URL (e.g., https://github.com/openshift-priv/ptp-operator)
+        revision: The git commit SHA to checkout
+        work_dir: Working directory for the git clone
+        logger: Logger instance
+
+    Returns:
+        Parsed CSV content as a dict, or None if not found
+    """
+    repo_dir = work_dir / "csv_repo"
+    if repo_dir.exists():
+        shutil.rmtree(repo_dir)
+
+    try:
+        clone_url = artlib_util.ensure_github_https_url(git_url)
+        logger.info("Cloning %s at revision %s", clone_url, revision)
+        await git_helper.run_git_async(
+            ["clone", "--no-checkout", "--depth=1", clone_url, str(repo_dir)], check=True, github_url=clone_url
+        )
+
+        # Fetch the specific revision
+        await git_helper.run_git_async(
+            ["-C", str(repo_dir), "fetch", "--depth=1", "origin", revision], check=True, github_url=clone_url
+        )
+
+        # Checkout the revision
+        await git_helper.run_git_async(["-C", str(repo_dir), "checkout", revision], check=True, github_url=clone_url)
+
+        # Find the clusterserviceversion.yaml file in manifests/
+        manifests_dir = repo_dir / "manifests"
+        if not manifests_dir.exists():
+            logger.warning("manifests/ directory not found in %s", git_url)
+            return None
+
+        csv_files = sorted(manifests_dir.rglob("*clusterserviceversion.yaml"))
+        if not csv_files:
+            logger.warning("No clusterserviceversion.yaml found in manifests/")
+            return None
+        if len(csv_files) > 1:
+            raise IOError(f"Multiple clusterserviceversion.yaml files found under {manifests_dir}")
+
+        csv_file = csv_files[0]
+        logger.info("Found CSV file: %s", csv_file.name)
+
+        with csv_file.open() as f:
+            return yaml.load(f)
+
+    except Exception as e:
+        logger.warning("Failed to fetch CSV from git: %s", e)
+        return None
+    finally:
+        if repo_dir.exists():
+            shutil.rmtree(repo_dir)
 
 
 class KonfluxFbcImporter:
@@ -92,7 +201,7 @@ class KonfluxFbcImporter:
         if self.ocp_version >= (4, 17):
             migrate_level = "bundle-object-to-csv-metadata"
         catalog_blobs = await self._get_catalog_blobs_from_index_image(
-            index_image, package_name, migrate_level=migrate_level
+            index_image, package_name, migrate_level=migrate_level, strict=strict
         )
         if not catalog_blobs:
             if strict:
@@ -104,12 +213,8 @@ class KonfluxFbcImporter:
             )
 
         # Clone the FBC repo
-        build_branch = "art-{group}-assembly-{assembly_name}-fbc-{distgit_key}".format_map(
-            {
-                "group": self.group,
-                "assembly_name": self.assembly,
-                "distgit_key": metadata.distgit_key,
-            }
+        build_branch = _generate_fbc_branch_name(
+            group=self.group, assembly=self.assembly, distgit_key=metadata.distgit_key, ocp_version=self.ocp_version
         )
         logger.info("Cloning FBC repo %s branch %s into %s", self.fbc_git_repo, build_branch, repo_dir)
         build_repo = BuildRepo(url=self.fbc_git_repo, branch=build_branch, local_dir=repo_dir, logger=logger)
@@ -170,11 +275,14 @@ class KonfluxFbcImporter:
         logger.info("FBC directory updated")
 
     @alru_cache
-    async def _render_index_image(self, index_image: str, migrate_level: str = "none") -> List[Dict]:
+    async def _render_index_image(
+        self, index_image: str, migrate_level: str = "none", strict: bool = True
+    ) -> List[Dict] | None:
         blobs = await retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(5))(opm.render)(
             index_image,
             auth=self.auth,
             migrate_level=migrate_level,
+            strict=strict,
         )
         return blobs
 
@@ -204,12 +312,14 @@ class KonfluxFbcImporter:
         return filtered
 
     async def _get_catalog_blobs_from_index_image(
-        self, index_image: str, package_name: str, migrate_level: str = "none"
-    ):
-        blobs = await self._render_index_image(index_image, migrate_level=migrate_level)
+        self, index_image: str, package_name: str, migrate_level: str = "none", strict: bool = True
+    ) -> list[dict[str, Any]] | None:
+        blobs = await self._render_index_image(index_image, migrate_level=migrate_level, strict=strict)
+        if blobs is None:
+            return None
         filtered_blobs = self._filter_catalog_blobs(blobs, {package_name})
         if package_name not in filtered_blobs:
-            return
+            return None
         return filtered_blobs[package_name]
 
     async def _get_package_name(self, metadata: ImageMetadata) -> str:
@@ -255,7 +365,9 @@ class KonfluxFbcFragmentMerger:
         fbc_git_password: str | None = None,
         registry_auth: Optional[str] = None,
         skip_checks: bool = False,
+        skip_fips_check: bool = False,
         plr_template: Optional[str] = None,
+        major_minor_override: Optional[Tuple[int, int]] = None,
         logger: logging.Logger | None = None,
     ):
         """
@@ -278,7 +390,9 @@ class KonfluxFbcFragmentMerger:
         self.fbc_git_password = fbc_git_password
         self.registry_auth = registry_auth
         self.skip_checks = skip_checks
+        self.skip_fips_check = skip_fips_check
         self.plr_template = plr_template or constants.KONFLUX_DEFAULT_FBC_BUILD_PLR_TEMPLATE_URL
+        self.major_minor_override = major_minor_override
         self._logger = logger or LOGGER.getChild(self.__class__.__name__)
         self._konflux_client = KonfluxClient.from_kubeconfig(
             config_file=self.konflux_kubeconfig,
@@ -288,13 +402,16 @@ class KonfluxFbcFragmentMerger:
             logger=logger,
         )
 
-    async def run(self, fragments: Collection[str], target_index: str):
+    async def run(self, fragments: Collection[str], target_index: str, git_auth_secret: Optional[str] = None):
         if not fragments:
             raise ValueError("At least one fragment must be provided.")
         if not target_index:
             raise ValueError("Target index must be provided.")
-        major = int(self.group_config.get("vars", {}).get("MAJOR"))
-        minor = int(self.group_config.get("vars", {}).get("MINOR"))
+        if self.major_minor_override:
+            major, minor = self.major_minor_override
+        else:
+            major = int(self.group_config.get("vars", {}).get("MAJOR"))
+            minor = int(self.group_config.get("vars", {}).get("MINOR"))
         logger = self._logger
         konflux_client = self._konflux_client
 
@@ -371,22 +488,24 @@ class KonfluxFbcFragmentMerger:
             logger.info("Dry run enabled, not pushing changes.")
 
         # Start the build
-        retries = 3
-        for attempt in range(retries):
-            logger.info(f"Attempt {attempt + 1} of {retries} to start the build...")
+        build_attempts = self.group_config.get("konflux", {}).get("build_attempts", 3)
+        for attempt in range(build_attempts):
+            logger.info(f"Attempt {attempt + 1} of {build_attempts} to start the build...")
             error = None
             created_plr = await self._start_build(
                 build_repo=build_repo,
                 output_image=target_index,
+                git_auth_secret=git_auth_secret,
             )
-            plr_name = created_plr["metadata"]["name"]
-            plr_url = konflux_client.resource_url(created_plr)
+            plr_name = created_plr.name
+            plr_url = konflux_client.resource_url(created_plr.to_dict())
             logger.info(f"Created Pipelinerun {plr_name}: {plr_url}")
 
             # Wait for the Pipelinerun to complete
             logger.info(f"Waiting for Pipelinerun {plr_name} to complete...")
-            plr, _ = await konflux_client.wait_for_pipelinerun(plr_name, self.konflux_namespace)
-            succeeded_condition = artlib_util.KubeCondition.find_condition(plr, 'Succeeded')
+            plr_info = await konflux_client.wait_for_pipelinerun(plr_name, self.konflux_namespace)
+            plr = plr_info.to_dict()
+            succeeded_condition = plr_info.find_condition('Succeeded')
             outcome = KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition(succeeded_condition)
             logger.info(
                 "Pipelinerun %s completed with outcome: %s",
@@ -403,7 +522,7 @@ class KonfluxFbcFragmentMerger:
                 error = None
                 break
         if error:
-            logger.error("Build failed after %d attempts: %s", retries, error)
+            logger.error("Build failed after %d attempts: %s", build_attempts, error)
             raise error
 
     @staticmethod
@@ -441,7 +560,7 @@ class KonfluxFbcFragmentMerger:
                 """
                 Fetch the ImageDigestMirrorSet for a given fragment.
                 """
-                fragment_info = await util.oc_image_info_for_arch_async__caching(
+                fragment_info = await util.oc_image_info_for_arch_async(
                     fragment,
                     registry_config=self.registry_auth,
                 )
@@ -482,7 +601,7 @@ class KonfluxFbcFragmentMerger:
         }
         return target_idms
 
-    async def _start_build(self, build_repo: BuildRepo, output_image: str):
+    async def _start_build(self, build_repo: BuildRepo, output_image: str, git_auth_secret: Optional[str] = None):
         logger = self._logger
         konflux_client = self._konflux_client
         commit_sha = build_repo.commit_hash
@@ -511,8 +630,9 @@ class KonfluxFbcFragmentMerger:
         )
         logger.info(f"Created component {comp_name} in application {app_name}")
 
-        arches = list(KonfluxClient.SUPPORTED_ARCHES.keys())
-        created_plr = await konflux_client.start_pipeline_run_for_image_build(
+        arches = self.group_config.get("arches", list(KonfluxClient.SUPPORTED_ARCHES.keys()))
+
+        build_kwargs = dict(
             generate_name=f"{comp_name}-",
             namespace=self.konflux_namespace,
             application_name=app_name,
@@ -523,12 +643,17 @@ class KonfluxFbcFragmentMerger:
             output_image=f"{output_image_repo}:{output_image_tag}",
             additional_tags=[],
             vm_override={},
-            building_arches=arches,  # FBC should be built for all supported arches
-            hermetic=True,  # FBC should be built in hermetic mode
+            building_arches=arches,
+            hermetic=True,
             dockerfile="catalog.Dockerfile",
             skip_checks=self.skip_checks,
+            skip_fips_check=self.skip_fips_check,
             pipelinerun_template_url=self.plr_template,
+            build_priority=FBC_BUILD_PRIORITY,
         )
+        if git_auth_secret:
+            build_kwargs["git_auth_secret"] = git_auth_secret
+        created_plr = await konflux_client.start_pipeline_run_for_image_build(**build_kwargs)
         return created_plr
 
 
@@ -544,6 +669,8 @@ class KonfluxFbcRebaser:
         push: bool,
         fbc_repo: str,
         upcycle: bool,
+        ocp_version_override: Optional[Tuple[int, int]] = None,
+        insert_missing_entry: bool = False,
         record_logger: Optional[RecordLogger] = None,
         logger: Optional[logging.Logger] = None,
     ) -> None:
@@ -556,12 +683,342 @@ class KonfluxFbcRebaser:
         self.push = push
         self.fbc_repo = fbc_repo or constants.ART_FBC_GIT_REPO
         self.upcycle = upcycle
+        self.ocp_version_override = ocp_version_override
         self._record_logger = record_logger
         self._logger = logger or LOGGER.getChild(self.__class__.__name__)
+        self.insert_missing_entry = insert_missing_entry
 
     @staticmethod
     def get_fbc_name(image_name: str):
         return f"{image_name}-fbc"
+
+    @staticmethod
+    def _extract_version_from_bundle_name(bundle_name: str) -> VersionInfo:
+        """Extract semantic version from bundle name.
+
+        Bundle names follow format: {operator-name}.v{major}.{minor}.{patch}
+        Example: "oadp-operator.v1.3.9" -> VersionInfo(1, 3, 9)
+
+        :param bundle_name: The bundle name
+        :return: VersionInfo object
+        :raises ValueError: If version cannot be parsed from bundle name
+        """
+        # Find the version part (starts with .v followed by semantic version)
+        # Split by '.' and look for the part starting with 'v'
+        parts = bundle_name.split('.')
+        for i, part in enumerate(parts):
+            if part.startswith('v') and len(parts) > i + 2:
+                # Extract vX.Y.Z format
+                version_str = '.'.join([part[1:]] + parts[i + 1 : i + 3])  # Remove 'v' prefix
+                try:
+                    return VersionInfo.parse(version_str)
+                except Exception as e:
+                    raise ValueError(
+                        f"Cannot parse semantic version from bundle name '{bundle_name}'. "
+                        f"Expected format: {{operator-name}}.v{{major}}.{{minor}}.{{patch}}"
+                    ) from e
+        # If we reach here, no version was found
+        raise ValueError(
+            f"Cannot parse semantic version from bundle name '{bundle_name}'. "
+            f"Expected format: {{operator-name}}.v{{major}}.{{minor}}.{{patch}}"
+        )
+
+    @staticmethod
+    def _rebuild_replaces_chain(entries: list) -> None:
+        """Rebuild replaces field for all entries based on their sorted order.
+
+        After sorting entries by version, each entry should replace the previous
+        entry in the list, forming a linear upgrade chain.
+
+        :param entries: List of channel entries sorted by version
+        """
+        for i in range(len(entries)):
+            if i == 0:
+                # First entry (oldest version) replaces nothing
+                entries[i].pop('replaces', None)
+            else:
+                # Each subsequent entry replaces the previous one
+                entries[i]['replaces'] = entries[i - 1]['name']
+
+    _VERSIONED_CHANNEL_RE = re.compile(r'^(.+)-v?(\d+(?:\.\d+)*)$')
+
+    @staticmethod
+    def _resolve_default_channel(channel_names: Collection[str], default_channel_name: str) -> str:
+        """Resolve the default channel to the highest versioned channel sharing the same prefix.
+
+        For versioned channels (e.g. stable-6.3, release-v1.8), finds all channels in the catalog
+        that share the same prefix and returns the one with the highest semver version.
+        For non-versioned channels (e.g. stable, candidate), returns the input unchanged.
+
+        :param channel_names: All channel names present in the catalog for the package.
+        :param default_channel_name: The default channel name from the bundle label.
+        :return: The channel name with the highest version among same-prefix channels,
+                 or default_channel_name if it is non-versioned.
+        """
+        match = KonfluxFbcRebaser._VERSIONED_CHANNEL_RE.match(default_channel_name)
+        if not match:
+            return default_channel_name
+
+        prefix = match.group(1)
+        best_channel = default_channel_name
+        best_version: Optional[VersionInfo] = None
+
+        for name in channel_names:
+            ch_match = KonfluxFbcRebaser._VERSIONED_CHANNEL_RE.match(name)
+            if not ch_match or ch_match.group(1) != prefix:
+                continue
+            parts = ch_match.group(2).split('.')
+            while len(parts) < 3:
+                parts.append('0')
+            try:
+                version = VersionInfo.parse('.'.join(parts[:3]))
+            except ValueError:
+                continue
+            if best_version is None or version > best_version:
+                best_version = version
+                best_channel = name
+
+        return best_channel
+
+    def _find_future_release_assembly(
+        self,
+        releases_config,
+    ) -> Optional[str]:
+        """
+        Find the first standard assembly with a future release_date.
+
+        Only considers assemblies of type STANDARD to avoid picking up
+        non-standard assemblies (e.g., custom, preview, candidate).
+
+        Args:
+            releases_config: The releases configuration from releases.yml
+
+        Returns:
+            The assembly name if found, None otherwise
+        """
+        release_names = list(releases_config.releases.keys())
+        if not release_names:
+            self._logger.info("No releases found in releases.yml")
+            return None
+
+        for release_name in release_names:
+            self._logger.info(f"checking assembly for {release_name}")
+
+            # Only consider standard assemblies
+            assem_type = assembly_type(releases_config, release_name)
+            if assem_type != AssemblyTypes.STANDARD:
+                self._logger.info("Skipping assembly %s (type=%s, expected standard)", release_name, assem_type.value)
+                continue
+
+            resolved_group = assembly_config_struct(releases_config, release_name, "group", {})
+            release_date = resolved_group.get("release_date")
+            self._logger.info(f"Got release date {release_date}")
+            if release_date and artlib_util.is_future_release_date(release_date):
+                self._logger.info(
+                    "Stream build: using future release assembly %s (release_date: %s)", release_name, release_date
+                )
+                return release_name
+
+        self._logger.info("No future standard release found in releases.yml")
+        return None
+
+    def _get_shipment_url_for_assembly(
+        self,
+        releases_config,
+        assembly: str,
+    ) -> Optional[str]:
+        """
+        Get the shipment URL for a given assembly from releases.yml.
+
+        Args:
+            releases_config: The releases configuration from releases.yml
+            assembly: The assembly name to look up
+
+        Returns:
+            The shipment URL if found, None otherwise
+        """
+        assembly_config = releases_config.releases.get(assembly, {})
+        if not assembly_config:
+            self._logger.debug("Assembly %s not found in releases.yml", assembly)
+            return None
+
+        shipment_info = assembly_config.get("assembly", {}).get("group", {}).get("shipment", {})
+        shipment_url = shipment_info.get("url")
+
+        if not shipment_url:
+            self._logger.debug("No shipment URL found for assembly %s", assembly)
+            return None
+
+        return shipment_url
+
+    def _find_component_in_shipment(
+        self,
+        shipment,
+        operator_name: str,
+    ):
+        """
+        Find a component matching the operator name in a shipment snapshot.
+
+        Args:
+            shipment: The shipment config object
+            operator_name: The operator distgit key to search for
+
+        Returns:
+            The matching component if found, None otherwise
+        """
+        if not shipment or not shipment.shipment.snapshot:
+            return None
+
+        # Bundle components typically follow pattern: {operator_name}-bundle
+        expected_names = (
+            f"{operator_name}-bundle",
+            operator_name,
+        )
+        for expected_name in expected_names:
+            component = next(
+                (c for c in shipment.shipment.snapshot.spec.components if c.name == expected_name),
+                None,
+            )
+            if component:
+                return component
+
+        return None
+
+    async def _extract_csv_info_from_bundle(
+        self,
+        bundle_component,
+    ) -> Optional[Tuple[str, Optional[str]]]:
+        """
+        Extract CSV name and skipRange from a bundle component's source.
+
+        Args:
+            bundle_component: The bundle component from shipment snapshot
+
+        Returns:
+            Tuple of (csv_name, skip_range) if found, None otherwise
+        """
+        git_url = bundle_component.source.git.url
+        revision = bundle_component.source.git.revision
+        self._logger.info("Found bundle component %s at %s@%s", bundle_component.name, git_url, revision)
+
+        with TemporaryDirectory(prefix=f"assembly_csv_{bundle_component.name}_") as tmpdir:
+            csv_data = await _fetch_csv_from_git(git_url, revision, Path(tmpdir), self._logger)
+        if not csv_data:
+            self._logger.warning("Could not fetch CSV from bundle source")
+            return None
+
+        csv_name = csv_data.get("metadata", {}).get("name")
+        skip_range = csv_data.get("metadata", {}).get("annotations", {}).get("olm.skipRange")
+
+        if not csv_name:
+            self._logger.warning("Could not extract CSV name from bundle source")
+            return None
+
+        self._logger.info("Found assembly bundle CSV: name=%s, skipRange=%s", csv_name, skip_range)
+        return csv_name, skip_range
+
+    async def _get_bundle_blob_from_fbc(
+        self,
+        fbc_component,
+        csv_name: str,
+    ) -> Optional[Dict]:
+        """
+        Render an FBC image and extract the olm.bundle blob matching the csv_name.
+
+        Args:
+            fbc_component: The FBC component from shipment snapshot
+            csv_name: The CSV name to match
+
+        Returns:
+            The matching olm.bundle blob if found, None otherwise
+        """
+        fbc_pullspec = fbc_component.containerImage
+        self._logger.info("Rendering FBC image %s to get bundle blob", fbc_pullspec)
+
+        registry_auth = opm.OpmRegistryAuth(
+            path=os.environ.get("QUAY_AUTH_FILE"),
+        )
+        blobs = await opm.render(fbc_pullspec, auth=registry_auth)
+        if not blobs:
+            self._logger.warning("No catalog blobs found in FBC image %s", fbc_pullspec)
+            return None
+
+        for blob in blobs:
+            if blob.get("schema") == "olm.bundle" and blob.get("name") == csv_name:
+                self._logger.info("Found olm.bundle blob for %s", csv_name)
+                return blob
+
+        self._logger.warning("Could not find olm.bundle blob for %s in FBC image", csv_name)
+        return None
+
+    async def _get_assembly_bundle_csv_info(
+        self,
+        metadata: ImageMetadata,
+    ) -> Optional[AssemblyBundleCsvInfo]:
+        """
+        Get bundle CSV info (name and skipRange) from a named assembly's shipment.
+
+        This method:
+        1. Looks up the shipment MR for the latest named assembly (with future release_date)
+        2. Gets the "metadata" shipment to find the bundle component
+        3. Clones the bundle source at the specified revision and extracts CSV metadata
+        4. Gets the "fbc" shipment to find the FBC component
+        5. Renders the FBC image with opm to get the olm.bundle blob
+
+        For stream builds, it finds a future release from releases.yml.
+        For named assembly builds, it uses the current assembly.
+
+        Args:
+            metadata: The operator image metadata
+
+        Returns:
+            AssemblyBundleCsvInfo with csv_name, skip_range, and bundle_blob, or None if not found
+        """
+        try:
+            # 1. Determine which assembly to look up
+            releases_config = metadata.runtime.get_releases_config()
+            if self.assembly == 'stream':
+                assembly = self._find_future_release_assembly(releases_config)
+                if not assembly:
+                    return None
+            else:
+                assembly = self.assembly
+
+            # 2. Get shipment URL from releases.yml
+            shipment_url = self._get_shipment_url_for_assembly(releases_config, assembly)
+            if not shipment_url:
+                return None
+
+            # 3. Get "metadata" shipment config and find bundle component
+            self._logger.info("Fetching metadata shipment config from %s", shipment_url)
+            metadata_shipment = get_shipment_config_from_mr(shipment_url, "metadata")
+            operator_name = metadata.distgit_key
+            bundle_component = self._find_component_in_shipment(metadata_shipment, operator_name)
+            if not bundle_component:
+                self._logger.info("Bundle component for %s not found in assembly %s", operator_name, assembly)
+                return None
+
+            # 4. Extract CSV name and skipRange from bundle source
+            csv_info = await self._extract_csv_info_from_bundle(bundle_component)
+            if not csv_info:
+                return None
+            csv_name, skip_range = csv_info
+
+            # 5. Get "fbc" shipment config and find FBC component for bundle blob
+            self._logger.info("Fetching FBC shipment config from %s", shipment_url)
+            fbc_shipment = get_shipment_config_from_mr(shipment_url, "fbc")
+            fbc_component = self._find_component_in_shipment(fbc_shipment, operator_name)
+            if not fbc_component:
+                self._logger.info("FBC component for %s not found in assembly %s", operator_name, assembly)
+                return AssemblyBundleCsvInfo(csv_name=csv_name, skip_range=skip_range, bundle_blob=None)
+
+            # 6. Render the FBC image and get the olm.bundle blob
+            bundle_blob = await self._get_bundle_blob_from_fbc(fbc_component, csv_name)
+            return AssemblyBundleCsvInfo(csv_name=csv_name, skip_range=skip_range, bundle_blob=bundle_blob)
+
+        except Exception as e:
+            self._logger.warning("Failed to get assembly bundle CSV info: %s", e)
+            return None
 
     async def rebase(
         self, metadata: ImageMetadata, bundle_build: KonfluxBundleBuildRecord, version: str, release: str
@@ -569,6 +1026,18 @@ class KonfluxFbcRebaser:
         bundle_short_name = metadata.get_olm_bundle_short_name()
         logger = self._logger.getChild(f"[{bundle_short_name}]")
         repo_dir = self.base_dir.joinpath(metadata.distgit_key)
+
+        # Determine OCP version early -- needed for both branch naming and NVR uniqueness
+        if self.ocp_version_override is not None:
+            ocp_version = self.ocp_version_override
+        else:
+            group_config = metadata.runtime.group_config
+            ocp_version = int(group_config.vars.MAJOR), int(group_config.vars.MINOR)
+
+        # For non-OpenShift groups (layered operators), the same operator is built for multiple
+        # OCP versions. Include the target OCP version in the release to ensure unique NVRs.
+        if not self.group.startswith('openshift-'):
+            release = f"{release}.ocp{ocp_version[0]}.{ocp_version[1]}"
 
         name = self.get_fbc_name(metadata.distgit_key)
         nvr = f"{name}-{version}-{release}"
@@ -585,12 +1054,8 @@ class KonfluxFbcRebaser:
 
         try:
             # Clone the FBC repo
-            fbc_build_branch = "art-{group}-assembly-{assembly_name}-fbc-{distgit_key}".format_map(
-                {
-                    "group": self.group,
-                    "assembly_name": self.assembly,
-                    "distgit_key": metadata.distgit_key,
-                }
+            fbc_build_branch = _generate_fbc_branch_name(
+                group=self.group, assembly=self.assembly, distgit_key=metadata.distgit_key, ocp_version=ocp_version
             )
             logger.info("Cloning FBC repo %s branch %s into %s", self.fbc_repo, fbc_build_branch, repo_dir)
             build_repo = BuildRepo(url=self.fbc_repo, branch=fbc_build_branch, local_dir=repo_dir, logger=logger)
@@ -633,8 +1098,10 @@ class KonfluxFbcRebaser:
         nvrs = {bundle_build.operator_nvr}
         if bundle_build.operand_nvrs:
             nvrs |= set(bundle_build.operand_nvrs)
+        # Filter out "external" image NVRs - these are external images we consume but do not necessarly build (i.e postgresql, etc)
+        nvrs = {nvr for nvr in nvrs if nvr != "external"}
         assert konflux_db.record_cls is KonfluxBuildRecord, "konflux_db is not bound to KonfluxBuildRecord. Doozer bug?"
-        ref_builds = await konflux_db.get_build_records_by_nvrs(list(nvrs))
+        ref_builds = await konflux_db.get_build_records_by_nvrs(list(nvrs), exclude_large_columns=True)
         return ref_builds
 
     async def _rebase_dir(
@@ -649,7 +1116,10 @@ class KonfluxFbcRebaser:
         logger.info("Rebasing dir %s", build_repo.local_dir)
 
         group_config = metadata.runtime.group_config
-        ocp_version = int(group_config.vars.MAJOR), int(group_config.vars.MINOR)
+        if self.ocp_version_override:
+            ocp_version = self.ocp_version_override
+        else:
+            ocp_version = int(group_config.vars.MAJOR), int(group_config.vars.MINOR)
         # OCP 4.17+ requires bundle object to CSV metadata migration.
         migrate_level = "none"
         if ocp_version >= (4, 17):
@@ -705,7 +1175,7 @@ class KonfluxFbcRebaser:
         else:
             logger.info("Catalog file %s does not exist, bootstrap a new one", catalog_file_path)
             icon = next(iter(csv.get("spec", {}).get("icon", [])), None)
-            catalog_blobs = self._bootstrap_catalog(olm_package, default_channel_name, icon)
+            catalog_blobs = KonfluxFbcRebaser._bootstrap_catalog(olm_package, default_channel_name, icon)
 
         categorized_catalog_blobs = self._catagorize_catalog_blobs(catalog_blobs)
         if olm_package not in categorized_catalog_blobs:
@@ -714,6 +1184,11 @@ class KonfluxFbcRebaser:
             logger.warning(
                 f"The catalog file {catalog_file_path} has multiple packages: {','.join(categorized_catalog_blobs.keys())}"
             )
+
+        # Get assembly bundle info from the latest named assembly's shipment
+        assembly_csv_info: Optional[AssemblyBundleCsvInfo] = None
+        assembly_csv_info = await self._get_assembly_bundle_csv_info(metadata)
+        logger.info(f"Get assembly csv info: {assembly_csv_info}")
 
         # Update the catalog
         def _update_channel(channel: Dict):
@@ -724,18 +1199,92 @@ class KonfluxFbcRebaser:
             bundle_with_skips = next(
                 (it for it in channel['entries'] if it.get('skips')), None
             )  # Find which bundle has the skips field
-            if bundle_with_skips:
+            if bundle_with_skips is not None:
+                # the channel already has skips like
+                # ------------
+                # entries:
+                # - name: clusterresourceoverride-operator.v4.21.0-202601292040
+                #   skipRange: '>=4.3.0 <4.21.0-202601292040'
+                # - name: clusterresourceoverride-operator.v4.21.0-202602091142
+                #   skipRange: '>=4.3.0 <4.21.0-202602091142'
+                #   skips:
+                #   - clusterresourceoverride-operator.v4.21.0-202601292040
+                # name: stable
+                # package: clusterresourceoverride
+                # schema: olm.channel
+                # ------------
                 # Then we move the skips field to the new bundle
                 # and add the bundle name of bundle_with_skips to the skips field
                 skips = set(bundle_with_skips.pop('skips'))
                 skips = (skips | {bundle_with_skips['name']}) - {olm_bundle_name}
+            elif len(channel['entries']) == 1:
+                # The channel only has one entry like
+                # ------------
+                # entries:
+                # - name: clusterresourceoverride-operator.v4.21.0-202601292040
+                #   skipRange: '>=4.3.0 <4.21.0-202601292040'
+                # name: stable
+                # package: clusterresourceoverride
+                # schema: olm.channel
+                # ------------
+                # In case the channel only contain one single entry, that bundle should
+                # become the only member of new-entry's `skip`.
+                only_entry_name = channel['entries'][0]['name']
+                if only_entry_name != olm_bundle_name:
+                    # Only if the new bundle build don't have the same name as the only_entry_name one
+                    # if the new build have the same name like 202601292040 we should do nothing(no skips)
+                    skips = {only_entry_name}
+
+            # Add assembly bundle to skips from the latest named assembly's shipment
+            if assembly_csv_info:
+                if assembly_csv_info.csv_name == olm_bundle_name:
+                    logger.info("Assembly bundle is the same as the current bundle, skipping")
+                else:
+                    if skips is None:
+                        skips = set()
+                    skips.add(assembly_csv_info.csv_name)
+                    # Also add assembly entry to channel if not exists
+                    if not any(e['name'] == assembly_csv_info.csv_name for e in channel['entries']):
+                        assembly_entry = {"name": assembly_csv_info.csv_name}
+                        if assembly_csv_info.skip_range:
+                            assembly_entry["skipRange"] = assembly_csv_info.skip_range
+                        channel['entries'].append(assembly_entry)
 
             # Add the current bundle to the specified channel in the catalog
             entry = next((entry for entry in channel['entries'] if entry['name'] == olm_bundle_name), None)
             if not entry:
                 logger.info("Adding bundle %s to channel %s", olm_bundle_name, channel['name'])
                 entry = {"name": olm_bundle_name}
-                channel['entries'].append(entry)
+
+                if self.insert_missing_entry:
+                    # Add entry and then sort all entries in ascending version order
+                    channel['entries'].append(entry)
+
+                    logger.info("Sorting channel entries by version order")
+                    channel['entries'].sort(key=lambda e: self._extract_version_from_bundle_name(e['name']))
+
+                    # Rebuild replaces chain for non-OpenShift groups (operators using replaces)
+                    if not self.group.startswith('openshift-'):
+                        logger.info("Rebuilding replaces chain after version sorting")
+                        self._rebuild_replaces_chain(channel['entries'])
+                else:
+                    # For an operator bundle that uses replaces -- such as OADP
+                    # Calculate replaces based on current head before appending
+                    replaces = None
+                    if not self.group.startswith('openshift-'):
+                        # Find the current head - the entry that is not replaced by any other entry
+                        bundle_with_replaces = [it for it in channel['entries']]
+                        replaced_names = {it.get('replaces') for it in bundle_with_replaces if it.get('replaces')}
+                        current_head = next(
+                            (it for it in bundle_with_replaces if it['name'] not in replaced_names), None
+                        )
+                        if current_head:
+                            # The new bundle should replace the current head
+                            replaces = current_head['name']
+
+                    channel['entries'].append(entry)
+                    if replaces:
+                        entry["replaces"] = replaces
             else:
                 logger.warning("Bundle %s already exists in channel %s. Replacing...", olm_bundle_name, channel['name'])
                 entry.clear()
@@ -749,17 +1298,32 @@ class KonfluxFbcRebaser:
             logger.info("Updating channel %s", channel_name)
             channel = categorized_catalog_blobs[olm_package]["olm.channel"].get(channel_name, None)
             if not channel:
-                raise IOError(
-                    f"Channel {channel_name} not found in package {olm_package}. The FBC repo is not properly initialized."
-                )
+                logger.info("Channel %s not found in package %s. Bootstrapping...", channel_name, olm_package)
+                channel = KonfluxFbcRebaser._bootstrap_channel(olm_package, channel_name)
+                categorized_catalog_blobs[olm_package].setdefault("olm.channel", {})[channel_name] = channel
+                catalog_blobs.append(channel)
             _update_channel(channel)
+
+        # Add the assembly bundle blob to the catalog if available
+        if assembly_csv_info and assembly_csv_info.bundle_blob:
+            assembly_bundle_name = assembly_csv_info.csv_name
+            if assembly_bundle_name not in categorized_catalog_blobs[olm_package].setdefault("olm.bundle", {}):
+                logger.info("Adding assembly bundle %s to package %s", assembly_bundle_name, olm_package)
+                categorized_catalog_blobs[olm_package]["olm.bundle"][assembly_bundle_name] = (
+                    assembly_csv_info.bundle_blob
+                )
+                catalog_blobs.append(assembly_csv_info.bundle_blob)
 
         # Set default channel
         if default_channel_name:
             package_blob = categorized_catalog_blobs[olm_package]["olm.package"][olm_package]
-            if package_blob.get("defaultChannel") != default_channel_name:
-                logger.info("Setting default channel to %s", default_channel_name)
-                package_blob["defaultChannel"] = default_channel_name
+            resolved_default = default_channel_name
+            if not self.group.startswith('openshift-'):
+                all_channel_names = list(categorized_catalog_blobs[olm_package].get("olm.channel", {}).keys())
+                resolved_default = self._resolve_default_channel(all_channel_names, default_channel_name)
+            if package_blob.get("defaultChannel") != resolved_default:
+                logger.info("Setting default channel to %s", resolved_default)
+                package_blob["defaultChannel"] = resolved_default
 
         # Replace pullspecs to use the prod registry
         digest = bundle_build.image_pullspec.split('@', 1)[-1]
@@ -840,8 +1404,9 @@ class KonfluxFbcRebaser:
         dfp.labels['com.redhat.art.nvr'] = nvr
         return nvr
 
+    @staticmethod
     def _bootstrap_catalog(
-        self, package_name: str, default_channel: str, icon: Dict[str, str] | None
+        package_name: str, default_channel: str, icon: Dict[str, str] | None
     ) -> List[Dict[str, Any]]:
         """Bootstrap a new catalog for the given package name.
         :param package_name: The name of the package to bootstrap.
@@ -866,24 +1431,42 @@ class KonfluxFbcRebaser:
             "name": package_name,
             "schema": "olm.package",
         }
-        channel_blob = {
-            "entries": [],
-            "name": default_channel,
-            "package": package_name,
-            "schema": "olm.channel",
-        }
+        channel_blob = KonfluxFbcRebaser._bootstrap_channel(package_name, default_channel)
         return [
             package_blob,
             channel_blob,
         ]
 
-    def _generate_image_digest_mirror_set(self, olm_bundle_blobs: Iterable[Dict], ref_pullspecs: Iterable[str]):
-        dest_repos = {
-            p_split[1]: p_split[0]
-            for bundle_blob in olm_bundle_blobs
-            for related_image in bundle_blob.get("relatedImages", [])
-            if (p_split := related_image["image"].split('@', 1))
+    @staticmethod
+    def _bootstrap_channel(package_name: str, channel_name: str) -> Dict[str, Any]:
+        """Bootstrap a new channel for the given package.
+        :param package_name: The name of the package.
+        :param channel_name: The name of the channel to bootstrap.
+        :return: A dictionary representing the channel blob.
+        """
+        channel_blob = {
+            "entries": [],
+            "name": channel_name,
+            "package": package_name,
+            "schema": "olm.channel",
         }
+        return channel_blob
+
+    def _generate_image_digest_mirror_set(self, olm_bundle_blobs: Iterable[Dict], ref_pullspecs: Iterable[str]):
+        dest_repos = {}
+        for bundle_blob in olm_bundle_blobs:
+            for related_image in bundle_blob.get("relatedImages", []):
+                if '@' in related_image["image"]:
+                    repo, digest = related_image["image"].split('@', 1)
+                    dest_repos[digest] = repo
+                else:
+                    continue
+        for pullspec in ref_pullspecs:
+            p_split = pullspec.split('@', 1)
+            if len(p_split) == 1:
+                raise ValueError(
+                    f"{p_split} invalid, it dosen't contains @, olm_bundle_blobs: {olm_bundle_blobs} \n ref_pullspecs: {ref_pullspecs}"
+                )
         source_repos = {p_split[1]: p_split[0] for pullspec in ref_pullspecs if (p_split := pullspec.split('@', 1))}
         if not dest_repos:
             return None
@@ -895,23 +1478,28 @@ class KonfluxFbcRebaser:
                 "namespace": "openshift-marketplace",
             },
             "spec": {
-                "imageDigestMirrors": [
-                    {
-                        "source": dest_repos[sha],
-                        "mirrors": [
-                            source_repo,
-                        ],
-                    }
-                    for sha, source_repo in source_repos.items()
-                ],
+                "imageDigestMirrors": sorted(
+                    [
+                        {
+                            "source": dest_repos[sha],
+                            "mirrors": [
+                                source_repo,
+                            ],
+                        }
+                        # If source is same as destination, we don't need to add an IDMS mapping
+                        for sha, source_repo in source_repos.items()
+                        if sha in dest_repos and source_repo != dest_repos[sha]
+                    ],
+                    key=lambda x: x["source"],
+                ),
             },
         }
         return image_digest_mirror_set
 
     async def _fetch_olm_bundle_image_info(self, bundle_build: KonfluxBundleBuildRecord):
-        return await util.oc_image_info_for_arch_async__caching(
+        return await util.oc_image_info_for_arch_async(
             bundle_build.image_pullspec,
-            registry_config=os.environ.get("KONFLUX_ART_IMAGES_AUTH_FILE"),
+            registry_config=os.environ.get("QUAY_AUTH_FILE"),
         )
 
     async def _load_csv_from_bundle(self, bundle_build: KonfluxBundleBuildRecord, manifests_dir: str):
@@ -926,7 +1514,7 @@ class KonfluxFbcRebaser:
             await util.oc_image_extract_async(
                 bundle_build.image_pullspec,
                 path_specs=path_specs,
-                registry_config=os.environ.get("KONFLUX_ART_IMAGES_AUTH_FILE"),
+                registry_config=os.environ.get("QUAY_AUTH_FILE"),
             )
             # Find the CSV file in the extracted manifests directory
             csv_file = next(Path(tmpdir).glob("*.clusterserviceversion.yaml"), None)
@@ -942,7 +1530,7 @@ class KonfluxFbcRebaser:
         :return: A tuple of (bundle name, package name, bundle blob).
         """
         registry_auth = opm.OpmRegistryAuth(
-            path=os.environ.get("KONFLUX_ART_IMAGES_AUTH_FILE"),
+            path=os.environ.get("QUAY_AUTH_FILE"),
         )
         rendered_blobs = await opm.render(bundle_build.image_pullspec, migrate_level=migrate_level, auth=registry_auth)
         if not isinstance(rendered_blobs, list) or len(rendered_blobs) != 1:
@@ -984,10 +1572,10 @@ class KonfluxFbcRebaser:
 
 
 class KonfluxFbcBuildError(Exception):
-    def __init__(self, message: str, pipelinerun_name: str, pipelinerun: Optional[resource.ResourceInstance]) -> None:
+    def __init__(self, message: str, pipelinerun_name: str, pipelinerun_dict: Optional[Dict]) -> None:
         super().__init__(message)
         self.pipelinerun_name = pipelinerun_name
-        self.pipelinerun = pipelinerun
+        self.pipelinerun_dict = pipelinerun_dict
 
 
 class KonfluxFbcBuilder:
@@ -996,6 +1584,7 @@ class KonfluxFbcBuilder:
         base_dir: Path,
         group: str,
         assembly: str,
+        product: str,
         db: KonfluxDb,
         fbc_repo: str,
         konflux_namespace: str,
@@ -1005,12 +1594,14 @@ class KonfluxFbcBuilder:
         skip_checks: bool = False,
         pipelinerun_template_url: str = constants.KONFLUX_DEFAULT_FBC_BUILD_PLR_TEMPLATE_URL,
         dry_run: bool = False,
+        major_minor_override: Optional[Tuple[int, int]] = None,
         record_logger: Optional[RecordLogger] = None,
         logger: logging.Logger = LOGGER,
     ):
         self.base_dir = base_dir
         self.group = group
         self.assembly = assembly
+        self.product = product
         self._db = db
         self.fbc_repo = fbc_repo or constants.ART_FBC_GIT_REPO
         self.konflux_namespace = konflux_namespace
@@ -1020,10 +1611,15 @@ class KonfluxFbcBuilder:
         self.skip_checks = skip_checks
         self.pipelinerun_template_url = pipelinerun_template_url
         self.dry_run = dry_run
+        self.major_minor_override = major_minor_override
+        self.source_git_commits = []
         self._record_logger = record_logger
         self._logger = logger.getChild(self.__class__.__name__)
         self._konflux_client = KonfluxClient.from_kubeconfig(
-            konflux_namespace, konflux_kubeconfig, konflux_context, dry_run=self.dry_run
+            default_namespace=konflux_namespace,
+            config_file=konflux_kubeconfig,
+            context=konflux_context,
+            dry_run=self.dry_run,
         )
 
     @staticmethod
@@ -1038,11 +1634,97 @@ class KonfluxFbcBuilder:
         # Openshift doesn't allow dots or underscores in any of its fields, so we replace them with dashes
         name = f"{application_name}-{image_name}".replace(".", "-").replace("_", "-")
         # A component resource name must start with a lower case letter and must be no more than 63 characters long.
-        # 'fbc-openshift-4-18-ose-installer-terraform' -> 'fbc-ose-4-18-ose-installer-terraform'
-        name = name.replace('openshift-', 'ose-')
+        # 'fbc-openshift-4-17-openshift-kubernetes-nmstate-operator' -> 'fbc-ose-4-17-openshift-kubernetes-nmstate-operator'
+        name = f"fbc-ose-{name[14:]}" if name.startswith("fbc-openshift-") else name
         return name
 
-    async def build(self, metadata: ImageMetadata):
+    def _extract_git_commits_from_nvrs(self, bundle_nvrs: str) -> list[str]:
+        """Extract git commit hashes from bundle NVRs, including the 'g' prefix.
+
+        Example: "cluster-nfd-operator-metadata-container-v4.12.0.202509242028.p2.gd5498aa.assembly.stream.el8-1" -> ["gd5498aa"]
+        """
+        if not bundle_nvrs:
+            return []
+
+        import re
+
+        commits = []
+        # Split by comma in case there are multiple NVRs
+        nvrs = bundle_nvrs.split(',')
+
+        for nvr in nvrs:
+            nvr = nvr.strip()
+            if nvr:
+                # Look for pattern .g<commit> in the NVR and extract including the 'g'
+                match = re.search(r'\.(g[a-f0-9]+)\.', nvr)
+                if match:
+                    commit = match.group(1)  # This includes the 'g' prefix
+                    if commit not in commits:  # Avoid duplicates
+                        commits.append(commit)
+
+        return commits
+
+    async def _check_image_exists(self, pullspec: str, logger: Optional[logging.Logger] = None) -> bool:
+        """Check if an image exists in the registry.
+
+        :param pullspec: Image pullspec to check
+        :param logger: Logger instance
+        :return: True if image exists, False otherwise
+        """
+        logger = logger or self._logger
+        try:
+            logger.debug(f"Checking if image exists: {pullspec}")
+            registry_config = os.getenv("QUAY_AUTH_FILE")
+            await util.oc_image_info_for_arch_async(pullspec, registry_config=registry_config)
+            logger.debug(f"Image exists: {pullspec}")
+            return True
+        except Exception as e:
+            logger.debug(f"Image does not exist or is not accessible: {pullspec} - {e}")
+            return False
+
+    async def _sync_fbc_related_images_to_share(
+        self, fbc_pullspec: str, product: str, logger: Optional[logging.Logger] = None
+    ):
+        """Sync FBC related images to art-images-share repository if they don't exist.
+
+        :param fbc_pullspec: FBC image pullspec
+        :param product: Product name (e.g., 'openshift', 'oadp')
+        :param logger: Logger instance
+        """
+        logger = logger or self._logger
+
+        try:
+            logger.info("Extracting related images from FBC...")
+            related_images = await artlib_util.extract_related_images_from_fbc(fbc_pullspec, product)
+            logger.info(f"Found {len(related_images)} related images in FBC")
+
+            if not related_images:
+                logger.info("No related images to sync")
+                return
+
+            # Check each image and sync if missing from art-images-share
+            for image_pullspec in related_images:
+                share_pullspec = image_pullspec.replace(KONFLUX_DEFAULT_IMAGE_REPO, KONFLUX_DEFAULT_IMAGE_SHARE_REPO)
+
+                if await self._check_image_exists(share_pullspec, logger):
+                    logger.info(f"Image already exists in art-images-share: {share_pullspec}")
+                else:
+                    logger.info(f"Syncing {image_pullspec} to art-images-share")
+                    try:
+                        destination_repo = share_pullspec.split('@')[0]  # Remove digest for destination
+                        await artlib_util.sync_to_quay(image_pullspec, destination_repo)
+                        logger.info(f"Successfully synced to art-images-share: {share_pullspec}")
+                    except Exception as e:
+                        logger.warning(f"Failed to sync {image_pullspec} to art-images-share: {e}")
+
+            logger.info("FBC related images sync complete")
+
+        except Exception:
+            logger.exception("Error while syncing FBC related images to art-images-share")
+
+    async def build(
+        self, metadata: ImageMetadata, operator_nvr: Optional[str] = None, git_auth_secret: Optional[str] = None
+    ):
         bundle_short_name = metadata.get_olm_bundle_short_name()
         logger = self._logger.getChild(f"[{bundle_short_name}]")
         logger.info("Building FBC for %s", metadata.distgit_key)
@@ -1067,12 +1749,15 @@ class KonfluxFbcBuilder:
                 build_repo = await BuildRepo.from_local_dir(repo_dir, logger)
                 logger.info("FBC repository loaded from %s", repo_dir)
             else:
-                build_branch = "art-{group}-assembly-{assembly_name}-fbc-{distgit_key}".format_map(
-                    {
-                        "group": self.group,
-                        "assembly_name": self.assembly,
-                        "distgit_key": metadata.distgit_key,
-                    }
+                # Get OCP version for branch naming
+                if self.major_minor_override:
+                    ocp_version = self.major_minor_override
+                else:
+                    group_config = metadata.runtime.group_config
+                    ocp_version = int(group_config.vars.MAJOR), int(group_config.vars.MINOR)
+
+                build_branch = _generate_fbc_branch_name(
+                    group=self.group, assembly=self.assembly, distgit_key=metadata.distgit_key, ocp_version=ocp_version
                 )
                 logger.info("Cloning bundle repository %s branch %s into %s", self.fbc_repo, build_branch, repo_dir)
                 build_repo = BuildRepo(
@@ -1094,10 +1779,15 @@ class KonfluxFbcBuilder:
             bundle_nvrs = dfp.envs.get("__doozer_bundle_nvrs")
             if bundle_nvrs:
                 record["bundle_nvrs"] = bundle_nvrs
+                # Extract git commits from bundle NVRs
+                # Example: "cluster-nfd-operator-metadata-container-v4.12.0.202509242028.p2.gd5498aa.assembly.stream.el8-1" -> ["gd5498aa"]
+                self.source_git_commits = self._extract_git_commits_from_nvrs(bundle_nvrs)
+            else:
+                self.source_git_commits = []
 
             # Start FBC build
             logger.info("Starting FBC build...")
-            retries = 3
+            build_attempts = metadata.get_konflux_build_attempts()
             name = dfp.labels.get('com.redhat.art.name')
             if not name:
                 raise ValueError("FBC name not found in the catalog.Dockerfile. Did you rebase?")
@@ -1108,50 +1798,122 @@ class KonfluxFbcBuilder:
             record["fbc_nvr"] = nvr
             output_image = f"{self.image_repo}:{nvr}"
 
-            # FBC needs to be built for all supported arches.
-            arches = list(KonfluxClient.SUPPORTED_ARCHES.keys())
-            for attempt in range(1, retries + 1):
-                logger.info("Build attempt %d/%d", attempt, retries)
-                pipelinerun, url = await self._start_build(
+            # If major_minor_override is present, get arches from the override group's konflux.arches config
+            if self.major_minor_override:
+                major, minor = self.major_minor_override
+                override_group = f"openshift-{major}.{minor}"
+                logger.info(
+                    "Using major_minor_override %s.%s, getting arches from group %s", major, minor, override_group
+                )
+
+                # Construct doozer command to read group config for konflux.arches
+                doozer_cmd = ['doozer', f'--group={override_group}', 'config:read-group', 'konflux.arches', '--yaml']
+
+                try:
+                    # Execute the command asynchronously
+                    _, out, _ = await exectools.cmd_gather_async(doozer_cmd)
+                    if out.strip():
+                        # Parse the YAML output to get the arches list
+                        arches = yaml.load(out.strip())
+                        logger.info("Retrieved arches from group %s: %s", override_group, arches)
+                    else:
+                        logger.warning(
+                            "No konflux.arches found for group %s, falling back to metadata arches", override_group
+                        )
+                        arches = metadata.get_arches()
+                except Exception as e:
+                    logger.warning(
+                        "Failed to get arches from group %s config: %s, falling back to metadata arches",
+                        override_group,
+                        e,
+                    )
+                    arches = metadata.get_arches()
+            else:
+                arches = metadata.get_arches()
+
+            for attempt in range(build_attempts):
+                logger.info("Build attempt %s/%s", attempt + 1, build_attempts)
+                pipelinerun_info, url = await self._start_build(
                     metadata=metadata,
                     build_repo=build_repo,
                     output_image=output_image,
                     arches=arches,
                     logger=logger,
+                    operator_nvr=operator_nvr,
+                    git_auth_secret=git_auth_secret,
                 )
-                pipelinerun_name = pipelinerun.metadata.name
+                pipelinerun_name = pipelinerun_info.name
                 record["task_id"] = pipelinerun_name
                 record["task_url"] = url
                 if not self.dry_run:
                     await self._update_konflux_db(
-                        metadata, build_repo, pipelinerun, KonfluxBuildOutcome.PENDING, arches, logger=logger
+                        metadata, build_repo, pipelinerun_info, KonfluxBuildOutcome.PENDING, arches, logger=logger
                     )
                 else:
                     logger.info("Dry run: Would have inserted build record in Konflux DB")
 
                 logger.info("Waiting for PipelineRun %s to complete...", pipelinerun_name)
-                pipelinerun, _ = await self._konflux_client.wait_for_pipelinerun(
+                pipelinerun_info = await self._konflux_client.wait_for_pipelinerun(
                     pipelinerun_name, namespace=self.konflux_namespace
                 )
                 logger.info("PipelineRun %s completed", pipelinerun_name)
 
-                succeeded_condition = artlib_util.KubeCondition.find_condition(pipelinerun, 'Succeeded')
+                pipelinerun_dict = pipelinerun_info.to_dict()
+                succeeded_condition = pipelinerun_info.find_condition('Succeeded')
                 outcome = KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition(succeeded_condition)
+
+                ec_status = KonfluxECStatus.NOT_APPLICABLE
+                ec_pipeline_url = ''
 
                 if self.dry_run:
                     logger.info("Dry run: Would have inserted build record in Konflux DB")
                 else:
-                    await self._update_konflux_db(metadata, build_repo, pipelinerun, outcome, arches, logger=logger)
+                    await self._update_konflux_db(
+                        metadata,
+                        build_repo,
+                        pipelinerun_info,
+                        outcome,
+                        arches,
+                        logger=logger,
+                        ec_status=ec_status,
+                        ec_pipeline_url=ec_pipeline_url,
+                    )
 
                 if outcome is not KonfluxBuildOutcome.SUCCESS:
                     error = KonfluxFbcBuildError(
-                        f"Konflux image build for {metadata.distgit_key} failed", pipelinerun_name, pipelinerun
+                        f"Konflux image build for {metadata.distgit_key} failed", pipelinerun_name, pipelinerun_dict
                     )
                 else:
                     error = None
                     metadata.build_status = True
                     record["message"] = "Success"
                     record["status"] = 0
+
+                    # Sync FBC related images to art-images-share
+                    if self.assembly == "stream":
+                        if not self.dry_run:
+                            try:
+                                results = pipelinerun_dict.get('status', {}).get('results', [])
+                                image_pullspec = next((r['value'] for r in results if r['name'] == 'IMAGE_URL'), None)
+                                image_digest = next((r['value'] for r in results if r['name'] == 'IMAGE_DIGEST'), None)
+
+                                if image_pullspec and image_digest:
+                                    fbc_pullspec = f"{image_pullspec.split(':')[0]}@{image_digest}"
+                                    await self._sync_fbc_related_images_to_share(
+                                        fbc_pullspec, self.product, logger=logger
+                                    )
+                                else:
+                                    logger.warning(
+                                        "Could not extract FBC pullspec from pipelinerun results, "
+                                        "skipping related images sync"
+                                    )
+                            except Exception as e:
+                                logger.warning(f"Failed to sync FBC related images: {e}")
+                        else:
+                            logger.info("Dry run: Would have synced FBC related images to art-images-share")
+                    else:
+                        logger.info(f"Skipping FBC related images sync for non-stream assembly '{self.assembly}'")
+
                     break
             if error:
                 record['message'] = str(error)
@@ -1159,7 +1921,7 @@ class KonfluxFbcBuilder:
         finally:
             if self._record_logger:
                 self._record_logger.add_record("build_fbc_konflux", **record)
-        return pipelinerun_name, pipelinerun
+        return pipelinerun_name, pipelinerun_dict
 
     async def _start_build(
         self,
@@ -1168,7 +1930,9 @@ class KonfluxFbcBuilder:
         output_image: str,
         arches: Sequence[str],
         logger: logging.Logger,
-    ):
+        operator_nvr: Optional[str] = None,
+        git_auth_secret: Optional[str] = None,
+    ) -> Tuple[PipelineRunInfo, str]:
         """Start a build with Konflux."""
         if not build_repo.commit_hash:
             raise IOError("Bundle repository must have a commit to build. Did you rebase?")
@@ -1196,13 +1960,39 @@ class KonfluxFbcBuilder:
 
         additional_tags = []
         group_name = metadata.runtime.group
-        if metadata.runtime.assembly == "stream" and group_name.startswith("openshift-"):
-            version = group_name.removeprefix("openshift-")
+        if metadata.runtime.assembly == "stream":
             delivery_repo_names = metadata.config.delivery.delivery_repo_names
             for delivery_repo in delivery_repo_names:
-                additional_tags.append(f"ocp__{version}__{delivery_repo.split('/')[-1]}")
+                delivery_repo_name = delivery_repo.split('/')[-1]
+                if group_name.startswith("openshift-"):
+                    product_name = "ocp"
+                    version = group_name.removeprefix("openshift-")
+                    additional_tags.append(f"{product_name}__{version}__{delivery_repo_name}")
+                    # Add operator NVR tag for openshift- groups
+                    if operator_nvr:
+                        additional_tags.append(f"operator_nvr__{operator_nvr}")
+                else:
+                    # eg: oadp-1.5 / mta-1.2
+                    if self.major_minor_override:
+                        tag_with_version = (
+                            f"{self.group}__v{'.'.join(map(str, self.major_minor_override))}__{delivery_repo_name}"
+                        )
+                        additional_tags.append(f"{tag_with_version}")
+                        for commit in self.source_git_commits:
+                            additional_tags.append(f"{tag_with_version}__{commit}")
+                        # Add operator NVR tag for non-openshift groups
+                        if operator_nvr:
+                            version_tag = f"v{'.'.join(map(str, self.major_minor_override))}"
+                            additional_tags.append(f"{version_tag}__operator_nvr__{operator_nvr}")
 
-        pipelinerun = await konflux_client.start_pipeline_run_for_image_build(
+        if additional_tags:
+            logger.info(
+                f"Additional tags being added: {additional_tags}",
+            )
+        else:
+            logger.info("No additional tags to be added")
+
+        build_kwargs = dict(
             generate_name=f"{component_name}-",
             namespace=self.konflux_namespace,
             application_name=app_name,
@@ -1212,25 +2002,31 @@ class KonfluxFbcBuilder:
             target_branch=build_repo.branch or build_repo.commit_hash,
             output_image=output_image,
             vm_override={},
-            building_arches=arches,  # FBC should be built for all supported arches
+            building_arches=arches,
             additional_tags=list(additional_tags),
             skip_checks=self.skip_checks,
             hermetic=True,
             dockerfile="catalog.Dockerfile",
             pipelinerun_template_url=self.pipelinerun_template_url,
+            build_priority=FBC_BUILD_PRIORITY,
         )
-        url = konflux_client.resource_url(pipelinerun)
-        logger.info(f"PipelineRun {pipelinerun.metadata.name} created: {url}")
-        return pipelinerun, url
+        if git_auth_secret:
+            build_kwargs["git_auth_secret"] = git_auth_secret
+        pipelinerun_info = await konflux_client.start_pipeline_run_for_image_build(**build_kwargs)
+        url = konflux_client.resource_url(pipelinerun_info.to_dict())
+        logger.info(f"PipelineRun {pipelinerun_info.name} created: {url}")
+        return pipelinerun_info, url
 
     async def _update_konflux_db(
         self,
         metadata: ImageMetadata,
         build_repo: BuildRepo,
-        pipelinerun: resource.ResourceInstance,
+        pipelinerun_info: PipelineRunInfo,
         outcome: KonfluxBuildOutcome,
         arches: Sequence[str],
         logger: Optional[logging.Logger] = None,
+        ec_status: KonfluxECStatus = KonfluxECStatus.NOT_APPLICABLE,
+        ec_pipeline_url: str = '',
     ):
         logger = logger or self._logger.getChild(f"[{metadata.distgit_key}]")
         db = self._db
@@ -1256,9 +2052,10 @@ class KonfluxFbcBuilder:
             source_repo = dfp.labels.get('io.openshift.build.source-location')
             commitish = dfp.labels.get('io.openshift.build.commit.id')
 
-            pipelinerun_name = pipelinerun.metadata.name
-            build_pipeline_url = KonfluxClient.resource_url(pipelinerun)
-            build_component = pipelinerun.metadata.labels.get('appstudio.openshift.io/component')
+            pipelinerun_name = pipelinerun_info.name
+            pipelinerun_dict = pipelinerun_info.to_dict()
+            build_pipeline_url = KonfluxClient.resource_url(pipelinerun_dict)
+            build_component = pipelinerun_dict['metadata']['labels'].get('appstudio.openshift.io/component')
 
             build_record_params = {
                 'name': name,
@@ -1282,6 +2079,8 @@ class KonfluxFbcBuilder:
                 'bundle_nvrs': bundle_nvrs,
                 'arches': arches,
                 'build_component': build_component,
+                'ec_status': ec_status,
+                'ec_pipeline_url': ec_pipeline_url,
             }
 
             match outcome:
@@ -1292,12 +2091,9 @@ class KonfluxFbcBuilder:
                     # - name: IMAGE_DIGEST
                     #   value: sha256:49d65afba393950a93517f09385e1b441d1735e0071678edf6fc0fc1fe501807
 
-                    image_pullspec = next(
-                        (r['value'] for r in pipelinerun.status.results or [] if r['name'] == 'IMAGE_URL'), None
-                    )
-                    image_digest = next(
-                        (r['value'] for r in pipelinerun.status.results or [] if r['name'] == 'IMAGE_DIGEST'), None
-                    )
+                    results = pipelinerun_dict.get('status', {}).get('results', [])
+                    image_pullspec = next((r['value'] for r in results if r['name'] == 'IMAGE_URL'), None)
+                    image_digest = next((r['value'] for r in results if r['name'] == 'IMAGE_DIGEST'), None)
 
                     if not (image_pullspec and image_digest):
                         raise ValueError(
@@ -1305,8 +2101,9 @@ class KonfluxFbcBuilder:
                             f"pipelinerun {pipelinerun_name}"
                         )
 
-                    start_time = pipelinerun.status.startTime
-                    end_time = pipelinerun.status.completionTime
+                    status = pipelinerun_dict.get('status', {})
+                    start_time = status.get('startTime')
+                    end_time = status.get('completionTime')
 
                     build_record_params.update(
                         {
@@ -1319,8 +2116,9 @@ class KonfluxFbcBuilder:
                         }
                     )
                 case KonfluxBuildOutcome.FAILURE:
-                    start_time = pipelinerun.status.startTime
-                    end_time = pipelinerun.status.completionTime
+                    status = pipelinerun_dict.get('status', {})
+                    start_time = status.get('startTime')
+                    end_time = status.get('completionTime')
                     build_record_params.update(
                         {
                             'start_time': datetime.strptime(start_time, '%Y-%m-%dT%H:%M:%SZ').replace(
@@ -1332,8 +2130,8 @@ class KonfluxFbcBuilder:
 
             build_record = KonfluxFbcBuildRecord(**build_record_params)
             db.add_build(build_record)
-            logger.info(f'Konflux build info stored successfully with status {outcome}')
+            logger.info('Konflux build %s info stored successfully with status %s', build_record.nvr, outcome)
 
-        except Exception as err:
-            logger.error('Failed writing record to the konflux DB: %s', err)
+        except Exception:
+            logger.exception('Failed writing record to the konflux DB')
             raise

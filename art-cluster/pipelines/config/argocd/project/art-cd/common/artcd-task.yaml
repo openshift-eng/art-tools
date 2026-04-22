@@ -1,0 +1,158 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: artcd
+  namespace: art-cd
+  labels:
+    app: artcd
+spec:
+  params:
+  - default: artcd $@
+    description: The artcd script to run
+    name: script
+    type: string
+  - default: []
+    description: artcd arguments to be passed
+    name: args
+    type: array
+  stepTemplate:
+    computeResources: {}
+    env:
+    - name: TASKRUN_NAMESPACE
+      value: $(context.taskRun.namespace)
+    - name: TASKRUN_NAME
+      value: $(context.taskRun.name)
+    - name: TASKRUN_UID
+      value: $(context.taskRun.uid)
+    - name: BUILD_URL
+      value: https://tekton.local/$(context.taskRun.namespace)/pipeline/$(context.taskRun.name)
+    - name: GIT_SSH_COMMAND
+      value: ssh -o StrictHostKeyChecking=no
+    - name: GOOGLE_APPLICATION_CREDENTIALS
+      value: /tmp/gcp-sa/sa.json
+    - name: GIT_AUTHOR_NAME
+      value: openshift-art-build-bot
+    - name: GIT_AUTHOR_EMAIL
+      value: openshift-dev-infra+github-openshift-art-build-bot@redhat.com
+    - name: GIT_COMMITTER_NAME
+      value: openshift-art-build-bot
+    - name: GIT_COMMITTER_EMAIL
+      value: openshift-dev-infra+github-openshift-art-build-bot@redhat.com
+  steps:
+  - args:
+    - $(params.args[*])
+    computeResources:
+      limits:
+        memory: 16Gi
+      requests:
+        cpu: "1"
+        memory: 8Gi
+    env:
+    - name: SLACK_BOT_TOKEN
+      valueFrom:
+        secretKeyRef:
+          key: slack-api-token
+          name: art-bot-config
+    - name: JIRA_TOKEN
+      valueFrom:
+        secretKeyRef:
+          key: token
+          name: openshift-art-jira-bot-token
+    - name: REDIS_SERVER_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          key: password
+          name: redis-server-password
+    - name: GITHUB_TOKEN
+      valueFrom:
+        secretKeyRef:
+          key: token
+          name: github-token
+          optional: true
+    - name: GITLAB_TOKEN
+      valueFrom:
+        secretKeyRef:
+          key: token
+          name: gitlab-token
+          optional: true
+    - name: GITHUB_APP_ID
+      valueFrom:
+        secretKeyRef:
+          key: app-id
+          name: github-app-credentials
+    - name: GITHUB_APP_PRIVATE_KEY_PATH
+      value: /tmp/github-app/private-key.pem
+    - name: KONFLUX_SA_KUBECONFIG
+      value: /tmp/konflux-kubeconfigs/ocp
+    - name: OADP_KONFLUX_SA_KUBECONFIG
+      value: /tmp/konflux-kubeconfigs/oadp
+    - name: MTA_KONFLUX_SA_KUBECONFIG
+      value: /tmp/konflux-kubeconfigs/mta
+    - name: MTC_KONFLUX_SA_KUBECONFIG
+      value: /tmp/konflux-kubeconfigs/mtc
+    - name: LOGGING_KONFLUX_SA_KUBECONFIG
+      value: /tmp/konflux-kubeconfigs/logging
+    - name: ASSISTED_INSTALLER_SA_KUBECONFIG
+      value: /tmp/konflux-kubeconfigs/assisted-installer
+    - name: QUAY_AUTH_FILE
+      value: /tmp/konflux-art-images-auth/config.json
+    - name: DOCKER_CONFIG
+      value: /tmp/konflux-art-images-auth
+    image: image-registry.openshift-image-registry.svc:5000/art-cd/art-cd:latest
+    name: invoke-artcd
+    script: $(params.script)
+    securityContext:
+      privileged: true
+      runAsGroup: 0
+      runAsUser: 0
+    volumeMounts:
+    - mountPath: /root/.config/doozer
+      name: doozer-config
+    - mountPath: /tmp/keytab
+      name: kerberos-keytab
+    - mountPath: /root/.config/art-bot
+      name: art-bot-docker-config
+    - mountPath: /tmp/gcp-sa
+      name: gcp-sa-key
+      readOnly: true
+    - mountPath: /tmp/konflux-kubeconfigs
+      name: konflux-sa-kubeconfigs
+      readOnly: true
+    - mountPath: /tmp/github-app
+      name: github-app-credentials
+      readOnly: true
+    - mountPath: /root/.ssh
+      name: openshift-bot-ssh-key
+      readOnly: true
+    - mountPath: /tmp/konflux-art-images-auth
+      name: konflux-art-images-auth-file
+      readOnly: true
+  volumes:
+  - name: doozer-config
+    secret:
+      secretName: doozer-config
+  - name: kerberos-keytab
+    secret:
+      secretName: synced-exd-ocp-buildvm-bot-prod-keytab
+  - name: art-bot-docker-config
+    secret:
+      secretName: art-bot-docker-config
+  - name: gcp-sa-key
+    secret:
+      secretName: gcp-sa-key
+  - name: konflux-sa-kubeconfigs
+    secret:
+      secretName: konflux-sa-kubeconfigs
+  - name: github-app-credentials
+    secret:
+      secretName: github-app-credentials
+  - name: openshift-bot-ssh-key
+    secret:
+      defaultMode: 256
+      secretName: openshift-bot-ssh-key
+  - name: konflux-art-images-auth-file
+    secret:
+      items:
+      - key: auth.json
+        path: config.json
+      secretName: konflux-art-images-auth-file

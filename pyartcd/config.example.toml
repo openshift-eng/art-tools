@@ -5,7 +5,7 @@ package_owner = "jdelft@redhat.com"
 
 [build_config]
 ocp_build_data_url = "https://github.com/openshift-eng/ocp-build-data.git"
-ocp_build_data_repo_push_url = "git@github.com:openshift-eng/ocp-build-data.git"
+ocp_build_data_repo_push_url = "https://github.com/openshift-eng/ocp-build-data.git"
 
 [shipment_config]
 shipment_data_url = "https://gitlab.cee.redhat.com/hybrid-platforms/art/ocp-shipment-data.git"
@@ -22,6 +22,9 @@ promote_image_list_recipients = ["openshift-ccs@redhat.com"]
 promote_complete_recipients = ['aos-cicd@redhat.com', 'aos-qe@redhat.com', 'aos-art-automation+new-release@redhat.com']
 
 [jira]
+# JIRA server URL - can also be set via JIRA_SERVER_URL environment variable
+# Note: The codebase uses centralized JIRA configuration from artcommonlib.jira_config
+# When migrating JIRA instances, update artcommonlib/jira_config.py or set JIRA_SERVER_URL env var
 url = "https://issues.redhat.com"
 [jira.templates]
 ocp4 = "OCPPLAN-4756"

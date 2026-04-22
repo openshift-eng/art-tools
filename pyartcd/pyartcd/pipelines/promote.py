@@ -13,7 +13,7 @@ from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Set, Union
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 import aiohttp
 import click
@@ -27,11 +27,20 @@ from artcommonlib.arch_util import (
 )
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.exceptions import VerificationError
-from artcommonlib.exectools import manifest_tool, to_thread
+from artcommonlib.exectools import manifest_tool, manifest_tool_auth_file, to_thread
+from artcommonlib.github_auth import get_github_client_for_org
+from artcommonlib.gitlab import GitLabClient
+from artcommonlib.jira_config import JIRA_EMAIL, JIRA_SERVER_URL
+from artcommonlib.oc_image_info import oc_image_info__cached_async
 from artcommonlib.rhcos import get_primary_container_name
 from artcommonlib.util import isolate_major_minor_in_group
-from elliottlib.shipment_utils import get_shipment_config_from_mr
-from github import Github, GithubException
+from elliottlib.errata import get_errata_live_id
+from elliottlib.shipment_model import ShipmentConfig
+from elliottlib.shipment_utils import (
+    get_shipment_config_from_mr,
+    get_shipment_configs_from_mr,
+)
+from github import GithubException
 from ruamel.yaml import YAML
 from ruamel.yaml.parser import ParserError
 from semver import VersionInfo
@@ -63,6 +72,12 @@ from pyartcd.signatory import AsyncSignatory, SigstoreSignatory
 
 yaml = YAML(typ="safe")
 yaml.default_flow_style = False
+
+# YAML handler for shipment config dumping
+shipment_yaml = YAML()
+shipment_yaml.default_flow_style = False
+shipment_yaml.preserve_quotes = True
+shipment_yaml.indent(mapping=2, sequence=4, offset=2)
 
 
 class PromotePipeline:
@@ -140,7 +155,8 @@ class PromotePipeline:
         self._elliott_lock = asyncio.Lock()
         self._ocp_build_data_url = self.runtime.config.get("build_config", {}).get("ocp_build_data_url")
         self._jira_client = JIRAClient.from_url(
-            self.runtime.config["jira"]["url"], token_auth=os.environ.get("JIRA_TOKEN")
+            JIRA_SERVER_URL,
+            basic_auth=(JIRA_EMAIL, os.environ.get("JIRA_TOKEN")),
         )
         if self._ocp_build_data_url:
             self._elliott_env_vars["ELLIOTT_DATA_PATH"] = self._ocp_build_data_url
@@ -149,7 +165,7 @@ class PromotePipeline:
     def check_environment_variables(self):
         logger = self.runtime.logger
 
-        required_vars = ["GITHUB_TOKEN", "JIRA_TOKEN", "QUAY_PASSWORD"]
+        required_vars = ["JIRA_TOKEN", "QUAY_PASSWORD"]
         if not self.skip_mirror_binaries and not self.skip_signing:
             required_vars += ["AWS_SHARED_CREDENTIALS_FILE", "CLOUDFLARE_ENDPOINT"]
         if not self.skip_signing:
@@ -288,14 +304,7 @@ class PromotePipeline:
                 image_shipment = get_shipment_config_from_mr(shipment_url, "image")
                 if not image_shipment:
                     raise ValueError("Could not find image shipment config in merge request!")
-                live_id = image_shipment.shipment.data.releaseNotes.live_id
-                if not live_id:
-                    raise ValueError("Could not find live ID in image shipment config!")
-
-                # construct full advisory id like RHBA-2025:13660
-                advisory_type = image_shipment.shipment.data.releaseNotes.type
-                year = datetime.now().strftime("%Y")
-                full_advisory_id = f"{advisory_type}-{year}:{live_id}"
+                full_advisory_id = self.get_full_advisory_id_from_shipment(image_shipment)
                 logger.info("Constructed full advisory ID from shipment config: %s", full_advisory_id)
                 # TODO: ensure that shipment MR is open and is not in a draft state (and optionally stage push is successful)
             else:
@@ -316,7 +325,7 @@ class PromotePipeline:
                             justification = self._reraise_if_not_permitted(err, "INVALID_ERRATA_STATUS", permits)
                             justifications.append(justification)
 
-                        full_advisory_id = self.get_live_id(image_advisory_info)
+                        full_advisory_id = self.get_full_advisory_id_from_errata_advisory(image_advisory_info)
 
             if assembly_type in [AssemblyTypes.STANDARD, AssemblyTypes.CANDIDATE]:
                 if not full_advisory_id:
@@ -350,9 +359,8 @@ class PromotePipeline:
                 if assembly_type in [AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE] or self.assembly.endswith(".0"):
                     no_verify_blocking_bugs = True
 
-                verify_flaws = True
-                if "prerelease" in impetus_advisories.keys() or assembly_type == AssemblyTypes.PREVIEW:
-                    verify_flaws = False
+                # flaws should be verified for all assemblies except previews
+                verify_flaws = not (assembly_type == AssemblyTypes.PREVIEW)
 
                 try:
                     await self.verify_attached_bugs(
@@ -391,6 +399,25 @@ class PromotePipeline:
                 "All release images for %s have been promoted. Pullspecs: %s", release_name, pullspecs_repr
             )
 
+            # Update shipment MR with payload SHAs immediately after promotion
+            payload_shas = {}
+            for arch, release_info in release_infos.items():
+                payload_shas[arch] = release_info["digest"]
+
+            shipment_config = group_config.get("shipment")
+            if shipment_config and shipment_config.get("url"):
+                shipment_url = shipment_config["url"]
+                self._logger.info("Found shipment configuration with URL: %s", shipment_url)
+                self._logger.info("Updating shipment MR with payload SHAs for %d architectures...", len(payload_shas))
+                try:
+                    await self.update_shipment_with_payload_shas(shipment_url, payload_shas)
+                    self._logger.info("Successfully updated shipment MR with payload SHAs")
+                except Exception as ex:
+                    self._logger.warning("Failed to update shipment MR with payload SHAs: %s", ex)
+                    await self._slack_client.say_in_thread(f"Failed to update shipment MR with payload SHAs: {ex}")
+            else:
+                self._logger.info("No shipment configuration found, skipping shipment MR update")
+
             # Signing payloads prior to adding it to the release controller assures that we are testing
             # signature verification processes in an installing/running cluster. In the future, we might
             # want to sign with a beta key before being accepted, so we don't gold sign all named releases,
@@ -413,7 +440,7 @@ class PromotePipeline:
 
             # Send notification to QE if it hasn't been sent yet
             # Skip ECs and RCs
-            if assembly_type not in [AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE]:
+            if assembly_type not in [AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE, AssemblyTypes.CUSTOM]:
                 self.handle_qe_notification(release_jira, release_name, impetus_advisories)
 
             if not tag_stable:
@@ -487,22 +514,6 @@ class PromotePipeline:
                     await self.send_image_list_email(release_name, image_advisory, mail_dir)
                     self._logger.info("Advisory image list sent.")
 
-                # update jira promote task status
-                self._logger.info("Updating promote release subtask")
-                if release_jira and not self.runtime.dry_run:
-                    parent_jira = self._jira_client.get_issue(release_jira)
-                    title = "Promote the tested nightly"
-                    subtask = next((s for s in parent_jira.fields.subtasks if title in s.fields.summary), None)
-                    if not subtask:
-                        self._logger.warning("Promote release subtask not found in release_jira: %s", release_jira)
-                    elif subtask.fields.status.name != "Closed":
-                        self._jira_client.add_comment(
-                            subtask,
-                            "promote release job : {}".format(os.environ.get("BUILD_URL")),
-                        )
-                        self._jira_client.assign_to_me(subtask)
-                        self._jira_client.close_task(subtask)
-
                 # extract client binaries
                 client_type = "ocp"
                 if (
@@ -515,11 +526,7 @@ class PromotePipeline:
                 if not self.skip_signing:
                     if not self.runtime.dry_run:
                         lock = Lock.SIGNING
-                        lock_identifier = jenkins.get_build_path()
-                        if not lock_identifier:
-                            self._logger.warning(
-                                'Env var BUILD_URL has not been defined: a random identifier will be used for the locks'
-                            )
+                        lock_identifier = jenkins.get_build_path_or_random()
 
                         await locks.run_with_lock(
                             coro=self.sign_artifacts(release_name, client_type, release_infos, message_digests),
@@ -621,23 +628,37 @@ class PromotePipeline:
         else:
             await self.ocp_doomsday_backup()
 
+        # Print payload SHAs for each architecture
+        self._logger.info("=== PAYLOAD SHAS ===")
+        for arch, content in data["content"].items():
+            digest = content["digest"]
+            pullspec = content["pullspec"]
+            self._logger.info("Arch %s: %s (%s)", arch, digest, pullspec)
+        self._logger.info("===================")
+
         json.dump(data, sys.stdout)
 
         await self._slack_client.say_in_thread(f":white_check_mark: promote completed for {release_name}.")
 
-    @staticmethod
-    def _get_release_stream_name(assembly_type: AssemblyTypes, arch: str):
+    def _get_release_stream_name(self, assembly_type: AssemblyTypes, arch: str):
+        major, _ = isolate_major_minor_in_group(self.group)
+        if major is None:
+            raise ValueError(f"Cannot determine major version from group name: {self.group}")
         go_arch_suffix = go_suffix_for_arch(arch)
-        return (
-            f'4-dev-preview{go_arch_suffix}' if assembly_type == AssemblyTypes.PREVIEW else f'4-stable{go_arch_suffix}'
-        )
+        if assembly_type == AssemblyTypes.PREVIEW:
+            return f'{major}-dev-preview{go_arch_suffix}'
+        return f'{major}-stable{go_arch_suffix}'
 
-    @staticmethod
-    def _get_image_stream_name(assembly_type: AssemblyTypes, arch: str):
+    def _get_image_stream_name(self, assembly_type: AssemblyTypes, arch: str):
+        major, _ = isolate_major_minor_in_group(self.group)
+        if major is None:
+            raise ValueError(f"Cannot determine major version from group name: {self.group}")
         go_arch_suffix = go_suffix_for_arch(arch)
-        return (
-            f'4-dev-preview{go_arch_suffix}' if assembly_type == AssemblyTypes.PREVIEW else f'release{go_arch_suffix}'
-        )
+        if assembly_type == AssemblyTypes.PREVIEW:
+            return f'{major}-dev-preview{go_arch_suffix}'
+        if major >= 5:
+            return f'release-{major}{go_arch_suffix}'
+        return f'release{go_arch_suffix}'
 
     def send_promote_complete_email(self, name, release_infos):
         content = "PullSpecs: \n"
@@ -665,18 +686,9 @@ class PromotePipeline:
 
     async def extract_and_publish_clients(self, client_type: str, release_infos: Dict):
         logger = self._logger
-        # make sure login to quay
-        if "QUAY_PASSWORD" in os.environ:
-            cmd = [
-                "docker",
-                "login",
-                "-u",
-                "openshift-release-dev+art_quay_dev",
-                "-p",
-                f"{os.environ['QUAY_PASSWORD']}",
-                "quay.io",
-            ]
-            await exectools.cmd_assert_async(cmd, env=os.environ.copy(), stdout=sys.stderr)
+        registry_config = os.environ.get("QUAY_AUTH_FILE")
+        if registry_config:
+            logger.info("Using QUAY_AUTH_FILE for registry authentication: %s", registry_config)
         base_to_mirror_dir = f"{self._working_dir}/to_mirror/openshift-v4"
         message_digests = []
         for arch, release_info in release_infos.items():
@@ -689,11 +701,21 @@ class PromotePipeline:
                     for manifest in release_info.get("manifests", [])
                 ]
                 message_digest = await self.publish_multi_client(
-                    base_to_mirror_dir, pullspec, release_name, manifest_arches, client_type
+                    base_to_mirror_dir,
+                    pullspec,
+                    release_name,
+                    manifest_arches,
+                    client_type,
+                    registry_config=registry_config,
                 )
             else:
                 message_digest = await self.publish_client(
-                    base_to_mirror_dir, pullspec, release_name, arch, client_type
+                    base_to_mirror_dir,
+                    pullspec,
+                    release_name,
+                    arch,
+                    client_type,
+                    registry_config=registry_config,
                 )
             message_digests.append(message_digest)
         return message_digests
@@ -853,7 +875,70 @@ class PromotePipeline:
             dry_run=self.runtime.dry_run,
         )
 
-    async def publish_client(self, base_to_mirror_dir: str, pullspec, release_name, build_arch, client_type):
+    def generate_sha256sum_file(self, directory_path: str, sha256sum_file_path: str):
+        """
+        Generate a comprehensive sha256sum.txt file by scanning all files in the directory.
+
+        Args:
+            directory_path: Path to the directory containing files to hash
+            sha256sum_file_path: Path where the sha256sum.txt file should be written
+        """
+        sha_entries = []
+
+        # Walk through the directory and compute SHA256 for each file
+        for root, dirs, files in os.walk(directory_path):
+            for file in files:
+                # Skip sha256sum.txt itself and any GPG signature files
+                if file in ['sha256sum.txt', 'sha256sum.txt.gpg']:
+                    continue
+
+                file_path = os.path.join(root, file)
+                # Compute relative path from the directory for the sha256sum.txt entry
+                relative_path = os.path.relpath(file_path, directory_path)
+
+                # For symlinks, compute SHA256 of the target file
+                # This is important because S3 doesn't support symlinks and will store them as regular files
+                if os.path.islink(file_path):
+                    # Resolve the symlink to get the actual file
+                    target_path = os.path.join(root, os.readlink(file_path))
+                    if not os.path.isabs(os.readlink(file_path)):
+                        # If the symlink is relative, resolve it relative to the symlink's directory
+                        target_path = os.path.normpath(target_path)
+
+                    # Only process if target exists and is a regular file
+                    if os.path.exists(target_path) and os.path.isfile(target_path):
+                        with open(target_path, 'rb') as f:
+                            shasum = hashlib.sha256(f.read()).hexdigest()
+                        sha_entries.append((shasum, relative_path))
+                    else:
+                        self._logger.warning(
+                            f"Symlink {file_path} points to non-existent or non-file target {target_path}"
+                        )
+                else:
+                    # Regular file - compute its SHA256
+                    with open(file_path, 'rb') as f:
+                        shasum = hashlib.sha256(f.read()).hexdigest()
+                    sha_entries.append((shasum, relative_path))
+
+        # Sort entries by filename for consistent output
+        sha_entries.sort(key=lambda x: x[1])
+
+        # Write the sha256sum.txt file
+        with open(sha256sum_file_path, 'w') as f:
+            for shasum, filename in sha_entries:
+                f.write(f"{shasum}  {filename}\n")
+
+        self._logger.info(f"Generated sha256sum.txt with {len(sha_entries)} entries at {sha256sum_file_path}")
+
+    async def publish_client(
+        self,
+        base_to_mirror_dir: str,
+        pullspec,
+        release_name,
+        build_arch,
+        client_type,
+        registry_config: Optional[str] = None,
+    ):
         # Anything under this directory will be sync'd to the mirror
         shutil.rmtree(f"{base_to_mirror_dir}/{build_arch}", ignore_errors=True)
 
@@ -863,47 +948,50 @@ class PromotePipeline:
         os.makedirs(client_mirror_dir)
 
         # extract release clients tools
-        extract_release_client_tools(pullspec, f"--to={client_mirror_dir}", None)
+        extract_release_client_tools(pullspec, f"--to={client_mirror_dir}", None, registry_config=registry_config)
 
         # Get cli installer operator-registry pull-spec from the release
         for release_component_tag_name, source_name in constants.MIRROR_CLIENTS.items():
-            image_stat, cli_pull_spec = get_release_image_pullspec(pullspec, release_component_tag_name)
+            image_stat, cli_pull_spec = get_release_image_pullspec(
+                pullspec,
+                release_component_tag_name,
+                registry_config=registry_config,
+            )
             if image_stat == 0:  # image exists
-                _, image_info = get_release_image_info_from_pullspec(cli_pull_spec)
+                _, image_info = get_release_image_info_from_pullspec(cli_pull_spec, registry_config=registry_config)
                 # Retrieve the commit from image info
                 commit = image_info["config"]["config"]["Labels"]["io.openshift.build.commit.id"]
                 source_url = image_info["config"]["config"]["Labels"]["io.openshift.build.source-location"]
-                # URL to download the tarball a specific commit
-                response = requests.get(f"{source_url}/archive/{commit}.tar.gz", stream=True)
-                if response.ok:
-                    with open(f"{client_mirror_dir}/{source_name}-src-{release_name}-{build_arch}.tar.gz", "wb") as f:
-                        f.write(response.raw.read())
-                    # calc shasum
-                    with open(f"{client_mirror_dir}/{source_name}-src-{release_name}-{build_arch}.tar.gz", 'rb') as f:
-                        shasum = hashlib.sha256(f.read()).hexdigest()
-                    # write shasum to sha256sum.txt
-                    with open(f"{client_mirror_dir}/sha256sum.txt", 'a') as f:
-                        f.write(f"{shasum}  {source_name}-src-{release_name}-{build_arch}.tar.gz\n")
-                else:
-                    response.raise_for_status()
+                # URL to download the tarball for a specific commit
+                tarball_url = f"{source_url}/archive/{commit}.tar.gz"
+                tarball_path = f"{client_mirror_dir}/{source_name}-src-{release_name}-{build_arch}.tar.gz"
+                self._download_source_tarball(tarball_url, tarball_path)
             else:
                 self._logger.error(f"Error get {release_component_tag_name} image from release pullspec")
 
         # Upload baremetal installer binary to mirror
-        self.publish_baremetal_installer_binary(pullspec, client_mirror_dir, build_arch)
+        self.publish_baremetal_installer_binary(
+            pullspec, client_mirror_dir, build_arch, registry_config=registry_config
+        )
 
         # Starting from 4.14, oc-mirror will be synced for all arches. See ART-6820 and ART-6863
         # oc-mirror was introduced in 4.10, so skip for <= 4.9.
         major, minor = isolate_major_minor_in_group(self.group)
-        if (major > 4 or minor >= 14) or (major == 4 and minor >= 10 and build_arch == 'x86_64'):
+        if (major, minor) >= (4, 14) or ((major, minor) >= (4, 10) and build_arch == 'x86_64'):
             # oc image  extract requires an empty destination directory. So do this before extracting tools.
             # oc adm release extract --tools does not require an empty directory.
-            image_stat, oc_mirror_pullspec = get_release_image_pullspec(pullspec, "oc-mirror")
+            image_stat, oc_mirror_pullspec = get_release_image_pullspec(
+                pullspec,
+                "oc-mirror",
+                registry_config=registry_config,
+            )
             if image_stat == 0:  # image exist
                 # extract image to workdir, if failed it will raise error in function
                 multi_rhel_path = [f"--path=/usr/bin/oc-mirror*:{client_mirror_dir}"]
                 extract_release_binary(
-                    oc_mirror_pullspec, multi_rhel_path
+                    oc_mirror_pullspec,
+                    multi_rhel_path,
+                    registry_config=registry_config,
                 )  # will exit with 0 even if no files are exacted
 
                 # if oc-mirror.rhel8 exists, rename it to oc-mirror
@@ -916,12 +1004,6 @@ class PromotePipeline:
                     tarball = Path(f'{file}.tar.gz')
                     with tarfile.open(tarball, "w:gz") as tar:
                         tar.add(f"{file}", arcname="oc-mirror")
-                    # calc shasum
-                    with open(tarball, 'rb') as f:
-                        shasum = hashlib.sha256(f.read()).hexdigest()
-                    # write shasum to sha256sum.txt
-                    with open(f"{client_mirror_dir}/sha256sum.txt", 'a') as f:
-                        f.write(f"{shasum}  {tarball.name}\n")
                     # remove extracted file
                     file.unlink()
                     files_extracted += 1
@@ -934,17 +1016,15 @@ class PromotePipeline:
         self.create_symlink(client_mirror_dir, False, False)
 
         # extract opm binaries
-        self.extract_opm(client_mirror_dir, release_name, pullspec, build_arch)
+        self.extract_opm(client_mirror_dir, release_name, pullspec, build_arch, registry_config=registry_config)
 
         util.log_dir_tree(client_mirror_dir)  # print dir tree
-        util.log_file_content(f"{client_mirror_dir}/sha256sum.txt")  # print sha256sum.txt
 
-        with open(f"{client_mirror_dir}/sha256sum.txt", "r") as shas:
-            archives = [line.split()[-1] for line in shas.readlines()]
-            seen = set()
-            dupes = [x for x in archives if x in seen or seen.add(x)]
-            if dupes:
-                raise ValueError(f'Duplicate archive entries in {client_mirror_dir}/sha256sum.txt: {dupes}')
+        # Generate comprehensive sha256sum.txt by scanning the directory
+        sha256sum_path = f"{client_mirror_dir}/sha256sum.txt"
+        self.generate_sha256sum_file(client_mirror_dir, sha256sum_path)
+
+        util.log_file_content(sha256sum_path)  # print sha256sum.txt
 
         # Publish the clients to our S3 bucket.
         await util.mirror_to_s3(
@@ -957,8 +1037,33 @@ class PromotePipeline:
 
         return f"{build_arch}/clients/{client_type}/{release_name}/sha256sum.txt"
 
-    async def sigstore_sign(self, release_name: str, release_infos: Dict):
-        """Signs release and component images with sigstore/cosign which publishes to quay"""
+    @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(30))
+    def _download_source_tarball(self, url: str, dest_path: str):
+        self._logger.info("Downloading source tarball from %s", url)
+        response = requests.get(url, stream=True, timeout=120)
+        response.raise_for_status()
+        with open(dest_path, "wb") as f:
+            f.write(response.raw.read())
+
+    async def sigstore_sign(
+        self,
+        release_name: str,
+        release_infos: Dict,
+    ):
+        """Signs release and component images with sigstore/cosign which publishes to quay.
+
+        Release images are signed with both digest and canonical tag identities
+        (e.g., "quay.io/.../ocp-release:4.16.1-x86_64"). This enables customers to verify
+        images referenced by tag without needing signedIdentity overrides in their policy
+        configuration.
+
+        Component images are signed with digest identity only.
+
+        :param release_name: The release name (e.g., "4.16.1")
+        :param release_infos: Dict mapping arch to release info (containing "image" and "digest")
+        """
+        from pyartcd.signatory import ReleaseImageInfo
+
         CONCURRENCY_LIMIT = 100  # we run out of processes without a limit
         signatory = SigstoreSignatory(
             logger=self._logger,
@@ -968,33 +1073,82 @@ class PromotePipeline:
             signing_key_ids=os.environ.get("KMS_KEY_ID", "dummy-key").strip().split(','),
             rekor_url=os.environ.get("REKOR_URL", ""),
             concurrency_limit=CONCURRENCY_LIMIT,
-            sign_release=True,
-            sign_components=True,
-            verify_release=False,  # not needed when we're supplying the shasum pullspecs
         )
-        # recursively discover all the pullspecs that need to be signed.
-        images: List[str] = [
-            # for paranoia, refer to release image pullspecs with shasums
-            signatory.redigest_pullspec(info["image"], info["digest"])
-            for info in release_infos.values()
-        ]
-        need_signing: Set[str] = set()
-        errors: Dict[str, str] = {}  # pullspec -> exception
-        need_signing, errors = await signatory.discover_pullspecs(images, release_name)
 
-        if errors:
-            # this should be impossible given we just created the pullspecs
-            raise IOError(f"Not all pullspecs examined were viable: {errors}")
-        if errors := await signatory.sign_pullspecs(need_signing):
-            raise IOError(f"Not all signings succeeded, check errors: {errors}")
+        # --- Phase 1: Discover release images and their manifests ---
+        # For manifest lists, this discovers all arch-specific manifests.
+        # All manifests from a manifest list are signed with the same canonical tag.
+        release_images: List[ReleaseImageInfo] = []
+        all_errors: Dict[str, Exception] = {}
 
-    def publish_baremetal_installer_binary(self, release_pullspec: str, client_mirror_dir: str, build_arch: str):
-        _, baremetal_installer_pullspec = get_release_image_pullspec(release_pullspec, 'baremetal-installer')
+        for arch, info in release_infos.items():
+            # For paranoia, refer to release image pullspecs with shasums
+            digest_pullspec = signatory.redigest_pullspec(info["image"], info["digest"])
+
+            # Extract the canonical tag (e.g., "4.16.1-x86_64" or "4.16.1-multi")
+            canonical_tag = info["image"].split(":")[-1]
+            self._logger.info("Discovering release image %s with canonical tag: %s", digest_pullspec, canonical_tag)
+
+            release_info, errors = await signatory.discover_release_image(
+                pullspec=digest_pullspec,
+                canonical_tag=canonical_tag,
+                release_name=release_name,
+            )
+            release_images.append(release_info)
+            all_errors.update(errors)
+
+        if all_errors:
+            raise IOError(f"Release image discovery failed: {all_errors}")
+
+        # --- Phase 2: Discover component images from ALL arch release images ---
+        # Each arch-specific release references arch-specific component digests,
+        # so we must discover from every release image to cover all architectures.
+        component_images: Set[str] = set()
+
+        for arch, info in release_infos.items():
+            digest_pullspec = signatory.redigest_pullspec(info["image"], info["digest"])
+            self._logger.info(f"Discovering component images from {arch} release: {digest_pullspec}")
+            components, errors = await signatory.discover_component_images(
+                release_pullspec=digest_pullspec,
+                release_name=release_name,
+            )
+            component_images.update(components)
+            all_errors.update(errors)
+
+        if all_errors:
+            raise IOError(f"Component image discovery failed: {all_errors}")
+
+        # --- Phase 3: Sign release images (with canonical tags) ---
+        self._logger.info(
+            "Signing %d release images with %d total manifests",
+            len(release_images),
+            sum(len(ri.manifests_to_sign) for ri in release_images),
+        )
+        if errors := await signatory.sign_release_images(release_images):
+            raise IOError(f"Release image signing failed: {errors}")
+
+        # --- Phase 4: Sign component images (digest only) ---
+        self._logger.info("Signing %d component images", len(component_images))
+        if errors := await signatory.sign_component_images(component_images):
+            raise IOError(f"Component image signing failed: {errors}")
+
+    def publish_baremetal_installer_binary(
+        self,
+        release_pullspec: str,
+        client_mirror_dir: str,
+        build_arch: str,
+        registry_config: Optional[str] = None,
+    ):
+        _, baremetal_installer_pullspec = get_release_image_pullspec(
+            release_pullspec,
+            'baremetal-installer',
+            registry_config=registry_config,
+        )
         self._logger.info('baremetal-installer pullspec: %s', baremetal_installer_pullspec)
 
         # Check rhel version (used for archive naming)
         major, minor = isolate_major_minor_in_group(self.group)
-        if major == 4 and minor < 16:
+        if (major, minor) < (4, 16):
             rhel_version = 'rhel8'
             binary_name = 'openshift-baremetal-install'
         else:
@@ -1004,7 +1158,9 @@ class PromotePipeline:
         # oc adm release extract --command=openshift-baremetal-install -n=ocp <release-pullspec>
         self._logger.info('Extracting baremetal-install')
         go_arch = go_arch_for_brew_arch(build_arch)
-        extract_baremetal_installer(release_pullspec, client_mirror_dir, go_arch, binary_name)
+        extract_baremetal_installer(
+            release_pullspec, client_mirror_dir, go_arch, binary_name, registry_config=registry_config
+        )
 
         # Create tarball
         archive_name = f'openshift-install-{rhel_version}-{go_arch}.tar.gz'
@@ -1012,27 +1168,31 @@ class PromotePipeline:
             tar.add(f'{client_mirror_dir}/{binary_name}', f'{binary_name}')
         self._logger.info('Created tarball %s at %s', archive_name, client_mirror_dir)
 
-        # Write shasum to sha256sum.txt
-        with open(f'{client_mirror_dir}/{archive_name}', 'rb') as f:
-            shasum = hashlib.sha256(f.read()).hexdigest()
-        with open(f"{client_mirror_dir}/sha256sum.txt", 'a') as f:
-            f.write(f"{shasum}  {archive_name}\n")
-
         # Remove baremetal-installer binary
         os.remove(f'{client_mirror_dir}/{binary_name}')
 
-    def extract_opm(self, client_mirror_dir, release_name, release_pullspec, arch):
+    def extract_opm(
+        self, client_mirror_dir, release_name, release_pullspec, arch, registry_config: Optional[str] = None
+    ):
         major, minor = isolate_major_minor_in_group(self.group)
         path_args = []
         if (major, minor) >= (4, 16):
             # from 4.16 opm has multi rhel binaries, will use operator-framework-tools
             base_path = '/tools/'
-            _, operator_pullspec = get_release_image_pullspec(release_pullspec, "operator-framework-tools")
+            _, operator_pullspec = get_release_image_pullspec(
+                release_pullspec,
+                "operator-framework-tools",
+                registry_config=registry_config,
+            )
             binaries = ['opm-rhel8', 'opm-rhel9']
             platforms = ['linux', 'linux-rhel9']
         else:
             base_path = '/usr/bin/registry/'
-            _, operator_pullspec = get_release_image_pullspec(release_pullspec, "operator-registry")
+            _, operator_pullspec = get_release_image_pullspec(
+                release_pullspec,
+                "operator-registry",
+                registry_config=registry_config,
+            )
             binaries = ['opm']
             platforms = ['linux']
         # For x86_64, we have binaries for macOS and Windows
@@ -1041,7 +1201,7 @@ class PromotePipeline:
             platforms += ['mac', 'windows']
         for binary in binaries:
             path_args.append(f'--path={base_path}{binary}:{client_mirror_dir}')
-        extract_release_binary(operator_pullspec, path_args)
+        extract_release_binary(operator_pullspec, path_args, registry_config=registry_config)
         # Compress binaries into tar.gz files and calculate sha256 digests
         for idx, binary in enumerate(binaries):
             platform = platforms[idx]
@@ -1054,12 +1214,16 @@ class PromotePipeline:
             os.symlink(
                 f"opm-{platform}-{release_name}.tar.gz", f"{client_mirror_dir}/opm-{platform}.tar.gz"
             )  # create symlink
-            with open(f"{client_mirror_dir}/opm-{platform}-{release_name}.tar.gz", 'rb') as f:  # calc shasum
-                shasum = hashlib.sha256(f.read()).hexdigest()
-            with open(f"{client_mirror_dir}/sha256sum.txt", 'a') as f:  # write shasum to sha256sum.txt
-                f.write(f"{shasum}  opm-{platform}-{release_name}.tar.gz\n")
 
-    async def publish_multi_client(self, base_to_mirror_dir: str, pullspec: str, release_name, arch_list, client_type):
+    async def publish_multi_client(
+        self,
+        base_to_mirror_dir: str,
+        pullspec: str,
+        release_name,
+        arch_list,
+        client_type,
+        registry_config: Optional[str] = None,
+    ):
         # Anything under this directory will be sync'd to the mirror
         shutil.rmtree(f"{base_to_mirror_dir}/multi", ignore_errors=True)
         release_mirror_dir = f"{base_to_mirror_dir}/multi/clients/{client_type}/{release_name}"
@@ -1070,24 +1234,40 @@ class PromotePipeline:
             client_mirror_dir = f"{release_mirror_dir}/{go_arch}"
             os.makedirs(client_mirror_dir)
             # extract release clients tools
-            extract_release_client_tools(pullspec, f"--to={client_mirror_dir}", go_arch)
+            extract_release_client_tools(
+                pullspec, f"--to={client_mirror_dir}", go_arch, registry_config=registry_config
+            )
             # extract baremetal installer binary
-            self.publish_baremetal_installer_binary(pullspec, client_mirror_dir, arch)
+            self.publish_baremetal_installer_binary(pullspec, client_mirror_dir, arch, registry_config=registry_config)
             # create symlink for clients
-            self.create_symlink(path_to_dir=client_mirror_dir, log_tree=True, log_shasum=True)
+            self.create_symlink(path_to_dir=client_mirror_dir, log_tree=True, log_shasum=False)
+
+            # Generate comprehensive sha256sum.txt for this architecture subdirectory
+            arch_sha256sum_path = f"{client_mirror_dir}/sha256sum.txt"
+            self.generate_sha256sum_file(client_mirror_dir, arch_sha256sum_path)
+            util.log_file_content(arch_sha256sum_path)  # print sha256sum.txt
 
         # Create a master sha256sum.txt including the sha256sum.txt files from all subarches
         # This is the file we will sign -- trust is transitive to the subarches
+        master_sha_entries = []
         for dir in os.listdir(release_mirror_dir):
-            if not os.path.isdir(f"{release_mirror_dir}/{dir}"):
+            dir_path = f"{release_mirror_dir}/{dir}"
+            if not os.path.isdir(dir_path):
                 continue
-            for root, dirs, files in os.walk(f"{release_mirror_dir}/{dir}"):
-                if "sha256sum.txt" not in files:
-                    continue
-                with open(f"{root}/sha256sum.txt", "rb") as f:
+            sha_file_path = f"{dir_path}/sha256sum.txt"
+            if os.path.exists(sha_file_path):
+                with open(sha_file_path, "rb") as f:
                     shasum = hashlib.sha256(f.read()).hexdigest()
-                with open(f"{release_mirror_dir}/sha256sum.txt", 'a') as f:  # write shasum to sha256sum.txt
-                    f.write(f"{shasum}  {dir}/sha256sum.txt\n")
+                master_sha_entries.append((shasum, f"{dir}/sha256sum.txt"))
+
+        # Sort entries for consistent output
+        master_sha_entries.sort(key=lambda x: x[1])
+
+        # Write the master sha256sum.txt
+        with open(f"{release_mirror_dir}/sha256sum.txt", 'w') as f:
+            for shasum, filename in master_sha_entries:
+                f.write(f"{shasum}  {filename}\n")
+
         util.log_dir_tree(release_mirror_dir)
 
         # Publish the clients to our S3 bucket.
@@ -1186,14 +1366,14 @@ class PromotePipeline:
             return
 
         major, minor = isolate_major_minor_in_group(self.group)
-        if major == 4 and minor < 14:
+        if (major, minor) < (4, 14):
             self._logger.info("Skip microshift build for version < 4.14")
             return
 
         jenkins.start_build_microshift(f'{major}.{minor}', self.assembly, self.runtime.dry_run)
 
     @staticmethod
-    def get_live_id(advisory_info: Dict):
+    def get_full_advisory_id_from_errata_advisory(advisory_info: Dict):
         # Extract live ID from advisory info
         # Examples:
         # - advisory with a live ID
@@ -1211,6 +1391,22 @@ class PromotePipeline:
             return None
         live_id = advisory_info["fulladvisory"].rsplit("-", 1)[0]  # RHBA-2019:2681-02 => RHBA-2019:2681
         return live_id
+
+    @staticmethod
+    def get_full_advisory_id_from_shipment(shipment_config: ShipmentConfig) -> str:
+        """Get the full advisory ID from a shipment config, if it exists."""
+        live_id = shipment_config.shipment.data.releaseNotes.live_id
+        if not live_id:
+            raise ValueError("Could not find live ID in image shipment config!")
+
+        # construct full advisory id like RHBA-2025:13660
+        advisory_type = shipment_config.shipment.data.releaseNotes.type
+        year = datetime.now().strftime("%Y")
+
+        # Important: Pad liveID with 0 if it is less than 4 digits
+        live_id = f"{live_id:04}"
+
+        return f"{advisory_type.upper()}-{year}:{live_id}"
 
     def verify_advisory_status(self, advisory_info: Dict):
         if advisory_info["status"] not in {"QE", "REL_PREP", "PUSH_READY", "IN_PUSH", "SHIPPED_LIVE"}:
@@ -1346,7 +1542,8 @@ class PromotePipeline:
         self._logger.info(
             "Checking if release image %s for %s (%s) already exists...", release_name, arch, dest_image_pullspec
         )
-        dest_image_info = await get_release_image_info(dest_image_pullspec)
+        registry_config = os.environ.get("QUAY_AUTH_FILE")
+        dest_image_info = await get_release_image_info(dest_image_pullspec, registry_config=registry_config)
         if dest_image_info:  # this arch-specific release image is already promoted
             self._logger.warning(
                 "Release image %s for %s (%s) already exists", release_name, arch, dest_image_info["image"]
@@ -1383,7 +1580,9 @@ class PromotePipeline:
             )
             self._logger.info("Getting release image information for %s...", dest_image_pullspec)
             if not self.runtime.dry_run:
-                dest_image_info = await get_release_image_info(dest_image_pullspec, raise_if_not_found=True)
+                dest_image_info = await get_release_image_info(
+                    dest_image_pullspec, raise_if_not_found=True, registry_config=registry_config
+                )
             else:
                 # populate fake data for dry run
                 dest_image_info = {
@@ -1621,27 +1820,36 @@ class PromotePipeline:
         with dest_manifest_list_path.open("w") as ml:
             yaml.dump(dest_manifest_list, ml)
 
-        await manifest_tool(["push", "from-spec", "--", f"{dest_manifest_list_path}"], self.runtime.dry_run)
-        auth_opt = ""
-        if os.environ.get("XDG_RUNTIME_DIR"):
-            auth_file = os.path.expandvars("${XDG_RUNTIME_DIR}/containers/auth.json")
-            if Path(auth_file).is_file():
-                auth_opt = f"--docker-cfg={auth_file}"
+        auth_file = os.environ.get("QUAY_AUTH_FILE")
+        await manifest_tool(
+            ["push", "from-spec", "--", f"{dest_manifest_list_path}"],
+            self.runtime.dry_run,
+            auth_file=auth_file,
+        )
+        with manifest_tool_auth_file(
+            auth_file, ["push", "from-spec", "--", f"{dest_manifest_list_path}"]
+        ) as resolved_auth_file:
+            auth_opt = ""
+            if resolved_auth_file:
+                auth_opt = f"--docker-cfg={resolved_auth_file}"
 
-        cmd = [
-            "manifest-tool",
-            auth_opt,
-            "push",
-            "from-spec",
-            "--",
-            f"{dest_manifest_list_path}",
-        ]
+            cmd = ["manifest-tool"]
+            if auth_opt:
+                cmd.append(auth_opt)
+            cmd.extend(
+                [
+                    "push",
+                    "from-spec",
+                    "--",
+                    f"{dest_manifest_list_path}",
+                ]
+            )
 
-        if self.runtime.dry_run:
-            self._logger.warning("[DRY RUN] Would have run %s", cmd)
-            return
-        env = os.environ.copy()
-        await exectools.cmd_assert_async(cmd, env=env, stdout=sys.stderr)
+            if self.runtime.dry_run:
+                self._logger.warning("[DRY RUN] Would have run %s", cmd)
+                return
+            env = os.environ.copy()
+            await exectools.cmd_assert_async(cmd, env=env, stdout=sys.stderr)
 
     async def build_release_image(
         self,
@@ -1684,6 +1892,9 @@ class PromotePipeline:
         if metadata:
             cmd.append("--metadata")
             cmd.append(json.dumps(metadata))
+        registry_config = os.environ.get("QUAY_AUTH_FILE")
+        if registry_config:
+            cmd.append(f"--registry-config={registry_config}")
         env = os.environ.copy()
         env["GOTRACEBACK"] = "all"
         self._logger.info("Running %s", " ".join(cmd))
@@ -1718,16 +1929,17 @@ class PromotePipeline:
     @staticmethod
     async def get_image_info(pullspec: str, raise_if_not_found: bool = False):
         # Get image manifest/manifest-list.
-        cmd = f'oc image info --show-multiarch -o json {pullspec}'
-        env = os.environ.copy()
-        rc, stdout, stderr = await exectools.cmd_gather_async(cmd, check=False, env=env)
-        if rc != 0:
-            if "not found: manifest unknown" in stderr or "was deleted or has expired" in stderr:
+        try:
+            registry_config = os.environ.get("QUAY_AUTH_FILE")
+            stdout = await oc_image_info__cached_async(pullspec, '--show-multiarch', registry_config=registry_config)
+        except ChildProcessError as e:
+            err_msg = str(e)
+            if "not found: manifest unknown" in err_msg or "was deleted or has expired" in err_msg:
                 # image doesn't exist
                 if raise_if_not_found:
                     raise IOError(f"Image {pullspec} is not found.")
                 return None
-            raise ChildProcessError(f"Error running {cmd}: exit_code={rc}, stdout={stdout}, stderr={stderr}")
+            raise
 
         # Info provided by oc need to be converted back into Skopeo-looking format
         info = json.loads(stdout)
@@ -1757,17 +1969,19 @@ class PromotePipeline:
     @staticmethod
     async def get_multi_image_digest(pullspec: str, raise_if_not_found: bool = False):
         # Get image digest
-        cmd = f'oc image info {pullspec} --filter-by-os linux/amd64 -o json'
-        env = os.environ.copy()
-        rc, stdout, stderr = await exectools.cmd_gather_async(cmd, check=False, env=env)
-
-        if rc != 0:
-            if "manifest unknown" in stderr or "was deleted or has expired" in stderr:
+        try:
+            registry_config = os.environ.get("QUAY_AUTH_FILE")
+            stdout = await oc_image_info__cached_async(
+                pullspec, '--filter-by-os=linux/amd64', registry_config=registry_config
+            )
+        except ChildProcessError as e:
+            err_msg = str(e)
+            if "manifest unknown" in err_msg or "was deleted or has expired" in err_msg:
                 # image doesn't exist
                 if raise_if_not_found:
                     raise IOError(f"Image {pullspec} is not found.")
                 return None
-            raise ChildProcessError(f"Error running {cmd}: exit_code={rc}, stdout={stdout}, stderr={stderr}")
+            raise
 
         return json.loads(stdout)['listDigest']
 
@@ -1904,9 +2118,8 @@ class PromotePipeline:
 
     @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
     def _update_qe_repo(self, release_name: str, release_jira: str, advisories: Dict[str, int]):
-        github_client = Github(os.environ.get("GITHUB_TOKEN"))
-        upstream_repo = github_client.get_repo("openshift/release-tests")
-        fork_repo = github_client.get_repo("openshift-bot/release-tests")
+        upstream_repo = get_github_client_for_org("openshift").get_repo("openshift/release-tests")
+        fork_repo = get_github_client_for_org("openshift-bot").get_repo("openshift-bot/release-tests")
         update_message = f"Add release {release_name}"
         major, minor = isolate_major_minor_in_group(self.group)
         file_path = f"_releases/{major}.{minor}/{major}.{minor}.z.yaml"
@@ -1924,7 +2137,7 @@ class PromotePipeline:
             release_content = upstream_repo.get_contents(file_path, ref="z-stream")
             file_content = yaml.load(release_content.decoded_content)
             file_content['releases'][release_name] = {'advisories': advisories, 'release_jira': release_jira}
-        except ParserError:
+        except (ParserError, TypeError):
             self._logger.warning("release file not in valid yaml format, overwrite with new value")
             file_content = {'releases': {}}
             file_content['releases'][release_name] = {'advisories': advisories, 'release_jira': release_jira}
@@ -2018,7 +2231,7 @@ class PromotePipeline:
             pr_messages = "Promoting a hotfix release (e.g. for a single customer). There is no advisory associated. \nPlease merge immediately."
 
         # create a forked branch
-        github_client = Github(os.environ.get("GITHUB_TOKEN"))
+        github_client = get_github_client_for_org("openshift")
         upstream_repo = github_client.get_repo("openshift/cincinnati-graph-data")
         for branch in upstream_repo.get_branches():
             if branch.name == branchName:
@@ -2076,6 +2289,322 @@ class PromotePipeline:
             self._logger.info("Successfully triggered ocp-doomsday-registry pipline on cluster")
         else:
             self._logger.error("Error while triggering ocp-doomsday-registry pipline on cluster")
+
+    async def update_shipment_with_payload_shas(self, shipment_url: str, payload_shas: Dict[str, str]):
+        """Update shipment MR with payload SHA digests from successful promote job.
+
+        :param shipment_url: The URL of the existing shipment MR to update
+        :param payload_shas: Dict mapping architecture names to their SHA256 digests
+        """
+        self._logger.info("Updating shipment MR with payload SHAs: %s", shipment_url)
+
+        gitlab_token = os.getenv("GITLAB_TOKEN")
+        if not gitlab_token:
+            raise ValueError("GITLAB_TOKEN environment variable is required for updating shipment MR")
+
+        # Parse the shipment URL to extract project and MR details
+        parsed_url = urlparse(shipment_url)
+        target_project_path = parsed_url.path.strip('/').split('/-/merge_requests')[0]
+        mr_id = parsed_url.path.split('/')[-1]
+        gitlab_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
+
+        # Connect to GitLab
+        gl = GitLabClient(gitlab_url, gitlab_token, self.runtime.dry_run)
+
+        # Load the existing MR
+        project = gl.get_project(target_project_path)
+        mr = project.mergerequests.get(mr_id)
+        source_project = gl.get_project(mr.source_project_id)
+
+        # Load shipment configs from MR
+        shipments_by_kind = get_shipment_configs_from_mr(shipment_url)
+
+        # Collect all file changes before creating a single MR
+        files_to_update = {}  # file_path -> updated_content
+        templates_replaced_total = 0
+
+        # Process all shipment types (except FBC) for template replacement
+        for shipment_kind, shipment_config in shipments_by_kind.items():
+            if shipment_kind == "fbc":
+                continue  # Skip FBC shipments
+
+            self._logger.info("Processing %s shipment for template replacement", shipment_kind)
+
+            # Check for template updates for this shipment
+            file_path, updated_content, templates_replaced = await self._prepare_shipment_templates(
+                shipment_kind, shipment_config, payload_shas, mr, source_project, shipments_by_kind
+            )
+
+            if file_path and updated_content and templates_replaced > 0:
+                files_to_update[file_path] = updated_content
+                templates_replaced_total += templates_replaced
+                self._logger.info(
+                    "Prepared %d template replacements for %s shipment", templates_replaced, shipment_kind
+                )
+            else:
+                self._logger.info("No template replacements needed for %s shipment", shipment_kind)
+
+        # Commit doc updates directly to the shipment MR branch
+        if files_to_update:
+            await self._update_shipment_mr_with_docs(mr, source_project, files_to_update, templates_replaced_total)
+        else:
+            self._logger.info("No template replacements needed for any shipment files")
+
+    async def _prepare_shipment_templates(
+        self, shipment_kind: str, shipment_config, payload_shas: Dict[str, str], mr, source_project, shipments_by_kind
+    ):
+        """Prepare template replacements for a single shipment and return file path, content, and replacement count"""
+        # Build format dictionary for template replacement
+        format_dict = {}
+
+        # Add SHA digests for image shipments
+        if shipment_kind == "image":
+            for arch, sha in payload_shas.items():
+                if arch == "multi":
+                    continue  # Skip multi-arch as it's not a specific architecture
+
+                # Map architecture names to format variables
+                if arch == "x86_64":
+                    format_dict["x864_DIGEST"] = sha
+                elif arch == "s390x":
+                    format_dict["s390x_DIGEST"] = sha
+                elif arch == "ppc64le":
+                    format_dict["ppc64le_DIGEST"] = sha
+                elif arch == "aarch64":
+                    format_dict["aarch64_DIGEST"] = sha
+                else:
+                    self._logger.warning("Unknown architecture %s, skipping template replacement", arch)
+                    continue
+
+                self._logger.info("Prepared format variable: %s -> %s", arch, sha)
+
+        # Generate IMAGE_ADVISORY template key for all shipment types (get from image shipment data)
+        try:
+            image_shipment = shipments_by_kind.get("image")
+
+            if (
+                image_shipment
+                and hasattr(image_shipment.shipment.data.releaseNotes, 'type')
+                and hasattr(image_shipment.shipment.data.releaseNotes, 'live_id')
+                and image_shipment.shipment.data.releaseNotes.type
+                and image_shipment.shipment.data.releaseNotes.live_id
+            ):
+                image_advisory = self.get_full_advisory_id_from_shipment(image_shipment)
+                format_dict["IMAGE_ADVISORY"] = image_advisory
+                self._logger.info("Generated IMAGE_ADVISORY: %s", image_advisory)
+            else:
+                self._logger.warning("Cannot generate IMAGE_ADVISORY: missing image shipment or type/live_id data")
+        except Exception as ex:
+            self._logger.warning("Failed to generate IMAGE_ADVISORY: %s", ex)
+
+        # Generate RPM_ADVISORY template key for all shipment types
+        try:
+            rpm_advisory_id = await self._get_rpm_advisory_id()
+            if rpm_advisory_id:
+                format_dict["RPM_ADVISORY"] = rpm_advisory_id
+                self._logger.info("Generated RPM_ADVISORY: %s", rpm_advisory_id)
+            else:
+                # Don't replace RPM_ADVISORY placeholder if we can't generate it
+                self._logger.warning("Could not generate RPM_ADVISORY: no RPM advisory found in releases.yml")
+        except Exception as ex:
+            # Don't replace RPM_ADVISORY placeholder on error
+            self._logger.warning("Failed to generate RPM_ADVISORY: %s", ex)
+
+        # If no replacements are needed, skip this shipment
+        if not format_dict:
+            self._logger.info("No template replacements needed for %s shipment", shipment_kind)
+            return None, None, 0
+
+        # Check if the shipment file actually contains any of our placeholders
+        # Find the shipment file first to check its content
+        diff_info = mr.diffs.list(all=True)[0]
+        diff = mr.diffs.get(diff_info.id)
+        shipment_file_path = None
+        for file_diff in diff.diffs:
+            file_path = file_diff.get('new_path') or file_diff.get('old_path')
+            if file_path and file_path.endswith(('.yaml', '.yml')) and shipment_kind in file_path:
+                shipment_file_path = file_path
+                break
+
+        if not shipment_file_path:
+            self._logger.warning("Could not find %s shipment file in MR", shipment_kind)
+            return None, None, 0
+
+        # Get original file content to check for placeholders
+        original_file = source_project.files.get(shipment_file_path, mr.source_branch)
+        original_content = original_file.decode().decode('utf-8')
+
+        # Check if any of our placeholders are actually present in the file
+        placeholders_found = []
+        for var_name in format_dict.keys():
+            placeholder = f"{{{var_name}}}"
+            if placeholder in original_content:
+                placeholders_found.append(placeholder)
+
+        if not placeholders_found:
+            self._logger.info("No relevant template placeholders found in %s shipment file", shipment_kind)
+            return None, None, 0
+
+        self._logger.info("Found template placeholders in %s shipment: %s", shipment_kind, placeholders_found)
+
+        # Validate template placeholders in both description and solution fields (for image shipments)
+        if shipment_kind == "image":
+            # Check solution field for SHA digest placeholders
+            if hasattr(shipment_config.shipment.data.releaseNotes, 'solution'):
+                solution_text = shipment_config.shipment.data.releaseNotes.solution
+                if solution_text:
+                    # Check for SHA digest placeholders that have no corresponding replacement
+                    placeholder_pattern = r'\{([^}]+)\}'
+                    placeholders = re.findall(placeholder_pattern, solution_text)
+                    for placeholder in placeholders:
+                        if placeholder.endswith('_DIGEST') and placeholder not in format_dict:
+                            raise ValueError(
+                                f"Solution contains placeholder {{{placeholder}}} but no corresponding value was found"
+                            )
+
+            # Check description field for advisory placeholders
+            if hasattr(shipment_config.shipment.data.releaseNotes, 'description'):
+                description_text = shipment_config.shipment.data.releaseNotes.description
+                if description_text:
+                    # Check for advisory placeholders that have no corresponding replacement
+                    placeholder_pattern = r'\{([^}]+)\}'
+                    placeholders = re.findall(placeholder_pattern, description_text)
+                    for placeholder in placeholders:
+                        if placeholder in ["IMAGE_ADVISORY", "RPM_ADVISORY"] and placeholder not in format_dict:
+                            # Allow advisory placeholders to remain if we can't generate them
+                            pass
+
+        # File content was already loaded above for placeholder checking
+
+        # Replace template placeholders directly in the original content to preserve formatting
+        # Advisory placeholders (IMAGE_ADVISORY, RPM_ADVISORY) go in description field
+        # SHA digest placeholders (x864_DIGEST, etc.) go in solution field
+        updated_content = original_content
+        templates_replaced = 0
+
+        for var_name, replacement_value in format_dict.items():
+            placeholder = f"{{{var_name}}}"
+            if placeholder in updated_content:
+                # Log appropriate context based on placeholder type
+                if var_name.endswith('_DIGEST'):
+                    context = "solution"
+                elif var_name in ["IMAGE_ADVISORY", "RPM_ADVISORY"]:
+                    context = "description"
+                else:
+                    context = "content"
+
+                updated_content = updated_content.replace(placeholder, replacement_value)
+                templates_replaced += 1
+                self._logger.info("Replaced %s with %s in %s field", placeholder, replacement_value, context)
+
+        if templates_replaced > 0:
+            self._logger.info(
+                "Successfully replaced %d template placeholders in %s shipment", templates_replaced, shipment_kind
+            )
+            return shipment_file_path, updated_content, templates_replaced
+        else:
+            self._logger.info("No template placeholders found in %s shipment file", shipment_kind)
+            return None, None, 0
+
+    async def _update_shipment_mr_with_docs(
+        self, mr, source_project, files_to_update: Dict[str, str], templates_replaced_total: int
+    ):
+        """
+        Update shipment files with template replacements by committing directly
+        to the shipment MR's source branch.
+        """
+        try:
+            if self.runtime.dry_run:
+                self._logger.info(
+                    "[DRY RUN] Would have committed doc updates to shipment MR branch %s: %s",
+                    mr.source_branch,
+                    list(files_to_update.keys()),
+                )
+                return None
+
+            source_branch = mr.source_branch
+            # Update all files directly on the shipment MR's source branch
+            for file_path, updated_content in files_to_update.items():
+                file_to_update = source_project.files.get(file_path, source_branch)
+                file_to_update.content = updated_content
+                file_to_update.save(
+                    branch=source_branch,
+                    commit_message=f"Update {file_path.split('/')[-1]} with payload SHAs for {self.assembly}",
+                )
+                self._logger.info("Updated file %s in branch %s", file_path, source_branch)
+
+            self._logger.info(
+                "Committed doc updates to shipment MR branch %s (%d templates replaced)",
+                source_branch,
+                templates_replaced_total,
+            )
+            await self._slack_client.say_in_thread(
+                f"Updated shipment MR with payload SHAs and advisories: {mr.web_url}"
+            )
+
+            # Comment on the shipment MR to notify docs team about the updates
+            main_mr_comment = (
+                f"@hybrid-platforms/art/team-docs: Shipment files have been updated with"
+                f" payload SHAs and advisory references ({templates_replaced_total} templates replaced)."
+                f" Please review the updated release notes and approve this Shipment MR."
+            )
+
+            # Check if comment already exists to avoid duplicates
+            existing_notes = mr.notes.list(all=True)
+            comment_exists = any(main_mr_comment in note.body for note in existing_notes)
+
+            if not comment_exists:
+                try:
+                    mr.notes.create({'body': main_mr_comment})
+                    self._logger.info("Added comment to shipment MR notifying docs team")
+                except Exception as comment_ex:
+                    self._logger.warning("Failed to comment on shipment MR: %s", comment_ex)
+            else:
+                self._logger.info("Comment about template update MR already exists on main shipment MR")
+
+        except Exception as ex:
+            self._logger.error("Failed to update shipment MR with doc updates: %s", ex)
+            raise
+
+    async def _get_rpm_advisory_id(self) -> Optional[str]:
+        """Get RPM advisory ID from releases.yml and query errata endpoint for advisory type.
+
+        :return: Formatted RPM advisory string like "RHBA-2025:12345" or None if not found
+        """
+        try:
+            # Load releases.yml config to get RPM advisory ID
+            releases_config = await util.load_releases_config(
+                group=self.group,
+                data_path=self._doozer_env_vars.get("DOOZER_DATA_PATH", None) or constants.OCP_BUILD_DATA_URL,
+            )
+
+            # Debug: Show available releases in the config
+            available_releases = list(releases_config.get("releases", {}).keys())
+            self._logger.info("Available releases in releases.yml: %s", available_releases)
+
+            # Get the assembly config from releases.yml
+            assembly_config = releases_config.get("releases", {}).get(self.assembly)
+            if not assembly_config:
+                self._logger.warning("Assembly %s not found in releases.yml", self.assembly)
+                return None
+
+            self._logger.info("Assembly config keys for %s: %s", self.assembly, list(assembly_config.keys()))
+
+            # Get RPM advisory ID from assembly.group.advisories path
+            assembly_group_advisories = assembly_config.get("assembly", {}).get("group", {}).get("advisories", {})
+            rpm_advisory_id = assembly_group_advisories.get("rpm")
+
+            self._logger.info("Assembly group advisories for %s: %s", self.assembly, assembly_group_advisories)
+
+            if not rpm_advisory_id:
+                self._logger.info("No RPM advisory ID found for assembly %s", self.assembly)
+                return None
+
+            return get_errata_live_id(rpm_advisory_id)
+
+        except Exception as ex:
+            self._logger.error("Error getting RPM advisory: %s", ex)
+            return None
 
 
 @cli.command("promote")

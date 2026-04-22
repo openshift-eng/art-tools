@@ -3,9 +3,7 @@ import copy
 import io
 import logging
 import os
-import re
 import traceback
-from collections import namedtuple
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
@@ -13,21 +11,21 @@ import click
 from artcommonlib import exectools
 from artcommonlib.arch_util import brew_arch_for_go_arch
 from artcommonlib.assembly import AssemblyTypes, assembly_config_struct
+from artcommonlib.gitdata import SafeFormatter
+from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.model import Model
 from artcommonlib.util import get_ocp_version_from_group, new_roundtrip_yaml_handler
-from doozerlib.util import isolate_nightly_name_components
+from doozerlib.util import get_nightly_pullspec
 from elliottlib.errata import push_cdn_stage
 from elliottlib.errata_async import AsyncErrataAPI
 from elliottlib.util import get_advisory_boilerplate
 from errata_tool import Erratum
-from ghapi.all import GhApi
-from github import Github, GithubException
+from github import GithubException
 from semver import VersionInfo
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 from pyartcd import constants, jenkins, oc, util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
-from pyartcd.git import GitRepository
 from pyartcd.record import parse_record_log
 from pyartcd.runtime import Runtime
 from pyartcd.util import (
@@ -80,7 +78,6 @@ class BuildMicroShiftPipeline:
         self.releases_config = None
         self.advisory_num = None
         self.slack_client = slack_client
-        self.github_client = Github(os.environ.get("GITHUB_TOKEN"))
         # determines OCP version
         self._ocp_version = get_ocp_version_from_group(group)
 
@@ -98,7 +95,7 @@ class BuildMicroShiftPipeline:
 
     async def run(self):
         # Make sure our api.ci token is fresh
-        await oc.registry_login(self.runtime)
+        await oc.registry_login()
 
         group_config = await load_group_config(self.group, self.assembly, env=self._doozer_env_vars)
         advisories = group_config.get("advisories", {})
@@ -118,6 +115,12 @@ class BuildMicroShiftPipeline:
             # Check if microshift advisory is defined in assembly
             if ('microshift' not in advisories or advisories.get("microshift") <= 0) and not self.skip_prepare_advisory:
                 self.advisory_num = await self.create_microshift_advisory()
+                # Immediately save advisory to assembly config to prevent race conditions
+                self._logger.info("Saving advisory %s to assembly config", self.advisory_num)
+                pr_url = await self._create_or_update_pull_request(nvrs=None)
+                await self.slack_client.say_in_thread(
+                    f"Microshift advisory {self.advisory_num} saved to assembly: {pr_url}"
+                )
             await self._rebase_and_build_for_named_assembly()
             await self._trigger_microshift_sync()
             await self._trigger_build_microshift_bootc()
@@ -132,7 +135,8 @@ class BuildMicroShiftPipeline:
             data_path = self._doozer_env_vars["DOOZER_DATA_PATH"]
         try:
             user, repo = self.extract_git_repo(data_path)
-            upstream_repo = self.github_client.get_repo(f"{user}/{repo}")
+            github_client = get_github_client_for_org(user)
+            upstream_repo = github_client.get_repo(f"{user}/{repo}")
             et_content = upstream_repo.get_contents(filename, ref=branch)
         except GithubException as e:
             raise ValueError(f"Can't load file contents from {data_path}: {e}")
@@ -163,12 +167,12 @@ class BuildMicroShiftPipeline:
         errata_api = AsyncErrataAPI()
 
         # Format the advisory boilerplate
-        synopsis = boilerplate['synopsis'].format(MINOR=release_version.minor, PATCH=release_version.patch)
-        advisory_topic = boilerplate['topic'].format(MINOR=release_version.minor, PATCH=release_version.patch)
-        advisory_description = boilerplate['description'].format(
-            MINOR=release_version.minor, PATCH=release_version.patch
-        )
-        advisory_solution = boilerplate['solution'].format(MINOR=release_version.minor, PATCH=release_version.patch)
+        formatter = SafeFormatter()
+        replace_vars = {"MAJOR": release_version.major, "MINOR": release_version.minor, "PATCH": release_version.patch}
+        synopsis = formatter.format(boilerplate['synopsis'], **replace_vars)
+        advisory_topic = formatter.format(boilerplate['topic'], **replace_vars)
+        advisory_description = formatter.format(boilerplate['description'], **replace_vars)
+        advisory_solution = formatter.format(boilerplate['solution'], **replace_vars)
 
         self._logger.info("Creating advisory with type %s art_advisory_key microshift ...", advisory_type)
         if self.runtime.dry_run:
@@ -439,16 +443,13 @@ class BuildMicroShiftPipeline:
             self._logger.info(f"Changed {advisory_id} to QE")
             push_cdn_stage(advisory_id)
 
-    @staticmethod
-    async def parse_release_payloads(payloads: Iterable[str]):
+    async def parse_release_payloads(self, payloads: Iterable[str]):
         result = {}
         pullspecs = []
         for payload in payloads:
             if "/" not in payload:
-                # Convert nightly name to pullspec
-                # 4.12.0-0.nightly-2022-10-25-210451 ==> registry.ci.openshift.org/ocp/release:4.12.0-0.nightly-2022-10-25-210451
-                _, brew_cpu_arch, _ = isolate_nightly_name_components(payload)
-                pullspecs.append(constants.NIGHTLY_PAYLOAD_REPOS[brew_cpu_arch] + ":" + payload)
+                pullspec = get_nightly_pullspec(payload)
+                pullspecs.append(pullspec)
             else:
                 # payload is a pullspec
                 pullspecs.append(payload)
@@ -518,19 +519,48 @@ class BuildMicroShiftPipeline:
             record_log = parse_record_log(file)
             return record_log["build_rpm"][-1]["nvrs"].split(",")
 
-    def _pin_nvrs(self, nvrs: List[str], releases_config) -> Dict:
-        """Update releases.yml to pin the specified NVRs.
+    def _pin_nvrs(self, nvrs: Optional[List[str]], releases_config) -> Optional[Dict]:
+        """Update releases.yml to pin the advisory and optionally the specified NVRs.
+
+        If nvrs is None or empty, only saves the advisory number.
+
         Example:
             releases:
                 4.11.7:
                     assembly:
-                    members:
-                        rpms:
-                        - distgit_key: microshift
-                        metadata:
-                            is:
-                                el8: microshift-4.11.7-202209300751.p0.g7ebffc3.assembly.4.11.7.el8
+                        group:
+                            advisories:
+                                microshift: 12345
+                        members:
+                            rpms:
+                            - distgit_key: microshift
+                              metadata:
+                                is:
+                                    el8: microshift-4.11.7-202209300751.p0.g7ebffc3.assembly.4.11.7.el8
         """
+        # Always save advisory number if available
+        if self.advisory_num:
+            advisories = (
+                releases_config["releases"][self.assembly]
+                .setdefault("assembly", {})
+                .setdefault("group", {})
+                .setdefault("advisories", {})
+            )
+            existing = advisories.get("microshift")
+            if existing and existing > 0 and existing != self.advisory_num:
+                self._logger.warning(
+                    f"Assembly {self.assembly} already references microshift advisory {existing}; "
+                    f"adopting existing advisory instead of newly created advisory {self.advisory_num}."
+                )
+                self.advisory_num = existing
+            else:
+                advisories["microshift"] = self.advisory_num
+
+        # If no NVRs provided, we're done (advisory-only save)
+        if not nvrs:
+            return None
+
+        # Pin NVRs
         is_entry = {}
         dg_key = "microshift"
         for nvr in nvrs:
@@ -538,10 +568,6 @@ class BuildMicroShiftPipeline:
             assert el_version is not None
             is_entry[f"el{el_version}"] = nvr
 
-        if self.advisory_num:
-            releases_config["releases"][self.assembly].setdefault("assembly", {}).setdefault("group", {}).setdefault(
-                "advisories", {}
-            ).setdefault("microshift", self.advisory_num)
         rpms_entry = (
             releases_config["releases"][self.assembly]
             .setdefault("assembly", {})
@@ -555,10 +581,17 @@ class BuildMicroShiftPipeline:
         microshift_entry.setdefault("metadata", {})["is"] = is_entry
         return microshift_entry
 
-    async def _create_or_update_pull_request(self, nvrs: List[str]):
+    async def _create_or_update_pull_request(self, nvrs: Optional[List[str]] = None):
         branch = f"auto-pin-microshift-{self.group}-{self.assembly}"
-        title = f"Pin microshift build for {self.group} {self.assembly}"
-        body = f"Created by job run {jenkins.get_build_url()}"
+
+        # Determine PR title and body based on what we're saving
+        if nvrs:
+            title = f"Pin microshift build for {self.group} {self.assembly}"
+            body = f"Pinning builds: {', '.join(nvrs)}\nCreated by job run {jenkins.get_build_url()}"
+        else:
+            title = f"Add microshift advisory for {self.group} {self.assembly}"
+            body = f"Advisory {self.advisory_num} created by job run {jenkins.get_build_url()}"
+
         if self.runtime.dry_run:
             self._logger.warning(
                 "[DRY RUN] Would have created pull-request with head '%s', title '%s', body '%s'",
@@ -567,28 +600,38 @@ class BuildMicroShiftPipeline:
                 body,
             )
             return "https://github.example.com/foo/bar/pull/1234"
-        upstream_repo = self.github_client.get_repo("openshift-eng/ocp-build-data")
+
+        upstream_github_client = get_github_client_for_org("openshift-eng")
+        upstream_repo = upstream_github_client.get_repo("openshift-eng/ocp-build-data")
         release_file_content = yaml.load(upstream_repo.get_contents("releases.yml", ref=self.group).decoded_content)
         source_file_content = copy.deepcopy(release_file_content)
         self._pin_nvrs(nvrs, release_file_content)
+
         if source_file_content == release_file_content:
-            self._logger.warning("PR is not created: upstream already updated, nothing to change.")
+            self._logger.info("PR is not created: upstream already updated, nothing to change.")
             return "Nothing to change"
+
+        # Delete branch if it exists
         for b in upstream_repo.get_branches():
             if b.name == branch:
                 upstream_repo.get_git_ref(f"heads/{branch}").delete()
+
+        # Create branch and commit changes
         upstream_repo.create_git_ref(f"refs/heads/{branch}", upstream_repo.get_branch(self.group).commit.sha)
         output = io.BytesIO()
         yaml.dump(release_file_content, output)
         output.seek(0)
         fork_file = upstream_repo.get_contents("releases.yml", ref=branch)
         upstream_repo.update_file("releases.yml", body, output.read(), fork_file.sha, branch=branch)
-        # create pr
+
+        # Create and merge PR
         try:
             pr = upstream_repo.create_pull(title=title, body=body, base=self.group, head=branch)
             pr.merge()
+            self._logger.info("PR created and merged: %s", pr.html_url)
         except GithubException as e:
             self._logger.warning(f"Failed to create pr: {e}")
+            raise
         return pr.html_url
 
     async def _notify_microshift_alerts(self, version_release: str):

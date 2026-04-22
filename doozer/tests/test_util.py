@@ -1,12 +1,21 @@
+import logging
+import pathlib
+import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch
 from artcommonlib.model import Model
+from artcommonlib.oc_image_info import oc_image_info__cached__lru, oc_image_info__cached_async__lru
 from doozerlib import util
 
 
 class TestUtil(unittest.TestCase):
+    def setUp(self):
+        """Clear LRU caches before each test to ensure test isolation."""
+        oc_image_info__cached__lru.cache_clear()
+        oc_image_info__cached_async__lru.cache_clear()
+
     def test_isolate_nightly_name_components(self):
         self.assertEqual(
             util.isolate_nightly_name_components('4.1.0-0.nightly-2019-11-08-213727'), ('4.1', 'x86_64', False)
@@ -117,41 +126,487 @@ class TestUtil(unittest.TestCase):
         expected = "4.12.23-assembly.art0003"
         self.assertEqual(actual, expected)
 
-    @patch("artcommonlib.exectools.cmd_assert")
-    def test_oc_image_info_show_multiarch(self, assert_mock):
-        assert_mock.return_value = ['{}', 0]
+    @patch("artcommonlib.exectools.cmd_gather")
+    def test_oc_image_info_show_multiarch(self, gather_mock):
+        gather_mock.return_value = (0, '{}', '')
         util.oc_image_info_show_multiarch('pullspec')
-        assert_mock.assert_called_once_with(
-            ['oc', 'image', 'info', '-o', 'json', 'pullspec', '--show-multiarch'],
-            retries=3,
-        )
+        gather_mock.assert_called_with(['oc', 'image', 'info', '-o', 'json', '--show-multiarch', 'pullspec'])
 
-    @patch("artcommonlib.exectools.cmd_assert")
-    def test_oc_image_info_show_multiarch_caching(self, assert_mock):
-        assert_mock.return_value = ['{}', 0]
-        util.oc_image_info_show_multiarch__caching('pullspec')
-        assert_mock.assert_called_once_with(
-            ['oc', 'image', 'info', '-o', 'json', 'pullspec', '--show-multiarch'],
-            retries=3,
-        )
+    @patch("artcommonlib.exectools.cmd_gather")
+    def test_oc_image_info_show_multiarch_caching(self, gather_mock):
+        gather_mock.return_value = (0, '{}', '')
+        util.oc_image_info_show_multiarch('pullspec')
+        gather_mock.assert_called_with(['oc', 'image', 'info', '-o', 'json', '--show-multiarch', 'pullspec'])
 
-    @patch("artcommonlib.exectools.cmd_assert")
-    def test_oc_image_info_for_arch(self, assert_mock):
-        assert_mock.return_value = ['{}', 0]
+    @patch("artcommonlib.exectools.cmd_gather")
+    def test_oc_image_info_for_arch(self, gather_mock):
+        gather_mock.return_value = (0, '{}', '')
         util.oc_image_info_for_arch('pullspec')
-        assert_mock.assert_called_once_with(
-            ['oc', 'image', 'info', '-o', 'json', 'pullspec', '--filter-by-os=amd64'],
-            retries=3,
+        gather_mock.assert_called_with(['oc', 'image', 'info', '-o', 'json', '--filter-by-os=amd64', 'pullspec'])
+
+    @patch("artcommonlib.exectools.cmd_gather")
+    def test_oc_image_info_for_arch_with_custom_arch(self, gather_mock):
+        gather_mock.return_value = (0, '{}', '')
+        util.oc_image_info_for_arch('pullspec', go_arch='arm64')
+        gather_mock.assert_called_with(['oc', 'image', 'info', '-o', 'json', '--filter-by-os=arm64', 'pullspec'])
+
+    @patch("artcommonlib.exectools.cmd_gather")
+    def test_oc_image_info_for_arch_with_registry_config(self, gather_mock):
+        gather_mock.return_value = (0, '{}', '')
+        util.oc_image_info_for_arch('pullspec', registry_config='/path/to/config.json')
+        gather_mock.assert_called_with(
+            [
+                'oc',
+                'image',
+                'info',
+                '-o',
+                'json',
+                '--filter-by-os=amd64',
+                '--registry-config=/path/to/config.json',
+                'pullspec',
+            ]
         )
 
-    @patch("artcommonlib.exectools.cmd_assert")
-    def test_oc_image_info_for_arch_caching(self, assert_mock):
-        assert_mock.return_value = ['{}', 0]
-        util.oc_image_info_for_arch__caching('pullspec')
-        assert_mock.assert_called_once_with(
-            ['oc', 'image', 'info', '-o', 'json', 'pullspec', '--filter-by-os=amd64'],
-            retries=3,
+    @patch("artcommonlib.exectools.cmd_gather")
+    def test_oc_image_info_for_arch_returns_dict(self, gather_mock):
+        gather_mock.return_value = (0, '{"name": "test"}', '')
+        result = util.oc_image_info_for_arch('pullspec')
+        self.assertIsInstance(result, dict)
+        self.assertEqual(result['name'], 'test')
+
+    @patch("artcommonlib.exectools.cmd_gather")
+    def test_oc_image_info_for_arch_raises_on_list(self, gather_mock):
+        # This should not happen with --filter-by-os, but test the assertion
+        gather_mock.return_value = (0, '[{"name": "test"}]', '')
+        with self.assertRaises(AssertionError):
+            util.oc_image_info_for_arch('pullspec')
+
+    @patch("artcommonlib.exectools.cmd_gather")
+    def test_oc_image_info_for_arch_caching(self, gather_mock):
+        gather_mock.return_value = (0, '{}', '')
+        util.oc_image_info_for_arch('pullspec')
+        gather_mock.assert_called_with(['oc', 'image', 'info', '-o', 'json', '--filter-by-os=amd64', 'pullspec'])
+
+    @patch("artcommonlib.util.oc_image_info")
+    def test_oc_image_info_for_arch_strict_false_manifest_unknown(self, oc_image_info_mock):
+        # When strict=False and manifest unknown, should return None
+        oc_image_info_mock.return_value = None
+        result = util.oc_image_info_for_arch('pullspec', strict=False)
+        self.assertIsNone(result)
+        oc_image_info_mock.assert_called_once_with(
+            'pullspec', '--filter-by-os=amd64', registry_config=None, strict=False
         )
+
+    @patch("artcommonlib.util.oc_image_info")
+    def test_oc_image_info_for_arch_strict_false_other_error(self, oc_image_info_mock):
+        # When strict=False but other error, should raise
+        oc_image_info_mock.side_effect = IOError("oc image info failed (rc=1): error: network timeout")
+        with self.assertRaises(IOError):
+            util.oc_image_info_for_arch('pullspec', strict=False)
+
+    @patch("artcommonlib.util.oc_image_info")
+    def test_oc_image_info_for_arch_strict_true_manifest_unknown(self, oc_image_info_mock):
+        # When strict=True and manifest unknown, should raise
+        oc_image_info_mock.side_effect = IOError(
+            "oc image info failed (rc=1): error: manifest unknown: manifest unknown"
+        )
+        with self.assertRaises(IOError):
+            util.oc_image_info_for_arch('pullspec', strict=True)
+
+    def test_get_cincinnati_channels_ocp_4_1(self):
+        # OCP 4.1 uses special channel names (prerelease, stable)
+        channels = util.get_cincinnati_channels(4, 1)
+        self.assertEqual(channels, ['prerelease-4.1', 'stable-4.1'])
+
+    def test_get_cincinnati_channels_ocp_4_x(self):
+        # OCP 4.2+ uses standard channel names
+        channels = util.get_cincinnati_channels(4, 16)
+        self.assertEqual(channels, ['candidate-4.16', 'fast-4.16', 'stable-4.16'])
+
+        channels = util.get_cincinnati_channels(4, 22)
+        self.assertEqual(channels, ['candidate-4.22', 'fast-4.22', 'stable-4.22'])
+
+    def test_get_cincinnati_channels_ocp_5_x(self):
+        # OCP 5.x uses standard channel names (same as 4.2+)
+        channels = util.get_cincinnati_channels(5, 0)
+        self.assertEqual(channels, ['candidate-5.0', 'fast-5.0', 'stable-5.0'])
+
+        channels = util.get_cincinnati_channels(5, 5)
+        self.assertEqual(channels, ['candidate-5.5', 'fast-5.5', 'stable-5.5'])
+
+    def test_get_cincinnati_channels_string_versions(self):
+        # Function should handle string inputs (converts to int)
+        channels = util.get_cincinnati_channels('5', '0')
+        self.assertEqual(channels, ['candidate-5.0', 'fast-5.0', 'stable-5.0'])
+
+    def test_get_cincinnati_channels_rejects_ocp_3(self):
+        # Cincinnati channels don't exist for OCP 3.x and earlier
+        with self.assertRaises(ValueError) as ctx:
+            util.get_cincinnati_channels(3, 11)
+        self.assertIn('Cincinnati channels are only available for OCP 4.x and later', str(ctx.exception))
+        self.assertIn('3.11', str(ctx.exception))
+
+
+class TestIsPackageMain(unittest.TestCase):
+    """Tests for ``_is_package_main``."""
+
+    def _write(self, dir_path: pathlib.Path, name: str, content: str) -> pathlib.Path:
+        p = dir_path / name
+        p.write_text(content, encoding='utf-8')
+        return p
+
+    def test_simple_package_main(self):
+        with tempfile.TemporaryDirectory() as td:
+            f = self._write(pathlib.Path(td), 'main.go', 'package main\n\nfunc main() {}\n')
+            self.assertTrue(util._is_package_main(f))
+
+    def test_package_not_main(self):
+        with tempfile.TemporaryDirectory() as td:
+            f = self._write(pathlib.Path(td), 'lib.go', 'package mylib\n')
+            self.assertFalse(util._is_package_main(f))
+
+    def test_go_build_ignore(self):
+        with tempfile.TemporaryDirectory() as td:
+            content = '//go:build ignore\n\npackage main\n\nfunc main() {}\n'
+            f = self._write(pathlib.Path(td), 'ignored.go', content)
+            self.assertFalse(util._is_package_main(f))
+
+    def test_plus_build_ignore(self):
+        with tempfile.TemporaryDirectory() as td:
+            content = '// +build ignore\n\npackage main\n\nfunc main() {}\n'
+            f = self._write(pathlib.Path(td), 'ignored.go', content)
+            self.assertFalse(util._is_package_main(f))
+
+    def test_build_constraint_not_ignore(self):
+        """A non-ignore build constraint should NOT prevent detection."""
+        with tempfile.TemporaryDirectory() as td:
+            content = '//go:build linux\n\npackage main\n\nfunc main() {}\n'
+            f = self._write(pathlib.Path(td), 'linux_main.go', content)
+            self.assertTrue(util._is_package_main(f))
+
+    def test_nonexistent_file(self):
+        self.assertFalse(util._is_package_main(pathlib.Path('/nonexistent/file.go')))
+
+
+class TestGetEffectivePackage(unittest.TestCase):
+    """Tests for ``_get_effective_package``."""
+
+    def _write(self, dir_path: pathlib.Path, name: str, content: str) -> pathlib.Path:
+        p = dir_path / name
+        p.write_text(content, encoding='utf-8')
+        return p
+
+    def test_returns_package_name(self):
+        with tempfile.TemporaryDirectory() as td:
+            f = self._write(pathlib.Path(td), 'lib.go', 'package plugins\n')
+            self.assertEqual(util._get_effective_package(f), 'plugins')
+
+    def test_returns_main(self):
+        with tempfile.TemporaryDirectory() as td:
+            f = self._write(pathlib.Path(td), 'main.go', 'package main\n')
+            self.assertEqual(util._get_effective_package(f), 'main')
+
+    def test_returns_none_for_build_ignore(self):
+        with tempfile.TemporaryDirectory() as td:
+            content = '//go:build ignore\n\npackage main\n'
+            f = self._write(pathlib.Path(td), 'ignored.go', content)
+            self.assertIsNone(util._get_effective_package(f))
+
+    def test_returns_none_for_unreadable(self):
+        self.assertIsNone(util._get_effective_package(pathlib.Path('/nonexistent/file.go')))
+
+
+class TestFindGoMainPackages(unittest.TestCase):
+    """Tests for ``find_go_main_packages``."""
+
+    def _write(self, dir_path: pathlib.Path, name: str, content: str) -> pathlib.Path:
+        dir_path.mkdir(parents=True, exist_ok=True)
+        p = dir_path / name
+        p.write_text(content, encoding='utf-8')
+        return p
+
+    def test_finds_simple_main_package(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            cmd_dir = root / 'cmd' / 'myapp'
+            self._write(cmd_dir, 'main.go', 'package main\n\nfunc main() {}\n')
+            result = util.find_go_main_packages(root)
+            self.assertEqual(result, [cmd_dir])
+
+    def test_skips_vendor_dirs(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            self._write(root / 'vendor' / 'pkg', 'main.go', 'package main\n')
+            result = util.find_go_main_packages(root)
+            self.assertEqual(result, [])
+
+    def test_skips_test_files(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            # Directory with only a test file declaring package main
+            self._write(root / 'pkg', 'main_test.go', 'package main\n')
+            result = util.find_go_main_packages(root)
+            self.assertEqual(result, [])
+
+    def test_skips_build_ignored_main(self):
+        """A directory with only ``//go:build ignore`` main files should be skipped."""
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            plugins_dir = root / 'plugins'
+            self._write(plugins_dir, 'example.go', '//go:build ignore\n\npackage main\n\nfunc main() {}\n')
+            self._write(plugins_dir, 'minimum.go', 'package plugins\n')
+            result = util.find_go_main_packages(root)
+            self.assertEqual(result, [])
+
+    def test_skips_mixed_package_directory(self):
+        """A directory with both ``package main`` and another package (e.g.
+        due to a build-constrained file that wasn't caught by the ignore
+        check) should be skipped.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            mixed_dir = root / 'mixed'
+            self._write(mixed_dir, 'main.go', 'package main\n\nfunc main() {}\n')
+            self._write(mixed_dir, 'lib.go', 'package mixed\n')
+            result = util.find_go_main_packages(root)
+            self.assertEqual(result, [])
+
+    def test_prometheus_plugins_scenario(self):
+        """Reproduce the exact prometheus/plugins failure scenario:
+        plugins/minimum.go is ``package plugins`` and there is a
+        ``//go:build ignore`` file with ``package main``.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            plugins_dir = root / 'plugins'
+            self._write(plugins_dir, 'minimum.go', 'package plugins\n\nvar _ = 1\n')
+            self._write(
+                plugins_dir,
+                'example_plugin.go',
+                '// +build ignore\n\npackage main\n\nimport _ "github.com/prometheus/prometheus/plugins"\n\nfunc main() {}\n',
+            )
+            # Also add a real main package elsewhere
+            cmd_dir = root / 'cmd' / 'prometheus'
+            self._write(
+                cmd_dir,
+                'main.go',
+                'package main\n\nimport _ "github.com/prometheus/prometheus/plugins"\n\nfunc main() {}\n',
+            )
+
+            result = util.find_go_main_packages(root)
+            # plugins/ should NOT be in the result; cmd/prometheus/ should be
+            self.assertIn(cmd_dir, result)
+            self.assertNotIn(plugins_dir, result)
+
+    def test_multiple_main_packages(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            cmd1 = root / 'cmd' / 'app1'
+            cmd2 = root / 'cmd' / 'app2'
+            self._write(cmd1, 'main.go', 'package main\n\nfunc main() {}\n')
+            self._write(cmd2, 'main.go', 'package main\n\nfunc main() {}\n')
+            result = util.find_go_main_packages(root)
+            self.assertEqual(result, sorted([cmd1, cmd2]))
+
+    def test_skips_sub_modules_with_own_go_mod(self):
+        """Directories with their own ``go.mod`` are separate Go modules
+        (e.g. staging/ deps via replace directives) and must be skipped so
+        that ``go mod vendor`` does not copy injected files into vendor/.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            # Root module
+            self._write(root, 'go.mod', 'module example.com/myproject\n')
+            root_cmd = root / 'cmd' / 'myapp'
+            self._write(root_cmd, 'main.go', 'package main\n\nfunc main() {}\n')
+            # Sub-module in staging/ (like operator-framework-olm)
+            staging = root / 'staging' / 'subproject'
+            self._write(staging, 'go.mod', 'module example.com/subproject\n')
+            staging_cmd = staging / 'cmd' / 'subcmd'
+            self._write(staging_cmd, 'main.go', 'package main\n\nfunc main() {}\n')
+
+            result = util.find_go_main_packages(root)
+            self.assertIn(root_cmd, result)
+            self.assertNotIn(staging_cmd, result)
+
+    def test_operator_framework_olm_scenario(self):
+        """Reproduce the operator-framework-olm failure: staging/ contains
+        separate Go modules referenced via replace directives.  Injecting
+        into them causes ``go mod vendor`` to copy coverage_server.go into
+        vendor/.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            self._write(root, 'go.mod', 'module example.com/olm\n')
+            # Root cmd directories
+            cmd_a = root / 'cmd' / 'collect-profiles'
+            self._write(cmd_a, 'main.go', 'package main\n\nfunc main() {}\n')
+            # Staging sub-modules
+            for submod in ['operator-lifecycle-manager', 'operator-registry']:
+                staging_mod = root / 'staging' / submod
+                self._write(staging_mod, 'go.mod', f'module github.com/operator-framework/{submod}\n')
+                for cmd_name in ['catalog', 'opm']:
+                    cmd_dir = staging_mod / 'cmd' / cmd_name
+                    self._write(cmd_dir, 'main.go', 'package main\n\nfunc main() {}\n')
+
+            result = util.find_go_main_packages(root)
+            self.assertEqual(result, [cmd_a])  # Only root cmd, no staging
+
+
+class TestInjectCoverageServer(unittest.TestCase):
+    """Tests for ``inject_coverage_server``."""
+
+    def _write(self, dir_path: pathlib.Path, name: str, content: str) -> pathlib.Path:
+        dir_path.mkdir(parents=True, exist_ok=True)
+        p = dir_path / name
+        p.write_text(content, encoding='utf-8')
+        return p
+
+    def test_injects_into_main_packages(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            cmd_dir = root / 'cmd' / 'myapp'
+            self._write(cmd_dir, 'main.go', 'package main\n\nfunc main() {}\n')
+
+            logger = logging.getLogger('test')
+            util.inject_coverage_server(root, logger)
+
+            self.assertTrue((cmd_dir / 'coverage_server.go').exists())
+
+    def test_does_not_inject_into_mixed_package(self):
+        """Ensure coverage_server.go is NOT injected into directories that
+        have conflicting package names (the prometheus/plugins scenario).
+        """
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            plugins_dir = root / 'plugins'
+            self._write(plugins_dir, 'minimum.go', 'package plugins\n')
+            self._write(plugins_dir, 'example.go', '//go:build ignore\n\npackage main\n\nfunc main() {}\n')
+
+            logger = logging.getLogger('test')
+            util.inject_coverage_server(root, logger)
+
+            self.assertFalse((plugins_dir / 'coverage_server.go').exists())
+
+
+class TestInjectCoverageProducer(unittest.TestCase):
+    """Tests for ``inject_coverage_producer``."""
+
+    def _write(self, dir_path: pathlib.Path, name: str, content: str) -> pathlib.Path:
+        dir_path.mkdir(parents=True, exist_ok=True)
+        p = dir_path / name
+        p.write_text(content, encoding='utf-8')
+        return p
+
+    def test_injects_into_cmd_kubelet(self):
+        """Producer should be injected into cmd/kubelet/ when it exists and
+        is a package main directory.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            kubelet_dir = root / 'cmd' / 'kubelet'
+            self._write(kubelet_dir, 'kubelet.go', 'package main\n\nfunc main() {}\n')
+
+            logger = logging.getLogger('test')
+            util.inject_coverage_producer(root, logger)
+
+            self.assertTrue((kubelet_dir / 'coverage_producer.go').exists())
+
+    def test_does_not_inject_without_cmd_kubelet(self):
+        """Producer should NOT be injected when there is no cmd/kubelet/ dir."""
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            other_dir = root / 'cmd' / 'kube-apiserver'
+            self._write(other_dir, 'main.go', 'package main\n\nfunc main() {}\n')
+
+            logger = logging.getLogger('test')
+            util.inject_coverage_producer(root, logger)
+
+            self.assertFalse((other_dir / 'coverage_producer.go').exists())
+
+    def test_does_not_inject_if_kubelet_not_package_main(self):
+        """If cmd/kubelet/ exists but is not package main, skip injection."""
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            kubelet_dir = root / 'cmd' / 'kubelet'
+            self._write(kubelet_dir, 'lib.go', 'package kubelet\n')
+
+            logger = logging.getLogger('test')
+            util.inject_coverage_producer(root, logger)
+
+            self.assertFalse((kubelet_dir / 'coverage_producer.go').exists())
+
+    def test_injects_alongside_coverage_server(self):
+        """Both server and producer should coexist in cmd/kubelet/."""
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            kubelet_dir = root / 'cmd' / 'kubelet'
+            self._write(kubelet_dir, 'kubelet.go', 'package main\n\nfunc main() {}\n')
+            # Also create another cmd to verify server is injected everywhere
+            other_dir = root / 'cmd' / 'kube-apiserver'
+            self._write(other_dir, 'main.go', 'package main\n\nfunc main() {}\n')
+
+            logger = logging.getLogger('test')
+            util.inject_coverage_server(root, logger)
+            util.inject_coverage_producer(root, logger)
+
+            # Both files in kubelet dir
+            self.assertTrue((kubelet_dir / 'coverage_server.go').exists())
+            self.assertTrue((kubelet_dir / 'coverage_producer.go').exists())
+            # Only server in other dir
+            self.assertTrue((other_dir / 'coverage_server.go').exists())
+            self.assertFalse((other_dir / 'coverage_producer.go').exists())
+
+
+class TestGetKonfluxBuildPriority(unittest.TestCase):
+    is_leaf = []
+    is_parent = [MagicMock()]
+
+    def _make_metadata(self, children, phase="release", image_config_priority=None, group_config_priority=None):
+        metadata = MagicMock()
+        metadata.distgit_key = "test-image"
+        metadata.children = children
+        metadata.config.konflux.get.return_value = image_config_priority
+        metadata.runtime.group_config.konflux.get.return_value = group_config_priority
+        metadata.runtime.group_config.software_lifecycle.phase = phase
+        return metadata
+
+    def test_parent_images_get_higher_priority_than_leaf_images(self):
+        cases = [
+            # (group, phase, children, expected, description)
+            ("openshift-4.19", "release", self.is_leaf, "5", "leaf default"),
+            ("openshift-4.19", "release", self.is_parent, "4", "parent default"),
+            ("openshift-4.19", "pre-release", self.is_leaf, "3", "leaf pre-release"),
+            ("openshift-4.19", "pre-release", self.is_parent, "2", "parent pre-release"),
+            ("openshift-4.19", "signing", self.is_leaf, "3", "leaf signing"),
+            ("openshift-4.19", "signing", self.is_parent, "2", "parent signing"),
+            ("oadp-1.5", "release", self.is_leaf, "5", "leaf non-openshift"),
+            ("oadp-1.5", "release", self.is_parent, "4", "parent non-openshift"),
+        ]
+        for group, phase, children, expected, desc in cases:
+            with self.subTest(desc):
+                metadata = self._make_metadata(children=children, phase=phase)
+                self.assertEqual(util.get_konflux_build_priority(metadata, group), expected)
+
+    def test_explicit_overrides_ignore_parent_status(self):
+        cases = [
+            # (override_type, override_value, expected)
+            ("image_config", 7, "7"),
+            ("group_config", 8, "8"),
+        ]
+        for override_type, value, expected in cases:
+            with self.subTest(f"{override_type}={value} on parent"):
+                kwargs = {f"{override_type}_priority": value}
+                metadata = self._make_metadata(children=self.is_parent, **kwargs)
+                self.assertEqual(util.get_konflux_build_priority(metadata, "openshift-4.19"), expected)
+
+    def test_golang_group_overrides_parent_status(self):
+        metadata = self._make_metadata(children=self.is_parent)
+        self.assertEqual(util.get_konflux_build_priority(metadata, "golang-1.22"), "2")
+
+    def test_priority_never_goes_below_1(self):
+        metadata = self._make_metadata(children=self.is_parent, phase="pre-release")
+        self.assertGreaterEqual(int(util.get_konflux_build_priority(metadata, "openshift-4.19")), 1)
 
 
 if __name__ == "__main__":

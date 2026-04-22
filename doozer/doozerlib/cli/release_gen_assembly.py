@@ -1,5 +1,5 @@
 import asyncio
-import json
+import os
 import re
 import sys
 from datetime import datetime
@@ -8,25 +8,29 @@ from typing import Dict, List, Optional, Set, Tuple
 import click
 import requests
 from artcommonlib import exectools, rhcos
-from artcommonlib.arch_util import go_arch_for_brew_arch, go_suffix_for_arch
+from artcommonlib.arch_util import go_arch_for_brew_arch
 from artcommonlib.assembly import AssemblyTypes
-from artcommonlib.constants import KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS, RHCOS_RELEASES_STREAM_URL
-from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBuildRecord
+from artcommonlib.constants import RHCOS_RELEASES_STREAM_URL
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord
 from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
-from artcommonlib.model import Missing, Model
+from artcommonlib.model import Missing
 from artcommonlib.release_util import isolate_el_version_in_release
-from artcommonlib.util import get_assembly_release_date_async
+from artcommonlib.util import (
+    get_art_prod_image_repo_for_version,
+    get_assembly_release_date,
+)
 from requests.adapters import HTTPAdapter
 from ruamel.yaml import YAML
 from semver import VersionInfo
 from urllib3.util.retry import Retry
 
-from doozerlib import brew, util
+from doozerlib import brew, release_inspector, util
 from doozerlib.brew import brew_event_from_datetime
 from doozerlib.build_info import BrewBuildRecordInspector, BuildRecordInspector, KonfluxBuildRecordInspector
 from doozerlib.cli import cli, click_coroutine, pass_runtime
 from doozerlib.rpmcfg import RPMMetadata
 from doozerlib.runtime import Runtime
+from doozerlib.util import get_nightly_pullspec
 
 
 @cli.group("release:gen-assembly", short_help="Output assembly metadata based on inputs")
@@ -68,11 +72,6 @@ def releases_gen_assembly(ctx, name):
     default=False,
     is_flag=True,
     help="If specified, weaker conformance criteria are applied (e.g. a nightly is not required for every arch).",
-)
-@click.option(
-    "--pre-ga-mode",
-    type=click.Choice(["prerelease"], case_sensitive=False),
-    help="Prepare the advisory for 'prerelease' operator release",
 )
 @click.option('--in-flight', 'in_flight', metavar='EDGE', help='An in-flight release that can upgrade to this release')
 @click.option(
@@ -135,7 +134,6 @@ async def gen_assembly_from_releases(
     nightlies: Tuple[str, ...],
     standards: Tuple[str, ...],
     custom: bool,
-    pre_ga_mode: str,
     in_flight: Optional[str],
     previous_list: Tuple[str, ...],
     auto_previous: bool,
@@ -161,7 +159,6 @@ async def gen_assembly_from_releases(
         nightlies=nightlies,
         standards=standards,
         custom=custom,
-        pre_ga_mode=pre_ga_mode,
         in_flight=in_flight,
         previous_list=previous_list,
         auto_previous=auto_previous,
@@ -171,6 +168,7 @@ async def gen_assembly_from_releases(
         suggestions_url=suggestions_url,
         gen_microshift=gen_microshift,
         release_date=date,
+        registry_config=os.getenv("QUAY_AUTH_FILE"),
     ).run()
 
     # ruamel.yaml configuration
@@ -200,7 +198,6 @@ class GenAssemblyCli:
         nightlies: Tuple[str, ...] = [],
         standards: Tuple[str, ...] = [],
         custom: bool = False,
-        pre_ga_mode: str = '',
         in_flight: Optional[str] = None,
         previous_list: Tuple[str, ...] = None,
         auto_previous: bool = False,
@@ -210,14 +207,15 @@ class GenAssemblyCli:
         suggestions_url: Optional[str] = None,
         gen_microshift: bool = False,
         release_date: Optional[str] = None,
+        registry_config: str = None,
     ):
         self.runtime = runtime
+        self.registry_config = registry_config
         # The name of the assembly we are going to output
         self.gen_assembly_name = gen_assembly_name
         self.nightlies = nightlies
         self.standards = standards
         self.custom = custom
-        self.pre_ga_mode = pre_ga_mode
         self.in_flight = in_flight
         self.previous_list = previous_list
         self.auto_previous = auto_previous
@@ -261,17 +259,14 @@ class GenAssemblyCli:
             rpm_meta.get_package_name(): rpm_meta for rpm_meta in self.runtime.rpm_metas()
         }
 
-        # ECs are always prerelease
-        if self.assembly_type == AssemblyTypes.PREVIEW:
-            self.pre_ga_mode = 'prerelease'
-
         # Microshift should always be built and its advisory prepared for preview and candidate assemblies
         # which will eventually go out at GA time
         if self.assembly_type in [AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE]:
             self.gen_microshift = True
 
         # Bind Konflux DB to the "builds" table
-        self.runtime.konflux_db.bind(KonfluxBuildRecord)
+        if self.runtime.konflux_db:
+            self.runtime.konflux_db.bind(KonfluxBuildRecord)
 
         self.package_rpm_finder = PackageRpmFinder(runtime)
 
@@ -282,7 +277,7 @@ class GenAssemblyCli:
         self._get_rhcos_container()
         await self._select_rpms()
         self._calculate_previous_list()
-        return await self._generate_assembly_definition()
+        return self._generate_assembly_definition()
 
     @staticmethod
     def _exit_with_error(msg):
@@ -305,12 +300,6 @@ class GenAssemblyCli:
             if self.auto_previous or self.previous_list or self.in_flight:
                 self._exit_with_error("Custom releases don't have previous list.")
 
-        if self.pre_ga_mode == "prerelease" and self.assembly_type not in [
-            AssemblyTypes.PREVIEW,
-            AssemblyTypes.CANDIDATE,
-        ]:
-            self._exit_with_error("Prerelease is only valid for preview and candidate assemblies.")
-
         if self.assembly_type is AssemblyTypes.STANDARD and self.includes_release_version is True:
             if "-" not in self.gen_assembly_name:
                 self._exit_with_error(
@@ -319,24 +308,15 @@ class GenAssemblyCli:
 
     def _get_release_pullspecs(self):
         for nightly_name in self.nightlies:
-            major_minor, brew_cpu_arch, priv = util.isolate_nightly_name_components(nightly_name)
-            if major_minor != self.runtime.get_minor_version():
-                self._exit_with_error(f'Specified nightly {nightly_name} does not match group major.minor')
+            _, brew_cpu_arch, _ = util.isolate_nightly_name_components(nightly_name)
             self.reference_releases_by_arch[brew_cpu_arch] = nightly_name
-            rc_suffix = go_suffix_for_arch(brew_cpu_arch, priv)
 
-            if (
-                self.runtime.build_system == 'konflux'
-                and self.runtime.group.removeprefix('openshift-') not in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
-            ):
-                release_suffix = f'konflux-release{rc_suffix}'
-            else:
-                release_suffix = f'release{rc_suffix}'
-            nightly_pullspec = f'registry.ci.openshift.org/ocp{rc_suffix}/{release_suffix}:{nightly_name}'
             if brew_cpu_arch in self.release_pullspecs:
                 raise ValueError(
                     f'Cannot process {nightly_name} since {self.release_pullspecs[brew_cpu_arch]} is already included'
                 )
+
+            nightly_pullspec = get_nightly_pullspec(nightly_name, self.runtime.build_system)
             self.release_pullspecs[brew_cpu_arch] = nightly_pullspec
 
         for standard_release_name in self.standards:
@@ -362,11 +342,9 @@ class GenAssemblyCli:
     async def _process_release(self, brew_cpu_arch, pullspec, rhcos_tag_names):
         self.runtime.logger.info(f'Processing release: {pullspec}')
 
-        _, release_json_str, _ = await exectools.cmd_gather_async(f'oc adm release info {pullspec} -o=json')
-        release_info = Model(dict_to_model=json.loads(release_json_str))
+        # Use shared utility to introspect release
+        release_info = await release_inspector.introspect_release(pullspec)
 
-        if not release_info.references.spec.tags:
-            self._exit_with_error(f'Could not find any imagestream tags in release: {pullspec}')
         if not release_info["displayVersions"]["machine-os"]["Version"]:
             self._exit_with_error(f'Could not find machine-os version in release: {pullspec}')
         # get rhcos version eg. 417.94.202410250757-0
@@ -382,7 +360,9 @@ class GenAssemblyCli:
             payload_tag_name = component_tag.name  # e.g. "aws-ebs-csi-driver"
             payload_tag_pullspec = component_tag['from'].name  # quay pullspec
             image_info = await util.oc_image_info_for_arch_async(
-                payload_tag_pullspec, go_arch_for_brew_arch(brew_cpu_arch)
+                payload_tag_pullspec,
+                go_arch_for_brew_arch(brew_cpu_arch),
+                registry_config=self.registry_config,
             )
             if payload_tag_name in rhcos_tag_names:
                 self.runtime.logger.info(f'Record rhcos tag name {payload_tag_name}')
@@ -395,21 +375,17 @@ class GenAssemblyCli:
                     self.runtime.logger.info(f'Find rhcos node image id {self.rhcos_node_id}')
                 continue
 
-            # The brew_build_inspector will take this archive image and find the actual
-            # brew build which created it.
-            image_info = await util.oc_image_info_for_arch_async(payload_tag_pullspec)
-            image_labels = image_info['config']['config']['Labels']
-            package_name = image_labels['com.redhat.component']
-            if self.runtime.build_system == 'brew':
-                build_nvr = package_name + '-' + image_labels['version'] + '-' + image_labels['release']
-                build_inspector = BrewBuildRecordInspector(self.runtime, payload_tag_pullspec)
-            else:
-                build_nvr = package_name + '-' + image_labels['version'] + '-' + image_labels['release']
-                build_record = await self.runtime.konflux_db.get_build_record_by_nvr(
-                    nvr=build_nvr,
-                    outcome=KonfluxBuildOutcome.SUCCESS,
-                )
-                build_inspector = KonfluxBuildRecordInspector(self.runtime, build_record)
+            # Use shared utility to extract NVR and get build inspector
+            name, version, release_ver = await release_inspector.extract_nvr_from_pullspec(
+                payload_tag_pullspec, registry_config=self.registry_config
+            )
+            package_name = name
+            build_nvr = f"{name}-{version}-{release_ver}"
+
+            # Get build inspector (supports both Brew and Konflux)
+            build_inspector = await release_inspector.get_build_inspector_from_nvr(
+                self.runtime, build_nvr, pullspec=payload_tag_pullspec
+            )
 
             if package_name in self.component_image_builds:
                 # If we have already encountered this package once in the list of releases we are
@@ -623,36 +599,68 @@ class GenAssemblyCli:
                         f"Did not find RHCOS {self.primary_rhcos_tag} image for active group architecture: {arch}"
                     )
                 # get rhcos pullspecs for this arch from rhcos version value if not full arch nightly provided
-                for tag in rhcos.get_container_configs(self.runtime):
-                    if self.runtime.group_config.rhcos.get("layered_rhcos", False):
-                        if not self.rhcos_node_id:
+                tags_to_resolve = [
+                    tag
+                    for tag in rhcos.get_container_configs(self.runtime)
+                    if not self.rhcos_by_tag[tag.name].get(arch)
+                ]
+                if not tags_to_resolve:
+                    continue
+
+                if self.runtime.group_config.rhcos.get("layered_rhcos", False):
+                    for tag in tags_to_resolve:
+                        if not self.rhcos_by_tag[tag.name].get("x86_64"):
                             self._exit_with_error(
-                                f"Did not find RHCOS {self.primary_rhcos_tag} node image id for architecture: {arch}"
+                                f"Did not find RHCOS {tag.name} image for architecture: x86_64 in any nightly"
                             )
+                        amd64_rhcos_info = util.oc_image_info_for_arch(
+                            self.rhcos_by_tag[tag.name]["x86_64"],
+                            "amd64",
+                            registry_config=self.registry_config,
+                        )
+                        # NOTE: RHCOS images are currently always in ocp-v4.0-art-dev, even for OCP 5.x.
+                        # When RHCOS 5.x images exist in their own repository, this should be updated to
+                        # use the actual OCP major version: get_art_prod_image_repo_for_version(major, "dev")
+                        art_repo = get_art_prod_image_repo_for_version(4, "dev")
                         rhcos_info = util.oc_image_info_for_arch(
-                            tag.rhcos_index_tag.replace('node-image', f'{self.rhcos_node_id}-node-image'),
+                            f"{art_repo}:{amd64_rhcos_info['config']['config']['Labels']['coreos.build.manifest-list-tag']}",
                             go_arch_for_brew_arch(arch),
+                            registry_config=self.registry_config,
                         )
-                        self.rhcos_by_tag[tag.name][arch] = (
-                            f"quay.io/openshift-release-dev/ocp-v4.0-art-dev@{rhcos_info['digest']}"
+                        self.rhcos_by_tag[tag.name][arch] = f"{art_repo}@{rhcos_info['digest']}"
+                        self.logger.info(f'Find RHCOS image {tag.name} for {arch}: {self.rhcos_by_tag[tag.name][arch]}')
+                else:
+                    url_key = f"{major_minor}-{rhcos_el_major}.{rhcos_el_minor}" if rhcos_el_major > 8 else major_minor
+                    rhcos_build_url = (
+                        f"{RHCOS_RELEASES_STREAM_URL}/{url_key}/builds/{self.rhcos_version}/{arch}/meta.json"
+                    )
+                    self.logger.info("Fetching RHCOS build metadata: %s", rhcos_build_url)
+                    session = requests.Session()
+                    retry_strategy = Retry(total=3, backoff_factor=2, status_forcelist=[429, 500, 502, 503, 504])
+                    session.mount('https://', HTTPAdapter(max_retries=retry_strategy))
+                    try:
+                        response = session.get(rhcos_build_url, timeout=60)
+                        response.raise_for_status()
+                        rhcos_meta_json = response.json()
+                    except requests.exceptions.RetryError as e:
+                        self._exit_with_error(
+                            f"RHCOS server is experiencing issues (retried 3 times). "
+                            f"URL: {rhcos_build_url}\n"
+                            f"Error: {e}\n"
+                            f"This is likely a transient server issue. Please retry the build."
                         )
-                    else:
-                        url_key = (
-                            f"{major_minor}-{rhcos_el_major}.{rhcos_el_minor}" if rhcos_el_major > 8 else major_minor
-                        )
-                        rhcos_build_url = (
-                            f"{RHCOS_RELEASES_STREAM_URL}/{url_key}/builds/{self.rhcos_version}/{arch}/meta.json"
-                        )
-                        session = requests.Session()
-                        session.mount('https://', HTTPAdapter(max_retries=Retry(total=3)))
-                        rhcos_meta_json = session.get(rhcos_build_url).json()
+                    except requests.exceptions.HTTPError as e:
+                        self._exit_with_error(f"Failed to fetch RHCOS metadata from {rhcos_build_url}: {e}")
+                    except requests.exceptions.JSONDecodeError as e:
+                        self._exit_with_error(f"Failed to parse RHCOS metadata JSON from {rhcos_build_url}: {e}")
+                    for tag in tags_to_resolve:
                         if tag.build_metadata_key not in rhcos_meta_json:
                             self._exit_with_error(
                                 f'Did not find RHCOS "{tag.name}" image for active group architecture: {arch}'
                             )
                         rhcos_image = rhcos_meta_json[tag.build_metadata_key]
                         self.rhcos_by_tag[tag.name][arch] = f"{rhcos_image['image']}@{rhcos_image['digest']}"
-                    self.logger.info(f'Find RHCOS image {tag.name} for {arch}: {self.rhcos_by_tag[tag.name][arch]}')
+                        self.logger.info(f'Find RHCOS image {tag.name} for {arch}: {self.rhcos_by_tag[tag.name][arch]}')
 
     async def _select_rpms(self):
         """
@@ -770,7 +778,6 @@ class GenAssemblyCli:
     def _get_advisories_release_jira(self) -> Tuple[Dict[str, int], str]:
         # Add placeholder advisory numbers and JIRA key.
         # Those values will be replaced with real values by pyartcd when preparing a release.
-        preGA_advisory_type = ['prerelease']
 
         if self.runtime.build_system == 'brew':
             advisories = {
@@ -779,16 +786,11 @@ class GenAssemblyCli:
                 'extras': -1,
                 'metadata': -1,
             }
-            for key in preGA_advisory_type:
-                if self.pre_ga_mode == key:
-                    advisories[key] = -1
         else:  # konflux
             advisories = {
                 'rpm': -1,
                 'rhcos': -1,
             }
-            # for konflux, prerelease advisories are noted in the `shipment` field.
-            # No need to add it to the advisories map.
 
         # For OCP >= 4.14, also microshift advisory placeholder must be created
         major, minor = self.runtime.get_major_minor_fields()
@@ -828,14 +830,9 @@ class GenAssemblyCli:
                 return advisories, release_jira
 
         previous_group = self.releases_config.releases[previous_assembly].assembly.group
-        previous_advisories = previous_group.advisories.primitive()
-
-        # preGA advisories (prerelease) associated with an assembly should not be reused
-        # they should be shipped or dropped if not shipping
-        for key in preGA_advisory_type:
-            previous_advisories.pop(key, None)
-
-        advisories.update(previous_advisories)
+        if previous_group.advisories is not Missing:
+            previous_advisories = previous_group.advisories.primitive()
+            advisories.update(previous_advisories)
 
         release_jira = previous_group.release_jira
         self.logger.info(
@@ -850,7 +847,7 @@ class GenAssemblyCli:
 
         return advisories, release_jira
 
-    async def _generate_assembly_definition(self) -> dict:
+    def _generate_assembly_definition(self) -> dict:
         image_member_overrides, rpm_member_overrides = self._get_member_overrides()
 
         group_info = {}
@@ -864,12 +861,10 @@ class GenAssemblyCli:
 
         if self.assembly_type != AssemblyTypes.CUSTOM:
             group_info['advisories'], group_info["release_jira"] = self._get_advisories_release_jira()
-            if self.pre_ga_mode == 'prerelease':
-                group_info['operator_index_mode'] = 'pre-release'
 
         if self.runtime.build_system == 'konflux':
             group_info['shipment'] = self._get_shipment_info()
-            group_info['release_date'] = await self._get_release_date()
+            group_info['release_date'] = self._get_release_date()
 
         if self.final_previous_list:
             group_info['upgrades'] = ','.join(map(str, self.final_previous_list))
@@ -900,14 +895,14 @@ class GenAssemblyCli:
             },
         }
 
-    async def _get_release_date(self):
+    def _get_release_date(self):
         if self.release_date:
             return self.release_date
         if self.assembly_type != AssemblyTypes.STANDARD:
             raise ValueError("For non standard release you need to manually set release date from job")
         self.logger.info("Release date not provided. Fetching release date from release schedule...")
         try:
-            self.release_date = await get_assembly_release_date_async(self.gen_assembly_name)
+            self.release_date = get_assembly_release_date(self.gen_assembly_name, self.runtime.group)
         except Exception as ex:
             raise ValueError(f"Failed to fetch release date from release schedule for {self.gen_assembly_name}: {ex}")
         self.logger.info("Release date: %s", self.release_date)
@@ -983,8 +978,6 @@ class GenAssemblyCli:
         }
         if env:
             default_shipment['env'] = env
-        if self.pre_ga_mode == 'prerelease':
-            default_shipment['advisories'].append({'kind': 'prerelease'})
         return default_shipment
 
     def _get_previous_shipment_info(self) -> dict:
@@ -1042,10 +1035,6 @@ class GenAssemblyCli:
                 previous_advisories = {ad["kind"]: ad for ad in release.assembly.group.shipment.advisories.primitive()}
                 if previous_advisories:
                     for advisory in advisories:
-                        # preGA advisories (prerelease) associated with an assembly should not be reused
-                        # they should be shipped or dropped if not shipping
-                        if advisory["kind"] == "prerelease":
-                            continue
                         # Reuse advisory if it exists in previous advisories
                         previous_ad = previous_advisories.get(advisory["kind"])
                         if not previous_ad:

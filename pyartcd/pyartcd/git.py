@@ -8,6 +8,8 @@ from typing import Union
 import aiofiles
 from artcommonlib import exectools
 from artcommonlib.constants import GIT_NO_PROMPTS
+from artcommonlib.github_auth import get_github_git_auth_env
+from artcommonlib.util import ensure_github_https_url
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
 
 LOGGER = getLogger(__name__)
@@ -17,13 +19,37 @@ class GitRepository:
     def __init__(self, directory: Union[str, Path], dry_run: bool = False) -> None:
         self._directory = Path(directory)
         self._dry_run = dry_run
+        self._remote_urls: dict[str, str] = {}
+
+    @staticmethod
+    def _local_env() -> dict[str, str]:
+        """Build env dict for local-only git operations (add, commit, status, diff, etc.)
+        that never contact a remote and therefore don't need GitHub auth."""
+        env = os.environ.copy()
+        env.update(GIT_NO_PROMPTS)
+        return env
+
+    @staticmethod
+    def _git_env(url: str | None = None) -> dict[str, str]:
+        """Build env dict with GIT_NO_PROMPTS and GitHub HTTPS auth (if available)."""
+        env = os.environ.copy()
+        env.update(GIT_NO_PROMPTS)
+        env.update(get_github_git_auth_env(url=url))
+        return env
+
+    def _git_env_for_remote(self, remote: str) -> dict[str, str]:
+        """Build env dict resolved for a specific named remote (origin, upstream, etc.)."""
+        return self._git_env(url=self._remote_urls.get(remote))
 
     async def setup(self, remote_url, upstream_remote_url=None):
         """Initialize a git repository with specified remote URL and an optional upstream remote URL."""
-        # Ensure local repo directory exists
+        remote_url = ensure_github_https_url(remote_url)
+        self._remote_urls["origin"] = remote_url
+        if upstream_remote_url:
+            upstream_remote_url = ensure_github_https_url(upstream_remote_url)
+            self._remote_urls["upstream"] = upstream_remote_url
         self._directory.mkdir(parents=True, exist_ok=True)
-        env = os.environ.copy()
-        env.update(GIT_NO_PROMPTS)
+        env = self._git_env(url=remote_url)
         repo_dir = str(self._directory)
         await exectools.cmd_assert_async(["git", "init", "--", repo_dir], env=env)
 
@@ -66,30 +92,25 @@ class GitRepository:
 
     async def add_all(self):
         """Add all files to the git repository."""
-        env = os.environ.copy()
-        env.update(GIT_NO_PROMPTS)
+        env = self._local_env()
         await exectools.cmd_assert_async(["git", "-C", str(self._directory), "add", "."], env=env)
 
     async def log_diff(self, ref: str = "HEAD"):
         """Log diff of the current working tree against the specified reference."""
-        env = os.environ.copy()
-        env.update(GIT_NO_PROMPTS)
+        env = self._local_env()
         await exectools.cmd_assert_async(["git", "-C", str(self._directory), "--no-pager", "diff", ref], env=env)
 
     async def create_branch(self, branch: str):
         """Create a new branch in the git repository."""
-        env = os.environ.copy()
-        env.update(GIT_NO_PROMPTS)
+        env = self._local_env()
         repo_dir = str(self._directory)
         await exectools.cmd_assert_async(["git", "-C", repo_dir, "checkout", "-b", branch], env=env)
 
     @retry(stop=stop_after_attempt(3), wait=wait_fixed(5), retry=retry_if_exception_type(ChildProcessError))
     async def does_branch_exist_on_remote(self, branch: str, remote: str) -> bool:
         """Check if a branch exists on the remote repository."""
-        env = os.environ.copy()
-        env.update(GIT_NO_PROMPTS)
+        env = self._git_env_for_remote(remote)
         repo_dir = str(self._directory)
-        # assume that the remote is already set up
         cmd = ["git", "-C", repo_dir, "ls-remote", "--heads", remote, branch]
         _, out, _ = await exectools.cmd_gather_async(cmd, env=env)
         return branch in out
@@ -98,16 +119,15 @@ class GitRepository:
         """Fetch `upstream_ref` from the remote repo, create the `branch` and start it at `upstream_ref`.
         If `branch` already exists, then reset it to `upstream_ref`.
         """
-        env = os.environ.copy()
-        env.update(GIT_NO_PROMPTS)
         repo_dir = str(self._directory)
         if remote:
             fetch_remote = remote
         else:
-            # Fetch remote
-            _, out, _ = await exectools.cmd_gather_async(["git", "-C", repo_dir, "remote"], env=env)
+            # Determine which remote to fetch from (local-only operation)
+            _, out, _ = await exectools.cmd_gather_async(["git", "-C", repo_dir, "remote"], env=self._local_env())
             remotes = set(out.strip().split())
             fetch_remote = "upstream" if "upstream" in remotes else "origin"
+        env = self._git_env_for_remote(fetch_remote)
         await exectools.cmd_assert_async(
             ["git", "-C", repo_dir, "fetch", "--depth=1", "--", fetch_remote, upstream_ref or branch], env=env
         )
@@ -127,25 +147,24 @@ class GitRepository:
         # Make sure all files are added to the index
         await self.add_all()
 
-        # Check if there are any changes to commit
-        env = os.environ.copy()
-        env.update(GIT_NO_PROMPTS)
+        local_env = self._local_env()
         repo_dir = str(self._directory)
         cmd = ["git", "-C", repo_dir, "status", "--porcelain", "--untracked-files=no"]
-        _, out, _ = await exectools.cmd_gather_async(cmd, env=env)
+        _, out, _ = await exectools.cmd_gather_async(cmd, env=local_env)
         if not out.strip():  # Nothing to commit
             return False
 
         # Commit the changes
         cmd = ["git", "-C", repo_dir, "commit", "--message", commit_message]
-        await exectools.cmd_assert_async(cmd, env=env)
+        await exectools.cmd_assert_async(cmd, env=local_env)
+
+        push_env = self._git_env_for_remote("origin")
 
         @retry(stop=stop_after_attempt(3), wait=wait_fixed(5), retry=retry_if_exception_type(ChildProcessError))
         async def _push():
-            # Push the commit to the remote repository
             cmd = ["git", "-C", repo_dir, "push", "--force-with-lease" if safe else "--force", "origin", "HEAD"]
             if not self._dry_run:
-                await exectools.cmd_assert_async(cmd, env=env)
+                await exectools.cmd_assert_async(cmd, env=push_env)
             else:
                 LOGGER.warning("[DRY RUN] Would have run %s", cmd)
 

@@ -6,15 +6,17 @@ import tempfile
 import time
 from contextlib import contextmanager
 from multiprocessing import Lock, RLock
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 import click
 import yaml
 from artcommonlib import exectools, gitdata
-from artcommonlib.assembly import AssemblyTypes, assembly_basis_event, assembly_group_config, assembly_type
+from artcommonlib.assembly import AssemblyTypes, assembly_basis_event, assembly_type
+from artcommonlib.config import BuildDataLoader
 from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
 from artcommonlib.model import Missing, Model
 from artcommonlib.runtime import GroupRuntime
+from artcommonlib.variants import BuildVariant
 
 from elliottlib import brew, constants
 from elliottlib.brew import brew_event_from_datetime
@@ -58,6 +60,7 @@ class Runtime(GroupRuntime):
         self.group_commitish = None
         self.load_wip = False
         self.load_disabled = False
+        self.variant = BuildVariant.OCP  # Default to OCP variant
         self.disable_gssapi = False
         self._logger = None
         self.use_jira = True
@@ -65,6 +68,7 @@ class Runtime(GroupRuntime):
             self.use_jira = False
         self._bug_trackers = {}
         self.brew_event: Optional[int] = None
+        self.registry_config: Optional[str] = None
         self.assembly: Optional[str] = 'stream'
         self.assembly_basis_event: Optional[int] = None
         self.releases_config: Optional[Model] = None
@@ -96,6 +100,14 @@ class Runtime(GroupRuntime):
     def get_major_minor(self):
         return self.group_config.vars.MAJOR, self.group_config.vars.MINOR
 
+    def get_major_minor_fields(self) -> Tuple[int, int]:
+        """
+        Returns: (int(MAJOR), int(MINOR)) if the vars are defined in the group config.
+        """
+        major = int(self.group_config.vars['MAJOR'])
+        minor = int(self.group_config.vars['MINOR'])
+        return major, minor
+
     def get_major_minor_patch(self):
         pattern = r"\d+.\d+.\d+"
         match = re.search(pattern, self.assembly)
@@ -123,24 +135,27 @@ class Runtime(GroupRuntime):
     def group_config(self, config: Model):
         self._group_config = config
 
-    def get_group_config(self):
-        # group.yml can contain a `vars` section which should be a
-        # single level dict containing keys to str.format(**dict) replace
-        # into the YAML content. If `vars` found, the format will be
-        # preformed and the YAML model will reloaded from that result
-        tmp_config = Model(self.gitdata.load_data(key='group').data)
-        replace_vars = tmp_config.vars or Model()
+    def get_replace_vars(self, group_config: Model | None):
+        replace_vars: dict = group_config.vars.primitive() if group_config and group_config.vars else {}
         if self.assembly:
             replace_vars['runtime_assembly'] = self.assembly
-        try:
-            group_yml = yaml.safe_dump(tmp_config.primitive(), default_flow_style=False)
-            tmp_config = Model(yaml.safe_load(group_yml.format(**replace_vars)))
-        except KeyError as e:
-            raise ValueError('group.yml contains template key `{}` but no value was provided'.format(e.args[0]))
-        return assembly_group_config(self.get_releases_config(), self.assembly, tmp_config)
+        return replace_vars
+
+    def get_group_config(self):
+        additional_vars = self.get_replace_vars(None)
+        group_config = self._build_data_loader.load_group_config(
+            assembly=self.assembly, releases_config=self.get_releases_config(), additional_vars=additional_vars
+        )
+        return Model(group_config)
 
     def initialize(
-        self, mode='none', no_group=False, disabled=None, build_system: str = None, with_shipment: bool = False
+        self,
+        mode='none',
+        no_group=False,
+        disabled=None,
+        build_system: str = None,
+        with_shipment: bool = False,
+        disable_konflux_db_cache=False,
     ):
         if self.initialized:
             return
@@ -155,7 +170,7 @@ class Runtime(GroupRuntime):
             if not os.path.isdir(self.working_dir):
                 os.makedirs(self.working_dir)
 
-        super().initialize(build_system)
+        super().initialize(build_system, disable_konflux_db_cache)
 
         if self.quiet and self.verbose:
             click.echo("Flags --quiet and --verbose are mutually exclusive")
@@ -185,7 +200,8 @@ class Runtime(GroupRuntime):
         self.group_config = self.get_group_config()
         if self.group_config.name != self.group:
             raise IOError(
-                "Name in group.yml does not match group name. Someone may have copied this group without updating group.yml (make sure to check branch)"
+                f"Name in group.yml ({self.group_config.name}) does not match group name ({self.group}). Someone "
+                "may have copied this group without updating group.yml (make sure to check branch)"
             )
 
         self.product = self.group_config.product or "ocp"
@@ -227,7 +243,16 @@ class Runtime(GroupRuntime):
             return d.get('mode', 'enabled') in ['wip', 'enabled']
 
         def filter_enabled(n, d):
-            return d.get('mode', 'enabled') == 'enabled'
+            mode = d.get('mode', 'enabled')
+
+            # For OKD variant, check okd.mode if present (enabled/disabled), otherwise fall back to top-level mode
+            if self.variant == BuildVariant.OKD:
+                okd_mode = d.get('okd', {}).get('mode')
+                if okd_mode is not None:
+                    return okd_mode == 'enabled'
+
+            # For OCP variant or OKD fallback, use top-level mode
+            return mode == 'enabled'
 
         def filter_disabled(n, d):
             return d.get('mode', 'enabled') in ['enabled', 'disabled']
@@ -294,7 +319,11 @@ class Runtime(GroupRuntime):
             )
 
         strict_mode = True
-        if not self.assembly or self.assembly in ['stream', 'test', 'microshift']:
+        if (
+            not self.assembly
+            or self.assembly in ['stream', 'test', 'microshift']
+            or not self.group.startswith('openshift-')
+        ):
             strict_mode = False
         self.assembly_type = assembly_type(self.get_releases_config(), self.assembly)
         self.assembly_basis_event = assembly_basis_event(
@@ -400,14 +429,23 @@ class Runtime(GroupRuntime):
                 commitish=self.group_commitish,
                 logger=self._logger,
             )
-            self.data_dir = self.gitdata.data_dir
+            self._build_data_loader = BuildDataLoader(
+                data_path=self.data_path,
+                clone_dir=self.working_dir,
+                commitish=self.group_commitish,
+                build_system=self.build_system,
+                upcycle=False,
+                gitdata=self.gitdata,
+                logger=self._logger,
+            )
+            self.data_dir = self._build_data_loader.data_dir
 
         except gitdata.GitDataException as ex:
             raise ElliottFatalError(ex)
 
     def resolve_shipment_metadata(self, strict=True):
         if strict and not self.shipment_path:
-            self.shipment_path = SHIPMENT_DATA_URL_TEMPLATE.format(self.product)
+            self.shipment_path = SHIPMENT_DATA_URL_TEMPLATE
 
         if self.shipment_path:
             shipment_path, commitish = self.shipment_path, "main"
@@ -422,19 +460,21 @@ class Runtime(GroupRuntime):
                 raise ElliottFatalError(ex)
 
     def get_releases_config(self):
-        if self.releases_config is not None:
-            return self.releases_config
-
-        load = self.gitdata.load_data(key='releases')
-        if load:
-            self.releases_config = Model(load.data)
-        else:
-            self.releases_config = Model()
-
+        if self.releases_config is None:
+            self.releases_config = Model(self._build_data_loader.load_releases_config())
         return self.releases_config
 
-    def get_errata_config(self, **kwargs):
-        return self.gitdata.load_data(key='erratatool', **kwargs).data
+    def get_errata_config(self):
+        replace_vars = self.get_replace_vars(self.group_config)
+        return self._build_data_loader.load_config(key='erratatool', default={}, replace_vars=replace_vars)
+
+    def get_bug_config(self):
+        replace_vars = self.get_replace_vars(self.group_config)
+        return self._build_data_loader.load_config(key='bug', default={}, replace_vars=replace_vars)
+
+    def get_streams_config(self):
+        replace_vars = self.get_replace_vars(self.group_config)
+        return self._build_data_loader.load_config(key='streams', default={}, replace_vars=replace_vars)
 
     def is_version_in_lifecycle_phase(self, phase: str, version: str = None) -> bool:
         """

@@ -8,7 +8,6 @@ from typing import Iterable, List
 from urllib.parse import urljoin
 
 import click
-from artcommonlib import exectools
 from artcommonlib.format_util import green_prefix, green_print, red_prefix, red_print, yellow_print
 from ruamel.yaml import YAML
 
@@ -16,7 +15,7 @@ from elliottlib import Runtime, brew
 from elliottlib.cli.common import cli, click_coroutine, pass_runtime
 from elliottlib.cvp import CVPInspector
 from elliottlib.imagecfg import ImageMetadata
-from elliottlib.util import parse_nvr, pbar_header, progress_func
+from elliottlib.util import parse_nvr, pbar_header
 
 yaml = YAML(typ="safe")
 yaml.default_flow_style = False
@@ -251,5 +250,7 @@ async def get_latest_image_builds(image_metas: Iterable[ImageMetadata]):
         seq=image_metas,
         file=sys.stderr,
     )
-    builds: List[Dict] = await asyncio.gather(*[image.get_latest_build() for image in image_metas])
+    builds: List[Dict] = await asyncio.gather(
+        *[image.get_latest_build(exclude_large_columns=True) for image in image_metas]
+    )
     return builds

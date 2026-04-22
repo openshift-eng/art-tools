@@ -1,10 +1,12 @@
 import copy
+import json
 import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, Mock, PropertyMock, call, patch
 
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
+from artcommonlib.jira_config import JIRA_DOMAIN_NAME
 from artcommonlib.model import Model
 from artcommonlib.util import convert_remote_git_to_ssh
 from elliottlib.errata_async import AsyncErrataAPI
@@ -24,12 +26,12 @@ from elliottlib.shipment_model import (
     SnapshotComponent,
     SnapshotSpec,
 )
-
-from pyartcd import constants
 from pyartcd.git import GitRepository
 from pyartcd.pipelines.prepare_release_konflux import PrepareReleaseKonfluxPipeline
 from pyartcd.runtime import Runtime
 from pyartcd.slack import SlackClient
+
+from pyartcd import constants
 
 
 class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
@@ -51,7 +53,6 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         self.mock_slack_client = Mock(spec=SlackClient)
         self.group = "openshift-4.18"
         self.assembly = "test-assembly"
-        self.github_token = "gh_token"
         self.gitlab_token = "gl_token"
         self.job_url = "http://jenkins/job/test-job/1"
 
@@ -62,7 +63,6 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             group=self.group,
             assembly=self.assembly,
         )
-        pipeline.github_token = self.github_token
         pipeline.gitlab_token = self.gitlab_token
 
         self.assertEqual(pipeline.build_data_repo_pull_url, self.runtime.config["build_config"]["ocp_build_data_url"])
@@ -83,14 +83,13 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             group=self.group,
             assembly=self.assembly,
         )
-        pipeline.github_token = self.github_token
         pipeline.gitlab_token = self.gitlab_token
 
         self.assertEqual(pipeline.build_data_repo_pull_url, constants.OCP_BUILD_DATA_URL)
         self.assertEqual(pipeline.build_data_gitref, None)
         self.assertEqual(pipeline.build_data_push_url, constants.OCP_BUILD_DATA_URL)
-        self.assertEqual(pipeline.shipment_data_repo_pull_url, SHIPMENT_DATA_URL_TEMPLATE.format("ocp"))
-        self.assertEqual(pipeline.shipment_data_repo_push_url, SHIPMENT_DATA_URL_TEMPLATE.format("ocp"))
+        self.assertEqual(pipeline.shipment_data_repo_pull_url, SHIPMENT_DATA_URL_TEMPLATE)
+        self.assertEqual(pipeline.shipment_data_repo_push_url, SHIPMENT_DATA_URL_TEMPLATE)
 
     def test_init_with_custom_urls(self):
         pipeline = PrepareReleaseKonfluxPipeline(
@@ -101,7 +100,6 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             build_data_repo_url="https://github.com/foo/build-repo@branch",
             shipment_data_repo_url="https://gitlab.com/bar/shipment-repo",
         )
-        pipeline.github_token = self.github_token
         pipeline.gitlab_token = self.gitlab_token
 
         self.assertEqual(pipeline.build_data_repo_pull_url, "https://github.com/foo/build-repo")
@@ -132,7 +130,6 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             group=self.group,
             assembly=self.assembly,
         )
-        pipeline.github_token = self.github_token
         pipeline.gitlab_token = self.gitlab_token
 
         await pipeline.setup_repos()
@@ -167,12 +164,16 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             group=self.group,
             assembly=self.assembly,
         )
-        pipeline.github_token = self.github_token
         pipeline.gitlab_token = self.gitlab_token
         pipeline.releases_config = Model(
             {
                 "releases": {
-                    "test-assembly": {"assembly": {"type": AssemblyTypes.STANDARD.value, "group": {"product": "ocp"}}}
+                    "test-assembly": {
+                        "assembly": {
+                            "type": AssemblyTypes.STANDARD.value,
+                            "group": {"product": "ocp", "release_date": "2025-Oct-22"},
+                        }
+                    }
                 }
             }
         )
@@ -186,7 +187,6 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             group=self.group,
             assembly=self.assembly,
         )
-        pipeline.github_token = self.github_token
         pipeline.gitlab_token = self.gitlab_token
         pipeline.releases_config = Model({"releases": {}})
         with self.assertRaises(ValueError) as context:
@@ -200,7 +200,6 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             group=self.group,
             assembly=self.assembly,
         )
-        pipeline.github_token = self.github_token
         pipeline.gitlab_token = self.gitlab_token
         pipeline.releases_config = Model(
             {"releases": {self.assembly: {"assembly": {"type": AssemblyTypes.STREAM.value}}}}
@@ -216,7 +215,6 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             group=self.group,
             assembly=self.assembly,
         )
-        pipeline.github_token = self.github_token
         pipeline.gitlab_token = self.gitlab_token
         pipeline.releases_config = Model(
             {
@@ -224,7 +222,7 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
                     "test-assembly": {
                         "assembly": {
                             "type": AssemblyTypes.STANDARD.value,
-                            "group": {"product": "other-product"},
+                            "group": {"product": "other-product", "release_date": "2025-Oct-22"},
                         },
                     },
                 },
@@ -260,7 +258,6 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             group=self.group,
             assembly=self.assembly,
         )
-        pipeline.github_token = self.github_token
         pipeline.gitlab_token = self.gitlab_token
         pipeline.releases_config = Model(
             {
@@ -290,7 +287,6 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             group=self.group,
             assembly=self.assembly,
         )
-        pipeline.github_token = self.github_token
         pipeline.gitlab_token = self.gitlab_token
         pipeline.releases_config = Model(
             {
@@ -316,8 +312,8 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
     @patch('pyartcd.pipelines.prepare_release_konflux.KonfluxDb')
     async def test_verify_attached_operators(self, MockKonfluxDb):
         """
-        Tests the success case where all referenced builds are found.
-        The function should complete without raising an exception.
+        Tests that verify_attached_operators completes successfully when all
+        operator and operand NVRs are present in the release builds.
         """
         pipeline = PrepareReleaseKonfluxPipeline(
             slack_client=self.mock_slack_client,
@@ -329,7 +325,14 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         build = MagicMock(
             nvr="my-bundle-1.0", operator_nvr="my-operator-1.0", operand_nvrs=["my-operand-A-1.0", "my-operand-B-1.0"]
         )
-        MockKonfluxDb.should_receive("search_builds_by_fields").and_return(iter([build]))
+
+        # Create async mock that returns the build
+        async def return_build(*args, **kwargs):
+            return build
+
+        mock_kdb_instance = MockKonfluxDb.return_value
+        mock_kdb_instance.bind = Mock()  # Mock the bind method
+        mock_kdb_instance.get_latest_build = AsyncMock(side_effect=return_build)
 
         kind_to_builds = {
             "metadata": ["my-bundle-1.0"],
@@ -337,9 +340,8 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             "extras": ["my-operand-B-1.0"],
         }
 
-        with self.assertRaises(ValueError) as context:
-            await pipeline.verify_attached_operators(kind_to_builds)
-        self.assertIn("Verify_attached_operators check failed", str(context.exception))
+        # Should NOT raise an exception since all builds are present
+        await pipeline.verify_attached_operators(kind_to_builds)
 
     async def test_validate_shipment_config_overlap(self):
         pipeline = PrepareReleaseKonfluxPipeline(
@@ -348,7 +350,6 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             group=self.group,
             assembly=self.assembly,
         )
-        pipeline.github_token = self.github_token
         pipeline.gitlab_token = self.gitlab_token
         pipeline.releases_config = Model(
             {
@@ -385,11 +386,23 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             slack_client=self.mock_slack_client,
             runtime=self.runtime,
             group=self.group,
-            assembly=self.assembly,
+            assembly="4.18.0",  # Use the assembly that matches releases_config
         )
         pipeline.release_date = "2024-07-01"
-        pipeline.assembly_type = "STANDARD"
+        pipeline.assembly_type = AssemblyTypes.STANDARD
         pipeline.assembly = "4.18.0"
+        pipeline.releases_config = Model(
+            {
+                "releases": {
+                    "4.18.0": {
+                        "assembly": {
+                            "type": AssemblyTypes.STANDARD.value,
+                            "group": {"product": "ocp", "release_date": "2025-Oct-22"},
+                        }
+                    }
+                }
+            }
+        )
         pipeline.logger = Mock()
         pipeline._slack_client = AsyncMock()
         pipeline.create_advisory = AsyncMock(return_value=12345)
@@ -404,9 +417,31 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
 
         pipeline.updated_assembly_group_config = Model({"advisories": {"rpm": -1}})
 
+        # Mock git repository operations
+        pipeline.build_data_repo = AsyncMock()
+        pipeline.build_data_repo.does_branch_exist_on_remote = AsyncMock(return_value=False)
+        pipeline.build_data_repo.create_branch = AsyncMock()
+        pipeline.build_data_repo.commit_all = AsyncMock()
+        pipeline.build_data_repo.push = AsyncMock()
+
         # Run the function
-        with patch("pyartcd.pipelines.prepare_release_konflux.push_cdn_stage") as mock_push_cdn_stage:
-            await pipeline.prepare_et_advisory("rpm")
+        with (
+            patch("pyartcd.pipelines.prepare_release_konflux.push_cdn_stage") as mock_push_cdn_stage,
+            patch("pyartcd.pipelines.prepare_release_konflux.get_github_client_for_org") as mock_get_github,
+            patch.object(PrepareReleaseKonfluxPipeline, "_wait_for_pr_merge", new_callable=AsyncMock),
+            patch("asyncio.sleep", new_callable=AsyncMock),
+        ):
+            # Mock PyGithub-style API: get_github_client_for_org(org).get_repo(...).get_pulls/create_pull
+            mock_gh_repo = Mock()
+            mock_gh_repo.get_pulls.return_value = []  # No existing PRs
+            mock_pr = Mock()
+            mock_pr.number = 1
+            mock_pr.html_url = "https://github.com/user1/repo1/pull/1"
+            mock_pr.body = ""
+            mock_gh_repo.create_pull.return_value = mock_pr
+            mock_get_github.return_value.get_repo.return_value = mock_gh_repo
+
+            await pipeline.prepare_et_advisories()
 
         # Assertions
         self.assertEqual(
@@ -435,7 +470,6 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             group=self.group,
             assembly=self.assembly,
         )
-        pipeline.github_token = self.github_token
         pipeline.gitlab_token = self.gitlab_token
         pipeline.releases_config = Model(
             {
@@ -504,7 +538,6 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             group=self.group,
             assembly=self.assembly,
         )
-        pipeline.github_token = self.github_token
         pipeline.gitlab_token = self.gitlab_token
         pipeline.releases_config = Model(
             {
@@ -657,12 +690,12 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         mock_find_builds_all.side_effect = find_builds_all
 
         def find_or_build_bundle_builds(nvrs):
-            return ["extras-bundle-nvr"]
+            return ["extras-bundle-nvr"], []
 
         mock_find_or_build_bundle_builds.side_effect = find_or_build_bundle_builds
 
         def find_or_build_fbc_builds(nvrs):
-            return ["fbc-nvr"]
+            return ["fbc-nvr"], []  # Return tuple of (successful_nvrs, errors)
 
         mock_find_or_build_fbc_builds.side_effect = find_or_build_fbc_builds
 
@@ -796,17 +829,17 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         mock_find_bugs.assert_any_call()
         self.assertEqual(mock_find_bugs.call_count, 3)
 
-        self.assertEqual(mock_update_shipment_mr.call_count, 2)
+        self.assertEqual(mock_update_shipment_mr.call_count, 3)
         updated_shipments_arg = mock_update_shipment_mr.call_args[0][0]
 
         mock_shipment_image_update = copy.deepcopy(mock_shipment_image_create)
         mock_shipment_extras_update = copy.deepcopy(mock_shipment_extras_create)
         mock_shipment_metadata_update = copy.deepcopy(mock_shipment_metadata_create)
         mock_shipment_image_update.shipment.data.releaseNotes.issues = Issues(
-            fixed=[Issue(id="IMAGEBUG", source="issues.redhat.com")]
+            fixed=[Issue(id="IMAGEBUG", source=JIRA_DOMAIN_NAME)]
         )
         mock_shipment_extras_update.shipment.data.releaseNotes.issues = Issues(
-            fixed=[Issue(id="EXTRASBUG", source="issues.redhat.com")]
+            fixed=[Issue(id="EXTRASBUG", source=JIRA_DOMAIN_NAME)]
         )
         self.assertEqual(updated_shipments_arg["image"], mock_shipment_image_update)
         self.assertEqual(updated_shipments_arg["extras"], mock_shipment_extras_update)
@@ -831,3 +864,94 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
                 }
             ),
         )
+        self.assertEqual(pipeline.bundle_build_errors, [])
+        self.assertEqual(pipeline.fbc_build_errors, [])
+
+    @patch('pyartcd.pipelines.prepare_release_konflux.exectools.cmd_gather_async', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'filter_olm_operators', new_callable=AsyncMock)
+    async def test_find_or_build_bundle_builds_allows_partial_failures(
+        self, mock_filter_olm_operators, mock_cmd_gather_async
+    ):
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+        )
+        pipeline.release_name = "4.18.1"
+        mock_filter_olm_operators.return_value = ["test-operator-1.0.0-1"]
+        mock_cmd_gather_async.return_value = (
+            1,
+            json.dumps(
+                {
+                    "nvrs": ["test-operator-bundle-1.0.0-1"],
+                    "errors": [
+                        {
+                            "operator": "test-operator",
+                            "operator_nvr": "test-operator-1.0.0-1",
+                            "bundle_nvr": None,
+                            "error": "build failed",
+                            "traceback": "traceback text",
+                        }
+                    ],
+                    "failed_count": 1,
+                    "success_count": 1,
+                }
+            ),
+            "stderr output",
+        )
+
+        with patch.dict('os.environ', {"KONFLUX_SA_KUBECONFIG": "/tmp/kubeconfig"}):
+            successful_nvrs, errors = await pipeline.find_or_build_bundle_builds(["test-operator-1.0.0-1"])
+
+        self.assertEqual(successful_nvrs, ["test-operator-bundle-1.0.0-1"])
+        self.assertEqual(errors[0]["operator"], "test-operator")
+        self.assertEqual(errors[0]["error"], "build failed")
+        mock_cmd_gather_async.assert_awaited_once()
+
+    @patch.object(PrepareReleaseKonfluxPipeline, 'report_deferred_build_failures', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'verify_payload', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'set_shipment_mr_ready', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'create_update_build_data_pr', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'handle_jira_ticket', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'prepare_shipment', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'prepare_et_advisories', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'check_blockers', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'check_advisory_stage_policy', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'initialize', new_callable=AsyncMock)
+    async def test_run_exits_unstable_when_deferred_build_failures_exist(
+        self,
+        mock_initialize,
+        mock_check_advisory_stage_policy,
+        mock_check_blockers,
+        mock_prepare_et_advisories,
+        mock_prepare_shipment,
+        mock_handle_jira_ticket,
+        mock_create_update_build_data_pr,
+        mock_set_shipment_mr_ready,
+        mock_verify_payload,
+        mock_report_deferred_build_failures,
+    ):
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+        )
+        pipeline.assembly_type = AssemblyTypes.STANDARD
+        pipeline.bundle_build_errors = ["bundle build failed for operator=test-operator: boom"]
+
+        with self.assertRaises(SystemExit) as cm:
+            await pipeline.run()
+        self.assertEqual(cm.exception.code, 2)
+
+        mock_initialize.assert_awaited_once()
+        mock_check_advisory_stage_policy.assert_awaited_once_with(AssemblyTypes.STANDARD)
+        mock_check_blockers.assert_awaited_once()
+        mock_prepare_et_advisories.assert_awaited_once()
+        mock_prepare_shipment.assert_awaited_once()
+        mock_handle_jira_ticket.assert_awaited_once()
+        mock_create_update_build_data_pr.assert_awaited_once()
+        mock_set_shipment_mr_ready.assert_awaited_once()
+        mock_verify_payload.assert_awaited_once()
+        mock_report_deferred_build_failures.assert_awaited_once_with(pipeline.bundle_build_errors)

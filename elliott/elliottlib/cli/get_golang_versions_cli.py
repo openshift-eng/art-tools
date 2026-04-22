@@ -74,7 +74,7 @@ async def get_golang_versions_cli(
             raise click.BadParameter('components for payload should end with -container')
 
     if release:
-        return await print_release_golang(release, rhcos_images, components, output, report)
+        return await print_release_golang(release, rhcos_images, components, output, report, runtime.registry_config)
     elif advisory_id:
         return print_advisory_golang(advisory_id, components, output, report)
     elif nvrs:
@@ -96,7 +96,7 @@ def print_nvrs_golang(nvrs, output, report):
 
     go_nvr_map = {}
     if rpm_nvrs:
-        go_nvr_map.update(util.get_golang_rpm_nvrs(rpm_nvrs, _LOGGER))
+        go_nvr_map.update(util.get_golang_rpm_nvrs(rpm_nvrs))
     if container_nvrs:
         go_nvr_map.update(util.get_golang_container_nvrs(container_nvrs, _LOGGER))
 
@@ -126,7 +126,7 @@ def print_advisory_golang(advisory_id, components, output, report):
     if content_type == 'docker':
         go_nvr_map = util.get_golang_container_nvrs(nvrs, _LOGGER)
     else:
-        go_nvr_map = util.get_golang_rpm_nvrs(nvrs, _LOGGER)
+        go_nvr_map = util.get_golang_rpm_nvrs(nvrs)
 
     if output == 'json':
         util.pretty_print_nvrs_go_json(go_nvr_map, report)
@@ -134,8 +134,8 @@ def print_advisory_golang(advisory_id, components, output, report):
         util.pretty_print_nvrs_go(go_nvr_map, report)
 
 
-async def print_release_golang(pullspec, rhcos_images, components, output, report):
-    nvr_map = await util.get_nvrs_from_release(pullspec, rhcos_images, _LOGGER)
+async def print_release_golang(pullspec, rhcos_images, components, output, report, registry_config=None):
+    nvr_map = await util.get_nvrs_from_release(pullspec, rhcos_images, _LOGGER, registry_config=registry_config)
     nvrs = [(n, vr_tuple[0], vr_tuple[1]) for n, vr_tuple in nvr_map.items()]
     _LOGGER.debug(f'{len(nvrs)} builds found in {pullspec}')
     if not nvrs:

@@ -100,7 +100,7 @@ class TestUtil(IsolatedAsyncioTestCase):
         cmd_gather_async.return_value = (0, '', '')
 
         await util.get_freeze_automation(
-            version='4.15',
+            group='openshift-4.15',
         )
         cmd_gather_async.assert_awaited_once_with(
             [
@@ -117,7 +117,7 @@ class TestUtil(IsolatedAsyncioTestCase):
 
         cmd_gather_async.reset_mock()
         await util.get_freeze_automation(
-            version='4.15',
+            group='openshift-4.15',
             doozer_data_path='https://github.com/random-fork/ocp-build-data',
             doozer_working='doozer_working',
             doozer_data_gitref='random-branch',

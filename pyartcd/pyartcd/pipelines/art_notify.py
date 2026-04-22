@@ -10,7 +10,6 @@ from urllib.parse import unquote
 
 import click
 import requests
-from artcommonlib import redis
 from slack_bolt import App
 from slack_sdk.errors import SlackApiError
 
@@ -194,7 +193,7 @@ class ArtNotifyPipeline:
             return None
 
         for pr in prs:
-            if pr['state'] == 'open' and pr['title'] == 'Update Konflux references':
+            if pr['state'] == 'open' and 'update konflux references' in pr['title'].lower():
                 pr_url = pr['html_url']
                 self.logger.info(f'Found open Konflux template update PR: {pr_url}')
 
@@ -351,61 +350,6 @@ class ArtNotifyPipeline:
             for notification in extra_notifications:
                 self.app.client.chat_postMessage(channel=self.channel, text=notification, thread_ts=response['ts'])
 
-    async def _get_rebase_failures(self):
-        """
-        Read the rebase failure counters from Redis, for both Brew and Konflux build systems
-        """
-
-        failures = {}
-
-        async def _get_failures_for_engine(engine):
-            redis_branch = f'count:rebase-failure:{engine}'
-            self.logger.info(f'Reading from {redis_branch}...')
-            failed_images = await redis.get_keys(f'{redis_branch}:*')
-
-            if failed_images:
-                fail_counters = await redis.get_multiple_values(failed_images)
-                for image, fail_counter in zip(failed_images, fail_counters):
-                    image_name = image.split(':')[-1]
-                    version = image.split(':')[-2]
-                    failures.setdefault(engine, {}).setdefault(version, {})[image_name] = fail_counter
-
-        await asyncio.gather(*[_get_failures_for_engine(engine) for engine in ['brew', 'konflux']])
-        return failures
-
-    async def _notify_rebase_failures(self):
-        """
-        Notify about rebase failures in Brew and Konflux
-        """
-
-        rebase_failures = await self._get_rebase_failures()
-
-        if not rebase_failures:
-            self.logger.info('No rebase failures found.')
-            return
-
-        self.logger.info('Found rebase failures:')
-        self.logger.info(json.dumps(rebase_failures, indent=4))
-
-        if self.runtime.dry_run:
-            self.logger.info("[DRY RUN] Would have notified rebase failures")
-            return
-
-        for engine, versions in rebase_failures.items():
-            for version, failures in versions.items():
-                major, minor = version.split('.')
-                channel = f'#art-release-{major}-{minor}'
-                response = self.app.client.chat_postMessage(
-                    channel=channel,
-                    text=f":warning: {len(failures)} image{'s' if len(failures) > 1 else ''} failed to rebase in *{engine.capitalize()}*",
-                    link_names=True,
-                )
-
-                for image, counter in failures.items():
-                    self.app.client.chat_postMessage(
-                        channel=channel, text=f'- `{image}`: failed {counter} times', thread_ts=response['ts']
-                    )
-
     async def run(self):
         failed_jobs_text = self._get_failed_jobs_text()
         messages = self._get_messages()
@@ -422,8 +366,6 @@ class ArtNotifyPipeline:
             self.app.client.chat_postMessage(
                 channel=self.channel, text=':check: no unresolved threads / job failures found'
             )
-
-        await self._notify_rebase_failures()
 
 
 @cli.command('art-notify', help='Rebase and build FBC segments for OLM operators')

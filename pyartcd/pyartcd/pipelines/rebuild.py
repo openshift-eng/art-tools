@@ -474,9 +474,10 @@ class RebuildPipeline:
         return plashets
 
     def _generate_repo_file_for_image(self, file: TextIOWrapper, plashets: Iterable[PlashetBuildResult], arches):
-        # Copy content of .oit/signed.repo in the distgit repo
+        # Copy content of .oit/art-signed.repo in the distgit repo
         source_path = (
-            Path(self._doozer_env_vars["DOOZER_WORKING_DIR"]) / f"distgits/containers/{self.dg_key}/.oit/signed.repo"
+            Path(self._doozer_env_vars["DOOZER_WORKING_DIR"])
+            / f"distgits/containers/{self.dg_key}/.oit/art-signed.repo"
         )
         repo_content = source_path.read_text()
 
@@ -754,11 +755,7 @@ async def rebuild(
     else:
         lock = locks.Lock.BUILD
         lock_name = lock.value.format(version=version)
-        lock_identifier = jenkins.get_build_path()
-        if not lock_identifier:
-            runtime.logger.warning(
-                'Env var BUILD_URL has not been defined: a random identifier will be used for the locks'
-            )
+        lock_identifier = jenkins.get_build_path_or_random()
 
         await asyncio.gather(
             *[

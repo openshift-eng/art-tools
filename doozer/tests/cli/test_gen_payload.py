@@ -1,6 +1,5 @@
 import io
 import os
-import pathlib
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
@@ -132,6 +131,7 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
             detect_non_latest_rpms=None,
             detect_inconsistent_images=Mock(),
             detect_installed_rpms_issues=None,
+            detect_hermetic_mismatches=None,
             detect_extend_payload_entry_issues=AsyncMock(),
             summarize_issue_permits=(True, {}),
         )
@@ -142,12 +142,82 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
     @patch("doozerlib.cli.release_gen_payload.PayloadGenerator.find_mismatched_siblings")
     def test_detect_mismatched_siblings(self, fms_mock):
         gpcli = rgp_cli.GenPayloadCli(runtime=MagicMock(assembly="stream"))
-        ai = flexmock(Mock(AssemblyInspector), get_group_release_images={})
+        payload_img = self._make_sibling_inspector(
+            "https://github.com/openshift/repo.git", "aaa", "payload-img", is_payload=True
+        )
+        ai = flexmock(Mock(AssemblyInspector), get_group_release_images={"payload-img": payload_img})
         bbii = flexmock(Mock(BrewBuildRecordInspector), get_nvr="spam-1.0", get_source_git_commit="spamcommit")
         fms_mock.return_value = [(bbii, bbii)]
 
         gpcli.detect_mismatched_siblings(ai)
         self.assertIsInstance(gpcli.assembly_issues[-1], AssemblyIssue)
+        fms_mock.assert_called_once_with([payload_img])
+
+    @patch("doozerlib.cli.release_gen_payload.PayloadGenerator.find_mismatched_siblings")
+    def test_detect_mismatched_siblings_skips_non_payload(self, fms_mock):
+        """Non-payload images should be excluded from the sibling mismatch check."""
+        gpcli = rgp_cli.GenPayloadCli(runtime=MagicMock(assembly="stream"))
+        non_payload = self._make_sibling_inspector(
+            "https://github.com/openshift/repo.git", "aaa", "non-payload-img", is_payload=False
+        )
+        ai = flexmock(Mock(AssemblyInspector), get_group_release_images={"non-payload-img": non_payload})
+        fms_mock.return_value = []
+
+        gpcli.detect_mismatched_siblings(ai)
+        fms_mock.assert_called_once_with([])
+        self.assertEqual(len(gpcli.assembly_issues), 0)
+
+    def _make_sibling_inspector(self, source_url, commit, distgit_key, allow_mismatched=False, is_payload=True):
+        """Helper to build a mock BuildRecordInspector for sibling tests."""
+        source_config = dict(
+            git=dict(url=source_url),
+        )
+        if allow_mismatched:
+            source_config['allow_mismatched_siblings'] = True
+        raw_config = Model(dict(content=dict(source=source_config)))
+        meta = MagicMock()
+        meta.raw_config = raw_config
+        meta.distgit_key = distgit_key
+        meta.is_payload = is_payload
+        inspector = MagicMock()
+        inspector.get_image_meta.return_value = meta
+        inspector.get_source_git_commit.return_value = commit
+        inspector.get_nvr.return_value = f"{distgit_key}-v1.0-1"
+        return inspector
+
+    def test_find_mismatched_siblings_detects_mismatch(self):
+        """Two images from the same repo at different commits should be flagged."""
+        img_a = self._make_sibling_inspector("https://github.com/openshift/repo.git", "aaa", "image-a")
+        img_b = self._make_sibling_inspector("https://github.com/openshift/repo.git", "bbb", "image-b")
+        result = rgp_cli.PayloadGenerator.find_mismatched_siblings([img_a, img_b])
+        self.assertEqual(len(result), 1)
+
+    def test_find_mismatched_siblings_no_mismatch_same_commit(self):
+        """Two images from the same repo at the same commit should not be flagged."""
+        img_a = self._make_sibling_inspector("https://github.com/openshift/repo.git", "aaa", "image-a")
+        img_b = self._make_sibling_inspector("https://github.com/openshift/repo.git", "aaa", "image-b")
+        result = rgp_cli.PayloadGenerator.find_mismatched_siblings([img_a, img_b])
+        self.assertEqual(len(result), 0)
+
+    def test_find_mismatched_siblings_allow_flag_suppresses(self):
+        """An image with allow_mismatched_siblings should be excluded from sibling comparison."""
+        img_a = self._make_sibling_inspector("https://github.com/openshift/repo.git", "aaa", "image-a")
+        img_b = self._make_sibling_inspector(
+            "https://github.com/openshift/repo.git", "bbb", "image-b", allow_mismatched=True
+        )
+        result = rgp_cli.PayloadGenerator.find_mismatched_siblings([img_a, img_b])
+        self.assertEqual(len(result), 0, "allow_mismatched_siblings flag should suppress the mismatch")
+
+    def test_find_mismatched_siblings_allow_flag_only_on_flagged(self):
+        """The flag only excludes the flagged image; unflagged siblings from different repos still compare."""
+        img_a = self._make_sibling_inspector("https://github.com/openshift/repo.git", "aaa", "image-a")
+        img_b = self._make_sibling_inspector(
+            "https://github.com/openshift/repo.git", "bbb", "image-b", allow_mismatched=True
+        )
+        img_c = self._make_sibling_inspector("https://github.com/openshift/other.git", "ccc", "image-c")
+        img_d = self._make_sibling_inspector("https://github.com/openshift/other.git", "ddd", "image-d")
+        result = rgp_cli.PayloadGenerator.find_mismatched_siblings([img_a, img_b, img_c, img_d])
+        self.assertEqual(len(result), 1, "only unflagged siblings from other.git should mismatch")
 
     def test_id_tags_list(self):
         gpcli = rgp_cli.GenPayloadCli()
@@ -460,6 +530,42 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
             ],
         )  # rhcos notably absent from mirroring
 
+    @patch("aiofiles.open")
+    @patch("artcommonlib.exectools.cmd_assert_async")
+    async def test_mirror_payload_content_mismatched_siblings(self, exec_mock, open_mock):
+        """Test that mismatched siblings are not mirrored"""
+        gpcli = rgp_cli.GenPayloadCli(output_dir="/tmp", apply=True, runtime=MagicMock(build_system='brew'))
+
+        # Mark mismatched-image as having mismatched siblings
+        gpcli.mismatched_siblings = ['mismatched-image']
+
+        payload_entries = dict(
+            good_image=rgp_cli.PayloadEntry(
+                issues=[],
+                dest_pullspec="good_pullspec",
+                image_meta=Mock(distgit_key="good-image"),
+                image_inspector=Mock(get_pullspec=lambda: "good_src"),
+            ),
+            mismatched_image=rgp_cli.PayloadEntry(
+                issues=[],
+                dest_pullspec="mismatched_pullspec",
+                image_meta=Mock(distgit_key="mismatched-image"),
+                image_inspector=Mock(get_pullspec=lambda: "mismatched_src"),
+            ),
+        )
+
+        buffer = io.StringIO()
+        open_mock.return_value.__aenter__.return_value.write = AsyncMock(side_effect=lambda s: buffer.write(s))
+        exec_mock.return_value = None  # do not actually run the command
+
+        await gpcli.mirror_payload_content("s390x", payload_entries)
+
+        lines = sorted(buffer.getvalue().splitlines())
+        self.assertEqual(
+            lines,
+            ["good_src=good_pullspec"],  # mismatched_image notably absent
+        )
+
     @patch("doozerlib.cli.release_gen_payload.PayloadGenerator.build_payload_istag")
     async def test_generate_specific_payload_imagestreams(self, build_mock):
         build_mock.side_effect = lambda name, _: name  # just to make the test simpler
@@ -503,7 +609,7 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
                 True: dict(),
                 False: dict(
                     rhcos=dict(s390x=payload_entries["rhcos"]),
-                    spam=dict(),  # embargoed
+                    # spam is embargoed and excluded from public payload (not even an empty dict)
                     eggs=dict(s390x=payload_entries["eggs"]),
                 ),
             },
@@ -528,7 +634,7 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
                 ),
                 False: dict(
                     rhcos=dict(s390x=payload_entries["rhcos"]),
-                    spam=dict(),  # embargoed
+                    # spam was skipped in public payload (not even an empty dict)
                     eggs=dict(s390x=payload_entries["eggs"]),
                 ),
             },
@@ -537,6 +643,66 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
             "ocp-s390x-priv", "release-s390x-priv", ["rhcos", "spam", "eggs"], True
         )
         gpcli.apply_arch_imagestream.assert_awaited_once()
+
+    @patch("doozerlib.cli.release_gen_payload.PayloadGenerator.build_payload_istag")
+    async def test_generate_specific_payload_imagestreams_mismatched_siblings(self, build_mock):
+        """Test that mismatched siblings are excluded from imagestreams and multi_specs"""
+        build_mock.side_effect = lambda name, _: name  # just to make the test simpler
+        runtime = MagicMock(images=[], exclude=[], assembly_type=AssemblyTypes.STREAM)
+        gpcli = flexmock(
+            rgp_cli.GenPayloadCli(
+                runtime=runtime,
+                apply=True,
+                is_name="release",
+                is_namespace="ocp",
+            )
+        )
+
+        # Mark 'mismatched-image' as having mismatched siblings
+        gpcli.mismatched_siblings = ['mismatched-image']
+
+        payload_entries = dict(
+            rhcos=rgp_cli.PayloadEntry(
+                issues=[],
+                dest_pullspec="dummy",
+            ),
+            good_image=rgp_cli.PayloadEntry(
+                issues=[],
+                dest_pullspec="dummy",
+                image_meta=Mock(distgit_key="good-image"),
+                build_record_inspector=Mock(BrewBuildRecordInspector, is_under_embargo=lambda: False),
+            ),
+            mismatched_image=rgp_cli.PayloadEntry(
+                issues=[],
+                dest_pullspec="dummy",
+                image_meta=Mock(distgit_key="mismatched-image"),
+                build_record_inspector=Mock(BrewBuildRecordInspector, is_under_embargo=lambda: False),
+            ),
+        )
+
+        gpcli.write_imagestream_artifact_file = AsyncMock()
+        gpcli.apply_arch_imagestream = AsyncMock()
+
+        multi_specs = {True: dict(), False: dict()}
+        await gpcli.generate_specific_payload_imagestreams("x86_64", False, payload_entries, multi_specs)
+
+        # Verify that mismatched-image was excluded from the imagestream tags
+        # It should not appear in multi_specs at all (not even as an empty dict)
+        self.assertEqual(
+            multi_specs,
+            {
+                True: dict(),
+                False: dict(
+                    rhcos=dict(x86_64=payload_entries["rhcos"]),
+                    good_image=dict(x86_64=payload_entries["good_image"]),
+                    # mismatched_image is completely absent from multi_specs
+                ),
+            },
+        )
+
+        # Verify that only rhcos and good_image were included in the istags (not mismatched_image)
+        # Note: x86_64 (amd64) doesn't get an arch suffix, so it's just "ocp" and "release"
+        gpcli.write_imagestream_artifact_file.assert_awaited_once_with("ocp", "release", ["rhcos", "good_image"], True)
 
     @patch("aiofiles.open")
     async def test_write_imagestream_artifact_file(self, open_mock):
@@ -701,29 +867,39 @@ spec:
     @patch("artcommonlib.exectools.cmd_assert_async")
     @patch("aiofiles.open")
     async def test_create_multi_manifest_list(self, open_mock, exec_mock, fmlsha_mock):
-        os.environ['XDG_RUNTIME_DIR'] = 'fake'
-        runtime = MagicMock(uuid="uuid")
-        gpcli = rgp_cli.GenPayloadCli(runtime, output_dir="/tmp", organization="org", repository="repo")
+        with patch.dict(os.environ, {"QUAY_AUTH_FILE": "/tmp/quay-auth.json"}, clear=True):
+            runtime = MagicMock(uuid="uuid")
+            gpcli = rgp_cli.GenPayloadCli(runtime, output_dir="/tmp", organization="org", repository="repo")
 
-        buffer = io.StringIO()
-        open_mock.return_value.__aenter__.return_value.write = AsyncMock(side_effect=lambda s: buffer.write(s))
-        exec_mock.return_value = None  # do not actually run the command
-        fmlsha_mock.return_value = "sha256:abcdef"
+            buffer = io.StringIO()
+            open_mock.return_value.__aenter__.return_value.write = AsyncMock(side_effect=lambda s: buffer.write(s))
+            exec_mock.return_value = None  # do not actually run the command
+            fmlsha_mock.return_value = "sha256:abcdef"
 
-        arch_to_payload_entry = dict(
-            s390x=rgp_cli.PayloadEntry(
-                issues=[],
-                dest_pullspec="quay.io/org/repo:eggs-s390x",
-            ),
-            ppc64le=rgp_cli.PayloadEntry(
-                issues=[],
-                dest_pullspec="quay.io/org/repo:eggs-ppc64le",
-            ),
-        )
-        await gpcli.create_multi_manifest_list("spam", arch_to_payload_entry, "ocp-multi")
+            arch_to_payload_entry = dict(
+                s390x=rgp_cli.PayloadEntry(
+                    issues=[],
+                    dest_pullspec="quay.io/org/repo:eggs-s390x",
+                ),
+                ppc64le=rgp_cli.PayloadEntry(
+                    issues=[],
+                    dest_pullspec="quay.io/org/repo:eggs-ppc64le",
+                ),
+            )
+            await gpcli.create_multi_manifest_list("spam", arch_to_payload_entry, "ocp-multi")
+
         self.assertEqual(
-            exec_mock.call_args[0][0], "manifest-tool  push from-spec /tmp/ocp-multi.spam.manifest-list.yaml"
+            exec_mock.call_args[0][0],
+            [
+                "manifest-tool",
+                "--docker-cfg=/tmp/quay-auth.json",
+                "push",
+                "from-spec",
+                "/tmp/ocp-multi.spam.manifest-list.yaml",
+            ],
         )
+        fmlsha_mock.assert_awaited_once()
+        self.assertEqual(fmlsha_mock.await_args.kwargs["registry_config"], "/tmp/quay-auth.json")
         ml = yaml.safe_load(buffer.getvalue())
         self.assertRegex(ml["image"], r"^quay.io/org/repo:sha256-")
         self.assertEqual(len(ml["manifests"]), 2)
@@ -761,21 +937,32 @@ spec:
     async def test_create_multi_release_manifest_list(
         self, open_mock, exec_mock, mirror_payload_content_mock, fmlsha_mock
     ):
-        os.environ['XDG_RUNTIME_DIR'] = 'fake'
-        gpcli = rgp_cli.GenPayloadCli(output_dir="/tmp")
+        with patch.dict(os.environ, {"QUAY_AUTH_FILE": "/tmp/quay-auth.json"}, clear=True):
+            gpcli = rgp_cli.GenPayloadCli(output_dir="/tmp")
 
-        exec_mock.return_value = None  # do not actually execute command
-        buffer = io.StringIO()
-        open_mock.return_value.__aenter__.return_value.write = AsyncMock(side_effect=lambda s: buffer.write(s))
-        fmlsha_mock.return_value = "sha256:abcdef"
+            exec_mock.return_value = None  # do not actually execute command
+            buffer = io.StringIO()
+            open_mock.return_value.__aenter__.return_value.write = AsyncMock(side_effect=lambda s: buffer.write(s))
+            fmlsha_mock.return_value = "sha256:abcdef"
 
-        pullspec = await gpcli.create_multi_release_manifest_list(
-            arch_release_dests=dict(x86_64="pullspec:x86"),
-            imagestream_name="isname",
-            multi_release_dest="quay.io/org/repo:spam",
-        )
+            pullspec = await gpcli.create_multi_release_manifest_list(
+                arch_release_dests=dict(x86_64="pullspec:x86"),
+                imagestream_name="isname",
+                multi_release_dest="quay.io/org/repo:spam",
+            )
         self.assertEqual(pullspec, "quay.io/org/repo@sha256:abcdef")
-        self.assertEqual(exec_mock.call_args[0][0], "manifest-tool  push from-spec /tmp/isname.manifest-list.yaml")
+        self.assertEqual(
+            exec_mock.call_args[0][0],
+            [
+                "manifest-tool",
+                "--docker-cfg=/tmp/quay-auth.json",
+                "push",
+                "from-spec",
+                "/tmp/isname.manifest-list.yaml",
+            ],
+        )
+        fmlsha_mock.assert_awaited_once()
+        self.assertEqual(fmlsha_mock.await_args.kwargs["registry_config"], "/tmp/quay-auth.json")
         self.assertEqual(
             buffer.getvalue().strip(),
             """
@@ -807,32 +994,36 @@ manifests:
                     spec=dict(
                         tags=[
                             dict(
-                                name=as_multi_release_name("spam0"),
+                                name=as_multi_release_name("spam0-nightly"),
                                 annotations={'release.openshift.io/phase': 'Accepted'},
                             ),
                             dict(
-                                name=as_multi_release_name("spam1"),
+                                name=as_multi_release_name("spam1-nightly"),
                                 annotations={'release.openshift.io/phase': 'Rejected'},
                             ),
                             dict(
-                                name=as_multi_release_name("spam2"),
+                                name=as_multi_release_name("spam2-nightly"),
                                 annotations={'release.openshift.io/phase': 'Rejected'},
                             ),
                             dict(
-                                name=as_multi_release_name("spam3"),
+                                name=as_multi_release_name("spam3-nightly"),
                                 annotations={'release.openshift.io/phase': 'Rejected'},
                             ),
                             dict(
-                                name=as_multi_release_name("spam4"),
+                                name=as_multi_release_name("spam4-nightly"),
                                 annotations={'release.openshift.io/phase': 'Rejected'},
                             ),
                             dict(
-                                name=as_multi_release_name("spam5"),
+                                name=as_multi_release_name("spam5-nightly"),
                                 annotations={'release.openshift.io/phase': 'Rejected'},
                             ),
                             dict(
-                                name=as_multi_release_name("spam6"),
+                                name=as_multi_release_name("spam6-nightly"),
                                 annotations={'release.openshift.io/phase': 'Accepted'},
+                            ),
+                            dict(
+                                name="tickle",  # non-nightly tag
+                                annotations=None,
                             ),
                         ]
                     ),
@@ -848,15 +1039,122 @@ manifests:
             return False
 
         await gpcli.apply_multi_imagestream_update("final_pullspec", "is_name", "multi_release_name")
-        self.assertFalse(contains(name=as_multi_release_name("spam1")), "old rejected should have been pruned")
-        self.assertTrue(contains(name=as_multi_release_name("spam2")), "recent rejected not pruned")
-        self.assertTrue(contains(name=as_multi_release_name("spam6")), "new accepted not pruned")
-        self.assertTrue(contains(name=as_multi_release_name("spam0")), "older 2nd accepted not pruned")
+        self.assertFalse(contains(name=as_multi_release_name("spam1-nightly")), "old rejected should have been pruned")
+        self.assertTrue(contains(name=as_multi_release_name("spam2-nightly")), "recent rejected not pruned")
+        self.assertTrue(contains(name=as_multi_release_name("spam6-nightly")), "new accepted not pruned")
+        self.assertTrue(contains(name=as_multi_release_name("spam0-nightly")), "older 2nd accepted not pruned")
+        self.assertTrue(contains(name="tickle"), "non-nightly tag should be preserved")
 
         new_tag_annotations = istream_apiobj.model.spec.tags[-1]['annotations']
         self.assertEqual('false', new_tag_annotations['release.openshift.io/rewrite'])
         self.assertEqual(os.getenv('BUILD_URL', ''), new_tag_annotations['release.openshift.io/build-url'])
         self.assertIn('release.openshift.io/runtime-brew-event', new_tag_annotations)
+
+    def _make_bbii(self, configured_mode, actual_hermetic, nvr="test-1.0-1"):
+        """Helper to create mock build record inspector for hermetic mismatch tests."""
+        build_obj = Mock()
+        build_obj.hermetic = actual_hermetic
+
+        image_meta = Mock()
+        image_meta.get_konflux_network_mode.return_value = configured_mode
+
+        bbii = Mock()
+        bbii.get_image_meta.return_value = image_meta
+        bbii.get_build_obj.return_value = build_obj
+        bbii.get_nvr.return_value = nvr
+        return bbii
+
+    def test_detect_hermetic_mismatches_configured_hermetic_built_non_hermetic(self):
+        """Configured hermetic but built non-hermetically should produce an issue."""
+        gpcli = rgp_cli.GenPayloadCli(runtime=MagicMock(build_system='konflux'))
+        bbii = self._make_bbii(configured_mode="hermetic", actual_hermetic=False, nvr="spam-1.0-1")
+        ai = Mock(AssemblyInspector)
+        ai.get_group_release_images.return_value = {"spam": bbii}
+
+        gpcli.detect_hermetic_mismatches(ai)
+
+        self.assertEqual(len(gpcli.assembly_issues), 1)
+        issue = gpcli.assembly_issues[0]
+        self.assertEqual(issue.code, AssemblyIssueCode.MISMATCHED_NETWORK_MODE)
+        self.assertEqual(issue.component, "spam")
+        self.assertIn("non-hermetic", issue.msg)
+
+    def test_detect_hermetic_mismatches_configured_open_built_hermetic(self):
+        """Configured open but built hermetically should NOT produce an issue."""
+        gpcli = rgp_cli.GenPayloadCli(runtime=MagicMock(build_system='konflux'))
+        bbii = self._make_bbii(configured_mode="open", actual_hermetic=True, nvr="eggs-2.0-1")
+        ai = Mock(AssemblyInspector)
+        ai.get_group_release_images.return_value = {"eggs": bbii}
+
+        gpcli.detect_hermetic_mismatches(ai)
+
+        self.assertEqual(gpcli.assembly_issues, [])
+
+    def test_detect_hermetic_mismatches_match_hermetic(self):
+        """Configured hermetic and built hermetically should produce no issues."""
+        gpcli = rgp_cli.GenPayloadCli(runtime=MagicMock(build_system='konflux'))
+        bbii = self._make_bbii(configured_mode="hermetic", actual_hermetic=True, nvr="foo-1.0-1")
+        ai = Mock(AssemblyInspector)
+        ai.get_group_release_images.return_value = {"foo": bbii}
+
+        gpcli.detect_hermetic_mismatches(ai)
+
+        self.assertEqual(gpcli.assembly_issues, [])
+
+    def test_detect_hermetic_mismatches_match_open(self):
+        """Configured open and built non-hermetically should produce no issues."""
+        gpcli = rgp_cli.GenPayloadCli(runtime=MagicMock(build_system='konflux'))
+        bbii = self._make_bbii(configured_mode="open", actual_hermetic=False, nvr="bar-1.0-1")
+        ai = Mock(AssemblyInspector)
+        ai.get_group_release_images.return_value = {"bar": bbii}
+
+        gpcli.detect_hermetic_mismatches(ai)
+
+        self.assertEqual(gpcli.assembly_issues, [])
+
+    def test_detect_hermetic_mismatches_defaults_to_open(self):
+        """Default network mode ('open') with non-hermetic build should produce no issues."""
+        gpcli = rgp_cli.GenPayloadCli(runtime=MagicMock(build_system='konflux'))
+        bbii = self._make_bbii(configured_mode="open", actual_hermetic=False, nvr="default-1.0-1")
+        ai = Mock(AssemblyInspector)
+        ai.get_group_release_images.return_value = {"default-img": bbii}
+
+        gpcli.detect_hermetic_mismatches(ai)
+
+        self.assertEqual(gpcli.assembly_issues, [])
+
+    def test_detect_hermetic_mismatches_skips_none_bbii(self):
+        """Images with no build record inspector (None) should be skipped."""
+        gpcli = rgp_cli.GenPayloadCli(runtime=MagicMock(build_system='konflux'))
+        ai = Mock(AssemblyInspector)
+        ai.get_group_release_images.return_value = {"missing-img": None}
+
+        gpcli.detect_hermetic_mismatches(ai)
+
+        self.assertEqual(gpcli.assembly_issues, [])
+
+    def test_detect_hermetic_mismatches_multiple_images(self):
+        """Only mismatched images produce issues; matched ones do not."""
+        gpcli = rgp_cli.GenPayloadCli(runtime=MagicMock(build_system='konflux'))
+        good_bbii = self._make_bbii(configured_mode="hermetic", actual_hermetic=True, nvr="good-1.0-1")
+        bad_bbii = self._make_bbii(configured_mode="hermetic", actual_hermetic=False, nvr="bad-1.0-1")
+        ai = Mock(AssemblyInspector)
+        ai.get_group_release_images.return_value = {"good-img": good_bbii, "bad-img": bad_bbii}
+
+        gpcli.detect_hermetic_mismatches(ai)
+
+        self.assertEqual(len(gpcli.assembly_issues), 1)
+        self.assertEqual(gpcli.assembly_issues[0].component, "bad-img")
+
+    def test_detect_hermetic_mismatches_skips_brew_builds(self):
+        """Brew builds should be skipped - they don't have hermetic attribute."""
+        gpcli = rgp_cli.GenPayloadCli(runtime=MagicMock(build_system='brew'))
+        ai = Mock(AssemblyInspector)
+
+        gpcli.detect_hermetic_mismatches(ai)
+
+        ai.get_group_release_images.assert_not_called()
+        self.assertEqual(gpcli.assembly_issues, [])
 
     @patch("doozerlib.cli.release_gen_payload.what_is_in_master", return_value="4.19")
     @patch("doozerlib.cli.release_gen_payload.modify_and_replace_api_object")
@@ -877,47 +1175,47 @@ manifests:
                     spec=dict(
                         tags=[
                             dict(
-                                name=as_multi_release_name("spam-1"),
+                                name=as_multi_release_name("spam-1-nightly"),
                                 annotations={'release.openshift.io/phase': 'Accepted'},
                             ),
                             dict(
-                                name=as_multi_release_name("spam0"),
+                                name=as_multi_release_name("spam0-nightly"),
                                 annotations={'release.openshift.io/phase': 'Rejected'},
                             ),
                             dict(
-                                name=as_multi_release_name("spam1"),
+                                name=as_multi_release_name("spam1-nightly"),
                                 annotations={'release.openshift.io/phase': 'Accepted'},
                             ),
                             dict(
-                                name=as_multi_release_name("spam2"),
+                                name=as_multi_release_name("spam2-nightly"),
                                 annotations={'release.openshift.io/phase': 'Rejected'},
                             ),
                             dict(
-                                name=as_multi_release_name("spam3"),
+                                name=as_multi_release_name("spam3-nightly"),
                                 annotations={'release.openshift.io/phase': 'Rejected'},
                             ),
                             dict(
-                                name=as_multi_release_name("spam4"),
+                                name=as_multi_release_name("spam4-nightly"),
                                 annotations={'release.openshift.io/phase': 'Accepted'},
                             ),
                             dict(
-                                name=as_multi_release_name("spam5"),
+                                name=as_multi_release_name("spam5-nightly"),
                                 annotations={'release.openshift.io/phase': 'Rejected'},
                             ),
                             dict(
-                                name=as_multi_release_name("spam6"),
+                                name=as_multi_release_name("spam6-nightly"),
                                 annotations={'release.openshift.io/phase': 'Rejected'},
                             ),
                             dict(
-                                name=as_multi_release_name("spam7"),
+                                name=as_multi_release_name("spam7-nightly"),
                                 annotations={'release.openshift.io/phase': 'Rejected'},
                             ),
                             dict(
-                                name=as_multi_release_name("spam8"),
+                                name=as_multi_release_name("spam8-nightly"),
                                 annotations={'release.openshift.io/phase': 'Rejected'},
                             ),
                             dict(
-                                name=as_multi_release_name("spam9"),
+                                name=as_multi_release_name("spam9-nightly"),
                                 annotations={'release.openshift.io/phase': 'Rejected'},
                             ),
                         ]
@@ -936,14 +1234,16 @@ manifests:
             return False
 
         self.assertFalse(
-            contains(name=as_multi_release_name("spam-1")), "oldest accepted release should have been pruned"
+            contains(name=as_multi_release_name("spam-1-nightly")), "oldest accepted release should have been pruned"
         )
-        self.assertTrue(contains(name=as_multi_release_name("spam1")), "accepted release should not have been pruned")
         self.assertTrue(
-            contains(name=as_multi_release_name("spam4")), "2nd accepted release should not have been pruned"
+            contains(name=as_multi_release_name("spam1-nightly")), "accepted release should not have been pruned"
+        )
+        self.assertTrue(
+            contains(name=as_multi_release_name("spam4-nightly")), "2nd accepted release should not have been pruned"
         )
         self.assertFalse(
-            contains(name=as_multi_release_name("spam0")), "oldest rejected release should have been pruned"
+            contains(name=as_multi_release_name("spam0-nightly")), "oldest rejected release should have been pruned"
         )
 
         new_tag_annotations = istream_apiobj.model.spec.tags[-1]['annotations']

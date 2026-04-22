@@ -4,15 +4,16 @@ import shutil
 import urllib.parse
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from multiprocessing import Lock
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple, cast
 
 from artcommonlib import assertion, constants, exectools
 from artcommonlib import util as art_util
 from artcommonlib.git_helper import git_clone
+from artcommonlib.github_auth import get_github_client_for_org, get_github_git_auth_env
 from artcommonlib.lock import get_named_semaphore
 from artcommonlib.model import ListModel, Missing, Model
+from github import GithubException, UnknownObjectException
 
 from doozerlib.record_logger import RecordLogger
 
@@ -29,11 +30,11 @@ class SourceResolution:
     source_path: str
     """ The local path to the source code repository. """
     url: str
-    """ The URL (usually HTTPS or SSH) of the source code repository. """
+    """ The URL (usually HTTPS or SSH) of the source code repository (for pushing). """
     branch: str
     """ The branch name (or commit hash) of the source code repository. """
     https_url: str
-    """ The HTTPS URL (instead of SSH) of the source code repository. """
+    """ The HTTPS URL (instead of SSH) of the source code repository (for pushing). """
     commit_hash: str
     """ The commit hash of the current HEAD. """
 
@@ -52,6 +53,15 @@ class SourceResolution:
     """ The public upstream URL of the source code repository. If the source code repository does not have a public upstream, this will be the same as the https_url. """
     public_upstream_branch: str
     """ The public upstream branch name of the source code repository. If the source code repository does not have a public upstream, this will be the same as the branch. """
+    pull_url: Optional[str] = None
+    """ The URL to pull from. If None, uses url for both pull and push. """
+
+    @property
+    def https_pull_url(self) -> str:
+        """The HTTPS URL for pulling. If pull_url is None, returns https_url."""
+        if self.pull_url:
+            return art_util.convert_remote_git_to_https(self.pull_url)
+        return self.https_url
 
 
 class SourceResolver:
@@ -170,11 +180,40 @@ class SourceResolver:
             clone_branch, _ = self.detect_remote_source_branch(source_details, self.stage, use_source_fallback_branch)
 
             url = str(source_details["url"])
+            pull_url = source_details.get("url_pull")  # Extract optional pull URL
             has_public_upstream = False
             if self._group_config.public_upstreams:
                 meta.public_upstream_url, meta.public_upstream_branch, has_public_upstream = self.get_public_upstream(
                     url, self._group_config.public_upstreams
                 )
+
+            # ART-14540: Check branch protection for the resolved branch
+            if not self.is_branch_commit_hash(clone_branch):
+                allow_unprotected = source_details.get("allow_unprotected_branch", False)
+                if not allow_unprotected:
+                    # Check the public upstream URL if available, otherwise the source URL
+                    check_url = meta.public_upstream_url if has_public_upstream else url
+                    check_branch = (
+                        (meta.public_upstream_branch or clone_branch) if has_public_upstream else clone_branch
+                    )
+                    is_protected = self._check_branch_protection(check_url, check_branch)
+                    if not is_protected:
+                        owners = list(meta.config.owners or [])
+                        if self._record_logger:
+                            self._record_logger.add_record(
+                                "branch_protection_missing",
+                                distgit=meta.qualified_key,
+                                source_url=check_url,
+                                branch=check_branch,
+                                owners=",".join(owners),
+                            )
+                        LOGGER.warning(
+                            "Branch '%s' in %s does not have branch protection enabled. "
+                            "Please enable branch protection or set 'allow_unprotected_branch: true' "
+                            "in the image/rpm metadata under content.source.git to override.",
+                            check_branch,
+                            check_url,
+                        )
 
             if no_clone:
                 https_url = art_util.convert_remote_git_to_https(url)
@@ -189,9 +228,11 @@ class SourceResolver:
                     has_public_upstream=has_public_upstream,
                     public_upstream_url=meta.public_upstream_url or https_url,
                     public_upstream_branch=meta.public_upstream_branch or clone_branch,
+                    pull_url=pull_url,
                 )
 
-            LOGGER.info("Attempting to checkout source '%s' branch %s in: %s" % (url, clone_branch, source_dir))
+            clone_url = pull_url or url  # Use pull URL for cloning if available
+            LOGGER.info("Attempting to checkout source '%s' branch %s in: %s" % (clone_url, clone_branch, source_dir))
             try:
                 # clone all branches as we must sometimes reference master /OWNERS for maintainer information
                 if self.is_branch_commit_hash(branch=clone_branch):
@@ -200,8 +241,18 @@ class SourceResolver:
                     gitargs = ['--branch', clone_branch]
 
                 git_clone(
-                    url, source_dir, gitargs=gitargs, set_env=constants.GIT_NO_PROMPTS, git_cache_dir=self.cache_dir
+                    clone_url,
+                    source_dir,
+                    gitargs=gitargs,
+                    set_env=constants.GIT_NO_PROMPTS,
+                    git_cache_dir=self.cache_dir,
                 )
+
+                # If we used pull_url for cloning, we need to set up the push remote
+                if pull_url and pull_url != url:
+                    with exectools.Dir(source_dir):
+                        exectools.cmd_assert(f'git remote set-url origin {url}')  # Set origin to push URL
+                        exectools.cmd_assert(f'git remote add pull {pull_url}')  # Add pull remote
 
                 if self.is_branch_commit_hash(branch=clone_branch):
                     with exectools.Dir(source_dir):
@@ -245,7 +296,7 @@ class SourceResolver:
         if use_source_fallback_branch not in ["yes", "always", "never"]:
             raise ValueError(f"Invalid value for use_source_fallback_branch: {use_source_fallback_branch}")
 
-        git_url = source_details["url"]
+        git_url = source_details.get("url_pull", source_details["url"])  # Use pull URL if available
         branches = source_details["branch"]
 
         stage_branch = branches.get("stage", None) if stage else None
@@ -309,19 +360,82 @@ class SourceResolver:
         :param branch: The name of the branch. If the name is not a branch and appears to be a commit
                 hash, the hash will be returned without modification.
         """
+        git_url = art_util.ensure_github_https_url(git_url)
+        auth_env = get_github_git_auth_env(url=git_url)
         LOGGER.info('Checking if target branch {} exists in {}'.format(branch, git_url))
 
         try:
-            out, _ = exectools.cmd_assert('git ls-remote --heads {} {}'.format(git_url, branch), retries=3)
+            out, _ = exectools.cmd_assert(
+                'git ls-remote --heads {} refs/heads/{}'.format(git_url, branch), retries=3, set_env=auth_env
+            )
         except Exception as err:
-            # We don't expect and exception if the branch does not exist; just an empty string
             LOGGER.error('Error attempting to find target branch {} hash: {}'.format(branch, err))
             return None
-        result = out.strip()  # any result means the branch is found; e.g. "7e66b10fbcd6bb4988275ffad0a69f563695901f	refs/heads/some_branch")
+        result = out.strip()
         if not result and SourceResolver.is_branch_commit_hash(branch):
-            return branch  # It is valid hex; just return it
+            return branch
 
         return result.split()[0] if result else None
+
+    @staticmethod
+    def _check_branch_protection(git_url: str, branch: str) -> bool:
+        """
+        Check if a GitHub branch has branch protection enabled.
+        Uses the PyGithub Branch object's `protected` boolean, which does NOT
+        require admin access (unlike the /protection endpoint).
+
+        Returns True if the branch is protected or if the check cannot be performed
+        (non-GitHub repo, missing token, API errors). Returns False only when the
+        API confirms the branch is unprotected.
+
+        Arg(s):
+            git_url (str): The git URL of the repository (SSH or HTTPS).
+            branch (str): The branch name to check.
+        Return Value(s):
+            bool: True if protected or check is inconclusive, False if confirmed unprotected.
+        """
+        https_url = art_util.convert_remote_git_to_https(git_url)
+        if "github.com" not in https_url:
+            LOGGER.info("Skipping branch protection check for non-GitHub repo: %s", https_url)
+            return True
+
+        _, owner, repo = art_util.split_git_url(git_url)
+
+        try:
+            gh = get_github_client_for_org(owner)
+            gh_repo = gh.get_repo(f"{owner}/{repo}")
+            gh_branch = gh_repo.get_branch(branch)
+            if gh_branch.protected:
+                LOGGER.info("Branch protection confirmed for %s/%s branch %s", owner, repo, branch)
+                return True
+            LOGGER.warning("Branch %s in %s/%s is NOT protected", branch, owner, repo)
+            return False
+        except UnknownObjectException:
+            LOGGER.warning(
+                "Branch %s or repo %s/%s not found on GitHub; failing open",
+                branch,
+                owner,
+                repo,
+            )
+            return True
+        except GithubException as e:
+            LOGGER.warning(
+                "GitHub API error checking branch protection for %s/%s branch %s: %s",
+                owner,
+                repo,
+                branch,
+                e,
+            )
+            return True
+        except Exception as e:
+            LOGGER.warning(
+                "Unexpected error checking branch protection for %s/%s branch %s: %s",
+                owner,
+                repo,
+                branch,
+                e,
+            )
+            return True
 
     def register_source_alias(self, alias: str, path: str):
         LOGGER.info("Registering source alias %s: %s" % (alias, path))
@@ -351,6 +465,12 @@ class SourceResolver:
 
             if not url or not branch:
                 raise IOError(f"Couldn't detect source URL or branch for local source {path}. Is it a valid Git repo?")
+
+            # Check if pull remote exists
+            pull_url = None
+            rc_pull, out_pull, _ = exectools.cmd_gather(["git", "config", "--get", "remote.pull.url"])
+            if rc_pull == 0:
+                pull_url = out_pull.strip()
 
             out, _ = exectools.cmd_assert(["git", "rev-parse", "HEAD"])
             commit_hash = out.strip()
@@ -382,6 +502,7 @@ class SourceResolver:
                 has_public_upstream=has_public_upstream,
                 public_upstream_url=public_upstream_url,
                 public_upstream_branch=public_upstream_branch,
+                pull_url=pull_url,
             )
             self.source_resolutions[alias] = resolution
             if self._record_logger:
@@ -440,7 +561,21 @@ class SourceResolver:
                         target_pub_branch = upstream.get("public_branch")
 
             if target_priv_prefix:
-                return f'{target_pub_prefix}{remote_https[len(target_priv_prefix) :]}', target_pub_branch, True
+                repo_path = remote_https[len(target_priv_prefix) :]  # e.g., "/migtools-mig-operator"
+
+                # Extract public org name
+                pub_org = target_pub_prefix.split('/')[-1]  # e.g., "migtools"
+
+                # If public org is not "openshift", try removing org prefix from repo name
+                if pub_org != "openshift":
+                    repo_name = repo_path.lstrip('/')  # "migtools-mig-operator"
+                    if repo_name.startswith(f"{pub_org}-"):
+                        # Remove the org prefix: "migtools-mig-operator" → "mig-operator"
+                        repo_without_prefix = repo_name.removeprefix(f"{pub_org}-")
+                        return f'{target_pub_prefix}/{repo_without_prefix}', target_pub_branch, True
+
+                # Fallback to original behavior
+                return f'{target_pub_prefix}{repo_path}', target_pub_branch, True
 
         return remote_https, None, False
 
@@ -460,10 +595,11 @@ class SourceResolver:
             exectools.cmd_assert(
                 ["git", "-C", source_dir, "remote", "set-url", "--", "public_upstream", public_source_url]
             )
+        fetch_env = {**constants.GIT_NO_PROMPTS, **get_github_git_auth_env(url=public_source_url)}
         exectools.cmd_assert(
             ["git", "-C", source_dir, "fetch", "--", "public_upstream", public_upstream_branch],
             retries=3,
-            set_env=constants.GIT_NO_PROMPTS,
+            set_env=fetch_env,
         )
 
     @staticmethod

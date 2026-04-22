@@ -5,7 +5,6 @@ import re
 from typing import Any, Dict, Iterable, List, Set, Tuple
 
 import click
-from artcommonlib import arch_util
 from artcommonlib.assembly import assembly_issues_config
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import is_release_next_week
@@ -344,10 +343,7 @@ class BugValidator:
     async def _verify_attached_flaws_for(
         self, advisory_id: int, attached_trackers: Iterable[Bug], attached_flaws: Iterable[Bug]
     ):
-        flaw_bug_tracker = self.runtime.get_bug_tracker('bugzilla')
-        tracker_flaws, first_fix_flaw_bugs = get_flaws(
-            flaw_bug_tracker, attached_trackers, self.runtime.assembly_type, self.runtime.assembly
-        )
+        tracker_flaws, first_fix_flaw_bugs = get_flaws(self.runtime, attached_trackers)
 
         # Check if attached flaws match expected flaws
         first_fix_flaw_ids = {b.id for b in first_fix_flaw_bugs}

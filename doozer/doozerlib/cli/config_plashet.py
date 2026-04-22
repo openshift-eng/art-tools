@@ -1,9 +1,11 @@
 import itertools
 import logging
 import os
+import re
 import ssl
 import sys
 import time
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Dict, List, Optional, Tuple
 
@@ -17,10 +19,11 @@ from artcommonlib.build_util import find_latest_builds
 from artcommonlib.build_visibility import BuildVisibility, get_visibility_suffix
 from artcommonlib.logutil import get_logger
 from artcommonlib.release_util import isolate_el_version_in_release
-from artcommonlib.rpm_utils import compare_nvr, parse_nvr
+from artcommonlib.rpm_utils import _rpmvercmp, compare_nvr, parse_nvr
 from artcommonlib.util import isolate_el_version_in_brew_tag
 from elliottlib import errata
 from requests_kerberos import HTTPKerberosAuth
+from tenacity import retry, retry_if_exception_type, stop_after_delay, wait_fixed
 
 from doozerlib.brew import get_builds_tags
 from doozerlib.cli import cli
@@ -31,12 +34,100 @@ from doozerlib.util import mkdirs, strip_epoch, to_nvre
 
 ERRATA_API_URL = "https://errata.engineering.redhat.com/api/v1/"
 
+KNOWN_SIGNING_KEYS = ('fd431d51', 'release4,release2,ima')
+
 logger: logging.Logger = None
 
 # As a plashet is assembled, concerns about its viability can be
 # added to this list. It will be captured in plashet.yml for easy
 # reference.
 plashet_concerns = []
+
+
+def compare_nvr_openshift_aware(nvre_obj1, nvre_obj2, target_openshift_version=None):
+    """
+    Compare two NVR objects with OpenShift version semantics.
+
+    This function handles the case where OpenShift versions should take precedence
+    over build numbers when comparing releases. For example:
+    - haproxy-2.8.10-1.rhaos4.21.el9 should be considered newer than
+    - haproxy-2.8.10-2.rhaos4.20.el9
+
+    When target_openshift_version is provided, OpenShift version priority is only
+    applied when at least one package matches the target group version.
+
+    :param nvre_obj1: First NVR object from parse_nvr
+    :param nvre_obj2: Second NVR object from parse_nvr
+    :param target_openshift_version: Tuple (major, minor) for the target OpenShift version (e.g., (4, 21))
+    :return: 1 if nvre_obj1 > nvre_obj2, 0 if equal, -1 if nvre_obj1 < nvre_obj2
+    """
+    # First check if names match
+    if nvre_obj1["name"] != nvre_obj2["name"]:
+        raise ValueError(f"Package names don't match: {nvre_obj1['name']}, {nvre_obj2['name']}")
+
+    # Compare epoch first
+    epoch1 = nvre_obj1.get("epoch") or ""
+    epoch2 = nvre_obj2.get("epoch") or ""
+    if epoch1 != epoch2:
+        # Convert to int for comparison, treating empty as 0
+        e1 = int(epoch1) if epoch1 else 0
+        e2 = int(epoch2) if epoch2 else 0
+        return 1 if e1 > e2 else -1
+
+    # Compare version
+    version1 = nvre_obj1["version"]
+    version2 = nvre_obj2["version"]
+    if version1 != version2:
+        # Use proper RPM version comparison instead of lexicographic string comparison
+        version_cmp = _rpmvercmp(version1, version2)
+        if version_cmp != 0:
+            return version_cmp
+
+    # Both have same name, epoch, and version - now compare releases with OpenShift semantics
+    release1 = nvre_obj1["release"]
+    release2 = nvre_obj2["release"]
+
+    # Extract OpenShift version from release strings (rhaos4.XX format)
+    rhaos_pattern = r'\.rhaos(\d+)\.(\d+)\.'
+
+    match1 = re.search(rhaos_pattern, release1)
+    match2 = re.search(rhaos_pattern, release2)
+
+    if match1 and match2:
+        # Both have OpenShift version patterns
+        major1, minor1 = int(match1.group(1)), int(match1.group(2))
+        major2, minor2 = int(match2.group(1)), int(match2.group(2))
+
+        # If target version is specified, only apply OpenShift version priority
+        # when at least one package matches the target group version
+        if target_openshift_version:
+            target_major, target_minor = target_openshift_version
+            version1_matches_target = (major1, minor1) == (target_major, target_minor)
+            version2_matches_target = (major2, minor2) == (target_major, target_minor)
+
+            if version1_matches_target and not version2_matches_target:
+                # Only first matches target → first wins
+                return 1
+            elif not version1_matches_target and version2_matches_target:
+                # Only second matches target → second wins
+                return -1
+            elif version1_matches_target and version2_matches_target:
+                # Both match target → OpenShift versions are identical, fall through to standard release comparison
+                pass
+            # If neither matches target, fall through to standard comparison
+        else:
+            # No target specified - use original behavior (always prioritize OpenShift versions)
+            if major1 != major2:
+                return 1 if major1 > major2 else -1
+            if minor1 != minor2:
+                return 1 if minor1 > minor2 else -1
+
+        # OpenShift versions are the same, fall back to standard release comparison
+        # for things like build numbers, etc.
+        return _rpmvercmp(release1, release2)
+
+    # If one or both don't have OpenShift version patterns, use standard comparison
+    return _rpmvercmp(release1, release2)
 
 
 def update_advisory_builds(config, errata_session, advisory_id, nvres, nvr_product_version):
@@ -110,7 +201,7 @@ def update_advisory_builds(config, errata_session, advisory_id, nvres, nvr_produ
             raise IOError(f'Unable to add nvrs to advisory {advisory_id}: {to_add}')
 
 
-def _assemble_repo(config, nvres: List[str]):
+def _assemble_repo(config: SimpleNamespace, nvres: List[str], koji_api: koji.ClientSession = None):
     """
     This method is intended to be wrapped by assemble_repo.
     Assembles one or more architecture specific repos in the
@@ -118,9 +209,50 @@ def _assemble_repo(config, nvres: List[str]):
     is called that all RPMs are signed if any of those arches requires signing.
     :param config: cli config
     :param nvres: a list of nvres to include.
+    :param koji_api: optional koji client session; when provided and assembling
+        in signed mode, the expected RPMs for each build are queried from Koji
+        and compared against the contents of the signed directory to ensure
+        completeness.
     :return: n/a
     An exception will be thrown if no RPMs can be found matching an nvr.
     """
+
+    @retry(
+        retry=retry_if_exception_type(IOError),
+        stop=stop_after_delay(600),
+        wait=wait_fixed(30),
+        reraise=True,
+        before_sleep=lambda retry_state: logger.info('Waiting for signed RPMs to become available, retrying in 30s...'),
+    )
+    def _wait_for_signed_rpms(brewroot_arch_path: str, expected_rpm_filenames: set, nvre: str, arch: str) -> List[str]:
+        rpms = os.listdir(brewroot_arch_path)
+        if not rpms:
+            raise IOError(f'Did not find any rpms in {brewroot_arch_path}')
+        if expected_rpm_filenames:
+            missing = expected_rpm_filenames - set(rpms)
+            if missing:
+                raise IOError(
+                    f'Signed {arch} directory for {nvre} is incomplete; '
+                    f'missing {len(missing)} RPM(s): {sorted(missing)}'
+                )
+        return rpms
+
+    # Pre-fetch expected RPMs per build for completeness validation when signing
+    expected_rpms_by_nvr: Dict[str, Dict[str, set]] = {}  # nvr -> {arch -> set of filenames}
+    if koji_api and any(mode == 'signed' for _, mode in config.arch):
+        for nvre in nvres:
+            nvr = strip_epoch(nvre)
+            nvre_obj = parse_nvr(nvre)
+            if nvre_obj["name"] in config.exclude_package:
+                continue
+            build = koji_api.getBuild(nvr, strict=True)
+            rpms = koji_api.listRPMs(buildID=build["id"])
+            by_arch: Dict[str, set] = {}
+            for rpm in rpms:
+                arch = rpm["arch"]
+                filename = os.path.basename(koji.pathinfo.rpm(rpm))
+                by_arch.setdefault(arch, set()).add(filename)
+            expected_rpms_by_nvr[nvr] = by_arch
 
     for arch_name, signing_mode in config.arch:
         # These directories shouldn't exist yet. They will be created during assemble.
@@ -145,12 +277,24 @@ def _assemble_repo(config, nvres: List[str]):
                     continue
 
                 signed = signing_mode == 'signed'
-                br_arch_base_path = get_brewroot_arch_base_path(config, nvre, signed)
+                base_path = get_brewroot_base_path(config, nvre)
+                if base_path is None:
+                    continue
 
                 # Include noarch in each arch specific repo.
                 include_arches = [arch_name, 'noarch']
                 for a in include_arches:
-                    brewroot_arch_path = os.path.join(br_arch_base_path, a)
+                    if signed:
+                        signing_keys = getattr(config, 'signing_keys', KNOWN_SIGNING_KEYS)
+                        resolved = resolve_signed_arch_path(base_path, a, nvre, signing_keys)
+                        if resolved is None:
+                            logger.debug(f'No signed {a} arch directory for {nvre}')
+                            continue
+                        brewroot_arch_path = str(resolved)
+                        signing_key = resolved.parent.name
+                    else:
+                        brewroot_arch_path = os.path.join(base_path, a)
+                        signing_key = None
 
                     if not os.path.isdir(brewroot_arch_path):
                         logger.debug(f'No {a} arch directory for {nvre}')
@@ -162,14 +306,18 @@ def _assemble_repo(config, nvres: List[str]):
                         arch=a,
                     )
                     if signed:
-                        link_name += f'__{config.signing_key_id}'
+                        link_name += f'__{signing_key}'
 
                     package_link_path = os.path.join(links_dir, link_name)
                     os.symlink(brewroot_arch_path, package_link_path)
 
-                    rpms = os.listdir(package_link_path)
-                    if not rpms:
-                        raise IOError(f'Did not find any rpms in {brewroot_arch_path}')
+                    if signed and nvr in expected_rpms_by_nvr:
+                        expected_rpm_filenames = expected_rpms_by_nvr[nvr].get(a, set())
+                        rpms = _wait_for_signed_rpms(brewroot_arch_path, expected_rpm_filenames, nvre, a)
+                    else:
+                        rpms = os.listdir(package_link_path)
+                        if not rpms:
+                            raise IOError(f'Did not find any rpms in {brewroot_arch_path}')
 
                     for r in rpms:
                         rpm_path = os.path.join('Packages', link_name, r)
@@ -177,13 +325,14 @@ def _assemble_repo(config, nvres: List[str]):
                         matched_count += 1
 
                 if not matched_count:
+                    path = base_path or "unknown path"
                     logger.warning(
-                        "Unable to find any {arch} rpms for {nvre} in {p} ; this may be ok if the package doesn't support the arch and it is not required for that arch".format(
-                            arch=arch_name, nvre=nvre, p=get_brewroot_arch_base_path(config, nvre, signed)
-                        )
+                        f"Unable to find any {arch_name} rpms for {nvre} in {path}; "
+                        "this may be ok if the package doesn't support the arch and "
+                        "it is not required for that arch"
                     )
 
-        exectools.cmd_assert('createrepo_c -i rpm_list .', cwd=dest_arch_path)
+        exectools.cmd_assert('createrepo_c --no-database -i rpm_list .', cwd=dest_arch_path)
         logger.info(f'Successfully created repo at {dest_arch_path}')
 
 
@@ -207,7 +356,7 @@ def assemble_repo(config, nvres, event_info=None, extra_data: Dict = None):
     with open(os.path.join(config.dest_dir, 'plashet.yml'), mode='w+', encoding='utf-8') as y:
         success = False
         try:
-            _assemble_repo(config, nvres)
+            _assemble_repo(config, nvres, koji_api=koji_proxy)
             success = True
         finally:
             packages = list()
@@ -245,67 +394,115 @@ def assemble_repo(config, nvres, event_info=None, extra_data: Dict = None):
             yaml.dump(plashet_info, y, default_flow_style=False)
 
 
-def get_brewroot_arch_base_path(config, nvre, signed):
+def get_brewroot_base_path(config: SimpleNamespace, nvre: str) -> Path | None:
+    """Return the unsigned brewroot base directory for an NVR.
+
+    This is ``<brewroot>/packages/<name>/<version>/<release>/``.
+    Returns *None* when the directory does not exist (i.e. the NVR has not
+    been built).
     """
-    :param config: Base cli config object
-    :param nvre: Will return the base directory under which the arch directories should exist.
-    :param signed: If True, the base directory under which signed arch directories should exit.
-    An exception will be raised if the nvr cannot be found unsigned in the brewroot as this
-    indicates the nvr has not been built.
+    nvr = parse_nvr(nvre)
+    name, version, release = nvr["name"], nvr["version"], nvr["release"]
+
+    el_version = isolate_el_version_in_release(release) or "7"
+    if el_version == "7" and "el7" not in release:
+        logger.warning(f"Defaulting {nvre} to RHEL 7; el_version not found in {release}")
+
+    brew_root = Path(config.packages_path.format(el_version=el_version))
+    base_path = brew_root / name / version / release
+
+    if not base_path.is_dir():
+        logger.error(f"Unable to find {nvre} in brewroot filesystem: {base_path}; skipping this package")
+        return None
+
+    return base_path
+
+
+def resolve_signed_arch_path(
+    base_path: Path, arch: str, nvre: str, signing_keys: tuple[str, ...] = KNOWN_SIGNING_KEYS
+) -> Path | None:
+    """Find the signed arch directory for an NVR by trying each key in order.
+
+    *signing_keys* is tried left-to-right; the first key whose
+    ``data/signed/<key>/<arch>/`` directory exists on disk is returned.
+    This avoids picking a key whose signing is still in progress when
+    another key is already complete — provided the caller puts the
+    preferred (usually older / fully-populated) key first.
+
+    Returns *None* when no accepted key provides a populated arch directory.
+    An error is logged when only unknown keys are present so operators know
+    which key to add.
     """
+    signed_dir = base_path / "data" / "signed"
+    for key in signing_keys:
+        candidate = signed_dir / key / arch
+        if candidate.is_dir():
+            return candidate
 
-    parsed_nvr = parse_nvr(nvre)
-    package_name = parsed_nvr["name"]
-    package_version = parsed_nvr["version"]
-    package_release = parsed_nvr["release"]
+    if signed_dir.is_dir():
+        unknown = [e.name for e in signed_dir.iterdir() if e.is_dir() and e.name and e.name not in KNOWN_SIGNING_KEYS]
+        if unknown:
+            logger.error(
+                f"{nvre} is signed with unrecognised key(s) {unknown}; "
+                f"known keys are {sorted(KNOWN_SIGNING_KEYS)}. "
+                f"Update KNOWN_SIGNING_KEYS in config_plashet.py to accept the new key."
+            )
 
-    el_version = isolate_el_version_in_release(package_release)
-    el_version = el_version if el_version else '7'
-    brew_packages = config.packages_path.format(el_version=el_version)
-
-    unsigned_arch_base_path = '{brew_packages}/{package_name}/{package_version}/{package_release}'.format(
-        brew_packages=brew_packages,
-        package_name=package_name,
-        package_version=package_version,
-        package_release=package_release,
-    )
-
-    if not os.path.isdir(unsigned_arch_base_path):
-        raise IOError(f'Unable to find {nvre} in brewroot filesystem: {unsigned_arch_base_path}')
-
-    if not signed:
-        return unsigned_arch_base_path
-    else:
-        return '{unsigned_arch_path}/data/signed/{signing_key_id}'.format(
-            unsigned_arch_path=unsigned_arch_base_path,
-            signing_key_id=config.signing_key_id,
-        )
+    return None
 
 
-def is_signed(config, nvre, koji_api: koji.ClientSession):
+def is_signed(config: SimpleNamespace, nvre: str, koji_api: koji.ClientSession) -> bool:
     """
     :param config: cli config object
     :param nvre: The nvr to check
-    :return: Returns whether the specified nvr is signed with the signing key id. An exception
-    will be raise if the nvr can't be found at all in the brew root (i.e. unsigned can't be found).
-    """
-    unsigned_base = get_brewroot_arch_base_path(config, nvre, False)
+    :return: Returns whether the specified nvr is signed with one of the accepted signing keys.
+    Returns False if the nvr can't be found in the brew root.
 
-    sigkey = config.signing_key_id
-    nvr = strip_epoch(nvre)
-    build = koji_api.getBuild(nvr, strict=True)
-    rpms = koji_api.listRPMs(buildID=build['id'])
-    tasks = []
+    We require that at least one accepted signing key covers ALL RPMs in
+    the build (i.e. every RPM has a signed copy on disk under that single
+    key).  This matches the assembly strategy where
+    ``resolve_signed_arch_path`` picks one key per NVR+arch and symlinks
+    the whole directory.
+    """
+    base_path = get_brewroot_base_path(config, nvre)
+    if base_path is None:
+        logger.warning(f"Cannot verify signing status for {nvre} - brewroot path not found")
+        return False
+
+    signing_keys = getattr(config, 'signing_keys', KNOWN_SIGNING_KEYS)
+
+    build = koji_api.getBuild(strip_epoch(nvre), strict=True)
+    rpms = koji_api.listRPMs(buildID=build["id"])
+
+    # queryRPMSigs without sigkey returns ALL signatures for each RPM.
+    sig_tasks = []
     with koji_api.multicall(batch=5000) as m:
         for rpm in rpms:
-            tasks.append(m.queryRPMSigs(rpm_id=rpm['id'], sigkey=sigkey))
+            sig_tasks.append((rpm, m.queryRPMSigs(rpm_id=rpm["id"])))
 
-    for rpm, task in zip(rpms, tasks):
-        if not any(
-            os.path.exists("%s/%s" % (unsigned_base, koji.pathinfo.signed(rpm, sig['sigkey']))) for sig in task.result
-        ):
-            logger.info(f'Found incomplete signed rpm {nvre}; brewroot may still be being built.')
+    # Collect the set of accepted sigkeys each RPM is signed with on disk.
+    keys_per_rpm: list[set[str]] = []
+    for rpm, task in sig_tasks:
+        rpm_keys: set[str] = set()
+        for sig in task.result:
+            sigkey = sig.get("sigkey", "")
+            if sigkey not in signing_keys:
+                continue
+            if (base_path / koji.pathinfo.signed(rpm, sigkey)).exists():
+                rpm_keys.add(sigkey)
+        keys_per_rpm.append(rpm_keys)
+
+    if not keys_per_rpm:
+        return True
+
+    # At least one key must cover every RPM in the build.
+    common_keys = keys_per_rpm[0]
+    for rpm_keys in keys_per_rpm[1:]:
+        common_keys = common_keys & rpm_keys
+        if not common_keys:
+            logger.info(f"No single signing key covers all RPMs for {nvre}; signing may still be in progress.")
             return False
+
     return True
 
 
@@ -321,7 +518,7 @@ def signed_desired(config):
             raise IOError(f'Unexpected signing mode for arch {a} (must be signed or unsigned): {mode}')
 
 
-def assert_signed(config, nvre, koji_api: koji.ClientSession, poll_for=15):
+def assert_signed(config: SimpleNamespace, nvre: str, koji_api: koji.ClientSession, poll_for: int = 30) -> int:
     """
     Raises an exception if the nvr has not been specified by the config signing key.
     :param config: The cli config
@@ -329,30 +526,23 @@ def assert_signed(config, nvre, koji_api: koji.ClientSession, poll_for=15):
     :param poll_for: The number of minutes to continue checking until an exception is raised.
     :return: number of minutes used for polling during successful wait for signing
     """
-    time_used = 0
+    minutes_used = 0
 
     while not is_signed(config, nvre, koji_api):
-        if poll_for <= 0:
-            br_arch_base_path = get_brewroot_arch_base_path(config, nvre, True)
-            logger.info(
-                'Package {nvre} has not been signed; {signed_path} does not exist'.format(
-                    nvre=nvre,
-                    signed_path=br_arch_base_path,
-                )
-            )
-            raise IOError(
-                'Package {nvre} has not been signed; {signed_path} does not exist'.format(
-                    nvre=nvre,
-                    signed_path=br_arch_base_path,
-                )
-            )
-        logger.info(
-            f'Waiting for up to {poll_for} more minutes, get back to default of 20 minutes after SIGNSERVER-267 is solved'
-        )
-        poll_for -= 1
-        time_used += 1
+        if minutes_used >= poll_for:
+            base_path = get_brewroot_base_path(config, nvre)
+            signed_path = f"{base_path}/data/signed/<key>" if base_path else "unknown brewroot path"
+
+            signing_keys = getattr(config, 'signing_keys', KNOWN_SIGNING_KEYS)
+            msg = f"Package {nvre} has not been signed after {poll_for} minutes; no accepted key ({sorted(signing_keys)}) found at {signed_path}"
+            logger.info(msg)
+            raise IOError(msg)
+
+        remaining = poll_for - minutes_used
+        logger.info(f"Waiting for up to {remaining} more minutes")
         time.sleep(60)
-    return time_used
+        minutes_used += 1
+    return minutes_used
 
 
 def setup_logging(dest_dir: str):
@@ -406,7 +596,7 @@ def setup_logging(dest_dir: str):
     '--signing-key-id',
     required=False,
     metavar='HEX',
-    help='Signing key to require for signed arches if you fd431d51 is not desired.',
+    help='Restrict signing to a single key (default: accept any key in KNOWN_SIGNING_KEYS).',
 )
 @click.option(
     '--arch',
@@ -478,6 +668,13 @@ def config_plashet(ctx, base_dir, brew_root, name, signing_key_id, **kwargs):
 
     runtime: Runtime = ctx.obj
 
+    effective_key = signing_key_id if signing_key_id else 'fd431d51'
+    if signing_key_id and signing_key_id not in KNOWN_SIGNING_KEYS:
+        logger.warning(
+            f"--signing-key-id={signing_key_id!r} is not in KNOWN_SIGNING_KEYS "
+            f"{sorted(KNOWN_SIGNING_KEYS)}; only that key will be accepted"
+        )
+
     ctx.obj = SimpleNamespace(
         base_dir=base_dir,
         brew_root=brew_root,
@@ -486,7 +683,8 @@ def config_plashet(ctx, base_dir, brew_root, name, signing_key_id, **kwargs):
         packages_path=packages_path,
         base_dir_path=base_dir_path,
         dest_dir=dest_dir,
-        signing_key_id=signing_key_id if signing_key_id else 'fd431d51',
+        signing_key_id=effective_key,
+        signing_keys=(effective_key,) if signing_key_id else KNOWN_SIGNING_KEYS,
         runtime=runtime,
         **kwargs,
     )
@@ -527,7 +725,7 @@ def config_plashet(ctx, base_dir, brew_root, name, signing_key_id, **kwargs):
     type=click.Choice(['leave', 'clean'], case_sensitive=False),
     help='clean=remove all builds on start and successful exit; leave=leave existing builds attached when attempting to sign',
 )
-@click.option('--poll-for', default=300, type=click.INT, help='Allow up to this number of minutes for auto-signing')
+@click.option('--poll-for', default=30, type=click.INT, help='Allow up to this number of minutes for auto-signing')
 @click.option(
     '--include-previous-for',
     multiple=True,
@@ -593,6 +791,11 @@ def from_tags(
     errata_session = requests.session()
     builder = PlashetBuilder(koji_proxy, logger=logger)
 
+    # Extract target OpenShift version from the group to scope OpenShift version semantics
+    target_openshift_version = None
+    if runtime.group and runtime.group.startswith('openshift-'):
+        target_openshift_version = runtime.get_major_minor_fields()
+
     # Gather up all nvrs tagged in the embargoed brew tags into a set.
     embargoed_tag_nvrs = set()
     embargoed_tag_nvrs.update(embargoed_nvr)
@@ -624,12 +827,10 @@ def from_tags(
                 package_name = build['package_name']
                 released_package_nvre_obj[package_name] = parse_nvr(to_nvre(build))
 
-        component_builds: Dict[
-            str, Dict
-        ] = {}  # candidate rpms for plashet; keys are rpm component names, values are Brew build dicts
-        pinned_nvres: Dict[
-            str, str
-        ] = {}  # rpms pinned to the runtime assembly either by "is" or group dependencies; keys are rpm component names, values are nvres
+        # candidate rpms for plashet; keys are rpm component names, values are Brew build dicts
+        component_builds: Dict[str, Dict] = {}
+        # rpms pinned to the runtime assembly either by "is" or group dependencies; keys are rpm component names, values are nvres
+        pinned_nvres: Dict[str, str] = {}
 
         if runtime.assembly_basis_event:
             # If an assembly has a basis event, it will only query for artifacts from the "stream" assembly.
@@ -752,8 +953,10 @@ def from_tags(
             nvre_obj = parse_nvr(nvre)
 
             if (
-                package_name not in pinned_nvres and released_nvre_obj and compare_nvr(nvre_obj, released_nvre_obj) < 0
-            ):  # if the current nvr is not pinned in the assembly config and is less than the released NVR
+                package_name not in pinned_nvres
+                and released_nvre_obj
+                and compare_nvr_openshift_aware(nvre_obj, released_nvre_obj, target_openshift_version) < 0
+            ):  # if the current nvr is not pinned in the assembly config and is less than the released NVR (OpenShift-aware)
                 msg = f'Skipping tagged {nvre} because it is older than a released version: {released_nvre_obj}'
                 plashet_concerns.append(msg)
                 logger.error(msg)
@@ -893,7 +1096,7 @@ def from_tags(
     type=click.Choice(['leave', 'clean'], case_sensitive=False),
     help='clean=remove all builds on start and successful exit; leave=leave existing builds attached when attempting to sign',
 )
-@click.option('--poll-for', default=300, type=click.INT, help='Allow up to this number of minutes for auto-signing')
+@click.option('--poll-for', default=30, type=click.INT, help='Allow up to this number of minutes for auto-signing')
 def for_assembly(
     config: SimpleNamespace,
     image: Optional[str],
@@ -1079,7 +1282,7 @@ def for_assembly(
     help='One or more brew tags which will be used to sign RPMs required by this plashet: <tag> <product_version>',
 )
 @click.option('--signing-advisory-id', required=False, help='Use this auto-signing advisory to sign RPMs if necessary.')
-@click.option('--poll-for', default=300, type=click.INT, help='Allow up to this number of minutes for auto-signing')
+@click.option('--poll-for', default=30, type=click.INT, help='Allow up to this number of minutes for auto-signing')
 def from_images(config, images, replace, brew_tag, signing_advisory_id, poll_for):
     """
     Creates a directory containing arch specific yum repository subdirectories based on RPMs

@@ -2,16 +2,16 @@ import asyncio
 import concurrent.futures
 import datetime
 import re
-import threading
 import time
-from typing import Any, List, Optional, Tuple, Union
+from typing import Any
 
 from artcommonlib import logutil
 from artcommonlib.assembly import assembly_basis_event, assembly_metadata_config
 from artcommonlib.brew import BuildStates
-from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildOutcome, KonfluxBuildRecord, KonfluxRecord
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.model import Missing, Model
 from artcommonlib.util import isolate_el_version_in_brew_tag
+from artcommonlib.variants import BuildVariant
 
 CONFIG_MODES = [
     'enabled',  # business as usual
@@ -70,6 +70,19 @@ class MetadataBase(object):
         self.data_obj.save()
 
     def branch(self):
+        # For OKD variant, check if okd.distgit.branch is configured
+        # runtime.variant is set by commands like scan-sources --variant=okd
+        if self.runtime.variant == BuildVariant.OKD:
+            if self.config.okd.distgit.branch is not Missing:
+                return self.config.okd.distgit.branch
+
+            # For OKD, prefer runtime.branch (which includes merged group okd.branch)
+            # over image's standard distgit.branch. This ensures group-level okd.branch
+            # takes precedence when there's no image-specific okd.distgit.branch override.
+            if self.runtime.branch:
+                return self.runtime.branch
+
+        # Fall back to standard branch logic
         if self.config.distgit.branch is not Missing:
             return self.config.distgit.branch
         return self.runtime.branch
@@ -85,7 +98,7 @@ class MetadataBase(object):
         """Returns derived brew target name from the distgit branch name"""
         return NotImplementedError()
 
-    def determine_targets(self) -> List[str]:
+    def determine_targets(self) -> list[str]:
         """Determine Brew targets for building this component"""
         targets = self.config.get("targets")
         if not targets:
@@ -110,12 +123,12 @@ class MetadataBase(object):
         else:
             raise IOError(f'Unable to determine rhel version from branch: {self.branch()}')
 
-    def determine_rhel_targets(self) -> List[int]:
+    def determine_rhel_targets(self) -> list[int]:
         """
         For each build target for the component, return the rhel version it is for. For example,
         if an RPM builds for both rhel-7 and rhel-8 targets, return [7,8]
         """
-        el_targets: List[int] = []
+        el_targets: list[int] = []
         for target in self.determine_targets():
             el_ver = isolate_el_version_in_brew_tag(target)
             if not el_ver:
@@ -124,7 +137,7 @@ class MetadataBase(object):
         return el_targets
 
     @staticmethod
-    def extract_component_info(meta_type: str, meta_name: str, config_model: Model) -> Tuple[str, str]:
+    def extract_component_info(meta_type: str, meta_name: str, config_model: Model) -> tuple[str, str]:
         """
         Determine the component information for either RPM or Image metadata
         configs.
@@ -177,14 +190,15 @@ class MetadataBase(object):
 
     def get_latest_brew_build(
         self,
-        default: Optional[Any] = -1,
-        assembly: Optional[str] = None,
+        default: Any = -1,
+        assembly: str | None = None,
         extra_pattern: str = '*',
         build_state: BuildStates = BuildStates.COMPLETE,
-        component_name: Optional[str] = None,
-        el_target: Optional[Union[str, int]] = None,
+        component_name: str | None = None,
+        el_target: str | int | None = None,
         honor_is: bool = True,
-        complete_before_event: Optional[int] = None,
+        complete_before_event: int | None = None,
+        **kwargs,
     ):
         """
         :param default: A value to return if no latest is found (if not specified, an exception will be thrown)
@@ -334,7 +348,11 @@ class MetadataBase(object):
                         )
                     is_nvr = isd[f'el{el_ver}']
                     if not is_nvr:
-                        return default_return()
+                        msg = f"No pinned builds found in assembly {assembly} under 'is' for {self.distgit_key}: el_ver: '{el_ver}'"
+                        if default != -1:
+                            self.logger.info(msg)
+                            return default
+                        raise IOError(msg)
                 else:
                     # The image metadata (or, more likely, the current assembly) has the image
                     # pinned. Return only the pinned NVR. When a child image is being rebased,
@@ -418,19 +436,20 @@ class MetadataBase(object):
                 raise ValueError(f'Did not find nvr field in pinned Image component {self.distgit_key}')
 
         # strict means raise an exception if not found.
-        return await self.runtime.konflux_db.get_build_record_by_nvr(is_nvr, strict=True)
+        return await self.runtime.konflux_db.get_build_record_by_nvr(is_nvr, strict=True, exclude_large_columns=False)
 
     async def get_latest_konflux_build(
         self,
         default=None,
-        assembly: Optional[str] = None,
+        assembly: str | None = None,
         outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS,
-        el_target: Optional[Union[int, str]] = None,
+        el_target: int | str | None = None,
         honor_is: bool = True,
-        completed_before: Optional[datetime.datetime] = None,
-        extra_patterns: dict = {},
+        completed_before: datetime.datetime | None = None,
+        extra_patterns: dict | None = None,
+        exclude_large_columns: bool = False,
         **kwargs,
-    ) -> Optional[KonfluxBuildRecord]:
+    ) -> KonfluxBuildRecord | None:
         """
         :param default: the value to be returned when no build is found
         :param assembly: A non-default assembly name to search relative to. If not specified, runtime.assembly
@@ -444,10 +463,15 @@ class MetadataBase(object):
         :param honor_is: If True, and an assembly component specifies 'is', that nvr will be returned.
         :param completed_before: cut off timestamp for builds completion time
         :param extra_patterns: e.g. {'release': 'b45ea65'} will result in adding "AND release LIKE '%b45ea65%'" to the query
+        :param exclude_large_columns: If True, exclude installed_rpms and installed_packages columns from
+                                      BigQuery queries to reduce query cost and latency.
+                                      Default is False (include all columns).
         """
-
         assert self.runtime.konflux_db is not None, 'Konflux DB must be initialized with GCP credentials'
         self.runtime.konflux_db.bind(KonfluxBuildRecord)
+
+        if extra_patterns is None:
+            extra_patterns = {}
 
         # Is the component pinned in config?
         if honor_is and self.config['is']:
@@ -456,10 +480,32 @@ class MetadataBase(object):
                 return None
             return await self.get_pinned_konflux_build(el_target=el_target)
 
+        # Determine the correct group and el_target for querying builds
+        # For OKD variant scans, use okd-* group for ALL images
+        # For OCP scans, only use okd-* group for okd-only images (mode: disabled, okd.mode: enabled)
+        query_group = self.runtime.group
+        is_okd = False
+
+        # Check if we're running in OKD variant mode (set by scan-sources --variant okd)
+        runtime_variant = getattr(self.runtime, 'variant', None)
+
+        if runtime_variant == BuildVariant.OKD:
+            # For OKD variant, query with okd-* group for all images
+            query_group = self.runtime.group.replace('openshift-', 'okd-')
+            # All images use scos prefix for OKD variant
+            is_okd = True
+            self.logger.debug(f"Using OKD group '{query_group}' for OKD variant scan of {self.distgit_key}")
+        elif self.mode == 'disabled':
+            if self.config.okd is not Missing and self.config.okd.mode == 'enabled':
+                # This is an okd-only image, use okd group (e.g., okd-4.23 instead of openshift-4.23)
+                is_okd = True
+                query_group = self.runtime.group.replace('openshift-', 'okd-')
+                self.logger.debug(f"Using OKD group '{query_group}' for okd-only image {self.distgit_key}")
+
         # If it's not pinned, fetch the build from the Konflux DB
         base_search_params = {
             'name': self.distgit_key if self.meta_type == 'image' else self.config.name,
-            'group': self.runtime.group,
+            'group': query_group,
             'outcome': outcome,
             'completed_before': completed_before,
             'engine': self.runtime.build_system,
@@ -467,7 +513,10 @@ class MetadataBase(object):
             **kwargs,
         }
         if el_target and isinstance(el_target, int):
-            el_target = f'el{el_target}'
+            if self.meta_type == 'image' and is_okd:
+                el_target = f'scos{el_target}'
+            else:
+                el_target = f'el{el_target}'
 
         if self.meta_type == 'rpm':
             # For RPMs, if rhel target is not set fetch true latest
@@ -475,12 +524,19 @@ class MetadataBase(object):
                 base_search_params['el_target'] = el_target
         else:
             # For images, if rhel target is not set default to the rhel version in this group
-            base_search_params['el_target'] = el_target if el_target else f'el{self.branch_el_target()}'
+            if el_target:
+                base_search_params['el_target'] = el_target
+            else:
+                # OKD builds use 'scos' prefix instead of 'el' (e.g., scos9 vs el9)
+                el_prefix = 'scos' if is_okd else 'el'
+                base_search_params['el_target'] = f'{el_prefix}{self.branch_el_target()}'
 
         assembly = assembly if assembly else self.runtime.assembly
         if not assembly:
             # if assembly is '' (by parameter) or still None after runtime.assembly, get true latest
-            build_record = await self.runtime.konflux_db.get_latest_build(**base_search_params)
+            build_record = await self.runtime.konflux_db.get_latest_build(
+                **base_search_params, exclude_large_columns=exclude_large_columns
+            )
 
         else:
             basis_event = assembly_basis_event(
@@ -495,6 +551,7 @@ class MetadataBase(object):
             build_record = await self.runtime.konflux_db.get_latest_build(
                 **base_search_params,
                 assembly=assembly,
+                exclude_large_columns=exclude_large_columns,
             )
 
             # If not builds were found and assembly != stream, look for 'stream' builds
@@ -502,14 +559,13 @@ class MetadataBase(object):
                 build_record = await self.runtime.konflux_db.get_latest_build(
                     **base_search_params,
                     assembly='stream',
+                    exclude_large_columns=exclude_large_columns,
                 )
 
         if not build_record:
             self.logger.warning(
-                'No build found for %s in group and %s assembly %s',
-                self.distgit_key,
-                self.runtime.group,
-                self.runtime.assembly,
+                f"No build found for {self.distgit_key} in group {query_group} and assembly {assembly} with parameters: "
+                f"outcome={outcome}, el_target={el_target}, extra_patterns={extra_patterns}"
             )
             return default
         return build_record
@@ -558,3 +614,18 @@ class MetadataBase(object):
 
         else:
             raise ValueError(f'Invalid value for --build-system: {self.runtime.build_system}')
+
+    def get_konflux_network_mode(self) -> str:
+        runtime_override = getattr(self.runtime, "network_mode_override", None)
+        if runtime_override:
+            return runtime_override
+
+        group_config_network_mode = self.runtime.group_config.konflux.get("network_mode")
+        image_config_network_mode = self.config.konflux.get("network_mode")
+
+        network_mode = image_config_network_mode or group_config_network_mode or "open"
+
+        valid_network_modes = ["hermetic", "internal-only", "open"]
+        if network_mode not in valid_network_modes:
+            raise ValueError(f"Invalid network mode; {network_mode}. Valid modes: {valid_network_modes}")
+        return network_mode

@@ -11,8 +11,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.serialization import Encoding
 from cryptography.x509.oid import NameOID
-
-from pyartcd.signatory import AsyncSignatory
+from pyartcd.signatory import AsyncSignatory, SigstoreSignatory
 
 
 class TestAsyncSignatory(IsolatedAsyncioTestCase):
@@ -288,3 +287,207 @@ class TestAsyncSignatory(IsolatedAsyncioTestCase):
             sig_file=sig_file,
         )
         self.assertEqual(sig_file.getvalue(), b'fake-signature')
+
+
+class TestSigstoreSignatory(IsolatedAsyncioTestCase):
+    def _create_signatory(self, dry_run=True, **kwargs) -> SigstoreSignatory:
+        """Create a SigstoreSignatory for testing"""
+        logger = MagicMock()
+        defaults = dict(
+            logger=logger,
+            dry_run=dry_run,
+            signing_creds="/path/to/creds",
+            signing_key_ids=["test-key-id"],
+            rekor_url="",
+            concurrency_limit=10,
+        )
+        defaults.update(kwargs)
+        return SigstoreSignatory(**defaults)
+
+    def test_redigest_pullspec_with_digest(self):
+        """Test redigest_pullspec with an existing digest reference"""
+        pullspec = "quay.io/openshift-release-dev/ocp-release@sha256:olddigest"
+        new_digest = "sha256:newdigest"
+        result = SigstoreSignatory.redigest_pullspec(pullspec, new_digest)
+        self.assertEqual(result, "quay.io/openshift-release-dev/ocp-release@sha256:newdigest")
+
+    def test_redigest_pullspec_with_tag(self):
+        """Test redigest_pullspec with a tag reference"""
+        pullspec = "quay.io/openshift-release-dev/ocp-release:4.16.1-x86_64"
+        new_digest = "sha256:abc123"
+        result = SigstoreSignatory.redigest_pullspec(pullspec, new_digest)
+        self.assertEqual(result, "quay.io/openshift-release-dev/ocp-release@sha256:abc123")
+
+    def test_redigest_pullspec_bare_repo(self):
+        """Test redigest_pullspec with a bare repo (no tag or digest)"""
+        pullspec = "quay.io/openshift-release-dev/ocp-release"
+        new_digest = "sha256:abc123"
+        result = SigstoreSignatory.redigest_pullspec(pullspec, new_digest)
+        self.assertEqual(result, "quay.io/openshift-release-dev/ocp-release@sha256:abc123")
+
+    async def test_sign_manifest_with_canonical_tag(self):
+        """Test signing a manifest with canonical tag signs with both digest and tag identities"""
+        signatory = self._create_signatory()
+
+        pullspec = "quay.io/openshift-release-dev/ocp-release@sha256:abc123"
+        canonical_tag = "4.16.1-x86_64"
+        result = await signatory._sign_manifest(pullspec, canonical_tag)
+
+        self.assertEqual(result, {})
+        # Should have logged dry run messages twice (digest + tag identities)
+        dry_run_calls = [call for call in signatory._logger.info.call_args_list if "[DRY RUN]" in str(call)]
+        self.assertEqual(len(dry_run_calls), 2)
+
+    async def test_sign_manifest_without_canonical_tag(self):
+        """Test signing a manifest without canonical tag signs with digest identity only"""
+        signatory = self._create_signatory()
+
+        pullspec = "quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:abc123"
+        result = await signatory._sign_manifest(pullspec)
+
+        self.assertEqual(result, {})
+        # Should have logged dry run message once (digest identity only)
+        dry_run_calls = [call for call in signatory._logger.info.call_args_list if "[DRY RUN]" in str(call)]
+        self.assertEqual(len(dry_run_calls), 1)
+
+    async def test_sign_release_images_with_multiple_manifests(self):
+        """Test signing release images where a manifest list has multiple arch manifests.
+
+        When a user pulls "ocp-release:4.16.1-multi", the registry returns an arch-specific
+        manifest. The signature for that manifest must have identity "ocp-release:4.16.1-multi"
+        (the tag the user requested), not an arch-specific tag.
+        """
+        from pyartcd.signatory import ReleaseImageInfo
+
+        signatory = self._create_signatory()
+
+        # Simulate a manifest list where multiple arch manifests are discovered
+        release_info = ReleaseImageInfo(
+            original_pullspec="quay.io/openshift-release-dev/ocp-release@sha256:manifest-list",
+            canonical_tag="4.16.1-multi",
+            manifests_to_sign=[
+                "quay.io/openshift-release-dev/ocp-release@sha256:x86-manifest",
+                "quay.io/openshift-release-dev/ocp-release@sha256:arm-manifest",
+            ],
+        )
+
+        result = await signatory.sign_release_images([release_info])
+
+        self.assertEqual(result, {})
+        # Should have logged for 4 signings: 2 manifests x 2 identities (digest + tag) each
+        dry_run_calls = [call for call in signatory._logger.info.call_args_list if "[DRY RUN]" in str(call)]
+        self.assertEqual(len(dry_run_calls), 4)
+
+    async def test_sign_component_images(self):
+        """Test signing component images signs with digest identity only"""
+        signatory = self._create_signatory()
+
+        component_images = [
+            "quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:comp1",
+            "quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:comp2",
+        ]
+
+        result = await signatory.sign_component_images(component_images)
+
+        self.assertEqual(result, {})
+        # Should have logged 2 dry run messages (one per component, digest only)
+        dry_run_calls = [call for call in signatory._logger.info.call_args_list if "[DRY RUN]" in str(call)]
+        self.assertEqual(len(dry_run_calls), 2)
+
+    @patch("pyartcd.signatory.asyncio.sleep", new_callable=AsyncMock)
+    @patch("pyartcd.signatory.exectools.cmd_gather_async", new_callable=AsyncMock)
+    async def test_batch_retry_retries_only_failed_release_images(self, mock_cmd, mock_sleep):
+        """After a batch failure, only the failed pullspecs are retried"""
+        from pyartcd.signatory import ReleaseImageInfo
+
+        signatory = self._create_signatory(dry_run=False, batch_retries=2, batch_retry_delay=0)
+
+        ps_ok = "quay.io/ocp-release@sha256:aaa"
+        ps_fail = "quay.io/ocp-release@sha256:bbb"
+
+        call_count = {}
+
+        async def fake_cmd(cmd, check=False, env=None):
+            pullspec = cmd[-1]
+            call_count.setdefault(pullspec, 0)
+            call_count[pullspec] += 1
+            if pullspec == ps_fail and call_count[pullspec] <= 5:
+                return (1, "", "cosign error")
+            return (0, "ok", "")
+
+        mock_cmd.side_effect = fake_cmd
+
+        release_info = ReleaseImageInfo(
+            original_pullspec="quay.io/ocp-release:4.16.1-x86_64",
+            canonical_tag="4.16.1-x86_64",
+            manifests_to_sign=[ps_ok, ps_fail],
+        )
+
+        errors = await signatory.sign_release_images([release_info])
+
+        # ps_ok should have been called only in the first batch (2 identities x 1 key = 2 calls)
+        self.assertNotIn(ps_ok, errors)
+        self.assertEqual(call_count[ps_ok], 2)
+        # ps_fail should have been retried in batch 2 (5 per-invocation retries * 2 batches * 2 identities)
+        self.assertGreater(call_count[ps_fail], 5)
+
+    @patch("pyartcd.signatory.asyncio.sleep", new_callable=AsyncMock)
+    @patch("pyartcd.signatory.exectools.cmd_gather_async", new_callable=AsyncMock)
+    async def test_batch_retry_succeeds_on_second_attempt(self, mock_cmd, mock_sleep):
+        """A transient failure that succeeds on the second batch attempt results in overall success"""
+        signatory = self._create_signatory(dry_run=False, batch_retries=3, batch_retry_delay=0)
+
+        batch_attempt = {"count": 0}
+        ps = "quay.io/ocp-release@sha256:abc"
+
+        async def fake_cmd(cmd, check=False, env=None):
+            if batch_attempt["count"] == 0:
+                return (1, "", "transient error")
+            return (0, "ok", "")
+
+        mock_cmd.side_effect = fake_cmd
+
+        original_sign = signatory._sign_manifest
+        call_number = {"n": 0}
+
+        async def counting_sign(pullspec, canonical_tag=None, tag_only=False):
+            call_number["n"] += 1
+            if call_number["n"] > 1:
+                batch_attempt["count"] = 1
+            return await original_sign(pullspec, canonical_tag, tag_only)
+
+        signatory._sign_manifest = counting_sign
+
+        result = await signatory.sign_component_images([ps])
+
+        self.assertEqual(result, {})
+
+    @patch("pyartcd.signatory.asyncio.sleep", new_callable=AsyncMock)
+    @patch("pyartcd.signatory.exectools.cmd_gather_async", new_callable=AsyncMock)
+    async def test_batch_retry_returns_errors_after_exhaustion(self, mock_cmd, mock_sleep):
+        """After all batch retries exhausted, remaining errors are returned"""
+        signatory = self._create_signatory(dry_run=False, batch_retries=2, batch_retry_delay=0)
+
+        mock_cmd.return_value = (1, "", "permanent error")
+
+        ps = "quay.io/ocp-v4.0-art-dev@sha256:fail"
+        result = await signatory.sign_component_images([ps])
+
+        self.assertIn(ps, result)
+        self.assertIsInstance(result[ps], RuntimeError)
+
+    @patch("pyartcd.signatory.asyncio.sleep", new_callable=AsyncMock)
+    @patch("pyartcd.signatory.exectools.cmd_gather_async", new_callable=AsyncMock)
+    async def test_error_detail_includes_identity_and_key(self, mock_cmd, mock_sleep):
+        """Error dict from _sign_manifest includes identity and key_id in the error message"""
+        signatory = self._create_signatory(dry_run=False, signing_key_ids=["my-key-123"])
+
+        mock_cmd.return_value = (1, "", "auth failure")
+
+        ps = "quay.io/ocp-release@sha256:xyz"
+        result = await signatory._sign_manifest(ps, canonical_tag="4.16.1-x86_64")
+
+        self.assertIn(ps, result)
+        err_msg = str(result[ps])
+        self.assertIn("identity=", err_msg)
+        self.assertIn("key=my-key-123", err_msg)

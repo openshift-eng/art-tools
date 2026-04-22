@@ -1,3 +1,4 @@
+import asyncio
 import io
 import json
 import pathlib
@@ -14,14 +15,15 @@ from typing import Optional, cast
 import click
 import koji
 import yaml
-from artcommonlib import exectools
+from artcommonlib import exectools, logutil
 from artcommonlib.format_util import color_print, green_print, yellow_print
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord
 from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
 from dockerfile_parse import DockerfileParser
-from future import standard_library
 
 from doozerlib import Runtime, coverity, state
+from doozerlib.backend.base_image_handler import BaseImageHandler
 from doozerlib.brew import get_watch_task_info_copy
 from doozerlib.cli import cli, option_commit_message, option_push, pass_runtime, validate_semver_major_minor_patch
 from doozerlib.distgit import ImageDistGitRepo
@@ -42,7 +44,7 @@ def images_clone(runtime, clone_upstreams):
 @click.option("--json", "is_json", is_flag=True, default=False, help="Output the list in JSON format.")
 @pass_runtime
 def images_list(runtime, is_json):
-    runtime.initialize(clone_distgits=False)
+    runtime.initialize(clone_distgits=False, prevent_cloning=True)
     if is_json:
         click.echo(json.dumps({"images": [image.distgit_key for image in runtime.image_metas()]}))
         return
@@ -1064,7 +1066,7 @@ def images_show_tree(runtime, imagename, yml):
     Displays the parent/child relationship of all images or just those given.
     This can be helpful to determine build order and dependencies.
     """
-    runtime.initialize(clone_distgits=False)
+    runtime.initialize(clone_distgits=False, prevent_cloning=True)
 
     images = list(runtime.image_metas())
 
@@ -1109,7 +1111,7 @@ def images_show_ancestors(runtime, image_names):
     """
     Displays the ancestors of a given image or images.
     """
-    runtime.initialize(clone_distgits=False)
+    runtime.initialize(clone_distgits=False, prevent_cloning=True)
 
     all_ancestors = set()
     image_name_list = [name.strip() for name in image_names.split(',')]
@@ -1214,7 +1216,7 @@ def images_print(runtime, short, show_non_release, only_for_payload, show_base, 
     "build" will be treated as "{build}"
     """
 
-    runtime.initialize(clone_distgits=False)
+    runtime.initialize(clone_distgits=False, prevent_cloning=True)
 
     # If user omitted braces, add them.
     if "{" not in pattern:
@@ -1445,7 +1447,78 @@ def query_rpm_version(runtime, repo_type):
     repository. This is the version number that will be applied to new images
     created from this build.
     """
-    runtime.initialize(clone_distgits=False)
+    runtime.initialize(clone_distgits=False, prevent_cloning=True)
 
     version = runtime.auto_version(repo_type)
     click.echo("version: {}".format(version))
+
+
+@cli.command("images:release-to-base-repo", short_help="Process base images through snapshot-to-release workflow")
+@click.option(
+    '--nvrs',
+    metavar='NVRS',
+    required=True,
+    help='Comma-separated list of build NVRs to process',
+)
+@pass_runtime
+def release_to_base_repo(runtime, nvrs):
+    """
+    Process completed base image builds through the snapshot-to-release workflow.
+    
+    This command handles the batch base image workflow that:
+    1. Resolves NVRs to image metadata using Konflux infrastructure
+    2. Creates a unified Konflux snapshot from all base image builds
+    3. Creates a release from the snapshot using the appropriate release plan
+    4. Waits for release completion
+    
+    This is intended to be called as a separate job after base image builds complete.
+    Only processes base images (base_only: true) and golang builders with snapshot_release: true.
+    
+    Examples:
+    
+    Process single base image workflow:
+    doozer --group openshift-4.22 images:release-to-base-repo \\
+        --nvrs openshift-enterprise-base-rhel9-container-v4.22.0-202602202227.p2.gcf42b3d.assembly.stream.el9
+    
+    Process multiple base images workflow:
+    doozer --group openshift-4.22 images:release-to-base-repo \\
+        --nvrs "nvr1,nvr2,nvr3"
+    """
+
+    async def run_workflow():
+        logger = logutil.get_logger(__name__)
+
+        try:
+            runtime.initialize(mode='images', build_system='konflux', clone_distgits=False, prevent_cloning=True)
+
+            runtime.konflux_db.bind(KonfluxBuildRecord)
+
+            nvr_list = [nvr.strip() for nvr in nvrs.split(',')]
+
+            logger.info(f"Processing {len(nvr_list)} NVRs through base image snapshot-to-release workflow")
+            logger.info(f"Group: {runtime.group}")
+            for nvr in nvr_list:
+                logger.info(f"NVR: {nvr}")
+
+            handler = BaseImageHandler(runtime, nvr_list, dry_run=False)
+            result = await handler.process_base_image_completion()
+
+            if result:
+                release_name, snapshot_name = result
+                logger.info("Base image workflow completed successfully")
+                logger.info(f"Release: {release_name}")
+                logger.info(f"Snapshot: {snapshot_name}")
+                return True
+            else:
+                logger.error("Base image workflow failed")
+                return False
+
+        except Exception as e:
+            logger.error(f"Base image workflow failed: {e}")
+            logger.debug(f"Base image workflow traceback: {traceback.format_exc()}")
+            return False
+
+    success = asyncio.run(run_workflow())
+
+    if not success:
+        sys.exit(1)

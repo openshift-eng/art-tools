@@ -1,13 +1,16 @@
 import asyncio
+import atexit
 import concurrent.futures
 import contextvars
 import errno
 import functools
+import json
 import os
 import platform
 import shlex
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import traceback
@@ -17,11 +20,11 @@ from datetime import datetime
 from fcntl import F_GETFL, F_SETFL, fcntl
 from inspect import getframeinfo, stack
 from multiprocessing.pool import MapResult, ThreadPool
-from pathlib import Path
 from typing import Awaitable, Callable, Dict, List, Optional, Tuple, TypeVar, Union
 from urllib.request import urlopen
 
 import tenacity
+import yaml
 from artcommonlib import logutil
 from artcommonlib.format_util import green_print, yellow_print
 from artcommonlib.pushd import Dir
@@ -35,6 +38,180 @@ SUCCESS = 0
 
 logger = logutil.get_logger(__name__)
 TRACER = trace.get_tracer(__name__)
+
+_SENSITIVE_ENV_KEY_PATTERNS = frozenset({'PASSWORD', 'TOKEN', 'SECRET', 'KEY', 'CREDENTIAL'})
+_MANIFEST_TOOL_AUTH_CACHE_LOCK = threading.Lock()
+_MANIFEST_TOOL_AUTH_CACHE: Dict[Tuple[str, int, str], str] = {}
+_MANIFEST_TOOL_AUTH_TEMP_FILES: set[str] = set()
+
+
+def _redact_env_for_logging(env_dict: Dict[str, str]) -> Dict[str, str]:
+    """Return a copy of env_dict with values redacted for keys that look secret."""
+    upper_key_cache = {k: k.upper() for k in env_dict}
+    return {
+        k: '***REDACTED***' if any(p in upper_key_cache[k] for p in _SENSITIVE_ENV_KEY_PATTERNS) else v
+        for k, v in env_dict.items()
+    }
+
+
+def _cleanup_manifest_tool_auth_temp_files():
+    with _MANIFEST_TOOL_AUTH_CACHE_LOCK:
+        temp_files = list(_MANIFEST_TOOL_AUTH_TEMP_FILES)
+        _MANIFEST_TOOL_AUTH_TEMP_FILES.clear()
+        _MANIFEST_TOOL_AUTH_CACHE.clear()
+
+    for temp_path in temp_files:
+        try:
+            os.unlink(temp_path)
+        except FileNotFoundError:
+            pass
+
+
+atexit.register(_cleanup_manifest_tool_auth_temp_files)
+
+
+@contextmanager
+def manifest_tool_auth_file(auth_file: Optional[str], options: Optional[Union[List[str], str]] = None):
+    """Yield an auth file path compatible with manifest-tool's host lookup."""
+    if not auth_file:
+        yield None
+        return
+
+    try:
+        with open(auth_file, encoding="utf-8") as f:
+            auth_config = json.load(f)
+    except (FileNotFoundError, OSError, json.JSONDecodeError) as e:
+        logger.warning("Unable to inspect manifest-tool auth file %s: %s", auth_file, e)
+        yield auth_file
+        return
+
+    auths = auth_config.get("auths")
+    if not isinstance(auths, dict):
+        yield auth_file
+        return
+
+    aliases = _manifest_tool_auth_aliases(auths, options)
+    if not aliases:
+        yield auth_file
+        return
+
+    try:
+        auth_stat = os.stat(auth_file)
+    except OSError as e:
+        logger.warning("Unable to stat manifest-tool auth file %s: %s", auth_file, e)
+        yield auth_file
+        return
+
+    cache_key = (auth_file, auth_stat.st_mtime_ns, json.dumps(aliases, sort_keys=True))
+
+    with _MANIFEST_TOOL_AUTH_CACHE_LOCK:
+        cached_path = _MANIFEST_TOOL_AUTH_CACHE.get(cache_key)
+    if cached_path and os.path.exists(cached_path):
+        yield cached_path
+        return
+
+    compat_config = dict(auth_config)
+    compat_auths = dict(auths)
+    compat_auths.update(aliases)
+    compat_config["auths"] = compat_auths
+
+    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", suffix=".json", delete=False) as tmp:
+        json.dump(compat_config, tmp)
+        tmp.flush()
+        temp_path = tmp.name
+
+    created = False
+    resolved_path = temp_path
+    with _MANIFEST_TOOL_AUTH_CACHE_LOCK:
+        cached_path = _MANIFEST_TOOL_AUTH_CACHE.get(cache_key)
+        if cached_path and os.path.exists(cached_path):
+            resolved_path = cached_path
+        else:
+            _MANIFEST_TOOL_AUTH_CACHE[cache_key] = temp_path
+            _MANIFEST_TOOL_AUTH_TEMP_FILES.add(temp_path)
+            created = True
+
+    if not created and resolved_path != temp_path:
+        try:
+            os.unlink(temp_path)
+        except FileNotFoundError:
+            pass
+
+    if created:
+        logger.info(
+            "Created cached manifest-tool auth compatibility file for host lookup: %s", ", ".join(sorted(aliases))
+        )
+    yield resolved_path
+
+
+def _manifest_tool_auth_aliases(
+    auths: Dict[str, Dict[str, str]], options: Optional[Union[List[str], str]]
+) -> Dict[str, Dict[str, str]]:
+    target_image = _manifest_tool_target_image(options)
+    if not target_image:
+        return {}
+
+    image_name = target_image.split("@", 1)[0]
+    last_slash = image_name.rfind("/")
+    last_colon = image_name.rfind(":")
+    if last_colon > last_slash:
+        image_name = image_name[:last_colon]
+
+    if "/" not in image_name:
+        return {}
+
+    host, _, _ = image_name.partition("/")
+    if auths.get(host):
+        return {}
+
+    candidate = max(
+        (
+            key
+            for key in auths
+            if key.startswith(f"{host}/") and (image_name == key or image_name.startswith(f"{key}/"))
+        ),
+        key=len,
+        default=None,
+    )
+    if not candidate:
+        return {}
+
+    return {host: auths[candidate]}
+
+
+def _manifest_tool_target_image(options: Optional[Union[List[str], str]]) -> Optional[str]:
+    spec_path = _manifest_tool_spec_path(options)
+    if not spec_path:
+        return None
+
+    try:
+        with open(spec_path, encoding="utf-8") as f:
+            spec = yaml.safe_load(f)
+    except (FileNotFoundError, OSError, yaml.YAMLError) as e:
+        logger.warning("Unable to inspect manifest-tool spec %s: %s", spec_path, e)
+        return None
+
+    if not isinstance(spec, dict):
+        return None
+    image = spec.get("image")
+    return image if isinstance(image, str) else None
+
+
+def _manifest_tool_spec_path(options: Optional[Union[List[str], str]]) -> Optional[str]:
+    if isinstance(options, str):
+        tokens = shlex.split(options)
+    elif isinstance(options, list):
+        tokens = options
+    else:
+        return None
+
+    if len(tokens) < 3 or tokens[0] != "push" or tokens[1] != "from-spec":
+        return None
+
+    if tokens[2] == "--":
+        return tokens[3] if len(tokens) > 3 else None
+    return tokens[2]
+
 
 F = TypeVar('F', bound=Callable[..., Awaitable])
 
@@ -209,7 +386,7 @@ def cmd_gather(
 
     env = os.environ.copy()
     if set_env:
-        cmd_info = '{} [env={}]'.format(cmd_info, set_env)
+        cmd_info = '{} [env={}]'.format(cmd_info, _redact_env_for_logging(set_env))
         env.update(set_env)
 
     # Make sure output of launched commands is utf-8
@@ -398,18 +575,22 @@ def limit_concurrency(limit: int = 5) -> Callable[[F], F]:
     return executor
 
 
-def fire_and_forget(cwd, shell_cmd, quiet=True):
+def fire_and_forget(cwd, shell_cmd, quiet=True, env=None):
     """
     Executes a command in a separate process that can continue to do its work
     even after doozer terminates.
     :param cwd: Path in which to launch the command
     :param shell_cmd: A string to send to the shell
     :param quiet: Whether to sink stdout & stderr to /dev/null
+    :param env: Environment variables for the subprocess; defaults to os.environ
     :return: N/A
     """
 
     if quiet:
         shell_cmd = f'{shell_cmd} > /dev/null 2>/dev/null'
+
+    if env is None:
+        env = os.environ.copy()
 
     # https://stackoverflow.com/a/13256908
     kwargs = {}
@@ -427,7 +608,7 @@ def fire_and_forget(cwd, shell_cmd, quiet=True):
 
     p = subprocess.Popen(
         f'{shell_cmd}',
-        env=os.environ.copy(),
+        env=env,
         shell=True,
         stdin=None,
         stdout=None,
@@ -494,28 +675,32 @@ def unpack_tuple_args(func):
 
 
 @tenacity.retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(60))
-async def manifest_tool(options, dry_run=False):
-    auth_opt = ""
-    if os.environ.get("XDG_RUNTIME_DIR"):
-        auth_file = os.path.expandvars("${XDG_RUNTIME_DIR}/containers/auth.json")
-        if Path(auth_file).is_file():
-            auth_opt = f"--docker-cfg={auth_file}"
+async def manifest_tool(options, dry_run=False, auth_file: Optional[str] = None):
+    def _build_cmd(resolved_auth_file: Optional[str]):
+        auth_opt = f"--docker-cfg={resolved_auth_file}" if resolved_auth_file else ""
 
-    if isinstance(options, str):
-        cmd = f'manifest-tool {auth_opt} {options}'
+        if isinstance(options, str):
+            cmd = ["manifest-tool"]
+            if auth_opt:
+                cmd.append(auth_opt)
+            cmd.extend(shlex.split(options))
+            return cmd
 
-    elif isinstance(options, list):
-        cmd = ['manifest-tool', auth_opt]
-        cmd.extend(options)
+        if isinstance(options, list):
+            cmd = ['manifest-tool']
+            if auth_opt:
+                cmd.append(auth_opt)
+            cmd.extend(options)
+            return cmd
 
-    else:
         raise ValueError('Invalid type for manifest-tool options provided')
 
     if dry_run:
-        logger.warning("[DRY RUN] Would have run %s", cmd)
+        logger.warning("[DRY RUN] Would have run %s", _build_cmd(auth_file))
         return
 
-    await cmd_assert_async(cmd)
+    with manifest_tool_auth_file(auth_file, options) as manifest_auth_file:
+        await cmd_assert_async(_build_cmd(manifest_auth_file), stdout=sys.stderr, stderr=sys.stderr)
 
 
 @start_as_current_span_async(TRACER, "cmd_gather_async")
@@ -634,10 +819,13 @@ def _get_meaningful_span_name(cmd: Union[List[str], str]) -> str:
 
 
 @start_as_current_span_async(TRACER, "cmd_assert_async")
-async def cmd_assert_async(cmd: Union[List[str], str], check: bool = True, **kwargs) -> int:
+async def cmd_assert_async(
+    cmd: Union[List[str], str], check: bool = True, suppress_output: bool = False, **kwargs
+) -> int:
     """Runs a command and optionally raises an exception if the return code of the command indicates failure.
     :param cmd <string|list>: A shell command
     :param check: If check is True and the exit code was non-zero, it raises a ChildProcessError
+    :param suppress_output: If True, stdout and stderr are discarded (/dev/null).
     :param kwargs: Other arguments passing to asyncio.subprocess.create_subprocess_exec
     :return: return code of the command
     """
@@ -659,6 +847,10 @@ async def cmd_assert_async(cmd: Union[List[str], str], check: bool = True, **kwa
     span.set_attribute("param.cmd", cmd_list)
     span.set_attribute("param.has_custom_env", "env" in kwargs)
     span.set_attribute("command.type", cmd_list[0])
+
+    if suppress_output:
+        kwargs.setdefault("stdout", asyncio.subprocess.DEVNULL)
+        kwargs.setdefault("stderr", asyncio.subprocess.DEVNULL)
 
     # Propagate trace context to subprocess
     carrier = {}

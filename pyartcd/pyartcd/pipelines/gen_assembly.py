@@ -1,4 +1,5 @@
 import asyncio
+import datetime
 import logging
 import os
 import re
@@ -10,16 +11,16 @@ from typing import Iterable, Optional, OrderedDict, Tuple
 import aiohttp
 import click
 from artcommonlib import exectools
-from artcommonlib.constants import KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
+from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.util import (
     get_inflight,
     isolate_major_minor_in_group,
     merge_objects,
     new_roundtrip_yaml_handler,
     split_git_url,
+    uses_konflux_imagestream_override,
 )
 from doozerlib.cli.get_nightlies import get_nightly_tag_base, rc_api_url
-from ghapi.all import GhApi
 
 from pyartcd import constants, jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -28,6 +29,42 @@ from pyartcd.jenkins import start_build_sync
 from pyartcd.runtime import Runtime
 
 yaml = new_roundtrip_yaml_handler()
+
+
+def validate_release_date(ctx, param, value):
+    """
+    Validates and converts release date to the format expected by elliott.
+    Accepts both YYYY-MM-DD and YYYY-Mon-DD formats.
+    Converts to YYYY-Mon-DD format (e.g., 2026-Mar-31) which is required by elliott.
+    """
+    if value is None:
+        return None
+
+    # Elliott's expected format
+    elliott_format = '%Y-%b-%d'
+
+    # Try parsing as YYYY-Mon-DD first (elliott format)
+    try:
+        parsed_date = datetime.datetime.strptime(value, elliott_format)
+        # Already in correct format
+        return value
+    except ValueError:
+        pass
+
+    # Try parsing as YYYY-MM-DD (numeric month)
+    try:
+        parsed_date = datetime.datetime.strptime(value, '%Y-%m-%d')
+        # Convert to elliott format
+        converted = parsed_date.strftime(elliott_format)
+        click.echo(f"Converted release date from {value} to {converted} (elliott format)")
+        return converted
+    except ValueError:
+        pass
+
+    raise click.BadParameter(
+        'Release date (--date) must be in YYYY-Mon-DD format (e.g., 2026-Mar-31) '
+        'or YYYY-MM-DD format (e.g., 2026-03-31)'
+    )
 
 
 class GenAssemblyPipeline:
@@ -50,7 +87,6 @@ class GenAssemblyPipeline:
         previous_list: Tuple[str, ...],
         auto_previous: bool,
         auto_trigger_build_sync: bool,
-        pre_ga_mode: str,
         skip_get_nightlies: bool,
         ignore_non_x86_nightlies: Optional[bool] = False,
         logger: Optional[logging.Logger] = None,
@@ -73,23 +109,22 @@ class GenAssemblyPipeline:
         self.date = date
         self.skip_get_nightlies = skip_get_nightlies
         self.gen_microshift = gen_microshift
-        if in_flight:
+        if in_flight and in_flight != "none":
             self.in_flight = in_flight
-        elif not custom and not pre_ga_mode and build_system == 'brew':
-            self.in_flight = get_inflight(assembly, group)
+        elif in_flight == "none":
+            self.in_flight = None
+        elif not custom:
+            self.in_flight = get_inflight(assembly, group, date)
         else:
             self.in_flight = None
 
         self.previous_list = previous_list
         self.auto_previous = auto_previous
-        self.pre_ga_mode = pre_ga_mode
         self._logger = logger or runtime.logger
         self._slack_client = self.runtime.new_slack_client()
         self._working_dir = self.runtime.working_dir.absolute()
 
-        self._github_token = os.environ.get('GITHUB_TOKEN')
-        if not self._github_token and not self.runtime.dry_run:
-            raise ValueError("GITHUB_TOKEN environment variable is required to create a pull request.")
+        # GitHub auth is handled by get_github_client_for_org() with App auth / PAT fallback
 
         # determines OCP version
         match = re.fullmatch(r"openshift-(\d+).(\d+)", group)
@@ -130,7 +165,12 @@ class GenAssemblyPipeline:
             if self.skip_get_nightlies:
                 candidate_nightlies = self.nightlies
             elif self.ignore_non_x86_nightlies:
-                candidate_nightlies = [await self._get_latest_accepted_nightly()]
+                if self.nightlies:
+                    # Use the specified nightlies directly - user knows what they want
+                    candidate_nightlies = self.nightlies
+                else:
+                    # No nightlies specified, get the latest accepted x86_64 nightly
+                    candidate_nightlies = [await self._get_latest_accepted_nightly()]
             else:
                 candidate_nightlies, latest_nightly = await asyncio.gather(
                     *[self._get_nightlies(), self._get_latest_accepted_nightly()]
@@ -143,9 +183,8 @@ class GenAssemblyPipeline:
             self._logger.info("Generated assembly definition:\n%s", out.getvalue())
 
             # For Konflux, stop here at the moment
-            if (
-                self.build_system == 'konflux'
-                and self.group.removeprefix('openshift-') not in KONFLUX_IMAGESTREAM_OVERRIDE_VERSIONS
+            if self.build_system == 'konflux' and not uses_konflux_imagestream_override(
+                self.group.removeprefix('openshift-')
             ):
                 return
 
@@ -243,8 +282,6 @@ class GenAssemblyPipeline:
         for nightly in candidate_nightlies:
             cmd.append(f"--nightly={nightly}")
 
-        if self.pre_ga_mode:
-            cmd.append(f"--pre-ga-mode={self.pre_ga_mode}")
         if self.gen_microshift:
             cmd.append("--gen-microshift")
         if self.date:
@@ -316,14 +353,15 @@ class GenAssemblyPipeline:
             return None
 
         # Create a pull request
-        _, owner, repo = split_git_url(ocp_build_data_repo_push_url)
-        api = GhApi(owner=owner, repo=repo, token=self._github_token)
-        existing_prs = api.pulls.list(state="open", base=base, head=head)
-        if not existing_prs.items:
-            result = api.pulls.create(head=head, base=base, title=title, body=body, maintainer_can_modify=True)
+        _, owner, repo_name = split_git_url(ocp_build_data_repo_push_url)
+        gh_repo = get_github_client_for_org(owner).get_repo(f"{owner}/{repo_name}")
+        existing_prs = list(gh_repo.get_pulls(state="open", base=base, head=head))
+        if not existing_prs:
+            result = gh_repo.create_pull(head=head, base=base, title=title, body=body, maintainer_can_modify=True)
         else:
-            pull_number = existing_prs.items[0].number
-            result = api.pulls.update(pull_number=pull_number, title=title, body=body)
+            pr = existing_prs[0]
+            pr.edit(title=title, body=body)
+            result = pr
 
         # Trigger build-sync
         if self.auto_trigger_build_sync:
@@ -384,11 +422,6 @@ class GenAssemblyPipeline:
     is_flag=True,
     help="Custom assemblies are not for official release. They can, for example, not have all required arches for the group.",
 )
-@click.option(
-    "--pre-ga-mode",
-    type=click.Choice(["prerelease"], case_sensitive=False),
-    help="Prepare the advisory for 'prerelease' operator release",
-)
 @click.option('--auto-trigger-build-sync', is_flag=True, help='Will trigger build-sync automatically after PR creation')
 @click.option(
     "--arch",
@@ -433,7 +466,11 @@ class GenAssemblyPipeline:
     is_flag=True,
     help="Create microshift entry for assembly release.",
 )
-@click.option("--date", metavar="YYYY-MMM-DD", help="Expected release date (e.g. 2020-Nov-25)")
+@click.option(
+    "--date",
+    metavar="YYYY-Mon-DD",
+    help="Expected release date (e.g. 2020-Nov-25 or 2020-11-25). Will be converted to YYYY-Mon-DD format.",
+)
 @pass_runtime
 @click_coroutine
 async def gen_assembly(
@@ -447,7 +484,6 @@ async def gen_assembly(
     allow_rejected: bool,
     allow_inconsistency: bool,
     custom: bool,
-    pre_ga_mode: str,
     auto_trigger_build_sync: bool,
     arches: Tuple[str, ...],
     in_flight: Optional[str],
@@ -458,6 +494,10 @@ async def gen_assembly(
     gen_microshift: bool,
     date: Optional[str],
 ):
+    # Validate and convert date format if provided
+    if date:
+        date = validate_release_date(None, None, date)
+
     pipeline = GenAssemblyPipeline(
         runtime=runtime,
         group=group,
@@ -474,7 +514,6 @@ async def gen_assembly(
         in_flight=in_flight,
         previous_list=previous_list,
         auto_previous=auto_previous,
-        pre_ga_mode=pre_ga_mode,
         skip_get_nightlies=skip_get_nightlies,
         ignore_non_x86_nightlies=ignore_non_x86_nightlies,
         gen_microshift=gen_microshift,

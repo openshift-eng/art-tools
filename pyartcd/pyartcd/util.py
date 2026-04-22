@@ -5,7 +5,7 @@ import re
 import shutil
 import sys
 import tempfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Dict, Iterable, List, Optional, Union, cast
@@ -19,9 +19,10 @@ from artcommonlib.exectools import limit_concurrency
 from artcommonlib.model import Missing, Model
 from artcommonlib.release_util import SoftwareLifecyclePhase, isolate_assembly_in_release
 from doozerlib import util as doozerutil
+from doozerlib.constants import ART_BUILD_HISTORY_URL
 from errata_tool import ErrataConnector
 
-from pyartcd import constants, jenkins, record
+from pyartcd import constants, record
 from pyartcd.mail import MailService
 
 logger = logging.getLogger(__name__)
@@ -169,6 +170,23 @@ def get_rpm_if_pinned_directly(releases_config: Dict, assembly_name: str, rpm_na
     return next((rpm['metadata']['is'] for rpm in pinned_rpms if rpm['distgit_key'] == rpm_name), dict())
 
 
+def get_image_if_pinned_directly(releases_config: Dict, assembly_name: str, image_name: str) -> str:
+    # this does not consider inherited assemblies
+    # use with caution
+    try:
+        pinned_images = Model(releases_config).releases[assembly_name].assembly.members.images
+    except (KeyError, AttributeError):
+        # Assembly structure doesn't exist
+        return ""
+
+    image_metadata = next(
+        (image['metadata']['is'] for image in pinned_images if image['distgit_key'] == image_name), None
+    )
+    if image_metadata:
+        return image_metadata['nvr']  # Let it fail if 'nvr' key isn't found
+    return ""
+
+
 async def kinit():
     logger.info('Initializing ocp-build kerberos credentials')
 
@@ -191,18 +209,31 @@ async def kinit():
         logger.warning('DISTGIT_KEYTAB_FILE is not set. Using any existing kerberos credential.')
 
 
-async def branch_arches(group: str, assembly: str, ga_only: bool = False, build_system: str = 'brew') -> list:
+async def branch_arches(
+    group: str,
+    assembly: str,
+    ga_only: bool = False,
+    build_system: str = 'brew',
+    data_path: str = constants.OCP_BUILD_DATA_URL,
+    doozer_data_gitref: str = '',
+) -> list:
     """
     Find the supported arches for a specific release
     :param str group: The name of the branch to get configs for. For example: 'openshift-4.12
     :param str assembly: The name of the assembly. For example: 'stream'
     :param bool ga_only: If you only want group arches and do not care about arches_override.
     :param str build_system: 'brew' | 'konflux'
+    :param str data_path: Path to ocp-build-data repository
+    :param str doozer_data_gitref: Git ref for ocp-build-data
     :return: A list of the arches built for this branch
     """
 
     logger.info('Fetching group config for %s', group)
-    group_config = Model(await load_group_config(group=group, assembly=assembly))
+    group_config = Model(
+        await load_group_config(
+            group=group, assembly=assembly, doozer_data_path=data_path, doozer_data_gitref=doozer_data_gitref
+        )
+    )
 
     # Check if arches_override has been specified. This is used in group.yaml
     # when we temporarily want to build for CPU architectures that are not yet GA.
@@ -247,7 +278,7 @@ def get_changes(yaml_data: dict) -> dict:
 
 
 async def get_freeze_automation(
-    version: str,
+    group: str,
     doozer_data_path: str = constants.OCP_BUILD_DATA_URL,
     doozer_working: str = '',
     doozer_data_gitref: str = '',
@@ -256,7 +287,7 @@ async def get_freeze_automation(
     Returns freeze_automation flag for a specific group
     """
 
-    group_param = f'--group=openshift-{version}'
+    group_param = f'--group={group}'
     if doozer_data_gitref:
         group_param += f'@{doozer_data_gitref}'
 
@@ -318,7 +349,11 @@ def get_weekday() -> str:
 
 
 async def is_build_permitted(
-    version: str, data_path: str = constants.OCP_BUILD_DATA_URL, doozer_working: str = '', doozer_data_gitref: str = ''
+    version: str = '',
+    group: str = '',
+    data_path: str = constants.OCP_BUILD_DATA_URL,
+    doozer_working: str = '',
+    doozer_data_gitref: str = '',
 ) -> bool:
     """
     Check whether the group should be built right now.
@@ -326,11 +361,22 @@ async def is_build_permitted(
         - group config 'freeze_automation'
         - manual/scheduled run
         - current day of the week
-    """
 
+    Args:
+        version: OCP version (e.g., '4.17'). If provided, group is constructed as 'openshift-{version}'.
+        group: Full group name (e.g., 'openshift-4.17'). One of version or group must be provided.
+        data_path: Path to ocp-build-data
+        doozer_working: Doozer working directory
+        doozer_data_gitref: Git ref for ocp-build-data
+    """
+    if not version and not group:
+        raise ValueError("Either version or group must be provided")
+    if not group:
+        group = f'openshift-{version}'
     # Get 'freeze_automation' flag
+    # get_freeze_automation now expects a full group name like 'openshift-4.15'
     freeze_automation = await get_freeze_automation(
-        version=version,
+        group=group,
         doozer_data_path=data_path,
         doozer_working=doozer_working,
         doozer_data_gitref=doozer_data_gitref,
@@ -395,6 +441,46 @@ def default_release_suffix():
     """
 
     return f'{datetime.strftime(datetime.now(tz=timezone.utc), "%Y%m%d%H%M")}.p?'
+
+
+def build_history_link_url(group: str, assembly: str, days: int = 2, job_url: str = '') -> str:
+    """
+    Construct a URL for art-build-history with proper encoding.
+    Shows both successful and failed builds from a specific job.
+
+    Arg(s):
+        group (str): Group name (e.g., 'openshift-4.17' or 'okd-5.0')
+        assembly (str): Assembly name (e.g., 'stream')
+        days (int): Number of days to look back for build history (default: 2)
+        job_url (str): Jenkins BUILD_URL to filter builds (default: '')
+
+    Return Value(s):
+        str: Complete art-build-history URL with all parameters
+    """
+    start_date = (datetime.now(timezone.utc) - timedelta(days=days)).strftime('%Y-%m-%d')
+    end_date = (datetime.now(timezone.utc)).strftime('%Y-%m-%d')
+
+    # Build URL with parameters in correct order and include empty parameters
+    build_history_url = (
+        f'{ART_BUILD_HISTORY_URL}/?name=&group={group}&assembly={assembly}'
+        f'&outcome=success&outcome=failure&engine=konflux'
+        f'&dateRange={start_date}+to+{end_date}'
+        f'&nvr=&record_id=&image_sha_tag=&source_repo=&commitish='
+    )
+
+    if job_url:
+        # Jenkins BUILD_URL has single-encoded job paths (build%2Fokd).
+        # Art-build-history needs double-encoded paths (build%252Fokd) after URL decoding.
+        # To achieve this:
+        # 1. Replace %2F with %252F to get build%252Fokd
+        # 2. URL-encode the entire string so %252F becomes %25252F in the parameter
+        # 3. When art-build-history decodes, %25252F becomes %252F, giving us build%252Fokd
+        job_url = job_url.replace('%2F', '%252F')
+        # Manually encode to ensure % is encoded as %25
+        encoded_job_url = job_url.replace('%', '%25').replace('/', '%2F').replace(':', '%3A')
+        build_history_url += f'&art-job-url={encoded_job_url}'
+
+    return build_history_url
 
 
 def dockerfile_url_for(url, branch, sub_path) -> str:
@@ -544,6 +630,74 @@ Thanks for your help!\n"""
         )
 
 
+async def notify_branch_protection_missing(version: str, doozer_working: str, mail_client: MailService):
+    """
+    Notify component owners when their upstream branch does not have branch protection enabled.
+    Uses Redis to throttle notifications: owners are only emailed once per 7 days per repo/branch.
+    ART-14540: Builds from unprotected branches are not allowed.
+    """
+    with open(Path(doozer_working) / "record.log", "r") as file:
+        record_log: dict = record.parse_record_log(file)
+
+    entries = record.get_branch_protection_notify(record_log)
+    for entry in entries:
+        owners = entry.get("owners", "")
+        if not owners:
+            continue
+
+        source_url = entry.get("source_url", "unknown")
+        branch = entry.get("branch", "unknown")
+        distgit = entry.get("distgit", "unknown")
+
+        # Throttle: only notify once per 7 days per repo/branch
+        # Use owner/repo instead of full URL to avoid colons in Redis keys
+        _, repo_owner, repo_name = artcommonlib.util.split_git_url(source_url)
+        redis_key = f"appdata:branch-protection-notified:{version}:{repo_owner}/{repo_name}:{branch}"
+        already_notified = await redis.get_value(redis_key)
+        if already_notified:
+            logger.info(
+                "Skipping branch protection notification for %s branch %s (already notified)",
+                source_url,
+                branch,
+            )
+            continue
+
+        email_subject = f"[ACTION REQUIRED] Branch protection missing for {distgit} in OCP v{version}"
+        explanation_body = f"""Why am I receiving this?
+------------------------
+You are receiving this message because you are listed as an owner for an
+OpenShift related image or RPM, and the upstream source branch used to build
+it does not have branch protection enabled.
+
+Per Red Hat internal audit requirements, all branches contributing to released
+code must have branch protection enabled.
+
+What needs to happen?
+---------------------
+Branch protection must be enabled for:
+  Repository: {source_url}
+  Branch: {branch}
+
+Please enable branch protection on this branch. Until branch protection is
+enabled, builds for {distgit} will fail.
+
+If this is a temporary situation (onboarding, hotfix, emergency), the ART team
+can set 'allow_unprotected_branch: true' in the image/RPM metadata as a
+short-term override.
+
+Please direct any questions to the Automated Release Tooling team (#forum-ocp-art on slack).
+"""
+
+        mail_client.send_mail(
+            to=owners,
+            subject=email_subject,
+            content=explanation_body,
+        )
+
+        # Mark as notified with 1-day TTL
+        await redis.set_value(redis_key, "1", expiry=86400)
+
+
 def mail_build_failure_owners(failed_builds: dict, doozer_working: str, mail_client: MailService, default_owner: str):
     """
      Send email to owners of failed image builds.
@@ -640,12 +794,19 @@ async def invalidate_cloudfront_cache(invalidation_path):
 
 
 async def mirror_to_s3(
-    source: Union[str, Path], dest: str, exclude: Optional[str] = None, include: Optional[str] = None, dry_run=False
+    source: Union[str, Path],
+    dest: str,
+    exclude: Optional[str] = None,
+    include: Optional[str] = None,
+    dry_run: bool = False,
+    delete: bool = False,
 ):
     """
     Copy to AWS S3
     """
     cmd = ["aws", "s3", "sync", "--no-progress", "--exact-timestamps"]
+    if delete:
+        cmd.append("--delete")
     paths = ['--', f'{source}', f'{dest}']
     if exclude is not None:
         cmd.append(f"--exclude={exclude}")
@@ -694,6 +855,10 @@ async def get_signing_mode(
         group_config = await load_group_config(
             group=group, assembly=assembly, doozer_data_path=doozer_data_path, doozer_data_gitref=doozer_data_gitref
         )
+
+    # For non-OpenShift groups, always use signed repos regardless of phase
+    if group and not group.startswith('openshift-'):
+        return 'signed'
 
     phase = SoftwareLifecyclePhase.from_name(group_config['software_lifecycle']['phase'])
     return 'signed' if phase >= SoftwareLifecyclePhase.SIGNING else 'unsigned'
@@ -751,44 +916,71 @@ async def get_microshift_builds(group, assembly, env):
     return [n for n in nvrs if isolate_assembly_in_release(n) == assembly]
 
 
-def mass_rebuild_score(version: str) -> int:
-    """For the ocp_version (e.g. `4.16`) return an integer score value
-    Higher the score, higher the priority
+def mass_rebuild_score(version: str, okd: bool = False) -> int:
     """
+    For the ocp_version (e.g. `4.16`) return an integer score value
+    Higher the score, higher the priority.
+    For OKD, the score is half that of OCP for the same version.
+    """
+
+    if okd:
+        return round(float(version) * 50)  # '4.16' -> 208
+
     return round(float(version) * 100)  # '4.16' -> 416
 
 
 async def get_group_images(
     group: str,
     assembly: str,
+    build_system: str,
+    working_dir: Path,
     doozer_data_path: str = constants.OCP_BUILD_DATA_URL,
     doozer_data_gitref: str = '',
+    variant: str = None,
 ) -> List[str]:
     """
     Get the list of images for a given group and assembly.
+
+    :param group: The group name (e.g. 'openshift-4.21')
+    :param assembly: The assembly name (e.g. 'stream', 'rc.1')
+    :param build_system: Build system to use ('brew' or 'konflux'). If empty string, doozer will use its default.
+    :param working_dir: Working directory for doozer
+    :param doozer_data_path: Path to ocp-build-data repository
+    :param doozer_data_gitref: Git reference to use in ocp-build-data
+    :param variant: Build variant ('ocp' or 'okd'). If None, uses doozer's default (runtime.variant, which defaults to 'ocp').
+    :return: List of image distgit keys
     """
 
-    with TemporaryDirectory() as doozer_working:
-        group_param = f'--group={group}'
-        if doozer_data_gitref:
-            group_param += f'@{doozer_data_gitref}'
-        command = [
-            'doozer',
-            f'--working-dir={doozer_working}',
-            f'--data-path={doozer_data_path}',
+    working_dir.mkdir(parents=True, exist_ok=True)
+    group_param = f'--group={group}'
+    if doozer_data_gitref:
+        group_param += f'@{doozer_data_gitref}'
+    command = [
+        'doozer',
+        f'--working-dir={working_dir}',
+        f'--data-path={doozer_data_path}',
+    ]
+    if variant:
+        command.append(f'--variant={variant}')
+    if build_system:
+        command.append(f'--build-system={build_system}')
+    command.extend(
+        [
             group_param,
             '--assembly',
             assembly,
             'images:list',
             '--json',
         ]
-        _, out, _ = await exectools.cmd_gather_async(command)
-        return json.loads(out)['images']
+    )
+    _, out, _ = await exectools.cmd_gather_async(command)
+    return json.loads(out)['images']
 
 
 async def get_group_rpms(
     group: str,
     assembly: str,
+    working_dir: Path,
     doozer_data_path: str = constants.OCP_BUILD_DATA_URL,
     doozer_data_gitref: str = '',
 ) -> List[str]:
@@ -796,43 +988,140 @@ async def get_group_rpms(
     Get the list of RPMs for a given group and assembly.
     """
 
-    with TemporaryDirectory() as doozer_working:
-        group_param = f'--group={group}'
-        if doozer_data_gitref:
-            group_param += f'@{doozer_data_gitref}'
-        command = [
-            'doozer',
-            f'--working-dir={doozer_working}',
-            f'--data-path={doozer_data_path}',
-            group_param,
-            f'--assembly={assembly}',
-            'rpms:print',
-            '--output=rpms.txt',
-        ]
-        await exectools.cmd_assert_async(command)
-        with open('rpms.txt', 'r') as f:
-            out = f.read()
-        return out.splitlines()
+    working_dir.mkdir(parents=True, exist_ok=True)
+    rpms_file = working_dir / 'rpms.txt'
+    group_param = f'--group={group}'
+    if doozer_data_gitref:
+        group_param += f'@{doozer_data_gitref}'
+    command = [
+        'doozer',
+        f'--working-dir={working_dir}',
+        f'--data-path={doozer_data_path}',
+        group_param,
+        f'--assembly={assembly}',
+        'rpms:print',
+        f'--output={rpms_file}',
+    ]
+    await exectools.cmd_assert_async(command)
+    with open(rpms_file, 'r') as f:
+        out = f.read()
+    return out.splitlines()
 
 
-async def increment_rebase_fail_counter(image, version, build_system):
+async def increment_rebase_fail_counter(image, version, build_system, branch='rebase-failure', job_url=None):
     """
     Increment the fail counter for a given image in Redis.
+    Optionally store the job URL where the failure occurred.
+
+    Arg(s):
+        image (str): Image name
+        version (str): OCP version (e.g., '4.17')
+        build_system (str): Build system ('brew', 'konflux')
+        branch (str): Branch identifier for the counter (default: 'rebase-failure')
+        job_url (str): Optional job URL where the failure occurred
     """
 
-    redis_branch = f'count:rebase-failure:{build_system}:{version}'
-    redis_key = f'{redis_branch}:{image}'
-    fail_count = await redis.get_value(redis_key)
+    redis_branch = f'count:{branch}:{build_system}:{version}:{image}'
+    failure_key = f'{redis_branch}:failure'
+    fail_count = await redis.get_value(failure_key)
     fail_count = int(fail_count) if fail_count else 0
-    await redis.set_value(key=redis_key, value=fail_count + 1)
+    await redis.set_value(key=failure_key, value=fail_count + 1)
+
+    # Store the job URL if provided
+    if job_url:
+        await redis.set_value(key=f'{redis_branch}:url', value=job_url)
 
 
 @limit_concurrency(50)
-async def reset_rebase_fail_counter(image, version, build_system):
+async def reset_rebase_fail_counter(image, version, build_system, branch='rebase-failure'):
     """
     Reset the fail counter for a given image in Redis.
-    Limit concurrency as we might have a lot of images to reset
+    Limit concurrency as we might have a lot of images to reset.
+
+    Arg(s):
+        image (str): Image name
+        version (str): OCP version (e.g., '4.17')
+        build_system (str): Build system ('brew', 'konflux')
+        branch (str): Branch identifier for the counter (default: 'rebase-failure')
     """
 
-    redis_branch = f'count:rebase-failure:{build_system}:{version}'
-    await redis.delete_key(f'{redis_branch}:{image}')
+    redis_branch = f'count:{branch}:{build_system}:{version}:{image}:*'
+    await redis.delete_keys_by_pattern(redis_branch)
+
+
+async def get_rebase_failures(version: str, branches: list[str], build_systems: list[str], logger=None):
+    """
+    Fetch rebase failure data from Redis for a specific version.
+    Checks multiple branch patterns and build systems.
+
+    Arg(s):
+        version (str): Version (e.g., "4.18")
+        branches (list[str]): Branch identifiers (e.g., ['rebase-failure'] or ['okd-rebase-failure'])
+        build_systems (list[str]): Build systems to check (e.g., ['brew', 'konflux'])
+        logger (Logger): Optional logger for debugging
+    Return Value(s):
+        dict: {image_name: {failure_count, url, build_system, branch}}
+    """
+    failures = {}
+
+    try:
+        for branch in branches:
+            for build_system in build_systems:
+                pattern = f'count:{branch}:{build_system}:{version}:*:failure'
+                failure_keys = await redis.get_keys(pattern)
+
+                if not failure_keys:
+                    if logger:
+                        logger.info('No %s %s rebase failures found for version %s', branch, build_system, version)
+                    continue
+
+                if logger:
+                    logger.info(
+                        'Found %d %s %s rebase failure keys for version %s',
+                        len(failure_keys),
+                        branch,
+                        build_system,
+                        version,
+                    )
+
+                # Parse failure keys to extract image names and fetch counts + URLs
+                for failure_key in failure_keys:
+                    # Extract image name from key: count:rebase-failure:konflux:4.18:ironic:failure
+                    parts = failure_key.split(':')
+                    if len(parts) >= 5:
+                        image_name = parts[4]
+                        url_key = f'count:{branch}:{build_system}:{version}:{image_name}:url'
+
+                        # Fetch failure count and URL
+                        failure_count = await redis.get_value(failure_key)
+                        job_url = await redis.get_value(url_key)
+
+                        # If image already exists (from another build system/branch), keep the one with higher count
+                        if image_name in failures:
+                            existing_count = failures[image_name]['failure_count']
+                            new_count = int(failure_count or 0)
+                            if new_count > existing_count:
+                                failures[image_name] = {
+                                    'failure_count': new_count,
+                                    'url': job_url or '',
+                                    'build_system': build_system,
+                                    'branch': branch,
+                                }
+                        else:
+                            failures[image_name] = {
+                                'failure_count': int(failure_count) if failure_count else 0,
+                                'url': job_url or '',
+                                'build_system': build_system,
+                                'branch': branch,
+                            }
+
+        if logger and failures:
+            import json
+
+            logger.info('Rebase failures for version %s: %s', version, json.dumps(failures, indent=2))
+
+    except Exception as e:
+        if logger:
+            logger.warning('Failed to fetch rebase failures from Redis for version %s: %s', version, e)
+
+    return failures

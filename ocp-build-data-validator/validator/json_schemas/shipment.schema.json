@@ -1,5 +1,5 @@
 {
-  "$comment": "Schema generated on 2025-08-12 02:38 UTC from elliottlib.shipment_model",
+  "$comment": "Schema generated on 2025-11-01 23:15 UTC from elliottlib.shipment_model",
   "$defs": {
     "ComponentSource": {
       "additionalProperties": false,
@@ -78,6 +78,26 @@
         }
       },
       "title": "EnvAdvisory",
+      "type": "object"
+    },
+    "EnvResult": {
+      "additionalProperties": false,
+      "description": "Information about the release result for the environment",
+      "properties": {
+        "pipeline": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pipeline"
+        }
+      },
+      "title": "EnvResult",
       "type": "object"
     },
     "Environments": {
@@ -222,18 +242,22 @@
           "type": "integer"
         },
         "synopsis": {
+          "default": null,
           "title": "Synopsis",
           "type": "string"
         },
         "topic": {
+          "default": null,
           "title": "Topic",
           "type": "string"
         },
         "description": {
+          "default": null,
           "title": "Description",
           "type": "string"
         },
         "solution": {
+          "default": null,
           "title": "Solution",
           "type": "string"
         },
@@ -280,11 +304,7 @@
         }
       },
       "required": [
-        "type",
-        "synopsis",
-        "topic",
-        "description",
-        "solution"
+        "type"
       ],
       "title": "ReleaseNotes",
       "type": "object"
@@ -352,6 +372,17 @@
           "anyOf": [
             {
               "$ref": "#/$defs/EnvAdvisory"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "result": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EnvResult"
             },
             {
               "type": "null"

@@ -366,7 +366,7 @@ RUN update-ca-trust && update-ca-trust enable
 # Add typical build repos to the image, but don't add to /etc/yum.repos.d
 # until we know whether we are on el7 or el8. As of 4.8, repos are only
 # appropriate for el8, so this repo file should only be installed in el8.
-ADD .oit/{cc.repo_type}.repo /tmp/oit.repo
+ADD .oit/art-{cc.repo_type}.repo /tmp/oit.repo
 
 # Install covscan repos
 {repo_injection_lines}
@@ -544,7 +544,7 @@ RUN rm -rf {cc.container_stage_cov_path(stage_number)}/emit
                     # For each new stage, we also need to make sure we have the appropriate repos enabled for this image
                     df_out.write(f'''
 # Ensure that the build process can access the same RPMs that the build can during a brew build
-RUN curl {cc.image.cgit_file_url(".oit/" + cc.repo_type + ".repo")} --output /etc/yum.repos.d/oit.repo 2>&1
+RUN curl {cc.image.cgit_file_url(".oit/" + "art-" + cc.repo_type + ".repo")} --output /etc/yum.repos.d/oit.repo 2>&1
 ''')
                     continue
 

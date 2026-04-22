@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional
 import tomli
 from artcommonlib import model, runtime
 from artcommonlib.exectools import cmd_gather_async
+from artcommonlib.jira_config import JIRA_EMAIL
 
 from pyartcd import constants, jenkins, util
 from pyartcd.jira_client import JIRAClient
@@ -37,7 +38,10 @@ class Runtime:
             jira_token = os.environ.get("JIRA_TOKEN")
             if not jira_token:
                 raise ValueError("JIRA_TOKEN environment variable is not set")
-        return JIRAClient.from_url(self.config["jira"]["url"], token_auth=jira_token)
+
+        jira_email = JIRA_EMAIL
+
+        return JIRAClient.from_url(self.config["jira"]["url"], basic_auth=(jira_email, jira_token))
 
     def new_slack_client(self, token: Optional[str] = None):
         if not token and not self.dry_run:

@@ -1,12 +1,11 @@
-import base64
 import copy
 import functools
 import json
+import logging
 import os
 import pathlib
 import re
-import tempfile
-import urllib.parse
+import urllib.request
 from collections import deque
 from datetime import datetime
 from itertools import chain
@@ -15,26 +14,33 @@ from pathlib import Path
 from sys import getsizeof, stderr
 from typing import Dict, List, Optional, Union
 
+import aiohttp
 import artcommonlib
 import semver
 import yaml
-from artcommonlib import exectools
-from artcommonlib.arch_util import GO_ARCHES, brew_arch_for_go_arch, go_arch_for_brew_arch
+from artcommonlib import constants, exectools
+from artcommonlib.arch_util import GO_ARCHES, brew_arch_for_go_arch, go_arch_for_brew_arch, go_suffix_for_arch
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.format_util import red_print
 from artcommonlib.model import Missing, Model
-from artcommonlib.util import isolate_major_minor_in_group
-from async_lru import alru_cache
-from tenacity import retry, stop_after_attempt, wait_fixed
+from artcommonlib.util import (
+    isolate_major_minor_in_group,
+    oc_image_info,  # noqa: F401 - re-exported for backward compatibility
+    oc_image_info_async,  # noqa: F401 - re-exported for backward compatibility
+    oc_image_info_for_arch,  # noqa: F401 - re-exported for backward compatibility
+    oc_image_info_for_arch_async,
+    oc_image_info_show_multiarch,  # noqa: F401 - re-exported for backward compatibility
+    uses_konflux_imagestream_override,
+)
 
 try:
     from reprlib import repr
 except ImportError:
     pass
 
-from functools import lru_cache
 
 DICT_EMPTY = object()
+logger = logging.getLogger(__name__)
 
 
 def dict_get(dct, path, default=DICT_EMPTY):
@@ -222,6 +228,7 @@ def extract_version_fields(version, at_least=0):
     :param version: A version to parse
     :param at_least: The minimum number of fields to find (else raise an error)
     """
+    version = version.replace('golang-builder-', '')
     fields = [int(f) for f in version.strip().split('-')[0].lstrip('v').split('.')]  # v1.17.1 => [ '1', '17', '1' ]
     if len(fields) < at_least:
         raise IOError(f'Unable to find required {at_least} fields in {version}')
@@ -230,20 +237,25 @@ def extract_version_fields(version, at_least=0):
 
 def get_cincinnati_channels(major, minor):
     """
-    :param major: Major for release
-    :param minor: Minor version for release.
-    :return: Returns the Cincinnati graph channels associated with a release
-             in promotion order (e.g. candidate -> stable)
+    Returns Cincinnati graph channels for a release in promotion order.
+
+    :param major: Major version for release
+    :param minor: Minor version for release
+    :return: List of channel names (e.g., ['candidate-4.16', 'fast-4.16', 'stable-4.16'])
+    :raises ValueError: If major version is less than 4 (Cincinnati channels only exist for OCP 4+)
     """
     major = int(major)
     minor = int(minor)
 
-    if major != 4:
-        raise IOError('Unable to derive previous for non v4 major')
+    if major < 4:
+        raise ValueError(f'Cincinnati channels are only available for OCP 4.x and later (requested: {major}.{minor})')
 
-    prefixes = ['candidate', 'fast', 'stable']
+    # Special case: OCP 4.1 used different channel names
     if major == 4 and minor == 1:
         prefixes = ['prerelease', 'stable']
+    else:
+        # Standard channel names for all other versions (4.2+, 5.x+)
+        prefixes = ['candidate', 'fast', 'stable']
 
     return [f'{prefix}-{major}.{minor}' for prefix in prefixes]
 
@@ -295,6 +307,28 @@ def isolate_nightly_name_components(nightly_name: str) -> (str, str, bool):
         go_arch = possible_arch
     brew_arch = brew_arch_for_go_arch(go_arch)
     return major_minor, brew_arch, is_private
+
+
+def get_nightly_pullspec(nightly: str, build_system: str = 'konflux') -> str:
+    """
+    Construct nightly pullspec from nightly name.
+
+    :param nightly: Nightly name (e.g., '5.0.0-0.nightly-2022-12-01-153811')
+    :param build_system: 'brew' or 'konflux'
+    :return: Full pullspec URL
+    """
+    major_minor, brew_cpu_arch, priv = isolate_nightly_name_components(nightly)
+
+    # Extract major version from nightly name
+    major = int(major_minor.split('.')[0])
+
+    if build_system == 'brew' or uses_konflux_imagestream_override(major_minor):
+        release_suffix = "release-5" if major == 5 else "release"
+    else:
+        release_suffix = 'konflux-release'
+
+    rc_suffix = go_suffix_for_arch(brew_cpu_arch, priv)
+    return f"registry.ci.openshift.org/ocp{rc_suffix}/{release_suffix}{rc_suffix}:{nightly}"
 
 
 # https://code.activestate.com/recipes/577504/
@@ -510,8 +544,8 @@ def get_release_calc_previous(
     return sort_semver(list(upgrade_from))
 
 
-async def find_manifest_list_sha(pullspec):
-    image_data = oc_image_info_for_arch__caching(pullspec)
+async def find_manifest_list_sha(pullspec, registry_config: str = None):
+    image_data = await oc_image_info_for_arch_async(pullspec, registry_config=registry_config)
     if 'listDigest' not in image_data:
         raise ValueError('Specified image is not a manifest-list.')
     return image_data['listDigest']
@@ -560,146 +594,16 @@ def get_release_name_for_assembly(group_name: str, releases_config: Model, assem
                 break
             current_assembly = parent_assembly
         if patch_version is None:
-            raise ValueError(
-                "patch_version is not set in assembly definition and can't be auto-determined through the chain of inheritance."
-            )
+            hotfix_previous_assembly = releases_config.releases[
+                current_assembly
+            ].assembly.basis.hotfix_previous_assembly
+            if hotfix_previous_assembly:
+                patch_version = int(hotfix_previous_assembly.rsplit('.', 1)[-1])
+            else:
+                raise ValueError(
+                    "patch_version is not set in assembly definition and can't be auto-determined through the chain of inheritance."
+                )
     return get_release_name(assembly_type, group_name, assembly_name, patch_version)
-
-
-def oc_image_info(
-    pullspec: str,
-    *options,
-    registry_config: Optional[str] = None,
-) -> Union[Dict, List]:
-    """
-    Returns a Dict of the parsed JSON output of `oc image info` for the specified
-    pullspec. Use oc_image_info__caching if you do not believe the image will change
-    during the course of doozer's execution.
-
-    :param pullspec: e.g. registry-proxy.engineering.redhat.com/rh-osbs/openshift-ose-vsphere-problem-detector-rhel9:v4.19.0-202501230108.p0.gcbd8539.assembly.stream.el9
-    :param options: list of extra args to use with oc, e.g. '--show-multiarch', '--filter-by-os=linux/amd64'
-    :param registry_config: The path to the registry config file.
-    """
-
-    cmd = ['oc', 'image', 'info', '-o', 'json', pullspec]
-    cmd.extend(options)
-    if registry_config:
-        cmd.extend([f'--registry-config={registry_config}'])
-    out, _ = exectools.cmd_assert(cmd, retries=3)
-    return json.loads(out)
-
-
-def oc_image_info_for_arch(pullspec: str, go_arch: str = 'amd64') -> Dict:
-    """
-    Filter by os because images can be multi-arch manifest lists
-    (which cause oc image info to throw an error if not filtered).
-    """
-    return oc_image_info(pullspec, f'--filter-by-os={go_arch}')
-
-
-@lru_cache(maxsize=1000)
-def oc_image_info_for_arch__caching(pullspec: str, go_arch: str = 'amd64') -> Dict:
-    """
-    Returns a Dict of the parsed JSON output of `oc image info` for the specified
-    pullspec. This function will cache that output per pullspec, so do not use it
-    if you expect the image to change during the course of doozer's execution.
-    """
-    return oc_image_info_for_arch(pullspec, go_arch)
-
-
-def oc_image_info_show_multiarch(
-    pullspec: str,
-    registry_config: Optional[str] = None,
-) -> Union[Dict, List]:
-    """
-    Runs oc image info with --show-multiarch which can be used with both single and multi arch images.
-    For single arch images, it will return a dict representing the supported arch manifest.
-    For multi arch images, it will return a list of dictionaries, each of these representing a single arch
-    """
-    return oc_image_info(
-        pullspec,
-        '--show-multiarch',
-        registry_config=registry_config,
-    )
-
-
-@lru_cache(maxsize=1000)
-def oc_image_info_show_multiarch__caching(
-    pullspec: str,
-    registry_config: Optional[str] = None,
-) -> Union[Dict, List]:
-    """
-    Runs oc image info with --show-multiarch which can be used with both single and multi arch images.
-    For single arch images, it will return a dict representing the supported arch manifest.
-    For multi arch images, it will return a list of dictionaries, each of these representing a single arch
-    """
-    return oc_image_info_show_multiarch(pullspec, registry_config)
-
-
-@retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
-async def oc_image_info_async(
-    pullspec: str,
-    *options,
-    registry_config: Optional[str] = None,
-) -> Union[Dict, List]:
-    """
-    Returns a Dict of the parsed JSON output of `oc image info` for the specified
-    pullspec.
-    This function will authenticate with the registry using the provided registry_config.
-
-    Use oc_image_info_async__caching if you think the image won't change during the course of doozer
-    execution.
-
-    :param pullspec: The image pullspec to query.
-    :param registry_config: The path to the registry config file.
-    :return: The parsed JSON output of `oc image info`.
-    """
-
-    opts = ['-o', 'json']
-    if registry_config:
-        opts.extend([f'--registry-config={registry_config}'])
-    opts.extend(options)
-    cmd = ['oc', 'image', 'info'] + opts + [pullspec]
-    _, out, _ = await exectools.cmd_gather_async(cmd)
-    return json.loads(out)
-
-
-async def oc_image_info_for_arch_async(
-    pullspec: str,
-    go_arch: str = 'amd64',
-    registry_config: Optional[str] = None,
-) -> Dict:
-    """
-    Runs oc image info with --filter-by-os because images can be multi-arch manifest lists
-    (which cause oc image info to throw an error if not filtered).
-    Will return a single dictionary repesenting the amd64 arch
-    """
-    return await oc_image_info_async(
-        pullspec,
-        f'--filter-by-os={go_arch}',
-        registry_config=registry_config,
-    )
-
-
-@alru_cache
-async def oc_image_info_for_arch_async__caching(
-    pullspec: str,
-    go_arch: str = 'amd64',
-    registry_config: Optional[str] = None,
-) -> Dict:
-    """
-    Returns a Dict of the parsed JSON output of `oc image info` for the specified
-    pullspec. This will authenticate with the registry using the provided config.
-
-    This function will cache that output per pullspec, so do not use it
-    if you expect the image to change during the course of doozer's execution.
-
-    :param pullspec: The image pullspec to query.
-    :param go_arch: The Go architecture to filter by.
-    :param registry_config: The path to the registry config file.
-    :return: The parsed JSON output of `oc image info`.
-    """
-    return await oc_image_info_for_arch_async(pullspec, go_arch, registry_config)
 
 
 async def oc_image_extract_async(pullspec: str, path_specs: list[str], registry_config: Optional[str] = None):
@@ -718,38 +622,6 @@ async def oc_image_extract_async(pullspec: str, path_specs: list[str], registry_
     await exectools.cmd_assert_async(cmd)
 
 
-async def oc_image_info_show_multiarch_async(
-    pullspec: str,
-    registry_config: Optional[str] = None,
-) -> Union[Dict, List]:
-    """
-    Runs oc image info with --show-multiarch which can be used with both single and multi arch images.
-    For single arch images, it will return a dict representing the supported arch manifest.
-    For multi arch images, it will return a list of dictionaries, each of these representing a single arch
-    """
-    return await oc_image_info_async(
-        pullspec,
-        '--show-multiarch',
-        registry_config=registry_config,
-    )
-
-
-@alru_cache
-async def oc_image_info_show_multiarch_async__caching(
-    pullspec: str,
-    registry_config: Optional[str] = None,
-) -> Union[Dict, List]:
-    """
-    Runs oc image info with --show-multiarch which can be used with both single and multi arch images.
-    For single arch images, it will return a dict representing the supported arch manifest.
-    For multi arch images, it will return a list of dictionaries, each of these representing a single arch
-    """
-    return await oc_image_info_show_multiarch_async(
-        pullspec=pullspec,
-        registry_config=registry_config,
-    )
-
-
 def infer_assembly_type(custom, assembly_name):
     # Infer assembly type
     if custom:
@@ -760,3 +632,326 @@ def infer_assembly_type(custom, assembly_name):
         return AssemblyTypes.PREVIEW
     else:
         return AssemblyTypes.STANDARD
+
+
+def get_konflux_build_priority(metadata, group):
+    """
+    Get the Konflux build priority based on the precedence rules.
+
+    :param metadata: ImageMetadata object containing config and runtime info
+    :param group: doozer group, eg: openshift-4.15 / oadp-1.5
+    :return: Priority value as string; "1" (high) "10" (low)
+    """
+    logger.info(f"Resolving build priority for {metadata.distgit_key}")
+    phase = metadata.runtime.group_config.software_lifecycle.phase
+
+    def higher_by(val: int) -> str:
+        new_priority = str(max(1, constants.KONFLUX_DEFAULT_BUILD_PRIORITY - val))
+        logger.info(f"Using phase-based priority for {metadata.distgit_key}: {new_priority} (phase: {phase})")
+        return new_priority
+
+    # 1. Image config priority
+    image_config_priority = metadata.config.konflux.get("build_priority")
+    if image_config_priority:
+        logger.info(f"Using image config priority for {metadata.distgit_key}: {image_config_priority}")
+        return str(image_config_priority)
+
+    # 2. Group config priority
+    group_config_priority = metadata.runtime.group_config.konflux.get("build_priority")
+    if group_config_priority:
+        logger.info(f"Using group config priority for {metadata.distgit_key}: {group_config_priority}")
+        return str(group_config_priority)
+
+    # 3. Golang builder images are high priority since they block other builds.
+    if 'golang' in group:
+        # Prioritize since golang builds may be part of addressing security issues.
+        return higher_by(3)
+
+    # 4. Higher than default priority for main & pre-GA N-1 streams.
+    if group.startswith("openshift-") and phase in ("pre-release", "signing"):
+        if metadata.children:
+            return higher_by(3)
+        return higher_by(2)
+
+    # 5. Non-leaf images get a priority bump since they block dependent builds.
+    if metadata.children:
+        return higher_by(1)
+
+    # Default
+    return higher_by(0)
+
+
+def rc_api_url(tag: str, arch: str, private_nightly: bool) -> str:
+    """
+    Get the base URL for a release tag in the release controller.
+
+    :param tag: The RC release stream as a string (e.g. "4.9.0-0.nightly")
+    :param arch: Architecture we are interested in (e.g. "s390x")
+    :param private_nightly: Whether this is a private nightly
+    :return: e.g. "https://s390x.ocp.releases.ci.openshift.org/api/v1/releasestream/4.9.0-0.nightly-s390x"
+    """
+    from doozerlib import constants as doozer_constants
+
+    arch = go_arch_for_brew_arch(arch)
+    arch_suffix = go_suffix_for_arch(arch, private_nightly)
+
+    if private_nightly:
+        return f"{doozer_constants.RC_BASE_PRIV_URL.format(arch=arch)}/api/v1/releasestream/{tag}{arch_suffix}"
+
+    return f"{doozer_constants.RC_BASE_URL.format(arch=arch)}/api/v1/releasestream/{tag}{arch_suffix}"
+
+
+async def check_nightly_exists(nightly_name: str, private_nightly: bool = False) -> bool:
+    """
+    Check if a nightly payload exists in the release controller.
+
+    :param nightly_name: Nightly name to check (e.g., '4.21.0-0.nightly-2025-11-12-194750' or '4.21.0-0.nightly-multi-2025-11-12-194750')
+    :param private_nightly: Whether this is a private nightly
+    :return: True if the nightly exists, False otherwise
+    """
+    # Extract version and arch from nightly name
+    major_minor, arch, _ = isolate_nightly_name_components(nightly_name)
+
+    # If no arch was found in the name, default to multi
+    if not arch:
+        arch = 'multi'
+
+    # Construct tag base (e.g., "4.21.0-0.nightly")
+    # Note: rc_api_url will add the appropriate arch suffix (e.g., -s390x, -multi)
+    tag_base = f"{major_minor}.0-0.nightly"
+
+    # Query the release controller API
+    rc_url = f"{rc_api_url(tag_base, arch, private_nightly)}/tags"
+    logger.debug(f"Checking if {nightly_name} exists at {rc_url}")
+
+    try:
+        headers = {}
+        if private_nightly:
+            # Get the token
+            rc, token, err = exectools.cmd_gather(["oc", "whoami", "-t"], strip=True)
+            if rc != 0 or err:
+                logger.warning(f"Error while trying to get token for private nightlies: {err}")
+                return False
+            if not token:
+                logger.warning("Token empty, might not be logged in to correct cluster")
+                return False
+            headers = {"Authorization": f"Bearer {token}"}
+
+        async with aiohttp.ClientSession() as session:
+            async with session.get(rc_url, headers=headers) as resp:
+                if resp.status != 200:
+                    logger.warning(f"Could not query release controller: HTTP {resp.status}")
+                    return False
+                data = await resp.json()
+
+        # Check if the nightly name exists in the tags list
+        tags = data.get('tags', [])
+        if not isinstance(tags, list):
+            logger.debug(f"Unexpected tags type: {type(tags)}, treating as non-existent")
+            return False
+
+        for tag in tags:
+            if not isinstance(tag, dict):
+                logger.debug(f"Skipping non-dict tag entry: {type(tag)}")
+                continue
+            if tag.get('name') == nightly_name:
+                logger.info(f"Found existing nightly: {nightly_name}")
+                return True
+
+        logger.info(f"Nightly {nightly_name} does not exist")
+        return False
+
+    except aiohttp.ClientError as e:
+        logger.warning(f"HTTP client error checking for nightly: {e}")
+        return False
+    except json.JSONDecodeError as e:
+        logger.warning(f"Failed to parse JSON response from release controller: {e}")
+        return False
+    except Exception as e:
+        logger.warning(f"Error checking for nightly: {e}")
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Go coverage instrumentation helpers
+# ---------------------------------------------------------------------------
+
+# Path to coverage Go sources in hack/coverage/ (at the repo root)
+_HACK_COVERAGE_DIR = pathlib.Path(__file__).parent.parent.parent / 'hack' / 'coverage'
+
+# Path to the coverage_server.go resource injected into every main package
+_COVERAGE_SERVER_GO = _HACK_COVERAGE_DIR / 'coverage_server.go'
+
+# Path to the coverage_producer.go resource (injected only into the kubelet)
+_COVERAGE_PRODUCER_GO = _HACK_COVERAGE_DIR / 'coverage_producer.go'
+
+# Compiled regex to detect 'package main' declarations in Go source files
+_PKG_MAIN_PATTERN = re.compile(rb'^\s*package\s+main\s*($|//|/\*)')
+
+# Compiled regex to detect any 'package <name>' declaration in Go source files
+_PKG_ANY_PATTERN = re.compile(rb'^\s*package\s+(\w+)')
+
+# Compiled regex to detect build-ignore constraints that exclude a file from
+# normal compilation (``//go:build ignore`` or ``// +build ignore``).
+_BUILD_IGNORE_PATTERN = re.compile(rb'^\s*//\s*(\+build\s+ignore|go:build\s+ignore)\b')
+
+# Directories that should be skipped when scanning for main packages
+_SKIP_DIRS = frozenset({'.git', 'vendor', 'node_modules', '.idea', '.vscode', '__pycache__'})
+
+
+def _is_package_main(file_path: pathlib.Path) -> bool:
+    """Return True if *file_path* contains a ``package main`` declaration
+    within the first 50 lines **and** is not excluded by a ``//go:build ignore``
+    or ``// +build ignore`` build constraint.
+    """
+    try:
+        with file_path.open('rb') as f:
+            has_ignore = False
+            for _ in range(50):
+                line = f.readline()
+                if not line:
+                    break
+                if _BUILD_IGNORE_PATTERN.match(line):
+                    has_ignore = True
+                if _PKG_MAIN_PATTERN.match(line):
+                    return not has_ignore
+    except (OSError, PermissionError):
+        pass
+    return False
+
+
+def _get_effective_package(file_path: pathlib.Path) -> Optional[str]:
+    """Return the package name declared in *file_path*, or ``None`` if the
+    file should be skipped (has a ``//go:build ignore`` constraint or could
+    not be read).  Only the first 50 lines are inspected.
+    """
+    try:
+        with file_path.open('rb') as f:
+            has_ignore = False
+            for _ in range(50):
+                line = f.readline()
+                if not line:
+                    break
+                if _BUILD_IGNORE_PATTERN.match(line):
+                    has_ignore = True
+                m = _PKG_ANY_PATTERN.match(line)
+                if m:
+                    if has_ignore:
+                        return None  # File is build-ignored; skip it
+                    return m.group(1).decode('utf-8')
+    except (OSError, PermissionError):
+        pass
+    return None
+
+
+def find_go_main_packages(root_path: pathlib.Path) -> List[pathlib.Path]:
+    """Return a sorted list of directories under *root_path* that contain a
+    Go ``package main`` source file (excluding ``_test.go`` files and files
+    with ``//go:build ignore`` constraints).
+
+    As a safety net, a directory is only included when **all** of its
+    compilable ``.go`` files (non-test, non-ignored) consistently declare
+    ``package main``.  This prevents injecting ``coverage_server.go`` into
+    directories that have a mix of package names (e.g. a ``package main``
+    example file coexisting with regular library files).
+
+    Sub-modules (directories that contain their own ``go.mod``) are skipped
+    entirely.  These are separate Go modules — typically vendored
+    dependencies referenced via ``replace`` directives — and injecting
+    into them would pollute the vendor directory when ``go mod vendor``
+    copies their contents.
+    """
+    root = root_path.resolve()
+    main_dirs: set[pathlib.Path] = set()
+
+    for current_root, dirs, files in os.walk(root):
+        # Prune directories in-place to avoid descending into irrelevant trees
+        dirs[:] = [d for d in dirs if d not in _SKIP_DIRS]
+
+        current_path = pathlib.Path(current_root)
+
+        # Skip sub-modules: if a non-root directory has its own go.mod it is
+        # a separate Go module (e.g. a staging/ dependency used via a replace
+        # directive).  Injecting into it would cause files to leak into the
+        # vendor/ tree when ``go mod vendor`` runs.
+        if current_path != root and 'go.mod' in files:
+            dirs.clear()  # Stop descending into this sub-module
+            continue
+
+        go_files = [f for f in files if f.endswith('.go') and not f.endswith('_test.go')]
+        if not go_files:
+            continue
+
+        has_main = False
+        has_non_main = False
+        for file in go_files:
+            pkg = _get_effective_package(current_path / file)
+            if pkg is None:
+                continue  # Build-ignored or unreadable
+            if pkg == 'main':
+                has_main = True
+            else:
+                has_non_main = True
+
+        if has_main and not has_non_main:
+            main_dirs.add(current_path)
+
+    return sorted(main_dirs)
+
+
+def inject_coverage_server(dg_path: pathlib.Path, logger_instance: logging.Logger) -> None:
+    """Copy ``coverage_server.go`` into every Go ``main`` package directory
+    found under *dg_path* so that the coverage HTTP server is compiled into
+    each binary via its ``init()`` function.
+    """
+    import shutil
+
+    if not _COVERAGE_SERVER_GO.is_file():
+        logger_instance.warning('coverage_server.go resource not found at %s; skipping injection', _COVERAGE_SERVER_GO)
+        return
+
+    main_dirs = find_go_main_packages(dg_path)
+    if not main_dirs:
+        logger_instance.debug('No Go main packages found under %s; nothing to inject', dg_path)
+        return
+
+    for pkg_dir in main_dirs:
+        dest = pkg_dir / _COVERAGE_SERVER_GO.name
+        shutil.copy2(str(_COVERAGE_SERVER_GO), str(dest))
+        logger_instance.info('Injected %s into %s', _COVERAGE_SERVER_GO.name, pkg_dir)
+
+    logger_instance.info('Injected coverage server into %d main package(s)', len(main_dirs))
+
+
+def inject_coverage_producer(dg_path: pathlib.Path, logger_instance: logging.Logger) -> None:
+    """Copy ``coverage_producer.go`` into the kubelet's ``cmd/kubelet/``
+    directory if it exists and is a ``package main`` directory.
+
+    The producer is only useful inside the kubelet binary — it discovers
+    coverage-instrumented containers on the node and uploads their data to S3.
+    """
+    import shutil
+
+    if not _COVERAGE_PRODUCER_GO.is_file():
+        logger_instance.warning(
+            'coverage_producer.go resource not found at %s; skipping injection',
+            _COVERAGE_PRODUCER_GO,
+        )
+        return
+
+    kubelet_dir = (dg_path / 'cmd' / 'kubelet').resolve()
+    if not kubelet_dir.is_dir():
+        logger_instance.debug('No cmd/kubelet/ directory found under %s; skipping producer injection', dg_path)
+        return
+
+    # Verify it is actually a package main directory
+    main_dirs = find_go_main_packages(dg_path)
+    if kubelet_dir not in main_dirs:
+        logger_instance.warning(
+            'cmd/kubelet/ exists but is not a package main directory; skipping producer injection',
+        )
+        return
+
+    dest = kubelet_dir / _COVERAGE_PRODUCER_GO.name
+    shutil.copy2(str(_COVERAGE_PRODUCER_GO), str(dest))
+    logger_instance.info('Injected %s into %s', _COVERAGE_PRODUCER_GO.name, kubelet_dir)

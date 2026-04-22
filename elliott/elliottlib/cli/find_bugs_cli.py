@@ -23,6 +23,12 @@ type_bug_set = Set[Bug]
 
 @common.cli.command("find-bugs", short_help="Find eligible bugs for the given assembly")
 @click.option(
+    "--exclude-trackers",
+    is_flag=True,
+    default=False,
+    help="Exclude tracker bugs",
+)
+@click.option(
     "--permissive",
     is_flag=True,
     default=False,
@@ -34,17 +40,22 @@ type_bug_set = Set[Bug]
     type=click.Choice(['json', 'text']),
     help='Output in the specified format',
 )
+@click.option("--cve-only", is_flag=True, help="Only find CVE trackers")
 @click.pass_obj
 @click_coroutine
 async def find_bugs_cli(
     runtime: Runtime,
+    exclude_trackers,
     permissive,
     output,
+    cve_only,
 ):
     """Find OCP bugs for the given group and assembly, eligible for release.
 
     The --group and --assembly sets the criteria for the bugs to be found.
     default jira search statuses: ['MODIFIED', 'ON_QA', 'VERIFIED']
+
+    If --exclude-trackers is set, tracker bugs will be excluded from the search.
 
     Security Tracker Bugs are validated and categorized based on attached builds
     to advisories that are in the assembly. The assumption is that:
@@ -58,10 +69,15 @@ async def find_bugs_cli(
         $ elliott -g openshift-4.18 --assembly 4.18.5 find-bugs -o json
 
     """
+    if exclude_trackers and cve_only:
+        raise click.BadParameter("Cannot use --exclude-trackers with --cve-only")
+
     cli = FindBugsCli(
         runtime=runtime,
         permissive=permissive,
         output=output,
+        cve_only=cve_only,
+        exclude_trackers=exclude_trackers,
     )
     await cli.run()
 
@@ -72,10 +88,14 @@ class FindBugsCli:
         runtime: Runtime,
         permissive: bool,
         output: str,
+        cve_only: bool,
+        exclude_trackers: bool,
     ):
         self.runtime = runtime
         self.permissive = permissive
         self.output = output
+        self.cve_only = cve_only
+        self.exclude_trackers = exclude_trackers
         self.bug_tracker = None
 
     async def run(self):
@@ -96,7 +116,7 @@ class FindBugsCli:
         :return: A dictionary where keys are advisory kinds and values are sets of Bug objects.
         """
 
-        find_bugs_obj = FindBugsSweep()
+        find_bugs_obj = FindBugsSweep(cve_only=self.cve_only)
         statuses = sorted(find_bugs_obj.status)
         tr = self.bug_tracker.target_release()
         LOGGER.info(f"Searching {self.bug_tracker.type} for bugs with status {statuses} and target releases: {tr}\n")
@@ -115,6 +135,7 @@ class FindBugsCli:
             minor_version=minor_version,
             operator_bundle_advisory="metadata",
             permissive=self.permissive,
+            exclude_trackers=self.exclude_trackers,
         )
         for kind, kind_bugs in bugs_by_type.items():
             LOGGER.info(f'{kind} bugs: {[b.id for b in kind_bugs]}')

@@ -8,7 +8,7 @@ from typing import Awaitable, Dict, List, Optional, Tuple, Union, cast
 from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord
 from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
-from artcommonlib.model import Missing, Model
+from artcommonlib.model import Model
 from artcommonlib.release_util import isolate_el_version_in_release
 from artcommonlib.rpm_utils import to_nevra
 
@@ -141,9 +141,8 @@ class BrewImageInspector(ImageInspector):
 
         # Get enabled repos for the image
         group_repos = self.runtime.repos
-        enabled_repos = sorted(
-            {r.name for r in group_repos.values() if r.enabled} | set(meta.config.get("enabled_repos", []))
-        )
+        # Use get_enabled_repos() which applies AND logic (globally enabled AND in image config)
+        enabled_repos = sorted(meta.get_enabled_repos())
         if not enabled_repos:  # no enabled repos
             logger.warning(
                 "Skipping non-latest rpms check for image %s because it doesn't have enabled_repos configured.",
@@ -312,7 +311,7 @@ class BuildRecordInspector(ABC):
         pass
 
     @abstractmethod
-    def find_non_latest_rpms(self, *_):
+    async def find_non_latest_rpms(self, *_):
         pass
 
     @abstractmethod
@@ -699,9 +698,9 @@ class KonfluxBuildRecordInspector(BuildRecordInspector):
 
     def get_image_inspectors(self):
         if not self._inspectors:
-            info = util.oc_image_info_show_multiarch__caching(
+            info = util.oc_image_info_show_multiarch(
                 pullspec=self.get_build_pullspec(),
-                registry_config=os.getenv("KONFLUX_ART_IMAGES_AUTH_FILE"),
+                registry_config=os.getenv("QUAY_AUTH_FILE"),
             )
             if isinstance(info, dict):
                 # The pullspec points to a single arch image
@@ -742,9 +741,8 @@ class KonfluxBuildRecordInspector(BuildRecordInspector):
         non_latest_rpms_for_arch = {}
 
         # Get enabled repos
-        enabled_repos = {r.name for r in group_repos.values() if r.enabled}
-        if meta.config.enabled_repos is not Missing:
-            enabled_repos |= set(meta.config.enabled_repos)
+        # Use get_enabled_repos() which applies AND logic (globally enabled AND in image config)
+        enabled_repos = meta.get_enabled_repos()
 
         # If there are no enabled repos, nothing to do here
         if not enabled_repos:
