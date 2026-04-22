@@ -1,7 +1,6 @@
 import asyncio
 import json
 import logging
-import os
 import sys
 import traceback
 from pathlib import Path
@@ -424,7 +423,7 @@ async def images_konflux_build(
         konflux_context=konflux_context,
         konflux_namespace=konflux_namespace,
         image_repo=image_repo,
-        registry_auth_file=os.getenv("QUAY_AUTH_FILE"),
+        registry_auth_file=runtime.registry_config,
         skip_checks=skip_checks,
         dry_run=dry_run,
         plr_template=plr_template,

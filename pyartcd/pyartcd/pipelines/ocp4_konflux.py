@@ -837,6 +837,7 @@ class KonfluxOcpPipeline:
             credentials=credentials,
         ) as global_auth_file:
             self._registry_auth_file = global_auth_file
+            self._doozer_base_command.append(f'--registry-config={global_auth_file}')
 
             # cosign requires DOCKER_CONFIG pointing to a dir containing config.json
             docker_config_dir = tempfile.mkdtemp(prefix='docker_config_')

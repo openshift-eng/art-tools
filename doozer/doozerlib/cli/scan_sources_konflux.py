@@ -104,7 +104,6 @@ class ConfigScanSources:
         self.image_tree = {}
         self.changing_rpm_names = set()
         self.rhcos_status = []
-        self.registry_auth_file = os.getenv("QUAY_AUTH_FILE")
         self.current_task_bundles: Dict[str, str] = {}
 
     def _is_okd_enabled(self, image_meta: ImageMetadata) -> bool:
@@ -691,7 +690,7 @@ class ConfigScanSources:
 
         # Fetch the SLSA attestation for the latest build
         attestation = await fetch_slsa_attestation(
-            build_record.image_pullspec, build_record.name, self.registry_auth_file
+            build_record.image_pullspec, build_record.name, self.runtime.registry_config
         )
         if not attestation:
             self.logger.warning('Skipping network mode check for %s', image_meta.distgit_key)
@@ -955,9 +954,9 @@ class ConfigScanSources:
         # Use KONFLUX_OPERATOR_INDEX_AUTH_FILE for non-openshift groups (like OADP), otherwise use default
         # Since OADP et. al. uses other streams like https://github.com/openshift-eng/ocp-build-data/blob/oadp-1.5/streams.yml#L13
         builder_auth_file = (
-            (os.getenv("KONFLUX_OPERATOR_INDEX_AUTH_FILE") or self.registry_auth_file)
+            (os.getenv("KONFLUX_OPERATOR_INDEX_AUTH_FILE") or self.runtime.registry_config)
             if not self.runtime.group.startswith("openshift-")
-            else self.registry_auth_file
+            else self.runtime.registry_config
         )
         latest_builder_image_info = Model(
             await oc_image_info_for_arch_async(builder_image_url, registry_config=builder_auth_file)
@@ -1210,7 +1209,7 @@ class ConfigScanSources:
 
         # Fetch SLSA attestation
         attestation = await fetch_slsa_attestation(
-            build_record.image_pullspec, build_record.name, self.registry_auth_file
+            build_record.image_pullspec, build_record.name, self.runtime.registry_config
         )
         if not attestation:
             self.logger.warning('Skipping task bundle check for %s', image_meta.distgit_key)
@@ -1383,7 +1382,7 @@ class ConfigScanSources:
         pullspec = f"quay.io/konflux-ci/tekton-catalog/{task_name}@sha256:{sha}"
         self.logger.info(f'Getting age for task bundle {task_name} using pullspec {pullspec}')
         try:
-            out = await oc_image_info__cached_async(pullspec, registry_config=self.registry_auth_file)
+            out = await oc_image_info__cached_async(pullspec, registry_config=self.runtime.registry_config)
             image_info = json.loads(out)
             created_str = image_info.get('config', {}).get('created', '')
             if not created_str:
@@ -1636,7 +1635,7 @@ class ConfigScanSources:
                 for container_conf in self.runtime.group_config.rhcos.payload_tags:
                     if self.runtime.group_config.rhcos.get("layered_rhcos", False):
                         build_id, pullspec = get_latest_layered_rhcos_build(
-                            container_conf, brew_arch, registry_config=self.registry_auth_file
+                            container_conf, brew_arch, registry_config=self.runtime.registry_config
                         )
                     else:
                         build_id, pullspec = rhcos.RHCOSBuildFinder(
@@ -1648,7 +1647,7 @@ class ConfigScanSources:
                     pullspec_for_tag,
                     brew_arch,
                     build_id,
-                    registry_config=self.registry_auth_file,
+                    registry_config=self.runtime.registry_config,
                 ).find_non_latest_rpms(exclude_rhel=True)
                 if non_latest_rpms:
                     status['outdated'] = True
@@ -1689,7 +1688,7 @@ class ConfigScanSources:
         rhcos_index = next(
             (tag.rhcos_index_tag for tag in self.runtime.group_config.rhcos.payload_tags if tag.primary), ""
         )
-        rhcos_info = util.oc_image_info_for_arch(rhcos_index, go_arch, registry_config=self.registry_auth_file)
+        rhcos_info = util.oc_image_info_for_arch(rhcos_index, go_arch, registry_config=self.runtime.registry_config)
         return rhcos_info['digest']
 
     def tagged_rhcos_id(self, container_name, version, arch, private) -> Optional[str]:

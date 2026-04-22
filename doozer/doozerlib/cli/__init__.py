@@ -220,6 +220,13 @@ def print_version(ctx, param, value):
     envvar='BUILD_SYSTEM',
     help="Which build system (Brew/Konflux) to consider when searching for builds.",
 )
+@click.option(
+    "--registry-config",
+    "registry_config",
+    metavar='PATH',
+    default=None,
+    help="Path to a Docker config.json for registry auth (passed to oc/cosign commands).",
+)
 @click.pass_context
 def cli(ctx, **kwargs):
     global CTX_GLOBAL

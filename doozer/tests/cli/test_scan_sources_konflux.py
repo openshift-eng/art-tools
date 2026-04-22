@@ -21,6 +21,7 @@ class TestScanSourcesKonflux(IsolatedAsyncioTestCase):
         self.runtime.konflux_db = MagicMock()
         self.runtime.group = 'openshift-4.20'  # Default to OCP group for tests
         self.runtime.load_disabled = False
+        self.runtime.registry_config = None
         self.runtime.image_metas.return_value = []
         self.runtime.rpm_metas.return_value = []
         self.runtime.image_map = {}
@@ -319,7 +320,7 @@ class TestScanTaskBundleChanges(TestScanSourcesKonflux):
 
         # Should call fetch_slsa_attestation when for_release is None (not skipped)
         mock_get_attestation.assert_called_once_with(
-            self.build_record.image_pullspec, self.build_record.name, self.scanner.registry_auth_file
+            self.build_record.image_pullspec, self.build_record.name, self.scanner.runtime.registry_config
         )
 
     @patch('doozerlib.cli.scan_sources_konflux.fetch_slsa_attestation')
@@ -336,7 +337,7 @@ class TestScanTaskBundleChanges(TestScanSourcesKonflux):
 
         # Should call fetch_slsa_attestation when for_release is Missing (not skipped)
         mock_get_attestation.assert_called_once_with(
-            self.build_record.image_pullspec, self.build_record.name, self.scanner.registry_auth_file
+            self.build_record.image_pullspec, self.build_record.name, self.scanner.runtime.registry_config
         )
 
     @patch('doozerlib.cli.scan_sources_konflux.fetch_slsa_attestation')
@@ -353,7 +354,7 @@ class TestScanTaskBundleChanges(TestScanSourcesKonflux):
 
         # Should call fetch_slsa_attestation when for_release is True (not skipped)
         mock_get_attestation.assert_called_once_with(
-            self.build_record.image_pullspec, self.build_record.name, self.scanner.registry_auth_file
+            self.build_record.image_pullspec, self.build_record.name, self.scanner.runtime.registry_config
         )
 
     @patch('doozerlib.cli.scan_sources_konflux.fetch_slsa_attestation')
@@ -662,7 +663,7 @@ class TestTaskBundleIntegration(TestScanSourcesKonflux):
 
         # Verify all methods were called in correct order
         mock_get_attestation.assert_called_once_with(
-            self.build_record.image_pullspec, self.build_record.name, self.scanner.registry_auth_file
+            self.build_record.image_pullspec, self.build_record.name, self.scanner.runtime.registry_config
         )
         mock_get_age.assert_called_once_with("git-clone", "old123")
 
