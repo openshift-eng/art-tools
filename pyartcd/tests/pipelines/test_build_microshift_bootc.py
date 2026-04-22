@@ -125,7 +125,11 @@ class TestBuildMicroShiftBootcPipeline(IsolatedAsyncioTestCase):
 
         # Mock releases config with existing shipment URL - use Model wrapper like in test_prepare_release_konflux
         pipeline.releases_config = Model(
-            {"releases": {self.assembly: {"assembly": {"group": {"shipment": {"url": existing_mr_url}}}}}}
+            {
+                "releases": {
+                    self.assembly: {"assembly": {"group": {"microshift_bootc_shipment": {"url": existing_mr_url}}}}
+                }
+            }
         )
 
         # Mock GitLab MR to return existing branch
@@ -133,6 +137,7 @@ class TestBuildMicroShiftBootcPipeline(IsolatedAsyncioTestCase):
         mock_mr.source_branch = existing_branch
         mock_mr.web_url = existing_mr_url
         mock_mr.description = "Original description"
+        mock_mr.state = "opened"
 
         mock_project = Mock()
         mock_project.mergerequests.get.return_value = mock_mr
@@ -450,3 +455,40 @@ class TestBuildMicroShiftBootcPipeline(IsolatedAsyncioTestCase):
             self.assertEqual(build_cmd[lock_idx + 2], "0d0943b")
         finally:
             os.environ.pop("KONFLUX_SA_KUBECONFIG", None)
+
+    def test_validate_shipment_mr_raises_on_closed_mr(self):
+        """
+        Test that _validate_shipment_mr raises ValueError when MR is not in opened state
+        """
+        # given
+        pipeline = BuildMicroShiftBootcPipeline(
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+            force=False,
+            force_plashet_sync=False,
+            prepare_shipment=True,
+            data_path="https://github.com/openshift-eng/ocp-build-data",
+            slack_client=self.mock_slack_client,
+        )
+
+        pipeline.gitlab_token = "fake-gitlab-token"
+
+        # Mock GitLab MR in closed state
+        mock_mr = Mock()
+        mock_mr.state = "closed"
+
+        mock_project = Mock()
+        mock_project.mergerequests.get.return_value = mock_mr
+
+        mock_gitlab_instance = Mock()
+        mock_gitlab_instance.get_project.return_value = mock_project
+        pipeline._gitlab = mock_gitlab_instance
+
+        shipment_url = "https://gitlab.example.com/shipment-data/-/merge_requests/123"
+
+        # when / then
+        with self.assertRaises(ValueError) as ctx:
+            pipeline._validate_shipment_mr(shipment_url)
+        self.assertIn("closed", str(ctx.exception))
+        self.assertIn("not opened", str(ctx.exception))

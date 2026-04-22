@@ -736,6 +736,10 @@ class BuildMicroShiftBootcPipeline:
         # Step 3: Check for existing shipment branch and try to load existing config
         shipment_config = await self._load_or_init_shipment_config()
 
+        # Check if there was an existing microshift_bootc_shipment URL
+        assembly_shipment_config = self.assembly_group_config.get("microshift_bootc_shipment", {})
+        had_existing_url = bool(assembly_shipment_config.get("url"))
+
         # Step 4: Use the provided bootc build
         self._logger.info("Using bootc build: %s", bootc_build.nvr)
 
@@ -748,6 +752,11 @@ class BuildMicroShiftBootcPipeline:
 
         if self.shipment_mr_url:
             await self.slack_client.say_in_thread(f"Shipment MR created: {self.shipment_mr_url}")
+
+            # Step 7: If this is the first run (no existing URL), write the URL back to releases.yml
+            if not had_existing_url:
+                self._logger.info("First shipment run for this assembly - writing URL to releases.yml")
+                await self._create_or_update_build_data_pr()
         else:
             await self.slack_client.say_in_thread("No changes in shipment data. MR was not created or updated.")
 
@@ -786,6 +795,138 @@ class BuildMicroShiftBootcPipeline:
 
         self._logger.info("Shipment environment setup completed")
 
+    def _validate_shipment_mr(self, shipment_url: str):
+        """Validate the shipment MR state
+        :param shipment_url: The URL of the existing shipment MR to validate
+        :raises ValueError: If the MR is not in opened state
+        """
+        # Parse the shipment URL to extract project and MR details
+        parsed_url = urlparse(shipment_url)
+        project_path = parsed_url.path.strip('/').split('/-/merge_requests')[0]
+        mr_id = parsed_url.path.split('/')[-1]
+
+        # Load the existing MR
+        project = self._gitlab.get_project(project_path)
+        mr = project.mergerequests.get(mr_id)
+
+        # Make sure MR is in opened state
+        if mr.state != "opened":
+            raise ValueError(f"MR state {mr.state} is not opened. This is not supported.")
+
+    async def _update_build_data(self, branch: str) -> bool:
+        """Update releases.yml in build data repo with microshift_bootc_shipment URL.
+        Commits the changes and pushes to the remote repo.
+        :param branch: The branch to update in the build data repo
+        :return: True if the changes were committed and pushed successfully, False otherwise.
+        """
+        data_path = self._doozer_env_vars["DOOZER_DATA_PATH"]
+        build_data_repo_dir = self._working_dir / "build-data-push"
+
+        # Clean up existing directory if it exists
+        if build_data_repo_dir.exists():
+            shutil.rmtree(build_data_repo_dir, ignore_errors=True)
+
+        # Initialize GitRepository for build data
+        build_data_repo = GitRepository(build_data_repo_dir, self.runtime.dry_run)
+
+        # Setup build-data repo
+        # For pushing, we need GitHub token auth
+        github_token = os.getenv("GITHUB_TOKEN")
+        if not github_token and not self.runtime.dry_run:
+            raise ValueError("GITHUB_TOKEN environment variable is required to update build data")
+
+        user, repo = self.extract_git_repo(data_path)
+        push_url = f"https://oauth2:{github_token}@github.com/{user}/{repo}.git" if github_token else data_path
+
+        await build_data_repo.setup(
+            remote_url=push_url,
+            upstream_remote_url=data_path,
+        )
+
+        # Check if branch exists on remote, if so fetch and switch to it
+        if await build_data_repo.does_branch_exist_on_remote(branch, remote="origin"):
+            self._logger.info('Fetching and switching to existing branch %s', branch)
+            await build_data_repo.fetch_switch_branch(branch, remote="origin")
+        else:
+            # Fetch and switch to group branch first
+            await build_data_repo.fetch_switch_branch(self.group, remote="upstream")
+            self._logger.info('Creating new branch %s', branch)
+            await build_data_repo.create_branch(branch)
+
+        # Load current releases.yml
+        releases_yml_path = "releases.yml"
+        new_releases_config = copy.deepcopy(self.releases_config)
+
+        # Update the microshift_bootc_shipment section
+        microshift_bootc_shipment_config = {"url": self.shipment_mr_url}
+
+        # Get the assembly definition to check if it has a parent
+        assembly_def = new_releases_config["releases"][self.assembly]["assembly"]
+        has_parent = bool(assembly_def.get("basis", {}).get("assembly"))
+
+        # If this assembly has a basis assembly, use the override marker (!)
+        # to prevent inheritance from causing the URL to be lost on subsequent runs
+        if has_parent:
+            key_name = "microshift_bootc_shipment!"
+        else:
+            key_name = "microshift_bootc_shipment"
+
+        # Set the microshift_bootc_shipment config
+        new_releases_config["releases"][self.assembly]["assembly"]["group"][key_name] = microshift_bootc_shipment_config
+
+        # Write updated releases.yml
+        out = StringIO()
+        yaml.dump(new_releases_config, out)
+        await build_data_repo.write_file(releases_yml_path, out.getvalue())
+        await build_data_repo.add_all()
+        await build_data_repo.log_diff()
+
+        commit_message = f"Update microshift-bootc shipment URL for assembly {self.assembly}"
+        return await build_data_repo.commit_push(commit_message, safe=True)
+
+    async def _create_or_update_build_data_pr(self) -> bool:
+        """Create or update a pull request in the build data repo with the microshift_bootc_shipment URL.
+        :return: True if the PR was created or updated successfully, False otherwise.
+        """
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+        branch = f"update-microshift-bootc-shipment-{self.assembly}-{timestamp}"
+        updated = await self._update_build_data(branch)
+        if not updated:
+            self._logger.info("No changes in microshift_bootc_shipment config. PR will not be created.")
+            return False
+
+        data_path = self._doozer_env_vars["DOOZER_DATA_PATH"]
+        user, repo = self.extract_git_repo(data_path)
+
+        head = f"{user}:{branch}"
+        base = self.group
+        gh_repo = get_github_client_for_org(user).get_repo(f"{user}/{repo}")
+        existing_prs = list(gh_repo.get_pulls(state="open", head=head, base=base))
+
+        if not existing_prs:
+            pr_title = f"Update microshift-bootc shipment URL for assembly {self.assembly}"
+            pr_body = f"This PR updates microshift_bootc_shipment URL for {self.assembly} assembly."
+            job_url = jenkins.get_build_url()
+            if job_url:
+                pr_body += f"\n\nCreated by job: {job_url}"
+
+            if self.runtime.dry_run:
+                self._logger.info("[DRY-RUN] Would have created a new PR with title '%s'", pr_title)
+                return True
+
+            pr = gh_repo.create_pull(title=pr_title, body=pr_body, base=base, head=branch)
+            self._logger.info("Created PR to update microshift-bootc shipment URL: %s", pr.html_url)
+            await self.slack_client.say_in_thread(f"PR created to update microshift-bootc shipment URL: {pr.html_url}")
+
+            # Wait for CI tests to pass, then merge
+            await self._wait_for_pr_merge(pr)
+        else:
+            # PR already exists, update it
+            pr = existing_prs[0]
+            self._logger.info("PR already exists: %s", pr.html_url)
+
+        return True
+
     async def _load_or_init_shipment_config(self) -> ShipmentConfig:
         """Load existing shipment config from branch or initialize new one
 
@@ -793,10 +934,13 @@ class BuildMicroShiftBootcPipeline:
         Otherwise, create a new branch with timestamp.
         """
         # Check if shipment already exists in assembly config
-        assembly_shipment_config = self.assembly_group_config.get("shipment", {})
+        assembly_shipment_config = self.assembly_group_config.get("microshift_bootc_shipment", {})
         existing_mr_url = assembly_shipment_config.get("url")
 
         if existing_mr_url:
+            # Validate MR state before using it
+            self._validate_shipment_mr(existing_mr_url)
+
             # Extract branch name from existing MR
             # The MR URL contains the branch name in the source_branch field
             # We need to fetch the MR details to get the branch name
@@ -896,12 +1040,15 @@ class BuildMicroShiftBootcPipeline:
         self._logger.info("Creating or updating shipment MR...")
 
         # Check if shipment already exists in assembly config
-        assembly_shipment_config = self.assembly_group_config.get("shipment", {})
+        assembly_shipment_config = self.assembly_group_config.get("microshift_bootc_shipment", {})
         existing_mr_url = assembly_shipment_config.get("url")
 
         target_branch = "main"
 
         if existing_mr_url:
+            # Validate MR state before using it
+            self._validate_shipment_mr(existing_mr_url)
+
             # Extract branch name from existing MR (already done in _load_or_init_shipment_config)
             parsed_url = urlparse(existing_mr_url)
             mr_id = parsed_url.path.split('/')[-1]
