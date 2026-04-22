@@ -795,21 +795,30 @@ class BuildMicroShiftBootcPipeline:
 
         self._logger.info("Shipment environment setup completed")
 
+    def _get_shipment_mr_branch(self, shipment_url: str) -> str:
+        """Get the source branch from a shipment MR URL.
+        :param shipment_url: The URL of the shipment MR
+        :returns: The source branch name of the MR
+        :raises ValueError: If the MR is not in opened state
+        """
+        mr = self._gitlab.get_mr_from_url(shipment_url)
+        if not mr:
+            raise ValueError(f"Could not find MR at URL: {shipment_url}")
+
+        if mr.state != "opened":
+            raise ValueError(f"MR state {mr.state} is not opened. This is not supported.")
+
+        return mr.source_branch
+
     def _validate_shipment_mr(self, shipment_url: str):
         """Validate the shipment MR state
         :param shipment_url: The URL of the existing shipment MR to validate
         :raises ValueError: If the MR is not in opened state
         """
-        # Parse the shipment URL to extract project and MR details
-        parsed_url = urlparse(shipment_url)
-        project_path = parsed_url.path.strip('/').split('/-/merge_requests')[0]
-        mr_id = parsed_url.path.split('/')[-1]
+        mr = self._gitlab.get_mr_from_url(shipment_url)
+        if not mr:
+            raise ValueError(f"Could not find MR at URL: {shipment_url}")
 
-        # Load the existing MR
-        project = self._gitlab.get_project(project_path)
-        mr = project.mergerequests.get(mr_id)
-
-        # Make sure MR is in opened state
         if mr.state != "opened":
             raise ValueError(f"MR state {mr.state} is not opened. This is not supported.")
 
@@ -844,8 +853,9 @@ class BuildMicroShiftBootcPipeline:
         else:
             key_name = "microshift_bootc_shipment"
 
-        # Set the microshift_bootc_shipment config
-        new_releases_config["releases"][self.assembly]["assembly"]["group"][key_name] = microshift_bootc_shipment_config
+        # Set the microshift_bootc_shipment config (ensure group dict exists first)
+        group_config = new_releases_config["releases"][self.assembly]["assembly"].setdefault("group", {})
+        group_config[key_name] = microshift_bootc_shipment_config
 
         # Check if anything changed
         if source_file_content == new_releases_config:
@@ -913,35 +923,26 @@ class BuildMicroShiftBootcPipeline:
 
         If a shipment MR already exists (URL in config), reuse the existing branch.
         Otherwise, create a new branch with timestamp.
+
+        Sets self._shipment_source_branch to the resolved branch name for reuse in _create_shipment_mr.
         """
         # Check if shipment already exists in assembly config
         assembly_shipment_config = self.assembly_group_config.get("microshift_bootc_shipment", {})
         existing_mr_url = assembly_shipment_config.get("url")
 
         if existing_mr_url:
-            # Validate MR state before using it
-            self._validate_shipment_mr(existing_mr_url)
+            # Get the branch name from the existing MR (validates MR state)
+            self._shipment_source_branch = self._get_shipment_mr_branch(existing_mr_url)
 
-            # Extract branch name from existing MR
-            # The MR URL contains the branch name in the source_branch field
-            # We need to fetch the MR details to get the branch name
-            parsed_url = urlparse(existing_mr_url)
-            mr_id = parsed_url.path.split('/')[-1]
-            project_path = parsed_url.path.strip('/').split('/-/merge_requests')[0]
-
-            # Use the cached GitLab client
-            project = self._gitlab.get_project(project_path)
-            mr = project.mergerequests.get(mr_id)
-            source_branch = mr.source_branch
-
-            self._logger.info('Found existing shipment MR, using branch: %s', source_branch)
-            await self.shipment_data_repo.fetch_switch_branch(source_branch, remote="origin")
+            self._logger.info('Found existing shipment MR, using branch: %s', self._shipment_source_branch)
+            await self.shipment_data_repo.fetch_switch_branch(self._shipment_source_branch, remote="origin")
 
             # Initialize new config - we'll load the snapshot from existing files later if needed
             return await self._init_shipment_config()
         else:
             # No existing MR - this is the first run, initialize new config
             self._logger.info('No existing shipment MR found, will initialize new shipment config')
+            self._shipment_source_branch = None
             return await self._init_shipment_config()
 
     async def _init_shipment_config(self) -> ShipmentConfig:
@@ -1020,28 +1021,14 @@ class BuildMicroShiftBootcPipeline:
         """Create or update shipment MR with the given shipment config. Returns None if no changes."""
         self._logger.info("Creating or updating shipment MR...")
 
-        # Check if shipment already exists in assembly config
-        assembly_shipment_config = self.assembly_group_config.get("microshift_bootc_shipment", {})
-        existing_mr_url = assembly_shipment_config.get("url")
-
         target_branch = "main"
 
-        if existing_mr_url:
-            # Validate MR state before using it
-            self._validate_shipment_mr(existing_mr_url)
-
-            # Extract branch name from existing MR (already done in _load_or_init_shipment_config)
-            parsed_url = urlparse(existing_mr_url)
-            mr_id = parsed_url.path.split('/')[-1]
-            project_path = parsed_url.path.strip('/').split('/-/merge_requests')[0]
-
-            # Use the cached GitLab client
-            project = self._gitlab.get_project(project_path)
-            mr = project.mergerequests.get(mr_id)
-            source_branch = mr.source_branch
-
+        # Use the cached branch name from _load_or_init_shipment_config (if available)
+        cached_branch = getattr(self, '_shipment_source_branch', None)
+        if cached_branch:
+            # Reusing existing MR branch (already switched in _load_or_init_shipment_config)
+            source_branch = cached_branch
             self._logger.info('Reusing existing shipment branch: %s', source_branch)
-            await self.shipment_data_repo.fetch_switch_branch(source_branch, remote="origin")
         else:
             # Create new branch with timestamp
             timestamp = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
@@ -1070,7 +1057,7 @@ class BuildMicroShiftBootcPipeline:
         mr_description = f"Created by job: {job_url}\n\n{commit_message}"
 
         if self.runtime.dry_run:
-            action = "updated" if existing_mr_url else "created"
+            action = "updated" if cached_branch else "created"
             self._logger.info("[DRY-RUN] Would have %s MR with title: %s", action, mr_title)
             mr_url = f"{self.gitlab_url}/placeholder/placeholder/-/merge_requests/placeholder"
         else:

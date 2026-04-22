@@ -147,6 +147,7 @@ class TestBuildMicroShiftBootcPipeline(IsolatedAsyncioTestCase):
 
         mock_gitlab_instance = Mock()
         mock_gitlab_instance.get_project.return_value = mock_project
+        mock_gitlab_instance.get_mr_from_url.return_value = mock_mr
         mock_gitlab_class.return_value = mock_gitlab_instance
 
         mock_shipment_config = Mock()
@@ -156,6 +157,8 @@ class TestBuildMicroShiftBootcPipeline(IsolatedAsyncioTestCase):
         mock_shipment_config.model_dump = Mock(return_value={"shipment": {}})
 
         pipeline._gitlab = mock_gitlab_instance
+        # Simulate _load_or_init_shipment_config having cached the branch
+        pipeline._shipment_source_branch = existing_branch
 
         # when
         with patch('pyartcd.pipelines.build_microshift_bootc.get_release_name_for_assembly', return_value="4.21.0"):
@@ -478,11 +481,8 @@ class TestBuildMicroShiftBootcPipeline(IsolatedAsyncioTestCase):
         mock_mr = Mock()
         mock_mr.state = "closed"
 
-        mock_project = Mock()
-        mock_project.mergerequests.get.return_value = mock_mr
-
         mock_gitlab_instance = Mock()
-        mock_gitlab_instance.get_project.return_value = mock_project
+        mock_gitlab_instance.get_mr_from_url.return_value = mock_mr
         pipeline._gitlab = mock_gitlab_instance
 
         shipment_url = "https://gitlab.example.com/shipment-data/-/merge_requests/123"
