@@ -53,9 +53,13 @@ class SigningTransport(Protocol):
 Two implementations:
 
 - **`UMBTransport`** — wraps the existing `AsyncUMBClient` (extracts what `AsyncSignatory`
-  already does today)
+  already does today). `ack()` maps directly to STOMP's per-message acknowledgement.
 - **`KafkaTransport`** — wraps `Retriable-Kafka-Client`, mapping `send()` to the Kafka
-  producer and `subscribe()` to the Kafka consumer on the response topic
+  producer and `subscribe()` to the Kafka consumer on the response topic. `ack()` commits
+  the Kafka offset. Offsets are committed only after a response with matching `request_id`
+  is successfully validated and processed. This provides at-least-once delivery; duplicate
+  responses are tolerated via existing `request_id` correlation (duplicates are discarded
+  since the corresponding `Future` has already been resolved).
 
 `AsyncSignatory.__init__` accepts a `transport: SigningTransport` instead of URI/cert/key
 directly. The factory logic in `promote.py` decides which transport to create based on
@@ -83,7 +87,8 @@ consumer poll loop in a thread and feeding messages into an `asyncio.Queue` — 
 | `pyartcd/pyartcd/signatory.py` | Refactor `AsyncSignatory` to accept `SigningTransport` instead of UMB-specific params |
 | `pyartcd/pyartcd/constants.py` | Add `KAFKA_BROKERS` dict (per environment) and Kafka topic names |
 | `pyartcd/pyartcd/pipelines/promote.py` | `sign_artifacts()` reads `--signing-transport` flag, creates appropriate transport |
-| CLI wiring (promote pipeline argparse/click) | Add `--signing-transport` option (choices: `umb`, `kafka`, default: `umb`) |
+| `pyartcd/pyartcd/pipelines/sync_rhcos.py` | Same transport selection for RHCOS message digest signing |
+| CLI wiring (promote and sync_rhcos pipelines) | Add `--signing-transport` option (choices: `umb`, `kafka`, default: `umb`) |
 
 ### Kafka Authentication & Configuration
 
@@ -127,6 +132,7 @@ New CLI flag `--signing-transport` on the promote pipeline:
 | **Signing failure** | RADAS returning `signing_status != "success"` raises `SignatoryServerError` — unchanged |
 | **Response timeout** | NEW: configurable timeout (default 10 minutes) on both transports. Raises `TimeoutError` instead of hanging indefinitely. This fixes a pre-existing issue in the UMB path too. |
 | **Consumer group conflicts** | Unique group ID per instance (`artcd-signing-{uuid}`) prevents response stealing |
+| **Kafka offset-commit semantics** | `KafkaTransport` commits offsets only after a response with matching `request_id` is successfully validated and processed. Unmatched or stale messages are not committed until a valid response is found. This provides at-least-once delivery; duplicates are tolerated via `request_id` correlation. |
 
 ### Testing Strategy
 
@@ -210,7 +216,7 @@ A possible phased path:
 - Add `SigningTransport` protocol, `UMBTransport`, `KafkaTransport`
 - Add `kafka_client.py` wrapping `Retriable-Kafka-Client`
 - Refactor `AsyncSignatory` to accept transport injection
-- Add `--signing-transport` flag (default: `umb`)
+- Add `--signing-transport` flag (default: `umb`) to both `promote.py` and `sync_rhcos.py`
 - Add response timeout to both transports
 - Unit tests
 
@@ -224,7 +230,8 @@ A possible phased path:
 ### Phase 3 — Validate on Stage
 
 - Run promote on stage with `--signing-transport kafka`
-- Verify full round-trip through the bridge
+- Run `sync_rhcos` signing on stage with `--signing-transport kafka`
+- Verify full round-trip through the bridge for both pipelines
 
 ### Phase 4 — Prod Cutover
 
