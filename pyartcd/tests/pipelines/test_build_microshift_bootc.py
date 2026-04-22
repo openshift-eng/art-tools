@@ -132,10 +132,12 @@ class TestBuildMicroShiftBootcPipeline(IsolatedAsyncioTestCase):
         mock_mr = Mock()
         mock_mr.source_branch = existing_branch
         mock_mr.web_url = existing_mr_url
+        mock_mr.description = "Original description"
 
         mock_project = Mock()
         mock_project.mergerequests.get.return_value = mock_mr
-        mock_project.mergerequests.list.return_value = []  # No existing MRs for this branch (will create new one)
+        # Return existing MR to exercise the update path (not create new)
+        mock_project.mergerequests.list.return_value = [mock_mr]
         mock_project.mergerequests.create.return_value = mock_mr
 
         mock_gitlab_instance = Mock()
@@ -159,6 +161,10 @@ class TestBuildMicroShiftBootcPipeline(IsolatedAsyncioTestCase):
         written_filepath = pipeline.shipment_data_repo.write_file.call_args[0][0]
         expected_filename = f"{self.assembly}.microshift-bootc.{existing_timestamp}.yaml"
         self.assertTrue(str(written_filepath).endswith(expected_filename))
+
+        # Verify the update path was exercised (not create)
+        mock_project.mergerequests.create.assert_not_called()
+        mock_mr.save.assert_called_once()
 
     @patch('pyartcd.pipelines.build_microshift_bootc.get_github_client_for_org')
     async def test_create_shipment_mr_generates_new_timestamp_for_new_shipment(self, mock_get_client):
