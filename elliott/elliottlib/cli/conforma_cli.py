@@ -200,7 +200,9 @@ class ConformaVerifyCli:
 
         if self.pullspec:
             rhcos_images = {c['name'] for c in get_container_configs(self.runtime)}
-            nvr_map = await get_nvrs_from_release(self.pullspec, rhcos_images, LOGGER)
+            nvr_map = await get_nvrs_from_release(
+                self.pullspec, rhcos_images, LOGGER, registry_config=self.runtime.registry_config
+            )
             self.nvrs = []
             for component, (v, r) in nvr_map.items():
                 self.nvrs.append(f"{component}-{v}-{r}")

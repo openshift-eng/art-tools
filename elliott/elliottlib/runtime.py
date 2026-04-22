@@ -68,6 +68,7 @@ class Runtime(GroupRuntime):
             self.use_jira = False
         self._bug_trackers = {}
         self.brew_event: Optional[int] = None
+        self.registry_config: Optional[str] = None
         self.assembly: Optional[str] = 'stream'
         self.assembly_basis_event: Optional[int] = None
         self.releases_config: Optional[Model] = None

@@ -74,7 +74,7 @@ async def get_golang_versions_cli(
             raise click.BadParameter('components for payload should end with -container')
 
     if release:
-        return await print_release_golang(release, rhcos_images, components, output, report)
+        return await print_release_golang(release, rhcos_images, components, output, report, runtime.registry_config)
     elif advisory_id:
         return print_advisory_golang(advisory_id, components, output, report)
     elif nvrs:
@@ -134,8 +134,8 @@ def print_advisory_golang(advisory_id, components, output, report):
         util.pretty_print_nvrs_go(go_nvr_map, report)
 
 
-async def print_release_golang(pullspec, rhcos_images, components, output, report):
-    nvr_map = await util.get_nvrs_from_release(pullspec, rhcos_images, _LOGGER)
+async def print_release_golang(pullspec, rhcos_images, components, output, report, registry_config=None):
+    nvr_map = await util.get_nvrs_from_release(pullspec, rhcos_images, _LOGGER, registry_config=registry_config)
     nvrs = [(n, vr_tuple[0], vr_tuple[1]) for n, vr_tuple in nvr_map.items()]
     _LOGGER.debug(f'{len(nvrs)} builds found in {pullspec}')
     if not nvrs:

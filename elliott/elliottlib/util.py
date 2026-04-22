@@ -682,9 +682,15 @@ def all_same(items: Iterable[Any]):
     return all(x == first for x in it)
 
 
-async def get_nvrs_from_release(pullspec_or_imagestream, rhcos_images, logger=None):
+async def get_nvrs_from_release(pullspec_or_imagestream, rhcos_images, logger=None, registry_config=None):
     """
     Get all payload NVRs from a release pullspec or imagestream.
+
+    Arg(s):
+        pullspec_or_imagestream: A release pullspec or imagestream name.
+        rhcos_images: Set of RHCOS image names to skip.
+        logger: Optional logger for progress messages.
+        registry_config (str): Optional path to a Docker config.json for registry auth.
     """
 
     def log(msg):
@@ -701,8 +707,9 @@ async def get_nvrs_from_release(pullspec_or_imagestream, rhcos_images, logger=No
     all_payload_nvrs = {}
     log("Fetching release info...")
     if is_pullspec:
+        registry_config_arg = f'--registry-config={registry_config}' if registry_config else ''
         rc, stdout, stderr = await exectools.cmd_gather_async(
-            f'oc adm release info -o json -n ocp {pullspec_or_imagestream}'
+            f'oc adm release info {registry_config_arg} -o json -n ocp {pullspec_or_imagestream}'
         )
         tags = json.loads(stdout)['references']['spec']['tags']
     else:  # it is an imagestream
@@ -721,7 +728,6 @@ async def get_nvrs_from_release(pullspec_or_imagestream, rhcos_images, logger=No
     async def _get_image_info(tag):
         pullspec = tag['from']['name']
         try:
-            registry_config = os.getenv("QUAY_AUTH_FILE")
             return await oc_image_info__cached_async(pullspec, registry_config=registry_config)
         except ChildProcessError as e:
             raise RuntimeError(f"Unable to run oc image info for {pullspec}: {e}") from e
