@@ -1,3 +1,5 @@
+from artcommonlib.constants import KONFLUX_DEFAULT_FBC_REPO, KONFLUX_DEFAULT_IMAGE_REPO  # noqa: F401
+
 RC_BASE_URL = "https://{arch}.ocp.releases.ci.openshift.org"
 RC_BASE_PRIV_URL = "https://{arch}.ocp.internal.releases.ci.openshift.org"
 
@@ -49,10 +51,6 @@ KONFLUX_REPO_CA_BUNDLE_HOST = "https://certs.corp.redhat.com/certs"
 WORKING_SUBDIR_KONFLUX_BUILD_SOURCES = "konflux_build_sources"
 WORKING_SUBDIR_KONFLUX_FBC_SOURCES = "konflux_fbc_sources"
 WORKING_SUBDIR_KONFLUX_OKD_SOURCES = "konflux_okd_sources"
-KONFLUX_DEFAULT_IMAGE_REPO = (
-    "quay.io/redhat-user-workloads/ocp-art-tenant/art-images"  # FIXME: If we change clusters this URL will change
-)
-KONFLUX_DEFAULT_FBC_REPO = "quay.io/redhat-user-workloads/ocp-art-tenant/art-fbc"
 # Legacy constants removed - use get_art_prod_image_repo_for_version() from artcommonlib.util instead
 DELIVERY_IMAGE_REGISTRY = "registry.redhat.io"
 KONFLUX_UI_HOST = "https://konflux-ui.apps.kflux-ocp-p01.7ayg.p1.openshiftapps.com"

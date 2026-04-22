@@ -18,7 +18,7 @@ import truststore
 from artcommonlib import exectools, git_helper
 from artcommonlib import util as artlib_util
 from artcommonlib.assembly import AssemblyTypes, assembly_config_struct, assembly_type
-from artcommonlib.constants import KONFLUX_ART_IMAGES_SHARE
+from artcommonlib.constants import KONFLUX_DEFAULT_IMAGE_SHARE_REPO
 from artcommonlib.konflux.konflux_build_record import (
     Engine,
     KonfluxBuildOutcome,
@@ -1704,7 +1704,7 @@ class KonfluxFbcBuilder:
 
             # Check each image and sync if missing from art-images-share
             for image_pullspec in related_images:
-                share_pullspec = image_pullspec.replace(KONFLUX_DEFAULT_IMAGE_REPO, KONFLUX_ART_IMAGES_SHARE)
+                share_pullspec = image_pullspec.replace(KONFLUX_DEFAULT_IMAGE_REPO, KONFLUX_DEFAULT_IMAGE_SHARE_REPO)
 
                 if await self._check_image_exists(share_pullspec, logger):
                     logger.info(f"Image already exists in art-images-share: {share_pullspec}")

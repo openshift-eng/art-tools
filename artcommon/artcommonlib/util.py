@@ -18,6 +18,7 @@ import requests_gssapi
 from artcommonlib import logutil
 from artcommonlib.constants import (
     GOLANG_BUILDER_IMAGE_NAME,
+    KONFLUX_DEFAULT_IMAGE_REPO,
     KONFLUX_DEFAULT_NAMESPACE,
     PRODUCT_KUBECONFIG_MAP,
     PRODUCT_NAMESPACE_MAP,
@@ -924,7 +925,7 @@ async def extract_related_images_from_fbc(fbc_pullspec: str, product: str) -> li
                     # Apply the transformation to quay.io/redhat-user-workloads/ocp-art-tenant/art-images
                     transformed_url = re.sub(
                         registry_transform_pattern,
-                        'quay.io/redhat-user-workloads/ocp-art-tenant/art-images',
+                        KONFLUX_DEFAULT_IMAGE_REPO,
                         img_url,
                     )
                     related_images.append(transformed_url)
@@ -960,7 +961,7 @@ async def extract_related_images_from_fbc(fbc_pullspec: str, product: str) -> li
                     if f'registry.redhat.io/{registry_namespace}/' in img_url:
                         transformed_url = re.sub(
                             registry_transform_pattern,
-                            'quay.io/redhat-user-workloads/ocp-art-tenant/art-images',
+                            KONFLUX_DEFAULT_IMAGE_REPO,
                             img_url,
                         )
                         related_images.append(transformed_url)
