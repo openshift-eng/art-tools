@@ -488,6 +488,7 @@ class KonfluxOcpPipeline:
             '--assembly',
             'stream',
             f'--group=openshift-{self.version}',
+            f'--registry-config={self._registry_auth_file}',
             "find-bugs:golang",
             "--analyze",
             "--update-tracker",

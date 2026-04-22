@@ -96,6 +96,13 @@ context_settings = dict(help_option_names=['-h', '--help'])
     envvar='BUILD_SYSTEM',
     help="Which build system (Brew/Konflux) to consider when searching for builds.",
 )
+@click.option(
+    "--registry-config",
+    "registry_config",
+    metavar='PATH',
+    default=None,
+    help="Path to a Docker config.json for registry auth (passed to oc --registry-config).",
+)
 @click.pass_context
 def cli(ctx, **kwargs):
     cfg = dotconfig.Config(

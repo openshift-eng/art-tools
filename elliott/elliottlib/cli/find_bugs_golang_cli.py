@@ -335,7 +335,9 @@ class FindBugsGolangCli:
             self._logger.info(f"Fetching go build nvrs for {self.pullspec}...")
             rhcos_images = {c['name'] for c in get_container_configs(self._runtime)}
             try:
-                nvr_map = await get_nvrs_from_release(self.pullspec, rhcos_images)
+                nvr_map = await get_nvrs_from_release(
+                    self.pullspec, rhcos_images, registry_config=self._runtime.registry_config
+                )
             except Exception as e:
                 self._logger.error(
                     "Does pullspec exist? To override use --pullspec. "
