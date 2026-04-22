@@ -209,6 +209,16 @@ class Repodata:
                 rpm for rpm in self.primary_rpms if rpm.name == rpm_name and (rpm.arch == arch or rpm.arch == 'noarch')
             ]
 
+            if not matching_rpms and is_nvr and rpm_name != item:
+                # NVR detection may have false-positived on a package name that
+                # contains digit-heavy segments (e.g. xorg-x11-fonts-ISO8859-1-100dpi).
+                # Retry with the original string as a plain package name.
+                matching_rpms = [
+                    rpm for rpm in self.primary_rpms if rpm.name == item and (rpm.arch == arch or rpm.arch == 'noarch')
+                ]
+                if matching_rpms:
+                    is_nvr = False
+
             if not matching_rpms:
                 not_found.append(item)
                 continue
@@ -251,7 +261,11 @@ class Repodata:
                 if re.search(r'[\d.]', version):
                     # Validate release: should contain at least one digit (typical RPM release)
                     if re.search(r'\d', release):
-                        return True, extracted_name
+                        # Reject releases that are just digits followed by letters (e.g. "100dpi")
+                        # — these are part of package names like xorg-x11-fonts-ISO8859-1-100dpi,
+                        # not real RPM releases which contain separators like dots or underscores
+                        if not re.fullmatch(r'\d+[a-zA-Z]+', release):
+                            return True, extracted_name
         except Exception:
             # If parsing fails, treat as package name
             pass

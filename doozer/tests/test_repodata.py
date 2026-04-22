@@ -666,6 +666,27 @@ data:
         self.assertEqual(found, [])
         self.assertEqual(not_found, ["foo-invalid-nvr-format"])
 
+    def test_get_rpms_nvr_false_positive_fallback(self):
+        # When NVR detection false-positives on a package name like
+        # xorg-x11-fonts-ISO8859-1-100dpi, get_rpms should fall back
+        # to treating the full string as a plain package name.
+        font_rpm = Rpm(
+            name="xorg-x11-fonts-ISO8859-1-100dpi",
+            epoch=0,
+            version="7.5",
+            release="21.el8",
+            arch="noarch",
+            checksum="fff",
+            size=1000,
+            location="xorg-x11-fonts-ISO8859-1-100dpi-7.5-21.el8.noarch.rpm",
+            sourcerpm="xorg-x11-fonts-ISO8859-1-100dpi-7.5-21.el8.src.rpm",
+        )
+        repodata = Repodata(name="testrepo", primary_rpms=[font_rpm], modules=[])
+        found, not_found = repodata.get_rpms("xorg-x11-fonts-ISO8859-1-100dpi", arch="x86_64")
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0].name, "xorg-x11-fonts-ISO8859-1-100dpi")
+        self.assertEqual(not_found, [])
+
     def test_detect_nvr_vs_name_package_names(self):
         # Test package names that should NOT be identified as NVRs
         test_cases = [
@@ -679,6 +700,9 @@ data:
             # Additional variations to test diverse patterns
             "lib2.5-devel",  # Another package name with dots and numbers
             "python3-libs",  # Package name with digit and suffix
+            # Package names with digit-heavy suffixes that look like NVRs
+            "xorg-x11-fonts-ISO8859-1-100dpi",  # rsplit yields version="1", release="100dpi"
+            "xorg-x11-fonts-ISO8859-1-75dpi",  # Same pattern, different resolution
         ]
 
         for package_name in test_cases:
@@ -700,6 +724,10 @@ data:
             ("ovn25.03-25.03.0-73.el9fdp", "ovn25.03"),  # Different version and el9 distro
             ("python3-3.6.8-51.el8_8.11", "python3"),  # Real Brew package ending with digit
             ("python3-3.6.8-21.el7_9.2", "python3"),  # Different release and el7 distro
+            # Releases with dots, underscores, and mixed patterns
+            ("python3-netifaces-0.10.9-9.el8ost.1", "python3-netifaces"),  # Release with ost dist variant
+            ("baz-3.1-42", "baz"),  # Bare numeric release
+            ("qux-2.0-1", "qux"),  # Single-digit release
         ]
 
         for nvr, expected_name in test_cases:
@@ -718,6 +746,9 @@ data:
             # Package names with dots and numbers that should NOT be NVRs
             ("package2.5-name", False, "package2.5-name"),  # Similar to ovn25.03 pattern
             ("lib1.2-dev", False, "lib1.2-dev"),  # Another versioned package name
+            # Release-like segments that are actually part of the package name
+            ("xorg-x11-fonts-ISO8859-1-100dpi", False, "xorg-x11-fonts-ISO8859-1-100dpi"),
+            ("some-pkg-2-300abc", False, "some-pkg-2-300abc"),  # digits-then-letters release
             # These should be detected as NVRs
             ("test-1.0-alpha1", True, "test"),  # Version has digit, release has digit
             ("package-2.5.1-1.20230101", True, "package"),  # Valid version/release
@@ -725,6 +756,11 @@ data:
             # Additional real-world patterns from Brew packages
             ("python3-3.6.8-15.1.el8_1.2", True, "python3"),  # Complex release with dots
             ("ovn25.03-25.03.0-51.el10fdp", True, "ovn25.03"),  # Different variant of ovn NVR
+            # Bare numeric releases (no dist tag) — still valid NVRs
+            ("thing-1.0-42", True, "thing"),  # Pure numeric release
+            ("thing-1.0-1", True, "thing"),  # Single-digit release
+            # Mixed numeric-alpha releases with dots — valid NVRs
+            ("gadget-3.1-9.el8ost.1", True, "gadget"),  # Release with ost dist variant
         ]
 
         for input_str, expected_is_nvr, expected_name in test_cases:
