@@ -872,6 +872,49 @@ RUN echo "test"
         # Verify config was merged (should detect el8 from ubi8 tag)
         self.assertEqual(metadata.config['distgit']['branch'], 'rhaos-4.16-rhel-8')
 
+    @patch('doozerlib.image.SourceResolver')
+    @patch('builtins.open', create=True)
+    @patch('pathlib.Path.joinpath')
+    @patch('doozerlib.image.util.oc_image_info_for_arch', return_value={'config': {'config': {'Labels': {}}}})
+    def test_determine_upstream_rhel_version_fallback_to_builder(
+        self, mock_oc_image_info, mock_joinpath, mock_open, mock_source_resolver
+    ):
+        """Test that RHEL version detection falls back to builder images when the base image tag is unhelpful"""
+        extract_builder_info_from_pullspec.cache_clear()
+        metadata = self._create_image_metadata('openshift/test_fallback')
+
+        metadata.config = Model(
+            {
+                'name': 'openshift/test_fallback',
+                'distgit': {'branch': 'rhaos-5.0-rhel-9'},
+                'content': {'source': {'git': {'url': 'https://github.com/test/repo.git'}}},
+            }
+        )
+        metadata.branch_el_target = MagicMock(return_value=9)
+
+        mock_source_resolution = MagicMock()
+        metadata.runtime.source_resolver.resolve_source = MagicMock(return_value=mock_source_resolution)
+
+        mock_source_dir = MagicMock()
+        mock_source_resolver.get_source_dir = MagicMock(return_value=mock_source_dir)
+
+        mock_df_path = MagicMock()
+        mock_joinpath.return_value = mock_df_path
+
+        mock_open.return_value.__enter__.return_value = mock.mock_open(read_data="").return_value
+
+        with patch('doozerlib.image.DockerfileParser') as mock_dfp:
+            mock_dfp_instance = MagicMock()
+            mock_dfp_instance.parent_images = [
+                'registry.ci.openshift.org/ocp/builder:rhel-9-golang-1.25',
+                'registry.ci.openshift.org/ocp/4.22:aws-efs-utils-base',
+            ]
+            mock_dfp.return_value = mock_dfp_instance
+            metadata.determine_targets = MagicMock(return_value=['target-1'])
+
+            # Should not raise - RHEL version 9 detected from the builder image fallback
+            metadata._apply_alternative_upstream_config()
+
     def test_get_olm_bundle_delivery_repo_name_override_single_entry(self):
         metadata = self._create_image_metadata('openshift/test')
         mock_config = MagicMock()

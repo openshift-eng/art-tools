@@ -936,14 +936,15 @@ class ImageMetadata(Metadata):
                 dfp = DockerfileParser(fileobj=f)
                 parent_images = dfp.parent_images
 
-            # We will infer the versions from the last build layer in the upstream Dockerfile
-            last_layer_pullspec = parent_images[-1]
-
-            # Use the cached function to extract builder info
-            rhel_version, golang_version = extract_builder_info_from_pullspec(last_layer_pullspec)
+            # Try the last build layer first (the runtime base), then fall back to earlier layers (builders).
+            # Some base images (e.g. aws-efs-utils-base) don't encode RHEL version in their tag and may
+            # not be inspectable, but builder images (e.g. rhel-9-golang-1.25) almost always do.
+            for pullspec in reversed(parent_images):
+                rhel_version, golang_version = extract_builder_info_from_pullspec(pullspec)
+                if rhel_version:
+                    break
 
         except Exception as e:
-            # Log the exception but don't raise - caller will decide how to handle None return
             self.logger.warning('[%s] Failed determining upstream builder info: %s', self.distgit_key, e)
 
         if not rhel_version:
