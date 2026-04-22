@@ -25,6 +25,15 @@ class JIRAClient:
     def add_comment(self, key, comment):
         self._client.add_comment(key, comment, visibility={'type': 'group', 'value': 'Red Hat Employee'})
 
+    def add_remote_link(self, issue_key: str, link_object: dict):
+        """Add a remote web link to a JIRA issue.
+
+        Args:
+            issue_key: The JIRA issue key (e.g. "OADP-1234")
+            link_object: Dict with "title" and "url" keys
+        """
+        self._client.add_remote_link(issue_key, {"object": link_object})
+
     def assign_to_me(self, key):
         self._client.assign_issue(key, 'openshift-art-jira-bot')
 

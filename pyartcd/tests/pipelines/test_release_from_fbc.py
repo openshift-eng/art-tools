@@ -586,6 +586,115 @@ class TestExtraImageNvrsValidation(unittest.TestCase):
             self.assertNotIn("FBC builds", str(e))
 
 
+class TestReleaseJira(unittest.TestCase):
+    """Tests for the --release-jira feature: MR description and JIRA link update."""
+
+    def _make_pipeline(self, dry_run=False, release_jira=None):
+        runtime = MagicMock()
+        runtime.dry_run = dry_run
+        runtime.working_dir = MagicMock()
+        runtime.working_dir.absolute.return_value = MagicMock()
+        runtime.config = {"gitlab_url": "https://gitlab.example.com"}
+
+        pipeline = ReleaseFromFbcPipeline(
+            runtime=runtime,
+            group="oadp-1.4",
+            assembly="1.4.8",
+            fbc_pullspecs=["quay.io/test/fbc:latest"],
+            create_mr=True,
+            release_jira=release_jira,
+        )
+        pipeline.product = "oadp"
+        pipeline.shipment_data_repo = AsyncMock()
+        pipeline.shipment_data_repo_push_url = "https://gitlab.example.com/user/ocp-shipment-data.git"
+        pipeline.shipment_data_repo_pull_url = "https://gitlab.example.com/org/ocp-shipment-data.git"
+        return pipeline
+
+    def test_release_jira_stored(self):
+        pipeline = self._make_pipeline(release_jira="https://redhat.atlassian.net/browse/OADP-1234")
+        self.assertEqual(pipeline.release_jira, "https://redhat.atlassian.net/browse/OADP-1234")
+
+    def test_release_jira_default_none(self):
+        pipeline = self._make_pipeline()
+        self.assertIsNone(pipeline.release_jira)
+
+    @patch("pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async")
+    def test_mr_description_includes_jira_when_set(self, mock_cmd):
+        mock_cmd.return_value = (0, "None", "")
+        pipeline = self._make_pipeline(dry_run=False, release_jira="https://redhat.atlassian.net/browse/OADP-1234")
+        pipeline.update_shipment_data = AsyncMock(return_value=True)
+
+        mock_source_project = MagicMock()
+        mock_mr = MagicMock()
+        mock_mr.web_url = "https://gitlab.example.com/org/repo/-/merge_requests/42"
+        mock_source_project.mergerequests.create.return_value = mock_mr
+        pipeline._get_gitlab_project = MagicMock(return_value=mock_source_project)
+        pipeline.__dict__["_gitlab"] = MagicMock()
+
+        asyncio.run(pipeline.create_shipment_mr({}, env="prod"))
+
+        create_call = mock_source_project.mergerequests.create.call_args[0][0]
+        self.assertIn("Release JIRA: https://redhat.atlassian.net/browse/OADP-1234", create_call["description"])
+
+    @patch("pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async")
+    def test_mr_description_excludes_jira_when_none(self, mock_cmd):
+        mock_cmd.return_value = (0, "None", "")
+        pipeline = self._make_pipeline(dry_run=False, release_jira=None)
+        pipeline.update_shipment_data = AsyncMock(return_value=True)
+
+        mock_source_project = MagicMock()
+        mock_mr = MagicMock()
+        mock_mr.web_url = "https://gitlab.example.com/org/repo/-/merge_requests/42"
+        mock_source_project.mergerequests.create.return_value = mock_mr
+        pipeline._get_gitlab_project = MagicMock(return_value=mock_source_project)
+        pipeline.__dict__["_gitlab"] = MagicMock()
+
+        asyncio.run(pipeline.create_shipment_mr({}, env="prod"))
+
+        create_call = mock_source_project.mergerequests.create.call_args[0][0]
+        self.assertNotIn("Release JIRA", create_call["description"])
+
+    def test_parse_jira_key_from_url(self):
+        key = ReleaseFromFbcPipeline._parse_jira_key("https://redhat.atlassian.net/browse/OADP-1234")
+        self.assertEqual(key, "OADP-1234")
+
+    def test_parse_jira_key_trailing_slash(self):
+        key = ReleaseFromFbcPipeline._parse_jira_key("https://redhat.atlassian.net/browse/MTA-999/")
+        self.assertEqual(key, "MTA-999")
+
+    def test_update_jira_adds_remote_link(self):
+        pipeline = self._make_pipeline(dry_run=False, release_jira="https://redhat.atlassian.net/browse/OADP-5678")
+        mock_jira = MagicMock()
+        pipeline.runtime.new_jira_client.return_value = mock_jira
+
+        pipeline._update_jira_with_mr_link("https://gitlab.example.com/org/repo/-/merge_requests/10")
+
+        mock_jira.add_remote_link.assert_called_once_with(
+            "OADP-5678",
+            {"title": "Shipment MR", "url": "https://gitlab.example.com/org/repo/-/merge_requests/10"},
+        )
+
+    def test_update_jira_dry_run_skips(self):
+        pipeline = self._make_pipeline(dry_run=True, release_jira="https://redhat.atlassian.net/browse/OADP-5678")
+
+        pipeline._update_jira_with_mr_link("https://gitlab.example.com/org/repo/-/merge_requests/10")
+
+        pipeline.runtime.new_jira_client.assert_not_called()
+
+    def test_update_jira_no_release_jira_skips(self):
+        pipeline = self._make_pipeline(dry_run=False, release_jira=None)
+
+        pipeline._update_jira_with_mr_link("https://gitlab.example.com/org/repo/-/merge_requests/10")
+
+        pipeline.runtime.new_jira_client.assert_not_called()
+
+    def test_update_jira_failure_is_nonfatal(self):
+        pipeline = self._make_pipeline(dry_run=False, release_jira="https://redhat.atlassian.net/browse/OADP-5678")
+        pipeline.runtime.new_jira_client.side_effect = RuntimeError("auth failed")
+
+        pipeline._update_jira_with_mr_link("https://gitlab.example.com/org/repo/-/merge_requests/10")
+
+
 class TestCliValidation(unittest.TestCase):
     """Test CLI argument validation via CliRunner against the real Click command."""
 
