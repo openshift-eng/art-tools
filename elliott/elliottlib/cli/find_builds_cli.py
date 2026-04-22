@@ -273,10 +273,10 @@ async def find_builds_cli(
         builds = [b for b in builds if b.nvr not in advisory_build_nvrs]
 
         if not builds:
-            green_print("No new builds found for attaching to advisory")
+            green_print("No new builds found for attaching to advisory", file=sys.stderr)
         elif dry_run:
-            yellow_print("[dry-run] Would've moved advisory to NEW_FILES state")
-            yellow_print(f"[dry-run] Would've attached {len(builds)} builds to advisory {advisory_id}")
+            yellow_print("[dry-run] Would've moved advisory to NEW_FILES state", file=sys.stderr)
+            yellow_print(f"[dry-run] Would've attached {len(builds)} builds to advisory {advisory_id}", file=sys.stderr)
         else:
             erratum.ensure_state('NEW_FILES')
             erratum.attach_builds(builds, kind)
@@ -305,39 +305,51 @@ async def find_builds_cli(
                 for b in sorted(nvrs_to_remove):
                     click.echo(' ' + b)
                 if dry_run:
-                    yellow_print("[dry-run] Would've moved advisory to NEW_FILES state")
-                    yellow_print(f"[dry-run] Would've removed {len(nvrs_to_remove)} builds from advisory {advisory_id}")
+                    yellow_print("[dry-run] Would've moved advisory to NEW_FILES state", file=sys.stderr)
+                    yellow_print(
+                        f"[dry-run] Would've removed {len(nvrs_to_remove)} builds from advisory {advisory_id}",
+                        file=sys.stderr,
+                    )
                 else:
                     erratum.ensure_state('NEW_FILES')
                     erratum.remove_builds(list(nvrs_to_remove))
 
-        if not builds:
+        # Skip setting cdn_repos if no canonical_nvrs are found.
+        # `builds` variable is not used because it is filtered already-attached builds out above
+        if not canonical_nvrs:
             return
 
         cdn_repos = et_data.get('cdn_repos')
         if kind == 'image':
             if dry_run:
-                yellow_print("[dry-run] Would've ensured RHCOS file metadata is set")
+                yellow_print("[dry-run] Would've ensured RHCOS file metadata is set", file=sys.stderr)
             else:
                 ensure_rhcos_file_meta(advisory_id)
             if cdn_repos and not no_cdn_repos:
                 if dry_run:
-                    yellow_print(f"[dry-run] Would've enabled CDN repos: {cdn_repos}")
+                    yellow_print(f"[dry-run] Would've enabled CDN repos: {cdn_repos}", file=sys.stderr)
                 else:
                     cdn_repos = set(cdn_repos)
-                    available_repos = set([i['repo']['name'] for i in erratum.metadataCdnRepos()])
-                    not_available_repos = cdn_repos - available_repos
-                    repos_to_enable = cdn_repos & available_repos
-                    if repos_to_enable:
-                        erratum.set_cdn_repos(repos_to_enable)
-                    if not_available_repos:
-                        raise ValueError(
-                            "These cdn repos defined in erratatool.yml are not available for the advisory "
-                            f"{advisory_id}: {not_available_repos}. Please remove these or request them to "
-                            "be created."
-                        )
+                    try:
+                        available_repos = set([i['repo']['name'] for i in erratum.metadataCdnRepos()])
+                        not_available_repos = cdn_repos - available_repos
+                        repos_to_enable = cdn_repos & available_repos
+                        if repos_to_enable:
+                            erratum.set_cdn_repos(repos_to_enable)
+                        if not_available_repos:
+                            raise ValueError(
+                                "These cdn repos defined in erratatool.yml are not available for the advisory "
+                                f"{advisory_id}: {not_available_repos}. Please remove these or request them to "
+                                "be created."
+                            )
+                    except ErrataException as e:
+                        # FIXME: Errata Tool's API endpoints for metadataCdnRepos are not reliable.
+                        # e.g. It raises an error if the advisory contains only RHCOS images.
+                        # However, we do need to set CDN repos on the web UI in order to move it to QE.
+                        # This should be an ET bug. Let's not fail the command on this error.
+                        yellow_print(f"Failed to set CDN repos: {e}", file=sys.stderr)
     except ErrataException as e:
-        red_print(f'Cannot change advisory {advisory_id}: {e}')
+        red_print(f'Cannot change advisory {advisory_id}: {e}', file=sys.stderr)
         exit(1)
 
 
