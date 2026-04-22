@@ -1,5 +1,6 @@
 import asyncio
 import re
+import stat
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
@@ -1151,6 +1152,132 @@ USER 3000
         # Note: COPY --from=metadata is not a FROM directive, so not counted
         self.assertEqual(result, [False, True, True])
         self.assertEqual(len(result), 3)
+
+
+class TestResolveVendorSymlinks(TestCase):
+    def setUp(self):
+        self.directory = TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.dest_dir = Path(self.directory.name)
+
+        self.rebaser = KonfluxRebaser.__new__(KonfluxRebaser)
+        self.rebaser._logger = MagicMock()
+
+    def test_no_vendor_dir(self):
+        asyncio.run(self.rebaser._resolve_vendor_symlinks(self.dest_dir))
+        self.rebaser._logger.info.assert_not_called()
+
+    def test_vendor_dir_no_symlinks(self):
+        vendor = self.dest_dir / "vendor" / "example.com" / "pkg"
+        vendor.mkdir(parents=True)
+        (vendor / "main.go").write_text("package pkg")
+
+        asyncio.run(self.rebaser._resolve_vendor_symlinks(self.dest_dir))
+        self.rebaser._logger.info.assert_not_called()
+
+    def test_resolves_directory_symlinks(self):
+        staging = self.dest_dir / "staging" / "src" / "k8s.io" / "api"
+        staging.mkdir(parents=True)
+        (staging / "types.go").write_text("package api")
+        (staging / "doc.go").write_text("package api // doc")
+
+        vendor = self.dest_dir / "vendor" / "k8s.io"
+        vendor.mkdir(parents=True)
+        (vendor / "api").symlink_to(staging)
+
+        asyncio.run(self.rebaser._resolve_vendor_symlinks(self.dest_dir))
+
+        resolved = vendor / "api"
+        self.assertTrue(resolved.is_dir())
+        self.assertFalse(resolved.is_symlink())
+        self.assertEqual((resolved / "types.go").read_text(), "package api")
+        self.assertEqual((resolved / "doc.go").read_text(), "package api // doc")
+
+    def test_resolves_file_symlinks(self):
+        real_file = self.dest_dir / "real_module.go"
+        real_file.write_text("package real")
+
+        vendor = self.dest_dir / "vendor" / "example.com"
+        vendor.mkdir(parents=True)
+        (vendor / "module.go").symlink_to(real_file)
+
+        asyncio.run(self.rebaser._resolve_vendor_symlinks(self.dest_dir))
+
+        resolved = vendor / "module.go"
+        self.assertTrue(resolved.is_file())
+        self.assertFalse(resolved.is_symlink())
+        self.assertEqual(resolved.read_text(), "package real")
+
+    def test_skips_broken_symlinks(self):
+        vendor = self.dest_dir / "vendor" / "k8s.io"
+        vendor.mkdir(parents=True)
+        (vendor / "missing").symlink_to("/nonexistent/path")
+
+        asyncio.run(self.rebaser._resolve_vendor_symlinks(self.dest_dir))
+
+        self.assertTrue((vendor / "missing").is_symlink())
+        self.rebaser._logger.warning.assert_called_once()
+
+    def test_resolves_multiple_symlinks(self):
+        staging_base = self.dest_dir / "staging" / "src" / "k8s.io"
+
+        for name in ["api", "client-go", "apimachinery"]:
+            pkg = staging_base / name
+            pkg.mkdir(parents=True)
+            (pkg / "main.go").write_text(f"package {name}")
+
+        vendor = self.dest_dir / "vendor" / "k8s.io"
+        vendor.mkdir(parents=True)
+        for name in ["api", "client-go", "apimachinery"]:
+            (vendor / name).symlink_to(staging_base / name)
+
+        asyncio.run(self.rebaser._resolve_vendor_symlinks(self.dest_dir))
+
+        for name in ["api", "client-go", "apimachinery"]:
+            resolved = vendor / name
+            self.assertTrue(resolved.is_dir())
+            self.assertFalse(resolved.is_symlink())
+            self.assertEqual((resolved / "main.go").read_text(), f"package {name}")
+
+    def test_strips_executable_permissions_from_resolved_dir(self):
+        staging = self.dest_dir / "staging" / "src" / "k8s.io" / "apiserver"
+        webhook_dir = staging / "pkg" / "util" / "webhook"
+        webhook_dir.mkdir(parents=True)
+        gencerts = webhook_dir / "gencerts.sh"
+        gencerts.write_text("#!/bin/bash\necho hello")
+        gencerts.chmod(0o755)
+        (webhook_dir / "webhook.go").write_text("package webhook")
+
+        vendor = self.dest_dir / "vendor" / "k8s.io"
+        vendor.mkdir(parents=True)
+        (vendor / "apiserver").symlink_to(staging)
+
+        asyncio.run(self.rebaser._resolve_vendor_symlinks(self.dest_dir))
+
+        resolved_sh = vendor / "apiserver" / "pkg" / "util" / "webhook" / "gencerts.sh"
+        self.assertTrue(resolved_sh.is_file())
+        self.assertFalse(resolved_sh.is_symlink())
+        self.assertEqual(resolved_sh.read_text(), "#!/bin/bash\necho hello")
+        mode = resolved_sh.stat().st_mode
+        exec_bits = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
+        self.assertEqual(mode & exec_bits, 0, "Executable bits should be stripped")
+
+    def test_strips_executable_permissions_from_resolved_file(self):
+        real_file = self.dest_dir / "staging" / "run.sh"
+        real_file.parent.mkdir(parents=True)
+        real_file.write_text("#!/bin/bash")
+        real_file.chmod(0o755)
+
+        vendor = self.dest_dir / "vendor" / "example.com"
+        vendor.mkdir(parents=True)
+        (vendor / "run.sh").symlink_to(real_file)
+
+        asyncio.run(self.rebaser._resolve_vendor_symlinks(self.dest_dir))
+
+        resolved = vendor / "run.sh"
+        mode = resolved.stat().st_mode
+        exec_bits = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
+        self.assertEqual(mode & exec_bits, 0, "Executable bits should be stripped")
 
 
 class TestCpeVersionExtraction(TestCase):

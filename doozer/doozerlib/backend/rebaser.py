@@ -8,6 +8,7 @@ import os
 import pathlib
 import re
 import shutil
+import stat
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple, cast
 
@@ -594,6 +595,61 @@ class KonfluxRebaser:
         cmd = 'rsync -av {} {}/ {}/'.format(exclude, src, dest)
         await exectools.cmd_assert_async(cmd, suppress_output=True)
 
+    async def _resolve_vendor_symlinks(self, dest_dir: Path):
+        """
+        Replace symlinks in vendor/ with copies of their target directories.
+
+        Some repos (e.g. openshift/kubernetes <= 4.16) have symlinks in vendor/
+        pointing to staging/ directories. Konflux hermetic builds reject these
+        because cachi2's gomod-vendor-check expects real files, not symlinks.
+
+        After copying, executable permissions are stripped from all files because
+        `go mod vendor` writes files as 0644 — leaving exec bits causes the
+        vendor consistency check to report diffs.
+        """
+        vendor_dir = dest_dir / "vendor"
+        if not vendor_dir.is_dir():
+            return
+
+        symlinks = [entry for entry in vendor_dir.rglob("*") if entry.is_symlink()]
+        if not symlinks:
+            return
+
+        self._logger.info("Resolving %d symlink(s) in vendor/ directory", len(symlinks))
+        for link in symlinks:
+            target = link.resolve()
+            if not target.exists():
+                self._logger.warning("Vendor symlink %s points to non-existent target %s, skipping", link, target)
+                continue
+
+            link.unlink()
+            if target.is_dir():
+                await exectools.to_thread(shutil.copytree, str(target), str(link))
+            else:
+                await exectools.to_thread(shutil.copy2, str(target), str(link))
+
+            self._strip_exec_permissions(link)
+
+        self._logger.info("Resolved vendor/ symlinks successfully")
+
+    @staticmethod
+    def _strip_exec_permissions(path: Path):
+        """
+        Remove executable bits from all files under path (or from path itself
+        if it is a file), matching the 0644 permissions that `go mod vendor` uses.
+        """
+        exec_bits = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
+        if path.is_file():
+            mode = path.stat().st_mode
+            if mode & exec_bits:
+                path.chmod(mode & ~exec_bits)
+        elif path.is_dir():
+            for f in path.rglob("*"):
+                if f.is_file():
+                    mode = f.stat().st_mode
+                    if mode & exec_bits:
+                        f.chmod(mode & ~exec_bits)
+
     @start_as_current_span_async(TRACER, "rebase.merge_source")
     async def _merge_source(self, metadata: ImageMetadata, source: SourceResolution, source_dir: Path, dest_dir: Path):
         """
@@ -632,6 +688,11 @@ class KonfluxRebaser:
 
         # Copy all files and overwrite where necessary
         await self._recursive_overwrite(source_dir, dest_dir)
+
+        # Resolve symlinks in vendor/ so that Konflux hermetic builds pass gomod-vendor-check.
+        # Some repos (e.g. openshift/kubernetes <= 4.16) use symlinks in vendor/ pointing to
+        # staging/ directories — cachi2 rejects these because they don't match `go mod vendor` output.
+        await self._resolve_vendor_symlinks(dest_dir)
 
         df_path = dest_dir.joinpath('Dockerfile')
 
