@@ -640,19 +640,25 @@ class PromotePipeline:
 
         await self._slack_client.say_in_thread(f":white_check_mark: promote completed for {release_name}.")
 
-    @staticmethod
-    def _get_release_stream_name(assembly_type: AssemblyTypes, arch: str):
+    def _get_release_stream_name(self, assembly_type: AssemblyTypes, arch: str):
+        major, _ = isolate_major_minor_in_group(self.group)
+        if major is None:
+            raise ValueError(f"Cannot determine major version from group name: {self.group}")
         go_arch_suffix = go_suffix_for_arch(arch)
-        return (
-            f'4-dev-preview{go_arch_suffix}' if assembly_type == AssemblyTypes.PREVIEW else f'4-stable{go_arch_suffix}'
-        )
+        if assembly_type == AssemblyTypes.PREVIEW:
+            return f'{major}-dev-preview{go_arch_suffix}'
+        return f'{major}-stable{go_arch_suffix}'
 
-    @staticmethod
-    def _get_image_stream_name(assembly_type: AssemblyTypes, arch: str):
+    def _get_image_stream_name(self, assembly_type: AssemblyTypes, arch: str):
+        major, _ = isolate_major_minor_in_group(self.group)
+        if major is None:
+            raise ValueError(f"Cannot determine major version from group name: {self.group}")
         go_arch_suffix = go_suffix_for_arch(arch)
-        return (
-            f'4-dev-preview{go_arch_suffix}' if assembly_type == AssemblyTypes.PREVIEW else f'release{go_arch_suffix}'
-        )
+        if assembly_type == AssemblyTypes.PREVIEW:
+            return f'{major}-dev-preview{go_arch_suffix}'
+        if major >= 5:
+            return f'release-{major}{go_arch_suffix}'
+        return f'release{go_arch_suffix}'
 
     def send_promote_complete_email(self, name, release_infos):
         content = "PullSpecs: \n"
