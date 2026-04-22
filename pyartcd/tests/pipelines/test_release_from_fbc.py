@@ -586,6 +586,96 @@ class TestExtraImageNvrsValidation(unittest.TestCase):
             self.assertNotIn("FBC builds", str(e))
 
 
+class TestSetShipmentMrReady(unittest.TestCase):
+    """Tests for ReleaseFromFbcPipeline.set_shipment_mr_ready()."""
+
+    def _make_pipeline(self, dry_run=False):
+        runtime = MagicMock()
+        runtime.dry_run = dry_run
+        runtime.working_dir = MagicMock()
+        runtime.working_dir.absolute.return_value = MagicMock()
+        runtime.config = {}
+
+        pipeline = ReleaseFromFbcPipeline(
+            runtime=runtime,
+            group="oadp-1.4",
+            assembly="1.4.5",
+            fbc_pullspecs=["quay.io/test/fbc:latest"],
+            create_mr=True,
+        )
+        pipeline.product = "oadp"
+        pipeline.shipment_mr_url = "https://gitlab.cee.redhat.com/test/repo/-/merge_requests/42"
+        return pipeline
+
+    @patch("asyncio.sleep", new_callable=AsyncMock)
+    def test_set_shipment_mr_ready_happy_path(self, mock_sleep):
+        """MR is marked ready, 30s sleep, pipeline triggered. Assert all three calls."""
+        pipeline = self._make_pipeline(dry_run=False)
+
+        mock_mr = MagicMock()
+        mock_gitlab = MagicMock()
+        mock_gitlab.set_mr_ready = AsyncMock(return_value=mock_mr)
+        mock_gitlab.trigger_ci_pipeline = AsyncMock(return_value="https://gitlab.cee.redhat.com/pipeline/123")
+        pipeline.__dict__["_gitlab"] = mock_gitlab
+
+        asyncio.run(pipeline.set_shipment_mr_ready())
+
+        mock_gitlab.set_mr_ready.assert_awaited_once_with(pipeline.shipment_mr_url)
+        mock_sleep.assert_awaited_once_with(30)
+        mock_gitlab.trigger_ci_pipeline.assert_awaited_once_with(mock_mr)
+
+    @patch("asyncio.sleep", new_callable=AsyncMock)
+    def test_set_shipment_mr_ready_dry_run(self, mock_sleep):
+        """dry_run=True. set_mr_ready is called but sleep and trigger_ci_pipeline are NOT called."""
+        pipeline = self._make_pipeline(dry_run=True)
+
+        mock_mr = MagicMock()
+        mock_gitlab = MagicMock()
+        mock_gitlab.set_mr_ready = AsyncMock(return_value=mock_mr)
+        mock_gitlab.trigger_ci_pipeline = AsyncMock()
+        pipeline.__dict__["_gitlab"] = mock_gitlab
+
+        asyncio.run(pipeline.set_shipment_mr_ready())
+
+        mock_gitlab.set_mr_ready.assert_awaited_once_with(pipeline.shipment_mr_url)
+        mock_sleep.assert_not_awaited()
+        mock_gitlab.trigger_ci_pipeline.assert_not_awaited()
+
+    @patch("asyncio.sleep", new_callable=AsyncMock)
+    def test_set_shipment_mr_ready_pipeline_trigger_fails(self, mock_sleep):
+        """trigger_ci_pipeline raises Exception. Assert it doesn't propagate (method catches it)."""
+        pipeline = self._make_pipeline(dry_run=False)
+
+        mock_mr = MagicMock()
+        mock_gitlab = MagicMock()
+        mock_gitlab.set_mr_ready = AsyncMock(return_value=mock_mr)
+        mock_gitlab.trigger_ci_pipeline = AsyncMock(side_effect=Exception("GitLab API error"))
+        pipeline.__dict__["_gitlab"] = mock_gitlab
+
+        # Should not raise
+        asyncio.run(pipeline.set_shipment_mr_ready())
+
+        mock_gitlab.set_mr_ready.assert_awaited_once_with(pipeline.shipment_mr_url)
+        mock_sleep.assert_awaited_once_with(30)
+        mock_gitlab.trigger_ci_pipeline.assert_awaited_once_with(mock_mr)
+
+    @patch("asyncio.sleep", new_callable=AsyncMock)
+    def test_set_shipment_mr_ready_mr_is_none(self, mock_sleep):
+        """set_mr_ready returns None. Assert sleep and trigger_ci_pipeline are NOT called."""
+        pipeline = self._make_pipeline(dry_run=False)
+
+        mock_gitlab = MagicMock()
+        mock_gitlab.set_mr_ready = AsyncMock(return_value=None)
+        mock_gitlab.trigger_ci_pipeline = AsyncMock()
+        pipeline.__dict__["_gitlab"] = mock_gitlab
+
+        asyncio.run(pipeline.set_shipment_mr_ready())
+
+        mock_gitlab.set_mr_ready.assert_awaited_once_with(pipeline.shipment_mr_url)
+        mock_sleep.assert_not_awaited()
+        mock_gitlab.trigger_ci_pipeline.assert_not_awaited()
+
+
 class TestCliValidation(unittest.TestCase):
     """Test CLI argument validation via CliRunner against the real Click command."""
 
