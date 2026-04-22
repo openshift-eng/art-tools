@@ -222,17 +222,13 @@ class RegistryConfig:
             cmd = f"oc --kubeconfig {self._kubeconfig} registry login --to={temp_path}"
             rc, _, stderr = exectools.cmd_gather(cmd)
             if rc != 0:
-                raise RuntimeError(
-                    f"Failed to run 'oc registry login' with kubeconfig '{self._kubeconfig}': {stderr}"
-                )
+                raise RuntimeError(f"Failed to run 'oc registry login' with kubeconfig '{self._kubeconfig}': {stderr}")
 
             with open(temp_path, encoding="utf-8") as f:
                 data = json.load(f)
 
             if not isinstance(data, dict) or "auths" not in data:
-                raise ValueError(
-                    f"oc registry login output missing 'auths' key. Expected Docker config.json format."
-                )
+                raise ValueError("oc registry login output missing 'auths' key. Expected Docker config.json format.")
 
             logger.info("Obtained CI registry credentials via kubeconfig '%s'", self._kubeconfig)
             return data["auths"]
