@@ -1,12 +1,8 @@
 reviewers:
-- sosiouxme
 - jupierce
-- thiagoalessio
 - joepvd
 - thegreyd
-- vfreex
 - locriandev
-- Ximinhan
 - ashwindasr
 - mbiarnes
 - lgarciaaco
@@ -16,21 +12,15 @@ reviewers:
 - pruan-rht
 - fgallott
 approvers:
-- sosiouxme
 - jupierce
-- thiagoalessio
 - joepvd
 - thegreyd
-- vfreex
 - locriandev
-- Ximinhan
 - ashwindasr
-- mbiarnes
-- lgarciaaco
-- rayfordj
-- fbladilo
-- adobes1
-- pruan-rht
-- fgallott
+emeritus_approvers:
+- sosiouxme
+- thiagoalessio
+- vfreex
+- Ximinhan
 # this is to keep automation from complaining about ownership of base image builds
 component: Release
