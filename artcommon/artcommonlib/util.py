@@ -39,6 +39,10 @@ LOGGER = logging.getLogger(__name__)
 KONFLUX_LOGGER = logutil.get_logger(__name__)
 
 
+def is_ocp_delivery_repo(name: str) -> bool:
+    return name.startswith(("openshift4/", "openshift5/"))
+
+
 def get_utc_now_formatted_str(microseconds: bool = False):
     return datetime.now(tz=timezone.utc).strftime("%Y%m%d%H%M%S%f" if microseconds else "%Y%m%d%H%M%S")
 

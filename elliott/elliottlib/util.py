@@ -21,7 +21,7 @@ from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord
 from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.logutil import get_logger
 from artcommonlib.oc_image_info import oc_image_info__cached_async
-from artcommonlib.util import extract_related_images_from_fbc
+from artcommonlib.util import extract_related_images_from_fbc, is_ocp_delivery_repo
 from errata_tool import Erratum
 
 from elliottlib import brew, constants
@@ -223,6 +223,16 @@ def get_component_by_delivery_repo(runtime, delivery_repo_name: str) -> Optional
         if _strip(delivery_repo_name) in [_strip(r) for r in image.config.delivery.delivery_repo_names]:
             return image.get_component_name()
     return None
+
+
+def normalize_component_by_ocp_delivery_repo(runtime, component_or_delivery_repo_name: str) -> str:
+    """Translate delivery repo names to component names when possible.
+
+    Returns the original value when it doesn't look like a delivery repo or when no mapping is found.
+    """
+    if not is_ocp_delivery_repo(component_or_delivery_repo_name):
+        return component_or_delivery_repo_name
+    return get_component_by_delivery_repo(runtime, component_or_delivery_repo_name) or component_or_delivery_repo_name
 
 
 def get_golang_version_from_log(log, log_url):

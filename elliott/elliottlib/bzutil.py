@@ -19,6 +19,7 @@ import requests
 from artcommonlib import logutil
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.jira_config import JIRA_EMAIL
+from artcommonlib.util import is_ocp_delivery_repo
 from errata_tool import Erratum
 from errata_tool.bug import Bug as ErrataBug
 from errata_tool.jira_issue import JiraIssue as ErrataJira
@@ -30,7 +31,11 @@ from elliottlib import constants, errata, exceptions
 from elliottlib.cli import cli_opts
 from elliottlib.errata_async import AsyncErrataAPI
 from elliottlib.metadata import Metadata
-from elliottlib.util import chunk, get_component_by_delivery_repo, isolate_timestamp_in_release
+from elliottlib.util import (
+    chunk,
+    get_component_by_delivery_repo,
+    isolate_timestamp_in_release,
+)
 
 logger = logutil.get_logger(__name__)
 
@@ -1630,7 +1635,7 @@ def get_cve_unfixed_components(runtime, cve_alias: str) -> Dict:
 
             # is it a delivery repo?
             # if it is then we need to match the delivery repo name to component name
-            if "openshift4/" in pkg_name:
+            if is_ocp_delivery_repo(pkg_name):
                 comp_name = get_component_by_delivery_repo(runtime, pkg_name)
                 if not comp_name:
                     logger.warning(

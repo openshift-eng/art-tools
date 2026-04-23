@@ -1,10 +1,10 @@
 import traceback
 import unittest
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import elliottlib.cli.find_bugs_sweep_cli as sweep_cli
 from click.testing import CliRunner
-from elliottlib import errata
+from elliottlib import constants, errata
 from elliottlib.bzutil import JIRABugTracker
 from elliottlib.cli.common import Runtime, cli
 from elliottlib.cli.find_bugs_sweep_cli import (
@@ -41,6 +41,106 @@ class TestFindBugsMode(unittest.TestCase):
 
 
 class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
+    def test_filter_art_managed_jira_trackers(self):
+        runtime = MagicMock()
+        payload_image = MagicMock(is_payload=True)
+        payload_image.get_component_name.return_value = "payload-container"
+        non_payload_image = MagicMock(is_payload=False)
+        non_payload_image.get_component_name.return_value = "non-payload-container"
+        runtime.image_metas.return_value = [payload_image, non_payload_image]
+
+        non_tracker = flexmock(id="OCPBUGS-0", is_tracker_bug=lambda: False)
+        payload_tracker = flexmock(
+            id="OCPBUGS-1", is_tracker_bug=lambda: True, whiteboard_component="payload-container"
+        )
+        non_payload_tracker = flexmock(
+            id="OCPBUGS-2", is_tracker_bug=lambda: True, whiteboard_component="non-payload-container"
+        )
+        filtered_image_tracker = flexmock(
+            id="OCPBUGS-7", is_tracker_bug=lambda: True, whiteboard_component="unmanaged-container"
+        )
+        rpm_tracker = flexmock(id="OCPBUGS-3", is_tracker_bug=lambda: True, whiteboard_component="openshift-clients")
+        rhcos_tracker = flexmock(id="OCPBUGS-4", is_tracker_bug=lambda: True, whiteboard_component="rhcos")
+        builder_tracker = flexmock(
+            id="OCPBUGS-5",
+            is_tracker_bug=lambda: True,
+            whiteboard_component=constants.GOLANG_BUILDER_CVE_COMPONENT,
+        )
+        delivery_repo_tracker = flexmock(
+            id="OCPBUGS-6", is_tracker_bug=lambda: True, whiteboard_component="openshift5/payload-image-rhel9"
+        )
+
+        with patch.object(
+            sweep_cli,
+            "normalize_component_by_ocp_delivery_repo",
+            side_effect=lambda runtime, name: "payload-container" if name.startswith("openshift5/") else name,
+        ):
+            actual = sweep_cli.filter_art_managed_jira_trackers(
+                runtime,
+                [
+                    non_tracker,
+                    payload_tracker,
+                    non_payload_tracker,
+                    filtered_image_tracker,
+                    rpm_tracker,
+                    rhcos_tracker,
+                    builder_tracker,
+                    delivery_repo_tracker,
+                ],
+            )
+
+        self.assertEqual(
+            [bug.id for bug in actual],
+            ["OCPBUGS-0", "OCPBUGS-1", "OCPBUGS-2", "OCPBUGS-3", "OCPBUGS-4", "OCPBUGS-5", "OCPBUGS-6"],
+        )
+
+    def test_filter_art_managed_jira_trackers_requires_whiteboard_component(self):
+        runtime = MagicMock()
+        image_meta = MagicMock()
+        image_meta.get_component_name.return_value = "payload-container"
+        runtime.image_metas.return_value = [image_meta]
+        bug = flexmock(id="OCPBUGS-1", is_tracker_bug=lambda: True, whiteboard_component=None)
+
+        with self.assertRaisesRegex(ValueError, "doesn't have a valid whiteboard component"):
+            sweep_cli.filter_art_managed_jira_trackers(runtime, [bug])
+
+    def test_filter_art_managed_jira_trackers_filters_unmapped_delivery_repo(self):
+        runtime = MagicMock()
+        payload_image = MagicMock()
+        payload_image.get_component_name.return_value = "payload-container"
+        runtime.image_metas.return_value = [payload_image]
+
+        tracker = flexmock(
+            id="OCPBUGS-8",
+            is_tracker_bug=lambda: True,
+            whiteboard_component="openshift5/unmapped-image-rhel9",
+        )
+
+        with patch.object(
+            sweep_cli,
+            "normalize_component_by_ocp_delivery_repo",
+            side_effect=lambda runtime, name: name,
+        ):
+            actual = sweep_cli.filter_art_managed_jira_trackers(runtime, [tracker])
+
+        self.assertEqual(actual, [])
+
+    @patch("elliottlib.cli.find_bugs_sweep_cli.get_assembly_bug_ids", return_value=(set(), set()))
+    @patch("elliottlib.cli.find_bugs_sweep_cli.get_sweep_cutoff_timestamp", new_callable=AsyncMock, return_value=0)
+    async def test_get_bugs_sweep_opt_out_skips_art_managed_filter(self, *_):
+        runtime = MagicMock(debug=False)
+        bug = flexmock(id="OCPBUGS-1")
+        find_bugs_obj = sweep_cli.FindBugsSweep(art_managed_trackers_only=False)
+        find_bugs_obj.search = Mock(return_value=[bug])
+        bug_tracker = MagicMock(type="jira")
+        bug_tracker.filter_attached_bugs = AsyncMock(return_value=[])
+
+        with patch.object(sweep_cli, "filter_art_managed_jira_trackers") as filter_mock:
+            actual = await sweep_cli.get_bugs_sweep(runtime, find_bugs_obj, bug_tracker)
+
+        self.assertEqual(actual, [bug])
+        filter_mock.assert_not_called()
+
     @patch('elliottlib.bzutil.JIRABugTracker.filter_attached_bugs')
     @patch('elliottlib.cli.find_bugs_sweep_cli.FindBugsSweep.search')
     def test_find_bugs_sweep_report_jira(self, search_mock, jira_filter_mock):
@@ -70,7 +170,9 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
         search_mock.return_value = [jira_bug]
         jira_filter_mock.return_value = []
 
-        result = runner.invoke(cli, ['-g', 'openshift-4.6', 'find-bugs:sweep', '--report'])
+        result = runner.invoke(
+            cli, ['-g', 'openshift-4.6', 'find-bugs:sweep', '--no-art-managed-trackers-only', '--report']
+        )
         if result.exit_code != 0:
             exc_type, exc_value, exc_traceback = result.exc_info
             t = "\n".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
@@ -97,7 +199,10 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
         flexmock(sweep_cli).should_receive("get_assembly_bug_ids").and_return(set(), set())
         flexmock(Runtime).should_receive("get_default_advisories").and_return({})
 
-        result = runner.invoke(cli, ['-g', 'openshift-4.6', '--assembly', '4.6.52', 'find-bugs:sweep'])
+        result = runner.invoke(
+            cli,
+            ['-g', 'openshift-4.6', '--assembly', '4.6.52', 'find-bugs:sweep', '--no-art-managed-trackers-only'],
+        )
         if result.exit_code != 0:
             exc_type, exc_value, exc_traceback = result.exc_info
             t = "\n".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
@@ -134,7 +239,10 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
         )
         jira_filter_mock.return_value = []
 
-        result = runner.invoke(cli, ['-g', 'openshift-4.6', 'find-bugs:sweep', '--add', str(advisory_id)])
+        result = runner.invoke(
+            cli,
+            ['-g', 'openshift-4.6', 'find-bugs:sweep', '--no-art-managed-trackers-only', '--add', str(advisory_id)],
+        )
         if result.exit_code != 0:
             exc_type, exc_value, exc_traceback = result.exc_info
             t = "\n".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
@@ -165,7 +273,17 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
             [b.id for b in bugs], advisory_id=123, noop=False, verbose=False
         )
 
-        result = runner.invoke(cli, ['-g', 'openshift-4.6', 'find-bugs:sweep', '--use-default-advisory', 'image'])
+        result = runner.invoke(
+            cli,
+            [
+                '-g',
+                'openshift-4.6',
+                'find-bugs:sweep',
+                '--no-art-managed-trackers-only',
+                '--use-default-advisory',
+                'image',
+            ],
+        )
         if result.exit_code != 0:
             exc_type, exc_value, exc_traceback = result.exc_info
             t = "\n".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
@@ -204,7 +322,16 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
         flexmock(JIRABugTracker).should_receive("attach_bugs").times(3).and_return()
         jira_filter_mock.return_value = []
 
-        result = runner.invoke(cli, ['-g', 'openshift-4.6', 'find-bugs:sweep', '--into-default-advisories'])
+        result = runner.invoke(
+            cli,
+            [
+                '-g',
+                'openshift-4.6',
+                'find-bugs:sweep',
+                '--no-art-managed-trackers-only',
+                '--into-default-advisories',
+            ],
+        )
         if result.exit_code != 0:
             exc_type, exc_value, exc_traceback = result.exc_info
             t = "\n".join(traceback.format_exception(exc_type, exc_value, exc_traceback))

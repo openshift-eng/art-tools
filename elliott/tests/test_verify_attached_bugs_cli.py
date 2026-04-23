@@ -25,7 +25,7 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
 
     def test_verify_bugs_skip_blocking_bugs_for_prerelease(self):
         runner = CliRunner()
-        flexmock(Runtime).should_receive("initialize")
+        flexmock(Runtime).should_receive("initialize").with_args(mode="images")
         flexmock(Runtime).should_receive("get_errata_config").and_return({})
         flexmock(Runtime).should_receive("get_major_minor").and_return((4, 6))
         flexmock(Runtime).should_receive("is_version_in_lifecycle_phase").and_return(False)
@@ -66,7 +66,7 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
     @patch('elliottlib.cli.verify_attached_bugs_cli.is_release_next_week', return_value=True)
     def test_verify_bugs_with_sweep_cli(self, *_):
         runner = CliRunner()
-        flexmock(Runtime).should_receive("initialize")
+        flexmock(Runtime).should_receive("initialize").with_args(mode="images")
         flexmock(Runtime).should_receive("get_errata_config").and_return({})
         flexmock(Runtime).should_receive("get_major_minor").and_return((4, 6))
         flexmock(Runtime).should_receive("is_version_in_lifecycle_phase").and_return(True)
@@ -136,7 +136,7 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
     @patch('elliottlib.cli.verify_attached_bugs_cli.is_release_next_week', return_value=True)
     def test_verify_attached_bugs_cli_fail(self, *_):
         runner = CliRunner()
-        flexmock(Runtime).should_receive("initialize")
+        flexmock(Runtime).should_receive("initialize").with_args(mode="images")
         flexmock(Runtime).should_receive("get_errata_config").and_return({})
         flexmock(Runtime).should_receive("get_major_minor").and_return((4, 6))
         flexmock(Runtime).should_receive("is_version_in_lifecycle_phase").and_return(True)
@@ -219,7 +219,7 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
     @patch('elliottlib.errata_async.AsyncErrataAPI._generate_auth_header')
     def test_verify_attached_bugs_cli_fail_on_type(self, *_):
         runner = CliRunner()
-        flexmock(Runtime).should_receive("initialize")
+        flexmock(Runtime).should_receive("initialize").with_args(mode="images")
         flexmock(Runtime).should_receive("get_errata_config").and_return({})
         flexmock(Runtime).should_receive("get_major_minor").and_return((4, 6))
         flexmock(JIRABugTracker).should_receive("get_config").and_return(

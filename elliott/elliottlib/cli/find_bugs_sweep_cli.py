@@ -8,7 +8,7 @@ from artcommonlib import arch_util, logutil
 from artcommonlib.assembly import assembly_config_struct, assembly_issues_config
 from artcommonlib.format_util import green_print
 from artcommonlib.rpm_utils import parse_nvr
-from artcommonlib.util import new_roundtrip_yaml_handler
+from artcommonlib.util import is_ocp_delivery_repo, new_roundtrip_yaml_handler
 
 from elliottlib import Runtime, bzutil, constants, errata
 from elliottlib.bzutil import Bug, BugTracker, JIRABug
@@ -16,7 +16,7 @@ from elliottlib.cli import common
 from elliottlib.cli.common import click_coroutine
 from elliottlib.exceptions import ElliottFatalError
 from elliottlib.shipment_utils import get_builds_from_mr
-from elliottlib.util import chunk, get_component_by_delivery_repo
+from elliottlib.util import chunk, normalize_component_by_ocp_delivery_repo
 
 logger = logutil.get_logger(__name__)
 type_bug_list = List[Bug]
@@ -25,9 +25,10 @@ yaml = new_roundtrip_yaml_handler()
 
 
 class FindBugsMode:
-    def __init__(self, status: List, cve_only: bool = False):
+    def __init__(self, status: List, cve_only: bool = False, art_managed_trackers_only: bool = False):
         self.status = set(status)
         self.cve_only = cve_only
+        self.art_managed_trackers_only = art_managed_trackers_only
 
     def include_status(self, status: List):
         self.status |= set(status)
@@ -44,10 +45,64 @@ class FindBugsMode:
 
 
 class FindBugsSweep(FindBugsMode):
-    def __init__(self, cve_only: bool = False):
+    def __init__(self, cve_only: bool = False, art_managed_trackers_only: bool = True):
         # Policy document: https://docs.google.com/document/d/1RkyN1hp1_mUqeks0kVzPscDeZVo-RDCYCTq6VLNB9i4/edit?tab=t.0#heading=h.m52kbuqe0dss
         # Accordingly, ART only sweeps VERIFIED by default.
-        super().__init__(status={'VERIFIED'}, cve_only=cve_only)
+        super().__init__(status={'VERIFIED'}, cve_only=cve_only, art_managed_trackers_only=art_managed_trackers_only)
+
+
+def get_art_managed_image_components(runtime: Runtime) -> Set[str]:
+    image_metas = runtime.image_metas()
+    if not image_metas:
+        raise ValueError("No image metas found. Forgot to initialize runtime with mode='images' or mode='both'?")
+    return {image_meta.get_component_name() for image_meta in image_metas}
+
+
+def filter_art_managed_jira_trackers(
+    runtime: Runtime, bugs: type_bug_list, bug_tracker_type: str = "jira"
+) -> type_bug_list:
+    if bug_tracker_type != "jira" or not bugs:
+        return list(bugs)
+
+    logger.info("Validating ART-managed image tracker bugs against image metadata")
+
+    non_trackers = [bug for bug in bugs if not bug.is_tracker_bug()]
+    trackers = [bug for bug in bugs if bug.is_tracker_bug()]
+    if not trackers:
+        return list(bugs)
+
+    art_managed_image_components = get_art_managed_image_components(runtime)
+    art_trackers: type_bug_list = []
+    non_art_trackers = []
+
+    for bug in trackers:
+        if not bug.whiteboard_component:
+            raise ValueError(f"Bug {bug.id} doesn't have a valid whiteboard component.")
+
+        original_component = bug.whiteboard_component
+        normalized_component = normalize_component_by_ocp_delivery_repo(runtime, original_component)
+        is_image_tracker = (
+            original_component.endswith("-container")
+            or is_ocp_delivery_repo(original_component)
+            or normalized_component.endswith("-container")
+        )
+        if not is_image_tracker:
+            art_trackers.append(bug)
+            continue
+
+        if (
+            normalized_component == constants.GOLANG_BUILDER_CVE_COMPONENT
+            or normalized_component in art_managed_image_components
+        ):
+            art_trackers.append(bug)
+            continue
+
+        non_art_trackers.append((bug.id, bug.whiteboard_component))
+
+    if non_art_trackers:
+        logger.info("Filtered %s non-ART-managed image tracker bugs: %s", len(non_art_trackers), non_art_trackers)
+
+    return non_trackers + art_trackers
 
 
 @common.cli.command("find-bugs:sweep", short_help="Sweep qualified bugs into advisories")
@@ -87,6 +142,11 @@ class FindBugsSweep(FindBugsMode):
     '"extras" instead of the default "image", bugs filtered into "none" are not attached at all.',
 )
 @click.option("--cve-only", is_flag=True, help="Only find CVE trackers")
+@click.option(
+    "--art-managed-trackers-only/--no-art-managed-trackers-only",
+    default=True,
+    help="Filter image component CVE trackers to ART-managed images only",
+)
 @click.option("--advance-release", is_flag=True, help="If the release contains an advance advisory")
 @click.option(
     "--permissive",
@@ -108,6 +168,7 @@ async def find_bugs_sweep_cli(
     output,
     into_default_advisories,
     cve_only,
+    art_managed_trackers_only,
     advance_release,
     permissive,
     noop,
@@ -151,7 +212,7 @@ async def find_bugs_sweep_cli(
         raise click.BadParameter("Do not use find-bugs:sweep with --build-system=konflux, instead use find-bugs")
 
     runtime.initialize(mode="both")
-    find_bugs_obj = FindBugsSweep(cve_only=cve_only)
+    find_bugs_obj = FindBugsSweep(cve_only=cve_only, art_managed_trackers_only=art_managed_trackers_only)
     find_bugs_obj.include_status(include_status)
     find_bugs_obj.exclude_status(exclude_status)
 
@@ -212,6 +273,9 @@ async def get_bugs_sweep(runtime: Runtime, find_bugs_obj, bug_tracker):
             logger.debug(f"Bugs attached to other advisories: {sorted(attached_bug_ids)}")
             bugs = [b for b in bugs if b.id not in attached_bug_ids]
             logger.info(f"Filtered {len(attached_bugs)} bugs since they are attached to other advisories")
+
+        if find_bugs_obj.art_managed_trackers_only:
+            bugs = filter_art_managed_jira_trackers(runtime, bugs, bug_tracker_type=bug_tracker.type)
 
     included_bug_ids, excluded_bug_ids = get_assembly_bug_ids(runtime, bug_tracker_type=bug_tracker.type)
     if included_bug_ids & excluded_bug_ids:
@@ -509,8 +573,7 @@ def categorize_bugs_by_type(
 
         for bug in tracker_bugs:
             package_name = bug.whiteboard_component
-            if "openshift4/" in package_name:
-                package_name = get_component_by_delivery_repo(runtime, package_name)
+            package_name = normalize_component_by_ocp_delivery_repo(runtime, package_name)
             if kind == "microshift" and package_name == "microshift" and len(packages) == 0:
                 # microshift is special since it has a separate advisory, and it's build is attached
                 # after payload is promoted. So do not pre-emptively complain
@@ -541,7 +604,7 @@ def categorize_bugs_by_type(
         )
 
     def _is_image_component(component: str) -> bool:
-        return component.endswith("-container") or "openshift4/" in component
+        return component.endswith("-container") or is_ocp_delivery_repo(component)
 
     not_found = set(tracker_bugs) - found
     if not_found:
