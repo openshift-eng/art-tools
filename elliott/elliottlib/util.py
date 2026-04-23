@@ -21,7 +21,7 @@ from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord
 from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.logutil import get_logger
 from artcommonlib.oc_image_info import oc_image_info__cached_async
-from artcommonlib.util import extract_related_images_from_fbc
+from artcommonlib.util import extract_related_images_from_fbc, is_ocp_delivery_repo
 from errata_tool import Erratum
 
 from elliottlib import brew, constants
@@ -206,10 +206,6 @@ def minor_version_tuple(bz_target):
 
     match = re.match(r'^(\d+).(\d+)(.0|.z)?$', bz_target)
     return int(match.groups()[0]), int(match.groups()[1])
-
-
-def is_ocp_delivery_repo(name: str) -> bool:
-    return name.startswith(("openshift4/", "openshift5/"))
 
 
 def get_component_by_delivery_repo(runtime, delivery_repo_name: str) -> Optional[str]:
