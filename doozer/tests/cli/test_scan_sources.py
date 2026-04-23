@@ -110,3 +110,28 @@ class TestScanSourcesCli(IsolatedAsyncioTestCase):
         broken_image.does_image_need_change.assert_not_called()
         good_image.ensure_canonical_builders_resolved.assert_called()
         good_image.does_image_need_change.assert_awaited_once()
+
+    def test_skip_image_removes_broken_image_from_change_tracking(self):
+        broken_image = MagicMock()
+        broken_image.distgit_key = "broken-image"
+        broken_image.qualified_key = "images:broken-image"
+        broken_image.get_descendants.return_value = set()
+
+        good_image = MagicMock()
+        good_image.distgit_key = "good-image"
+        good_image.qualified_key = "images:good-image"
+        good_image.get_descendants.return_value = {broken_image}
+
+        runtime = MagicMock()
+        runtime.rpm_metas.return_value = []
+        runtime.image_metas.return_value = [broken_image, good_image]
+
+        scanner = ConfigScanSources(runtime, "dummy", False)
+        scanner.add_image_meta_change(broken_image, RebuildHint(RebuildHintCode.CONFIG_CHANGE, "broken"))
+
+        self.assertEqual({meta.distgit_key for meta in scanner.changing_image_metas}, {"broken-image"})
+
+        scanner._skip_image(broken_image, "broken")
+        scanner.add_image_meta_change(good_image, RebuildHint(RebuildHintCode.ANCESTOR_CHANGING, "good"))
+
+        self.assertEqual({meta.distgit_key for meta in scanner.changing_image_metas}, {"good-image"})

@@ -10,7 +10,7 @@ from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord
 from artcommonlib.model import Missing
 from doozerlib.cli.scan_sources_konflux import ConfigScanSources
 from doozerlib.image import ImageMetadata
-from doozerlib.metadata import RebuildHintCode
+from doozerlib.metadata import RebuildHint, RebuildHintCode
 from doozerlib.runtime import Runtime
 
 
@@ -123,6 +123,29 @@ class TestMinimalCrashIsolation(TestScanSourcesKonflux):
             self.scanner.issues,
             [{'name': 'test-image', 'issue': 'Failed scanning image during upstream commit checks: boom'}],
         )
+
+    def test_skip_image_removes_broken_image_from_change_tracking(self):
+        broken_image = MagicMock(spec=ImageMetadata)
+        broken_image.distgit_key = "broken-image"
+        broken_image.qualified_key = "images:broken-image"
+        broken_image.get_descendants.return_value = set()
+
+        good_image = MagicMock(spec=ImageMetadata)
+        good_image.distgit_key = "good-image"
+        good_image.qualified_key = "images:good-image"
+        good_image.get_descendants.return_value = [broken_image]
+
+        broken_key = f"{broken_image.qualified_key}+True"
+        self.scanner.changing_image_names.add("broken-image")
+        self.scanner.assessment_reason[broken_key] = "broken"
+        self.scanner.assessment_code[broken_key] = RebuildHintCode.CONFIG_CHANGE
+
+        self.scanner._skip_image(broken_image, "broken")
+        self.scanner.add_image_meta_change(good_image, RebuildHint(RebuildHintCode.ANCESTOR_CHANGING, "good"))
+
+        self.assertEqual(self.scanner.changing_image_names, {"good-image"})
+        self.assertNotIn(broken_key, self.scanner.assessment_reason)
+        self.assertNotIn(broken_key, self.scanner.assessment_code)
 
     @patch('doozerlib.cli.scan_sources_konflux.Dir')
     @patch('doozerlib.cli.scan_sources_konflux.exectools.parallel_exec')

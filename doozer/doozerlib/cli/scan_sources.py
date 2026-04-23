@@ -89,6 +89,11 @@ class ConfigScanSources:
         if image_meta.distgit_key in self.skipped_image_dgks:
             return
         self.skipped_image_dgks.add(image_meta.distgit_key)
+        self.changing_image_metas = {
+            meta for meta in self.changing_image_metas if meta.distgit_key != image_meta.distgit_key
+        }
+        qualified_key = getattr(image_meta, "qualified_key", image_meta.distgit_key)
+        self.assessment_reason.pop(f'{qualified_key}+True', None)
         self.runtime.logger.warning("[%s] %s", image_meta.distgit_key, issue)
         self.issues.append({"name": image_meta.distgit_key, "issue": issue})
 
@@ -590,9 +595,13 @@ class ConfigScanSources:
             self.assessment_reason[key] = rebuild_hint.reason
 
     def add_image_meta_change(self, meta: ImageMetadata, rebuild_hint: RebuildHint):
+        if meta.distgit_key in self.skipped_image_dgks:
+            return
         self.changing_image_metas.add(meta)
         self.add_assessment_reason(meta, rebuild_hint)
         for descendant_meta in meta.get_descendants():
+            if descendant_meta.distgit_key in self.skipped_image_dgks:
+                continue
             self.changing_image_metas.add(descendant_meta)
             self.add_assessment_reason(
                 descendant_meta,
@@ -601,9 +610,13 @@ class ConfigScanSources:
 
     async def generate_report(self):
         image_results = []
-        changing_image_dgks = [meta.distgit_key for meta in self.changing_image_metas]
+        changing_image_dgks = {
+            meta.distgit_key for meta in self.changing_image_metas if meta.distgit_key not in self.skipped_image_dgks
+        }
         for image_meta in self.all_image_metas:
             dgk = image_meta.distgit_key
+            if dgk in self.skipped_image_dgks:
+                continue
             is_changing = dgk in changing_image_dgks
             if is_changing:
                 image_results.append(

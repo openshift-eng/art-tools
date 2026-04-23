@@ -111,6 +111,10 @@ class ConfigScanSources:
         if image_meta.distgit_key in self.skipped_image_names:
             return
         self.skipped_image_names.add(image_meta.distgit_key)
+        self.changing_image_names.discard(image_meta.distgit_key)
+        qualified_key = getattr(image_meta, "qualified_key", image_meta.distgit_key)
+        self.assessment_reason.pop(f'{qualified_key}+True', None)
+        self.assessment_code.pop(f'{qualified_key}+True', None)
         self.logger.warning("[%s] %s", image_meta.distgit_key, issue)
         self.issues.append({'name': image_meta.distgit_key, 'issue': issue})
 
@@ -1582,6 +1586,8 @@ class ConfigScanSources:
             self.assessment_code[key] = rebuild_hint.code
 
     def add_image_meta_change(self, meta: ImageMetadata, rebuild_hint: RebuildHint):
+        if meta.distgit_key in self.skipped_image_names:
+            return
         # If the rebuild hint does not require a rebuild, do nothing
         if not rebuild_hint.rebuild:
             return
@@ -1591,6 +1597,8 @@ class ConfigScanSources:
 
         # Mark all descendants for rebuild, so to prevent redundant scans
         for descendant_meta in meta.get_descendants():
+            if descendant_meta.distgit_key in self.skipped_image_names:
+                continue
             self.changing_image_names.add(descendant_meta.distgit_key)
             self.add_assessment_reason(
                 descendant_meta,
@@ -1785,7 +1793,10 @@ class ConfigScanSources:
 
         # Filter out images that are disabled or wip at the konflux level
         changing_image_names = list(
-            filter(lambda image_name: self.is_image_enabled(image_name), self.changing_image_names)
+            filter(
+                lambda image_name: image_name not in self.skipped_image_names and self.is_image_enabled(image_name),
+                self.changing_image_names,
+            )
         )
 
         # For non-openshift groups (layered products like oadp-1.4), find images
@@ -1798,6 +1809,8 @@ class ConfigScanSources:
 
         for image_meta in self.all_image_metas:
             dgk = image_meta.distgit_key
+            if dgk in self.skipped_image_names:
+                continue
             is_changing = dgk in changing_image_names
             if is_changing:
                 key = f'{image_meta.qualified_key}+{is_changing}'

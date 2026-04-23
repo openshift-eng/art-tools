@@ -489,7 +489,13 @@ class ImageDistGitRepo(DistGitRepo):
             # If the image is distgit-only, this logic does not apply
             if self.has_source():
                 attempted_resolution = True
-                source_path = self.runtime.source_resolver.resolve_source(self.metadata).source_path
+                source_resolution = self.runtime.source_resolver.resolve_source(self.metadata)
+                source_path = getattr(source_resolution, "source_path", None) if source_resolution else None
+                if not source_path:
+                    raise IOError(
+                        f'[{self.metadata.distgit_key}] canonical_builders_from_upstream is enabled but '
+                        'source could not be resolved. Cannot determine upstream RHEL version.'
+                    )
                 self.art_intended_el_version = self._determine_art_rhel_version()
                 self.upstream_intended_el_version = self._determine_upstream_rhel_version(source_path)
             # To match upstream, we need to be able to infer upstream intended RHEL version
@@ -1846,14 +1852,16 @@ class ImageDistGitRepo(DistGitRepo):
 
     def _determine_upstream_rhel_version(self, source_path) -> Optional[int]:
         """
-        The upstream indended RHEL version is obtained from the last build layer as defined in the Dockerfile.
+        Determine the upstream intended RHEL version from upstream Dockerfile parents.
 
-        Given a pullspec such as registry.ci.openshift.org/ocp/4.15:base-rhel9, use "oc image info" and Brew API
-        to determine the RHEL version. Use an in-memory caching mechanism to store the pullspec/rhel version pair
-        within the same Doozer execution.
+        Uses the same parent-selection rule as ImageMetadata canonical-builder
+        resolution so scan-time config resolution and the distgit path derive
+        the same upstream RHEL version for multi-stage Dockerfiles.
 
         Return either an integer representing the RHEL major version, or None if something went wrong.
         """
+        from doozerlib.image import determine_builder_info_from_parent_images
+
         df_name = self.config.content.source.dockerfile
         if not df_name:
             df_name = 'Dockerfile'
@@ -1868,15 +1876,7 @@ class ImageDistGitRepo(DistGitRepo):
                 dfp = DockerfileParser(fileobj=f)
                 parent_images = dfp.parent_images
 
-            # We will infer the rhel version from the last build layer in the upstream Dockerfile
-            last_layer_pullspec = parent_images[-1]
-            image_labels = util.oc_image_info_for_arch(last_layer_pullspec)['config']['config']['Labels']
-            if 'version' not in image_labels or 'release' not in image_labels:
-                # This does not appear to be a brew image. We can't determine RHEL.
-                return None
-
-            bbii = BrewBuildRecordInspector(self.runtime, last_layer_pullspec)
-            version = bbii.get_rhel_base_version()
+            version, _ = determine_builder_info_from_parent_images(parent_images)
 
         except Exception as e:
             # Swallow exception as this is not fatal. We just can't determine the
