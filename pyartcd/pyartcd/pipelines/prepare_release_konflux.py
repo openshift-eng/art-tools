@@ -21,13 +21,17 @@ import click
 import semver
 from artcommonlib import exectools
 from artcommonlib.assembly import AssemblyTypes, assembly_config_struct, assembly_group_config
-from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
+from artcommonlib.constants import (
+    REGISTRY_QUAY_OCP_RELEASE_DEV,
+    SHIPMENT_DATA_URL_TEMPLATE,
+)
 from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.gitlab import GitLabClient
 from artcommonlib.jira_config import JIRA_EMAIL
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBundleBuildRecord
 from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.model import Model
+from artcommonlib.registry_config import RegistryConfig
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import convert_remote_git_to_ssh, new_roundtrip_yaml_handler
 from doozerlib.backend.konflux_client import API_VERSION, KIND_SNAPSHOT
@@ -216,6 +220,36 @@ class PrepareReleaseKonfluxPipeline:
     async def run(self):
         await self.initialize()
 
+        quay_auth_file = os.getenv('QUAY_AUTH_FILE')
+        if not quay_auth_file:
+            raise ValueError(
+                "QUAY_AUTH_FILE environment variable is required but not set. "
+                "Ensure Jenkins credentials are properly bound."
+            )
+
+        source_files = [quay_auth_file]
+        redhat_registry_auth_file = os.getenv('KONFLUX_OPERATOR_INDEX_AUTH_FILE')
+        if redhat_registry_auth_file:
+            source_files.append(redhat_registry_auth_file)
+
+        with RegistryConfig(
+            kubeconfig=os.environ.get('KUBECONFIG'),
+            source_files=source_files,
+            registries=[
+                REGISTRY_QUAY_OCP_RELEASE_DEV,
+            ],
+        ) as global_auth_file:
+            self._elliott_base_command.append(f'--registry-config={global_auth_file}')
+            self._doozer_base_command.append(f'--registry-config={global_auth_file}')
+
+            self.logger.info(
+                f'Set registry auth file={global_auth_file} for pipeline operations '
+                f'(cherry-picked from {len(source_files)} source file(s))'
+            )
+
+            await self._run_pipeline()
+
+    async def _run_pipeline(self):
         # Check advisory stage policy early for fail-fast behavior
         await self.check_advisory_stage_policy(self.assembly_type)
 
