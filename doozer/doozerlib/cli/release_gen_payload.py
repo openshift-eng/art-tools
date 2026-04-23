@@ -1435,8 +1435,9 @@ class GenPayloadCli:
                 'login',
                 '--registry',
                 'quay.io/redhat-user-workloads',
-                f'--registry-config={self.runtime.registry_config}',
             ]
+            if self.runtime.registry_config:
+                cmd.append(f'--registry-config={self.runtime.registry_config}')
             await exectools.cmd_assert_async(cmd)
 
         for payload_entry in payload_entries.values():
@@ -1477,7 +1478,7 @@ class GenPayloadCli:
                     '--continue-on-error',
                     f'--filename={str(src_dest_path)}',
                 ]
-                if self.runtime.build_system == 'konflux':
+                if self.runtime.build_system == 'konflux' and self.runtime.registry_config:
                     cmd.append(f'--registry-config={self.runtime.registry_config}')
                 await asyncio.wait_for(exectools.cmd_assert_async(cmd), timeout=7200)
 
