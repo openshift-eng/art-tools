@@ -918,6 +918,51 @@ RUN echo "test"
     @patch('doozerlib.image.SourceResolver')
     @patch('builtins.open', create=True)
     @patch('pathlib.Path.joinpath')
+    @patch('doozerlib.image.util.oc_image_info_for_arch', return_value={'config': {'config': {'Labels': {}}}})
+    def test_determine_upstream_rhel_version_skips_compat_builder(
+        self, mock_oc_image_info, mock_joinpath, mock_open, mock_source_resolver
+    ):
+        """Test that primary rhel-9 builder is detected over a rhel-8 compatibility builder"""
+        extract_builder_info_from_pullspec.cache_clear()
+        metadata = self._create_image_metadata('openshift/ose-ovn-kubernetes-rhel9')
+
+        metadata.config = Model(
+            {
+                'name': 'openshift/ose-ovn-kubernetes-rhel9',
+                'distgit': {'branch': 'rhaos-5.0-rhel-9'},
+                'content': {'source': {'git': {'url': 'https://github.com/test/repo.git'}}},
+            }
+        )
+        metadata.branch_el_target = MagicMock(return_value=9)
+
+        mock_source_resolution = MagicMock()
+        metadata.runtime.source_resolver.resolve_source = MagicMock(return_value=mock_source_resolution)
+
+        mock_source_dir = MagicMock()
+        mock_source_resolver.get_source_dir = MagicMock(return_value=mock_source_dir)
+
+        mock_df_path = MagicMock()
+        mock_joinpath.return_value = mock_df_path
+
+        mock_open.return_value.__enter__.return_value = mock.mock_open(read_data="").return_value
+
+        with patch('doozerlib.image.DockerfileParser') as mock_dfp:
+            mock_dfp_instance = MagicMock()
+            # ovn-kubernetes pattern: primary rhel-9 builder, rhel-8 compat builder, base with no RHEL tag
+            mock_dfp_instance.parent_images = [
+                'registry.ci.openshift.org/ocp/builder:rhel-9-golang-1.25-openshift-4.22',
+                'registry.ci.openshift.org/ocp/builder:rhel-8-golang-1.25-openshift-4.22',
+                'registry.ci.openshift.org/ocp/4.22:ovn-kubernetes-base',
+            ]
+            mock_dfp.return_value = mock_dfp_instance
+            metadata.determine_targets = MagicMock(return_value=['target-1'])
+
+            # Should detect el9 from the primary builder, not el8 from the compat builder
+            metadata._apply_alternative_upstream_config()
+
+    @patch('doozerlib.image.SourceResolver')
+    @patch('builtins.open', create=True)
+    @patch('pathlib.Path.joinpath')
     @patch('doozerlib.image.util.oc_image_info_for_arch', side_effect=Exception('image not accessible'))
     def test_apply_alternative_upstream_config_undetermined_rhel_version(
         self, mock_oc_image_info, mock_joinpath, mock_open, mock_source_resolver

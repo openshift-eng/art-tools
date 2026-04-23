@@ -942,10 +942,14 @@ class ImageMetadata(Metadata):
                 dfp = DockerfileParser(fileobj=f)
                 parent_images = dfp.parent_images
 
-            # Try the last build layer first (the runtime base), then fall back to earlier layers (builders).
-            # Some base images (e.g. aws-efs-utils-base) don't encode RHEL version in their tag and may
-            # not be inspectable, but builder images (e.g. rhel-9-golang-1.25) almost always do.
-            for pullspec in reversed(parent_images):
+            # Iterate forward: the first FROM in a multi-stage Dockerfile is the primary builder,
+            # which reliably encodes the target RHEL version. Reverse iteration would incorrectly
+            # pick up compatibility builders (e.g. rhel-8-golang used only for upgrade shim binaries
+            # in ovn-kubernetes) before the primary rhel-9 builder.
+            # Also, some images (e.g. deployer) use image stream tags like :cli or :base that don't encode RHEL version. In these cases, we want to iterate through all parent images in case any of them encode RHEL version info in the tag.
+            # NOTE: the rhel version should be determined by the final layer. This is a hotfix and is probably wrong,
+            # but is needed to unblock canonical builders for now.
+            for pullspec in parent_images:
                 rhel_version, golang_version = extract_builder_info_from_pullspec(pullspec)
                 if rhel_version:
                     break
