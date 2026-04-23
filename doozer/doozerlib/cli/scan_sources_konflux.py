@@ -97,6 +97,7 @@ class ConfigScanSources:
         self.assessment_reason = dict()  # maps metadata qualified_key => message describing change
         self.assessment_code = dict()  # maps metadata qualified_key => RebuildHintCode
         self.issues = list()  # tracks issues that arose during the scan, which did not interrupt the job
+        self.skipped_image_names: Set[str] = set()
 
         self.package_rpm_finder = PackageRpmFinder(runtime)
         self.latest_image_build_records_map: Dict[str, KonfluxBuildRecord] = {}
@@ -105,6 +106,23 @@ class ConfigScanSources:
         self.changing_rpm_names = set()
         self.rhcos_status = []
         self.current_task_bundles: Dict[str, str] = {}
+
+    def _skip_image(self, image_meta: ImageMetadata, issue: str) -> None:
+        if image_meta.distgit_key in self.skipped_image_names:
+            return
+        self.skipped_image_names.add(image_meta.distgit_key)
+        self.logger.warning("[%s] %s", image_meta.distgit_key, issue)
+        self.issues.append({'name': image_meta.distgit_key, 'issue': issue})
+
+    def _prepare_image_for_scan(self, image_meta: ImageMetadata, phase: str) -> bool:
+        if image_meta.distgit_key in self.skipped_image_names:
+            return False
+        try:
+            image_meta.ensure_canonical_builders_resolved()
+        except Exception as err:
+            self._skip_image(image_meta, f'Failed resolving canonical builders before {phase}: {err}')
+            return False
+        return True
 
     def _is_okd_enabled(self, image_meta: ImageMetadata) -> bool:
         """
@@ -533,7 +551,7 @@ class ConfigScanSources:
             tasks.extend([_find_target_build(rpm, f'el{target}') for target in rpm.determine_rhel_targets()])
         await asyncio.gather(*tasks)
 
-    async def find_latest_image_builds(self, image_names: List[str]):
+    async def find_latest_image_builds(self, image_names: List[str]) -> List[str]:
         self.logger.info('Gathering latest image build records information...')
         # For OCP, need installed_packages column for RPM analysis in scan_rpm_changes
         # For OKD, exclude large columns to reduce BigQuery cost (OKD doesn't check RPM changes)
@@ -543,31 +561,57 @@ class ConfigScanSources:
         # This is critical for OKD where images may have different el_targets (e.g., el9 vs el10)
         # than their upstream sources, preventing false change detection
         tasks = []
-        for name in image_names:
-            image_meta = self.runtime.image_map[name]
-            el_target = self._get_image_el_target(image_meta)
-            tasks.append(
-                image_meta.get_latest_build(
+        prepared_names = []
+
+        async def _find_latest_build(image_meta: ImageMetadata):
+            if not self._prepare_image_for_scan(image_meta, 'latest build lookup'):
+                return image_meta.distgit_key, None, None
+            try:
+                el_target = self._get_image_el_target(image_meta)
+                build_record = await image_meta.get_latest_build(
                     engine=Engine.KONFLUX.value,
                     exclude_large_columns=exclude_large_columns,
                     el_target=el_target,
                 )
-            )
+                return image_meta.distgit_key, build_record, None
+            except Exception as err:
+                return image_meta.distgit_key, None, err
+
+        for name in image_names:
+            image_meta = self.runtime.image_map[name]
+            tasks.append(_find_latest_build(image_meta))
 
         latest_image_builds = await asyncio.gather(*tasks)
-        self.latest_image_build_records_map.update((zip(image_names, latest_image_builds)))
+        for name, build_record, err in latest_image_builds:
+            if name in self.skipped_image_names:
+                continue
+            if err:
+                self._skip_image(
+                    self.runtime.image_map[name], f'Failed finding latest build during latest build lookup: {err}'
+                )
+                continue
+            self.latest_image_build_records_map[name] = build_record
+            prepared_names.append(name)
+
+        return prepared_names
 
     async def scan_images(self, image_names: List[str]):
         # Filter to only enabled images (variant-aware filtering is handled by _is_image_enabled)
         image_names = filter(lambda name: self._is_image_enabled(self.runtime.image_map[name]), image_names)
 
         # Do not scan images that have already been requested for rebuild
-        image_names = list(filter(lambda name: name not in self.changing_image_names, image_names))
+        image_names = list(
+            filter(
+                lambda name: name not in self.changing_image_names and name not in self.skipped_image_names, image_names
+            )
+        )
         if not image_names:
             return
 
         # Store latest build records in a map, to reduce DB queries and execution time
-        await self.find_latest_image_builds(image_names)
+        image_names = await self.find_latest_image_builds(image_names)
+        if not image_names:
+            return
 
         # Scan images for changes
         scanning_image_metas = [self.runtime.image_map[image_name] for image_name in image_names]
@@ -590,8 +634,10 @@ class ConfigScanSources:
 
     @skip_check_if_changing
     async def scan_image(self, image_meta: ImageMetadata):
-        stage = 'initialization'
+        stage = 'canonical builder resolution'
         try:
+            if not self._prepare_image_for_scan(image_meta, stage):
+                return
             self.logger.info(f'Scanning {image_meta.distgit_key} for changes')
             if image_meta.config.konflux is not Missing:
                 image_meta.config = Model(
@@ -646,7 +692,7 @@ class ConfigScanSources:
 
         except Exception as e:
             self.logger.exception('Failed scanning image %s during %s', image_meta.distgit_key, stage)
-            self.issues.append({'name': image_meta.distgit_key, 'issue': f'Failed scanning image during {stage}: {e}'})
+            self._skip_image(image_meta, f'Failed scanning image during {stage}: {e}')
 
     def find_upstream_commit_hash(self, meta: Metadata):
         """

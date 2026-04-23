@@ -67,6 +67,42 @@ class TestScanSourcesKonflux(IsolatedAsyncioTestCase):
 
 
 class TestMinimalCrashIsolation(TestScanSourcesKonflux):
+    async def test_scan_images_skips_broken_canonical_image_and_continues(self):
+        broken_image = MagicMock(spec=ImageMetadata)
+        broken_image.distgit_key = "broken-image"
+        broken_image.enabled = True
+        broken_image.ensure_canonical_builders_resolved.side_effect = RuntimeError("bad canonical")
+        broken_image.get_latest_build = AsyncMock()
+
+        good_image = MagicMock(spec=ImageMetadata)
+        good_image.distgit_key = "good-image"
+        good_image.enabled = True
+        good_image.ensure_canonical_builders_resolved.return_value = None
+        good_image.get_latest_build = AsyncMock(return_value=self.build_record)
+
+        self.runtime.image_map = {
+            "broken-image": broken_image,
+            "good-image": good_image,
+        }
+        self.scanner.latest_image_build_records_map = {}
+
+        with patch.object(self.scanner, 'scan_image', AsyncMock()) as mock_scan_image:
+            await self.scanner.scan_images(["broken-image", "good-image"])
+
+        self.assertEqual(
+            self.scanner.issues,
+            [
+                {
+                    'name': 'broken-image',
+                    'issue': 'Failed resolving canonical builders before latest build lookup: bad canonical',
+                }
+            ],
+        )
+        self.assertIn('broken-image', self.scanner.skipped_image_names)
+        broken_image.get_latest_build.assert_not_called()
+        self.assertEqual(self.scanner.latest_image_build_records_map, {"good-image": self.build_record})
+        mock_scan_image.assert_awaited_once_with(good_image)
+
     async def test_scan_image_records_issue_instead_of_raising(self):
         self.image_meta.config.konflux = Missing
 
