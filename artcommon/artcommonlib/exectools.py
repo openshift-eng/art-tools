@@ -348,6 +348,8 @@ def cmd_gather(
     log_stderr=True,
     timeout: Optional[int] = None,
     cwd: Optional[str] = None,
+    retries: int = 1,
+    pollrate: int = 60,
 ) -> Tuple[int, str, str]:
     """
     Runs a command and returns rc,stdout,stderr as a tuple.
@@ -364,6 +366,8 @@ def cmd_gather(
     :param log_stderr: Whether stderr should be logged into the DEBUG log
     :param timeout: Kill the process if it does not terminate after timeout seconds.
     :param cwd: Set current working directory
+    :param retries: The number of times to try before giving up
+    :param pollrate: Seconds to sleep between retries
     :return: (rc,stdout,stderr)
     """
 
@@ -392,94 +396,104 @@ def cmd_gather(
     # Make sure output of launched commands is utf-8
     env['LC_ALL'] = 'en_US.UTF-8'
 
-    with timer(logger.debug, f'{cmd_info}: Executed:cmd_gather'):
-        logger.info(f'{cmd_info}: Executing:cmd_gather: {" ".join(cmd_list)}')
-        try:
-            proc = subprocess.Popen(
-                cmd_list, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL
-            )
-        except OSError as exc:
-            description = "{}: Errored:\nException:\n{}\nIs {} installed?".format(cmd_info, exc, cmd_list[0])
-            logger.error(description)
-            return exc.errno, "", description
+    rc, out, err = -1, '', ''
 
-        if not realtime:
+    for try_num in range(retries):
+        if try_num > 0:
+            logger.debug("cmd_gather: Failed {} times. Retrying in {} seconds: {}".format(try_num, pollrate, cmd))
+            time.sleep(pollrate)
+
+        with timer(logger.debug, f'{cmd_info}: Executed:cmd_gather'):
+            logger.info(f'{cmd_info}: Executing:cmd_gather: {" ".join(cmd_list)}')
             try:
-                out, err = proc.communicate(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                out, err = proc.communicate()
-            rc = proc.returncode
-        else:
-            out = b''
-            err = b''
-
-            # Many thanks to http://eyalarubas.com/python-subproc-nonblock.html
-            # setup non-blocking read
-            # set the O_NONBLOCK flag of proc.stdout file descriptor:
-            flags = fcntl(proc.stdout, F_GETFL)  # get current proc.stdout flags
-            fcntl(proc.stdout, F_SETFL, flags | os.O_NONBLOCK)
-            # set the O_NONBLOCK flag of proc.stderr file descriptor:
-            flags = fcntl(proc.stderr, F_GETFL)  # get current proc.stderr flags
-            fcntl(proc.stderr, F_SETFL, flags | os.O_NONBLOCK)
-
-            rc = None
-            stdout_complete = False
-            stderr_complete = False
-            while not stdout_complete or not stderr_complete or rc is None:
-                try:
-                    output = os.read(proc.stdout.fileno(), 4096)
-                    if output:
-                        green_print(output.rstrip())
-                        out += output
-                    else:
-                        stdout_complete = True
-                except OSError as ose:
-                    if ose.errno == errno.EAGAIN or ose.errno == errno.EWOULDBLOCK:
-                        pass  # It is supposed to raise one of these exceptions
-                    else:
-                        raise
-
-                try:
-                    error = os.read(proc.stderr.fileno(), 4096)
-                    if error:
-                        yellow_print(error.rstrip())
-                        out += error
-                    else:
-                        stderr_complete = True
-                except OSError as ose:
-                    if ose.errno == errno.EAGAIN or ose.errno == errno.EWOULDBLOCK:
-                        pass  # It is supposed to raise one of these exceptions
-                    else:
-                        raise
-
-                if rc is None:
-                    rc = proc.poll()
-                    time.sleep(0.5)  # reduce busy-wait
-
-        # We read in bytes representing utf-8 output; decode so that python recognizes them as unicode strings
-        out = out.decode('utf-8')
-        err = err.decode('utf-8')
-
-        log_output_stdout = out
-        log_output_stderr = err
-        if not log_stdout and len(out) > 200:
-            log_output_stdout = f'{out[:200]}\n..truncated..'
-        if not log_stderr and len(err) > 200:
-            log_output_stderr = f'{err[:200]}\n..truncated..'
-
-        if rc:
-            logger.debug(
-                "{}: Exited with error: {}\nstdout>>{}<<\nstderr>>{}<<\n".format(
-                    cmd_info, rc, log_output_stdout, log_output_stderr
+                proc = subprocess.Popen(
+                    cmd_list, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL
                 )
-            )
-        else:
-            logger.debug(
-                "{}: Exited with: {}\nstdout>>{}<<\nstderr>>{}<<\n".format(
-                    cmd_info, rc, log_output_stdout, log_output_stderr
+            except OSError as exc:
+                description = "{}: Errored:\nException:\n{}\nIs {} installed?".format(cmd_info, exc, cmd_list[0])
+                logger.error(description)
+                return exc.errno, "", description
+
+            if not realtime:
+                try:
+                    out, err = proc.communicate(timeout=timeout)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    out, err = proc.communicate()
+                rc = proc.returncode
+            else:
+                out = b''
+                err = b''
+
+                # Many thanks to http://eyalarubas.com/python-subproc-nonblock.html
+                # setup non-blocking read
+                # set the O_NONBLOCK flag of proc.stdout file descriptor:
+                flags = fcntl(proc.stdout, F_GETFL)  # get current proc.stdout flags
+                fcntl(proc.stdout, F_SETFL, flags | os.O_NONBLOCK)
+                # set the O_NONBLOCK flag of proc.stderr file descriptor:
+                flags = fcntl(proc.stderr, F_GETFL)  # get current proc.stderr flags
+                fcntl(proc.stderr, F_SETFL, flags | os.O_NONBLOCK)
+
+                rc = None
+                stdout_complete = False
+                stderr_complete = False
+                while not stdout_complete or not stderr_complete or rc is None:
+                    try:
+                        output = os.read(proc.stdout.fileno(), 4096)
+                        if output:
+                            green_print(output.rstrip())
+                            out += output
+                        else:
+                            stdout_complete = True
+                    except OSError as ose:
+                        if ose.errno == errno.EAGAIN or ose.errno == errno.EWOULDBLOCK:
+                            pass  # It is supposed to raise one of these exceptions
+                        else:
+                            raise
+
+                    try:
+                        error = os.read(proc.stderr.fileno(), 4096)
+                        if error:
+                            yellow_print(error.rstrip())
+                            err += error
+                        else:
+                            stderr_complete = True
+                    except OSError as ose:
+                        if ose.errno == errno.EAGAIN or ose.errno == errno.EWOULDBLOCK:
+                            pass  # It is supposed to raise one of these exceptions
+                        else:
+                            raise
+
+                    if rc is None:
+                        rc = proc.poll()
+                        time.sleep(0.5)  # reduce busy-wait
+
+            # We read in bytes representing utf-8 output; decode so that python recognizes them as unicode strings
+            out = out.decode('utf-8')
+            err = err.decode('utf-8')
+
+            log_output_stdout = out
+            log_output_stderr = err
+            if not log_stdout and len(out) > 200:
+                log_output_stdout = f'{out[:200]}\n..truncated..'
+            if not log_stderr and len(err) > 200:
+                log_output_stderr = f'{err[:200]}\n..truncated..'
+
+            if rc:
+                logger.debug(
+                    "{}: Exited with error: {}\nstdout>>{}<<\nstderr>>{}<<\n".format(
+                        cmd_info, rc, log_output_stdout, log_output_stderr
+                    )
                 )
-            )
+            else:
+                logger.debug(
+                    "{}: Exited with: {}\nstdout>>{}<<\nstderr>>{}<<\n".format(
+                        cmd_info, rc, log_output_stdout, log_output_stderr
+                    )
+                )
+
+        if rc == SUCCESS:
+            break
 
     if strip:
         out = out.strip()

@@ -170,7 +170,10 @@ class GitData(object):
                     else:
                         # Check if local is synced with remote
                         rc, out, err = exectools.cmd_gather(
-                            ["git", "ls-remote", self.data_path, self.branch], set_env=git_env
+                            ["git", "ls-remote", self.data_path, self.branch],
+                            set_env=git_env,
+                            retries=3,
+                            pollrate=5,
                         )
                         if rc:
                             raise GitDataException('Unable to check remote sha: {}'.format(err))
@@ -194,7 +197,7 @@ class GitData(object):
                 self.logger.info('Cloning config data from {}'.format(self.data_path))
                 if not os.path.isdir(data_destination):
                     cmd = "git clone --no-single-branch {} {}".format(self.data_path, data_destination)
-                    exectools.cmd_assert(cmd, set_env=git_env)
+                    exectools.cmd_assert(cmd, set_env=git_env, retries=3)
                     exectools.cmd_assert(f'git -C {data_destination} checkout {self.branch}', set_env=git_env)
 
             self.remote_path = self.data_path
@@ -325,4 +328,4 @@ class GitData(object):
         """
         self.logger.info('Pushing config...')
         with Dir(self.data_path):
-            exectools.cmd_assert('git push')
+            exectools.cmd_assert('git push', retries=3)
