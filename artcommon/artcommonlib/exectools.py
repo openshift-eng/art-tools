@@ -455,7 +455,7 @@ def cmd_gather(
                         error = os.read(proc.stderr.fileno(), 4096)
                         if error:
                             yellow_print(error.rstrip())
-                            out += error
+                            err += error
                         else:
                             stderr_complete = True
                     except OSError as ose:
