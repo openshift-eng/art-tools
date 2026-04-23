@@ -1053,6 +1053,7 @@ class TestUpdateLayeredBranches(IsolatedAsyncioTestCase):
     def _mock_github(self, group_vars, layered_streams=None):
         """Return (mock_upstream_repo, mock_fork_repo) with canned GitHub responses."""
         import io as _io
+
         from artcommonlib.util import new_roundtrip_yaml_handler
 
         _yaml = new_roundtrip_yaml_handler()

@@ -16,7 +16,6 @@ from artcommonlib.constants import (
     PRODUCT_NAMESPACE_MAP,
 )
 from artcommonlib.github_auth import get_github_client_for_org
-from github import GithubException
 from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.release_util import split_el_suffix_in_release
@@ -24,6 +23,7 @@ from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import new_roundtrip_yaml_handler
 from elliottlib import util as elliottutil
 from elliottlib.constants import GOLANG_BUILDER_CVE_COMPONENT
+from github import GithubException
 
 from pyartcd import constants, jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
