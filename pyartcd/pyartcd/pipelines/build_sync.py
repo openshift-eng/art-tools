@@ -152,7 +152,8 @@ class BuildSyncPipeline:
     async def run(self):
         if 'XDG_RUNTIME_DIR' in os.environ:
             self.logger.info('Unsetting XDG_RUNTIME_DIR to prevent use of default registry auth')
-            del os.environ['XDG_RUNTIME_DIR']
+            # Daniele will fix later :)
+#            del os.environ['XDG_RUNTIME_DIR']
 
         quay_auth_file = os.getenv('QUAY_AUTH_FILE')
         if not quay_auth_file:
