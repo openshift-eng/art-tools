@@ -4,7 +4,9 @@ import json
 import pathlib
 import re
 from collections import OrderedDict
+from contextlib import contextmanager
 from copy import copy
+from enum import Enum
 from functools import lru_cache
 from multiprocessing import Event
 from typing import Any, Dict, List, Optional, Set, Tuple, cast
@@ -89,6 +91,23 @@ def extract_builder_info_from_pullspec(pullspec: str) -> tuple[int | None, tuple
     return rhel_version, golang_version
 
 
+class CanonicalBuildersResolutionError(RuntimeError):
+    """Raised when canonical builders resolution fails."""
+
+
+class UnresolvedCanonicalBuildersError(CanonicalBuildersResolutionError):
+    """Raised when canonical-sensitive values are accessed before canonical builders are resolved."""
+
+
+class CanonicalBuildersPreparationState(Enum):
+    INITIALIZING = "initializing"
+    UNRESOLVED = "unresolved"
+    PREPARING = "preparing"
+    RESOLVED = "resolved"
+    FAILED = "failed"
+    NOT_APPLICABLE = "not-applicable"
+
+
 class ImageMetadata(Metadata):
     def __init__(
         self,
@@ -99,6 +118,9 @@ class ImageMetadata(Metadata):
         prevent_cloning: Optional[bool] = False,
         process_dependents: Optional[bool] = True,
     ):
+        self._canonical_builders_preparation_state = CanonicalBuildersPreparationState.INITIALIZING
+        self._canonical_builders_preparation_exception: Optional[Exception] = None
+        self._canonical_builders_guard_depth = 0
         super(ImageMetadata, self).__init__('image', runtime, data_obj, commitish, prevent_cloning=prevent_cloning)
         self.required = self.config.get('required', False)
         self.parent = None
@@ -126,31 +148,119 @@ class ImageMetadata(Metadata):
         self.build_status = False
         """ True if this image has been successfully built. """
 
-        # Apply alternative upstream config if canonical builders is enabled
-        # This must happen early so config is correct for all subsequent operations
-        if self.canonical_builders_enabled:
-            if prevent_cloning:
-                self.logger.warning(
-                    '[%s] canonical_builders_from_upstream is enabled but prevent_cloning=True. '
-                    'Skipping upstream RHEL version detection; alternative_upstream config will not be applied.',
-                    self.distgit_key,
-                )
-            else:
-                if not clone_source:
-                    self.logger.warning(
-                        '[%s] canonical_builders_from_upstream is enabled but clone_source=False. '
-                        'Source will be cloned anyway to determine upstream RHEL version.',
-                        self.distgit_key,
-                    )
-                # When canonical_builders_from_upstream is enabled, we need to determine
-                # the upstream RHEL version and merge alternative_upstream config if needed.
-                # This will clone source as part of the process.
-                self._apply_alternative_upstream_config()
-        elif clone_source:
-            # Normal case: clone source if requested (and canonical builders not enabled)
+        if clone_source:
+            # Preserve explicit clone_source behavior, but defer canonical builder config changes
+            # until a caller explicitly resolves canonical-sensitive config for this image.
             runtime.source_resolver.resolve_source(self)
 
+        if self.canonical_builders_enabled:
+            self._canonical_builders_preparation_state = CanonicalBuildersPreparationState.UNRESOLVED
+        else:
+            self._canonical_builders_preparation_state = CanonicalBuildersPreparationState.NOT_APPLICABLE
+
         self.installed_rpms = None
+
+    @property
+    def canonical_builders_preparation_state(self) -> CanonicalBuildersPreparationState:
+        return self._canonical_builders_preparation_state
+
+    @contextmanager
+    def _suspend_canonical_builders_guard(self):
+        self._canonical_builders_guard_depth += 1
+        try:
+            yield
+        finally:
+            self._canonical_builders_guard_depth -= 1
+
+    def _mark_canonical_builders_resolved(self):
+        if self.canonical_builders_enabled:
+            self._canonical_builders_preparation_state = CanonicalBuildersPreparationState.RESOLVED
+        else:
+            self._canonical_builders_preparation_state = CanonicalBuildersPreparationState.NOT_APPLICABLE
+        self._canonical_builders_preparation_exception = None
+
+    def _assert_canonical_builders_resolved(self, operation: str) -> None:
+        if not self.canonical_builders_enabled:
+            return
+        if self._canonical_builders_guard_depth > 0:
+            return
+
+        state = self._canonical_builders_preparation_state
+        if state in (
+            CanonicalBuildersPreparationState.INITIALIZING,
+            CanonicalBuildersPreparationState.PREPARING,
+            CanonicalBuildersPreparationState.RESOLVED,
+            CanonicalBuildersPreparationState.NOT_APPLICABLE,
+        ):
+            return
+
+        if getattr(self.runtime, "initialized", None) is False:
+            return
+
+        if state is CanonicalBuildersPreparationState.FAILED:
+            previous = self._canonical_builders_preparation_exception
+            raise UnresolvedCanonicalBuildersError(
+                f'[{self.distgit_key}] Cannot {operation} because canonical builders resolution previously failed: '
+                f'{previous}. Call ensure_canonical_builders_resolved() first.'
+            ) from previous
+
+        raise UnresolvedCanonicalBuildersError(
+            f'[{self.distgit_key}] Cannot {operation} before canonical builders are resolved. '
+            'canonical_builders_from_upstream may change branch, targets, or other image config. '
+            'Call ensure_canonical_builders_resolved() first.'
+        )
+
+    def ensure_canonical_builders_resolved(self) -> None:
+        state = self._canonical_builders_preparation_state
+        if state in (
+            CanonicalBuildersPreparationState.RESOLVED,
+            CanonicalBuildersPreparationState.NOT_APPLICABLE,
+            CanonicalBuildersPreparationState.INITIALIZING,
+        ):
+            return
+
+        if state is CanonicalBuildersPreparationState.FAILED:
+            previous = self._canonical_builders_preparation_exception
+            raise CanonicalBuildersResolutionError(
+                f'[{self.distgit_key}] Canonical builders resolution previously failed: {previous}'
+            ) from previous
+
+        if state is CanonicalBuildersPreparationState.PREPARING:
+            return
+
+        self._canonical_builders_preparation_state = CanonicalBuildersPreparationState.PREPARING
+        self._canonical_builders_preparation_exception = None
+        try:
+            with self._suspend_canonical_builders_guard():
+                self._apply_alternative_upstream_config()
+        except Exception as err:
+            self._canonical_builders_preparation_state = CanonicalBuildersPreparationState.FAILED
+            self._canonical_builders_preparation_exception = err
+            raise CanonicalBuildersResolutionError(
+                f'[{self.distgit_key}] Failed resolving canonical builders: {err}'
+            ) from err
+
+        self._mark_canonical_builders_resolved()
+
+    def branch(self):
+        self._assert_canonical_builders_resolved("read image branch")
+        return super().branch()
+
+    def determine_targets(self) -> list[str]:
+        self._assert_canonical_builders_resolved("determine image targets")
+        return super().determine_targets()
+
+    def branch_el_target(self) -> int:
+        self._assert_canonical_builders_resolved("determine branch EL target")
+        return super().branch_el_target()
+
+    def determine_rhel_targets(self) -> list[int]:
+        self._assert_canonical_builders_resolved("determine RHEL targets")
+        return super().determine_rhel_targets()
+
+    def needs_rebuild(self):
+        self._assert_canonical_builders_resolved("check whether the image needs rebuild")
+        return super().needs_rebuild()
 
     @property
     def image_name(self):
@@ -711,6 +821,7 @@ class ImageMetadata(Metadata):
                 return False
 
     def calculate_config_digest(self, group_config, streams):
+        self._assert_canonical_builders_resolved("calculate config digest")
         ignore_keys = [
             "owners",
             "okd",
@@ -819,7 +930,7 @@ class ImageMetadata(Metadata):
     def _apply_alternative_upstream_config(self) -> None:
         """
         When canonical_builders_enabled, merge alternative_upstream config based on upstream RHEL version.
-        This must happen early in initialization so config is correct for all subsequent operations.
+        This is invoked explicitly by callers that need canonical-sensitive image config to be resolved.
 
         This method determines both ART and upstream intended RHEL versions, then merges the appropriate
         alternative_upstream config stanza if the versions differ. If versions match, no merge is needed.

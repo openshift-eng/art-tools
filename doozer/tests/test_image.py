@@ -10,7 +10,13 @@ from artcommonlib import exectools
 from artcommonlib.model import Missing, Model
 from artcommonlib.variants import BuildVariant
 from doozerlib import build_info, image
-from doozerlib.image import ImageMetadata, extract_builder_info_from_pullspec
+from doozerlib.image import (
+    CanonicalBuildersPreparationState,
+    CanonicalBuildersResolutionError,
+    ImageMetadata,
+    UnresolvedCanonicalBuildersError,
+    extract_builder_info_from_pullspec,
+)
 from doozerlib.repodata import Repodata, Rpm
 from doozerlib.repos import Repos
 from flexmock import flexmock
@@ -183,6 +189,74 @@ class TestImageMetadata(unittest.TestCase):
         rt = MagicMock()
         rt.logger = logging.getLogger('test_runtime')  # Use real logger
         return image.ImageMetadata(rt, data_obj)
+
+    def _create_canonical_image_metadata(self, name='openshift/test_canonical'):
+        image_model = Model(
+            {
+                'name': name,
+                'canonical_builders_from_upstream': True,
+                'distgit': {'branch': 'rhaos-4.16-rhel-9'},
+                'content': {'source': {'git': {'url': 'https://github.com/test/repo.git'}}},
+            }
+        )
+        data_obj = Model(
+            {
+                'key': 'my-distgit',
+                'data': image_model,
+                'filename': 'my-distgit.yaml',
+            }
+        )
+        rt = MagicMock()
+        rt.logger = logging.getLogger('test_runtime')
+        rt.initialized = True
+        return image.ImageMetadata(rt, data_obj)
+
+    @patch.object(ImageMetadata, '_apply_alternative_upstream_config')
+    def test_init_defers_canonical_resolution(self, apply_alternative_upstream_config):
+        metadata = self._create_canonical_image_metadata()
+
+        apply_alternative_upstream_config.assert_not_called()
+        self.assertEqual(metadata.canonical_builders_preparation_state, CanonicalBuildersPreparationState.UNRESOLVED)
+
+    def test_branch_requires_canonical_resolution(self):
+        metadata = self._create_canonical_image_metadata()
+
+        with self.assertRaises(UnresolvedCanonicalBuildersError) as ctx:
+            metadata.branch()
+
+        self.assertIn('ensure_canonical_builders_resolved', str(ctx.exception))
+
+    def test_calculate_config_digest_requires_canonical_resolution(self):
+        metadata = self._create_canonical_image_metadata()
+
+        with self.assertRaises(UnresolvedCanonicalBuildersError):
+            metadata.calculate_config_digest(Model({}), Model({}))
+
+    @patch.object(ImageMetadata, '_apply_alternative_upstream_config')
+    def test_ensure_canonical_builders_resolved_is_idempotent(self, apply_alternative_upstream_config):
+        metadata = self._create_canonical_image_metadata()
+
+        metadata.ensure_canonical_builders_resolved()
+        metadata.ensure_canonical_builders_resolved()
+
+        apply_alternative_upstream_config.assert_called_once()
+        self.assertEqual(metadata.canonical_builders_preparation_state, CanonicalBuildersPreparationState.RESOLVED)
+
+    @patch.object(ImageMetadata, '_apply_alternative_upstream_config', side_effect=IOError('boom'))
+    def test_ensure_canonical_builders_resolved_caches_failures(self, apply_alternative_upstream_config):
+        metadata = self._create_canonical_image_metadata()
+
+        with self.assertRaises(CanonicalBuildersResolutionError) as ctx:
+            metadata.ensure_canonical_builders_resolved()
+
+        self.assertIn('Failed resolving canonical builders', str(ctx.exception))
+        self.assertEqual(metadata.canonical_builders_preparation_state, CanonicalBuildersPreparationState.FAILED)
+
+        with self.assertRaises(CanonicalBuildersResolutionError) as second_ctx:
+            metadata.ensure_canonical_builders_resolved()
+
+        self.assertIn('previously failed', str(second_ctx.exception))
+        apply_alternative_upstream_config.assert_called_once()
 
     def test_cachi2_enabled_1(self):
         metadata = self._create_image_metadata('openshift/test_0')

@@ -494,6 +494,7 @@ class ImageDistGitRepo(DistGitRepo):
             # 1. we failed to determine upstream rhel version
             # 2. upstream and ART rhel versions match: in this case, alternative_upstream is ignored
             self._update_image_config()
+            self.metadata._mark_canonical_builders_resolved()
 
         # Initialize our distgit directory, if necessary
         if autoclone:
@@ -1921,6 +1922,7 @@ class ImageDistGitRepo(DistGitRepo):
             self.branch = self.config.distgit.branch
             # Also update metadata config
             self.metadata.config = self.config
+            self.metadata._mark_canonical_builders_resolved()
             self.metadata.targets = self.metadata.determine_targets()
 
     def rebase_from_directives(self, dfp):

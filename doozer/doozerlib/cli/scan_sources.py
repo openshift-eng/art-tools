@@ -1,7 +1,7 @@
 import asyncio
 import json
 from datetime import datetime, timezone
-from typing import List, Optional, Tuple
+from typing import Optional, Set
 
 import artcommonlib.util
 import click
@@ -37,6 +37,7 @@ class ConfigScanSources:
         self.changing_rpm_packages = set()
         self.assessment_reason = dict()  # maps metadata qualified_key => message describing change
         self.issues = list()  # tracks issues that arose during the scan, which did not interrupt the job
+        self.skipped_image_dgks: Set[str] = set()
 
         self.all_rpm_metas = set(runtime.rpm_metas())
         self.all_image_metas = set(runtime.image_metas())
@@ -80,6 +81,40 @@ class ConfigScanSources:
 
         # We have our information. Now build and print the output report
         await self.generate_report()
+
+    def _is_meta_enabled(self, meta: Metadata) -> bool:
+        return meta.enabled or meta.mode == "disabled" and self.runtime.load_disabled
+
+    def _skip_image(self, image_meta: ImageMetadata, issue: str) -> None:
+        if image_meta.distgit_key in self.skipped_image_dgks:
+            return
+        self.skipped_image_dgks.add(image_meta.distgit_key)
+        self.runtime.logger.warning("[%s] %s", image_meta.distgit_key, issue)
+        self.issues.append({"name": image_meta.distgit_key, "issue": issue})
+
+    def _prepare_image_for_scan(self, image_meta: ImageMetadata, phase: str) -> bool:
+        if image_meta.distgit_key in self.skipped_image_dgks:
+            return False
+        if not self._is_meta_enabled(image_meta):
+            return False
+        try:
+            image_meta.ensure_canonical_builders_resolved()
+        except Exception as err:
+            self._skip_image(image_meta, f"Failed resolving canonical builders before {phase}: {err}")
+            return False
+        return True
+
+    def _handle_image_scan_exception(self, image_meta: ImageMetadata, phase: str, err: Exception) -> None:
+        issue = f"Failed scanning image during {phase}: {err}"
+        self._skip_image(image_meta, issue)
+
+    def _scan_meta_for_upstream_changes(self, meta: Metadata):
+        if meta.meta_type == "image" and not self._prepare_image_for_scan(meta, "upstream commit checks"):
+            return meta, None, None
+        try:
+            return meta, meta.needs_rebuild(), None
+        except Exception as err:
+            return meta, None, err
 
     def _try_reconciliation(self, metadata: Metadata, repo_name: str, pub_branch_name: str, priv_branch_name: str):
         reconciled = False
@@ -290,15 +325,22 @@ class ConfigScanSources:
         # Determine if the current upstream source commit hash has a downstream build associated with it.
         # Result is a list of tuples, where each tuple contains an rpm or image metadata
         # and a change tuple (changed: bool, message: str).
-        upstream_changes: List[Tuple[Metadata, RebuildHint]] = exectools.parallel_exec(
-            lambda image_meta, _: (image_meta, image_meta.needs_rebuild()),
+        upstream_changes = exectools.parallel_exec(
+            lambda meta, _: self._scan_meta_for_upstream_changes(meta),
             self.all_metas,
             n_threads=20,
         ).get()
 
-        for meta, rebuild_hint in upstream_changes:
+        for meta, rebuild_hint, err in upstream_changes:
+            if err:
+                if meta.meta_type == 'image':
+                    self._handle_image_scan_exception(meta, 'upstream commit checks', err)
+                    continue
+                raise err
+            if rebuild_hint is None:
+                continue
             dgk = meta.distgit_key
-            if not (meta.enabled or meta.mode == "disabled" and self.runtime.load_disabled):
+            if not self._is_meta_enabled(meta):
                 # An enabled image's dependents are always loaded.
                 # Ignore disabled configs unless explicitly indicated
                 continue
@@ -352,27 +394,33 @@ class ConfigScanSources:
 
     async def check_for_image_changes(self, koji_api):
         async def _inner(image_meta):
+            if not self._prepare_image_for_scan(image_meta, "image change checks"):
+                return
+
             # If a rebuild is already requested, skip following checks
             if image_meta in self.changing_image_metas:
                 return
 
-            build_info = await image_meta.get_latest_build(default=None, exclude_large_columns=True)
+            try:
+                build_info = await image_meta.get_latest_build(default=None, exclude_large_columns=True)
 
-            if build_info is None:
-                return
+                if build_info is None:
+                    return
 
-            # To limit the size of the queries we are going to make, find the oldest and newest image
-            self.find_oldest_newest(koji_api, build_info)
+                # To limit the size of the queries we are going to make, find the oldest and newest image
+                self.find_oldest_newest(koji_api, build_info)
 
-            # Request a rebuild if A is a dependent (operator or child image) of B
-            # but the latest build of A is older than B.
-            self.check_dependents(image_meta, build_info)
+                # Request a rebuild if A is a dependent (operator or child image) of B
+                # but the latest build of A is older than B.
+                self.check_dependents(image_meta, build_info)
 
-            # If no upstream change has been detected, check configurations
-            # like image meta, repos, and streams to see if they have changed
-            # We detect config changes by comparing their digest changes.
-            # The config digest of the previous build is stored at .oit/config_digest on distgit repo.
-            self.check_config_changes(image_meta, build_info)
+                # If no upstream change has been detected, check configurations
+                # like image meta, repos, and streams to see if they have changed
+                # We detect config changes by comparing their digest changes.
+                # The config digest of the previous build is stored at .oit/config_digest on distgit repo.
+                self.check_config_changes(image_meta, build_info)
+            except Exception as err:
+                self._handle_image_scan_exception(image_meta, 'image change checks', err)
 
         await asyncio.gather(*[_inner(image_meta) for image_meta in self.runtime.image_metas()])
 
@@ -413,19 +461,25 @@ class ConfigScanSources:
                 )
                 return
 
-            dep_info = dep.get_latest_brew_build(default=None)
-            if not dep_info:
+            if not self._prepare_image_for_scan(dep, "dependency checks"):
                 return
 
-            dep_rebase_time = release_util.isolate_timestamp_in_release(dep_info["release"])
-            if not dep_rebase_time:  # no timestamp string in NVR?
-                return
+            try:
+                dep_info = dep.get_latest_brew_build(default=None)
+                if not dep_info:
+                    return
 
-            dep_rebase_time = datetime.strptime(dep_rebase_time, "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
-            if dep_rebase_time > rebase_time:
-                self.add_image_meta_change(
-                    image_meta, RebuildHint(RebuildHintCode.DEPENDENCY_NEWER, 'Dependency has a newer build')
-                )
+                dep_rebase_time = release_util.isolate_timestamp_in_release(dep_info["release"])
+                if not dep_rebase_time:  # no timestamp string in NVR?
+                    return
+
+                dep_rebase_time = datetime.strptime(dep_rebase_time, "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
+                if dep_rebase_time > rebase_time:
+                    self.add_image_meta_change(
+                        image_meta, RebuildHint(RebuildHintCode.DEPENDENCY_NEWER, 'Dependency has a newer build')
+                    )
+            except Exception as err:
+                self._handle_image_scan_exception(dep, 'dependency checks', err)
 
         exectools.parallel_exec(
             f=lambda dep, _: _check_dep(dep),
@@ -477,12 +531,18 @@ class ConfigScanSources:
         # because we are about to rebuild it.
 
         async def _thread_does_image_need_change(image_meta):
-            return await image_meta.does_image_need_change(
-                changing_rpm_packages=self.changing_rpm_packages,
-                buildroot_tag=image_meta.build_root_tag(),
-                newest_image_event_ts=self.newest_image_event_ts,
-                oldest_image_event_ts=self.oldest_image_event_ts,
-            )
+            if not self._prepare_image_for_scan(image_meta, "RPM impact checks"):
+                return None
+            try:
+                return await image_meta.does_image_need_change(
+                    changing_rpm_packages=self.changing_rpm_packages,
+                    buildroot_tag=image_meta.build_root_tag(),
+                    newest_image_event_ts=self.newest_image_event_ts,
+                    oldest_image_event_ts=self.oldest_image_event_ts,
+                )
+            except Exception as err:
+                self._handle_image_scan_exception(image_meta, 'RPM impact checks', err)
+                return None
 
         change_results = await asyncio.gather(
             *[_thread_does_image_need_change(image_meta) for image_meta in self.runtime.image_metas()],
@@ -501,6 +561,8 @@ class ConfigScanSources:
         while True:
             changing_image_dgks = [meta.distgit_key for meta in self.changing_image_metas]
             for image_meta in self.all_image_metas:
+                if not self._prepare_image_for_scan(image_meta, "builder change checks"):
+                    continue
                 dgk = image_meta.distgit_key
                 if dgk in changing_image_dgks:  # Already in? Don't look any further
                     continue
@@ -777,10 +839,7 @@ async def config_scan_source_changes(runtime: Runtime, ci_kubeconfig, as_yaml, r
     # Initialize group config: we need this to determine the canonical builders behavior
     runtime.initialize(config_only=True)
 
-    if runtime.group_config.canonical_builders_from_upstream and runtime.build_system == 'brew':
-        runtime.initialize(mode="both", clone_distgits=True)
-    else:
-        runtime.initialize(mode='both', clone_distgits=False)
+    runtime.initialize(mode='both', clone_distgits=False)
 
     await ConfigScanSources(runtime, ci_kubeconfig, as_yaml, rebase_priv, dry_run).run()
 
