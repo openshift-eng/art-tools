@@ -206,18 +206,10 @@ class Repodata:
             is_nvr, rpm_name = self._detect_nvr_vs_name(item)
 
             matching_rpms = [
-                rpm for rpm in self.primary_rpms if rpm.name == rpm_name and (rpm.arch == arch or rpm.arch == 'noarch')
+                rpm
+                for rpm in self.primary_rpms
+                if (rpm.name == rpm_name or rpm.name == item) and (rpm.arch == arch or rpm.arch == 'noarch')
             ]
-
-            if not matching_rpms and is_nvr and rpm_name != item:
-                # NVR detection may have false-positived on a package name that
-                # contains digit-heavy segments (e.g. xorg-x11-fonts-ISO8859-1-100dpi).
-                # Retry with the original string as a plain package name.
-                matching_rpms = [
-                    rpm for rpm in self.primary_rpms if rpm.name == item and (rpm.arch == arch or rpm.arch == 'noarch')
-                ]
-                if matching_rpms:
-                    is_nvr = False
 
             if not matching_rpms:
                 not_found.append(item)
