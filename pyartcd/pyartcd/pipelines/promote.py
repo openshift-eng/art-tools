@@ -26,12 +26,14 @@ from artcommonlib.arch_util import (
     go_suffix_for_arch,
 )
 from artcommonlib.assembly import AssemblyTypes
+from artcommonlib.constants import REGISTRY_CI_OPENSHIFT, REGISTRY_QUAY_OCP_RELEASE_DEV
 from artcommonlib.exceptions import VerificationError
 from artcommonlib.exectools import manifest_tool, manifest_tool_auth_file, to_thread
 from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.gitlab import GitLabClient
 from artcommonlib.jira_config import JIRA_EMAIL, JIRA_SERVER_URL
 from artcommonlib.oc_image_info import oc_image_info__cached_async
+from artcommonlib.registry_config import RegistryConfig
 from artcommonlib.rhcos import get_primary_container_name
 from artcommonlib.util import isolate_major_minor_in_group
 from elliottlib.errata import get_errata_live_id
@@ -162,6 +164,8 @@ class PromotePipeline:
             self._elliott_env_vars["ELLIOTT_DATA_PATH"] = self._ocp_build_data_url
             self._doozer_env_vars["DOOZER_DATA_PATH"] = self._ocp_build_data_url
 
+        self._registry_config: Optional[str] = None
+
     def check_environment_variables(self):
         logger = self.runtime.logger
 
@@ -185,8 +189,41 @@ class PromotePipeline:
 
     async def run(self):
         logger = self.runtime.logger
-        # Check if all required environment variables are set
         self.check_environment_variables()
+
+        if 'XDG_RUNTIME_DIR' in os.environ:
+            logger.info('Unsetting XDG_RUNTIME_DIR to prevent use of default registry auth')
+            del os.environ['XDG_RUNTIME_DIR']
+
+        quay_auth_file = os.getenv('QUAY_AUTH_FILE')
+        if not quay_auth_file:
+            raise ValueError(
+                "QUAY_AUTH_FILE environment variable is required but not set. "
+                "Ensure Jenkins credentials are properly bound."
+            )
+
+        source_files = [quay_auth_file]
+
+        with RegistryConfig(
+            kubeconfig=os.environ.get('KUBECONFIG'),
+            source_files=source_files,
+            registries=[
+                REGISTRY_QUAY_OCP_RELEASE_DEV,
+                REGISTRY_CI_OPENSHIFT,
+            ],
+        ) as global_auth_file:
+            self._registry_config = global_auth_file
+
+            logger.info(
+                'Set registry auth file=%s for pipeline operations (cherry-picked from %d source file(s))',
+                global_auth_file,
+                len(source_files),
+            )
+
+            await self._run_pipeline()
+
+    async def _run_pipeline(self):
+        logger = self.runtime.logger
 
         # Load group config and releases.yml
         logger.info("Loading build data...")
@@ -686,9 +723,7 @@ class PromotePipeline:
 
     async def extract_and_publish_clients(self, client_type: str, release_infos: Dict):
         logger = self._logger
-        registry_config = os.environ.get("QUAY_AUTH_FILE")
-        if registry_config:
-            logger.info("Using QUAY_AUTH_FILE for registry authentication: %s", registry_config)
+        registry_config = self._registry_config
         base_to_mirror_dir = f"{self._working_dir}/to_mirror/openshift-v4"
         message_digests = []
         for arch, release_info in release_infos.items():
@@ -1542,7 +1577,7 @@ class PromotePipeline:
         self._logger.info(
             "Checking if release image %s for %s (%s) already exists...", release_name, arch, dest_image_pullspec
         )
-        registry_config = os.environ.get("QUAY_AUTH_FILE")
+        registry_config = self._registry_config
         dest_image_info = await get_release_image_info(dest_image_pullspec, registry_config=registry_config)
         if dest_image_info:  # this arch-specific release image is already promoted
             self._logger.warning(
@@ -1820,7 +1855,7 @@ class PromotePipeline:
         with dest_manifest_list_path.open("w") as ml:
             yaml.dump(dest_manifest_list, ml)
 
-        auth_file = os.environ.get("QUAY_AUTH_FILE")
+        auth_file = self._registry_config
         await manifest_tool(
             ["push", "from-spec", "--", f"{dest_manifest_list_path}"],
             self.runtime.dry_run,
@@ -1892,9 +1927,8 @@ class PromotePipeline:
         if metadata:
             cmd.append("--metadata")
             cmd.append(json.dumps(metadata))
-        registry_config = os.environ.get("QUAY_AUTH_FILE")
-        if registry_config:
-            cmd.append(f"--registry-config={registry_config}")
+        if self._registry_config:
+            cmd.append(f"--registry-config={self._registry_config}")
         env = os.environ.copy()
         env["GOTRACEBACK"] = "all"
         self._logger.info("Running %s", " ".join(cmd))
@@ -1926,12 +1960,11 @@ class PromotePipeline:
             return None
         return json.loads(stdout)
 
-    @staticmethod
-    async def get_image_info(pullspec: str, raise_if_not_found: bool = False):
-        # Get image manifest/manifest-list.
+    async def get_image_info(self, pullspec: str, raise_if_not_found: bool = False):
         try:
-            registry_config = os.environ.get("QUAY_AUTH_FILE")
-            stdout = await oc_image_info__cached_async(pullspec, '--show-multiarch', registry_config=registry_config)
+            stdout = await oc_image_info__cached_async(
+                pullspec, '--show-multiarch', registry_config=self._registry_config
+            )
         except ChildProcessError as e:
             err_msg = str(e)
             if "not found: manifest unknown" in err_msg or "was deleted or has expired" in err_msg:
@@ -1966,13 +1999,10 @@ class PromotePipeline:
 
         return manifests
 
-    @staticmethod
-    async def get_multi_image_digest(pullspec: str, raise_if_not_found: bool = False):
-        # Get image digest
+    async def get_multi_image_digest(self, pullspec: str, raise_if_not_found: bool = False):
         try:
-            registry_config = os.environ.get("QUAY_AUTH_FILE")
             stdout = await oc_image_info__cached_async(
-                pullspec, '--filter-by-os=linux/amd64', registry_config=registry_config
+                pullspec, '--filter-by-os=linux/amd64', registry_config=self._registry_config
             )
         except ChildProcessError as e:
             err_msg = str(e)
