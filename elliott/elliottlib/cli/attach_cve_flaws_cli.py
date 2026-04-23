@@ -10,7 +10,7 @@ from artcommonlib import arch_util
 from artcommonlib.assembly import assembly_config_struct
 from artcommonlib.gitdata import SafeFormatter
 from artcommonlib.rpm_utils import parse_nvr
-from artcommonlib.util import new_roundtrip_yaml_handler
+from artcommonlib.util import is_ocp_delivery_repo, new_roundtrip_yaml_handler
 from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
 from errata_tool import Erratum
 
@@ -25,7 +25,6 @@ from elliottlib.shipment_utils import get_shipment_config_from_mr, set_bugzilla_
 from elliottlib.util import (
     get_advisory_boilerplate,
     get_component_by_delivery_repo,
-    is_ocp_delivery_repo,
 )
 
 YAML = new_roundtrip_yaml_handler()

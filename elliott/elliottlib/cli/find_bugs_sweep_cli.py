@@ -8,7 +8,7 @@ from artcommonlib import arch_util, logutil
 from artcommonlib.assembly import assembly_config_struct, assembly_issues_config
 from artcommonlib.format_util import green_print
 from artcommonlib.rpm_utils import parse_nvr
-from artcommonlib.util import new_roundtrip_yaml_handler
+from artcommonlib.util import is_ocp_delivery_repo, new_roundtrip_yaml_handler
 
 from elliottlib import Runtime, bzutil, constants, errata
 from elliottlib.bzutil import Bug, BugTracker, JIRABug
@@ -16,7 +16,7 @@ from elliottlib.cli import common
 from elliottlib.cli.common import click_coroutine
 from elliottlib.exceptions import ElliottFatalError
 from elliottlib.shipment_utils import get_builds_from_mr
-from elliottlib.util import chunk, is_ocp_delivery_repo, normalize_component_by_ocp_delivery_repo
+from elliottlib.util import chunk, normalize_component_by_ocp_delivery_repo
 
 logger = logutil.get_logger(__name__)
 type_bug_list = List[Bug]

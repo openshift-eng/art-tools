@@ -19,6 +19,7 @@ import requests
 from artcommonlib import logutil
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.jira_config import JIRA_EMAIL
+from artcommonlib.util import is_ocp_delivery_repo
 from errata_tool import Erratum
 from errata_tool.bug import Bug as ErrataBug
 from errata_tool.jira_issue import JiraIssue as ErrataJira
@@ -33,7 +34,6 @@ from elliottlib.metadata import Metadata
 from elliottlib.util import (
     chunk,
     get_component_by_delivery_repo,
-    is_ocp_delivery_repo,
     isolate_timestamp_in_release,
 )
 
