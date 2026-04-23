@@ -76,9 +76,14 @@ def golang_report_for_version(runtime, ocp_version: str, ignore_rhel: bool = Fal
             # handle legacy format openshift/golang-builder:v1.23.9-202506111225.g6c23478.el9
             nvr = image_nvr_like.replace('openshift/golang-builder:', 'openshift-golang-builder-container-')
         else:
-            # handle new pullspec format quay.io/redhat-user-workloads/ocp-art-tenant/art-images:golang-builder-v1.23.10-202602241801.p2.gd0321dd.el9
             tag = image_nvr_like.split(':')[-1]
-            nvr = tag.replace('golang-builder', 'openshift-golang-builder-container')
+            if tag.startswith('openshift-golang-builder-container-'):
+                # registry.redhat.io/openshift/art-images-base:openshift-golang-builder-container-v1.25.8-...
+                # Tag is already in NVR name format
+                nvr = tag
+            else:
+                # quay.io/redhat-user-workloads/ocp-art-tenant/art-images:golang-builder-v1.23.10-...
+                nvr = tag.replace('golang-builder', 'openshift-golang-builder-container')
 
         _LOGGER.info(f"Detected stream {stream_name} with builder nvr: {nvr}")
 
