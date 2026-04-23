@@ -8,7 +8,11 @@ import click
 import yaml
 from artcommonlib import exectools, redis, rhcos
 from artcommonlib.arch_util import go_arch_for_brew_arch, go_suffix_for_arch
-from artcommonlib.constants import REGISTRY_CI_OPENSHIFT, REGISTRY_QUAY_OCP_RELEASE_DEV
+from artcommonlib.constants import (
+    KONFLUX_DEFAULT_IMAGE_REPO,
+    REGISTRY_CI_OPENSHIFT,
+    REGISTRY_QUAY_OCP_RELEASE_DEV,
+)
 from artcommonlib.exectools import limit_concurrency
 from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.redis import RedisError
@@ -164,6 +168,7 @@ class BuildSyncPipeline:
             source_files=source_files,
             registries=[
                 REGISTRY_QUAY_OCP_RELEASE_DEV,
+                KONFLUX_DEFAULT_IMAGE_REPO,
                 REGISTRY_CI_OPENSHIFT,
             ],
         ) as global_auth_file:
