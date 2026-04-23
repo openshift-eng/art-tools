@@ -224,6 +224,7 @@ ENV ART_BUILD_DEPS_METHOD=cachi2
 ENV ART_BUILD_NETWORK=hermetic
 RUN go clean -cache || true
 ENV ART_BUILD_DEPS_MODE=default
+USER 0
 # End Konflux-specific steps
 LABEL foo="bar baz"
 USER 1000
@@ -235,6 +236,7 @@ ENV ART_BUILD_DEPS_METHOD=cachi2
 ENV ART_BUILD_NETWORK=hermetic
 RUN go clean -cache || true
 ENV ART_BUILD_DEPS_MODE=default
+USER 0
 # End Konflux-specific steps
 USER 2000
 RUN commands
@@ -281,6 +283,7 @@ ENV ART_BUILD_DEPS_METHOD=cachi2
 ENV ART_BUILD_NETWORK=hermetic
 RUN go clean -cache || true
 ENV ART_BUILD_DEPS_MODE=default
+USER 0
 # End Konflux-specific steps
 LABEL foo="bar baz"
 USER 1000
@@ -292,6 +295,7 @@ ENV ART_BUILD_DEPS_METHOD=cachi2
 ENV ART_BUILD_NETWORK=hermetic
 RUN go clean -cache || true
 ENV ART_BUILD_DEPS_MODE=default
+USER 0
 # End Konflux-specific steps
 USER 2000
 RUN commands
@@ -374,6 +378,7 @@ USER 3000
         metadata = MagicMock()
         metadata.distgit_key = "foo"
         metadata.is_lockfile_generation_enabled.return_value = True
+        metadata.get_lockfile_backend.return_value = "art-internal"
 
         mock_generator = AsyncMock()
         rebaser = KonfluxRebaser(MagicMock(), MagicMock(), MagicMock(), "unsigned", "test-repo")
@@ -383,7 +388,7 @@ USER 3000
         asyncio.run(rebaser._write_rpms_lock_file(metadata, Path(".")))
 
         mock_generator.generate_lockfile.assert_awaited_once_with(metadata, Path("."))
-        rebaser._logger.info.assert_called_with('Generating RPM lockfile for foo')
+        rebaser._logger.info.assert_called_with("Generating RPM lockfile for foo (backend=art-internal)")
 
     def test_write_rpms_lock_file_disabled(self):
         metadata = MagicMock()
@@ -1474,3 +1479,59 @@ class TestRebaserResolveMemberParentRegistryRedhat(IsolatedAsyncioTestCase):
 
         resolved, _ = await rebaser._resolve_member_parent("ose-cli", "ignored")
         self.assertEqual(resolved, "quay.io/fake:ose-cli-v4.18-uuid")
+
+
+class TestStripBareUpdates(TestCase):
+    """
+    Tests for _strip_bare_updates which removes bare yum/dnf update
+    commands from Dockerfiles in hermetic mode.
+    """
+
+    def setUp(self):
+        self.directory = TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.rebaser = KonfluxRebaser.__new__(KonfluxRebaser)
+        self.rebaser._logger = MagicMock()
+
+    def _make_dfp(self, content):
+        df_path = Path(self.directory.name) / "Dockerfile"
+        df_path.write_text(content)
+        return DockerfileParser(str(df_path))
+
+    def test_single_line(self):
+        dfp = self._make_dfp("FROM base\nRUN yum update -y && yum clean all\n")
+        self.rebaser._strip_bare_updates(dfp)
+        self.assertIn("yum clean all", dfp.content)
+        self.assertNotIn("yum update", dfp.content)
+
+    def test_continuation_line_no_double_ampersand(self):
+        """
+        Regression: stripping 'yum update -y' from a continuation line
+        must also consume the trailing backslash-newline-&& to avoid
+        leaving a syntactically invalid double '&&'.
+        """
+        content = (
+            "FROM base\n"
+            "RUN echo 'skip_missing_names_on_install=0' >> /etc/yum.conf \\\n"
+            " && yum update -y  \\\n"
+            " && yum clean all\n"
+        )
+        dfp = self._make_dfp(content)
+        self.rebaser._strip_bare_updates(dfp)
+        result = dfp.content
+        self.assertNotIn("yum update", result)
+        self.assertNotIn("&& \\\n &&", result)
+        self.assertNotIn("&&  &&", result)
+        self.assertIn("yum clean all", result)
+        self.assertIn("skip_missing_names_on_install", result)
+
+    def test_named_update_not_stripped(self):
+        dfp = self._make_dfp("FROM base\nRUN yum update -y openssl && yum clean all\n")
+        self.rebaser._strip_bare_updates(dfp)
+        self.assertIn("yum update -y openssl", dfp.content)
+
+    def test_dnf_update_stripped(self):
+        dfp = self._make_dfp("FROM base\nRUN dnf update -y && dnf clean all\n")
+        self.rebaser._strip_bare_updates(dfp)
+        self.assertNotIn("dnf update", dfp.content)
+        self.assertIn("dnf clean all", dfp.content)

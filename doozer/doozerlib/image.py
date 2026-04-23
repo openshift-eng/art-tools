@@ -1094,6 +1094,26 @@ class ImageMetadata(Metadata):
 
         return lockfile_enabled
 
+    def get_lockfile_backend(self) -> str:
+        """
+        Determine the lockfile backend to use.
+
+        Checks in order:
+            1. Image config: konflux.cachi2.lockfile.backend
+            2. Group config: konflux.cachi2.lockfile.backend
+            3. Default: "art-internal"
+
+        Return Value(s):
+            str: The lockfile backend name.
+        """
+        image_backend = self.config.konflux.cachi2.lockfile.get("backend")
+        group_backend = self.runtime.group_config.konflux.cachi2.lockfile.get("backend")
+
+        backend = image_backend or group_backend or "art-internal"
+
+        self.logger.info(f"Lockfile backend: {backend}")
+        return backend
+
     def is_dnf_modules_enable_enabled(self) -> bool:
         """
         Determines whether DNF module enablement command injection is enabled.
