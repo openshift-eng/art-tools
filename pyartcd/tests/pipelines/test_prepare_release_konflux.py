@@ -919,8 +919,10 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
     @patch.object(PrepareReleaseKonfluxPipeline, 'check_blockers', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'check_advisory_stage_policy', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'initialize', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.prepare_release_konflux.RegistryConfig')
     async def test_run_exits_unstable_when_deferred_build_failures_exist(
         self,
+        mock_registry_config,
         mock_initialize,
         mock_check_advisory_stage_policy,
         mock_check_blockers,
@@ -932,6 +934,9 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         mock_verify_payload,
         mock_report_deferred_build_failures,
     ):
+        mock_registry_config.return_value.__enter__ = Mock(return_value='/tmp/fake-auth.json')
+        mock_registry_config.return_value.__exit__ = Mock(return_value=False)
+
         pipeline = PrepareReleaseKonfluxPipeline(
             slack_client=self.mock_slack_client,
             runtime=self.runtime,
@@ -941,8 +946,9 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         pipeline.assembly_type = AssemblyTypes.STANDARD
         pipeline.bundle_build_errors = ["bundle build failed for operator=test-operator: boom"]
 
-        with self.assertRaises(SystemExit) as cm:
-            await pipeline.run()
+        with patch.dict('os.environ', {'QUAY_AUTH_FILE': '/tmp/fake-quay-auth.json'}):
+            with self.assertRaises(SystemExit) as cm:
+                await pipeline.run()
         self.assertEqual(cm.exception.code, 2)
 
         mock_initialize.assert_awaited_once()
