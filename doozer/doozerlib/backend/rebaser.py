@@ -30,6 +30,7 @@ from doozerlib.backend.build_repo import BuildRepo
 from doozerlib.exceptions import ParentRebaseFailedError
 from doozerlib.image import ImageMetadata, extract_builder_info_from_pullspec
 from doozerlib.lockfile import ArtifactLockfileGenerator, RPMLockfileGenerator
+from doozerlib.lockfile_prototype import LockfileBackend
 from doozerlib.record_logger import RecordLogger
 from doozerlib.repos import Repos
 from doozerlib.runtime import Runtime
@@ -87,6 +88,7 @@ class KonfluxRebaser:
         self.rpm_lockfile_generator = RPMLockfileGenerator(
             runtime.repos, runtime=runtime, lockfile_seed_nvrs=lockfile_seed_nvrs
         )
+        self._prototype_lockfile_generator = None
         self.artifact_lockfile_generator = ArtifactLockfileGenerator(runtime=runtime)
         self.image_repo = image_repo
         self.uuid_tag = ''
@@ -301,7 +303,7 @@ class KonfluxRebaser:
         self.uuid_tag = f"{version}-{self._runtime.uuid}"
 
         # Determine if parent images contain private fixes
-        downstream_parents: Optional[List[str]] = None
+        downstream_parents: list[str] | None = None
         if "from" in metadata.config:
             # If this image is FROM another group member, we need to wait on that group
             # member to determine if there is a private fix in it.
@@ -896,7 +898,7 @@ class KonfluxRebaser:
         source: Optional[SourceResolution],
         version: str,
         release: str,
-        downstream_parents: Optional[List[str]],
+        downstream_parents: list[str] | None,
         force_yum_updates: bool,
     ):
         with exectools.Dir(dest_dir):
@@ -907,8 +909,6 @@ class KonfluxRebaser:
             await self._write_fetch_artifacts(metadata, dest_dir)
 
             await self._write_osbs_image_config(metadata, dest_dir, source, version)
-
-            await self._write_rpms_lock_file(metadata, dest_dir)
 
             await self._write_artifacts_lock_file(metadata, dest_dir)
 
@@ -924,18 +924,38 @@ class KonfluxRebaser:
                 dest_dir,
             )
 
+            # Generate lockfile after Dockerfile update so --containerfile
+            # sees the rebased FROM lines with resolved ART pullspecs
+            await self._write_rpms_lock_file(metadata, dest_dir, downstream_parents)
+
             await self._update_csv(metadata, dest_dir, version, release)
 
             return version, release
 
-    async def _write_rpms_lock_file(self, metadata: ImageMetadata, dest_dir: Path):
+    async def _write_rpms_lock_file(
+        self,
+        metadata: ImageMetadata,
+        dest_dir: Path,
+        downstream_parents: list[str] | None = None,
+    ):
         if not metadata.is_lockfile_generation_enabled():
-            self._logger.debug(f'RPM lockfile generation is disabled for {metadata.distgit_key}')
+            self._logger.debug(f"RPM lockfile generation is disabled for {metadata.distgit_key}")
             return
 
-        self._logger.info(f'Generating RPM lockfile for {metadata.distgit_key}')
+        backend_str = metadata.config.konflux.cachi2.lockfile.get("backend", LockfileBackend.ART_INTERNAL.value)
+        self._logger.info(f"Generating RPM lockfile for {metadata.distgit_key} (backend={backend_str})")
 
-        await self.rpm_lockfile_generator.generate_lockfile(metadata, dest_dir)
+        if backend_str == LockfileBackend.RPM_LOCKFILE_PROTOTYPE.value:
+            if self._prototype_lockfile_generator is None:
+                from doozerlib.lockfile_prototype import RpmLockfilePrototypeGenerator
+
+                self._prototype_lockfile_generator = RpmLockfilePrototypeGenerator(
+                    self._runtime.repos, runtime=self._runtime
+                )
+            self._prototype_lockfile_generator.downstream_parents = downstream_parents or []
+            await self._prototype_lockfile_generator.generate_lockfile(metadata, dest_dir)
+        else:
+            await self.rpm_lockfile_generator.generate_lockfile(metadata, dest_dir)
 
     async def _write_artifacts_lock_file(self, metadata: ImageMetadata, dest_dir: Path):
         if not metadata.is_artifact_lockfile_enabled():
@@ -1067,7 +1087,7 @@ class KonfluxRebaser:
         df_path: Path,
         version: str,
         release: str,
-        downstream_parents: Optional[List[str]],
+        downstream_parents: list[str] | None,
         force_yum_updates: bool,
         dest_dir: Path,
     ):

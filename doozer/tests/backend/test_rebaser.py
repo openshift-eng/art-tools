@@ -373,6 +373,7 @@ USER 3000
         metadata = MagicMock()
         metadata.distgit_key = "foo"
         metadata.is_lockfile_generation_enabled.return_value = True
+        metadata.config.konflux.cachi2.lockfile.get.return_value = "art-internal"
 
         mock_generator = AsyncMock()
         rebaser = KonfluxRebaser(MagicMock(), MagicMock(), MagicMock(), "unsigned", "test-repo")
@@ -382,7 +383,7 @@ USER 3000
         asyncio.run(rebaser._write_rpms_lock_file(metadata, Path(".")))
 
         mock_generator.generate_lockfile.assert_awaited_once_with(metadata, Path("."))
-        rebaser._logger.info.assert_called_with('Generating RPM lockfile for foo')
+        rebaser._logger.info.assert_called_with("Generating RPM lockfile for foo (backend=art-internal)")
 
     def test_write_rpms_lock_file_disabled(self):
         metadata = MagicMock()
