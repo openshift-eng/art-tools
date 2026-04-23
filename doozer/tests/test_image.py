@@ -915,6 +915,48 @@ RUN echo "test"
             # Should not raise - RHEL version 9 detected from the builder image fallback
             metadata._apply_alternative_upstream_config()
 
+    @patch('doozerlib.image.SourceResolver')
+    @patch('builtins.open', create=True)
+    @patch('pathlib.Path.joinpath')
+    @patch('doozerlib.image.util.oc_image_info_for_arch', side_effect=Exception('image not accessible'))
+    def test_apply_alternative_upstream_config_undetermined_rhel_version(
+        self, mock_oc_image_info, mock_joinpath, mock_open, mock_source_resolver
+    ):
+        """Test that undetermined RHEL version logs a warning and returns instead of raising"""
+        extract_builder_info_from_pullspec.cache_clear()
+        metadata = self._create_image_metadata('openshift/ose-deployer-rhel9')
+
+        metadata.config = Model(
+            {
+                'name': 'openshift/ose-deployer-rhel9',
+                'distgit': {'branch': 'rhaos-5.0-rhel-9'},
+                'content': {'source': {'git': {'url': 'https://github.com/test/repo.git'}}},
+            }
+        )
+        metadata.branch_el_target = MagicMock(return_value=9)
+
+        mock_source_resolution = MagicMock()
+        metadata.runtime.source_resolver.resolve_source = MagicMock(return_value=mock_source_resolution)
+
+        mock_source_dir = MagicMock()
+        mock_source_resolver.get_source_dir = MagicMock(return_value=mock_source_dir)
+
+        mock_df_path = MagicMock()
+        mock_joinpath.return_value = mock_df_path
+
+        mock_open.return_value.__enter__.return_value = mock.mock_open(read_data="").return_value
+
+        with patch('doozerlib.image.DockerfileParser') as mock_dfp:
+            mock_dfp_instance = MagicMock()
+            # Single parent image with no RHEL version info (like :cli or :base)
+            mock_dfp_instance.parent_images = [
+                'registry.ci.openshift.org/ocp/4.22:cli',
+            ]
+            mock_dfp.return_value = mock_dfp_instance
+
+            # Should NOT raise - should log a warning and return gracefully
+            metadata._apply_alternative_upstream_config()
+
     def test_get_olm_bundle_delivery_repo_name_override_single_entry(self):
         metadata = self._create_image_metadata('openshift/test')
         mock_config = MagicMock()

@@ -854,10 +854,16 @@ class ImageMetadata(Metadata):
         upstream_intended_el_version, _ = self._determine_upstream_builder_info(source_dir)
 
         if not upstream_intended_el_version:
-            raise IOError(
-                f'[{self.distgit_key}] Could not determine upstream RHEL version. '
-                'Cannot apply alternative_upstream config.'
+            # Some images (e.g. deployer) use image stream tags like :cli or :base that don't
+            # encode RHEL version. Assume they match ART's intended version rather than crashing.
+            self.logger.warning(
+                '[%s] Could not determine upstream RHEL version from Dockerfile parent images. '
+                'Assuming it matches ART intended version (el%s). '
+                'If this is wrong, add rhel/ubi version info to the upstream Dockerfile base image tag.',
+                self.distgit_key,
+                art_intended_el_version,
             )
+            return
 
         # If ART and upstream RHEL versions match, no config merge needed
         if upstream_intended_el_version == art_intended_el_version:
