@@ -1,3 +1,4 @@
+import asyncio
 import html as html_mod
 import logging
 import os
@@ -14,7 +15,7 @@ from pyartcd import constants, jenkins
 from pyartcd import record as record_util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.runtime import Runtime
-from pyartcd.util import build_history_link_url, default_release_suffix
+from pyartcd.util import build_history_link_url, default_release_suffix, reset_rebase_fail_counter
 
 LOGGER = logging.getLogger(__name__)
 
@@ -124,7 +125,9 @@ class SeedLockfilePipeline:
         LOGGER.info('Generating lockfiles in %s assembly with seed map: %s', self.assembly, self.seed_map)
         await self._rebase_and_build_with_seed_map()
 
-        await self._post_report()
+        test_failed, solved, stream_failed = self._categorize_results()
+        await self._reset_rebase_counters_for_solved(solved)
+        await self._post_report(test_failed, solved, stream_failed)
 
     async def _build_in_test_assembly(self):
         """Phase 1: Build components in the test assembly with network_mode=open."""
@@ -214,6 +217,23 @@ class SeedLockfilePipeline:
             name = entry['name']
             # Overwrite -- the last entry per name is the stream build
             self.stream_results[name] = entry
+
+    async def _reset_rebase_counters_for_solved(self, solved: list[str]):
+        """Reset Redis rebase-fail counters for images that built successfully in the stream assembly."""
+        if self.assembly != 'stream' or self.runtime.dry_run:
+            return
+
+        if not solved:
+            return
+
+        LOGGER.info('Resetting rebase-fail counters for solved images: %s', ', '.join(solved))
+        results = await asyncio.gather(
+            *[reset_rebase_fail_counter(image, self.version, 'konflux') for image in solved],
+            return_exceptions=True,
+        )
+        for image, result in zip(solved, results):
+            if isinstance(result, Exception):
+                LOGGER.warning('Failed to reset rebase-fail counter for %s: %s', image, result)
 
     async def _rebase_and_build_with_seed_map(self):
         """Phase 2: Rebase and build in the target assembly with --lockfile-seed-nvrs for lockfile generation."""
@@ -426,9 +446,7 @@ class SeedLockfilePipeline:
 
         return '\n'.join(lines)
 
-    async def _post_report(self):
-        test_failed, solved, stream_failed = self._categorize_results()
-
+    async def _post_report(self, test_failed: list[str], solved: list[str], stream_failed: list[str]):
         slack_report = self._build_slack_report(test_failed, solved, stream_failed)
         LOGGER.info('Report:\n%s', slack_report)
         await self.slack_client.say(slack_report)
