@@ -98,12 +98,29 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         ],
     }
 
+    _ENV_KEYS = [
+        "GITHUB_TOKEN",
+        "JIRA_TOKEN",
+        "QUAY_PASSWORD",
+        "QUAY_AUTH_FILE",
+        "SIGNING_CERT",
+        "SIGNING_KEY",
+        "REDIS_SERVER_PASSWORD",
+        "JENKINS_SERVICE_ACCOUNT",
+        "JENKINS_SERVICE_ACCOUNT_TOKEN",
+        "AWS_SHARED_CREDENTIALS_FILE",
+        "CLOUDFLARE_ENDPOINT",
+        "ART_CLUSTER_ART_CD_PIPELINE_KUBECONFIG",
+    ]
+
     def setUp(self) -> None:
+        self._saved_env = {k: os.environ.get(k) for k in self._ENV_KEYS}
         os.environ.update(
             {
                 "GITHUB_TOKEN": "fake-github-token",
                 "JIRA_TOKEN": "fake-jira-token",
                 "QUAY_PASSWORD": "fake-quay-password",
+                "QUAY_AUTH_FILE": "/fake/quay-auth.json",
                 "SIGNING_CERT": "/path/to/signing.crt",
                 "SIGNING_KEY": "/path/to/signing.key",
                 "REDIS_SERVER_PASSWORD": "fake-redis-server-password",
@@ -115,11 +132,19 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             }
         )
 
+    def tearDown(self) -> None:
+        for key, value in self._saved_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+    @patch("pyartcd.pipelines.promote.RegistryConfig")
     @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
     @patch("pyartcd.pipelines.promote.util.load_releases_config", return_value={})
     @patch("pyartcd.pipelines.promote.util.load_group_config", return_value=dict(arches=["x86_64", "s390x"]))
     async def test_run_without_explicit_assembly_definition(
-        self, load_group_config: AsyncMock, load_releases_config: AsyncMock, _
+        self, load_group_config: AsyncMock, load_releases_config: AsyncMock, _, __
     ):
         runtime = MagicMock(
             config={
@@ -143,6 +168,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             group='openshift-4.10', data_path='https://example.com/ocp-build-data.git'
         )
 
+    @patch("pyartcd.pipelines.promote.RegistryConfig")
     @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
     @patch(
         "pyartcd.pipelines.promote.util.load_releases_config",
@@ -151,7 +177,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         },
     )
     @patch("pyartcd.pipelines.promote.util.load_group_config", return_value=dict(arches=["x86_64", "s390x"]))
-    async def test_run_with_stream_assembly(self, load_group_config: AsyncMock, load_releases_config: AsyncMock, _):
+    async def test_run_with_stream_assembly(self, load_group_config: AsyncMock, load_releases_config: AsyncMock, _, __):
         runtime = MagicMock(
             config={
                 "build_config": {
@@ -174,6 +200,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             group='openshift-4.10', data_path='https://example.com/ocp-build-data.git'
         )
 
+    @patch("pyartcd.pipelines.promote.RegistryConfig")
     @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
     @patch(
         "pyartcd.pipelines.promote.util.load_releases_config",
@@ -183,7 +210,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
     )
     @patch("pyartcd.pipelines.promote.util.load_group_config", return_value=dict(arches=["x86_64", "s390x"]))
     async def test_run_with_custom_assembly_and_missing_release_offset(
-        self, load_group_config: AsyncMock, load_releases_config: AsyncMock, _
+        self, load_group_config: AsyncMock, load_releases_config: AsyncMock, _, __
     ):
         runtime = MagicMock(
             config={
@@ -208,6 +235,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             group='openshift-4.10', data_path='https://example.com/ocp-build-data.git'
         )
 
+    @patch("pyartcd.pipelines.promote.RegistryConfig")
     @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
     @patch("pyartcd.pipelines.promote.PromotePipeline.build_release_image", return_value=None)
     @patch(
@@ -252,6 +280,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         get_release_image_info: AsyncMock,
         build_release_image: AsyncMock,
         _,
+        __,
     ):
         runtime = MagicMock(
             config={
@@ -318,6 +347,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         )
         pipeline._slack_client.bind_channel.assert_called_once_with("4.10.99-assembly.art0001")
 
+    @patch("pyartcd.pipelines.promote.RegistryConfig")
     @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
     @patch(
         "pyartcd.pipelines.promote.util.load_releases_config",
@@ -327,7 +357,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
     )
     @patch("pyartcd.pipelines.promote.util.load_group_config", return_value=Model(dict(arches=["x86_64", "s390x"])))
     async def test_run_with_standard_assembly_without_upgrade_edges(
-        self, load_group_config: AsyncMock, load_releases_config: AsyncMock, _
+        self, load_group_config: AsyncMock, load_releases_config: AsyncMock, _, __
     ):
         runtime = MagicMock(
             config={
@@ -355,6 +385,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             group='openshift-4.10', data_path='https://example.com/ocp-build-data.git'
         )
 
+    @patch("pyartcd.pipelines.promote.RegistryConfig")
     @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
     @patch(
         "pyartcd.pipelines.promote.util.load_releases_config",
@@ -367,7 +398,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         return_value=Model(dict(arches=["x86_64", "s390x"], upgrades="4.10.98,4.9.99")),
     )
     async def test_run_with_standard_assembly_without_image_advisory(
-        self, load_group_config: AsyncMock, load_releases_config: AsyncMock, _
+        self, load_group_config: AsyncMock, load_releases_config: AsyncMock, _, __
     ):
         runtime = MagicMock(
             config={
@@ -397,6 +428,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             group='openshift-4.10', data_path='https://example.com/ocp-build-data.git'
         )
 
+    @patch("pyartcd.pipelines.promote.RegistryConfig")
     @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
     @patch(
         "pyartcd.pipelines.promote.util.load_releases_config",
@@ -409,7 +441,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         return_value=Model(dict(arches=["x86_64", "s390x"], upgrades="4.10.98,4.9.99", advisories={"image": 2})),
     )
     async def test_run_with_standard_assembly_without_liveid(
-        self, load_group_config: AsyncMock, load_releases_config: AsyncMock, _
+        self, load_group_config: AsyncMock, load_releases_config: AsyncMock, _, __
     ):
         runtime = MagicMock(
             config={
@@ -447,6 +479,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             group='openshift-4.10', data_path='https://example.com/ocp-build-data.git'
         )
 
+    @patch("pyartcd.pipelines.promote.RegistryConfig")
     @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
     @patch(
         "pyartcd.pipelines.promote.util.load_releases_config",
@@ -459,7 +492,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         return_value=Model(dict(arches=["x86_64", "s390x"], upgrades="4.10.98,4.9.99", advisories={"image": 2})),
     )
     async def test_run_with_standard_assembly_invalid_errata_status(
-        self, load_group_config: AsyncMock, load_releases_config: AsyncMock, _
+        self, load_group_config: AsyncMock, load_releases_config: AsyncMock, _, __
     ):
         runtime = MagicMock(
             config={
@@ -493,6 +526,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             group='openshift-4.10', data_path='https://example.com/ocp-build-data.git'
         )
 
+    @patch("pyartcd.pipelines.promote.RegistryConfig")
     @patch("pyartcd.locks.run_with_lock", new_callable=MagicMock)
     @patch("pyartcd.pipelines.promote.PromotePipeline.sign_artifacts")
     @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
@@ -559,6 +593,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         from_url: Mock,
         sign_artifacts: AsyncMock,
         run_with_lock: AsyncMock,
+        mock_registry_config: MagicMock,
     ):
         def fake_run_with_lock(*args, **kwargs):
             async def inner():
@@ -1595,6 +1630,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         self.assertEqual(actual["image"], "quay.io/openshift-release-dev/ocp-release:4.10.99-multi")
         self.assertEqual(actual["digest"], "fake:deadbeef-dest-multi")
 
+    @patch("pyartcd.pipelines.promote.RegistryConfig")
     @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
     @patch("pyartcd.pipelines.promote.PromotePipeline.check_blocker_bugs")
     @patch(
@@ -1615,7 +1651,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         ),
     )
     async def test_run_with_shipment_config_and_image_advisory_conflict(
-        self, load_group_config: AsyncMock, load_releases_config: AsyncMock, check_blocker_bugs: AsyncMock, _
+        self, load_group_config: AsyncMock, load_releases_config: AsyncMock, check_blocker_bugs: AsyncMock, _, __
     ):
         runtime = MagicMock(
             config={
@@ -1645,6 +1681,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             group='openshift-4.10', data_path='https://example.com/ocp-build-data.git'
         )
 
+    @patch("pyartcd.pipelines.promote.RegistryConfig")
     @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
     @patch("pyartcd.pipelines.promote.PromotePipeline.check_blocker_bugs")
     @patch(
@@ -1664,7 +1701,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         ),
     )
     async def test_run_with_shipment_config_missing_url(
-        self, load_group_config: AsyncMock, load_releases_config: AsyncMock, check_blocker_bugs: AsyncMock, _
+        self, load_group_config: AsyncMock, load_releases_config: AsyncMock, check_blocker_bugs: AsyncMock, _, __
     ):
         runtime = MagicMock(
             config={
@@ -1693,6 +1730,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             group='openshift-4.10', data_path='https://example.com/ocp-build-data.git'
         )
 
+    @patch("pyartcd.pipelines.promote.RegistryConfig")
     @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
     @patch("pyartcd.pipelines.promote.PromotePipeline.check_blocker_bugs")
     @patch("pyartcd.pipelines.promote.get_shipment_config_from_mr", return_value=None)
@@ -1719,6 +1757,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         get_shipment_config_mock: Mock,
         check_blocker_bugs: AsyncMock,
         _,
+        __,
     ):
         runtime = MagicMock(
             config={
@@ -1748,6 +1787,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             group='openshift-4.10', data_path='https://example.com/ocp-build-data.git'
         )
 
+    @patch("pyartcd.pipelines.promote.RegistryConfig")
     @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
     @patch("pyartcd.pipelines.promote.PromotePipeline.check_blocker_bugs")
     @patch("pyartcd.pipelines.promote.get_shipment_config_from_mr")
@@ -1774,6 +1814,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         get_shipment_config_mock: Mock,
         check_blocker_bugs: AsyncMock,
         _,
+        __,
     ):
         # Mock shipment config without live_id
         mock_shipment = MagicMock()
@@ -1808,6 +1849,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             group='openshift-4.10', data_path='https://example.com/ocp-build-data.git'
         )
 
+    @patch("pyartcd.pipelines.promote.RegistryConfig")
     @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
     @patch("pyartcd.pipelines.promote.PromotePipeline.check_blocker_bugs")
     @patch("pyartcd.pipelines.promote.get_shipment_config_from_mr")
@@ -1838,6 +1880,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         get_shipment_config_mock: Mock,
         check_blocker_bugs: AsyncMock,
         _,
+        __,
     ):
         # Mock shipment config with valid data
         mock_shipment = MagicMock()
@@ -2077,7 +2120,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
     @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
     @patch("pyartcd.pipelines.promote.exectools.cmd_assert_async")
     @patch("pyartcd.pipelines.promote.manifest_tool")
-    async def test_push_manifest_list_uses_quay_auth_file(
+    async def test_push_manifest_list_uses_registry_config(
         self, manifest_tool: AsyncMock, cmd_assert_async: AsyncMock, _
     ):
         runtime = MagicMock(
@@ -2097,8 +2140,8 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             runtime.working_dir = Path(temp_dir)
             pipeline = PromotePipeline(runtime, group="openshift-4.10", assembly="4.10.99", signing_env="prod")
-            with patch.dict(os.environ, {"QUAY_AUTH_FILE": "/tmp/quay-auth.json", "XDG_RUNTIME_DIR": "/run/user/984"}):
-                await pipeline.push_manifest_list("4.10.99", {"schemaVersion": 2})
+            pipeline._registry_config = "/tmp/quay-auth.json"
+            await pipeline.push_manifest_list("4.10.99", {"schemaVersion": 2})
 
             manifest_tool.assert_awaited_once_with(
                 ["push", "from-spec", "--", str(Path(temp_dir) / "4.10.99.manifest-list.yaml")],
@@ -2106,10 +2149,6 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
                 auth_file="/tmp/quay-auth.json",
             )
             cmd_assert_async.assert_awaited_once()
-            self.assertEqual(
-                cmd_assert_async.await_args.kwargs["env"]["QUAY_AUTH_FILE"],
-                "/tmp/quay-auth.json",
-            )
             self.assertEqual(
                 cmd_assert_async.await_args.args[0],
                 [
