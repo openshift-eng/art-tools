@@ -21,7 +21,6 @@ from opentelemetry import trace
 from pyartcd import constants, jenkins, locks
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.jenkins import get_build_url
-from pyartcd.oc import registry_login
 from pyartcd.runtime import GroupRuntime, Runtime
 from pyartcd.util import branch_arches
 
@@ -200,9 +199,6 @@ class BuildSyncPipeline:
         if self.assembly not in ('stream', 'test') and not self.runtime.dry_run:
             text_body = f"Build sync job [run]({self.job_run}) has been triggered"
             await self.comment_on_assembly_pr(text_body)
-
-        # Make sure we're logged into the OC registry
-        await registry_login()
 
         if self.retrigger_current_nightly:
             await self._retrigger_current_nightlies()
