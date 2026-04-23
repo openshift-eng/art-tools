@@ -1,5 +1,4 @@
 import asyncio
-import os
 import re
 import sys
 from datetime import datetime
@@ -168,7 +167,6 @@ async def gen_assembly_from_releases(
         suggestions_url=suggestions_url,
         gen_microshift=gen_microshift,
         release_date=date,
-        registry_config=os.getenv("QUAY_AUTH_FILE"),
     ).run()
 
     # ruamel.yaml configuration
@@ -207,10 +205,8 @@ class GenAssemblyCli:
         suggestions_url: Optional[str] = None,
         gen_microshift: bool = False,
         release_date: Optional[str] = None,
-        registry_config: str = None,
     ):
         self.runtime = runtime
-        self.registry_config = registry_config
         # The name of the assembly we are going to output
         self.gen_assembly_name = gen_assembly_name
         self.nightlies = nightlies
@@ -362,7 +358,7 @@ class GenAssemblyCli:
             image_info = await util.oc_image_info_for_arch_async(
                 payload_tag_pullspec,
                 go_arch_for_brew_arch(brew_cpu_arch),
-                registry_config=self.registry_config,
+                registry_config=self.runtime.registry_config,
             )
             if payload_tag_name in rhcos_tag_names:
                 self.runtime.logger.info(f'Record rhcos tag name {payload_tag_name}')
@@ -377,7 +373,7 @@ class GenAssemblyCli:
 
             # Use shared utility to extract NVR and get build inspector
             name, version, release_ver = await release_inspector.extract_nvr_from_pullspec(
-                payload_tag_pullspec, registry_config=self.registry_config
+                payload_tag_pullspec, registry_config=self.runtime.registry_config
             )
             package_name = name
             build_nvr = f"{name}-{version}-{release_ver}"
@@ -616,7 +612,7 @@ class GenAssemblyCli:
                         amd64_rhcos_info = util.oc_image_info_for_arch(
                             self.rhcos_by_tag[tag.name]["x86_64"],
                             "amd64",
-                            registry_config=self.registry_config,
+                            registry_config=self.runtime.registry_config,
                         )
                         # NOTE: RHCOS images are currently always in ocp-v4.0-art-dev, even for OCP 5.x.
                         # When RHCOS 5.x images exist in their own repository, this should be updated to
@@ -625,7 +621,7 @@ class GenAssemblyCli:
                         rhcos_info = util.oc_image_info_for_arch(
                             f"{art_repo}:{amd64_rhcos_info['config']['config']['Labels']['coreos.build.manifest-list-tag']}",
                             go_arch_for_brew_arch(arch),
-                            registry_config=self.registry_config,
+                            registry_config=self.runtime.registry_config,
                         )
                         self.rhcos_by_tag[tag.name][arch] = f"{art_repo}@{rhcos_info['digest']}"
                         self.logger.info(f'Find RHCOS image {tag.name} for {arch}: {self.rhcos_by_tag[tag.name][arch]}')

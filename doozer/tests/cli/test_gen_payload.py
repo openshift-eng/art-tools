@@ -867,8 +867,8 @@ spec:
     @patch("artcommonlib.exectools.cmd_assert_async")
     @patch("aiofiles.open")
     async def test_create_multi_manifest_list(self, open_mock, exec_mock, fmlsha_mock):
-        with patch.dict(os.environ, {"QUAY_AUTH_FILE": "/tmp/quay-auth.json"}, clear=True):
-            runtime = MagicMock(uuid="uuid")
+        with patch.dict(os.environ, {}, clear=True):
+            runtime = MagicMock(uuid="uuid", registry_config="/tmp/quay-auth.json")
             gpcli = rgp_cli.GenPayloadCli(runtime, output_dir="/tmp", organization="org", repository="repo")
 
             buffer = io.StringIO()
@@ -907,7 +907,8 @@ spec:
     @patch("artcommonlib.exectools.cmd_assert_async")
     @patch("pathlib.Path.open")
     async def test_create_multi_release_images(self, open_mock, exec_mock):
-        gpcli = flexmock(rgp_cli.GenPayloadCli(output_dir="/tmp"))
+        runtime = MagicMock(registry_config="/tmp/quay-auth.json")
+        gpcli = flexmock(rgp_cli.GenPayloadCli(runtime, output_dir="/tmp"))
 
         exec_mock.return_value = None  # do not actually execute command
         cmgr = MagicMock(__enter__=lambda _: io.StringIO())  # mock Path.open()
@@ -937,8 +938,9 @@ spec:
     async def test_create_multi_release_manifest_list(
         self, open_mock, exec_mock, mirror_payload_content_mock, fmlsha_mock
     ):
-        with patch.dict(os.environ, {"QUAY_AUTH_FILE": "/tmp/quay-auth.json"}, clear=True):
-            gpcli = rgp_cli.GenPayloadCli(output_dir="/tmp")
+        with patch.dict(os.environ, {}, clear=True):
+            runtime = MagicMock(registry_config="/tmp/quay-auth.json")
+            gpcli = rgp_cli.GenPayloadCli(runtime, output_dir="/tmp")
 
             exec_mock.return_value = None  # do not actually execute command
             buffer = io.StringIO()
