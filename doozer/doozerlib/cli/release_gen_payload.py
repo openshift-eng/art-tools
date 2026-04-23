@@ -2826,9 +2826,10 @@ class PayloadGenerator:
         release_json_str = ""
         rc = -1
         while retries > 0:
-            rc, release_json_str, err = await exectools.cmd_gather_async(
-                f"oc adm release info {pullspec} -o=json", check=False
-            )
+            cmd: List[str] = ["oc", "adm", "release", "info", pullspec, "-o=json"]
+            if runtime.registry_config:
+                cmd.append(f"--registry-config={runtime.registry_config}")
+            rc, release_json_str, err = await exectools.cmd_gather_async(cmd, check=False)
             if rc == 0:
                 break
             runtime.logger.warn(f"Error accessing nightly release info for {pullspec}:  {err}")
@@ -2843,7 +2844,7 @@ class PayloadGenerator:
 
         payload_entries: Dict[str, PayloadEntry]
         issues: List[AssemblyIssue]
-        registry_config = self.runtime.registry_config
+        registry_config = runtime.registry_config
         payload_entries, issues = self.find_payload_entries(
             assembly_inspector, arch, "", registry_config=registry_config
         )
