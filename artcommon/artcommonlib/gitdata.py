@@ -1,4 +1,5 @@
 import io
+import logging
 import os
 import shutil
 import string
@@ -6,6 +7,7 @@ import urllib.parse
 
 import ruamel.yaml
 import ruamel.yaml.util
+import tenacity
 import yaml
 from artcommonlib import exectools
 from artcommonlib.constants import GIT_NO_PROMPTS
@@ -169,11 +171,18 @@ class GitData(object):
                             raise GitDataBranchException(msg)
                     else:
                         # Check if local is synced with remote
-                        rc, out, err = exectools.cmd_gather(
-                            ["git", "ls-remote", self.data_path, self.branch], set_env=git_env
-                        )
-                        if rc:
-                            raise GitDataException('Unable to check remote sha: {}'.format(err))
+                        for attempt in tenacity.Retrying(
+                            stop=tenacity.stop_after_attempt(3),
+                            wait=tenacity.wait_fixed(5),
+                            before_sleep=tenacity.before_sleep_log(self.logger, logging.WARNING),
+                            reraise=True,
+                        ):
+                            with attempt:
+                                rc, out, err = exectools.cmd_gather(
+                                    ["git", "ls-remote", self.data_path, self.branch], set_env=git_env
+                                )
+                                if rc:
+                                    raise GitDataException('Unable to check remote sha: {}'.format(err))
                         remote = out.strip().split('\t')[0]
                         try:
                             exectools.cmd_assert('git branch --contains {}'.format(remote))
