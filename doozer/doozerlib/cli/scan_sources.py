@@ -83,7 +83,7 @@ class ConfigScanSources:
         await self.generate_report()
 
     def _is_meta_enabled(self, meta: Metadata) -> bool:
-        return meta.enabled or meta.mode == "disabled" and self.runtime.load_disabled
+        return meta.enabled or (meta.mode == "disabled" and self.runtime.load_disabled)
 
     def _skip_image(self, image_meta: ImageMetadata, issue: str) -> None:
         if image_meta.distgit_key in self.skipped_image_dgks:

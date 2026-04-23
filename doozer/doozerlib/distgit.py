@@ -44,6 +44,7 @@ from artcommonlib.util import (
     isolate_el_version_in_brew_tag,
     isolate_rhel_major_from_distgit_branch,
 )
+from artcommonlib.variants import BuildVariant
 from dockerfile_parse import DockerfileParser
 from tenacity import before_sleep_log, retry, retry_if_not_result, stop_after_attempt, wait_fixed
 
@@ -484,8 +485,10 @@ class ImageDistGitRepo(DistGitRepo):
         # (e.g., for commands like images:list that don't need this information)
         # This avoids expensive oc image info operations
         if self.metadata.canonical_builders_enabled and autoclone:
+            attempted_resolution = False
             # If the image is distgit-only, this logic does not apply
             if self.has_source():
+                attempted_resolution = True
                 source_path = self.runtime.source_resolver.resolve_source(self.metadata).source_path
                 self.art_intended_el_version = self._determine_art_rhel_version()
                 self.upstream_intended_el_version = self._determine_upstream_rhel_version(source_path)
@@ -493,8 +496,17 @@ class ImageDistGitRepo(DistGitRepo):
             # and find a related alternative_upstream config stanza. This won't happen if:
             # 1. we failed to determine upstream rhel version
             # 2. upstream and ART rhel versions match: in this case, alternative_upstream is ignored
-            self._update_image_config()
-            self.metadata._mark_canonical_builders_resolved()
+            metadata_resolved = self._update_image_config()
+            if (
+                attempted_resolution
+                and not metadata_resolved
+                and (
+                    self.upstream_intended_el_version is None
+                    or self.upstream_intended_el_version == self.art_intended_el_version
+                    or self.runtime.variant == BuildVariant.OKD
+                )
+            ):
+                self.metadata._mark_canonical_builders_resolved()
 
         # Initialize our distgit directory, if necessary
         if autoclone:
@@ -1876,7 +1888,7 @@ class ImageDistGitRepo(DistGitRepo):
 
         return version
 
-    def _update_image_config(self):
+    def _update_image_config(self) -> bool:
         """
         If we're trying to match upstream, check if there's a 'when' clause in image alternative_config field
         that matches upstream RHEL version. If so, merge the 'when' clause content with the main image config
@@ -1886,13 +1898,13 @@ class ImageDistGitRepo(DistGitRepo):
             # Could not determine upstream rhel version: do not match upstream builders
             self.logger.warning('Unknown upstream rhel version: will not merge configs')
             self.should_match_upstream = False
-            return
+            return False
 
         elif self.upstream_intended_el_version == self.art_intended_el_version:
             # ART/upstream el versions match: do not merge configs, but match upstream builders
             self.logger.warning('ART and upstream intended rhel version match: will not merge configs')
             self.should_match_upstream = True
-            return
+            return False
 
         # Check if there is an alternative configuration matching upstream RHEL version
         alt_configs = self.config.alternative_upstream
@@ -1914,16 +1926,17 @@ class ImageDistGitRepo(DistGitRepo):
                 self.upstream_intended_el_version,
             )
             self.should_match_upstream = False
+            return False
 
-        else:
-            # We found an alternative_upstream config stanza. We can match upstream
-            self.should_match_upstream = True
-            # Distgit branch must be changed to track the alternative one
-            self.branch = self.config.distgit.branch
-            # Also update metadata config
-            self.metadata.config = self.config
-            self.metadata._mark_canonical_builders_resolved()
-            self.metadata.targets = self.metadata.determine_targets()
+        # We found an alternative_upstream config stanza. We can match upstream
+        self.should_match_upstream = True
+        # Distgit branch must be changed to track the alternative one
+        self.branch = self.config.distgit.branch
+        # Also update metadata config
+        self.metadata.config = self.config
+        self.metadata.targets = self.metadata.determine_targets()
+        self.metadata._mark_canonical_builders_resolved()
+        return True
 
     def rebase_from_directives(self, dfp):
         image_from = Model(self.config.get('from', None))
