@@ -8,9 +8,15 @@ import click
 import yaml
 from artcommonlib import exectools, redis, rhcos
 from artcommonlib.arch_util import go_arch_for_brew_arch, go_suffix_for_arch
+from artcommonlib.constants import (
+    KONFLUX_DEFAULT_IMAGE_REPO,
+    REGISTRY_CI_OPENSHIFT,
+    REGISTRY_QUAY_OCP_RELEASE_DEV,
+)
 from artcommonlib.exectools import limit_concurrency
 from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.redis import RedisError
+from artcommonlib.registry_config import RegistryConfig
 from artcommonlib.release_util import SoftwareLifecyclePhase
 from artcommonlib.telemetry import start_as_current_span_async
 from artcommonlib.util import split_git_url, uses_konflux_imagestream_override
@@ -19,7 +25,6 @@ from opentelemetry import trace
 from pyartcd import constants, jenkins, locks
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.jenkins import get_build_url
-from pyartcd.oc import registry_login
 from pyartcd.runtime import GroupRuntime, Runtime
 from pyartcd.util import branch_arches
 
@@ -79,6 +84,8 @@ class BuildSyncPipeline:
 
         self.slack_client = self.runtime.new_slack_client()
         self.slack_client.bind_channel(f'openshift-{self.version}')
+
+        self._registry_config: str | None = None
 
         # Imagestream name for Brew builds is 4.y-art-latest
         # For konflux, it is 4.y-konflux-art-latest
@@ -143,6 +150,39 @@ class BuildSyncPipeline:
 
     @start_as_current_span_async(TRACER, "build-sync.run")
     async def run(self):
+        if 'XDG_RUNTIME_DIR' in os.environ:
+            self.logger.info('Unsetting XDG_RUNTIME_DIR to prevent use of default registry auth')
+            del os.environ['XDG_RUNTIME_DIR']
+
+        quay_auth_file = os.getenv('QUAY_AUTH_FILE')
+        if not quay_auth_file:
+            raise ValueError(
+                "QUAY_AUTH_FILE environment variable is required but not set. "
+                "Ensure Jenkins credentials are properly bound."
+            )
+
+        source_files = [quay_auth_file]
+
+        with RegistryConfig(
+            kubeconfig=os.environ.get('KUBECONFIG'),
+            source_files=source_files,
+            registries=[
+                REGISTRY_QUAY_OCP_RELEASE_DEV,
+                KONFLUX_DEFAULT_IMAGE_REPO,
+                REGISTRY_CI_OPENSHIFT,
+            ],
+        ) as global_auth_file:
+            self._registry_config = global_auth_file
+
+            self.logger.info(
+                'Set registry auth file=%s for pipeline operations (cherry-picked from %d source file(s))',
+                global_auth_file,
+                len(source_files),
+            )
+
+            await self._run_pipeline()
+
+    async def _run_pipeline(self):
         current_span = trace.get_current_span()
         current_span.set_attribute("build-sync.version", self.version)
         current_span.set_attribute("build-sync.assembly", self.assembly)
@@ -162,23 +202,16 @@ class BuildSyncPipeline:
             jenkins.update_title(' [KONFLUX]')
 
         if self.assembly not in ('stream', 'test') and not self.runtime.dry_run:
-            # Comment on PR if triggered from gen assembly
             text_body = f"Build sync job [run]({self.job_run}) has been triggered"
             await self.comment_on_assembly_pr(text_body)
 
-        # Make sure we're logged into the OC registry
-        await registry_login()
-
-        # Should we retrigger current nightly?
         if self.retrigger_current_nightly:
             await self._retrigger_current_nightlies()
             return
 
-        # Backup imagestreams
         self.logger.info('Backup all imagestreams...')
         await self._backup_all_imagestreams()
 
-        # Update nightly imagestreams
         self.logger.info('Update nightly imagestreams...')
         await self._update_nightly_imagestreams()
 
@@ -433,6 +466,8 @@ class BuildSyncPipeline:
             group_param += f'@{self.doozer_data_gitref}'
         cmd.append(group_param)
         cmd.append(f'--build-system={self.build_system}')
+        if self._registry_config:
+            cmd.append(f'--registry-config={self._registry_config}')
         cmd.extend(
             [
                 'release:gen-payload',
@@ -485,6 +520,8 @@ class BuildSyncPipeline:
                 f'oc adm release new --to-image={image} --name {name} '
                 f'--reference-mode=source -n {namespace} --from-image-stream {meta["name"]}'
             )
+            if self._registry_config:
+                cmd += f' --registry-config={self._registry_config}'
 
             if self.runtime.dry_run:
                 self.logger.info('Would have created the release image as follows: %s', cmd)
