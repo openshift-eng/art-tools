@@ -1,5 +1,4 @@
 import io
-import logging
 import os
 import shutil
 import string
@@ -7,7 +6,6 @@ import urllib.parse
 
 import ruamel.yaml
 import ruamel.yaml.util
-import tenacity
 import yaml
 from artcommonlib import exectools
 from artcommonlib.constants import GIT_NO_PROMPTS
@@ -171,18 +169,14 @@ class GitData(object):
                             raise GitDataBranchException(msg)
                     else:
                         # Check if local is synced with remote
-                        for attempt in tenacity.Retrying(
-                            stop=tenacity.stop_after_attempt(3),
-                            wait=tenacity.wait_fixed(5),
-                            before_sleep=tenacity.before_sleep_log(self.logger, logging.WARNING),
-                            reraise=True,
-                        ):
-                            with attempt:
-                                rc, out, err = exectools.cmd_gather(
-                                    ["git", "ls-remote", self.data_path, self.branch], set_env=git_env
-                                )
-                                if rc:
-                                    raise GitDataException('Unable to check remote sha: {}'.format(err))
+                        rc, out, err = exectools.cmd_gather(
+                            ["git", "ls-remote", self.data_path, self.branch],
+                            set_env=git_env,
+                            retries=3,
+                            pollrate=5,
+                        )
+                        if rc:
+                            raise GitDataException('Unable to check remote sha: {}'.format(err))
                         remote = out.strip().split('\t')[0]
                         try:
                             exectools.cmd_assert('git branch --contains {}'.format(remote))
@@ -203,7 +197,7 @@ class GitData(object):
                 self.logger.info('Cloning config data from {}'.format(self.data_path))
                 if not os.path.isdir(data_destination):
                     cmd = "git clone --no-single-branch {} {}".format(self.data_path, data_destination)
-                    exectools.cmd_assert(cmd, set_env=git_env)
+                    exectools.cmd_assert(cmd, set_env=git_env, retries=3)
                     exectools.cmd_assert(f'git -C {data_destination} checkout {self.branch}', set_env=git_env)
 
             self.remote_path = self.data_path
@@ -334,4 +328,4 @@ class GitData(object):
         """
         self.logger.info('Pushing config...')
         with Dir(self.data_path):
-            exectools.cmd_assert('git push')
+            exectools.cmd_assert('git push', retries=3)
