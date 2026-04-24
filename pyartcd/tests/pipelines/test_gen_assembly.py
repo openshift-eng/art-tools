@@ -230,6 +230,8 @@ releases:
             maintainer_can_modify=True,
         )
 
+    @patch.dict("os.environ", {"QUAY_AUTH_FILE": "/tmp/auth.json"})
+    @patch("pyartcd.pipelines.gen_assembly.RegistryConfig")
     @patch("pyartcd.pipelines.gen_assembly.GenAssemblyPipeline._get_latest_accepted_nightly", return_value="nightly2")
     @patch(
         "pyartcd.pipelines.gen_assembly.GenAssemblyPipeline._create_or_update_pull_request",
@@ -244,7 +246,12 @@ releases:
         _gen_assembly_from_releases: AsyncMock,
         _create_or_update_pull_request: AsyncMock,
         _get_latest_accepted_nightly: AsyncMock,
+        mock_registry_config: MagicMock,
     ):
+        # Mock RegistryConfig context manager
+        mock_registry_config.return_value.__enter__.return_value = "/tmp/global_auth.json"
+        mock_registry_config.return_value.__exit__.return_value = None
+
         runtime = MagicMock(
             dry_run=False,
             config={

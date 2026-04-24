@@ -11,7 +11,13 @@ from typing import Iterable, Optional, OrderedDict, Tuple
 import aiohttp
 import click
 from artcommonlib import exectools
+from artcommonlib.constants import (
+    KONFLUX_DEFAULT_IMAGE_REPO,
+    REGISTRY_CI_OPENSHIFT,
+    REGISTRY_QUAY_OCP_RELEASE_DEV,
+)
 from artcommonlib.github_auth import get_github_client_for_org
+from artcommonlib.registry_config import RegistryConfig
 from artcommonlib.util import (
     get_inflight,
     isolate_major_minor_in_group,
@@ -139,6 +145,9 @@ class GenAssemblyPipeline:
             data_path if data_path else self.runtime.config.get("build_config", {}).get("ocp_build_data_url")
         )
 
+        # Registry config will be set up in run() method
+        self._registry_config: str | None = None
+
         if self.skip_get_nightlies and len(self.nightlies) != len(self.arches):
             raise ValueError(
                 f"When using --skip-get-nightlies, nightlies for all given {len(self.arches)} arches must be specified"
@@ -150,6 +159,39 @@ class GenAssemblyPipeline:
                 raise ValueError("All nightlies must be private or none")
 
     async def run(self):
+        if 'XDG_RUNTIME_DIR' in os.environ:
+            self._logger.info('Unsetting XDG_RUNTIME_DIR to prevent use of default registry auth')
+            del os.environ['XDG_RUNTIME_DIR']
+
+        quay_auth_file = os.getenv('QUAY_AUTH_FILE')
+        if not quay_auth_file:
+            raise ValueError(
+                "QUAY_AUTH_FILE environment variable is required but not set. "
+                "Ensure Jenkins credentials are properly bound."
+            )
+
+        source_files = [quay_auth_file]
+
+        with RegistryConfig(
+            kubeconfig=os.environ.get('KUBECONFIG'),
+            source_files=source_files,
+            registries=[
+                REGISTRY_QUAY_OCP_RELEASE_DEV,
+                KONFLUX_DEFAULT_IMAGE_REPO,
+                REGISTRY_CI_OPENSHIFT,
+            ],
+        ) as global_auth_file:
+            self._registry_config = global_auth_file
+
+            self._logger.info(
+                'Set registry auth file=%s for pipeline operations (cherry-picked from %d source file(s))',
+                global_auth_file,
+                len(source_files),
+            )
+
+            await self._run_pipeline()
+
+    async def _run_pipeline(self):
         self._slack_client.bind_channel(self.group)
         slack_response = await self._slack_client.say(
             f":construction: Generating assembly definition {self.assembly} :construction:"
@@ -243,6 +285,8 @@ class GenAssemblyPipeline:
             "--build-system",
             self.build_system,
         ]
+        if self._registry_config:
+            cmd.append(f"--registry-config={self._registry_config}")
         if self.arches:
             cmd.append("--arches")
             cmd.append(",".join(self.arches))
@@ -273,6 +317,8 @@ class GenAssemblyPipeline:
             "--build-system",
             self.build_system,
         ]
+        if self._registry_config:
+            cmd.append(f"--registry-config={self._registry_config}")
         if self.arches:
             cmd.append("--arches")
             cmd.append(",".join(self.arches))
