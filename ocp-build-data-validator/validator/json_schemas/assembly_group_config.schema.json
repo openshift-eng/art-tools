@@ -192,6 +192,22 @@
       "$ref": "#/properties/shipment"
     },
     "shipment-": {},
+    "microshift_bootc_shipment": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "microshift_bootc_shipment!": {
+      "$ref": "#/properties/microshift_bootc_shipment"
+    },
+    "microshift_bootc_shipment?": {
+      "$ref": "#/properties/microshift_bootc_shipment"
+    },
+    "microshift_bootc_shipment-": {},
     "upgrades!": {
       "$ref": "#/properties/upgrades"
     },

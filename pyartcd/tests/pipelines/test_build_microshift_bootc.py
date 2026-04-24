@@ -9,6 +9,7 @@ from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, Mock, patch
 
 from artcommonlib.assembly import AssemblyTypes
+from artcommonlib.model import Model
 from pyartcd.pipelines.build_microshift_bootc import BuildMicroShiftBootcPipeline
 from pyartcd.runtime import Runtime
 from pyartcd.slack import SlackClient
@@ -47,72 +48,10 @@ class TestBuildMicroShiftBootcPipeline(IsolatedAsyncioTestCase):
         os.environ.pop("GITHUB_TOKEN", None)
         os.environ.pop("GITLAB_TOKEN", None)
 
-    @patch('pyartcd.pipelines.build_microshift_bootc.ShipmentConfig')
-    @patch('pyartcd.pipelines.build_microshift_bootc.KonfluxImageBuilder.get_application_name')
     @patch('pyartcd.pipelines.build_microshift_bootc.get_github_client_for_org')
-    async def test_load_existing_shipment_config_extracts_timestamp(
-        self, mock_get_client, mock_get_app_name, mock_shipment_config_class
-    ):
+    async def test_update_shipment_data_extracts_timestamp_from_branch(self, mock_get_client):
         """
-        Test that when loading an existing shipment config, the timestamp is correctly extracted
-        from the filename and stored in existing_shipment_timestamp
-        """
-        # given
-        mock_get_app_name.return_value = "openshift-4-21"
-        mock_shipment_instance = Mock()
-        mock_shipment_config_class.return_value = mock_shipment_instance
-
-        pipeline = BuildMicroShiftBootcPipeline(
-            runtime=self.runtime,
-            group=self.group,
-            assembly=self.assembly,
-            force=False,
-            force_plashet_sync=False,
-            prepare_shipment=True,
-            data_path="https://github.com/openshift-eng/ocp-build-data",
-            slack_client=self.mock_slack_client,
-        )
-        pipeline.shipment_data_repo = Mock()
-        pipeline.shipment_data_repo._directory = self.runtime.working_dir
-
-        application = "openshift-4-21"
-        env = "prod"
-        shipment_dir = self.runtime.working_dir / "shipment" / "ocp" / self.group / application / env
-        shipment_dir.mkdir(parents=True, exist_ok=True)
-
-        existing_timestamp = "20260129004538"
-        existing_filename = f"{self.assembly}.microshift-bootc.{existing_timestamp}.yaml"
-        existing_file = shipment_dir / existing_filename
-
-        shipment_yaml_content = """
-shipment:
-  metadata:
-    product: ocp
-    application: openshift-4-21
-    group: openshift-4.21
-    assembly: 4.21.0
-    fbc: false
-  snapshot:
-    spec:
-      application: openshift-4-21
-      components:
-        - name: ose-4-21-microshift-bootc
-    nvrs:
-      - microshift-bootc-container-v4.21.0-202601290005.p2.g509fdb7.assembly.4.21.0.el9
-"""
-        existing_file.write_text(shipment_yaml_content)
-
-        # when
-        shipment_config = await pipeline._load_existing_shipment_config()
-        # then
-        self.assertIsNotNone(shipment_config)
-        self.assertEqual(pipeline.existing_shipment_timestamp, existing_timestamp)
-
-    @patch('pyartcd.pipelines.build_microshift_bootc.get_github_client_for_org')
-    async def test_create_shipment_mr_reuses_existing_timestamp(self, mock_get_client):
-        """
-        Test that when updating an existing MR, the existing timestamp is reused
-        instead of generating a new one
+        Test that timestamp is correctly extracted from branch name for filename generation
         """
         # given
         pipeline = BuildMicroShiftBootcPipeline(
@@ -126,35 +65,100 @@ shipment:
             slack_client=self.mock_slack_client,
         )
 
-        existing_timestamp = "20260129004538"
-        pipeline.existing_shipment_timestamp = existing_timestamp
-
         pipeline.shipment_data_repo = Mock()
         pipeline.shipment_data_repo._directory = self.runtime.working_dir
-        pipeline.shipment_data_repo.does_branch_exist_on_remote = AsyncMock(return_value=True)
-        pipeline.shipment_data_repo.fetch_switch_branch = AsyncMock()
-        pipeline.shipment_data_repo.create_branch = AsyncMock()
         pipeline.shipment_data_repo.write_file = AsyncMock()
         pipeline.shipment_data_repo.add_all = AsyncMock()
         pipeline.shipment_data_repo.log_diff = AsyncMock()
         pipeline.shipment_data_repo.commit_push = AsyncMock(return_value=True)
 
-        pipeline.releases_config = {"releases": {self.assembly: {}}}
-
-        mock_gitlab_client = Mock()
         mock_shipment_config = Mock()
         mock_shipment_config.shipment.metadata.product = "ocp"
         mock_shipment_config.shipment.metadata.group = self.group
         mock_shipment_config.shipment.metadata.application = "ocp-art-tenant"
         mock_shipment_config.model_dump = Mock(return_value={"shipment": {}})
 
-        mock_project = Mock()
-        mock_project.mergerequests.list.return_value = []
+        existing_timestamp = "20260129004538"
+        source_branch = f"prepare-microshift-bootc-shipment-{self.assembly}-{existing_timestamp}"
+
+        # when
+        await pipeline._update_shipment_data(mock_shipment_config, "Test commit", source_branch)
+
+        # then
+        pipeline.shipment_data_repo.write_file.assert_called_once()
+        written_filepath = pipeline.shipment_data_repo.write_file.call_args[0][0]
+        expected_filename = f"{self.assembly}.microshift-bootc.{existing_timestamp}.yaml"
+        self.assertTrue(str(written_filepath).endswith(expected_filename))
+
+    @patch('pyartcd.pipelines.build_microshift_bootc.GitLabClient')
+    @patch('pyartcd.pipelines.build_microshift_bootc.get_github_client_for_org')
+    async def test_create_shipment_mr_reuses_existing_timestamp(self, mock_get_client, mock_gitlab_class):
+        """
+        Test that when updating an existing MR, the timestamp from the existing branch is reused
+        """
+        # given
+        existing_timestamp = "20260129004538"
+        existing_branch = f"prepare-microshift-bootc-shipment-{self.assembly}-{existing_timestamp}"
+        existing_mr_url = "https://gitlab.example.com/shipment-data/-/merge_requests/123"
+
+        pipeline = BuildMicroShiftBootcPipeline(
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+            force=False,
+            force_plashet_sync=False,
+            prepare_shipment=True,
+            data_path="https://github.com/openshift-eng/ocp-build-data",
+            slack_client=self.mock_slack_client,
+        )
+
+        # Set gitlab_token like in test_prepare_release_konflux
+        pipeline.gitlab_token = "fake-gitlab-token"
+
+        pipeline.shipment_data_repo = Mock()
+        pipeline.shipment_data_repo._directory = self.runtime.working_dir
+        pipeline.shipment_data_repo.fetch_switch_branch = AsyncMock()
+        pipeline.shipment_data_repo.write_file = AsyncMock()
+        pipeline.shipment_data_repo.add_all = AsyncMock()
+        pipeline.shipment_data_repo.log_diff = AsyncMock()
+        pipeline.shipment_data_repo.commit_push = AsyncMock(return_value=True)
+
+        # Mock releases config with existing shipment URL - use Model wrapper like in test_prepare_release_konflux
+        pipeline.releases_config = Model(
+            {
+                "releases": {
+                    self.assembly: {"assembly": {"group": {"microshift_bootc_shipment": {"url": existing_mr_url}}}}
+                }
+            }
+        )
+
+        # Mock GitLab MR to return existing branch
         mock_mr = Mock()
-        mock_mr.web_url = "https://gitlab.example.com/shipment-data/-/merge_requests/123"
+        mock_mr.source_branch = existing_branch
+        mock_mr.web_url = existing_mr_url
+        mock_mr.description = "Original description"
+        mock_mr.state = "opened"
+
+        mock_project = Mock()
+        mock_project.mergerequests.get.return_value = mock_mr
+        # Return existing MR to exercise the update path (not create new)
+        mock_project.mergerequests.list.return_value = [mock_mr]
         mock_project.mergerequests.create.return_value = mock_mr
-        mock_gitlab_client.get_project.return_value = mock_project
-        pipeline._gitlab = mock_gitlab_client
+
+        mock_gitlab_instance = Mock()
+        mock_gitlab_instance.get_project.return_value = mock_project
+        mock_gitlab_instance.get_mr_from_url.return_value = mock_mr
+        mock_gitlab_class.return_value = mock_gitlab_instance
+
+        mock_shipment_config = Mock()
+        mock_shipment_config.shipment.metadata.product = "ocp"
+        mock_shipment_config.shipment.metadata.group = self.group
+        mock_shipment_config.shipment.metadata.application = "ocp-art-tenant"
+        mock_shipment_config.model_dump = Mock(return_value={"shipment": {}})
+
+        pipeline._gitlab = mock_gitlab_instance
+        # Simulate _load_or_init_shipment_config having cached the branch
+        pipeline._shipment_source_branch = existing_branch
 
         # when
         with patch('pyartcd.pipelines.build_microshift_bootc.get_release_name_for_assembly', return_value="4.21.0"):
@@ -164,13 +168,16 @@ shipment:
         pipeline.shipment_data_repo.write_file.assert_called_once()
         written_filepath = pipeline.shipment_data_repo.write_file.call_args[0][0]
         expected_filename = f"{self.assembly}.microshift-bootc.{existing_timestamp}.yaml"
-
         self.assertTrue(str(written_filepath).endswith(expected_filename))
+
+        # Verify the update path was exercised (not create)
+        mock_project.mergerequests.create.assert_not_called()
+        mock_mr.save.assert_called_once()
 
     @patch('pyartcd.pipelines.build_microshift_bootc.get_github_client_for_org')
     async def test_create_shipment_mr_generates_new_timestamp_for_new_shipment(self, mock_get_client):
         """
-        Test that when creating a new MR (no existing shipment), a new timestamp is generated
+        Test that when creating a new MR (no existing shipment), a new branch with timestamp is created
         """
         # given
         pipeline = BuildMicroShiftBootcPipeline(
@@ -184,19 +191,21 @@ shipment:
             slack_client=self.mock_slack_client,
         )
 
-        self.assertIsNone(pipeline.existing_shipment_timestamp)
+        # Set gitlab_token like in test_prepare_release_konflux
+        pipeline.gitlab_token = "fake-gitlab-token"
 
         pipeline.shipment_data_repo = Mock()
         pipeline.shipment_data_repo._directory = self.runtime.working_dir
-        pipeline.shipment_data_repo.does_branch_exist_on_remote = AsyncMock(return_value=False)
-        pipeline.shipment_data_repo.fetch_switch_branch = AsyncMock()
         pipeline.shipment_data_repo.create_branch = AsyncMock()
         pipeline.shipment_data_repo.write_file = AsyncMock()
         pipeline.shipment_data_repo.add_all = AsyncMock()
         pipeline.shipment_data_repo.log_diff = AsyncMock()
         pipeline.shipment_data_repo.commit_push = AsyncMock(return_value=True)
 
-        pipeline.releases_config = {"releases": {self.assembly: {}}}
+        # No existing shipment URL in releases config - use Model wrapper with proper structure
+        pipeline.releases_config = Model(
+            {"releases": {self.assembly: {"assembly": {"group": {}}}}}  # No shipment URL here
+        )
 
         mock_gitlab_client = Mock()
         mock_shipment_config = Mock()
@@ -218,6 +227,12 @@ shipment:
             _ = await pipeline._create_shipment_mr(mock_shipment_config)
 
         # then
+        # Verify a new branch with timestamp was created
+        pipeline.shipment_data_repo.create_branch.assert_called_once()
+        created_branch = pipeline.shipment_data_repo.create_branch.call_args[0][0]
+        self.assertTrue(created_branch.startswith(f"prepare-microshift-bootc-shipment-{self.assembly}-"))
+
+        # Verify the filename uses the timestamp from the branch
         pipeline.shipment_data_repo.write_file.assert_called_once()
         written_filepath = pipeline.shipment_data_repo.write_file.call_args[0][0]
         filename = str(written_filepath.name)
@@ -225,7 +240,10 @@ shipment:
         self.assertTrue(filename.startswith(f"{self.assembly}.microshift-bootc."))
         self.assertTrue(filename.endswith(".yaml"))
 
+        # Extract timestamp from branch and verify it matches the filename
+        timestamp_from_branch = created_branch.split("-")[-1]
         timestamp_part = filename.replace(f"{self.assembly}.microshift-bootc.", "").replace(".yaml", "")
+        self.assertEqual(timestamp_from_branch, timestamp_part)
         self.assertEqual(len(timestamp_part), 14)
         self.assertTrue(timestamp_part.isdigit())
 
@@ -440,3 +458,37 @@ shipment:
             self.assertEqual(build_cmd[lock_idx + 2], "0d0943b")
         finally:
             os.environ.pop("KONFLUX_SA_KUBECONFIG", None)
+
+    def test_validate_shipment_mr_raises_on_closed_mr(self):
+        """
+        Test that _validate_shipment_mr raises ValueError when MR is not in opened state
+        """
+        # given
+        pipeline = BuildMicroShiftBootcPipeline(
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+            force=False,
+            force_plashet_sync=False,
+            prepare_shipment=True,
+            data_path="https://github.com/openshift-eng/ocp-build-data",
+            slack_client=self.mock_slack_client,
+        )
+
+        pipeline.gitlab_token = "fake-gitlab-token"
+
+        # Mock GitLab MR in closed state
+        mock_mr = Mock()
+        mock_mr.state = "closed"
+
+        mock_gitlab_instance = Mock()
+        mock_gitlab_instance.get_mr_from_url.return_value = mock_mr
+        pipeline._gitlab = mock_gitlab_instance
+
+        shipment_url = "https://gitlab.example.com/shipment-data/-/merge_requests/123"
+
+        # when / then
+        with self.assertRaises(ValueError) as ctx:
+            pipeline._validate_shipment_mr(shipment_url)
+        self.assertIn("closed", str(ctx.exception))
+        self.assertIn("not opened", str(ctx.exception))
