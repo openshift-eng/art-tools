@@ -96,7 +96,9 @@ def compare_nvr(nvr_dict1: NVR, nvr_dict2: NVR, ignore_epoch: bool = False, igno
     @type ignore_epoch: bool
     @param ignore_name: skip package name comparison check
     @type ignore_name: bool
-    @return: nvr1 newer than nvr2: 1, same nvrs: 0, nvr1 older: -1, different names: ValueError
+    @return: nvr1 newer than nvr2: 1, same nvrs: 0, nvr1 older: -1.
+             When ignore_name=False (default), raises ValueError if package names differ.
+             When ignore_name=True, name differences are ignored and comparison proceeds.
     @rtype: int
     """
 
