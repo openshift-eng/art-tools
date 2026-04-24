@@ -179,8 +179,10 @@ class KonfluxImageBuilder:
                 target_nvr_dict["version"] = _normalize_version(target_nvr_dict["version"])
                 latest_nvr_dict["version"] = _normalize_version(latest_nvr_dict["version"])
 
+                # Skip package name comparison for test assemblies
                 # compare_nvr returns: 1 if target > latest, 0 if equal, -1 if target < latest
-                if compare_nvr(target_nvr_dict, latest_nvr_dict) <= 0:
+                ignore_name = metadata.runtime.assembly == "test"
+                if compare_nvr(target_nvr_dict, latest_nvr_dict, ignore_name=ignore_name) <= 0:
                     raise ValueError(
                         f"Target NVR {nvr} is not greater than the latest successful build {latest_build.nvr}. "
                         f"Latest build pullspec: {latest_build.image_pullspec}. "

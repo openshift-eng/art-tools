@@ -83,7 +83,7 @@ def to_nevra(d: Dict):
     return to_nevr(d) + f".{arch}"
 
 
-def compare_nvr(nvr_dict1: NVR, nvr_dict2: NVR, ignore_epoch: bool = False):
+def compare_nvr(nvr_dict1: NVR, nvr_dict2: NVR, ignore_epoch: bool = False, ignore_name: bool = False):
     """Compare two N-V-R dictionaries.
 
     This function is backported from `kobo.rpmlib.compare_nvr`.
@@ -94,6 +94,8 @@ def compare_nvr(nvr_dict1: NVR, nvr_dict2: NVR, ignore_epoch: bool = False):
     @type nvr_dict2: dict
     @param ignore_epoch: ignore epoch during the comparison
     @type ignore_epoch: bool
+    @param ignore_name: skip package name comparison check
+    @type ignore_name: bool
     @return: nvr1 newer than nvr2: 1, same nvrs: 0, nvr1 older: -1, different names: ValueError
     @rtype: int
     """
@@ -104,7 +106,7 @@ def compare_nvr(nvr_dict1: NVR, nvr_dict2: NVR, ignore_epoch: bool = False):
     nvr1["epoch"] = nvr1.get("epoch", None)
     nvr2["epoch"] = nvr2.get("epoch", None)
 
-    if nvr1["name"] != nvr2["name"]:
+    if not ignore_name and nvr1["name"] != nvr2["name"]:
         raise ValueError("Package names doesn't match: %s, %s" % (nvr1["name"], nvr2["name"]))
 
     if ignore_epoch:
