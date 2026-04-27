@@ -395,22 +395,29 @@ class UpdateGolangPipeline:
                 raise ValueError(error_msg)
 
         # streams.yml should only reference the published pullspecs for Konflux-built builders.
-        builder_nvrs = konflux_nvrs
-        builder_pullspecs = {el_v: self._get_builder_pullspec(nvr) for el_v, nvr in builder_nvrs.items()}
-        if builder_pullspecs:
-            await asyncio.gather(
-                *[self._ensure_builder_pullspec_available(pullspec) for pullspec in builder_pullspecs.values()]
+        if self.build_system == "brew":
+            skip_message = (
+                "Skipping streams.yml update for brew-only run; "
+                "streams.yml only references Konflux-built golang builder pullspecs."
             )
-            builder_details = "\n".join(
-                [f"  - RHEL {el_v}: {nvr} -> {builder_pullspecs[el_v]}" for el_v, nvr in builder_nvrs.items()]
-            )
-            builder_message = "Konflux golang builders available for streams.yml:\n" + builder_details
-            _LOGGER.info(builder_message)
-            await self._slack_client.say_in_thread(builder_message)
+            _LOGGER.info(skip_message)
+            await self._slack_client.say_in_thread(skip_message)
         else:
-            _LOGGER.info("No Konflux golang builder images found; streams.yml will not be updated.")
-
-        await self.update_golang_streams(go_version, builder_pullspecs)
+            builder_nvrs = konflux_nvrs
+            builder_pullspecs = {el_v: self._get_builder_pullspec(nvr) for el_v, nvr in builder_nvrs.items()}
+            if builder_pullspecs:
+                await asyncio.gather(
+                    *[self._ensure_builder_pullspec_available(pullspec) for pullspec in builder_pullspecs.values()]
+                )
+                builder_details = "\n".join(
+                    [f"  - RHEL {el_v}: {nvr} -> {builder_pullspecs[el_v]}" for el_v, nvr in builder_nvrs.items()]
+                )
+                builder_message = "Konflux golang builders available for streams.yml:\n" + builder_details
+                _LOGGER.info(builder_message)
+                await self._slack_client.say_in_thread(builder_message)
+                await self.update_golang_streams(go_version, builder_pullspecs)
+            else:
+                _LOGGER.info("No Konflux golang builder images found; streams.yml will not be updated.")
 
         await move_golang_bugs(
             ocp_version=self.ocp_version,
