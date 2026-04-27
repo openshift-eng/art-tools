@@ -1,7 +1,7 @@
 import json
 import logging
 from unittest import IsolatedAsyncioTestCase, TestCase
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from artcommonlib.konflux.konflux_build_record import KonfluxECStatus
 from doozerlib.backend.konflux_client import (
@@ -816,9 +816,7 @@ class TestNewPipelinerunEphemeralStorage(IsolatedAsyncioTestCase):
         build_images_spec = next(s for s in task_run_specs if s["pipelineTaskName"] == "build-images")
         step_specs = {s["name"]: s for s in build_images_spec["stepSpecs"]}
 
-        self.assertEqual(
-            step_specs["build"]["computeResources"]["requests"]["ephemeral-storage"], "250Gi"
-        )
+        self.assertEqual(step_specs["build"]["computeResources"]["requests"]["ephemeral-storage"], "250Gi")
         for step_name in ("push", "sbom-syft-generate", "prepare-sboms", "upload-sbom"):
             self.assertIn(step_name, step_specs, f"Missing stepSpec for {step_name}")
             self.assertEqual(
