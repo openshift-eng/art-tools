@@ -467,6 +467,46 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
 
     @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    async def test_update_golang_streams_reuses_cached_group_content(self, mock_konflux_db, mock_get_github_client):
+        """Test update_golang_streams reuses the same cached group.yml content loaded during validation"""
+        mock_runtime = Mock(
+            dry_run=False,
+            working_dir=Path("/tmp/working"),
+        )
+        mock_slack = Mock()
+        mock_slack.say_in_thread = AsyncMock()
+        mock_runtime.new_slack_client.return_value = mock_slack
+
+        upstream_repo = Mock()
+
+        def get_contents(path, ref):
+            if path == "group.yml":
+                return Mock(decoded_content=b"vars:\n  GO_LATEST: 1.22\n")
+            if path == "streams.yml":
+                return Mock(decoded_content=b"{}\n")
+            raise AssertionError(f"Unexpected path requested: {path}")
+
+        upstream_repo.get_contents.side_effect = get_contents
+        mock_get_github_client.return_value.get_repo.return_value = upstream_repo
+
+        pipeline = UpdateGolangPipeline(
+            runtime=mock_runtime,
+            ocp_version="4.16",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.22.9-1.el8"],
+            art_jira="ART-1234",
+            tag_builds=False,
+        )
+
+        pipeline.validate_go_version_matches_group_vars("1.22.9")
+        await pipeline.update_golang_streams("1.22.9", {})
+
+        group_calls = [call for call in upstream_repo.get_contents.call_args_list if call.args[0] == "group.yml"]
+        self.assertEqual(len(group_calls), 1)
+
+    @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     def test_validate_go_version_matches_group_vars_accepts_matching_go_previous(
         self, mock_konflux_db, mock_get_github_client
     ):
