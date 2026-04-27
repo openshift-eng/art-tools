@@ -677,6 +677,8 @@ class UpdateGolangPipeline:
             [
                 "--group",
                 branch,
+                "-i",
+                GOLANG_BUILDER_IMAGE_NAME,
                 "images:rebase",
                 "--version",
                 version,
@@ -706,6 +708,8 @@ class UpdateGolangPipeline:
             [
                 "--group",
                 branch,
+                "-i",
+                GOLANG_BUILDER_IMAGE_NAME,
                 "images:build",
                 "--repo-type",
                 "unsigned",
@@ -741,6 +745,8 @@ class UpdateGolangPipeline:
             [
                 "--group",
                 branch,
+                "-i",
+                GOLANG_BUILDER_IMAGE_NAME,
                 "beta:images:konflux:rebase",
                 "--version",
                 version,
@@ -774,6 +780,8 @@ class UpdateGolangPipeline:
             [
                 "--group",
                 branch,
+                "-i",
+                GOLANG_BUILDER_IMAGE_NAME,
                 "beta:images:konflux:build",
                 f"--konflux-namespace={konflux_namespace}",
                 "--skip-ec-verify",
