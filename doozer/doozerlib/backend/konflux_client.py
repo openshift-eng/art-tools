@@ -1383,9 +1383,7 @@ class KonfluxClient:
                     "limits": {"ephemeral-storage": "1Gi"},
                 }
                 for step_name in ("push", "prepare-sboms", "upload-sbom"):
-                    build_images_step_specs.append(
-                        {"name": step_name, "computeResources": post_build_resources}
-                    )
+                    build_images_step_specs.append({"name": step_name, "computeResources": post_build_resources})
 
             if build_params.build_step_resources:
                 build_images_step_specs.append(
