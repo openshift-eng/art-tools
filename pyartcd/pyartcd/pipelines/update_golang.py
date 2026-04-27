@@ -23,6 +23,7 @@ from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import new_roundtrip_yaml_handler
 from elliottlib import util as elliottutil
 from elliottlib.constants import GOLANG_BUILDER_CVE_COMPONENT
+from github import GithubException
 
 from pyartcd import constants, jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -342,7 +343,8 @@ class UpdateGolangPipeline:
         else:  # konflux
             builder_nvrs = konflux_nvrs
 
-        await self.update_golang_streams(go_version, builder_nvrs)
+        replacements = await self.update_golang_streams(go_version, builder_nvrs)
+        await self.update_layered_branches(go_version, replacements)
 
         await move_golang_bugs(
             ocp_version=self.ocp_version,
@@ -495,13 +497,15 @@ class UpdateGolangPipeline:
             # TODO: This is temporary. In the future we need a location to share with multiple teams.
             return f'{KONFLUX_DEFAULT_IMAGE_REPO}:golang-builder-{parsed_nvr["version"]}-{parsed_nvr["release"]}'
 
-    async def update_golang_streams(self, go_version, builder_nvrs):
+    async def update_golang_streams(self, go_version, builder_nvrs) -> dict[str, str]:
         """
         Update golang builders for current release in ocp-build-data
         1. First check go verion from group.yml var to decide if it's a major version bump or minor version bump
         2. Get the golang image value, find and replace for each item in streams.yml
         3. If it'a major version bump, also need to update key in streams.yml and vars in group.yml
         4. Create pr to update changes
+
+        Returns a dict mapping old pullspecs to new pullspecs for all replacements made.
         """
         branch = f"openshift-{self.ocp_version}"
         upstream_repo = get_github_client_for_org("openshift-eng").get_repo("openshift-eng/ocp-build-data")
@@ -529,6 +533,7 @@ class UpdateGolangPipeline:
             return f'rhel-{el_v}-golang-{go_previous_var_template}'
 
         update_streams = update_group = False
+        replacements: dict[str, str] = {}
 
         # register aliases
         stream_alias_map = {}
@@ -557,6 +562,7 @@ class UpdateGolangPipeline:
                 latest_go = get_stream(latest_go_stream_name(el_v))['image']
 
                 new_latest_go = self._get_builder_pullspec(parsed_nvr, self.build_system)
+                replacements[latest_go] = new_latest_go
                 for _, info in streams_content.items():
                     if info['image'] == latest_go:
                         info['image'] = new_latest_go
@@ -570,6 +576,7 @@ class UpdateGolangPipeline:
                 previous_go = get_stream(previous_go_stream_name(el_v))['image']
 
                 new_previous_go = self._get_builder_pullspec(parsed_nvr, self.build_system)
+                replacements[previous_go] = new_previous_go
                 for _, info in streams_content.items():
                     if info['image'] == previous_go:
                         info['image'] = new_previous_go
@@ -586,10 +593,13 @@ class UpdateGolangPipeline:
                 previous_go = get_stream(previous_go_stream_name(el_v))['image'] if go_previous else None
 
                 new_latest_go = self._get_builder_pullspec(parsed_nvr, self.build_system)
+                replacements[latest_go] = new_latest_go
+                if previous_go:
+                    replacements[previous_go] = latest_go
                 for _, info in streams_content.items():
                     if info['image'] == latest_go:
                         info['image'] = new_latest_go
-                    if info['image'] == previous_go:
+                    if previous_go and info['image'] == previous_go:
                         info['image'] = latest_go
                 group_content['vars'][go_latest_var] = go_version
                 group_content['vars']['GO_EXTRA'] = go_version
@@ -600,7 +610,7 @@ class UpdateGolangPipeline:
         if update_streams:
             if self.dry_run:
                 _LOGGER.info(f"[DRY RUN] Would have created PR to update {go_version} golang builders")
-                return
+                return replacements
             if self.skip_pr:
                 # Log NVRs and pullspecs for golang builder images
                 builder_info = []
@@ -618,7 +628,7 @@ class UpdateGolangPipeline:
                     f"Skipping PR creation (--skip-pr flag set) for {go_version} golang builders update.\n"
                     f"Golang builder images:\n{builder_details}"
                 )
-                return
+                return replacements
             fork_repo = get_github_client_for_org("openshift-bot").get_repo("openshift-bot/ocp-build-data")
             branch_name = f"update-golang-{self.ocp_version}-{go_version}"
             title = f"{self.art_jira} - Bump {self.ocp_version} golang builders to {go_version}"
@@ -658,6 +668,130 @@ class UpdateGolangPipeline:
                 )
             else:
                 _LOGGER.info(f"No update needed in {branch}")
+        return replacements
+
+    async def update_layered_branches(self, go_version: str, replacements: dict[str, str]):
+        """
+        For each layered operator branch listed in golang_sync_branches, update
+        streams.yml with the same builder pullspec replacements applied to the
+        main OCP branch.
+        """
+        branch = f"openshift-{self.ocp_version}"
+        upstream_repo = get_github_client_for_org("openshift-eng").get_repo("openshift-eng/ocp-build-data")
+        group_content = yaml.load(upstream_repo.get_contents("group.yml", ref=branch).decoded_content)
+        sync_branches = group_content.get('vars', {}).get('golang_sync_branches', [])
+
+        if not sync_branches:
+            _LOGGER.info("No golang_sync_branches configured for %s, skipping layered branch sync", branch)
+            return
+
+        if not replacements:
+            _LOGGER.info("No replacements to apply, skipping layered branch sync")
+            return
+
+        if self.dry_run:
+            _LOGGER.info(
+                "[DRY RUN] Would update layered branches %s with replacements: %s", sync_branches, replacements
+            )
+            return
+
+        if self.skip_pr:
+            _LOGGER.info("Skipping layered branch PRs (--skip-pr flag set) for branches: %s", sync_branches)
+            return
+
+        results = await asyncio.gather(
+            *[self._update_layered_branch(b, go_version, replacements) for b in sync_branches],
+            return_exceptions=True,
+        )
+
+        summary_lines = []
+        for branch_name, result in zip(sync_branches, results):
+            if isinstance(result, Exception):
+                summary_lines.append(f"  - {branch_name}: :x: error: {result}")
+                _LOGGER.error("Failed to update layered branch %s: %s", branch_name, result)
+            elif result is None:
+                summary_lines.append(f"  - {branch_name}: skipped (no matching builders)")
+            else:
+                summary_lines.append(f"  - {branch_name}: {result}")
+
+        summary = f"Layered branch PRs for golang {go_version}:\n" + "\n".join(summary_lines)
+        _LOGGER.info(summary)
+        await self._slack_client.say_in_thread(summary)
+
+    async def _update_layered_branch(
+        self, branch_name: str, go_version: str, replacements: dict[str, str]
+    ) -> str | None:
+        """
+        Apply pullspec replacements to streams.yml on a single layered branch.
+        Returns the PR URL if a PR was created, or None if no changes were needed.
+        """
+        upstream_repo = get_github_client_for_org("openshift-eng").get_repo("openshift-eng/ocp-build-data")
+        try:
+            upstream_repo.get_branch(branch_name)
+        except GithubException as e:
+            if e.status == 404:
+                raise ValueError(f"Branch '{branch_name}' does not exist in ocp-build-data")
+            raise
+        streams_raw = upstream_repo.get_contents("streams.yml", ref=branch_name)
+        streams_content = yaml.load(streams_raw.decoded_content)
+
+        changed = False
+        for stream_name, info in streams_content.items():
+            old_image = info.get('image', '')
+            if old_image in replacements:
+                _LOGGER.debug(
+                    "Replacing golang builder in %s: %s -> %s", branch_name, old_image, replacements[old_image]
+                )
+                info['image'] = replacements[old_image]
+                changed = True
+
+        if not changed:
+            _LOGGER.info("No matching builders in %s, skipping", branch_name)
+            return None
+
+        fork_repo = get_github_client_for_org("openshift-bot").get_repo("openshift-bot/ocp-build-data")
+        fork_branch_name = f"update-golang-{branch_name}-{go_version}"
+        try:
+            fork_repo.get_git_ref(f"heads/{fork_branch_name}").delete()
+        except GithubException as e:
+            if e.status != 404:
+                raise
+        fork_repo.create_git_ref(
+            f"refs/heads/{fork_branch_name}",
+            upstream_repo.get_branch(branch_name).commit.sha,
+        )
+
+        output = io.BytesIO()
+        yaml.dump(streams_content, output)
+        output.seek(0)
+        fork_file = fork_repo.get_contents("streams.yml", ref=fork_branch_name)
+        commit_msg = f"Bump {branch_name} golang builders to {go_version}"
+        fork_repo.update_file("streams.yml", commit_msg, output.read(), fork_file.sha, branch=fork_branch_name)
+
+        title = f"{self.art_jira} - Bump {branch_name} golang builders to {go_version}"
+        build_url = jenkins.get_build_url()
+
+        if not branch_name.startswith("openshift-"):
+            replacements_applied = []
+            for sname, sinfo in streams_content.items():
+                for old, new in replacements.items():
+                    if sinfo.get('image') == new:
+                        replacements_applied.append(f"- `{sname}`: {old.split(':')[-1]} \u2192 {new.split(':')[-1]}")
+                        break
+            body = (
+                f"Created by job run {build_url or 'manual trigger'}\n\n"
+                f"This PR was automatically generated to sync golang builder "
+                f"updates from openshift-{self.ocp_version}.\n\n"
+                f"**Golang builder replacements:**\n"
+                + ("\n".join(replacements_applied) if replacements_applied else "- (no streams updated)")
+            )
+        else:
+            body = f"Created by job run {build_url}" if build_url else ""
+        pr = upstream_repo.create_pull(
+            title=title, body=body, base=branch_name, head=f"openshift-bot:{fork_branch_name}"
+        )
+        _LOGGER.info("PR created %s for layered branch %s", pr.html_url, branch_name)
+        return pr.html_url
 
     async def _rebase_brew(self, el_v, go_version):
         _LOGGER.info("Rebasing for Brew...")

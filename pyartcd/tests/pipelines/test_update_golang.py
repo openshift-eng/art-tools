@@ -1027,5 +1027,270 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
         self.assertEqual(mock_cmd_assert.call_count, 2)
 
 
+class TestUpdateLayeredBranches(IsolatedAsyncioTestCase):
+    """Test the update_layered_branches / _update_layered_branch methods"""
+
+    def _make_pipeline(self, dry_run=False, skip_pr=False, build_system="konflux"):
+        mock_runtime = Mock(
+            dry_run=dry_run,
+            working_dir=Path("/tmp/working"),
+        )
+        mock_slack = Mock()
+        mock_slack.say_in_thread = AsyncMock()
+        mock_runtime.new_slack_client.return_value = mock_slack
+        return UpdateGolangPipeline(
+            runtime=mock_runtime,
+            ocp_version="4.22",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.25.8-1.el9"],
+            art_jira="ART-14708",
+            tag_builds=False,
+            build_system=build_system,
+            skip_pr=skip_pr,
+        )
+
+    def _mock_github(self, group_vars, layered_streams=None):
+        """Return (mock_upstream_repo, mock_fork_repo) with canned GitHub responses."""
+        import io as _io
+
+        from artcommonlib.util import new_roundtrip_yaml_handler
+
+        _yaml = new_roundtrip_yaml_handler()
+
+        group_yml = {"vars": group_vars}
+        group_bytes = _io.BytesIO()
+        _yaml.dump(group_yml, group_bytes)
+        group_bytes.seek(0)
+        group_raw = group_bytes.read()
+
+        mock_upstream = Mock()
+        mock_fork = Mock()
+
+        def get_contents(path, ref=None):
+            content_mock = Mock()
+            if path == "group.yml":
+                content_mock.decoded_content = group_raw
+                return content_mock
+            if path == "streams.yml":
+                streams = layered_streams or {}
+                buf = _io.BytesIO()
+                _yaml.dump(streams, buf)
+                buf.seek(0)
+                content_mock.decoded_content = buf.read()
+                content_mock.sha = "fake-sha"
+                return content_mock
+            return content_mock
+
+        mock_upstream.get_contents = Mock(side_effect=get_contents)
+        mock_upstream.get_branch = Mock(return_value=Mock(commit=Mock(sha="abc123")))
+        mock_upstream.create_pull = Mock(
+            return_value=Mock(html_url="https://github.com/openshift-eng/ocp-build-data/pull/9999")
+        )
+
+        mock_fork.get_branches = Mock(return_value=[])
+        mock_fork.create_git_ref = Mock()
+        mock_fork.get_contents = Mock(return_value=Mock(sha="fork-sha"))
+        mock_fork.update_file = Mock()
+
+        return mock_upstream, mock_fork
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
+    async def test_no_sync_list(self, mock_gh_client, mock_konflux_db):
+        """golang_sync_branches absent in vars -- no streams.yml reads"""
+        pipeline = self._make_pipeline()
+        mock_upstream, _ = self._mock_github(group_vars={"GO_LATEST": "1.25"})
+        mock_gh_client.return_value.get_repo.return_value = mock_upstream
+
+        await pipeline.update_layered_branches("1.25.8", {"old": "new"})
+
+        mock_upstream.get_contents.assert_called_once_with("group.yml", ref="openshift-4.22")
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
+    async def test_empty_replacements(self, mock_gh_client, mock_konflux_db):
+        """Replacements map is empty -- immediate return after reading group.yml"""
+        pipeline = self._make_pipeline()
+        mock_upstream, _ = self._mock_github(
+            group_vars={"GO_LATEST": "1.25", "golang_sync_branches": ["logging-6.0"]},
+        )
+        mock_gh_client.return_value.get_repo.return_value = mock_upstream
+
+        await pipeline.update_layered_branches("1.25.8", {})
+
+        mock_upstream.get_contents.assert_called_once_with("group.yml", ref="openshift-4.22")
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    @patch("pyartcd.pipelines.update_golang.jenkins")
+    @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
+    async def test_creates_pr(self, mock_gh_client, mock_jenkins, mock_konflux_db):
+        """Layered branch stream matches old pullspec -- PR created with correct params"""
+        mock_jenkins.get_build_url.return_value = "https://jenkins/job/123"
+        pipeline = self._make_pipeline()
+        old_pullspec = "quay.io/redhat-user-workloads/ocp-art-tenant/art-images:golang-builder-v1.25.7-old.el9"
+        new_pullspec = "quay.io/redhat-user-workloads/ocp-art-tenant/art-images:golang-builder-v1.25.8-new.el9"
+        replacements = {old_pullspec: new_pullspec}
+        layered_streams = {
+            "rhel-9-golang": {"image": old_pullspec, "aliases": []},
+        }
+        mock_upstream, mock_fork = self._mock_github(
+            group_vars={"GO_LATEST": "1.25", "golang_sync_branches": ["logging-6.0"]},
+            layered_streams=layered_streams,
+        )
+
+        def get_repo(name):
+            if "openshift-bot" in name:
+                return mock_fork
+            return mock_upstream
+
+        mock_gh_client.return_value.get_repo = Mock(side_effect=get_repo)
+
+        await pipeline.update_layered_branches("1.25.8", replacements)
+
+        mock_upstream.create_pull.assert_called_once()
+        call_kwargs = mock_upstream.create_pull.call_args
+        self.assertEqual(call_kwargs.kwargs["base"], "logging-6.0")
+        self.assertIn("logging-6.0", call_kwargs.kwargs["title"])
+        self.assertIn("1.25.8", call_kwargs.kwargs["title"])
+        self.assertIn("openshift-bot:", call_kwargs.kwargs["head"])
+        pipeline._slack_client.say_in_thread.assert_called()
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
+    async def test_no_match(self, mock_gh_client, mock_konflux_db):
+        """Layered branch uses a different builder -- no PR, skip reported"""
+        pipeline = self._make_pipeline()
+        replacements = {"old-pullspec-that-wont-match": "new-pullspec"}
+        layered_streams = {
+            "rhel-9-golang": {"image": "completely-different-pullspec", "aliases": []},
+        }
+        mock_upstream, mock_fork = self._mock_github(
+            group_vars={"GO_LATEST": "1.25", "golang_sync_branches": ["oadp-1.3"]},
+            layered_streams=layered_streams,
+        )
+
+        def get_repo(name):
+            if "openshift-bot" in name:
+                return mock_fork
+            return mock_upstream
+
+        mock_gh_client.return_value.get_repo = Mock(side_effect=get_repo)
+
+        await pipeline.update_layered_branches("1.25.8", replacements)
+
+        mock_upstream.create_pull.assert_not_called()
+        pipeline._slack_client.say_in_thread.assert_called()
+        summary = pipeline._slack_client.say_in_thread.call_args[0][0]
+        self.assertIn("skipped", summary)
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
+    async def test_dry_run(self, mock_gh_client, mock_konflux_db):
+        """Dry-run logs but does not create PR"""
+        pipeline = self._make_pipeline(dry_run=True)
+        mock_upstream, _ = self._mock_github(
+            group_vars={"GO_LATEST": "1.25", "golang_sync_branches": ["logging-6.0"]},
+        )
+        mock_gh_client.return_value.get_repo.return_value = mock_upstream
+
+        await pipeline.update_layered_branches("1.25.8", {"old": "new"})
+
+        mock_upstream.create_pull.assert_not_called()
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
+    async def test_skip_pr(self, mock_gh_client, mock_konflux_db):
+        """--skip-pr flag is respected"""
+        pipeline = self._make_pipeline(skip_pr=True)
+        mock_upstream, _ = self._mock_github(
+            group_vars={"GO_LATEST": "1.25", "golang_sync_branches": ["logging-6.0"]},
+        )
+        mock_gh_client.return_value.get_repo.return_value = mock_upstream
+
+        await pipeline.update_layered_branches("1.25.8", {"old": "new"})
+
+        mock_upstream.create_pull.assert_not_called()
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    @patch("pyartcd.pipelines.update_golang.jenkins")
+    @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
+    async def test_partial_failure(self, mock_gh_client, mock_jenkins, mock_konflux_db):
+        """One branch PR fails, others succeed -- failures reported but pipeline continues"""
+        mock_jenkins.get_build_url.return_value = ""
+        pipeline = self._make_pipeline()
+        old_pullspec = "quay.io/ocp-art-tenant/art-images:golang-builder-v1.25.7-old.el9"
+        new_pullspec = "quay.io/ocp-art-tenant/art-images:golang-builder-v1.25.8-new.el9"
+        replacements = {old_pullspec: new_pullspec}
+
+        layered_streams = {
+            "rhel-9-golang": {"image": old_pullspec, "aliases": []},
+        }
+        mock_upstream, mock_fork = self._mock_github(
+            group_vars={
+                "GO_LATEST": "1.25",
+                "golang_sync_branches": ["logging-6.0", "logging-6.2"],
+            },
+            layered_streams=layered_streams,
+        )
+
+        call_count = 0
+
+        def create_pull_side_effect(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise RuntimeError("GitHub API error")
+            return Mock(html_url="https://github.com/openshift-eng/ocp-build-data/pull/9999")
+
+        mock_upstream.create_pull = Mock(side_effect=create_pull_side_effect)
+
+        def get_repo(name):
+            if "openshift-bot" in name:
+                return mock_fork
+            return mock_upstream
+
+        mock_gh_client.return_value.get_repo = Mock(side_effect=get_repo)
+
+        await pipeline.update_layered_branches("1.25.8", replacements)
+
+        self.assertEqual(mock_upstream.create_pull.call_count, 2)
+        pipeline._slack_client.say_in_thread.assert_called()
+        summary = pipeline._slack_client.say_in_thread.call_args[0][0]
+        self.assertIn("error", summary)
+        self.assertIn("pull/9999", summary)
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
+    async def test_branch_not_found(self, mock_gh_client, mock_konflux_db):
+        """Branch in sync list doesn't exist -- error caught and reported"""
+        from github import GithubException
+
+        pipeline = self._make_pipeline()
+        mock_upstream, mock_fork = self._mock_github(
+            group_vars={"GO_LATEST": "1.25", "golang_sync_branches": ["nonexistent-branch"]},
+        )
+        mock_upstream.get_branch.side_effect = GithubException(
+            404,
+            {"message": "Branch not found"},
+            headers={},
+        )
+
+        def get_repo(name):
+            if "openshift-bot" in name:
+                return mock_fork
+            return mock_upstream
+
+        mock_gh_client.return_value.get_repo = Mock(side_effect=get_repo)
+
+        await pipeline.update_layered_branches("1.25.8", {"old": "new"})
+
+        mock_upstream.create_pull.assert_not_called()
+        pipeline._slack_client.say_in_thread.assert_called()
+        summary = pipeline._slack_client.say_in_thread.call_args[0][0]
+        self.assertIn("error", summary.lower())
+        self.assertIn("nonexistent-branch", summary)
+
+
 if __name__ == "__main__":
     unittest.main()
