@@ -18,6 +18,14 @@ class _IncludeConstructor:
         self.base_dir = base_dir.resolve() if base_dir else None
         self.replace_vars = replace_vars
 
+    def _new_yaml(self) -> YAML:
+        """Create a fresh parser so nested !include loads are not re-entrant."""
+        nested_yaml = YAML(typ='safe')
+        nested_yaml.constructor.add_constructor(
+            '!include', _IncludeConstructor(base_dir=self.base_dir, replace_vars=self.replace_vars)
+        )
+        return nested_yaml
+
     def __call__(self, loader, node) -> Any:
         if node.id == "scalar":  # for `!include "file.yml"`
             patterns = (loader.construct_scalar(node),)
@@ -42,7 +50,7 @@ class _IncludeConstructor:
                     content = content.format(**self.replace_vars)
                 f = StringIO(content)
                 f.name = str(file)
-                doc = yaml.load(f)
+                doc = self._new_yaml().load(f)
                 if isinstance(merged_doc, dict):
                     merged_doc = {**merged_doc, **doc}
                 elif isinstance(merged_doc, list):
