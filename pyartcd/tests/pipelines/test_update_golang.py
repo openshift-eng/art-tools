@@ -378,6 +378,63 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
         branch = UpdateGolangPipeline.get_golang_branch(9, "1.21.5")
         self.assertEqual(branch, "rhel-9-golang-1.21")
 
+    @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    def test_validate_tag_builds_go_latest_accepts_matching_major_minor(self, mock_konflux_db, mock_get_github_client):
+        """Test tag-build validation accepts a build version matching group.yml GO_LATEST major.minor"""
+        mock_runtime = Mock(
+            dry_run=False,
+            working_dir=Path("/tmp/working"),
+        )
+        mock_runtime.new_slack_client.return_value = Mock()
+
+        upstream_repo = Mock()
+        upstream_repo.get_contents.return_value = Mock(decoded_content=b"vars:\n  GO_LATEST: 1.22.7\n")
+        mock_get_github_client.return_value.get_repo.return_value = upstream_repo
+
+        pipeline = UpdateGolangPipeline(
+            runtime=mock_runtime,
+            ocp_version="4.16",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.22.9-1.el8"],
+            art_jira="ART-1234",
+            tag_builds=True,
+        )
+
+        pipeline.validate_tag_builds_go_latest("1.22.9")
+
+        upstream_repo.get_contents.assert_called_once_with("group.yml", ref="openshift-4.16")
+
+    @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    def test_validate_tag_builds_go_latest_rejects_mismatched_major_minor(
+        self, mock_konflux_db, mock_get_github_client
+    ):
+        """Test tag-build validation rejects build versions that do not match group.yml GO_LATEST major.minor"""
+        mock_runtime = Mock(
+            dry_run=False,
+            working_dir=Path("/tmp/working"),
+        )
+        mock_runtime.new_slack_client.return_value = Mock()
+
+        upstream_repo = Mock()
+        upstream_repo.get_contents.return_value = Mock(decoded_content=b"vars:\n  GO_LATEST: 1.22.7\n")
+        mock_get_github_client.return_value.get_repo.return_value = upstream_repo
+
+        pipeline = UpdateGolangPipeline(
+            runtime=mock_runtime,
+            ocp_version="4.16",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.21.13-1.el8"],
+            art_jira="ART-1234",
+            tag_builds=True,
+        )
+
+        with self.assertRaisesRegex(ValueError, r"--tag-builds.*\(1\.21\).*\(1\.22\)"):
+            pipeline.validate_tag_builds_go_latest("1.21.13")
+
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     def test_brew_login_when_logged_out(self, mock_konflux_db):
         """Test brew_login when session is logged out"""
@@ -535,9 +592,7 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
 
     @patch("pyartcd.pipelines.update_golang.get_image_info", new_callable=AsyncMock)
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
-    async def test_ensure_builder_pullspec_available_reuses_oc_helper(
-        self, mock_konflux_db, get_image_info
-    ):
+    async def test_ensure_builder_pullspec_available_reuses_oc_helper(self, mock_konflux_db, get_image_info):
         """Test published pullspec availability check reuses pyartcd.oc.get_image_info with quay auth"""
         mock_runtime = Mock(
             dry_run=False,
@@ -571,9 +626,7 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
 
     @patch("pyartcd.pipelines.update_golang.get_image_info", new_callable=AsyncMock)
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
-    async def test_ensure_builder_pullspec_available_errors_when_oc_helper_fails(
-        self, mock_konflux_db, get_image_info
-    ):
+    async def test_ensure_builder_pullspec_available_errors_when_oc_helper_fails(self, mock_konflux_db, get_image_info):
         """Test published pullspec availability check raises when pyartcd.oc.get_image_info fails"""
         mock_runtime = Mock(
             dry_run=False,
