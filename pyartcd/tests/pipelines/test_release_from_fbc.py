@@ -716,6 +716,170 @@ class TestCliValidation(unittest.TestCase):
         result = self._invoke(["--extra-image-nvrs", "foo-container-1.0-1.el9"])
         self.assertNotIsInstance(result.exception, click.ClickException)
 
+    @patch("pyartcd.pipelines.release_from_fbc.ReleaseFromFbcPipeline")
+    def test_release_notes_options_passed_to_pipeline(self, mock_pipeline_cls):
+        """Release notes CLI options should be passed through to the pipeline."""
+        mock_pipeline_cls.return_value.run = AsyncMock()
+        result = self._invoke(
+            [
+                "--fbc-pullspecs",
+                "quay.io/example/fbc:v1",
+                "--release-notes-synopsis",
+                "Bug fix update",
+                "--release-notes-topic",
+                "An update is available",
+                "--release-notes-description",
+                "Fixes several bugs",
+                "--release-notes-solution",
+                "Apply the update",
+            ]
+        )
+        self.assertIsNone(result.exception)
+
+        call_kwargs = mock_pipeline_cls.call_args[1]
+        self.assertEqual(call_kwargs["release_notes_synopsis"], "Bug fix update")
+        self.assertEqual(call_kwargs["release_notes_topic"], "An update is available")
+        self.assertEqual(call_kwargs["release_notes_description"], "Fixes several bugs")
+        self.assertEqual(call_kwargs["release_notes_solution"], "Apply the update")
+
+    @patch("pyartcd.pipelines.release_from_fbc.ReleaseFromFbcPipeline")
+    def test_release_notes_options_default_none(self, mock_pipeline_cls):
+        """Release notes CLI options should default to None when not provided."""
+        mock_pipeline_cls.return_value.run = AsyncMock()
+        result = self._invoke(["--fbc-pullspecs", "quay.io/example/fbc:v1"])
+        self.assertIsNone(result.exception)
+
+        call_kwargs = mock_pipeline_cls.call_args[1]
+        self.assertIsNone(call_kwargs["release_notes_synopsis"])
+        self.assertIsNone(call_kwargs["release_notes_topic"])
+        self.assertIsNone(call_kwargs["release_notes_description"])
+        self.assertIsNone(call_kwargs["release_notes_solution"])
+
+
+class TestApplyReleaseNotesText(unittest.TestCase):
+    """Tests for _apply_release_notes_text merge logic."""
+
+    def _make_pipeline(self, synopsis=None, topic=None, description=None, solution=None):
+        runtime = MagicMock()
+        runtime.dry_run = False
+        runtime.working_dir = MagicMock()
+        runtime.working_dir.absolute.return_value = MagicMock()
+        runtime.config = {}
+
+        pipeline = ReleaseFromFbcPipeline(
+            runtime=runtime,
+            group="logging-6.5",
+            assembly="6.5.0",
+            fbc_pullspecs=["quay.io/test/fbc:latest"],
+            release_notes_synopsis=synopsis,
+            release_notes_topic=topic,
+            release_notes_description=description,
+            release_notes_solution=solution,
+        )
+        pipeline.product = "logging"
+        return pipeline
+
+    def test_overlay_on_existing_release_notes(self):
+        """User-provided text fields are overlaid onto ReleaseNotes from bug processing."""
+        pipeline = self._make_pipeline(
+            synopsis="Logging 6.5.0 bug fix update",
+            topic="An update is available for Logging 6.5.",
+        )
+        existing_rn = ReleaseNotes(type="RHSA")
+
+        result = pipeline._apply_release_notes_text(existing_rn)
+
+        self.assertIs(result, existing_rn)
+        self.assertEqual(result.type, "RHSA")
+        self.assertEqual(result.synopsis, "Logging 6.5.0 bug fix update")
+        self.assertEqual(result.topic, "An update is available for Logging 6.5.")
+        self.assertIsNone(result.description)
+        self.assertIsNone(result.solution)
+
+    def test_text_only_creates_rhba(self):
+        """When no existing ReleaseNotes, a new RHBA is created with text fields."""
+        pipeline = self._make_pipeline(
+            synopsis="Logging 6.5.0 bug fix update",
+            description="This update fixes several bugs.",
+            solution="Apply the update using the operator.",
+        )
+
+        result = pipeline._apply_release_notes_text(None)
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result.type, "RHBA")
+        self.assertEqual(result.synopsis, "Logging 6.5.0 bug fix update")
+        self.assertIsNone(result.topic)
+        self.assertEqual(result.description, "This update fixes several bugs.")
+        self.assertEqual(result.solution, "Apply the update using the operator.")
+
+    def test_neither_bugs_nor_text_returns_none(self):
+        """When no text fields and no existing ReleaseNotes, returns None."""
+        pipeline = self._make_pipeline()
+
+        result = pipeline._apply_release_notes_text(None)
+
+        self.assertIsNone(result)
+
+    def test_partial_text_only_sets_provided_fields(self):
+        """Only provided text fields are set; others remain None."""
+        pipeline = self._make_pipeline(solution="Apply the update.")
+        existing_rn = ReleaseNotes(type="RHBA")
+
+        result = pipeline._apply_release_notes_text(existing_rn)
+
+        self.assertIsNone(result.synopsis)
+        self.assertIsNone(result.topic)
+        self.assertIsNone(result.description)
+        self.assertEqual(result.solution, "Apply the update.")
+
+    def test_all_four_fields(self):
+        """All four text fields are set when all are provided."""
+        pipeline = self._make_pipeline(
+            synopsis="Synopsis text",
+            topic="Topic text",
+            description="Description text",
+            solution="Solution text",
+        )
+
+        result = pipeline._apply_release_notes_text(None)
+
+        self.assertEqual(result.type, "RHBA")
+        self.assertEqual(result.synopsis, "Synopsis text")
+        self.assertEqual(result.topic, "Topic text")
+        self.assertEqual(result.description, "Description text")
+        self.assertEqual(result.solution, "Solution text")
+
+    def test_no_text_with_existing_rn_returns_unchanged(self):
+        """When no text fields are provided but ReleaseNotes exists, it passes through unchanged."""
+        pipeline = self._make_pipeline()
+        existing_rn = ReleaseNotes(type="RHSA")
+
+        result = pipeline._apply_release_notes_text(existing_rn)
+
+        self.assertIs(result, existing_rn)
+        self.assertIsNone(result.synopsis)
+
+    def test_empty_and_whitespace_strings_ignored(self):
+        """Empty and whitespace-only strings are treated as not provided."""
+        pipeline = self._make_pipeline(synopsis="", topic="   ", description=None, solution="Real value")
+        existing_rn = ReleaseNotes(type="RHBA")
+
+        result = pipeline._apply_release_notes_text(existing_rn)
+
+        self.assertIsNone(result.synopsis)
+        self.assertIsNone(result.topic)
+        self.assertIsNone(result.description)
+        self.assertEqual(result.solution, "Real value")
+
+    def test_all_empty_strings_returns_unchanged(self):
+        """When all text fields are empty strings, release_notes passes through unchanged."""
+        pipeline = self._make_pipeline(synopsis="", topic="", description="", solution="")
+
+        result = pipeline._apply_release_notes_text(None)
+
+        self.assertIsNone(result)
+
 
 if __name__ == "__main__":
     unittest.main()
