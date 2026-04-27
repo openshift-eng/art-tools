@@ -378,6 +378,227 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
         branch = UpdateGolangPipeline.get_golang_branch(9, "1.21.5")
         self.assertEqual(branch, "rhel-9-golang-1.21")
 
+    @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    def test_validate_tag_builds_go_latest_accepts_matching_major_minor(self, mock_konflux_db, mock_get_github_client):
+        """Test tag-build validation accepts a build version matching group.yml GO_LATEST major.minor"""
+        mock_runtime = Mock(
+            dry_run=False,
+            working_dir=Path("/tmp/working"),
+        )
+        mock_runtime.new_slack_client.return_value = Mock()
+
+        upstream_repo = Mock()
+        upstream_repo.get_contents.return_value = Mock(decoded_content=b"vars:\n  GO_LATEST: 1.22\n")
+        mock_get_github_client.return_value.get_repo.return_value = upstream_repo
+
+        pipeline = UpdateGolangPipeline(
+            runtime=mock_runtime,
+            ocp_version="4.16",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.22.9-1.el8"],
+            art_jira="ART-1234",
+            tag_builds=True,
+        )
+
+        branch, allowed_major_minors, build_major_minor = pipeline.validate_go_version_matches_group_vars("1.22.9")
+        pipeline.validate_tag_builds_go_latest(branch, allowed_major_minors, build_major_minor)
+
+        requested_paths = [call.args[0] for call in upstream_repo.get_contents.call_args_list]
+        self.assertEqual(sorted(requested_paths), ["group.yml", "streams.yml"])
+
+    @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    def test_validate_go_version_matches_group_vars_accepts_matching_go_extra(
+        self, mock_konflux_db, mock_get_github_client
+    ):
+        """Test version validation accepts a build version matching group.yml GO_EXTRA major.minor"""
+        mock_runtime = Mock(
+            dry_run=False,
+            working_dir=Path("/tmp/working"),
+        )
+        mock_runtime.new_slack_client.return_value = Mock()
+
+        upstream_repo = Mock()
+        upstream_repo.get_contents.return_value = Mock(decoded_content=b"vars:\n  GO_LATEST: 1.22\n  GO_EXTRA: 1.23\n")
+        mock_get_github_client.return_value.get_repo.return_value = upstream_repo
+
+        pipeline = UpdateGolangPipeline(
+            runtime=mock_runtime,
+            ocp_version="4.16",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.23.9-1.el8"],
+            art_jira="ART-1234",
+            tag_builds=False,
+        )
+
+        pipeline.validate_go_version_matches_group_vars("1.23.9")
+
+    @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    def test_validate_go_version_matches_group_vars_accepts_unquoted_trailing_zero(
+        self, mock_konflux_db, mock_get_github_client
+    ):
+        """Test version validation accepts unquoted trailing-zero YAML scalars like 1.20"""
+        mock_runtime = Mock(
+            dry_run=False,
+            working_dir=Path("/tmp/working"),
+        )
+        mock_runtime.new_slack_client.return_value = Mock()
+
+        upstream_repo = Mock()
+        upstream_repo.get_contents.return_value = Mock(decoded_content=b"vars:\n  GO_LATEST: 1.20\n")
+        mock_get_github_client.return_value.get_repo.return_value = upstream_repo
+
+        pipeline = UpdateGolangPipeline(
+            runtime=mock_runtime,
+            ocp_version="4.16",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.20.12-2.el8"],
+            art_jira="ART-1234",
+            tag_builds=False,
+        )
+
+        pipeline.validate_go_version_matches_group_vars("1.20.12")
+
+        requested_paths = [call.args[0] for call in upstream_repo.get_contents.call_args_list]
+        self.assertEqual(sorted(requested_paths), ["group.yml", "streams.yml"])
+
+    @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    async def test_update_golang_streams_reuses_cached_branch_content(self, mock_konflux_db, mock_get_github_client):
+        """Test update_golang_streams reuses the same cached branch content loaded during validation"""
+        mock_runtime = Mock(
+            dry_run=False,
+            working_dir=Path("/tmp/working"),
+        )
+        mock_slack = Mock()
+        mock_slack.say_in_thread = AsyncMock()
+        mock_runtime.new_slack_client.return_value = mock_slack
+
+        upstream_repo = Mock()
+
+        def get_contents(path, ref):
+            if path == "group.yml":
+                return Mock(decoded_content=b"vars:\n  GO_LATEST: 1.22\n")
+            if path == "streams.yml":
+                return Mock(decoded_content=b"{}\n")
+            raise AssertionError(f"Unexpected path requested: {path}")
+
+        upstream_repo.get_contents.side_effect = get_contents
+        mock_get_github_client.return_value.get_repo.return_value = upstream_repo
+
+        pipeline = UpdateGolangPipeline(
+            runtime=mock_runtime,
+            ocp_version="4.16",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.22.9-1.el8"],
+            art_jira="ART-1234",
+            tag_builds=False,
+        )
+
+        pipeline.validate_go_version_matches_group_vars("1.22.9")
+        await pipeline.update_golang_streams("1.22.9", {})
+
+        requested_paths = [call.args[0] for call in upstream_repo.get_contents.call_args_list]
+        self.assertEqual(requested_paths.count("group.yml"), 1)
+        self.assertEqual(requested_paths.count("streams.yml"), 1)
+
+    @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    def test_validate_go_version_matches_group_vars_accepts_matching_go_previous(
+        self, mock_konflux_db, mock_get_github_client
+    ):
+        """Test version validation accepts a build version matching group.yml GO_PREVIOUS major.minor"""
+        mock_runtime = Mock(
+            dry_run=False,
+            working_dir=Path("/tmp/working"),
+        )
+        mock_runtime.new_slack_client.return_value = Mock()
+
+        upstream_repo = Mock()
+        upstream_repo.get_contents.return_value = Mock(
+            decoded_content=b"vars:\n  GO_LATEST: 1.22\n  GO_PREVIOUS: 1.21\n"
+        )
+        mock_get_github_client.return_value.get_repo.return_value = upstream_repo
+
+        pipeline = UpdateGolangPipeline(
+            runtime=mock_runtime,
+            ocp_version="4.16",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.21.13-1.el8"],
+            art_jira="ART-1234",
+            tag_builds=False,
+        )
+
+        pipeline.validate_go_version_matches_group_vars("1.21.13")
+
+    @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    def test_validate_go_version_matches_group_vars_rejects_mismatched_major_minor(
+        self, mock_konflux_db, mock_get_github_client
+    ):
+        """Test version validation rejects build versions that match none of GO_LATEST/GO_EXTRA/GO_PREVIOUS"""
+        mock_runtime = Mock(
+            dry_run=False,
+            working_dir=Path("/tmp/working"),
+        )
+        mock_runtime.new_slack_client.return_value = Mock()
+
+        upstream_repo = Mock()
+        upstream_repo.get_contents.return_value = Mock(
+            decoded_content=b"vars:\n  GO_LATEST: 1.22\n  GO_EXTRA: 1.23\n  GO_PREVIOUS: 1.21\n"
+        )
+        mock_get_github_client.return_value.get_repo.return_value = upstream_repo
+
+        pipeline = UpdateGolangPipeline(
+            runtime=mock_runtime,
+            ocp_version="4.16",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.24.1-1.el8"],
+            art_jira="ART-1234",
+            tag_builds=False,
+        )
+
+        with self.assertRaisesRegex(
+            ValueError,
+            r"must match one of .*GO_LATEST \(1\.22\).*GO_EXTRA \(1\.23\).*GO_PREVIOUS \(1\.21\)",
+        ):
+            pipeline.validate_go_version_matches_group_vars("1.24.1")
+
+    @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    def test_validate_tag_builds_go_latest_rejects_go_extra_match(self, mock_konflux_db, mock_get_github_client):
+        """Test tag-build validation still requires GO_LATEST even when GO_EXTRA matches"""
+        mock_runtime = Mock(
+            dry_run=False,
+            working_dir=Path("/tmp/working"),
+        )
+        mock_runtime.new_slack_client.return_value = Mock()
+
+        upstream_repo = Mock()
+        upstream_repo.get_contents.return_value = Mock(decoded_content=b"vars:\n  GO_LATEST: 1.22\n  GO_EXTRA: 1.23\n")
+        mock_get_github_client.return_value.get_repo.return_value = upstream_repo
+
+        pipeline = UpdateGolangPipeline(
+            runtime=mock_runtime,
+            ocp_version="4.16",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.23.9-1.el8"],
+            art_jira="ART-1234",
+            tag_builds=True,
+        )
+
+        with self.assertRaisesRegex(ValueError, r"--tag-builds.*\(1\.23\).*\(1\.22\)"):
+            pipeline.validate_tag_builds_go_latest("openshift-4.16", {"GO_LATEST": "1.22", "GO_EXTRA": "1.23"}, "1.23")
+
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     def test_brew_login_when_logged_out(self, mock_konflux_db):
         """Test brew_login when session is logged out"""
