@@ -11,7 +11,7 @@ import shutil
 import tempfile
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, NamedTuple, Optional, Sequence, Union, cast
 from urllib.parse import parse_qs, urlparse
@@ -41,6 +41,31 @@ _GIT_AUTH_SECRET_LABEL_KEY = "art.openshift.io/git-auth"
 _GIT_AUTH_SECRET_LABEL_VALUE = "true"
 _GIT_AUTH_GENERATED_BY_LABEL_KEY = "art.openshift.io/generated-by"
 _GIT_AUTH_GENERATED_BY_LABEL_VALUE = "art-automation"
+
+
+@dataclass
+class ImageBuildParams:
+    """Optional build customization parameters for a Konflux PipelineRun."""
+
+    hermetic: Optional[bool] = None
+    sast: Optional[bool] = None
+    dockerfile: Optional[str] = None
+    rebuild: Optional[bool] = None
+    build_args: Optional[list[str]] = None
+    additional_secret: Optional[str] = None
+    privileged_nested: Optional[bool] = None
+    build_step_resources: Optional[dict[str, str]] = None
+    workspace_storage: Optional[str] = None
+    prefetch: Optional[list] = None
+    artifact_type: Optional[str] = None
+    service_account: Optional[str] = None
+    annotations: Optional[dict[str, str]] = None
+    build_priority: Optional[str] = None
+    additional_tags: Optional[list[str]] = field(default_factory=list)
+    vm_override: Optional[dict] = None
+    skip_checks: bool = False
+    skip_fips_check: bool = False
+
 
 # Label key used to filter PipelineRuns for this process
 _COMMON_RUNTIME_LABEL_KEY = "doozer-watch-id"
@@ -1174,23 +1199,13 @@ class KonfluxClient:
         target_branch: str,
         output_image: str,
         build_platforms: Sequence[str],
-        prefetch: Optional[list] = None,
         git_auth_secret: str = "pipelines-as-code-secret",
-        additional_tags: Optional[Sequence[str]] = None,
-        skip_checks: bool = False,
-        skip_fips_check: bool = False,
-        build_priority: str = None,
-        hermetic: Optional[bool] = None,
-        sast: Optional[bool] = None,
-        dockerfile: Optional[str] = None,
         pipelinerun_template_url: str = constants.KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL,
-        annotations: Optional[dict[str, str]] = None,
-        artifact_type: Optional[str] = None,
-        service_account: Optional[str] = None,
-        rebuild: Optional[bool] = None,
+        build_params: Optional[ImageBuildParams] = None,
     ) -> dict:
-        if additional_tags is None:
-            additional_tags = []
+        if build_params is None:
+            build_params = ImageBuildParams()
+        additional_tags = build_params.additional_tags or []
         https_url = art_util.convert_remote_git_to_https(git_url)
 
         template = await self._get_pipelinerun_template(pipelinerun_template_url)
@@ -1216,8 +1231,8 @@ class KonfluxClient:
         # Set the application and component names
         obj["metadata"]["annotations"]["build.appstudio.openshift.io/repo"] = f"{https_url}?rev={commit_sha}"
         obj["metadata"]["annotations"]["art-jenkins-job-url"] = os.getenv("BUILD_URL", "n/a")
-        if annotations:
-            obj["metadata"]["annotations"].update(annotations)
+        if build_params.annotations:
+            obj["metadata"]["annotations"].update(build_params.annotations)
         obj["metadata"]["labels"]["appstudio.openshift.io/application"] = application_name
         obj["metadata"]["labels"]["appstudio.openshift.io/component"] = component_name
 
@@ -1226,53 +1241,59 @@ class KonfluxClient:
         obj["metadata"]["labels"].update(watch_labels)
 
         # Add Kueue build priority label if specified
-        if build_priority:
-            priority_class = f"build-priority-{build_priority}"
+        if build_params.build_priority:
+            priority_class = f"build-priority-{build_params.build_priority}"
             obj["metadata"]["labels"]["kueue.x-k8s.io/priority-class"] = priority_class
             self._logger.info(f"Set Kueue priority class label: {priority_class}")
 
-        def _modify_param(params: List, name: str, value: Union[str, bool, list[str]]):
+        def _modify_param(plr_params: List, name: str, value: Union[str, bool, list[str]]):
             """Modify a parameter in the params list. If the parameter does not exist, it is added.
 
-            :param params: The list of parameters.
+            :param plr_params: The list of parameters.
             :param name: The name of the parameter.
             :param value: The value of the parameter.
             """
             if isinstance(value, bool):
-                # boolean value should be converted to string
                 value = "true" if value else "false"
-            for param in params:
+            for param in plr_params:
                 if param["name"] == name:
                     param["value"] = value
                     return
-            params.append({"name": name, "value": value})
+            plr_params.append({"name": name, "value": value})
 
         # PipelineRun parameters to override in the template
-        params = obj["spec"]["params"]
-        _modify_param(params, "output-image", output_image)
-        _modify_param(params, "skip-checks", skip_checks)
+        plr_params = obj["spec"]["params"]
+        _modify_param(plr_params, "output-image", output_image)
+        _modify_param(plr_params, "skip-checks", build_params.skip_checks)
         _modify_param(
-            params, "build-source-image", "true"
+            plr_params, "build-source-image", "true"
         )  # Have to be true always to satisfy Enterprise Contract Policy
-        _modify_param(params, "build-platforms", list(build_platforms))
-        if dockerfile:
-            _modify_param(params, "dockerfile", dockerfile)
+        _modify_param(plr_params, "build-platforms", list(build_platforms))
+        if build_params.dockerfile:
+            _modify_param(plr_params, "dockerfile", build_params.dockerfile)
 
-        if prefetch:
-            _modify_param(params, "prefetch-input", prefetch)
-        if hermetic is not None:
-            _modify_param(params, "hermetic", hermetic)
+        if build_params.prefetch:
+            _modify_param(plr_params, "prefetch-input", build_params.prefetch)
+        if build_params.hermetic is not None:
+            _modify_param(plr_params, "hermetic", build_params.hermetic)
 
-        if rebuild is not None:
-            _modify_param(params, "rebuild", rebuild)
+        if build_params.rebuild is not None:
+            _modify_param(plr_params, "rebuild", build_params.rebuild)
+
+        if build_params.build_args:
+            _modify_param(plr_params, "build-args", build_params.build_args)
 
         # See https://konflux-ci.dev/docs/how-tos/configuring/customizing-the-build/#configuring-timeouts
         obj["spec"]["timeouts"] = {"pipeline": "12h"}
 
-        obj["spec"]["taskRunTemplate"]["serviceAccountName"] = service_account or f"build-pipeline-{component_name}"
+        obj["spec"]["taskRunTemplate"]["serviceAccountName"] = (
+            build_params.service_account or f"build-pipeline-{component_name}"
+        )
 
         # Check if verbose prefetch is being used (RPM, generic, or yarn types)
-        verbose_prefetch_enabled = prefetch and any(item.get("type") in ("rpm", "generic", "yarn") for item in prefetch)
+        verbose_prefetch_enabled = build_params.prefetch and any(
+            item.get("type") in ("rpm", "generic", "yarn") for item in build_params.prefetch
+        )
 
         # Task specific parameters to override in the template
         has_build_images_task = False
@@ -1283,6 +1304,10 @@ class KonfluxClient:
                     has_build_images_task = True
                     task["timeout"] = "12h"
                     _modify_param(task["params"], "SBOM_TYPE", "spdx")
+                    if build_params.additional_secret:
+                        _modify_param(task["params"], "ADDITIONAL_SECRET", build_params.additional_secret)
+                    if build_params.privileged_nested is not None:
+                        _modify_param(task["params"], "PRIVILEGED_NESTED", str(build_params.privileged_nested).lower())
                 case "prefetch-dependencies":
                     _modify_param(task["params"], "sbom-type", "spdx")
                     if verbose_prefetch_enabled:
@@ -1292,8 +1317,6 @@ class KonfluxClient:
                     _modify_param(task["params"], "ADDITIONAL_TAGS", list(additional_tags))
                 case "sast-shell-check":
                     if namespace == "art-logging-tenant" and "vector" in component_name:
-                        # For the component "vector" in the logging namepace, we need to set the TARGET_DIRS
-                        # https://gitlab.cee.redhat.com/openshift-logging/sustaining-eng/konflux-log-collection/-/merge_requests/67/diffs
                         _modify_param(task["params"], "TARGET_DIRS", "./cluster-logging-operator")
                 case "clone-repository":
                     _modify_param(
@@ -1304,14 +1327,14 @@ class KonfluxClient:
                 case "sast-snyk-check":
                     has_sast_task = True
                 case "ecosystem-cert-preflight-checks":
-                    if artifact_type:
-                        _modify_param(task["params"], "artifact-type", artifact_type)
+                    if build_params.artifact_type:
+                        _modify_param(task["params"], "artifact-type", build_params.artifact_type)
 
-        if sast and not has_sast_task:
+        if build_params.sast and not has_sast_task:
             raise IOError(
                 "SAST task is enabled, but the template does not contain it. Please ensure the template is up-to-date."
             )
-        if sast is False and has_sast_task:  # if SAST is explicitly disabled, remove SAST tasks
+        if build_params.sast is False and has_sast_task:
             tasks = []
             has_sast_task = False
             for task in obj["spec"]["pipelineSpec"]["tasks"]:
@@ -1323,7 +1346,7 @@ class KonfluxClient:
 
             obj["spec"]["pipelineSpec"]["tasks"] = tasks
 
-        if skip_fips_check:
+        if build_params.skip_fips_check:
             tasks = []
             for task in obj["spec"]["pipelineSpec"]["tasks"]:
                 task_name = task.get("name")
@@ -1337,22 +1360,48 @@ class KonfluxClient:
         # ose-installer-artifacts fails with OOM with default values, hence bumping memory limit
         task_run_specs = []
         if has_build_images_task:
+            ephemeral_storage = (build_params.build_step_resources or {}).get("ephemeral-storage")
+
+            sbom_syft_resources: dict = {
+                "requests": {"memory": "5Gi"},
+                "limits": {"memory": "10Gi"},
+            }
+            if ephemeral_storage:
+                sbom_syft_resources["requests"]["ephemeral-storage"] = "1Gi"
+                sbom_syft_resources["limits"]["ephemeral-storage"] = "1Gi"
+
+            build_images_step_specs: list[dict] = [
+                {
+                    "name": "sbom-syft-generate",
+                    "computeResources": sbom_syft_resources,
+                },
+            ]
+
+            if ephemeral_storage:
+                post_build_resources: dict = {
+                    "requests": {"ephemeral-storage": "1Gi"},
+                    "limits": {"ephemeral-storage": "1Gi"},
+                }
+                for step_name in ("push", "prepare-sboms", "upload-sbom"):
+                    build_images_step_specs.append(
+                        {"name": step_name, "computeResources": post_build_resources}
+                    )
+
+            if build_params.build_step_resources:
+                build_images_step_specs.append(
+                    {
+                        "name": "build",
+                        "computeResources": {
+                            "requests": dict(build_params.build_step_resources),
+                            "limits": dict(build_params.build_step_resources),
+                        },
+                    }
+                )
+
             task_run_specs += [
                 {
                     "pipelineTaskName": "build-images",
-                    "stepSpecs": [
-                        {
-                            "name": "sbom-syft-generate",
-                            "computeResources": {
-                                "requests": {
-                                    "memory": "5Gi",
-                                },
-                                "limits": {
-                                    "memory": "10Gi",
-                                },
-                            },
-                        }
-                    ],
+                    "stepSpecs": build_images_step_specs,
                 }
             ]
             task_run_specs += [
@@ -1385,6 +1434,27 @@ class KonfluxClient:
 
         obj["spec"]["taskRunSpecs"] = task_run_specs
 
+        if build_params.workspace_storage:
+            pipeline_workspaces = obj["spec"]["pipelineSpec"].setdefault("workspaces", [])
+            if not any(ws.get("name") == "workspace" for ws in pipeline_workspaces):
+                pipeline_workspaces.append({"name": "workspace", "optional": True})
+
+            plr_workspaces = obj["spec"].setdefault("workspaces", [])
+            if not any(ws.get("name") == "workspace" for ws in plr_workspaces):
+                plr_workspaces.append(
+                    {
+                        "name": "workspace",
+                        "volumeClaimTemplate": {
+                            "spec": {
+                                "accessModes": ["ReadWriteOnce"],
+                                "resources": {
+                                    "requests": {"storage": build_params.workspace_storage},
+                                },
+                            },
+                        },
+                    }
+                )
+
         return obj
 
     async def start_pipeline_run_for_image_build(
@@ -1397,22 +1467,10 @@ class KonfluxClient:
         commit_sha: str,
         target_branch: str,
         output_image: str,
-        vm_override: dict,
         building_arches: Sequence[str],
-        prefetch: Optional[list] = None,
-        sast: Optional[bool] = None,
         git_auth_secret: str = "pipelines-as-code-secret",
-        additional_tags: Sequence[str] = [],
-        skip_checks: bool = False,
-        skip_fips_check: bool = False,
-        build_priority: str = None,
-        hermetic: Optional[bool] = None,
-        dockerfile: Optional[str] = None,
         pipelinerun_template_url: str = constants.KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL,
-        annotations: Optional[dict[str, str]] = None,
-        artifact_type: Optional[str] = None,
-        service_account: Optional[str] = None,
-        rebuild: Optional[bool] = None,
+        build_params: Optional[ImageBuildParams] = None,
     ) -> PipelineRunInfo:
         """
         Start a PipelineRun for building an image.
@@ -1425,30 +1483,20 @@ class KonfluxClient:
         :param commit_sha: The commit SHA.
         :param target_branch: The target branch.
         :param output_image: The output image.
-        :param vm_override: Override the default konflux VM flavor (in case we need more specs)
         :param building_arches: The architectures to build.
-        :param prefetch: The param values for Konflux prefetch dependencies task
-        :param sast: To enable the SAST task in PLR. If None, use the default value from the pipeline template.
         :param git_auth_secret: The git auth secret.
-        :param additional_tags: Additional tags to apply to the image.
-        :param skip_checks: Whether to skip checks.
-        :param skip_fips_check: Whether to skip the FIPS compliance check.
-        :param hermetic: Whether to build the image in a hermetic environment. If None, the default value is used.
-        :param dockerfile: Optional Dockerfile name
         :param pipelinerun_template_url: The URL to the PipelineRun template.
-        :param annotations: Optional PLR annotations
-        :param artifact_type: The type of artifact artifact_type for ecosystem-cert-preflight-checks. Select from application, operatorbundle, or introspect.
-        :param service_account: The service account to use for the PipelineRun.
-        :param rebuild: Forces rebuild of the image, even if it already exists. If None, the default behavior is to not changed.
-        :param build_priority: The Kueue build priority (1-10, where 1 is highest priority). If specified, adds the kueue.x-k8s.io/priority-class label.
+        :param build_params: Optional build customization parameters bundled in an ImageBuildParams dataclass.
         :return: The PipelineRun resource as a PipelineRunInfo.
         """
+        if build_params is None:
+            build_params = ImageBuildParams()
 
         unsupported_arches = set(building_arches) - set(self.SUPPORTED_ARCHES)
         if unsupported_arches:
             raise ValueError(f"Unsupported architectures: {unsupported_arches}")
 
-        # If vm_override is not one and an override exists for a particular arch, use that. Otherwise, use the default
+        vm_override = build_params.vm_override
         build_platforms = [
             vm_override[arch] if vm_override and arch in vm_override else random.choice(self.SUPPORTED_ARCHES[arch])
             for arch in building_arches
@@ -1465,19 +1513,8 @@ class KonfluxClient:
             output_image=output_image,
             build_platforms=build_platforms,
             git_auth_secret=git_auth_secret,
-            skip_checks=skip_checks,
-            skip_fips_check=skip_fips_check,
-            hermetic=hermetic,
-            additional_tags=additional_tags,
-            dockerfile=dockerfile,
             pipelinerun_template_url=pipelinerun_template_url,
-            prefetch=prefetch,
-            sast=sast,
-            annotations=annotations,
-            artifact_type=artifact_type,
-            service_account=service_account,
-            rebuild=rebuild,
-            build_priority=build_priority,
+            build_params=build_params,
         )
         if self.dry_run:
             fake_pipelinerun = resource.ResourceInstance(self.dyn_client, pipelinerun_manifest)
