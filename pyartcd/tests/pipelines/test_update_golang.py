@@ -735,9 +735,7 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
 
     @patch("pyartcd.pipelines.update_golang.get_image_info", new_callable=AsyncMock)
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
-    async def test_ensure_builder_pullspec_available_reuses_oc_helper(
-        self, mock_konflux_db, get_image_info
-    ):
+    async def test_ensure_builder_pullspec_available_reuses_oc_helper(self, mock_konflux_db, get_image_info):
         """Test published pullspec availability check reuses pyartcd.oc.get_image_info with quay auth"""
         pipeline = self._make_pipeline(build_system="konflux")
 
@@ -751,15 +749,11 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
         ):
             await pipeline._ensure_builder_pullspec_available(pullspec)
 
-        get_image_info.assert_awaited_once_with(
-            pullspec, raise_if_not_found=True, registry_config=quay_auth_file
-        )
+        get_image_info.assert_awaited_once_with(pullspec, raise_if_not_found=True, registry_config=quay_auth_file)
 
     @patch("pyartcd.pipelines.update_golang.get_image_info", new_callable=AsyncMock)
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
-    async def test_ensure_builder_pullspec_available_errors_when_oc_helper_fails(
-        self, mock_konflux_db, get_image_info
-    ):
+    async def test_ensure_builder_pullspec_available_errors_when_oc_helper_fails(self, mock_konflux_db, get_image_info):
         """Test published pullspec availability check raises when pyartcd.oc.get_image_info fails"""
         pipeline = self._make_pipeline(build_system="konflux")
 
