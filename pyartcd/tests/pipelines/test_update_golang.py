@@ -429,7 +429,7 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
             force_update_tracker=False,
             go_nvrs=["golang-1.23.9-1.el8"],
             art_jira="ART-1234",
-            tag_builds=True,
+            tag_builds=False,
         )
 
         pipeline.validate_go_version_matches_group_vars("1.23.9")
@@ -459,7 +459,7 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
             force_update_tracker=False,
             go_nvrs=["golang-1.21.13-1.el8"],
             art_jira="ART-1234",
-            tag_builds=True,
+            tag_builds=False,
         )
 
         pipeline.validate_go_version_matches_group_vars("1.21.13")
@@ -469,7 +469,7 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
     def test_validate_go_version_matches_group_vars_rejects_mismatched_major_minor(
         self, mock_konflux_db, mock_get_github_client
     ):
-        """Test tag-build validation rejects build versions that match none of GO_LATEST/GO_EXTRA/GO_PREVIOUS"""
+        """Test version validation rejects build versions that match none of GO_LATEST/GO_EXTRA/GO_PREVIOUS"""
         mock_runtime = Mock(
             dry_run=False,
             working_dir=Path("/tmp/working"),
@@ -489,7 +489,7 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
             force_update_tracker=False,
             go_nvrs=["golang-1.24.1-1.el8"],
             art_jira="ART-1234",
-            tag_builds=True,
+            tag_builds=False,
         )
 
         with self.assertRaisesRegex(
