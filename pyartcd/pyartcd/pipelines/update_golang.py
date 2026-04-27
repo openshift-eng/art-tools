@@ -119,6 +119,7 @@ def extract_and_validate_golang_nvrs(ocp_version: str, go_nvrs: List[str]):
 
 
 def extract_major_minor(version: str, label: str = "version") -> str:
+    version = str(version)
     match = re.fullmatch(r"(\d+)\.(\d+)(?:\.\d+)?", version)
     if not match:
         raise ValueError(f"Invalid {label}: {version}")
@@ -215,30 +216,61 @@ class UpdateGolangPipeline:
             self.konflux_db = KonfluxDb()
             self.konflux_db.bind(KonfluxBuildRecord)
 
-    def validate_tag_builds_go_latest(self, go_version: str):
-        branch = f"openshift-{self.ocp_version}"
-        upstream_repo = get_github_client_for_org("openshift-eng").get_repo("openshift-eng/ocp-build-data")
-        group_content = yaml.load(upstream_repo.get_contents("group.yml", ref=branch).decoded_content)
+    @staticmethod
+    def _load_yaml_from_repo(repo, path: str, ref: str):
+        return yaml.load(repo.get_contents(path, ref=ref).decoded_content)
 
+    def _get_upstream_ocp_build_data_repo(self):
+        return get_github_client_for_org("openshift-eng").get_repo("openshift-eng/ocp-build-data")
+
+    def _get_allowed_go_major_minors(self) -> tuple[str, dict[str, str]]:
+        branch = f"openshift-{self.ocp_version}"
+        upstream_repo = self._get_upstream_ocp_build_data_repo()
+        group_content = self._load_yaml_from_repo(upstream_repo, "group.yml", branch)
+
+        vars_content = group_content.get("vars", {})
         go_latest_var = "GO_LATEST"
-        go_latest = group_content.get("vars", {}).get(go_latest_var)
+        go_latest = vars_content.get(go_latest_var)
         if not go_latest:
             raise ValueError(
                 f"{go_latest_var} variable not found in group.yml, please make sure it is defined before running the pipeline"
             )
 
+        allowed_major_minors = {
+            var_name: extract_major_minor(var_value, f"group.yml {var_name}")
+            for var_name in ("GO_LATEST", "GO_EXTRA", "GO_PREVIOUS")
+            for var_value in [vars_content.get(var_name)]
+            if var_value
+        }
+        return branch, allowed_major_minors
+
+    def validate_go_version_matches_group_vars(self, go_version: str):
+        branch, allowed_major_minors = self._get_allowed_go_major_minors()
         build_major_minor = extract_major_minor(go_version, "golang build version")
-        latest_major_minor = extract_major_minor(go_latest, f"group.yml {go_latest_var}")
+        if build_major_minor not in allowed_major_minors.values():
+            allowed_versions = ", ".join(
+                f"{var_name} ({major_minor})" for var_name, major_minor in allowed_major_minors.items()
+            )
+            raise ValueError(
+                f"The provided golang build major.minor ({build_major_minor}) must match "
+                f"one of {branch} group.yml vars: {allowed_versions}."
+            )
+        return branch, allowed_major_minors, build_major_minor
+
+    def validate_tag_builds_go_latest(self, go_version: str):
+        branch, allowed_major_minors, build_major_minor = self.validate_go_version_matches_group_vars(go_version)
+        latest_major_minor = allowed_major_minors["GO_LATEST"]
         if build_major_minor != latest_major_minor:
             raise ValueError(
                 f"When --tag-builds is set, the provided golang build major.minor ({build_major_minor}) must match "
-                f"{branch} group.yml {go_latest_var} major.minor ({latest_major_minor})."
+                f"{branch} group.yml GO_LATEST major.minor ({latest_major_minor})."
             )
 
     async def run(self):
         go_version, el_nvr_map = extract_and_validate_golang_nvrs(self.ocp_version, self.go_nvrs)
         _LOGGER.info(f'Golang version detected: {go_version}')
         _LOGGER.info(f'NVRs by rhel version: {el_nvr_map}')
+        self.validate_go_version_matches_group_vars(go_version)
         if self.tag_builds:
             self.validate_tag_builds_go_latest(go_version)
 
@@ -533,9 +565,9 @@ class UpdateGolangPipeline:
         4. Create pr to update changes
         """
         branch = f"openshift-{self.ocp_version}"
-        upstream_repo = get_github_client_for_org("openshift-eng").get_repo("openshift-eng/ocp-build-data")
-        streams_content = yaml.load(upstream_repo.get_contents("streams.yml", ref=branch).decoded_content)
-        group_content = yaml.load(upstream_repo.get_contents("group.yml", ref=branch).decoded_content)
+        upstream_repo = self._get_upstream_ocp_build_data_repo()
+        streams_content = self._load_yaml_from_repo(upstream_repo, "streams.yml", branch)
+        group_content = self._load_yaml_from_repo(upstream_repo, "group.yml", branch)
 
         go_latest_var, go_previous_var = "GO_LATEST", "GO_PREVIOUS"
         go_latest = group_content['vars'].get(go_latest_var)
