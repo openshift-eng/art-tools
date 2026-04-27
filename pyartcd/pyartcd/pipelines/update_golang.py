@@ -206,7 +206,7 @@ class UpdateGolangPipeline:
         self._slack_client = self.runtime.new_slack_client()
         self._doozer_working_dir = self.runtime.working_dir / "doozer-working"
         self._doozer_env_vars = os.environ.copy()
-        self._group_content = None
+        self._branch_content = None
 
         # Get kubeconfig from environment variable if not provided
         if not kubeconfig:
@@ -227,16 +227,22 @@ class UpdateGolangPipeline:
     def _get_upstream_ocp_build_data_repo(self):
         return get_github_client_for_org("openshift-eng").get_repo("openshift-eng/ocp-build-data")
 
-    def _get_group_content(self):
-        if self._group_content is None:
+    def _get_branch_content(self):
+        if self._branch_content is None:
             branch = f"openshift-{self.ocp_version}"
             upstream_repo = self._get_upstream_ocp_build_data_repo()
-            self._group_content = self._load_yaml_from_repo(upstream_repo, "group.yml", branch)
-        return self._group_content
+            self._branch_content = {
+                "branch": branch,
+                "repo": upstream_repo,
+                "group": self._load_yaml_from_repo(upstream_repo, "group.yml", branch),
+                "streams": self._load_yaml_from_repo(upstream_repo, "streams.yml", branch),
+            }
+        return self._branch_content
 
     def _get_allowed_go_major_minors(self) -> tuple[str, dict[str, str]]:
-        branch = f"openshift-{self.ocp_version}"
-        group_content = self._get_group_content()
+        branch_content = self._get_branch_content()
+        branch = branch_content["branch"]
+        group_content = branch_content["group"]
 
         vars_content = group_content.get("vars", {})
         go_latest_var = "GO_LATEST"
@@ -573,10 +579,11 @@ class UpdateGolangPipeline:
         3. If it'a major version bump, also need to update key in streams.yml and vars in group.yml
         4. Create pr to update changes
         """
-        branch = f"openshift-{self.ocp_version}"
-        upstream_repo = self._get_upstream_ocp_build_data_repo()
-        streams_content = self._load_yaml_from_repo(upstream_repo, "streams.yml", branch)
-        group_content = self._get_group_content()
+        branch_content = self._get_branch_content()
+        branch = branch_content["branch"]
+        upstream_repo = branch_content["repo"]
+        streams_content = branch_content["streams"]
+        group_content = branch_content["group"]
 
         go_latest_var, go_previous_var = "GO_LATEST", "GO_PREVIOUS"
         go_latest = group_content['vars'].get(go_latest_var)

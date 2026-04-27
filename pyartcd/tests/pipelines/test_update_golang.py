@@ -405,7 +405,8 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
         branch, allowed_major_minors, build_major_minor = pipeline.validate_go_version_matches_group_vars("1.22.9")
         pipeline.validate_tag_builds_go_latest(branch, allowed_major_minors, build_major_minor)
 
-        upstream_repo.get_contents.assert_called_once_with("group.yml", ref="openshift-4.16")
+        requested_paths = [call.args[0] for call in upstream_repo.get_contents.call_args_list]
+        self.assertEqual(sorted(requested_paths), ["group.yml", "streams.yml"])
 
     @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
@@ -463,12 +464,13 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
 
         pipeline.validate_go_version_matches_group_vars("1.20.12")
 
-        upstream_repo.get_contents.assert_called_once_with("group.yml", ref="openshift-4.16")
+        requested_paths = [call.args[0] for call in upstream_repo.get_contents.call_args_list]
+        self.assertEqual(sorted(requested_paths), ["group.yml", "streams.yml"])
 
     @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
-    async def test_update_golang_streams_reuses_cached_group_content(self, mock_konflux_db, mock_get_github_client):
-        """Test update_golang_streams reuses the same cached group.yml content loaded during validation"""
+    async def test_update_golang_streams_reuses_cached_branch_content(self, mock_konflux_db, mock_get_github_client):
+        """Test update_golang_streams reuses the same cached branch content loaded during validation"""
         mock_runtime = Mock(
             dry_run=False,
             working_dir=Path("/tmp/working"),
@@ -502,8 +504,9 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
         pipeline.validate_go_version_matches_group_vars("1.22.9")
         await pipeline.update_golang_streams("1.22.9", {})
 
-        group_calls = [call for call in upstream_repo.get_contents.call_args_list if call.args[0] == "group.yml"]
-        self.assertEqual(len(group_calls), 1)
+        requested_paths = [call.args[0] for call in upstream_repo.get_contents.call_args_list]
+        self.assertEqual(requested_paths.count("group.yml"), 1)
+        self.assertEqual(requested_paths.count("streams.yml"), 1)
 
     @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
