@@ -72,6 +72,7 @@ GOLANG_RPM_PACKAGE_NAME = 'golang'
 PRODUCT_NAMESPACE_MAP = {
     "cert-manager": "art-oap-tenant",
     "external-secrets": "art-oap-tenant",
+    "installer-ove-ui": "art-installer-agent-tenant",
     "logging": "art-logging-tenant",
     "mta": "art-mta-tenant",
     "oadp": "art-oadp-tenant",
@@ -85,6 +86,7 @@ PRODUCT_NAMESPACE_MAP = {
 PRODUCT_KUBECONFIG_MAP = {
     "cert-manager": "OAP_KONFLUX_SA_KUBECONFIG",
     "external-secrets": "OAP_KONFLUX_SA_KUBECONFIG",
+    "installer-ove-ui": "ASSISTED_INSTALLER_SA_KUBECONFIG",
     "logging": "LOGGING_KONFLUX_SA_KUBECONFIG",
     "mta": "MTA_KONFLUX_SA_KUBECONFIG",
     "oadp": "OADP_KONFLUX_SA_KUBECONFIG",
