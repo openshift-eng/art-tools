@@ -119,7 +119,10 @@ def extract_and_validate_golang_nvrs(ocp_version: str, go_nvrs: List[str]):
 
 
 def extract_major_minor(version: str, label: str = "version") -> str:
-    version = str(version)
+    if not isinstance(version, str):
+        output = io.StringIO()
+        yaml.dump({"value": version}, output)
+        version = output.getvalue().split(":", 1)[1].strip()
     match = re.fullmatch(r"(\d+)\.(\d+)(?:\.\d+)?", version)
     if not match:
         raise ValueError(f"Invalid {label}: {version}")
@@ -257,8 +260,7 @@ class UpdateGolangPipeline:
             )
         return branch, allowed_major_minors, build_major_minor
 
-    def validate_tag_builds_go_latest(self, go_version: str):
-        branch, allowed_major_minors, build_major_minor = self.validate_go_version_matches_group_vars(go_version)
+    def validate_tag_builds_go_latest(self, branch: str, allowed_major_minors: dict[str, str], build_major_minor: str):
         latest_major_minor = allowed_major_minors["GO_LATEST"]
         if build_major_minor != latest_major_minor:
             raise ValueError(
@@ -270,9 +272,9 @@ class UpdateGolangPipeline:
         go_version, el_nvr_map = extract_and_validate_golang_nvrs(self.ocp_version, self.go_nvrs)
         _LOGGER.info(f'Golang version detected: {go_version}')
         _LOGGER.info(f'NVRs by rhel version: {el_nvr_map}')
-        self.validate_go_version_matches_group_vars(go_version)
+        branch, allowed_major_minors, build_major_minor = self.validate_go_version_matches_group_vars(go_version)
         if self.tag_builds:
-            self.validate_tag_builds_go_latest(go_version)
+            self.validate_tag_builds_go_latest(branch, allowed_major_minors, build_major_minor)
 
         # el10 is only supported for build roots (RPM tagging), not for golang-builder images yet
         el_nvr_map_for_images = {el_v: nvr for el_v, nvr in el_nvr_map.items() if el_v != 10}
@@ -576,6 +578,11 @@ class UpdateGolangPipeline:
                 f"{go_latest_var} variable not found in group.yml, please make sure it is defined before running the pipeline"
             )
         go_previous = group_content['vars'].get(go_previous_var)
+        build_major_minor = extract_major_minor(go_version, "golang build version")
+        latest_major_minor = extract_major_minor(go_latest, f"group.yml {go_latest_var}")
+        previous_major_minor = extract_major_minor(go_previous, f"group.yml {go_previous_var}") if go_previous else None
+        build_major_minor_tuple = tuple(map(int, build_major_minor.split(".")))
+        latest_major_minor_tuple = tuple(map(int, latest_major_minor.split(".")))
 
         # these group var templates are used in streams.yml
         # but we do not need to replace/update them
@@ -610,7 +617,7 @@ class UpdateGolangPipeline:
             return streams_content.get(stream_key, None)
 
         # This is to bump minor golang for GO_LATEST
-        if go_latest in go_version:
+        if build_major_minor == latest_major_minor:
             for el_v, builder_nvr in builder_nvrs.items():
                 parsed_nvr = parse_nvr(builder_nvr)
 
@@ -623,7 +630,7 @@ class UpdateGolangPipeline:
                         info['image'] = new_latest_go
                         update_streams = True
         # This is to bump minor golang for GO_PREVIOUS
-        elif go_previous and go_previous in go_version:
+        elif previous_major_minor and build_major_minor == previous_major_minor:
             for el_v, builder_nvr in builder_nvrs.items():
                 parsed_nvr = parse_nvr(builder_nvr)
 
@@ -636,7 +643,7 @@ class UpdateGolangPipeline:
                         info['image'] = new_previous_go
                         update_streams = True
         # This is to bump major golang for GO_LATEST and update GO_PREVIOUS to current GO_LATEST
-        elif go_version.split('.')[0] >= go_latest.split('.')[0] and go_version.split('.')[1] > go_latest.split('.')[1]:
+        elif build_major_minor_tuple > latest_major_minor_tuple:
             for el_v, builder_nvr in builder_nvrs.items():
                 parsed_nvr = parse_nvr(builder_nvr)
 
