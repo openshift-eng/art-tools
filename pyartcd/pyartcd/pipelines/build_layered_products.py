@@ -128,7 +128,8 @@ class BuildLayeredProductsPipeline:
 
         # Extract product from group config
         product = group_config.get('product', 'ocp')
-        await self._rebase_and_build(product)
+        image_repo = group_config.get('konflux', {}).get('image_repo', KONFLUX_DEFAULT_IMAGE_REPO)
+        await self._rebase_and_build(product, image_repo)
         self.trigger_bundle_build()
 
     def _group_param(self) -> str:
@@ -147,7 +148,7 @@ class BuildLayeredProductsPipeline:
             "--latest-parent-version",
         ]
 
-    async def _rebase_and_build(self, product: str):
+    async def _rebase_and_build(self, product: str, image_repo: str):
         """Rebase and build layered product image"""
         image_list = self.image_list
 
@@ -160,7 +161,7 @@ class BuildLayeredProductsPipeline:
             self._logger.warning('No buildable images remaining after rebase; skipping build')
             return
 
-        await self._build(image_list, product)
+        await self._build(image_list, product, image_repo)
 
     async def _rebase(self, image_list: str) -> str:
         """Rebase layered product images.
@@ -221,7 +222,7 @@ class BuildLayeredProductsPipeline:
             remaining = [img for img in requested if img not in excluded]
             return ','.join(remaining)
 
-    async def _build(self, image_list: str, product: str):
+    async def _build(self, image_list: str, product: str, image_repo: str):
         """Build layered product images."""
         self._logger.info(f"Building {image_list} image(s) for assembly {self.assembly}")
 
@@ -230,7 +231,7 @@ class BuildLayeredProductsPipeline:
             [
                 f"--images={image_list}",
                 "beta:images:konflux:build",
-                f"--image-repo={KONFLUX_DEFAULT_IMAGE_REPO}",
+                f"--image-repo={image_repo}",
                 "--build-priority=1",
             ]
         )

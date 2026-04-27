@@ -32,7 +32,7 @@ from async_lru import alru_cache
 from dockerfile_parse import DockerfileParser
 from doozerlib import constants, opm, util
 from doozerlib.backend.build_repo import BuildRepo
-from doozerlib.backend.konflux_client import KonfluxClient
+from doozerlib.backend.konflux_client import ImageBuildParams, KonfluxClient
 from doozerlib.backend.pipelinerun_utils import PipelineRunInfo
 from doozerlib.constants import KONFLUX_DEFAULT_IMAGE_REPO
 from doozerlib.image import ImageMetadata
@@ -641,15 +641,15 @@ class KonfluxFbcFragmentMerger:
             commit_sha=commit_sha,
             target_branch=self.fbc_git_branch or commit_sha,
             output_image=f"{output_image_repo}:{output_image_tag}",
-            additional_tags=[],
-            vm_override={},
             building_arches=arches,
-            hermetic=True,
-            dockerfile="catalog.Dockerfile",
-            skip_checks=self.skip_checks,
-            skip_fips_check=self.skip_fips_check,
             pipelinerun_template_url=self.plr_template,
-            build_priority=FBC_BUILD_PRIORITY,
+            build_params=ImageBuildParams(
+                hermetic=True,
+                dockerfile="catalog.Dockerfile",
+                skip_checks=self.skip_checks,
+                skip_fips_check=self.skip_fips_check,
+                build_priority=FBC_BUILD_PRIORITY,
+            ),
         )
         if git_auth_secret:
             build_kwargs["git_auth_secret"] = git_auth_secret
@@ -2001,14 +2001,15 @@ class KonfluxFbcBuilder:
             commit_sha=build_repo.commit_hash,
             target_branch=build_repo.branch or build_repo.commit_hash,
             output_image=output_image,
-            vm_override={},
             building_arches=arches,
-            additional_tags=list(additional_tags),
-            skip_checks=self.skip_checks,
-            hermetic=True,
-            dockerfile="catalog.Dockerfile",
             pipelinerun_template_url=self.pipelinerun_template_url,
-            build_priority=FBC_BUILD_PRIORITY,
+            build_params=ImageBuildParams(
+                additional_tags=list(additional_tags),
+                skip_checks=self.skip_checks,
+                hermetic=True,
+                dockerfile="catalog.Dockerfile",
+                build_priority=FBC_BUILD_PRIORITY,
+            ),
         )
         if git_auth_secret:
             build_kwargs["git_auth_secret"] = git_auth_secret

@@ -27,7 +27,7 @@ from artcommonlib.util import sync_to_quay
 from dockerfile_parse import DockerfileParser
 from doozerlib import constants, util
 from doozerlib.backend.build_repo import BuildRepo
-from doozerlib.backend.konflux_client import KonfluxClient
+from doozerlib.backend.konflux_client import ImageBuildParams, KonfluxClient
 from doozerlib.backend.pipelinerun_utils import PipelineRunInfo
 from doozerlib.image import ImageMetadata
 from doozerlib.record_logger import RecordLogger
@@ -919,14 +919,15 @@ class KonfluxOlmBundleBuilder:
             commit_sha=bundle_build_repo.commit_hash,
             target_branch=target_branch,
             output_image=output_image,
-            vm_override={},
             building_arches=["x86_64"],
-            additional_tags=list(additional_tags),
-            skip_checks=skip_checks,
-            hermetic=True,
             pipelinerun_template_url=self.pipelinerun_template_url,
-            artifact_type="operatorbundle",
-            build_priority=BUNDLE_BUILD_PRIORITY,
+            build_params=ImageBuildParams(
+                additional_tags=list(additional_tags),
+                skip_checks=skip_checks,
+                hermetic=True,
+                artifact_type="operatorbundle",
+                build_priority=BUNDLE_BUILD_PRIORITY,
+            ),
         )
         if git_auth_secret:
             build_kwargs["git_auth_secret"] = git_auth_secret
