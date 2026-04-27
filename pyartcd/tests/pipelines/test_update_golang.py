@@ -535,8 +535,10 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
 
     @patch("pyartcd.pipelines.update_golang.get_image_info", new_callable=AsyncMock)
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
-    async def test_ensure_builder_pullspec_available_reuses_oc_helper(self, mock_konflux_db, get_image_info):
-        """Test published pullspec availability check reuses pyartcd.oc.get_image_info"""
+    async def test_ensure_builder_pullspec_available_reuses_oc_helper(
+        self, mock_konflux_db, get_image_info
+    ):
+        """Test published pullspec availability check reuses pyartcd.oc.get_image_info with env auth"""
         mock_runtime = Mock(
             dry_run=False,
             working_dir=Path("/tmp/working"),
@@ -556,9 +558,16 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
 
         pullspec = "registry.redhat.io/openshift/art-images-base:openshift-golang-builder-container-v1.25.8-test"
 
-        await pipeline._ensure_builder_pullspec_available(pullspec)
+        with patch.dict(
+            "os.environ",
+            {"REGISTRY_AUTH_FILE": "/tmp/registry-auth.json"},
+            clear=False,
+        ):
+            await pipeline._ensure_builder_pullspec_available(pullspec)
 
-        get_image_info.assert_awaited_once_with(pullspec, raise_if_not_found=True)
+        get_image_info.assert_awaited_once_with(
+            pullspec, raise_if_not_found=True, registry_config="/tmp/registry-auth.json"
+        )
 
     @patch("pyartcd.pipelines.update_golang.get_image_info", new_callable=AsyncMock)
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
@@ -586,8 +595,13 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
         pullspec = "registry.redhat.io/openshift/art-images-base:openshift-golang-builder-container-v1.25.8-test"
         get_image_info.side_effect = ValueError("Image pullspec is not found.")
 
-        with self.assertRaisesRegex(RuntimeError, "Published golang builder pullspec is not available"):
-            await pipeline._ensure_builder_pullspec_available(pullspec)
+        with patch.dict(
+            "os.environ",
+            {"REGISTRY_AUTH_FILE": "/tmp/registry-auth.json"},
+            clear=False,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "Published golang builder pullspec is not available"):
+                await pipeline._ensure_builder_pullspec_available(pullspec)
 
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     def test_get_module_tag(self, mock_konflux_db):
