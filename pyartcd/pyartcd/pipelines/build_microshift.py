@@ -11,9 +11,15 @@ import click
 from artcommonlib import exectools
 from artcommonlib.arch_util import brew_arch_for_go_arch
 from artcommonlib.assembly import AssemblyTypes, assembly_config_struct
+from artcommonlib.constants import (
+    KONFLUX_DEFAULT_IMAGE_REPO,
+    REGISTRY_CI_OPENSHIFT,
+    REGISTRY_QUAY_OCP_RELEASE_DEV,
+)
 from artcommonlib.gitdata import SafeFormatter
 from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.model import Model
+from artcommonlib.registry_config import RegistryConfig
 from artcommonlib.util import get_ocp_version_from_group, new_roundtrip_yaml_handler
 from doozerlib.util import get_nightly_pullspec
 from elliottlib.errata import push_cdn_stage
@@ -93,10 +99,45 @@ class BuildMicroShiftPipeline:
             self._doozer_env_vars["DOOZER_DATA_PATH"] = data_path
             self._elliott_env_vars["ELLIOTT_DATA_PATH"] = data_path
 
-    async def run(self):
-        # Make sure our api.ci token is fresh
-        await oc.registry_login()
+        # Registry config will be set up in run() method
+        self._registry_config: Optional[str] = None
 
+    async def run(self):
+        if 'XDG_RUNTIME_DIR' in os.environ:
+            self._logger.info('Unsetting XDG_RUNTIME_DIR to prevent use of default registry auth')
+            del os.environ['XDG_RUNTIME_DIR']
+        self._doozer_env_vars.pop('XDG_RUNTIME_DIR', None)
+        self._elliott_env_vars.pop('XDG_RUNTIME_DIR', None)
+
+        quay_auth_file = os.getenv('QUAY_AUTH_FILE')
+        if not quay_auth_file:
+            raise ValueError(
+                "QUAY_AUTH_FILE environment variable is required but not set. "
+                "Ensure Jenkins credentials are properly bound."
+            )
+
+        source_files = [quay_auth_file]
+
+        with RegistryConfig(
+            kubeconfig=os.environ.get('KUBECONFIG'),
+            source_files=source_files,
+            registries=[
+                REGISTRY_QUAY_OCP_RELEASE_DEV,
+                KONFLUX_DEFAULT_IMAGE_REPO,
+                REGISTRY_CI_OPENSHIFT,
+            ],
+        ) as global_auth_file:
+            self._registry_config = global_auth_file
+
+            self._logger.info(
+                'Set registry auth file=%s for pipeline operations (cherry-picked from %d source file(s))',
+                global_auth_file,
+                len(source_files),
+            )
+
+            await self._run_pipeline()
+
+    async def _run_pipeline(self):
         group_config = await load_group_config(self.group, self.assembly, env=self._doozer_env_vars)
         advisories = group_config.get("advisories", {})
         self.releases_config = await load_releases_config(
@@ -349,14 +390,13 @@ class BuildMicroShiftPipeline:
         await self._verify_microshift_bugs(microshift_advisory_id)
         await self.slack_client.say_in_thread("Completed preparing microshift advisory.")
 
+    def _elliott_base_cmd(self) -> List[str]:
+        """Create base elliott command with group and assembly"""
+        return ["elliott", "--group", self.group, "--assembly", self.assembly]
+
     async def _attach_builds(self):
         """attach the microshift builds to advisory"""
-        cmd = [
-            "elliott",
-            "--group",
-            self.group,
-            "--assembly",
-            self.assembly,
+        cmd = self._elliott_base_cmd() + [
             "--rpms",
             "microshift",
             "find-builds",
@@ -372,12 +412,7 @@ class BuildMicroShiftPipeline:
 
     async def _sweep_bugs(self):
         """sweep the microshift bugs to advisory"""
-        cmd = [
-            "elliott",
-            "--group",
-            self.group,
-            "--assembly",
-            self.assembly,
+        cmd = self._elliott_base_cmd() + [
             "find-bugs:sweep",
             "--permissive",  # this is so we don't error out on non-microshift bugs
             "--use-default-advisory",
@@ -389,12 +424,7 @@ class BuildMicroShiftPipeline:
 
     async def _attach_cve_flaws(self):
         """attach CVE flaws to advisory"""
-        cmd = [
-            "elliott",
-            "--group",
-            self.group,
-            "--assembly",
-            self.assembly,
+        cmd = self._elliott_base_cmd() + [
             "attach-cve-flaws",
             "--use-default-advisory",
             "microshift",
@@ -405,12 +435,7 @@ class BuildMicroShiftPipeline:
 
     async def _verify_microshift_bugs(self, advisory_id):
         """verify attached bugs on microshift advisory"""
-        cmd = [
-            "elliott",
-            "--group",
-            self.group,
-            "--assembly",
-            self.assembly,
+        cmd = self._elliott_base_cmd() + [
             "verify-attached-bugs",
             "--verify-flaws",
             str(advisory_id),
@@ -453,7 +478,9 @@ class BuildMicroShiftPipeline:
             else:
                 # payload is a pullspec
                 pullspecs.append(payload)
-        payload_infos = await asyncio.gather(*(oc.get_release_image_info(pullspec) for pullspec in pullspecs))
+        payload_infos = await asyncio.gather(
+            *(oc.get_release_image_info(pullspec, registry_config=self._registry_config) for pullspec in pullspecs)
+        )
         for info in payload_infos:
             arch = info["config"]["architecture"]
             brew_arch = brew_arch_for_go_arch(arch)
@@ -493,17 +520,25 @@ class BuildMicroShiftPipeline:
             self.group,
             "--assembly",
             self.assembly,
-            "-r",
-            "microshift",
-            "rpms:rebase-and-build",
-            "--version",
-            version,
-            "--release",
-            release,
         ]
+        if self._registry_config:
+            cmd.append(f"--registry-config={self._registry_config}")
+        cmd.extend(
+            [
+                "-r",
+                "microshift",
+                "rpms:rebase-and-build",
+                "--version",
+                version,
+                "--release",
+                release,
+            ]
+        )
         if self.runtime.dry_run:
             cmd.append("--dry-run")
         set_env = self._doozer_env_vars.copy()
+        if self._registry_config:
+            set_env["QUAY_AUTH_FILE"] = self._registry_config
         if custom_payloads:
             set_env["MICROSHIFT_PAYLOAD_X86_64"] = custom_payloads["x86_64"]["pullspec"]
             set_env["MICROSHIFT_PAYLOAD_AARCH64"] = custom_payloads["aarch64"]["pullspec"]
