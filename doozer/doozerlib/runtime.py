@@ -250,6 +250,45 @@ class Runtime(GroupRuntime):
     def group_config(self, config: Model):
         self._group_config = config
 
+    @staticmethod
+    def _should_register_name_in_bundle(image_data: Model) -> bool:
+        name_in_bundle = image_data.get('name_in_bundle')
+        if name_in_bundle not in (None, Missing):
+            return True
+
+        update_csv = image_data.get('update-csv')
+        if update_csv not in (None, Missing):
+            return True
+
+        dependents = image_data.get('dependents', [])
+        return dependents not in (None, Missing, [])
+
+    def _populate_image_name_maps(self, image_name_data):
+        def _register_name_in_bundle(name_in_bundle: str, distgit_key: str):
+            if name_in_bundle in self.name_in_bundle_map:
+                raise ValueError(
+                    f"Image {distgit_key} has name_in_bundle={name_in_bundle}, which is already taken by image {self.name_in_bundle_map[name_in_bundle]}"
+                )
+            self.name_in_bundle_map[name_in_bundle] = distgit_key
+
+        for img in image_name_data.values():
+            name = img.data.get('name')
+            short_name = name.split('/')[1]
+            self.image_name_map[name] = img.key
+            self.image_name_map[short_name] = img.key
+
+            if not self._should_register_name_in_bundle(img.data):
+                continue
+
+            name_in_bundle = img.data.get('name_in_bundle')
+            if name_in_bundle:
+                _register_name_in_bundle(name_in_bundle, img.key)
+            else:
+                short_name_without_ose = short_name[4:] if short_name.startswith("ose-") else short_name
+                _register_name_in_bundle(short_name_without_ose, img.key)
+                short_name_with_ose = "ose-" + short_name_without_ose
+                _register_name_in_bundle(short_name_with_ose, img.key)
+
     @functools.lru_cache(maxsize=1)
     def get_group_config(self) -> Model:
         """
@@ -714,26 +753,7 @@ class Runtime(GroupRuntime):
             # name or distgit. For now this is used elsewhere
             image_name_data = self.gitdata.load_data(path='images')
 
-            def _register_name_in_bundle(name_in_bundle: str, distgit_key: str):
-                if name_in_bundle in self.name_in_bundle_map:
-                    raise ValueError(
-                        f"Image {distgit_key} has name_in_bundle={name_in_bundle}, which is already taken by image {self.name_in_bundle_map[name_in_bundle]}"
-                    )
-                self.name_in_bundle_map[name_in_bundle] = img.key
-
-            for img in image_name_data.values():
-                name = img.data.get('name')
-                short_name = name.split('/')[1]
-                self.image_name_map[name] = img.key
-                self.image_name_map[short_name] = img.key
-                name_in_bundle = img.data.get('name_in_bundle')
-                if name_in_bundle:
-                    _register_name_in_bundle(name_in_bundle, img.key)
-                else:
-                    short_name_without_ose = short_name[4:] if short_name.startswith("ose-") else short_name
-                    _register_name_in_bundle(short_name_without_ose, img.key)
-                    short_name_with_ose = "ose-" + short_name_without_ose
-                    _register_name_in_bundle(short_name_with_ose, img.key)
+            self._populate_image_name_maps(image_name_data)
 
             image_data = self.gitdata.load_data(
                 path='images',
