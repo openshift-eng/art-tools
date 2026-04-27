@@ -490,10 +490,8 @@ class UpdateGolangPipeline:
         published_nvr = f'{component_name}-{parsed_nvr["version"]}-{parsed_nvr["release"]}'
         return f'{PUBLISHED_GOLANG_BUILDER_REPO}:{published_nvr}'
 
-    async def _ensure_builder_pullspec_available(self, pullspec: str, retries: int = 3):
+    async def _ensure_builder_pullspec_available(self, pullspec: str):
         """Verify the published golang builder pullspec is available before updating streams.yml."""
-        if retries != 3:
-            _LOGGER.warning("Ignoring custom retry count %s; pyartcd.oc.get_image_info retries 3 times", retries)
         try:
             await get_image_info(pullspec, raise_if_not_found=True)
         except Exception as e:
