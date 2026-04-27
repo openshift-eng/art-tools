@@ -568,7 +568,7 @@ class UpdateGolangPipeline:
 
     async def _ensure_builder_pullspec_available(self, pullspec: str):
         """Verify the published golang builder pullspec is available before updating streams.yml."""
-        registry_config = os.getenv("REGISTRY_AUTH_FILE")
+        registry_config = os.getenv("QUAY_AUTH_FILE")
         try:
             await get_image_info(pullspec, raise_if_not_found=True, registry_config=registry_config)
         except Exception as e:

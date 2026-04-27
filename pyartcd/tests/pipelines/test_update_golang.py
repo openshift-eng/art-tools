@@ -759,7 +759,7 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
     async def test_ensure_builder_pullspec_available_reuses_oc_helper(
         self, mock_konflux_db, get_image_info
     ):
-        """Test published pullspec availability check reuses pyartcd.oc.get_image_info with env auth"""
+        """Test published pullspec availability check reuses pyartcd.oc.get_image_info with quay auth"""
         mock_runtime = Mock(
             dry_run=False,
             working_dir=Path("/tmp/working"),
@@ -781,13 +781,13 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
 
         with patch.dict(
             "os.environ",
-            {"REGISTRY_AUTH_FILE": "/tmp/registry-auth.json"},
+            {"QUAY_AUTH_FILE": "/tmp/quay-auth.json"},
             clear=False,
         ):
             await pipeline._ensure_builder_pullspec_available(pullspec)
 
         get_image_info.assert_awaited_once_with(
-            pullspec, raise_if_not_found=True, registry_config="/tmp/registry-auth.json"
+            pullspec, raise_if_not_found=True, registry_config="/tmp/quay-auth.json"
         )
 
     @patch("pyartcd.pipelines.update_golang.get_image_info", new_callable=AsyncMock)
@@ -818,7 +818,7 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
 
         with patch.dict(
             "os.environ",
-            {"REGISTRY_AUTH_FILE": "/tmp/registry-auth.json"},
+            {"QUAY_AUTH_FILE": "/tmp/quay-auth.json"},
             clear=False,
         ):
             with self.assertRaisesRegex(RuntimeError, "Published golang builder pullspec is not available"):
