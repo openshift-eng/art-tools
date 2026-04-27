@@ -118,6 +118,13 @@ def extract_and_validate_golang_nvrs(ocp_version: str, go_nvrs: List[str]):
     return go_version, el_nvr_map
 
 
+def extract_major_minor(version: str, label: str = "version") -> str:
+    match = re.fullmatch(r"(\d+)\.(\d+)(?:\.\d+)?", version)
+    if not match:
+        raise ValueError(f"Invalid {label}: {version}")
+    return f"{match[1]}.{match[2]}"
+
+
 async def move_golang_bugs(
     ocp_version: str,
     cves: list[str] | None = None,
@@ -208,10 +215,32 @@ class UpdateGolangPipeline:
             self.konflux_db = KonfluxDb()
             self.konflux_db.bind(KonfluxBuildRecord)
 
+    def validate_tag_builds_go_latest(self, go_version: str):
+        branch = f"openshift-{self.ocp_version}"
+        upstream_repo = get_github_client_for_org("openshift-eng").get_repo("openshift-eng/ocp-build-data")
+        group_content = yaml.load(upstream_repo.get_contents("group.yml", ref=branch).decoded_content)
+
+        go_latest_var = "GO_LATEST"
+        go_latest = group_content.get("vars", {}).get(go_latest_var)
+        if not go_latest:
+            raise ValueError(
+                f"{go_latest_var} variable not found in group.yml, please make sure it is defined before running the pipeline"
+            )
+
+        build_major_minor = extract_major_minor(go_version, "golang build version")
+        latest_major_minor = extract_major_minor(go_latest, f"group.yml {go_latest_var}")
+        if build_major_minor != latest_major_minor:
+            raise ValueError(
+                f"When --tag-builds is set, the provided golang build major.minor ({build_major_minor}) must match "
+                f"{branch} group.yml {go_latest_var} major.minor ({latest_major_minor})."
+            )
+
     async def run(self):
         go_version, el_nvr_map = extract_and_validate_golang_nvrs(self.ocp_version, self.go_nvrs)
         _LOGGER.info(f'Golang version detected: {go_version}')
         _LOGGER.info(f'NVRs by rhel version: {el_nvr_map}')
+        if self.tag_builds:
+            self.validate_tag_builds_go_latest(go_version)
 
         # el10 is only supported for build roots (RPM tagging), not for golang-builder images yet
         el_nvr_map_for_images = {el_v: nvr for el_v, nvr in el_nvr_map.items() if el_v != 10}
