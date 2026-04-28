@@ -1333,16 +1333,34 @@ class ImageMetadata(Metadata):
         """
         Determines whether snapshot-to-release workflow is enabled for this image.
 
-        The snapshot_release flag controls whether base images should trigger
-        the snapshot-to-release workflow when builds complete.
+        Checks configuration in the following order:
+        1. Image metadata configuration (snapshot_release)
+        2. Group configuration (snapshot_release)
+        3. Default value (True)
 
         Returns:
-            bool: True if snapshot_release: true is configured, True by default if not specified
+            bool: True if snapshot_release is enabled, False otherwise
         """
-        snapshot_release_config = getattr(self.config, 'snapshot_release', Missing)
-        if snapshot_release_config not in [Missing, None]:
-            return bool(snapshot_release_config)
-        return True
+        snapshot_release_config_override = getattr(self.config, 'snapshot_release', Missing)
+        snapshot_release_group_override = getattr(self.runtime.group_config, 'snapshot_release', Missing)
+
+        if snapshot_release_config_override not in [Missing, None]:
+            # If snapshot_release override is defined in image metadata
+            snapshot_release_enabled = bool(snapshot_release_config_override)
+            source = "metadata config"
+
+        elif snapshot_release_group_override not in [Missing, None]:
+            # If snapshot_release override is defined in group metadata
+            snapshot_release_enabled = bool(snapshot_release_group_override)
+            source = "group config"
+
+        else:
+            # Default to enabled
+            snapshot_release_enabled = True
+            source = "default"
+
+        self.logger.info("snapshot_release %s from %s", "enabled" if snapshot_release_enabled else "disabled", source)
+        return snapshot_release_enabled
 
     def get_required_artifacts(self) -> list:
         """

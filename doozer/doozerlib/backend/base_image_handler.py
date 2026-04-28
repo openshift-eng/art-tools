@@ -10,6 +10,7 @@ import asyncio
 from typing import Dict, List, Optional, Tuple
 
 from artcommonlib import logutil
+from artcommonlib.constants import REGISTRY_REDHAT_IO
 from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildRecord
 from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.util import (
@@ -154,6 +155,8 @@ class BaseImageHandler:
             if not completed_successfully:
                 self.logger.error("Release did not complete successfully, aborting workflow")
                 return None
+
+            await self._update_database_pullspecs(valid_records)
 
             self.logger.info("✓ Base image workflow completed successfully")
             self.logger.info(f"  Snapshot: {snapshot_name}")
@@ -413,6 +416,40 @@ class BaseImageHandler:
         except Exception as e:
             self.logger.error(f"Failed to monitor release {release_name}: {e}")
             return False
+
+    async def _update_database_pullspecs(self, valid_records: Dict[str, KonfluxBuildRecord]) -> None:
+        if not self.konflux_db:
+            return
+
+        try:
+            # Filter out test assemblies
+            non_test_records = {nvr: record for nvr, record in valid_records.items() if record.assembly != 'test'}
+
+            if not non_test_records:
+                self.logger.info("No non-test assembly records to update")
+                return
+
+            self.logger.info(
+                f"Updating {len(non_test_records)} non-test assembly records "
+                f"(skipped {len(valid_records) - len(non_test_records)} test assembly records)"
+            )
+
+            updated_records = []
+            for nvr, build_record in non_test_records.items():
+                registry_pullspec = f"{REGISTRY_REDHAT_IO}/openshift/{ART_IMAGES_BASE_APPLICATION}:{nvr}"
+
+                # Copy existing record and update only the changed fields
+                updated_record = KonfluxBuildRecord(**vars(build_record))
+                updated_record.image_pullspec = registry_pullspec
+                updated_record.ingestion_time = get_utc_now_formatted_str()
+                updated_records.append(updated_record)
+
+            if updated_records and not self.dry_run:
+                await self.konflux_db.insert_build_records(updated_records)
+                self.logger.info(f"✓ Updated {len(updated_records)} database records with registry.redhat.io pullspecs")
+
+        except Exception as e:
+            self.logger.error(f"Failed to update database pullspecs: {e}")
 
     async def _wait_for_snapshot_availability(self, snapshot_name: str, timeout_minutes: int = 1) -> bool:
         """
