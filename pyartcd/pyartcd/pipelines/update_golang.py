@@ -66,7 +66,7 @@ async def is_latest_and_available(ocp_version: str, el_v: int, nvr: str, koji_se
     # If regen repo has been run this would take a few seconds
     # sadly --timeout cannot be less than 1 minute, so we wait for 1 minute
     build_tag = f'rhaos-{ocp_version}-rhel-{el_v}-build'
-    cmd = f'brew wait-repo {build_tag} --build {nvr} --request --timeout=1'
+    cmd = f'brew wait-repo {build_tag} --build {nvr} --timeout=1 --verbose'
     rc, out, err = await exectools.cmd_gather_async(cmd, check=False)
     if rc != 0:
         output = "\n".join(stream.strip() for stream in (err, out) if stream and stream.strip())

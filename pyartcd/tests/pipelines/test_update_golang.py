@@ -195,7 +195,7 @@ class TestIsLatestAndAvailable(IsolatedAsyncioTestCase):
         self.assertFalse(result)
         self.assertEqual(len(cm.output), 2)
         self.assertIn(
-            "brew wait-repo rhaos-4.16-rhel-8-build --build golang-1.20.12-2.el8 --request --timeout=1",
+            "brew wait-repo rhaos-4.16-rhel-8-build --build golang-1.20.12-2.el8 --timeout=1 --verbose",
             cm.output[0],
         )
         self.assertIn("exit code 1", cm.output[0])
