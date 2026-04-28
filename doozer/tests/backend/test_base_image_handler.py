@@ -116,7 +116,9 @@ class TestBaseImageHandler(IsolatedAsyncioTestCase):
 
         with patch.object(handler, "_fetch_build_records", return_value=build_records):
             with patch.object(handler, "_create_snapshot", return_value="test-snapshot"):
-                with patch.object(handler, "_create_release_from_snapshot", return_value="test-release") as mock_release:
+                with patch.object(
+                    handler, "_create_release_from_snapshot", return_value="test-release"
+                ) as mock_release:
                     with patch.object(handler, "_wait_for_release_completion", return_value=True):
                         with self.assertRaises(RuntimeError) as context:
                             await handler.process_base_image_completion()
