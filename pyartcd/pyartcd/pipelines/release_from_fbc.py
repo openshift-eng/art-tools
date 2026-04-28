@@ -16,6 +16,8 @@ import click
 import yaml as stdlib_yaml
 from artcommonlib import exectools
 from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
+from artcommonlib.gitdata import SafeFormatter
+from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.gitlab import GitLabClient
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import new_roundtrip_yaml_handler
@@ -30,9 +32,11 @@ from elliottlib.shipment_model import (
     Snapshot,
     SnapshotSpec,
 )
-from elliottlib.util import extract_nvrs_from_fbc
+from elliottlib.util import extract_nvrs_from_fbc, get_advisory_boilerplate
+from github import GithubException
 from tenacity import retry, stop_after_attempt
 
+from pyartcd import constants
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.git import GitRepository
 from pyartcd.runtime import Runtime
@@ -76,10 +80,6 @@ class ReleaseFromFbcPipeline:
         jira_bugs: Optional[List[str]] = None,
         target_release_date: Optional[str] = None,
         extra_image_nvrs: Optional[List[str]] = None,
-        release_notes_synopsis: Optional[str] = None,
-        release_notes_topic: Optional[str] = None,
-        release_notes_description: Optional[str] = None,
-        release_notes_solution: Optional[str] = None,
     ) -> None:
         self.logger = logging.getLogger(__name__)
         self.runtime = runtime
@@ -119,10 +119,6 @@ class ReleaseFromFbcPipeline:
 
         self.jira_bugs = jira_bugs
         self.target_release_date = target_release_date
-        self.release_notes_synopsis = release_notes_synopsis
-        self.release_notes_topic = release_notes_topic
-        self.release_notes_description = release_notes_description
-        self.release_notes_solution = release_notes_solution
 
         # Base elliott command template
         self._elliott_base_command = [
@@ -148,6 +144,86 @@ class ReleaseFromFbcPipeline:
             or SHIPMENT_DATA_URL_TEMPLATE
         )
         return shipment_data_repo_pull_url, shipment_data_repo_push_url
+
+    def get_file_from_branch(self, branch: str, filename: str, data_path: str | None = None) -> bytes:
+        """
+        Fetch a file from ocp-build-data using PyGithub.
+        Matches the interface expected by get_advisory_boilerplate().
+        """
+        if data_path is None:
+            data_path = constants.OCP_BUILD_DATA_URL
+        try:
+            data_path = data_path.rstrip(".git")
+            parts = data_path.rstrip("/").split("/")
+            if len(parts) < 2:
+                raise ValueError(f"Invalid git repo URL: {data_path}")
+            user, repo_name = parts[-2], parts[-1]
+            github_client = get_github_client_for_org(user)
+            repo = github_client.get_repo(f"{user}/{repo_name}")
+            file_content = repo.get_contents(filename, ref=branch)
+            return file_content.decoded_content
+        except GithubException as e:
+            raise ValueError(f"Failed to fetch {filename} from {data_path} branch {branch}: {e}")
+
+    def _load_release_notes_template(self) -> dict | None:
+        """
+        Load and populate release notes template from ocp-build-data using get_advisory_boilerplate(),
+        matching the pattern used by get_advisory_boilerplate().
+
+        Return Value(s):
+            dict | None: Template dict with synopsis, topic, description, solution, or None if not found.
+        """
+        try:
+            boilerplate = get_advisory_boilerplate(
+                runtime=self,
+                et_data={},
+                art_advisory_key=self.product,
+                errata_type="RHBA",
+            )
+        except (ValueError, KeyError):
+            self.logger.debug("No release notes template found for product '%s'", self.product)
+            return None
+        except Exception as e:
+            self.logger.warning("Failed to load release notes template: %s", e)
+            return None
+
+        try:
+            group_content = self.get_file_from_branch(self.group, "group.yml")
+            group_config = stdlib_yaml.safe_load(group_content)
+
+            ocp_version = str(group_config.get("OCP_RELEASE_NOTES_VERSION", ""))
+            if not ocp_version:
+                self.logger.warning("OCP_RELEASE_NOTES_VERSION not found in group.yml for group '%s'", self.group)
+                return None
+
+            ocp_version_dashed = ocp_version.replace(".", "-")
+
+            assembly_parts = self.assembly.split(".")
+            replace_vars = {
+                "OCP_RELEASE_NOTES_VERSION": ocp_version,
+                "OCP_RELEASE_NOTES_VERSION_DASHED": ocp_version_dashed,
+                "PRODUCT_MAJOR": assembly_parts[0] if len(assembly_parts) > 0 else "",
+                "PRODUCT_MINOR": assembly_parts[1] if len(assembly_parts) > 1 else "",
+                "PRODUCT_PATCH": assembly_parts[2] if len(assembly_parts) > 2 else "",
+            }
+
+            formatter = SafeFormatter()
+            result = {}
+            for field in ("synopsis", "topic", "description", "solution"):
+                value = boilerplate.get(field, "")
+                result[field] = formatter.format(value, **replace_vars)
+
+            self.logger.info(
+                "Loaded release notes template for '%s' (OCP_RELEASE_NOTES_VERSION=%s, assembly=%s)",
+                self.product,
+                ocp_version,
+                self.assembly,
+            )
+            return result
+
+        except Exception as e:
+            self.logger.warning("Failed to process release notes template: %s", e)
+            return None
 
     @staticmethod
     def basic_auth_url(url: str, token: str) -> str:
@@ -510,36 +586,6 @@ class ReleaseFromFbcPipeline:
             len(release_notes.issues.fixed) if release_notes.issues and release_notes.issues.fixed else 0,
             len(release_notes.cves) if release_notes.cves else 0,
         )
-        return release_notes
-
-    def _apply_release_notes_text(self, release_notes: Optional[ReleaseNotes]) -> Optional[ReleaseNotes]:
-        """
-        Merge user-provided release notes text fields into a ReleaseNotes object.
-
-        Arg(s):
-            release_notes (ReleaseNotes | None): Existing ReleaseNotes from JIRA bug processing, or None.
-        Return Value(s):
-            ReleaseNotes | None: The merged ReleaseNotes, a new one, or None if nothing to apply.
-        """
-        text_fields = {
-            "synopsis": self.release_notes_synopsis,
-            "topic": self.release_notes_topic,
-            "description": self.release_notes_description,
-            "solution": self.release_notes_solution,
-        }
-        provided = {k: v for k, v in text_fields.items() if v is not None and v.strip()}
-
-        if not provided:
-            return release_notes
-
-        if release_notes is None:
-            self.logger.info("No JIRA bugs provided; creating RHBA release notes from text fields")
-            release_notes = ReleaseNotes(type="RHBA")
-
-        for field, value in provided.items():
-            self.logger.info("Setting release notes %s from CLI parameter", field)
-            setattr(release_notes, field, value)
-
         return release_notes
 
     def create_shipment_config(
@@ -951,8 +997,15 @@ class ReleaseFromFbcPipeline:
         if self.jira_bugs:
             release_notes = self.generate_release_notes()
 
-        # Overlay user-provided release notes text fields
-        release_notes = self._apply_release_notes_text(release_notes)
+        # Load release notes template from ocp-build-data
+        template = self._load_release_notes_template()
+        if template:
+            if release_notes is None:
+                release_notes = ReleaseNotes(type="RHBA")
+            release_notes.synopsis = template["synopsis"]
+            release_notes.topic = template["topic"]
+            release_notes.description = template["description"]
+            release_notes.solution = template["solution"]
 
         # Create shipment configurations
         timestamp = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
@@ -1050,26 +1103,6 @@ class ReleaseFromFbcPipeline:
     help='Target ship date for the release (e.g., 2026-Mar-31 or 2026-03-31). '
     'When provided, the date is included in the shipment MR title.',
 )
-@click.option(
-    '--release-notes-synopsis',
-    default=None,
-    help='Optional synopsis text for release notes (short advisory summary).',
-)
-@click.option(
-    '--release-notes-topic',
-    default=None,
-    help='Optional topic text for release notes (expanded description).',
-)
-@click.option(
-    '--release-notes-description',
-    default=None,
-    help='Optional description text for release notes (full detailed description).',
-)
-@click.option(
-    '--release-notes-solution',
-    default=None,
-    help='Optional solution text for release notes (how to apply the fix/update).',
-)
 @pass_runtime
 @click_coroutine
 async def release_from_fbc(
@@ -1083,10 +1116,6 @@ async def release_from_fbc(
     shipment_path: Optional[str],
     jira_bugs: Optional[str],
     target_release_date: Optional[str],
-    release_notes_synopsis: Optional[str],
-    release_notes_topic: Optional[str],
-    release_notes_description: Optional[str],
-    release_notes_solution: Optional[str],
 ):
     """
     Create shipment files from an FBC image for non-OpenShift products.
@@ -1159,10 +1188,6 @@ async def release_from_fbc(
         jira_bugs=jira_bugs_list,
         target_release_date=normalized_date,
         extra_image_nvrs=extra_image_nvrs_list,
-        release_notes_synopsis=release_notes_synopsis,
-        release_notes_topic=release_notes_topic,
-        release_notes_description=release_notes_description,
-        release_notes_solution=release_notes_solution,
     )
 
     await pipeline.run()

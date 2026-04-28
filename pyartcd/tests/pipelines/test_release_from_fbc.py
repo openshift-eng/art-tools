@@ -6,6 +6,8 @@ import click
 from elliottlib.shipment_model import (
     ComponentSource,
     GitSource,
+    Issue,
+    Issues,
     ReleaseNotes,
     Snapshot,
     SnapshotComponent,
@@ -716,50 +718,11 @@ class TestCliValidation(unittest.TestCase):
         result = self._invoke(["--extra-image-nvrs", "foo-container-1.0-1.el9"])
         self.assertNotIsInstance(result.exception, click.ClickException)
 
-    @patch("pyartcd.pipelines.release_from_fbc.ReleaseFromFbcPipeline")
-    def test_release_notes_options_passed_to_pipeline(self, mock_pipeline_cls):
-        """Release notes CLI options should be passed through to the pipeline."""
-        mock_pipeline_cls.return_value.run = AsyncMock()
-        result = self._invoke(
-            [
-                "--fbc-pullspecs",
-                "quay.io/example/fbc:v1",
-                "--release-notes-synopsis",
-                "Bug fix update",
-                "--release-notes-topic",
-                "An update is available",
-                "--release-notes-description",
-                "Fixes several bugs",
-                "--release-notes-solution",
-                "Apply the update",
-            ]
-        )
-        self.assertIsNone(result.exception)
 
-        call_kwargs = mock_pipeline_cls.call_args[1]
-        self.assertEqual(call_kwargs["release_notes_synopsis"], "Bug fix update")
-        self.assertEqual(call_kwargs["release_notes_topic"], "An update is available")
-        self.assertEqual(call_kwargs["release_notes_description"], "Fixes several bugs")
-        self.assertEqual(call_kwargs["release_notes_solution"], "Apply the update")
+class TestGetFileFromBranch(unittest.TestCase):
+    """Tests for get_file_from_branch helper method."""
 
-    @patch("pyartcd.pipelines.release_from_fbc.ReleaseFromFbcPipeline")
-    def test_release_notes_options_default_none(self, mock_pipeline_cls):
-        """Release notes CLI options should default to None when not provided."""
-        mock_pipeline_cls.return_value.run = AsyncMock()
-        result = self._invoke(["--fbc-pullspecs", "quay.io/example/fbc:v1"])
-        self.assertIsNone(result.exception)
-
-        call_kwargs = mock_pipeline_cls.call_args[1]
-        self.assertIsNone(call_kwargs["release_notes_synopsis"])
-        self.assertIsNone(call_kwargs["release_notes_topic"])
-        self.assertIsNone(call_kwargs["release_notes_description"])
-        self.assertIsNone(call_kwargs["release_notes_solution"])
-
-
-class TestApplyReleaseNotesText(unittest.TestCase):
-    """Tests for _apply_release_notes_text merge logic."""
-
-    def _make_pipeline(self, synopsis=None, topic=None, description=None, solution=None):
+    def _make_pipeline(self):
         runtime = MagicMock()
         runtime.dry_run = False
         runtime.working_dir = MagicMock()
@@ -771,114 +734,246 @@ class TestApplyReleaseNotesText(unittest.TestCase):
             group="logging-6.5",
             assembly="6.5.0",
             fbc_pullspecs=["quay.io/test/fbc:latest"],
-            release_notes_synopsis=synopsis,
-            release_notes_topic=topic,
-            release_notes_description=description,
-            release_notes_solution=solution,
         )
         pipeline.product = "logging"
         return pipeline
 
-    def test_overlay_on_existing_release_notes(self):
-        """User-provided text fields are overlaid onto ReleaseNotes from bug processing."""
-        pipeline = self._make_pipeline(
-            synopsis="Logging 6.5.0 bug fix update",
-            topic="An update is available for Logging 6.5.",
+    @patch("pyartcd.pipelines.release_from_fbc.get_github_client_for_org")
+    def test_successful_fetch(self, mock_get_client):
+        """get_file_from_branch should fetch file content from GitHub."""
+        pipeline = self._make_pipeline()
+
+        mock_github = MagicMock()
+        mock_get_client.return_value = mock_github
+
+        mock_repo = MagicMock()
+        mock_github.get_repo.return_value = mock_repo
+
+        mock_file = MagicMock()
+        mock_file.decoded_content = b"file content here"
+        mock_repo.get_contents.return_value = mock_file
+
+        result = pipeline.get_file_from_branch("openshift-4.20", "releases.yml")
+
+        self.assertEqual(result, b"file content here")
+        mock_get_client.assert_called_once_with("openshift-eng")
+        mock_github.get_repo.assert_called_once_with("openshift-eng/ocp-build-data")
+        mock_repo.get_contents.assert_called_once_with("releases.yml", ref="openshift-4.20")
+
+    @patch("pyartcd.pipelines.release_from_fbc.get_github_client_for_org")
+    def test_github_exception_raises_value_error(self, mock_get_client):
+        """get_file_from_branch should raise ValueError on GithubException."""
+        from github import GithubException
+
+        pipeline = self._make_pipeline()
+
+        mock_github = MagicMock()
+        mock_get_client.return_value = mock_github
+
+        mock_repo = MagicMock()
+        mock_github.get_repo.return_value = mock_repo
+
+        mock_repo.get_contents.side_effect = GithubException(404, "Not Found", {})
+
+        with self.assertRaises(ValueError) as ctx:
+            pipeline.get_file_from_branch("openshift-4.20", "releases.yml")
+
+        self.assertIn("Failed to fetch", str(ctx.exception))
+        self.assertIn("releases.yml", str(ctx.exception))
+
+
+class TestLoadReleaseNotesTemplate(unittest.TestCase):
+    """Tests for _load_release_notes_template method."""
+
+    def _make_pipeline(self, group="logging-6.5", assembly="6.5.0"):
+        runtime = MagicMock()
+        runtime.dry_run = False
+        runtime.working_dir = MagicMock()
+        runtime.working_dir.absolute.return_value = MagicMock()
+        runtime.config = {}
+
+        pipeline = ReleaseFromFbcPipeline(
+            runtime=runtime,
+            group=group,
+            assembly=assembly,
+            fbc_pullspecs=["quay.io/test/fbc:latest"],
         )
-        existing_rn = ReleaseNotes(type="RHSA")
+        pipeline.product = "openshift-logging"
+        return pipeline
 
-        result = pipeline._apply_release_notes_text(existing_rn)
+    @patch("pyartcd.pipelines.release_from_fbc.get_advisory_boilerplate")
+    @patch.object(ReleaseFromFbcPipeline, "get_file_from_branch")
+    def test_template_found_with_placeholder_substitution(self, mock_get_file, mock_get_boilerplate):
+        """Template is found via get_advisory_boilerplate and all placeholders are substituted."""
+        mock_get_boilerplate.return_value = {
+            "synopsis": "Logging {PRODUCT_MAJOR}.{PRODUCT_MINOR}.{PRODUCT_PATCH}",
+            "topic": "Logging {PRODUCT_MAJOR}.{PRODUCT_MINOR}.{PRODUCT_PATCH}",
+            "description": "Logging {PRODUCT_MAJOR}.{PRODUCT_MINOR}.{PRODUCT_PATCH} update",
+            "solution": "For OCP {OCP_RELEASE_NOTES_VERSION} see ocp-{OCP_RELEASE_NOTES_VERSION_DASHED}-release-notes",
+        }
+        mock_get_file.return_value = b"""
+OCP_RELEASE_NOTES_VERSION: "4.21"
+"""
 
-        self.assertIs(result, existing_rn)
-        self.assertEqual(result.type, "RHSA")
-        self.assertEqual(result.synopsis, "Logging 6.5.0 bug fix update")
-        self.assertEqual(result.topic, "An update is available for Logging 6.5.")
-        self.assertIsNone(result.description)
-        self.assertIsNone(result.solution)
-
-    def test_text_only_creates_rhba(self):
-        """When no existing ReleaseNotes, a new RHBA is created with text fields."""
-        pipeline = self._make_pipeline(
-            synopsis="Logging 6.5.0 bug fix update",
-            description="This update fixes several bugs.",
-            solution="Apply the update using the operator.",
-        )
-
-        result = pipeline._apply_release_notes_text(None)
+        pipeline = self._make_pipeline()
+        result = pipeline._load_release_notes_template()
 
         self.assertIsNotNone(result)
-        self.assertEqual(result.type, "RHBA")
-        self.assertEqual(result.synopsis, "Logging 6.5.0 bug fix update")
-        self.assertIsNone(result.topic)
-        self.assertEqual(result.description, "This update fixes several bugs.")
-        self.assertEqual(result.solution, "Apply the update using the operator.")
+        self.assertEqual(result["synopsis"], "Logging 6.5.0")
+        self.assertEqual(result["topic"], "Logging 6.5.0")
+        self.assertEqual(result["description"], "Logging 6.5.0 update")
+        self.assertEqual(result["solution"], "For OCP 4.21 see ocp-4-21-release-notes")
 
-    def test_neither_bugs_nor_text_returns_none(self):
-        """When no text fields and no existing ReleaseNotes, returns None."""
+        mock_get_boilerplate.assert_called_once_with(
+            runtime=pipeline,
+            et_data={},
+            art_advisory_key="openshift-logging",
+            errata_type="RHBA",
+        )
+        mock_get_file.assert_called_once_with("logging-6.5", "group.yml")
+
+    @patch("pyartcd.pipelines.release_from_fbc.get_advisory_boilerplate")
+    def test_template_not_found_returns_none(self, mock_get_boilerplate):
+        """When get_advisory_boilerplate raises ValueError, return None."""
+        mock_get_boilerplate.side_effect = ValueError("Boilerplate mta not found")
+
         pipeline = self._make_pipeline()
-
-        result = pipeline._apply_release_notes_text(None)
+        pipeline.product = "mta"
+        result = pipeline._load_release_notes_template()
 
         self.assertIsNone(result)
 
-    def test_partial_text_only_sets_provided_fields(self):
-        """Only provided text fields are set; others remain None."""
-        pipeline = self._make_pipeline(solution="Apply the update.")
-        existing_rn = ReleaseNotes(type="RHBA")
+    @patch("pyartcd.pipelines.release_from_fbc.get_advisory_boilerplate")
+    def test_github_api_failure_returns_none(self, mock_get_boilerplate):
+        """When get_advisory_boilerplate raises an unexpected error, return None."""
+        mock_get_boilerplate.side_effect = Exception("GitHub API failure")
 
-        result = pipeline._apply_release_notes_text(existing_rn)
+        pipeline = self._make_pipeline()
+        result = pipeline._load_release_notes_template()
 
-        self.assertIsNone(result.synopsis)
-        self.assertIsNone(result.topic)
-        self.assertIsNone(result.description)
-        self.assertEqual(result.solution, "Apply the update.")
+        self.assertIsNone(result)
 
-    def test_all_four_fields(self):
-        """All four text fields are set when all are provided."""
-        pipeline = self._make_pipeline(
-            synopsis="Synopsis text",
-            topic="Topic text",
-            description="Description text",
-            solution="Solution text",
+    @patch("pyartcd.pipelines.release_from_fbc.get_advisory_boilerplate")
+    @patch.object(ReleaseFromFbcPipeline, "get_file_from_branch")
+    def test_missing_ocp_release_notes_version_returns_none(self, mock_get_file, mock_get_boilerplate):
+        """When group.yml has no OCP_RELEASE_NOTES_VERSION, return None."""
+        mock_get_boilerplate.return_value = {
+            "synopsis": "Synopsis",
+            "topic": "Topic",
+            "description": "Description",
+            "solution": "Solution",
+        }
+        mock_get_file.return_value = b"""
+product: logging
+"""
+
+        pipeline = self._make_pipeline()
+        result = pipeline._load_release_notes_template()
+
+        self.assertIsNone(result)
+
+    @patch("pyartcd.pipelines.release_from_fbc.get_advisory_boilerplate")
+    @patch.object(ReleaseFromFbcPipeline, "get_file_from_branch")
+    def test_assembly_version_parsing_two_components(self, mock_get_file, mock_get_boilerplate):
+        """Assembly with only major.minor (no PRODUCT_PATCH) uses empty string for PRODUCT_PATCH."""
+        mock_get_boilerplate.return_value = {
+            "synopsis": "Version {PRODUCT_MAJOR}.{PRODUCT_MINOR}.{PRODUCT_PATCH}",
+            "topic": "Topic",
+            "description": "Description",
+            "solution": "Solution",
+        }
+        mock_get_file.return_value = b"""
+OCP_RELEASE_NOTES_VERSION: "4.21"
+"""
+
+        pipeline = self._make_pipeline(assembly="6.5")
+        result = pipeline._load_release_notes_template()
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result["synopsis"], "Version 6.5.")
+
+
+class TestRunWithTemplate(unittest.TestCase):
+    def _make_pipeline(self, group="logging-6.5", assembly="6.5.0", jira_bugs=None):
+        runtime = MagicMock()
+        runtime.dry_run = False
+        runtime.working_dir = MagicMock()
+        runtime.working_dir.absolute.return_value = MagicMock()
+        runtime.config = {}
+        pipeline = ReleaseFromFbcPipeline(
+            runtime=runtime,
+            group=group,
+            assembly=assembly,
+            fbc_pullspecs=["quay.io/test/fbc:latest"],
+            jira_bugs=jira_bugs,
+        )
+        pipeline.product = "openshift-logging"
+        return pipeline
+
+    @patch.object(ReleaseFromFbcPipeline, "_load_release_notes_template")
+    def test_template_applied_when_no_jira_bugs(self, mock_load_template):
+        pipeline = self._make_pipeline()
+        mock_load_template.return_value = {
+            "synopsis": "Logging 6.5.0",
+            "topic": "Logging 6.5.0 topic",
+            "description": "Logging 6.5.0 description",
+            "solution": "Logging 6.5.0 solution",
+        }
+
+        release_notes = None
+        template = pipeline._load_release_notes_template()
+        if template:
+            if release_notes is None:
+                release_notes = ReleaseNotes(type="RHBA")
+            release_notes.synopsis = template["synopsis"]
+            release_notes.topic = template["topic"]
+            release_notes.description = template["description"]
+            release_notes.solution = template["solution"]
+
+        self.assertIsNotNone(release_notes)
+        self.assertEqual(release_notes.type, "RHBA")
+        self.assertEqual(release_notes.synopsis, "Logging 6.5.0")
+        self.assertEqual(release_notes.topic, "Logging 6.5.0 topic")
+
+    @patch.object(ReleaseFromFbcPipeline, "_load_release_notes_template")
+    def test_template_preserves_jira_fields(self, mock_load_template):
+        pipeline = self._make_pipeline(jira_bugs=["LOG-1234"])
+        mock_load_template.return_value = {
+            "synopsis": "Logging 6.5.0",
+            "topic": "Logging 6.5.0 topic",
+            "description": "Logging 6.5.0 description",
+            "solution": "Logging 6.5.0 solution",
+        }
+
+        release_notes = ReleaseNotes(
+            type="RHSA",
+            issues=Issues(fixed=[Issue(id="LOG-1234", source="redhat.atlassian.net")]),
         )
 
-        result = pipeline._apply_release_notes_text(None)
+        template = pipeline._load_release_notes_template()
+        if template:
+            release_notes.synopsis = template["synopsis"]
+            release_notes.topic = template["topic"]
+            release_notes.description = template["description"]
+            release_notes.solution = template["solution"]
 
-        self.assertEqual(result.type, "RHBA")
-        self.assertEqual(result.synopsis, "Synopsis text")
-        self.assertEqual(result.topic, "Topic text")
-        self.assertEqual(result.description, "Description text")
-        self.assertEqual(result.solution, "Solution text")
+        self.assertEqual(release_notes.type, "RHSA")
+        self.assertEqual(release_notes.synopsis, "Logging 6.5.0")
+        self.assertEqual(len(release_notes.issues.fixed), 1)
+        self.assertEqual(release_notes.issues.fixed[0].id, "LOG-1234")
 
-    def test_no_text_with_existing_rn_returns_unchanged(self):
-        """When no text fields are provided but ReleaseNotes exists, it passes through unchanged."""
+    @patch.object(ReleaseFromFbcPipeline, "_load_release_notes_template")
+    def test_no_template_no_bugs_returns_none(self, mock_load_template):
         pipeline = self._make_pipeline()
-        existing_rn = ReleaseNotes(type="RHSA")
+        mock_load_template.return_value = None
 
-        result = pipeline._apply_release_notes_text(existing_rn)
+        release_notes = None
+        template = pipeline._load_release_notes_template()
+        if template:
+            if release_notes is None:
+                release_notes = ReleaseNotes(type="RHBA")
 
-        self.assertIs(result, existing_rn)
-        self.assertIsNone(result.synopsis)
-
-    def test_empty_and_whitespace_strings_ignored(self):
-        """Empty and whitespace-only strings are treated as not provided."""
-        pipeline = self._make_pipeline(synopsis="", topic="   ", description=None, solution="Real value")
-        existing_rn = ReleaseNotes(type="RHBA")
-
-        result = pipeline._apply_release_notes_text(existing_rn)
-
-        self.assertIsNone(result.synopsis)
-        self.assertIsNone(result.topic)
-        self.assertIsNone(result.description)
-        self.assertEqual(result.solution, "Real value")
-
-    def test_all_empty_strings_returns_unchanged(self):
-        """When all text fields are empty strings, release_notes passes through unchanged."""
-        pipeline = self._make_pipeline(synopsis="", topic="", description="", solution="")
-
-        result = pipeline._apply_release_notes_text(None)
-
-        self.assertIsNone(result)
+        self.assertIsNone(release_notes)
 
 
 if __name__ == "__main__":
