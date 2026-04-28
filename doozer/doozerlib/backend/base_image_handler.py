@@ -309,6 +309,8 @@ class BaseImageHandler:
                 if not snapshot_available:
                     raise RuntimeError(f"Snapshot {snapshot_name} did not become available in time")
 
+            released_nvrs = ",".join(sorted(self.nvr_list))
+
             metadata = {
                 "generateName": "ocp-base-image-release-",
                 "namespace": self.namespace,
@@ -320,6 +322,7 @@ class BaseImageHandler:
                     "art.redhat.com/group": self.runtime.group_config.name,
                     "art.redhat.com/assembly": getattr(self.runtime, 'assembly', 'stream'),
                     "art.redhat.com/env": "base-image-workflow",
+                    "art.redhat.com/nvrs": released_nvrs,
                 },
             }
 
