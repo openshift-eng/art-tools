@@ -774,6 +774,10 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
     async def test_run_brew_only_skips_updating_streams(self, mock_konflux_db, move_golang_bugs):
         """Test brew-only runs skip streams.yml updates because streams use Konflux pullspecs"""
         pipeline = self._make_pipeline(build_system="brew")
+        pipeline.validate_go_version_matches_group_vars = Mock(
+            return_value=("openshift-4.16", {"GO_LATEST": "1.25"}, "1.25")
+        )
+        pipeline.validate_tag_builds_go_latest = Mock()
         pipeline.process_build = AsyncMock(return_value=True)
         pipeline.get_existing_builders = Mock(
             return_value={9: "openshift-golang-builder-container-v1.25.8-202604150744.p2.gf28329a.el9"}
