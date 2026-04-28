@@ -145,7 +145,8 @@ class BaseImageHandler:
                 self.logger.error("Failed to create snapshot, aborting workflow")
                 return None
 
-            release_name = await self._create_release_from_snapshot(snapshot_name)
+            released_nvrs = ",".join(sorted(valid_records))
+            release_name = await self._create_release_from_snapshot(snapshot_name, released_nvrs)
             if not release_name:
                 self.logger.error("Failed to create release, aborting workflow")
                 return None
@@ -284,12 +285,13 @@ class BaseImageHandler:
             self.logger.error(f"Failed to create snapshot: {e}")
             return None
 
-    async def _create_release_from_snapshot(self, snapshot_name: str) -> Optional[str]:
+    async def _create_release_from_snapshot(self, snapshot_name: str, released_nvrs: str) -> Optional[str]:
         """
         Create Konflux release using the same pattern as CreateReleaseCli.new_release().
 
         Args:
             snapshot_name: Name of the snapshot to create release from
+            released_nvrs: Comma-separated NVRs validated for release
 
         Returns:
             str: Release name if successful, None if failed
@@ -320,6 +322,7 @@ class BaseImageHandler:
                     "art.redhat.com/group": self.runtime.group_config.name,
                     "art.redhat.com/assembly": getattr(self.runtime, 'assembly', 'stream'),
                     "art.redhat.com/env": "base-image-workflow",
+                    "art.redhat.com/nvrs": released_nvrs,
                 },
             }
 

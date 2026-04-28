@@ -116,12 +116,15 @@ class TestBaseImageHandler(IsolatedAsyncioTestCase):
 
         with patch.object(handler, "_fetch_build_records", return_value=build_records):
             with patch.object(handler, "_create_snapshot", return_value="test-snapshot"):
-                with patch.object(handler, "_create_release_from_snapshot", return_value="test-release"):
+                with patch.object(
+                    handler, "_create_release_from_snapshot", return_value="test-release"
+                ) as mock_release:
                     with patch.object(handler, "_wait_for_release_completion", return_value=True):
                         with self.assertRaises(RuntimeError) as context:
                             await handler.process_base_image_completion()
 
         error_message = str(context.exception)
+        mock_release.assert_awaited_once_with("test-snapshot", valid_nvr)
         self.assertIn("Snapshot/Release completed successfully", error_message)
         self.assertIn("1 critical validation failures", error_message)
         self.assertIn("Could not resolve metadata", error_message)
@@ -255,3 +258,39 @@ class TestBaseImageHandler(IsolatedAsyncioTestCase):
         # Golang builder should successfully complete the workflow
         self.assertIsNotNone(result)
         self.assertEqual(result, ("golang-release", "golang-snapshot"))
+
+    @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_kubeconfig_by_product")
+    async def test_create_release_from_snapshot_adds_nvr_annotation(
+        self, mock_kubeconfig, mock_namespace, mock_konflux_client_init
+    ):
+        mock_namespace.return_value = "ocp-art-tenant"
+        mock_kubeconfig.return_value = "/path/to/kubeconfig"
+
+        konflux_client = AsyncMock()
+        created_release = MagicMock()
+        created_release.metadata.name = "test-release"
+        konflux_client._create.return_value = created_release
+        konflux_client.resource_url = MagicMock(return_value="https://konflux.example/releases/test-release")
+        mock_konflux_client_init.return_value = konflux_client
+
+        handler = BaseImageHandler(
+            self.runtime,
+            [self.nvr, "another-base-container-v1.0.0-1.el8"],
+            dry_run=False,
+        )
+
+        with patch.object(handler, "_wait_for_snapshot_availability", new=AsyncMock(return_value=True)):
+            await handler._create_release_from_snapshot(
+                "test-snapshot",
+                "another-base-container-v1.0.0-1.el8,test-base-container-v1.0.0-1.el9",
+            )
+
+        konflux_client._get.assert_awaited_once()
+        konflux_client._create.assert_awaited_once()
+        release_obj = konflux_client._create.await_args.args[0]
+        self.assertEqual(
+            release_obj["metadata"]["annotations"]["art.redhat.com/nvrs"],
+            "another-base-container-v1.0.0-1.el8,test-base-container-v1.0.0-1.el9",
+        )
