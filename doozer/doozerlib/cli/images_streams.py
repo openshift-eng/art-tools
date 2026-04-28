@@ -973,6 +973,12 @@ in #forum-ocp-art to discuss the discrepancy.
 
 Closing this issue without addressing the difference will cause the issue to
 be reopened automatically.
+
+Once the differences have been resolved (either by merging this pull or updating the
+downstream production build configuration), ART will automatically move this issue
+from ON_QA to Closed (at some point during the release's Release Candidate phase).
+There is no need for QE verification beyond the existing CI signal this change helps
+improve.
 '''
         if potential_project != project or potential_component != component:
             description += f'''
