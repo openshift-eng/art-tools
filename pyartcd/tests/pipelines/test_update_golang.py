@@ -189,9 +189,18 @@ class TestIsLatestAndAvailable(IsolatedAsyncioTestCase):
         mock_cmd_gather.return_value = (1, "", "timeout")
         mock_koji_session = Mock()
 
-        result = await is_latest_and_available("4.16", 8, "golang-1.20.12-2.el8", mock_koji_session)
+        with self.assertLogs("pyartcd.pipelines.update_golang", level="INFO") as cm:
+            result = await is_latest_and_available("4.16", 8, "golang-1.20.12-2.el8", mock_koji_session)
 
         self.assertFalse(result)
+        self.assertEqual(len(cm.output), 2)
+        self.assertIn(
+            "brew wait-repo rhaos-4.16-rhel-8-build --build golang-1.20.12-2.el8 --timeout=1 --verbose",
+            cm.output[0],
+        )
+        self.assertIn("exit code 1", cm.output[0])
+        self.assertIn("timeout", cm.output[0])
+        self.assertIn("could not be confirmed available", cm.output[1])
 
 
 class TestMoveGolangBugs(IsolatedAsyncioTestCase):
@@ -769,9 +778,10 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
             with self.assertRaisesRegex(RuntimeError, "Published golang builder pullspec is not available"):
                 await pipeline._ensure_builder_pullspec_available(pullspec)
 
+    @patch("pyartcd.pipelines.update_golang.kinit", new_callable=AsyncMock)
     @patch("pyartcd.pipelines.update_golang.move_golang_bugs", new_callable=AsyncMock)
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
-    async def test_run_brew_only_skips_updating_streams(self, mock_konflux_db, move_golang_bugs):
+    async def test_run_brew_only_skips_updating_streams(self, mock_konflux_db, move_golang_bugs, mock_kinit):
         """Test brew-only runs skip streams.yml updates because streams use Konflux pullspecs"""
         pipeline = self._make_pipeline(build_system="brew")
         pipeline.validate_go_version_matches_group_vars = Mock(
@@ -786,6 +796,7 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
 
         await pipeline.run()
 
+        mock_kinit.assert_awaited_once()
         pipeline.update_golang_streams.assert_not_awaited()
         move_golang_bugs.assert_awaited_once()
         slack_messages = [call.args[0] for call in pipeline._slack_client.say_in_thread.await_args_list]

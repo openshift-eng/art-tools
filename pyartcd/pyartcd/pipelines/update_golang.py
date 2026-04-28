@@ -29,7 +29,7 @@ from pyartcd import constants, jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.oc import get_image_info
 from pyartcd.runtime import Runtime
-from pyartcd.util import default_release_suffix
+from pyartcd.util import default_release_suffix, kinit
 
 _LOGGER = logging.getLogger(__name__)
 yaml = new_roundtrip_yaml_handler()
@@ -66,12 +66,30 @@ async def is_latest_and_available(ocp_version: str, el_v: int, nvr: str, koji_se
     # If regen repo has been run this would take a few seconds
     # sadly --timeout cannot be less than 1 minute, so we wait for 1 minute
     build_tag = f'rhaos-{ocp_version}-rhel-{el_v}-build'
-    cmd = f'brew wait-repo {build_tag} --build {nvr} --request --timeout=1'
-    rc, _, _ = await exectools.cmd_gather_async(cmd, check=False)
+    cmd = f'brew wait-repo {build_tag} --build {nvr} --timeout=1 --verbose'
+    rc, out, err = await exectools.cmd_gather_async(cmd, check=False)
     if rc != 0:
+        output = "\n".join(stream.strip() for stream in (err, out) if stream and stream.strip())
+        if output:
+            _LOGGER.warning(
+                "`%s` failed while checking whether %s is available in %s (exit code %s):\n%s",
+                cmd,
+                nvr,
+                build_tag,
+                rc,
+                output,
+            )
+        else:
+            _LOGGER.warning(
+                "`%s` failed while checking whether %s is available in %s (exit code %s) and produced no output.",
+                cmd,
+                nvr,
+                build_tag,
+                rc,
+            )
         _LOGGER.info(
-            f'Build {nvr} is tagged but not available in {build_tag}. Run `brew regen-repo {build_tag} to '
-            'make the build available.'
+            f'Build {nvr} could not be confirmed available in {build_tag}. If the build is already tagged, '
+            f'run `brew regen-repo {build_tag}` to make it available.'
         )
         return False
     _LOGGER.info(f'{nvr} is available in {build_tag}')
@@ -285,6 +303,12 @@ class UpdateGolangPipeline:
             )
 
     async def run(self):
+        try:
+            await kinit()
+        except ChildProcessError as err:
+            _LOGGER.error("Failed initializing Kerberos credentials")
+            raise RuntimeError("Failed initializing Kerberos credentials") from err
+
         go_version, el_nvr_map = extract_and_validate_golang_nvrs(self.ocp_version, self.go_nvrs)
         _LOGGER.info(f'Golang version detected: {go_version}')
         _LOGGER.info(f'NVRs by rhel version: {el_nvr_map}')
