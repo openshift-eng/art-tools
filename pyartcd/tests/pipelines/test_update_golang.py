@@ -189,9 +189,18 @@ class TestIsLatestAndAvailable(IsolatedAsyncioTestCase):
         mock_cmd_gather.return_value = (1, "", "timeout")
         mock_koji_session = Mock()
 
-        result = await is_latest_and_available("4.16", 8, "golang-1.20.12-2.el8", mock_koji_session)
+        with self.assertLogs("pyartcd.pipelines.update_golang", level="INFO") as cm:
+            result = await is_latest_and_available("4.16", 8, "golang-1.20.12-2.el8", mock_koji_session)
 
         self.assertFalse(result)
+        self.assertEqual(len(cm.output), 2)
+        self.assertIn(
+            "brew wait-repo rhaos-4.16-rhel-8-build --build golang-1.20.12-2.el8 --request --timeout=1",
+            cm.output[0],
+        )
+        self.assertIn("exit code 1", cm.output[0])
+        self.assertIn("timeout", cm.output[0])
+        self.assertIn("could not be confirmed available", cm.output[1])
 
 
 class TestMoveGolangBugs(IsolatedAsyncioTestCase):
