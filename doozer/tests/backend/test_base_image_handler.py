@@ -116,12 +116,13 @@ class TestBaseImageHandler(IsolatedAsyncioTestCase):
 
         with patch.object(handler, "_fetch_build_records", return_value=build_records):
             with patch.object(handler, "_create_snapshot", return_value="test-snapshot"):
-                with patch.object(handler, "_create_release_from_snapshot", return_value="test-release"):
+                with patch.object(handler, "_create_release_from_snapshot", return_value="test-release") as mock_release:
                     with patch.object(handler, "_wait_for_release_completion", return_value=True):
                         with self.assertRaises(RuntimeError) as context:
                             await handler.process_base_image_completion()
 
         error_message = str(context.exception)
+        mock_release.assert_awaited_once_with("test-snapshot", valid_nvr)
         self.assertIn("Snapshot/Release completed successfully", error_message)
         self.assertIn("1 critical validation failures", error_message)
         self.assertIn("Could not resolve metadata", error_message)
@@ -279,7 +280,10 @@ class TestBaseImageHandler(IsolatedAsyncioTestCase):
         )
 
         with patch.object(handler, "_wait_for_snapshot_availability", new=AsyncMock(return_value=True)):
-            await handler._create_release_from_snapshot("test-snapshot")
+            await handler._create_release_from_snapshot(
+                "test-snapshot",
+                "another-base-container-v1.0.0-1.el8,test-base-container-v1.0.0-1.el9",
+            )
 
         konflux_client._get.assert_awaited_once()
         konflux_client._create.assert_awaited_once()
