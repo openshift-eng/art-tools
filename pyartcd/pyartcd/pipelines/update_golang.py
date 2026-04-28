@@ -29,7 +29,7 @@ from pyartcd import constants, jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.oc import get_image_info
 from pyartcd.runtime import Runtime
-from pyartcd.util import default_release_suffix
+from pyartcd.util import default_release_suffix, kinit
 
 _LOGGER = logging.getLogger(__name__)
 yaml = new_roundtrip_yaml_handler()
@@ -303,6 +303,12 @@ class UpdateGolangPipeline:
             )
 
     async def run(self):
+        try:
+            await kinit()
+        except ChildProcessError as err:
+            _LOGGER.error("Failed initializing Kerberos credentials")
+            raise RuntimeError("Failed initializing Kerberos credentials") from err
+
         go_version, el_nvr_map = extract_and_validate_golang_nvrs(self.ocp_version, self.go_nvrs)
         _LOGGER.info(f'Golang version detected: {go_version}')
         _LOGGER.info(f'NVRs by rhel version: {el_nvr_map}')

@@ -778,9 +778,10 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
             with self.assertRaisesRegex(RuntimeError, "Published golang builder pullspec is not available"):
                 await pipeline._ensure_builder_pullspec_available(pullspec)
 
+    @patch("pyartcd.pipelines.update_golang.kinit", new_callable=AsyncMock)
     @patch("pyartcd.pipelines.update_golang.move_golang_bugs", new_callable=AsyncMock)
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
-    async def test_run_brew_only_skips_updating_streams(self, mock_konflux_db, move_golang_bugs):
+    async def test_run_brew_only_skips_updating_streams(self, mock_konflux_db, move_golang_bugs, mock_kinit):
         """Test brew-only runs skip streams.yml updates because streams use Konflux pullspecs"""
         pipeline = self._make_pipeline(build_system="brew")
         pipeline.validate_go_version_matches_group_vars = Mock(
@@ -795,6 +796,7 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
 
         await pipeline.run()
 
+        mock_kinit.assert_awaited_once()
         pipeline.update_golang_streams.assert_not_awaited()
         move_golang_bugs.assert_awaited_once()
         slack_messages = [call.args[0] for call in pipeline._slack_client.say_in_thread.await_args_list]
