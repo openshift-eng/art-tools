@@ -593,6 +593,62 @@ class TestCalcUpgradeSourcesAsync(unittest.IsolatedAsyncioTestCase):
 
     @patch("artcommonlib.ocp_version_ancestry.get_channel_versions_async")
     @patch("artcommonlib.ocp_version_ancestry.get_build_suggestions_async")
+    async def test_hotfix_in_block_list_not_readded(self, mock_suggestions, mock_channel):
+        """Step 7 must not re-add hotfixes excluded by z_block_list"""
+        mock_suggestions.return_value = self._make_suggestions(
+            {
+                "default": {
+                    "minor_min": "4.22.0",
+                    "minor_max": "4.22.9999",
+                    "minor_block_list": [],
+                    "z_min": "5.0.0-ec.0",
+                    "z_max": "5.0.9999",
+                    "z_block_list": ["5.0.0-0.hotfix-2024-09-30-133631"],
+                },
+            }
+        )
+        mock_channel.side_effect = [
+            (['4.22.0'], {}),
+            (
+                ['5.0.0-ec.0', '5.0.0-0.hotfix-2024-09-30-133631'],
+                {'5.0.0-0.hotfix-2024-09-30-133631': ['5.0.0-ec.0']},
+            ),
+        ]
+
+        result = await calc_upgrade_sources_async("5.0.1", "x86_64")
+
+        self.assertNotIn('5.0.0-0.hotfix-2024-09-30-133631', result)
+
+    @patch("artcommonlib.ocp_version_ancestry.get_channel_versions_async")
+    @patch("artcommonlib.ocp_version_ancestry.get_build_suggestions_async")
+    async def test_hotfix_edges_count_only_standard_targets(self, mock_suggestions, mock_channel):
+        """Step 7 should count only edges to standard releases toward the 2-edge limit"""
+        mock_suggestions.return_value = self._make_suggestions()
+        mock_channel.side_effect = [
+            (['4.22.0'], {}),
+            (
+                [
+                    '5.0.0-ec.0',
+                    '5.0.0-0.hotfix-2024-09-30-133631',
+                    '5.0.0-0.hotfix-2024-09-29-120000',
+                    '5.0.0-nightly-2024-09-28-010101',
+                ],
+                {
+                    '5.0.0-0.hotfix-2024-09-30-133631': [
+                        '5.0.0-ec.0',
+                        '5.0.0-0.hotfix-2024-09-29-120000',
+                        '5.0.0-nightly-2024-09-28-010101',
+                    ],
+                },
+            ),
+        ]
+
+        result = await calc_upgrade_sources_async("5.0.1", "x86_64")
+
+        self.assertIn('5.0.0-0.hotfix-2024-09-30-133631', result)
+
+    @patch("artcommonlib.ocp_version_ancestry.get_channel_versions_async")
+    @patch("artcommonlib.ocp_version_ancestry.get_build_suggestions_async")
     async def test_hotfix_not_included_for_hotfix_release(self, mock_suggestions, mock_channel):
         """When calculating for a hotfix release, don't include other hotfixes"""
         mock_suggestions.return_value = self._make_suggestions()

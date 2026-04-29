@@ -405,7 +405,12 @@ async def calc_upgrade_sources_async(
     if 'nightly' not in version and 'hotfix' not in version:
         previous_hotfixes = [release for release in curr_versions if 'nightly' in release or 'hotfix' in release]
         for hotfix_version in previous_hotfixes:
-            if len(current_edges.get(hotfix_version, [])) < 2:
+            if hotfix_version in spec.z_block_list:
+                continue
+            standard_edges = [
+                edge for edge in current_edges.get(hotfix_version, []) if 'nightly' not in edge and 'hotfix' not in edge
+            ]
+            if len(standard_edges) < 2:
                 upgrade_from.add(hotfix_version)
 
     return sort_semver(list(upgrade_from))
