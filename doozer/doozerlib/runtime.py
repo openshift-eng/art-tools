@@ -398,6 +398,11 @@ class Runtime(GroupRuntime):
 
     def init_state(self):
         self.state = dict(state.TEMPLATE_BASE_STATE)
+
+        # Skip file I/O for read-only operations (config commands don't need persistent state)
+        if self.prevent_cloning:
+            return
+
         if os.path.isfile(self.state_file):
             with io.open(self.state_file, 'r', encoding='utf-8') as f:
                 try:
@@ -419,6 +424,10 @@ class Runtime(GroupRuntime):
                         self._logger.warning(f'Failed to remove corrupted state file: {e}')
 
     def save_state(self):
+        # Skip file I/O for read-only operations (config commands don't need persistent state)
+        if self.prevent_cloning:
+            return
+
         with io.open(self.state_file, 'w', encoding='utf-8') as f:
             yaml.safe_dump(self.state, f, default_flow_style=False)
 
