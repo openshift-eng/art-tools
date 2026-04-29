@@ -88,7 +88,6 @@ class KonfluxRebaser:
         self.rpm_lockfile_generator = RPMLockfileGenerator(
             runtime.repos, runtime=runtime, lockfile_seed_nvrs=lockfile_seed_nvrs
         )
-        self._prototype_lockfile_generator = None
         self.artifact_lockfile_generator = ArtifactLockfileGenerator(runtime=runtime)
         self.image_repo = image_repo
         self.uuid_tag = ''
@@ -946,14 +945,11 @@ class KonfluxRebaser:
         self._logger.info(f"Generating RPM lockfile for {metadata.distgit_key} (backend={backend_str})")
 
         if backend_str == LockfileBackend.RPM_LOCKFILE_PROTOTYPE.value:
-            if self._prototype_lockfile_generator is None:
-                from doozerlib.lockfile_prototype import RpmLockfilePrototypeGenerator
+            from doozerlib.lockfile_prototype import RpmLockfilePrototypeGenerator
 
-                self._prototype_lockfile_generator = RpmLockfilePrototypeGenerator(
-                    self._runtime.repos, runtime=self._runtime
-                )
-            self._prototype_lockfile_generator.downstream_parents = downstream_parents or []
-            await self._prototype_lockfile_generator.generate_lockfile(metadata, dest_dir)
+            generator = RpmLockfilePrototypeGenerator(self._runtime.repos, runtime=self._runtime)
+            generator.downstream_parents = downstream_parents or []
+            await generator.generate_lockfile(metadata, dest_dir)
         else:
             await self.rpm_lockfile_generator.generate_lockfile(metadata, dest_dir)
 

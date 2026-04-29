@@ -151,7 +151,20 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
         lockfile = {
             "lockfileVersion": 1,
             "lockfileVendor": "redhat",
-            "arches": [{"arch": "x86_64", "packages": [], "module_metadata": []}],
+            "arches": [
+                {
+                    "arch": "x86_64",
+                    "packages": [
+                        {
+                            "url": "https://example.com/nfs-utils-2.5.4-1.el9.x86_64.rpm",
+                            "repoid": "rhel-9-baseos-rpms",
+                            "name": "nfs-utils",
+                            "evr": "2.5.4-1.el9",
+                        }
+                    ],
+                    "module_metadata": [],
+                }
+            ],
         }
         outfile_path.parent.mkdir(parents=True, exist_ok=True)
         with open(outfile_path, "w") as f:
@@ -237,3 +250,121 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
             dest_dir = Path(tmpdir)
             asyncio.run(generator.generate_lockfile(meta, dest_dir))
             self.assertFalse((dest_dir / "rpms.lock.yaml").exists())
+
+    @patch("doozerlib.lockfile_prototype.cmd_gather_async")
+    def test_stage_alias_uses_bare_mode(self, mock_gather):
+        """
+        When downstream_parents contains a stage alias (no "/"),
+        the generator should use --bare instead of --image.
+        """
+        repos = self._make_mock_repos()
+        meta = self._make_mock_image_meta()
+
+        generator = RpmLockfilePrototypeGenerator(
+            repos=repos,
+            runtime=MagicMock(),
+        )
+        generator.downstream_parents = [
+            "quay.io/test/builder@sha256:abc123",
+            "build",
+        ]
+
+        with TemporaryDirectory() as tmpdir:
+            dest_dir = Path(tmpdir)
+            (dest_dir / "Dockerfile").write_text(
+                "FROM quay.io/test/builder AS build\n"
+                "RUN dnf install -y gcc\n"
+                "\n"
+                "FROM build\n"
+                "RUN dnf install -y nfs-utils\n"
+            )
+            mock_gather.side_effect = self._mock_cmd_gather_async
+
+            asyncio.run(generator.generate_lockfile(meta, dest_dir))
+
+        self.assertEqual(mock_gather.call_count, 2)
+        stage0_cmd = mock_gather.call_args_list[0][0][0]
+        stage1_cmd = mock_gather.call_args_list[1][0][0]
+        self.assertIn("--image", stage0_cmd)
+        self.assertIn("--bare", stage1_cmd)
+        self.assertNotIn("--image", stage1_cmd)
+
+    def test_merge_lockfiles_dedupes_by_url(self):
+        """
+        Merge should deduplicate by url, not by name, so that
+        different versions of the same package are preserved.
+        """
+        lockfile_a = {
+            "arches": [
+                {
+                    "arch": "x86_64",
+                    "packages": [
+                        {
+                            "url": "https://example.com/foo-1.0-1.el9.x86_64.rpm",
+                            "repoid": "baseos",
+                            "name": "foo",
+                            "evr": "1.0-1.el9",
+                        },
+                    ],
+                    "module_metadata": [],
+                }
+            ],
+        }
+        lockfile_b = {
+            "arches": [
+                {
+                    "arch": "x86_64",
+                    "packages": [
+                        {
+                            "url": "https://example.com/foo-2.0-1.el9.x86_64.rpm",
+                            "repoid": "baseos",
+                            "name": "foo",
+                            "evr": "2.0-1.el9",
+                        },
+                        {
+                            "url": "https://example.com/bar-1.0-1.el9.x86_64.rpm",
+                            "repoid": "baseos",
+                            "name": "bar",
+                            "evr": "1.0-1.el9",
+                        },
+                    ],
+                    "module_metadata": [],
+                }
+            ],
+        }
+        merged = RpmLockfilePrototypeGenerator._merge_lockfiles([lockfile_a, lockfile_b])
+        x86_packages = merged["arches"][0]["packages"]
+        urls = [p["url"] for p in x86_packages]
+        self.assertEqual(len(urls), 3)
+        self.assertIn("https://example.com/foo-1.0-1.el9.x86_64.rpm", urls)
+        self.assertIn("https://example.com/foo-2.0-1.el9.x86_64.rpm", urls)
+        self.assertIn("https://example.com/bar-1.0-1.el9.x86_64.rpm", urls)
+
+    def test_merge_lockfiles_preserves_module_metadata(self):
+        """
+        Merge should collect module_metadata from all stage lockfiles.
+        """
+        lockfile_a = {
+            "arches": [
+                {
+                    "arch": "x86_64",
+                    "packages": [],
+                    "module_metadata": [{"name": "mod-a", "stream": "1.0"}],
+                }
+            ],
+        }
+        lockfile_b = {
+            "arches": [
+                {
+                    "arch": "x86_64",
+                    "packages": [],
+                    "module_metadata": [{"name": "mod-b", "stream": "2.0"}],
+                }
+            ],
+        }
+        merged = RpmLockfilePrototypeGenerator._merge_lockfiles([lockfile_a, lockfile_b])
+        modules = merged["arches"][0]["module_metadata"]
+        module_names = [m["name"] for m in modules]
+        self.assertEqual(len(modules), 2)
+        self.assertIn("mod-a", module_names)
+        self.assertIn("mod-b", module_names)

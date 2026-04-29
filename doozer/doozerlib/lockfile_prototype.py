@@ -229,8 +229,6 @@ class RpmLockfilePrototypeGenerator:
         cmd.extend(["--outfile", str(out_file_path), str(in_file_path)])
 
         env = self._build_env()
-        self.logger.info(f"{distgit_key}: running {' '.join(cmd)}")
-
         rc, _, stderr = await cmd_gather_async(cmd, check=False, env=env)
 
         if rc != 0:
@@ -320,6 +318,9 @@ class RpmLockfilePrototypeGenerator:
 
         for stage_num, packages in stages_with_packages:
             image_pullspec = self.downstream_parents[stage_num] if stage_num < len(self.downstream_parents) else None
+            if image_pullspec and "/" not in image_pullspec:
+                self.logger.debug(f"{distgit_key}: stage {stage_num} parent is a stage alias, using --bare")
+                image_pullspec = None
             if image_pullspec:
                 image_pullspec = await self._resolve_to_digest(image_pullspec)
             self.logger.info(
@@ -366,31 +367,38 @@ class RpmLockfilePrototypeGenerator:
         if len(lockfiles) == 1:
             return lockfiles[0]
 
-        merged = {
+        merged: dict = {
             "lockfileVersion": 1,
             "lockfileVendor": "redhat",
             "arches": [],
         }
 
-        # Collect all arches across all lockfiles
         all_arches: dict[str, dict[str, dict]] = {}
+        all_module_metadata: dict[str, dict[str, dict]] = {}
+
         for lockfile in lockfiles:
             for arch_entry in lockfile.get("arches", []):
                 arch = arch_entry["arch"]
                 if arch not in all_arches:
                     all_arches[arch] = {}
+                    all_module_metadata[arch] = {}
                 for pkg in arch_entry.get("packages", []):
-                    key = pkg["name"]
+                    key = pkg.get("url", pkg.get("name", ""))
                     if key not in all_arches[arch]:
                         all_arches[arch][key] = pkg
+                for mod in arch_entry.get("module_metadata", []):
+                    mod_key = mod.get("name", "") + ":" + mod.get("stream", "")
+                    if mod_key not in all_module_metadata[arch]:
+                        all_module_metadata[arch][mod_key] = mod
 
         for arch in sorted(all_arches.keys()):
-            packages = sorted(all_arches[arch].values(), key=lambda p: p["name"])
+            packages = sorted(all_arches[arch].values(), key=lambda p: p.get("url", p.get("name", "")))
+            modules = sorted(all_module_metadata[arch].values(), key=lambda m: m.get("name", ""))
             merged["arches"].append(
                 {
                     "arch": arch,
                     "packages": packages,
-                    "module_metadata": [],
+                    "module_metadata": modules,
                 }
             )
 
