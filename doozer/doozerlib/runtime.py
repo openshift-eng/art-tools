@@ -400,7 +400,18 @@ class Runtime(GroupRuntime):
         self.state = dict(state.TEMPLATE_BASE_STATE)
         if os.path.isfile(self.state_file):
             with io.open(self.state_file, 'r', encoding='utf-8') as f:
-                self.state = yaml.full_load(f)
+                loaded = yaml.full_load(f)
+                if loaded is not None:
+                    self.state = loaded
+                else:
+                    # Corrupted or empty state file detected (e.g., from disk full), delete and start fresh
+                    self._logger.warning(
+                        f'Corrupted state file detected: {self.state_file}, regenerating from template'
+                    )
+                    try:
+                        os.remove(self.state_file)
+                    except OSError as e:
+                        self._logger.warning(f'Failed to remove corrupted state file: {e}')
 
     def save_state(self):
         with io.open(self.state_file, 'w', encoding='utf-8') as f:
