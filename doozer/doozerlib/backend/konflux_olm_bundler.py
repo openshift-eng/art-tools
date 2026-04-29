@@ -607,6 +607,7 @@ class KonfluxOlmBundleBuilder:
         konflux_context: Optional[str] = None,
         image_repo: str = constants.KONFLUX_DEFAULT_IMAGE_REPO,
         skip_checks: bool = False,
+        skip_tasks: Sequence[str] = (),
         pipelinerun_template_url: str = constants.KONFLUX_DEFAULT_BUNDLE_BUILD_PLR_TEMPLATE_URL,
         dry_run: bool = False,
         skip_ec_verify: bool = False,
@@ -624,6 +625,7 @@ class KonfluxOlmBundleBuilder:
         self.konflux_context = konflux_context
         self.image_repo = image_repo
         self.skip_checks = skip_checks
+        self.skip_tasks = tuple(skip_tasks)
         self.pipelinerun_template_url = pipelinerun_template_url
         self.dry_run = dry_run
         self.skip_ec_verify = skip_ec_verify
@@ -726,6 +728,7 @@ class KonfluxOlmBundleBuilder:
                     output_image,
                     self.konflux_namespace,
                     self.skip_checks,
+                    skip_tasks=self.skip_tasks,
                     git_auth_secret=git_auth_secret,
                 )
                 pipelinerun_name = pipelinerun_info.name
@@ -879,6 +882,7 @@ class KonfluxOlmBundleBuilder:
         output_image: str,
         namespace: str,
         skip_checks: bool = False,
+        skip_tasks: Sequence[str] = (),
         additional_tags: Optional[Sequence[str]] = None,
         git_auth_secret: Optional[str] = None,
     ) -> Tuple[PipelineRunInfo, str]:
@@ -924,6 +928,7 @@ class KonfluxOlmBundleBuilder:
             build_params=ImageBuildParams(
                 additional_tags=list(additional_tags),
                 skip_checks=skip_checks,
+                skip_tasks=skip_tasks,
                 hermetic=True,
                 artifact_type="operatorbundle",
                 build_priority=BUNDLE_BUILD_PRIORITY,

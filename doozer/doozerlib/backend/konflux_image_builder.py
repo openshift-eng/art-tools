@@ -92,6 +92,7 @@ class KonfluxImageBuilderConfig:
     image_repo: str = constants.KONFLUX_DEFAULT_IMAGE_REPO
     registry_auth_file: Optional[str] = None
     skip_checks: bool = False
+    skip_tasks: tuple[str, ...] = ()
     dry_run: bool = False
     build_priority: Optional[str] = None
     ec_policy_configuration: str = constants.KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION
@@ -765,6 +766,10 @@ class KonfluxImageBuilder:
         raw_ws = _get_konflux_config(metadata, "workspace_storage")
         workspace_storage = str(raw_ws) if raw_ws else None
 
+        group_skip_tasks = metadata.runtime.group_config.get("konflux", {}).get("skip_tasks", [])
+        image_skip_tasks = metadata.config.get("konflux", {}).get("skip_tasks", [])
+        merged_skip_tasks = list(set(self._config.skip_tasks) | set(group_skip_tasks) | set(image_skip_tasks))
+
         annotations = {
             "art-network-mode": metadata.get_konflux_network_mode(),
             "art-nvr": nvr,
@@ -786,6 +791,7 @@ class KonfluxImageBuilder:
             workspace_storage=workspace_storage,
             vm_override=metadata.config.get("konflux", {}).get("vm_override"),
             skip_checks=self._config.skip_checks,
+            skip_tasks=merged_skip_tasks,
             annotations=annotations,
             build_priority=build_priority,
             additional_tags=additional_tags or [],
