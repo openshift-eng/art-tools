@@ -776,8 +776,9 @@ class KonfluxOlmBundleBuilder:
                     )
 
                     # Run EC verification after a successful bundle build
-                    is_ocp_group = self.group.startswith("openshift-")
-                    if outcome is KonfluxBuildOutcome.SUCCESS and is_ocp_group and not self.skip_ec_verify:
+                    product = metadata.runtime.product
+                    has_ec_policy = product in constants.PRODUCT_EC_POLICY_MAP
+                    if outcome is KonfluxBuildOutcome.SUCCESS and has_ec_policy and not self.skip_ec_verify:
                         app_name = self.get_application_name(metadata.runtime.group)
                         bundle_name = metadata.get_olm_bundle_short_name()
                         component_name = self.get_component_name(app_name, bundle_name)
@@ -787,7 +788,7 @@ class KonfluxOlmBundleBuilder:
                         if self.assembly_type == AssemblyTypes.PREVIEW:
                             ec_policy = constants.KONFLUX_PREGA_EC_POLICY_CONFIGURATION
                         else:
-                            ec_policy = constants.KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION
+                            ec_policy = constants.get_ec_policy_for_product(product)
 
                         ec_result = await konflux_client.verify_enterprise_contract(
                             namespace=self.konflux_namespace,
@@ -807,11 +808,11 @@ class KonfluxOlmBundleBuilder:
                     elif outcome is KonfluxBuildOutcome.SUCCESS:
                         if self.skip_ec_verify:
                             logger.info("Skipping EC verification for %s: skip_ec_verify is set", metadata.distgit_key)
-                        elif not is_ocp_group:
+                        elif not has_ec_policy:
                             logger.info(
-                                "Skipping EC verification for %s: non-OCP group '%s'",
+                                "Skipping EC verification for %s: product '%s' not configured for EC verification",
                                 metadata.distgit_key,
-                                self.group,
+                                product,
                             )
 
                     # Update the Konflux DB with the final outcome
