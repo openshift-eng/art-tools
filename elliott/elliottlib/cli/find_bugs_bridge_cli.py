@@ -148,10 +148,9 @@ class FindBugsBridgeCli:
 
     def _get_candidate_bugs(self) -> List[Tuple[JIRABug, object]]:
         assert self.source_tracker is not None
-        query = self.source_tracker._query(search_filter="default", custom_query=' and status != "CLOSED"')
-        if query is None:
-            return []
-        bugs = self.source_tracker._search(query, verbose=self.runtime.debug)
+        bugs = self.source_tracker.search_bugs(
+            search_filter="default", custom_query=' and status != "CLOSED"', verbose=self.runtime.debug
+        )
         candidates: List[Tuple[JIRABug, object]] = []
         tracker_filtered = 0
         unmapped_filtered = 0
@@ -297,14 +296,12 @@ class FindBugsBridgeCli:
         if not source_bug_ids:
             return {}
 
-        query = self.target_tracker._query(
+        mirrors = self.target_tracker.search_bugs(
             include_labels=[BRIDGE_LABEL],
             with_target_release=True,
             custom_query=" order by created DESC",
+            verbose=self.runtime.debug,
         )
-        if query is None:
-            return {}
-        mirrors = self.target_tracker._search(query, verbose=self.runtime.debug)
         source_bug_ids = set(source_bug_ids)
         mirrors_by_source: Dict[str, List[JIRABug]] = {bug_id: [] for bug_id in source_bug_ids}
         for mirror in mirrors:
@@ -344,7 +341,7 @@ class FindBugsBridgeCli:
         ]
         for link_name, inward_issue, outward_issue in link_specs:
             try:
-                self.target_tracker._client.create_issue_link(link_name, inward_issue, outward_issue)
+                self.target_tracker.create_issue_link(link_name, inward_issue, outward_issue)
             except JIRAError as err:
                 if "already exists" not in str(err).lower():
                     raise
