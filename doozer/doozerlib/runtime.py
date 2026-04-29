@@ -398,11 +398,36 @@ class Runtime(GroupRuntime):
 
     def init_state(self):
         self.state = dict(state.TEMPLATE_BASE_STATE)
+
+        # Skip file I/O for read-only operations (config commands don't need persistent state)
+        if self.prevent_cloning:
+            return
+
         if os.path.isfile(self.state_file):
             with io.open(self.state_file, 'r', encoding='utf-8') as f:
-                self.state = yaml.full_load(f)
+                try:
+                    loaded = yaml.full_load(f)
+                except yaml.YAMLError as e:
+                    self._logger.warning(f'Failed to parse state file {self.state_file}: {e}')
+                    loaded = None
+
+                if isinstance(loaded, dict):
+                    self.state = loaded
+                else:
+                    # Corrupted or empty state file detected (e.g., from disk full), delete and start fresh
+                    self._logger.warning(
+                        f'Corrupted state file detected: {self.state_file}, regenerating from template'
+                    )
+                    try:
+                        os.remove(self.state_file)
+                    except OSError as e:
+                        self._logger.warning(f'Failed to remove corrupted state file: {e}')
 
     def save_state(self):
+        # Skip file I/O for read-only operations (config commands don't need persistent state)
+        if self.prevent_cloning:
+            return
+
         with io.open(self.state_file, 'w', encoding='utf-8') as f:
             yaml.safe_dump(self.state, f, default_flow_style=False)
 
