@@ -1,4 +1,4 @@
-.PHONY: venv tox lint test pylint format format-check reinstall clean-reinstall unit unit-artcommon unit-doozer unit-elliott unit-pyartcd unit-ocp-build-data-validator
+.PHONY: venv tox lint test pylint format format-check reinstall clean-reinstall unit unit-artcommon unit-doozer unit-elliott unit-pyartcd unit-ocp-build-data-validator check-docs docs-dashboard
 
 venv:
 	uv venv --python 3.11
@@ -57,3 +57,9 @@ clean-reinstall:
 
 gen-shipment-schema:
 	echo 'from elliottlib.shipment_model import ShipmentConfig; import json; print(json.dumps(ShipmentConfig.model_json_schema(mode="validation"), indent=2))' | uv run python > ocp-build-data-validator/validator/json_schemas/shipment.schema.json
+
+check-docs:
+	bash agentic/scripts/measure-all-metrics.sh
+
+docs-dashboard:
+	bash agentic/scripts/measure-all-metrics.sh --html
