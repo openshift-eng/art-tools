@@ -17,7 +17,13 @@ from artcommonlib.github_auth import get_github_client_for_org, get_github_git_a
 from artcommonlib.jira_config import get_jira_browse_url
 from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
-from artcommonlib.util import convert_remote_git_to_https, ensure_github_https_url, remove_prefix, split_git_url
+from artcommonlib.util import (
+    convert_remote_git_to_https,
+    ensure_github_https_url,
+    get_next_ocp_version,
+    remove_prefix,
+    split_git_url,
+)
 from dockerfile_parse import DockerfileParser
 from elliottlib.bzutil import JIRABugTracker
 from github import Auth, Github, GithubException, PullRequest, UnknownObjectException
@@ -1046,7 +1052,8 @@ This ticket was created by ART pipline run [sync-ci-images|{jenkins_build_url}]
                 runtime.logger.error(f"An error occurred while updating the Target Version on issue {issue.key}: {e}")
 
             # check depend issues and set depend to a higher version issue if true
-            look_for_summary = f'Update {major}.{minor + 1} {image_meta.name} image to be consistent with ART'
+            next_major, next_minor = get_next_ocp_version(major, minor)
+            look_for_summary = f'Update {next_major}.{next_minor} {image_meta.name} image to be consistent with ART'
             depend_issues = search_issues(f"project={project} AND summary ~ '{look_for_summary}'")
             # jira title search is fuzzy, so we need to check if an issue is really the one we want
             depend_issues = [i for i in depend_issues if i.fields.summary == look_for_summary]

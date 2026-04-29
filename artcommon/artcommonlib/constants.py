@@ -33,6 +33,17 @@ ACTIVE_OCP_VERSIONS = [
     "5.0",
 ]
 
+# Last known minor version for each OCP major release
+# Update these values as new versions are released
+# Note: This is OCP-specific; art-tools also works with other products (OADP, MTA, etc.)
+# which have their own versioning schemes
+# Use None for major versions where the maximum minor is not yet known
+LAST_OCP_MINOR_VERSION = {
+    3: 11,  # OCP 3.11 was the last 3.x release
+    4: 22,  # Current highest known 4.x minor (update as versions are released)
+    5: None,  # OCP 5.x max minor not yet known - allows infinite growth
+}
+
 # Konflux DB related vars
 GOOGLE_CLOUD_PROJECT = 'openshift-art'
 DATASET_ID = 'events'
