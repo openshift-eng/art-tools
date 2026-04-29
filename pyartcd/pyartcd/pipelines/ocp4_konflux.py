@@ -39,8 +39,10 @@ from pyartcd.util import (
     build_history_link_url,
     get_group_images,
     get_group_rpms,
+    increment_build_fail_counter,
     increment_rebase_fail_counter,
     mass_rebuild_score,
+    reset_build_fail_counter,
     reset_rebase_fail_counter,
 )
 
@@ -228,6 +230,31 @@ class KonfluxOcpPipeline:
             *[increment_rebase_fail_counter(image, self.version, 'konflux', job_url=job_url) for image in failed_images]
         )
 
+    async def update_build_fail_counters(self, built_images, failed_images, record_log):
+        if self.assembly != 'stream':
+            return
+
+        group = f'openshift-{self.version}'
+        job_url = os.getenv('BUILD_URL')
+
+        # Build a lookup of failed entries for NVR metadata
+        failed_entries = {
+            entry['name']: entry for entry in record_log.get('image_build_konflux', []) if int(entry['status'])
+        }
+
+        await asyncio.gather(*[reset_build_fail_counter(image, group) for image in built_images])
+        await asyncio.gather(
+            *[
+                increment_build_fail_counter(
+                    image,
+                    group,
+                    job_url=job_url,
+                    nvr=failed_entries.get(image, {}).get('nvrs'),
+                )
+                for image in failed_images
+            ]
+        )
+
     def building_images(self):
         """
         Returns True if images are being built, False otherwise.
@@ -390,6 +417,8 @@ class KonfluxOcpPipeline:
             jenkins.update_description(f'Failed images: {", ".join(failed_images)}<br/>')
         elif len(failed_images) > 10:
             jenkins.update_description(f'{len(failed_images)} images failed. Check record.log for details<br/>')
+
+        await self.update_build_fail_counters(built_images, failed_images, record_log)
 
         if not built_images:
             # Nothing to do, skipping build-sync
