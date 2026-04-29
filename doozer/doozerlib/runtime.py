@@ -400,8 +400,13 @@ class Runtime(GroupRuntime):
         self.state = dict(state.TEMPLATE_BASE_STATE)
         if os.path.isfile(self.state_file):
             with io.open(self.state_file, 'r', encoding='utf-8') as f:
-                loaded = yaml.full_load(f)
-                if loaded is not None:
+                try:
+                    loaded = yaml.full_load(f)
+                except yaml.YAMLError as e:
+                    self._logger.warning(f'Failed to parse state file {self.state_file}: {e}')
+                    loaded = None
+
+                if isinstance(loaded, dict):
                     self.state = loaded
                 else:
                     # Corrupted or empty state file detected (e.g., from disk full), delete and start fresh
