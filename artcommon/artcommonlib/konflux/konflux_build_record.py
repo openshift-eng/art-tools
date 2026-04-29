@@ -23,6 +23,7 @@ class KonfluxBuildOutcome(KonfluxEnum):
     FAILURE = 'failure'
     SUCCESS = 'success'
     PENDING = 'pending'
+    UNRELEASED = 'unreleased'
     TIMEOUT = 'timeout'
     CANCELLED = 'cancelled'
 

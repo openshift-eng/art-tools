@@ -3,11 +3,12 @@ import re
 import stat
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest import TestCase
+from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, MagicMock
 
 import semver
 from artcommonlib.model import Missing, Model
+from artcommonlib.variants import BuildVariant
 from dockerfile_parse import DockerfileParser
 from doozerlib.backend.rebaser import KonfluxRebaser
 
@@ -1309,3 +1310,71 @@ class TestCpeVersionExtraction(TestCase):
 
     def test_single_segment(self):
         self.assertEqual(self._extract_cpe_version("v4"), "4")
+
+
+class TestRhArtImagesBasePullspec(TestCase):
+    def test_rh_art_images_base_pullspec_matches_db_convention(self):
+        from doozerlib.util import rh_art_images_base_pullspec
+
+        nvr = "openshift-golang-builder-container-v1.21-1.el9"
+        self.assertEqual(
+            rh_art_images_base_pullspec(nvr),
+            f"registry.redhat.io/openshift/art-images-base:{nvr}",
+        )
+
+
+class TestRebaserResolveMemberParentRegistryRedhat(IsolatedAsyncioTestCase):
+    """Member parent resolution uses registry.redhat.io for art-managed base images."""
+
+    def setUp(self):
+        self.directory = TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.base_dir = Path(self.directory.name)
+
+    async def test_resolve_member_parent_uses_rh_when_art_base_and_labels_present(self):
+        parent = MagicMock()
+        parent.distgit_key = "golang-builder"
+        parent.qualified_key = "openshift/golang-builder"
+        parent.private_fix = False
+        parent.image_name_short = "golang-builder"
+        parent.rebased_image_version = "v1.21"
+        parent.rebased_image_release = "1.el9"
+        parent.get_component_name.return_value = "openshift-golang-builder-container"
+        parent.should_trigger_base_image_release.return_value = True
+
+        runtime = MagicMock()
+        runtime.resolve_image.return_value = parent
+        runtime.group_config = Model({"konflux": Model({})})
+
+        rebaser = KonfluxRebaser(runtime, self.base_dir, MagicMock(), "unsigned")
+        rebaser.variant = BuildVariant.OCP
+        rebaser.image_repo = "quay.io/fake"
+        rebaser.uuid_tag = "v4.18-abc"
+        rebaser.group = "openshift-4.18"
+
+        resolved, _embargo = await rebaser._resolve_member_parent("golang-builder", "ignored")
+        self.assertEqual(
+            resolved,
+            "registry.redhat.io/openshift/art-images-base:openshift-golang-builder-container-v1.21-1.el9",
+        )
+
+    async def test_resolve_member_parent_keeps_quay_for_regular_member(self):
+        parent = MagicMock()
+        parent.distgit_key = "ose-cli"
+        parent.qualified_key = "openshift/ose-cli"
+        parent.private_fix = False
+        parent.image_name_short = "ose-cli"
+        parent.should_trigger_base_image_release.return_value = False
+
+        runtime = MagicMock()
+        runtime.resolve_image.return_value = parent
+        runtime.group_config = Model({"konflux": Model({})})
+
+        rebaser = KonfluxRebaser(runtime, self.base_dir, MagicMock(), "unsigned")
+        rebaser.variant = BuildVariant.OCP
+        rebaser.image_repo = "quay.io/fake"
+        rebaser.uuid_tag = "v4.18-uuid"
+        rebaser.group = "openshift-4.18"
+
+        resolved, _ = await rebaser._resolve_member_parent("ose-cli", "ignored")
+        self.assertEqual(resolved, "quay.io/fake:ose-cli-v4.18-uuid")

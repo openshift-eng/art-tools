@@ -121,6 +121,9 @@ class ImageMetadata(Metadata):
         """ Event that is set when this image is being rebased. """
         self.rebase_status = False
         """ True if this image has been successfully rebased. """
+        # KonfluxRebaser.rebase_to sets these after _rebase_dir succeeds (same inputs as Dockerfile labels).
+        self.rebased_image_version: Optional[str] = None
+        self.rebased_image_release: Optional[str] = None
         self.build_event = Event()
         """ Event that is set when this image is being built. """
         self.build_status = False

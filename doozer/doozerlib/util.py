@@ -33,6 +33,8 @@ from artcommonlib.util import (
     uses_konflux_imagestream_override,
 )
 
+from doozerlib import constants as doozer_constants
+
 try:
     from reprlib import repr
 except ImportError:
@@ -41,6 +43,11 @@ except ImportError:
 
 DICT_EMPTY = object()
 logger = logging.getLogger(__name__)
+
+
+def rh_art_images_base_pullspec(nvr: str) -> str:
+    """Pullspec for golang/base images after art-images-base release (NVR = component-version-release)."""
+    return f"{doozer_constants.DELIVERY_IMAGE_REGISTRY}/openshift/{doozer_constants.ART_IMAGES_BASE_APPLICATION}:{nvr}"
 
 
 def dict_get(dct, path, default=DICT_EMPTY):

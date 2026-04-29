@@ -10,7 +10,7 @@ import asyncio
 from typing import Dict, List, Optional, Tuple
 
 from artcommonlib import logutil
-from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildRecord
+from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.util import (
     get_utc_now_formatted_str,
@@ -20,13 +20,13 @@ from artcommonlib.util import (
 )
 from doozerlib.backend.konflux_client import API_VERSION, KIND_RELEASE, KIND_RELEASE_PLAN, KIND_SNAPSHOT, KonfluxClient
 from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
+from doozerlib.constants import ART_IMAGES_BASE_APPLICATION
 from kubernetes.dynamic import exceptions
 
 from pyartcd import jenkins
 
 LOGGER = logutil.get_logger(__name__)
 ART_IMAGES_BASE_RELEASE_PLAN = "ocp-art-images-base-silent"
-ART_IMAGES_BASE_APPLICATION = "art-images-base"
 
 
 class BaseImageHandler:
@@ -193,7 +193,7 @@ class BaseImageHandler:
         try:
             where = {"group": self.runtime.group, "engine": Engine.KONFLUX.value}
             records = await self.konflux_db.get_build_records_by_nvrs(
-                nvrs, where=where, strict=False, exclude_large_columns=True
+                nvrs, outcome=KonfluxBuildOutcome.UNRELEASED, where=where, strict=False, exclude_large_columns=True
             )
             return {record.nvr: record for record in records}
         except Exception as e:
