@@ -130,7 +130,7 @@ class FindBugsBridgeCli:
         self.images_by_component = {}
         self.images_by_jira_component = {}
         for image_meta in self.runtime.image_metas():
-            if not image_meta.config.get("for_payload", False):
+            if not image_meta.bridge_bug_mirroring_enabled:
                 continue
             self.images_by_component[image_meta.get_component_name()] = image_meta
         component_mapping = self._get_product_config().bug_mapping.components
@@ -154,7 +154,6 @@ class FindBugsBridgeCli:
         candidates: List[Tuple[JIRABug, object]] = []
         tracker_filtered = 0
         unmapped_filtered = 0
-        mirroring_disabled_filtered = 0
         for bug in sorted(bugs, key=lambda item: item.id):
             if bug.is_tracker_bug():
                 tracker_filtered += 1
@@ -165,20 +164,13 @@ class FindBugsBridgeCli:
                 unmapped_filtered += 1
                 LOGGER.debug("Skipping %s because it does not map to a target image", bug.id)
                 continue
-            if not self._image_bug_mirroring_enabled(image_meta):
-                mirroring_disabled_filtered += 1
-                LOGGER.debug(
-                    "Skipping %s because bridge bug mirroring is disabled for %s", bug.id, image_meta.distgit_key
-                )
-                continue
             candidates.append((bug, image_meta))
-        total_filtered = tracker_filtered + unmapped_filtered + mirroring_disabled_filtered
+        total_filtered = tracker_filtered + unmapped_filtered
         LOGGER.info(
-            "Filtered %d bugs: tracker/CVE=%d, unmapped/non-ART/non-payload=%d, mirroring-disabled=%d",
+            "Filtered %d bugs: tracker/CVE=%d, unmapped/non-ART/non-payload=%d",
             total_filtered,
             tracker_filtered,
             unmapped_filtered,
-            mirroring_disabled_filtered,
         )
         LOGGER.info("Found %d candidate bugs in basis group %s", len(candidates), self.bridge_config.basis_group)
         return candidates
@@ -203,12 +195,6 @@ class FindBugsBridgeCli:
             raise IOError("product.yml from the current build-data repo main branch is missing or invalid")
         self._product_config = Model(dict_to_model=product_config)
         return self._product_config
-
-    @staticmethod
-    def _image_bug_mirroring_enabled(image_meta) -> bool:
-        bridge_release = image_meta.config.get("bridge_release", {}) or {}
-        bug_mirroring = bridge_release.get("bug_mirroring", {}) or {}
-        return bug_mirroring.get("enabled", True)
 
     async def _sync_mirror(self, source_bug: JIRABug, image_meta) -> bool:
         assert self.target_tracker is not None

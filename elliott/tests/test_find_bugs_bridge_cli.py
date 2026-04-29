@@ -48,39 +48,20 @@ class TestFindBugsBridgeCli(IsolatedAsyncioTestCase):
             link.outwardIssue.key = outward_key
         return link
 
-    def test_get_candidate_bugs_filters_trackers_and_disabled_images(self):
+    def test_get_candidate_bugs_filters_trackers_and_unmapped(self):
         visible_image = MagicMock()
         visible_image.distgit_key = "visible-image"
         visible_image.get_component_name.return_value = "visible-image-container"
-        visible_image.config = {
-            "for_payload": True,
-            "delivery": {"delivery_repo_names": ["openshift4/visible-image-rhel9"]},
-        }
-        disabled_image = MagicMock()
-        disabled_image.distgit_key = "disabled-image"
-        disabled_image.get_component_name.return_value = "disabled-image-container"
-        disabled_image.config = {
-            "for_payload": True,
-            "delivery": {"delivery_repo_names": ["openshift4/disabled-image-rhel9"]},
-            "bridge_release": {"bug_mirroring": {"enabled": False}},
-        }
         self.cli.images_by_component = {
             "visible-image-container": visible_image,
-            "disabled-image-container": disabled_image,
         }
         self.cli.images_by_jira_component = {
             "Visible": visible_image,
-            "Disabled": disabled_image,
         }
 
         tracker_bug = MagicMock()
         tracker_bug.id = "OCPBUGS-1"
         tracker_bug.is_tracker_bug.return_value = True
-
-        disabled_bug = MagicMock()
-        disabled_bug.id = "OCPBUGS-2"
-        disabled_bug.is_tracker_bug.return_value = False
-        disabled_bug.component = "Disabled"
 
         visible_bug = MagicMock()
         visible_bug.id = "OCPBUGS-3"
@@ -93,7 +74,7 @@ class TestFindBugsBridgeCli(IsolatedAsyncioTestCase):
         unmanaged_bug.component = "Unmanaged"
 
         self.cli.source_tracker = MagicMock()
-        self.cli.source_tracker.search_bugs.return_value = [tracker_bug, disabled_bug, visible_bug, unmanaged_bug]
+        self.cli.source_tracker.search_bugs.return_value = [tracker_bug, visible_bug, unmanaged_bug]
 
         candidates = self.cli._get_candidate_bugs()
         self.assertEqual([(bug.id, image.distgit_key) for bug, image in candidates], [("OCPBUGS-3", "visible-image")])
@@ -103,21 +84,21 @@ class TestFindBugsBridgeCli(IsolatedAsyncioTestCase):
             verbose=False,
         )
 
-    def test_build_target_image_maps_only_includes_payload_images(self):
-        visible_image = MagicMock()
-        visible_image.get_component_name.return_value = "visible-image-container"
-        visible_image.config = {"for_payload": True}
+    def test_build_target_image_maps_respects_bridge_bug_mirroring_enabled(self):
+        enabled_image = MagicMock()
+        enabled_image.get_component_name.return_value = "visible-image-container"
+        enabled_image.bridge_bug_mirroring_enabled = True
 
-        non_payload_image = MagicMock()
-        non_payload_image.get_component_name.return_value = "non-art-built-container"
-        non_payload_image.config = {"for_payload": False}
+        disabled_image = MagicMock()
+        disabled_image.get_component_name.return_value = "disabled-image-container"
+        disabled_image.bridge_bug_mirroring_enabled = False
 
-        self.runtime.image_metas.return_value = [visible_image, non_payload_image]
+        self.runtime.image_metas.return_value = [enabled_image, disabled_image]
 
         self.cli._build_target_image_maps()
 
-        self.assertEqual(self.cli.images_by_component, {"visible-image-container": visible_image})
-        self.assertEqual(self.cli.images_by_jira_component, {"Visible": visible_image})
+        self.assertEqual(self.cli.images_by_component, {"visible-image-container": enabled_image})
+        self.assertEqual(self.cli.images_by_jira_component, {"Visible": enabled_image})
 
     async def test_sync_mirror_creates_issue_and_link(self):
         source_bug = MagicMock()
