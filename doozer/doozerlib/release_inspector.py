@@ -55,7 +55,8 @@ async def introspect_release(pullspec: str, registry_config: str = None) -> Mode
     """
     registry_config_arg = f'--registry-config={registry_config}' if registry_config else ''
     rc, release_json_str, err = await exectools.cmd_gather_async(
-        f"oc adm release info {registry_config_arg} {pullspec} -o=json", check=False)
+        f"oc adm release info {registry_config_arg} {pullspec} -o=json", check=False
+    )
 
     if rc != 0:
         raise IOError(f"Unable to gather release info for {pullspec}: {err}")
