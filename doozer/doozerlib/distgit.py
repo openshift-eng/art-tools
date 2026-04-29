@@ -2206,6 +2206,21 @@ class ImageDistGitRepo(DistGitRepo):
                     ]
                 )
 
+            # Prune dnf cache to reduce image size
+            final_stage_user = self.metadata.config.final_stage_user or 0
+            cache_prune_lines = ['']
+            if final_stage_user:
+                cache_prune_lines.append('USER 0')
+            cache_prune_lines.extend(
+                [
+                    '# Prune dnf cache to reduce image size',
+                    'RUN (if command -v microdnf; then microdnf clean all; else dnf clean all; fi && rm -rf /var/cache/dnf/*) || true',
+                ]
+            )
+            if final_stage_user:
+                cache_prune_lines.append(f'USER {final_stage_user}')
+            df_lines.extend(cache_prune_lines)
+
             df_content = "\n".join(df_lines)
 
             if release:
