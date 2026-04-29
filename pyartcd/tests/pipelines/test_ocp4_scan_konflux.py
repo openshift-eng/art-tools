@@ -6,7 +6,6 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import yaml
-
 from pyartcd.pipelines.ocp4_scan_konflux import Ocp4ScanPipeline
 from pyartcd.runtime import Runtime
 
