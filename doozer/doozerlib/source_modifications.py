@@ -202,8 +202,13 @@ class CommandModifier(object):
         set_env.update(context["set_env"])
         ceiling_dir = kwargs["ceiling_dir"]
 
+        # Format command string with context variables (e.g., {registry_config}, {release_name})
+        command = self.command
+        if isinstance(command, str):
+            command = command.format(**context)
+
         with Dir(ceiling_dir):
-            exectools.cmd_assert(self.command, set_env=set_env, log_stdout=True, log_stderr=True)
+            exectools.cmd_assert(command, set_env=set_env, log_stdout=True, log_stderr=True)
 
 
 SourceModifierFactory.MODIFICATIONS["command"] = CommandModifier

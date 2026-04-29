@@ -21,12 +21,18 @@ from artcommonlib import exectools
 from artcommonlib.arch_util import brew_arch_for_go_arch
 from artcommonlib.assembly import AssemblyTypes, assembly_config_struct
 from artcommonlib.config.repo import RepoList
-from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
+from artcommonlib.constants import (
+    KONFLUX_DEFAULT_IMAGE_REPO,
+    REGISTRY_CI_OPENSHIFT,
+    REGISTRY_QUAY_OCP_RELEASE_DEV,
+    SHIPMENT_DATA_URL_TEMPLATE,
+)
 from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.gitlab import GitLabClient
 from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.model import Model
+from artcommonlib.registry_config import RegistryConfig
 from artcommonlib.util import (
     get_art_prod_image_repo_for_version,
     get_ocp_version_from_group,
@@ -34,12 +40,11 @@ from artcommonlib.util import (
     sync_to_quay,
 )
 from doozerlib.backend.konflux_client import API_VERSION, KIND_SNAPSHOT
-from doozerlib.constants import KONFLUX_DEFAULT_IMAGE_REPO
 from doozerlib.util import isolate_git_commit_in_release
 from elliottlib.shipment_model import ShipmentConfig, Snapshot, SnapshotSpec
 from github import GithubException
 
-from pyartcd import constants, jenkins, oc
+from pyartcd import constants, jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.git import GitRepository
 from pyartcd.plashets import convert_plashet_config_to_new_style, plashet_config_for_major_minor
@@ -137,14 +142,51 @@ class BuildMicroShiftBootcPipeline:
             f'--data-path={data_path or constants.OCP_BUILD_DATA_URL}',
         ]
 
+        # Registry config will be set up in run() method
+        self._registry_config: Optional[str] = None
+
     @property
     def assembly_group_config(self) -> Model:
         """Get the assembly-specific group configuration"""
         return assembly_config_struct(Model(self.releases_config), self.assembly, "group", {})
 
     async def run(self):
-        # Make sure our api.ci token is fresh
-        await oc.registry_login()
+        if 'XDG_RUNTIME_DIR' in os.environ:
+            self._logger.info('Unsetting XDG_RUNTIME_DIR to prevent use of default registry auth')
+            del os.environ['XDG_RUNTIME_DIR']
+            self._elliott_env_vars.pop('XDG_RUNTIME_DIR', None)
+            self._doozer_env_vars.pop('XDG_RUNTIME_DIR', None)
+
+        quay_auth_file = os.getenv('QUAY_AUTH_FILE')
+        if not quay_auth_file:
+            raise ValueError(
+                "QUAY_AUTH_FILE environment variable is required but not set. "
+                "Ensure Jenkins credentials are properly bound."
+            )
+
+        source_files = [quay_auth_file]
+
+        with RegistryConfig(
+            kubeconfig=os.environ.get('KUBECONFIG'),
+            source_files=source_files,
+            registries=[
+                REGISTRY_QUAY_OCP_RELEASE_DEV,
+                KONFLUX_DEFAULT_IMAGE_REPO,
+                REGISTRY_CI_OPENSHIFT,
+            ],
+        ) as global_auth_file:
+            self._logger.info(
+                'Set registry auth file=%s for pipeline operations (cherry-picked from %d source file(s))',
+                global_auth_file,
+                len(source_files),
+            )
+
+            # Store registry config for use in pipeline operations
+            self._registry_config = global_auth_file
+
+            await self._run_pipeline()
+
+    async def _run_pipeline(self):
         data_path = self._doozer_env_vars["DOOZER_DATA_PATH"]
         self.releases_config = await load_releases_config(group=self.doozer_group, data_path=data_path)
         self.assembly_type = get_assembly_type(self.releases_config, self.assembly)
@@ -161,20 +203,6 @@ class BuildMicroShiftBootcPipeline:
         else:
             raise ValueError(f"Could not find bootc image build for assembly {self.assembly}")
 
-        # Login to Konflux registry
-        cmd = [
-            'oc',
-            'registry',
-            'login',
-            '--registry',
-            'quay.io/redhat-user-workloads',
-        ]
-
-        konflux_registry_auth_file = os.getenv("QUAY_AUTH_FILE")
-        if konflux_registry_auth_file:
-            cmd += [f'--registry-config={konflux_registry_auth_file}']
-        await exectools.cmd_assert_async(cmd)
-
         # get image digests from manifest list for all arches
         cmd = [
             "skopeo",
@@ -183,8 +211,8 @@ class BuildMicroShiftBootcPipeline:
             "--raw",
         ]
 
-        if konflux_registry_auth_file:
-            cmd += [f'--authfile={konflux_registry_auth_file}']
+        if self._registry_config:
+            cmd += [f'--authfile={self._registry_config}']
 
         _, out, _ = await exectools.cmd_gather_async(cmd)
         manifest_list = json.loads(out)
@@ -546,22 +574,28 @@ class BuildMicroShiftBootcPipeline:
             "--assembly",
             self.assembly,
             "--latest-parent-version",
-            "-i",
-            bootc_image_name,
-            # Lock to the same commit as the microshift RPM to ensure consistency
-            "--lock-upstream",
-            bootc_image_name,
-            upstream_commit,
-            "--build-system",
-            "konflux",
-            "beta:images:konflux:build",
-            "--image-repo",
-            KONFLUX_DEFAULT_IMAGE_REPO,
-            "--konflux-kubeconfig",
-            kubeconfig,
-            "--konflux-namespace",
-            "ocp-art-tenant",
         ]
+        if self._registry_config:
+            build_cmd.append(f"--registry-config={self._registry_config}")
+        build_cmd.extend(
+            [
+                "-i",
+                bootc_image_name,
+                # Lock to the same commit as the microshift RPM to ensure consistency
+                "--lock-upstream",
+                bootc_image_name,
+                upstream_commit,
+                "--build-system",
+                "konflux",
+                "beta:images:konflux:build",
+                "--image-repo",
+                KONFLUX_DEFAULT_IMAGE_REPO,
+                "--konflux-kubeconfig",
+                kubeconfig,
+                "--konflux-namespace",
+                "ocp-art-tenant",
+            ]
+        )
         if self.runtime.dry_run:
             build_cmd.append("--dry-run")
         await exectools.cmd_assert_async(build_cmd, env=self._doozer_env_vars)
