@@ -567,7 +567,7 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
             f"{self.image_repo}:test-component-1.0-1",
             self.konflux_namespace,
             self.skip_checks,
-            additional_tags,
+            additional_tags=additional_tags,
         )
 
         self.konflux_client.ensure_application.assert_called_once_with(name="test-group", display_name="test-group")

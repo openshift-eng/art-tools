@@ -65,6 +65,7 @@ class ImageBuildParams:
     vm_override: Optional[dict] = None
     skip_checks: bool = False
     skip_fips_check: bool = False
+    skip_tasks: Sequence[str] = ()
 
 
 # Label key used to filter PipelineRuns for this process
@@ -1334,27 +1335,21 @@ class KonfluxClient:
             raise IOError(
                 "SAST task is enabled, but the template does not contain it. Please ensure the template is up-to-date."
             )
+        effective_skip: set[str] = set(build_params.skip_tasks)
         if build_params.sast is False and has_sast_task:
-            tasks = []
-            has_sast_task = False
-            for task in obj["spec"]["pipelineSpec"]["tasks"]:
-                task_name = task.get("name")
-                if task_name in ("sast-unicode-check", "sast-shell-check"):
-                    self._logger.info(f"Removing {task_name} tasks since SAST is disabled")
-                    continue
-                tasks.append(task)
-
-            obj["spec"]["pipelineSpec"]["tasks"] = tasks
-
+            effective_skip |= {"sast-unicode-check", "sast-shell-check"}
         if build_params.skip_fips_check:
-            tasks = []
+            effective_skip.add("fbc-fips-check-oci-ta")
+
+        if effective_skip:
+            kept = []
             for task in obj["spec"]["pipelineSpec"]["tasks"]:
                 task_name = task.get("name")
-                if task_name == "fbc-fips-check-oci-ta":
-                    self._logger.info("Removing fbc-fips-check-oci-ta task since skip_fips_check is enabled")
+                if task_name in effective_skip:
+                    self._logger.info("Removing task %s from PipelineRun (skip_tasks)", task_name)
                     continue
-                tasks.append(task)
-            obj["spec"]["pipelineSpec"]["tasks"] = tasks
+                kept.append(task)
+            obj["spec"]["pipelineSpec"]["tasks"] = kept
 
         # https://konflux.pages.redhat.com/docs/users/how-tos/configuring/overriding-compute-resources.html
         # ose-installer-artifacts fails with OOM with default values, hence bumping memory limit
