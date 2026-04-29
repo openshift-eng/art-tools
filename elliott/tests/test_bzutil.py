@@ -573,9 +573,7 @@ class TestJIRABugTracker(unittest.TestCase):
         flexmock(JIRABugTracker).should_receive("_init_fields")
 
         tracker = JIRABugTracker(config)
-        mock_jira_client.should_receive("create_issue_link").with_args(
-            "Blocks", "OCPBUGS-100", "OCPBUGS-200"
-        ).once()
+        mock_jira_client.should_receive("create_issue_link").with_args("Blocks", "OCPBUGS-100", "OCPBUGS-200").once()
 
         tracker.create_issue_link("Blocks", "OCPBUGS-100", "OCPBUGS-200")
 
