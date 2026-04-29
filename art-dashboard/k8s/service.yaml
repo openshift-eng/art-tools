@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: art-dashboard
+  namespace: art-cd
+  labels:
+    app: art-dashboard
+spec:
+  selector:
+    app: art-dashboard
+  ports:
+    - port: 8080
+      targetPort: 8080
+      protocol: TCP
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: art-dashboard
+  namespace: art-cd
+  labels:
+    app: art-dashboard
+spec:
+  to:
+    kind: Service
+    name: art-dashboard
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
