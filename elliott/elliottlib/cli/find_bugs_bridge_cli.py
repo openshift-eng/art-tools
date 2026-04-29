@@ -202,12 +202,6 @@ class FindBugsBridgeCli:
             return False
         existing = self.existing_mirrors_by_source.get(source_bug.id, [])
         if existing:
-            if len(existing) != 1:
-                self._record_invalid_bug(
-                    source_bug.id,
-                    f"Expected exactly one bridge mirror, found {len(existing)}: {[mirror.id for mirror in existing]}",
-                )
-                return False
             if any(self._is_closed_wont_fix(mirror) for mirror in existing):
                 LOGGER.info("Skipping %s because an existing mirror is closed as Won't Fix", source_bug.id)
                 return False
