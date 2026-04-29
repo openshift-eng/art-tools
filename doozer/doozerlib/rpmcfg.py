@@ -126,6 +126,7 @@ class RPMMetadata(Metadata):
             },
             "runtime_assembly": self.runtime.assembly,
             "release_name": "",
+            "registry_config": self.runtime.registry_config or "",
         }
 
         if self.runtime.assembly_type is not AssemblyTypes.STREAM:
