@@ -380,6 +380,55 @@ class Repodata:
 
 class RepodataLoader:
     @staticmethod
+    def _extract_metadata_refs(repomd_xml: xml.etree.ElementTree.Element):
+        primary_data_element = repomd_xml.find('repo:data[@type="primary"]', NAMESPACES)
+        if primary_data_element is None:
+            raise ValueError("Couldn't find primary data in repodata")
+        primary_location = primary_data_element.find('repo:location', NAMESPACES)
+        if primary_location is None:
+            raise ValueError("Couldn't find primary location in repodata")
+        primary_ref = primary_location.attrib['href']
+
+        modules_ref = None
+        modules_checksum = None
+        modules_size = None
+        modules_data_element = repomd_xml.find('repo:data[@type="modules"]', NAMESPACES)
+        if modules_data_element is not None:
+            modules_location = modules_data_element.find('repo:location', NAMESPACES)
+            if modules_location is None:
+                raise ValueError("Couldn't find modules location in repodata")
+            modules_ref = modules_location.attrib['href']
+
+            modules_checksum_element = modules_data_element.find('repo:checksum', NAMESPACES)
+            if modules_checksum_element is not None:
+                modules_checksum = f"{modules_checksum_element.attrib['type']}:{modules_checksum_element.text}"
+
+            modules_size_element = modules_data_element.find('repo:size', NAMESPACES)
+            if modules_size_element is not None:
+                modules_size = int(modules_size_element.text)
+
+        return primary_ref, modules_ref, modules_checksum, modules_size
+
+    @staticmethod
+    def _build_repodata(
+        repo_name: str,
+        primary_bytes: bytes,
+        modules_bytes: bytes,
+        modules_checksum: Optional[str] = None,
+        modules_size: Optional[int] = None,
+        modules_url: Optional[str] = None,
+    ):
+        yaml = YAML(typ='safe')
+        return Repodata.from_metadatas(
+            repo_name,
+            ET.fromstring(primary_bytes),
+            list(yaml.load_all(modules_bytes) if modules_bytes else []),
+            modules_checksum=modules_checksum,
+            modules_size=modules_size,
+            modules_url=modules_url,
+        )
+
+    @staticmethod
     async def _fetch_remote_compressed(session: aiohttp.ClientSession, url: Optional[str]):
         if not url:
             return b''
@@ -418,32 +467,9 @@ class RepodataLoader:
                 _, _, err = await cmd_gather_async(curl_cmd)
                 LOGGER.info('curl command stderr: %s', err)
                 raise
-
-            primary_data_element = repomd_xml.find('repo:data[@type="primary"]', NAMESPACES)
-            if primary_data_element is None:
-                raise ValueError("Couldn't find primary data in repodata")
-            primary_location = primary_data_element.find('repo:location', NAMESPACES)
-            if primary_location is None:
-                raise ValueError("Couldn't find primary location in repodata")
-            primary_url = parse.urljoin(repo_url, primary_location.attrib['href'])
-
-            modules_url = None
-            modules_checksum = None
-            modules_size = None
-            modules_data_element = repomd_xml.find('repo:data[@type="modules"]', NAMESPACES)
-            if modules_data_element is not None:
-                modules_location = modules_data_element.find('repo:location', NAMESPACES)
-                if modules_location is None:
-                    raise ValueError("Couldn't find modules location in repodata")
-                modules_url = parse.urljoin(repo_url, modules_location.attrib['href'])
-
-                modules_checksum_element = modules_data_element.find('repo:checksum', NAMESPACES)
-                if modules_checksum_element is not None:
-                    modules_checksum = f"{modules_checksum_element.attrib['type']}:{modules_checksum_element.text}"
-
-                modules_size_element = modules_data_element.find('repo:size', NAMESPACES)
-                if modules_size_element is not None:
-                    modules_size = int(modules_size_element.text)
+            primary_ref, modules_ref, modules_checksum, modules_size = self._extract_metadata_refs(repomd_xml)
+            primary_url = parse.urljoin(repo_url, primary_ref)
+            modules_url = parse.urljoin(repo_url, modules_ref) if modules_ref else None
 
             @retry(
                 reraise=True,
@@ -468,17 +494,14 @@ class RepodataLoader:
                 fetch_remote_compressed(primary_url),
                 fetch_remote_compressed(modules_url),
             )
-
-        yaml = YAML(typ='safe')
-        repodata = Repodata.from_metadatas(
+        return self._build_repodata(
             repo_name,
-            ET.fromstring(primary_bytes),
-            list(yaml.load_all(modules_bytes) if modules_bytes else []),
+            primary_bytes,
+            modules_bytes,
             modules_checksum=modules_checksum,
             modules_size=modules_size,
             modules_url=modules_url,
         )
-        return repodata
 
 
 class OutdatedRPMFinder:

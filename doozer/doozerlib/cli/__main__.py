@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import os
+import shlex
 import shutil
 import sys
 import tempfile
@@ -305,7 +306,22 @@ def beta_reposync(runtime, output, cachedir, arch, repo_type, names, dry_run):
         if cfg.is_reposync_enabled():
             enabled_repos.append(name)
 
-    yum_conf = """
+    optional_fails = []
+
+    if not os.path.isdir(output):
+        yellow_print('Creating outputdir: {}'.format(output))
+        exectools.cmd_assert('mkdir -p {}'.format(shlex.quote(output)))
+
+    if not os.path.isdir(cachedir):
+        yellow_print('Creating cachedir: {}'.format(cachedir))
+        exectools.cmd_assert('mkdir -p {}'.format(shlex.quote(cachedir)))
+
+    metadata_dir = None
+    yc_file = None
+    try:
+        # Use an isolated dnf cache so stale repodata from previous runs can't bleed into this sync.
+        metadata_dir = tempfile.mkdtemp(prefix='reposync-cache.', dir=cachedir)
+        yum_conf = """
 [main]
 cachedir={}/$basearch/$releasever
 keepcache=0
@@ -315,36 +331,20 @@ obsoletes=1
 gpgcheck=1
 plugins=1
 installonly_limit=3
-""".format(cachedir, runtime.working_dir)
+metadata_expire=0
+""".format(metadata_dir, runtime.working_dir)
+        repos_content = repos.repo_file(repo_type, enabled_repos=enabled_repos, arch=arch)
+        content = "{}\n\n{}".format(yum_conf, repos_content)
 
-    optional_fails = []
+        print("repo config:\n", content)
 
-    repos_content = repos.repo_file(repo_type, enabled_repos=enabled_repos, arch=arch)
-    content = "{}\n\n{}".format(yum_conf, repos_content)
-
-    print("repo config:\n", content)
-
-    if not os.path.isdir(output):
-        yellow_print('Creating outputdir: {}'.format(output))
-        exectools.cmd_assert('mkdir -p {}'.format(output))
-
-    if not os.path.isdir(cachedir):
-        yellow_print('Creating cachedir: {}'.format(cachedir))
-        exectools.cmd_assert('mkdir -p {}'.format(cachedir))
-
-    metadata_dir = None
-    yc_file = None
-    try:
-        # If corrupted, reposync metadata can interfere with subsequent runs.
-        # Ensure we have a clean space for each invocation.
-        metadata_dir = tempfile.mkdtemp(prefix='reposync-metadata.', dir=cachedir)
         yc_file = tempfile.NamedTemporaryFile()
         yc_file.write(content.encode('utf-8'))
 
         # must flush so it can be read
         yc_file.flush()
 
-        exectools.cmd_assert('yum clean all')  # clean the cache first to avoid outdated repomd.xml files
+        exectools.cmd_assert(f'dnf --config {shlex.quote(yc_file.name)} clean all')
 
         for repo in repos.values():
             # If specific names were specified, only synchronize them.
@@ -355,34 +355,48 @@ installonly_limit=3
                 runtime.logger.info('Skipping repo {} because reposync is disabled in group.yml'.format(repo.name))
                 continue
 
-            color_print('Syncing repo {}'.format(repo.name), 'blue')
-            cmd = (
-                'dnf '
-                f'--config {yc_file.name} '
-                f'--repoid {repo.name} '
-                'reposync '
-                f'--arch {arch} '
-                '--arch noarch '
-                '--delete '
-                '--download-metadata '
-                f'--download-path {output} '
-            )
-            if repo.is_reposync_latest_only():
-                cmd += '--newest-only '
+            try:
+                color_print('Syncing repo {}'.format(repo.name), 'blue')
+                cmd = (
+                    'dnf '
+                    f'--config {shlex.quote(yc_file.name)} '
+                    '--refresh '
+                    f'--repoid {shlex.quote(repo.name)} '
+                    'reposync '
+                    f'--arch {arch} '
+                    '--arch noarch '
+                    '--delete '
+                    '--download-metadata '
+                    f'--download-path {shlex.quote(output)} '
+                )
+                if repo.is_reposync_latest_only():
+                    cmd += '--newest-only '
 
-            if dry_run:
-                cmd += '--urls '
+                if dry_run:
+                    cmd += '--urls '
 
-            rc, out, err = exectools.cmd_gather(cmd, realtime=True)
-            if rc != 0:
+                rc, out, err = exectools.cmd_gather(cmd, realtime=True)
+                if rc != 0:
+                    raise DoozerFatalError(err or out or f'Failed to sync repo {repo.name}')
+
+                if dry_run:
+                    continue
+
+                local_repo_dir = os.path.join(output, repo.name)
+                if not os.path.isdir(local_repo_dir):
+                    raise DoozerFatalError(f'Expected mirrored repo directory was not created: {local_repo_dir}')
+
+                exectools.cmd_assert(f'createrepo_c --update --keep-all-metadata {shlex.quote(local_repo_dir)}')
+            except Exception as ex:
                 if not repo.cs_optional:
-                    raise DoozerFatalError(err)
-                else:
-                    runtime.logger.warning('Failed to sync repo {} but marked as optional: {}'.format(repo.name, err))
-                    optional_fails.append(repo.name)
+                    raise
+                runtime.logger.warning('Failed to sync repo %s but marked as optional: %s', repo.name, ex)
+                optional_fails.append(repo.name)
     finally:
-        yc_file.close()
-        shutil.rmtree(metadata_dir, ignore_errors=True)
+        if yc_file:
+            yc_file.close()
+        if metadata_dir:
+            shutil.rmtree(metadata_dir, ignore_errors=True)
 
     if optional_fails:
         yellow_print(
