@@ -24,7 +24,7 @@ class TestFindBugsBridgeCli(IsolatedAsyncioTestCase):
         self.cli.target_tracker = MagicMock()
         self.cli.target_tracker.project = "OCPBUGS"
         self.cli.target_tracker.field_target_version = "customfield_12345"
-        self.cli.target_tracker._query.return_value = "mirror query"
+        self.cli.target_tracker.search_bugs.return_value = []
         self.cli.existing_mirrors_by_source = {}
         self.cli._product_config = Model(
             {
@@ -93,16 +93,15 @@ class TestFindBugsBridgeCli(IsolatedAsyncioTestCase):
         unmanaged_bug.component = "Unmanaged"
 
         self.cli.source_tracker = MagicMock()
-        self.cli.source_tracker._query.return_value = "source query"
-        self.cli.source_tracker._search.return_value = [tracker_bug, disabled_bug, visible_bug, unmanaged_bug]
+        self.cli.source_tracker.search_bugs.return_value = [tracker_bug, disabled_bug, visible_bug, unmanaged_bug]
 
         candidates = self.cli._get_candidate_bugs()
         self.assertEqual([(bug.id, image.distgit_key) for bug, image in candidates], [("OCPBUGS-3", "visible-image")])
-        self.cli.source_tracker._query.assert_called_once_with(
+        self.cli.source_tracker.search_bugs.assert_called_once_with(
             search_filter="default",
             custom_query=' and status != "CLOSED"',
+            verbose=False,
         )
-        self.cli.source_tracker._search.assert_called_once_with("source query", verbose=False)
 
     def test_build_target_image_maps_only_includes_payload_images(self):
         visible_image = MagicMock()
@@ -150,10 +149,10 @@ class TestFindBugsBridgeCli(IsolatedAsyncioTestCase):
         self.assertEqual(create_call["issuetype"], {"name": "Story"})
         self.assertEqual(create_call["components"], [{"name": "Visible"}])
         self.assertIn(BRIDGE_LABEL, create_call["labels"])
-        self.cli.target_tracker._client.create_issue_link.assert_any_call("Blocks", "OCPBUGS-123", "OCPBUGS-999")
-        self.cli.target_tracker._client.create_issue_link.assert_any_call("Depend", "OCPBUGS-999", "OCPBUGS-123")
-        self.cli.target_tracker._client.create_issue_link.assert_any_call("Cloners", "OCPBUGS-999", "OCPBUGS-123")
-        self.assertEqual(self.cli.target_tracker._client.create_issue_link.call_count, 3)
+        self.cli.target_tracker.create_issue_link.assert_any_call("Blocks", "OCPBUGS-123", "OCPBUGS-999")
+        self.cli.target_tracker.create_issue_link.assert_any_call("Depend", "OCPBUGS-999", "OCPBUGS-123")
+        self.cli.target_tracker.create_issue_link.assert_any_call("Cloners", "OCPBUGS-999", "OCPBUGS-123")
+        self.assertEqual(self.cli.target_tracker.create_issue_link.call_count, 3)
 
     async def test_sync_mirror_skips_existing_wont_fix(self):
         source_bug = MagicMock()
@@ -182,18 +181,18 @@ class TestFindBugsBridgeCli(IsolatedAsyncioTestCase):
         unrelated_mirror = MagicMock()
         unrelated_mirror.id = "OCPBUGS-901"
         unrelated_mirror.bug.fields.issuelinks = [self._link("Blocks", inward_key="OCPBUGS-999")]
-        self.cli.target_tracker._search.return_value = [mirror_for_source, unrelated_mirror]
+        self.cli.target_tracker.search_bugs.return_value = [mirror_for_source, unrelated_mirror]
 
         mirrors_by_source = self.cli._get_existing_mirrors_by_source(["OCPBUGS-123", "OCPBUGS-456"])
 
         self.assertEqual(mirrors_by_source["OCPBUGS-123"], [mirror_for_source])
         self.assertEqual(mirrors_by_source["OCPBUGS-456"], [])
-        self.cli.target_tracker._query.assert_called_once_with(
+        self.cli.target_tracker.search_bugs.assert_called_once_with(
             include_labels=[BRIDGE_LABEL],
             with_target_release=True,
             custom_query=" order by created DESC",
+            verbose=False,
         )
-        self.cli.target_tracker._search.assert_called_once()
 
     def test_get_existing_mirrors_by_source_complains_for_duplicate_mirrors(self):
         mirror_a = MagicMock()
@@ -202,7 +201,7 @@ class TestFindBugsBridgeCli(IsolatedAsyncioTestCase):
         mirror_b = MagicMock()
         mirror_b.id = "OCPBUGS-901"
         mirror_b.bug.fields.issuelinks = [self._link("Depend", outward_key="OCPBUGS-123")]
-        self.cli.target_tracker._search.return_value = [mirror_a, mirror_b]
+        self.cli.target_tracker.search_bugs.return_value = [mirror_a, mirror_b]
 
         mirrors_by_source = self.cli._get_existing_mirrors_by_source(["OCPBUGS-123"])
 

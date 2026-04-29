@@ -536,6 +536,49 @@ class TestJIRABugTracker(unittest.TestCase):
         result = tracker.cve_tracker_search(["NEW"])
         self.assertEqual(result, [])
 
+        # Test search_bugs method
+        result = tracker.search_bugs(status=["NEW"])
+        self.assertEqual(result, [])
+
+    def test_search_bugs_delegates_to_query_and_search(self):
+        config = {
+            "project": "OCPBUGS",
+            "server": JIRA_SERVER_URL,
+            "target_release": ["4.23.z"],
+        }
+        mock_jira_client = flexmock()
+        flexmock(JIRABugTracker).should_receive("login").and_return(mock_jira_client)
+        flexmock(JIRABugTracker).should_receive("_init_fields")
+
+        tracker = JIRABugTracker(config)
+        flexmock(tracker).should_receive("_get_available_target_versions").and_return(["4.23.z"])
+
+        mock_bug = flexmock(key="OCPBUGS-1")
+        mock_jira_client.should_receive("search_issues").and_return([mock_bug])
+
+        results = tracker.search_bugs(
+            search_filter="default",
+            include_labels=["art:bridge-bug"],
+            custom_query=" order by created DESC",
+            verbose=False,
+        )
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].id, "OCPBUGS-1")
+
+    def test_create_issue_link_delegates_to_client(self):
+        config = {"project": "OCPBUGS", "server": JIRA_SERVER_URL}
+        mock_jira_client = flexmock()
+        flexmock(JIRABugTracker).should_receive("login").and_return(mock_jira_client)
+        flexmock(JIRABugTracker).should_receive("_init_fields")
+
+        tracker = JIRABugTracker(config)
+        mock_jira_client.should_receive("create_issue_link").with_args(
+            "Blocks", "OCPBUGS-100", "OCPBUGS-200"
+        ).once()
+
+        tracker.create_issue_link("Blocks", "OCPBUGS-100", "OCPBUGS-200")
+
 
 class TestBugzillaBugTracker(unittest.TestCase):
     def test_get_config(self):

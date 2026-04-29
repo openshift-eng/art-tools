@@ -1101,6 +1101,31 @@ class JIRABugTracker(BugTracker):
             return []
         return self._search(query, verbose=verbose)
 
+    def search_bugs(
+        self,
+        status: Optional[List] = None,
+        search_filter: Optional[str] = None,
+        include_labels: Optional[List] = None,
+        exclude_labels: Optional[List] = None,
+        with_target_release: bool = True,
+        custom_query: Optional[str] = None,
+        verbose: bool = False,
+    ) -> List[JIRABug]:
+        query = self._query(
+            status=status,
+            search_filter=search_filter,
+            include_labels=include_labels,
+            exclude_labels=exclude_labels,
+            with_target_release=with_target_release,
+            custom_query=custom_query,
+        )
+        if query is None:
+            return []
+        return self._search(query, verbose=verbose)
+
+    def create_issue_link(self, link_name: str, inward_issue: str, outward_issue: str):
+        self._client.create_issue_link(link_name, inward_issue, outward_issue)
+
     def remove_bugs(self, advisory_obj, bugids: List, noop=False):
         if noop:
             print(f"Would've removed bugs: {bugids}")
