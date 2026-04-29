@@ -263,6 +263,7 @@ class KonfluxBuildCli:
         plr_template: str,
         build_priority: Optional[str],
         skip_ec_verify: bool = False,
+        skip_tasks: tuple[str, ...] = (),
     ):
         self.runtime = runtime
         self.konflux_kubeconfig = konflux_kubeconfig
@@ -271,6 +272,7 @@ class KonfluxBuildCli:
         self.image_repo = image_repo
         self.registry_auth_file = registry_auth_file
         self.skip_checks = skip_checks
+        self.skip_tasks = skip_tasks
         self.dry_run = dry_run
         self.plr_template = plr_template
         self.build_priority = build_priority
@@ -309,6 +311,7 @@ class KonfluxBuildCli:
             image_repo=self.image_repo,
             registry_auth_file=self.registry_auth_file,
             skip_checks=self.skip_checks,
+            skip_tasks=self.skip_tasks,
             dry_run=self.dry_run,
             plr_template=self.plr_template,
             build_priority=self.build_priority,
@@ -373,6 +376,12 @@ class KonfluxBuildCli:
 )
 @click.option('--image-repo', default=constants.KONFLUX_DEFAULT_IMAGE_REPO, help='Push images to the specified repo.')
 @click.option('--skip-checks', default=False, is_flag=True, help='Skip all post build checks')
+@click.option(
+    '--skip-task',
+    'skip_tasks',
+    multiple=True,
+    help='Remove a named Tekton task from the PipelineRun. Repeatable (e.g. --skip-task clair-scan --skip-task sast-snyk-check).',
+)
 @click.option('--dry-run', default=False, is_flag=True, help='Do not build anything, but only print build operations.')
 @click.option(
     '--plr-template',
@@ -408,6 +417,7 @@ async def images_konflux_build(
     konflux_namespace: str,
     image_repo: str,
     skip_checks: bool,
+    skip_tasks: tuple,
     dry_run: bool,
     plr_template: str,
     build_priority: Optional[str],
@@ -425,6 +435,7 @@ async def images_konflux_build(
         image_repo=image_repo,
         registry_auth_file=runtime.registry_config,
         skip_checks=skip_checks,
+        skip_tasks=skip_tasks,
         dry_run=dry_run,
         plr_template=plr_template,
         build_priority=build_priority,
@@ -448,6 +459,7 @@ class KonfluxBundleCli:
         release: Optional[str],
         plr_template: str,
         output: str,
+        skip_tasks: tuple[str, ...] = (),
     ):
         self.runtime = runtime
         self.operator_nvrs = list(operator_nvrs)
@@ -458,6 +470,7 @@ class KonfluxBundleCli:
         self.konflux_namespace = konflux_namespace
         self.image_repo = image_repo
         self.skip_checks = skip_checks
+        self.skip_tasks = skip_tasks
         self.release = release
         self.output = output
         self.plr_template = plr_template
@@ -607,6 +620,7 @@ class KonfluxBundleCli:
             konflux_context=self.konflux_context,
             image_repo=self.image_repo,
             skip_checks=self.skip_checks,
+            skip_tasks=self.skip_tasks,
             pipelinerun_template_url=self.plr_template,
             dry_run=self.dry_run,
             assembly_type=runtime.assembly_type,
@@ -712,6 +726,12 @@ class KonfluxBundleCli:
 )
 @click.option('--image-repo', default=constants.KONFLUX_DEFAULT_IMAGE_REPO, help='Push images to the specified repo.')
 @click.option('--skip-checks', default=False, is_flag=True, help='Skip all post build checks')
+@click.option(
+    '--skip-task',
+    'skip_tasks',
+    multiple=True,
+    help='Remove a named Tekton task from the PipelineRun. Repeatable (e.g. --skip-task clair-scan --skip-task sast-snyk-check).',
+)
 @click.option("--release", metavar='RELEASE', help="Release string to populate in bundle's Dockerfiles.")
 @click.option(
     '--plr-template',
@@ -738,6 +758,7 @@ async def images_konflux_bundle(
     konflux_namespace: str,
     image_repo: str,
     skip_checks: bool,
+    skip_tasks: tuple,
     release: Optional[str],
     plr_template: str,
     output: str,
@@ -752,6 +773,7 @@ async def images_konflux_bundle(
         konflux_namespace=konflux_namespace,
         image_repo=image_repo,
         skip_checks=skip_checks,
+        skip_tasks=skip_tasks,
         release=release,
         plr_template=plr_template,
         output=output,

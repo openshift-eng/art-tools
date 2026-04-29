@@ -1402,6 +1402,18 @@
           "$ref": "#/properties/konflux/properties/build_attempts"
         },
         "build_attempts-": {},
+        "skip_tasks": {
+          "description": "List of Tekton task names to remove from PipelineRuns for this image",
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "skip_tasks!": {
+          "$ref": "#/properties/konflux/properties/skip_tasks"
+        },
+        "skip_tasks?": {
+          "$ref": "#/properties/konflux/properties/skip_tasks"
+        },
+        "skip_tasks-": {},
         "content": {
           "$ref": "image_content.base.schema.json"
         }

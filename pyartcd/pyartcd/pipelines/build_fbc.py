@@ -59,13 +59,14 @@ class BuildFbcPipeline:
         kubeconfig: str,
         plr_template: str,
         skip_checks: bool,
-        reset_to_prod: bool,
-        prod_registry_auth: Optional[str],
-        force: bool,
-        group: str,
-        major_minor: Optional[str],
-        ignore_locks: bool,
-        insert_missing_entry: bool,
+        skip_tasks: tuple[str, ...] = (),
+        reset_to_prod: bool = True,
+        prod_registry_auth: Optional[str] = None,
+        force: bool = False,
+        group: str = '',
+        major_minor: Optional[str] = None,
+        ignore_locks: bool = False,
+        insert_missing_entry: bool = False,
     ):
         self.runtime = runtime
         self.version = version
@@ -80,6 +81,7 @@ class BuildFbcPipeline:
         self.kubeconfig = kubeconfig
         self.plr_template = plr_template
         self.skip_checks = skip_checks
+        self.skip_tasks = skip_tasks
         self.reset_to_prod = reset_to_prod
         self.prod_registry_auth = prod_registry_auth
         self.force = force
@@ -216,6 +218,8 @@ class BuildFbcPipeline:
             doozer_opts.extend(['--plr-template', plr_template_url])
         if self.skip_checks:
             doozer_opts.append('--skip-checks')
+        for task_name in self.skip_tasks:
+            doozer_opts.extend(['--skip-task', task_name])
         if self.reset_to_prod:
             doozer_opts.append('--reset-to-prod')
         else:
@@ -314,6 +318,12 @@ class BuildFbcPipeline:
 )
 @click.option("--skip-checks", is_flag=True, help="Skip all post build checks in the FBC build pipeline")
 @click.option(
+    '--skip-task',
+    'skip_tasks',
+    multiple=True,
+    help='Remove a named Tekton task from the PipelineRun. Repeatable (e.g. --skip-task clair-scan).',
+)
+@click.option(
     "--reset-to-prod/--no-reset-to-prod", is_flag=True, help="Reset FBC builds to the latest production version"
 )
 @click.option(
@@ -354,6 +364,7 @@ async def build_fbc(
     kubeconfig: str,
     plr_template: str,
     skip_checks: bool,
+    skip_tasks: tuple,
     reset_to_prod: bool,
     prod_registry_auth: Optional[str],
     force: bool,
@@ -379,6 +390,7 @@ async def build_fbc(
         kubeconfig=kubeconfig,
         plr_template=plr_template,
         skip_checks=skip_checks,
+        skip_tasks=skip_tasks,
         reset_to_prod=reset_to_prod,
         prod_registry_auth=prod_registry_auth,
         force=force,

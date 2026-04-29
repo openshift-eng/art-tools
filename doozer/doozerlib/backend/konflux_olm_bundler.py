@@ -27,7 +27,7 @@ from artcommonlib.util import sync_to_quay
 from dockerfile_parse import DockerfileParser
 from doozerlib import constants, util
 from doozerlib.backend.build_repo import BuildRepo
-from doozerlib.backend.konflux_client import KonfluxClient
+from doozerlib.backend.konflux_client import ImageBuildParams, KonfluxClient
 from doozerlib.backend.pipelinerun_utils import PipelineRunInfo
 from doozerlib.image import ImageMetadata
 from doozerlib.record_logger import RecordLogger
@@ -607,6 +607,7 @@ class KonfluxOlmBundleBuilder:
         konflux_context: Optional[str] = None,
         image_repo: str = constants.KONFLUX_DEFAULT_IMAGE_REPO,
         skip_checks: bool = False,
+        skip_tasks: Sequence[str] = (),
         pipelinerun_template_url: str = constants.KONFLUX_DEFAULT_BUNDLE_BUILD_PLR_TEMPLATE_URL,
         dry_run: bool = False,
         skip_ec_verify: bool = False,
@@ -624,6 +625,7 @@ class KonfluxOlmBundleBuilder:
         self.konflux_context = konflux_context
         self.image_repo = image_repo
         self.skip_checks = skip_checks
+        self.skip_tasks = tuple(skip_tasks)
         self.pipelinerun_template_url = pipelinerun_template_url
         self.dry_run = dry_run
         self.skip_ec_verify = skip_ec_verify
@@ -726,6 +728,7 @@ class KonfluxOlmBundleBuilder:
                     output_image,
                     self.konflux_namespace,
                     self.skip_checks,
+                    skip_tasks=self.skip_tasks,
                     git_auth_secret=git_auth_secret,
                 )
                 pipelinerun_name = pipelinerun_info.name
@@ -879,6 +882,7 @@ class KonfluxOlmBundleBuilder:
         output_image: str,
         namespace: str,
         skip_checks: bool = False,
+        skip_tasks: Sequence[str] = (),
         additional_tags: Optional[Sequence[str]] = None,
         git_auth_secret: Optional[str] = None,
     ) -> Tuple[PipelineRunInfo, str]:
@@ -919,14 +923,16 @@ class KonfluxOlmBundleBuilder:
             commit_sha=bundle_build_repo.commit_hash,
             target_branch=target_branch,
             output_image=output_image,
-            vm_override={},
             building_arches=["x86_64"],
-            additional_tags=list(additional_tags),
-            skip_checks=skip_checks,
-            hermetic=True,
             pipelinerun_template_url=self.pipelinerun_template_url,
-            artifact_type="operatorbundle",
-            build_priority=BUNDLE_BUILD_PRIORITY,
+            build_params=ImageBuildParams(
+                additional_tags=list(additional_tags),
+                skip_checks=skip_checks,
+                skip_tasks=skip_tasks,
+                hermetic=True,
+                artifact_type="operatorbundle",
+                build_priority=BUNDLE_BUILD_PRIORITY,
+            ),
         )
         if git_auth_secret:
             build_kwargs["git_auth_secret"] = git_auth_secret

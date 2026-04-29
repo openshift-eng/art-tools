@@ -7,7 +7,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock, Mock, call, patch
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBundleBuildRecord, KonfluxECStatus
 from doozerlib.backend.build_repo import BuildRepo
-from doozerlib.backend.konflux_client import KonfluxClient
+from doozerlib.backend.konflux_client import ImageBuildParams, KonfluxClient
 from doozerlib.backend.konflux_fbc import (
     AssemblyBundleCsvInfo,
     KonfluxFbcBuilder,
@@ -2176,14 +2176,15 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
             commit_sha="deadbeef",
             target_branch='test-branch',
             output_image='test-image-pullspec',
-            vm_override={},
             building_arches=['x86_64', 's390x'],
-            additional_tags=[],
-            skip_checks=False,
-            hermetic=True,
-            dockerfile='catalog.Dockerfile',
             pipelinerun_template_url='https://example.com/template.yaml',
-            build_priority='2',
+            build_params=ImageBuildParams(
+                hermetic=True,
+                dockerfile='catalog.Dockerfile',
+                skip_checks=False,
+                skip_fips_check=False,
+                build_priority='2',
+            ),
         )
         self.assertEqual(result, (pplr, "https://example.com/pipelinerun/test-pipeline-run-name"))
 
@@ -2229,14 +2230,15 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
             commit_sha="deadbeef",
             target_branch='test-branch',
             output_image='test-image-pullspec',
-            vm_override={},
             building_arches=['x86_64', 's390x'],
-            additional_tags=["ocp__4.20__sample-operator-1", "ocp__4.20__sample-operator-2"],
-            skip_checks=False,
-            hermetic=True,
-            dockerfile='catalog.Dockerfile',
             pipelinerun_template_url='https://example.com/template.yaml',
-            build_priority='2',
+            build_params=ImageBuildParams(
+                additional_tags=["ocp__4.20__sample-operator-1", "ocp__4.20__sample-operator-2"],
+                skip_checks=False,
+                hermetic=True,
+                dockerfile='catalog.Dockerfile',
+                build_priority='2',
+            ),
         )
         self.assertEqual(result, (pplr, "https://example.com/pipelinerun/test-pipeline-run-name"))
 
@@ -2511,14 +2513,15 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
             commit_sha="deadbeef",
             target_branch='test-branch',
             output_image='test-image-pullspec',
-            vm_override={},
             building_arches=['x86_64', 's390x'],
-            additional_tags=expected_additional_tags,
-            skip_checks=False,
-            hermetic=True,
-            dockerfile='catalog.Dockerfile',
             pipelinerun_template_url='https://example.com/template.yaml',
-            build_priority='2',
+            build_params=ImageBuildParams(
+                additional_tags=expected_additional_tags,
+                skip_checks=False,
+                hermetic=True,
+                dockerfile='catalog.Dockerfile',
+                build_priority='2',
+            ),
         )
         self.assertEqual(result, (pplr, "https://example.com/pipelinerun/test-pipeline-run-name"))
 
@@ -2564,14 +2567,15 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
             commit_sha="deadbeef",
             target_branch='test-branch',
             output_image='test-image-pullspec',
-            vm_override={},
             building_arches=['x86_64', 's390x'],
-            additional_tags=expected_additional_tags,
-            skip_checks=False,
-            hermetic=True,
-            dockerfile='catalog.Dockerfile',
             pipelinerun_template_url='https://example.com/template.yaml',
-            build_priority='2',
+            build_params=ImageBuildParams(
+                additional_tags=expected_additional_tags,
+                skip_checks=False,
+                hermetic=True,
+                dockerfile='catalog.Dockerfile',
+                build_priority='2',
+            ),
         )
         self.assertEqual(result, (pplr, "https://example.com/pipelinerun/test-pipeline-run-name"))
 

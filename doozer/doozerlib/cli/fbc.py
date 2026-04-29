@@ -208,9 +208,10 @@ class FbcMergeCli:
         message: Optional[str],
         skip_checks: bool,
         skip_fips_check: bool,
-        plr_template: Optional[str],
-        target_index: Optional[str],
-        major_minor: Optional[str],
+        skip_tasks: tuple[str, ...] = (),
+        plr_template: Optional[str] = None,
+        target_index: Optional[str] = None,
+        major_minor: Optional[str] = None,
     ):
         """
         Initialize the FBCFragmentMergerCli.
@@ -228,6 +229,7 @@ class FbcMergeCli:
         self.message = message
         self.skip_checks = skip_checks
         self.skip_fips_check = skip_fips_check
+        self.skip_tasks = skip_tasks
         self.plr_template = plr_template
         self.target_index = target_index
         self.major_minor = major_minor
@@ -326,6 +328,7 @@ class FbcMergeCli:
             konflux_namespace=self.konflux_namespace,
             skip_checks=self.skip_checks,
             skip_fips_check=self.skip_fips_check,
+            skip_tasks=self.skip_tasks,
             plr_template=self.plr_template,
             major_minor_override=(major, minor) if self.major_minor else None,
         )
@@ -398,6 +401,12 @@ class FbcMergeCli:
 @click.option('--skip-checks', is_flag=True, default=False, help='Skip all post build checks')
 @click.option('--skip-fips-check', is_flag=True, default=False, help='Skip the FIPS compliance check task')
 @click.option(
+    '--skip-task',
+    'skip_tasks',
+    multiple=True,
+    help='Remove a named Tekton task from the PipelineRun. Repeatable (e.g. --skip-task clair-scan).',
+)
+@click.option(
     '--target-index',
     metavar='TARGET_INDEX',
     default=None,
@@ -424,6 +433,7 @@ async def fbc_merge(
     registry_auth: Optional[str],
     skip_checks: bool,
     skip_fips_check: bool,
+    skip_tasks: tuple,
     plr_template: Optional[str],
     target_index: Optional[str],
     major_minor: Optional[str],
@@ -454,6 +464,7 @@ async def fbc_merge(
         konflux_namespace=resolved_namespace,
         skip_checks=skip_checks,
         skip_fips_check=skip_fips_check,
+        skip_tasks=skip_tasks,
         plr_template=plr_template,
         target_index=target_index,
         major_minor=major_minor,
@@ -483,6 +494,7 @@ class FbcRebaseAndBuildCli:
         prod_registry_auth: Optional[str] = None,
         major_minor: Optional[str] = None,
         insert_missing_entry: bool = False,
+        skip_tasks: tuple[str, ...] = (),
     ):
         self.runtime = runtime
         self.version = version
@@ -495,6 +507,7 @@ class FbcRebaseAndBuildCli:
         self.konflux_namespace = konflux_namespace
         self.image_repo = image_repo
         self.skip_checks = skip_checks
+        self.skip_tasks = skip_tasks
         self.plr_template = plr_template
         self.dry_run = dry_run
         self.force = force
@@ -745,6 +758,7 @@ class FbcRebaseAndBuildCli:
             konflux_namespace=self.konflux_namespace,
             image_repo=self.image_repo,
             skip_checks=self.skip_checks,
+            skip_tasks=self.skip_tasks,
             pipelinerun_template_url=self.plr_template,
             dry_run=self.dry_run,
             major_minor_override=ocp_version if self.major_minor else None,
@@ -853,6 +867,12 @@ class FbcRebaseAndBuildCli:
 )
 @click.option('--image-repo', default=constants.KONFLUX_DEFAULT_FBC_REPO, help='Push images to the specified repo.')
 @click.option('--skip-checks', default=False, is_flag=True, help='Skip all post build checks')
+@click.option(
+    '--skip-task',
+    'skip_tasks',
+    multiple=True,
+    help='Remove a named Tekton task from the PipelineRun. Repeatable (e.g. --skip-task clair-scan).',
+)
 @click.option('--dry-run', default=False, is_flag=True, help='Do not build anything, but only print build operations.')
 @click.option(
     '--force',
@@ -911,6 +931,7 @@ async def fbc_rebase_and_build(
     konflux_namespace: str,
     image_repo: str,
     skip_checks: bool,
+    skip_tasks: tuple,
     dry_run: bool,
     force: bool,
     plr_template: str,
@@ -951,6 +972,7 @@ async def fbc_rebase_and_build(
         konflux_namespace=konflux_namespace,
         image_repo=image_repo,
         skip_checks=skip_checks,
+        skip_tasks=skip_tasks,
         plr_template=plr_template,
         dry_run=dry_run,
         force=force,
