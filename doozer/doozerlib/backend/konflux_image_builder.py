@@ -85,6 +85,7 @@ class KonfluxImageBuilderConfig:
     image_repo: str = constants.KONFLUX_DEFAULT_IMAGE_REPO
     registry_auth_file: Optional[str] = None
     skip_checks: bool = False
+    skip_tasks: tuple[str, ...] = ()
     dry_run: bool = False
     build_priority: Optional[str] = None
     ec_policy_configuration: str = constants.KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION
@@ -744,6 +745,11 @@ class KonfluxImageBuilder:
         image_config_sast_task = metadata.config.get("konflux", {}).get("sast", {}).get("enabled", Missing)
         sast = image_config_sast_task if image_config_sast_task is not Missing else group_config_sast_task
 
+        # Merge skip_tasks: CLI list + group config + image config
+        group_skip_tasks = metadata.runtime.group_config.get("konflux", {}).get("skip_tasks", [])
+        image_skip_tasks = metadata.config.get("konflux", {}).get("skip_tasks", [])
+        merged_skip_tasks = list(set(self._config.skip_tasks) | set(group_skip_tasks) | set(image_skip_tasks))
+
         # Prepare annotations
         annotations = {
             "art-network-mode": metadata.get_konflux_network_mode(),
@@ -768,6 +774,7 @@ class KonfluxImageBuilder:
             building_arches=building_arches,
             additional_tags=additional_tags,
             skip_checks=self._config.skip_checks,
+            skip_tasks=merged_skip_tasks,
             hermetic=hermetic,
             vm_override=metadata.config.get("konflux", {}).get("vm_override"),
             pipelinerun_template_url=self._config.plr_template,

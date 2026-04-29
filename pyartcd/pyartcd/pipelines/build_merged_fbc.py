@@ -25,6 +25,7 @@ class BuildMergedFbcPipeline:
         kubeconfig: str,
         plr_template: str,
         skip_checks: bool,
+        skip_tasks: tuple[str, ...] = (),
     ):
         self.runtime = runtime
         self.version = version
@@ -36,6 +37,7 @@ class BuildMergedFbcPipeline:
         self.kubeconfig = kubeconfig
         self.plr_template = plr_template
         self.skip_checks = skip_checks
+        self.skip_tasks = skip_tasks
 
         self._logger = logging.getLogger(__name__)
         self._slack_client = runtime.new_slack_client()
@@ -101,6 +103,8 @@ class BuildMergedFbcPipeline:
             doozer_opts.extend(['--plr-template', plr_template_url])
         if self.skip_checks:
             doozer_opts.append('--skip-checks')
+        for task_name in self.skip_tasks:
+            doozer_opts.extend(['--skip-task', task_name])
         doozer_opts.append('--')
         stage_index_repo = "quay.io/openshift-art/stage-fbc-fragments"
         for dgk in operator_dgks:
@@ -154,6 +158,10 @@ class BuildMergedFbcPipeline:
     help='Override the Pipeline Run template commit from openshift-priv/art-konflux-template; format: <owner>@<branch>',
 )
 @click.option("--skip-checks", is_flag=True, help="Skip all post build checks in the FBC build pipeline")
+@click.option(
+    '--skip-task', 'skip_tasks', multiple=True,
+    help='Remove a named Tekton task from the PipelineRun. Repeatable (e.g. --skip-task clair-scan).',
+)
 @pass_runtime
 @click_coroutine
 async def build_merged_fbc(
@@ -167,6 +175,7 @@ async def build_merged_fbc(
     kubeconfig: str,
     plr_template: str,
     skip_checks: bool,
+    skip_tasks: tuple,
 ):
     pipeline = BuildMergedFbcPipeline(
         runtime=runtime,
@@ -179,5 +188,6 @@ async def build_merged_fbc(
         kubeconfig=kubeconfig,
         plr_template=plr_template,
         skip_checks=skip_checks,
+        skip_tasks=skip_tasks,
     )
     await pipeline.run()

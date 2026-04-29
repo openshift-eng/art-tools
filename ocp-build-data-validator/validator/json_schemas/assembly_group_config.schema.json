@@ -440,6 +440,18 @@
           "$ref": "#/properties/konflux/properties/sast"
         },
         "sast-": {},
+        "skip_tasks": {
+          "description": "List of Tekton task names to remove from PipelineRuns",
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "skip_tasks!": {
+          "$ref": "#/properties/konflux/properties/skip_tasks"
+        },
+        "skip_tasks?": {
+          "$ref": "#/properties/konflux/properties/skip_tasks"
+        },
+        "skip_tasks-": {},
         "network_mode": {
           "type": "string"
         },

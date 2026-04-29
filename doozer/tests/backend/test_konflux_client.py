@@ -3,6 +3,7 @@ import logging
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import jinja2
 from artcommonlib.konflux.konflux_build_record import KonfluxECStatus
 from doozerlib.backend.konflux_client import (
     API_VERSION,
@@ -533,3 +534,109 @@ class TestVerifyEnterpriseContract(IsolatedAsyncioTestCase):
             application_name="openshift-4-21",
             policy_configuration="rhtap-releng-tenant/registry-ocp-art-base-prod",
         )
+
+
+class TestSkipTasks(IsolatedAsyncioTestCase):
+    """Tests for the generic skip_tasks mechanism in _new_pipelinerun_for_image_build."""
+
+    MINIMAL_TEMPLATE = jinja2.Template(json.dumps({
+        "metadata": {
+            "name": "test-plr",
+            "namespace": "test-ns",
+            "annotations": {
+                "pipelinesascode.tekton.dev/on-cel-expression": "dummy",
+                "build.appstudio.openshift.io/repo": "",
+            },
+            "labels": {
+                "appstudio.openshift.io/application": "test-app",
+                "appstudio.openshift.io/component": "test-comp",
+            },
+        },
+        "spec": {
+            "params": [],
+            "timeouts": {},
+            "taskRunTemplate": {"serviceAccountName": "default"},
+            "pipelineSpec": {
+                "tasks": [
+                    {"name": "clone-repository", "params": [{"name": "refspec", "value": ""}]},
+                    {"name": "build-images", "params": [{"name": "SBOM_TYPE", "value": ""}]},
+                    {"name": "clair-scan", "params": []},
+                    {"name": "sast-snyk-check", "params": []},
+                    {"name": "sast-unicode-check", "params": []},
+                    {"name": "sast-shell-check", "params": []},
+                    {"name": "apply-tags", "params": [{"name": "ADDITIONAL_TAGS", "value": []}]},
+                    {"name": "fbc-fips-check-oci-ta", "params": []},
+                ],
+            },
+        },
+    }))
+
+    def _make_client(self):
+        client = MagicMock(spec=KonfluxClient)
+        client._logger = logging.getLogger("test")
+        client.dry_run = False
+
+        async def fake_get_template(url):
+            return self.MINIMAL_TEMPLATE
+
+        client._get_pipelinerun_template = fake_get_template
+        return client
+
+    async def _build_plr(self, **kwargs):
+        """Helper to call _new_pipelinerun_for_image_build with minimal defaults."""
+        defaults = dict(
+            generate_name="test-",
+            namespace="ns",
+            application_name="app",
+            component_name="comp",
+            git_url="https://github.com/org/repo",
+            commit_sha="abc123",
+            target_branch="main",
+            output_image="quay.io/test:latest",
+            build_platforms=["linux/x86_64"],
+        )
+        defaults.update(kwargs)
+        client = self._make_client()
+        return await KonfluxClient._new_pipelinerun_for_image_build(client, **defaults)
+
+    async def test_skip_tasks_removes_named_tasks(self):
+        result = await self._build_plr(skip_tasks=["clair-scan"])
+        task_names = [t["name"] for t in result["spec"]["pipelineSpec"]["tasks"]]
+        self.assertNotIn("clair-scan", task_names)
+        self.assertIn("build-images", task_names)
+        self.assertIn("sast-snyk-check", task_names)
+
+    async def test_skip_tasks_multiple(self):
+        result = await self._build_plr(skip_tasks=["clair-scan", "sast-snyk-check"])
+        task_names = [t["name"] for t in result["spec"]["pipelineSpec"]["tasks"]]
+        self.assertNotIn("clair-scan", task_names)
+        self.assertNotIn("sast-snyk-check", task_names)
+        self.assertIn("build-images", task_names)
+
+    async def test_legacy_sast_false_still_removes_tasks(self):
+        result = await self._build_plr(sast=False)
+        task_names = [t["name"] for t in result["spec"]["pipelineSpec"]["tasks"]]
+        self.assertNotIn("sast-unicode-check", task_names)
+        self.assertNotIn("sast-shell-check", task_names)
+        self.assertIn("clair-scan", task_names)
+
+    async def test_legacy_skip_fips_check_still_removes_task(self):
+        result = await self._build_plr(skip_fips_check=True)
+        task_names = [t["name"] for t in result["spec"]["pipelineSpec"]["tasks"]]
+        self.assertNotIn("fbc-fips-check-oci-ta", task_names)
+        self.assertIn("clair-scan", task_names)
+
+    async def test_skip_tasks_combined_with_legacy_flags(self):
+        result = await self._build_plr(skip_tasks=["clair-scan"], sast=False, skip_fips_check=True)
+        task_names = [t["name"] for t in result["spec"]["pipelineSpec"]["tasks"]]
+        self.assertNotIn("clair-scan", task_names)
+        self.assertNotIn("sast-unicode-check", task_names)
+        self.assertNotIn("sast-shell-check", task_names)
+        self.assertNotIn("fbc-fips-check-oci-ta", task_names)
+        self.assertIn("build-images", task_names)
+        self.assertIn("clone-repository", task_names)
+
+    async def test_skip_tasks_unknown_name_is_silently_ignored(self):
+        result = await self._build_plr(skip_tasks=["nonexistent-task"])
+        task_names = [t["name"] for t in result["spec"]["pipelineSpec"]["tasks"]]
+        self.assertEqual(len(task_names), 8)

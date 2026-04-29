@@ -1179,6 +1179,7 @@ class KonfluxClient:
         additional_tags: Optional[Sequence[str]] = None,
         skip_checks: bool = False,
         skip_fips_check: bool = False,
+        skip_tasks: Sequence[str] = (),
         build_priority: str = None,
         hermetic: Optional[bool] = None,
         sast: Optional[bool] = None,
@@ -1311,27 +1312,23 @@ class KonfluxClient:
             raise IOError(
                 "SAST task is enabled, but the template does not contain it. Please ensure the template is up-to-date."
             )
-        if sast is False and has_sast_task:  # if SAST is explicitly disabled, remove SAST tasks
-            tasks = []
-            has_sast_task = False
-            for task in obj["spec"]["pipelineSpec"]["tasks"]:
-                task_name = task.get("name")
-                if task_name in ("sast-unicode-check", "sast-shell-check"):
-                    self._logger.info(f"Removing {task_name} tasks since SAST is disabled")
-                    continue
-                tasks.append(task)
 
-            obj["spec"]["pipelineSpec"]["tasks"] = tasks
-
+        # Build the effective skip set from explicit skip_tasks + legacy flags
+        effective_skip: set[str] = set(skip_tasks)
+        if sast is False and has_sast_task:
+            effective_skip |= {"sast-unicode-check", "sast-shell-check"}
         if skip_fips_check:
-            tasks = []
+            effective_skip.add("fbc-fips-check-oci-ta")
+
+        if effective_skip:
+            kept = []
             for task in obj["spec"]["pipelineSpec"]["tasks"]:
                 task_name = task.get("name")
-                if task_name == "fbc-fips-check-oci-ta":
-                    self._logger.info("Removing fbc-fips-check-oci-ta task since skip_fips_check is enabled")
+                if task_name in effective_skip:
+                    self._logger.info("Removing task %s from PipelineRun (skip_tasks)", task_name)
                     continue
-                tasks.append(task)
-            obj["spec"]["pipelineSpec"]["tasks"] = tasks
+                kept.append(task)
+            obj["spec"]["pipelineSpec"]["tasks"] = kept
 
         # https://konflux.pages.redhat.com/docs/users/how-tos/configuring/overriding-compute-resources.html
         # ose-installer-artifacts fails with OOM with default values, hence bumping memory limit
@@ -1405,6 +1402,7 @@ class KonfluxClient:
         additional_tags: Sequence[str] = [],
         skip_checks: bool = False,
         skip_fips_check: bool = False,
+        skip_tasks: Sequence[str] = (),
         build_priority: str = None,
         hermetic: Optional[bool] = None,
         dockerfile: Optional[str] = None,
@@ -1433,6 +1431,7 @@ class KonfluxClient:
         :param additional_tags: Additional tags to apply to the image.
         :param skip_checks: Whether to skip checks.
         :param skip_fips_check: Whether to skip the FIPS compliance check.
+        :param skip_tasks: List of Tekton task names to remove from the PipelineRun.
         :param hermetic: Whether to build the image in a hermetic environment. If None, the default value is used.
         :param dockerfile: Optional Dockerfile name
         :param pipelinerun_template_url: The URL to the PipelineRun template.
@@ -1467,6 +1466,7 @@ class KonfluxClient:
             git_auth_secret=git_auth_secret,
             skip_checks=skip_checks,
             skip_fips_check=skip_fips_check,
+            skip_tasks=skip_tasks,
             hermetic=hermetic,
             additional_tags=additional_tags,
             dockerfile=dockerfile,
