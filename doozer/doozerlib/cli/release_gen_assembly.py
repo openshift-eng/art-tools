@@ -339,7 +339,9 @@ class GenAssemblyCli:
         self.runtime.logger.info(f'Processing release: {pullspec}')
 
         # Use shared utility to introspect release
-        release_info = await release_inspector.introspect_release(pullspec)
+        release_info = await release_inspector.introspect_release(
+            pullspec, registry_config=self.runtime.registry_config
+        )
 
         if not release_info["displayVersions"]["machine-os"]["Version"]:
             self._exit_with_error(f'Could not find machine-os version in release: {pullspec}')
