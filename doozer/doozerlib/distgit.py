@@ -44,6 +44,7 @@ from artcommonlib.util import (
     isolate_el_version_in_brew_tag,
     isolate_rhel_major_from_distgit_branch,
 )
+from artcommonlib.variants import BuildVariant
 from dockerfile_parse import DockerfileParser
 from tenacity import before_sleep_log, retry, retry_if_not_result, stop_after_attempt, wait_fixed
 
@@ -484,16 +485,34 @@ class ImageDistGitRepo(DistGitRepo):
         # (e.g., for commands like images:list that don't need this information)
         # This avoids expensive oc image info operations
         if self.metadata.canonical_builders_enabled and autoclone:
+            attempted_resolution = False
             # If the image is distgit-only, this logic does not apply
             if self.has_source():
-                source_path = self.runtime.source_resolver.resolve_source(self.metadata).source_path
+                attempted_resolution = True
+                source_resolution = self.runtime.source_resolver.resolve_source(self.metadata)
+                source_path = getattr(source_resolution, "source_path", None) if source_resolution else None
+                if not source_path:
+                    raise IOError(
+                        f'[{self.metadata.distgit_key}] canonical_builders_from_upstream is enabled but '
+                        'source could not be resolved. Cannot determine upstream RHEL version.'
+                    )
                 self.art_intended_el_version = self._determine_art_rhel_version()
                 self.upstream_intended_el_version = self._determine_upstream_rhel_version(source_path)
             # To match upstream, we need to be able to infer upstream intended RHEL version
             # and find a related alternative_upstream config stanza. This won't happen if:
             # 1. we failed to determine upstream rhel version
             # 2. upstream and ART rhel versions match: in this case, alternative_upstream is ignored
-            self._update_image_config()
+            metadata_resolved = self._update_image_config()
+            if (
+                attempted_resolution
+                and not metadata_resolved
+                and (
+                    self.upstream_intended_el_version is None
+                    or self.upstream_intended_el_version == self.art_intended_el_version
+                    or self.runtime.variant == BuildVariant.OKD
+                )
+            ):
+                self.metadata._mark_canonical_builders_resolved()
 
         # Initialize our distgit directory, if necessary
         if autoclone:
@@ -1833,14 +1852,16 @@ class ImageDistGitRepo(DistGitRepo):
 
     def _determine_upstream_rhel_version(self, source_path) -> Optional[int]:
         """
-        The upstream indended RHEL version is obtained from the last build layer as defined in the Dockerfile.
+        Determine the upstream intended RHEL version from upstream Dockerfile parents.
 
-        Given a pullspec such as registry.ci.openshift.org/ocp/4.15:base-rhel9, use "oc image info" and Brew API
-        to determine the RHEL version. Use an in-memory caching mechanism to store the pullspec/rhel version pair
-        within the same Doozer execution.
+        Uses the same parent-selection rule as ImageMetadata canonical-builder
+        resolution so scan-time config resolution and the distgit path derive
+        the same upstream RHEL version for multi-stage Dockerfiles.
 
         Return either an integer representing the RHEL major version, or None if something went wrong.
         """
+        from doozerlib.image import determine_builder_info_from_parent_images
+
         df_name = self.config.content.source.dockerfile
         if not df_name:
             df_name = 'Dockerfile'
@@ -1855,15 +1876,7 @@ class ImageDistGitRepo(DistGitRepo):
                 dfp = DockerfileParser(fileobj=f)
                 parent_images = dfp.parent_images
 
-            # We will infer the rhel version from the last build layer in the upstream Dockerfile
-            last_layer_pullspec = parent_images[-1]
-            image_labels = util.oc_image_info_for_arch(last_layer_pullspec)['config']['config']['Labels']
-            if 'version' not in image_labels or 'release' not in image_labels:
-                # This does not appear to be a brew image. We can't determine RHEL.
-                return None
-
-            bbii = BrewBuildRecordInspector(self.runtime, last_layer_pullspec)
-            version = bbii.get_rhel_base_version()
+            version, _ = determine_builder_info_from_parent_images(parent_images)
 
         except Exception as e:
             # Swallow exception as this is not fatal. We just can't determine the
@@ -1875,7 +1888,7 @@ class ImageDistGitRepo(DistGitRepo):
 
         return version
 
-    def _update_image_config(self):
+    def _update_image_config(self) -> bool:
         """
         If we're trying to match upstream, check if there's a 'when' clause in image alternative_config field
         that matches upstream RHEL version. If so, merge the 'when' clause content with the main image config
@@ -1885,13 +1898,13 @@ class ImageDistGitRepo(DistGitRepo):
             # Could not determine upstream rhel version: do not match upstream builders
             self.logger.warning('Unknown upstream rhel version: will not merge configs')
             self.should_match_upstream = False
-            return
+            return False
 
         elif self.upstream_intended_el_version == self.art_intended_el_version:
             # ART/upstream el versions match: do not merge configs, but match upstream builders
             self.logger.warning('ART and upstream intended rhel version match: will not merge configs')
             self.should_match_upstream = True
-            return
+            return False
 
         # Check if there is an alternative configuration matching upstream RHEL version
         alt_configs = self.config.alternative_upstream
@@ -1913,15 +1926,17 @@ class ImageDistGitRepo(DistGitRepo):
                 self.upstream_intended_el_version,
             )
             self.should_match_upstream = False
+            return False
 
-        else:
-            # We found an alternative_upstream config stanza. We can match upstream
-            self.should_match_upstream = True
-            # Distgit branch must be changed to track the alternative one
-            self.branch = self.config.distgit.branch
-            # Also update metadata config
-            self.metadata.config = self.config
-            self.metadata.targets = self.metadata.determine_targets()
+        # We found an alternative_upstream config stanza. We can match upstream
+        self.should_match_upstream = True
+        # Distgit branch must be changed to track the alternative one
+        self.branch = self.config.distgit.branch
+        # Also update metadata config
+        self.metadata.config = self.config
+        self.metadata.targets = self.metadata.determine_targets()
+        self.metadata._mark_canonical_builders_resolved()
+        return True
 
     def rebase_from_directives(self, dfp):
         image_from = Model(self.config.get('from', None))
