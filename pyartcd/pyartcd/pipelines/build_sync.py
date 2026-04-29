@@ -225,7 +225,7 @@ class BuildSyncPipeline:
             # Comment on the PR that the job succeeded
             await self.comment_on_assembly_pr(f"Build sync job [run]({self.job_run}) succeeded!")
             await self.slack_client.say(
-                f"@release-artists `{self.build_system.capitalize()}` <{self.job_run}|build-sync> "
+                f"`{self.build_system.capitalize()}` <{self.job_run}|build-sync> "
                 f"for assembly `{self.assembly}` succeeded!"
             )
 
@@ -571,8 +571,7 @@ class BuildSyncPipeline:
         if self.assembly != 'stream':
             await self.comment_on_assembly_pr(f"Build sync job [run]({self.job_run}) failed!")
             await self.slack_client.say(
-                f"@release-artists `{self.build_system.capitalize()}` <{self.job_run}|build sync> "
-                f"for assembly {self.assembly} failed!"
+                f"`{self.build_system.capitalize()}` <{self.job_run}|build sync> for assembly {self.assembly} failed!"
             )
 
         # Increment failure count
