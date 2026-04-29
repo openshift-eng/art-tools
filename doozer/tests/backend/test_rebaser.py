@@ -4,7 +4,7 @@ import stat
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import semver
 from artcommonlib.model import Missing, Model
@@ -586,13 +586,16 @@ USER 3000
         mock_metadata.is_lockfile_generation_enabled.return_value = True
         mock_metadata.is_dnf_modules_enable_enabled.return_value = False
 
-        result = rebaser._get_module_enablement_commands(mock_metadata)
+        # Create mock DockerfileParser
+        mock_dfp = MagicMock()
+
+        result = rebaser._get_module_enablement_commands(mock_metadata, mock_dfp)
 
         # Should return empty list
         self.assertEqual(result, [])
 
         # Should log that module enablement is disabled
-        rebaser._logger.info.assert_called_once_with("DNF module enablement disabled for test-image")
+        rebaser._logger.info.assert_called_once_with("Module enablement disabled for test-image")
 
         # Should not call other metadata methods since we returned early
         mock_metadata.branch_el_target.assert_not_called()
@@ -613,7 +616,14 @@ USER 3000
         mock_metadata.branch_el_target.return_value = 9  # RHEL 9
         mock_metadata.get_lockfile_modules_to_install.return_value = {"postgresql:15", "maven:3.8"}
 
-        result = rebaser._get_module_enablement_commands(mock_metadata)
+        # Create mock DockerfileParser with dnf usage
+        mock_dfp = MagicMock()
+        mock_dfp.structure = [
+            {'instruction': 'FROM', 'value': 'ubi9'},
+            {'instruction': 'RUN', 'value': 'dnf install -y something'},
+        ]
+
+        result = rebaser._get_module_enablement_commands(mock_metadata, mock_dfp)
 
         # Should return command list with USER 0 + RUN command
         self.assertEqual(len(result), 2)
@@ -623,9 +633,7 @@ USER 3000
         self.assertIn("postgresql:15", result[1])
 
         # Should log the modules being enabled
-        rebaser._logger.info.assert_called_once()
-        log_message = rebaser._logger.info.call_args[0][0]
-        self.assertIn("Enabling modules for test-image", log_message)
+        self.assertGreaterEqual(rebaser._logger.info.call_count, 2)  # At least module enable + pkg manager detection
 
         # Should have called all metadata methods
         mock_metadata.is_dnf_modules_enable_enabled.assert_called_once()
@@ -646,9 +654,13 @@ USER 3000
         mock_metadata.branch_el_target.return_value = 9
         mock_metadata.get_lockfile_modules_to_install.return_value = {"postgresql:15"}
 
+        # Create mock DockerfileParser
+        mock_dfp = MagicMock()
+        mock_dfp.structure = [{'instruction': 'RUN', 'value': 'dnf install -y something'}]
+
         # Previous lines contain USER 0
         previous_lines = ["ENV TEST=1", "USER 0", "RUN something"]
-        result = rebaser._get_module_enablement_commands(mock_metadata, previous_lines)
+        result = rebaser._get_module_enablement_commands(mock_metadata, mock_dfp, previous_lines)
 
         # Should NOT include USER 0 again
         self.assertEqual(len(result), 1)
@@ -669,9 +681,13 @@ USER 3000
         mock_metadata.branch_el_target.return_value = 9
         mock_metadata.get_lockfile_modules_to_install.return_value = {"postgresql:15"}
 
+        # Create mock DockerfileParser
+        mock_dfp = MagicMock()
+        mock_dfp.structure = [{'instruction': 'RUN', 'value': 'dnf install -y something'}]
+
         # Previous lines contain different USER
         previous_lines = ["ENV TEST=1", "USER 1001", "RUN something"]
-        result = rebaser._get_module_enablement_commands(mock_metadata, previous_lines)
+        result = rebaser._get_module_enablement_commands(mock_metadata, mock_dfp, previous_lines)
 
         # Should include USER 0 since current user is not root
         self.assertEqual(len(result), 2)
@@ -692,9 +708,13 @@ USER 3000
         mock_metadata.branch_el_target.return_value = 9
         mock_metadata.get_lockfile_modules_to_install.return_value = {"postgresql:15"}
 
+        # Create mock DockerfileParser
+        mock_dfp = MagicMock()
+        mock_dfp.structure = [{'instruction': 'RUN', 'value': 'dnf install -y something'}]
+
         # Previous lines contain USER 0 then USER 1001 (most recent)
         previous_lines = ["ENV TEST=1", "USER 0", "RUN something", "USER 1001"]
-        result = rebaser._get_module_enablement_commands(mock_metadata, previous_lines)
+        result = rebaser._get_module_enablement_commands(mock_metadata, mock_dfp, previous_lines)
 
         # Should include USER 0 since current user is 1001 (not root)
         self.assertEqual(len(result), 2)
@@ -715,8 +735,12 @@ USER 3000
         mock_metadata.branch_el_target.return_value = 9
         mock_metadata.get_lockfile_modules_to_install.return_value = {"postgresql:15"}
 
+        # Create mock DockerfileParser
+        mock_dfp = MagicMock()
+        mock_dfp.structure = [{'instruction': 'RUN', 'value': 'dnf install -y something'}]
+
         # No previous lines provided (None)
-        result = rebaser._get_module_enablement_commands(mock_metadata, None)
+        result = rebaser._get_module_enablement_commands(mock_metadata, mock_dfp, None)
 
         # Should include USER 0 by default
         self.assertEqual(len(result), 2)
@@ -737,13 +761,127 @@ USER 3000
         mock_metadata.branch_el_target.return_value = 9
         mock_metadata.get_lockfile_modules_to_install.return_value = {"postgresql:15"}
 
+        # Create mock DockerfileParser
+        mock_dfp = MagicMock()
+        mock_dfp.structure = [{'instruction': 'RUN', 'value': 'dnf install -y something'}]
+
         # Empty previous lines list
-        result = rebaser._get_module_enablement_commands(mock_metadata, [])
+        result = rebaser._get_module_enablement_commands(mock_metadata, mock_dfp, [])
 
         # Should include USER 0 by default
         self.assertEqual(len(result), 2)
         self.assertEqual(result[0], "USER 0")
         self.assertIn("RUN dnf module enable -y", result[1])
+
+    def test_get_module_enablement_commands_with_microdnf(self):
+        """Test _get_module_enablement_commands detects microdnf and uses it for module enable"""
+        rebaser = KonfluxRebaser(
+            runtime=MagicMock(), base_dir=Path("/tmp"), source_resolver=MagicMock(), repo_type="test"
+        )
+        rebaser._logger = MagicMock()
+
+        mock_metadata = MagicMock()
+        mock_metadata.distgit_key = "test-image"
+        mock_metadata.is_lockfile_generation_enabled.return_value = True
+        mock_metadata.is_dnf_modules_enable_enabled.return_value = True
+        mock_metadata.branch_el_target.return_value = 9
+        mock_metadata.get_lockfile_modules_to_install.return_value = {"postgresql:15"}
+
+        # Create mock DockerfileParser with microdnf usage only
+        mock_dfp = MagicMock()
+        mock_dfp.structure = [
+            {'instruction': 'FROM', 'value': 'ubi9-minimal'},
+            {'instruction': 'RUN', 'value': 'microdnf install -y something'},
+        ]
+
+        result = rebaser._get_module_enablement_commands(mock_metadata, mock_dfp)
+
+        # Should return command list with microdnf (not dnf)
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0], "USER 0")
+        self.assertIn("RUN microdnf module enable -y", result[1])
+        self.assertIn("postgresql:15", result[1])
+
+        # Should have logged microdnf detection
+        log_calls = [call[0][0] for call in rebaser._logger.info.call_args_list]
+        self.assertTrue(any("microdnf" in msg for msg in log_calls))
+
+    def test_get_module_enablement_commands_with_mixed_package_managers(self):
+        """Test _get_module_enablement_commands handles multistage builds with both dnf and microdnf"""
+        rebaser = KonfluxRebaser(
+            runtime=MagicMock(), base_dir=Path("/tmp"), source_resolver=MagicMock(), repo_type="test"
+        )
+        rebaser._logger = MagicMock()
+
+        mock_metadata = MagicMock()
+        mock_metadata.distgit_key = "test-image"
+        mock_metadata.is_lockfile_generation_enabled.return_value = True
+        mock_metadata.is_dnf_modules_enable_enabled.return_value = True
+        mock_metadata.branch_el_target.return_value = 9
+        mock_metadata.get_lockfile_modules_to_install.return_value = {"postgresql:15"}
+
+        # Create mock DockerfileParser with BOTH dnf and microdnf (multistage build)
+        mock_dfp = MagicMock()
+        mock_dfp.structure = [
+            {'instruction': 'FROM', 'value': 'ubi9 AS builder'},
+            {'instruction': 'RUN', 'value': 'dnf install -y gcc'},
+            {'instruction': 'FROM', 'value': 'ubi9-minimal'},
+            {'instruction': 'RUN', 'value': 'microdnf install -y something'},
+        ]
+
+        result = rebaser._get_module_enablement_commands(mock_metadata, mock_dfp)
+
+        # Should default to dnf when both are present
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0], "USER 0")
+        self.assertIn("RUN dnf module enable -y", result[1])
+        self.assertIn("postgresql:15", result[1])
+
+        # Should have logged a warning about mixed package managers
+        log_calls = [call[0][0] for call in rebaser._logger.warning.call_args_list]
+        self.assertTrue(
+            any("Both dnf and microdnf detected" in msg for msg in log_calls),
+            "Expected warning about mixed package managers",
+        )
+
+    def test_get_module_enablement_commands_microdnf_with_dnf_package(self):
+        """Test _get_module_enablement_commands correctly detects microdnf when dnf appears only as package name"""
+        rebaser = KonfluxRebaser(
+            runtime=MagicMock(), base_dir=Path("/tmp"), source_resolver=MagicMock(), repo_type="test"
+        )
+        rebaser._logger = MagicMock()
+
+        mock_metadata = MagicMock()
+        mock_metadata.distgit_key = "test-image"
+        mock_metadata.is_lockfile_generation_enabled.return_value = True
+        mock_metadata.is_dnf_modules_enable_enabled.return_value = True
+        mock_metadata.branch_el_target.return_value = 9
+        mock_metadata.get_lockfile_modules_to_install.return_value = {"postgresql:15"}
+
+        # Create mock DockerfileParser with microdnf installing dnf-plugins-core package
+        # This should NOT trigger "both detected" warning
+        mock_dfp = MagicMock()
+        mock_dfp.structure = [
+            {'instruction': 'FROM', 'value': 'ubi9-minimal'},
+            {'instruction': 'RUN', 'value': 'microdnf install -y dnf-plugins-core'},
+        ]
+
+        result = rebaser._get_module_enablement_commands(mock_metadata, mock_dfp)
+
+        # Should use microdnf (not dnf) since dnf appears only as package name
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0], "USER 0")
+        self.assertIn("RUN microdnf module enable -y", result[1])
+        self.assertIn("postgresql:15", result[1])
+
+        # Should NOT have logged a warning about mixed package managers
+        if rebaser._logger.warning.called:
+            log_calls = [call[0][0] for call in rebaser._logger.warning.call_args_list]
+            self.assertFalse(
+                any("Both dnf and microdnf detected" in msg for msg in log_calls),
+                "Should not warn about mixed package managers when 'dnf' is only a package name",
+            )
+
 
     def test_make_actual_release_string_ocp_with_el_suffix(self):
         """Test _make_actual_release_string uses el# suffix for OCP builds"""

@@ -1295,12 +1295,117 @@ class KonfluxRebaser:
         self._logger.info(f"Found required {artifact_type} artifact: {matching_artifact}")
         return matching_artifact
 
-    def _get_module_enablement_commands(self, metadata: ImageMetadata, previous_lines: List[str] = None) -> List[str]:
+    def _iter_run_command_names(self, cmd: str):
         """
-        Generate DNF module enable commands for RHEL 9+ images with lockfile modules.
+        Yield command names from a RUN instruction value.
+
+        Parses the shell command and yields only the command executables,
+        not arguments or package names.
+
+        Args:
+            cmd: RUN instruction value (shell command)
+
+        Yields:
+            Command names (e.g., 'microdnf', 'dnf')
+        """
+        # Build a list of command nodes from the AST
+        cmd_nodes = []
+
+        def append_nodes_from(node):
+            if node.kind in ["list", "compound"]:
+                sublist = node.parts if node.kind == "list" else node.list
+                for subnode in sublist:
+                    append_nodes_from(subnode)
+            elif node.kind == "command":
+                cmd_nodes.append(node)
+
+        # Remove dockerfile directive options that bashlex doesn't parse (e.g "RUN --mount=foobar")
+        for word in cmd.split():
+            if word.startswith("--"):
+                cmd = cmd.replace(word, "")
+            else:
+                break
+
+        try:
+            append_nodes_from(bashlex.parse(cmd)[0])
+        except bashlex.errors.ParsingError:
+            # If we can't parse, skip this RUN instruction
+            return
+
+        # Yield first word (command name) from each command node
+        for subcmd in cmd_nodes:
+            if subcmd.parts:
+                cmd_name = getattr(subcmd.parts[0], "word", None)
+                if cmd_name:
+                    yield cmd_name
+
+    def _detect_package_manager_from_dockerfile(self, dfp: DockerfileParser) -> str:
+        """
+        Detect which package manager is used in the Dockerfile.
+
+        Scans RUN instructions for microdnf or dnf commands. If both are found
+        (e.g., in multistage builds with different package managers), defaults to dnf
+        with a warning.
+
+        Returns:
+            str: 'microdnf' if only microdnf is found, otherwise 'dnf'
+        """
+        has_microdnf = False
+        has_dnf = False
+        lines = dfp.lines
+
+        for instruction in dfp.structure:
+            if instruction['instruction'] == 'RUN':
+                value = instruction.get('value') or ""
+
+                # Handle heredoc RUN instructions (e.g., RUN <<EOF ... EOF)
+                delim = self._heredoc_delimiter(value)
+                if delim:
+                    startline = instruction.get("startline", 0)
+                    full_run, endline = self._extract_heredoc_run_from_lines(lines, startline, delim)
+                    if full_run is None:
+                        self._logger.warning(
+                            "Could not find closing heredoc delimiter %s for RUN at line %s",
+                            delim,
+                            startline + 1,
+                        )
+                        continue
+                    value = full_run
+
+                # Extract command names from RUN instruction
+                for cmd_name in self._iter_run_command_names(value):
+                    if re.search(r'(^|/)microdnf$', cmd_name):
+                        has_microdnf = True
+                    elif re.search(r'(^|/)dnf$', cmd_name):
+                        has_dnf = True
+
+        if has_microdnf and has_dnf:
+            self._logger.warning(
+                "Both dnf and microdnf detected in multistage build. "
+                "Defaulting to 'dnf module enable'. "
+                "Set dnf_modules_enable: false if module enablement fails in microdnf-only stages."
+            )
+            return 'dnf'
+
+        if has_microdnf:
+            self._logger.info("Detected microdnf usage in Dockerfile, will use 'microdnf module enable'")
+            return 'microdnf'
+
+        # Default to dnf (standard for EL9+)
+        self._logger.info("No microdnf detected in Dockerfile, defaulting to 'dnf module enable'")
+        return 'dnf'
+
+    def _get_module_enablement_commands(
+        self, metadata: ImageMetadata, dfp: DockerfileParser, previous_lines: List[str] = None
+    ) -> List[str]:
+        """
+        Generate module enable commands for RHEL 9+ images with lockfile modules.
+
+        Detects the package manager used in the Dockerfile and generates appropriate module enable commands.
 
         Args:
             metadata: ImageMetadata for the image being processed
+            dfp: DockerfileParser instance to detect package manager
             previous_lines: List of previous Dockerfile lines to check for existing USER 0
 
         Returns:
@@ -1309,9 +1414,9 @@ class KonfluxRebaser:
         if not metadata.is_lockfile_generation_enabled():
             return []
 
-        # Check if DNF module enablement is disabled
+        # Check if module enablement is disabled
         if not metadata.is_dnf_modules_enable_enabled():
-            self._logger.info(f"DNF module enablement disabled for {metadata.distgit_key}")
+            self._logger.info(f"Module enablement disabled for {metadata.distgit_key}")
             return []
 
         try:
@@ -1328,6 +1433,9 @@ class KonfluxRebaser:
         modules_list = ' '.join(sorted(modules_to_install))
         self._logger.info(f"Enabling modules for {metadata.distgit_key}: {modules_list}")
 
+        # Detect which package manager to use
+        pkg_manager = self._detect_package_manager_from_dockerfile(dfp)
+
         # Check if USER 0 was already added in recent lines
         user_zero_needed = True
         if previous_lines:
@@ -1342,7 +1450,7 @@ class KonfluxRebaser:
         commands = []
         if user_zero_needed:
             commands.append("USER 0")
-        commands.append(f"RUN dnf module enable -y {modules_list}")
+        commands.append(f"RUN {pkg_manager} module enable -y {modules_list}")
 
         return commands
 
@@ -1538,7 +1646,7 @@ class KonfluxRebaser:
                 "ENV HTTPS_PROXY='http://127.0.0.1:9999'",
             ]
 
-        module_enable_commands = self._get_module_enablement_commands(metadata, konflux_lines)
+        module_enable_commands = self._get_module_enablement_commands(metadata, dfp, konflux_lines)
         if module_enable_commands:
             konflux_lines.extend(module_enable_commands)
 
