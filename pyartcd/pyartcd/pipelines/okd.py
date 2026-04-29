@@ -24,7 +24,9 @@ from pyartcd.util import (
     build_history_link_url,
     default_release_suffix,
     get_group_images,
+    increment_build_fail_counter,
     increment_rebase_fail_counter,
+    reset_build_fail_counter,
     reset_rebase_fail_counter,
 )
 
@@ -396,9 +398,9 @@ class KonfluxOkdPipeline:
             pass
 
         finally:
-            self.handle_built_images()
+            await self.handle_built_images()
 
-    def handle_built_images(self):
+    async def handle_built_images(self):
         record_log = self.parse_record_log()
         if not record_log:
             self.logger.error('record.log not found!')
@@ -429,6 +431,36 @@ class KonfluxOkdPipeline:
                 jenkins.update_description(f'Build failures: {", ".join(failed_images)}<br>')
             else:
                 jenkins.update_description(f'Build failures: {len(failed_images)} images<br>')
+
+        await self.update_build_fail_counters(
+            [img['name'] for img in self.built_images],
+            failed_images,
+            record_log,
+        )
+
+    async def update_build_fail_counters(self, built_images, failed_images, record_log):
+        if self.assembly != 'stream':
+            return
+
+        group = f'okd-{self.version}'
+        job_url = os.getenv('BUILD_URL')
+
+        failed_entries = {
+            entry['name']: entry for entry in record_log.get('image_build_okd', []) if int(entry['status'])
+        }
+
+        await asyncio.gather(*[reset_build_fail_counter(image, group) for image in built_images])
+        await asyncio.gather(
+            *[
+                increment_build_fail_counter(
+                    image,
+                    group,
+                    job_url=job_url,
+                    nvr=failed_entries.get(image, {}).get('nvrs'),
+                )
+                for image in failed_images
+            ]
+        )
 
     async def detect_embargoed_builds(self):
         """

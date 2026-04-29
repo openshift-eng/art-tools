@@ -1,5 +1,5 @@
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from pyartcd import util
 
@@ -223,3 +223,57 @@ class TestUtil(IsolatedAsyncioTestCase):
         self.assertEqual(util.get_rpm_if_pinned_directly(releases_config, '4.11.0', 'foo'), rpms)
         self.assertEqual(util.get_rpm_if_pinned_directly(releases_config, '4.11.1', 'foo'), dict())
         self.assertEqual(util.get_rpm_if_pinned_directly(releases_config, '4.11.0', 'bar'), dict())
+
+    @patch("artcommonlib.redis.set_value", new_callable=AsyncMock)
+    @patch("artcommonlib.redis.get_value", new_callable=AsyncMock)
+    async def test_increment_build_fail_counter_new(self, mock_get, mock_set):
+        mock_get.return_value = None
+        await util.increment_build_fail_counter('ironic', 'openshift-4.21', job_url='http://j/1', nvr='ironic-1.0-1')
+        mock_set.assert_any_call(key='count:build-failure:konflux:openshift-4.21:ironic:failure', value=1)
+        mock_set.assert_any_call(key='count:build-failure:konflux:openshift-4.21:ironic:url', value='http://j/1')
+        mock_set.assert_any_call(key='count:build-failure:konflux:openshift-4.21:ironic:nvr', value='ironic-1.0-1')
+
+    @patch("artcommonlib.redis.set_value", new_callable=AsyncMock)
+    @patch("artcommonlib.redis.get_value", new_callable=AsyncMock)
+    async def test_increment_build_fail_counter_existing(self, mock_get, mock_set):
+        mock_get.return_value = '3'
+        await util.increment_build_fail_counter('ironic', 'openshift-4.21')
+        mock_set.assert_any_call(key='count:build-failure:konflux:openshift-4.21:ironic:failure', value=4)
+
+    @patch("artcommonlib.redis.delete_keys_by_pattern", new_callable=AsyncMock)
+    async def test_reset_build_fail_counter(self, mock_delete):
+        await util.reset_build_fail_counter('ironic', 'openshift-4.21')
+        mock_delete.assert_called_once_with('count:build-failure:konflux:openshift-4.21:ironic:*')
+
+    @patch("artcommonlib.redis.get_value", new_callable=AsyncMock)
+    @patch("artcommonlib.redis.get_keys", new_callable=AsyncMock)
+    async def test_get_build_failures(self, mock_get_keys, mock_get_value):
+        mock_get_keys.return_value = [
+            'count:build-failure:konflux:openshift-4.21:ironic:failure',
+            'count:build-failure:konflux:openshift-4.21:ovn-kubernetes:failure',
+        ]
+        mock_get_value.side_effect = lambda key: {
+            'count:build-failure:konflux:openshift-4.21:ironic:failure': '5',
+            'count:build-failure:konflux:openshift-4.21:ironic:url': 'http://j/1',
+            'count:build-failure:konflux:openshift-4.21:ironic:nvr': 'ironic-1.0-1',
+            'count:build-failure:konflux:openshift-4.21:ovn-kubernetes:failure': '2',
+            'count:build-failure:konflux:openshift-4.21:ovn-kubernetes:url': '',
+            'count:build-failure:konflux:openshift-4.21:ovn-kubernetes:nvr': None,
+        }.get(key)
+        result = await util.get_build_failures('openshift-4.21')
+        self.assertEqual(result['ironic']['failure_count'], 5)
+        self.assertEqual(result['ironic']['url'], 'http://j/1')
+        self.assertEqual(result['ironic']['nvr'], 'ironic-1.0-1')
+        self.assertEqual(result['ovn-kubernetes']['failure_count'], 2)
+
+    @patch("artcommonlib.redis.get_keys", new_callable=AsyncMock)
+    async def test_get_build_failures_empty(self, mock_get_keys):
+        mock_get_keys.return_value = []
+        result = await util.get_build_failures('openshift-4.21')
+        self.assertEqual(result, {})
+
+    @patch("artcommonlib.redis.get_keys", new_callable=AsyncMock)
+    async def test_get_build_failures_redis_error(self, mock_get_keys):
+        mock_get_keys.side_effect = Exception("Redis connection refused")
+        result = await util.get_build_failures('openshift-4.21', logger=MagicMock())
+        self.assertEqual(result, {})
