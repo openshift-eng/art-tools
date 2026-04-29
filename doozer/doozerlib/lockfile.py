@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from functools import total_ordering
 from logging import Logger
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import aiohttp
 import yaml
@@ -547,22 +547,28 @@ class RPMLockfileGenerator:
         self.runtime = runtime
         self.lockfile_seed_nvrs = lockfile_seed_nvrs
 
-    def _validate_cross_arch_version_sets(self, rpms_info_by_arch: dict[str, list[RpmInfo]]) -> None:
-        """Validate that RPM latest version sets are consistent across architectures where packages exist."""
+    def _validate_cross_arch_version_sets(
+        self, rpms_info_by_arch: dict[str, list[RpmInfo]]
+    ) -> Optional[Dict[str, Dict[str, str]]]:
+        """Validate that RPM latest version sets are consistent across architectures where packages exist.
+
+        Returns fallback recommendations when mismatches are detected, None when validation passes.
+
+        Returns:
+            Optional[Dict[str, Dict[str, str]]]: Package name to architecture-version mapping for fallback,
+            or None if no mismatches detected.
+        """
         package_arch_evrs = {}
 
         for arch, rpm_list in rpms_info_by_arch.items():
-            # Group RPMs by package name
             packages = {}
             for rpm in rpm_list:
                 packages.setdefault(rpm.name, []).append(rpm)
 
-            # For each package, find latest version and add to validation set
             for package_name, package_rpms in packages.items():
                 if len(package_rpms) == 1:
                     latest_rpm = package_rpms[0]
                 else:
-                    # Find latest using RpmInfo comparison (leverages @total_ordering)
                     latest_rpm = package_rpms[0]
                     for rpm in package_rpms[1:]:
                         if rpm > latest_rpm:
@@ -570,7 +576,7 @@ class RPMLockfileGenerator:
 
                 package_arch_evrs.setdefault(package_name, {}).setdefault(arch, set()).add(latest_rpm.evr)
 
-        mismatches = []
+        mismatched_packages = []
         for package_name, arch_evrs in package_arch_evrs.items():
             if len(arch_evrs) < 2:
                 continue
@@ -579,11 +585,129 @@ class RPMLockfileGenerator:
             reference_set = evr_sets[0]
 
             if not all(evr_set == reference_set for evr_set in evr_sets[1:]):
-                arch_details = [f"{arch}:{{{','.join(sorted(evr_set))}}}" for arch, evr_set in arch_evrs.items()]
-                mismatches.append(f"{package_name} ({'; '.join(arch_details)})")
+                mismatched_packages.append(package_name)
 
-        if mismatches:
-            raise ValueError(f"RPM version set mismatches: {'; '.join(mismatches)}")
+        if mismatched_packages:
+            self.logger.warning(
+                f"Cross-architecture version mismatches detected for packages: {', '.join(mismatched_packages)}"
+            )
+            return {
+                pkg: {arch: list(evrs)[0] for arch, evrs in package_arch_evrs[pkg].items()}
+                for pkg in mismatched_packages
+            }
+
+        return None
+
+    def _find_common_fallback_versions(self, package_name: str, arch_versions: Dict[str, str]) -> str:
+        """
+        Find the lowest version among mismatched architectures for fallback.
+
+        Args:
+            package_name: Name of the RPM package to find fallback for
+            arch_versions: Current architecture to version mapping showing the mismatch
+
+        Returns:
+            str: Lowest EVR string among the mismatched versions
+        """
+        evr_list = list(arch_versions.values())
+
+        rpm_infos = []
+        for evr in evr_list:
+            if ':' in evr:
+                epoch_str, version_release = evr.split(':', 1)
+                epoch = int(epoch_str)
+            else:
+                epoch = 0
+                version_release = evr
+
+            if '-' in version_release:
+                version, release = version_release.rsplit('-', 1)
+            else:
+                version = version_release
+                release = ""
+
+            rpm_info = RpmInfo(
+                name=package_name,
+                evr=evr,
+                checksum="",
+                repoid="",
+                size=0,
+                sourcerpm="",
+                url="",
+                epoch=epoch,
+                version=version,
+                release=release,
+            )
+            rpm_infos.append(rpm_info)
+
+        lowest_rpm = min(rpm_infos)
+
+        self.logger.info(
+            f"Selected fallback version {lowest_rpm.evr} (lowest among mismatched versions) for {package_name}"
+        )
+        return lowest_rpm.evr
+
+    async def _apply_fallback_versions(
+        self,
+        rpms_info_by_arch: Dict[str, List[RpmInfo]],
+        fallback_recommendations: Dict[str, str],
+        arches: List[str],
+        enabled_repos: set[str],
+    ) -> None:
+        """
+        Apply fallback versions to the package collection.
+
+        Handles both Case 1 (fallback version already in collections) and Case 2 (fetch from repositories).
+
+        Args:
+            rpms_info_by_arch: Architecture to RPM list mapping to modify in place
+            fallback_recommendations: Package name to fallback EVR mapping
+            arches: Target architectures for repository resolution
+            enabled_repos: Repository names for fetching missing packages
+        """
+        for package_name, fallback_evr in fallback_recommendations.items():
+            self.logger.info(f"Applying fallback version {fallback_evr} for package {package_name}")
+
+            fallback_rpms_by_arch = {}
+            for arch, rpm_list in rpms_info_by_arch.items():
+                package_rpms = [rpm for rpm in rpm_list if rpm.name == package_name]
+
+                if not package_rpms:
+                    continue
+
+                fallback_rpm = None
+                for rpm in package_rpms:
+                    if rpm.evr == fallback_evr:
+                        fallback_rpm = rpm
+                        break
+
+                if fallback_rpm is None:
+                    # Case 2: Fetch missing fallback version from repositories
+                    self.logger.info(f"Attempting repository resolution for {package_name} {fallback_evr} on {arch}")
+
+                    missing_nvr = f"{package_name}-{fallback_evr}"
+                    fetch_result = await self.builder.fetch_rpms_info([arch], enabled_repos, {missing_nvr})
+
+                    if fetch_result and arch in fetch_result and fetch_result[arch]:
+                        fallback_rpm = fetch_result[arch][0]  # Take the first (and only) result
+                        self.logger.info(
+                            f"Successfully resolved {package_name} {fallback_evr} for {arch} from repositories"
+                        )
+                    else:
+                        raise ValueError(
+                            f"Fallback version {fallback_evr} not available for {package_name} in {arch} - not found in any repository"
+                        )
+
+                fallback_rpms_by_arch[arch] = fallback_rpm
+
+            for arch, fallback_rpm in fallback_rpms_by_arch.items():
+                rpm_list = rpms_info_by_arch[arch]
+                rpms_info_by_arch[arch] = [rpm for rpm in rpm_list if rpm.name != package_name]
+                rpms_info_by_arch[arch].append(fallback_rpm)
+
+                self.logger.debug(f"Applied fallback {package_name}={fallback_evr} for {arch}")
+
+            self.logger.info(f"Successfully applied fallback for {package_name} across all architectures (Case 1)")
 
     async def should_generate_lockfile(
         self, image_meta: ImageMetadata, dest_dir: Path, filename: str = DEFAULT_RPM_LOCKFILE_NAME
@@ -719,8 +843,15 @@ class RPMLockfileGenerator:
             self.builder.fetch_modules_info(arches, enabled_repos, modules_to_install),
         )
 
-        # Validate cross-architecture version set consistency
-        self._validate_cross_arch_version_sets(rpms_info_by_arch)
+        mismatch_data = self._validate_cross_arch_version_sets(rpms_info_by_arch)
+        if mismatch_data is not None:
+            fallback_recommendations = {}
+            for package_name, arch_versions in mismatch_data.items():
+                fallback_evr = self._find_common_fallback_versions(package_name, arch_versions)
+                fallback_recommendations[package_name] = fallback_evr
+
+            await self._apply_fallback_versions(rpms_info_by_arch, fallback_recommendations, arches, enabled_repos)
+            self.logger.info(f"Applied fallback recovery for {len(fallback_recommendations)} packages")
 
         if image_meta.is_cross_arch_enabled():
             self.logger.info("Cross-architecture lockfile inclusion enabled")
