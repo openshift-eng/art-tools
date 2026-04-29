@@ -429,20 +429,17 @@ class KonfluxOcpPipeline:
         )
 
     async def mirror_streams_to_ci(self):
-        # If the API server builds, we mirror out the streams to CI. If ART builds a bad golang builder image it will
-        # break CI builds for most upstream components if we don't catch it before we push. So we use apiserver as
-        # bellwether to make sure that the current builder image is good enough. We can still break CI (e.g. pushing a
-        # bad ruby-25 image along with this push, but it will not be a catastrophic event like breaking the apiserver.
+        # Mirror CI images whenever any image builds successfully
         record_log = self.parse_record_log()
         if not record_log:
-            LOGGER.warning('record.log not found, skipping CI mirroring check')
+            LOGGER.warning('record.log not found, skipping CI mirroring')
             return
 
-        built_images = {
-            entry['name']: entry for entry in record_log.get('image_build_konflux', []) if not int(entry['status'])
-        }
-        if built_images.get('ose-openshift-apiserver', None):
-            LOGGER.warning('apiserver rebuilt: mirroring streams to CI...')
+        built_images = [
+            entry['name'] for entry in record_log.get('image_build_konflux', []) if not int(entry['status'])
+        ]
+        if built_images:
+            LOGGER.info(f'{len(built_images)} images built, mirroring streams to CI...')
 
             cmd = self._doozer_base_command.copy()
             cmd.extend(['images:streams', 'mirror', '--registry-auth', self._registry_auth_file])

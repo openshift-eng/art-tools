@@ -136,12 +136,57 @@ def images_streams_mirror(
     elif runtime.registry_config_dir is not None:
         registry_config_file = get_docker_config_json(runtime.registry_config_dir)
 
+    def get_image_info(pullspec: str, go_arch: str = 'amd64') -> Tuple[Optional[str], Optional[str]]:
+        """Get the digest and NVR of an image, returns (None, None) if image doesn't exist.
+
+        For manifest lists, returns listDigest (the manifest list digest).
+        For single-arch images, returns digest (the image digest).
+        NVR is reconstructed from com.redhat.component, version, release labels if available.
+        """
+        try:
+            info = oc_image_info_for_arch(pullspec, go_arch=go_arch, registry_config=registry_config_file, strict=False)
+            if info is None:
+                return None, None
+            # For manifest lists, listDigest is the manifest list digest
+            # For single-arch, use digest
+            digest = info.get('listDigest') or info.get('digest')
+
+            # Try to extract NVR from labels
+            nvr = None
+            labels = info.get('config', {}).get('config', {}).get('Labels', {})
+            if labels:
+                component = labels.get('com.redhat.component')
+                version = labels.get('version')
+                release = labels.get('release')
+                if component and version and release:
+                    nvr = f'{component}-{version}-{release}'
+            return digest, nvr
+        except Exception as e:
+            runtime.logger.debug(f'Failed to get info for {pullspec}: {e}')
+            return None, None
+
+    def get_nvr_from_pullspec(pullspec: str) -> str:
+        """Extract NVR-like identifier from a pullspec tag."""
+        # pullspec like: quay.io/redhat-user-workloads/ocp-art-tenant/art-images:golang-builder-v1.25.8-202604081607.p2.g2aa6a05.el8
+        # returns the tag portion as NVR
+        if ':' in pullspec:
+            return pullspec.rsplit(':', 1)[1]
+        return pullspec.rsplit('/', 1)[-1]
+
+    def get_floating_qci_tag(upstream_dest: str) -> Optional[str]:
+        """Compute the floating QCI tag for a registry.ci destination."""
+        if not upstream_dest.startswith('registry.ci.openshift.org/'):
+            return None
+        _, org_repo_tag = upstream_dest.split('/', 1)
+        org_repo_tag = re.sub(r"[:/]", "_", org_repo_tag)
+        return f"quay.io/openshift/ci:art__{org_repo_tag}"
+
     def mirror_image(cmd_start: str, upstream_dest: str):
         full_cmd_1 = f'{cmd_start} {upstream_dest}'
         if dry_run:
             print(f'For {upstream_entry_name}, would have run: {full_cmd_1}')
         else:
-            exectools.cmd_assert(full_cmd_1, retries=3, realtime=True)
+            exectools.cmd_assert(full_cmd_1, retries=3)
 
         if upstream_dest.startswith('registry.ci.openshift.org/'):
             # If the image is being mirrored the CI imagestreams, we must also mirror it
@@ -167,14 +212,14 @@ def images_streams_mirror(
             if dry_run:
                 print(f'For {upstream_entry_name}, would have run: {full_cmd_2}')
             else:
-                exectools.cmd_assert(full_cmd_2, retries=3, realtime=True)
+                exectools.cmd_assert(full_cmd_2, retries=3)
 
             floating_qci_upstream_dest = f"quay.io/openshift/ci:art__{org_repo_tag}"
             full_cmd_3 = f'{cmd_start} {floating_qci_upstream_dest}'
             if dry_run:
                 print(f'For {upstream_entry_name}, would have run: {full_cmd_3}')
             else:
-                exectools.cmd_assert(full_cmd_3, retries=3, realtime=True)
+                exectools.cmd_assert(full_cmd_3, retries=3)
 
     upstreaming_entries = _get_upstreaming_entries(runtime, streams)
 
@@ -253,8 +298,32 @@ def images_streams_mirror(
             if registry_config_file is not None:
                 cmd += f" --registry-config={registry_config_file}"
 
-            # Mirror to main destination only if not in only-if-missing mode OR destination doesn't exist
-            if not only_if_missing or not destinations_to_check.get(upstream_dest, False):
+            # Compare source and destination digests to avoid no-op mirrors
+            # Check both the primary destination and the floating QCI tag
+            floating_dest = get_floating_qci_tag(upstream_dest)
+            src_digest, src_nvr = get_image_info(src_image_pullspec)
+            primary_dest_digest, dest_nvr = get_image_info(upstream_dest)
+            floating_dest_digest = None
+            if floating_dest:
+                floating_dest_digest, _ = get_image_info(floating_dest)
+            src_nvr = src_nvr or get_nvr_from_pullspec(src_image_pullspec)
+            dest_nvr = dest_nvr or get_nvr_from_pullspec(floating_dest or upstream_dest)
+            runtime.logger.info(f'Comparing {src_image_pullspec} -> {upstream_dest}')
+            runtime.logger.info(f'  Source digest:   {src_digest}')
+            runtime.logger.info(f'  Primary digest:  {primary_dest_digest}')
+            if floating_dest:
+                runtime.logger.info(f'  Floating digest: {floating_dest_digest}')
+
+            # Skip only if source matches both primary and floating destinations
+            digests_match = (
+                src_digest
+                and src_digest == primary_dest_digest
+                and (floating_dest is None or src_digest == floating_dest_digest)
+            )
+            if digests_match:
+                runtime.logger.info(f'  Digests match, skipping mirror for {upstream_entry_name}')
+            elif not only_if_missing or not destinations_to_check.get(upstream_dest, False):
+                runtime.logger.info(f'  Digests differ, mirroring {upstream_entry_name} ({src_nvr} -> {dest_nvr})')
                 mirror_image(cmd, upstream_dest)
 
             # mirror arm64 builder and base images for CI
@@ -263,9 +332,35 @@ def images_streams_mirror(
                 arm_cmd = f'oc image mirror --filter-by-os linux/arm64 {src_image_pullspec}'
                 if registry_config_file is not None:
                     arm_cmd += f" --registry-config={registry_config_file}"
-                # Mirror ARM64 only if not in only-if-missing mode OR destination doesn't exist
-                if not only_if_missing or not destinations_to_check.get(f'{upstream_dest}-arm64', False):
-                    mirror_image(arm_cmd, f'{upstream_dest}-arm64')
+
+                arm_dest = f'{upstream_dest}-arm64'
+                floating_arm_dest = get_floating_qci_tag(arm_dest)
+                src_arm_digest, src_arm_nvr = get_image_info(src_image_pullspec, go_arch='arm64')
+                primary_arm_digest, dest_arm_nvr = get_image_info(arm_dest, go_arch='arm64')
+                floating_arm_digest = None
+                if floating_arm_dest:
+                    floating_arm_digest, _ = get_image_info(floating_arm_dest, go_arch='arm64')
+                src_arm_nvr = src_arm_nvr or get_nvr_from_pullspec(src_image_pullspec)
+                dest_arm_nvr = dest_arm_nvr or get_nvr_from_pullspec(floating_arm_dest or arm_dest)
+                runtime.logger.info(f'Comparing {src_image_pullspec} -> {arm_dest} (arm64)')
+                runtime.logger.info(f'  Source digest:   {src_arm_digest}')
+                runtime.logger.info(f'  Primary digest:  {primary_arm_digest}')
+                if floating_arm_dest:
+                    runtime.logger.info(f'  Floating digest: {floating_arm_digest}')
+
+                # Skip only if source matches both primary and floating destinations
+                arm_digests_match = (
+                    src_arm_digest
+                    and src_arm_digest == primary_arm_digest
+                    and (floating_arm_dest is None or src_arm_digest == floating_arm_digest)
+                )
+                if arm_digests_match:
+                    runtime.logger.info(f'  ARM64 digests match, skipping mirror for {upstream_entry_name}')
+                elif not only_if_missing or not destinations_to_check.get(arm_dest, False):
+                    runtime.logger.info(
+                        f'  ARM64 digests differ, mirroring {upstream_entry_name} ({src_arm_nvr} -> {dest_arm_nvr})'
+                    )
+                    mirror_image(arm_cmd, arm_dest)
 
             # If upstream_image_mirror is set, mirror the upstream_image (which we just updated above)
             # to the locations specified. Note that this is NOT upstream_image_base.
@@ -275,8 +370,20 @@ def images_streams_mirror(
             # upstream_image to all the upstream_image_mirror destinations so they all get the same version.
             if config.upstream_image_mirror is not Missing:
                 for upstream_image_mirror_dest in config.upstream_image_mirror:
-                    # Mirror to each destination only if not in only-if-missing mode OR destination doesn't exist
-                    if not only_if_missing or not destinations_to_check.get(upstream_image_mirror_dest, False):
+                    src_mirror_digest, src_mirror_nvr = get_image_info(config.upstream_image)
+                    dest_mirror_digest, dest_mirror_nvr = get_image_info(upstream_image_mirror_dest)
+                    src_mirror_nvr = src_mirror_nvr or get_nvr_from_pullspec(config.upstream_image)
+                    dest_mirror_nvr = dest_mirror_nvr or get_nvr_from_pullspec(upstream_image_mirror_dest)
+                    runtime.logger.info(f'Comparing {config.upstream_image} -> {upstream_image_mirror_dest}')
+                    runtime.logger.info(f'  Source digest: {src_mirror_digest}')
+                    runtime.logger.info(f'  Dest digest:   {dest_mirror_digest}')
+
+                    if src_mirror_digest and src_mirror_digest == dest_mirror_digest:
+                        runtime.logger.info(f'  Digests match, skipping mirror for {upstream_entry_name}')
+                    elif not only_if_missing or not destinations_to_check.get(upstream_image_mirror_dest, False):
+                        runtime.logger.info(
+                            f'  Digests differ, mirroring {upstream_entry_name} ({src_mirror_nvr} -> {dest_mirror_nvr})'
+                        )
                         priv_cmd = f'oc image mirror {config.upstream_image}'
                         if registry_config_file is not None:
                             priv_cmd += f" --registry-config={registry_config_file}"
