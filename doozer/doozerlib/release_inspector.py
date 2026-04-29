@@ -45,14 +45,17 @@ async def fetch_release_pullspec_from_stream_api(release_name: str, major_minor:
     raise IOError(f"Nightly {release_name} not found in release stream {release_stream_name}")
 
 
-async def introspect_release(pullspec: str) -> Model:
+async def introspect_release(pullspec: str, registry_config: str = None) -> Model:
     """
     Run 'oc adm release info' and return parsed release information.
 
     :param pullspec: Release payload pullspec
+    :param registry_config: Optional path to registry auth config file
     :return: Model object containing release info
     """
-    rc, release_json_str, err = await exectools.cmd_gather_async(f"oc adm release info {pullspec} -o=json", check=False)
+    registry_config_arg = f'--registry-config={registry_config}' if registry_config else ''
+    rc, release_json_str, err = await exectools.cmd_gather_async(
+        f"oc adm release info {registry_config_arg} {pullspec} -o=json", check=False)
 
     if rc != 0:
         raise IOError(f"Unable to gather release info for {pullspec}: {err}")
