@@ -574,22 +574,28 @@ class BuildMicroShiftBootcPipeline:
             "--assembly",
             self.assembly,
             "--latest-parent-version",
-            "-i",
-            bootc_image_name,
-            # Lock to the same commit as the microshift RPM to ensure consistency
-            "--lock-upstream",
-            bootc_image_name,
-            upstream_commit,
-            "--build-system",
-            "konflux",
-            "beta:images:konflux:build",
-            "--image-repo",
-            KONFLUX_DEFAULT_IMAGE_REPO,
-            "--konflux-kubeconfig",
-            kubeconfig,
-            "--konflux-namespace",
-            "ocp-art-tenant",
         ]
+        if self._registry_config:
+            build_cmd.append(f"--registry-config={self._registry_config}")
+        build_cmd.extend(
+            [
+                "-i",
+                bootc_image_name,
+                # Lock to the same commit as the microshift RPM to ensure consistency
+                "--lock-upstream",
+                bootc_image_name,
+                upstream_commit,
+                "--build-system",
+                "konflux",
+                "beta:images:konflux:build",
+                "--image-repo",
+                KONFLUX_DEFAULT_IMAGE_REPO,
+                "--konflux-kubeconfig",
+                kubeconfig,
+                "--konflux-namespace",
+                "ocp-art-tenant",
+            ]
+        )
         if self.runtime.dry_run:
             build_cmd.append("--dry-run")
         await exectools.cmd_assert_async(build_cmd, env=self._doozer_env_vars)

@@ -392,7 +392,10 @@ class BuildMicroShiftPipeline:
 
     def _elliott_base_cmd(self) -> List[str]:
         """Create base elliott command with group and assembly"""
-        return ["elliott", "--group", self.group, "--assembly", self.assembly]
+        cmd = ["elliott", "--group", self.group, "--assembly", self.assembly]
+        if self._registry_config:
+            cmd.append(f"--registry-config={self._registry_config}")
+        return cmd
 
     async def _attach_builds(self):
         """attach the microshift builds to advisory"""
@@ -537,8 +540,6 @@ class BuildMicroShiftPipeline:
         if self.runtime.dry_run:
             cmd.append("--dry-run")
         set_env = self._doozer_env_vars.copy()
-        if self._registry_config:
-            set_env["QUAY_AUTH_FILE"] = self._registry_config
         if custom_payloads:
             set_env["MICROSHIFT_PAYLOAD_X86_64"] = custom_payloads["x86_64"]["pullspec"]
             set_env["MICROSHIFT_PAYLOAD_AARCH64"] = custom_payloads["aarch64"]["pullspec"]
