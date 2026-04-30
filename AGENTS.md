@@ -2,7 +2,7 @@
 
 This file provides guidance to AI coding agents (Claude Code, Cursor, Codex, etc.) when working with code in this repository.
 
-If the file `.claude/CLAUDE.md` exists, read it. If instructions contradict (for example for what to run with test or run commands), `.claude/CLAUDE.md` takes precedence over this file.
+If the file `.claude/CLAUDE.md` exists, read it for supplemental context. This file (AGENTS.md) is the single source of truth; `.claude/CLAUDE.md` may only provide additional non-conflicting notes and cannot override anything defined here.
 
 ## Overview
 
@@ -95,7 +95,7 @@ make gen-shipment-schema
 # Create a feature branch for your work
 git checkout -b your-feature-or-bug-name
 
-# Make your changes, commit, and disover rebase errors before pushing:
+# Make your changes, commit, and discover rebase errors before pushing:
 git add .
 git commit -m "Your commit message"
 git fetch origin
