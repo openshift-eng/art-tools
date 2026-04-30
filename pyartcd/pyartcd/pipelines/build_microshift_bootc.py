@@ -66,6 +66,8 @@ yaml = new_roundtrip_yaml_handler()
 class BuildMicroShiftBootcPipeline:
     """Rebase and build MicroShift for an assembly"""
 
+    BOOTC_IMAGE_NAME = "microshift-bootc"
+
     def __init__(
         self,
         runtime: Runtime,
@@ -77,6 +79,7 @@ class BuildMicroShiftBootcPipeline:
         data_path: str,
         slack_client,
         data_gitref: str | None = None,
+        force_open_build: bool = False,
         logger: Optional[logging.Logger] = None,
     ):
         self.runtime = runtime
@@ -88,6 +91,7 @@ class BuildMicroShiftBootcPipeline:
         self.force_plashet_sync = force_plashet_sync
         self.prepare_shipment = prepare_shipment
         self.slack_client = slack_client
+        self.force_open_build = force_open_build
         self._logger = logger or runtime.logger
 
         self._working_dir = self.runtime.working_dir.absolute()
@@ -312,16 +316,14 @@ class BuildMicroShiftBootcPipeline:
             await _run_for(local_dir, release_path)
             await _run_for(local_dir, latest_path)
 
-    async def get_latest_bootc_build(self):
-        bootc_image_name = "microshift-bootc"
-
+    async def get_latest_bootc_build(self, hermetic: Optional[bool] = None):
         if not self.konflux_db:
             self.konflux_db = KonfluxDb()
             self.konflux_db.bind(KonfluxBuildRecord)
             self._logger.info('Konflux DB initialized')
 
-        build = await self.konflux_db.get_latest_build(
-            name=bootc_image_name,
+        kwargs: dict = dict(
+            name=self.BOOTC_IMAGE_NAME,
             group=self.group,
             assembly=self.assembly,
             outcome=KonfluxBuildOutcome.SUCCESS,
@@ -330,6 +332,10 @@ class BuildMicroShiftBootcPipeline:
             el_target='el9',
             exclude_large_columns=True,
         )
+        if hermetic is not None:
+            kwargs['extra_patterns'] = {'hermetic': hermetic}
+
+        build = await self.konflux_db.get_latest_build(**kwargs)
         return cast(Optional[KonfluxBuildRecord], build)
 
     async def _build_plashet_for_bootc(self):
@@ -476,7 +482,6 @@ class BuildMicroShiftBootcPipeline:
         raise ValueError(f"Assembly type {self.assembly_type} is not supported for microshift-bootc builds")
 
     async def _rebase_and_build_bootc(self):
-        bootc_image_name = "microshift-bootc"
         major, minor = self._ocp_version
         # do not run for version < 4.18
         if (major, minor) < (4, 18):
@@ -485,7 +490,7 @@ class BuildMicroShiftBootcPipeline:
 
         # Check if an image is already pinned and don't rebuild unless forced
         if not self.force and self.assembly_type != AssemblyTypes.STREAM:
-            pinned_nvr = get_image_if_pinned_directly(self.releases_config, self.assembly, bootc_image_name)
+            pinned_nvr = get_image_if_pinned_directly(self.releases_config, self.assembly, self.BOOTC_IMAGE_NAME)
             if pinned_nvr:
                 message = f"For assembly {self.assembly} microshift-bootc image is already pinned: {pinned_nvr}. Use FORCE to rebuild."
                 self._logger.info(message)
@@ -503,24 +508,24 @@ class BuildMicroShiftBootcPipeline:
                 self._logger.info("Found existing build record for pinned NVR: %s", pinned_nvr)
                 return build
 
-        # check if an image build already exists in Konflux DB
+        # Check for existing hermetic build
         if not self.force:
-            build = await self.get_latest_bootc_build()
+            build = await self.get_latest_bootc_build(hermetic=True)
             if build:
                 self._logger.info(
-                    "Bootc image build exists for assembly: %s. Will use that. To force a rebuild use --force",
+                    "Hermetic bootc build exists for assembly: %s. Will use that. To force a rebuild use --force",
                     build.nvr,
                 )
                 return build
             else:
-                self._logger.info("Bootc image build does not exist for assembly. Will proceed to build")
+                self._logger.info("No hermetic bootc build exists for assembly. Will proceed to build")
         else:
             self._logger.info("Force flag is set. Forcing bootc image build")
 
         kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
         if not kubeconfig:
             raise ValueError(
-                f"KONFLUX_SA_KUBECONFIG environment variable is required to build {bootc_image_name} image"
+                f"KONFLUX_SA_KUBECONFIG environment variable is required to build {self.BOOTC_IMAGE_NAME} image"
             )
 
         await self._build_plashet_for_bootc()
@@ -531,9 +536,39 @@ class BuildMicroShiftBootcPipeline:
         # Determine the assembly label value based on assembly type
         assembly_label_value = self._get_assembly_label_value()
 
-        # Rebase and build bootc image
+        # Phase 1: Open build to produce a successful build record whose installed_rpms
+        # can be used by Phase 2's lockfile generator
+        open_build = await self.get_latest_bootc_build(hermetic=False)
+        if open_build and not self.force_open_build:
+            self._logger.info("Open build already exists for assembly (%s). Skipping open build phase.", open_build.nvr)
+        else:
+            if self.force_open_build:
+                self._logger.info("Forcing open build phase (--force-open-build)")
+            else:
+                self._logger.info(
+                    "No open build found. Running open build to produce build record for lockfile generation."
+                )
+            await self.slack_client.say_in_thread(
+                "Running open build phase (needed for hermetic lockfile generation)..."
+            )
+            await self._do_rebase_and_build("open", upstream_commit, assembly_label_value)
+            # Wait for the build record to propagate in BigQuery before Phase 2 queries it for lockfile generation
+            await asyncio.sleep(10)
+
+        # Phase 2: Hermetic build using lockfile seeded from Phase 1
+        self._logger.info("Running hermetic build phase...")
+        await self.slack_client.say_in_thread("Running hermetic build phase...")
+        await self._do_rebase_and_build("hermetic", upstream_commit, assembly_label_value)
+        await asyncio.sleep(10)
+
+        return await self.get_latest_bootc_build(hermetic=True)
+
+    async def _do_rebase_and_build(self, network_mode: str, upstream_commit: str, assembly_label_value: Optional[str]):
+        """Run a single rebase+build cycle with the specified network mode."""
+        major, minor = self._ocp_version
         version = f"v{major}.{minor}"
         release = default_release_suffix()
+
         rebase_cmd = [
             "doozer",
             "--group",
@@ -542,12 +577,12 @@ class BuildMicroShiftBootcPipeline:
             self.assembly,
             "--latest-parent-version",
             "-i",
-            bootc_image_name,
+            self.BOOTC_IMAGE_NAME,
             # Lock to the same commit as the microshift RPM to ensure consistency
             # between RPM and bootc artifacts. Without this, doozer would try to
             # use brew to find the commit which fails for Konflux-built images.
             "--lock-upstream",
-            bootc_image_name,
+            self.BOOTC_IMAGE_NAME,
             upstream_commit,
             "--build-system",
             "konflux",
@@ -559,6 +594,7 @@ class BuildMicroShiftBootcPipeline:
         ]
         if assembly_label_value:
             rebase_cmd += ["--extra-label", f"assembly={assembly_label_value}"]
+        rebase_cmd += ["--network-mode", network_mode]
         rebase_cmd += [
             "--message",
             f"Updating Dockerfile version and release {version}-{release}",
@@ -567,6 +603,7 @@ class BuildMicroShiftBootcPipeline:
             rebase_cmd.append("--push")
         await exectools.cmd_assert_async(rebase_cmd, env=self._doozer_env_vars)
 
+        kubeconfig = os.environ['KONFLUX_SA_KUBECONFIG']
         build_cmd = [
             "doozer",
             "--group",
@@ -580,10 +617,10 @@ class BuildMicroShiftBootcPipeline:
         build_cmd.extend(
             [
                 "-i",
-                bootc_image_name,
+                self.BOOTC_IMAGE_NAME,
                 # Lock to the same commit as the microshift RPM to ensure consistency
                 "--lock-upstream",
-                bootc_image_name,
+                self.BOOTC_IMAGE_NAME,
                 upstream_commit,
                 "--build-system",
                 "konflux",
@@ -594,17 +631,13 @@ class BuildMicroShiftBootcPipeline:
                 kubeconfig,
                 "--konflux-namespace",
                 "ocp-art-tenant",
+                "--network-mode",
+                network_mode,
             ]
         )
         if self.runtime.dry_run:
             build_cmd.append("--dry-run")
         await exectools.cmd_assert_async(build_cmd, env=self._doozer_env_vars)
-
-        # sleep a little bit to account for time drift between systems
-        await asyncio.sleep(10)
-
-        # now that build is complete, fetch it
-        return await self.get_latest_bootc_build()
 
     def extract_git_repo(self, data_path: str):
         """
@@ -1214,6 +1247,11 @@ class BuildMicroShiftBootcPipeline:
     default="",
     help="Doozer data path git [branch / tag / sha] to use",
 )
+@click.option(
+    "--force-open-build",
+    is_flag=True,
+    help="Force open build phase even if one already exists for the assembly.",
+)
 @pass_runtime
 @click_coroutine
 async def build_microshift_bootc(
@@ -1225,6 +1263,7 @@ async def build_microshift_bootc(
     force_plashet_sync: bool,
     prepare_shipment: bool,
     data_gitref: str | None = None,
+    force_open_build: bool = False,
 ):
     # slack client is dry-run aware and will not send messages if dry-run is enabled
     slack_client = runtime.new_slack_client()
@@ -1240,6 +1279,7 @@ async def build_microshift_bootc(
             data_path=data_path,
             slack_client=slack_client,
             data_gitref=data_gitref,
+            force_open_build=force_open_build,
         )
         await pipeline.run()
     except Exception as err:

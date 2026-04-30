@@ -325,7 +325,7 @@ class TestBuildMicroShiftBootcPipeline(IsolatedAsyncioTestCase):
             await pipeline._get_microshift_rpm_commit()
         self.assertIn("commit", str(ctx.exception).lower())
 
-    def _make_pipeline(self, group="openshift-4.21", assembly="4.21.0"):
+    def _make_pipeline(self, group="openshift-4.21", assembly="4.21.0", force_open_build=False):
         """Helper to create a pipeline instance with the given group and assembly."""
         return BuildMicroShiftBootcPipeline(
             runtime=self.runtime,
@@ -336,6 +336,7 @@ class TestBuildMicroShiftBootcPipeline(IsolatedAsyncioTestCase):
             prepare_shipment=False,
             data_path="https://github.com/openshift-eng/ocp-build-data",
             slack_client=self.mock_slack_client,
+            force_open_build=force_open_build,
         )
 
     def test_get_assembly_label_value_standard(self):
@@ -375,6 +376,18 @@ class TestBuildMicroShiftBootcPipeline(IsolatedAsyncioTestCase):
         pipeline.assembly_type = AssemblyTypes.STREAM
         self.assertIsNone(pipeline._get_assembly_label_value())
 
+    def _mock_get_latest_bootc_build(self, open_build=None, hermetic_build=None):
+        """Create a side_effect for get_latest_bootc_build that returns different builds by hermetic filter."""
+
+        async def _side_effect(hermetic=None):
+            if hermetic is True:
+                return hermetic_build
+            if hermetic is False:
+                return open_build
+            return hermetic_build or open_build
+
+        return _side_effect
+
     @patch("pyartcd.pipelines.build_microshift_bootc.exectools.cmd_assert_async", new_callable=AsyncMock)
     @patch.object(BuildMicroShiftBootcPipeline, "get_latest_bootc_build", new_callable=AsyncMock)
     @patch.object(BuildMicroShiftBootcPipeline, "_get_microshift_rpm_commit", new_callable=AsyncMock)
@@ -386,7 +399,8 @@ class TestBuildMicroShiftBootcPipeline(IsolatedAsyncioTestCase):
         (OCPBUGS-78040).
         """
         mock_get_commit.return_value = "abc1234"
-        mock_get_build.return_value = Mock(nvr="microshift-bootc-4.21.0-1.el9")
+        hermetic_build = Mock(nvr="microshift-bootc-4.21.7-1.el9")
+        mock_get_build.side_effect = self._mock_get_latest_bootc_build(hermetic_build=hermetic_build)
         pipeline = self._make_pipeline(group="openshift-4.21", assembly="4.21.7")
         pipeline.assembly_type = AssemblyTypes.STANDARD
         pipeline.force = True
@@ -422,7 +436,8 @@ class TestBuildMicroShiftBootcPipeline(IsolatedAsyncioTestCase):
         """
         # given
         mock_get_commit.return_value = "0d0943b"
-        mock_get_build.return_value = Mock(nvr="microshift-bootc-4.21.0-1.el9")
+        hermetic_build = Mock(nvr="microshift-bootc-4.21.0-1.el9")
+        mock_get_build.side_effect = self._mock_get_latest_bootc_build(hermetic_build=hermetic_build)
         pipeline = BuildMicroShiftBootcPipeline(
             runtime=self.runtime,
             group=self.group,
@@ -456,6 +471,97 @@ class TestBuildMicroShiftBootcPipeline(IsolatedAsyncioTestCase):
             lock_idx = build_cmd.index("--lock-upstream")
             self.assertEqual(build_cmd[lock_idx + 1], "microshift-bootc")
             self.assertEqual(build_cmd[lock_idx + 2], "0d0943b")
+        finally:
+            os.environ.pop("KONFLUX_SA_KUBECONFIG", None)
+
+    @patch("pyartcd.pipelines.build_microshift_bootc.exectools.cmd_assert_async", new_callable=AsyncMock)
+    @patch.object(BuildMicroShiftBootcPipeline, "get_latest_bootc_build", new_callable=AsyncMock)
+    @patch.object(BuildMicroShiftBootcPipeline, "_get_microshift_rpm_commit", new_callable=AsyncMock)
+    @patch.object(BuildMicroShiftBootcPipeline, "_build_plashet_for_bootc", new_callable=AsyncMock)
+    async def test_two_phase_build_passes_network_mode(self, mock_plashet, mock_get_commit, mock_get_build, mock_cmd):
+        """Phase 1 passes --network-mode open, Phase 2 passes --network-mode hermetic."""
+        mock_get_commit.return_value = "abc1234"
+        hermetic_build = Mock(nvr="microshift-bootc-4.21.0-1.el9")
+        mock_get_build.side_effect = self._mock_get_latest_bootc_build(hermetic_build=hermetic_build)
+        pipeline = self._make_pipeline()
+        pipeline.assembly_type = AssemblyTypes.STANDARD
+        pipeline.force = True
+        os.environ["KONFLUX_SA_KUBECONFIG"] = "/fake/kubeconfig"
+
+        try:
+            with patch("asyncio.sleep", new_callable=AsyncMock):
+                await pipeline._rebase_and_build_bootc()
+
+            # 4 cmd_assert_async calls: open rebase, open build, hermetic rebase, hermetic build
+            self.assertEqual(len(mock_cmd.call_args_list), 4)
+
+            # Phase 1: open
+            open_rebase = mock_cmd.call_args_list[0][0][0]
+            self.assertEqual(open_rebase[open_rebase.index("--network-mode") + 1], "open")
+            open_build = mock_cmd.call_args_list[1][0][0]
+            self.assertEqual(open_build[open_build.index("--network-mode") + 1], "open")
+
+            # Phase 2: hermetic
+            hermetic_rebase = mock_cmd.call_args_list[2][0][0]
+            self.assertEqual(hermetic_rebase[hermetic_rebase.index("--network-mode") + 1], "hermetic")
+            hermetic_build_cmd = mock_cmd.call_args_list[3][0][0]
+            self.assertEqual(hermetic_build_cmd[hermetic_build_cmd.index("--network-mode") + 1], "hermetic")
+        finally:
+            os.environ.pop("KONFLUX_SA_KUBECONFIG", None)
+
+    @patch("pyartcd.pipelines.build_microshift_bootc.exectools.cmd_assert_async", new_callable=AsyncMock)
+    @patch.object(BuildMicroShiftBootcPipeline, "get_latest_bootc_build", new_callable=AsyncMock)
+    @patch.object(BuildMicroShiftBootcPipeline, "_get_microshift_rpm_commit", new_callable=AsyncMock)
+    @patch.object(BuildMicroShiftBootcPipeline, "_build_plashet_for_bootc", new_callable=AsyncMock)
+    async def test_phase1_skipped_when_open_build_exists(self, mock_plashet, mock_get_commit, mock_get_build, mock_cmd):
+        """Phase 1 is skipped when an open build already exists in BigQuery."""
+        mock_get_commit.return_value = "abc1234"
+        open_build = Mock(nvr="microshift-bootc-4.21.0-open.el9")
+        hermetic_build = Mock(nvr="microshift-bootc-4.21.0-hermetic.el9")
+        mock_get_build.side_effect = self._mock_get_latest_bootc_build(
+            open_build=open_build, hermetic_build=hermetic_build
+        )
+        pipeline = self._make_pipeline()
+        pipeline.assembly_type = AssemblyTypes.STANDARD
+        pipeline.force = True
+        os.environ["KONFLUX_SA_KUBECONFIG"] = "/fake/kubeconfig"
+
+        try:
+            with patch("asyncio.sleep", new_callable=AsyncMock):
+                await pipeline._rebase_and_build_bootc()
+
+            # Only 2 calls: hermetic rebase + hermetic build (open phase skipped)
+            self.assertEqual(len(mock_cmd.call_args_list), 2)
+            rebase_cmd = mock_cmd.call_args_list[0][0][0]
+            self.assertEqual(rebase_cmd[rebase_cmd.index("--network-mode") + 1], "hermetic")
+        finally:
+            os.environ.pop("KONFLUX_SA_KUBECONFIG", None)
+
+    @patch("pyartcd.pipelines.build_microshift_bootc.exectools.cmd_assert_async", new_callable=AsyncMock)
+    @patch.object(BuildMicroShiftBootcPipeline, "get_latest_bootc_build", new_callable=AsyncMock)
+    @patch.object(BuildMicroShiftBootcPipeline, "_get_microshift_rpm_commit", new_callable=AsyncMock)
+    @patch.object(BuildMicroShiftBootcPipeline, "_build_plashet_for_bootc", new_callable=AsyncMock)
+    async def test_force_open_build_reruns_phase1(self, mock_plashet, mock_get_commit, mock_get_build, mock_cmd):
+        """--force-open-build forces Phase 1 even when an open build already exists."""
+        mock_get_commit.return_value = "abc1234"
+        open_build = Mock(nvr="microshift-bootc-4.21.0-open.el9")
+        hermetic_build = Mock(nvr="microshift-bootc-4.21.0-hermetic.el9")
+        mock_get_build.side_effect = self._mock_get_latest_bootc_build(
+            open_build=open_build, hermetic_build=hermetic_build
+        )
+        pipeline = self._make_pipeline(force_open_build=True)
+        pipeline.assembly_type = AssemblyTypes.STANDARD
+        pipeline.force = True
+        os.environ["KONFLUX_SA_KUBECONFIG"] = "/fake/kubeconfig"
+
+        try:
+            with patch("asyncio.sleep", new_callable=AsyncMock):
+                await pipeline._rebase_and_build_bootc()
+
+            # 4 calls: both phases run despite existing open build
+            self.assertEqual(len(mock_cmd.call_args_list), 4)
+            open_rebase = mock_cmd.call_args_list[0][0][0]
+            self.assertEqual(open_rebase[open_rebase.index("--network-mode") + 1], "open")
         finally:
             os.environ.pop("KONFLUX_SA_KUBECONFIG", None)
 
