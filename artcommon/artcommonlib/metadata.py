@@ -629,3 +629,18 @@ class MetadataBase(object):
         if network_mode not in valid_network_modes:
             raise ValueError(f"Invalid network mode; {network_mode}. Valid modes: {valid_network_modes}")
         return network_mode
+
+    @property
+    def bridge_bug_mirroring_enabled(self) -> bool:
+        group_bridge = self.runtime.group_config.get("bridge_release", {}) or {}
+        group_bug_mirroring = group_bridge.get("bug_mirroring", {}) or {}
+        if not group_bug_mirroring.get("enabled", False):
+            return False
+
+        comp_bridge = self.config.get("bridge_release", {}) or {}
+        comp_bug_mirroring = comp_bridge.get("bug_mirroring", {}) or {}
+        comp_enabled = comp_bug_mirroring.get("enabled")
+        if comp_enabled is not None:
+            return bool(comp_enabled)
+
+        return True

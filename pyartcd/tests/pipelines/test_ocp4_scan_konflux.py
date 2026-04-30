@@ -2,6 +2,7 @@
 
 import os
 import unittest
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import yaml
@@ -129,6 +130,81 @@ class TestOcp4ScanKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         pipeline.handle_source_changes.assert_called_once()
         pipeline.handle_rhcos_changes.assert_awaited_once()
         mock_jenkins.update_description.assert_called_with('Scan failures: test-image<br/>')
+
+
+class TestBridgeBugMirroring(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.runtime = MagicMock(spec=Runtime)
+        self.runtime.dry_run = False
+        self.runtime.working_dir = Path("/tmp")
+        self.runtime.new_slack_client.return_value = AsyncMock()
+        self.pipeline = Ocp4ScanPipeline(
+            runtime=self.runtime,
+            version="4.23",
+            data_path="https://github.com/openshift-eng/ocp-build-data",
+            assembly="stream",
+            data_gitref="",
+            image_list="",
+        )
+
+    async def test_run_invokes_bridge_bug_mirroring(self):
+        self.pipeline.get_changes = AsyncMock()
+        self.pipeline.get_rhcos_inconsistencies = AsyncMock()
+        self.pipeline.handle_bridge_bug_mirroring = AsyncMock()
+        self.pipeline.handle_source_changes = MagicMock()
+        self.pipeline.handle_rhcos_changes = AsyncMock()
+
+        await self.pipeline.run()
+
+        self.pipeline.handle_bridge_bug_mirroring.assert_awaited_once()
+        self.pipeline.handle_source_changes.assert_called_once()
+        self.pipeline.handle_rhcos_changes.assert_awaited_once()
+
+    @patch("pyartcd.pipelines.ocp4_scan_konflux.util.load_group_config")
+    @patch("pyartcd.pipelines.ocp4_scan_konflux.exectools.cmd_assert_async")
+    async def test_handle_bridge_bug_mirroring_skips_when_disabled(self, mock_cmd_assert, mock_load_group_config):
+        mock_load_group_config.return_value = {}
+
+        await self.pipeline.handle_bridge_bug_mirroring()
+
+        mock_cmd_assert.assert_not_called()
+
+    @patch("pyartcd.pipelines.ocp4_scan_konflux.util.load_group_config")
+    @patch("pyartcd.pipelines.ocp4_scan_konflux.exectools.cmd_assert_async")
+    async def test_handle_bridge_bug_mirroring_runs_elliott(self, mock_cmd_assert, mock_load_group_config):
+        mock_load_group_config.return_value = {
+            "bridge_release": {
+                "basis_group": "openshift-5.0",
+                "bug_mirroring": {"enabled": True},
+            }
+        }
+
+        await self.pipeline.handle_bridge_bug_mirroring()
+
+        cmd = mock_cmd_assert.call_args.args[0]
+        self.assertIn("find-bugs:bridge-mirror", cmd)
+        self.assertIn("--build-system=konflux", cmd)
+        self.assertIn("--group=openshift-4.23", cmd)
+
+    @patch("pyartcd.pipelines.ocp4_scan_konflux.util.load_group_config")
+    @patch("pyartcd.pipelines.ocp4_scan_konflux.exectools.cmd_assert_async")
+    async def test_handle_bridge_bug_mirroring_alerts_on_failure(self, mock_cmd_assert, mock_load_group_config):
+        mock_load_group_config.return_value = {
+            "bridge_release": {
+                "basis_group": "openshift-5.0",
+                "bug_mirroring": {"enabled": True},
+            }
+        }
+        mock_cmd_assert.side_effect = ChildProcessError("boom")
+        slack_client = AsyncMock()
+        slack_client.bind_channel = MagicMock()
+        self.runtime.new_slack_client.return_value = slack_client
+
+        with self.assertRaises(ChildProcessError):
+            await self.pipeline.handle_bridge_bug_mirroring()
+
+        slack_client.bind_channel.assert_called_once_with("openshift-4.23")
+        slack_client.say.assert_awaited_once_with("Bridge bug mirroring failed for 4.23. Please investigate")
 
 
 if __name__ == '__main__':

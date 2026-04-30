@@ -877,6 +877,10 @@ class JIRABugTracker(BugTracker):
     def product(self):
         return self._project
 
+    @property
+    def project(self):
+        return self._project
+
     def looks_like_a_jira_project_bug(self, bug_id) -> bool:
         pattern = re.compile(rf'{self._project}-\d+')
         return bool(pattern.match(str(bug_id)))
@@ -924,21 +928,39 @@ class JIRABugTracker(BugTracker):
         self, bug_title: str, bug_description: str, target_status: str, keywords: List, noop=False
     ) -> JIRABug:
         fields = {
-            'project': {'key': self._project},
             'issuetype': {'name': 'Bug'},
             'components': [{'name': 'Release'}],
-            'versions': [{'name': self.config.get('version')[0]}],  # Affects Version/s
-            self.field_target_version: [{'name': self.config.get('target_release')[0]}],  # Target Version
             'summary': bug_title,
             'labels': keywords,
             'description': bug_description,
         }
+        return self.create_issue(fields=fields, target_status=target_status, noop=noop)
+
+    def create_issue(
+        self,
+        fields: Dict,
+        target_status: Optional[str] = None,
+        target_releases: Optional[List[str]] = None,
+        versions: Optional[List[str]] = None,
+        noop: bool = False,
+    ) -> JIRABug:
+        fields = fields.copy()
+        fields.setdefault('project', {'key': self._project})
+        if versions is None:
+            versions = self.config.get('version')
+        if versions and 'versions' not in fields:
+            fields['versions'] = [{'name': version} for version in versions]
+        if target_releases is None:
+            target_releases = self.target_release()
+        if target_releases and self.field_target_version not in fields:
+            fields[self.field_target_version] = [{'name': target_release} for target_release in target_releases]
         if noop:
             logger.info(f"Would have created JIRA Issue with status={target_status} and fields={fields}")
             return
-        bug = self._client.create_issue(fields=fields)
-        self._client.transition_issue(bug, target_status)
-        return JIRABug(bug)
+        issue = self._client.create_issue(fields=fields)
+        if target_status:
+            self._client.transition_issue(issue, target_status)
+        return JIRABug(issue)
 
     def _update_bug_status(self, bugid, target_status):
         return self._client.transition_issue(bugid, target_status)
@@ -1079,6 +1101,31 @@ class JIRABugTracker(BugTracker):
             return []
         return self._search(query, verbose=verbose)
 
+    def search_bugs(
+        self,
+        status: Optional[List] = None,
+        search_filter: Optional[str] = None,
+        include_labels: Optional[List] = None,
+        exclude_labels: Optional[List] = None,
+        with_target_release: bool = True,
+        custom_query: Optional[str] = None,
+        verbose: bool = False,
+    ) -> List[JIRABug]:
+        query = self._query(
+            status=status,
+            search_filter=search_filter,
+            include_labels=include_labels,
+            exclude_labels=exclude_labels,
+            with_target_release=with_target_release,
+            custom_query=custom_query,
+        )
+        if query is None:
+            return []
+        return self._search(query, verbose=verbose)
+
+    def create_issue_link(self, link_name: str, inward_issue: str, outward_issue: str):
+        self._client.create_issue_link(link_name, inward_issue, outward_issue)
+
     def remove_bugs(self, advisory_obj, bugids: List, noop=False):
         if noop:
             print(f"Would've removed bugs: {bugids}")
@@ -1145,7 +1192,14 @@ class BugzillaBugTracker(BugTracker):
     def __init__(self, config):
         super().__init__(config, 'bugzilla')
         self._client = self.login()
-        self.product = self.config.get('product', '')
+
+    @property
+    def product(self):
+        return self.config.get('product', '')
+
+    @property
+    def project(self):
+        return self.config.get('product', '')
 
     def get_bug(self, bugid, **kwargs):
         return BugzillaBug(self._client.getbug(bugid, **kwargs))
