@@ -813,6 +813,10 @@ async def extract_related_images_from_fbc(fbc_pullspec: str, product: str) -> li
     :param product: Product name for URL transformation (e.g., 'openshift', 'oadp')
     :return: List of image pullspecs from art-images repository
     """
+    ATTACHED_ARTIFACT_TYPE = 'application/vnd.konflux-ci.attached-artifact'
+    RELATED_IMAGES_MEDIA_TYPE = 'related-images'
+    RENDERED_CATALOG_MEDIA_TYPE = 'rendered-catalog'
+
     LOGGER.info(f"Extracting related images from FBC: {fbc_pullspec}")
 
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -831,9 +835,11 @@ async def extract_related_images_from_fbc(fbc_pullspec: str, product: str) -> li
         LOGGER.debug(f"ORAS discover response: {discover_data}")
 
         digest = None
+        catalog_digest = None  # Keep track of catalog artifact as fallback
         referrers = discover_data.get('referrers', [])
         LOGGER.info(f"Found {len(referrers)} referrers")
 
+        # Look for related-images or rendered-catalog (fallback)
         for i, referrer in enumerate(referrers):
             artifact_type = referrer.get('artifactType')
             annotations = referrer.get('annotations', {})
@@ -842,19 +848,35 @@ async def extract_related_images_from_fbc(fbc_pullspec: str, product: str) -> li
                 f"Referrer {i}: artifactType={artifact_type}, attachedMediaType={attached_media_type}, digest={referrer.get('digest')}"
             )
 
-            # Look specifically for the related-images artifact
-            if (
-                artifact_type == 'application/vnd.konflux-ci.attached-artifact'
-                and 'related-images' in attached_media_type
-            ):
-                digest = referrer.get('digest')
-                LOGGER.info(f"Found related-images artifact with digest: {digest}")
-                break
+            if artifact_type == ATTACHED_ARTIFACT_TYPE:
+                if RELATED_IMAGES_MEDIA_TYPE in attached_media_type:
+                    digest = referrer.get('digest')
+                    LOGGER.info(f"Found '{RELATED_IMAGES_MEDIA_TYPE}' artifact with digest: {digest}")
+                    break
+                # If we find rendered-catalog, save it but keep looking for related-images
+                elif RENDERED_CATALOG_MEDIA_TYPE in attached_media_type:
+                    catalog_digest = referrer.get('digest')
+                    LOGGER.info(f"Found '{RENDERED_CATALOG_MEDIA_TYPE}' artifact with digest: {catalog_digest}")
+
+        # If we didn't find related-images, use catalog if available
+        if not digest and catalog_digest:
+            digest = catalog_digest
+            LOGGER.info(
+                f"No '{RELATED_IMAGES_MEDIA_TYPE}' artifact found, using '{RENDERED_CATALOG_MEDIA_TYPE}' artifact with digest: {digest}"
+            )
 
         if not digest:
-            available_types = [r.get('artifactType') for r in referrers]
+            available_artifacts = [
+                {
+                    'artifactType': r.get('artifactType'),
+                    'attachedMediaType': r.get('annotations', {}).get('attachedMediaType', 'N/A'),
+                }
+                for r in referrers
+            ]
             raise RuntimeError(
-                f"No attached artifact found with expected type 'application/vnd.konflux-ci.attached-artifact'. Available types: {available_types}"
+                f"No attached artifact found with type '{ATTACHED_ARTIFACT_TYPE}' and media type containing "
+                f"'{RELATED_IMAGES_MEDIA_TYPE}' or '{RENDERED_CATALOG_MEDIA_TYPE}'. "
+                f"Available artifacts: {available_artifacts}"
             )
 
         # Step 2: Pull the attached artifact

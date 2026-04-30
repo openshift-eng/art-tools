@@ -1,4 +1,7 @@
+import asyncio
+import json
 import unittest
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import yaml
 from artcommonlib import build_util, release_util, util
@@ -6,6 +9,7 @@ from artcommonlib.model import Model
 from artcommonlib.release_util import SoftwareLifecyclePhase
 from artcommonlib.util import (
     deep_merge,
+    extract_related_images_from_fbc,
     isolate_major_minor_in_group,
     normalize_group_name_for_k8s,
 )
@@ -580,3 +584,232 @@ class TestIsFutureReleaseDate(unittest.TestCase):
 
 # Legacy group-based resolver tests removed - functions no longer exist
 # Use product-based resolvers: resolve_konflux_kubeconfig_by_product() and resolve_konflux_namespace_by_product()
+
+
+class TestExtractRelatedImagesFromFBC(unittest.TestCase):
+    """Tests for extract_related_images_from_fbc function with artifact fallback logic"""
+
+    def setUp(self):
+        """Set up common test data"""
+        self.fbc_pullspec = "quay.io/redhat-user-workloads/ocp-art-tenant/art-fbc@sha256:abc123"
+        self.product = "ocp"
+
+        # Sample related-images.json content
+        self.related_images_json = [
+            "registry.redhat.io/openshift4/ose-operator@sha256:111",
+            "registry.redhat.io/openshift4/ose-cli@sha256:222",
+            "quay.io/other/image@sha256:333",
+        ]
+
+        # Sample catalog.json content with embedded images
+        self.catalog_json_content = '''
+        {
+            "schema": "olm.package",
+            "name": "test-operator",
+            "relatedImages": [
+                {"image": "registry.redhat.io/openshift4/ose-operator@sha256:444"},
+                {"image": "registry.redhat.io/openshift4/ose-cli@sha256:555"}
+            ]
+        }
+        '''
+
+    def _create_discover_response(self, include_related_images=True, include_rendered_catalog=False):
+        """Helper to create ORAS discover response JSON"""
+        referrers = []
+
+        if include_related_images:
+            referrers.append(
+                {
+                    'digest': 'sha256:related-digest-111',
+                    'artifactType': 'application/vnd.konflux-ci.attached-artifact',
+                    'annotations': {
+                        'attachedMediaType': 'application/vnd.konflux-ci.attached-artifact.related-images+json'
+                    },
+                }
+            )
+
+        if include_rendered_catalog:
+            referrers.append(
+                {
+                    'digest': 'sha256:catalog-digest-222',
+                    'artifactType': 'application/vnd.konflux-ci.attached-artifact',
+                    'annotations': {
+                        'attachedMediaType': 'application/vnd.konflux-ci.attached-artifact.rendered-catalog+json'
+                    },
+                }
+            )
+
+        return json.dumps({'referrers': referrers})
+
+    @patch('artcommonlib.util.cmd_gather_async', new_callable=AsyncMock)
+    @patch('builtins.open', new_callable=MagicMock)
+    @patch('os.path.exists')
+    @patch('os.listdir')
+    def test_prefers_related_images_artifact(self, mock_listdir, mock_exists, mock_open, mock_cmd):
+        """Test that 'related-images' artifact is preferred when both artifacts exist"""
+        # Setup mocks - cmd_gather_async is called twice (discover + pull)
+        mock_cmd.side_effect = [
+            # First call: ORAS discover
+            (0, self._create_discover_response(include_related_images=True, include_rendered_catalog=True), ''),
+            # Second call: ORAS pull
+            (0, 'Pulled artifact successfully', ''),
+        ]
+
+        mock_listdir.return_value = ['related-images.json']
+        mock_exists.side_effect = lambda path: 'related-images.json' in path
+
+        # Mock file reading
+        mock_file = MagicMock()
+        mock_file.__enter__.return_value.read.return_value = json.dumps(self.related_images_json)
+        mock_open.return_value = mock_file
+
+        # Run async test
+        result = asyncio.run(extract_related_images_from_fbc(self.fbc_pullspec, self.product))
+
+        # Verify
+        self.assertGreater(len(result), 0)
+        # Should pull the related-images artifact (digest sha256:related-digest-111)
+        pull_call = mock_cmd.call_args_list[1]  # Second call is the pull
+        self.assertIn('sha256:related-digest-111', str(pull_call))
+
+    @patch('artcommonlib.util.cmd_gather_async', new_callable=AsyncMock)
+    @patch('builtins.open', new_callable=MagicMock)
+    @patch('os.path.exists')
+    @patch('os.listdir')
+    def test_falls_back_to_rendered_catalog_artifact(self, mock_listdir, mock_exists, mock_open, mock_cmd):
+        """Test that 'rendered-catalog' artifact is used when 'related-images' is missing (ART-14747 fix)"""
+        # Setup mocks - only rendered-catalog artifact exists
+        mock_cmd.side_effect = [
+            # First call: ORAS discover
+            (0, self._create_discover_response(include_related_images=False, include_rendered_catalog=True), ''),
+            # Second call: ORAS pull
+            (0, 'Pulled artifact successfully', ''),
+        ]
+
+        mock_listdir.return_value = ['catalog.json']
+        mock_exists.side_effect = lambda path: 'catalog.json' in path
+
+        # Mock file reading
+        mock_file = MagicMock()
+        mock_file.__enter__.return_value.read.return_value = self.catalog_json_content
+        mock_open.return_value = mock_file
+
+        # Run async test
+        result = asyncio.run(extract_related_images_from_fbc(self.fbc_pullspec, self.product))
+
+        # Verify
+        self.assertGreater(len(result), 0)
+        # Should pull the rendered-catalog artifact (digest sha256:catalog-digest-222)
+        pull_call = mock_cmd.call_args_list[1]  # Second call is the pull
+        self.assertIn('sha256:catalog-digest-222', str(pull_call))
+
+    @patch('artcommonlib.util.cmd_gather_async', new_callable=AsyncMock)
+    def test_error_when_no_artifacts_found(self, mock_cmd):
+        """Test detailed error message when neither artifact type exists"""
+        # Setup mocks - no matching artifacts
+        other_artifact_response = json.dumps(
+            {
+                'referrers': [
+                    {
+                        'digest': 'sha256:other-digest',
+                        'artifactType': 'application/vnd.other.type',
+                        'annotations': {'attachedMediaType': 'application/vnd.other+json'},
+                    }
+                ]
+            }
+        )
+
+        mock_cmd.return_value = (0, other_artifact_response, '')
+
+        # Run async test and expect RuntimeError
+        with self.assertRaises(RuntimeError) as ctx:
+            asyncio.run(extract_related_images_from_fbc(self.fbc_pullspec, self.product))
+
+        # Verify error message includes both artifactType and attachedMediaType
+        error_msg = str(ctx.exception)
+        self.assertIn('application/vnd.konflux-ci.attached-artifact', error_msg)
+        self.assertIn('related-images', error_msg)
+        self.assertIn('rendered-catalog', error_msg)
+        self.assertIn('attachedMediaType', error_msg)
+
+    @patch('artcommonlib.util.cmd_gather_async', new_callable=AsyncMock)
+    @patch('builtins.open', new_callable=MagicMock)
+    @patch('os.path.exists')
+    @patch('os.listdir')
+    def test_file_level_fallback_from_related_images_to_catalog(self, mock_listdir, mock_exists, mock_open, mock_cmd):
+        """Test file-level fallback: related-images artifact exists but only catalog.json file inside"""
+        # Setup mocks - related-images artifact exists
+        mock_cmd.side_effect = [
+            # First call: ORAS discover
+            (0, self._create_discover_response(include_related_images=True, include_rendered_catalog=False), ''),
+            # Second call: ORAS pull
+            (0, 'Pulled artifact successfully', ''),
+        ]
+
+        mock_listdir.return_value = ['catalog.json']  # Only catalog.json inside the artifact
+        # First check for related-images.json (False), then catalog.json (True)
+        mock_exists.side_effect = lambda path: 'catalog.json' in path
+
+        # Mock file reading
+        mock_file = MagicMock()
+        mock_file.__enter__.return_value.read.return_value = self.catalog_json_content
+        mock_open.return_value = mock_file
+
+        # Run async test
+        result = asyncio.run(extract_related_images_from_fbc(self.fbc_pullspec, self.product))
+
+        # Verify
+        self.assertGreater(len(result), 0)
+
+    @patch('artcommonlib.util.cmd_gather_async', new_callable=AsyncMock)
+    @patch('builtins.open', new_callable=MagicMock)
+    @patch('os.path.exists')
+    @patch('os.listdir')
+    def test_catalog_json_expected_from_rendered_catalog_artifact(self, mock_listdir, mock_exists, mock_open, mock_cmd):
+        """Test that using catalog.json from rendered-catalog artifact doesn't log warning"""
+        # Setup mocks - rendered-catalog artifact exists
+        mock_cmd.side_effect = [
+            # First call: ORAS discover
+            (0, self._create_discover_response(include_related_images=False, include_rendered_catalog=True), ''),
+            # Second call: ORAS pull
+            (0, 'Pulled artifact successfully', ''),
+        ]
+
+        mock_listdir.return_value = ['catalog.json']
+        mock_exists.side_effect = lambda path: 'catalog.json' in path
+
+        # Mock file reading
+        mock_file = MagicMock()
+        mock_file.__enter__.return_value.read.return_value = self.catalog_json_content
+        mock_open.return_value = mock_file
+
+        # Run async test
+        result = asyncio.run(extract_related_images_from_fbc(self.fbc_pullspec, self.product))
+
+        # Verify - should successfully extract images
+        self.assertGreater(len(result), 0)
+
+    @patch('artcommonlib.util.cmd_gather_async', new_callable=AsyncMock)
+    @patch('os.path.exists')
+    @patch('os.listdir')
+    def test_error_when_neither_file_found(self, mock_listdir, mock_exists, mock_cmd):
+        """Test error when neither related-images.json nor catalog.json found in pulled artifact"""
+        # Setup mocks
+        mock_cmd.side_effect = [
+            # First call: ORAS discover
+            (0, self._create_discover_response(include_related_images=True, include_rendered_catalog=False), ''),
+            # Second call: ORAS pull
+            (0, 'Pulled artifact successfully', ''),
+        ]
+
+        mock_listdir.return_value = ['other-file.txt']
+        mock_exists.return_value = False  # Neither file exists
+
+        # Run async test and expect RuntimeError
+        with self.assertRaises(RuntimeError) as ctx:
+            asyncio.run(extract_related_images_from_fbc(self.fbc_pullspec, self.product))
+
+        # Verify error message includes artifact type and available files
+        error_msg = str(ctx.exception)
+        self.assertIn('artifact', error_msg.lower())
+        self.assertIn('other-file.txt', error_msg)
