@@ -77,6 +77,8 @@ class BuildMicroShiftBootcPipeline:
         data_path: str,
         slack_client,
         data_gitref: str | None = None,
+        network_mode: Optional[str] = None,
+        suppress_external_effects: bool = False,
         logger: Optional[logging.Logger] = None,
     ):
         self.runtime = runtime
@@ -88,6 +90,8 @@ class BuildMicroShiftBootcPipeline:
         self.force_plashet_sync = force_plashet_sync
         self.prepare_shipment = prepare_shipment
         self.slack_client = slack_client
+        self.network_mode = network_mode
+        self.suppress_external_effects = suppress_external_effects
         self._logger = logger or runtime.logger
 
         self._working_dir = self.runtime.working_dir.absolute()
@@ -187,6 +191,14 @@ class BuildMicroShiftBootcPipeline:
             await self._run_pipeline()
 
     async def _run_pipeline(self):
+        if self.network_mode == 'open' and not self.suppress_external_effects:
+            raise ValueError(
+                "Open builds require --suppress-external-effects to prevent "
+                "publishing non-hermetic builds to production."
+            )
+        if self.suppress_external_effects and self.prepare_shipment:
+            raise ValueError("--prepare-shipment and --suppress-external-effects are mutually exclusive.")
+
         data_path = self._doozer_env_vars["DOOZER_DATA_PATH"]
         self.releases_config = await load_releases_config(group=self.doozer_group, data_path=data_path)
         self.assembly_type = get_assembly_type(self.releases_config, self.assembly)
@@ -219,7 +231,7 @@ class BuildMicroShiftBootcPipeline:
         digest_by_arch = {m["platform"]["architecture"]: m["digest"] for m in manifest_list["manifests"]}
         self._logger.info("Bootc image digests by arch: %s", json.dumps(digest_by_arch, indent=4))
 
-        if not self.runtime.dry_run:
+        if not self.runtime.dry_run and not self.suppress_external_effects:
             major, _ = self._ocp_version
             if bootc_build.embargoed:
                 art_repo = get_art_prod_image_repo_for_version(major, "dev-priv")
@@ -239,10 +251,11 @@ class BuildMicroShiftBootcPipeline:
         else:
             major, _ = self._ocp_version
             art_repo = get_art_prod_image_repo_for_version(major, "dev")
-            self._logger.warning(f"Skipping sync to {art_repo} since in dry-run mode")
+            reason = 'suppress-external-effects' if self.suppress_external_effects else 'dry-run'
+            self._logger.warning(f"Skipping sync to {art_repo} ({reason})")
 
         # Pin the image to the assembly if not STREAM
-        if self.assembly_type != AssemblyTypes.STREAM:
+        if self.assembly_type != AssemblyTypes.STREAM and not self.suppress_external_effects:
             # Check if we need to create a PR to pin the build
             pinned_nvr = get_image_if_pinned_directly(self.releases_config, self.assembly, 'microshift-bootc')
             if bootc_build.nvr != pinned_nvr:
@@ -489,7 +502,8 @@ class BuildMicroShiftBootcPipeline:
             if pinned_nvr:
                 message = f"For assembly {self.assembly} microshift-bootc image is already pinned: {pinned_nvr}. Use FORCE to rebuild."
                 self._logger.info(message)
-                await self.slack_client.say_in_thread(message)
+                if not self.suppress_external_effects:
+                    await self.slack_client.say_in_thread(message)
 
                 # Fetch the actual build record from Konflux DB using the pinned NVR
                 if not self.konflux_db:
@@ -559,6 +573,8 @@ class BuildMicroShiftBootcPipeline:
         ]
         if assembly_label_value:
             rebase_cmd += ["--extra-label", f"assembly={assembly_label_value}"]
+        if self.network_mode:
+            rebase_cmd += ["--network-mode", self.network_mode]
         rebase_cmd += [
             "--message",
             f"Updating Dockerfile version and release {version}-{release}",
@@ -596,6 +612,8 @@ class BuildMicroShiftBootcPipeline:
                 "ocp-art-tenant",
             ]
         )
+        if self.network_mode:
+            build_cmd.extend(["--network-mode", self.network_mode])
         if self.runtime.dry_run:
             build_cmd.append("--dry-run")
         await exectools.cmd_assert_async(build_cmd, env=self._doozer_env_vars)
@@ -1214,6 +1232,17 @@ class BuildMicroShiftBootcPipeline:
     default="",
     help="Doozer data path git [branch / tag / sha] to use",
 )
+@click.option(
+    "--network-mode",
+    type=click.Choice(['hermetic', 'open']),
+    default=None,
+    help="Override network mode for Konflux builds.",
+)
+@click.option(
+    "--suppress-external-effects",
+    is_flag=True,
+    help="Skip Quay sync, mirror sync, PR creation, shipment MR, and Slack notifications.",
+)
 @pass_runtime
 @click_coroutine
 async def build_microshift_bootc(
@@ -1225,6 +1254,8 @@ async def build_microshift_bootc(
     force_plashet_sync: bool,
     prepare_shipment: bool,
     data_gitref: str | None = None,
+    network_mode: str | None = None,
+    suppress_external_effects: bool = False,
 ):
     # slack client is dry-run aware and will not send messages if dry-run is enabled
     slack_client = runtime.new_slack_client()
@@ -1240,11 +1271,14 @@ async def build_microshift_bootc(
             data_path=data_path,
             slack_client=slack_client,
             data_gitref=data_gitref,
+            network_mode=network_mode,
+            suppress_external_effects=suppress_external_effects,
         )
         await pipeline.run()
     except Exception as err:
         slack_message = f"build-microshift-bootc pipeline encountered error: {err}"
         error_message = slack_message + f"\n {traceback.format_exc()}"
         runtime.logger.error(error_message)
-        await slack_client.say_in_thread(slack_message)
+        if not suppress_external_effects:
+            await slack_client.say_in_thread(slack_message)
         raise
