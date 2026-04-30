@@ -155,6 +155,7 @@ class SeedLockfilePipeline:
                 '--konflux-namespace=ocp-art-tenant',
                 '--network-mode',
                 'open',
+                '--skip-ec-verify',
             ]
         )
         if self.kubeconfig:
