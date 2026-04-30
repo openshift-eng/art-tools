@@ -325,7 +325,14 @@ class TestBuildMicroShiftBootcPipeline(IsolatedAsyncioTestCase):
             await pipeline._get_microshift_rpm_commit()
         self.assertIn("commit", str(ctx.exception).lower())
 
-    def _make_pipeline(self, group="openshift-4.21", assembly="4.21.0"):
+    def _make_pipeline(
+        self,
+        group="openshift-4.21",
+        assembly="4.21.0",
+        network_mode=None,
+        suppress_external_effects=False,
+        prepare_shipment=False,
+    ):
         """Helper to create a pipeline instance with the given group and assembly."""
         return BuildMicroShiftBootcPipeline(
             runtime=self.runtime,
@@ -333,9 +340,11 @@ class TestBuildMicroShiftBootcPipeline(IsolatedAsyncioTestCase):
             assembly=assembly,
             force=False,
             force_plashet_sync=False,
-            prepare_shipment=False,
+            prepare_shipment=prepare_shipment,
             data_path="https://github.com/openshift-eng/ocp-build-data",
             slack_client=self.mock_slack_client,
+            network_mode=network_mode,
+            suppress_external_effects=suppress_external_effects,
         )
 
     def test_get_assembly_label_value_standard(self):
@@ -458,6 +467,158 @@ class TestBuildMicroShiftBootcPipeline(IsolatedAsyncioTestCase):
             self.assertEqual(build_cmd[lock_idx + 2], "0d0943b")
         finally:
             os.environ.pop("KONFLUX_SA_KUBECONFIG", None)
+
+    async def test_open_network_mode_without_suppress_raises(self):
+        """Open builds must use --suppress-external-effects."""
+        pipeline = self._make_pipeline(network_mode="open", suppress_external_effects=False)
+        with self.assertRaises(ValueError) as ctx:
+            await pipeline._run_pipeline()
+        self.assertIn("suppress-external-effects", str(ctx.exception))
+
+    async def test_suppress_with_prepare_shipment_raises(self):
+        """--prepare-shipment and --suppress-external-effects are mutually exclusive."""
+        pipeline = self._make_pipeline(prepare_shipment=True, suppress_external_effects=True)
+        with self.assertRaises(ValueError) as ctx:
+            await pipeline._run_pipeline()
+        self.assertIn("mutually exclusive", str(ctx.exception))
+
+    @patch("pyartcd.pipelines.build_microshift_bootc.exectools.cmd_assert_async", new_callable=AsyncMock)
+    @patch.object(BuildMicroShiftBootcPipeline, "get_latest_bootc_build", new_callable=AsyncMock)
+    @patch.object(BuildMicroShiftBootcPipeline, "_get_microshift_rpm_commit", new_callable=AsyncMock)
+    @patch.object(BuildMicroShiftBootcPipeline, "_build_plashet_for_bootc", new_callable=AsyncMock)
+    async def test_network_mode_passed_to_rebase_and_build(
+        self, mock_plashet, mock_get_commit, mock_get_build, mock_cmd
+    ):
+        """--network-mode should appear in both rebase and build doozer commands."""
+        mock_get_commit.return_value = "abc1234"
+        mock_get_build.return_value = Mock(nvr="microshift-bootc-4.21.0-1.el9")
+        pipeline = self._make_pipeline(network_mode="open", suppress_external_effects=True)
+        pipeline.assembly_type = AssemblyTypes.STANDARD
+        pipeline.force = True
+        os.environ["KONFLUX_SA_KUBECONFIG"] = "/fake/kubeconfig"
+
+        try:
+            with patch("asyncio.sleep", new_callable=AsyncMock):
+                await pipeline._rebase_and_build_bootc()
+
+            rebase_cmd = mock_cmd.call_args_list[0][0][0]
+            self.assertIn("--network-mode", rebase_cmd)
+            self.assertEqual(rebase_cmd[rebase_cmd.index("--network-mode") + 1], "open")
+
+            build_cmd = mock_cmd.call_args_list[1][0][0]
+            self.assertIn("--network-mode", build_cmd)
+            self.assertEqual(build_cmd[build_cmd.index("--network-mode") + 1], "open")
+        finally:
+            os.environ.pop("KONFLUX_SA_KUBECONFIG", None)
+
+    @patch("pyartcd.pipelines.build_microshift_bootc.exectools.cmd_assert_async", new_callable=AsyncMock)
+    @patch.object(BuildMicroShiftBootcPipeline, "get_latest_bootc_build", new_callable=AsyncMock)
+    @patch.object(BuildMicroShiftBootcPipeline, "_get_microshift_rpm_commit", new_callable=AsyncMock)
+    @patch.object(BuildMicroShiftBootcPipeline, "_build_plashet_for_bootc", new_callable=AsyncMock)
+    async def test_network_mode_omitted_when_not_set(self, mock_plashet, mock_get_commit, mock_get_build, mock_cmd):
+        """--network-mode should NOT appear in commands when not set."""
+        mock_get_commit.return_value = "abc1234"
+        mock_get_build.return_value = Mock(nvr="microshift-bootc-4.21.0-1.el9")
+        pipeline = self._make_pipeline()
+        pipeline.assembly_type = AssemblyTypes.STANDARD
+        pipeline.force = True
+        os.environ["KONFLUX_SA_KUBECONFIG"] = "/fake/kubeconfig"
+
+        try:
+            with patch("asyncio.sleep", new_callable=AsyncMock):
+                await pipeline._rebase_and_build_bootc()
+
+            rebase_cmd = mock_cmd.call_args_list[0][0][0]
+            self.assertNotIn("--network-mode", rebase_cmd)
+
+            build_cmd = mock_cmd.call_args_list[1][0][0]
+            self.assertNotIn("--network-mode", build_cmd)
+        finally:
+            os.environ.pop("KONFLUX_SA_KUBECONFIG", None)
+
+    @patch("pyartcd.pipelines.build_microshift_bootc.sync_to_quay", new_callable=AsyncMock)
+    @patch.object(BuildMicroShiftBootcPipeline, "_create_or_update_pull_request_for_image", new_callable=AsyncMock)
+    @patch.object(BuildMicroShiftBootcPipeline, "sync_to_mirror", new_callable=AsyncMock)
+    @patch("pyartcd.pipelines.build_microshift_bootc.exectools.cmd_gather_async", new_callable=AsyncMock)
+    @patch.object(BuildMicroShiftBootcPipeline, "_rebase_and_build_bootc", new_callable=AsyncMock)
+    @patch("pyartcd.pipelines.build_microshift_bootc.load_releases_config", new_callable=AsyncMock)
+    @patch("pyartcd.pipelines.build_microshift_bootc.load_group_config", new_callable=AsyncMock)
+    @patch("pyartcd.pipelines.build_microshift_bootc.get_assembly_type")
+    async def test_suppress_skips_quay_sync_and_pr(
+        self,
+        mock_get_type,
+        mock_load_group,
+        mock_load_releases,
+        mock_rebase,
+        mock_gather,
+        mock_mirror,
+        mock_pr,
+        mock_quay_sync,
+    ):
+        """With suppress_external_effects, quay sync, mirror sync, PR creation, and slack should be skipped."""
+        mock_load_releases.return_value = {"releases": {"4.21.0": {"assembly": {"group": {}}}}}
+        mock_load_group.return_value = {}
+        mock_get_type.return_value = AssemblyTypes.STANDARD
+
+        mock_build = Mock(
+            nvr="microshift-bootc-4.21.0-1.el9",
+            image_pullspec="quay.io/test/microshift-bootc@sha256:abc",
+            embargoed=False,
+            el_target="el9",
+        )
+        mock_rebase.return_value = mock_build
+        mock_gather.return_value = (
+            0,
+            '{"manifests":[{"platform":{"architecture":"amd64"},"digest":"sha256:abc"}]}',
+            "",
+        )
+
+        pipeline = self._make_pipeline(suppress_external_effects=True)
+        await pipeline._run_pipeline()
+
+        mock_quay_sync.assert_not_called()
+        mock_mirror.assert_not_called()
+        mock_pr.assert_not_called()
+        self.mock_slack_client.say_in_thread.assert_not_called()
+
+    @patch("pyartcd.pipelines.build_microshift_bootc.exectools.cmd_assert_async", new_callable=AsyncMock)
+    @patch.object(BuildMicroShiftBootcPipeline, "get_latest_bootc_build", new_callable=AsyncMock)
+    @patch.object(BuildMicroShiftBootcPipeline, "_get_microshift_rpm_commit", new_callable=AsyncMock)
+    @patch.object(BuildMicroShiftBootcPipeline, "_build_plashet_for_bootc", new_callable=AsyncMock)
+    async def test_suppress_skips_slack_for_pinned_build(self, mock_plashet, mock_get_commit, mock_get_build, mock_cmd):
+        """With suppress_external_effects, the 'already pinned' Slack message should be skipped."""
+        pipeline = self._make_pipeline(suppress_external_effects=True)
+        pipeline.assembly_type = AssemblyTypes.STANDARD
+        pipeline.force = False
+        pipeline.releases_config = {
+            "releases": {
+                "4.21.0": {
+                    "assembly": {
+                        "members": {
+                            "images": [
+                                {
+                                    "distgit_key": "microshift-bootc",
+                                    "metadata": {"is": {"nvr": "microshift-bootc-4.21.0-1.el9"}},
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        }
+
+        mock_build = Mock(nvr="microshift-bootc-4.21.0-1.el9")
+        pipeline.konflux_db = Mock()
+        pipeline.konflux_db.get_build_record_by_nvr = AsyncMock(return_value=mock_build)
+
+        with patch(
+            "pyartcd.pipelines.build_microshift_bootc.get_image_if_pinned_directly",
+            return_value="microshift-bootc-4.21.0-1.el9",
+        ):
+            result = await pipeline._rebase_and_build_bootc()
+
+        self.assertEqual(result, mock_build)
+        self.mock_slack_client.say_in_thread.assert_not_called()
 
     def test_validate_shipment_mr_raises_on_closed_mr(self):
         """
