@@ -76,3 +76,5 @@ KONFLUX_PREGA_EC_POLICY_CONFIGURATION = "rhtap-releng-tenant/registry-ocp-art-ec
 # Base image EC policy (base_only images use a dedicated prod policy for all assembly types)
 # https://gitlab.cee.redhat.com/releng/konflux-release-data/-/blob/main/config/kflux-ocp-p01.7ayg.p1/product/EnterpriseContractPolicy/registry-ocp-art-base-prod.yaml
 KONFLUX_BASE_IMAGE_EC_POLICY_CONFIGURATION = "rhtap-releng-tenant/registry-ocp-art-base-prod"
+
+ART_IMAGES_BASE_APPLICATION = "art-images-base"

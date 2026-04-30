@@ -225,6 +225,8 @@ class KonfluxRebaser:
                 force = (self._runtime.assembly != "stream") or (build_repo.url != build_repo.pull_url)
                 await build_repo.push(force=force)
 
+            metadata.rebased_image_version = actual_version
+            metadata.rebased_image_release = actual_release
             metadata.rebase_status = True
         finally:
             # notify child images
@@ -388,6 +390,17 @@ class KonfluxRebaser:
                 await file.write("\n!/.oit/**\n")
                 await file.write("\n!labels.json\n")
 
+    def _rebased_member_image_nvr(self, parent_metadata: ImageMetadata) -> str:
+        """NVR from parent's rebase (same as Dockerfile labels / Konflux DB): component-version-release."""
+        version = parent_metadata.rebased_image_version
+        release = parent_metadata.rebased_image_release
+        if not version or not release:
+            raise IOError(
+                f"Parent image {parent_metadata.distgit_key} has no rebased_image_version/rebased_image_release; "
+                f"expected KonfluxRebaser to set them after a successful rebase."
+            )
+        return f"{parent_metadata.get_component_name()}-{version}-{release}"
+
     @staticmethod
     def _identify_stage_references(dfp: DockerfileParser) -> List[bool]:
         """
@@ -539,6 +552,9 @@ class KonfluxRebaser:
                     "This indicates a bug in Doozer. Please report this issue.",
                 )
             private_fix = parent_metadata.private_fix
+            if self.variant is not BuildVariant.OKD and parent_metadata.should_trigger_base_image_release():
+                parent_nvr = self._rebased_member_image_nvr(parent_metadata)
+                return util.rh_art_images_base_pullspec(parent_nvr), private_fix
             return f"{self.image_repo}:{parent_metadata.image_name_short}-{self.uuid_tag}", private_fix
 
     @start_as_current_span_async(TRACER, "rebase.resolve_stream_parent")
