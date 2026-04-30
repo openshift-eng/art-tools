@@ -5,7 +5,6 @@ import logging
 import os
 import pathlib
 import re
-import urllib.request
 from collections import deque
 from datetime import datetime
 from itertools import chain
@@ -235,31 +234,6 @@ def extract_version_fields(version, at_least=0):
     return fields
 
 
-def get_cincinnati_channels(major, minor):
-    """
-    Returns Cincinnati graph channels for a release in promotion order.
-
-    :param major: Major version for release
-    :param minor: Minor version for release
-    :return: List of channel names (e.g., ['candidate-4.16', 'fast-4.16', 'stable-4.16'])
-    :raises ValueError: If major version is less than 4 (Cincinnati channels only exist for OCP 4+)
-    """
-    major = int(major)
-    minor = int(minor)
-
-    if major < 4:
-        raise ValueError(f'Cincinnati channels are only available for OCP 4.x and later (requested: {major}.{minor})')
-
-    # Special case: OCP 4.1 used different channel names
-    if major == 4 and minor == 1:
-        prefixes = ['prerelease', 'stable']
-    else:
-        # Standard channel names for all other versions (4.2+, 5.x+)
-        prefixes = ['candidate', 'fast', 'stable']
-
-    return [f'{prefix}-{major}.{minor}' for prefix in prefixes]
-
-
 def get_docker_config_json(config_dir):
     flist = os.listdir(abspath(config_dir))
     if 'config.json' in flist:
@@ -407,141 +381,6 @@ def get_release_tag_datetime(release: str) -> Optional[str]:
 
 def sort_semver(versions):
     return sorted(versions, key=functools.cmp_to_key(semver.compare), reverse=True)
-
-
-def get_channel_versions(
-    channel,
-    arch,
-    graph_url='https://api.openshift.com/api/upgrades_info/v1/graph',
-    graph_content_stable=None,
-    graph_content_candidate=None,
-):
-    """
-    Queries Cincinnati and returns a tuple containing:
-    1. All of the versions in the specified channel in decending order (e.g. 4.6.26, ... ,4.6.1)
-    2. A map of the edges associated with each version (e.g. map['4.6.1'] -> [ '4.6.2', '4.6.3', ... ]
-    :param channel: The name of the channel to inspect
-    :param arch: Arch for the channel
-    :param graph_url: Cincinnati graph URL to query
-    :param graph_content_candidate: Override content from candidate channel - primarily for testing
-    :param graph_content_stable: Override content from stable channel - primarily for testing
-    :return: (versions, edge_map)
-    """
-    content = None
-    if (channel == 'stable') and graph_content_stable:
-        # permit override
-        with open(graph_content_stable, 'r') as f:
-            content = f.read()
-
-    if (channel != 'stable') and graph_content_candidate:
-        # permit override
-        with open(graph_content_candidate, 'r') as f:
-            content = f.read()
-
-    if not content:
-        url = f'{graph_url}?arch={arch}&channel={channel}'
-        req = urllib.request.Request(url)
-        req.add_header('Accept', 'application/json')
-        content = exectools.urlopen_assert(req).read()
-
-    graph = json.loads(content)
-    versions = [node['version'] for node in graph['nodes']]
-    descending_versions = sort_semver(versions)
-
-    edges: Dict[str, List] = dict()
-    for v in versions:
-        # Ensure there is at least an empty list for all versions.
-        edges[v] = []
-
-    for edge_def in graph['edges']:
-        # edge_def example [22, 20] where is number is an offset into versions
-        from_ver = versions[edge_def[0]]
-        to_ver = versions[edge_def[1]]
-        edges[from_ver].append(to_ver)
-
-    return descending_versions, edges
-
-
-def get_build_suggestions(
-    major,
-    minor,
-    arch,
-    suggestions_url='https://raw.githubusercontent.com/openshift/cincinnati-graph-data/master/build-suggestions/',
-):
-    """
-    Loads suggestions_url/major.minor.yaml and returns minor_min, minor_max,
-    minor_block_list, z_min, z_max, and z_block_list
-    :param suggestions_url: Base url to /{major}.{minor}.yaml
-    :param major: Major version
-    :param minor: Minor version
-    :param arch: Architecture to lookup
-    :return: {minor_min, minor_max, minor_block_list, z_min, z_max, z_block_list}
-    """
-    url = f'{suggestions_url}/{major}.{minor}.yaml'
-    req = urllib.request.Request(url)
-    req.add_header('Accept', 'application/yaml')
-    suggestions = yaml.safe_load(exectools.urlopen_assert(req))
-    if arch in suggestions:
-        return suggestions[arch]
-    else:
-        return suggestions['default']
-
-
-def get_release_calc_previous(
-    version,
-    arch,
-    graph_url='https://api.openshift.com/api/upgrades_info/v1/graph',
-    graph_content_stable=None,
-    graph_content_candidate=None,
-    suggestions_url='https://raw.githubusercontent.com/openshift/cincinnati-graph-data/master/build-suggestions/',
-):
-    major, minor = extract_version_fields(version, at_least=2)[:2]
-    arch = go_arch_for_brew_arch(arch)  # Cincinnati is go code, and uses a different arch name than brew
-    # Get the names of channels we need to analyze
-    candidate_channel = get_cincinnati_channels(major, minor)[0]
-    prev_candidate_channel = get_cincinnati_channels(major, minor - 1)[0]
-
-    upgrade_from = set()
-    prev_versions, prev_edges = get_channel_versions(
-        prev_candidate_channel, arch, graph_url, graph_content_stable, graph_content_candidate
-    )
-    curr_versions, current_edges = get_channel_versions(
-        candidate_channel, arch, graph_url, graph_content_stable, graph_content_candidate
-    )
-    suggestions = get_build_suggestions(major, minor, arch, suggestions_url)
-    for v in prev_versions:
-        if (
-            semver.VersionInfo.parse(v) >= semver.VersionInfo.parse(suggestions['minor_min'])
-            and semver.VersionInfo.parse(v) < semver.VersionInfo.parse(suggestions['minor_max'])
-            and v not in suggestions['minor_block_list']
-        ):
-            upgrade_from.add(v)
-    for v in curr_versions:
-        if (
-            semver.VersionInfo.parse(v) >= semver.VersionInfo.parse(suggestions['z_min'])
-            and semver.VersionInfo.parse(v) < semver.VersionInfo.parse(suggestions['z_max'])
-            and v not in suggestions['z_block_list']
-        ):
-            upgrade_from.add(v)
-
-    candidate_channel_versions, candidate_edges = curr_versions, current_edges
-    # 'nightly' was an older convention. This nightly variant check can be removed by Oct 2020.
-    if 'nightly' not in version and 'hotfix' not in version:
-        # If we are not calculating a previous list for standard release, we want edges from previously
-        # released hotfixes to be valid for this node IF and only if that hotfix does not
-        # have an edge to TWO previous standard releases.
-        # ref: https://docs.google.com/document/d/16eGVikCYARd6nUUtAIHFRKXa7R_rU5Exc9jUPcQoG8A/edit
-
-        # If a release name in candidate contains 'hotfix', it was promoted as a hotfix for a customer.
-        previous_hotfixes = list(
-            filter(lambda release: 'nightly' in release or 'hotfix' in release, candidate_channel_versions)
-        )
-        # For each hotfix that doesn't have 2 outgoing edges, and it as an incoming edge to this release
-        for hotfix_version in previous_hotfixes:
-            if len(candidate_edges[hotfix_version]) < 2:
-                upgrade_from.add(hotfix_version)
-
-    return sort_semver(list(upgrade_from))
 
 
 async def find_manifest_list_sha(pullspec, registry_config: str = None):

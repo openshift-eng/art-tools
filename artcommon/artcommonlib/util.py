@@ -39,6 +39,22 @@ LOGGER = logging.getLogger(__name__)
 KONFLUX_LOGGER = logutil.get_logger(__name__)
 
 
+def extract_version_fields(version, at_least=0):
+    """
+    For a specified version, return a list with major, minor, patch.. isolated
+    as integers.
+    :param version: A version to parse
+    :param at_least: The minimum number of fields to find (else raise an error)
+    """
+    try:
+        fields = [int(f) for f in version.strip().split('-')[0].lstrip('v').split('.')]  # v1.17.1 => [ '1', '17', '1' ]
+    except (TypeError, ValueError) as e:
+        raise IOError(f'Unable to parse version fields from {version!r}') from e
+    if len(fields) < at_least:
+        raise IOError(f'Unable to find required {at_least} fields in {version}')
+    return fields
+
+
 def is_ocp_delivery_repo(name: str) -> bool:
     return name.startswith(("openshift4/", "openshift5/"))
 

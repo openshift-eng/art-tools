@@ -93,6 +93,10 @@ class TestUtil(unittest.TestCase):
             'https://gitlab.cee.redhat.com/some/repo',
         )
 
+    def test_extract_version_fields_invalid_token_raises_ioerror(self):
+        with self.assertRaises(IOError):
+            util.extract_version_fields('5.x.0')
+
     def test_find_latest_builds(self):
         builds = [
             {
