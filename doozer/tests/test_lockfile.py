@@ -466,6 +466,346 @@ class TestRpmInfoCollectorFetchRpms(unittest.TestCase):
         self.assertEqual(result[0].evr, '0:252-32.el9_4')
         self.assertEqual(result[0].repoid, 'baseos-cs')
 
+    def test_fetch_rpms_prefers_non_modular_over_higher_modular(self):
+        """Non-modular RPM should win over a higher-EVR modular RPM."""
+        arches = ['x86_64']
+        repo_data = {
+            "rhel-8-baseos-rpms": {
+                "conf": {"baseurl": {"x86_64": "https://example.com/baseos/"}},
+                "content_set": {"default": "baseos-cs"},
+                "reposync": {"enabled": False},
+            },
+            "rhel-8-appstream-rpms": {
+                "conf": {"baseurl": {"x86_64": "https://example.com/appstream/"}},
+                "content_set": {"default": "appstream-cs"},
+                "reposync": {"enabled": False},
+            },
+        }
+        repos = Repos(repo_data, arches=arches)
+        collector = RpmInfoCollector(repos=repos)
+        collector.logger = MagicMock()
+
+        non_modular_rpm = Rpm(
+            name="perl-interpreter",
+            epoch=4,
+            version="5.26.3",
+            checksum="abc",
+            size=6000000,
+            location="/perl-interpreter-5.26.3-423.el8_10.x86_64.rpm",
+            sourcerpm="perl-5.26.3-423.el8_10.src.rpm",
+            release="423.el8_10",
+            arch="x86_64",
+        )
+        modular_rpm = Rpm(
+            name="perl-interpreter",
+            epoch=4,
+            version="5.32.1",
+            checksum="def",
+            size=150000,
+            location="/perl-interpreter-5.32.1-474.module+el8.10.0.x86_64.rpm",
+            sourcerpm="perl-5.32.1-474.module+el8.10.0.src.rpm",
+            release="474.module+el8.10.0+24099+8aa2f756",
+            arch="x86_64",
+        )
+        perl_module = RpmModule(
+            name="perl",
+            stream="5.32",
+            version=8100020240612,
+            context="rhel8",
+            arch="x86_64",
+            rpms={modular_rpm.nevra},
+        )
+
+        arch = 'x86_64'
+        baseos_repodata = MagicMock()
+        baseos_repodata.get_rpms.return_value = ([non_modular_rpm], [])
+        baseos_repodata.modules = []
+        baseos_repodata.default_streams = {}
+        collector.loaded_repos[f"rhel-8-baseos-rpms-{arch}"] = baseos_repodata
+
+        appstream_repodata = MagicMock()
+        appstream_repodata.get_rpms.return_value = ([modular_rpm], [])
+        appstream_repodata.modules = [perl_module]
+        appstream_repodata.default_streams = {}
+        collector.loaded_repos[f"rhel-8-appstream-rpms-{arch}"] = appstream_repodata
+
+        # Non-modular 5.26 should win even though modular 5.32 has higher EVR
+        result = collector._fetch_rpms_info_per_arch(
+            {'perl-interpreter'},
+            set(repo_data.keys()),
+            arch,
+        )
+        self.assertEqual(len(result), 1)
+        self.assertIn('5.26.3', result[0].evr)
+        self.assertEqual(result[0].repoid, 'baseos-cs')
+
+    def test_fetch_rpms_allows_modular_when_module_enabled(self):
+        """When a module is in the image's modules: config, its higher-EVR modular RPMs should win."""
+        arches = ['x86_64']
+        repo_data = {
+            "rhel-8-baseos-rpms": {
+                "conf": {"baseurl": {"x86_64": "https://example.com/baseos/"}},
+                "content_set": {"default": "baseos-cs"},
+                "reposync": {"enabled": False},
+            },
+            "rhel-8-appstream-rpms": {
+                "conf": {"baseurl": {"x86_64": "https://example.com/appstream/"}},
+                "content_set": {"default": "appstream-cs"},
+                "reposync": {"enabled": False},
+            },
+        }
+        repos = Repos(repo_data, arches=arches)
+        collector = RpmInfoCollector(repos=repos)
+        collector.logger = MagicMock()
+
+        non_modular_rpm = Rpm(
+            name="perl-interpreter",
+            epoch=4,
+            version="5.26.3",
+            checksum="abc",
+            size=6000000,
+            location="/perl-interpreter-5.26.3-423.el8_10.x86_64.rpm",
+            sourcerpm="perl-5.26.3-423.el8_10.src.rpm",
+            release="423.el8_10",
+            arch="x86_64",
+        )
+        modular_rpm = Rpm(
+            name="perl-interpreter",
+            epoch=4,
+            version="5.32.1",
+            checksum="def",
+            size=150000,
+            location="/perl-interpreter-5.32.1-474.module+el8.10.0.x86_64.rpm",
+            sourcerpm="perl-5.32.1-474.module+el8.10.0.src.rpm",
+            release="474.module+el8.10.0+24099+8aa2f756",
+            arch="x86_64",
+        )
+        perl_module = RpmModule(
+            name="perl",
+            stream="5.32",
+            version=8100020240612,
+            context="rhel8",
+            arch="x86_64",
+            rpms={modular_rpm.nevra},
+        )
+
+        arch = 'x86_64'
+        baseos_repodata = MagicMock()
+        baseos_repodata.get_rpms.return_value = ([non_modular_rpm], [])
+        baseos_repodata.modules = []
+        baseos_repodata.default_streams = {}
+        baseos_repodata.primary_rpms = [non_modular_rpm]
+        collector.loaded_repos[f"rhel-8-baseos-rpms-{arch}"] = baseos_repodata
+
+        appstream_repodata = MagicMock()
+        appstream_repodata.get_rpms.return_value = ([modular_rpm], [])
+        appstream_repodata.modules = [perl_module]
+        appstream_repodata.default_streams = {"perl": "5.32"}
+        appstream_repodata.primary_rpms = [modular_rpm]
+        collector.loaded_repos[f"rhel-8-appstream-rpms-{arch}"] = appstream_repodata
+
+        # With perl in enabled_modules, default stream 5.32 is resolved from
+        # modulemd-defaults metadata — modular 5.32 should win
+        result = collector._fetch_rpms_info_per_arch(
+            {'perl-interpreter'},
+            set(repo_data.keys()),
+            arch,
+            enabled_modules={'perl'},
+        )
+        self.assertEqual(len(result), 1)
+        self.assertIn('5.32.1', result[0].evr)
+        self.assertEqual(result[0].repoid, 'appstream-cs')
+
+    def test_fetch_rpms_uses_modular_when_no_non_modular_exists(self):
+        """When a package only exists in modular form, use it regardless."""
+        arches = ['x86_64']
+        repo_data = {
+            "rhel-8-appstream-rpms": {
+                "conf": {"baseurl": {"x86_64": "https://example.com/appstream/"}},
+                "content_set": {"default": "appstream-cs"},
+                "reposync": {"enabled": False},
+            },
+        }
+        repos = Repos(repo_data, arches=arches)
+        collector = RpmInfoCollector(repos=repos)
+        collector.logger = MagicMock()
+
+        modular_rpm = Rpm(
+            name="perl-IO-Socket-SSL",
+            epoch=0,
+            version="2.075",
+            checksum="def",
+            size=250000,
+            location="/perl-IO-Socket-SSL-2.075.rpm",
+            sourcerpm="perl-IO-Socket-SSL-2.075.src.rpm",
+            release="1.module+el8.10.0+24099+8aa2f756",
+            arch="noarch",
+        )
+        perl_ssl_module = RpmModule(
+            name="perl-IO-Socket-SSL",
+            stream="2.066",
+            version=8100020240612,
+            context="rhel8",
+            arch="x86_64",
+            rpms={modular_rpm.nevra},
+        )
+
+        arch = 'x86_64'
+        appstream_repodata = MagicMock()
+        appstream_repodata.get_rpms.return_value = ([modular_rpm], [])
+        appstream_repodata.modules = [perl_ssl_module]
+        appstream_repodata.default_streams = {}
+        collector.loaded_repos[f"rhel-8-appstream-rpms-{arch}"] = appstream_repodata
+
+        result = collector._fetch_rpms_info_per_arch(
+            {'perl-IO-Socket-SSL'},
+            set(repo_data.keys()),
+            arch,
+        )
+        self.assertEqual(len(result), 1)
+        self.assertIn('2.075', result[0].evr)
+
+    def test_fetch_rpms_resolves_enabled_module_rpms_from_correct_context(self):
+        """Enabled module RPMs should come from the context matching resolved dependencies."""
+        arches = ['x86_64']
+        repo_data = {
+            "rhel-8-baseos-rpms": {
+                "conf": {"baseurl": {"x86_64": "https://example.com/baseos/"}},
+                "content_set": {"default": "baseos-cs"},
+                "reposync": {"enabled": False},
+            },
+            "rhel-8-appstream-rpms": {
+                "conf": {"baseurl": {"x86_64": "https://example.com/appstream/"}},
+                "content_set": {"default": "appstream-cs"},
+                "reposync": {"enabled": False},
+            },
+        }
+        repos = Repos(repo_data, arches=arches)
+        collector = RpmInfoCollector(repos=repos)
+        collector.logger = MagicMock()
+
+        # Non-modular perl-interpreter 5.26 from baseos
+        perl_interpreter = Rpm(
+            name="perl-interpreter",
+            epoch=4,
+            version="5.26.3",
+            checksum="abc",
+            size=6000000,
+            location="/perl-interpreter-5.26.3-423.el8_10.x86_64.rpm",
+            sourcerpm="perl-5.26.3-423.el8_10.src.rpm",
+            release="423.el8_10",
+            arch="x86_64",
+        )
+        # Non-modular perl-Mozilla-CA from baseos (would be filtered by dnf)
+        mozilla_ca_nonmod = Rpm(
+            name="perl-Mozilla-CA",
+            epoch=0,
+            version="20160104",
+            checksum="nonmod",
+            size=12000,
+            location="/perl-Mozilla-CA-20160104-7.el8.noarch.rpm",
+            sourcerpm="perl-Mozilla-CA.src.rpm",
+            release="7.el8",
+            arch="noarch",
+        )
+
+        # perl-Net-SSLeay from perl:5.24 context (wrong — hash sorts higher)
+        net_ssleay_524 = Rpm(
+            name="perl-Net-SSLeay",
+            epoch=0,
+            version="1.88",
+            checksum="wrong",
+            size=388000,
+            location="/perl-Net-SSLeay-1.88-2.module+el8.6.0+13392+30f09725.x86_64.rpm",
+            sourcerpm="perl-Net-SSLeay.src.rpm",
+            release="2.module+el8.6.0+13392+30f09725",
+            arch="x86_64",
+        )
+        # perl-Net-SSLeay from perl:5.26 context (correct)
+        net_ssleay_526 = Rpm(
+            name="perl-Net-SSLeay",
+            epoch=0,
+            version="1.88",
+            checksum="right",
+            size=388000,
+            location="/perl-Net-SSLeay-1.88-2.module+el8.6.0+13392+f0897f98.x86_64.rpm",
+            sourcerpm="perl-Net-SSLeay.src.rpm",
+            release="2.module+el8.6.0+13392+f0897f98",
+            arch="x86_64",
+        )
+        # perl-Mozilla-CA modular from perl:5.26 context
+        mozilla_ca_526 = Rpm(
+            name="perl-Mozilla-CA",
+            epoch=0,
+            version="20160104",
+            checksum="modular",
+            size=12000,
+            location="/perl-Mozilla-CA-20160104-7.module+el8.3.0+6498+9eecfe51.noarch.rpm",
+            sourcerpm="perl-Mozilla-CA.src.rpm",
+            release="7.module+el8.3.0+6498+9eecfe51",
+            arch="noarch",
+        )
+
+        # Module contexts
+        ssl_module_524 = RpmModule(
+            name="perl-IO-Socket-SSL",
+            stream="2.066",
+            version=8060020220623,
+            context="30f09725",
+            arch="x86_64",
+            rpms={net_ssleay_524.nevra},
+            requires={"perl": ["5.24"], "platform": ["el8"]},
+        )
+        ssl_module_526 = RpmModule(
+            name="perl-IO-Socket-SSL",
+            stream="2.066",
+            version=8060020220623,
+            context="f0897f98",
+            arch="x86_64",
+            rpms={net_ssleay_526.nevra, mozilla_ca_526.nevra},
+            requires={"perl": ["5.26"], "platform": ["el8"]},
+        )
+        # perl module (not enabled) also claims perl-Mozilla-CA
+        perl_module = RpmModule(
+            name="perl",
+            stream="5.26",
+            version=8100020240612,
+            context="rhel8",
+            arch="x86_64",
+            rpms={mozilla_ca_526.nevra},
+            requires={"platform": ["el8"]},
+        )
+
+        arch = 'x86_64'
+        baseos_repodata = MagicMock()
+        baseos_repodata.get_rpms.return_value = ([perl_interpreter, mozilla_ca_nonmod], [])
+        baseos_repodata.modules = []
+        baseos_repodata.default_streams = {}
+        baseos_repodata.primary_rpms = [perl_interpreter, mozilla_ca_nonmod]
+        collector.loaded_repos[f"rhel-8-baseos-rpms-{arch}"] = baseos_repodata
+
+        appstream_repodata = MagicMock()
+        appstream_repodata.get_rpms.return_value = ([net_ssleay_524], [])
+        appstream_repodata.modules = [ssl_module_524, ssl_module_526, perl_module]
+        appstream_repodata.default_streams = {"perl-IO-Socket-SSL": "2.066"}
+        appstream_repodata.primary_rpms = [net_ssleay_524, net_ssleay_526, mozilla_ca_526]
+        collector.loaded_repos[f"rhel-8-appstream-rpms-{arch}"] = appstream_repodata
+
+        result = collector._fetch_rpms_info_per_arch(
+            {'perl-interpreter', 'perl-Net-SSLeay', 'perl-Mozilla-CA'},
+            set(repo_data.keys()),
+            arch,
+            enabled_modules={'perl-IO-Socket-SSL'},
+        )
+
+        result_by_name = {r.name: r for r in result}
+        # perl-interpreter: non-modular 5.26 (perl module not enabled)
+        self.assertIn('5.26.3', result_by_name['perl-interpreter'].evr)
+        # perl-Net-SSLeay: from perl:5.26 context (correct context)
+        self.assertIn('f0897f98', result_by_name['perl-Net-SSLeay'].evr)
+        # perl-Mozilla-CA: modular from perl:5.26 context (overrides non-modular)
+        self.assertIn('module+', result_by_name['perl-Mozilla-CA'].evr)
+
     def test_fetch_rpms_preserves_nvr_pin_alongside_latest(self):
         """When both a plain name and a pinned NVR are requested, the lockfile must contain both versions."""
         arches = ['x86_64']

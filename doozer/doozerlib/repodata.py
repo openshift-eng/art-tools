@@ -140,6 +140,7 @@ class RpmModule:
     context: str
     arch: str
     rpms: Set[str] = field(default_factory=set)
+    requires: Dict[str, List[str]] = field(default_factory=dict)
 
     @property
     def name_stream(self):
@@ -160,13 +161,16 @@ class RpmModule:
     @staticmethod
     def from_metadata(metadata: Dict[str, Any]):
         rpms = metadata["data"].get("artifacts", {}).get("rpms", [])
+        deps = metadata["data"].get("dependencies", [])
+        requires = deps[0].get("requires", {}) if deps else {}
         return RpmModule(
             name=metadata["data"]["name"],
             stream=str(metadata["data"]["stream"]),
             version=metadata["data"]["version"],
-            context=metadata["data"]["context"],
+            context=str(metadata["data"]["context"]),
             arch=metadata["data"]["arch"],
             rpms=set(rpms),
+            requires={k: [str(s) for s in v] for k, v in requires.items()},
         )
 
 
@@ -175,6 +179,7 @@ class Repodata:
     name: str
     primary_rpms: List[Rpm] = field(default_factory=list)
     modules: List[RpmModule] = field(default_factory=list)
+    default_streams: Dict[str, str] = field(default_factory=dict)
     modules_checksum: Optional[str] = None
     modules_size: Optional[int] = None
     modules_url: Optional[str] = None
@@ -367,10 +372,18 @@ class Repodata:
             Rpm.from_metadata(metadata) for metadata in primary.findall("common:package[@type='rpm']", NAMESPACES)
         ]
         modules = [RpmModule.from_metadata(metadata) for metadata in modules_yaml if metadata['document'] == 'modulemd']
+        default_streams: Dict[str, str] = {}
+        for metadata in modules_yaml:
+            if metadata.get('document') == 'modulemd-defaults':
+                mod_name = metadata['data'].get('module')
+                stream = metadata['data'].get('stream')
+                if mod_name and stream:
+                    default_streams[mod_name] = str(stream)
         repodata = Repodata(
             name=name,
             primary_rpms=primary_rpms,
             modules=modules,
+            default_streams=default_streams,
             modules_checksum=modules_checksum,
             modules_size=modules_size,
             modules_url=modules_url,

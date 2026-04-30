@@ -189,6 +189,34 @@ class TestRpmModule(TestCase):
         metadata = YAML(typ="safe").load(StringIO(yaml_str))
         module = RpmModule.from_metadata(metadata)
         self.assertEqual(module.nsvca, "container-tools:rhel8:8030020201124131330:830d479e:x86_64")
+        self.assertEqual(module.requires, {})
+
+    def test_from_metadata_with_dependencies(self):
+        yaml_str = """
+        document: modulemd
+        version: 2
+        data:
+            name: perl-IO-Socket-SSL
+            stream: "2.066"
+            version: 8060020220623
+            context: 6b8485cb
+            arch: x86_64
+            dependencies:
+                - buildrequires:
+                    perl: [5.32]
+                    platform: [el8.6.0]
+                  requires:
+                    perl: [5.32]
+                    platform: [el8]
+            artifacts:
+                rpms:
+                    - perl-IO-Socket-SSL-0:2.066-4.module+el8.6.0+13392+6b8485cb.noarch
+                    - perl-Net-SSLeay-0:1.88-2.module+el8.6.0+13392+30f09725.x86_64
+        """
+        metadata = YAML(typ="safe").load(StringIO(yaml_str))
+        module = RpmModule.from_metadata(metadata)
+        self.assertEqual(module.requires, {"perl": ["5.32"], "platform": ["el8"]})
+        self.assertEqual(len(module.rpms), 2)
 
 
 class TestRepodata(TestCase):
