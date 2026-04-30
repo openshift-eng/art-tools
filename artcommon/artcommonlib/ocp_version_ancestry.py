@@ -8,9 +8,10 @@ Key components:
 - SuggestionsSpec: Pydantic model for version constraints
 - BuildSuggestions: Pydantic model for complete build-suggestions structure
 - get_build_suggestions_async(): Fetch and validate Cincinnati build-suggestions YAML files
-- get_previous_minor_version(): Determine previous version using three-tier strategy
+- get_previous_minor_version_from_suggestions(): Extract the previous major.minor version
+  from validated build-suggestions data
 - get_cincinnati_channels(): Get Cincinnati channel names for a version
-- get_release_calc_previous(): Calculate which versions can upgrade to a target version
+- calc_upgrade_sources_async(): Calculate which versions can upgrade to a target version
 """
 
 import functools
@@ -360,6 +361,7 @@ async def calc_upgrade_sources_async(
     :param graph_url: Cincinnati API endpoint
     :param suggestions_url: Base URL to Cincinnati build-suggestions directory
     :return: Sorted list of version strings that can upgrade to the target version
+    :raises IOError: If the version string cannot be parsed into major.minor fields
     :raises ValueError: If build-suggestions are invalid or previous version cannot be determined
     :raises httpx.HTTPError: If Cincinnati or build-suggestions fetch fails
     """

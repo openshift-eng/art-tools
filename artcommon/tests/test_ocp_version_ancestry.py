@@ -172,8 +172,8 @@ class TestBuildSuggestions(unittest.TestCase):
         self.assertEqual(suggestions.default.minor_min, "4.22.0-rc.0")
 
         # Check s390x override exists
-        self.assertTrue(hasattr(suggestions, "s390x"))
-        s390x_spec = getattr(suggestions, "s390x")
+        s390x_spec = suggestions.s390x
+        self.assertIsNotNone(s390x_spec)
         self.assertEqual(s390x_spec.minor_min, "4.22.1")
         self.assertEqual(s390x_spec.minor_block_list, ["4.22.5"])
 
