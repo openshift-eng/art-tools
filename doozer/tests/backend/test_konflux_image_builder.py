@@ -49,6 +49,7 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         metadata.runtime.assembly = "test-assembly"
         metadata.runtime.konflux_db = MagicMock()
         metadata.runtime.group_config.software_lifecycle.phase = "release"
+        metadata.config.konflux.get.return_value = False
         metadata.for_release = True
         metadata.get_latest_build = AsyncMock(return_value=None)
         metadata.get_konflux_build_attempts.return_value = 1
@@ -233,6 +234,74 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
             )
 
         mock_get_installed_packages.assert_awaited_once_with("quay.io/test/image@sha256:testdigest", ["x86_64"], None)
+
+    async def test_update_konflux_db_skips_rpm_extraction_when_no_shell(self):
+        """RPM extraction is skipped for no_shell images (e.g. FROM scratch ISO builds)."""
+        metadata = self._metadata()
+        metadata.config.konflux.get.return_value = True  # no_shell=True
+        build_repo = MagicMock()
+        build_repo.https_url = "https://example.com/repo.git"
+        build_repo.commit_hash = "test-commit-hash"
+        build_repo.local_dir = Path(self.temp_dir.name)
+
+        pipelinerun = PipelineRunInfo(
+            {
+                "metadata": {
+                    "name": "test-pipelinerun",
+                    "uid": "test-uid",
+                    "labels": {"appstudio.openshift.io/component": "test-component"},
+                },
+                "status": {
+                    "results": [
+                        {"name": "IMAGE_URL", "value": "quay.io/test/image:test-tag"},
+                        {"name": "IMAGE_DIGEST", "value": "sha256:testdigest"},
+                    ],
+                    "startTime": "2023-10-01T12:00:00Z",
+                    "completionTime": "2023-10-01T12:30:00Z",
+                },
+            },
+            {},
+        )
+
+        with (
+            patch("doozerlib.backend.konflux_image_builder.DockerfileParser") as mock_dockerfile_parser,
+            patch.object(self.builder, "extract_parent_image_nvrs", new=AsyncMock(return_value=[])),
+            patch.object(
+                self.builder,
+                "get_installed_packages",
+                new=AsyncMock(return_value=({"pkg-1.0-1"}, {"srcpkg-1.0-1"})),
+            ) as mock_get_installed_packages,
+            patch("doozerlib.backend.konflux_image_builder.bigquery.BigQueryClient") as mock_bigquery_client,
+        ):
+            mock_dockerfile = MagicMock()
+            mock_dockerfile.labels = {
+                "io.openshift.build.source-location": "https://example.com/source-repo.git",
+                "io.openshift.build.commit.id": "source-commit-id",
+                "com.redhat.component": "test-component",
+                "version": "1.0",
+                "release": "1.el9",
+            }
+            mock_dockerfile.parent_images = []
+            mock_dockerfile_parser.return_value = mock_dockerfile
+            mock_bigquery_client.return_value.client.insert_rows_json.return_value = None
+
+            await self.builder.update_konflux_db(
+                metadata,
+                build_repo,
+                pipelinerun,
+                KonfluxBuildOutcome.SUCCESS,
+                ["x86_64"],
+                "5",
+            )
+
+        mock_get_installed_packages.assert_not_awaited()
+        # DB record should have empty package lists
+        add_build_call = metadata.runtime.konflux_db.add_build
+        add_build_call.assert_called_once()
+        build_record = add_build_call.call_args[0][0]
+        self.assertEqual(build_record.installed_packages, [])
+        self.assertEqual(build_record.installed_rpms, [])
+        self.assertEqual(build_record.image_pullspec, "quay.io/test/image@sha256:testdigest")
 
     async def test_ec_policy_selection_missing_lifecycle_phase(self):
         """Test that default EC policy is used when lifecycle phase is Missing."""

@@ -967,10 +967,18 @@ class KonfluxImageBuilder:
 
             definitive_image_pullspec = f"{image_pullspec.split(':')[0]}@{image_digest}"
 
-            # use image_digest here to be precise, image_pullspec can collide in case of golang-builder images
-            package_nvrs, source_rpms = await self.get_installed_packages(
-                definitive_image_pullspec, building_arches, self._config.registry_auth_file
-            )
+            # Skip RPM extraction for images that don't use RPMs (e.g. FROM scratch ISO builds).
+            # no_shell implies no /bin/sh and no RPMs installed in the image.
+            skip_rpm_extraction = metadata.config.konflux.get("no_shell", False)
+            if skip_rpm_extraction:
+                logger.info("Skipping RPM extraction (no_shell=true): image does not use RPMs")
+                package_nvrs: set = set()
+                source_rpms: set = set()
+            else:
+                # use image_digest here to be precise, image_pullspec can collide in case of golang-builder images
+                package_nvrs, source_rpms = await self.get_installed_packages(
+                    definitive_image_pullspec, building_arches, self._config.registry_auth_file
+                )
 
             build_record_params.update(
                 {
