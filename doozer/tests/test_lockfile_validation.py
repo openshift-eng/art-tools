@@ -1,6 +1,6 @@
-from unittest.mock import Mock
+import asyncio
+from unittest.mock import AsyncMock, Mock
 
-import pytest
 from doozerlib.lockfile import RpmInfo, RPMLockfileGenerator
 
 
@@ -132,8 +132,9 @@ class TestCrossArchVersionSetValidation:
             ],
         }
 
-        # Act & Assert: Should not raise exception
-        self.generator._validate_cross_arch_version_sets(rpms_info_by_arch)
+        # Act & Assert: Should return None (no fallback needed)
+        result = self.generator._validate_cross_arch_version_sets(rpms_info_by_arch)
+        assert result is None
 
     def test_version_set_mismatch_single_package_single_architecture(self):
         """Test validation fails when one package has different version sets across architectures."""
@@ -193,15 +194,14 @@ class TestCrossArchVersionSetValidation:
             ],
         }
 
-        # Act & Assert: Should raise ValueError
-        with pytest.raises(ValueError) as exc_info:
-            self.generator._validate_cross_arch_version_sets(rpms_info_by_arch)
+        # Act: Should return mismatch data instead of raising exception
+        result = self.generator._validate_cross_arch_version_sets(rpms_info_by_arch)
 
-        # Verify error message contains specific details (now shows only latest versions)
-        error_message = str(exc_info.value)
-        assert "audit-libs" in error_message
-        assert "x86_64:{0:3.1.5-4.el9}" in error_message
-        assert "aarch64:{0:3.1.5-6.el9}" in error_message
+        # Assert: Should return fallback recommendations
+        assert result is not None
+        assert "audit-libs" in result
+        assert "x86_64" in result["audit-libs"]
+        assert "aarch64" in result["audit-libs"]
 
     def test_version_set_mismatch_multiple_packages_multiple_architectures(self):
         """Test validation fails with detailed errors for multiple package mismatches across architectures."""
@@ -323,20 +323,19 @@ class TestCrossArchVersionSetValidation:
             ],
         }
 
-        # Act & Assert: Should raise ValueError with multiple mismatches
-        with pytest.raises(ValueError) as exc_info:
-            self.generator._validate_cross_arch_version_sets(rpms_info_by_arch)
+        # Act: Should return mismatch data for multiple packages
+        result = self.generator._validate_cross_arch_version_sets(rpms_info_by_arch)
 
-        # Verify error message contains all mismatched packages
-        error_message = str(exc_info.value)
-        assert "audit-libs" in error_message
-        assert "curl" in error_message
-        assert "openssl-libs" in error_message
+        # Assert: Should return all mismatched packages
+        assert result is not None
+        assert "audit-libs" in result
+        assert "curl" in result
+        assert "openssl-libs" in result
 
-        # Verify architecture-specific version sets are listed
-        assert "x86_64" in error_message
-        assert "aarch64" in error_message
-        assert "s390x" in error_message
+        # Verify architecture data is present
+        assert "x86_64" in result["audit-libs"]
+        assert "aarch64" in result["audit-libs"]
+        assert "s390x" in result["audit-libs"]
 
     def test_single_architecture_always_passes_validation(self):
         """Test validation always passes for single architecture scenarios."""
@@ -382,8 +381,9 @@ class TestCrossArchVersionSetValidation:
             ],
         }
 
-        # Act & Assert: Should not raise exception
-        self.generator._validate_cross_arch_version_sets(rpms_info_by_arch)
+        # Act & Assert: Should return None (no fallback needed)
+        result = self.generator._validate_cross_arch_version_sets(rpms_info_by_arch)
+        assert result is None
 
     def test_empty_rpm_list_passes_validation(self):
         """Test validation passes when RPM lists are empty."""
@@ -394,8 +394,9 @@ class TestCrossArchVersionSetValidation:
             "ppc64le": [],
         }
 
-        # Act & Assert: Should not raise exception
-        self.generator._validate_cross_arch_version_sets(rpms_info_by_arch)
+        # Act & Assert: Should return None (no fallback needed)
+        result = self.generator._validate_cross_arch_version_sets(rpms_info_by_arch)
+        assert result is None
 
     def test_architecture_specific_packages_allowed(self):
         """Test validation passes when packages exist on subset of architectures."""
@@ -418,8 +419,9 @@ class TestCrossArchVersionSetValidation:
             "aarch64": [],
         }
 
-        # Act & Assert: Should not raise exception
-        self.generator._validate_cross_arch_version_sets(rpms_info_by_arch)
+        # Act & Assert: Should return None (no fallback needed)
+        result = self.generator._validate_cross_arch_version_sets(rpms_info_by_arch)
+        assert result is None
 
     def test_complex_epoch_version_release_combinations(self):
         """Test validation with complex EVR combinations including different epochs."""
@@ -629,14 +631,15 @@ class TestCrossArchVersionSetValidation:
             ],
         }
 
-        # Act & Assert: Should raise ValueError
-        with pytest.raises(ValueError) as exc_info:
-            self.generator._validate_cross_arch_version_sets(rpms_info_by_arch)
+        # Act: Should return mismatch data
+        result = self.generator._validate_cross_arch_version_sets(rpms_info_by_arch)
 
-        # Verify error message shows only latest versions (not all historical versions)
-        error_message = str(exc_info.value)
-        assert "x86_64:{0:3.0.0-1.el9}" in error_message
-        assert "aarch64:{0:4.0.0-1.el9}" in error_message
+        # Assert: Should return fallback data for latest versions only
+        assert result is not None
+        assert "test-package" in result
+        # Verify that only latest versions are considered for fallback
+        assert result["test-package"]["x86_64"] == "0:3.0.0-1.el9"
+        assert result["test-package"]["aarch64"] == "0:4.0.0-1.el9"
 
     def test_mixed_single_and_multi_arch_packages_validation(self):
         """Test that single-arch packages are ignored while multi-arch version mismatches still trigger failures."""
@@ -696,16 +699,16 @@ class TestCrossArchVersionSetValidation:
             ],
         }
 
-        # Act & Assert: Should fail due to shared-lib version mismatch but ignore single-arch packages
-        with pytest.raises(ValueError) as exc_info:
-            self.generator._validate_cross_arch_version_sets(rpms_info_by_arch)
+        # Act: Should return mismatch data for shared-lib but ignore single-arch packages
+        result = self.generator._validate_cross_arch_version_sets(rpms_info_by_arch)
 
-        error_message = str(exc_info.value)
-        assert "shared-lib" in error_message
-        assert "x86_64:{0:2.0.0-1.el9}" in error_message
-        assert "aarch64:{0:2.0.0-2.el9}" in error_message
-        assert "x86-only-driver" not in error_message
-        assert "arm-specific-tool" not in error_message
+        # Assert: Should only include shared-lib in mismatch data
+        assert result is not None
+        assert "shared-lib" in result
+        assert "x86-only-driver" not in result
+        assert "arm-specific-tool" not in result
+        assert result["shared-lib"]["x86_64"] == "0:2.0.0-1.el9"
+        assert result["shared-lib"]["aarch64"] == "0:2.0.0-2.el9"
 
     def test_mixed_single_and_multi_arch_packages_with_matching_versions(self):
         """Test that single-arch packages are ignored and multi-arch packages with identical versions pass."""
@@ -765,14 +768,107 @@ class TestCrossArchVersionSetValidation:
             ],
         }
 
-        # Act: Should pass - single-arch packages ignored, shared-lib has identical versions
-        try:
-            self.generator._validate_cross_arch_version_sets(rpms_info_by_arch)
-            validation_passed = True
-        except ValueError:
-            validation_passed = False
+        # Act: Should return None - single-arch packages ignored, shared-lib has identical versions
+        result = self.generator._validate_cross_arch_version_sets(rpms_info_by_arch)
 
-        # Assert: Validation should pass with no exceptions
-        assert validation_passed, (
-            "Validation should pass when single-arch packages are present and multi-arch packages have identical versions"
-        )
+        # Assert: Should return None (no mismatches)
+        assert result is None
+
+
+class TestRPMLockfileFallback:
+    """Test suite for RPM lockfile version fallback recovery."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        self.mock_repos = Mock()
+        self.generator = RPMLockfileGenerator(self.mock_repos)
+
+    def test_find_common_fallback_versions_simple_case(self):
+        """Test fallback version selection picks lowest version."""
+        arch_versions = {"x86_64": "0:1.0-3", "aarch64": "0:1.0-4"}
+        result = self.generator._find_common_fallback_versions("pkg1", arch_versions)
+        assert result == "0:1.0-3"
+
+    def test_find_common_fallback_versions_complex_epoch(self):
+        """Test fallback with epoch comparison."""
+        arch_versions = {"x86_64": "2:1.0-1", "aarch64": "1:2.0-1"}
+        result = self.generator._find_common_fallback_versions("pkg1", arch_versions)
+        assert result == "1:2.0-1"
+
+    def test_apply_fallback_versions_case_1_success(self):
+        """Test fallback application when fallback version exists in all architectures."""
+
+        async def _test():
+            rpms_info_by_arch = {
+                "x86_64": [
+                    RpmInfo("pkg1", "0:1.0-2", "checksum1", "repo1", 1000, "src1", "url1", 0, "1.0", "2"),
+                    RpmInfo("pkg1", "0:1.0-3", "checksum2", "repo1", 1000, "src1", "url2", 0, "1.0", "3"),
+                ],
+                "aarch64": [
+                    RpmInfo("pkg1", "0:1.0-2", "checksum3", "repo1", 1000, "src1", "url3", 0, "1.0", "2"),
+                    RpmInfo("pkg1", "0:1.0-4", "checksum4", "repo1", 1000, "src1", "url4", 0, "1.0", "4"),
+                ],
+            }
+
+            fallback_recommendations = {"pkg1": "0:1.0-2"}
+            arches = ["x86_64", "aarch64"]
+            enabled_repos = {"repo1"}
+
+            await self.generator._apply_fallback_versions(
+                rpms_info_by_arch, fallback_recommendations, arches, enabled_repos
+            )
+
+            for arch in rpms_info_by_arch:
+                pkg_rpms = [rpm for rpm in rpms_info_by_arch[arch] if rpm.name == "pkg1"]
+                assert len(pkg_rpms) == 1
+                assert pkg_rpms[0].evr == "0:1.0-2"
+
+        asyncio.run(_test())
+
+    def test_apply_fallback_versions_case_2_repository_resolution(self):
+        """Test Case 2: Repository resolution when fallback version doesn't exist in collections but available in repos."""
+
+        async def _test():
+            rpms_info_by_arch = {
+                "x86_64": [RpmInfo("pkg1", "0:1.0-3", "checksum1", "repo1", 1000, "src1", "url1", 0, "1.0", "3")],
+                "aarch64": [RpmInfo("pkg1", "0:1.0-4", "checksum2", "repo1", 1000, "src1", "url2", 0, "1.0", "4")],
+            }
+
+            fallback_recommendations = {"pkg1": "0:1.0-2"}
+            arches = ["x86_64", "aarch64"]
+            enabled_repos = {"repo1"}
+
+            # Mock successful repository resolution
+            resolved_rpm_x86 = RpmInfo(
+                "pkg1", "0:1.0-2", "resolved_checksum_x86", "repo1", 1000, "src1", "resolved_url_x86", 0, "1.0", "2"
+            )
+            resolved_rpm_aarch64 = RpmInfo(
+                "pkg1",
+                "0:1.0-2",
+                "resolved_checksum_aarch64",
+                "repo1",
+                1000,
+                "src1",
+                "resolved_url_aarch64",
+                0,
+                "1.0",
+                "2",
+            )
+
+            self.generator.builder.fetch_rpms_info = AsyncMock()
+            self.generator.builder.fetch_rpms_info.side_effect = [
+                {"x86_64": [resolved_rpm_x86]},  # First call for x86_64
+                {"aarch64": [resolved_rpm_aarch64]},  # Second call for aarch64
+            ]
+
+            await self.generator._apply_fallback_versions(
+                rpms_info_by_arch, fallback_recommendations, arches, enabled_repos
+            )
+
+            # Verify fallback versions were applied after repository resolution
+            for arch in rpms_info_by_arch:
+                pkg_rpms = [rpm for rpm in rpms_info_by_arch[arch] if rpm.name == "pkg1"]
+                assert len(pkg_rpms) == 1
+                assert pkg_rpms[0].evr == "0:1.0-2"
+
+        asyncio.run(_test())
