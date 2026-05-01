@@ -78,8 +78,6 @@ _COMMON_KWARGS = dict(
 
 def _make_mock_client(mock_get_template):
     """Create a KonfluxClient instance with a mocked template."""
-    import jinja2
-
     mock_get_template.return_value = jinja2.Template(_MINIMAL_PLR_TEMPLATE, autoescape=True)
     client = KonfluxClient.__new__(KonfluxClient)
     client._logger = MagicMock()

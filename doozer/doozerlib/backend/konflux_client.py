@@ -61,7 +61,7 @@ class ImageBuildParams:
     service_account: Optional[str] = None
     annotations: Optional[dict[str, str]] = None
     build_priority: Optional[str] = None
-    additional_tags: Optional[list[str]] = field(default_factory=list)
+    additional_tags: list[str] = field(default_factory=list)
     vm_override: Optional[dict] = None
     skip_checks: bool = False
     skip_fips_check: bool = False
@@ -1206,7 +1206,7 @@ class KonfluxClient:
     ) -> dict:
         if build_params is None:
             build_params = ImageBuildParams()
-        additional_tags = build_params.additional_tags or []
+        additional_tags = build_params.additional_tags
         https_url = art_util.convert_remote_git_to_https(git_url)
 
         template = await self._get_pipelinerun_template(pipelinerun_template_url)

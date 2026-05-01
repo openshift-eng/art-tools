@@ -488,6 +488,63 @@
           "$ref": "#/properties/konflux/properties/skip_tasks"
         },
         "skip_tasks-": {},
+        "build_args": {
+          "description": "List of KEY=VALUE strings passed as the build-args pipeline param",
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "build_args!": {
+          "$ref": "#/properties/konflux/properties/build_args"
+        },
+        "build_args?": {
+          "$ref": "#/properties/konflux/properties/build_args"
+        },
+        "build_args-": {},
+        "additional_secret": {
+          "description": "Kubernetes secret name set as ADDITIONAL_SECRET on the build-images task",
+          "type": "string"
+        },
+        "additional_secret!": {
+          "$ref": "#/properties/konflux/properties/additional_secret"
+        },
+        "additional_secret?": {
+          "$ref": "#/properties/konflux/properties/additional_secret"
+        },
+        "additional_secret-": {},
+        "privileged_nested": {
+          "description": "Enable PRIVILEGED_NESTED on the build-images task",
+          "type": "boolean"
+        },
+        "privileged_nested!": {
+          "$ref": "#/properties/konflux/properties/privileged_nested"
+        },
+        "privileged_nested?": {
+          "$ref": "#/properties/konflux/properties/privileged_nested"
+        },
+        "privileged_nested-": {},
+        "build_step_resources": {
+          "description": "Kubernetes resource requests/limits for the build step (e.g. memory, ephemeral-storage)",
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "build_step_resources!": {
+          "$ref": "#/properties/konflux/properties/build_step_resources"
+        },
+        "build_step_resources?": {
+          "$ref": "#/properties/konflux/properties/build_step_resources"
+        },
+        "build_step_resources-": {},
+        "workspace_storage": {
+          "description": "PVC storage size for workspace volume (e.g. 100Gi)",
+          "type": "string"
+        },
+        "workspace_storage!": {
+          "$ref": "#/properties/konflux/properties/workspace_storage"
+        },
+        "workspace_storage?": {
+          "$ref": "#/properties/konflux/properties/workspace_storage"
+        },
+        "workspace_storage-": {},
         "network_mode": {
           "type": "string"
         },

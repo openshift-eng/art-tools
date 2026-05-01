@@ -128,7 +128,7 @@ class BuildLayeredProductsPipeline:
 
         # Extract product from group config
         product = group_config.get('product', 'ocp')
-        image_repo = group_config.get('konflux', {}).get('image_repo', KONFLUX_DEFAULT_IMAGE_REPO)
+        image_repo = group_config.get('konflux', {}).get('image_repo') or KONFLUX_DEFAULT_IMAGE_REPO
         await self._rebase_and_build(product, image_repo)
         self.trigger_bundle_build()
 
