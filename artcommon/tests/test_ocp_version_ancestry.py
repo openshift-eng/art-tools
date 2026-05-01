@@ -109,13 +109,21 @@ class TestSuggestionsSpec(unittest.TestCase):
         self.assertEqual(spec.z_min, "5.0.0-ec.0")
         self.assertIsNone(spec.z_max)
 
+    def test_block_lists_default_to_empty(self):
+        """Test that omitted block lists default to empty lists"""
+        spec = SuggestionsSpec(
+            minor_min="4.22.0-rc.0",
+            z_min="5.0.0-ec.0",
+        )
+
+        self.assertEqual(spec.minor_block_list, [])
+        self.assertEqual(spec.z_block_list, [])
+
     def test_missing_required_fields(self):
         """Test that missing required fields raise ValidationError"""
         with self.assertRaises(ValidationError) as context:
             SuggestionsSpec(
-                minor_min="4.22.0",
                 minor_max="4.22.9999",
-                # Missing minor_block_list (required)
                 z_min="5.0.0",
                 z_max="5.0.9999",
                 z_block_list=[],

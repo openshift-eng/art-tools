@@ -35,7 +35,7 @@ class SuggestionsSpec(BaseModel):
 
     All version strings must be valid semver (e.g., '4.22.0-rc.0', '5.0.9999').
     minor_max and z_max are optional; if omitted, all versions >= the corresponding
-    min with the same major.minor are included.
+    min with the same major.minor are included. Block lists default to empty lists.
     """
 
     minor_min: str = Field(
@@ -48,8 +48,8 @@ class SuggestionsSpec(BaseModel):
         "If omitted, all versions >= minor_min with the same major.minor are included.",
     )
     minor_block_list: list[str] = Field(
-        ...,
-        description="Explicitly blocked versions from previous minor (empty list if none)",
+        default_factory=list,
+        description="Explicitly blocked versions from previous minor (defaults to empty list)",
     )
     z_min: str = Field(
         ...,
@@ -61,9 +61,16 @@ class SuggestionsSpec(BaseModel):
         "If omitted, all versions >= z_min with the same major.minor are included.",
     )
     z_block_list: list[str] = Field(
-        ...,
-        description="Explicitly blocked versions from current minor (empty list if none)",
+        default_factory=list,
+        description="Explicitly blocked versions from current minor (defaults to empty list)",
     )
+
+    @staticmethod
+    def _parse_semver(v: str) -> None:
+        try:
+            semver.VersionInfo.parse(v)
+        except ValueError as e:
+            raise ValueError(f"Invalid semver format '{v}': {e}") from e
 
     @field_validator('minor_min', 'minor_max', 'z_min', 'z_max')
     @classmethod
@@ -71,10 +78,7 @@ class SuggestionsSpec(BaseModel):
         """Validate that version strings are valid semver."""
         if v is None:
             return v
-        try:
-            semver.VersionInfo.parse(v)
-        except ValueError as e:
-            raise ValueError(f"Invalid semver format '{v}': {e}") from e
+        cls._parse_semver(v)
         return v
 
     @field_validator('minor_block_list', 'z_block_list')
@@ -83,7 +87,7 @@ class SuggestionsSpec(BaseModel):
         """Validate that all versions in block lists are valid semver."""
         for v in versions:
             try:
-                semver.VersionInfo.parse(v)
+                cls._parse_semver(v)
             except ValueError as e:
                 raise ValueError(f"Invalid semver format in block list '{v}': {e}") from e
         return versions
