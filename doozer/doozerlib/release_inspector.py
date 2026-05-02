@@ -3,7 +3,9 @@ Shared utilities for introspecting nightly/release payloads.
 Used by both release:gen-payload and release:gen-assembly commands.
 """
 
+import asyncio
 import json
+import logging
 from typing import Tuple
 
 from artcommonlib import exectools
@@ -13,6 +15,8 @@ from artcommonlib.oc_image_info import oc_image_info__cached_async
 
 from doozerlib.build_info import BrewBuildRecordInspector, BuildRecordInspector, KonfluxBuildRecordInspector
 from doozerlib.runtime import Runtime
+
+logger = logging.getLogger(__name__)
 
 
 async def fetch_release_pullspec_from_stream_api(release_name: str, major_minor: str) -> str:
@@ -45,20 +49,36 @@ async def fetch_release_pullspec_from_stream_api(release_name: str, major_minor:
     raise IOError(f"Nightly {release_name} not found in release stream {release_stream_name}")
 
 
-async def introspect_release(pullspec: str, registry_config: str = None) -> Model:
+async def introspect_release(pullspec: str, registry_config: str = None, retries: int = 5,
+                             retry_delay: float = 30.0) -> Model:
     """
     Run 'oc adm release info' and return parsed release information.
+    Retries on transient "manifest unknown" errors, which can occur when
+    the release controller advertises a nightly before the registry has
+    finished propagating the manifest.
 
     :param pullspec: Release payload pullspec
     :param registry_config: Optional path to registry auth config
+    :param retries: Number of retry attempts for transient errors
+    :param retry_delay: Seconds to wait between retries
     :return: Model object containing release info
     """
     cmd = ["oc", "adm", "release", "info", pullspec, "-o=json"]
     if registry_config:
         cmd.insert(1, f"--registry-config={registry_config}")
-    rc, release_json_str, err = await exectools.cmd_gather_async(cmd, check=False)
 
-    if rc != 0:
+    for attempt in range(1, retries + 1):
+        rc, release_json_str, err = await exectools.cmd_gather_async(cmd, check=False)
+
+        if rc == 0:
+            break
+
+        if "manifest unknown" in err and attempt < retries:
+            logger.warning("Manifest not yet available for %s (attempt %d/%d); retrying in %ds...",
+                           pullspec, attempt, retries, int(retry_delay))
+            await asyncio.sleep(retry_delay)
+            continue
+
         raise IOError(f"Unable to gather release info for {pullspec}: {err}")
 
     release_info = Model(dict_to_model=json.loads(release_json_str))
