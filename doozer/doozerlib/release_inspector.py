@@ -49,8 +49,9 @@ async def fetch_release_pullspec_from_stream_api(release_name: str, major_minor:
     raise IOError(f"Nightly {release_name} not found in release stream {release_stream_name}")
 
 
-async def introspect_release(pullspec: str, registry_config: str = None, retries: int = 5,
-                             retry_delay: float = 30.0) -> Model:
+async def introspect_release(
+    pullspec: str, registry_config: str = None, retries: int = 5, retry_delay: float = 30.0
+) -> Model:
     """
     Run 'oc adm release info' and return parsed release information.
     Retries on transient "manifest unknown" errors, which can occur when
@@ -74,8 +75,13 @@ async def introspect_release(pullspec: str, registry_config: str = None, retries
             break
 
         if "manifest unknown" in err and attempt < retries:
-            logger.warning("Manifest not yet available for %s (attempt %d/%d); retrying in %ds...",
-                           pullspec, attempt, retries, int(retry_delay))
+            logger.warning(
+                "Manifest not yet available for %s (attempt %d/%d); retrying in %ds...",
+                pullspec,
+                attempt,
+                retries,
+                int(retry_delay),
+            )
             await asyncio.sleep(retry_delay)
             continue
 
