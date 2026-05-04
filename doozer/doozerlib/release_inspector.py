@@ -12,7 +12,6 @@ from artcommonlib import exectools
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome
 from artcommonlib.model import Model
 from artcommonlib.oc_image_info import oc_image_info__cached_async
-from tenacity import retry
 
 from doozerlib.build_info import BrewBuildRecordInspector, BuildRecordInspector, KonfluxBuildRecordInspector
 from doozerlib.runtime import Runtime
