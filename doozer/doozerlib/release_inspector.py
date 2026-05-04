@@ -12,6 +12,7 @@ from artcommonlib import exectools
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome
 from artcommonlib.model import Model
 from artcommonlib.oc_image_info import oc_image_info__cached_async
+from tenacity import retry
 
 from doozerlib.build_info import BrewBuildRecordInspector, BuildRecordInspector, KonfluxBuildRecordInspector
 from doozerlib.runtime import Runtime
@@ -64,6 +65,11 @@ async def introspect_release(
     :param retry_delay: Seconds to wait between retries
     :return: Model object containing release info
     """
+    if retries < 1:
+        raise ValueError("retries must be >= 1")
+    if retry_delay < 0:
+        raise ValueError("retry_delay must be >= 0")
+
     cmd = ["oc", "adm", "release", "info", pullspec, "-o=json"]
     if registry_config:
         cmd.insert(1, f"--registry-config={registry_config}")
