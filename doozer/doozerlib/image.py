@@ -856,6 +856,28 @@ class ImageMetadata(Metadata):
 
         return attempts
 
+    def get_konflux_image_repo(self, default: str) -> str:
+        """
+        Returns the Konflux image repository for this image's builds.
+
+        Checks configuration in the following order:
+        1. Image metadata configuration (konflux.image_repo)
+        2. Group configuration (konflux.image_repo)
+        3. Provided default value (typically the CLI --image-repo option)
+
+        Args:
+            default: Fallback image repo if no override is configured
+
+        Returns:
+            str: The Konflux image repository URL
+        """
+        if (override := self.config.konflux.image_repo) not in [Missing, None]:
+            self.logger.info("Using per-image Konflux image repo for %s: %s", self.distgit_key, override)
+            return str(override)
+        if (group_override := self.runtime.group_config.konflux.image_repo) not in [Missing, None]:
+            return str(group_override)
+        return default
+
     def _apply_alternative_upstream_config(self) -> None:
         """
         When canonical_builders_enabled, merge alternative_upstream config based on upstream RHEL version.

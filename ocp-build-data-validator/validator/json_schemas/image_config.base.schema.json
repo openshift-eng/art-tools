@@ -1402,6 +1402,17 @@
           "$ref": "#/properties/konflux/properties/build_attempts"
         },
         "build_attempts-": {},
+        "image_repo": {
+          "description": "Override the default Konflux image repository for this image's builds",
+          "type": "string"
+        },
+        "image_repo?": {
+          "$ref": "#/properties/konflux/properties/image_repo"
+        },
+        "image_repo!": {
+          "$ref": "#/properties/konflux/properties/image_repo"
+        },
+        "image_repo-": {},
         "content": {
           "$ref": "image_content.base.schema.json"
         }

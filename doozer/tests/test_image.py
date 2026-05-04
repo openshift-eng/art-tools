@@ -536,6 +536,48 @@ class TestImageMetadata(unittest.TestCase):
         attempts = metadata.get_konflux_build_attempts()
         self.assertEqual(attempts, 1)
 
+    def test_get_konflux_image_repo_default(self):
+        """
+        Test default image repo is returned when no override is configured
+        """
+        metadata = self._create_image_metadata('openshift/test')
+        mock_config = MagicMock()
+        mock_config.konflux.image_repo = Missing
+        metadata.config = mock_config
+        metadata.runtime.group_config.konflux.image_repo = Missing
+        metadata.logger = MagicMock()
+
+        repo = metadata.get_konflux_image_repo(default="quay.io/default/repo")
+        self.assertEqual(repo, "quay.io/default/repo")
+
+    def test_get_konflux_image_repo_metadata_override(self):
+        """
+        Test image-level override takes precedence over group and default
+        """
+        metadata = self._create_image_metadata('openshift/test')
+        mock_config = MagicMock()
+        mock_config.konflux.image_repo = "quay.io/custom/image-repo"
+        metadata.config = mock_config
+        metadata.runtime.group_config.konflux.image_repo = "quay.io/group/repo"
+        metadata.logger = MagicMock()
+
+        repo = metadata.get_konflux_image_repo(default="quay.io/default/repo")
+        self.assertEqual(repo, "quay.io/custom/image-repo")
+
+    def test_get_konflux_image_repo_group_override(self):
+        """
+        Test group-level override when image config is not set
+        """
+        metadata = self._create_image_metadata('openshift/test')
+        mock_config = MagicMock()
+        mock_config.konflux.image_repo = Missing
+        metadata.config = mock_config
+        metadata.runtime.group_config.konflux.image_repo = "quay.io/group/repo"
+        metadata.logger = MagicMock()
+
+        repo = metadata.get_konflux_image_repo(default="quay.io/default/repo")
+        self.assertEqual(repo, "quay.io/group/repo")
+
     def test_calculate_config_digest_old_style_repos(self):
         """
         Test calculate_config_digest with old-style repos (dict format).

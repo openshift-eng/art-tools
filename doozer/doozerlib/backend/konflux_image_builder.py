@@ -190,7 +190,8 @@ class KonfluxImageBuilder:
                     )
 
             record["nvrs"] = nvr
-            output_image = f"{self._config.image_repo}:{uuid_tag}"
+            image_repo = metadata.get_konflux_image_repo(default=self._config.image_repo)
+            output_image = f"{image_repo}:{uuid_tag}"
             additional_tags = [f"{metadata.image_name_short}-{version}-{release}"]
 
             # Wait for parent members to be built

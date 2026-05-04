@@ -575,7 +575,8 @@ class KonfluxRebaser:
             if parent_metadata.should_trigger_base_image_release():
                 parent_nvr = self._rebased_member_image_nvr(parent_metadata)
                 return util.rh_art_images_base_pullspec(parent_nvr), private_fix
-            return f"{self.image_repo}:{parent_metadata.image_name_short}-{self.uuid_tag}", private_fix
+            parent_image_repo = parent_metadata.get_konflux_image_repo(default=self.image_repo)
+            return f"{parent_image_repo}:{parent_metadata.image_name_short}-{self.uuid_tag}", private_fix
 
     @start_as_current_span_async(TRACER, "rebase.resolve_stream_parent")
     async def _resolve_stream_parent(
