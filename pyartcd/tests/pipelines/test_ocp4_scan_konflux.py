@@ -67,6 +67,7 @@ class TestOcp4ScanKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
 
         pipeline.get_changes = AsyncMock(side_effect=fake_get_changes)
         pipeline.get_rhcos_inconsistencies = AsyncMock()
+        pipeline.handle_bridge_bug_mirroring = AsyncMock()
         pipeline.handle_source_changes = Mock()
         pipeline.handle_rhcos_changes = AsyncMock()
 
@@ -93,6 +94,7 @@ class TestOcp4ScanKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
 
         pipeline.get_changes = AsyncMock(side_effect=fake_get_changes)
         pipeline.get_rhcos_inconsistencies = AsyncMock()
+        pipeline.handle_bridge_bug_mirroring = AsyncMock()
         pipeline.handle_source_changes = Mock()
         pipeline.handle_rhcos_changes = AsyncMock()
 
@@ -120,6 +122,7 @@ class TestOcp4ScanKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
 
         pipeline.get_changes = AsyncMock(side_effect=fake_get_changes)
         pipeline.get_rhcos_inconsistencies = AsyncMock()
+        pipeline.handle_bridge_bug_mirroring = AsyncMock()
         pipeline.handle_source_changes = Mock()
         pipeline.handle_rhcos_changes = AsyncMock()
 
