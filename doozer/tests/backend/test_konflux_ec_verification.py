@@ -1,15 +1,17 @@
 """Tests for EC verification gating logic in KonfluxImageBuilder.build().
 
 Verifies that enterprise-contract verification is only triggered for images
-that are for_release=True, in an OCP group, and not skipped via --skip-ec-verify.
+that are for_release=True, with a product configured in PRODUCT_EC_POLICY_MAP,
+and not skipped via --skip-ec-verify.
 """
 
 import asyncio
 from pathlib import Path
-from unittest import IsolatedAsyncioTestCase
+from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxECStatus
+from doozerlib import constants
 from doozerlib.backend.konflux_client import ECVerificationResult
 from doozerlib.backend.konflux_image_builder import (
     KonfluxImageBuilder,
@@ -61,7 +63,7 @@ def _make_successful_pipelinerun_info():
     return plr_info
 
 
-def _make_metadata(distgit_key="test-image", for_release=True, is_base_image=False):
+def _make_metadata(distgit_key="test-image", for_release=True, is_base_image=False, product="ocp"):
     """Create a mock ImageMetadata."""
     metadata = MagicMock()
     metadata.distgit_key = distgit_key
@@ -79,6 +81,7 @@ def _make_metadata(distgit_key="test-image", for_release=True, is_base_image=Fal
     metadata.runtime.assembly = "stream"
     metadata.runtime.group_config.software_lifecycle.phase = "release"
     metadata.runtime.konflux_db = None
+    metadata.runtime.product = product
     return metadata
 
 
@@ -173,10 +176,30 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
         verify_ec = await self._run_build_and_get_ec_calls(config, metadata, mock_kc_init)
         verify_ec.assert_not_called()
 
-    async def test_ec_skipped_for_non_ocp_group(self, mock_kc_init):
-        """EC verification should be skipped for non-OCP groups (e.g. logging)."""
+    async def test_ec_runs_for_layered_product(self, mock_kc_init):
+        """EC verification should run for layered products with a configured EC policy."""
         config = _make_config(group_name="logging-6.2")
-        metadata = _make_metadata(for_release=True)
+        metadata = _make_metadata(for_release=True, product="logging")
+
+        verify_ec = await self._run_build_and_get_ec_calls(config, metadata, mock_kc_init)
+        verify_ec.assert_called_once()
+        call_kwargs = verify_ec.call_args.kwargs
+        self.assertEqual(call_kwargs["ec_policy"], "rhtap-releng-tenant/registry-art-logging-stage")
+
+    async def test_ec_runs_for_oadp_with_correct_policy(self, mock_kc_init):
+        """EC verification should use the OADP-specific policy for OADP builds."""
+        config = _make_config(group_name="oadp-1.5")
+        metadata = _make_metadata(for_release=True, product="oadp")
+
+        verify_ec = await self._run_build_and_get_ec_calls(config, metadata, mock_kc_init)
+        verify_ec.assert_called_once()
+        call_kwargs = verify_ec.call_args.kwargs
+        self.assertEqual(call_kwargs["ec_policy"], "rhtap-releng-tenant/registry-art-oadp-stage")
+
+    async def test_ec_skipped_for_unknown_product(self, mock_kc_init):
+        """EC verification should be skipped for products not in PRODUCT_EC_POLICY_MAP."""
+        config = _make_config(group_name="unknown-1.0")
+        metadata = _make_metadata(for_release=True, product="unknown")
 
         verify_ec = await self._run_build_and_get_ec_calls(config, metadata, mock_kc_init)
         verify_ec.assert_not_called()
@@ -223,3 +246,69 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
                         await builder.build(metadata)
 
         builder._start_build.assert_called_once()
+
+
+class TestEcPolicyHelpers(TestCase):
+    """Test the product-to-EC-policy resolution helpers."""
+
+    def test_ocp_registry_policy(self):
+        self.assertEqual(
+            constants.get_ec_policy_for_product("ocp"),
+            "rhtap-releng-tenant/registry-ocp-art-stage",
+        )
+
+    def test_logging_registry_policy(self):
+        self.assertEqual(
+            constants.get_ec_policy_for_product("logging"),
+            "rhtap-releng-tenant/registry-art-logging-stage",
+        )
+
+    def test_oadp_registry_policy(self):
+        self.assertEqual(
+            constants.get_ec_policy_for_product("oadp"),
+            "rhtap-releng-tenant/registry-art-oadp-stage",
+        )
+
+    def test_mta_registry_policy(self):
+        self.assertEqual(
+            constants.get_ec_policy_for_product("mta"),
+            "rhtap-releng-tenant/registry-art-mta-stage",
+        )
+
+    def test_rhmtc_registry_policy(self):
+        self.assertEqual(
+            constants.get_ec_policy_for_product("rhmtc"),
+            "rhtap-releng-tenant/registry-art-mtc-stage",
+        )
+
+    def test_unknown_product_falls_back_to_default(self):
+        self.assertEqual(
+            constants.get_ec_policy_for_product("unknown"),
+            constants.KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION,
+        )
+
+    def test_oadp_fbc_policy(self):
+        self.assertEqual(
+            constants.get_fbc_ec_policy_for_product("oadp"),
+            "rhtap-releng-tenant/fbc-art-oadp-stage",
+        )
+
+    def test_logging_fbc_policy(self):
+        self.assertEqual(
+            constants.get_fbc_ec_policy_for_product("logging"),
+            "rhtap-releng-tenant/fbc-ocp-art-stage",
+        )
+
+    def test_ocp_not_in_fbc_policy_map(self):
+        """OCP FBC EC was removed (verified at release time); should fall back to default."""
+        self.assertNotIn("ocp", constants.PRODUCT_FBC_EC_POLICY_MAP)
+        self.assertEqual(
+            constants.get_fbc_ec_policy_for_product("ocp"),
+            constants.KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION,
+        )
+
+    def test_unknown_product_fbc_falls_back_to_default(self):
+        self.assertEqual(
+            constants.get_fbc_ec_policy_for_product("unknown"),
+            constants.KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION,
+        )

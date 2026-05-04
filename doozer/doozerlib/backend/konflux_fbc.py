@@ -1862,8 +1862,39 @@ class KonfluxFbcBuilder:
                 succeeded_condition = pipelinerun_info.find_condition('Succeeded')
                 outcome = KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition(succeeded_condition)
 
+                ec_failed = False
                 ec_status = KonfluxECStatus.NOT_APPLICABLE
                 ec_pipeline_url = ''
+
+                has_fbc_ec_policy = self.product in constants.PRODUCT_FBC_EC_POLICY_MAP
+                if outcome is KonfluxBuildOutcome.SUCCESS and has_fbc_ec_policy:
+                    results = pipelinerun_dict.get('status', {}).get('results', [])
+                    image_pullspec = next((r['value'] for r in results if r['name'] == 'IMAGE_URL'), None)
+                    image_digest = next((r['value'] for r in results if r['name'] == 'IMAGE_DIGEST'), None)
+
+                    if image_pullspec and image_digest:
+                        app_name = self.get_application_name(self.group)
+                        component_name = self.get_component_name(self.group, metadata.distgit_key)
+                        image_with_digest = f"{image_pullspec.split(':')[0]}@{image_digest}"
+                        source_url = artlib_util.convert_remote_git_to_https(build_repo.url)
+
+                        ec_result = await self._konflux_client.verify_enterprise_contract(
+                            namespace=self.konflux_namespace,
+                            application_name=app_name,
+                            component_name=component_name,
+                            image_pullspec=image_with_digest,
+                            source_url=source_url,
+                            commit_sha=build_repo.commit_hash,
+                            ec_policy=constants.get_fbc_ec_policy_for_product(self.product),
+                            logger=logger,
+                        )
+                        ec_status = ec_result.ec_status
+                        ec_pipeline_url = ec_result.ec_pipeline_url
+                        if ec_result.ec_failed:
+                            outcome = KonfluxBuildOutcome.FAILURE
+                            ec_failed = True
+                    else:
+                        logger.warning("Could not extract image pullspec/digest for EC verification")
 
                 if self.dry_run:
                     logger.info("Dry run: Would have inserted build record in Konflux DB")
@@ -1883,6 +1914,8 @@ class KonfluxFbcBuilder:
                     error = KonfluxFbcBuildError(
                         f"Konflux image build for {metadata.distgit_key} failed", pipelinerun_name, pipelinerun_dict
                     )
+                    if ec_failed:
+                        break
                 else:
                     error = None
                     metadata.build_status = True
