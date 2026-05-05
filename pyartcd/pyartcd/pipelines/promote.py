@@ -1503,9 +1503,10 @@ class PromotePipeline:
                 f"--group={self.group}",
                 f"--assembly={self.assembly}",
                 "--build-system=konflux",
-                "verify-payload",
-                imagestream,
             ]
+            if self._registry_config:
+                cmd.append(f"--registry-config={self._registry_config}")
+            cmd += ["verify-payload", imagestream]
             if self.runtime.dry_run:
                 self._logger.info("[DRY-RUN] Would have run command: %s", ' '.join(cmd))
                 return
