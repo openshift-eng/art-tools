@@ -158,6 +158,13 @@ def _check_recursion(releases_config: dict, assembly: str):
             raise ValueError(f'Infinite recursion in {assembly} detected; {next_assembly} detected twice in chain')
         found.add(next_assembly)
         target_assembly = releases.get(next_assembly, {}).get("assembly")
+        for k in target_assembly:
+            if k != 'basis' and isinstance(k, str) and k[-1:] in ('!', '?', '-'):
+                raise ValueError(
+                    f'Assembly {next_assembly} has top-level key "{k}" with merge operator suffix; '
+                    f'merge operators (!/?/-) are only supported on keys nested inside assembly values, '
+                    f'not on top-level assembly keys like "group", "members", "rhcos", etc.'
+                )
         next_assembly = target_assembly.get("basis", {}).get("assembly")
 
 

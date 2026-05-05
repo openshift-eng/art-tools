@@ -684,6 +684,20 @@ releases:
         with self.assertRaises(ValueError):
             assembly_resolved(self.releases_config, 'ART_INFINITE')
 
+    def test_top_level_merge_operator_rejected(self):
+        for suffix in ('!', '?', '-'):
+            releases_yml = f"""
+releases:
+  bad_assembly:
+    assembly:
+      group{suffix}:
+        advisories:
+          image: 1
+"""
+            releases_config = Model(dict_to_model=yaml.safe_load(releases_yml))
+            with self.assertRaises(ValueError, msg=f'suffix "{suffix}" should be rejected'):
+                assembly_resolved(releases_config, 'bad_assembly')
+
     def test_merger(self):
         # First value dominates on primitive
         self.assertEqual(_merger(4, 5), 4)
