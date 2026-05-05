@@ -260,8 +260,21 @@ class PrepareReleaseKonfluxPipeline:
         await self.check_blockers()
         err = None
         try:
-            await self.prepare_et_advisories()
-            await self.prepare_shipment()
+            # Phase 1: Create advisories and attach builds to all advisories/shipments
+            impetus_advisories = await self.create_et_advisories()
+            await self.sweep_et_builds(impetus_advisories)
+            shipment_data = await self.prepare_shipment_builds()
+
+            # Phase 2: Find and attach bugs across all advisories/shipments
+            # This must run after all builds are attached so that bug categorization
+            # sees builds from both brew and konflux sources
+            await self.sweep_bugs(impetus_advisories, shipment_data)
+
+            # Phase 3: Finalize advisories and shipments
+            await self.finalize_et_advisories(impetus_advisories)
+            if shipment_data:
+                await self.finalize_shipment(shipment_data)
+
             await self.handle_jira_ticket()
         except Exception as ex:
             self.logger.error(f"Unable to prepare release: {ex}", exc_info=True)
@@ -372,23 +385,16 @@ class PrepareReleaseKonfluxPipeline:
                 f"{int(match[1])} Blocker Bugs found! Make sure to resolve these blocker bugs before proceeding to promote the release."
             )
 
-    async def prepare_et_advisories(self):
-        """
-        Prepare and manage all ET advisories for the current assembly.
+    async def create_et_advisories(self) -> dict:
+        """Create ET advisories for the assembly if needed.
 
-        This function performs the following steps:
-        1. Checks if an advisory exists for the assembly; if not, creates one and updates the build data.
-        2. Sweeps builds into the advisory.
-        3. Sweeps bugs into the advisory.
-        4. Attaches CVE flaw bugs to the advisory.
-        5. Attempts to change the advisory state to QE.
-        6. Attempts to trigger a push of the advisory to the CDN stage.
+        :return: Dict of {impetus: advisory_num} for configured advisories, or empty dict if none configured.
         """
         SUPPORTED_IMPETUSES = {"rpm", "rhcos", "microshift"}
         impetus_advisories = self.assembly_group_config.get("advisories", {}).copy()
         if not impetus_advisories:
             self.logger.warning("No advisories configured for assembly %s", self.assembly)
-            return
+            return {}
         if invalid := impetus_advisories.keys() - SUPPORTED_IMPETUSES:
             raise ValueError(f"Invalid advisory impetuses: {', '.join(invalid)}")
 
@@ -408,8 +414,13 @@ class PrepareReleaseKonfluxPipeline:
 
         # Update assembly PR
         await self.create_update_build_data_pr()
+        return impetus_advisories
 
-        # Sweep builds
+    async def sweep_et_builds(self, impetus_advisories: dict):
+        """Sweep builds into ET advisories."""
+        if not impetus_advisories:
+            return
+
         base_command = [item for item in self._elliott_base_command if item != '--build-system=konflux']
         for impetus, advisory_num in impetus_advisories.items():
             if advisory_num <= 0 and not self.dry_run:
@@ -438,18 +449,22 @@ class PrepareReleaseKonfluxPipeline:
                 operate_cmd += ["--dry-run"]
             await self.run_cmd_with_retry(base_command, operate_cmd)
 
-        # Find bugs
-        self.logger.info("Finding %s bugs...", impetus)
+    async def sweep_bugs(self, impetus_advisories: dict, shipment_data: Optional[tuple]):
+        """Find bugs once and distribute to both ET advisories and shipment release notes.
 
-        # Build system is brew here by design, since its needed to pickup ET Advisories
-        impetus_bugs = await self.find_bugs(build_system='brew')
+        Must be called after builds are attached to all advisories and shipments so that
+        bug categorization sees builds from both brew and konflux sources.
+        """
+        self.logger.info("Finding bugs for all advisories and shipments...")
+        bugs_by_kind = await self.find_bugs()
 
+        # Attach bugs to ET advisories
         # Process bugs
         for impetus, advisory_num in impetus_advisories.items():
             # microshift advisory is special, and it will not be ready at this time
             if impetus == 'microshift':
                 continue
-            bug_ids = impetus_bugs.get(impetus)
+            bug_ids = bugs_by_kind.get(impetus)
             if not bug_ids:
                 self.logger.info("No bugs found for %s advisory.", impetus)
             else:
@@ -461,6 +476,27 @@ class PrepareReleaseKonfluxPipeline:
                 if self.dry_run:
                     operate_cmd += ["--dry-run"]
                 await self.run_cmd_with_retry(self._elliott_base_command, operate_cmd)
+
+        # Set bugs in shipment release notes
+        if shipment_data:
+            shipments_by_kind, env, shipment_url = shipment_data
+            for kind, shipment in shipments_by_kind.items():
+                if kind == "fbc":
+                    continue
+                bug_ids = bugs_by_kind.get(kind, [])
+                set_jira_bug_ids(shipment.shipment.data.releaseNotes, bug_ids)
+
+            await self.update_shipment_mr(shipments_by_kind, env, shipment_url)
+
+    async def finalize_et_advisories(self, impetus_advisories: dict):
+        """Attach CVE flaws, change state to QE, and push to CDN stage for ET advisories."""
+        if not impetus_advisories:
+            return
+
+        base_command = [item for item in self._elliott_base_command if item != '--build-system=konflux']
+        for impetus, advisory_num in impetus_advisories.items():
+            if impetus == 'microshift':
+                continue
 
             # unconditionally attach cve flaws
             self.logger.info("Attaching CVE flaws to %s advisory ...", impetus)
@@ -527,14 +563,14 @@ class PrepareReleaseKonfluxPipeline:
     async def run_cmd_with_retry(self, base_cmd: list[str], cmd: list[str]):
         await self.execute_command_with_logging(base_cmd + cmd)
 
-    async def prepare_shipment(self):
-        """Prepare the shipment for the assembly.
-        This includes:
-        - Validating the shipment advisory config
-        - Generating shipment files for each advisory kind
-        - Creating or updating the shipment MR
-        - Creating or updating the build data PR with the shipment config
+    async def prepare_shipment_builds(self) -> Optional[tuple]:
+        """Prepare shipment MR and attach builds (without bugs or CVE flaws).
+
+        :return: Tuple of (shipments_by_kind, env, shipment_url) for use by sweep_bugs() and
+                 finalize_shipment(), or None if no shipment config exists.
         """
+        if not self.shipment_config:
+            return None
 
         self.validate_shipment_config(self.shipment_config)
 
@@ -615,20 +651,11 @@ class PrepareReleaseKonfluxPipeline:
         # Update shipment MR with found builds
         await self.update_shipment_mr(shipments_by_kind, env, shipment_url)
 
-        # IMPORTANT: Bug Finding is special, it dynamically categorizes tracker bugs based on where the builds are found.
-        # The Bug-Finder needs standardized access to shipment configs and respective builds via shipment MR.
-        # Therefore bug finding should be run only after:
-        # - shipment MR is created with all the right builds
-        # - shipment MR is committed to build-data
-        # Then the output of Bug-Finder is committed to shipment MR
-        for kind, shipment in shipments_by_kind.items():
-            if kind == "fbc":
-                continue
-            bug_ids = (await self.find_bugs()).get(kind, [])
-            set_jira_bug_ids(shipment.shipment.data.releaseNotes, bug_ids)
+        return shipments_by_kind, env, shipment_url
 
-        # Update shipment MR with found bugs
-        await self.update_shipment_mr(shipments_by_kind, env, shipment_url)
+    async def finalize_shipment(self, shipment_data: tuple):
+        """Attach CVE flaws to shipments and update the shipment MR."""
+        shipments_by_kind, env, shipment_url = shipment_data
 
         # Attach CVE flaws
         if self.assembly_type not in (AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE):

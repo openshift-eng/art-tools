@@ -441,7 +441,10 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             mock_gh_repo.create_pull.return_value = mock_pr
             mock_get_github.return_value.get_repo.return_value = mock_gh_repo
 
-            await pipeline.prepare_et_advisories()
+            impetus_advisories = await pipeline.create_et_advisories()
+            await pipeline.sweep_et_builds(impetus_advisories)
+            await pipeline.sweep_bugs(impetus_advisories, None)
+            await pipeline.finalize_et_advisories(impetus_advisories)
 
         # Assertions
         self.assertEqual(
@@ -779,7 +782,9 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
 
         pipeline.updated_assembly_group_config = Model(group_config)
 
-        await pipeline.prepare_shipment()
+        shipment_data = await pipeline.prepare_shipment_builds()
+        await pipeline.sweep_bugs({}, shipment_data)
+        await pipeline.finalize_shipment(shipment_data)
 
         # assert liveID is reserved
         mock_errata_api.assert_called_once()
@@ -827,8 +832,9 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
 
         # assert bug finding was done and MR updated with the right shipment configs
         mock_find_bugs.assert_any_call()
-        self.assertEqual(mock_find_bugs.call_count, 3)
+        self.assertEqual(mock_find_bugs.call_count, 1)
 
+        # update_shipment_mr is called 3 times: builds, bugs (via sweep_bugs), CVE flaws (via finalize_shipment)
         self.assertEqual(mock_update_shipment_mr.call_count, 3)
         updated_shipments_arg = mock_update_shipment_mr.call_args[0][0]
 
@@ -914,8 +920,12 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
     @patch.object(PrepareReleaseKonfluxPipeline, 'set_shipment_mr_ready', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'create_update_build_data_pr', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'handle_jira_ticket', new_callable=AsyncMock)
-    @patch.object(PrepareReleaseKonfluxPipeline, 'prepare_shipment', new_callable=AsyncMock)
-    @patch.object(PrepareReleaseKonfluxPipeline, 'prepare_et_advisories', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'finalize_shipment', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'finalize_et_advisories', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'sweep_bugs', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'prepare_shipment_builds', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'sweep_et_builds', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'create_et_advisories', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'check_blockers', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'check_advisory_stage_policy', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'initialize', new_callable=AsyncMock)
@@ -926,8 +936,12 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         mock_initialize,
         mock_check_advisory_stage_policy,
         mock_check_blockers,
-        mock_prepare_et_advisories,
-        mock_prepare_shipment,
+        mock_create_et_advisories,
+        mock_sweep_et_builds,
+        mock_prepare_shipment_builds,
+        mock_sweep_bugs,
+        mock_finalize_et_advisories,
+        mock_finalize_shipment,
         mock_handle_jira_ticket,
         mock_create_update_build_data_pr,
         mock_set_shipment_mr_ready,
@@ -936,6 +950,9 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
     ):
         mock_registry_config.return_value.__enter__ = Mock(return_value='/tmp/fake-auth.json')
         mock_registry_config.return_value.__exit__ = Mock(return_value=False)
+
+        mock_create_et_advisories.return_value = {}
+        mock_prepare_shipment_builds.return_value = None
 
         pipeline = PrepareReleaseKonfluxPipeline(
             slack_client=self.mock_slack_client,
@@ -954,8 +971,11 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         mock_initialize.assert_awaited_once()
         mock_check_advisory_stage_policy.assert_awaited_once_with(AssemblyTypes.STANDARD)
         mock_check_blockers.assert_awaited_once()
-        mock_prepare_et_advisories.assert_awaited_once()
-        mock_prepare_shipment.assert_awaited_once()
+        mock_create_et_advisories.assert_awaited_once()
+        mock_sweep_et_builds.assert_awaited_once()
+        mock_prepare_shipment_builds.assert_awaited_once()
+        mock_sweep_bugs.assert_awaited_once()
+        mock_finalize_et_advisories.assert_awaited_once()
         mock_handle_jira_ticket.assert_awaited_once()
         mock_create_update_build_data_pr.assert_awaited_once()
         mock_set_shipment_mr_ready.assert_awaited_once()
