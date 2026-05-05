@@ -380,38 +380,38 @@ async def find_and_attach_bugs(
 
 
 def get_builds_by_advisory_kind(runtime: Runtime) -> Dict[str, List[str]]:
-    """Get builds attached to advisories by advisory kind, based on the build system.
+    """Get builds attached to advisories by advisory kind, from both brew and konflux sources.
 
-    For brew:
-    - fetch advisories from assembly.group.advisories
-    - for each advisory, fetch attached builds from Errata Tool
-
-    For konflux:
-    - fetch advisories from assembly.group.shipment.advisories
-    - for each shipment yaml file for an advisory in shipment MR, fetch builds from shipment spec
+    Always fetches from both sources so that bug categorization is consistent regardless of the
+    build system being passed. This prevents tracker bugs (e.g. rhcos, microshift) from being
+    attached to different advisories depending on which build system is used.
 
     :param runtime: Runtime object
     :return: Dict of {advisory_kind: [builds]} where builds is a list of NVRs (str) and kind is e.g. "rpm", "image", "extras", "microshift", "metadata"
     """
-    # fetch builds from ET advisories
     builds_by_kind: Dict[str, List[str]] = {}
-    if runtime.build_system == 'brew':
-        advisory_ids = runtime.get_default_advisories()
-        for kind, kind_advisory_id in advisory_ids.items():
-            if int(kind_advisory_id) <= 0:
-                logger.info(f"{kind} advisory is not initialized: {kind_advisory_id}")
-                continue
-            builds_by_kind[kind] = errata.get_advisory_nvrs_flattened(kind_advisory_id)
-    elif runtime.build_system == 'konflux':
-        # fetch builds from shipments
-        assembly_group_config = assembly_config_struct(runtime.get_releases_config(), runtime.assembly, "group", {})
-        shipment = assembly_group_config.get("shipment", {})
-        mr_url = shipment.get("url")
-        if not mr_url:
-            logger.warning("No shipment URL found in assembly config, cannot fetch builds for advisories.")
-        else:
-            logger.info(f"Fetching builds from shipment URL: {mr_url}")
-            builds_by_kind = get_builds_from_mr(mr_url)
+
+    # Fetch builds from brew/errata advisories
+    advisory_ids = runtime.get_default_advisories()
+    for kind, kind_advisory_id in advisory_ids.items():
+        if int(kind_advisory_id) <= 0:
+            logger.info(f"{kind} advisory is not initialized: {kind_advisory_id}")
+            continue
+        builds_by_kind[kind] = errata.get_advisory_nvrs_flattened(kind_advisory_id)
+
+    # Fetch builds from konflux shipments
+    assembly_group_config = assembly_config_struct(runtime.get_releases_config(), runtime.assembly, "group", {})
+    shipment = assembly_group_config.get("shipment", {})
+    mr_url = shipment.get("url")
+    if mr_url:
+        logger.info(f"Fetching builds from shipment URL: {mr_url}")
+        shipment_builds = get_builds_from_mr(mr_url)
+        for kind, nvrs in shipment_builds.items():
+            if kind in builds_by_kind:
+                builds_by_kind[kind].extend(nvrs)
+            else:
+                builds_by_kind[kind] = nvrs
+
     return builds_by_kind
 
 
@@ -596,16 +596,6 @@ def categorize_bugs_by_type(
                 found.add(bug)
                 bugs_by_type[kind].add(bug)
 
-    def _message(kind: str, bug_data: list[tuple[str, str]]) -> str:
-        advisory_type = "errata" if runtime.build_system == "brew" else "shipment"
-        return (
-            f'No attached builds found in {advisory_type} advisories for {kind} tracker bugs (bug, package): '
-            f'{bug_data}. Either attach builds or explicitly include/exclude the bug ids in the assembly definition'
-        )
-
-    def _is_image_component(component: str) -> bool:
-        return component.endswith("-container") or is_ocp_delivery_repo(component)
-
     not_found = set(tracker_bugs) - found
     if not_found:
         still_not_found = not_found
@@ -618,26 +608,16 @@ def categorize_bugs_by_type(
             still_not_found = {b for b in not_found if b.id not in permitted_bug_ids}
 
         if still_not_found:
-            # We want to separate image and rpm tracker bug-build-validation since they are handled differently
-            # builds from errata/rpm advisories are only fetched if --build-system=brew
-            # builds from shipment/image advisories are only fetched if --build-system=konflux
-            # so only complain about bugs for which builds were fetched
-
-            # whiteboard value could be component or delivery repo name
-            not_found_image_bugs = [b for b in still_not_found if _is_image_component(b.whiteboard_component)]
-            not_found_rpm_bugs = [b for b in still_not_found if b not in not_found_image_bugs]
-            message = ""
-            if runtime.build_system == "brew" and not_found_rpm_bugs:
-                message = _message("rpm", [(b.id, b.whiteboard_component) for b in not_found_rpm_bugs])
-            elif runtime.build_system == "konflux" and not_found_image_bugs:
-                message = _message("image", [(b.id, b.whiteboard_component) for b in not_found_image_bugs])
-
-            if message:
-                if permissive:
-                    logger.warning(f"{message} Ignoring them because --permissive.")
-                    issues.append(message)
-                else:
-                    raise ValueError(message)
+            bug_data = [(b.id, b.whiteboard_component) for b in still_not_found]
+            message = (
+                f'No attached builds found in advisories for tracker bugs (bug, package): '
+                f'{bug_data}. Either attach builds or explicitly include/exclude the bug ids in the assembly definition'
+            )
+            if permissive:
+                logger.warning(f"{message} Ignoring them because --permissive.")
+                issues.append(message)
+            else:
+                raise ValueError(message)
 
     return bugs_by_type, issues
 

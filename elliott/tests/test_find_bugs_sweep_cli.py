@@ -227,6 +227,7 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
         flexmock(Runtime).should_receive("get_major_minor").and_return(4, 6)
         flexmock(sweep_cli).should_receive("get_assembly_bug_ids").and_return(set(), set())
         flexmock(Runtime).should_receive("get_default_advisories").and_return({})
+        flexmock(sweep_cli).should_receive("get_builds_by_advisory_kind").and_return({})
 
         # jira mocks
         flexmock(JIRABugTracker).should_receive("get_config").and_return({'target_release': ['4.6.z']})
@@ -699,14 +700,16 @@ class TestExtrasBugs(unittest.TestCase):
 
 
 class TestGetBuildsByAdvisoryKind(unittest.TestCase):
-    def test_get_builds_brew_system(self):
-        """Test get_builds_by_advisory_kind for brew build system"""
-        runtime = flexmock(build_system='brew')
+    @patch('elliottlib.cli.find_bugs_sweep_cli.assembly_config_struct')
+    def test_get_builds_brew_only(self, mock_assembly_config):
+        """Test with brew advisories and no shipment URL"""
+        runtime = flexmock(assembly='4.16.0')
         runtime.should_receive("get_default_advisories").and_return(
             {'rpm': 12345, 'image': 12346, 'extras': 12347, 'metadata': 12348}
         )
+        runtime.should_receive("get_releases_config").and_return({})
+        mock_assembly_config.return_value = {'shipment': {}}
 
-        # Mock errata.get_advisory_nvrs_flattened for each advisory
         flexmock(errata).should_receive("get_advisory_nvrs_flattened").with_args(12345).and_return(
             ['rpm-package-1-1.0.0-1.el9']
         )
@@ -730,20 +733,23 @@ class TestGetBuildsByAdvisoryKind(unittest.TestCase):
         result = get_builds_by_advisory_kind(runtime)
         self.assertEqual(result, expected)
 
-    def test_get_builds_brew_system_empty_advisories(self):
-        """Test get_builds_by_advisory_kind for brew system with no advisories"""
-        runtime = flexmock(build_system='brew')
+    @patch('elliottlib.cli.find_bugs_sweep_cli.assembly_config_struct')
+    def test_get_builds_empty_advisories_no_shipment(self, mock_assembly_config):
+        """Test with no brew advisories and no shipment URL"""
+        runtime = flexmock(assembly='4.16.0')
         runtime.should_receive("get_default_advisories").and_return({})
+        runtime.should_receive("get_releases_config").and_return({})
+        mock_assembly_config.return_value = {'shipment': {}}
 
-        expected = {}
         result = get_builds_by_advisory_kind(runtime)
-        self.assertEqual(result, expected)
+        self.assertEqual(result, {})
 
     @patch('elliottlib.cli.find_bugs_sweep_cli.assembly_config_struct')
     @patch('elliottlib.cli.find_bugs_sweep_cli.get_builds_from_mr')
-    def test_get_builds_konflux_system_with_shipment(self, mock_get_builds, mock_assembly_config):
-        """Test get_builds_by_advisory_kind for konflux build system with shipment URL"""
-        runtime = flexmock(build_system='konflux', assembly='4.16.0')
+    def test_get_builds_shipment_only(self, mock_get_builds, mock_assembly_config):
+        """Test with no brew advisories and shipment URL present"""
+        runtime = flexmock(assembly='4.16.0')
+        runtime.should_receive("get_default_advisories").and_return({})
         runtime.should_receive("get_releases_config").and_return({})
 
         mock_assembly_config.return_value = {
@@ -751,39 +757,46 @@ class TestGetBuildsByAdvisoryKind(unittest.TestCase):
         }
 
         mock_get_builds.return_value = {
-            'rpm': ['konflux-rpm-1.0.0-1.el9'],
             'image': ['konflux-image-container-v1.0.0-1'],
             'extras': ['konflux-extras-1.0.0-1.el9'],
         }
 
         expected = {
-            'rpm': ['konflux-rpm-1.0.0-1.el9'],
             'image': ['konflux-image-container-v1.0.0-1'],
             'extras': ['konflux-extras-1.0.0-1.el9'],
         }
 
         result = get_builds_by_advisory_kind(runtime)
         self.assertEqual(result, expected)
-
-        # Verify mocks were called correctly
-        mock_assembly_config.assert_called_once_with({}, '4.16.0', "group", {})
         mock_get_builds.assert_called_once_with('https://gitlab.com/example/shipment/-/merge_requests/123')
 
     @patch('elliottlib.cli.find_bugs_sweep_cli.assembly_config_struct')
     @patch('elliottlib.cli.find_bugs_sweep_cli.get_builds_from_mr')
-    def test_get_builds_konflux_system_no_shipment_url(self, mock_get_builds, mock_assembly_config):
-        """Test get_builds_by_advisory_kind for konflux system with no shipment URL"""
-        runtime = flexmock(build_system='konflux', assembly='4.16.0')
+    def test_get_builds_merged_from_both_sources(self, mock_get_builds, mock_assembly_config):
+        """Test with both brew advisories and shipment URL - builds are merged"""
+        runtime = flexmock(assembly='4.16.0')
+        runtime.should_receive("get_default_advisories").and_return({'rpm': 12345, 'image': 12346})
         runtime.should_receive("get_releases_config").and_return({})
 
-        mock_assembly_config.return_value = {'shipment': {}}
+        flexmock(errata).should_receive("get_advisory_nvrs_flattened").with_args(12345).and_return(
+            ['rpm-package-1-1.0.0-1.el9']
+        )
+        flexmock(errata).should_receive("get_advisory_nvrs_flattened").with_args(12346).and_return(
+            ['brew-image-container-v1.0.0-1']
+        )
 
-        expected = {}
+        mock_assembly_config.return_value = {
+            'shipment': {'url': 'https://gitlab.com/example/shipment/-/merge_requests/123'}
+        }
+        mock_get_builds.return_value = {
+            'image': ['konflux-image-container-v1.0.0-1'],
+            'extras': ['konflux-extras-1.0.0-1.el9'],
+        }
+
         result = get_builds_by_advisory_kind(runtime)
-        self.assertEqual(result, expected)
-
-        # Verify get_builds_from_mr was not called
-        mock_get_builds.assert_not_called()
+        self.assertEqual(result['rpm'], ['rpm-package-1-1.0.0-1.el9'])
+        self.assertEqual(result['image'], ['brew-image-container-v1.0.0-1', 'konflux-image-container-v1.0.0-1'])
+        self.assertEqual(result['extras'], ['konflux-extras-1.0.0-1.el9'])
 
 
 if __name__ == '__main__':
