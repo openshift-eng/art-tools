@@ -424,6 +424,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
         metadata.runtime.group_config.vars.MAJOR = "4"
         metadata.runtime.group_config.vars.MINOR = "9"
         metadata.runtime = MagicMock()
+        metadata.runtime.group_config.vars.FBC_DISABLE_CHANNEL_SKIPS = False
         metadata.get_olm_bundle_delivery_repo_name = MagicMock(return_value="openshift4/foo-bundle")
         build_repo = MagicMock()
         build_repo.local_dir = self.base_dir
@@ -939,6 +940,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
         metadata.runtime.group_config.vars = MagicMock()
         metadata.runtime.group_config.vars.MAJOR = "4"
         metadata.runtime.group_config.vars.MINOR = "14"
+        metadata.runtime.group_config.vars.FBC_DISABLE_CHANNEL_SKIPS = False
         metadata.runtime.konflux_db = MagicMock()
         metadata.config = MagicMock()
         metadata.config.delivery = MagicMock()
@@ -1090,6 +1092,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
         metadata.runtime.group_config.vars = MagicMock()
         metadata.runtime.group_config.vars.MAJOR = "1"
         metadata.runtime.group_config.vars.MINOR = "3"
+        metadata.runtime.group_config.vars.FBC_DISABLE_CHANNEL_SKIPS = False
         metadata.runtime.konflux_db = MagicMock()
         metadata.config = MagicMock()
         metadata.config.delivery = MagicMock()
@@ -1250,6 +1253,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
         metadata.runtime.group_config.vars = MagicMock()
         metadata.runtime.group_config.vars.MAJOR = "6"
         metadata.runtime.group_config.vars.MINOR = "3"
+        metadata.runtime.group_config.vars.FBC_DISABLE_CHANNEL_SKIPS = False
         metadata.runtime.konflux_db = MagicMock()
         metadata.config = MagicMock()
         metadata.config.delivery = MagicMock()
@@ -1535,6 +1539,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
         metadata.runtime.group_config.vars = MagicMock()
         metadata.runtime.group_config.vars.MAJOR = "6"
         metadata.runtime.group_config.vars.MINOR = "3"
+        metadata.runtime.group_config.vars.FBC_DISABLE_CHANNEL_SKIPS = False
         metadata.runtime.konflux_db = MagicMock()
         metadata.config = MagicMock()
         metadata.config.delivery = MagicMock()
@@ -1625,6 +1630,153 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
         await rebaser._rebase_dir(metadata, build_repo, bundle_build, "6.3.4", "1", logger)
 
         logger.info.assert_any_call("Setting default channel to %s", "stable-6.4")
+
+    @patch("doozerlib.opm.generate_dockerfile")
+    @patch("pathlib.Path.unlink")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._load_csv_from_bundle")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._get_referenced_images")
+    @patch("doozerlib.backend.konflux_fbc.DockerfileParser")
+    @patch("pathlib.Path.mkdir")
+    @patch("pathlib.Path.is_file", return_value=True)
+    @patch("pathlib.Path.open")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._fetch_olm_bundle_image_info", new_callable=AsyncMock)
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._fetch_olm_bundle_blob", new_callable=AsyncMock)
+    async def test_rebase_dir_no_skips_when_disabled(
+        self,
+        mock_fetch_olm_bundle_blob,
+        mock_fetch_olm_bundle_image_info,
+        mock_open,
+        mock_is_file,
+        mock_mkdir,
+        MockDockerfileParser,
+        mock_get_referenced_images,
+        mock_load_csv_from_bundle: AsyncMock,
+        mock_path_unlink: Mock,
+        mock_generate_dockerfile: AsyncMock,
+    ):
+        """When FBC_DISABLE_CHANNEL_SKIPS is True for a non-openshift group, skips are not written."""
+        rebaser = KonfluxFbcRebaser(
+            base_dir=self.base_dir,
+            group="logging-6.5",
+            assembly=self.assembly,
+            version="6.5.1",
+            release="1",
+            commit_message="test",
+            push=False,
+            fbc_repo="https://example.com/fbc.git",
+            upcycle=False,
+        )
+
+        metadata = MagicMock(spec=ImageMetadata)
+        metadata.distgit_key = "cluster-logging-operator"
+        metadata.runtime = MagicMock()
+        metadata.runtime.group_config = MagicMock()
+        metadata.runtime.group_config.vars = MagicMock()
+        metadata.runtime.group_config.vars.MAJOR = "6"
+        metadata.runtime.group_config.vars.MINOR = "5"
+        metadata.runtime.group_config.vars.FBC_DISABLE_CHANNEL_SKIPS = True
+        metadata.runtime.konflux_db = MagicMock()
+        metadata.config = MagicMock()
+        metadata.config.delivery = MagicMock()
+        metadata.config.delivery.delivery_repo_names = ["logging-repo"]
+        metadata.get_olm_bundle_delivery_repo_name.return_value = "logging-repo"
+
+        build_repo = MagicMock()
+        build_repo.local_dir = self.base_dir
+        bundle_build = MagicMock(
+            spec=KonfluxBundleBuildRecord,
+            nvr="cluster-logging-operator-bundle-6.5.1-1",
+            operator_nvr="cluster-logging-operator-6.5.1-1",
+            operand_nvrs=[],
+            image_pullspec="example.com/logging-bundle@sha256:abc",
+            image_tag="abc123",
+            source_repo="https://example.com/cluster-logging-operator.git",
+            commitish="abc123def",
+        )
+        logger = MagicMock()
+
+        mock_fetch_olm_bundle_image_info.return_value = {
+            "config": {
+                "config": {
+                    "Labels": {
+                        "name": "cluster-logging-operator",
+                        "operators.operatorframework.io.bundle.channels.v1": "stable-6.5",
+                        "operators.operatorframework.io.bundle.channel.default.v1": "stable-6.5",
+                        "operators.operatorframework.io.bundle.package.v1": "cluster-logging",
+                        "operators.operatorframework.io.bundle.manifests.v1": "manifests/",
+                    },
+                },
+            },
+        }
+
+        mock_fetch_olm_bundle_blob.return_value = (
+            "cluster-logging.v6.5.1",
+            "cluster-logging",
+            {
+                "schema": "olm.bundle",
+                "name": "cluster-logging.v6.5.1",
+                "package": "cluster-logging",
+                "properties": [],
+                "relatedImages": [{"name": "", "image": "example.com/logging-bundle@sha256:abc"}],
+            },
+        )
+
+        org_catalog_blobs = [
+            {"schema": "olm.package", "name": "cluster-logging", "defaultChannel": "stable-6.5"},
+            {
+                "schema": "olm.channel",
+                "name": "stable-6.5",
+                "package": "cluster-logging",
+                "entries": [
+                    {"name": "cluster-logging.v6.5.0", "skipRange": ">=6.3.0-0 <6.5.0"},
+                ],
+            },
+            {
+                "schema": "olm.bundle",
+                "name": "cluster-logging.v6.5.0",
+                "package": "cluster-logging",
+                "properties": [],
+                "relatedImages": [],
+            },
+        ]
+
+        org_catalog_file = StringIO()
+        yaml.dump_all(org_catalog_blobs, org_catalog_file)
+        org_catalog_file.seek(0)
+        result_catalog_file = StringIO()
+        images_mirror_set_file = StringIO()
+        mock_open.return_value.__enter__.side_effect = [org_catalog_file, result_catalog_file, images_mirror_set_file]
+
+        mock_get_referenced_images.return_value = []
+        mock_load_csv_from_bundle.return_value = {
+            "metadata": {
+                "name": "cluster-logging-operator",
+                "annotations": {"olm.skipRange": ">=6.3.0-0 <6.5.1"},
+            },
+            "spec": {"icon": []},
+        }
+
+        mock_dfp = MockDockerfileParser.return_value
+        mock_dfp.envs = {}
+        mock_dfp.labels = {}
+
+        mock_generate_dockerfile.return_value = None
+
+        await rebaser._rebase_dir(metadata, build_repo, bundle_build, "6.5.1", "1", logger)
+
+        result_catalog_file.seek(0)
+        result_catalog_blobs = list(yaml.load_all(result_catalog_file))
+        result_catalog_blobs = rebaser._catagorize_catalog_blobs(result_catalog_blobs)
+
+        entries = result_catalog_blobs["cluster-logging"]["olm.channel"]["stable-6.5"]["entries"]
+
+        for entry in entries:
+            self.assertNotIn("skips", entry, f"Entry {entry['name']} should not have 'skips' when disabled")
+
+        new_entry = next(e for e in entries if e["name"] == "cluster-logging.v6.5.1")
+        self.assertEqual(new_entry["skipRange"], ">=6.3.0-0 <6.5.1")
+        self.assertIn("replaces", new_entry)
+        self.assertEqual(new_entry["replaces"], "cluster-logging.v6.5.0")
 
 
 class TestFetchCsvFromGit(unittest.IsolatedAsyncioTestCase):
