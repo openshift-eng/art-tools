@@ -432,11 +432,7 @@ class PromotePipeline:
 
             # Verify payload imagestreams match advisory builds before promoting
             logger.info("Verifying payload imagestreams match advisory builds...")
-            try:
-                await self.verify_payload(assembly_type, arches)
-            except VerificationError as err:
-                justification = self._reraise_if_not_permitted(err, "PAYLOAD_MISMATCH", permits)
-                justifications.append(justification)
+            await self.verify_payload(assembly_type, arches)
 
             # Promote release images
             metadata = {}
