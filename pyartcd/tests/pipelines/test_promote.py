@@ -332,7 +332,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             {},
             "quay.io/openshift-release-dev/ocp-release:4.10.99-assembly.art0001-x86_64",
             None,
-            '4.10-art-assembly-art0001',
+            '4.10-konflux-art-assembly-art0001',
             keep_manifest_list=False,
         )
         build_release_image.assert_any_await(
@@ -343,7 +343,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             {},
             "quay.io/openshift-release-dev/ocp-release:4.10.99-assembly.art0001-s390x",
             None,
-            '4.10-art-assembly-art0001-s390x',
+            '4.10-konflux-art-assembly-art0001-s390x',
             keep_manifest_list=False,
         )
         pipeline._slack_client.bind_channel.assert_called_once_with("4.10.99-assembly.art0001")
@@ -581,8 +581,10 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
     @patch("pyartcd.pipelines.promote.PromotePipeline.get_image_stream")
     @patch("pyartcd.pipelines.promote.PromotePipeline.send_promote_complete_email")
     @patch("pyartcd.pipelines.promote.PromotePipeline.create_cincinnati_prs")
+    @patch("pyartcd.pipelines.promote.PromotePipeline.verify_payload")
     async def test_run_with_standard_assembly(
         self,
+        verify_payload: AsyncMock,
         create_cincinnati_prs: AsyncMock,
         send_promote_complete_email: Mock,
         get_image_stream: AsyncMock,
@@ -674,7 +676,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             {"description": "whatever", "url": "https://access.redhat.com/errata/RHBA-2099:2222"},
             "quay.io/openshift-release-dev/ocp-release:4.10.99-x86_64",
             None,
-            "4.10-art-assembly-4.10.99",
+            "4.10-konflux-art-assembly-4.10.99",
             keep_manifest_list=False,
         )
         build_release_image.assert_any_await(
@@ -685,7 +687,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             {"description": "whatever", "url": "https://access.redhat.com/errata/RHBA-2099:2222"},
             "quay.io/openshift-release-dev/ocp-release:4.10.99-s390x",
             None,
-            "4.10-art-assembly-4.10.99-s390x",
+            "4.10-konflux-art-assembly-4.10.99-s390x",
             keep_manifest_list=False,
         )
         build_release_image.assert_any_await(
@@ -696,7 +698,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             {"description": "whatever", "url": "https://access.redhat.com/errata/RHBA-2099:2222"},
             "quay.io/openshift-release-dev/ocp-release:4.10.99-ppc64le",
             None,
-            "4.10-art-assembly-4.10.99-ppc64le",
+            "4.10-konflux-art-assembly-4.10.99-ppc64le",
             keep_manifest_list=False,
         )
         build_release_image.assert_any_await(
@@ -707,7 +709,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             {"description": "whatever", "url": "https://access.redhat.com/errata/RHBA-2099:2222"},
             "quay.io/openshift-release-dev/ocp-release:4.10.99-aarch64",
             None,
-            "4.10-art-assembly-4.10.99-arm64",
+            "4.10-konflux-art-assembly-4.10.99-arm64",
             keep_manifest_list=False,
         )
         pipeline._slack_client.bind_channel.assert_called_once_with("4.10.99")
@@ -806,7 +808,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             metadata,
             "quay.io/openshift-release-dev/ocp-release:4.10.99-x86_64",
             None,
-            '4.10-art-assembly-4.10.99',
+            '4.10-konflux-art-assembly-4.10.99',
             keep_manifest_list=False,
         )
         get_image_stream_tag.assert_awaited_once_with("ocp", "release:4.10.99")
@@ -841,7 +843,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             metadata,
             "quay.io/openshift-release-dev/ocp-release:4.10.99-aarch64",
             None,
-            '4.10-art-assembly-4.10.99-arm64',
+            '4.10-konflux-art-assembly-4.10.99-arm64',
             keep_manifest_list=False,
         )
         get_image_stream_tag.assert_awaited_once_with("ocp-arm64", "release-arm64:4.10.99")
@@ -882,7 +884,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             metadata,
             "quay.io/openshift-release-dev/ocp-release:4.10.99-aarch64",
             None,
-            '4.10-art-assembly-4.10.99-arm64',
+            '4.10-konflux-art-assembly-4.10.99-arm64',
             keep_manifest_list=False,
         )
         get_image_stream_tag.assert_awaited_once_with("ocp-arm64", "release-arm64:4.10.99")
@@ -1875,8 +1877,10 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             }
         ),
     )
+    @patch("pyartcd.pipelines.promote.PromotePipeline.verify_payload")
     async def test_run_with_shipment_config_valid(
         self,
+        verify_payload: AsyncMock,
         load_group_config: AsyncMock,
         load_releases_config: AsyncMock,
         datetime_mock: Mock,
