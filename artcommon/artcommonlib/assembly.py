@@ -430,6 +430,42 @@ def assembly_metadata_config(
     return Model(dict_to_model=config_dict)
 
 
+def _collect_assembly_keys(releases_config: dict, assembly: str) -> set[str]:
+    """Collect all top-level keys from an assembly and its ancestors in the basis chain."""
+    keys: set[str] = set()
+    target = releases_config.get('releases', {}).get(assembly, {}).get('assembly', {})
+    keys.update(target.keys())
+    if basis_assembly := target.get('basis', {}).get('assembly'):
+        keys.update(_collect_assembly_keys(releases_config, basis_assembly))
+    return keys
+
+
+def assembly_resolved(releases_config: Model, assembly: typing.Optional[str]) -> Model:
+    """
+    Resolves the entire assembly definition after applying inheritance through
+    the basis chain. Returns a Model with all keys fully merged.
+    The 'basis' key is excluded from the result since it is the inheritance
+    mechanism itself.
+    :param releases_config: The content of releases.yml in Model form.
+    :param assembly: The name of the assembly to resolve
+    :return: A Model containing the fully resolved assembly definition.
+    """
+    if not assembly or not isinstance(releases_config, Model):
+        return Model(dict_to_model={})
+
+    raw_config = releases_config.primitive()
+    _check_recursion(raw_config, assembly)
+
+    all_keys = _collect_assembly_keys(raw_config, assembly)
+    all_keys.discard('basis')
+
+    result = {}
+    for key in sorted(all_keys):
+        result[key] = assembly_field(raw_config, assembly, key, {})
+
+    return Model(dict_to_model=result)
+
+
 def assembly_excluded_components(releases_config: Model, assembly: typing.Optional[str], meta_type: str) -> set[str]:
     """
     Returns a set of distgit_keys that have `exclude: true` in the assembly's members section.

@@ -9,6 +9,7 @@ from artcommonlib.assembly import (
     assembly_excluded_components,
     assembly_group_config,
     assembly_metadata_config,
+    assembly_resolved,
     assembly_rhcos_config,
 )
 from artcommonlib.model import Missing, Model
@@ -643,6 +644,45 @@ releases:
     def test_assembly_excluded_components_infinite_recursion(self):
         with self.assertRaises(ValueError):
             assembly_excluded_components(self.releases_config, 'ART_INFINITE', 'rpm')
+
+    def test_assembly_resolved_empty(self):
+        self.assertEqual(assembly_resolved(self.releases_config, None).primitive(), {})
+        self.assertEqual(assembly_resolved(self.releases_config, '').primitive(), {})
+        self.assertEqual(assembly_resolved(None, 'ART_1').primitive(), {})
+
+    def test_assembly_resolved_no_inheritance(self):
+        resolved = assembly_resolved(self.releases_config, 'ART_1')
+        self.assertEqual(resolved.group.advisories.image, 11)
+        self.assertEqual(resolved.group.advisories.extras, 12)
+        self.assertEqual(len(resolved.group.arches), 3)
+        self.assertIsNotNone(resolved.members)
+
+    def test_assembly_resolved_with_inheritance(self):
+        # ART_3 inherits from ART_2
+        resolved = assembly_resolved(self.releases_config, 'ART_3')
+        self.assertEqual(resolved.group.advisories.image, 31)
+        # members inherited from ART_2
+        self.assertIsNotNone(resolved.members)
+
+    def test_assembly_resolved_bang_override(self):
+        # ART_5 uses ! to completely replace arches and advisories
+        resolved = assembly_resolved(self.releases_config, 'ART_5')
+        self.assertEqual(len(resolved.group.arches), 1)
+        self.assertEqual(resolved.group.arches[0], 's390x')
+        self.assertEqual(resolved.group.advisories.image, 51)
+        self.assertEqual(resolved.group.advisories.extras, Missing)
+
+    def test_assembly_resolved_excludes_basis(self):
+        resolved = assembly_resolved(self.releases_config, 'ART_3')
+        self.assertEqual(resolved.basis, Missing)
+
+    def test_assembly_resolved_includes_rhcos(self):
+        resolved = assembly_resolved(self.releases_config, 'ART_8')
+        self.assertEqual(len(resolved.rhcos.dependencies.rpms), 3)
+
+    def test_assembly_resolved_infinite_recursion(self):
+        with self.assertRaises(ValueError):
+            assembly_resolved(self.releases_config, 'ART_INFINITE')
 
     def test_merger(self):
         # First value dominates on primitive

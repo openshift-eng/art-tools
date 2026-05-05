@@ -25,13 +25,14 @@ from artcommonlib.arch_util import (
     go_arch_for_brew_arch,
     go_suffix_for_arch,
 )
-from artcommonlib.assembly import AssemblyTypes
+from artcommonlib.assembly import AssemblyTypes, assembly_config_struct
 from artcommonlib.constants import REGISTRY_CI_OPENSHIFT, REGISTRY_QUAY_OCP_RELEASE_DEV
 from artcommonlib.exceptions import VerificationError
 from artcommonlib.exectools import manifest_tool, manifest_tool_auth_file, to_thread
 from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.gitlab import GitLabClient
 from artcommonlib.jira_config import JIRA_EMAIL, JIRA_SERVER_URL
+from artcommonlib.model import Model
 from artcommonlib.oc_image_info import oc_image_info__cached_async
 from artcommonlib.registry_config import RegistryConfig
 from artcommonlib.rhcos import get_primary_container_name
@@ -2610,20 +2611,14 @@ class PromotePipeline:
                 data_path=self._doozer_env_vars.get("DOOZER_DATA_PATH", None) or constants.OCP_BUILD_DATA_URL,
             )
 
-            # Debug: Show available releases in the config
-            available_releases = list(releases_config.get("releases", {}).keys())
-            self._logger.info("Available releases in releases.yml: %s", available_releases)
-
-            # Get the assembly config from releases.yml
-            assembly_config = releases_config.get("releases", {}).get(self.assembly)
-            if not assembly_config:
+            if releases_config.get("releases", {}).get(self.assembly) is None:
                 self._logger.warning("Assembly %s not found in releases.yml", self.assembly)
                 return None
 
-            self._logger.info("Assembly config keys for %s: %s", self.assembly, list(assembly_config.keys()))
-
-            # Get RPM advisory ID from assembly.group.advisories path
-            assembly_group_advisories = assembly_config.get("assembly", {}).get("group", {}).get("advisories", {})
+            group_config = assembly_config_struct(Model(releases_config), self.assembly, "group", {})
+            assembly_group_advisories = group_config.get("advisories", {})
+            if isinstance(assembly_group_advisories, Model):
+                assembly_group_advisories = assembly_group_advisories.primitive()
             rpm_advisory_id = assembly_group_advisories.get("rpm")
 
             self._logger.info("Assembly group advisories for %s: %s", self.assembly, assembly_group_advisories)

@@ -7,9 +7,11 @@ from typing import Dict, List
 import click
 import yaml
 from artcommonlib import gitdata
+from artcommonlib.assembly import assembly_resolved
 from artcommonlib.format_util import color_print, green_print, red_print, yellow_print
 from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.metadata import CONFIG_MODES
+from artcommonlib.model import Model
 
 from doozerlib import Runtime
 from doozerlib.cli import cli, click_coroutine, pass_runtime
@@ -236,9 +238,9 @@ def config_read_releases(runtime, as_len, as_yaml, out_file):
 @pass_runtime
 def config_read_assemblies(runtime, default, as_len, as_yaml, out_file, key):
     """
-    Read data from releases.yaml for given group, assembly and key.
-    An assembly must be specified. To get a global representation of release.yaml,
-    use doozer config:read-releases instead
+    Read the fully resolved assembly definition from releases.yaml for a given
+    group and assembly. Inheritance through the basis chain is applied so the
+    output includes values from ancestor assemblies.
 
     Usage:
 
@@ -257,11 +259,14 @@ def config_read_assemblies(runtime, default, as_len, as_yaml, out_file, key):
 
     CONFIG_RUNTIME_OPTS['group_only'] = True
     runtime.initialize(**CONFIG_RUNTIME_OPTS)
-    releases = get_releases(runtime)['releases']
-    try:
-        assembly_data = releases[runtime.assembly]
-    except KeyError:
+    releases = get_releases(runtime)
+    releases_config = Model(dict_to_model=releases)
+
+    if runtime.assembly not in releases.get('releases', {}):
         raise DoozerFatalError(f'No assembly data found for assembly "{runtime.assembly}" in group {runtime.group}')
+
+    resolved = assembly_resolved(releases_config, runtime.assembly).primitive()
+    assembly_data = {'assembly': resolved}
 
     if key is not None:
         assembly_data = dict_get(assembly_data, key, None)
