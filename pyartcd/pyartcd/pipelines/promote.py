@@ -1514,7 +1514,9 @@ class PromotePipeline:
                 self._logger.info("[DRY-RUN] Would have run command: %s", ' '.join(cmd))
                 return
             async with self._elliott_lock:
-                _, stdout, _ = await exectools.cmd_gather_async(cmd, env=self._elliott_env_vars, stderr=None)
+                _, stdout, _ = await exectools.cmd_gather_async(
+                    cmd, env=self._elliott_env_vars, stderr=None, check=True
+                )
             results = json.loads(stdout)
             self._logger.info("Verify payload results for %s:\n%s", imagestream, json.dumps(results, indent=4))
             if results.get("missing_in_advisory") or results.get("payload_advisory_mismatch"):
