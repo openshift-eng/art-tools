@@ -431,8 +431,11 @@ class PromotePipeline:
                         justifications.append(justification)
 
             # Verify payload imagestreams match advisory builds before promoting
-            logger.info("Verifying payload imagestreams match advisory builds...")
-            await self.verify_payload(assembly_type, arches)
+            if image_advisory > 0 or shipment_config:
+                logger.info("Verifying payload imagestreams match advisory builds...")
+                await self.verify_payload(assembly_type, arches)
+            else:
+                logger.info("Skipping payload verification: no image advisory or shipment config defined")
 
             # Promote release images
             metadata = {}
@@ -1654,8 +1657,15 @@ class PromotePipeline:
                 self._logger.warning("The existing release image %s will be overwritten!", dest_image_pullspec)
             major, minor = isolate_major_minor_in_group(self.group)
             # Ensure build-sync has been run for this assembly
-            is_name = f"{major}.{minor}-art-assembly-{self.assembly}{go_arch_suffix}"
-            imagestream = await self.get_image_stream(f"ocp{go_arch_suffix}", is_name)
+            is_namespace, is_name = payload_imagestream_namespace_and_name(
+                default_imagestream_namespace_base_name(),
+                assembly_imagestream_base_name_generic(
+                    f"{major}.{minor}", self.assembly, assembly_type, build_system='konflux'
+                ),
+                arch,
+                private=False,
+            )
+            imagestream = await self.get_image_stream(is_namespace, is_name)
             if not imagestream:
                 raise ValueError(f"Image stream {is_name} is not found. Did you run build-sync?")
             await self._fix_failed_imagestream_imports(f"ocp{go_arch_suffix}", is_name)
