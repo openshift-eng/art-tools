@@ -430,13 +430,22 @@ def assembly_metadata_config(
     return Model(dict_to_model=config_dict)
 
 
-def _collect_assembly_keys(releases_config: dict, assembly: str) -> set[str]:
-    """Collect all top-level keys from an assembly and its ancestors in the basis chain."""
-    keys: set[str] = set()
+def _collect_assembly_keys(releases_config: dict, assembly: str) -> list[str]:
+    """Collect all top-level keys from an assembly and its ancestors in the basis chain.
+    Keys are returned in original YAML order: ancestor keys first, then any new
+    keys introduced by child assemblies.
+    """
     target = releases_config.get('releases', {}).get(assembly, {}).get('assembly', {})
-    keys.update(target.keys())
-    if basis_assembly := target.get('basis', {}).get('assembly'):
-        keys.update(_collect_assembly_keys(releases_config, basis_assembly))
+    basis_assembly = target.get('basis', {}).get('assembly')
+    if basis_assembly:
+        keys = _collect_assembly_keys(releases_config, basis_assembly)
+    else:
+        keys = []
+    seen = set(keys)
+    for k in target.keys():
+        if k not in seen:
+            keys.append(k)
+            seen.add(k)
     return keys
 
 
@@ -445,7 +454,7 @@ def assembly_resolved(releases_config: Model, assembly: typing.Optional[str]) ->
     Resolves the entire assembly definition after applying inheritance through
     the basis chain. Returns a Model with all keys fully merged.
     The 'basis' key is excluded from the result since it is the inheritance
-    mechanism itself.
+    mechanism itself. Key ordering from the original YAML is preserved.
     :param releases_config: The content of releases.yml in Model form.
     :param assembly: The name of the assembly to resolve
     :return: A Model containing the fully resolved assembly definition.
@@ -457,10 +466,11 @@ def assembly_resolved(releases_config: Model, assembly: typing.Optional[str]) ->
     _check_recursion(raw_config, assembly)
 
     all_keys = _collect_assembly_keys(raw_config, assembly)
-    all_keys.discard('basis')
 
     result = {}
-    for key in sorted(all_keys):
+    for key in all_keys:
+        if key == 'basis':
+            continue
         result[key] = assembly_field(raw_config, assembly, key, {})
 
     return Model(dict_to_model=result)
