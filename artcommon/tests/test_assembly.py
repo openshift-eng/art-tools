@@ -703,3 +703,21 @@ releases:
             _merger({'r-': [1, 2]}, {'r': [3, 4]}),
             {},
         )
+
+        # ! key with nested ! keys - nested special suffixes should be stripped
+        self.assertEqual(
+            _merger({'shipment!': {'advisories!': [{'kind': 'image'}], 'url!': ''}}, {'shipment': {'advisories': [{'kind': 'extras'}], 'url': 'http://example.com'}}),
+            {'shipment': {'advisories': [{'kind': 'image'}], 'url': ''}},
+        )
+
+        # ? key with nested special suffixes should also be stripped
+        self.assertEqual(
+            _merger({'shipment?': {'advisories!': [{'kind': 'image'}]}}, {}),
+            {'shipment': {'advisories': [{'kind': 'image'}]}},
+        )
+
+        # Deeply nested special suffixes should be stripped
+        self.assertEqual(
+            _merger({'a!': {'b!': {'c!': 'value'}}}, {'a': {'x': 1}}),
+            {'a': {'b': {'c': 'value'}}},
+        )

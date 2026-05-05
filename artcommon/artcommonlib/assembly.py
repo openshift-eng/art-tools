@@ -161,6 +161,27 @@ def _check_recursion(releases_config: dict, assembly: str):
         next_assembly = target_assembly.get("basis", {}).get("assembly")
 
 
+def _strip_special_suffixes(obj):
+    """
+    Recursively strip special suffixes (!, ?, -) from all keys in a nested structure.
+    This is needed when a value is set with a dominant key (!) since the value itself
+    may contain keys with special suffixes that need to be normalized.
+    """
+    if isinstance(obj, dict):
+        result = {}
+        for k, v in obj.items():
+            # Strip special suffix from key
+            if k.endswith(('!', '?', '-')):
+                k = k[:-1]
+            # Recursively process value
+            result[k] = _strip_special_suffixes(v)
+        return result
+    elif isinstance(obj, list):
+        return [_strip_special_suffixes(item) for item in obj]
+    else:
+        return obj
+
+
 def _merger(a, b):
     """
     Merges two, potentially deep, objects into a new one and returns the result.
@@ -200,11 +221,13 @@ def _merger(a, b):
         for k, v in a.items():
             if k.endswith('!'):  # full dominant key
                 k = k[:-1]
-                c[k] = v
+                # Strip special suffixes from nested keys since value is set exactly
+                c[k] = _strip_special_suffixes(v)
             elif k.endswith('?'):  # default value key
                 k = k[:-1]
                 if k not in c:
-                    c[k] = v
+                    # Strip special suffixes from nested keys
+                    c[k] = _strip_special_suffixes(v)
             elif k.endswith('-'):  # remove key entirely
                 k = k[:-1]
                 c.pop(k, None)
