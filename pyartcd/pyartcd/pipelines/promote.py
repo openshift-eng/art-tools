@@ -1495,7 +1495,7 @@ class PromotePipeline:
         version = f"{major}.{minor}"
 
         assembly_is_base_name = assembly_imagestream_base_name_generic(
-            version, self.assembly, assembly_type, build_system='konflux'
+            version, self.assembly, assembly_type, build_system='brew'
         )
 
         @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
@@ -1505,7 +1505,6 @@ class PromotePipeline:
                 "elliott",
                 f"--group={self.group}",
                 f"--assembly={self.assembly}",
-                "--build-system=konflux",
             ]
             if self._registry_config:
                 cmd.append(f"--registry-config={self._registry_config}")
@@ -1660,7 +1659,7 @@ class PromotePipeline:
             is_namespace, is_name = payload_imagestream_namespace_and_name(
                 default_imagestream_namespace_base_name(),
                 assembly_imagestream_base_name_generic(
-                    f"{major}.{minor}", self.assembly, assembly_type, build_system='konflux'
+                    f"{major}.{minor}", self.assembly, assembly_type, build_system='brew'
                 ),
                 arch,
                 private=False,
