@@ -1292,7 +1292,8 @@ class KonfluxFbcRebaser:
             if olm_skip_range:
                 entry["skipRange"] = olm_skip_range
             if skips:
-                if self.group.startswith('openshift-') or not bool(group_config.vars.FBC_DISABLE_CHANNEL_SKIPS):
+                disable_channel_skips = bool(getattr(group_config.vars, "FBC_DISABLE_CHANNEL_SKIPS", False))
+                if self.group.startswith("openshift-") or not disable_channel_skips:
                     entry["skips"] = sorted(skips)
 
         for channel_name in channel_names:
