@@ -40,6 +40,7 @@ except ImportError:
 
 class NoAliasSafeDumper(yaml.SafeDumper):
     """A YAML dumper that never emits anchors/aliases for duplicate objects."""
+
     def ignore_aliases(self, data):
         return True
 

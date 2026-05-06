@@ -1790,7 +1790,9 @@ class ConfigScanSources:
             rhcos=self.rhcos_status,
         )
 
-        self.logger.debug(f'scan-sources coordinate: results:\n{yaml.dump(results, indent=4, Dumper=util.NoAliasSafeDumper)}')
+        self.logger.debug(
+            f'scan-sources coordinate: results:\n{yaml.dump(results, indent=4, Dumper=util.NoAliasSafeDumper)}'
+        )
 
         if self.as_yaml:
             click.echo('---')
