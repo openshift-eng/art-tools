@@ -246,7 +246,7 @@ class AttachCveFlaws:
         kinds = [advisory.get("kind") for advisory in advisories]
         if self.default_advisory_type not in kinds:
             raise click.UsageError(
-                f"Default advisory type '{self.default_advisory_type}' not found in shipment advisories: {advisories.keys()}"
+                f"Default advisory type '{self.default_advisory_type}' not found in shipment advisories. Available kinds: {kinds}"
             )
 
         # Get the shipment configs from the merge request URL
