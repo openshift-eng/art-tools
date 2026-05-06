@@ -2599,34 +2599,21 @@ class PromotePipeline:
             raise
 
     async def _get_rpm_advisory_id(self) -> Optional[str]:
-        """Get RPM advisory ID from releases.yml and query errata endpoint for advisory type.
+        """
+        Get RPM advisory ID from the assembly group config and query errata endpoint for advisory type.
 
-        :return: Formatted RPM advisory string like "RHBA-2025:12345" or None if not found
+        Uses group_runtime.group_config which properly resolves assembly inheritance
+        and handles special key suffixes (e.g. 'advisories!' for full replacement).
+
+        Return Value(s):
+            Formatted RPM advisory string like "RHBA-2025:12345" or None if not found.
         """
         try:
-            # Load releases.yml config to get RPM advisory ID
-            releases_config = await util.load_releases_config(
-                group=self.group,
-                data_path=self._doozer_env_vars.get("DOOZER_DATA_PATH", None) or constants.OCP_BUILD_DATA_URL,
-            )
+            group_config = self.group_runtime.group_config
+            advisories = group_config.get("advisories", {})
+            rpm_advisory_id = advisories.get("rpm")
 
-            # Debug: Show available releases in the config
-            available_releases = list(releases_config.get("releases", {}).keys())
-            self._logger.info("Available releases in releases.yml: %s", available_releases)
-
-            # Get the assembly config from releases.yml
-            assembly_config = releases_config.get("releases", {}).get(self.assembly)
-            if not assembly_config:
-                self._logger.warning("Assembly %s not found in releases.yml", self.assembly)
-                return None
-
-            self._logger.info("Assembly config keys for %s: %s", self.assembly, list(assembly_config.keys()))
-
-            # Get RPM advisory ID from assembly.group.advisories path
-            assembly_group_advisories = assembly_config.get("assembly", {}).get("group", {}).get("advisories", {})
-            rpm_advisory_id = assembly_group_advisories.get("rpm")
-
-            self._logger.info("Assembly group advisories for %s: %s", self.assembly, assembly_group_advisories)
+            self._logger.info("Assembly group advisories for %s: %s", self.assembly, advisories)
 
             if not rpm_advisory_id:
                 self._logger.info("No RPM advisory ID found for assembly %s", self.assembly)

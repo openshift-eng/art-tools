@@ -4,7 +4,7 @@ from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
 
-from artcommonlib.assembly import AssemblyTypes
+from artcommonlib.assembly import AssemblyTypes, assembly_field
 from artcommonlib.exceptions import VerificationError
 from artcommonlib.jira_config import JIRA_SERVER_URL
 from artcommonlib.model import Model
@@ -2116,6 +2116,158 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
                 }
             },
         )
+
+    @patch("pyartcd.pipelines.promote.get_errata_live_id", return_value="RHBA-2026:166757")
+    @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
+    @patch("pyartcd.pipelines.promote.util.load_releases_config", return_value={})
+    @patch(
+        "pyartcd.pipelines.promote.util.load_group_config",
+        return_value=Model(
+            {
+                "arches": ["x86_64", "s390x"],
+                "advisories": {"rpm": 166757, "rhcos": 166758},
+            }
+        ),
+    )
+    async def test_get_rpm_advisory_id_from_group_config(
+        self, load_group_config: AsyncMock, load_releases_config: AsyncMock, _, get_errata_live_id: Mock
+    ):
+        """
+        Simulate the 4.21.14 scenario where releases.yml uses 'advisories!' (with '!' suffix)
+        to override inherited advisories. The raw YAML key 'advisories!' would not match a
+        plain .get("advisories") lookup, but group_runtime.group_config (which goes through
+        assembly_field merging) strips the '!' and returns the clean key.
+        This test verifies that _get_rpm_advisory_id correctly reads the RPM advisory ID
+        from the merged group config.
+        """
+        runtime = MagicMock(
+            config={
+                "build_config": {
+                    "ocp_build_data_url": "https://example.com/ocp-build-data.git",
+                },
+                "jira": {
+                    "url": JIRA_SERVER_URL,
+                },
+            },
+            working_dir=Path("/path/to/working"),
+            dry_run=False,
+        )
+        pipeline = await PromotePipeline.create(
+            runtime, group="openshift-4.21", assembly="4.21.14", signing_env="prod", skip_sigstore=True
+        )
+
+        result = await pipeline._get_rpm_advisory_id()
+
+        self.assertEqual(result, "RHBA-2026:166757")
+        get_errata_live_id.assert_called_once_with(166757)
+
+    @patch("pyartcd.pipelines.promote.get_errata_live_id", return_value="RHBA-2026:166757")
+    @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
+    @patch("pyartcd.pipelines.promote.util.load_releases_config", return_value={})
+    async def test_get_rpm_advisory_id_with_advisories_bang_suffix(
+        self, load_releases_config: AsyncMock, _, get_errata_live_id: Mock
+    ):
+        """
+        Reproduce the exact 4.21.14 scenario: releases.yml uses 'advisories!' (with '!')
+        to prevent inheriting parent assembly's advisories. Run the raw releases config
+        through assembly_field (the real merge function) to produce the group config,
+        proving that the '!' suffix is correctly stripped and the RPM advisory is found.
+        """
+        # Raw releases.yml structure mirroring the 4.21.14 PR (ocp-build-data#10405)
+        releases_config = {
+            "releases": {
+                "4.21.13": {
+                    "assembly": {
+                        "group": {
+                            "advisories": {"rpm": 99999, "rhcos": 99998},
+                        },
+                    },
+                },
+                "4.21.14": {
+                    "assembly": {
+                        "basis": {
+                            "assembly": "4.21.13",
+                        },
+                        "group": {
+                            # The '!' suffix means: do NOT inherit advisories from 4.21.13
+                            "advisories!": {"rpm": 166757, "rhcos": 166758},
+                        },
+                    },
+                },
+            },
+        }
+
+        # Run through the real assembly merge — this is what doozer config:read-group does
+        merged_group = assembly_field(releases_config, "4.21.14", "group", {})
+
+        # Verify the merge stripped the '!' and did NOT inherit parent's advisories
+        self.assertEqual(merged_group["advisories"]["rpm"], 166757)
+        self.assertNotEqual(merged_group["advisories"]["rpm"], 99999)
+
+        # Now use this merged config as load_group_config return value
+        with patch(
+            "pyartcd.pipelines.promote.util.load_group_config",
+            return_value=Model({**merged_group, "arches": ["x86_64", "s390x"]}),
+        ):
+            runtime = MagicMock(
+                config={
+                    "build_config": {
+                        "ocp_build_data_url": "https://example.com/ocp-build-data.git",
+                    },
+                    "jira": {
+                        "url": JIRA_SERVER_URL,
+                    },
+                },
+                working_dir=Path("/path/to/working"),
+                dry_run=False,
+            )
+            pipeline = await PromotePipeline.create(
+                runtime, group="openshift-4.21", assembly="4.21.14", signing_env="prod", skip_sigstore=True
+            )
+
+            result = await pipeline._get_rpm_advisory_id()
+
+            self.assertEqual(result, "RHBA-2026:166757")
+            get_errata_live_id.assert_called_once_with(166757)
+
+    @patch("pyartcd.pipelines.promote.get_errata_live_id")
+    @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
+    @patch("pyartcd.pipelines.promote.util.load_releases_config", return_value={})
+    @patch(
+        "pyartcd.pipelines.promote.util.load_group_config",
+        return_value=Model(
+            {
+                "arches": ["x86_64", "s390x"],
+            }
+        ),
+    )
+    async def test_get_rpm_advisory_id_returns_none_when_no_advisories(
+        self, load_group_config: AsyncMock, load_releases_config: AsyncMock, _, get_errata_live_id: Mock
+    ):
+        """
+        Verify that _get_rpm_advisory_id returns None when no advisories are defined
+        in the group config (e.g. stream assembly or assembly without RPM advisory).
+        """
+        runtime = MagicMock(
+            config={
+                "build_config": {
+                    "ocp_build_data_url": "https://example.com/ocp-build-data.git",
+                },
+                "jira": {
+                    "url": JIRA_SERVER_URL,
+                },
+            },
+            working_dir=Path("/path/to/working"),
+            dry_run=False,
+        )
+        pipeline = await PromotePipeline.create(
+            runtime, group="openshift-4.21", assembly="4.21.14", signing_env="prod", skip_sigstore=True
+        )
+
+        result = await pipeline._get_rpm_advisory_id()
+
+        self.assertIsNone(result)
+        get_errata_live_id.assert_not_called()
 
     @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
     @patch("pyartcd.pipelines.promote.exectools.cmd_assert_async")
