@@ -143,6 +143,15 @@ def plashet_config_for_major_minor(major, minor):
             "embargoed_tags": [],
             "include_previous_packages": [],
         },
+        "rhel-9-golang-rpms": {
+            "slug": "golang-el9",
+            "tag": f"rhaos-{major}.{minor}-rhel-9-override",
+            "product_version": f"OSE-{major}.{minor}-RHEL-9",
+            "include_embargoed": False,
+            "embargoed_tags": [],
+            "include_previous_packages": [],
+            "include_packages": ["golang", "goversioninfo"],
+        },
     }
 
 
@@ -159,6 +168,7 @@ def convert_plashet_config_to_new_style(plashet_config: dict) -> list[Repo]:
             embargo_aware=True,
             include_embargoed=config.get("include_embargoed", False),
             include_previous_packages=config.get("include_previous_packages", []),
+            include_packages=config.get("include_packages", []),
             exclude_packages=config.get("exclude_packages", []),
             source=BrewSource(
                 type="brew",
@@ -253,10 +263,15 @@ async def build_plashets(
         plashet_config = PlashetConfig.model_validate(group_config.get('plashet', {}))
 
     else:  # Fall back to old-style config
-        # old-style config only supports openshift-x.y groups
         major, minor = isolate_major_minor_in_group(group)
         if major is None:
-            raise ValueError("Old-style plashet config only supports openshift-x.y groups")
+            group_vars = group_config.get("vars", {})
+            major, minor = group_vars.get("MAJOR"), group_vars.get("MINOR")
+            if major is None or minor is None:
+                raise ValueError(
+                    f"Cannot determine MAJOR/MINOR for group '{group}': "
+                    "not an openshift-x.y group and MAJOR/MINOR vars not set in group config"
+                )
         logger.info("Using old-style plashet configs in group.yml")
         group_repos = group_config.get('repos', {}).keys()
         if repos:
@@ -281,7 +296,7 @@ async def build_plashets(
     logger.info("Building plashet repos: %s", ", ".join(plashet_repo_names))
 
     # Check release state
-    signing_mode = await util.get_signing_mode(group_config=group_config)
+    signing_mode = await util.get_signing_mode(group=group, group_config=group_config)
 
     # Create plashet repos on ocp-artifacts
     # We can't safely run doozer config:plashet from-tags in parallel as this moment.
@@ -332,6 +347,7 @@ async def build_plashets(
             embargoed_tags=config.source.embargoed_tags,
             tag_pvs=tuple((tag.name, tag.product_version) for tag in config.source.from_tags),
             include_previous_packages=config.include_previous_packages,
+            include_packages=config.include_packages,
             exclude_packages=config.exclude_packages,
             repo_subdir=plashet_config.repo_subdir if plashet_config.create_repo_subdirs else None,
             data_path=data_path,
@@ -378,6 +394,7 @@ async def build_plashet_from_tags(
     tag_pvs: Sequence[Tuple[str, str]],
     embargoed_tags: Optional[Sequence[str]],
     include_previous_packages: Optional[Sequence[str]] = None,
+    include_packages: Optional[Sequence[str]] = None,
     exclude_packages: Optional[Sequence[str]] = None,
     repo_subdir: str | None = 'os',
     poll_for: int = 0,
@@ -411,18 +428,18 @@ async def build_plashet_from_tags(
         cmd.extend(["--repo-subdir", repo_subdir])
     for arch in arches:
         cmd.extend(["--arch", arch, signing_mode])
+    for pkg in include_packages or []:
+        cmd.extend(["--include-package", pkg])
     for pkg in exclude_packages or []:
         cmd.extend(["--exclude-package", pkg])
-    cmd.extend(
-        [
-            "from-tags",
-            "--signing-advisory-id",
-            f"{signing_advisory or 54765}",
-            "--signing-advisory-mode",
-            "clean",
-            "--inherit",
-        ]
-    )
+    from_tags_args = ["from-tags"]
+    if signing_advisory and str(signing_advisory) != '0':
+        from_tags_args.extend([
+            "--signing-advisory-id", str(signing_advisory),
+            "--signing-advisory-mode", "clean",
+        ])
+    from_tags_args.append("--inherit")
+    cmd.extend(from_tags_args)
     if include_embargoed:
         cmd.append("--include-embargoed")
     if embargoed_tags:

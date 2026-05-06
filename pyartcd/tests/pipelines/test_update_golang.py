@@ -769,8 +769,8 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
         pipeline.koji_session.gssapi_login.assert_not_called()
 
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
-    def test_get_content_repo_url_suffix(self, mock_konflux_db):
-        """Test get_content_repo_url_suffix method"""
+    def test_get_expected_golang_url_suffixes(self, mock_konflux_db):
+        """Test get_expected_golang_url_suffixes returns both brewroot and plashet patterns"""
         mock_runtime = Mock(
             dry_run=False,
             working_dir=Path("/tmp/working"),
@@ -787,8 +787,9 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
             tag_builds=True,
         )
 
-        url = pipeline.get_content_repo_url_suffix(8)
-        self.assertEqual(url, "/brewroot/repos/rhaos-4.16-rhel-8-build/latest")
+        suffixes = pipeline.get_expected_golang_url_suffixes(8, 4, 16)
+        self.assertIn("/brewroot/repos/rhaos-4.16-rhel-8-build/latest", suffixes)
+        self.assertIn("/pub/RHOCP/plashets/4.16/stream/golang-el8/latest", suffixes)
 
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     def test_get_builder_pullspec(self, mock_konflux_db):
@@ -873,6 +874,7 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
         )
         pipeline.validate_tag_builds_go_latest = Mock()
         pipeline.process_build = AsyncMock(return_value=True)
+        pipeline._build_golang_plashets = AsyncMock()
         pipeline.get_existing_builders_brew = Mock(
             return_value={9: "openshift-golang-builder-container-v1.25.8-202604150744.p2.gf28329a.el9"}
         )

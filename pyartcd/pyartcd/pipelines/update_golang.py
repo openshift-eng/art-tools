@@ -36,6 +36,11 @@ _LOGGER = logging.getLogger(__name__)
 yaml = new_roundtrip_yaml_handler()
 PUBLISHED_GOLANG_BUILDER_REPO = f"{REGISTRY_REDHAT_IO}/openshift/{ART_IMAGES_BASE_APPLICATION}"
 
+# Golang versions built by OCP sustaining (no longer maintained in RHEL).
+# These are signed with internal-only key 00da75f2 via auto-signing brew tags.
+# Versions NOT in this list are RHEL-shipped and signed with production key fd431d51.
+SUSTAINING_GOLANG_VERSIONS = ["1.20", "1.22", "1.23", "1.24"]
+
 
 def is_latest(ocp_version: str, el_v: int, nvr: str, koji_session) -> bool:
     build_tag = f'rhaos-{ocp_version}-rhel-{el_v}-build'
@@ -354,6 +359,9 @@ class UpdateGolangPipeline:
             _LOGGER.info('All golang RPM builds are tagged and available!')
             await self._slack_client.say_in_thread("All golang RPM builds are tagged and available!")
 
+            # Build plashets for golang RPMs before building images
+            await self._build_golang_plashets(go_version, el_nvr_map_for_images.keys())
+
         # Check if openshift-golang-builder image builds exist for the provided compiler builds
         # Only for RHEL versions that support golang-builder images (excludes el10 for now)
         brew_nvrs = {}
@@ -530,6 +538,44 @@ class UpdateGolangPipeline:
             self.koji_session.tagBuild(build_tag, build)
             _LOGGER.info(f"Tagged {build} with {build_tag} tag")
             await self._slack_client.say_in_thread(f"Tagged {build} with {build_tag} tag")
+
+    @staticmethod
+    def is_sustaining_golang(go_version: str) -> bool:
+        """Check if the golang version is maintained by OCP sustaining (no longer in RHEL).
+        Sustaining golang can be signed with internal-only key 00da75f2 via auto-signing brew tags.
+        RHEL-shipped golang (not sustaining) is signed with production key fd431d51 through the RHEL process.
+        """
+        go_major_minor = ".".join(go_version.split(".")[:2])
+        return go_major_minor in SUSTAINING_GOLANG_VERSIONS
+
+    async def _build_golang_plashets(self, go_version, el_versions):
+        go_v = ".".join(go_version.split(".")[:2])
+        _LOGGER.info("Building golang plashets for go %s, RHEL versions: %s", go_v, list(el_versions))
+
+        # TODO: When signed mode is enabled, check signing status based on sustaining vs RHEL-shipped:
+        # if self.is_sustaining_golang(go_version):
+        #     # Tag into auto-signing brew tag for 00da75f2 signing
+        #     pass
+        # else:
+        #     # RHEL-shipped: RPMs should already be signed with fd431d51
+        #     pass
+
+        for el_v in el_versions:
+            group = f"rhel-{el_v}-golang-{go_v}"
+            repo_name = f"rhel-{el_v}-golang-rpms"
+            _LOGGER.info("Triggering plashet build for group=%s, repo=%s", group, repo_name)
+            await self._slack_client.say_in_thread(f"Building golang plashet: group={group}, repo={repo_name}")
+            if self.dry_run:
+                _LOGGER.info("[DRY RUN] Would have triggered build-plashets for %s", group)
+                continue
+            jenkins.start_build_plashets(
+                group=group,
+                release=default_release_suffix(),
+                assembly="stream",
+                repos=[repo_name],
+                block_until_complete=True,
+            )
+            _LOGGER.info("Plashet build complete for %s", group)
 
     def get_existing_builders_brew(self, el_nvr_map, go_version):
         component = GOLANG_BUILDER_CVE_COMPONENT
@@ -982,7 +1028,6 @@ class UpdateGolangPipeline:
         repo = get_github_client_for_org("openshift-eng").get_repo("openshift-eng/ocp-build-data")
         content = repo.get_contents(filename, ref=branch)
         group_config = yaml.load(content.decoded_content)
-        content_repo_url_suffix = self.get_content_repo_url_suffix(el_v)
 
         golang_repo = f'rhel-{el_v}-golang-rpms'
         if golang_repo not in group_config['repos']:
@@ -992,14 +1037,15 @@ class UpdateGolangPipeline:
                 "name please correct it."
             )
 
-        ocp_major, ocp_minor = self.ocp_version.split('.')
+        major, minor = group_config['vars']['MAJOR'], group_config['vars']['MINOR']
+        expected_suffixes = self.get_expected_golang_url_suffixes(el_v, major, minor)
         err = False
         for arch, template_url in group_config['repos'][golang_repo]['conf']['baseurl'].items():
-            expected_suffix = f'{content_repo_url_suffix}/{arch}/'
-            actual_url = template_url.format(MAJOR=ocp_major, MINOR=ocp_minor)
-            if not actual_url.endswith(expected_suffix):
+            actual_url = template_url.format(MAJOR=major, MINOR=minor)
+            if not any(actual_url.endswith(f'{suffix}/{arch}/') or actual_url.endswith(f'{suffix}/{arch}/os/')
+                       for suffix in expected_suffixes):
                 err = True
-                _LOGGER.error(f"{expected_suffix} not found in URL {actual_url}")
+                _LOGGER.error(f"URL {actual_url} does not match any expected pattern for arch {arch}")
 
         if err:
             raise ValueError(
@@ -1008,9 +1054,10 @@ class UpdateGolangPipeline:
 
         _LOGGER.info(f"Builder branch {branch} has the expected content set urls")
 
-    def get_content_repo_url_suffix(self, el_v):
-        url = '/brewroot/repos/{repo}/latest'
-        return url.format(repo=f'rhaos-{self.ocp_version}-rhel-{el_v}-build')
+    def get_expected_golang_url_suffixes(self, el_v, major, minor):
+        brewroot_suffix = f'/brewroot/repos/rhaos-{self.ocp_version}-rhel-{el_v}-build/latest'
+        plashet_suffix = f'/pub/RHOCP/plashets/{major}.{minor}/stream/golang-el{el_v}/latest'
+        return [brewroot_suffix, plashet_suffix]
 
     def get_module_tag(self, nvr, el_v) -> str:
         tags = [t['name'] for t in self.koji_session.listTags(build=nvr)]
