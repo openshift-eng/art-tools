@@ -192,10 +192,33 @@ class BaseImageHandler:
 
         try:
             where = {"group": self.runtime.group, "engine": Engine.KONFLUX.value}
-            records = await self.konflux_db.get_build_records_by_nvrs(
-                nvrs, outcome=KonfluxBuildOutcome.UNRELEASED, where=where, strict=False, exclude_large_columns=True
+            unreleased_records = await self.konflux_db.get_build_records_by_nvrs(
+                nvrs,
+                outcome=KonfluxBuildOutcome.UNRELEASED,
+                where=where,
+                strict=False,
+                exclude_large_columns=True,
             )
-            return {record.nvr: record for record in records if record is not None}
+            merged: Dict[str, KonfluxBuildRecord] = {}
+            missing_nvrs: List[str] = []
+            for nvr, record in zip(nvrs, unreleased_records, strict=True):
+                if record is not None:
+                    merged[nvr] = record
+                else:
+                    missing_nvrs.append(nvr)
+
+            if missing_nvrs:
+                success_records = await self.konflux_db.get_build_records_by_nvrs(
+                    missing_nvrs,
+                    outcome=KonfluxBuildOutcome.SUCCESS,
+                    where=where,
+                    strict=False,
+                    exclude_large_columns=True,
+                )
+                for nvr, record in zip(missing_nvrs, success_records, strict=True):
+                    if record is not None:
+                        merged[nvr] = record
+            return merged
         except Exception as e:
             self.logger.warning(f"Failed to fetch build records from database: {e}")
             return {}
