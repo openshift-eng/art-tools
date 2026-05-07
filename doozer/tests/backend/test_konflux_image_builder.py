@@ -753,27 +753,27 @@ class TestKonfluxImageBuilderGolangComponent(unittest.TestCase):
     def test_get_golang_builder_component_name_basic(self):
         """Test basic golang builder component name generation."""
         nvr = "openshift-golang-builder-container-v1.25.8-202604081607.p0.g2aa6a05.el8"
-        expected = "golang-builder-v1.25-rhel8"
+        expected = "golang-builder-v1.25.8-rhel8"
         result = KonfluxImageBuilder.get_golang_builder_component_name(nvr)
         self.assertEqual(result, expected)
 
     def test_get_golang_builder_component_name_el9(self):
         """Test golang builder component name with el9."""
         nvr = "openshift-golang-builder-container-v1.24.13-202603271102.p2.ge8e5642.el9"
-        expected = "golang-builder-v1.24-rhel9"
+        expected = "golang-builder-v1.24.13-rhel9"
         result = KonfluxImageBuilder.get_golang_builder_component_name(nvr)
         self.assertEqual(result, expected)
 
     def test_get_golang_builder_component_name_various_versions(self):
-        """Test various golang versions extract major.minor correctly."""
+        """Test various golang versions normalize to vMAJ.MIN.PAT."""
         test_cases = [
-            ("openshift-golang-builder-container-v1.25.8-202604081607.p0.g2aa6a05.el8", "golang-builder-v1.25-rhel8"),
-            ("openshift-golang-builder-container-v1.24.13-202603271102.p2.ge8e5642.el9", "golang-builder-v1.24-rhel9"),
-            ("openshift-golang-builder-container-v1.19.13-202604151155.p2.g47c3be5.el9", "golang-builder-v1.19-rhel9"),
-            ("openshift-golang-builder-container-v1.23.10-202604151125.p2.gd0321dd.el9", "golang-builder-v1.23-rhel9"),
-            ("openshift-golang-builder-container-v1.21.13-202603251649.p0.g670cbfa.el9", "golang-builder-v1.21-rhel9"),
-            ("openshift-golang-builder-container-v1.22.12-202603171846.p2.g3a22db8.el8", "golang-builder-v1.22-rhel8"),
-            ("openshift-golang-builder-container-v1.20.12-202604101100.p0.g6e050e4.el8", "golang-builder-v1.20-rhel8"),
+            ("openshift-golang-builder-container-v1.25.8-202604081607.p0.g2aa6a05.el8", "golang-builder-v1.25.8-rhel8"),
+            ("openshift-golang-builder-container-v1.24.13-202603271102.p2.ge8e5642.el9", "golang-builder-v1.24.13-rhel9"),
+            ("openshift-golang-builder-container-v1.19.13-202604151155.p2.g47c3be5.el9", "golang-builder-v1.19.13-rhel9"),
+            ("openshift-golang-builder-container-v1.23.10-202604151125.p2.gd0321dd.el9", "golang-builder-v1.23.10-rhel9"),
+            ("openshift-golang-builder-container-v1.21.13-202603251649.p0.g670cbfa.el9", "golang-builder-v1.21.13-rhel9"),
+            ("openshift-golang-builder-container-v1.22.12-202603171846.p2.g3a22db8.el8", "golang-builder-v1.22.12-rhel8"),
+            ("openshift-golang-builder-container-v1.20.12-202604101100.p0.g6e050e4.el8", "golang-builder-v1.20.12-rhel8"),
         ]
 
         for nvr, expected in test_cases:
@@ -784,20 +784,20 @@ class TestKonfluxImageBuilderGolangComponent(unittest.TestCase):
     def test_get_golang_builder_component_name_comprehensive_dataset(self):
         """Test with comprehensive dataset of real NVRs."""
         test_nvrs = [
-            ("openshift-golang-builder-container-v1.25.8-202604081607.p0.g2aa6a05.el8", "golang-builder-v1.25-rhel8"),
-            ("openshift-golang-builder-container-v1.25.8-202604081723.p0.gf28329a.el9", "golang-builder-v1.25-rhel9"),
-            ("openshift-golang-builder-container-v1.25.8-202604081550.p2.gf28329a.el9", "golang-builder-v1.25-rhel9"),
-            ("openshift-golang-builder-container-v1.25.8-202604150842.p2.g2aa6a05.el8", "golang-builder-v1.25-rhel8"),
-            ("openshift-golang-builder-container-v1.19.13-202604151155.p2.g47c3be5.el9", "golang-builder-v1.19-rhel9"),
-            ("openshift-golang-builder-container-v1.23.10-202604151125.p2.gd0321dd.el9", "golang-builder-v1.23-rhel9"),
-            ("openshift-golang-builder-container-v1.24.13-202604151125.p2.g04d2cd5.el9", "golang-builder-v1.24-rhel9"),
-            ("openshift-golang-builder-container-v1.21.13-202603251649.p0.g670cbfa.el9", "golang-builder-v1.21-rhel9"),
-            ("openshift-golang-builder-container-v1.25.7-202604020943.p2.g5015a16.el9", "golang-builder-v1.25-rhel9"),
-            ("openshift-golang-builder-container-v1.25.7-202604021351.p2.g5015a16.el9", "golang-builder-v1.25-rhel9"),
-            ("openshift-golang-builder-container-v1.22.12-202603171846.p2.g3a22db8.el8", "golang-builder-v1.22-rhel8"),
-            ("openshift-golang-builder-container-v1.24.13-202603270926.p2.g1f0d617.el8", "golang-builder-v1.24-rhel8"),
-            ("openshift-golang-builder-container-v1.24.13-202603271102.p2.ge8e5642.el9", "golang-builder-v1.24-rhel9"),
-            ("openshift-golang-builder-container-v1.20.12-202604101100.p0.g6e050e4.el8", "golang-builder-v1.20-rhel8"),
+            ("openshift-golang-builder-container-v1.25.8-202604081607.p0.g2aa6a05.el8", "golang-builder-v1.25.8-rhel8"),
+            ("openshift-golang-builder-container-v1.25.8-202604081723.p0.gf28329a.el9", "golang-builder-v1.25.8-rhel9"),
+            ("openshift-golang-builder-container-v1.25.8-202604081550.p2.gf28329a.el9", "golang-builder-v1.25.8-rhel9"),
+            ("openshift-golang-builder-container-v1.25.8-202604150842.p2.g2aa6a05.el8", "golang-builder-v1.25.8-rhel8"),
+            ("openshift-golang-builder-container-v1.19.13-202604151155.p2.g47c3be5.el9", "golang-builder-v1.19.13-rhel9"),
+            ("openshift-golang-builder-container-v1.23.10-202604151125.p2.gd0321dd.el9", "golang-builder-v1.23.10-rhel9"),
+            ("openshift-golang-builder-container-v1.24.13-202604151125.p2.g04d2cd5.el9", "golang-builder-v1.24.13-rhel9"),
+            ("openshift-golang-builder-container-v1.21.13-202603251649.p0.g670cbfa.el9", "golang-builder-v1.21.13-rhel9"),
+            ("openshift-golang-builder-container-v1.25.7-202604020943.p2.g5015a16.el9", "golang-builder-v1.25.7-rhel9"),
+            ("openshift-golang-builder-container-v1.25.7-202604021351.p2.g5015a16.el9", "golang-builder-v1.25.7-rhel9"),
+            ("openshift-golang-builder-container-v1.22.12-202603171846.p2.g3a22db8.el8", "golang-builder-v1.22.12-rhel8"),
+            ("openshift-golang-builder-container-v1.24.13-202603270926.p2.g1f0d617.el8", "golang-builder-v1.24.13-rhel8"),
+            ("openshift-golang-builder-container-v1.24.13-202603271102.p2.ge8e5642.el9", "golang-builder-v1.24.13-rhel9"),
+            ("openshift-golang-builder-container-v1.20.12-202604101100.p0.g6e050e4.el8", "golang-builder-v1.20.12-rhel8"),
         ]
 
         for nvr, expected in test_nvrs:
@@ -808,33 +808,33 @@ class TestKonfluxImageBuilderGolangComponent(unittest.TestCase):
     def test_get_golang_builder_component_name_no_el_version_defaults_to_rhel9(self):
         """Test that missing RHEL version defaults to rhel9."""
         nvr = "openshift-golang-builder-container-v1.25.8-202604081607.p0.g2aa6a05.unknown"
-        expected = "golang-builder-v1.25-rhel9"
+        expected = "golang-builder-v1.25.8-rhel9"
         result = KonfluxImageBuilder.get_golang_builder_component_name(nvr)
         self.assertEqual(result, expected)
 
     def test_get_golang_builder_component_name_version_without_v_prefix(self):
         """Test version without 'v' prefix."""
         nvr = "openshift-golang-builder-container-1.25.8-202604081607.p0.g2aa6a05.el8"
-        expected = "golang-builder-v1.25-rhel8"
+        expected = "golang-builder-v1.25.8-rhel8"
         result = KonfluxImageBuilder.get_golang_builder_component_name(nvr)
         self.assertEqual(result, expected)
 
     def test_get_golang_builder_component_name_single_version_part(self):
-        """Test with single version part (fallback behavior)."""
+        """Single-segment RPM version is zero-padded to vX.0.0."""
         nvr = "openshift-golang-builder-container-v1-202604081607.p0.g2aa6a05.el9"
-        expected = "golang-builder-v1-rhel9"  # Should fallback to original version
+        expected = "golang-builder-v1.0.0-rhel9"
         result = KonfluxImageBuilder.get_golang_builder_component_name(nvr)
         self.assertEqual(result, expected)
 
     def test_get_golang_builder_component_name_edge_cases(self):
         """Test edge cases and boundary conditions."""
         test_cases = [
-            # Two-part version (standard case)
-            ("openshift-golang-builder-container-v1.24-202604081607.p0.g2aa6a05.el9", "golang-builder-v1.24-rhel9"),
+            # Two-part version -> patch .0
+            ("openshift-golang-builder-container-v1.24-202604081607.p0.g2aa6a05.el9", "golang-builder-v1.24.0-rhel9"),
             # Three-part version
-            ("openshift-golang-builder-container-v1.24.0-202604081607.p0.g2aa6a05.el8", "golang-builder-v1.24-rhel8"),
-            # Four-part version
-            ("openshift-golang-builder-container-v1.24.0.1-202604081607.p0.g2aa6a05.el9", "golang-builder-v1.24-rhel9"),
+            ("openshift-golang-builder-container-v1.24.0-202604081607.p0.g2aa6a05.el8", "golang-builder-v1.24.0-rhel8"),
+            # Four-part version -> first three only
+            ("openshift-golang-builder-container-v1.24.0.1-202604081607.p0.g2aa6a05.el9", "golang-builder-v1.24.0-rhel9"),
         ]
 
         for nvr, expected in test_cases:
@@ -846,6 +846,6 @@ class TestKonfluxImageBuilderGolangComponent(unittest.TestCase):
         """Test theoretical edge case where both .el8 and .el9 appear in release."""
         # This documents the expected behavior: .el8 override wins due to simplified logic
         nvr = "openshift-golang-builder-container-v1.25.8-202604081607.p0.g2aa6a05.el8.dependency.el9"
-        expected = "golang-builder-v1.25-rhel8"  # .el8 override takes precedence
+        expected = "golang-builder-v1.25.8-rhel8"  # .el8 override takes precedence
         result = KonfluxImageBuilder.get_golang_builder_component_name(nvr)
         self.assertEqual(result, expected)

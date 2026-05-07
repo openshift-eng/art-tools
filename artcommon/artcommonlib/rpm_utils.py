@@ -68,6 +68,34 @@ def parse_nvr(nvre: str):
     return result
 
 
+def rpm_version_to_golang_v_semver(version: str) -> str:
+    """
+    Normalize an RPM NVR *version* field to ``v`` + exactly three dot-separated segments (Go-style semver core).
+
+    Used for golang-builder labels (Konflux component names, etc.). First three segments of the version are kept;
+    shorter versions are zero-padded (``1.24`` -> ``v1.24.0``); four or more segments truncate (``1.24.0.1`` ->
+    ``v1.24.0``). Optional leading ``v`` / ``V`` is stripped before parsing.
+
+    :param version: The ``version`` value from :func:`parse_nvr`
+    :return: String like ``v1.25.8``
+    :raises ValueError: if *version* is empty/whitespace or has an empty segment among the first three parts
+    """
+    if not isinstance(version, str) or not version.strip():
+        raise ValueError("RPM version must be a non-empty string")
+    v = version.strip()
+    if v[:1].lower() == "v":
+        v = v[1:]
+    parts = v.split(".")
+    if not parts:
+        raise ValueError(f"Invalid RPM version: {version!r}")
+    head = parts[:3]
+    if any(not seg for seg in head):
+        raise ValueError(f"Invalid RPM version (empty segment): {version!r}")
+    while len(head) < 3:
+        head.append("0")
+    return f"v{head[0]}.{head[1]}.{head[2]}"
+
+
 def to_nevr(d: Dict):
     """Converts an NEVR dict to N-E:V-R string"""
     n = d["name"]

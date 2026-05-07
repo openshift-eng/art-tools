@@ -1,11 +1,10 @@
 import json
-import re
 
 import click
 from artcommonlib import logutil
 from artcommonlib.format_util import green_print
 from artcommonlib.release_util import split_el_suffix_in_release
-from artcommonlib.rpm_utils import parse_nvr
+from artcommonlib.rpm_utils import parse_nvr, rpm_version_to_golang_v_semver
 
 from elliottlib.cli.common import cli
 from elliottlib.runtime import Runtime
@@ -175,9 +174,8 @@ def golang_report_for_version(runtime, ocp_version: str, ignore_rhel: bool = Fal
 
 def go_version_from_nvr_string(nvr_string: str, ignore_rhel: bool) -> str:
     nvr = parse_nvr(nvr_string)
-    match = re.search(r'(\d+\.\d+\.\d+)', nvr['version'])
-    version = match.group(1)
-    _, el_version = split_el_suffix_in_release(nvr['release'])
+    version = rpm_version_to_golang_v_semver(nvr["version"])[1:]
+    _, el_version = split_el_suffix_in_release(nvr["release"])
     if not ignore_rhel:
         version = f"{version}.{el_version}"
     return version

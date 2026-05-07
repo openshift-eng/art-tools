@@ -26,7 +26,7 @@ from artcommonlib.konflux.konflux_build_record import (
 from artcommonlib.model import Missing
 from artcommonlib.oc_image_info import oc_image_info__cached_async
 from artcommonlib.release_util import SoftwareLifecyclePhase, isolate_el_version_in_release, split_el_suffix_in_release
-from artcommonlib.rpm_utils import compare_nvr, parse_nvr
+from artcommonlib.rpm_utils import compare_nvr, parse_nvr, rpm_version_to_golang_v_semver
 from artcommonlib.util import fetch_slsa_attestation, get_konflux_data
 from dockerfile_parse import DockerfileParser
 from doozerlib import constants, util
@@ -539,23 +539,11 @@ class KonfluxImageBuilder:
             nvr: Build NVR (e.g., "openshift-golang-builder-container-v1.25.8-202604081607.p0.g2aa6a05.el8")
 
         Returns:
-            Component name (e.g., "golang-builder-v1.25-rhel8")
+            Component name (e.g., "golang-builder-v1.25.8-rhel8")
         """
         nvr_parsed = parse_nvr(nvr)
-        version = nvr_parsed["version"]
+        v_semver = rpm_version_to_golang_v_semver(nvr_parsed["version"])
         release = nvr_parsed["release"]
-
-        # Extract major.minor from semantic version (e.g., "v1.25.8" -> "v1.25")
-        if version.startswith("v"):
-            version_parts = version[1:].split(".")  # Remove 'v' prefix and split
-        else:
-            version_parts = version.split(".")
-
-        if len(version_parts) >= 2:
-            major_minor = f"v{version_parts[0]}.{version_parts[1]}"
-        else:
-            # Fallback to original version if parsing fails
-            major_minor = version
 
         # Determine RHEL version from release field
         # Assumes exactly one .elX pattern per release (validated by production data)
@@ -563,7 +551,7 @@ class KonfluxImageBuilder:
         if ".el8" in release:
             el_suffix = "rhel8"
 
-        return f"golang-builder-{major_minor}-{el_suffix}"
+        return f"golang-builder-{v_semver}-{el_suffix}"
 
     @staticmethod
     def _repo_gets_hermetic_module_hotfixes(repo_name: str, group: str, golang_pattern: re.Pattern) -> bool:
