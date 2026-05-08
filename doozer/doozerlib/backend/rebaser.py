@@ -92,7 +92,6 @@ class KonfluxRebaser:
         self.uuid_tag = ''
         self.variant = variant
         self.extra_labels = extra_labels or {}
-        self._rebased_nvr_info: Dict[str, Tuple[str, str]] = {}
 
         self.konflux_db = self._runtime.konflux_db
         if self.konflux_db:
@@ -226,7 +225,6 @@ class KonfluxRebaser:
                 force = (self._runtime.assembly != "stream") or (build_repo.url != build_repo.pull_url)
                 await build_repo.push(force=force)
 
-            self._rebased_nvr_info[metadata.distgit_key] = (actual_version, actual_release)
             metadata.rebase_status = True
         finally:
             # notify child images
@@ -390,17 +388,6 @@ class KonfluxRebaser:
                 await file.write("\n!/.oit/**\n")
                 await file.write("\n!labels.json\n")
 
-    def _rebased_member_image_nvr(self, parent_metadata: ImageMetadata) -> str:
-        """NVR from parent's rebase (same as Dockerfile labels / Konflux DB): component-version-release."""
-        nvr_info = self._rebased_nvr_info.get(parent_metadata.distgit_key)
-        if not nvr_info:
-            raise IOError(
-                f"Parent image {parent_metadata.distgit_key} has no rebased NVR in this KonfluxRebaser session; "
-                f"expected a successful rebase_to for that image first."
-            )
-        version, release = nvr_info
-        return f"{parent_metadata.get_component_name()}-{version}-{release}"
-
     @staticmethod
     def _identify_stage_references(dfp: DockerfileParser) -> List[bool]:
         """
@@ -552,9 +539,6 @@ class KonfluxRebaser:
                     "This indicates a bug in Doozer. Please report this issue.",
                 )
             private_fix = parent_metadata.private_fix
-            if parent_metadata.should_trigger_base_image_release():
-                parent_nvr = self._rebased_member_image_nvr(parent_metadata)
-                return util.rh_art_images_base_pullspec(parent_nvr), private_fix
             return f"{self.image_repo}:{parent_metadata.image_name_short}-{self.uuid_tag}", private_fix
 
     @start_as_current_span_async(TRACER, "rebase.resolve_stream_parent")

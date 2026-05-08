@@ -359,11 +359,6 @@ class KonfluxImageBuilder:
 
                 else:
                     # Create a build record after every attempt (both success and failure)
-                    # Base images need a synchronous release to registry.redhat.io before dependents can use RH
-                    # pullspecs. Mark SUCCESS as UNRELEASED in the DB until that release completes; see below.
-                    if outcome is KonfluxBuildOutcome.SUCCESS and metadata.should_trigger_base_image_release():
-                        outcome = KonfluxBuildOutcome.UNRELEASED
-
                     build_record = await self.update_konflux_db(
                         metadata,
                         build_repo,
@@ -378,26 +373,13 @@ class KonfluxImageBuilder:
                         record["record_id"] = build_record.record_id
 
                     # Check base image release AFTER saving to database
-                    if outcome is KonfluxBuildOutcome.UNRELEASED and metadata.should_trigger_base_image_release():
+                    if outcome is KonfluxBuildOutcome.SUCCESS and metadata.should_trigger_base_image_release():
                         base_image_release_success = await self._trigger_base_image_release(metadata, nvr)
-                        if base_image_release_success:
-                            logger.info(f"Base image release succeeded for {nvr}, updating with registry pullspec")
-                        else:
-                            logger.error(f"Base image release failed for {nvr}, updating build record to FAILURE")
-                        outcome = (
-                            KonfluxBuildOutcome.SUCCESS if base_image_release_success else KonfluxBuildOutcome.FAILURE
-                        )
-                        await self.update_konflux_db(
-                            metadata,
-                            build_repo,
-                            pipelinerun_info,
-                            outcome,
-                            building_arches,
-                            build_priority,
-                            ec_status=ec_status,
-                            ec_pipeline_url=ec_pipeline_url,
-                            released=base_image_release_success,
-                        )
+                        if not base_image_release_success:
+                            logger.error(
+                                f"Base image release failed for {metadata.distgit_key}, but build already stored in database"
+                            )
+                            # outcome = KonfluxBuildOutcome.FAILURE
 
                 if outcome is not KonfluxBuildOutcome.SUCCESS:
                     error = KonfluxImageBuildError(
@@ -908,7 +890,6 @@ class KonfluxImageBuilder:
         build_priority,
         ec_status=KonfluxECStatus.NOT_APPLICABLE,
         ec_pipeline_url='',
-        released=False,
     ) -> Optional[KonfluxBuildRecord]:
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
         if not metadata.runtime.konflux_db:
@@ -977,9 +958,7 @@ class KonfluxImageBuilder:
             'ec_pipeline_url': ec_pipeline_url,
         }
 
-        # SUCCESS: normal completed build. UNRELEASED: build succeeded and is waiting for
-        # snapshot→release before final SUCCESS + registry.redhat.io pullspec — same pipelinerun IMAGE_URL/results.
-        if outcome in (KonfluxBuildOutcome.SUCCESS, KonfluxBuildOutcome.UNRELEASED):
+        if outcome == KonfluxBuildOutcome.SUCCESS:
             # results:
             # - name: IMAGE_URL
             #   value: quay.io/openshift-release-dev/ocp-v4.0-art-dev-test:ose-network-metrics-daemon-rhel9-v4.18.0-20241001.151532
@@ -996,10 +975,7 @@ class KonfluxImageBuilder:
                     f"pipelinerun {pipelinerun_name}"
                 )
 
-            if released:
-                definitive_image_pullspec = util.rh_art_images_base_pullspec(nvr)
-            else:
-                definitive_image_pullspec = f"{image_pullspec.split(':')[0]}@{image_digest}"
+            definitive_image_pullspec = f"{image_pullspec.split(':')[0]}@{image_digest}"
 
             # use image_digest here to be precise, image_pullspec can collide in case of golang-builder images
             package_nvrs, source_rpms = await self.get_installed_packages(
@@ -1247,21 +1223,16 @@ class KonfluxImageBuilder:
         try:
             build_version = self._config.group_name
 
-            result = jenkins.start_base_image_release(
+            jenkins.start_base_image_release(
                 build_version=build_version,
                 assembly=metadata.runtime.assembly,
                 base_image_nvrs=[nvr],
                 doozer_data_path=getattr(metadata.runtime, 'data_path', ''),
                 doozer_data_gitref=getattr(metadata.runtime, 'data_gitref', ''),
                 dry_run=self._config.dry_run,
-                block_until_complete=True,
             )
-            if result is not None:
-                logger.info(f"Successfully completed base image release for {nvr}")
-                return True
-            else:
-                logger.error(f"Base image release job failed for {nvr}")
-                return False
+            logger.info(f"Successfully triggered base image release for {nvr}")
+            return True
 
         except Exception as e:
             logger.error(f"Failed to trigger base image release for {nvr}: {e}")

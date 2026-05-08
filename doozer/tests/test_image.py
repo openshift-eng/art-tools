@@ -1650,16 +1650,6 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         regular_metadata = ImageMetadata(runtime, regular_data)
         self.assertFalse(regular_metadata.should_trigger_base_image_release())
 
-        # OKD: base image would trigger on OCP but never on OKD (no RH registry release)
-        okd_runtime = MagicMock()
-        okd_runtime.logger = logging.getLogger('test_runtime')
-        okd_runtime.variant = BuildVariant.OKD
-        okd_base_metadata = ImageMetadata(okd_runtime, base_data)
-        self.assertFalse(okd_base_metadata.should_trigger_base_image_release())
-
-        okd_golang_metadata = ImageMetadata(okd_runtime, golang_data)
-        self.assertFalse(okd_golang_metadata.should_trigger_base_image_release())
-
     def test_is_snapshot_release_enabled(self):
         from artcommonlib.model import Model
 

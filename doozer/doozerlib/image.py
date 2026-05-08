@@ -17,7 +17,6 @@ from artcommonlib.pushd import Dir
 from artcommonlib.release_util import isolate_el_version_in_release
 from artcommonlib.rpm_utils import parse_nvr, to_nevra
 from artcommonlib.util import deep_merge
-from artcommonlib.variants import BuildVariant
 from dockerfile_parse import DockerfileParser
 
 import doozerlib
@@ -893,6 +892,8 @@ class ImageMetadata(Metadata):
         if not matched:
             # For OKD variant, RHEL version mismatches are expected (e.g., OKD 5.0 uses el10 while upstream uses el9)
             # Log a warning instead of raising an error to allow canonical builders to work
+            from artcommonlib.variants import BuildVariant
+
             if self.runtime.variant == BuildVariant.OKD:
                 self.logger.warning(
                     '[%s] OKD variant: Upstream uses el%s but ART uses el%s. '
@@ -1334,13 +1335,9 @@ class ImageMetadata(Metadata):
         """
         Determines whether this image should trigger the base image release workflow.
 
-        OKD builds never trigger the OCP registry.redhat.io base-image release path.
-
         Returns:
             bool: True if base image release workflow should be triggered, False otherwise
         """
-        if self.runtime.variant is BuildVariant.OKD:
-            return False
         return self.is_base_image() or self.is_golang_builder()
 
     def is_snapshot_release_enabled(self) -> bool:
