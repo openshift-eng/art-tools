@@ -17,7 +17,6 @@ from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.runtime import Runtime
 
 SEARCH_WINDOW_HOURS = 8  # Window of last X hours that we consider for our failed builds search
-ART_TRIAGE_HANDLE = 'automated-tooling-triage'
 ART_KONFLUX_TEMPLATE_REPO = 'openshift-priv/art-konflux-template'
 ART_DOCS_TASK_BUNDLES_URL = 'https://art-docs.engineering.redhat.com/konflux/update-konflux-task-bundles/'
 
@@ -308,7 +307,7 @@ class ArtNotifyPipeline:
 
         header_block = [
             {"type": "header", "text": {"type": "plain_text", "text": f"{header_text} ({n_threads})", "emoji": True}},
-            {"type": "section", "text": {"type": "mrkdwn", "text": f"Attention @{ART_TRIAGE_HANDLE}"}},
+            {"type": "section", "text": {"type": "mrkdwn", "text": "Attention: please review the following items"}},
         ]
 
         if self.runtime.dry_run:
@@ -330,7 +329,7 @@ class ArtNotifyPipeline:
             # https://api.slack.com/methods/chat.postMessage#examples
             response = self.app.client.chat_postMessage(
                 channel=self.channel,
-                text=f'@{ART_TRIAGE_HANDLE} - {fallback_text}',
+                text=fallback_text,
                 blocks=header_block,
                 unfurl_links=False,
             )

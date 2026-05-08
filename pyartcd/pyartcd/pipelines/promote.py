@@ -250,7 +250,7 @@ class PromotePipeline:
         logger.info("Release name: %s", release_name)
 
         self._slack_client.bind_channel(release_name)
-        await self._slack_client.say_in_thread(f"Promoting release `{release_name}` @automated-tooling-triage")
+        await self._slack_client.say_in_thread(f"Promoting release `{release_name}`")
 
         justifications = []
         try:
