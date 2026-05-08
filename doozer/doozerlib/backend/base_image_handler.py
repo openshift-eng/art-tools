@@ -7,6 +7,7 @@ with URL extraction and streams.yml updates to be implemented later.
 """
 
 import asyncio
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 
 from artcommonlib import logutil
@@ -71,6 +72,61 @@ class BaseImageHandler:
             context=None,
             dry_run=dry_run,
         )
+
+    async def _record_build_failures(self, valid_records: Dict[str, KonfluxBuildRecord], reason: str):
+        """
+        Create failure build records for all valid builds in the database.
+
+        Args:
+            valid_records: Dict mapping NVR to KonfluxBuildRecord for builds that need failure records
+            reason: Reason for the failure (used in logging)
+        """
+        if not self.konflux_db:
+            self.logger.warning("No Konflux database available, cannot record build failures")
+            return
+
+        if self.dry_run:
+            self.logger.info(f"[DRY-RUN] Would record {len(valid_records)} build failures due to: {reason}")
+            return
+
+        try:
+            failure_records = []
+            for nvr, build_record in valid_records.items():
+                # Create a new failure record based on the existing build record
+                failure_record = KonfluxBuildRecord(
+                    name=build_record.name,
+                    group=build_record.group,
+                    version=build_record.version,
+                    release=build_record.release,
+                    assembly=build_record.assembly,
+                    source_repo=build_record.source_repo,
+                    commitish=build_record.commitish,
+                    rebase_repo_url=build_record.rebase_repo_url,
+                    rebase_commitish=build_record.rebase_commitish,
+                    start_time=build_record.start_time,
+                    end_time=datetime.now(timezone.utc),
+                    engine=build_record.engine,
+                    image_pullspec=build_record.image_pullspec,
+                    image_tag=build_record.image_tag,
+                    outcome=KonfluxBuildOutcome.FAILURE,
+                    art_job_url=build_record.art_job_url,
+                    build_pipeline_url=build_record.build_pipeline_url,
+                    pipeline_commit=build_record.pipeline_commit,
+                    artifact_type=build_record.artifact_type,
+                    el_target=build_record.el_target,
+                    arches=build_record.arches,
+                    embargoed=build_record.embargoed,
+                    hermetic=build_record.hermetic,
+                    build_component=build_record.build_component,
+                    build_priority=build_record.build_priority,
+                )
+                failure_records.append(failure_record)
+
+            await self.konflux_db.add_builds(failure_records)
+            self.logger.info(f"Recorded {len(failure_records)} build failures in database due to: {reason}")
+
+        except Exception as e:
+            self.logger.error(f"Failed to record build failures in database: {e}")
 
     async def process_base_image_completion(self) -> Optional[Tuple[str, str]]:
         """
@@ -143,17 +199,20 @@ class BaseImageHandler:
             snapshot_name = await self._create_snapshot(valid_records)
             if not snapshot_name:
                 self.logger.error("Failed to create snapshot, aborting workflow")
+                await self._record_build_failures(valid_records, "snapshot creation failed")
                 return None
 
             released_nvrs = ",".join(sorted(valid_records))
             release_name = await self._create_release_from_snapshot(snapshot_name, released_nvrs)
             if not release_name:
                 self.logger.error("Failed to create release, aborting workflow")
+                await self._record_build_failures(valid_records, "release creation failed")
                 return None
 
             completed_successfully = await self._wait_for_release_completion(release_name)
             if not completed_successfully:
                 self.logger.error("Release did not complete successfully, aborting workflow")
+                await self._record_build_failures(valid_records, "release completion failed (e.g., conformance check)")
                 return None
 
             self.logger.info("✓ Base image workflow completed successfully")
