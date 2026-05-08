@@ -170,10 +170,7 @@ class Ocp4ScanPipeline:
 
         slack_client = self.runtime.new_slack_client()
         slack_client.bind_channel(self.version)
-        message = (
-            f":warning: Some issues have arisen during "
-            f"scan-sources for *{self.version}* :warning:"
-        )
+        message = f":warning: Some issues have arisen during scan-sources for *{self.version}* :warning:"
         slack_response = await slack_client.say(message)
 
         slack_thread = slack_response["message"]["ts"]
