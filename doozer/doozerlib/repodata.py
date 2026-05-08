@@ -572,6 +572,9 @@ class OutdatedRPMFinder:
         all_modular_rpms: Dict[
             str, Dict[str, Dict[str, RpmModule]]
         ] = {}  # rpm_nvera => repo_name => module_nsvca => module_object
+        all_modular_rpm_names: Dict[
+            str, Dict[str, Dict[str, RpmModule]]
+        ] = {}  # rpm_name => repo_name => module_nsvca => module_object
         for repodata in repodatas:
             for module in repodata.modules:
                 all_modules.setdefault(module.name_stream, {}).setdefault(module.version, []).append(
@@ -579,8 +582,13 @@ class OutdatedRPMFinder:
                 )
                 for nevra in module.rpms:
                     all_modular_rpms.setdefault(nevra, {}).setdefault(repodata.name, {})[module.nsvca] = module
+                    # Also index by package name for module stream detection
+                    rpm_name = Rpm.from_nevra(nevra).name
+                    all_modular_rpm_names.setdefault(rpm_name, {}).setdefault(repodata.name, {})[module.nsvca] = module
 
         # Populate a dict to hold enabled module streams
+        # Only use exact NEVRA matches to determine enabled streams
+        # (we can't reliably determine stream/context from package name alone)
         enabled_streams: Dict[str, Set[str]] = {}  # module_stream => {context}
         for name, archive_rpm in archive_rpms.items():
             rpm = Rpm.from_dict(archive_rpm)
@@ -612,7 +620,9 @@ class OutdatedRPMFinder:
         for name, archive_rpm in archive_rpms.items():
             archive_rpm = Rpm.from_dict(archive_rpm)
             repo, candidate_rpm = None, None
-            if archive_rpm.nevra in all_modular_rpms:  # Archive rpm is a modular rpm
+            # Check if this RPM is modular by checking both exact NEVRA and package name
+            is_modular = (archive_rpm.nevra in all_modular_rpms) or (archive_rpm.name in all_modular_rpm_names)
+            if is_modular:  # Archive rpm is a modular rpm
                 repo, candidate_rpm = candidate_modular_rpms.get(name, (None, None))
             else:  # Archive rpm is a non-modular rpm
                 repo, candidate_rpm = candidate_non_modular_rpms.get(name, (None, None))
