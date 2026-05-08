@@ -620,9 +620,19 @@ class OutdatedRPMFinder:
         for name, archive_rpm in archive_rpms.items():
             archive_rpm = Rpm.from_dict(archive_rpm)
             repo, candidate_rpm = None, None
-            # Check if this RPM is modular by checking both exact NEVRA and package name
-            is_modular = (archive_rpm.nevra in all_modular_rpms) or (archive_rpm.name in all_modular_rpm_names)
-            if is_modular:  # Archive rpm is a modular rpm
+
+            # Check if this RPM is modular
+            is_modular_by_nevra = archive_rpm.nevra in all_modular_rpms
+            is_modular_by_name_only = (not is_modular_by_nevra) and (archive_rpm.name in all_modular_rpm_names)
+
+            if is_modular_by_name_only:
+                # Conservative: skip RPMs that are modular by name but not by exact NEVRA.
+                # This happens when the exact installed version no longer exists in repo metadata
+                # (e.g., older module build). Comparing against other module builds would cause
+                # false positives. We accept the false negative to avoid over-rebuilding.
+                continue
+
+            if is_modular_by_nevra:  # Archive rpm is a modular rpm with exact NEVRA match
                 repo, candidate_rpm = candidate_modular_rpms.get(name, (None, None))
             else:  # Archive rpm is a non-modular rpm
                 repo, candidate_rpm = candidate_non_modular_rpms.get(name, (None, None))
