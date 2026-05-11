@@ -51,6 +51,7 @@ class Jobs(Enum):
     LAYERED_PRODUCTS_SCAN = 'aos-cd-builds/build%2Flayered-products-scan'
     SCAN_PLASHET_RPMS = 'scanning/scanning%2Fplashet-rpms'
     SCAN_OPERATOR = 'aos-cd-builds/build%2Fscan-operator'
+    SYNC_CI_IMAGES = 'hack/shruti/sync-ci-images-pyartcd'  # Testing path
 
 
 def get_jenkins_url():
@@ -523,6 +524,17 @@ def start_rhcos(build_version: str, new_build: bool, job_name: str = 'build', **
     return start_build(
         job=Jobs.RHCOS,
         params={'BUILD_VERSION': build_version, 'NEW_BUILD': new_build, 'JOB_NAME': job_name},
+        **kwargs,
+    )
+
+
+def start_sync_ci_images(version: str, **kwargs) -> Optional[str]:
+    params = {
+        'VERSION': version,
+    }
+    return start_build(
+        job=Jobs.SYNC_CI_IMAGES,
+        params=params,
         **kwargs,
     )
 
