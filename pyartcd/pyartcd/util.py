@@ -856,9 +856,9 @@ async def get_signing_mode(
             group=group, assembly=assembly, doozer_data_path=doozer_data_path, doozer_data_gitref=doozer_data_gitref
         )
 
-    # For non-OpenShift groups, always use signed repos regardless of phase
+    # For non-OpenShift groups, default to unsigned
     if group and not group.startswith('openshift-'):
-        return 'signed'
+        return 'unsigned'
 
     phase = SoftwareLifecyclePhase.from_name(group_config['software_lifecycle']['phase'])
     return 'signed' if phase >= SoftwareLifecyclePhase.SIGNING else 'unsigned'
