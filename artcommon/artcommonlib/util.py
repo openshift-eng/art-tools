@@ -822,12 +822,11 @@ async def sync_to_quay(source_pullspec, destination_repo, tags=None):
 
 
 def _extract_images_from_catalog_json(catalog_path: str) -> list[str]:
-    """Parse catalog.json (FBC format) and return relatedImages from the channel head olm.bundle.
+    """Parse catalog.json (FBC format) and return relatedImages from olm.bundle entries.
 
     Handles both NDJSON (one JSON object per line) and top-level JSON array formats.
-    Uses olm.channel to identify the current (head) bundle version, then extracts
-    only that bundle's relatedImages, mirroring:
-        jq -r 'select(.schema == "olm.bundle" and .name == HEAD) | .relatedImages[].image'
+    Only extracts from entries where schema == "olm.bundle", mirroring:
+        jq -r 'select(.schema == "olm.bundle") | .relatedImages[].image'
     """
     with open(catalog_path, 'r') as f:
         content = f.read()
@@ -857,25 +856,22 @@ def _extract_images_from_catalog_json(catalog_path: str) -> list[str]:
     if not entries:
         raise RuntimeError(f"Failed to parse catalog.json: no valid JSON entries found in {catalog_path}")
 
-    # Find the channel head bundle name from olm.channel
-    head_bundle_name = None
+    images: list[str] = []
+    bundle_count = 0
     for entry in entries:
-        if entry.get('schema') == 'olm.channel':
-            channel_entries = entry.get('entries', [])
-            if channel_entries:
-                head_bundle_name = channel_entries[-1].get('name')
-                LOGGER.info(f"Channel head bundle from olm.channel: {head_bundle_name}")
-            break
+        if entry.get('schema') != 'olm.bundle':
+            continue
+        bundle_count += 1
+        for ri in entry.get('relatedImages', []):
+            img = ri.get('image')
+            if img:
+                images.append(img)
 
-    for entry in entries:
-        if entry.get('schema') == 'olm.bundle' and entry.get('name') == head_bundle_name:
-            images = [ri.get('image') for ri in entry.get('relatedImages', []) if ri.get('image')]
-            LOGGER.info(f"Extracted {len(images)} relatedImages from catalog.json (bundle: {head_bundle_name})")
-            return images
-
-    raise RuntimeError(
-        f"No olm.bundle entry found matching channel head '{head_bundle_name}' in {catalog_path}"
+    LOGGER.info(
+        f"Parsed catalog.json: {len(entries)} entries, {bundle_count} olm.bundle(s), "
+        f"{len(images)} relatedImages extracted"
     )
+    return images
 
 
 async def extract_related_images_from_fbc(fbc_pullspec: str, product: str) -> list[str]:
@@ -1045,8 +1041,7 @@ async def extract_related_images_from_fbc(fbc_pullspec: str, product: str) -> li
             catalog_json_path = os.path.join(temp_dir, 'catalog.json')
             if os.path.exists(catalog_json_path):
                 LOGGER.info(
-                    "related-images.json not found, extracting relatedImages "
-                    "from olm.bundle entries in catalog.json"
+                    "related-images.json not found, extracting relatedImages from olm.bundle entries in catalog.json"
                 )
                 found_images = _extract_images_from_catalog_json(catalog_json_path)
 
