@@ -152,6 +152,15 @@ def plashet_config_for_major_minor(major, minor):
             "include_previous_packages": [],
             "include_packages": ["golang", "goversioninfo"],
         },
+        "rhel-8-golang-rpms": {
+            "slug": "golang-el8",
+            "tag": f"rhaos-{major}.{minor}-rhel-8-override",
+            "product_version": f"OSE-{major}.{minor}-RHEL-8",
+            "include_embargoed": False,
+            "embargoed_tags": [],
+            "include_previous_packages": [],
+            "include_packages": ["golang", "goversioninfo"],
+        },
     }
 
 
