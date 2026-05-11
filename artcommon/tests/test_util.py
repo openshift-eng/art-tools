@@ -605,17 +605,31 @@ class TestExtractRelatedImagesFromFBC(unittest.TestCase):
             "quay.io/other/image@sha256:333",
         ]
 
-        # Sample catalog.json content with embedded images
-        self.catalog_json_content = '''
-        {
-            "schema": "olm.package",
-            "name": "test-operator",
-            "relatedImages": [
-                {"image": "registry.redhat.io/openshift4/ose-operator@sha256:444"},
-                {"image": "registry.redhat.io/openshift4/ose-cli@sha256:555"}
-            ]
-        }
-        '''
+        # Sample catalog.json content -- FBC NDJSON with olm.bundle schema
+        self.catalog_json_content = '\n'.join([
+            json.dumps({
+                "schema": "olm.package",
+                "name": "test-operator",
+                "defaultChannel": "stable",
+            }),
+            json.dumps({
+                "schema": "olm.channel",
+                "name": "stable",
+                "package": "test-operator",
+                "entries": [
+                    {"name": "test-operator.v1.0.0", "skipRange": ">=0.0.1 <1.0.0"},
+                ],
+            }),
+            json.dumps({
+                "schema": "olm.bundle",
+                "name": "test-operator.v1.0.0",
+                "package": "test-operator",
+                "relatedImages": [
+                    {"name": "operator", "image": "registry.redhat.io/openshift4/ose-operator@sha256:444"},
+                    {"name": "cli", "image": "registry.redhat.io/openshift4/ose-cli@sha256:555"},
+                ],
+            }),
+        ])
 
     def _create_discover_response(self, include_related_images=True, include_rendered_catalog=False):
         """Helper to create ORAS discover response JSON"""
@@ -817,3 +831,103 @@ class TestExtractRelatedImagesFromFBC(unittest.TestCase):
         error_msg = str(ctx.exception)
         self.assertIn('artifact', error_msg.lower())
         self.assertIn('other-file.txt', error_msg)
+
+    @patch('artcommonlib.util.cmd_gather_async', new_callable=AsyncMock)
+    @patch('builtins.open', new_callable=MagicMock)
+    @patch('os.path.exists')
+    @patch('os.listdir')
+    def test_catalog_json_ignores_non_bundle_entries(self, mock_listdir, mock_exists, mock_open, mock_cmd):
+        """Structured extraction only reads olm.bundle entries, not olm.package or olm.channel"""
+        catalog_with_noise = '\n'.join([
+            json.dumps({
+                "schema": "olm.package",
+                "name": "test-operator",
+                "description": "Ships registry.redhat.io/openshift4/should-not-match@sha256:999",
+            }),
+            json.dumps({
+                "schema": "olm.channel",
+                "name": "stable",
+                "package": "test-operator",
+                "entries": [{"name": "test-operator.v1.0.0"}],
+            }),
+            json.dumps({
+                "schema": "olm.bundle",
+                "name": "test-operator.v1.0.0",
+                "package": "test-operator",
+                "relatedImages": [
+                    {"name": "op", "image": "registry.redhat.io/openshift4/ose-operator@sha256:444"},
+                ],
+            }),
+        ])
+
+        mock_cmd.side_effect = [
+            (0, self._create_discover_response(include_related_images=False, include_rendered_catalog=True), ''),
+            (0, 'Pulled artifact successfully', ''),
+        ]
+        mock_listdir.return_value = ['catalog.json']
+        mock_exists.side_effect = lambda path: 'catalog.json' in path
+
+        mock_file = MagicMock()
+        mock_file.__enter__.return_value.read.return_value = catalog_with_noise
+        mock_open.return_value = mock_file
+
+        result = asyncio.run(extract_related_images_from_fbc(self.fbc_pullspec, self.product))
+
+        self.assertEqual(len(result), 1)
+        self.assertNotIn('should-not-match', str(result))
+
+    @patch('artcommonlib.util.cmd_gather_async', new_callable=AsyncMock)
+    @patch('builtins.open', new_callable=MagicMock)
+    @patch('os.path.exists')
+    @patch('os.listdir')
+    def test_catalog_json_extracts_only_channel_head(self, mock_listdir, mock_exists, mock_open, mock_cmd):
+        """Only the channel head bundle's relatedImages are extracted, not older versions"""
+        catalog_multi_bundle = '\n'.join([
+            json.dumps({
+                "schema": "olm.package",
+                "name": "test-operator",
+                "defaultChannel": "stable",
+            }),
+            json.dumps({
+                "schema": "olm.channel",
+                "name": "stable",
+                "package": "test-operator",
+                "entries": [
+                    {"name": "test-operator.v1.0.0", "skipRange": ">=0.0.1 <1.0.0"},
+                    {"name": "test-operator.v1.1.0", "skipRange": ">=0.0.1 <1.1.0"},
+                ],
+            }),
+            json.dumps({
+                "schema": "olm.bundle",
+                "name": "test-operator.v1.0.0",
+                "package": "test-operator",
+                "relatedImages": [
+                    {"name": "old-op", "image": "registry.redhat.io/openshift4/ose-operator@sha256:old111"},
+                ],
+            }),
+            json.dumps({
+                "schema": "olm.bundle",
+                "name": "test-operator.v1.1.0",
+                "package": "test-operator",
+                "relatedImages": [
+                    {"name": "new-op", "image": "registry.redhat.io/openshift4/ose-operator@sha256:new222"},
+                ],
+            }),
+        ])
+
+        mock_cmd.side_effect = [
+            (0, self._create_discover_response(include_related_images=False, include_rendered_catalog=True), ''),
+            (0, 'Pulled artifact successfully', ''),
+        ]
+        mock_listdir.return_value = ['catalog.json']
+        mock_exists.side_effect = lambda path: 'catalog.json' in path
+
+        mock_file = MagicMock()
+        mock_file.__enter__.return_value.read.return_value = catalog_multi_bundle
+        mock_open.return_value = mock_file
+
+        result = asyncio.run(extract_related_images_from_fbc(self.fbc_pullspec, self.product))
+
+        self.assertEqual(len(result), 1)
+        self.assertIn('sha256:new222', str(result))
+        self.assertNotIn('sha256:old111', str(result))

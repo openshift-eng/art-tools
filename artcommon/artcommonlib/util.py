@@ -821,6 +821,63 @@ async def sync_to_quay(source_pullspec, destination_repo, tags=None):
             LOGGER.info(f"Tagging from {destination_repo}@sha256:{shasum} to {destination_repo}:{tag} completed")
 
 
+def _extract_images_from_catalog_json(catalog_path: str) -> list[str]:
+    """Parse catalog.json (FBC format) and return relatedImages from the channel head olm.bundle.
+
+    Handles both NDJSON (one JSON object per line) and top-level JSON array formats.
+    Uses olm.channel to identify the current (head) bundle version, then extracts
+    only that bundle's relatedImages, mirroring:
+        jq -r 'select(.schema == "olm.bundle" and .name == HEAD) | .relatedImages[].image'
+    """
+    with open(catalog_path, 'r') as f:
+        content = f.read()
+
+    entries: list[dict] = []
+    try:
+        parsed = json.loads(content)
+        if isinstance(parsed, list):
+            entries = parsed
+        elif isinstance(parsed, dict):
+            entries = [parsed]
+    except json.JSONDecodeError:
+        pass
+
+    if not entries:
+        for line in content.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+                if isinstance(obj, dict):
+                    entries.append(obj)
+            except json.JSONDecodeError:
+                continue
+
+    if not entries:
+        raise RuntimeError(f"Failed to parse catalog.json: no valid JSON entries found in {catalog_path}")
+
+    # Find the channel head bundle name from olm.channel
+    head_bundle_name = None
+    for entry in entries:
+        if entry.get('schema') == 'olm.channel':
+            channel_entries = entry.get('entries', [])
+            if channel_entries:
+                head_bundle_name = channel_entries[-1].get('name')
+                LOGGER.info(f"Channel head bundle from olm.channel: {head_bundle_name}")
+            break
+
+    for entry in entries:
+        if entry.get('schema') == 'olm.bundle' and entry.get('name') == head_bundle_name:
+            images = [ri.get('image') for ri in entry.get('relatedImages', []) if ri.get('image')]
+            LOGGER.info(f"Extracted {len(images)} relatedImages from catalog.json (bundle: {head_bundle_name})")
+            return images
+
+    raise RuntimeError(
+        f"No olm.bundle entry found matching channel head '{head_bundle_name}' in {catalog_path}"
+    )
+
+
 async def extract_related_images_from_fbc(fbc_pullspec: str, product: str) -> list[str]:
     """
     Extract related image pullspecs from FBC image using ORAS workflow.
@@ -987,19 +1044,13 @@ async def extract_related_images_from_fbc(fbc_pullspec: str, product: str) -> li
         else:
             catalog_json_path = os.path.join(temp_dir, 'catalog.json')
             if os.path.exists(catalog_json_path):
-                LOGGER.warning(
-                    "related-images.json not found, falling back to catalog.json (this may extract many images)"
+                LOGGER.info(
+                    "related-images.json not found, extracting relatedImages "
+                    "from olm.bundle entries in catalog.json"
                 )
-                with open(catalog_json_path, 'r') as f:
-                    catalog_content = f.read()
+                found_images = _extract_images_from_catalog_json(catalog_json_path)
 
-                registry_pattern = r'registry\.redhat\.io/[^\s"\'<>]+|quay\.io/[^\s"\'<>]+'
-                found_images = re.findall(registry_pattern, catalog_content)
-
-                # Use the same registry namespace for catalog.json fallback
                 for img_url in found_images:
-                    img_url = img_url.rstrip('",')
-                    # Check if the URL matches the registry namespace pattern
                     if f'registry.redhat.io/{registry_namespace}/' in img_url:
                         transformed_url = re.sub(
                             registry_transform_pattern,
@@ -1011,7 +1062,7 @@ async def extract_related_images_from_fbc(fbc_pullspec: str, product: str) -> li
                         related_images.append(img_url)
 
                 related_images = list(set(related_images))
-                LOGGER.warning(f"Extracted {len(related_images)} unique images from catalog.json")
+                LOGGER.info(f"Extracted {len(related_images)} unique images from catalog.json")
             else:
                 raise RuntimeError(
                     f"Neither related-images.json nor catalog.json found in pulled artifact. Available files: {pulled_files}"
