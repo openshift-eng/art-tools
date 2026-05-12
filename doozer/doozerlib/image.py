@@ -871,11 +871,11 @@ class ImageMetadata(Metadata):
         Returns:
             str: The Konflux image repository URL
         """
-        if (override := self.config.konflux.image_repo) not in [Missing, None]:
+        if (override := self.config.konflux.image_repo) not in [Missing, None] and str(override).strip():
             self.logger.info("Using per-image Konflux image repo for %s: %s", self.distgit_key, override)
-            return str(override)
-        if (group_override := self.runtime.group_config.konflux.image_repo) not in [Missing, None]:
-            return str(group_override)
+            return str(override).strip()
+        if (group_override := self.runtime.group_config.konflux.image_repo) not in [Missing, None] and str(group_override).strip():
+            return str(group_override).strip()
         return default
 
     def _apply_alternative_upstream_config(self) -> None:

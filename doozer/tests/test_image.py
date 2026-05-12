@@ -578,6 +578,39 @@ class TestImageMetadata(unittest.TestCase):
         repo = metadata.get_konflux_image_repo(default="quay.io/default/repo")
         self.assertEqual(repo, "quay.io/group/repo")
 
+    def test_get_konflux_image_repo_empty_string_falls_through(self):
+        metadata = self._create_image_metadata('openshift/test')
+        mock_config = MagicMock()
+        mock_config.konflux.image_repo = ""
+        metadata.config = mock_config
+        metadata.runtime.group_config.konflux.image_repo = "quay.io/group/repo"
+        metadata.logger = MagicMock()
+
+        repo = metadata.get_konflux_image_repo(default="quay.io/default/repo")
+        self.assertEqual(repo, "quay.io/group/repo")
+
+    def test_get_konflux_image_repo_whitespace_falls_through(self):
+        metadata = self._create_image_metadata('openshift/test')
+        mock_config = MagicMock()
+        mock_config.konflux.image_repo = "   "
+        metadata.config = mock_config
+        metadata.runtime.group_config.konflux.image_repo = Missing
+        metadata.logger = MagicMock()
+
+        repo = metadata.get_konflux_image_repo(default="quay.io/default/repo")
+        self.assertEqual(repo, "quay.io/default/repo")
+
+    def test_get_konflux_image_repo_both_blank_falls_to_default(self):
+        metadata = self._create_image_metadata('openshift/test')
+        mock_config = MagicMock()
+        mock_config.konflux.image_repo = ""
+        metadata.config = mock_config
+        metadata.runtime.group_config.konflux.image_repo = "  "
+        metadata.logger = MagicMock()
+
+        repo = metadata.get_konflux_image_repo(default="quay.io/default/repo")
+        self.assertEqual(repo, "quay.io/default/repo")
+
     def test_calculate_config_digest_old_style_repos(self):
         """
         Test calculate_config_digest with old-style repos (dict format).
