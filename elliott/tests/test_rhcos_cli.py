@@ -23,13 +23,13 @@ class TestGetRhcosPullspecFromPayload(unittest.TestCase):
 
 
 class TestVerifyTag(unittest.TestCase):
-    @patch("elliottlib.cli.rhcos_cli.oc_image_info")
+    @patch("elliottlib.cli.rhcos_cli.oc_image_info_show_multiarch")
     def test_passes_when_live(self, mock_info):
         mock_info.return_value = {"some": "info"}
         _verify_tag("quay.io/repo:tag")
         mock_info.assert_called_once_with("quay.io/repo:tag", strict=False)
 
-    @patch("elliottlib.cli.rhcos_cli.oc_image_info")
+    @patch("elliottlib.cli.rhcos_cli.oc_image_info_show_multiarch")
     def test_raises_when_not_live(self, mock_info):
         mock_info.return_value = None
         with self.assertRaises(ClickException) as ctx:

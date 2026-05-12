@@ -8,7 +8,7 @@ from artcommonlib.arch_util import brew_arch_for_go_arch
 from artcommonlib.constants import RHCOS_RELEASES_STREAM_URL
 from artcommonlib.format_util import green_print
 from artcommonlib.rhcos import get_container_configs
-from artcommonlib.util import get_art_prod_image_repo_for_version, oc_image_info
+from artcommonlib.util import get_art_prod_image_repo_for_version, oc_image_info, oc_image_info_show_multiarch
 from doozerlib.util import get_nightly_pullspec
 
 from elliottlib.cli.common import cli
@@ -87,7 +87,7 @@ def _get_rhcos_pullspec_from_payload(payload_pullspec, tag_name):
 
 
 def _verify_tag(tag_pullspec):
-    result = oc_image_info(tag_pullspec, strict=False)
+    result = oc_image_info_show_multiarch(tag_pullspec, strict=False)
     if result is None:
         raise click.ClickException(f"Tag is not live in registry: {tag_pullspec}")
 
