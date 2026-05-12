@@ -51,6 +51,28 @@ class KonfluxECStatus(KonfluxEnum):
     NOT_APPLICABLE = 'n/a'
 
 
+class KonfluxAuthzOutcome(KonfluxEnum):
+    """Outcome of the Jenkins base-image-release (authz) pipeline for a build record.
+
+    PENDING is set by writers when the image build exists but release has not finished.
+    Terminal Jenkins results after block_until_complete map via from_jenkins_result: only
+    SUCCESS stays SUCCESS; FAILURE and every other value (UNSTABLE, ABORTED, NOT_BUILT,
+    empty, None) map to FAILURE.
+    """
+
+    NOT_APPLICABLE = 'n/a'
+    PENDING = 'pending'
+    SUCCESS = 'success'
+    FAILURE = 'failure'
+
+    @classmethod
+    def from_jenkins_result(cls, result: Optional[str]) -> "KonfluxAuthzOutcome":
+        """Map jenkinsapi poll()['result'] (or equivalent) to a storage enum."""
+        if result and str(result).strip().upper() == "SUCCESS":
+            return cls.SUCCESS
+        return cls.FAILURE
+
+
 class ArtifactType(KonfluxEnum):
     RPM = 'rpm'
     IMAGE = 'image'
@@ -69,6 +91,9 @@ class KonfluxRecord:
         'nvr',
         'ec_status',
         'ec_pipeline_url',
+        'authz_pullspec',
+        'authz_pipeline_url',
+        'authz_outcome',
     ]
 
     TABLE_ID = None
@@ -293,6 +318,9 @@ class KonfluxBuildRecord(KonfluxRecord):
         build_priority: int = constants.KONFLUX_DEFAULT_BUILD_PRIORITY,
         ec_status: KonfluxECStatus = KonfluxECStatus.NOT_APPLICABLE,
         ec_pipeline_url: str = '',
+        authz_pullspec: str = '',
+        authz_pipeline_url: str = '',
+        authz_outcome: KonfluxAuthzOutcome = KonfluxAuthzOutcome.NOT_APPLICABLE,
     ):
         super().__init__(
             name,
@@ -333,6 +361,13 @@ class KonfluxBuildRecord(KonfluxRecord):
             else KonfluxECStatus(ec_status or KonfluxECStatus.NOT_APPLICABLE.value)
         )
         self.ec_pipeline_url = ec_pipeline_url
+        self.authz_pullspec = authz_pullspec or ''
+        self.authz_pipeline_url = authz_pipeline_url or ''
+        self.authz_outcome = (
+            authz_outcome
+            if isinstance(authz_outcome, KonfluxAuthzOutcome)
+            else KonfluxAuthzOutcome(authz_outcome or KonfluxAuthzOutcome.NOT_APPLICABLE.value)
+        )
         self.init_uuids(record_id, build_id, nvr)
 
 

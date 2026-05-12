@@ -660,8 +660,10 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
             SchemaField('build_priority', 'INTEGER', 'REQUIRED'),
             SchemaField('ec_status', 'STRING', 'REQUIRED'),
             SchemaField('ec_pipeline_url', 'STRING', 'REQUIRED'),
+            SchemaField('authz_pullspec', 'STRING', 'REQUIRED'),
+            SchemaField('authz_pipeline_url', 'STRING', 'REQUIRED'),
+            SchemaField('authz_outcome', 'STRING', 'REQUIRED'),
         ]
-        self.db.bind(KonfluxBuildRecord)
         self.assertEqual(self.db.generate_build_schema(), expected_fields)
 
     def test_generate_bundle_builds_schema(self):

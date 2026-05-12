@@ -4,7 +4,7 @@ import os
 import time
 import uuid
 from enum import Enum
-from typing import Optional
+from typing import NamedTuple, Optional, Union
 from urllib.parse import unquote, urlparse
 
 import requests
@@ -19,6 +19,14 @@ from tenacity import retry, stop_after_attempt, wait_fixed
 from pyartcd import constants
 
 logger = logging.getLogger(__name__)
+
+
+class JenkinsBlockingBuildResult(NamedTuple):
+    """Jenkins build result when ``block_until_complete`` and ``return_build_url`` are True."""
+
+    result: Optional[str]
+    build_url: str
+
 
 current_build_url: Optional[str] = None
 current_job_name: Optional[str] = None
@@ -336,7 +344,8 @@ def start_build(
     block_until_building: bool = True,
     block_until_complete: bool = False,
     watch_building_delay: int = 5,
-) -> Optional[str]:
+    return_build_url: bool = False,
+) -> Union[str, JenkinsBlockingBuildResult, None]:
     """
     Starts a new Jenkins build
 
@@ -346,6 +355,8 @@ def start_build(
         triggered jobs are properly backlinked to parent jobs.
     :param block_until_complete: False by default. Will block until the new build completes
     :param watch_building_delay: Poll rate for building state
+    :param return_build_url: If True with block_until_complete, return JenkinsBlockingBuildResult
+        with (result string, absolute/build URL); otherwise return only the result string.
 
     Returns the build result if block_until_complete is True, None otherwise
     """
@@ -371,6 +382,9 @@ def start_build(
     triggered_build.block_until_complete()
     result = triggered_build.poll()['result']
     logger.info('Build completed with result: %s', result)
+    if return_build_url:
+        url = getattr(triggered_build, 'baseurl', None) or ''
+        return JenkinsBlockingBuildResult(result, str(url).rstrip('/'))
     return result
 
 
@@ -687,8 +701,9 @@ def start_base_image_release(
     doozer_data_path: str = constants.OCP_BUILD_DATA_URL,
     doozer_data_gitref: str = '',
     dry_run: bool = False,
+    return_build_url: bool = False,
     **kwargs,
-) -> Optional[str]:
+) -> Union[str, JenkinsBlockingBuildResult, None]:
     if not base_image_nvrs:
         logger.warning('Empty base image NVR list: skipping base image release')
         return
@@ -706,6 +721,7 @@ def start_base_image_release(
     return start_build(
         job=Jobs.BASE_IMAGE_RELEASE,
         params=params,
+        return_build_url=return_build_url,
         **kwargs,
     )
 

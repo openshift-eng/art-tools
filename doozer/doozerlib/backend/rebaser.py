@@ -22,7 +22,7 @@ from artcommonlib.build_visibility import BuildVisibility, get_visibility_suffix
 from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildRecord
 from artcommonlib.model import ListModel, Missing, Model
 from artcommonlib.telemetry import start_as_current_span_async
-from artcommonlib.util import deep_merge, detect_package_managers, is_cachito_enabled, oc_image_info_for_arch_async
+from artcommonlib.util import deep_merge, detect_package_managers, is_cachito_enabled
 from artcommonlib.variants import BuildVariant
 from dockerfile_parse import DockerfileParser
 from doozerlib import constants, util
@@ -503,16 +503,6 @@ class KonfluxRebaser:
         private_fix = any(private_fix for _, private_fix in mapped_images)
         return downstream_parents, private_fix
 
-    async def _registry_pullspec_exists(self, pullspec: str) -> bool:
-        """Return True if the registry reports the image readable (manifest present). Used for lazy DB lookups."""
-        registry_config = getattr(self._runtime, "registry_config", None)
-        try:
-            await oc_image_info_for_arch_async(pullspec, registry_config=registry_config)
-            return True
-        except Exception as exc:
-            self._logger.debug("Could not read pullspec %s: %s", pullspec, exc)
-            return False
-
     @start_as_current_span_async(TRACER, "rebase.resolve_member_parent")
     async def _resolve_member_parent(self, member: str, original_parent: str):
         """Resolve the parent image for the given image metadata."""
@@ -550,13 +540,16 @@ class KonfluxRebaser:
                 if not build:
                     raise IOError(f"A build of parent image {member} is not found.")
                 if parent_metadata.should_trigger_base_image_release():
-                    rh_pullspec = util.rh_art_images_base_pullspec(build.nvr)
-                    if await self._registry_pullspec_exists(rh_pullspec):
-                        return rh_pullspec, build.embargoed
-                    self._logger.info(
-                        "art-images-base %s not reachable; using Konflux image_pullspec for late-resolved parent %s",
-                        rh_pullspec,
+                    authz = build.authz_pullspec.strip()
+                    if authz:
+                        return authz, build.embargoed
+                    # TODO: Reinstate strict authz_pullspec (or fail/retry) once DB backfill and release workflow are reliably populated for all base images.
+                    self._logger.error(
+                        "Parent image %s (nvr=%r) has no authz_pullspec in Konflux DB (outcome=%s); "
+                        "using Konflux image_pullspec until base-image release populates authz.",
                         member,
+                        build.nvr,
+                        build.outcome,
                     )
                     return build.image_pullspec, build.embargoed
                 return build.image_pullspec, build.embargoed
@@ -574,6 +567,7 @@ class KonfluxRebaser:
             private_fix = parent_metadata.private_fix
             if parent_metadata.should_trigger_base_image_release():
                 parent_nvr = self._rebased_member_image_nvr(parent_metadata)
+                # Session NVR exists before a Konflux row (with authz_pullspec) is written; use canonical tag.
                 return util.rh_art_images_base_pullspec(parent_nvr), private_fix
             return f"{self.image_repo}:{parent_metadata.image_name_short}-{self.uuid_tag}", private_fix
 

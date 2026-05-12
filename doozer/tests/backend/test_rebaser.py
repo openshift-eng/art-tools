@@ -7,6 +7,7 @@ from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, MagicMock
 
 import semver
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome
 from artcommonlib.model import Missing, Model
 from artcommonlib.variants import BuildVariant
 from dockerfile_parse import DockerfileParser
@@ -1324,7 +1325,8 @@ class TestRhArtImagesBasePullspec(TestCase):
 
 
 class TestRebaserResolveMemberParentRegistryRedhat(IsolatedAsyncioTestCase):
-    """Member parent resolution uses registry.redhat.io for art-managed base images."""
+    """RH base/golang parents: loaded member uses rh_art_images_base tag from session NVR;
+    late-resolve prefers authz_pullspec when set, otherwise logs and uses Konflux image_pullspec."""
 
     def setUp(self):
         self.directory = TemporaryDirectory()
@@ -1332,6 +1334,7 @@ class TestRebaserResolveMemberParentRegistryRedhat(IsolatedAsyncioTestCase):
         self.base_dir = Path(self.directory.name)
 
     async def test_resolve_member_parent_uses_rh_when_art_base_and_labels_present(self):
+        """Parent in this session may not have a Konflux DB row yet; FROM line uses tag convention."""
         parent = MagicMock()
         parent.distgit_key = "golang-builder"
         parent.qualified_key = "openshift/golang-builder"
@@ -1357,16 +1360,19 @@ class TestRebaserResolveMemberParentRegistryRedhat(IsolatedAsyncioTestCase):
             "registry.redhat.io/openshift/art-images-base:openshift-golang-builder-container-v1.21-1.el9",
         )
 
-    async def test_resolve_member_parent_late_resolve_uses_rh_art_base_tag(self):
-        """Late-resolve (DB) base/golang: RH art-images-base if tag is reachable, else Konflux digest from DB."""
+    async def test_resolve_member_parent_late_resolve_uses_authz_pullspec_from_db(self):
+        """Late-resolved base parent: use authz_pullspec from the Konflux row when present."""
         parent = MagicMock()
         parent.distgit_key = "golang-builder"
         parent.should_trigger_base_image_release.return_value = True
         parent.branch_el_target.return_value = 9
+        expected_authz = "registry.redhat.io/openshift/art-images-base:openshift-golang-builder-container-v1.21-1.el9"
         kb = MagicMock()
         kb.nvr = "openshift-golang-builder-container-v1.21-1.el9"
         kb.image_pullspec = "quay.io/k@sha256:abc"
         kb.embargoed = False
+        kb.authz_pullspec = expected_authz
+        kb.outcome = KonfluxBuildOutcome.SUCCESS
         parent.get_latest_build = AsyncMock(return_value=kb)
 
         runtime = MagicMock()
@@ -1375,22 +1381,20 @@ class TestRebaserResolveMemberParentRegistryRedhat(IsolatedAsyncioTestCase):
         runtime.latest_parent_version = True
         runtime.late_resolve_image = MagicMock(return_value=parent)
         runtime.group_config = Model({"konflux": Model({})})
+        runtime.assembly = "stream"
 
         rebaser = KonfluxRebaser(runtime, self.base_dir, MagicMock(), "unsigned")
         rebaser.variant = BuildVariant.OCP
         rebaser.image_repo = "quay.io/fake"
         rebaser.uuid_tag = "v4.18-tag"
         rebaser.group = "openshift-4.18"
-        rebaser._registry_pullspec_exists = AsyncMock(return_value=True)
 
         resolved, emb = await rebaser._resolve_member_parent("golang-builder", "orig")
-        self.assertEqual(
-            resolved, "registry.redhat.io/openshift/art-images-base:openshift-golang-builder-container-v1.21-1.el9"
-        )
+        self.assertEqual(resolved, expected_authz)
         self.assertFalse(emb)
 
-    async def test_resolve_member_parent_late_resolve_falls_back_to_db_pullspec_when_art_base_missing(self):
-        """Late-resolved golang parent: use RH only if tag exists; otherwise Konflux digest from DB."""
+    async def test_resolve_member_parent_late_resolve_falls_back_when_authz_pullspec_missing(self):
+        """Late-resolved art-managed base: empty authz_pullspec logs ERROR and uses Konflux digest."""
         parent = MagicMock()
         parent.distgit_key = "golang-builder"
         parent.should_trigger_base_image_release.return_value = True
@@ -1399,6 +1403,8 @@ class TestRebaserResolveMemberParentRegistryRedhat(IsolatedAsyncioTestCase):
         kb.nvr = "openshift-golang-builder-container-v1.21-1.el9"
         kb.image_pullspec = "quay.io/k@sha256:beef"
         kb.embargoed = False
+        kb.authz_pullspec = ""
+        kb.outcome = KonfluxBuildOutcome.UNRELEASED
         parent.get_latest_build = AsyncMock(return_value=kb)
 
         runtime = MagicMock()
@@ -1407,17 +1413,19 @@ class TestRebaserResolveMemberParentRegistryRedhat(IsolatedAsyncioTestCase):
         runtime.latest_parent_version = True
         runtime.late_resolve_image = MagicMock(return_value=parent)
         runtime.group_config = Model({"konflux": Model({})})
+        runtime.assembly = "stream"
 
         rebaser = KonfluxRebaser(runtime, self.base_dir, MagicMock(), "unsigned")
         rebaser.variant = BuildVariant.OCP
         rebaser.image_repo = "quay.io/fake"
         rebaser.uuid_tag = "v4.18-tag"
         rebaser.group = "openshift-4.18"
-        rebaser._registry_pullspec_exists = AsyncMock(return_value=False)
 
-        resolved, emb = await rebaser._resolve_member_parent("golang-builder", "orig")
+        with self.assertLogs('doozerlib.backend.rebaser', level='ERROR') as log_cm:
+            resolved, emb = await rebaser._resolve_member_parent("golang-builder", "orig")
         self.assertEqual(resolved, "quay.io/k@sha256:beef")
         self.assertFalse(emb)
+        self.assertTrue(any('authz_pullspec' in r.getMessage() for r in log_cm.records))
 
     async def test_resolve_member_parent_keeps_quay_for_regular_member(self):
         parent = MagicMock()

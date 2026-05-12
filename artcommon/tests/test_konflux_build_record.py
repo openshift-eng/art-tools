@@ -2,6 +2,7 @@ import json
 from unittest import TestCase
 
 from artcommonlib.konflux.konflux_build_record import (
+    KonfluxAuthzOutcome,
     KonfluxBuildRecord,
     KonfluxBundleBuildRecord,
     KonfluxECStatus,
@@ -102,6 +103,46 @@ class TestKonfluxBuild(TestCase):
 
         build = KonfluxBuildRecord(ec_status='n/a')
         self.assertEqual(build.ec_status, KonfluxECStatus.NOT_APPLICABLE)
+
+    def test_authz_outcome_default(self):
+        build = KonfluxBuildRecord()
+        self.assertEqual(build.authz_outcome, KonfluxAuthzOutcome.NOT_APPLICABLE)
+        self.assertEqual(build.authz_pullspec, '')
+        self.assertEqual(build.authz_pipeline_url, '')
+
+    def test_authz_fields_serialization(self):
+        build = KonfluxBuildRecord(
+            authz_pullspec='registry.redhat.io/openshift/art-images-base:foo-1-1',
+            authz_pipeline_url='https://jenkins.example/job/1',
+            authz_outcome=KonfluxAuthzOutcome.SUCCESS,
+        )
+        d = build.to_dict()
+        self.assertEqual(d['authz_pullspec'], 'registry.redhat.io/openshift/art-images-base:foo-1-1')
+        self.assertEqual(d['authz_pipeline_url'], 'https://jenkins.example/job/1')
+        self.assertEqual(d['authz_outcome'], 'success')
+
+    def test_authz_outcome_excluded_from_build_id(self):
+        build_1 = KonfluxBuildRecord(authz_outcome=KonfluxAuthzOutcome.NOT_APPLICABLE)
+        build_2 = KonfluxBuildRecord(
+            authz_outcome=KonfluxAuthzOutcome.SUCCESS,
+            authz_pullspec='registry.redhat.io/openshift/art-images-base:x',
+            authz_pipeline_url='https://j/1',
+        )
+        self.assertEqual(build_1.build_id, build_2.build_id)
+
+    def test_authz_outcome_pending_and_failure_serialization(self):
+        for outcome in (KonfluxAuthzOutcome.PENDING, KonfluxAuthzOutcome.FAILURE):
+            with self.subTest(outcome=outcome):
+                build = KonfluxBuildRecord(authz_outcome=outcome)
+                d = build.to_dict()
+                self.assertEqual(d['authz_outcome'], outcome.value)
+
+    def test_authz_outcome_from_jenkins_result(self):
+        self.assertEqual(KonfluxAuthzOutcome.from_jenkins_result('SUCCESS'), KonfluxAuthzOutcome.SUCCESS)
+        self.assertEqual(KonfluxAuthzOutcome.from_jenkins_result('success'), KonfluxAuthzOutcome.SUCCESS)
+        self.assertEqual(KonfluxAuthzOutcome.from_jenkins_result('FAILURE'), KonfluxAuthzOutcome.FAILURE)
+        self.assertEqual(KonfluxAuthzOutcome.from_jenkins_result('UNSTABLE'), KonfluxAuthzOutcome.FAILURE)
+        self.assertEqual(KonfluxAuthzOutcome.from_jenkins_result(None), KonfluxAuthzOutcome.FAILURE)
 
 
 class TestKonfluxBundleBuildRecordEC(TestCase):

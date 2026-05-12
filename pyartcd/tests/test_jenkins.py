@@ -72,6 +72,41 @@ class TestJenkinsStartBuild(unittest.TestCase):
         mock_queue_item.poll.assert_called_once()
         mock_build.assert_called_once_with(url=triggered_url, buildno=1, job=mock_job)
 
+    @mock.patch("pyartcd.jenkins.Build")
+    @mock.patch("pyartcd.jenkins.init_jenkins")
+    @mock.patch("pyartcd.jenkins.jenkins_client")
+    def test_start_build_block_until_complete_with_return_build_url(self, mock_client, mock_init_jenkins, mock_build):
+        job = Jobs.OCP4
+        params = {"param1": "value1", "param2": "value2"}
+        delay = 10
+        mock_client.get_job.return_value = mock_job = mock.MagicMock()
+        mock_job.invoke.return_value = mock_queue_item = mock.MagicMock()
+        mock_queue_item.poll.return_value = {'executable': {'number': 1}, 'task': {'url': 'folder/foo/'}}
+        triggered_url = 'folder/foo/1'
+        os.environ['BUILD_URL'] = 'folder/bar/1'
+        os.environ['JOB_NAME'] = 'bar'
+        os.environ['JENKINS_URL'] = 'buildvm.com'
+        mock_build.return_value.poll.return_value = {'result': 'SUCCESS'}
+        mock_build.return_value.baseurl = 'https://jenkins.example/job/1/'
+
+        result = jenkins.start_build(
+            job,
+            params,
+            block_until_building=True,
+            block_until_complete=True,
+            watch_building_delay=delay,
+            return_build_url=True,
+        )
+        self.assertIsInstance(result, jenkins.JenkinsBlockingBuildResult)
+        self.assertEqual(result.result, 'SUCCESS')
+        self.assertEqual(result.build_url, 'https://jenkins.example/job/1')
+
+        mock_init_jenkins.assert_called_once()
+        mock_client.get_job.assert_called_once_with(job.value)
+        mock_job.invoke.assert_called_once_with(build_params=params)
+        mock_queue_item.poll.assert_called_once()
+        mock_build.assert_called_once_with(url=triggered_url, buildno=1, job=mock_job)
+
     def test_get_build_url_and_path(self):
         # No BUILD_URL env var defined
         if os.environ.get('BUILD_URL'):

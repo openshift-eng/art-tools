@@ -9,7 +9,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple, cast
+from typing import Dict, List, NamedTuple, Optional, Set, Tuple, cast
 
 from artcommonlib import bigquery, exectools
 from artcommonlib import constants as artlib_constants
@@ -19,6 +19,7 @@ from artcommonlib.build_visibility import is_release_embargoed
 from artcommonlib.konflux.konflux_build_record import (
     ArtifactType,
     Engine,
+    KonfluxAuthzOutcome,
     KonfluxBuildOutcome,
     KonfluxBuildRecord,
     KonfluxECStatus,
@@ -44,6 +45,14 @@ from tenacity import retry, stop_after_attempt, wait_fixed
 from pyartcd import jenkins
 
 LOGGER = logging.getLogger(__name__)
+
+
+class _BaseImageReleaseResult(NamedTuple):
+    """Result of synchronous base-image-release Jenkins run (or no-op when snapshot release disabled)."""
+
+    ok: bool
+    jenkins_build_url: str
+    authz_outcome: KonfluxAuthzOutcome
 
 
 def _normalize_version(version: str) -> str:
@@ -364,6 +373,14 @@ class KonfluxImageBuilder:
                     if outcome is KonfluxBuildOutcome.SUCCESS and metadata.should_trigger_base_image_release():
                         outcome = KonfluxBuildOutcome.UNRELEASED
 
+                    authz_extras = {}
+                    if outcome is KonfluxBuildOutcome.UNRELEASED:
+                        authz_extras = {
+                            'authz_outcome': KonfluxAuthzOutcome.PENDING,
+                            'authz_pullspec': '',
+                            'authz_pipeline_url': '',
+                        }
+
                     build_record = await self.update_konflux_db(
                         metadata,
                         build_repo,
@@ -373,19 +390,23 @@ class KonfluxImageBuilder:
                         build_priority,
                         ec_status=ec_status,
                         ec_pipeline_url=ec_pipeline_url,
+                        **authz_extras,
                     )
                     if build_record:
                         record["record_id"] = build_record.record_id
 
                     # Check base image release AFTER saving to database
                     if outcome is KonfluxBuildOutcome.UNRELEASED and metadata.should_trigger_base_image_release():
-                        base_image_release_success = await self._trigger_base_image_release(metadata, nvr)
-                        if base_image_release_success:
+                        release_result = await self._trigger_base_image_release(metadata, nvr)
+                        if release_result.ok:
                             logger.info(f"Base image release succeeded for {nvr}, updating build record")
                         else:
                             logger.error(f"Base image release failed for {nvr}, updating build record to FAILURE")
-                        outcome = (
-                            KonfluxBuildOutcome.SUCCESS if base_image_release_success else KonfluxBuildOutcome.FAILURE
+                        outcome = KonfluxBuildOutcome.SUCCESS if release_result.ok else KonfluxBuildOutcome.FAILURE
+                        authz_pullspec = (
+                            util.rh_art_images_base_pullspec(nvr)
+                            if release_result.ok and release_result.authz_outcome is KonfluxAuthzOutcome.SUCCESS
+                            else ''
                         )
                         await self.update_konflux_db(
                             metadata,
@@ -396,6 +417,9 @@ class KonfluxImageBuilder:
                             build_priority,
                             ec_status=ec_status,
                             ec_pipeline_url=ec_pipeline_url,
+                            authz_pullspec=authz_pullspec,
+                            authz_pipeline_url=release_result.jenkins_build_url,
+                            authz_outcome=release_result.authz_outcome,
                         )
 
                 if outcome is not KonfluxBuildOutcome.SUCCESS:
@@ -907,6 +931,9 @@ class KonfluxImageBuilder:
         build_priority,
         ec_status=KonfluxECStatus.NOT_APPLICABLE,
         ec_pipeline_url='',
+        authz_pullspec: str = '',
+        authz_pipeline_url: str = '',
+        authz_outcome: KonfluxAuthzOutcome = KonfluxAuthzOutcome.NOT_APPLICABLE,
     ) -> Optional[KonfluxBuildRecord]:
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
         if not metadata.runtime.konflux_db:
@@ -973,6 +1000,9 @@ class KonfluxImageBuilder:
             'build_priority': int(build_priority),
             'ec_status': ec_status,
             'ec_pipeline_url': ec_pipeline_url,
+            'authz_pullspec': authz_pullspec or '',
+            'authz_pipeline_url': authz_pipeline_url or '',
+            'authz_outcome': authz_outcome,
         }
 
         # SUCCESS: normal completed build. UNRELEASED: build succeeded and is waiting for
@@ -1222,27 +1252,27 @@ class KonfluxImageBuilder:
 
         return parent_image_nvrs
 
-    async def _trigger_base_image_release(self, metadata: ImageMetadata, nvr: str) -> bool:
+    async def _trigger_base_image_release(self, metadata: ImageMetadata, nvr: str) -> _BaseImageReleaseResult:
         """Trigger base image release for a single successful base image build.
 
         Expects group_name format 'openshift-X.Y' (e.g., 'openshift-4.22') for
         version extraction. Falls back to full group_name if format doesn't match.
 
         Returns:
-            bool: True if base image release was triggered successfully, False otherwise
+            _BaseImageReleaseResult: ok, Jenkins build URL (if run), and authz outcome for Konflux DB.
         """
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
 
         if not metadata.is_snapshot_release_enabled():
             logger.info(f"Skipping base image release for {nvr}: snapshot_release disabled")
-            return True
+            return _BaseImageReleaseResult(True, '', KonfluxAuthzOutcome.NOT_APPLICABLE)
 
         logger.info(f"Triggering base image release for {nvr}")
 
         try:
             build_version = self._config.group_name
 
-            result = jenkins.start_base_image_release(
+            blocking = jenkins.start_base_image_release(
                 build_version=build_version,
                 assembly=metadata.runtime.assembly,
                 base_image_nvrs=[nvr],
@@ -1250,15 +1280,26 @@ class KonfluxImageBuilder:
                 doozer_data_gitref=getattr(metadata.runtime, 'data_gitref', ''),
                 dry_run=self._config.dry_run,
                 block_until_complete=True,
+                return_build_url=True,
             )
-            # start_build(..., block_until_complete=True) returns Jenkins result strings (SUCCESS, FAILURE, …), not None.
-            success = result == "SUCCESS"
-            if success:
+            if blocking is None:
+                logger.error("Base image release returned no Jenkins result for %s", nvr)
+                return _BaseImageReleaseResult(False, '', KonfluxAuthzOutcome.FAILURE)
+
+            authz_outcome = KonfluxAuthzOutcome.from_jenkins_result(blocking.result)
+            ok = blocking.result == "SUCCESS"
+            if ok:
                 logger.info(f"Successfully completed base image release for {nvr}")
-                return True
-            logger.error("Base image release job failed for %s with Jenkins result=%r", nvr, result)
-            return False
+                return _BaseImageReleaseResult(True, blocking.build_url, authz_outcome)
+
+            logger.error(
+                "Base image release job failed for %s with Jenkins result=%r url=%s",
+                nvr,
+                blocking.result,
+                blocking.build_url,
+            )
+            return _BaseImageReleaseResult(False, blocking.build_url, authz_outcome)
 
         except Exception as e:
             logger.error(f"Failed to trigger base image release for {nvr}: {e}")
-            return False
+            return _BaseImageReleaseResult(False, '', KonfluxAuthzOutcome.FAILURE)

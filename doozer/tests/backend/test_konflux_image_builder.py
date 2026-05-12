@@ -3,11 +3,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome
+from artcommonlib.konflux.konflux_build_record import KonfluxAuthzOutcome, KonfluxBuildOutcome
 from doozerlib.backend.konflux_image_builder import (
     KonfluxImageBuilder,
     KonfluxImageBuilderConfig,
     KonfluxImageBuildError,
+    _BaseImageReleaseResult,
     _normalize_version,
 )
 from doozerlib.backend.pipelinerun_utils import PipelineRunInfo
@@ -467,7 +468,11 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
                 self.builder, "update_konflux_db", new=AsyncMock(return_value=MagicMock(record_id="1"))
             ) as mock_update_db,
             patch.object(
-                self.builder, "_trigger_base_image_release", new=AsyncMock(return_value=True)
+                self.builder,
+                "_trigger_base_image_release",
+                new=AsyncMock(
+                    return_value=_BaseImageReleaseResult(True, 'https://jenkins/release/1', KonfluxAuthzOutcome.SUCCESS)
+                ),
             ) as mock_trigger_release,
             patch.object(self.builder, "_validate_build_attestation_and_signature", new=AsyncMock()),
             patch.object(
@@ -488,6 +493,9 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(mock_update_db.await_count, 3)
         success_call_args = mock_update_db.await_args_list[2][0]
         self.assertEqual(success_call_args[3], KonfluxBuildOutcome.SUCCESS)
+        success_call_kwargs = mock_update_db.await_args_list[2][1]
+        self.assertEqual(success_call_kwargs.get('authz_outcome'), KonfluxAuthzOutcome.SUCCESS)
+        self.assertEqual(success_call_kwargs.get('authz_pipeline_url'), 'https://jenkins/release/1')
 
     async def test_trigger_base_image_release_failure_flow(self):
         """Test base image release failure handling with FAILURE outcome update."""
@@ -532,7 +540,13 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
                 self.builder, "update_konflux_db", new=AsyncMock(return_value=MagicMock(record_id="1"))
             ) as mock_update_db,
             patch.object(
-                self.builder, "_trigger_base_image_release", new=AsyncMock(return_value=False)
+                self.builder,
+                "_trigger_base_image_release",
+                new=AsyncMock(
+                    return_value=_BaseImageReleaseResult(
+                        False, 'https://jenkins/release/2', KonfluxAuthzOutcome.FAILURE
+                    )
+                ),
             ) as mock_trigger_release,
             patch.object(self.builder, "_validate_build_attestation_and_signature", new=AsyncMock()),
             patch.object(
@@ -554,6 +568,9 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         # Final update records FAILURE outcome
         failure_call_args = mock_update_db.await_args_list[2][0]
         self.assertEqual(failure_call_args[3], KonfluxBuildOutcome.FAILURE)
+        failure_call_kwargs = mock_update_db.await_args_list[2][1]
+        self.assertEqual(failure_call_kwargs.get('authz_outcome'), KonfluxAuthzOutcome.FAILURE)
+        self.assertEqual(failure_call_kwargs.get('authz_pipeline_url'), 'https://jenkins/release/2')
 
     async def test_non_base_image_skips_release_trigger(self):
         """Test that non-base images skip the release trigger logic entirely."""
@@ -617,31 +634,42 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(mock_update_db.await_count, 2)
 
     async def test_trigger_base_image_release_calls_jenkins_with_block_until_complete(self):
-        """Test that base image release uses block_until_complete=True for synchronous execution."""
+        """Test that base image release uses block_with_complete and return_build_url for DB correlation."""
+        from pyartcd.jenkins import JenkinsBlockingBuildResult
+
         from pyartcd import jenkins
 
         metadata = self._metadata()
         metadata.is_snapshot_release_enabled.return_value = True
 
-        with patch.object(jenkins, 'start_base_image_release', return_value="SUCCESS") as mock_jenkins:
+        blocking = JenkinsBlockingBuildResult('SUCCESS', 'https://jenkins.example/job/1')
+        with patch.object(jenkins, 'start_base_image_release', return_value=blocking) as mock_jenkins:
             result = await self.builder._trigger_base_image_release(metadata, "test-nvr")
 
-        self.assertTrue(result)
+        self.assertTrue(result.ok)
+        self.assertEqual(result.jenkins_build_url, 'https://jenkins.example/job/1')
+        self.assertEqual(result.authz_outcome, KonfluxAuthzOutcome.SUCCESS)
         mock_jenkins.assert_called_once()
         call_kwargs = mock_jenkins.call_args[1]
         self.assertTrue(call_kwargs.get('block_until_complete', False))
+        self.assertTrue(call_kwargs.get('return_build_url', False))
 
     async def test_trigger_base_image_release_jenkins_failure_string_returns_false(self):
         """start_build returns Jenkins result strings; FAILURE must not be treated as success."""
+        from pyartcd.jenkins import JenkinsBlockingBuildResult
+
         from pyartcd import jenkins
 
         metadata = self._metadata()
         metadata.is_snapshot_release_enabled.return_value = True
 
-        with patch.object(jenkins, 'start_base_image_release', return_value='FAILURE'):
+        blocking = JenkinsBlockingBuildResult('FAILURE', 'https://jenkins.example/job/2')
+        with patch.object(jenkins, 'start_base_image_release', return_value=blocking):
             result = await self.builder._trigger_base_image_release(metadata, "test-nvr")
 
-        self.assertFalse(result)
+        self.assertFalse(result.ok)
+        self.assertEqual(result.authz_outcome, KonfluxAuthzOutcome.FAILURE)
+        self.assertEqual(result.jenkins_build_url, 'https://jenkins.example/job/2')
 
     async def test_trigger_base_image_release_respects_snapshot_release_disabled(self):
         """Test that snapshot_release disabled skips base image release."""
@@ -650,7 +678,9 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
 
         result = await self.builder._trigger_base_image_release(metadata, "test-nvr")
 
-        self.assertTrue(result)  # Should return True (no-op success) when disabled
+        self.assertTrue(result.ok)
+        self.assertEqual(result.jenkins_build_url, '')
+        self.assertEqual(result.authz_outcome, KonfluxAuthzOutcome.NOT_APPLICABLE)
 
 
 class TestNormalizeVersion(unittest.TestCase):
