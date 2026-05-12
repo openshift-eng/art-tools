@@ -1426,6 +1426,7 @@ class TestRebaserResolveMemberParentRegistryRedhat(IsolatedAsyncioTestCase):
         parent.private_fix = False
         parent.image_name_short = "ose-cli"
         parent.should_trigger_base_image_release.return_value = False
+        parent.get_konflux_image_repo.return_value = "quay.io/fake"
 
         runtime = MagicMock()
         runtime.resolve_image.return_value = parent
