@@ -1,155 +1,160 @@
+import json
 import logging
+from urllib import request
 
 import click
-from artcommonlib.arch_util import BREW_ARCHES, GO_ARCHES, brew_arch_for_go_arch
+from artcommonlib import exectools
+from artcommonlib.arch_util import brew_arch_for_go_arch
+from artcommonlib.constants import RHCOS_RELEASES_STREAM_URL
 from artcommonlib.format_util import green_print
-from artcommonlib.rhcos import get_build_id_from_rhcos_pullspec, get_primary_container_name
+from artcommonlib.rhcos import get_container_configs
+from artcommonlib.util import get_art_prod_image_repo_for_version, oc_image_info
 from doozerlib.util import get_nightly_pullspec
 
-from elliottlib import rhcos, util
 from elliottlib.cli.common import cli
 from elliottlib.runtime import Runtime
 
 LOGGER = logging.getLogger(__name__)
 
 
-@cli.command("rhcos", short_help="Show details of packages contained in OCP RHCOS builds")
+@cli.command("rhcos", short_help="Get RHCOS manifest list tags from an OCP release payload")
 @click.option(
     '--release',
     '-r',
     'release',
-    help='Show details for this OCP release. Can be a full pullspec or a named release ex: 4.8.4',
+    help='OCP release: nightly name, named release (e.g. 4.16.5), or full pullspec',
 )
-@click.option(
-    '--arch',
-    'arch',
-    default='x86_64',
-    type=click.Choice(BREW_ARCHES + ['all']),
-    help='Specify architecture. Default is x86_64. "all" to get all arches. aarch64 only works for 4.8+',
-)
-@click.option('--packages', '-p', 'packages', help='Show details for only these package names (comma-separated)')
-@click.option('--go', '-g', 'go', is_flag=True, help='Show go version for packages that are go binaries')
 @click.pass_obj
-def rhcos_cli(runtime: Runtime, release, packages, arch, go):
+def rhcos_cli(runtime: Runtime, release):
     """
-        Show packages in an RHCOS build in a payload image.
-        There are several ways to specify the location of the RHCOS build.
+        Extract RHCOS manifest list tags from an OCP release payload.
+
+        Inspects the RHCOS images in a release payload and outputs their
+        manifest list tags (e.g. quay.io/openshift-release-dev/ocp-v4.0-art-dev:418.94.202605101521-0-coreos).
+
+        For layered RHCOS (4.19+), reads the coreos.build.manifest-list-tag label
+        from each RHCOS image in the payload.
+
+        For non-layered RHCOS, fetches RHCOS build metadata (meta.json) and
+        extracts the build-specific tags from each container entry.
+
+        Each tag is verified to be live in the registry before being returned.
 
         Usage:
 
     \b Nightly
-        $ elliott -g openshift-4.8 rhcos -r 4.8.0-0.nightly-s390x-2021-07-31-070046
+        $ elliott -g openshift-4.19 rhcos -r 4.19.0-0.nightly-2025-05-01-010101
 
     \b Named Release
-        $ elliott -g openshift-4.6 rhcos -r 4.6.31
+        $ elliott -g openshift-4.16 rhcos -r 4.16.5
 
     \b Any Pullspec
         $ elliott -g openshift-4.X rhcos -r <pullspec>
 
-    \b Assembly Definition
-        $ elliott --group openshift-4.8 --assembly 4.8.21 rhcos
-
-    \b Only lookup specified package(s)
-        $ elliott -g openshift-4.6 rhcos -r 4.6.31 -p "openshift,runc,cri-o,selinux-policy"
-
-    \b Also lookup go build version (if available)
-        $ elliott -g openshift-4.6 rhcos -r 4.6.31 -p openshift --go
-
-    \b Specify arch (default being x64)
-        $ elliott -g openshift-4.6 rhcos -r 4.6.31 --arch s390x -p openshift
-
-    \b Get all arches (supported only for named release and assembly)
-        $ elliott -g openshift-4.6 rhcos -r 4.6.31 --arch all -p openshift
+    \b Assembly
+        $ elliott -g openshift-4.19 --assembly 4.19.3 rhcos
     """
     named_assembly = runtime.assembly not in ['stream', 'test']
-    count_options = sum(map(bool, [named_assembly, release]))
-    if count_options != 1:
-        raise click.BadParameter("Use one of --assembly or --release")
-
-    nightly = release and 'nightly' in release
-    pullspec = release and '/' in release
-    named_release = not (nightly or pullspec or named_assembly)
-    if arch == "all" and (pullspec or nightly):
-        raise click.BadParameter("--arch=all cannot be used with --release <pullspec> or <*nightly*>")
+    if not release and not named_assembly:
+        raise click.BadParameter("Use one of --release or --assembly")
+    if release and named_assembly:
+        raise click.BadParameter("Use only one of --release or --assembly")
 
     runtime.initialize()
-    major, minor = runtime.get_major_minor()
+
+    if named_assembly:
+        release = runtime.assembly
+        LOGGER.info("Using assembly name as release: %s", release)
+
+    nightly = 'nightly' in release
+    pullspec = '/' in release
+
     if nightly:
-        for a in GO_ARCHES:
-            if a in release:
-                arch = a
-                break
-
-    version = f'{major}.{minor}'
-
-    if arch == 'all':
-        target_arches = BREW_ARCHES
-        if (major, minor) < (4, 9):
-            target_arches.remove("aarch64")
+        payload_pullspec = get_nightly_pullspec(release, runtime.build_system)
+    elif pullspec:
+        payload_pullspec = release
     else:
-        target_arches = [arch]
+        payload_pullspec = f'quay.io/openshift-release-dev/ocp-release:{release}-x86_64'
 
-    payload_pullspecs = []
-    if release:
-        if pullspec:
-            payload_pullspecs.append(release)
-        elif nightly:
-            payload_pullspecs.append(get_nightly_pullspec(release, runtime.build_system))
-        elif named_release:
-            for local_arch in target_arches:
-                p = get_pullspec(release, local_arch)
-                payload_pullspecs.append(p)
-        build_ids = [get_build_id_from_image_pullspec(runtime, p) for p in payload_pullspecs]
-    elif named_assembly:
-        rhcos_pullspecs = get_rhcos_pullspecs_from_assembly(runtime)
-        build_ids = [
-            (get_build_id_from_rhcos_pullspec(p), arch) for arch, p in rhcos_pullspecs.items() if arch in target_arches
-        ]
-
-    for build, local_arch in build_ids:
-        _via_build_id(runtime, build, local_arch, version, packages, go)
+    tags = get_rhcos_tags(runtime, payload_pullspec)
+    for tag_name, full_tag in tags.items():
+        green_print(f"{tag_name}: {full_tag}")
 
 
-def get_pullspec(release, arch):
-    return f'quay.io/openshift-release-dev/ocp-release:{release}-{arch}'
+def _get_rhcos_pullspec_from_payload(payload_pullspec, tag_name):
+    out, _ = exectools.cmd_assert(["oc", "adm", "release", "info", "--image-for", tag_name, "--", payload_pullspec])
+    return out.strip()
 
 
-def get_rhcos_pullspecs_from_assembly(runtime):
-    rhcos_def = runtime.releases_config.releases[runtime.assembly].assembly.rhcos
-    if not rhcos_def:
-        raise click.BadParameter(
-            "only named assemblies with valid rhcos values are supported. If an assembly is "
-            "based on another, try using the original assembly"
-        )
-
-    images = rhcos_def[get_primary_container_name(runtime)]['images']
-    return images
+def _verify_tag(tag_pullspec):
+    result = oc_image_info(tag_pullspec, strict=False)
+    if result is None:
+        raise click.ClickException(f"Tag is not live in registry: {tag_pullspec}")
 
 
-def get_build_id_from_image_pullspec(runtime, pullspec):
-    green_print(f"Image pullspec: {pullspec}")
-    build_id, arch = rhcos.get_build_from_payload(runtime, pullspec)
-    return build_id, arch
+def get_rhcos_tags(runtime, payload_pullspec):
+    art_repo = get_art_prod_image_repo_for_version(4, "dev")
+    container_configs = get_container_configs(runtime)
+    primary_conf = next(c for c in container_configs if c.primary)
+
+    primary_rhcos_pullspec = _get_rhcos_pullspec_from_payload(payload_pullspec, primary_conf.name)
+    image_info = oc_image_info(primary_rhcos_pullspec)
+    labels = image_info["config"]["config"]["Labels"]
+    arch = brew_arch_for_go_arch(image_info["config"]["architecture"])
+
+    manifest_list_tag = labels.get("coreos.build.manifest-list-tag")
+    if manifest_list_tag:
+        return _get_layered_tags(runtime, payload_pullspec, container_configs, art_repo)
+    else:
+        build_id = labels.get("org.opencontainers.image.version") or labels.get("version")
+        if not build_id:
+            raise click.ClickException(f"Cannot determine RHCOS build ID from {primary_rhcos_pullspec}")
+        return _get_non_layered_tags(runtime, build_id, arch, container_configs, art_repo)
 
 
-def _via_build_id(runtime, build_id, arch, version, packages, go):
-    if not build_id:
-        Exception('Cannot find build_id')
+def _get_layered_tags(runtime, payload_pullspec, container_configs, art_repo):
+    tags = {}
+    for container_conf in container_configs:
+        tag_name = container_conf.name
+        rhcos_pullspec = _get_rhcos_pullspec_from_payload(payload_pullspec, tag_name)
+        image_info = oc_image_info(rhcos_pullspec)
+        mlt = image_info["config"]["config"]["Labels"].get("coreos.build.manifest-list-tag")
+        if not mlt:
+            raise click.ClickException(f"No coreos.build.manifest-list-tag label found for {tag_name}")
+        tag_pullspec = f"{art_repo}:{mlt}"
+        _verify_tag(tag_pullspec)
+        tags[tag_name] = tag_pullspec
+    return tags
 
-    arch = brew_arch_for_go_arch(arch)
-    green_print(f'Build: {build_id} Arch: {arch}')
-    nvrs = rhcos.get_rpm_nvrs(runtime, build_id, version, arch)
-    if not nvrs:
-        return
-    if packages:
-        packages = [p.strip() for p in packages.split(',')]
-        if 'openshift' in packages:
-            packages.remove('openshift')
-            packages.append('openshift-hyperkube')
-        nvrs = [p for p in nvrs if p[0] in packages]
-    if go:
-        go_rpm_nvrs = util.get_golang_rpm_nvrs(nvrs)
-        util.pretty_print_nvrs_go(go_rpm_nvrs, ignore_na=True)
-        return
-    for nvr in sorted(nvrs):
-        print('-'.join(nvr))
+
+def _get_non_layered_tags(runtime, build_id, arch, container_configs, art_repo):
+    major, minor = runtime.get_major_minor()
+    major_minor = f"{major}.{minor}"
+    rhcos_el_major = runtime.group_config.vars.RHCOS_EL_MAJOR
+    rhcos_el_minor = runtime.group_config.vars.RHCOS_EL_MINOR
+    url_key = f"{major_minor}-{rhcos_el_major}.{rhcos_el_minor}" if rhcos_el_major > 8 else major_minor
+    meta_url = f"{RHCOS_RELEASES_STREAM_URL}/{url_key}/builds/{build_id}/{arch}/meta.json"
+
+    LOGGER.info("Fetching RHCOS metadata: %s", meta_url)
+    with request.urlopen(meta_url) as resp:
+        meta = json.loads(resp.read().decode())
+
+    tags = {}
+    for container_conf in container_configs:
+        key = container_conf.build_metadata_key
+        if key not in meta:
+            raise click.ClickException(
+                f"Key '{key}' not found in RHCOS metadata for {container_conf.name}. URL: {meta_url}"
+            )
+        container = meta[key]
+        image = container["image"]
+        container_tags = container.get("tags", [])
+        build_tag = next((t for t in container_tags if build_id in t), None)
+        if not build_tag:
+            raise click.ClickException(
+                f"No build-specific tag (containing {build_id}) found for {container_conf.name} in RHCOS metadata"
+            )
+        tag_pullspec = f"{image}:{build_tag}"
+        _verify_tag(tag_pullspec)
+        tags[container_conf.name] = tag_pullspec
+    return tags
