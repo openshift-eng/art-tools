@@ -298,10 +298,12 @@ class TestAssemblyPinBuildsCli(IsolatedAsyncioTestCase):
         primary_conf = MagicMock()
         primary_conf.name = "rhel-coreos"
         primary_conf.rhcos_index_tag = f"{art_repo}:4.21-9.6-node-image"
+        primary_conf.rhel_version = "9.6"
 
         ext_conf = MagicMock()
         ext_conf.name = "rhel-coreos-extensions"
         ext_conf.rhcos_index_tag = f"{art_repo}:4.21-9.6-node-image-extensions"
+        ext_conf.rhel_version = "9.6"
 
         mock_get_container_configs.return_value = [primary_conf, ext_conf]
 

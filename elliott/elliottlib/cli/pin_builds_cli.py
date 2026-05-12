@@ -294,11 +294,10 @@ class AssemblyPinBuildsCli:
 
         for container_conf in container_configs:
             if layered:
-                # Only process tags matching the RHEL version from the input
-                tag_part = str(container_conf.rhcos_index_tag).split(":")[-1]
-                tag_rhel_version = tag_part.split("-")[1]
-                if tag_rhel_version != rhel_version:
-                    LOGGER.info(f"Skipping {container_conf.name}: RHEL version {tag_rhel_version} != {rhel_version}")
+                if str(container_conf.rhel_version) != rhel_version:
+                    LOGGER.info(
+                        f"Skipping {container_conf.name}: RHEL version {container_conf.rhel_version} != {rhel_version}"
+                    )
                     continue
             rhcos_info[container_conf.name] = {"images": {}}
 
