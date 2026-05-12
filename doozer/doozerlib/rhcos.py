@@ -4,7 +4,7 @@ import os
 import tempfile
 from typing import Dict, List, Optional, Tuple
 from urllib import request
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 
 import koji
 from artcommonlib import exectools, logutil, rhcos
@@ -201,8 +201,11 @@ class RHCOSBuildFinder:
         if not arch:
             arch = self.brew_arch
         url = f"{self.rhcos_release_url()}/{build_id}/{arch}/{meta_type}.json"
-        with request.urlopen(url, timeout=60) as req:
-            return json.loads(req.read().decode())
+        try:
+            with request.urlopen(url, timeout=60) as req:
+                return json.loads(req.read().decode())
+        except HTTPError as e:
+            raise HTTPError(e.url or url, e.code, f"{e.reason} ({url})", e.headers, e.fp) from e
 
     @retry(reraise=True, stop=stop_after_attempt(10), wait=wait_fixed(3))
     def rhel_build_meta_layered(self, pullspec: str):

@@ -3,13 +3,14 @@ from typing import List, Optional
 import click
 import yaml
 from artcommonlib import logutil
-from artcommonlib.arch_util import brew_arch_for_go_arch
+from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch
 from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.model import ListModel, Model
 from artcommonlib.release_util import isolate_el_version_in_release
 from artcommonlib.rhcos import get_container_configs, get_container_pullspec
 from artcommonlib.rpm_utils import parse_nvr
+from artcommonlib.util import get_art_prod_image_repo_for_version, oc_image_info_for_arch
 from doozerlib.brew import get_build_objects
 from doozerlib.rhcos import RHCOSBuildFinder
 from github import Github
@@ -56,8 +57,8 @@ class AssemblyPinBuildsCli:
                 if f"{major}.{minor}" not in parsed['version']:
                     raise ValueError(f"Does nvr belong to the current group? {nvr}")
                 images.append(nvr)
-            elif parsed['name'].startswith("rhcos"):
-                if f"{major}{minor}" not in parsed['version']:
+            elif nvr.startswith("rhcos"):
+                if f"{major}{minor}" not in nvr and f"{major}.{minor}" not in nvr:
                     raise ValueError(f"Does rhcos nvr belong to the current group: {nvr}")
                 rhcos.append(nvr)
             elif parsed['name'] in art_rpms_by_comp:
@@ -264,29 +265,60 @@ class AssemblyPinBuildsCli:
     def pin_rhcos(self, rhcos_nvr):
         """
         Pin RHCOS build to the assembly's group.rhcos section.
-        The RHCOS build is identified by its build ID, which is extracted from the NVR.
-        For each architecture in the group, we generate the appropriate container pullspecs.
+
+        Accepts two formats:
+        - Non-layered NVR: rhcos-418.92.202309222337-0
+        - Layered build ID: rhcos-4.21-9.6-202605121024
+
+        For layered RHCOS (4.19+), each payload_tag config has an rhcos_index_tag pointing to
+        a manifest-list in art-prod (e.g. "art-dev:4.21-9.6-node-image"). We construct the
+        build-specific tag by inserting the timestamp, then query per-arch digests via oc image info.
         """
-        parsed = parse_nvr(rhcos_nvr)
-        build_id = f"{parsed['version']}-{parsed['release']}"
-        LOGGER.info(f"Pinning RHCOS build: {build_id}")
+        layered = self.runtime.group_config.rhcos.get("layered_rhcos", False)
+        major, minor = self.runtime.get_major_minor()
+
+        if not layered:
+            parsed = parse_nvr(rhcos_nvr)
+            build_id = f"{parsed['version']}-{parsed['release']}"
+        else:
+            # Format: rhcos-{major}.{minor}-{rhel_major}.{rhel_minor}-{timestamp}
+            parts = rhcos_nvr.removeprefix("rhcos-").split("-")
+            rhel_version = parts[1]  # e.g. "9.6"
+            timestamp = parts[-1]
+
+        LOGGER.info(f"Pinning RHCOS build from NVR: {rhcos_nvr}")
 
         rhcos_info = {}
         changed = False
+        container_configs = get_container_configs(self.runtime)
 
-        for arch in self.runtime.group_config.arches:
-            brew_arch = brew_arch_for_go_arch(arch)
-            LOGGER.info(f"Getting RHCOS pullspecs for build {build_id}-{brew_arch}...")
-            for container_conf in get_container_configs(self.runtime):
-                major, minor = self.runtime.get_major_minor()
-                version = f"{major}.{minor}"
-                finder = RHCOSBuildFinder(self.runtime, version, brew_arch, False)
-                if container_conf.name not in rhcos_info:
-                    rhcos_info[container_conf.name] = {"images": {}}
-                pullspec = get_container_pullspec(
-                    finder.rhcos_build_meta(build_id),
-                    container_conf or finder.get_primary_container_conf(),
-                )
+        for container_conf in container_configs:
+            if layered:
+                # Only process tags matching the RHEL version from the input
+                tag_part = str(container_conf.rhcos_index_tag).split(":")[-1]
+                tag_rhel_version = tag_part.split("-")[1]
+                if tag_rhel_version != rhel_version:
+                    LOGGER.info(f"Skipping {container_conf.name}: RHEL version {tag_rhel_version} != {rhel_version}")
+                    continue
+            rhcos_info[container_conf.name] = {"images": {}}
+
+            for arch in self.runtime.group_config.arches:
+                if layered:
+                    pullspec = self._get_layered_rhcos_pullspec(
+                        container_conf,
+                        arch,
+                        timestamp,
+                    )
+                else:
+                    brew_arch = brew_arch_for_go_arch(arch)
+                    version = f"{major}.{minor}"
+                    finder = RHCOSBuildFinder(self.runtime, version, brew_arch, False)
+                    build_meta = finder.rhcos_build_meta(build_id)
+                    pullspec = get_container_pullspec(
+                        build_meta,
+                        container_conf or finder.get_primary_container_conf(),
+                    )
+
                 rhcos_info[container_conf.name]["images"][arch] = pullspec
 
         self.assembly_config.setdefault("rhcos", Model({}))
@@ -296,6 +328,38 @@ class AssemblyPinBuildsCli:
             changed = True
 
         return changed
+
+    def _get_layered_rhcos_pullspec(self, container_conf, arch, timestamp):
+        """
+        Get the pullspec for a layered RHCOS container at a specific build timestamp.
+
+        Constructs the build-specific manifest-list tag from the container_conf's rhcos_index_tag
+        by inserting the timestamp, then queries oc image info for the per-arch digest.
+
+        rhcos_index_tag (latest):   "quay.io/.../art-dev:4.21-9.6-node-image"
+        Build-specific tag:         "4.21-9.6-202605121024-node-image"
+
+        The tag has the form {ocp_version}-{rhel_version}-{suffix}. We find the suffix
+        (everything after the second hyphen-separated version segment) and insert the timestamp.
+        """
+        index_tag = str(container_conf.rhcos_index_tag)
+        tag_part = index_tag.split(":")[-1]
+        # Split: ["4.21", "9.6", "node", "image"] or ["4.21", "10.2", "node", "image", "extensions"]
+        parts = tag_part.split("-")
+        # First two segments are version numbers (ocp, rhel); the rest is the suffix
+        version_prefix = f"{parts[0]}-{parts[1]}-"
+        suffix = "-".join(parts[2:])
+        build_tag = f"{version_prefix}{timestamp}-{suffix}"
+
+        art_repo = get_art_prod_image_repo_for_version(major=4, repo_type="dev")
+        go_arch = go_arch_for_brew_arch(arch)
+        LOGGER.info(f"Fetching layered RHCOS pullspec: {art_repo}:{build_tag} for {go_arch}")
+        image_info = oc_image_info_for_arch(
+            f"{art_repo}:{build_tag}",
+            go_arch,
+            registry_config=self.runtime.registry_config,
+        )
+        return f"{art_repo}@{image_info['digest']}"
 
 
 @cli.command("pin-builds", short_help="Pin given builds to assembly")

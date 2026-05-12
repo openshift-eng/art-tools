@@ -214,6 +214,7 @@ class TestAssemblyPinBuildsCli(IsolatedAsyncioTestCase):
     ):
         self.runtime.group_config = MagicMock()
         self.runtime.group_config.arches = ["x86_64", "aarch64"]
+        self.runtime.group_config.rhcos.get.return_value = False
         mock_brew_arch_for_go_arch.side_effect = lambda arch: arch  # Return the input arch
 
         # Setup container configs
@@ -264,6 +265,94 @@ class TestAssemblyPinBuildsCli(IsolatedAsyncioTestCase):
                     "images": {
                         "x86_64": "registry.example.com/rhel-coreos/machine-os-content@sha256:abc123",
                         "aarch64": "registry.example.com/rhel-coreos/machine-os-content@sha256:abc123",
+                    },
+                },
+            },
+        }
+        self.assertEqual(changed, True)
+        self.assertEqual(out["releases"][self.runtime.assembly]["assembly"], expected_assembly_config)
+
+    @patch("elliottlib.cli.pin_builds_cli.get_container_configs")
+    @patch("elliottlib.cli.pin_builds_cli.oc_image_info_for_arch")
+    @patch("elliottlib.cli.pin_builds_cli.get_art_prod_image_repo_for_version")
+    @patch("elliottlib.cli.pin_builds_cli.go_arch_for_brew_arch")
+    async def test_run_with_layered_rhcos_nvr(
+        self,
+        mock_go_arch_for_brew_arch,
+        mock_get_art_repo,
+        mock_oc_image_info,
+        mock_get_container_configs,
+    ):
+        self.runtime.get_major_minor.return_value = (4, 21)
+        self.runtime.group_config = MagicMock()
+        self.runtime.group_config.arches = ["x86_64", "aarch64"]
+        self.runtime.group_config.rhcos.get.return_value = True
+        self.runtime.group_config.vars.RHCOS_EL_MAJOR = 9
+        self.runtime.group_config.vars.RHCOS_EL_MINOR = 6
+
+        mock_go_arch_for_brew_arch.side_effect = lambda a: {"x86_64": "amd64", "aarch64": "arm64"}[a]
+        art_repo = "quay.io/openshift-release-dev/ocp-v4.0-art-dev"
+        mock_get_art_repo.return_value = art_repo
+
+        # Layered container configs have rhcos_index_tag instead of build_metadata_key
+        primary_conf = MagicMock()
+        primary_conf.name = "rhel-coreos"
+        primary_conf.rhcos_index_tag = f"{art_repo}:4.21-9.6-node-image"
+
+        ext_conf = MagicMock()
+        ext_conf.name = "rhel-coreos-extensions"
+        ext_conf.rhcos_index_tag = f"{art_repo}:4.21-9.6-node-image-extensions"
+
+        mock_get_container_configs.return_value = [primary_conf, ext_conf]
+
+        # Return different digests per tag+arch to verify correct routing
+        def fake_oc_image_info(pullspec, go_arch, registry_config=None):
+            if "node-image-extensions" in pullspec:
+                return {"digest": f"sha256:ext-{go_arch}"}
+            return {"digest": f"sha256:primary-{go_arch}"}
+
+        mock_oc_image_info.side_effect = fake_oc_image_info
+
+        layered_rhcos_build = "rhcos-4.21-9.6-202605121024"
+        cli = AssemblyPinBuildsCli(
+            runtime=self.runtime,
+            nvrs=[layered_rhcos_build],
+            pr=None,
+            why=self.why,
+            github_client=self.github_client,
+        )
+        out, changed = await cli.run()
+
+        # Verify build-specific tags were constructed correctly
+        mock_oc_image_info.assert_any_call(
+            f"{art_repo}:4.21-9.6-202605121024-node-image",
+            "amd64",
+            registry_config=self.runtime.registry_config,
+        )
+        mock_oc_image_info.assert_any_call(
+            f"{art_repo}:4.21-9.6-202605121024-node-image-extensions",
+            "arm64",
+            registry_config=self.runtime.registry_config,
+        )
+        self.assertEqual(mock_oc_image_info.call_count, 4)  # 2 containers x 2 arches
+
+        expected_assembly_config = {
+            "members": {
+                "images": [],
+                "rpms": [],
+            },
+            "group": {},
+            "rhcos": {
+                "rhel-coreos": {
+                    "images": {
+                        "x86_64": f"{art_repo}@sha256:primary-amd64",
+                        "aarch64": f"{art_repo}@sha256:primary-arm64",
+                    },
+                },
+                "rhel-coreos-extensions": {
+                    "images": {
+                        "x86_64": f"{art_repo}@sha256:ext-amd64",
+                        "aarch64": f"{art_repo}@sha256:ext-arm64",
                     },
                 },
             },
