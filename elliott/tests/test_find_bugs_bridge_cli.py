@@ -6,6 +6,8 @@ from elliottlib.cli.find_bugs_bridge_cli import BRIDGE_LABEL, FindBugsBridgeCli
 
 
 class TestFindBugsBridgeCli(IsolatedAsyncioTestCase):
+    """Exercise bridge bug mirroring candidate and sync behavior."""
+
     def setUp(self):
         self.runtime = MagicMock()
         self.runtime.group = "openshift-4.23"
@@ -40,6 +42,7 @@ class TestFindBugsBridgeCli(IsolatedAsyncioTestCase):
 
     @staticmethod
     def _link(link_name, inward_key=None, outward_key=None):
+        """Build a mock issue link with the requested direction."""
         link = MagicMock()
         link.type.name = link_name
         if inward_key:

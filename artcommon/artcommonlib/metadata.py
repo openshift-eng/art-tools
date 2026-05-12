@@ -632,6 +632,7 @@ class MetadataBase(object):
 
     @property
     def bridge_bug_mirroring_enabled(self) -> bool:
+        """Return whether bridge bug mirroring applies to this image."""
         group_bridge = self.runtime.group_config.get("bridge_release", {}) or {}
         group_bug_mirroring = group_bridge.get("bug_mirroring", {}) or {}
         if not group_bug_mirroring.get("enabled", False):

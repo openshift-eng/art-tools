@@ -882,6 +882,7 @@ class JIRABugTracker(BugTracker):
 
     @property
     def project(self):
+        """Return the configured JIRA project key."""
         return self._project
 
     def looks_like_a_jira_project_bug(self, bug_id) -> bool:
@@ -947,6 +948,24 @@ class JIRABugTracker(BugTracker):
         versions: Optional[List[str]] = None,
         noop: bool = False,
     ) -> JIRABug:
+        """Create a JIRA issue, filling in tracker defaults when fields omit them.
+
+        Args:
+            fields: Raw JIRA issue fields to submit. The mapping may omit
+                `project`, `versions`, and target-version fields because this
+                helper fills them from tracker configuration when needed.
+            target_status: Optional workflow status to transition the new issue
+                to after creation.
+            target_releases: Optional target-version values to use instead of the
+                tracker's configured target releases.
+            versions: Optional affects-version values to use instead of the
+                tracker's configured versions.
+            noop: If `True`, log the create request without creating the issue.
+
+        Returns:
+            JIRABug | None: The created issue wrapper, or `None` when `noop` is
+            enabled.
+        """
         fields = fields.copy()
         fields.setdefault('project', {'key': self._project})
         if versions is None:
@@ -1114,6 +1133,23 @@ class JIRABugTracker(BugTracker):
         custom_query: Optional[str] = None,
         verbose: bool = False,
     ) -> List[JIRABug]:
+        """Search JIRA bugs with optional status, label, and query filters.
+
+        Args:
+            status: Optional allowed workflow statuses.
+            search_filter: Named component filter to exclude non-relevant
+                components.
+            include_labels: Optional labels that matching issues must include.
+            exclude_labels: Optional labels that matching issues must not include.
+            with_target_release: If `True`, constrain the search to the tracker's
+                configured target releases.
+            custom_query: Extra JQL appended to the generated query.
+            verbose: If `True`, log the generated JQL before searching.
+
+        Returns:
+            list[JIRABug]: Matching issues, or an empty list if version filtering
+            removes all configured target releases.
+        """
         query = self._query(
             status=status,
             search_filter=search_filter,
@@ -1127,6 +1163,7 @@ class JIRABugTracker(BugTracker):
         return self._search(query, verbose=verbose)
 
     def create_issue_link(self, link_name: str, inward_issue: str, outward_issue: str):
+        """Create a JIRA issue link between two issues."""
         self._client.create_issue_link(link_name, inward_issue, outward_issue)
 
     def remove_bugs(self, advisory_obj, bugids: List, noop=False):
@@ -1198,10 +1235,12 @@ class BugzillaBugTracker(BugTracker):
 
     @property
     def product(self):
+        """Return the configured Bugzilla product name."""
         return self.config.get('product', '')
 
     @property
     def project(self):
+        """Return the Bugzilla product for tracker-agnostic callers."""
         return self.config.get('product', '')
 
     def get_bug(self, bugid, **kwargs):

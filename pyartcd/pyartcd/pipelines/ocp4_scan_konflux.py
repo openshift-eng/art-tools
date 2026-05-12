@@ -270,6 +270,16 @@ class Ocp4ScanPipeline:
             )
 
     async def handle_bridge_bug_mirroring(self):
+        """Run bridge bug mirroring for groups that enable it.
+
+        Returns:
+            None.
+
+        Raises:
+            ChildProcessError: If the `elliott find-bugs:bridge-mirror` command
+                fails. In non-dry-run mode, a Slack notification is sent before
+                the exception is re-raised.
+        """
         group = f"openshift-{self.version}"
         group_config = await util.load_group_config(
             group=group,

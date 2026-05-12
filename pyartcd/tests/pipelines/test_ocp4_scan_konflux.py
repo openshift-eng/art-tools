@@ -136,6 +136,8 @@ class TestOcp4ScanKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
 
 
 class TestBridgeBugMirroring(unittest.IsolatedAsyncioTestCase):
+    """Cover bridge bug mirroring orchestration in the Konflux scan pipeline."""
+
     def setUp(self):
         self.runtime = MagicMock(spec=Runtime)
         self.runtime.dry_run = False

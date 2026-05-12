@@ -1,3 +1,5 @@
+"""Mirror eligible basis-group JIRA bugs into a bridge release."""
+
 import logging
 import os
 from dataclasses import dataclass
@@ -22,6 +24,8 @@ REQUIRED_LINK_TYPES = {"depends_on", "blocked_by", "clones"}
 
 @dataclass(frozen=True)
 class BridgeBugMirroringConfig:
+    """Bridge bug mirroring settings derived from group config."""
+
     basis_group: str
     enabled: bool
 
@@ -31,11 +35,22 @@ class BridgeBugMirroringConfig:
 @click.pass_obj
 @click_coroutine
 async def find_bugs_bridge_cli(runtime: Runtime, noop: bool):
+    """Mirror eligible basis-group bugs into the current bridge release.
+
+    Args:
+        runtime: Elliott runtime for the bridge target group.
+        noop: If `True`, log intended changes without creating or updating issues.
+
+    Returns:
+        None.
+    """
     cli = FindBugsBridgeCli(runtime=runtime, noop=noop)
     await cli.run()
 
 
 class FindBugsBridgeCli:
+    """Synchronize bridge-release mirrors for bugs from a basis group."""
+
     def __init__(self, runtime: Runtime, noop: bool):
         self.runtime = runtime
         self.noop = noop
@@ -54,6 +69,15 @@ class FindBugsBridgeCli:
         self.updated_mirror_count = 0
 
     async def run(self):
+        """Create or update bridge mirrors for all eligible source bugs.
+
+        Returns:
+            None.
+
+        Raises:
+            ValueError: If the target group has no configured JIRA target release,
+                or if invalid existing mirror states are detected.
+        """
         self.runtime.initialize(mode="images")
         major, minor = self.runtime.get_major_minor_fields()
         self.major_minor = f"{major}.{minor}"
@@ -105,6 +129,19 @@ class FindBugsBridgeCli:
 
     @staticmethod
     def _load_bridge_config(runtime: Runtime) -> BridgeBugMirroringConfig:
+        """Read bridge bug mirroring settings from the target runtime.
+
+        Args:
+            runtime: Runtime for the bridge target group.
+
+        Returns:
+            BridgeBugMirroringConfig: Parsed bridge mirroring settings for the
+            target group.
+
+        Raises:
+            ValueError: If mirroring is enabled but `bridge_release.basis_group`
+                is missing.
+        """
         bridge_release = runtime.group_config.get("bridge_release", {}) or {}
         basis_group = bridge_release.get("basis_group")
         bug_mirroring = bridge_release.get("bug_mirroring", {}) or {}
@@ -114,6 +151,15 @@ class FindBugsBridgeCli:
         return BridgeBugMirroringConfig(basis_group=basis_group or "", enabled=enabled)
 
     def _build_source_runtime(self, group: str) -> Runtime:
+        """Build a runtime for querying bugs in the basis group.
+
+        Args:
+            group: Basis group name to query for source bugs.
+
+        Returns:
+            Runtime: A runtime configured to read the basis group from the same
+            build-data source and assembly as the target runtime.
+        """
         config = self.runtime.cfg_obj.to_dict()
         config.update(
             {
@@ -127,6 +173,13 @@ class FindBugsBridgeCli:
         return Runtime(cfg_obj=self.runtime.cfg_obj, **config)
 
     def _build_target_image_maps(self):
+        """Map target images by component name and JIRA component.
+
+        Returns:
+            None. This method repopulates `self.images_by_component` and
+            `self.images_by_jira_component` from runtime image metadata and
+            `product.yml` component mappings.
+        """
         self.images_by_component = {}
         self.images_by_jira_component = {}
         for image_meta in self.runtime.image_metas():
@@ -147,6 +200,13 @@ class FindBugsBridgeCli:
                 self.images_by_jira_component[issue_component] = image_meta
 
     def _get_candidate_bugs(self) -> List[Tuple[JIRABug, object]]:
+        """Return source bugs that should be mirrored into the target release.
+
+        Returns:
+            list[tuple[JIRABug, object]]: `(source_bug, image_meta)` pairs for
+            open, non-tracker bugs whose JIRA component maps to a bridge-enabled
+            target image.
+        """
         assert self.source_tracker is not None
         bugs = self.source_tracker.search_bugs(
             search_filter="default", custom_query=' and status != "CLOSED"', verbose=self.runtime.debug
@@ -176,6 +236,15 @@ class FindBugsBridgeCli:
         return candidates
 
     def _resolve_bug_image(self, bug: JIRABug):
+        """Resolve the target image metadata for a source bug.
+
+        Args:
+            bug: Source JIRA bug from the basis group.
+
+        Returns:
+            The target image metadata object for the bug's JIRA component, or
+            `None` if the bug has no component or maps to no bridge-enabled image.
+        """
         try:
             jira_component = bug.component
         except IndexError:
@@ -184,6 +253,16 @@ class FindBugsBridgeCli:
         return self.images_by_jira_component.get(jira_component)
 
     def _get_product_config(self) -> Model:
+        """Load and cache `product.yml` from the build-data main branch.
+
+        Returns:
+            Model: Parsed `product.yml` content used to map package names to JIRA
+            components.
+
+        Raises:
+            IOError: If `product.yml` is missing or invalid in the build-data
+                repository.
+        """
         if self._product_config is not None:
             return self._product_config
 
@@ -197,6 +276,17 @@ class FindBugsBridgeCli:
         return self._product_config
 
     async def _sync_mirror(self, source_bug: JIRABug, image_meta) -> bool:
+        """Create or update the bridge mirror for a source bug.
+
+        Args:
+            source_bug: Source JIRA bug from the basis group.
+            image_meta: Target image metadata matched to the source bug.
+
+        Returns:
+            bool: `True` if the bug was handled by creating or updating a mirror,
+            or by reusing a valid existing mirror. `False` if the bug was skipped
+            because an invalid state or a closed Won't Fix mirror was found.
+        """
         assert self.target_tracker is not None
         if source_bug.id in self.invalid_bugs:
             return False
@@ -232,6 +322,17 @@ class FindBugsBridgeCli:
         return True
 
     def _build_issue_fields(self, source_bug: JIRABug, image_meta) -> dict:
+        """Build the field payload for a bridge mirror issue.
+
+        Args:
+            source_bug: Source JIRA bug being mirrored.
+            image_meta: Target image metadata matched to the source bug.
+
+        Returns:
+            dict: JIRA issue fields for the mirror, including summary,
+            description, issue type, components, labels, and selected copied
+            metadata such as priority and security level.
+        """
         assert self.target_tracker is not None
         summary = f"{source_bug.summary} [bridge to {self.target_release}]"
         description = self._build_description(source_bug, image_meta)
@@ -253,6 +354,16 @@ class FindBugsBridgeCli:
         return fields
 
     def _build_description(self, source_bug: JIRABug, image_meta) -> str:
+        """Build the bridge-specific description for a mirrored issue.
+
+        Args:
+            source_bug: Source JIRA bug being mirrored.
+            image_meta: Target image metadata matched to the source bug.
+
+        Returns:
+            str: A bridge-specific description that explains why the mirror
+            exists and appends the original source issue description.
+        """
         source_description = getattr(source_bug.bug.fields, "description", "") or "No source description provided."
         return (
             f"This issue was automatically created by ART as a bridge-release mirror of {source_bug.id} "
@@ -272,6 +383,17 @@ class FindBugsBridgeCli:
         )
 
     def _get_existing_mirrors_by_source(self, source_bug_ids: List[str]) -> Dict[str, List[JIRABug]]:
+        """Return existing mirror issues keyed by source bug id.
+
+        Args:
+            source_bug_ids: Source JIRA issue keys to look up in existing bridge
+                mirrors.
+
+        Returns:
+            dict[str, list[JIRABug]]: A mapping for every requested source bug id.
+            Lists are empty when no mirror is found and can contain multiple
+            entries when duplicate mirrors exist.
+        """
         assert self.target_tracker is not None
         if not source_bug_ids:
             return {}
@@ -300,6 +422,15 @@ class FindBugsBridgeCli:
         return mirrors_by_source
 
     def _update_issue(self, mirror_bug: JIRABug, fields: dict):
+        """Update an existing bridge mirror with the latest source fields.
+
+        Args:
+            mirror_bug: Existing bridge mirror to update.
+            fields: JIRA update payload derived from the current source bug state.
+
+        Returns:
+            None.
+        """
         if self.noop:
             LOGGER.info("[DRY RUN] Would update bridge mirror %s with fields=%s", mirror_bug.id, fields)
             return
@@ -310,6 +441,19 @@ class FindBugsBridgeCli:
         LOGGER.info("Updated bridge mirror %s", mirror_bug.id)
 
     def _ensure_issue_links(self, mirror_issue_key: str, source_issue_key: str):
+        """Ensure the required links exist between the source and mirror issues.
+
+        Args:
+            mirror_issue_key: JIRA key for the bridge mirror issue.
+            source_issue_key: JIRA key for the basis-group source issue.
+
+        Returns:
+            None.
+
+        Raises:
+            JIRAError: If link creation fails for a reason other than the link
+                already existing.
+        """
         assert self.target_tracker is not None
         if self.noop:
             LOGGER.info("[DRY RUN] Would add required links between %s and %s", mirror_issue_key, source_issue_key)
@@ -328,6 +472,17 @@ class FindBugsBridgeCli:
 
     @staticmethod
     def _get_linked_sources(mirror_bug: JIRABug, source_bug_ids: set[str]) -> set[str]:
+        """Return source bug ids linked to a mirror through required link types.
+
+        Args:
+            mirror_bug: Bridge mirror issue to inspect.
+            source_bug_ids: Source issue keys that are valid candidates for
+                linkage.
+
+        Returns:
+            set[str]: Source issue keys linked to the mirror through any of the
+            required bridge mirror link types.
+        """
         linked_sources = set()
         for link in getattr(mirror_bug.bug.fields, "issuelinks", []):
             if link.type.name == "Blocks" and hasattr(link, "inwardIssue"):
@@ -347,6 +502,16 @@ class FindBugsBridgeCli:
 
     @staticmethod
     def _required_link_types_for_source(mirror_bug: JIRABug, source_bug_id: str) -> set[str]:
+        """Return required link types already present for a source bug.
+
+        Args:
+            mirror_bug: Bridge mirror issue to inspect.
+            source_bug_id: Source issue key whose links should be validated.
+
+        Returns:
+            set[str]: Normalized required link markers already present between
+            the mirror and the source issue.
+        """
         found = set()
         for link in getattr(mirror_bug.bug.fields, "issuelinks", []):
             if link.type.name == "Blocks" and hasattr(link, "inwardIssue") and link.inwardIssue.key == source_bug_id:
@@ -361,6 +526,15 @@ class FindBugsBridgeCli:
         return found
 
     def _validate_required_links(self, mirror_bug: JIRABug, source_bug_id: str):
+        """Record an invalid case when a mirror is missing required links.
+
+        Args:
+            mirror_bug: Bridge mirror issue to validate.
+            source_bug_id: Source issue key that should be linked to the mirror.
+
+        Returns:
+            None.
+        """
         found = self._required_link_types_for_source(mirror_bug, source_bug_id)
         missing = REQUIRED_LINK_TYPES - found
         if missing:
@@ -370,15 +544,26 @@ class FindBugsBridgeCli:
             )
 
     def _record_invalid_bug(self, source_bug_id: str, message: str):
+        """Record an invalid bridge mirroring case for later reporting."""
         self.invalid_bugs.setdefault(source_bug_id, []).append(message)
 
     def _report_invalid_bugs(self):
+        """Log every invalid bridge mirroring case collected during the run."""
         for source_bug_id in sorted(self.invalid_bugs):
             for message in self.invalid_bugs[source_bug_id]:
                 LOGGER.error("Invalid bridge bug case for %s: %s", source_bug_id, message)
 
     @staticmethod
     def _is_closed_wont_fix(mirror_bug: JIRABug) -> bool:
+        """Return whether a mirror is closed with a Won't Fix resolution.
+
+        Args:
+            mirror_bug: Bridge mirror issue to inspect.
+
+        Returns:
+            bool: `True` when the mirror is closed with a Won't Fix style
+            resolution, otherwise `False`.
+        """
         if mirror_bug.status.lower() != "closed":
             return False
         resolution = (mirror_bug.resolution or "").replace("’", "'").lower()
