@@ -202,20 +202,17 @@ class TestAssemblyPinBuildsCli(IsolatedAsyncioTestCase):
         self.assertEqual(out["releases"][self.runtime.assembly]["assembly"], expected_assembly_config)
 
     @patch("elliottlib.cli.pin_builds_cli.get_container_configs")
-    @patch("elliottlib.cli.pin_builds_cli.brew_arch_for_go_arch")
     @patch("elliottlib.cli.pin_builds_cli.get_container_pullspec")
     @patch("elliottlib.cli.pin_builds_cli.RHCOSBuildFinder")
     async def test_run_with_rhcos_nvr(
         self,
         mock_rhcos_build_finder,
         mock_get_container_pullspec,
-        mock_brew_arch_for_go_arch,
         mock_get_container_configs,
     ):
         self.runtime.group_config = MagicMock()
         self.runtime.group_config.arches = ["x86_64", "aarch64"]
         self.runtime.group_config.rhcos.get.return_value = False
-        mock_brew_arch_for_go_arch.side_effect = lambda arch: arch  # Return the input arch
 
         # Setup container configs
         mock_container_conf = MagicMock()

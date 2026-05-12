@@ -3,7 +3,7 @@ from typing import List, Optional
 import click
 import yaml
 from artcommonlib import logutil
-from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch
+from artcommonlib.arch_util import go_arch_for_brew_arch
 from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.model import ListModel, Model
@@ -309,9 +309,8 @@ class AssemblyPinBuildsCli:
                         timestamp,
                     )
                 else:
-                    brew_arch = brew_arch_for_go_arch(arch)
                     version = f"{major}.{minor}"
-                    finder = RHCOSBuildFinder(self.runtime, version, brew_arch, False)
+                    finder = RHCOSBuildFinder(self.runtime, version, arch, False)
                     build_meta = finder.rhcos_build_meta(build_id)
                     pullspec = get_container_pullspec(
                         build_meta,
@@ -320,10 +319,14 @@ class AssemblyPinBuildsCli:
 
                 rhcos_info[container_conf.name]["images"][arch] = pullspec
 
+        if not rhcos_info:
+            raise ValueError(f"No container configs matched RHCOS NVR {rhcos_nvr}")
+
         self.assembly_config.setdefault("rhcos", Model({}))
         current_rhcos = self.assembly_config["rhcos"].primitive()
-        if current_rhcos != rhcos_info:
-            self.assembly_config["rhcos"] = Model(rhcos_info)
+        merged_rhcos = {**current_rhcos, **rhcos_info}
+        if current_rhcos != merged_rhcos:
+            self.assembly_config["rhcos"] = Model(merged_rhcos)
             changed = True
 
         return changed
