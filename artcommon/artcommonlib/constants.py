@@ -34,8 +34,8 @@ ACTIVE_OCP_VERSIONS = [
 ]
 
 # Konflux DB related vars
-GOOGLE_CLOUD_PROJECT = 'openshift-art'
-DATASET_ID = 'events'
+GOOGLE_CLOUD_PROJECT = 'openshift-gce-devel'
+DATASET_ID = 'art_test'
 BUILDS_TABLE_ID = 'builds'
 BUNDLES_TABLE_ID = 'bundles'
 FBCS_TABLE_ID = 'fbcs'
