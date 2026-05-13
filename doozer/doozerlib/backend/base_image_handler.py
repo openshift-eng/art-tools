@@ -102,11 +102,10 @@ class BaseImageHandler:
                     continue
 
                 if not metadata.should_trigger_base_image_release():
-                    self.logger.warning(f"Image {nvr} does not qualify for base image release workflow, skipping")
-                    continue
-
-                if not metadata.is_snapshot_release_enabled():
-                    self.logger.warning(f"Image {nvr} has snapshot release disabled, skipping")
+                    self.logger.warning(
+                        f"Image {nvr} does not qualify for base image release workflow "
+                        "(base/golang, OCP, base_image_release.enabled), skipping"
+                    )
                     continue
 
                 if not build_record.image_pullspec:

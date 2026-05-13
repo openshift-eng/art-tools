@@ -344,6 +344,42 @@
       "$ref": "#/properties/canonical_builders_from_upstream"
     },
     "canonical_builders_from_upstream-": {},
+    "base_image_release": {
+      "description": "Default base-image release behavior for the group. Per-image base_image_release overrides.",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "description": "If false, disables snapshot-to-release for qualifying base images unless overridden per image. Omitted defaults to true.",
+          "type": "boolean"
+        },
+        "enabled!": {
+          "$ref": "#/properties/base_image_release/properties/enabled"
+        },
+        "enabled?": {
+          "$ref": "#/properties/base_image_release/properties/enabled"
+        },
+        "enabled-": {},
+        "quay_fallback": {
+          "description": "When false, late parent resolve fails if art-images-base is unreachable instead of Konflux fallback. Default true.",
+          "type": "boolean"
+        },
+        "quay_fallback!": {
+          "$ref": "#/properties/base_image_release/properties/quay_fallback"
+        },
+        "quay_fallback?": {
+          "$ref": "#/properties/base_image_release/properties/quay_fallback"
+        },
+        "quay_fallback-": {}
+      },
+      "additionalProperties": false
+    },
+    "base_image_release!": {
+      "$ref": "#/properties/base_image_release"
+    },
+    "base_image_release?": {
+      "$ref": "#/properties/base_image_release"
+    },
+    "base_image_release-": {},
     "konflux": {
       "description": "Konflux configuration",
       "type": "object",

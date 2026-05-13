@@ -1234,10 +1234,6 @@ class KonfluxImageBuilder:
         """
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
 
-        if not metadata.is_snapshot_release_enabled():
-            logger.info(f"Skipping base image release for {nvr}: snapshot_release disabled")
-            return True
-
         logger.info(f"Triggering base image release for {nvr}")
 
         try:

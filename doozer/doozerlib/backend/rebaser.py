@@ -547,12 +547,17 @@ class KonfluxRebaser:
                     rh_pullspec = util.rh_art_images_base_pullspec(build.nvr)
                     if await self._registry_pullspec_exists(rh_pullspec):
                         return rh_pullspec, build.embargoed
-                    self._logger.info(
-                        "art-images-base %s not reachable; using Konflux image_pullspec for late-resolved parent %s",
-                        rh_pullspec,
-                        member,
+                    if parent_metadata.is_base_image_release_quay_fallback_enabled():
+                        self._logger.info(
+                            "art-images-base %s not reachable; using Konflux image_pullspec for late-resolved parent %s",
+                            rh_pullspec,
+                            member,
+                        )
+                        return build.image_pullspec, build.embargoed
+                    raise IOError(
+                        f"art-images-base pullspec not reachable for late-resolved parent {member} ({rh_pullspec!r}); "
+                        "base_image_release.quay_fallback is false"
                     )
-                    return build.image_pullspec, build.embargoed
                 return build.image_pullspec, build.embargoed
 
             return original_parent, False

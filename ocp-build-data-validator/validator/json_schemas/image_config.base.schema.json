@@ -173,17 +173,42 @@
       "$ref": "#/properties/base_only"
     },
     "base_only-": {},
-    "snapshot_release": {
-      "description": "If true, enables snapshot-to-release workflow for base images. Only applies to base_only images",
-      "type": "boolean"
+    "base_image_release": {
+      "description": "Controls Konflux base-image snapshot-to-release and rebaser RH art-images-base behavior for qualifying images. Per-image overrides group.",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "description": "If false, disables snapshot-to-release for this image when it qualifies as a base-image workflow target. Omitted: inherit group or default true.",
+          "type": "boolean"
+        },
+        "enabled!": {
+          "$ref": "#/properties/base_image_release/properties/enabled"
+        },
+        "enabled?": {
+          "$ref": "#/properties/base_image_release/properties/enabled"
+        },
+        "enabled-": {},
+        "quay_fallback": {
+          "description": "When false, late parent resolve fails if registry.redhat.io art-images-base is unreachable instead of falling back to Konflux image_pullspec. Default true. Image overrides group.",
+          "type": "boolean"
+        },
+        "quay_fallback!": {
+          "$ref": "#/properties/base_image_release/properties/quay_fallback"
+        },
+        "quay_fallback?": {
+          "$ref": "#/properties/base_image_release/properties/quay_fallback"
+        },
+        "quay_fallback-": {}
+      },
+      "additionalProperties": false
     },
-    "snapshot_release!": {
-      "$ref": "#/properties/snapshot_release"
+    "base_image_release!": {
+      "$ref": "#/properties/base_image_release"
     },
-    "snapshot_release?": {
-      "$ref": "#/properties/snapshot_release"
+    "base_image_release?": {
+      "$ref": "#/properties/base_image_release"
     },
-    "snapshot_release-": {},
+    "base_image_release-": {},
     "cachito": {
       "description": "Cachito integration configuration",
       "$ref": "cachito.schema.json"
