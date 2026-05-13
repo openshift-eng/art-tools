@@ -37,6 +37,7 @@ class Rpm:
     sourcerpm: str
     release: str
     arch: str
+    requires: List[str] = field(default_factory=list)
 
     @property
     def nevra(self):
@@ -89,6 +90,7 @@ class Rpm:
             size=0,
             location="",
             sourcerpm="",
+            requires=[],
         )
 
     @staticmethod
@@ -114,10 +116,19 @@ class Rpm:
 
         format_elem = metadata.find("common:format", NAMESPACES)
         sourcerpm = ''
+        requires = []
         if format_elem is not None:
             sourcerpm_elem = format_elem.find("rpm:sourcerpm", NAMESPACES)
             if sourcerpm_elem is not None and sourcerpm_elem.text:
                 sourcerpm = sourcerpm_elem.text
+
+            # Parse package requirements
+            requires_elem = format_elem.find("rpm:requires", NAMESPACES)
+            if requires_elem is not None:
+                for entry in requires_elem.findall("rpm:entry", NAMESPACES):
+                    pkg_name = entry.attrib.get("name")
+                    if pkg_name:
+                        requires.append(pkg_name)
 
         return Rpm(
             name=name.text,
@@ -129,6 +140,7 @@ class Rpm:
             sourcerpm=sourcerpm,
             release=version.attrib["rel"],
             arch=arch.text,
+            requires=requires,
         )
 
 
@@ -496,6 +508,78 @@ class RepodataLoader:
 
 class OutdatedRPMFinder:
     @staticmethod
+    def _has_incompatible_dependencies(candidate_rpm: Rpm, installed_rpms: Dict[str, Dict]) -> bool:
+        """
+        Check if a candidate RPM has dependencies that conflict with currently installed packages.
+
+        This detects cases where upgrading would require replacing installed packages with
+        incompatible alternatives. For example:
+        - Installed: bind9.18
+        - Candidate requires: bind (which conflicts with bind9.18)
+
+        Args:
+            candidate_rpm: The newer RPM being considered
+            installed_rpms: Dict of currently installed RPMs (name => rpm_dict)
+
+        Returns:
+            True if the candidate has incompatible dependencies, False otherwise
+        """
+        if not candidate_rpm.requires:
+            return False
+
+        # Extract base package names from candidate requirements
+        # Filter out non-package requirements (capabilities, files, etc.)
+        candidate_pkg_requires = set()
+        for req in candidate_rpm.requires:
+            # Skip requirements that are:
+            # - file paths (start with /)
+            # - capabilities/provides (contain parentheses or special chars)
+            # - rpmlib dependencies
+            if req.startswith('/') or '(' in req or req.startswith('rpmlib'):
+                continue
+            candidate_pkg_requires.add(req)
+
+        # Check if any required package conflicts with installed packages
+        for required_pkg in candidate_pkg_requires:
+            # First check if the requirement is exactly satisfied
+            if required_pkg in installed_rpms:
+                continue  # Requirement satisfied, no conflict
+
+            # Check for versioned package conflicts (e.g., bind vs bind9.18)
+            # Pattern: required package is base name, but we have a versioned variant installed
+            for installed_name in installed_rpms.keys():
+                # Skip exact matches (already handled above)
+                if installed_name == required_pkg:
+                    continue
+
+                # Check if installed package is a versioned variant of the required package
+                # E.g., required="bind", installed="bind9.18"
+                if installed_name.startswith(required_pkg) and len(installed_name) > len(required_pkg):
+                    # Check if what follows is a version number
+                    suffix = installed_name[len(required_pkg) :]
+                    # Versioned package patterns: bind9.18, python3.11, etc.
+                    # The suffix should start with a digit (with or without separator)
+                    if suffix[0].isdigit() or (
+                        suffix[0] in ['-', '.', '_'] and len(suffix) > 1 and suffix[1].isdigit()
+                    ):
+                        # We have a versioned variant installed (e.g., bind9.18)
+                        # but candidate requires the base package (e.g., bind)
+                        # These are typically mutually exclusive
+                        return True
+
+                # Also check the reverse: required package is versioned, but base is installed
+                # E.g., required="bind9.18", installed="bind"
+                if required_pkg.startswith(installed_name) and len(required_pkg) > len(installed_name):
+                    suffix = required_pkg[len(installed_name) :]
+                    if suffix[0].isdigit() or (
+                        suffix[0] in ['-', '.', '_'] and len(suffix) > 1 and suffix[1].isdigit()
+                    ):
+                        # Candidate requires versioned package but base is installed
+                        return True
+
+        return False
+
+    @staticmethod
     def _find_candidate_modular_rpms(all_modules, enabled_streams):
         """Finds all candidate modular rpms in enabled module streams"""
         # Find the latest module versions for each enabled streams
@@ -533,8 +617,7 @@ class OutdatedRPMFinder:
         the non-modular rpm will be exempt.
         """
         candidate_non_modular_rpms: Dict[str, Tuple[str, Rpm]] = {}  # package_name => (repo_name, rpm)
-        for nevra, repo in all_non_modular_rpms.items():
-            rpm = Rpm.from_nevra(nevra)
+        for nevra, (repo, rpm) in all_non_modular_rpms.items():
             _, candidate = candidate_non_modular_rpms.get(rpm.name, (None, None))
             if not candidate or rpm.compare(candidate) > 0:
                 candidate_non_modular_rpms[rpm.name] = (repo, rpm)
@@ -597,20 +680,20 @@ class OutdatedRPMFinder:
             candidate_modular_rpms = self._find_candidate_modular_rpms(all_modules, enabled_streams)
 
         # Populate a dict to hold all non-modular rpms
-        all_non_modular_rpms: Dict[str, str] = {}  # rpm_nvera => repo_name
+        all_non_modular_rpms: Dict[str, Tuple[str, Rpm]] = {}  # rpm_nvera => (repo_name, rpm_object)
         for repodata in repodatas:
             for rpm in repodata.primary_rpms:
                 if rpm.nevra in all_modular_rpms:
                     continue  # It is a modular rpm
-                all_non_modular_rpms[rpm.nevra] = repodata.name
+                all_non_modular_rpms[rpm.nevra] = (repodata.name, rpm)
 
         # fetch all visible non-modular rpms that are latest among all configured repos
         candidate_non_modular_rpms = self._find_candidate_non_modular_rpms(all_non_modular_rpms)
 
         # Compare archive rpms to all candidate rpms
         results: List[Tuple[str, str, str]] = []
-        for name, archive_rpm in archive_rpms.items():
-            archive_rpm = Rpm.from_dict(archive_rpm)
+        for name, archive_rpm_dict in archive_rpms.items():
+            archive_rpm = Rpm.from_dict(archive_rpm_dict)
             repo, candidate_rpm = None, None
             if archive_rpm.nevra in all_modular_rpms:  # Archive rpm is a modular rpm
                 repo, candidate_rpm = candidate_modular_rpms.get(name, (None, None))
@@ -619,5 +702,13 @@ class OutdatedRPMFinder:
             if not repo or not candidate_rpm:
                 continue  # Archive rpm is not available in any configured repos
             if archive_rpm.compare(candidate_rpm) < 0:  # Archive rpm is older than candidate rpm
+                # Check if the newer version has incompatible dependencies
+                if self._has_incompatible_dependencies(candidate_rpm, archive_rpms):
+                    logger.info(
+                        "Skipping outdated RPM %s -> %s: newer version has incompatible dependencies",
+                        archive_rpm.nevra,
+                        candidate_rpm.nevra,
+                    )
+                    continue
                 results.append((archive_rpm.nevra, candidate_rpm.nevra, repo))
         return results

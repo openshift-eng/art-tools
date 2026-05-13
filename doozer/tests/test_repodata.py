@@ -1165,3 +1165,148 @@ class TestOutdatedRPMFinder(IsolatedAsyncioTestCase):
             ('f-0:1.0.0-el8.x86_64', 'f-0:999.0.0-el8.x86_64', 'bravo-x86_64'),
         ]
         self.assertEqual(actual, expected)
+
+    async def test_find_non_latest_rpms_with_dependency_conflicts(self):
+        """
+        Test that newer RPMs with incompatible dependencies are not flagged as outdated.
+
+        Scenario: bind-dyndb-ldap has newer version available, but:
+        - Installed: bind-dyndb-ldap-11.11-2 (requires bind9.18)
+        - Available: bind-dyndb-ldap-11.11-3 (requires bind)
+        - System has: bind9.18 installed
+        - bind and bind9.18 are mutually exclusive
+
+        Expected: bind-dyndb-ldap-11.11-2 should NOT be flagged as outdated
+        """
+        # Installed RPMs include bind9.18 and bind-dyndb-ldap-11.11-2
+        installed_rpms = [
+            "bind9.18-32:9.18.29-14.el9_8.1.x86_64",
+            "bind-dyndb-ldap-0:11.11-2.el9.x86_64",
+        ]
+
+        # Create the older version with requires for bind9.18
+        old_bind_dyndb_ldap = Rpm(
+            name="bind-dyndb-ldap",
+            epoch=0,
+            version="11.11",
+            release="2.el9",
+            arch="x86_64",
+            checksum="sha256:old",
+            size=100,
+            location="bind-dyndb-ldap-11.11-2.el9.x86_64.rpm",
+            sourcerpm="bind-dyndb-ldap-11.11-2.el9.src.rpm",
+            requires=["bind9.18"],  # Requires bind9.18
+        )
+
+        # Create the newer version with requires for bind (incompatible)
+        new_bind_dyndb_ldap = Rpm(
+            name="bind-dyndb-ldap",
+            epoch=0,
+            version="11.11",
+            release="3.el9_6",
+            arch="x86_64",
+            checksum="sha256:new",
+            size=100,
+            location="bind-dyndb-ldap-11.11-3.el9_6.x86_64.rpm",
+            sourcerpm="bind-dyndb-ldap-11.11-3.el9_6.src.rpm",
+            requires=["bind"],  # Requires bind (conflicts with bind9.18)
+        )
+
+        finder = OutdatedRPMFinder()
+        repodatas = [
+            Repodata(
+                name="rhel-9-appstream-e4s",
+                primary_rpms=[
+                    Rpm.from_nevra("bind9.18-32:9.18.29-14.el9_8.1.x86_64"),
+                    old_bind_dyndb_ldap,
+                    new_bind_dyndb_ldap,
+                ],
+                modules=[],
+            ),
+        ]
+
+        logger = MagicMock()
+        actual = finder.find_non_latest_rpms(
+            [Rpm.from_nevra(nevra).to_dict() for nevra in installed_rpms],
+            repodatas,
+            logger,
+        )
+
+        # Expected: bind-dyndb-ldap should NOT be flagged as outdated
+        # because the newer version has incompatible dependencies
+        expected = []
+        self.assertEqual(actual, expected)
+
+        # Verify that the logger was called to indicate skipping
+        logger.info.assert_called()
+        log_calls = [str(call) for call in logger.info.call_args_list]
+        self.assertTrue(
+            any("incompatible dependencies" in call for call in log_calls),
+            f"Expected incompatible dependencies log message, got: {log_calls}",
+        )
+
+    async def test_find_non_latest_rpms_no_conflict_when_exact_match_installed(self):
+        """
+        Test that exact package matches don't trigger false conflicts.
+
+        Scenario: Both bind and bind9.18 are installed, newer package requires bind.
+        Expected: No conflict (bind requirement is satisfied by exact match)
+        """
+        installed_rpms = [
+            "bind-32:9.16.23-40.el9_8.1.x86_64",
+            "bind9.18-32:9.18.29-14.el9_8.1.x86_64",
+            "test-pkg-0:1.0.0-1.el9.x86_64",
+        ]
+
+        # Older version requires bind (which is installed)
+        old_test_pkg = Rpm(
+            name="test-pkg",
+            epoch=0,
+            version="1.0.0",
+            release="1.el9",
+            arch="x86_64",
+            checksum="sha256:old",
+            size=100,
+            location="test-pkg-1.0.0-1.el9.x86_64.rpm",
+            sourcerpm="test-pkg-1.0.0-1.el9.src.rpm",
+            requires=["bind"],
+        )
+
+        # Newer version also requires bind (which is installed)
+        new_test_pkg = Rpm(
+            name="test-pkg",
+            epoch=0,
+            version="2.0.0",
+            release="1.el9",
+            arch="x86_64",
+            checksum="sha256:new",
+            size=100,
+            location="test-pkg-2.0.0-1.el9.x86_64.rpm",
+            sourcerpm="test-pkg-2.0.0-1.el9.src.rpm",
+            requires=["bind"],  # bind is installed, so no conflict
+        )
+
+        finder = OutdatedRPMFinder()
+        repodatas = [
+            Repodata(
+                name="rhel-9-appstream",
+                primary_rpms=[
+                    Rpm.from_nevra("bind-32:9.16.23-40.el9_8.1.x86_64"),
+                    Rpm.from_nevra("bind9.18-32:9.18.29-14.el9_8.1.x86_64"),
+                    old_test_pkg,
+                    new_test_pkg,
+                ],
+                modules=[],
+            ),
+        ]
+
+        logger = MagicMock()
+        actual = finder.find_non_latest_rpms(
+            [Rpm.from_nevra(nevra).to_dict() for nevra in installed_rpms],
+            repodatas,
+            logger,
+        )
+
+        # Expected: test-pkg SHOULD be flagged as outdated because bind requirement is satisfied
+        expected = [('test-pkg-0:1.0.0-1.el9.x86_64', 'test-pkg-0:2.0.0-1.el9.x86_64', 'rhel-9-appstream')]
+        self.assertEqual(actual, expected)
