@@ -1396,7 +1396,7 @@ class ImageMetadata(Metadata):
         Returns:
             bool: True if this is a base image (base_only: true), False otherwise
         """
-        base_only_config = getattr(self.config, 'base_only', Missing)
+        base_only_config = self.config.base_only
         if base_only_config not in [Missing, None]:
             return bool(base_only_config)
         return False
@@ -1418,32 +1418,60 @@ class ImageMetadata(Metadata):
         """
         Determines whether this image should trigger the base image release workflow.
 
-        OKD builds never trigger the OCP registry.redhat.io base-image release path.
-        The test assembly does not use this path (Konflux UNRELEASED, Jenkins snapshot-to-release,
-        registry.redhat.io parent pullspecs, lockfile seeding with unreleased builds).
+        The method checks preconditions in the following order:
+        1. Variant must be OCP (not OKD)
+        2. Assembly must not be ``test``
+        3. Image must be ``base_only`` or a golang builder
+        4. Base image release enabled override:
+           - Image metadata configuration (``self.config.base_image_release.enabled``)
+           - Group configuration (``self.runtime.group_config.base_image_release.enabled``)
+        If no override is set for step 4, the enabled flag defaults to True.
 
         Returns:
-            bool: True if base image release workflow should be triggered, False otherwise
+            bool: True if base image release workflow should be triggered, False otherwise.
         """
         if self.runtime.variant is BuildVariant.OKD:
             return False
+
         if self.runtime.assembly == "test":
             return False
-        return self.is_base_image() or self.is_golang_builder()
 
-    def is_snapshot_release_enabled(self) -> bool:
+        if not (self.is_base_image() or self.is_golang_builder()):
+            return False
+
+        source = None
+        base_image_release_enabled = True
+        base_image_release_config_override = self.config.base_image_release.enabled
+
+        if base_image_release_config_override not in [Missing, None]:
+            base_image_release_enabled = bool(base_image_release_config_override)
+            source = "metadata config"
+        else:
+            base_image_release_group_override = self.runtime.group_config.base_image_release.enabled
+            if base_image_release_group_override not in [Missing, None]:
+                base_image_release_enabled = bool(base_image_release_group_override)
+                source = "group config"
+
+        self.logger.info(f"Base image release enabled set from {source} {base_image_release_enabled}")
+        return base_image_release_enabled
+
+    def is_base_image_release_quay_fallback_enabled(self) -> bool:
         """
-        Determines whether snapshot-to-release workflow is enabled for this image.
+        When False and ``should_trigger_base_image_release()`` applies, late parent resolve
+        must not fall back to Konflux ``image_pullspec`` if ``registry.redhat.io`` art-images-base
+        is unreachable (rebase fails instead).
 
-        The snapshot_release flag controls whether base images should trigger
-        the snapshot-to-release workflow when builds complete.
-
-        Returns:
-            bool: True if snapshot_release: true is configured, True by default if not specified
+        Image ``base_image_release.quay_fallback`` overrides group; default True
+        (same pattern as ``konflux.cachi2.lockfile.enabled``).
         """
-        snapshot_release_config = getattr(self.config, 'snapshot_release', Missing)
-        if snapshot_release_config not in [Missing, None]:
-            return bool(snapshot_release_config)
+        base_image_release_quay_fallback_config_override = self.config.base_image_release.quay_fallback
+        if base_image_release_quay_fallback_config_override not in [Missing, None]:
+            return bool(base_image_release_quay_fallback_config_override)
+        else:
+            base_image_release_quay_fallback_group_override = self.runtime.group_config.base_image_release.quay_fallback
+            if base_image_release_quay_fallback_group_override not in [Missing, None]:
+                return bool(base_image_release_quay_fallback_group_override)
+
         return True
 
     def get_required_artifacts(self) -> list:

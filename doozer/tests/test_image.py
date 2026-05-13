@@ -1796,6 +1796,7 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         runtime.logger = logging.getLogger('test_runtime')
         runtime.variant = BuildVariant.OCP
         runtime.assembly = 'stream'
+        runtime.group_config = Model({})
 
         # Test base image - should trigger workflow
         base_image = Model({'name': 'test-base', 'base_only': True})
@@ -1814,6 +1815,7 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         test_assembly_runtime.logger = logging.getLogger('test_runtime')
         test_assembly_runtime.variant = BuildVariant.OCP
         test_assembly_runtime.assembly = 'test'
+        test_assembly_runtime.group_config = Model({})
         self.assertFalse(ImageMetadata(test_assembly_runtime, base_data).should_trigger_base_image_release())
         self.assertFalse(ImageMetadata(test_assembly_runtime, golang_data).should_trigger_base_image_release())
 
@@ -1822,6 +1824,7 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         named_runtime.logger = logging.getLogger('test_runtime')
         named_runtime.variant = BuildVariant.OCP
         named_runtime.assembly = '4.17.1'
+        named_runtime.group_config = Model({})
         self.assertTrue(ImageMetadata(named_runtime, base_data).should_trigger_base_image_release())
         self.assertTrue(ImageMetadata(named_runtime, golang_data).should_trigger_base_image_release())
 
@@ -1831,38 +1834,83 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         regular_metadata = ImageMetadata(runtime, regular_data)
         self.assertFalse(regular_metadata.should_trigger_base_image_release())
 
+        # Regular image with base_image_release.enabled: true does not qualify (not base/golang)
+        snap_regular = Model({'name': 'test-regular', 'base_image_release': Model({'enabled': True})})
+        snap_regular_data = Model({'key': 'test-snap', 'data': snap_regular, 'filename': 'test-snap.yaml'})
+        snap_regular_metadata = ImageMetadata(runtime, snap_regular_data)
+        self.assertFalse(snap_regular_metadata.should_trigger_base_image_release())
+
+        # Base image with base_image_release.enabled: false
+        base_snap_off = Model({'name': 'test-base', 'base_only': True, 'base_image_release': Model({'enabled': False})})
+        base_snap_off_data = Model({'key': 'base-off', 'data': base_snap_off, 'filename': 'base-off.yaml'})
+        base_snap_off_metadata = ImageMetadata(runtime, base_snap_off_data)
+        self.assertFalse(base_snap_off_metadata.should_trigger_base_image_release())
+
+        # Golang builder with base_image_release.enabled: false
+        golang_snap_off = Model({'name': GOLANG_BUILDER_IMAGE_NAME, 'base_image_release': Model({'enabled': False})})
+        golang_snap_off_data = Model({'key': 'go-off', 'data': golang_snap_off, 'filename': 'go-off.yaml'})
+        golang_snap_off_metadata = ImageMetadata(runtime, golang_snap_off_data)
+        self.assertFalse(golang_snap_off_metadata.should_trigger_base_image_release())
+
+        # Group base_image_release.enabled: false, image omits field (inherits group -> off)
+        runtime_group_off = MagicMock()
+        runtime_group_off.logger = logging.getLogger('test_runtime')
+        runtime_group_off.variant = BuildVariant.OCP
+        runtime_group_off.assembly = 'stream'
+        runtime_group_off.group_config = Model({'base_image_release': Model({'enabled': False})})
+        group_off_base = Model({'name': 'g-off-base', 'base_only': True})
+        group_off_data = Model({'key': 'g-off-base', 'data': group_off_base, 'filename': 'g-off-base.yaml'})
+        group_off_metadata = ImageMetadata(runtime_group_off, group_off_data)
+        self.assertFalse(group_off_metadata.should_trigger_base_image_release())
+
+        # Group off, image base_image_release.enabled: true (image overrides)
+        runtime_both = MagicMock()
+        runtime_both.logger = logging.getLogger('test_runtime')
+        runtime_both.variant = BuildVariant.OCP
+        runtime_both.assembly = 'stream'
+        runtime_both.group_config = Model({'base_image_release': Model({'enabled': False})})
+        base_override = Model(
+            {
+                'name': 'override-base',
+                'base_only': True,
+                'base_image_release': Model({'enabled': True}),
+            }
+        )
+        both_data = Model({'key': 'override-base', 'data': base_override, 'filename': 'override-base.yaml'})
+        both_metadata = ImageMetadata(runtime_both, both_data)
+        self.assertTrue(both_metadata.should_trigger_base_image_release())
+
         # OKD: base image would trigger on OCP but never on OKD (no RH registry release)
         okd_runtime = MagicMock()
         okd_runtime.logger = logging.getLogger('test_runtime')
         okd_runtime.variant = BuildVariant.OKD
         okd_runtime.assembly = 'stream'
+        okd_runtime.group_config = Model({})
         okd_base_metadata = ImageMetadata(okd_runtime, base_data)
         self.assertFalse(okd_base_metadata.should_trigger_base_image_release())
 
         okd_golang_metadata = ImageMetadata(okd_runtime, golang_data)
         self.assertFalse(okd_golang_metadata.should_trigger_base_image_release())
 
-    def test_is_snapshot_release_enabled(self):
+    def test_base_image_release_quay_fallback_image_overrides_group(self):
         from artcommonlib.model import Model
 
         runtime = MagicMock()
         runtime.logger = logging.getLogger('test_runtime')
-        runtime.variant = BuildVariant.OCP
+        runtime.group_config = Model({'base_image_release': Model({'quay_fallback': False})})
+        img_on = Model({'name': 't', 'base_image_release': Model({'quay_fallback': True})})
+        meta_on = ImageMetadata(runtime, Model({'key': 't', 'data': img_on, 'filename': 't.yaml'}))
+        self.assertTrue(meta_on.is_base_image_release_quay_fallback_enabled())
 
-        enabled_image = Model({'name': 'test-snapshot', 'snapshot_release': True})
-        enabled_data = Model({'key': 'test-snapshot', 'data': enabled_image, 'filename': 'test-snapshot.yaml'})
-        enabled_metadata = ImageMetadata(runtime, enabled_data)
-        self.assertTrue(enabled_metadata.is_snapshot_release_enabled())
+        img_inherit = Model({'name': 't2'})
+        meta_inherit = ImageMetadata(runtime, Model({'key': 't2', 'data': img_inherit, 'filename': 't2.yaml'}))
+        self.assertFalse(meta_inherit.is_base_image_release_quay_fallback_enabled())
 
-        disabled_image = Model({'name': 'test-regular', 'snapshot_release': False})
-        disabled_data = Model({'key': 'test-regular', 'data': disabled_image, 'filename': 'test-regular.yaml'})
-        disabled_metadata = ImageMetadata(runtime, disabled_data)
-        self.assertFalse(disabled_metadata.is_snapshot_release_enabled())
-
-        default_image = Model({'name': 'test-default'})
-        default_data = Model({'key': 'test-default', 'data': default_image, 'filename': 'test-default.yaml'})
-        default_metadata = ImageMetadata(runtime, default_data)
-        self.assertTrue(default_metadata.is_snapshot_release_enabled())
+        runtime_default = MagicMock()
+        runtime_default.logger = logging.getLogger('test_runtime')
+        runtime_default.group_config = Model({})
+        meta_default = ImageMetadata(runtime_default, Model({'key': 't2', 'data': img_inherit, 'filename': 't2.yaml'}))
+        self.assertTrue(meta_default.is_base_image_release_quay_fallback_enabled())
 
 
 class TestExtractBuilderInfoFromPullspec(unittest.TestCase):

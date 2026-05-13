@@ -18,7 +18,7 @@ class TestBaseImageHandler(IsolatedAsyncioTestCase):
             {
                 "name": "test-base",
                 "base_only": True,
-                "snapshot_release": True,
+                "base_image_release": {"enabled": True},
                 "distgit": {"component": "ose-test-base-container"},
             }
         )
@@ -229,7 +229,7 @@ class TestBaseImageHandler(IsolatedAsyncioTestCase):
         golang_builder_model = Model(
             {
                 "name": GOLANG_BUILDER_IMAGE_NAME,
-                "snapshot_release": True,
+                "base_image_release": {"enabled": True},
                 "distgit": {"component": "ose-golang-builder-container"},
             }
         )

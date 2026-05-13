@@ -428,7 +428,6 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         """SUCCESS after base snapshot release refreshes Konflux DB without swapping image_pullspec to RH."""
         metadata = self._metadata()
         metadata.should_trigger_base_image_release.return_value = True
-        metadata.is_snapshot_release_enabled.return_value = True
         dest_dir = self.builder._config.base_dir.joinpath(metadata.qualified_key)
         dest_dir.mkdir(parents=True)
 
@@ -493,7 +492,6 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         """Test base image release failure handling with FAILURE outcome update."""
         metadata = self._metadata()
         metadata.should_trigger_base_image_release.return_value = True
-        metadata.is_snapshot_release_enabled.return_value = True
         dest_dir = self.builder._config.base_dir.joinpath(metadata.qualified_key)
         dest_dir.mkdir(parents=True)
 
@@ -621,7 +619,6 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         from pyartcd import jenkins
 
         metadata = self._metadata()
-        metadata.is_snapshot_release_enabled.return_value = True
 
         with patch.object(jenkins, 'start_base_image_release', return_value="SUCCESS") as mock_jenkins:
             result = await self.builder._trigger_base_image_release(metadata, "test-nvr")
@@ -636,21 +633,11 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         from pyartcd import jenkins
 
         metadata = self._metadata()
-        metadata.is_snapshot_release_enabled.return_value = True
 
         with patch.object(jenkins, 'start_base_image_release', return_value='FAILURE'):
             result = await self.builder._trigger_base_image_release(metadata, "test-nvr")
 
         self.assertFalse(result)
-
-    async def test_trigger_base_image_release_respects_snapshot_release_disabled(self):
-        """Test that snapshot_release disabled skips base image release."""
-        metadata = self._metadata()
-        metadata.is_snapshot_release_enabled.return_value = False
-
-        result = await self.builder._trigger_base_image_release(metadata, "test-nvr")
-
-        self.assertTrue(result)  # Should return True (no-op success) when disabled
 
 
 class TestNormalizeVersion(unittest.TestCase):
