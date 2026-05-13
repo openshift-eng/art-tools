@@ -1,4 +1,4 @@
-.PHONY: venv tox lint test pylint format format-check reinstall clean-reinstall unit unit-artcommon unit-doozer unit-elliott unit-pyartcd unit-ocp-build-data-validator
+.PHONY: venv tox lint test pylint pylint-imports format format-check reinstall clean-reinstall unit unit-artcommon unit-doozer unit-elliott unit-pyartcd unit-ocp-build-data-validator
 
 venv:
 	uv venv --python 3.11
@@ -14,8 +14,11 @@ format:
 	uv run ruff check --fix
 	uv run ruff format
 
-lint: format-check
+lint: format-check pylint-imports
 	uv run ruff check --output-format concise
+
+pylint-imports:
+	uv run pylint --disable=all --enable=E0401,E0611 --score=no artcommon/ doozer/ elliott/ pyartcd/ ocp-build-data-validator/
 
 pylint:
 	uv run pylint --errors-only .
