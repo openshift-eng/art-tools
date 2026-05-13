@@ -457,132 +457,170 @@ class SyncCIImagesPipeline:
 
         return rc, stdout, stderr
 
+    async def _check_for_changes(self) -> tuple[bool, str]:
+        """Check if ocp-build-data has changes since last run."""
+        has_changes, current_sha = await self._has_changes_stateless(self.version)
+        if not has_changes:
+            self._logger.info(f"{self.version}: No changes detected, skipping")
+        return has_changes, current_sha
+
+    async def _prepare_build_data(self) -> Path:
+        """Clone ocp-build-data repository."""
+        return await self._clone_ocp_build_data(self.version)
+
+    def _build_doozer_options(self, group_dir: Path, auth_file: str) -> str:
+        """Build doozer global options for all commands."""
+        group = f"openshift-{self.version}"
+        working_dir = f"{self.runtime.doozer_working}/wd-{self.version}"
+        doozer_opts = (
+            f"--working-dir {working_dir} "
+            f"--data-path {group_dir} "
+            f"--group {group} "
+            f"--assembly {self.assembly} "
+            f"--latest-parent-version "
+            f"--build-system {self.BUILD_SYSTEM} "
+            f"--registry-config {auth_file}"
+        )
+        if self.only_stream:
+            doozer_opts += f" --only-streams {self.only_stream}"
+        return doozer_opts
+
+    async def _generate_and_apply_buildconfigs(self, doozer_opts: str) -> None:
+        """Generate BuildConfigs and apply them to CI cluster."""
+        self._logger.info(f"{self.version}: Generating BuildConfigs")
+        working_dir = f"{self.runtime.doozer_working}/wd-{self.version}"
+        apply_flag = "" if self.runtime.dry_run else "--apply"
+        await self._run_doozer_command(
+            doozer_opts, "images:streams gen-buildconfigs", f"-o {working_dir}/buildconfigs.yaml {apply_flag}"
+        )
+
+    async def _mirror_images_to_ci(self, doozer_opts: str) -> None:
+        """Mirror builder and base images to CI registries."""
+        self._logger.info(f"{self.version}: Mirroring images")
+        mirror_args = ""
+        if self.update_images_only_when_missing:
+            mirror_args += "--only-if-missing "
+        if self.runtime.dry_run:
+            mirror_args += "--dry-run"
+        await self._run_doozer_command(doozer_opts, "images:streams mirror", mirror_args.strip())
+
+    async def _trigger_ci_builds(self, doozer_opts: str) -> None:
+        """Start CI builds for updated images."""
+        self._logger.info(f"{self.version}: Starting builds")
+        start_builds_args = "--dry-run" if self.runtime.dry_run else ""
+        await self._run_doozer_command(doozer_opts, "images:streams start-builds", start_builds_args)
+
+    async def _wait_for_builds(self) -> None:
+        """Wait for CI builds to complete."""
+        if not self.skip_waits and not self.runtime.dry_run:
+            self._logger.info(f"{self.version}: Waiting {self.WAIT_TIME_MINUTES} minutes for builds")
+            await asyncio.sleep(self.WAIT_TIME_MINUTES * 60)
+
+    async def _verify_upstream_consistency(self, doozer_opts: str) -> None:
+        """Verify CI imagestreams match expected state."""
+        self._logger.info(f"{self.version}: Checking upstream consistency")
+        await self._run_doozer_command(doozer_opts, "images:streams check-upstream", "")
+
+    async def _open_reconciliation_prs(self, doozer_opts: str) -> int:
+        """Open PRs to reconcile BuildConfig drift."""
+        if self.skip_prs:
+            return 0
+
+        self._logger.info(f"{self.version}: Opening reconciliation PRs")
+
+        # Validate GITHUB_TOKEN for PR operations (doozer requires PAT to fork repos)
+        github_token = os.environ.get('GITHUB_TOKEN')
+        if not github_token:
+            raise EnvironmentError(
+                "GITHUB_TOKEN (Personal Access Token) required for PR operations. "
+                "Doozer requires a PAT (not GitHub App token) to fork repos and open PRs. "
+                "Set GITHUB_TOKEN environment variable."
+            )
+
+        pr_args = f"--github-access-token {github_token} --interstitial {self.PR_INTERSTITIAL_SECONDS}"
+        if self.add_labels:
+            pr_args += f" --add-labels {self.add_labels}"
+        if self.runtime.dry_run:
+            pr_args += " --moist-run"  # doozer's dry-run equivalent for PRs
+
+        rc, _, _ = await self._run_doozer_command(
+            doozer_opts,
+            "images:streams prs open",
+            pr_args,
+            check=False,  # PRs can return 25 for partial success
+        )
+
+        if rc == 25:
+            self._logger.warning(f"{self.version}: Some PRs skipped (rc=25)")
+            return 25  # Don't update Redis on partial success - retry on next run
+        elif rc != 0:
+            raise RuntimeError(f"PR opening failed with rc={rc}")
+
+        return 0
+
+    async def _record_successful_run(self, current_sha: str) -> None:
+        """Store current SHA in Redis to track last successful run."""
+        if not self.runtime.dry_run:
+            redis_key = f"sync-ci-images:last-sha:{self.version}"
+            await redis.set_value(redis_key, current_sha)
+            self._logger.info(f"{self.version}: Updated Redis with SHA {current_sha[:8]}")
+
+    def _cleanup(self, group_dir: Path | None) -> None:
+        """Remove temporary clone directory."""
+        if group_dir and group_dir.exists():
+            shutil.rmtree(group_dir)
+            self._logger.info(f"{self.version}: Cleaned up clone directory")
+
     async def run(self) -> int:
         """
-        Main pipeline execution: sync CI images for the configured OCP version.
+        Main pipeline: sync CI images for a single OCP version.
+
+        Workflow:
+        1. Check for changes in ocp-build-data
+        2. Generate and apply BuildConfigs to CI cluster
+        3. Mirror builder/base images to CI registries
+        4. Trigger CI builds
+        5. Wait for builds to complete
+        6. Verify upstream imagestream consistency
+        7. Open PRs to reconcile any BuildConfig drift
 
         Returns:
             Return code: 0=success, 25=partial (PRs skipped), 50=failure
         """
         from pyartcd import jenkins
 
-        # Set Jenkins title tag
         jenkins.update_title(f' [{self.version}]')
-
         self._logger.info(f"Starting sync-ci-images for {self.version}")
 
-        group = f"openshift-{self.version}"
         group_dir = None
 
         try:
-            # Check for changes using stateless detection (GitHub API or git ls-remote + Redis)
-            has_changes, current_sha = await self._has_changes_stateless(self.version)
+            # Check for changes
+            has_changes, current_sha = await self._check_for_changes()
             if not has_changes:
-                self._logger.info(f"{self.version}: No changes detected, skipping")
                 return 0
 
-            # Clone ocp-build-data only if changes detected
-            group_dir = await self._clone_ocp_build_data(self.version)
+            # Prepare build data
+            group_dir = await self._prepare_build_data()
 
-            # Create registry config
+            # Execute sync workflow
             with self._create_registry_config() as auth_file:
                 self._logger.info(f"Created registry config: {auth_file}")
+                doozer_opts = self._build_doozer_options(group_dir, auth_file)
 
-                # Build doozer global options (before subcommand)
-                working_dir = f"{self.runtime.doozer_working}/wd-{self.version}"
-                doozer_opts = (
-                    f"--working-dir {working_dir} "
-                    f"--data-path {group_dir} "
-                    f"--group {group} "
-                    f"--assembly {self.assembly} "
-                    f"--latest-parent-version "
-                    f"--build-system {self.BUILD_SYSTEM} "
-                    f"--registry-config {auth_file}"
-                )
+                await self._generate_and_apply_buildconfigs(doozer_opts)
+                await self._mirror_images_to_ci(doozer_opts)
+                await self._trigger_ci_builds(doozer_opts)
+                await self._wait_for_builds()
+                await self._verify_upstream_consistency(doozer_opts)
 
-                if self.only_stream:
-                    doozer_opts += f" --only-streams {self.only_stream}"
+                rc = await self._open_reconciliation_prs(doozer_opts)
+                if rc == 25:
+                    return 25
 
-                # Step 1: Generate BuildConfigs
-                # In dry-run mode, omit --apply flag instead of skipping the command
-                self._logger.info(f"{self.version}: Generating BuildConfigs")
-                apply_flag = "" if self.runtime.dry_run else "--apply"
-                await self._run_doozer_command(
-                    doozer_opts, "images:streams gen-buildconfigs", f"-o {working_dir}/buildconfigs.yaml {apply_flag}"
-                )
-
-                # Step 2: Mirror images
-                # Pass --dry-run to doozer subcommand for better visibility
-                self._logger.info(f"{self.version}: Mirroring images")
-                mirror_args = ""
-                if self.update_images_only_when_missing:
-                    mirror_args += "--only-if-missing "
-                if self.runtime.dry_run:
-                    mirror_args += "--dry-run"
-                await self._run_doozer_command(
-                    doozer_opts,
-                    "images:streams mirror",
-                    mirror_args.strip(),
-                )
-
-                # Step 3: Start builds
-                # Pass --dry-run to doozer subcommand
-                self._logger.info(f"{self.version}: Starting builds")
-                start_builds_args = "--dry-run" if self.runtime.dry_run else ""
-                await self._run_doozer_command(doozer_opts, "images:streams start-builds", start_builds_args)
-
-                # Step 4: Wait for builds if not skipping
-                if not self.skip_waits and not self.runtime.dry_run:
-                    self._logger.info(f"{self.version}: Waiting {self.WAIT_TIME_MINUTES} minutes for builds")
-                    await asyncio.sleep(self.WAIT_TIME_MINUTES * 60)
-
-                # Step 5: Check upstream consistency
-                self._logger.info(f"{self.version}: Checking upstream consistency")
-                await self._run_doozer_command(doozer_opts, "images:streams check-upstream", "")
-
-                # Step 6: Open reconciliation PRs
-                if not self.skip_prs:
-                    self._logger.info(f"{self.version}: Opening reconciliation PRs")
-
-                    # Validate GITHUB_TOKEN for PR operations (doozer requires PAT to fork repos)
-                    github_token = os.environ.get('GITHUB_TOKEN')
-                    if not github_token:
-                        raise EnvironmentError(
-                            "GITHUB_TOKEN (Personal Access Token) required for PR operations. "
-                            "Doozer requires a PAT (not GitHub App token) to fork repos and open PRs. "
-                            "Set GITHUB_TOKEN environment variable."
-                        )
-
-                    pr_args = f"--github-access-token {github_token} --interstitial {self.PR_INTERSTITIAL_SECONDS}"
-                    if self.add_labels:
-                        pr_args += f" --add-labels {self.add_labels}"
-                    if self.runtime.dry_run:
-                        pr_args += " --moist-run"  # doozer's dry-run equivalent for PRs
-
-                    rc, _, _ = await self._run_doozer_command(
-                        doozer_opts,
-                        "images:streams prs open",
-                        pr_args,
-                        check=False,  # PRs can return 25 for partial success
-                    )
-
-                    if rc == 25:
-                        self._logger.warning(f"{self.version}: Some PRs skipped (rc=25)")
-                        # Don't update Redis on partial success - retry on next run
-                        return 25
-                    elif rc != 0:
-                        raise RuntimeError(f"PR opening failed with rc={rc}")
-
-            # Store current SHA in Redis for next run (stateless)
-            if not self.runtime.dry_run:
-                redis_key = f"sync-ci-images:last-sha:{self.version}"
-                await redis.set_value(redis_key, current_sha)
-                self._logger.info(f"{self.version}: Updated Redis with SHA {current_sha[:8]}")
-
-            # Clean up clone directory (no need to persist between runs)
-            if group_dir and group_dir.exists():
-                shutil.rmtree(group_dir)
-                self._logger.info(f"{self.version}: Cleaned up clone directory")
+            # Record success
+            await self._record_successful_run(current_sha)
+            self._cleanup(group_dir)
 
             self._logger.info(f"{self.version}: Completed successfully")
             return 0
