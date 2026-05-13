@@ -9,7 +9,7 @@ import click
 import openshift_client as oc
 import requests
 from requests.adapters import HTTPAdapter
-from requests.packages.urllib3.util.retry import Retry
+from urllib3.util.retry import Retry
 
 from pyartcd.cli import cli, pass_runtime
 from pyartcd.runtime import Runtime
