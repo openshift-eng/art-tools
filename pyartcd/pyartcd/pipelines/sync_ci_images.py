@@ -553,6 +553,10 @@ class SyncCIImagesPipeline:
         if rc == 25:
             self._logger.warning(f"{self.version}: Some PRs skipped (rc=25)")
             return 25  # Don't update Redis on partial success - retry on next run
+        elif rc == 1 and self.runtime.dry_run:
+            # --moist-run exits with 1 to signal simulation mode (not a failure)
+            self._logger.info(f"{self.version}: PR simulation completed (rc=1 from --moist-run)")
+            return 0
         elif rc != 0:
             raise RuntimeError(f"PR opening failed with rc={rc}")
 
