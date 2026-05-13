@@ -6,6 +6,8 @@ If the file `.claude/CLAUDE.md` exists, read it. If instructions contradict (for
 
 ## Overview
 
+For detailed domain documentation, see [AGENTS.md](./AGENTS.md) and the [agentic/](./agentic/) directory.
+
 This is **art-tools**, a collection of Release tools for managing OpenShift Container Platform (OCP) releases. The repository contains multiple Python packages that work together to automate the OCP release process.
 
 ### Core Components
@@ -138,6 +140,24 @@ gh pr create --base main
    - Commit directly to `main`
    - Push to `origin` remote
    - Force push to shared branches without coordination
+
+## Exec-Plans (Required for Features)
+
+Before implementing a new feature or significant change, you MUST:
+
+1. Create an exec-plan in `agentic/exec-plans/active/` using the template at `agentic/exec-plans/template.md`
+2. Name it descriptively: `agentic/exec-plans/active/<feature-name>.md`
+3. Fill in: Goal, Context, Technical Approach, Implementation Phases, and Testing Strategy
+4. Get the plan reviewed by teammates BEFORE writing code
+5. Update the plan's Progress Notes as work progresses
+6. Move to `agentic/exec-plans/completed/` when done
+
+This applies to: new features, significant refactors, architectural changes, new integrations.
+This does NOT apply to: bug fixes, typo fixes, dependency bumps, small config changes.
+
+## Documentation Updates
+
+When you modify source code in files tracked by the documentation freshness system (see `.github/workflows/validate-agentic-docs.yml`), update the corresponding agentic doc. Run `make check-docs` to verify documentation quality.
 
 ## Architecture
 
