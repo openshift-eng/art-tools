@@ -122,6 +122,8 @@ class ImageMetadata(Metadata):
         """ Event that is set when this image is being rebased. """
         self.rebase_status = False
         """ True if this image has been successfully rebased. """
+        self.lockfile_packages: list[str] = []
+        """ Resolved RPM package names from lockfile, used by child images for conflict detection. """
         self.build_event = Event()
         """ Event that is set when this image is being built. """
         self.build_status = False

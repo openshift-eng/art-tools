@@ -1,0 +1,473 @@
+"""
+Dockerfile-level parsing for RPM lockfile generation.
+
+Parses Dockerfile structure to collect ARG/ENV variables, build
+COPY/ADD mappings, locate and extract packages from shell scripts
+referenced in RUN commands, and analyze per-stage install and update
+commands.
+"""
+
+import logging
+import re
+import shlex
+from pathlib import Path
+
+from artcommonlib.arch_util import BREW_ARCHES
+from dockerfile_parse import DockerfileParser
+
+from doozerlib.lockfile_prototype.constants import ARCH_SUBSHELL_KEYWORDS
+from doozerlib.lockfile_prototype.models import StageInfo
+from doozerlib.lockfile_prototype.shell_parser import (
+    analyze_run_commands,
+    resolve_bash_expansion,
+)
+
+
+def _strip_quotes(value: str) -> str:
+    if len(value) >= 2 and value[0] in ("\"", "'") and value[-1] == value[0]:
+        return value[1:-1]
+    return value
+
+
+def collect_stage_vars(entries: list[dict], inherited_vars: dict[str, str] | None = None) -> dict[str, str]:
+    """
+    Collect ARG and ENV variable definitions from DockerfileParser
+    structure entries.
+
+    ARG values with defaults and ENV values are collected. ENV values
+    can reference previously defined variables via bash expansion.
+
+    Arg(s):
+        entries (list[dict]): DockerfileParser structure entries with
+            "instruction" and "value" keys.
+        inherited_vars (dict[str, str] | None): Variables inherited from
+            global scope (ARGs before first FROM).
+    Return Value(s):
+        dict[str, str]: Collected variable name-to-value mapping.
+    """
+    variables: dict[str, str] = dict(inherited_vars or {})
+
+    for entry in entries:
+        instruction = entry["instruction"]
+        value = entry["value"]
+
+        if instruction == "ARG":
+            arg_match = re.match(r"^(\w+)(?:=(.*))?$", value.strip())
+            if arg_match:
+                var_name = arg_match.group(1)
+                default_value = arg_match.group(2)
+                if default_value is not None:
+                    variables[var_name] = resolve_bash_expansion(_strip_quotes(default_value.strip()), variables)
+
+        elif instruction == "ENV":
+            env_match = re.match(r"^(\w+)(?:=|\s+)(.*)", value.strip())
+            if env_match:
+                var_name = env_match.group(1)
+                variables[var_name] = resolve_bash_expansion(_strip_quotes(env_match.group(2).strip()), variables)
+
+    return variables
+
+
+def build_copy_map(
+    stage_entries: list[dict],
+    env_vars: dict[str, str] | None = None,
+) -> dict[str, str]:
+    """
+    Build a mapping from container destination paths to source paths
+    from COPY/ADD instructions in a Dockerfile stage.
+
+    Handles both file and directory destinations:
+        COPY hack/foo.sh /tmp   -> /tmp/foo.sh -> hack/foo.sh
+        COPY hack/foo.sh /opt/renamed.sh -> /opt/renamed.sh -> hack/foo.sh
+
+    Skips COPY --from=... (inter-stage copies) since those don't come
+    from the source tree.
+
+    Arg(s):
+        stage_entries (list[dict]): DockerfileParser structure entries.
+        env_vars (dict[str, str] | None): Variables for resolving
+            COPY paths that contain ARG/ENV references.
+    Return Value(s):
+        dict[str, str]: Container path to source-relative path mapping.
+    """
+    variables = dict(env_vars or {})
+    copy_map: dict[str, str] = {}
+    for entry in stage_entries:
+        if entry["instruction"] not in ("COPY", "ADD"):
+            continue
+        value = entry["value"]
+        if "--from=" in value:
+            continue
+        if variables:
+            value = resolve_bash_expansion(value, variables)
+        try:
+            parts = shlex.split(value)
+        except ValueError:
+            continue
+        non_flag_parts = [p for p in parts if not p.startswith("--")]
+        if len(non_flag_parts) < 2:
+            continue
+        sources = non_flag_parts[:-1]
+        dest = non_flag_parts[-1]
+        for src in sources:
+            src_name = Path(src).name
+            # Map assuming dest is a directory: COPY hack/foo.sh /tmp -> /tmp/foo.sh
+            dir_dest = dest.rstrip("/") + "/" + src_name
+            copy_map[dir_dest] = src
+            # Map assuming dest is an exact file path (only when dest doesn't end with /)
+            if not dest.endswith("/"):
+                copy_map[dest] = src
+    return copy_map
+
+
+def _read_packages_from_file(source_file: Path) -> list[str]:
+    """
+    Read package names from a file (one per line, comments skipped).
+    Allows file paths (e.g. /usr/sbin/udevadm) since DNF can resolve
+    them via provides.
+    """
+    packages: list[str] = []
+    for line in source_file.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        pkg_name = line.split()[0]
+        if not pkg_name.startswith("-") and "*" not in pkg_name:
+            packages.append(pkg_name)
+    return packages
+
+
+def _resolve_file_from_copy_map(
+    resolved_path: str,
+    copy_map: dict[str, str],
+    source_dir: Path,
+) -> Path | None:
+    """
+    Look up a container path in copy_map and return the source file.
+    Falls back to looking for the basename directly in source_dir
+    when copy_map uses globs (e.g. COPY ${PKGS_LIST}* /tmp/).
+    """
+    source_file = None
+    if resolved_path in copy_map:
+        source_file = source_dir / copy_map[resolved_path]
+    else:
+        basename = Path(resolved_path).name
+        for container_path, src_path in copy_map.items():
+            if container_path.endswith("/" + basename):
+                source_file = source_dir / src_path
+                break
+        if not source_file:
+            candidate = source_dir / basename
+            if candidate.exists():
+                source_file = candidate
+    if not source_file:
+        return None
+    try:
+        source_file = source_file.resolve()
+        if not source_file.is_relative_to(source_dir.resolve()):
+            return None
+    except (OSError, ValueError):
+        return None
+    return source_file if source_file.exists() else None
+
+
+def extract_packages_from_file_installs(
+    run_values: list[str],
+    copy_map: dict[str, str],
+    source_dir: Path,
+    env_vars: dict[str, str] | None = None,
+) -> tuple[list[str], dict[str, list[str]]]:
+    """
+    Extract package names from install commands that read packages from
+    a file via stdin redirect or pipe.
+
+    Supported patterns:
+        xargs dnf install < /tmp/pkgs.txt
+        grep -vE '^(#|$)' /tmp/pkgs.txt | xargs dnf install -y
+        cat /tmp/pkgs.txt | xargs dnf install -y
+
+    When the file path contains an arch keyword like $(arch), resolves
+    it per-architecture and returns arch-specific packages separately.
+
+    Arg(s):
+        run_values (list[str]): RUN command bodies or joined script lines.
+        copy_map (dict[str, str]): Container path to source path mapping.
+        source_dir (Path): Source tree root.
+        env_vars (dict[str, str] | None): Variables for path resolution.
+    Return Value(s):
+        tuple[list[str], dict[str, list[str]]]:
+            - Sorted unique package names (common to all arches).
+            - Dict mapping arch to sorted unique package names for that arch only.
+    """
+    logger = logging.getLogger(__name__)
+    variables = dict(env_vars or {})
+    redirect_re = re.compile(
+        r"""
+        (?:xargs\s+\S+\s+)?        # optional xargs with flags
+        (?:dnf|yum)\s+              # package manager
+        .*?\b(?:install)\b          # install subcommand
+        .*?<\s*(\S+)               # stdin redirect: < /path/to/file
+        """,
+        re.VERBOSE,
+    )
+    pipe_re = re.compile(
+        r"""
+        (?:grep|cat)\s+             # grep or cat command
+        .*?(\S+)                    # file path argument (captured)
+        \s*\|\s*                    # pipe
+        (?:xargs\s+\S+\s+)?        # optional xargs with flags
+        (?:dnf|yum)\s+              # package manager
+        .*?\b(?:install)\b          # install subcommand
+        """,
+        re.VERBOSE,
+    )
+    packages: set[str] = set()
+    arch_packages: dict[str, set[str]] = {}
+
+    for run_body in run_values:
+        for cmd in re.split(r"&&|;", run_body):
+            cmd_clean = re.sub(r"^(if\s+!\s*|if\s+|then|else|elif|do)\s*", "", cmd.strip())
+            match = redirect_re.search(cmd_clean)
+            if not match:
+                match = pipe_re.search(cmd_clean)
+            if not match:
+                continue
+            raw_path = match.group(1)
+            resolved_path = resolve_bash_expansion(raw_path, variables)
+            if not resolved_path:
+                continue
+
+            has_arch_keyword = any(kw in resolved_path for kw in ARCH_SUBSHELL_KEYWORDS)
+            if not has_arch_keyword and "$" in resolved_path:
+                continue
+
+            if has_arch_keyword:
+                for arch in BREW_ARCHES:
+                    arch_path = resolved_path
+                    for kw in ARCH_SUBSHELL_KEYWORDS:
+                        arch_path = arch_path.replace(kw, arch)
+                    source_file = _resolve_file_from_copy_map(arch_path, copy_map, source_dir)
+                    if not source_file:
+                        continue
+                    logger.info(f"Extracting arch-specific packages from {source_file} for {arch}")
+                    try:
+                        arch_packages.setdefault(arch, set()).update(_read_packages_from_file(source_file))
+                    except OSError:
+                        continue
+            else:
+                source_file = _resolve_file_from_copy_map(resolved_path, copy_map, source_dir)
+                if not source_file:
+                    logger.debug(f"File install path {resolved_path} not resolved from COPY map")
+                    continue
+                logger.info(f"Extracting packages from file install: {source_file}")
+                try:
+                    packages.update(_read_packages_from_file(source_file))
+                except OSError:
+                    continue
+
+    arch_result = {arch: sorted(pkgs) for arch, pkgs in sorted(arch_packages.items())}
+    return sorted(packages), arch_result
+
+
+def extract_packages_from_scripts(
+    run_values: list[str],
+    source_dir: Path | None = None,
+    copy_map: dict[str, str] | None = None,
+    env_vars: dict[str, str] | None = None,
+) -> StageInfo:
+    """
+    Find shell scripts invoked in RUN commands and extract yum/dnf
+    install/update packages from them.
+
+    Detects patterns like:
+        RUN /src/install-deps.sh
+        RUN ./scripts/setup.sh
+        RUN . /cachi2/cachi2.env && /src/install-deps.sh
+        RUN /bin/bash /tmp/dockerfile_install_support.sh
+        RUN bash /opt/scripts/setup.sh
+
+    Uses copy_map to trace container paths back to source files when
+    the script was COPY'd into the image (e.g. COPY hack/foo.sh /tmp).
+
+    Arg(s):
+        run_values (list[str]): RUN command bodies.
+        source_dir (Path | None): Source tree root to locate script files.
+        copy_map (dict[str, str] | None): Container path to source path
+            mapping from COPY/ADD instructions.
+        env_vars (dict[str, str] | None): Variables for path resolution.
+    Return Value(s):
+        StageInfo: Extracted packages, update targets, arch-specific
+            packages, and update flag from scripts.
+    """
+    if not source_dir:
+        return StageInfo()
+
+    logger = logging.getLogger(__name__)
+    # Match script invocations: absolute (/path/to.sh), relative
+    # (./path/to.sh), or bare (name.sh relying on PATH) — optionally
+    # preceded by an interpreter (bash, sh, /bin/bash, etc.)
+    script_pattern = re.compile(
+        r"(?:^|&&\s*|;\s*)"
+        r"(?:(?:(?:/usr)?/bin/)?(?:ba)?sh\s+)?"
+        r"(/\S+\.sh|\.\/\S+\.sh|(?<!\S)[\w.-]+\.sh)"
+    )
+    copy_map = copy_map or {}
+    all_packages: set[str] = set()
+    all_updates: set[str] = set()
+    all_arch_packages: dict[str, set[str]] = {}
+    scripts_have_bare_update: bool = False
+
+    for run_body in run_values:
+        for match in script_pattern.finditer(run_body):
+            script_path = match.group(1)
+            if script_path.startswith("./"):
+                candidate = source_dir / script_path[2:]
+            elif script_path.startswith("/src/"):
+                candidate = source_dir / script_path[5:]
+            elif script_path in copy_map:
+                candidate = source_dir / copy_map[script_path]
+            elif "/" not in script_path:
+                found = None
+                for container_path, src_path in copy_map.items():
+                    if Path(container_path).name == script_path:
+                        found = source_dir / src_path
+                        break
+                if found:
+                    candidate = found
+                else:
+                    logger.debug(f"Skipping bare script {script_path}: not found in COPY map")
+                    continue
+            else:
+                logger.debug(f"Skipping script {script_path}: unsupported path prefix and not in COPY map")
+                continue
+
+            try:
+                candidate = candidate.resolve()
+                if not candidate.is_relative_to(source_dir.resolve()):
+                    logger.debug(f"Skipping script {script_path}: path traversal outside source_dir")
+                    continue
+            except (OSError, ValueError):
+                continue
+
+            if not candidate.exists():
+                logger.warning(f"Script {script_path} referenced in Dockerfile but not found at {candidate}")
+                continue
+
+            logger.info(f"Extracting packages from script: {candidate}")
+
+            try:
+                script_content = candidate.read_text()
+            except OSError:
+                continue
+
+            raw_lines = [line for line in script_content.splitlines() if not line.strip().startswith("#")]
+            joined_lines: list[str] = []
+            for line in raw_lines:
+                stripped = line.rstrip()
+                if joined_lines and joined_lines[-1].endswith("\\"):
+                    joined_lines[-1] = joined_lines[-1][:-1] + " " + stripped.lstrip()
+                else:
+                    joined_lines.append(stripped)
+            script_body = "\n".join(line for line in joined_lines if line.strip())
+
+            pkgs, script_arch_pkgs, updates, has_update = analyze_run_commands([script_body])
+            all_packages.update(pkgs)
+            for arch, arch_pkgs in script_arch_pkgs.items():
+                all_arch_packages.setdefault(arch, set()).update(arch_pkgs)
+            all_updates.update(updates)
+            if has_update:
+                scripts_have_bare_update = True
+
+            file_pkgs, file_arch_pkgs = extract_packages_from_file_installs(
+                [script_body], copy_map, source_dir, env_vars=env_vars
+            )
+            all_packages.update(file_pkgs)
+            for arch, arch_pkgs in file_arch_pkgs.items():
+                all_arch_packages.setdefault(arch, set()).update(arch_pkgs)
+
+    return StageInfo(
+        packages=sorted(all_packages),
+        has_update=scripts_have_bare_update,
+        arch_packages={arch: sorted(pkgs) for arch, pkgs in sorted(all_arch_packages.items())},
+        update_targets=sorted(all_updates),
+    )
+
+
+def analyze_dockerfile_stages(
+    dockerfile_path: Path,
+    source_dir: Path | None = None,
+) -> tuple[list["StageInfo"], list[dict]]:
+    """
+    Parse a Dockerfile and return per-stage package analysis.
+
+    Uses DockerfileParser for instruction parsing, backslash-continuation
+    joining, and stage boundary detection. Collects ARG definitions before
+    the first FROM as global variables, then per-stage ARG/ENV definitions.
+    All variables are used to resolve package names in install commands.
+
+    Also detects shell scripts invoked in RUN commands and extracts
+    packages from them if the script file exists in source_dir.
+
+    Packages inside arch-conditional blocks (if [ $(arch) = X ]) are
+    returned separately so they can be resolved only for the matching
+    architecture.
+
+    Arg(s):
+        dockerfile_path (Path): Path to the Dockerfile.
+        source_dir (Path | None): Source tree root to locate script files
+            referenced in RUN commands.
+    Return Value(s):
+        tuple[list[StageInfo], list[dict]]: Per-stage package analysis
+            and raw DockerfileParser structure entries.
+    """
+    dfp = DockerfileParser(str(dockerfile_path))
+    entries = dfp.structure
+
+    pre_from_entries: list[dict] = []
+    stage_entry_lists: list[list[dict]] = []
+    current_stage: list[dict] = []
+    seen_from = False
+
+    for entry in entries:
+        if entry["instruction"] == "FROM":
+            if seen_from and current_stage:
+                stage_entry_lists.append(current_stage)
+            seen_from = True
+            current_stage = [entry]
+        elif seen_from:
+            current_stage.append(entry)
+        else:
+            pre_from_entries.append(entry)
+
+    if current_stage:
+        stage_entry_lists.append(current_stage)
+
+    global_args = collect_stage_vars(pre_from_entries)
+    stages: list[StageInfo] = []
+
+    for stage_entries in stage_entry_lists:
+        stage_vars = collect_stage_vars(stage_entries, inherited_vars=global_args)
+        run_values = [e["value"] for e in stage_entries if e["instruction"] == "RUN"]
+
+        common, arch_specific, update_targets, has_update = analyze_run_commands(run_values, env_vars=stage_vars)
+        stage = StageInfo(
+            packages=common,
+            has_update=has_update,
+            arch_packages=arch_specific,
+            update_targets=update_targets,
+        )
+
+        copy_map = build_copy_map(stage_entries, env_vars=stage_vars)
+        stage = stage.merge(
+            extract_packages_from_scripts(run_values, source_dir=source_dir, copy_map=copy_map, env_vars=stage_vars)
+        )
+
+        if source_dir:
+            file_pkgs, file_arch_pkgs = extract_packages_from_file_installs(
+                run_values, copy_map, source_dir, env_vars=stage_vars
+            )
+            stage = stage.merge(StageInfo(packages=file_pkgs, arch_packages=file_arch_pkgs))
+
+        stages.append(stage)
+
+    return stages, entries

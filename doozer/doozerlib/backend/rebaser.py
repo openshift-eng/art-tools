@@ -10,6 +10,7 @@ import re
 import shutil
 import stat
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Dict, List, Optional, Set, Tuple, cast
 
 import aiofiles
@@ -30,7 +31,7 @@ from doozerlib.backend.build_repo import BuildRepo
 from doozerlib.exceptions import ParentRebaseFailedError
 from doozerlib.image import ImageMetadata, extract_builder_info_from_pullspec
 from doozerlib.lockfile import ArtifactLockfileGenerator, RPMLockfileGenerator
-from doozerlib.lockfile_prototype import LockfileBackend
+from doozerlib.lockfile_prototype.constants import LockfileBackend
 from doozerlib.record_logger import RecordLogger
 from doozerlib.repos import Repos
 from doozerlib.runtime import Runtime
@@ -91,6 +92,7 @@ class KonfluxRebaser:
             runtime.repos, runtime=runtime, lockfile_seed_nvrs=lockfile_seed_nvrs
         )
         self.artifact_lockfile_generator = ArtifactLockfileGenerator(runtime=runtime)
+        self._shared_dnf_cache: TemporaryDirectory | None = None
         self.image_repo = image_repo
         self.uuid_tag = ''
         self.variant = variant
@@ -301,6 +303,7 @@ class KonfluxRebaser:
 
         # Determine if parent images contain private fixes
         downstream_parents: list[str] | None = None
+        parent_members: list = []
         if "from" in metadata.config:
             # If this image is FROM another group member, we need to wait on that group
             # member to determine if there is a private fix in it.
@@ -350,6 +353,7 @@ class KonfluxRebaser:
             release,
             downstream_parents,
             force_yum_updates,
+            parent_members=parent_members,
         )
         metadata.private_fix = private_fix
 
@@ -937,6 +941,7 @@ class KonfluxRebaser:
         release: str,
         downstream_parents: list[str] | None,
         force_yum_updates: bool,
+        parent_members: list | None = None,
     ):
         with exectools.Dir(dest_dir):
             await self._generate_repo_conf(metadata, dest_dir, self._runtime.repos)
@@ -963,7 +968,24 @@ class KonfluxRebaser:
 
             # Generate lockfile after Dockerfile update so --containerfile
             # sees the rebased FROM lines with resolved ART pullspecs
-            await self._write_rpms_lock_file(metadata, dest_dir, downstream_parents)
+            await self._write_rpms_lock_file(metadata, dest_dir, downstream_parents, parent_members)
+
+            # Strip bare yum/dnf update commands AFTER lockfile generation
+            # so the generator resolves upgrade targets into the lockfile,
+            # but the build doesn't hit unreachable external repos (e.g.
+            # cdn-ubi.redhat.com) in hermetic mode.
+            if (
+                metadata.is_lockfile_generation_enabled()
+                and metadata.get_lockfile_backend() == LockfileBackend.RPM_LOCKFILE_PROTOTYPE.value
+            ):
+                from doozerlib.lockfile_prototype.dockerfile_transforms import (
+                    strip_bare_updates,
+                    strip_bare_updates_from_scripts,
+                )
+
+                df_path = dest_dir / "Dockerfile"
+                df_path.write_text(strip_bare_updates(df_path.read_text()))
+                strip_bare_updates_from_scripts(dest_dir, logger=self._logger)
 
             await self._update_csv(metadata, dest_dir, version, release)
 
@@ -974,6 +996,7 @@ class KonfluxRebaser:
         metadata: ImageMetadata,
         dest_dir: Path,
         downstream_parents: list[str] | None = None,
+        parent_members: list | None = None,
     ):
         if not metadata.is_lockfile_generation_enabled():
             self._logger.debug(f"RPM lockfile generation is disabled for {metadata.distgit_key}")
@@ -983,11 +1006,50 @@ class KonfluxRebaser:
         self._logger.info(f"Generating RPM lockfile for {metadata.distgit_key} (backend={backend_str})")
 
         if backend_str == LockfileBackend.RPM_LOCKFILE_PROTOTYPE.value:
-            from doozerlib.lockfile_prototype import RpmLockfilePrototypeGenerator
+            from doozerlib.lockfile_prototype.constants import DEFAULT_RPM_LOCKFILE_NAME
+            from doozerlib.lockfile_prototype.generator import RpmLockfilePrototypeGenerator
+            from doozerlib.lockfile_prototype.resolver import RpmResolver
 
-            generator = RpmLockfilePrototypeGenerator(self._runtime.repos, runtime=self._runtime)
-            generator.downstream_parents = downstream_parents or []
-            await generator.generate_lockfile(metadata, dest_dir)
+            if self._shared_dnf_cache is None:
+                self._shared_dnf_cache = TemporaryDirectory(prefix="rpm-lockfile-cache-")
+
+            resolver = RpmResolver(logger=self._logger, cache_dir=self._shared_dnf_cache.name)
+            generator = RpmLockfilePrototypeGenerator(self._runtime.repos, resolver=resolver)
+
+            fallback: dict[int, list[str]] = {}
+            parent_dirs: dict[int, Path] = {}
+            if parent_members and downstream_parents:
+                for stage_num, pullspec in enumerate(downstream_parents):
+                    for parent in parent_members or []:
+                        if parent is None:
+                            continue
+                        if parent.distgit_key in pullspec:
+                            if parent.lockfile_packages:
+                                fallback[stage_num] = parent.lockfile_packages
+                            parent_dir = self._base_dir / parent.qualified_key
+                            if parent_dir.is_dir():
+                                parent_dirs[stage_num] = parent_dir
+                            break
+
+            await generator.generate_lockfile(
+                metadata,
+                dest_dir,
+                downstream_parents=downstream_parents,
+                fallback_installed=fallback or None,
+                parent_source_dirs=parent_dirs or None,
+            )
+
+            # Store resolved package names for child images
+            lockfile_path = dest_dir / DEFAULT_RPM_LOCKFILE_NAME
+            if lockfile_path.exists():
+                lockfile_data = yaml.safe_load(lockfile_path.read_text())
+                pkg_names: set[str] = set()
+                for arch_entry in lockfile_data.get("arches", []):
+                    for pkg in arch_entry.get("packages", []):
+                        name = pkg.get("name")
+                        if name:
+                            pkg_names.add(name)
+                metadata.lockfile_packages = sorted(pkg_names)
         else:
             await self.rpm_lockfile_generator.generate_lockfile(metadata, dest_dir)
 
@@ -1294,6 +1356,12 @@ class KonfluxRebaser:
             shutil.copyfileobj(df_fileobj, df)
             df_fileobj.close()
 
+        if metadata.get_lockfile_backend() == LockfileBackend.RPM_LOCKFILE_PROTOTYPE.value:
+            from doozerlib.lockfile_prototype.dockerfile_transforms import fix_rpm_verify_commands
+
+            df_path_obj = Path(dfp.dockerfile_path)
+            df_path_obj.write_text(fix_rpm_verify_commands(df_path_obj.read_text()))
+
         await self._update_environment_variables(
             metadata, source, df_path, build_update_envs=build_update_env_vars, metadata_envs=metadata_envs
         )
@@ -1361,6 +1429,9 @@ class KonfluxRebaser:
             List[str]: List of RUN commands to enable modules, or empty list if no modules needed
         """
         if not metadata.is_lockfile_generation_enabled():
+            return []
+
+        if metadata.get_lockfile_backend() == LockfileBackend.RPM_LOCKFILE_PROTOTYPE.value:
             return []
 
         # Check if DNF module enablement is disabled
@@ -1650,27 +1721,6 @@ class KonfluxRebaser:
         # metadata.config.final_stage_user has to be honored in all network modes
         if config_final_stage_user and not config_final_stage_user_set:
             dfp.add_lines(*[f"{config_final_stage_user}"])
-
-        if network_mode == "hermetic":
-            self._strip_bare_updates(dfp)
-
-    def _strip_bare_updates(self, dfp: DockerfileParser):
-        """
-        Remove bare dnf/yum update commands in hermetic mode. The lockfile
-        pins exact RPM versions, making bare updates redundant and prone
-        to version conflicts with base image packages.
-
-        Only strips updates without named packages. Named updates like
-        ``dnf update -y openssl`` are left intact.
-        """
-        bare_update_re = re.compile(
-            r"\b(?:dnf|yum)\s+(?:update|upgrade)\s+-y\s*(?:\\\n\s*&&\s*|&&\s*|;\s*|(?=$))",
-        )
-        original = dfp.content
-        modified = bare_update_re.sub("", original)
-        if modified != original:
-            dfp.content = modified
-            self._logger.info("Stripped bare dnf/yum update commands for hermetic build")
 
     def _modify_cachito_commands(self, metadata: ImageMetadata, dfp: DockerfileParser):
         """
