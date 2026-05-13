@@ -53,7 +53,7 @@ from doozerlib.cli.images import (
 )
 from doozerlib.cli.images_health import images_health
 from doozerlib.cli.images_konflux import images_konflux_build, images_konflux_rebase
-from doozerlib.cli.images_okd import images_okd, images_okd_prs
+from doozerlib.cli.images_okd import images_okd
 from doozerlib.cli.images_streams import images_streams, images_streams_gen_buildconfigs, images_streams_mirror
 from doozerlib.cli.inspect_stream import inspect_stream
 from doozerlib.cli.olm_bundle import list_olm_operators, olm_bundles_print, rebase_and_build_olm_bundle
