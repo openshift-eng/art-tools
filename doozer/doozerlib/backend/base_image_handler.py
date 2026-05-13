@@ -13,15 +13,13 @@ from artcommonlib import logutil
 from artcommonlib.util import (
     get_utc_now_formatted_str,
     normalize_group_name_for_k8s,
+    resolve_konflux_base_image_release_targets,
     resolve_konflux_kubeconfig_by_product,
     resolve_konflux_namespace_by_product,
 )
 from doozerlib import util as doozer_util
 from doozerlib.backend.konflux_client import API_VERSION, KIND_RELEASE, KIND_RELEASE_PLAN, KIND_SNAPSHOT, KonfluxClient
-from doozerlib.constants import ART_IMAGES_BASE_APPLICATION
 from kubernetes.dynamic import exceptions
-
-ART_IMAGES_BASE_RELEASE_PLAN = "ocp-art-images-base-silent"
 
 
 @dataclass(frozen=True)
@@ -38,8 +36,8 @@ class BaseImageSnapshotInput:
 
 class BaseImageHandler:
     """
-    Create a Konflux Snapshot for ``art-images-base`` with **one** component, then a Release using
-    ``ocp-art-images-base-silent``, and wait until the Release reports success.
+    Create a Konflux Snapshot for the product's base-image Application with **one** component, then a Release using
+    the product's silent base-image ReleasePlan, and wait until the Release reports success.
     """
 
     def __init__(self, runtime, dry_run: bool = False):
@@ -50,6 +48,14 @@ class BaseImageHandler:
 
         self.namespace = resolve_konflux_namespace_by_product(self.runtime.product, None)
         kubeconfig = resolve_konflux_kubeconfig_by_product(self.runtime.product, None)
+
+        resolved_plan, resolved_application = resolve_konflux_base_image_release_targets(self.runtime.product)
+        self.base_image_release_plan = resolved_plan
+        self.base_image_application = resolved_application
+        self.logger.info(
+            f"Base image Konflux targets: namespace={self.namespace} "
+            f"releasePlan={self.base_image_release_plan} application={self.base_image_application}"
+        )
 
         self.konflux_client = KonfluxClient.from_kubeconfig(
             default_namespace=self.namespace,
@@ -163,11 +169,11 @@ class BaseImageHandler:
                     "namespace": self.namespace,
                     "labels": {
                         "test.appstudio.openshift.io/type": "override",
-                        "appstudio.openshift.io/application": ART_IMAGES_BASE_APPLICATION,
+                        "appstudio.openshift.io/application": self.base_image_application,
                     },
                 },
                 "spec": {
-                    "application": ART_IMAGES_BASE_APPLICATION,
+                    "application": self.base_image_application,
                     "components": [component],
                 },
             }
@@ -193,7 +199,7 @@ class BaseImageHandler:
 
     async def _create_release_from_snapshot(self, snapshot_name: str, released_nvr: str) -> Optional[str]:
         """
-        Create Konflux Release from snapshot using the ocp-art-images-base-silent ReleasePlan.
+        Create Konflux Release from snapshot using the product's silent base-image ReleasePlan.
 
         Args:
             snapshot_name: Snapshot resource name.
@@ -201,12 +207,12 @@ class BaseImageHandler:
         """
         try:
             if not self.dry_run:
-                self.logger.info(f"Verifying release plan {ART_IMAGES_BASE_RELEASE_PLAN} exists")
+                self.logger.info(f"Verifying release plan {self.base_image_release_plan} exists")
                 try:
-                    await self.konflux_client._get(API_VERSION, KIND_RELEASE_PLAN, ART_IMAGES_BASE_RELEASE_PLAN)
+                    await self.konflux_client._get(API_VERSION, KIND_RELEASE_PLAN, self.base_image_release_plan)
                 except exceptions.NotFoundError:
                     raise RuntimeError(
-                        f"Release plan {ART_IMAGES_BASE_RELEASE_PLAN} not found in namespace {self.namespace}"
+                        f"Release plan {self.base_image_release_plan} not found in namespace {self.namespace}"
                     ) from None
 
                 self.logger.info(f"Waiting for snapshot {snapshot_name} to become available")
@@ -218,7 +224,7 @@ class BaseImageHandler:
                 "generateName": "ocp-base-image-release-",
                 "namespace": self.namespace,
                 "labels": {
-                    "appstudio.openshift.io/application": ART_IMAGES_BASE_APPLICATION,
+                    "appstudio.openshift.io/application": self.base_image_application,
                 },
                 "annotations": {
                     "art.redhat.com/kind": "image",
@@ -234,14 +240,14 @@ class BaseImageHandler:
                 "kind": KIND_RELEASE,
                 "metadata": release_metadata,
                 "spec": {
-                    "releasePlan": ART_IMAGES_BASE_RELEASE_PLAN,
+                    "releasePlan": self.base_image_release_plan,
                     "snapshot": snapshot_name,
                 },
             }
 
             if self.dry_run:
                 self.logger.info(
-                    f"[DRY-RUN] Would create release for snapshot={snapshot_name} plan={ART_IMAGES_BASE_RELEASE_PLAN}"
+                    f"[DRY-RUN] Would create release for snapshot={snapshot_name} plan={self.base_image_release_plan}"
                 )
                 self.logger.debug(f"[DRY-RUN] Release object: {release_obj}")
                 return f"dry-run-release-{snapshot_name}"

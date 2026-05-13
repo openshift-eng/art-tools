@@ -20,6 +20,7 @@ from artcommonlib.constants import (
     GOLANG_BUILDER_IMAGE_NAME,
     KONFLUX_DEFAULT_IMAGE_REPO,
     KONFLUX_DEFAULT_NAMESPACE,
+    PRODUCT_BASE_IMAGE_KONFLUX_RELEASE_MAP,
     PRODUCT_KUBECONFIG_MAP,
     PRODUCT_NAMESPACE_MAP,
     RELEASE_SCHEDULES,
@@ -1194,6 +1195,39 @@ def resolve_konflux_namespace_by_product(product: str, provided_namespace: Optio
         f"No namespace mapping found for product '{product}'. Available products: {list(PRODUCT_NAMESPACE_MAP.keys())}. Using default: '{KONFLUX_DEFAULT_NAMESPACE}'"
     )
     return KONFLUX_DEFAULT_NAMESPACE
+
+
+def resolve_konflux_base_image_release_targets(product: str) -> Tuple[str, str]:
+    """
+    Resolve the Konflux ReleasePlan name and Application for the silent base-image workflow.
+
+    The ReleasePlan name is the resource metadata.name; the Application is Snapshot/Release
+    spec.application and matching labels. These must match konflux-release-data for the product's tenant.
+    Layered products use `<product>-images-base` (e.g. `mtc-images-base`). OCP keeps `art-images-base`.
+
+    Unknown products default to the OCP targets (same as resolve_konflux_namespace_by_product fallback).
+
+    Args:
+        product: Runtime product key (e.g. ocp, rhmtc, mta).
+
+    Returns:
+        (release_plan_name, application_name)
+    """
+    targets = PRODUCT_BASE_IMAGE_KONFLUX_RELEASE_MAP.get(product)
+    if targets:
+        plan, app = targets
+        KONFLUX_LOGGER.info(
+            f"Using base-image Konflux releasePlan '{plan}' and application '{app}' for product '{product}'"
+        )
+        return targets
+
+    default_plan, default_app = PRODUCT_BASE_IMAGE_KONFLUX_RELEASE_MAP["ocp"]
+    KONFLUX_LOGGER.warning(
+        f"No base-image Konflux mapping for product '{product}'. "
+        f"Known keys: {list(PRODUCT_BASE_IMAGE_KONFLUX_RELEASE_MAP.keys())}. "
+        f"Using OCP defaults: releasePlan={default_plan!r}, application={default_app!r}"
+    )
+    return default_plan, default_app
 
 
 async def run_safe(func: Callable[[], Any], failures_list: Optional[List[Tuple[str, Exception]]] = None) -> Any:
