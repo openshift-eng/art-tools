@@ -597,7 +597,7 @@ def categorize_bugs_by_type(
         bug_data = [(b.id, b.whiteboard_component) for b in not_found]
         message = (
             f'No attached builds found in advisories for tracker bugs (bug, package): '
-            f'{bug_data}. Either exclude the bugs or include the builds in the assembly definition'
+            f'{bug_data}. Either exclude the bugs or ensure the corresponding builds are attached to the relevant advisory or otherwise included for this assembly'
         )
         if permissive:
             logger.warning(f"{message} Ignoring them because --permissive.")
