@@ -26,6 +26,7 @@ from artcommonlib.constants import (
 from artcommonlib.github_auth import get_github_client_for_org, get_github_git_auth_env
 from artcommonlib.registry_config import RegistryConfig, RegistryCredential
 
+from pyartcd import jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.constants import OCP_BUILD_DATA_URL
 from pyartcd.runtime import Runtime
@@ -44,7 +45,6 @@ class SyncCIImagesPipeline:
     WAIT_TIME_MINUTES = 20
     PR_INTERSTITIAL_SECONDS = 840
     GIT_CLONE_TIMEOUT = 300
-    DOOZER_DEFAULT_TIMEOUT = 3600
 
     def __init__(
         self,
@@ -116,6 +116,11 @@ class SyncCIImagesPipeline:
             raise ValueError(
                 f"Invalid ASSEMBLY format: {self.assembly}. Only alphanumeric, dash, dot, and underscore allowed"
             )
+
+    @property
+    def _working_dir(self) -> str:
+        """Get doozer working directory path for this version."""
+        return f"{self.runtime.doozer_working}/wd-{self.version}"
 
     def _get_required_env(self, var_name: str) -> str:
         """
@@ -209,40 +214,72 @@ class SyncCIImagesPipeline:
             )
 
         try:
-            # Determine gitref: use data_gitref if provided, otherwise use version-specific branch
-            gitref = self.data_gitref or f"openshift-{version}"
+            gitref = self._get_gitref(version)
 
             # Get authenticated client - uses GitHub App (blocking call, run in thread)
             client = await asyncio.to_thread(get_github_client_for_org, owner)
-            repo_obj = await asyncio.to_thread(client.get_repo, f"{owner}/{repo}")
+            repo_obj = await asyncio.to_thread(client.get_repo, self._get_github_repo_url(owner, repo))
 
             # Try resolving gitref (could be branch, SHA, or tag)
-            try:
-                branch = await asyncio.to_thread(repo_obj.get_branch, gitref)
-                sha = branch.commit.sha
-                self._logger.info(f"{version}: Resolved branch '{gitref}' to SHA {sha[:8]} via GitHub App API")
-                return sha
-            except Exception:
-                try:
-                    commit = await asyncio.to_thread(repo_obj.get_commit, gitref)
-                    self._logger.info(
-                        f"{version}: Resolved commit '{gitref[:8]}' to SHA {commit.sha[:8]} via GitHub App API"
-                    )
-                    return commit.sha
-                except Exception:
-                    ref = await asyncio.to_thread(repo_obj.get_git_ref, f"tags/{gitref}")
-                    self._logger.info(
-                        f"{version}: Resolved tag '{gitref}' to SHA {ref.object.sha[:8]} via GitHub App API"
-                    )
-                    return ref.object.sha
+            return await self._resolve_github_ref(repo_obj, gitref, version)
 
         except Exception as e:
             self._logger.warning(f"{version}: GitHub API failed: {e}")
             return None
 
-    def _is_commit_sha(self, gitref: str) -> bool:
+    @staticmethod
+    def _is_commit_sha(gitref: str) -> bool:
         """Check if gitref is a commit SHA (7-40 char hex string)."""
         return bool(gitref and re.fullmatch(r"[0-9a-f]{7,40}", gitref.lower()))
+
+    def _get_gitref(self, version: str) -> str:
+        """Get gitref to use: data_gitref if provided, otherwise version-specific branch."""
+        return self.data_gitref or f"openshift-{version}"
+
+    @staticmethod
+    def _get_github_repo_url(owner: str, repo: str) -> str:
+        """Construct GitHub repository URL."""
+        return f"https://github.com/{owner}/{repo}"
+
+    async def _resolve_github_ref(self, repo_obj, gitref: str, version: str) -> str:
+        """
+        Resolve a GitHub reference (branch, commit, or tag) to a commit SHA.
+
+        Tries branch first, then commit, then tag.
+
+        Args:
+            repo_obj: PyGithub Repository object
+            gitref: Git reference to resolve (branch, commit SHA, or tag)
+            version: OCP version (for logging)
+
+        Returns:
+            Resolved commit SHA
+
+        Raises:
+            Exception: If ref cannot be resolved
+        """
+        # Try branch
+        try:
+            branch = await asyncio.to_thread(repo_obj.get_branch, gitref)
+            self._logger.info(
+                f"{version}: Resolved branch '{gitref}' to SHA {branch.commit.sha[:8]} via GitHub App API"
+            )
+            return branch.commit.sha
+        except Exception:
+            pass
+
+        # Try commit
+        try:
+            commit = await asyncio.to_thread(repo_obj.get_commit, gitref)
+            self._logger.info(f"{version}: Resolved commit '{gitref[:8]}' to SHA {commit.sha[:8]} via GitHub App API")
+            return commit.sha
+        except Exception:
+            pass
+
+        # Try tag
+        ref = await asyncio.to_thread(repo_obj.get_git_ref, f"tags/{gitref}")
+        self._logger.info(f"{version}: Resolved tag '{gitref}' to SHA {ref.object.sha[:8]} via GitHub App API")
+        return ref.object.sha
 
     async def _get_latest_commit_sha_git_ls_remote(self, version: str) -> str:
         """
@@ -263,8 +300,7 @@ class SyncCIImagesPipeline:
         Raises:
             RuntimeError: If git ls-remote fails or gitref is a raw SHA
         """
-        # Determine gitref: use data_gitref if provided, otherwise use version-specific branch
-        gitref = self.data_gitref or f"openshift-{version}"
+        gitref = self._get_gitref(version)
 
         # Raw commit SHAs cannot be resolved by git ls-remote
         if self._is_commit_sha(gitref):
@@ -396,8 +432,7 @@ class SyncCIImagesPipeline:
         if group_dir.exists():
             shutil.rmtree(group_dir)
 
-        # Determine gitref: use data_gitref if provided, otherwise use version-specific branch
-        gitref = self.data_gitref or group
+        gitref = self._get_gitref(version)
 
         # Get GitHub App authentication for git commands (supports private repos)
         git_env = get_github_git_auth_env(url=self.data_path)
@@ -414,20 +449,20 @@ class SyncCIImagesPipeline:
                 # Standard clone for branches and tags
                 cmd = f"git clone {self.data_path} --branch {gitref} --single-branch --depth 1 {group_dir}"
 
-            # Use asyncio.wait_for for timeout since cmd_gather_async doesn't support timeout parameter
-            rc, _, stderr = await asyncio.wait_for(
-                exectools.cmd_gather_async(cmd, env=git_env), timeout=self.GIT_CLONE_TIMEOUT
+            # Stream git clone output to console
+            rc, _, _ = await asyncio.wait_for(
+                exectools.cmd_gather_async(cmd, env=git_env, stdout=None, stderr=None), timeout=self.GIT_CLONE_TIMEOUT
             )
 
             if rc != 0:
-                raise RuntimeError(f"Git clone failed for {group}: {stderr}")
+                raise RuntimeError(f"Git clone failed for {group}")
         except asyncio.TimeoutError as e:
             raise RuntimeError(f"Git clone timed out after {self.GIT_CLONE_TIMEOUT}s for {group}") from e
 
         return group_dir
 
     async def _run_doozer_command(
-        self, doozer_opts: str, subcommand: str, extra_args: str = "", check: bool = True, timeout: int = None
+        self, doozer_opts: str, subcommand: str, extra_args: str = "", check: bool = True
     ) -> tuple[int, str, str]:
         """
         Execute a doozer command with standard options.
@@ -437,7 +472,6 @@ class SyncCIImagesPipeline:
             subcommand: Doozer subcommand (e.g., "images:streams mirror")
             extra_args: Additional arguments for the subcommand
             check: Raise exception on non-zero return code
-            timeout: Command timeout in seconds (default: DOOZER_DEFAULT_TIMEOUT)
 
         Returns:
             Tuple of (return_code, stdout, stderr)
@@ -445,15 +479,12 @@ class SyncCIImagesPipeline:
         Raises:
             Exception: If check=True and command fails
         """
-        if timeout is None:
-            timeout = self.DOOZER_DEFAULT_TIMEOUT
-
         cmd = f"doozer {doozer_opts} {subcommand} {extra_args}".strip()
 
         self._logger.info(f"Running doozer command: {cmd}")
 
-        # Use asyncio.wait_for for timeout
-        rc, stdout, stderr = await asyncio.wait_for(exectools.cmd_gather_async(cmd, check=check), timeout=timeout)
+        # Stream output to Jenkins console in real-time
+        rc, stdout, stderr = await exectools.cmd_gather_async(cmd, check=check, stdout=None, stderr=None)
 
         return rc, stdout, stderr
 
@@ -471,9 +502,8 @@ class SyncCIImagesPipeline:
     def _build_doozer_options(self, group_dir: Path, auth_file: str) -> str:
         """Build doozer global options for all commands."""
         group = f"openshift-{self.version}"
-        working_dir = f"{self.runtime.doozer_working}/wd-{self.version}"
         doozer_opts = (
-            f"--working-dir {working_dir} "
+            f"--working-dir {self._working_dir} "
             f"--data-path {group_dir} "
             f"--group {group} "
             f"--assembly {self.assembly} "
@@ -488,10 +518,9 @@ class SyncCIImagesPipeline:
     async def _generate_and_apply_buildconfigs(self, doozer_opts: str) -> None:
         """Generate BuildConfigs and apply them to CI cluster."""
         self._logger.info(f"{self.version}: Generating BuildConfigs")
-        working_dir = f"{self.runtime.doozer_working}/wd-{self.version}"
         apply_flag = "" if self.runtime.dry_run else "--apply"
         await self._run_doozer_command(
-            doozer_opts, "images:streams gen-buildconfigs", f"-o {working_dir}/buildconfigs.yaml {apply_flag}"
+            doozer_opts, "images:streams gen-buildconfigs", f"-o {self._working_dir}/buildconfigs.yaml {apply_flag}"
         )
 
     async def _mirror_images_to_ci(self, doozer_opts: str) -> None:
@@ -591,8 +620,6 @@ class SyncCIImagesPipeline:
         Returns:
             Return code: 0=success, 25=partial (PRs skipped), 50=failure
         """
-        from pyartcd import jenkins
-
         jenkins.update_title(f' [{self.version}]')
         self._logger.info(f"Starting sync-ci-images for {self.version}")
 
@@ -625,18 +652,11 @@ class SyncCIImagesPipeline:
             # Record success
             await self._record_successful_run(current_sha)
             self._cleanup(group_dir)
-
-            self._logger.info(f"{self.version}: Completed successfully")
             return 0
 
         except Exception as e:
             self._logger.error(f"{self.version}: Failed with error: {e}", exc_info=True)
-
-            # Clean up clone directory on failure
-            if group_dir and group_dir.exists():
-                shutil.rmtree(group_dir)
-                self._logger.info(f"{self.version}: Cleaned up clone directory after failure")
-
+            self._cleanup(group_dir)
             raise  # Re-raise to fail the job
 
 
