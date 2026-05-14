@@ -69,10 +69,11 @@ ART_BUILD_HISTORY_URL = 'https://art-build-history-art-build-history.apps.artc20
 KONFLUX_EC_PIPELINE_GIT_URL = "https://github.com/konflux-ci/build-definitions"
 KONFLUX_EC_PIPELINE_REVISION = "main"
 KONFLUX_EC_PIPELINE_PATH = "pipelines/enterprise-contract.yaml"
-KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION = "rhtap-releng-tenant/registry-ocp-art-stage"
+# https://gitlab.cee.redhat.com/releng/konflux-release-data/-/blob/main/tenants-config/cluster/kflux-ocp-p01/tenants/ocp-art-tenant/ecp-build-stage.yaml
+KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION = "ocp-art-tenant/conforma-build-stage"
 # PreGA (PREVIEW assembly) EC policy: same as stage but allows unsigned RPMs
-# https://gitlab.cee.redhat.com/releng/konflux-release-data/-/blob/main/config/kflux-ocp-p01.7ayg.p1/product/EnterpriseContractPolicy/registry-ocp-art-ec-stage.yaml
-KONFLUX_PREGA_EC_POLICY_CONFIGURATION = "rhtap-releng-tenant/registry-ocp-art-ec-stage"
+# https://gitlab.cee.redhat.com/releng/konflux-release-data/-/blob/main/tenants-config/cluster/kflux-ocp-p01/tenants/ocp-art-tenant/ecp-build-ec-stage.yaml
+KONFLUX_PREGA_EC_POLICY_CONFIGURATION = "ocp-art-tenant/conforma-build-ec-stage"
 # Base image EC policy (base_only images use a dedicated prod policy for all assembly types)
 # https://gitlab.cee.redhat.com/releng/konflux-release-data/-/blob/main/config/kflux-ocp-p01.7ayg.p1/product/EnterpriseContractPolicy/registry-ocp-art-base-prod.yaml
 KONFLUX_BASE_IMAGE_EC_POLICY_CONFIGURATION = "rhtap-releng-tenant/registry-ocp-art-base-prod"
