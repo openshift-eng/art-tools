@@ -5,7 +5,6 @@ import re
 from typing import Any, Dict, Iterable, List, Set, Tuple
 
 import click
-from artcommonlib.assembly import assembly_issues_config
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import is_release_next_week
 from errata_tool import ErrataException
@@ -135,13 +134,7 @@ async def verify_attached_bugs(
         # skip advisory type check if advisories are
         # manually passed in, and we don't know their type
         if '?' not in advisory_id_map.keys():
-            included_bug_ids = set()
-            if runtime.assembly:
-                issues_config = assembly_issues_config(runtime.get_releases_config(), runtime.assembly)
-                included_bug_ids = {issue["id"] for issue in issues_config.include}
-            validator.verify_bugs_advisory_type(
-                runtime, non_flaw_bugs, advisory_id_map, advisory_bug_map, included_bug_ids
-            )
+            validator.verify_bugs_advisory_type(runtime, non_flaw_bugs, advisory_id_map, advisory_bug_map)
 
         if not skip_multiple_advisories_check:
             await validator.verify_bugs_multiple_advisories(non_flaw_bugs)
@@ -283,7 +276,7 @@ class BugValidator:
             blocking_bugs_for = self._get_blocking_bugs_for(non_flaw_bugs)
             self._verify_blocking_bugs(blocking_bugs_for, is_attached=is_attached)
 
-    def verify_bugs_advisory_type(self, runtime, non_flaw_bugs, advisory_id_map, advisory_bug_map, permitted_bug_ids):
+    def verify_bugs_advisory_type(self, runtime, non_flaw_bugs, advisory_id_map, advisory_bug_map):
         advance_release = False
         if "advance" in advisory_id_map and is_advisory_editable(advisory_id_map["advance"]):
             advance_release = True
@@ -294,7 +287,6 @@ class BugValidator:
             runtime,
             non_flaw_bugs,
             builds_by_advisory_kind,
-            permitted_bug_ids=permitted_bug_ids,
             permissive=True,
             operator_bundle_advisory=operator_bundle_advisory,
             major_version=major_version,
