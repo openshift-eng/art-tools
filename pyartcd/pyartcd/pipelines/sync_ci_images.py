@@ -112,7 +112,7 @@ class SyncCIImagesPipeline:
             self.skip_prs = True
 
         # Validate assembly format (alphanumeric, dash, dot, underscore)
-        if self.assembly and not re.match(r'^[\w\-\.]+$', self.assembly):
+        if self.assembly and not re.match(r'^[\w.-]+$', self.assembly):
             raise ValueError(
                 f"Invalid ASSEMBLY format: {self.assembly}. Only alphanumeric, dash, dot, and underscore allowed"
             )
