@@ -11,7 +11,6 @@ from elliottlib.cli.common import click_coroutine
 from elliottlib.cli.find_bugs_sweep_cli import (
     FindBugsSweep,
     categorize_bugs_by_type,
-    get_assembly_bug_ids,
     get_bugs_sweep,
     get_builds_by_advisory_kind,
 )
@@ -131,7 +130,6 @@ class FindBugsCli:
         LOGGER.info(f"Searching {self.bug_tracker.type} for bugs with status {statuses} and target releases: {tr}\n")
 
         bugs = await get_bugs_sweep(self.runtime, find_bugs_obj, self.bug_tracker)
-        included_bug_ids, _ = get_assembly_bug_ids(self.runtime, bug_tracker_type=self.bug_tracker.type)
         major_version, minor_version = self.runtime.get_major_minor()
 
         builds_by_advisory_kind = get_builds_by_advisory_kind(self.runtime)
@@ -139,7 +137,6 @@ class FindBugsCli:
             runtime=self.runtime,
             bugs=bugs,
             builds_by_advisory_kind=builds_by_advisory_kind,
-            permitted_bug_ids=included_bug_ids,
             major_version=major_version,
             minor_version=minor_version,
             operator_bundle_advisory="metadata",

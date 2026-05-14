@@ -330,7 +330,6 @@ async def find_and_attach_bugs(
         return []
 
     advisory_ids = runtime.get_default_advisories()
-    included_bug_ids, _ = get_assembly_bug_ids(runtime, bug_tracker_type=bug_tracker.type)
     major_version, minor_version = runtime.get_major_minor()
 
     builds_by_advisory_kind = get_builds_by_advisory_kind(runtime)
@@ -339,7 +338,6 @@ async def find_and_attach_bugs(
         runtime=runtime,
         bugs=bugs,
         builds_by_advisory_kind=builds_by_advisory_kind,
-        permitted_bug_ids=included_bug_ids,
         major_version=major_version,
         minor_version=minor_version,
         operator_bundle_advisory=operator_bundle_advisory,
@@ -436,7 +434,6 @@ def categorize_bugs_by_type(
     builds_by_advisory_kind: Dict[str, List[str]],
     major_version: int,
     minor_version: int,
-    permitted_bug_ids: Optional[set] = None,
     operator_bundle_advisory: Optional[str] = "metadata",
     permissive: bool = False,
     exclude_trackers: bool = False,
@@ -446,7 +443,6 @@ def categorize_bugs_by_type(
     :param builds_by_advisory_kind: Dict of {advisory_kind: [builds]} where builds are the NVRs attached to advisories
     :param major_version: Major version of the release
     :param minor_version: Minor version of the release
-    :param permitted_bug_ids: Set of bug IDs that are explicitly permitted for inclusion
     :param operator_bundle_advisory: Type of advisory for operator bundles, defaults to "metadata"
     :param permissive: If True, ignore invalid bugs instead of raising an error
     :param exclude_trackers: If True, exclude tracker bugs from the categorization
@@ -598,26 +594,16 @@ def categorize_bugs_by_type(
 
     not_found = set(tracker_bugs) - found
     if not_found:
-        still_not_found = not_found
-        if permitted_bug_ids:
-            logger.info(
-                'The following tracker bugs will be included in image advisory because they are '
-                f'explicitly included in the assembly config: {permitted_bug_ids}'
-            )
-            bugs_by_type["image"] = {b for b in not_found if b.id in permitted_bug_ids}
-            still_not_found = {b for b in not_found if b.id not in permitted_bug_ids}
-
-        if still_not_found:
-            bug_data = [(b.id, b.whiteboard_component) for b in still_not_found]
-            message = (
-                f'No attached builds found in advisories for tracker bugs (bug, package): '
-                f'{bug_data}. Either attach builds or explicitly include/exclude the bug ids in the assembly definition'
-            )
-            if permissive:
-                logger.warning(f"{message} Ignoring them because --permissive.")
-                issues.append(message)
-            else:
-                raise ValueError(message)
+        bug_data = [(b.id, b.whiteboard_component) for b in not_found]
+        message = (
+            f'No attached builds found in advisories for tracker bugs (bug, package): '
+            f'{bug_data}. Either exclude the bugs or include the builds in the assembly definition'
+        )
+        if permissive:
+            logger.warning(f"{message} Ignoring them because --permissive.")
+            issues.append(message)
+        else:
+            raise ValueError(message)
 
     return bugs_by_type, issues
 
