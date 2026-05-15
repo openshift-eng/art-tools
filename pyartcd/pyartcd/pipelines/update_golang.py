@@ -736,10 +736,7 @@ class UpdateGolangPipeline:
                         info['image'] = pullspec
                     if info['image'] == previous_go:
                         info['image'] = latest_go
-                group_content['vars'][go_latest_var] = go_version
-                group_content['vars']['GO_EXTRA'] = go_version
-                if go_previous:
-                    group_content['vars'][go_previous_var] = go_latest
+                group_content['vars'][go_latest_var] = build_major_minor
                 update_streams = update_group = True
         # save changes and create pr
         if update_streams:
