@@ -1162,6 +1162,69 @@ class TestOutdatedRPMFinder(IsolatedAsyncioTestCase):
             ('c-0:1.0.0-el8.x86_64', 'c-0:3.0.0-el8.x86_64', 'bravo-x86_64'),
             ('d-0:1.0.0-el8.x86_64', 'd-0:2.0.0-el8.x86_64', 'bravo-x86_64'),
             ('e-0:1.0.0-el8.x86_64', 'e-0:1.1.0-el8.x86_64', 'charlie-x86_64'),
-            ('f-0:1.0.0-el8.x86_64', 'f-0:999.0.0-el8.x86_64', 'bravo-x86_64'),
+            # Note: f-0:1.0.0 is NOT flagged as outdated because:
+            # - Its package name "f" appears in module e:2 (contains f-0:2.0.0)
+            # - But its exact NEVRA (f-0:1.0.0) is NOT in any module
+            # - We can't determine if the installed f-1.0.0 is modular or non-modular
+            # - To avoid false positives, we conservatively skip it
+            # This prevents cases like v8-12.4-devel being incorrectly flagged
         ]
+        self.assertEqual(actual, expected)
+
+    async def test_find_non_latest_rpms_detects_modular_by_name_not_nevra(self):
+        """
+        Test that modular RPMs are correctly detected even when the exact installed NEVRA
+        doesn't exist in the current repodata. This happens when:
+        - Installed: v8-12.4-devel from nodejs:22 module build 4 (release 1.22.4.1.4)
+        - Repo has: v8-12.4-devel from nodejs:22 newer build (release 1.22.22.2.1)
+
+        The installed RPM should be recognized as modular by package name, and only
+        compared within the same module stream context, preventing false positives.
+
+        Without this fix, v8-12.4-devel wouldn't be detected as modular because its exact
+        NEVRA isn't in the repo, leading to incorrect comparisons against non-modular RPMs.
+        """
+        # Simulate the v8-12.4-devel scenario
+        installed_rpms = [
+            # v8-12.4-devel from nodejs 22 build 4 (older, no longer in repo)
+            "v8-12.4-devel-3:12.4.254.21-1.22.4.1.4.x86_64",
+        ]
+
+        finder = OutdatedRPMFinder()
+        repodatas = [
+            Repodata(
+                name="rhel-9-appstream-rpms-x86_64",
+                primary_rpms=[
+                    # The newer version from later nodejs build (this is what's in primary_rpms)
+                    Rpm.from_nevra("v8-12.4-devel-3:12.4.254.21-1.22.22.2.1.module+el9.8.0+24156+bb41d456.x86_64"),
+                ],
+                modules=[
+                    # Only the current/newer nodejs module build is in the repo
+                    # The older build (that produced 1.22.4.1.4) is no longer here
+                    RpmModule(
+                        name="nodejs",
+                        stream="22",
+                        version=9080020250101120000,
+                        context="rhel9",
+                        arch="x86_64",
+                        rpms={
+                            "v8-12.4-devel-3:12.4.254.21-1.22.22.2.1.module+el9.8.0+24156+bb41d456.x86_64",
+                        },
+                    ),
+                ],
+            ),
+        ]
+
+        logger = MagicMock()
+        actual = finder.find_non_latest_rpms(
+            [Rpm.from_nevra(nevra).to_dict() for nevra in installed_rpms],
+            repodatas,
+            logger,
+        )
+
+        # Expected: Because v8-12.4-devel appears in the nodejs module (by name),
+        # it should be detected as modular and compared against modular candidates.
+        # Since there are no enabled streams detected (exact NEVRA not found),
+        # but the package IS modular, it should be skipped (no false positive)
+        expected = []
         self.assertEqual(actual, expected)
