@@ -60,15 +60,13 @@ def get_latest_nvr_in_tag(tag: str, package: str, koji_session) -> str:
     return latest_build[0]['nvr']
 
 
-async def is_latest_and_available(ocp_version: str, el_v: int, nvr: str, koji_session, request: bool = False) -> bool:
+async def is_latest_and_available(ocp_version: str, el_v: int, nvr: str, koji_session) -> bool:
     if not is_latest_build(ocp_version, el_v, nvr, koji_session):
         return False
     # If regen repo has been run this would take a few seconds
     # sadly --timeout cannot be less than 1 minute, so we wait for 1 minute
     build_tag = f'rhaos-{ocp_version}-rhel-{el_v}-build'
     cmd = f'brew wait-repo {build_tag} --build {nvr} --timeout=1 --verbose'
-    if request:
-        cmd += ' --request'
     rc, out, err = await exectools.cmd_gather_async(cmd, check=False)
     if rc != 0:
         output = "\n".join(stream.strip() for stream in (err, out) if stream and stream.strip())
@@ -481,15 +479,22 @@ class UpdateGolangPipeline:
             return False
         # Tag builds into override tag
         await self.tag_build(el_v, nvr)
-        # Wait for repo to be available (5 hours max)
 
+        # Request a repo regen so the newly tagged build becomes available
+        build_tag = f'rhaos-{self.ocp_version}-rhel-{el_v}-build'
         if self.dry_run:
+            _LOGGER.info(f"[DRY RUN] Would have run `brew regen-repo {build_tag}`")
             _LOGGER.info(f"[DRY RUN] Would have waited for {nvr} to be available in build tags")
             return True
 
+        regen_cmd = f'brew regen-repo {build_tag}'
+        _LOGGER.info("Requesting repo regen: %s", regen_cmd)
+        await exectools.cmd_assert_async(regen_cmd)
+
+        # Wait for repo to be available (5 hours max)
         for _ in range(30):
             await asyncio.sleep(600)  # 10 minutes
-            if await is_latest_and_available(self.ocp_version, el_v, nvr, self.koji_session, request=True):
+            if await is_latest_and_available(self.ocp_version, el_v, nvr, self.koji_session):
                 return True
             _LOGGER.info("wait 10 mins...")
         _LOGGER.info("build not available after 5 hours")

@@ -172,21 +172,6 @@ class TestIsLatestAndAvailable(IsolatedAsyncioTestCase):
         mock_cmd_gather.assert_called_once()
 
     @patch("pyartcd.pipelines.update_golang.is_latest_build")
-    @patch("artcommonlib.exectools.cmd_gather_async")
-    async def test_build_is_latest_and_available_with_request(self, mock_cmd_gather, mock_is_latest):
-        """Test when build is latest and available with request=True"""
-        mock_is_latest.return_value = True
-        mock_cmd_gather.return_value = (0, "", "")
-        mock_koji_session = Mock()
-
-        result = await is_latest_and_available("4.16", 8, "golang-1.20.12-2.el8", mock_koji_session, request=True)
-
-        self.assertTrue(result)
-        mock_cmd_gather.assert_called_once()
-        cmd = mock_cmd_gather.call_args[0][0]
-        self.assertIn("--request", cmd)
-
-    @patch("pyartcd.pipelines.update_golang.is_latest_build")
     async def test_build_is_not_latest(self, mock_is_latest):
         """Test when build is not latest"""
         mock_is_latest.return_value = False
