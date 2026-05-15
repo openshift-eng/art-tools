@@ -1,6 +1,5 @@
 import base64
 import json
-from datetime import datetime, timezone
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -226,36 +225,15 @@ class TestScanTaskBundleChanges(TestScanSourcesKonflux):
         self.assertEqual(len(self.scanner.changing_image_names), 0)
 
     @patch('doozerlib.cli.scan_sources_konflux.fetch_slsa_attestation')
-    @patch.object(ConfigScanSources, 'get_current_task_bundle_shas')
-    @patch.object(ConfigScanSources, 'get_task_bundle_age_days')
-    async def test_scan_task_bundle_changes_not_old_enough(self, mock_get_age, mock_get_current, mock_get_attestation):
-        """Test that task bundles less than 10 days old don't trigger rebuilds."""
-        mock_get_attestation.return_value = self.sample_attestation
-        mock_get_current.return_value = self.current_task_bundles
-        mock_get_age.return_value = 5  # Less than 10 days
-
-        await self.scanner.scan_task_bundle_changes(self.image_meta)
-
-        # Should not add any changes when task bundle is not old enough
-        self.assertEqual(len(self.scanner.changing_image_names), 0)
-
-    @patch('doozerlib.cli.scan_sources_konflux.fetch_slsa_attestation')
-    @patch.object(ConfigScanSources, 'get_task_bundle_age_days')
     @patch.object(ConfigScanSources, 'add_image_meta_change')
-    @patch('random.randint')
-    async def test_scan_task_bundle_changes_staggered_rebuild_triggers(
-        self, mock_randint, mock_add_change, mock_get_age, mock_get_attestation
-    ):
-        """Test that staggered rebuild logic triggers rebuild when random condition is met."""
+    async def test_scan_task_bundle_changes_sha_mismatch_triggers_rebuild(self, mock_add_change, mock_get_attestation):
+        """Test that task bundles with SHA mismatch trigger rebuilds."""
         mock_get_attestation.return_value = self.sample_attestation
-        mock_get_age.return_value = 35  # 35 days old
-        mock_randint.return_value = 1  # This should trigger rebuild
-
         self.scanner.current_task_bundles = self.current_task_bundles
 
         await self.scanner.scan_task_bundle_changes(self.image_meta)
 
-        # Should add change when staggered rebuild condition is met
+        # Should add change when SHA doesn't match
         mock_add_change.assert_called_once()
 
         # Verify the rebuild hint
@@ -263,33 +241,9 @@ class TestScanTaskBundleChanges(TestScanSourcesKonflux):
         rebuild_hint = call_args[1]
         self.assertEqual(rebuild_hint.code, RebuildHintCode.TASK_BUNDLE_OUTDATED)
         self.assertIn("task-git-clone", rebuild_hint.reason)
-        self.assertIn("35 days old", rebuild_hint.reason)
 
     @patch('doozerlib.cli.scan_sources_konflux.fetch_slsa_attestation')
-    @patch.object(ConfigScanSources, 'get_current_task_bundle_shas')
-    @patch.object(ConfigScanSources, 'get_task_bundle_age_days')
-    @patch.object(ConfigScanSources, 'add_image_meta_change')
-    @patch('random.randint')
-    async def test_scan_task_bundle_changes_staggered_rebuild_skips(
-        self, mock_randint, mock_add_change, mock_get_age, mock_get_current, mock_get_attestation
-    ):
-        """Test that staggered rebuild logic skips rebuild when random condition is not met."""
-        mock_get_attestation.return_value = self.sample_attestation
-        mock_get_current.return_value = self.current_task_bundles
-        mock_get_age.return_value = 15  # 15 days old
-        mock_randint.return_value = 2  # With denominator of 15 (max(30-15, 1)), this should not trigger rebuild
-
-        await self.scanner.scan_task_bundle_changes(self.image_meta)
-
-        # Should not add change when staggered rebuild condition is not met
-        mock_add_change.assert_not_called()
-
-    @patch('doozerlib.cli.scan_sources_konflux.fetch_slsa_attestation')
-    @patch.object(ConfigScanSources, 'get_current_task_bundle_shas')
-    @patch.object(ConfigScanSources, 'get_task_bundle_age_days')
-    async def test_scan_task_bundle_changes_same_sha_no_rebuild(
-        self, mock_get_age, mock_get_current, mock_get_attestation
-    ):
+    async def test_scan_task_bundle_changes_same_sha_no_rebuild(self, mock_get_attestation):
         """Test that task bundles with same SHA don't trigger rebuilds."""
         # Modify current bundles to have same SHA as used SHA
         current_bundles_same = {
@@ -298,12 +252,11 @@ class TestScanTaskBundleChanges(TestScanSourcesKonflux):
         }
 
         mock_get_attestation.return_value = self.sample_attestation
-        mock_get_current.return_value = current_bundles_same
+        self.scanner.current_task_bundles = current_bundles_same
 
         await self.scanner.scan_task_bundle_changes(self.image_meta)
 
-        # Should not call get_age when SHAs match
-        mock_get_age.assert_not_called()
+        # Should not add any changes when SHAs match
         self.assertEqual(len(self.scanner.changing_image_names), 0)
 
     @patch('doozerlib.cli.scan_sources_konflux.fetch_slsa_attestation')
@@ -550,95 +503,12 @@ class TestGetCurrentTaskBundleShas(TestScanSourcesKonflux):
         self.assertEqual(result, expected)
 
 
-class TestGetTaskBundleAgeDays(TestScanSourcesKonflux):
-    """Test the get_task_bundle_age_days method."""
-
-    @patch('doozerlib.cli.scan_sources_konflux.oc_image_info__cached_async')
-    async def test_get_task_bundle_age_days_success(self, mock_oc_image_info):
-        """Test successful calculation of task bundle age."""
-        # Mock oc image info output
-        created_time = "2024-01-01T10:00:00Z"
-        mock_image_info = {"config": {"created": created_time}}
-
-        mock_oc_image_info.return_value = json.dumps(mock_image_info)
-
-        # Mock current time to be 35 days after creation
-        with patch('doozerlib.cli.scan_sources_konflux.datetime') as mock_datetime:
-            mock_now = datetime(2024, 2, 5, 10, 0, 0, tzinfo=timezone.utc)
-            mock_datetime.now.return_value = mock_now
-            mock_datetime.fromisoformat = datetime.fromisoformat
-
-            result = await self.scanner.get_task_bundle_age_days("test-task", "abc123")
-
-        self.assertEqual(result, 35)
-
-        # Verify correct pullspec was queried with registry_config
-        expected_pullspec = "quay.io/konflux-ci/tekton-catalog/test-task@sha256:abc123"
-        mock_oc_image_info.assert_called_once_with(expected_pullspec, registry_config=None)
-
-    @patch('doozerlib.cli.scan_sources_konflux.oc_image_info__cached_async')
-    async def test_get_task_bundle_age_days_missing_created_field(self, mock_oc_image_info):
-        """Test handling when created field is missing from image info."""
-        mock_image_info = {"config": {}}  # Missing 'created' field
-
-        mock_oc_image_info.return_value = json.dumps(mock_image_info)
-
-        result = await self.scanner.get_task_bundle_age_days("test-task", "abc123")
-
-        self.assertIsNone(result)
-
-    @patch('doozerlib.cli.scan_sources_konflux.oc_image_info__cached_async')
-    async def test_get_task_bundle_age_days_command_failure(self, mock_oc_image_info):
-        """Test handling when oc image info command fails."""
-        mock_oc_image_info.side_effect = Exception("Command failed")
-
-        result = await self.scanner.get_task_bundle_age_days("test-task", "abc123")
-
-        self.assertIsNone(result)
-
-    @patch('doozerlib.cli.scan_sources_konflux.oc_image_info__cached_async')
-    async def test_get_task_bundle_age_days_invalid_json(self, mock_oc_image_info):
-        """Test handling when oc command returns invalid JSON."""
-        mock_oc_image_info.return_value = "invalid json"
-
-        result = await self.scanner.get_task_bundle_age_days("test-task", "abc123")
-
-        self.assertIsNone(result)
-
-    @patch('doozerlib.cli.scan_sources_konflux.oc_image_info__cached_async')
-    async def test_get_task_bundle_age_days_timezone_handling(self, mock_oc_image_info):
-        """Test proper timezone handling in age calculation."""
-        # Test with different timezone formats
-        test_cases = [
-            "2024-01-01T10:00:00Z",  # UTC with Z
-            "2024-01-01T10:00:00+00:00",  # UTC with offset
-        ]
-
-        for created_time in test_cases:
-            with self.subTest(created_time=created_time):
-                mock_image_info = {"config": {"created": created_time}}
-                mock_oc_image_info.return_value = json.dumps(mock_image_info)
-
-                with patch('doozerlib.cli.scan_sources_konflux.datetime') as mock_datetime:
-                    mock_now = datetime(2024, 1, 11, 10, 0, 0, tzinfo=timezone.utc)
-                    mock_datetime.now.return_value = mock_now
-                    mock_datetime.fromisoformat = datetime.fromisoformat
-
-                    result = await self.scanner.get_task_bundle_age_days("test-task", "abc123")
-
-                self.assertEqual(result, 10)
-
-
 class TestTaskBundleIntegration(TestScanSourcesKonflux):
     """Integration tests for the complete task bundle scanning workflow."""
 
     @patch('doozerlib.cli.scan_sources_konflux.fetch_slsa_attestation')
-    @patch.object(ConfigScanSources, 'get_task_bundle_age_days')
     @patch.object(ConfigScanSources, 'add_image_meta_change')
-    @patch('random.randint')
-    async def test_full_workflow_rebuild_triggered(
-        self, mock_randint, mock_add_change, mock_get_age, mock_get_attestation
-    ):
+    async def test_full_workflow_rebuild_triggered(self, mock_add_change, mock_get_attestation):
         """Test the complete workflow when a rebuild should be triggered."""
         # Setup test data
         attestation = {
@@ -655,8 +525,6 @@ class TestTaskBundleIntegration(TestScanSourcesKonflux):
         current_bundles = {"git-clone": "new456"}  # Different SHA
 
         mock_get_attestation.return_value = attestation
-        mock_get_age.return_value = 35  # Old enough to trigger rebuild
-        mock_randint.return_value = 1  # Will trigger rebuild
         self.scanner.current_task_bundles = current_bundles
 
         await self.scanner.scan_task_bundle_changes(self.image_meta)
@@ -665,10 +533,6 @@ class TestTaskBundleIntegration(TestScanSourcesKonflux):
         mock_get_attestation.assert_called_once_with(
             self.build_record.image_pullspec, self.build_record.name, self.scanner.runtime.registry_config
         )
-        mock_get_age.assert_called_once_with("git-clone", "old123")
-
-        # Verify staggered rebuild logic
-        mock_randint.assert_called_once_with(1, 1)  # max(30 - 35, 1) = 1
 
         # Verify rebuild hint was added
         mock_add_change.assert_called_once()
@@ -676,19 +540,29 @@ class TestTaskBundleIntegration(TestScanSourcesKonflux):
         self.assertEqual(rebuild_hint.code, RebuildHintCode.TASK_BUNDLE_OUTDATED)
 
     @patch('doozerlib.cli.scan_sources_konflux.fetch_slsa_attestation')
-    @patch.object(ConfigScanSources, 'get_task_bundle_age_days')
     @patch.object(ConfigScanSources, 'add_image_meta_change')
-    async def test_full_workflow_no_rebuild_needed(self, mock_add_change, mock_get_age, mock_get_attestation):
+    async def test_full_workflow_no_rebuild_needed(self, mock_add_change, mock_get_attestation):
         """Test the complete workflow when no rebuild is needed."""
         # Setup test data with matching SHAs
+        attestation = {
+            "predicate": {
+                "materials": [
+                    {
+                        "uri": "quay.io/konflux-ci/tekton-catalog/git-clone",
+                        "digest": {"sha256": "same123"},
+                    }
+                ]
+            }
+        }
+
         current_bundles = {"git-clone": "same123"}  # Same SHA
+        mock_get_attestation.return_value = attestation
         self.scanner.current_task_bundles = current_bundles
 
         await self.scanner.scan_task_bundle_changes(self.image_meta)
 
         # Verify early exit when SHAs match
         mock_get_attestation.assert_called_once()
-        mock_get_age.assert_not_called()  # Should not check age when SHAs match
         mock_add_change.assert_not_called()
 
     async def test_skip_check_if_changing_decorator(self):
