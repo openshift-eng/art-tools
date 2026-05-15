@@ -607,6 +607,68 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
 
     @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    def test_validate_go_version_matches_group_vars_permits_mismatch_with_major_bump(
+        self, mock_konflux_db, mock_get_github_client
+    ):
+        """Test version validation permits mismatched major.minor when --major-bump is set"""
+        mock_runtime = Mock(
+            dry_run=False,
+            working_dir=Path("/tmp/working"),
+        )
+        mock_runtime.new_slack_client.return_value = Mock()
+
+        upstream_repo = Mock()
+        upstream_repo.get_contents.return_value = Mock(
+            decoded_content=b"vars:\n  GO_LATEST: 1.22\n  GO_PREVIOUS: 1.21\n"
+        )
+        mock_get_github_client.return_value.get_repo.return_value = upstream_repo
+
+        pipeline = UpdateGolangPipeline(
+            runtime=mock_runtime,
+            ocp_version="4.16",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.23.1-1.el8"],
+            art_jira="ART-1234",
+            tag_builds=False,
+            major_bump=True,
+        )
+
+        branch, allowed_major_minors, build_major_minor = pipeline.validate_go_version_matches_group_vars("1.23.1")
+        self.assertEqual(build_major_minor, "1.23")
+        self.assertEqual(allowed_major_minors["GO_LATEST"], "1.22")
+
+    @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    def test_validate_tag_builds_go_latest_permits_mismatch_with_major_bump(
+        self, mock_konflux_db, mock_get_github_client
+    ):
+        """Test tag-build validation permits mismatched GO_LATEST when --major-bump is set"""
+        mock_runtime = Mock(
+            dry_run=False,
+            working_dir=Path("/tmp/working"),
+        )
+        mock_runtime.new_slack_client.return_value = Mock()
+
+        upstream_repo = Mock()
+        upstream_repo.get_contents.return_value = Mock(decoded_content=b"vars:\n  GO_LATEST: 1.22\n")
+        mock_get_github_client.return_value.get_repo.return_value = upstream_repo
+
+        pipeline = UpdateGolangPipeline(
+            runtime=mock_runtime,
+            ocp_version="4.16",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.23.9-1.el8"],
+            art_jira="ART-1234",
+            tag_builds=True,
+            major_bump=True,
+        )
+
+        pipeline.validate_tag_builds_go_latest("openshift-4.16", {"GO_LATEST": "1.22"}, "1.23")
+
+    @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     def test_validate_tag_builds_go_latest_rejects_go_extra_match(self, mock_konflux_db, mock_get_github_client):
         """Test tag-build validation still requires GO_LATEST even when GO_EXTRA matches"""
         mock_runtime = Mock(

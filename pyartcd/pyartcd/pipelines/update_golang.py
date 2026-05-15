@@ -45,11 +45,7 @@ def is_latest_build(ocp_version: str, el_v: int, nvr: str, koji_session) -> bool
     if nvr == latest_build[0]['nvr']:
         _LOGGER.info(f'{nvr} is the latest build in {build_tag}')
         return True
-    override_tag = f'rhaos-{ocp_version}-rhel-{el_v}-override'
-    _LOGGER.info(
-        f'{nvr} is not the latest build in {build_tag}. Run `brew tag {override_tag} {nvr}` to tag the '
-        f'build and then run `brew regen-repo {build_tag}` to make it available.'
-    )
+    _LOGGER.info(f'{nvr} is not the latest build in {build_tag}. Use --tag-builds to tag and regen-repo automatically.')
     return False
 
 
@@ -87,10 +83,7 @@ async def is_latest_and_available(ocp_version: str, el_v: int, nvr: str, koji_se
                 build_tag,
                 rc,
             )
-        _LOGGER.info(
-            f'Build {nvr} could not be confirmed available in {build_tag}. If the build is already tagged, '
-            f'run `brew regen-repo {build_tag}` to make it available.'
-        )
+        _LOGGER.info(f'Build {nvr} could not be confirmed available in {build_tag}.')
         return False
     _LOGGER.info(f'{nvr} is available in {build_tag}')
     return True
@@ -206,6 +199,7 @@ class UpdateGolangPipeline:
         skip_pr: bool = False,
         external_golang_rpms: bool = False,
         network_mode: str | None = None,
+        major_bump: bool = False,
     ):
         self.runtime = runtime
         self.dry_run = runtime.dry_run
@@ -224,6 +218,7 @@ class UpdateGolangPipeline:
         self.skip_pr = skip_pr
         self.external_golang_rpms = external_golang_rpms
         self.network_mode = network_mode
+        self.major_bump = major_bump
         self._slack_client = self.runtime.new_slack_client()
         self._doozer_working_dir = self.runtime.working_dir / "doozer-working"
         self._doozer_env_vars = os.environ.copy()
@@ -285,22 +280,39 @@ class UpdateGolangPipeline:
         branch, allowed_major_minors = self._get_allowed_go_major_minors()
         build_major_minor = extract_major_minor(go_version, "golang build version")
         if build_major_minor not in allowed_major_minors.values():
-            allowed_versions = ", ".join(
-                f"{var_name} ({major_minor})" for var_name, major_minor in allowed_major_minors.items()
-            )
-            raise ValueError(
-                f"The provided golang build major.minor ({build_major_minor}) must match "
-                f"one of {branch} group.yml vars: {allowed_versions}."
-            )
+            if self.major_bump:
+                _LOGGER.info(
+                    "--major-bump is set: permitting golang build major.minor (%s) that does not match "
+                    "any of %s group.yml vars",
+                    build_major_minor,
+                    branch,
+                )
+            else:
+                allowed_versions = ", ".join(
+                    f"{var_name} ({major_minor})" for var_name, major_minor in allowed_major_minors.items()
+                )
+                raise ValueError(
+                    f"The provided golang build major.minor ({build_major_minor}) must match "
+                    f"one of {branch} group.yml vars: {allowed_versions}."
+                )
         return branch, allowed_major_minors, build_major_minor
 
     def validate_tag_builds_go_latest(self, branch: str, allowed_major_minors: dict[str, str], build_major_minor: str):
         latest_major_minor = allowed_major_minors["GO_LATEST"]
         if build_major_minor != latest_major_minor:
-            raise ValueError(
-                f"When --tag-builds is set, the provided golang build major.minor ({build_major_minor}) must match "
-                f"{branch} group.yml GO_LATEST major.minor ({latest_major_minor})."
-            )
+            if self.major_bump:
+                _LOGGER.info(
+                    "--major-bump is set: permitting --tag-builds with golang build major.minor (%s) "
+                    "that does not match %s group.yml GO_LATEST (%s)",
+                    build_major_minor,
+                    branch,
+                    latest_major_minor,
+                )
+            else:
+                raise ValueError(
+                    f"When --tag-builds is set, the provided golang build major.minor ({build_major_minor}) must match "
+                    f"{branch} group.yml GO_LATEST major.minor ({latest_major_minor})."
+                )
 
     async def run(self):
         try:
@@ -460,12 +472,19 @@ class UpdateGolangPipeline:
             return False
         # Tag builds into override tag
         await self.tag_build(el_v, nvr)
-        # Wait for repo to be available (5 hours max)
 
+        # Request a repo regen so the newly tagged build becomes available
+        build_tag = f'rhaos-{self.ocp_version}-rhel-{el_v}-build'
         if self.dry_run:
+            _LOGGER.info(f"[DRY RUN] Would have run `brew regen-repo {build_tag}`")
             _LOGGER.info(f"[DRY RUN] Would have waited for {nvr} to be available in build tags")
             return True
 
+        regen_cmd = f'brew regen-repo {build_tag}'
+        _LOGGER.info("Requesting repo regen: %s", regen_cmd)
+        await exectools.cmd_assert_async(regen_cmd)
+
+        # Wait for repo to be available (5 hours max)
         for _ in range(30):
             await asyncio.sleep(600)  # 10 minutes
             if await is_latest_and_available(self.ocp_version, el_v, nvr, self.koji_session):
@@ -1010,6 +1029,13 @@ class UpdateGolangPipeline:
     default=None,
     help='Override network mode for Konflux builds. Takes precedence over image and group config settings.',
 )
+@click.option(
+    '--major-bump',
+    is_flag=True,
+    default=False,
+    help='Indicates a major.minor golang version bump (e.g. 1.22 -> 1.23). '
+    'Permits validation of go_latest even when the new version does not match current group.yml vars.',
+)
 @pass_runtime
 @click_coroutine
 async def update_golang(
@@ -1030,6 +1056,7 @@ async def update_golang(
     skip_pr: bool,
     external_golang_rpms: bool,
     network_mode: str | None,
+    major_bump: bool,
 ):
     if not runtime.dry_run and not confirm:
         _LOGGER.info('--confirm is not set, running in dry-run mode')
@@ -1057,4 +1084,5 @@ async def update_golang(
         skip_pr,
         external_golang_rpms,
         network_mode,
+        major_bump,
     ).run()
