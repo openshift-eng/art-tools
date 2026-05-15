@@ -45,11 +45,7 @@ def is_latest_build(ocp_version: str, el_v: int, nvr: str, koji_session) -> bool
     if nvr == latest_build[0]['nvr']:
         _LOGGER.info(f'{nvr} is the latest build in {build_tag}')
         return True
-    override_tag = f'rhaos-{ocp_version}-rhel-{el_v}-override'
-    _LOGGER.info(
-        f'{nvr} is not the latest build in {build_tag}. Run `brew tag {override_tag} {nvr}` to tag the '
-        f'build and then run `brew regen-repo {build_tag}` to make it available.'
-    )
+    _LOGGER.info(f'{nvr} is not the latest build in {build_tag}. Use --tag-builds to tag and regen-repo automatically.')
     return False
 
 
@@ -87,10 +83,7 @@ async def is_latest_and_available(ocp_version: str, el_v: int, nvr: str, koji_se
                 build_tag,
                 rc,
             )
-        _LOGGER.info(
-            f'Build {nvr} could not be confirmed available in {build_tag}. If the build is already tagged, '
-            f'run `brew regen-repo {build_tag}` to make it available.'
-        )
+        _LOGGER.info(f'Build {nvr} could not be confirmed available in {build_tag}.')
         return False
     _LOGGER.info(f'{nvr} is available in {build_tag}')
     return True
