@@ -1113,7 +1113,7 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     @patch("pyartcd.pipelines.update_golang.elliottutil.get_golang_container_nvrs_for_konflux_record")
     async def test_get_existing_builders_konflux(self, mock_get_golang_nvrs, mock_konflux_db_class):
-        """Test Konflux builder lookup returns the build record NVR on exact RPM match"""
+        """Test Konflux builder lookup returns the build record on exact RPM match"""
         mock_runtime = Mock(
             dry_run=False,
             working_dir=Path("/tmp/working"),
@@ -1150,7 +1150,7 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
         el_nvr_map = {8: "golang-1.20.12-2.el8"}
         builder_nvrs = await pipeline.get_existing_builders_konflux(el_nvr_map, "1.20.12")
 
-        self.assertEqual(builder_nvrs, {8: mock_build_record.nvr})
+        self.assertEqual(builder_nvrs, {8: mock_build_record})
         mock_get_golang_nvrs.assert_called_once()
         self.assertEqual(mock_get_golang_nvrs.call_args.args[0], [mock_build_record])
         self.assertEqual(mock_get_golang_nvrs.call_args.kwargs, {"exact": True})
