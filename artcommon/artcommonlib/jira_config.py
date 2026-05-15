@@ -21,7 +21,10 @@ Example usage:
     browse_url = get_jira_browse_url("OCPBUGS-12345")
 """
 
+import logging
 import os
+
+LOGGER = logging.getLogger(__name__)
 
 # Default JIRA server URL (hardcoded; not read from ocp-build-data bug.yml)
 # This can be overridden by setting the JIRA_SERVER_URL environment variable
@@ -73,3 +76,40 @@ def get_jira_api_url(endpoint: str) -> str:
     """
     endpoint = endpoint.lstrip("/")
     return f"{JIRA_API_BASE}/{endpoint}"
+
+
+def verify_jira_client(jira_client) -> str:
+    """
+    Verify JIRA client by making an authenticated API call.
+
+    This function attempts to retrieve the current user from JIRA to verify that
+    the client is working. It is used by doozer, elliott, and pyartcd to fail
+    fast with a clear error message when JIRA_EMAIL doesn't match JIRA_TOKEN.
+
+    Arg(s):
+        jira_client: JIRA client instance (from jira.JIRA)
+
+    Raises:
+        ValueError: If authentication fails (HTTP 401)
+        JIRAError: If other JIRA errors occur (re-raised)
+
+    Return Value(s):
+        str: The authenticated username (typically the email address)
+
+    Example:
+        >>> from jira import JIRA
+        >>> client = JIRA(server="https://redhat.atlassian.net", basic_auth=(email, token))
+        >>> username = verify_jira_client(client)
+    """
+    from jira import JIRAError
+
+    try:
+        current_user = jira_client.current_user()
+        LOGGER.debug("Successfully authenticated to JIRA")
+        return current_user
+    except JIRAError as e:
+        if e.status_code == 401:
+            raise ValueError(
+                "JIRA authentication failed. Please ensure JIRA_EMAIL environment variable matches your JIRA_TOKEN."
+            ) from e
+        raise

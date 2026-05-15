@@ -886,7 +886,7 @@ class Runtime(GroupRuntime):
         """
         :return: Returns a JIRA client setup for the server in bug.yaml
         """
-        from artcommonlib.jira_config import DEFAULT_JIRA_EMAIL, JIRA_SERVER_URL
+        from artcommonlib.jira_config import DEFAULT_JIRA_EMAIL, JIRA_SERVER_URL, verify_jira_client
 
         major, minor = self.get_major_minor_fields()
         if (major, minor) < (4, 6):
@@ -899,9 +899,13 @@ class Runtime(GroupRuntime):
             raise ValueError(f"Jira activity requires login credentials for {server}. Set a JIRA_TOKEN env var")
         # Get email for basic auth
         jira_email = os.environ.get("JIRA_EMAIL", DEFAULT_JIRA_EMAIL)
+        if not jira_email:
+            raise ValueError(f"Jira activity requires login credentials for {server}. Set a JIRA_EMAIL env var")
 
         jira_options = {'server': server}
         client = JIRA(options=jira_options, basic_auth=(jira_email, token_auth))
+        verify_jira_client(client)
+
         return client
 
     def build_retrying_koji_client(self):

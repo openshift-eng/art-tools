@@ -2,6 +2,7 @@ import logging
 from typing import Any, Callable, Dict, List, Optional
 
 import jinja2
+from artcommonlib.jira_config import verify_jira_client
 from jira import JIRA, Issue
 from tenacity import retry, stop_after_attempt, wait_fixed
 
@@ -10,9 +11,24 @@ _LOGGER = logging.getLogger(__name__)
 
 class JIRAClient:
     @classmethod
-    def from_url(cls, server_url: str, basic_auth: tuple):
+    def from_url(cls, server_url: str, basic_auth: tuple[str, str]) -> "JIRAClient":
+        """
+        Create a JIRAClient instance from server URL and credentials.
+
+        Args:
+            server_url: JIRA server URL (e.g., "https://redhat.atlassian.net")
+            basic_auth: Tuple of (email, token) for authentication
+
+        Returns:
+            JIRAClient instance with validated credentials
+
+        Raises:
+            ValueError: If authentication fails
+        """
         jira_options = {'server': server_url}
         client = JIRA(options=jira_options, basic_auth=basic_auth)
+        verify_jira_client(client)
+
         return JIRAClient(client)
 
     def __init__(self, jira: JIRA) -> None:

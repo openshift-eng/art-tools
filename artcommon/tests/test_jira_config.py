@@ -6,6 +6,7 @@ Tests for centralized JIRA configuration module.
 
 import os
 import unittest
+from unittest.mock import Mock
 
 from artcommonlib import jira_config
 
@@ -125,6 +126,70 @@ class TestJiraConfig(unittest.TestCase):
             import importlib
 
             importlib.reload(jira_config)
+
+    def test_verify_jira_client_success(self):
+        """
+        Test that verify_jira_client returns username on success.
+        """
+        # Create a mock JIRA client that succeeds
+        mock_client = Mock()
+        mock_client.current_user.return_value = "test-user@redhat.com"
+
+        result = jira_config.verify_jira_client(mock_client)
+
+        self.assertEqual(result, "test-user@redhat.com")
+        mock_client.current_user.assert_called_once()
+
+    def test_verify_jira_client_auth_failure(self):
+        """
+        Test that verify_jira_client raises ValueError on 401 error.
+        """
+        from jira import JIRAError
+
+        # Create a mock JIRA client that returns 401
+        mock_client = Mock()
+        mock_error = JIRAError(status_code=401, text="Unauthorized")
+        mock_client.current_user.side_effect = mock_error
+
+        with self.assertRaises(ValueError) as context:
+            jira_config.verify_jira_client(mock_client)
+
+        error_message = str(context.exception)
+        self.assertIn("matches your JIRA_TOKEN", error_message)
+
+    def test_verify_jira_client_other_error(self):
+        """
+        Test that verify_jira_client re-raises non-401 JIRA errors.
+        """
+        from jira import JIRAError
+
+        # Create a mock JIRA client that returns 500
+        mock_client = Mock()
+        mock_error = JIRAError(status_code=500, text="Internal Server Error")
+        mock_client.current_user.side_effect = mock_error
+
+        with self.assertRaises(JIRAError) as context:
+            jira_config.verify_jira_client(mock_client)
+
+        # Should re-raise the original error
+        self.assertEqual(context.exception.status_code, 500)
+
+    def test_verify_jira_client_chains_exception(self):
+        """
+        Test that ValueError chains the original JIRAError as __cause__.
+        """
+        from jira import JIRAError
+
+        mock_client = Mock()
+        mock_error = JIRAError(status_code=401, text="Unauthorized")
+        mock_client.current_user.side_effect = mock_error
+
+        with self.assertRaises(ValueError) as context:
+            jira_config.verify_jira_client(mock_client)
+
+        # Should chain the original exception
+        self.assertIsInstance(context.exception.__cause__, JIRAError)
+        self.assertEqual(context.exception.__cause__.status_code, 401)
 
 
 if __name__ == "__main__":
