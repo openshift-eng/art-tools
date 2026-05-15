@@ -2,7 +2,6 @@ import asyncio
 import json
 import logging
 import os
-import random
 import re
 import tempfile
 from datetime import datetime, timedelta, timezone
@@ -22,7 +21,6 @@ from artcommonlib.github_auth import get_github_client_for_org, get_github_git_a
 from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
 from artcommonlib.model import Missing, Model
-from artcommonlib.oc_image_info import oc_image_info__cached_async
 from artcommonlib.pushd import Dir
 from artcommonlib.release_util import isolate_timestamp_in_release
 from artcommonlib.rhcos import get_latest_layered_rhcos_build, get_primary_container_name
@@ -46,7 +44,6 @@ from doozerlib.source_resolver import SourceResolver
 from doozerlib.util import oc_image_info_for_arch_async
 
 DEFAULT_THRESHOLD_HOURS = 6
-TASK_BUNDLE_AGE_THRESHOLD_DAYS = 10
 
 
 class ConfigScanSources:
@@ -1176,32 +1173,11 @@ class ConfigScanSources:
 
         return task_bundles
 
-    async def check_task_bundle_age(self, task_name: str, used_sha: str, current_sha: str):
-        """
-        Check if a single task bundle is old enough to warrant a rebuild.
-        Returns a tuple with task info and age if old enough, None otherwise.
-        """
-        self.logger.info(
-            f'Task bundle {task_name} version differs: used={used_sha[:12]}... vs current={current_sha[:12]}...'
-        )
-
-        task_age_days = await self.get_task_bundle_age_days(task_name, used_sha)
-        if not task_age_days:
-            return None
-
-        if task_age_days >= TASK_BUNDLE_AGE_THRESHOLD_DAYS:
-            return task_name, used_sha, current_sha, task_age_days
-        else:
-            self.logger.info(
-                f'Task bundle {task_name} is only {task_age_days} days old (< {TASK_BUNDLE_AGE_THRESHOLD_DAYS} days), skipping rebuild'
-            )
-            return None
-
     @skip_check_if_changing
     async def scan_task_bundle_changes(self, image_meta: ImageMetadata):
         """
-        Check if task bundles used in the build are outdated compared to current versions
-        and if old task bundles are more than {TASK_BUNDLE_AGE_THRESHOLD_DAYS} days old, trigger a rebuild.
+        Check if task bundles used in the build are outdated compared to current versions.
+        If any task bundle SHA doesn't match, trigger a rebuild.
         """
         # Skip if image is not being released
         for_release = image_meta.config.for_release
@@ -1239,7 +1215,7 @@ class ConfigScanSources:
         # Check each task bundle for outdated versions
         self.logger.info(f'Comparing task bundle versions for {image_meta.distgit_key}')
 
-        # Filter out task bundles that are up-to-date or not found in current template
+        # Find task bundles with SHA mismatches
         outdated_task_bundles = []
         for task_name, used_sha in task_bundles.items():
             current_sha = current_task_bundles.get(task_name)
@@ -1251,69 +1227,24 @@ class ConfigScanSources:
                 self.logger.info(f'Task bundle {task_name} is up to date (SHA: {used_sha[:12]}...)')
                 continue
 
+            self.logger.info(
+                f'Task bundle {task_name} version differs: used={used_sha[:12]}... vs current={current_sha[:12]}...'
+            )
             outdated_task_bundles.append((task_name, used_sha, current_sha))
 
         if not outdated_task_bundles:
             return
 
-        # Check if any outdated task bundles are old enough and apply staggered rebuild logic once
-        # Execute all age checks in parallel
-        age_check_results = await asyncio.gather(
-            *[
-                self.check_task_bundle_age(task_name, used_sha, current_sha)
-                for task_name, used_sha, current_sha in outdated_task_bundles
-            ]
-        )
-
-        # Filter out None results to get only old enough task bundles
-        old_outdated_tasks = [result for result in age_check_results if result is not None]
-
-        if not old_outdated_tasks:
-            return
-
-        # Apply staggered rebuild logic once for all old outdated tasks
-        # Use the oldest task for probability calculation
-        oldest_task = max(old_outdated_tasks, key=lambda x: x[3])
-        task_name, used_sha, current_sha, task_age_days = oldest_task
+        # Trigger rebuild for any SHA mismatch
+        task_name, used_sha, current_sha = outdated_task_bundles[0]
+        task_list = ', '.join([name for name, _, _ in outdated_task_bundles])
 
         self.logger.info(
-            f'Found {len(old_outdated_tasks)} outdated task bundles >= {TASK_BUNDLE_AGE_THRESHOLD_DAYS} days old, '
-            f'applying staggered rebuild logic based on oldest task {task_name} ({task_age_days} days old)'
-        )
-
-        # Staggered rebuild logic: probability increases as age increases
-        #   - At 10 days: 1 in 21 chance (~5%)
-        #   - At 15 days: 1 in 16 chance (~6%)
-        #   - At 20 days: 1 in 11 chance (~9%)
-        #   - At 25 days: 1 in 6 chance (~17%)
-        #   - At 29 days: 1 in 2 chance (50%)
-        #   - At 30+ days: Always rebuild (100%)
-        rebuild_probability_denominator = max(30 - task_age_days, 1)
-        probability_percentage = (1.0 / rebuild_probability_denominator) * 100
-        random_number = random.randint(1, rebuild_probability_denominator)
-        should_rebuild = random_number == 1
-
-        self.logger.info(
-            f'Staggered rebuild probability: {probability_percentage:.1f}% (1/{rebuild_probability_denominator}), '
-            f'generated random number: {random_number}, rebuild decision: {should_rebuild}'
-        )
-
-        if not should_rebuild:
-            self.logger.info(
-                f'Staggered rebuild logic decided not to rebuild despite {len(old_outdated_tasks)} outdated task bundles '
-                f'(probability was {probability_percentage:.1f}% based on oldest task {task_name})'
-            )
-            return
-
-        # Trigger rebuild using the oldest task as the reason
-        self.logger.info(
-            f'Triggering rebuild for {image_meta.distgit_key} due to outdated task bundles '
-            f'(oldest: {task_name}, {task_age_days} days old)'
+            f'Triggering rebuild for {image_meta.distgit_key} due to {len(outdated_task_bundles)} outdated task bundle(s): {task_list}'
         )
         rebuild_hint = RebuildHint(
             RebuildHintCode.TASK_BUNDLE_OUTDATED,
-            f'Task bundle {task_name} is {task_age_days} days old (>={TASK_BUNDLE_AGE_THRESHOLD_DAYS} days) '
-            f'and newer version is available (staggered rebuild)',
+            f'Task bundle(s) outdated: {task_list}',
         )
         self.add_image_meta_change(image_meta, rebuild_hint)
 
@@ -1379,33 +1310,6 @@ class ConfigScanSources:
         elif isinstance(obj, list):
             for item in obj:
                 self._extract_task_refs(item, task_bundles)
-
-    async def get_task_bundle_age_days(self, task_name: str, sha: str) -> Optional[int]:
-        """
-        Get the age of a task bundle in days using oc image info
-        """
-        pullspec = f"quay.io/konflux-ci/tekton-catalog/{task_name}@sha256:{sha}"
-        self.logger.info(f'Getting age for task bundle {task_name} using pullspec {pullspec}')
-        try:
-            out = await oc_image_info__cached_async(pullspec, registry_config=self.runtime.registry_config)
-            image_info = json.loads(out)
-            created_str = image_info.get('config', {}).get('created', '')
-            if not created_str:
-                return None
-
-            # Parse creation time and calculate age
-            created_time = datetime.fromisoformat(created_str.rstrip('Z')).replace(tzinfo=timezone.utc)
-            now = datetime.now(timezone.utc)
-            age_days = (now - created_time).days
-
-            self.logger.info(
-                f'Task bundle {task_name} was created on {created_time.strftime("%Y-%m-%d")}, age: {age_days} days'
-            )
-            return age_days
-
-        except Exception as e:
-            self.logger.warning(f'Failed to get age for task bundle {task_name}@{sha}: {e}')
-            return None
 
     async def check_changing_rpms(self):
         """
