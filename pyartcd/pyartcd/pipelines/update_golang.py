@@ -12,6 +12,7 @@ from artcommonlib.brew import BuildStates
 from artcommonlib.constants import (
     BREW_HUB,
     GOLANG_BUILDER_IMAGE_NAME,
+    KONFLUX_DEFAULT_IMAGE_REPO,
     PRODUCT_NAMESPACE_MAP,
     REGISTRY_REDHAT_IO,
 )
@@ -446,13 +447,14 @@ class UpdateGolangPipeline:
                     await self._ensure_builder_pullspec_available(published_pullspec)
                     builder_pullspecs[el_v] = published_pullspec
                 except RuntimeError:
+                    konflux_pullspec = self._get_konflux_builder_pullspec(record.nvr)
                     _LOGGER.warning(
                         "Published pullspec not available: %s, falling back to Konflux pullspec: %s",
                         published_pullspec,
-                        record.image_pullspec,
+                        konflux_pullspec,
                     )
-                    await self._ensure_builder_pullspec_available(record.image_pullspec)
-                    builder_pullspecs[el_v] = record.image_pullspec
+                    await self._ensure_builder_pullspec_available(konflux_pullspec)
+                    builder_pullspecs[el_v] = konflux_pullspec
             if builder_pullspecs:
                 builder_details = "\n".join(
                     [
@@ -626,6 +628,12 @@ class UpdateGolangPipeline:
             raise ValueError(f"Expected a golang builder image NVR, got: {builder_nvr}")
         published_nvr = f'{component_name}-{parsed_nvr["version"]}-{parsed_nvr["release"]}'
         return f'{PUBLISHED_GOLANG_BUILDER_REPO}:{published_nvr}'
+
+    @staticmethod
+    def _get_konflux_builder_pullspec(builder_nvr: str):
+        """Generate a human-readable Konflux pullspec as fallback when registry.redhat.io is unavailable."""
+        parsed_nvr = parse_nvr(builder_nvr)
+        return f'{KONFLUX_DEFAULT_IMAGE_REPO}:golang-builder-{parsed_nvr["version"]}-{parsed_nvr["release"]}'
 
     async def _ensure_builder_pullspec_available(self, pullspec: str):
         """Verify the published golang builder pullspec is available before updating streams.yml."""
