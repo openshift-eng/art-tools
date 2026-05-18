@@ -821,6 +821,59 @@ async def sync_to_quay(source_pullspec, destination_repo, tags=None):
             LOGGER.info(f"Tagging from {destination_repo}@sha256:{shasum} to {destination_repo}:{tag} completed")
 
 
+def _extract_images_from_catalog_json(catalog_path: str) -> list[str]:
+    """Parse catalog.json (FBC format) and return relatedImages from olm.bundle entries.
+
+    Handles both NDJSON (one JSON object per line) and top-level JSON array formats.
+    Only extracts from entries where schema == "olm.bundle", mirroring:
+        jq -r 'select(.schema == "olm.bundle") | .relatedImages[].image'
+    """
+    with open(catalog_path, 'r') as f:
+        content = f.read()
+
+    entries: list[dict] = []
+    try:
+        parsed = json.loads(content)
+        if isinstance(parsed, list):
+            entries = parsed
+        elif isinstance(parsed, dict):
+            entries = [parsed]
+    except json.JSONDecodeError:
+        pass
+
+    if not entries:
+        for line in content.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+                if isinstance(obj, dict):
+                    entries.append(obj)
+            except json.JSONDecodeError:
+                continue
+
+    if not entries:
+        raise RuntimeError(f"Failed to parse catalog.json: no valid JSON entries found in {catalog_path}")
+
+    images: list[str] = []
+    bundle_count = 0
+    for entry in entries:
+        if entry.get('schema') != 'olm.bundle':
+            continue
+        bundle_count += 1
+        for ri in entry.get('relatedImages', []):
+            img = ri.get('image')
+            if img:
+                images.append(img)
+
+    LOGGER.info(
+        f"Parsed catalog.json: {len(entries)} entries, {bundle_count} olm.bundle(s), "
+        f"{len(images)} relatedImages extracted"
+    )
+    return images
+
+
 async def extract_related_images_from_fbc(fbc_pullspec: str, product: str) -> list[str]:
     """
     Extract related image pullspecs from FBC image using ORAS workflow.
@@ -829,6 +882,10 @@ async def extract_related_images_from_fbc(fbc_pullspec: str, product: str) -> li
     :param product: Product name for URL transformation (e.g., 'openshift', 'oadp')
     :return: List of image pullspecs from art-images repository
     """
+    ATTACHED_ARTIFACT_TYPE = 'application/vnd.konflux-ci.attached-artifact'
+    RELATED_IMAGES_MEDIA_TYPE = 'related-images'
+    RENDERED_CATALOG_MEDIA_TYPE = 'rendered-catalog'
+
     LOGGER.info(f"Extracting related images from FBC: {fbc_pullspec}")
 
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -847,9 +904,11 @@ async def extract_related_images_from_fbc(fbc_pullspec: str, product: str) -> li
         LOGGER.debug(f"ORAS discover response: {discover_data}")
 
         digest = None
+        catalog_digest = None  # Keep track of catalog artifact as fallback
         referrers = discover_data.get('referrers', [])
         LOGGER.info(f"Found {len(referrers)} referrers")
 
+        # Look for related-images or rendered-catalog (fallback)
         for i, referrer in enumerate(referrers):
             artifact_type = referrer.get('artifactType')
             annotations = referrer.get('annotations', {})
@@ -858,19 +917,35 @@ async def extract_related_images_from_fbc(fbc_pullspec: str, product: str) -> li
                 f"Referrer {i}: artifactType={artifact_type}, attachedMediaType={attached_media_type}, digest={referrer.get('digest')}"
             )
 
-            # Look specifically for the related-images artifact
-            if (
-                artifact_type == 'application/vnd.konflux-ci.attached-artifact'
-                and 'related-images' in attached_media_type
-            ):
-                digest = referrer.get('digest')
-                LOGGER.info(f"Found related-images artifact with digest: {digest}")
-                break
+            if artifact_type == ATTACHED_ARTIFACT_TYPE:
+                if RELATED_IMAGES_MEDIA_TYPE in attached_media_type:
+                    digest = referrer.get('digest')
+                    LOGGER.info(f"Found '{RELATED_IMAGES_MEDIA_TYPE}' artifact with digest: {digest}")
+                    break
+                # If we find rendered-catalog, save it but keep looking for related-images
+                elif RENDERED_CATALOG_MEDIA_TYPE in attached_media_type:
+                    catalog_digest = referrer.get('digest')
+                    LOGGER.info(f"Found '{RENDERED_CATALOG_MEDIA_TYPE}' artifact with digest: {catalog_digest}")
+
+        # If we didn't find related-images, use catalog if available
+        if not digest and catalog_digest:
+            digest = catalog_digest
+            LOGGER.info(
+                f"No '{RELATED_IMAGES_MEDIA_TYPE}' artifact found, using '{RENDERED_CATALOG_MEDIA_TYPE}' artifact with digest: {digest}"
+            )
 
         if not digest:
-            available_types = [r.get('artifactType') for r in referrers]
+            available_artifacts = [
+                {
+                    'artifactType': r.get('artifactType'),
+                    'attachedMediaType': r.get('annotations', {}).get('attachedMediaType', 'N/A'),
+                }
+                for r in referrers
+            ]
             raise RuntimeError(
-                f"No attached artifact found with expected type 'application/vnd.konflux-ci.attached-artifact'. Available types: {available_types}"
+                f"No attached artifact found with type '{ATTACHED_ARTIFACT_TYPE}' and media type containing "
+                f"'{RELATED_IMAGES_MEDIA_TYPE}' or '{RENDERED_CATALOG_MEDIA_TYPE}'. "
+                f"Available artifacts: {available_artifacts}"
             )
 
         # Step 2: Pull the attached artifact
@@ -965,19 +1040,12 @@ async def extract_related_images_from_fbc(fbc_pullspec: str, product: str) -> li
         else:
             catalog_json_path = os.path.join(temp_dir, 'catalog.json')
             if os.path.exists(catalog_json_path):
-                LOGGER.warning(
-                    "related-images.json not found, falling back to catalog.json (this may extract many images)"
+                LOGGER.info(
+                    "related-images.json not found, extracting relatedImages from olm.bundle entries in catalog.json"
                 )
-                with open(catalog_json_path, 'r') as f:
-                    catalog_content = f.read()
+                found_images = _extract_images_from_catalog_json(catalog_json_path)
 
-                registry_pattern = r'registry\.redhat\.io/[^\s"\'<>]+|quay\.io/[^\s"\'<>]+'
-                found_images = re.findall(registry_pattern, catalog_content)
-
-                # Use the same registry namespace for catalog.json fallback
                 for img_url in found_images:
-                    img_url = img_url.rstrip('",')
-                    # Check if the URL matches the registry namespace pattern
                     if f'registry.redhat.io/{registry_namespace}/' in img_url:
                         transformed_url = re.sub(
                             registry_transform_pattern,
@@ -989,7 +1057,7 @@ async def extract_related_images_from_fbc(fbc_pullspec: str, product: str) -> li
                         related_images.append(img_url)
 
                 related_images = list(set(related_images))
-                LOGGER.warning(f"Extracted {len(related_images)} unique images from catalog.json")
+                LOGGER.info(f"Extracted {len(related_images)} unique images from catalog.json")
             else:
                 raise RuntimeError(
                     f"Neither related-images.json nor catalog.json found in pulled artifact. Available files: {pulled_files}"
