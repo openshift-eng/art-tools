@@ -64,26 +64,8 @@ async def is_latest_and_available(ocp_version: str, el_v: int, nvr: str, koji_se
     # sadly --timeout cannot be less than 1 minute, so we wait for 1 minute
     build_tag = f'rhaos-{ocp_version}-rhel-{el_v}-build'
     cmd = f'brew wait-repo {build_tag} --build {nvr} --timeout=1 --verbose'
-    rc, out, err = await exectools.cmd_gather_async(cmd, check=False)
+    rc = await exectools.cmd_assert_async(cmd, check=False, log_stdout=True)
     if rc != 0:
-        output = "\n".join(stream.strip() for stream in (err, out) if stream and stream.strip())
-        if output:
-            _LOGGER.warning(
-                "`%s` failed while checking whether %s is available in %s (exit code %s):\n%s",
-                cmd,
-                nvr,
-                build_tag,
-                rc,
-                output,
-            )
-        else:
-            _LOGGER.warning(
-                "`%s` failed while checking whether %s is available in %s (exit code %s) and produced no output.",
-                cmd,
-                nvr,
-                build_tag,
-                rc,
-            )
         _LOGGER.info(f'Build {nvr} could not be confirmed available in {build_tag}.')
         return False
     _LOGGER.info(f'{nvr} is available in {build_tag}')
@@ -496,7 +478,7 @@ class UpdateGolangPipeline:
 
         regen_cmd = f'brew regen-repo {build_tag}'
         _LOGGER.info("Requesting repo regen: %s", regen_cmd)
-        await exectools.cmd_assert_async(regen_cmd)
+        await exectools.cmd_assert_async(regen_cmd, log_stdout=True)
 
         # Wait for repo to be available (5 hours max)
         for _ in range(30):
