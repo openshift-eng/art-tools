@@ -66,6 +66,7 @@ class SlackClient:
         broadcast: bool = False,
         link_build_url: bool = True,
         unfurl_links: bool = True,
+        unfurl_media: bool = True,
     ):
         attachments = []
         if self.build_url and link_build_url:
@@ -88,6 +89,7 @@ class SlackClient:
             icon_emoji=self.icon_emoji,
             reply_broadcast=broadcast,
             unfurl_links=unfurl_links,
+            unfurl_media=unfurl_media,
         )
         # https://api.slack.com/methods/reactions.add
         if reaction:

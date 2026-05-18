@@ -308,7 +308,7 @@ class ImagesHealthPipeline:
                     report += f' ({self.url_text(job_url, "Last failure job")})'
                 report += '\n'
 
-        await self.slack_client.say(report, thread_ts=response['ts'], unfurl_links=False)
+        await self.slack_client.say(report, thread_ts=response['ts'], unfurl_links=False, unfurl_media=False)
 
     async def notify_forum_ocp_art(self):
         self.slack_client.bind_channel('#forum-ocp-art')
@@ -367,7 +367,7 @@ class ImagesHealthPipeline:
             for concern in concerns:
                 image_message += f'\n• {self.get_message_for_forum(concern)}'
             await self.slack_client.say(
-                image_message, thread_ts=response['ts'], link_build_url=False, unfurl_links=False
+                image_message, thread_ts=response['ts'], link_build_url=False, unfurl_links=False, unfurl_media=False
             )
 
         # Rebase failures
@@ -385,7 +385,7 @@ class ImagesHealthPipeline:
                 if job_url:
                     image_message += f' ({self.url_text(job_url, "Last failure job")})'
             await self.slack_client.say(
-                image_message, thread_ts=response['ts'], link_build_url=False, unfurl_links=False
+                image_message, thread_ts=response['ts'], link_build_url=False, unfurl_links=False, unfurl_media=False
             )
 
     def get_message_for_release(self, concern: dict):
