@@ -61,6 +61,7 @@ GOLANG_RPM_PACKAGE_NAME = 'golang'
 
 # Product-based mappings for Konflux tenant namespaces and kubeconfigs
 PRODUCT_NAMESPACE_MAP = {
+    "acm": "art-acm-tenant",
     "cert-manager": "art-oap-tenant",
     "external-secrets": "art-oap-tenant",
     "logging": "art-logging-tenant",
@@ -74,6 +75,7 @@ PRODUCT_NAMESPACE_MAP = {
 }
 
 PRODUCT_KUBECONFIG_MAP = {
+    "acm": "ACM_KONFLUX_SA_KUBECONFIG",
     "cert-manager": "OAP_KONFLUX_SA_KUBECONFIG",
     "external-secrets": "OAP_KONFLUX_SA_KUBECONFIG",
     "logging": "LOGGING_KONFLUX_SA_KUBECONFIG",
