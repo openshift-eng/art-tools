@@ -1968,8 +1968,6 @@ class PromotePipeline:
         """Find tags with failed ImportSuccess conditions and trigger re-imports, retrying up to max_attempts times."""
         for attempt in range(max_attempts):
             imagestream = await self.get_image_stream(namespace, image_stream_name)
-            if not imagestream:
-                return
             failed_tags = [
                 tag_status["tag"]
                 for tag_status in imagestream.get("status", {}).get("tags", [])
@@ -1980,16 +1978,11 @@ class PromotePipeline:
             ]
             if not failed_tags:
                 if attempt > 0:
-                    self._logger.info("All imports in image stream %s/%s succeeded.", namespace, image_stream_name)
+                    self._logger.info(f"All imports in image stream {namespace}/{image_stream_name} succeeded.")
                 return
             self._logger.warning(
-                "Image stream %s/%s has %d tag(s) with failed imports: %s. Triggering re-import (attempt %d/%d)...",
-                namespace,
-                image_stream_name,
-                len(failed_tags),
-                ", ".join(failed_tags),
-                attempt + 1,
-                max_attempts,
+                f"Image stream {namespace}/{image_stream_name} has {len(failed_tags)} tag(s) with failed imports: "
+                f"{', '.join(failed_tags)}. Triggering re-import (attempt {attempt + 1}/{max_attempts})..."
             )
             if not self.runtime.dry_run:
                 import_tasks = [
@@ -2000,10 +1993,7 @@ class PromotePipeline:
                 self._logger.info("Waiting 60 seconds for imports to complete...")
                 await asyncio.sleep(60)
         self._logger.warning(
-            "Some imports in image stream %s/%s may still be failing after %d attempts.",
-            namespace,
-            image_stream_name,
-            max_attempts,
+            f"Some imports in image stream {namespace}/{image_stream_name} may still be failing after {max_attempts} attempts."
         )
 
     async def get_image_info(self, pullspec: str, raise_if_not_found: bool = False):
