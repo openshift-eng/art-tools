@@ -307,6 +307,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             signing_env="prod",
             skip_sigstore=True,
         )
+        get_image_stream.return_value = {"status": {"tags": []}}
 
         await pipeline.run()
         load_group_config.assert_awaited_once()
@@ -642,6 +643,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         pipeline.send_image_list_email = AsyncMock()
         pipeline.is_accepted = AsyncMock(return_value=False)
         pipeline.ocp_doomsday_backup = AsyncMock(return_value=None)
+        get_image_stream.return_value = {"status": {"tags": []}}
         await pipeline.run()
         load_group_config.assert_awaited_once()
         load_releases_config.assert_awaited_once_with(
@@ -778,6 +780,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             dry_run=False,
         )
         pipeline = PromotePipeline(runtime, group="openshift-4.10", assembly="4.10.99", signing_env="prod")
+        get_image_stream.return_value = {"status": {"tags": []}}
         previous_list = ["4.10.98", "4.10.97", "4.9.99"]
         metadata = {"description": "whatever", "url": "https://access.redhat.com/errata/RHBA-2099:2222"}
 
