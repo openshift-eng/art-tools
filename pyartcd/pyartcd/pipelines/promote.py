@@ -1966,9 +1966,10 @@ class PromotePipeline:
 
     async def _fix_failed_imagestream_imports(self, namespace: str, image_stream_name: str, max_attempts: int = 3):
         """Find tags with failed ImportSuccess conditions and trigger re-imports, retrying up to max_attempts times."""
-        for attempt in range(max_attempts):
+
+        async def get_failed_tags() -> List[str]:
             imagestream = await self.get_image_stream(namespace, image_stream_name)
-            failed_tags = [
+            return [
                 tag_status["tag"]
                 for tag_status in imagestream.get("status", {}).get("tags", [])
                 if any(
@@ -1976,6 +1977,9 @@ class PromotePipeline:
                     for cond in tag_status.get("conditions", [])
                 )
             ]
+
+        for attempt in range(max_attempts):
+            failed_tags = await get_failed_tags()
             if not failed_tags:
                 if attempt > 0:
                     self._logger.info(f"All imports in image stream {namespace}/{image_stream_name} succeeded.")
@@ -1985,16 +1989,20 @@ class PromotePipeline:
                 f"{', '.join(failed_tags)}. Triggering re-import (attempt {attempt + 1}/{max_attempts})..."
             )
             if not self.runtime.dry_run:
-                import_tasks = [
-                    exectools.cmd_gather_async(["oc", "-n", namespace, "import-image", f"is/{image_stream_name}:{tag}"])
-                    for tag in failed_tags
-                ]
-                await asyncio.gather(*import_tasks, return_exceptions=True)
+                for tag in failed_tags:
+                    await exectools.cmd_gather_async(
+                        ["oc", "-n", namespace, "import-image", f"is/{image_stream_name}:{tag}"],
+                        check=False,
+                    )
                 self._logger.info("Waiting 60 seconds for imports to complete...")
                 await asyncio.sleep(60)
-        raise RuntimeError(
-            f"Image stream {namespace}/{image_stream_name} still has failed imports after {max_attempts} attempts. "
-        )
+        still_failed = await get_failed_tags()
+        if still_failed:
+            raise RuntimeError(
+                f"Image stream {namespace}/{image_stream_name} still has {len(still_failed)} tag(s) with failed imports "
+                f"after {max_attempts} attempts: {', '.join(still_failed)}"
+            )
+        self._logger.info(f"All imports in image stream {namespace}/{image_stream_name} succeeded.")
 
     async def get_image_info(self, pullspec: str, raise_if_not_found: bool = False):
         try:
