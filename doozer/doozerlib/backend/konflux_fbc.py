@@ -24,7 +24,6 @@ from artcommonlib.konflux.konflux_build_record import (
     KonfluxBuildOutcome,
     KonfluxBuildRecord,
     KonfluxBundleBuildRecord,
-    KonfluxECStatus,
     KonfluxFbcBuildRecord,
 )
 from artcommonlib.konflux.konflux_db import KonfluxDb
@@ -1872,9 +1871,6 @@ class KonfluxFbcBuilder:
                 succeeded_condition = pipelinerun_info.find_condition('Succeeded')
                 outcome = KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition(succeeded_condition)
 
-                ec_status = KonfluxECStatus.NOT_APPLICABLE
-                ec_pipeline_url = ''
-
                 if self.dry_run:
                     logger.info("Dry run: Would have inserted build record in Konflux DB")
                 else:
@@ -1885,8 +1881,6 @@ class KonfluxFbcBuilder:
                         outcome,
                         arches,
                         logger=logger,
-                        ec_status=ec_status,
-                        ec_pipeline_url=ec_pipeline_url,
                     )
 
                 if outcome is not KonfluxBuildOutcome.SUCCESS:
@@ -2040,8 +2034,6 @@ class KonfluxFbcBuilder:
         outcome: KonfluxBuildOutcome,
         arches: Sequence[str],
         logger: Optional[logging.Logger] = None,
-        ec_status: KonfluxECStatus = KonfluxECStatus.NOT_APPLICABLE,
-        ec_pipeline_url: str = '',
     ):
         logger = logger or self._logger.getChild(f"[{metadata.distgit_key}]")
         db = self._db
@@ -2094,8 +2086,6 @@ class KonfluxFbcBuilder:
                 'bundle_nvrs': bundle_nvrs,
                 'arches': arches,
                 'build_component': build_component,
-                'ec_status': ec_status,
-                'ec_pipeline_url': ec_pipeline_url,
             }
 
             match outcome:

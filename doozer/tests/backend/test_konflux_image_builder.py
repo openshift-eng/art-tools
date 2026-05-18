@@ -90,7 +90,6 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
 
         # Mock EC verification result
         ec_result_mock = MagicMock()
-        ec_result_mock.ec_status = "PASSED"
         ec_result_mock.ec_pipeline_url = "https://example.com/ec-pipeline"
         ec_result_mock.ec_failed = False
 
@@ -339,7 +338,6 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         self.mock_konflux_client.wait_for_pipelinerun = AsyncMock(return_value=completed_pipelinerun)
 
         ec_result_mock = MagicMock()
-        ec_result_mock.ec_status = "PASSED"
         ec_result_mock.ec_pipeline_url = "https://example.com/ec-pipeline"
         ec_result_mock.ec_failed = False
 
@@ -547,7 +545,7 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
             patch.object(
                 self.builder._konflux_client,
                 "verify_enterprise_contract",
-                new=AsyncMock(return_value=MagicMock(ec_status="PASSED", ec_pipeline_url="", ec_failed=False)),
+                new=AsyncMock(return_value=MagicMock(ec_pipeline_url="", ec_failed=False)),
             ),
             patch(
                 "doozerlib.backend.konflux_image_builder.KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition",
@@ -623,7 +621,7 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
             patch.object(
                 self.builder._konflux_client,
                 "verify_enterprise_contract",
-                new=AsyncMock(return_value=MagicMock(ec_status="PASSED", ec_pipeline_url="", ec_failed=False)),
+                new=AsyncMock(return_value=MagicMock(ec_pipeline_url="", ec_failed=False)),
             ),
             patch(
                 "doozerlib.backend.konflux_image_builder.KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition",
@@ -689,7 +687,7 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
             patch.object(
                 self.builder._konflux_client,
                 "verify_enterprise_contract",
-                new=AsyncMock(return_value=MagicMock(ec_status="PASSED", ec_pipeline_url="", ec_failed=False)),
+                new=AsyncMock(return_value=MagicMock(ec_pipeline_url="", ec_failed=False)),
             ),
             patch(
                 "doozerlib.backend.konflux_image_builder.KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition",

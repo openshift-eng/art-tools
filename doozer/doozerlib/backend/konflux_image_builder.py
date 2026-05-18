@@ -21,7 +21,6 @@ from artcommonlib.konflux.konflux_build_record import (
     Engine,
     KonfluxBuildOutcome,
     KonfluxBuildRecord,
-    KonfluxECStatus,
 )
 from artcommonlib.model import Missing
 from artcommonlib.oc_image_info import oc_image_info__cached_async
@@ -898,7 +897,6 @@ class KonfluxImageBuilder:
         outcome,
         building_arches,
         build_priority,
-        ec_status=KonfluxECStatus.NOT_APPLICABLE,
         ec_pipeline_url='',
         release_pipeline='',
         released_pullspec='',
@@ -966,7 +964,6 @@ class KonfluxImageBuilder:
             'pipeline_commit': 'n/a',  # TODO: populate this
             'build_component': build_component,
             'build_priority': int(build_priority),
-            'ec_status': ec_status,
             'ec_pipeline_url': ec_pipeline_url,
             'release_pipeline': release_pipeline,
             'released_pullspec': released_pullspec,

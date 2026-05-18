@@ -19,7 +19,6 @@ from artcommonlib.konflux.konflux_build_record import (
     KonfluxBuildOutcome,
     KonfluxBuildRecord,
     KonfluxBundleBuildRecord,
-    KonfluxECStatus,
 )
 from artcommonlib.konflux.konflux_db import Engine, KonfluxDb
 from artcommonlib.model import Model
@@ -760,7 +759,6 @@ class KonfluxOlmBundleBuilder:
                 outcome = KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition(succeeded_condition)
 
                 ec_failed = False
-                ec_status = KonfluxECStatus.NOT_APPLICABLE
                 ec_pipeline_url = ''
                 if not self.dry_run:
                     results = pipelinerun_dict.get('status', {}).get('results', [])
@@ -802,7 +800,6 @@ class KonfluxOlmBundleBuilder:
                             ec_policy=ec_policy,
                             logger=logger,
                         )
-                        ec_status = ec_result.ec_status
                         ec_pipeline_url = ec_result.ec_pipeline_url
                         if ec_result.ec_failed:
                             outcome = KonfluxBuildOutcome.ITS_ERROR
@@ -827,7 +824,6 @@ class KonfluxOlmBundleBuilder:
                         outcome,
                         operator_nvr,
                         operand_nvrs,
-                        ec_status=ec_status,
                         ec_pipeline_url=ec_pipeline_url,
                     )
                 else:
@@ -935,7 +931,6 @@ class KonfluxOlmBundleBuilder:
         outcome: KonfluxBuildOutcome,
         operator_nvr: str,
         operand_nvrs: list[str],
-        ec_status: KonfluxECStatus = KonfluxECStatus.NOT_APPLICABLE,
         ec_pipeline_url: str = '',
     ):
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
@@ -987,7 +982,6 @@ class KonfluxOlmBundleBuilder:
                 'operator_nvr': operator_nvr,
                 'operand_nvrs': operand_nvrs,
                 'build_component': build_component,
-                'ec_status': ec_status,
                 'ec_pipeline_url': ec_pipeline_url,
             }
 

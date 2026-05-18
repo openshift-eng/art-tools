@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxECStatus
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome
 from doozerlib.backend.konflux_client import ECVerificationResult
 from doozerlib.backend.konflux_image_builder import (
     KonfluxImageBuilder,
@@ -83,15 +83,11 @@ def _make_metadata(distgit_key="test-image", for_release=True, is_base_image=Fal
 
 
 def _ec_passed_result():
-    return ECVerificationResult(
-        ec_status=KonfluxECStatus.PASSED, ec_pipeline_url="https://example.com/ec-plr", ec_failed=False
-    )
+    return ECVerificationResult(ec_pipeline_url="https://example.com/ec-plr", ec_failed=False)
 
 
 def _ec_failed_result():
-    return ECVerificationResult(
-        ec_status=KonfluxECStatus.FAILED, ec_pipeline_url="https://example.com/ec-plr", ec_failed=True
-    )
+    return ECVerificationResult(ec_pipeline_url="https://example.com/ec-plr", ec_failed=True)
 
 
 @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
