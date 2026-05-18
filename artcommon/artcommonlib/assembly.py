@@ -386,6 +386,42 @@ def assembly_issues_config(releases_config: Model, assembly: str) -> Model:
     return assembly_config_struct(releases_config, assembly, 'issues', {})
 
 
+def assembly_targeted_fixes_only(releases_config: Model, assembly: typing.Optional[str]) -> bool:
+    """
+    Returns True if the assembly's own issues config has targeted_fixes_only: true, without
+    traversing the inheritance chain. Use to detect targeted/emergency releases that should
+    skip automated bug sweeps, inheritance of parent issues, and blocker checks.
+
+    Arg(s):
+        releases_config (Model): The content of releases.yml in Model form.
+        assembly (str | None): The name of the assembly to assess.
+    Return Value(s):
+        bool: True if issues.targeted_fixes_only is set on the assembly's own node, False otherwise.
+    """
+    return bool(assembly_own_issues_config(releases_config, assembly).targeted_fixes_only)
+
+
+def assembly_own_issues_config(releases_config: Model, assembly: typing.Optional[str]) -> Model:
+    """
+    Returns the issues config defined ONLY in the given assembly's own node,
+    without traversing the inheritance chain. Use instead of assembly_issues_config()
+    to prevent parent assembly bugs from bleeding into child assembly advisories.
+
+    Arg(s):
+        releases_config (Model): The content of releases.yml in Model form.
+        assembly (str | None): The name of the assembly to assess.
+    Return Value(s):
+        Model: The issues config for the assembly's own node, or an empty Model if
+               not defined or inputs are invalid.
+    """
+    if not assembly or not isinstance(releases_config, Model):
+        return Model(dict_to_model={})
+    own_issues = releases_config.releases[assembly].assembly.issues
+    if own_issues is Missing:
+        return Model(dict_to_model={})
+    return own_issues
+
+
 def assembly_streams_config(releases_config: Model, assembly: typing.Optional[str], streams_config: Model) -> Model:
     """
     Returns a streams config based on the assembly information

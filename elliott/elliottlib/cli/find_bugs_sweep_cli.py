@@ -5,7 +5,12 @@ from typing import Dict, List, Optional, Set
 
 import click
 from artcommonlib import arch_util, logutil
-from artcommonlib.assembly import assembly_config_struct, assembly_issues_config
+from artcommonlib.assembly import (
+    assembly_config_struct,
+    assembly_issues_config,
+    assembly_own_issues_config,
+    assembly_targeted_fixes_only,
+)
 from artcommonlib.format_util import green_print
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import is_ocp_delivery_repo, new_roundtrip_yaml_handler
@@ -242,7 +247,22 @@ async def find_bugs_sweep_cli(
 
 
 async def get_bugs_sweep(runtime: Runtime, find_bugs_obj, bug_tracker):
-    bugs = find_bugs_obj.search(bug_tracker_obj=bug_tracker, verbose=runtime.debug)
+    releases_config = runtime.get_releases_config()
+    is_targeted = assembly_targeted_fixes_only(releases_config, runtime.assembly)
+    if is_targeted:
+        own_issues = assembly_own_issues_config(releases_config, runtime.assembly)
+        if not list(own_issues.include):
+            raise ValueError(
+                f"Assembly {runtime.assembly} has targeted_fixes_only=true but issues.include is empty. "
+                "A targeted release must explicitly list the bugs it ships."
+            )
+        logger.info(
+            "Skipping Jira sweep: assembly %s has targeted_fixes_only=true. Only explicitly included bugs will be attached.",
+            runtime.assembly,
+        )
+        bugs = []
+    else:
+        bugs = find_bugs_obj.search(bug_tracker_obj=bug_tracker, verbose=runtime.debug)
     if bugs:
         sweep_cutoff_timestamp = await get_sweep_cutoff_timestamp(runtime)
         if sweep_cutoff_timestamp:
@@ -277,7 +297,9 @@ async def get_bugs_sweep(runtime: Runtime, find_bugs_obj, bug_tracker):
         if find_bugs_obj.art_managed_trackers_only:
             bugs = filter_art_managed_jira_trackers(runtime, bugs, bug_tracker_type=bug_tracker.type)
 
-    included_bug_ids, excluded_bug_ids = get_assembly_bug_ids(runtime, bug_tracker_type=bug_tracker.type)
+    included_bug_ids, excluded_bug_ids = get_assembly_bug_ids(
+        runtime, bug_tracker_type=bug_tracker.type, use_own_only=is_targeted
+    )
     if included_bug_ids & excluded_bug_ids:
         raise ValueError(
             f"The following {bug_tracker.type} bugs are defined in both 'include' and 'exclude': "
@@ -413,9 +435,13 @@ def get_builds_by_advisory_kind(runtime: Runtime) -> Dict[str, List[str]]:
     return builds_by_kind
 
 
-def get_assembly_bug_ids(runtime, bug_tracker_type) -> tuple[Set[str], Set[str]]:
-    # Loads included/excluded bugs from assembly config
-    issues_config = assembly_issues_config(runtime.get_releases_config(), runtime.assembly)
+def get_assembly_bug_ids(runtime, bug_tracker_type, use_own_only: bool = False) -> tuple[Set[str], Set[str]]:
+    # For hotfix releases, use only the assembly's own issues (no inheritance).
+    # Otherwise use the merged inheritance chain so explicit includes/excludes work across releases.
+    if use_own_only:
+        issues_config = assembly_own_issues_config(runtime.get_releases_config(), runtime.assembly)
+    else:
+        issues_config = assembly_issues_config(runtime.get_releases_config(), runtime.assembly)
     included_bug_ids = {i["id"] for i in issues_config.include}
     excluded_bug_ids = {i["id"] for i in issues_config.exclude}
 
