@@ -1796,6 +1796,7 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         runtime.logger = logging.getLogger('test_runtime')
         runtime.variant = BuildVariant.OCP
         runtime.assembly = 'stream'
+        runtime.product = 'ocp'
         runtime.group_config = Model({})
 
         # Test base image - should trigger workflow
@@ -1815,6 +1816,7 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         test_assembly_runtime.logger = logging.getLogger('test_runtime')
         test_assembly_runtime.variant = BuildVariant.OCP
         test_assembly_runtime.assembly = 'test'
+        test_assembly_runtime.product = 'ocp'
         test_assembly_runtime.group_config = Model({})
         self.assertFalse(ImageMetadata(test_assembly_runtime, base_data).should_trigger_base_image_release())
         self.assertFalse(ImageMetadata(test_assembly_runtime, golang_data).should_trigger_base_image_release())
@@ -1824,6 +1826,7 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         named_runtime.logger = logging.getLogger('test_runtime')
         named_runtime.variant = BuildVariant.OCP
         named_runtime.assembly = '4.17.1'
+        named_runtime.product = 'ocp'
         named_runtime.group_config = Model({})
         self.assertTrue(ImageMetadata(named_runtime, base_data).should_trigger_base_image_release())
         self.assertTrue(ImageMetadata(named_runtime, golang_data).should_trigger_base_image_release())
@@ -1857,6 +1860,7 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         runtime_group_off.logger = logging.getLogger('test_runtime')
         runtime_group_off.variant = BuildVariant.OCP
         runtime_group_off.assembly = 'stream'
+        runtime_group_off.product = 'ocp'
         runtime_group_off.group_config = Model({'base_image_release': Model({'enabled': False})})
         group_off_base = Model({'name': 'g-off-base', 'base_only': True})
         group_off_data = Model({'key': 'g-off-base', 'data': group_off_base, 'filename': 'g-off-base.yaml'})
@@ -1868,6 +1872,7 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         runtime_both.logger = logging.getLogger('test_runtime')
         runtime_both.variant = BuildVariant.OCP
         runtime_both.assembly = 'stream'
+        runtime_both.product = 'ocp'
         runtime_both.group_config = Model({'base_image_release': Model({'enabled': False})})
         base_override = Model(
             {
@@ -1895,6 +1900,7 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         okd_runtime.logger = logging.getLogger('test_runtime')
         okd_runtime.variant = BuildVariant.OKD
         okd_runtime.assembly = 'stream'
+        okd_runtime.product = 'ocp'
         okd_runtime.group_config = Model({})
         okd_base_metadata = ImageMetadata(okd_runtime, base_data)
         self.assertFalse(okd_base_metadata.should_trigger_base_image_release())

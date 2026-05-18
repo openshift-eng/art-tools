@@ -1419,8 +1419,8 @@ class ImageMetadata(Metadata):
         Determines whether this image should trigger the base image release workflow.
 
         The method checks preconditions in the following order:
-        1. Runtime ``product`` must be OCP (when set to a string). Layered products skip the
-           ocp-art-images registry base-image release workflow.
+        1. When ``runtime.product`` is set and not ``ocp``, skip (layered products). Unset or
+           falsy product continues to later checks.
         2. Variant must be OCP (not OKD)
         3. Assembly must not be ``test``
         4. Image must be ``base_only`` or a golang builder
@@ -1432,8 +1432,8 @@ class ImageMetadata(Metadata):
         Returns:
             bool: True if base image release workflow should be triggered, False otherwise.
         """
-        rp = getattr(self.runtime, "product", None)
-        if isinstance(rp, str) and rp != "ocp":
+        rp = self.runtime.product
+        if rp and rp != "ocp":
             return False
 
         if self.runtime.variant is BuildVariant.OKD:
