@@ -1008,45 +1008,72 @@ async def get_group_rpms(
     return out.splitlines()
 
 
+async def increment_fail_counter(branch: str, **kwargs):
+    """
+    Generic Redis failure counter increment with optional metadata fields.
+
+    Always increments a 'failure' field at {branch}:failure.
+    Additional kwargs are stored as {branch}:{key} if value is not None.
+
+    Arg(s):
+        branch (str): Full Redis key prefix (e.g., 'count:build-failure:konflux:openshift-4.17:ironic')
+        **kwargs: Optional metadata fields (url, nvr, etc.)
+
+    Example:
+        await increment_fail_counter('count:build:4.17:ironic', url='http://...', nvr='ironic-1.0')
+    """
+    failure_key = f'{branch}:failure'
+    fail_count = await redis.get_value(failure_key)
+    fail_count = int(fail_count) if fail_count else 0
+    await redis.set_value(key=failure_key, value=fail_count + 1)
+
+    for key, value in kwargs.items():
+        if value is not None:
+            await redis.set_value(key=f'{branch}:{key}', value=value)
+
+
+@limit_concurrency(50)
+async def reset_fail_counter(branch: str):
+    """
+    Remove all keys under a Redis branch pattern.
+    Limit concurrency as we might reset many counters in parallel.
+
+    Arg(s):
+        branch (str): Full Redis key prefix
+    """
+    await redis.delete_keys_by_pattern(f'{branch}:*')
+
+
 async def increment_rebase_fail_counter(image, version, build_system, branch='rebase-failure', job_url=None):
     """
-    Increment the fail counter for a given image in Redis.
+    Increment the rebase fail counter for a given image in Redis.
     Optionally store the job URL where the failure occurred.
 
     Arg(s):
         image (str): Image name
         version (str): OCP version (e.g., '4.17')
         build_system (str): Build system ('brew', 'konflux')
-        branch (str): Branch identifier for the counter (default: 'rebase-failure')
+        branch (str): Branch identifier (default: 'rebase-failure')
         job_url (str): Optional job URL where the failure occurred
     """
-
     redis_branch = f'count:{branch}:{build_system}:{version}:{image}'
-    failure_key = f'{redis_branch}:failure'
-    fail_count = await redis.get_value(failure_key)
-    fail_count = int(fail_count) if fail_count else 0
-    await redis.set_value(key=failure_key, value=fail_count + 1)
-
-    # Store the job URL if provided
-    if job_url:
-        await redis.set_value(key=f'{redis_branch}:url', value=job_url)
+    await increment_fail_counter(redis_branch, url=job_url)
 
 
 @limit_concurrency(50)
 async def reset_rebase_fail_counter(image, version, build_system, branch='rebase-failure'):
     """
-    Reset the fail counter for a given image in Redis.
+    Reset the rebase fail counter for a given image in Redis.
     Limit concurrency as we might have a lot of images to reset.
 
     Arg(s):
         image (str): Image name
         version (str): OCP version (e.g., '4.17')
         build_system (str): Build system ('brew', 'konflux')
-        branch (str): Branch identifier for the counter (default: 'rebase-failure')
+        branch (str): Branch identifier (default: 'rebase-failure')
     """
-
-    redis_branch = f'count:{branch}:{build_system}:{version}:{image}:*'
-    await redis.delete_keys_by_pattern(redis_branch)
+    redis_branch = f'count:{branch}:{build_system}:{version}:{image}'
+    await reset_fail_counter(redis_branch)
 
 
 async def get_rebase_failures(version: str, branches: list[str], build_systems: list[str], logger=None):
@@ -1123,5 +1150,92 @@ async def get_rebase_failures(version: str, branches: list[str], build_systems: 
     except Exception as e:
         if logger:
             logger.warning('Failed to fetch rebase failures from Redis for version %s: %s', version, e)
+
+    return failures
+
+
+async def increment_build_fail_counter(image, group, build_system='konflux', **kwargs):
+    """
+    Increment the build fail counter for a given image in Redis.
+    Optionally store metadata like job URL and NVR of the failed build.
+
+    Key format: count:build-failure:{build_system}:{group}:{image}:{field}
+    Consistent with the rebase failure key pattern.
+
+    Arg(s):
+        image (str): Image name (distgit key)
+        group (str): Group name (e.g., 'openshift-4.17', 'okd-4.21')
+        build_system (str): Build system (default: 'konflux')
+        **kwargs: Optional metadata (url, nvr, etc.)
+    """
+    redis_branch = f'count:build-failure:{build_system}:{group}:{image}'
+    await increment_fail_counter(redis_branch, **kwargs)
+
+
+@limit_concurrency(50)
+async def reset_build_fail_counter(image, group, build_system='konflux'):
+    """
+    Reset the build fail counter for a given image in Redis.
+    Limit concurrency as we might have a lot of images to reset.
+
+    Arg(s):
+        image (str): Image name (distgit key)
+        group (str): Group name (e.g., 'openshift-4.17', 'okd-4.21')
+        build_system (str): Build system (default: 'konflux')
+    """
+    redis_branch = f'count:build-failure:{build_system}:{group}:{image}'
+    await reset_fail_counter(redis_branch)
+
+
+async def get_build_failures(group: str, build_system: str = 'konflux', logger=None):
+    """
+    Fetch build failure data from Redis for a specific group.
+
+    Arg(s):
+        group (str): Group name (e.g., 'openshift-4.18', 'okd-4.21')
+        build_system (str): Build system (default: 'konflux')
+        logger (Logger): Optional logger for debugging
+    Return Value(s):
+        dict: {image_name: {failure_count, url, nvr}}
+    """
+    failures = {}
+
+    try:
+        pattern = f'count:build-failure:{build_system}:{group}:*:failure'
+        failure_keys = await redis.get_keys(pattern)
+
+        if not failure_keys:
+            if logger:
+                logger.info('No %s build failures found for group %s', build_system, group)
+            return failures
+
+        if logger:
+            logger.info('Found %d %s build failure keys for group %s', len(failure_keys), build_system, group)
+
+        # Key format: count:build-failure:{build_system}:{group}:{image}:failure
+        for failure_key in failure_keys:
+            parts = failure_key.split(':')
+            if len(parts) >= 6:
+                image_name = parts[4]
+                base_key = f'count:build-failure:{build_system}:{group}:{image_name}'
+
+                failure_count = await redis.get_value(failure_key)
+                job_url = await redis.get_value(f'{base_key}:url')
+                nvr = await redis.get_value(f'{base_key}:nvr')
+
+                failures[image_name] = {
+                    'failure_count': int(failure_count) if failure_count else 0,
+                    'url': job_url or '',
+                    'nvr': nvr or '',
+                }
+
+        if logger and failures:
+            import json
+
+            logger.info('Build failures for group %s: %s', group, json.dumps(failures, indent=2))
+
+    except Exception as e:
+        if logger:
+            logger.warning('Failed to fetch build failures from Redis for group %s: %s', group, e)
 
     return failures
