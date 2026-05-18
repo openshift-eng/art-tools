@@ -1997,8 +1997,8 @@ class PromotePipeline:
                     for tag in failed_tags
                 ]
                 await asyncio.gather(*import_tasks, return_exceptions=True)
-            self._logger.info("Waiting 60 seconds for imports to complete...")
-            await asyncio.sleep(60)
+                self._logger.info("Waiting 60 seconds for imports to complete...")
+                await asyncio.sleep(60)
         self._logger.warning(
             "Some imports in image stream %s/%s may still be failing after %d attempts.",
             namespace,
