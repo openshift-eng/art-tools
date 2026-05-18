@@ -1267,6 +1267,7 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         rt.build_system = 'konflux'
         rt.konflux_db = MagicMock()
         rt.assembly = 'stream'
+        rt.product = 'ocp'
 
         metadata = image.ImageMetadata(rt, data_obj)
         metadata.logger = self.logger
