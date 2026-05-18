@@ -1992,8 +1992,8 @@ class PromotePipeline:
                 await asyncio.gather(*import_tasks, return_exceptions=True)
                 self._logger.info("Waiting 60 seconds for imports to complete...")
                 await asyncio.sleep(60)
-        self._logger.warning(
-            f"Some imports in image stream {namespace}/{image_stream_name} may still be failing after {max_attempts} attempts."
+        raise RuntimeError(
+            f"Image stream {namespace}/{image_stream_name} still has failed imports after {max_attempts} attempts. "
         )
 
     async def get_image_info(self, pullspec: str, raise_if_not_found: bool = False):
