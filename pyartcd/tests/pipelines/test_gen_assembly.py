@@ -5,7 +5,8 @@ from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import click
-from pyartcd.pipelines.gen_assembly import GenAssemblyPipeline, validate_release_date
+from pyartcd.click_validators import validate_release_date
+from pyartcd.pipelines.gen_assembly import GenAssemblyPipeline
 
 
 class TestGenAssemblyPipeline(IsolatedAsyncioTestCase):
@@ -148,10 +149,13 @@ releases:
         self.assertIn("4.12.99", actual["releases"])
 
     @patch("pathlib.Path.exists", autospec=True, return_value=True)
-    @patch("pyartcd.pipelines.gen_assembly.get_github_client_for_org")
-    @patch("pyartcd.pipelines.gen_assembly.yaml")
-    @patch("pyartcd.pipelines.gen_assembly.GitRepository", autospec=True)
-    def test_create_or_update_pull_request(self, git_repo: MagicMock, yaml: MagicMock, mock_get_client: MagicMock, *_):
+    @patch("pyartcd.util.get_github_client_for_org")
+    @patch("pyartcd.util.new_roundtrip_yaml_handler")
+    @patch("pyartcd.util.GitRepository", autospec=True)
+    def test_create_or_update_pull_request(
+        self, git_repo: MagicMock, mock_yaml_handler: MagicMock, mock_get_client: MagicMock, *_
+    ):
+        yaml = mock_yaml_handler.return_value
         runtime = MagicMock(
             dry_run=False,
             config={

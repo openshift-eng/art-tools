@@ -58,6 +58,7 @@ from doozerlib.cli.images_streams import images_streams, images_streams_gen_buil
 from doozerlib.cli.inspect_stream import inspect_stream
 from doozerlib.cli.olm_bundle import list_olm_operators, olm_bundles_print, rebase_and_build_olm_bundle
 from doozerlib.cli.release_gen_assembly import gen_assembly_from_releases, releases_gen_assembly
+from doozerlib.cli.release_gen_assembly_targeted import gen_assembly_from_targeted
 from doozerlib.cli.release_gen_payload import release_gen_payload
 from doozerlib.cli.rpms import (
     rpms_build,

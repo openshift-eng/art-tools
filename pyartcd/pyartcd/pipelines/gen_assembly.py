@@ -1,10 +1,8 @@
 import asyncio
-import datetime
 import logging
 import os
 import re
 import traceback
-from collections import namedtuple
 from io import StringIO
 from typing import Iterable, Optional, OrderedDict, Tuple
 
@@ -16,65 +14,28 @@ from artcommonlib.constants import (
     REGISTRY_CI_OPENSHIFT,
     REGISTRY_QUAY_OCP_RELEASE_DEV,
 )
-from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.registry_config import RegistryConfig
 from artcommonlib.util import (
     get_inflight,
     isolate_major_minor_in_group,
-    merge_objects,
     new_roundtrip_yaml_handler,
-    split_git_url,
     uses_konflux_imagestream_override,
 )
 from doozerlib.cli.get_nightlies import get_nightly_tag_base, rc_api_url
 
 from pyartcd import constants, jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
-from pyartcd.git import GitRepository
-from pyartcd.jenkins import start_build_sync
+from pyartcd.click_validators import validate_release_date
 from pyartcd.runtime import Runtime
+from pyartcd.util import create_or_update_assembly_pr
 
 yaml = new_roundtrip_yaml_handler()
 
 
-def validate_release_date(ctx, param, value):
-    """
-    Validates and converts release date to the format expected by elliott.
-    Accepts both YYYY-MM-DD and YYYY-Mon-DD formats.
-    Converts to YYYY-Mon-DD format (e.g., 2026-Mar-31) which is required by elliott.
-    """
-    if value is None:
-        return None
-
-    # Elliott's expected format
-    elliott_format = '%Y-%b-%d'
-
-    # Try parsing as YYYY-Mon-DD first (elliott format)
-    try:
-        parsed_date = datetime.datetime.strptime(value, elliott_format)
-        # Already in correct format
-        return value
-    except ValueError:
-        pass
-
-    # Try parsing as YYYY-MM-DD (numeric month)
-    try:
-        parsed_date = datetime.datetime.strptime(value, '%Y-%m-%d')
-        # Convert to elliott format
-        converted = parsed_date.strftime(elliott_format)
-        click.echo(f"Converted release date from {value} to {converted} (elliott format)")
-        return converted
-    except ValueError:
-        pass
-
-    raise click.BadParameter(
-        'Release date (--date) must be in YYYY-Mon-DD format (e.g., 2026-Mar-31) '
-        'or YYYY-MM-DD format (e.g., 2026-03-31)'
-    )
-
-
 class GenAssemblyPipeline:
-    """Rebase and build MicroShift for an assembly"""
+    """
+    Generate an assembly definition from nightlies or releases.
+    """
 
     def __init__(
         self,
@@ -347,83 +308,26 @@ class GenAssemblyPipeline:
 
     async def _create_or_update_pull_request(self, assembly_definition: OrderedDict):
         """
-        Create or update pull request for ocp-build-data
-        :param assembly_definition: the assembly definition to be added to releases.yml
+        Create or update pull request for ocp-build-data.
+
+        Arg(s):
+            assembly_definition: the assembly definition to be added to releases.yml
         """
-
-        self._logger.info("Creating ocp-build-data PR...")
-
-        # Gather PR data
-        ocp_build_data_repo_push_url = self.runtime.config["build_config"]["ocp_build_data_repo_push_url"]
-        match = re.search(r"github\.com[:/](.+)/(.+)(?:.git)?", ocp_build_data_repo_push_url)
-        if not match:
-            raise ValueError(
-                f"Couldn't create a pull request: {ocp_build_data_repo_push_url} is not a valid github repo"
-            )
-
         title = f"Add assembly {self.assembly}"
         body = f"Created by job run {jenkins.get_build_url()}"
-        branch = f"auto-gen-assembly-{self.group}-{self.assembly}"
-        head = f"{match[1]}:{branch}"
-        base = self.group
 
-        # Dry run
-        if self.runtime.dry_run:
-            self._logger.warning(
-                "[DRY RUN] Would have created pull-request with head '%s', base '%s' title '%s', body '%s'",
-                head,
-                base,
-                title,
-                body,
-            )
-
-            if self.auto_trigger_build_sync:
-                self._logger.info("[DRY RUN] Would have triggered build-sync with the PR assembly definition")
-            d = {"html_url": "https://github.example.com/foo/bar/pull/1234", "number": 1234}
-            result = namedtuple('pull_request', d.keys())(*d.values())
-            return result
-
-        # Clone ocp-build-data
-        build_data_path = self._working_dir / "ocp-build-data-push"
-        build_data = GitRepository(build_data_path, dry_run=self.runtime.dry_run)
-        await build_data.setup(ocp_build_data_repo_push_url)
-        await build_data.fetch_switch_branch(branch, self.group)
-
-        # Make changes to releases.yml and push changes to auto-gen-assembly branch
-        releases_yaml_path = build_data_path / "releases.yml"
-        releases_yaml = yaml.load(releases_yaml_path) if releases_yaml_path.exists() else {}
-        releases_yaml = merge_objects(assembly_definition, releases_yaml)
-        yaml.dump(releases_yaml, releases_yaml_path)
-        pushed = await build_data.commit_push(f"{title}\n{body}")
-        if not pushed:
-            self._logger.warning("PR is not created: Nothing to commit.")
-            return None
-
-        # Create a pull request
-        _, owner, repo_name = split_git_url(ocp_build_data_repo_push_url)
-        gh_repo = get_github_client_for_org(owner).get_repo(f"{owner}/{repo_name}")
-        existing_prs = list(gh_repo.get_pulls(state="open", base=base, head=head))
-        if not existing_prs:
-            result = gh_repo.create_pull(head=head, base=base, title=title, body=body, maintainer_can_modify=True)
-        else:
-            pr = existing_prs[0]
-            pr.edit(title=title, body=body)
-            result = pr
-
-        # Trigger build-sync
-        if self.auto_trigger_build_sync:
-            self._logger.info("Triggering build-sync")
-            build_version = self.group.split("-")[1]  # eg: 4.14 from openshift-4.14
-            start_build_sync(
-                build_version=build_version,
-                assembly=self.assembly,
-                build_system=self.build_system,
-                doozer_data_path=constants.OCP_BUILD_DATA_URL,  # we're not passing doozer_data_path
-                # to build-sync because we always create branch on the base repo
-                doozer_data_gitref=branch,
-            )
-
-        return result
+        return await create_or_update_assembly_pr(
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+            build_system=self.build_system,
+            assembly_definition=assembly_definition,
+            title=title,
+            body=body,
+            working_dir=self._working_dir,
+            auto_trigger_build_sync=self.auto_trigger_build_sync,
+            logger=self._logger,
+        )
 
 
 @cli.command("gen-assembly")

@@ -237,6 +237,35 @@ def merge_objects(a, b):
     return c
 
 
+def normalize_release_date(value: str) -> str:
+    """
+    Normalize a release date string to YYYY-Mon-DD format (e.g. 2026-Mar-31).
+    Accepts YYYY-Mon-DD (passthrough) or YYYY-MM-DD (converted).
+
+    Arg(s):
+        value: Date string in YYYY-Mon-DD or YYYY-MM-DD format
+    Return Value(s):
+        str: Date in YYYY-Mon-DD format
+    """
+    elliott_format = "%Y-%b-%d"
+    try:
+        datetime.strptime(value, elliott_format)
+        return value
+    except ValueError:
+        pass
+
+    try:
+        parsed = datetime.strptime(value, "%Y-%m-%d")
+        return parsed.strftime(elliott_format)
+    except ValueError:
+        pass
+
+    raise ValueError(
+        f"Release date '{value}' must be in YYYY-Mon-DD format (e.g. 2026-Mar-31) "
+        f"or YYYY-MM-DD format (e.g. 2026-03-31)"
+    )
+
+
 def is_future_release_date(date_str):
     """
     If the input date is in future then return True else False
