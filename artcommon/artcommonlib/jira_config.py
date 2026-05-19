@@ -24,6 +24,8 @@ Example usage:
 import logging
 import os
 
+from jira import JIRAError
+
 LOGGER = logging.getLogger(__name__)
 
 # Default JIRA server URL (hardcoded; not read from ocp-build-data bug.yml)
@@ -101,8 +103,6 @@ def verify_jira_client(jira_client) -> str:
         >>> client = JIRA(server="https://redhat.atlassian.net", basic_auth=(email, token))
         >>> username = verify_jira_client(client)
     """
-    from jira import JIRAError
-
     try:
         current_user = jira_client.current_user()
         LOGGER.debug("Successfully authenticated to JIRA")
