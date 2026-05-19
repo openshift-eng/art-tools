@@ -5,10 +5,11 @@ import re
 import shutil
 import sys
 import tempfile
+from collections import namedtuple
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Dict, Iterable, List, Optional, Union, cast
+from typing import Dict, Iterable, List, Optional, OrderedDict, Union, cast
 
 import artcommonlib
 import yaml
@@ -16,13 +17,17 @@ from artcommonlib import exectools, redis
 from artcommonlib.arch_util import go_suffix_for_arch
 from artcommonlib.assembly import assembly_type
 from artcommonlib.exectools import limit_concurrency
+from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.model import Missing, Model
 from artcommonlib.release_util import SoftwareLifecyclePhase, isolate_assembly_in_release
+from artcommonlib.util import merge_objects, new_roundtrip_yaml_handler, split_git_url
 from doozerlib import util as doozerutil
 from doozerlib.constants import ART_BUILD_HISTORY_URL
 from errata_tool import ErrataConnector
 
 from pyartcd import constants, record
+from pyartcd.git import GitRepository
+from pyartcd.jenkins import start_build_sync
 from pyartcd.mail import MailService
 
 logger = logging.getLogger(__name__)
@@ -1190,3 +1195,96 @@ async def get_counter_failures(
     """
     pattern = f'count:{counter_type}:{build_system}:{group}:*:failure'
     return await get_failures(pattern, entity_index=-2, logger=logger)
+
+
+async def create_or_update_assembly_pr(
+    runtime,
+    group: str,
+    assembly: str,
+    build_system: str,
+    assembly_definition: OrderedDict,
+    title: str,
+    body: str,
+    working_dir,
+    logger: logging.Logger,
+    auto_trigger_build_sync: bool = False,
+):
+    """
+    Create or update a pull request against ocp-build-data with an assembly definition.
+    Shared between gen-assembly and gen-assembly-targeted pipelines.
+
+    Arg(s):
+        runtime: pyartcd Runtime
+        group: OCP group name (e.g. openshift-4.17)
+        assembly: assembly name (e.g. 4.17.5)
+        build_system: 'brew' or 'konflux'
+        assembly_definition: YAML dict to merge into releases.yml
+        title: PR title
+        body: PR body
+        working_dir: working directory for git clone
+        logger: logger instance
+        auto_trigger_build_sync: whether to trigger build-sync after PR
+    Return Value(s):
+        PR object, or None if nothing to commit
+    """
+    _yaml = new_roundtrip_yaml_handler()
+    log = logger
+    log.info("Creating ocp-build-data PR...")
+
+    ocp_build_data_repo_push_url = runtime.config["build_config"]["ocp_build_data_repo_push_url"]
+    match = re.search(r"github\.com[:/](.+)/(.+)(?:.git)?", ocp_build_data_repo_push_url)
+    if not match:
+        raise ValueError(f"Couldn't create a pull request: {ocp_build_data_repo_push_url} is not a valid github repo")
+
+    branch = f"auto-gen-assembly-{group}-{assembly}"
+    head = f"{match[1]}:{branch}"
+    base = group
+
+    if runtime.dry_run:
+        log.warning(
+            "[DRY RUN] Would have created PR with head '%s', base '%s', title '%s'",
+            head,
+            base,
+            title,
+        )
+        if auto_trigger_build_sync:
+            log.info("[DRY RUN] Would have triggered build-sync")
+        d = {"html_url": "https://github.example.com/foo/bar/pull/1234", "number": 1234}
+        return namedtuple("pull_request", d.keys())(*d.values())
+
+    build_data_path = working_dir / "ocp-build-data-push"
+    build_data = GitRepository(build_data_path, dry_run=runtime.dry_run)
+    await build_data.setup(ocp_build_data_repo_push_url)
+    await build_data.fetch_switch_branch(branch, group)
+
+    releases_yaml_path = build_data_path / "releases.yml"
+    releases_yaml = _yaml.load(releases_yaml_path) if releases_yaml_path.exists() else {}
+    releases_yaml = merge_objects(assembly_definition, releases_yaml)
+    _yaml.dump(releases_yaml, releases_yaml_path)
+    pushed = await build_data.commit_push(f"{title}\n{body}")
+    if not pushed:
+        log.warning("PR is not created: Nothing to commit.")
+        return None
+
+    _, owner, repo_name = split_git_url(ocp_build_data_repo_push_url)
+    gh_repo = get_github_client_for_org(owner).get_repo(f"{owner}/{repo_name}")
+    existing_prs = list(gh_repo.get_pulls(state="open", base=base, head=head))
+    if not existing_prs:
+        result = gh_repo.create_pull(head=head, base=base, title=title, body=body, maintainer_can_modify=True)
+    else:
+        pr = existing_prs[0]
+        pr.edit(title=title, body=body)
+        result = pr
+
+    if auto_trigger_build_sync:
+        log.info("Triggering build-sync")
+        build_version = group.split("-")[1]
+        start_build_sync(
+            build_version=build_version,
+            assembly=assembly,
+            build_system=build_system,
+            doozer_data_path=constants.OCP_BUILD_DATA_URL,
+            doozer_data_gitref=branch,
+        )
+
+    return result
