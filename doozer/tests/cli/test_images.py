@@ -1,10 +1,14 @@
 import unittest
-from unittest.mock import MagicMock, Mock, patch
+from unittest import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
+from artcommonlib.constants import GOLANG_BUILDER_IMAGE_NAME
 from artcommonlib.gitdata import DataObj
+from artcommonlib.model import Model
 from artcommonlib.variants import BuildVariant
 from click.testing import CliRunner
 from doozerlib import Runtime
+from doozerlib.cli import images as images_cli
 from doozerlib.cli.images import images_show_ancestors
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.image import ImageMetadata
@@ -104,6 +108,93 @@ class TestImagesCli(unittest.TestCase):
         result = self.runner.invoke(images_show_ancestors, ['--image-names', 'non-existent'], obj=runtime)
         self.assertIsInstance(result.exception, DoozerFatalError)
         self.assertIn("Image 'non-existent' not found in group.", str(result.exception))
+
+
+class TestSnapshotInputsFromKonfluxSuccessBuilds(IsolatedAsyncioTestCase):
+    def _base_runtime_and_md(self):
+        runtime = MagicMock()
+        runtime.group = "openshift-4.22"
+        runtime.product = "ocp"
+        runtime.variant = BuildVariant.OCP
+        runtime.assembly = "stream"
+        image_model = Model(
+            {
+                "name": "ose-base",
+                "base_only": True,
+                "base_image_release": {"enabled": True},
+                "distgit": {"component": "ose-base-container"},
+            }
+        )
+        data = Model({"key": "openshift-enterprise-base-rhel9", "data": image_model, "filename": "base.yaml"})
+        md = ImageMetadata(runtime, data)
+        md.distgit_key = "openshift-enterprise-base-rhel9"
+        return runtime, md
+
+    async def test_builds_inputs_from_success_rows(self):
+        runtime, md = self._base_runtime_and_md()
+
+        record = MagicMock()
+        record.nvr = "ose-base-container-v4.22-1.el9"
+        record.name = "openshift-enterprise-base-rhel9"
+        record.image_pullspec = "quay.io/x@sha256:abc"
+        record.rebase_repo_url = "https://git.example/r.git"
+        record.rebase_commitish = "deadbeef"
+
+        runtime.konflux_db = MagicMock()
+        runtime.konflux_db.get_build_records_by_nvrs = AsyncMock(return_value=[record])
+        runtime.image_map = {record.name: md}
+
+        inputs = await images_cli._snapshot_inputs_from_konflux_success_builds(runtime, [record.nvr])
+
+        self.assertEqual(len(inputs), 1)
+        self.assertEqual(inputs[0].nvr, record.nvr)
+        self.assertEqual(inputs[0].distgit_key, record.name)
+        self.assertEqual(inputs[0].container_image, record.image_pullspec)
+        self.assertEqual(inputs[0].rebase_repo_url, record.rebase_repo_url)
+        self.assertFalse(inputs[0].is_golang_builder)
+
+    async def test_skips_unknown_nvr(self):
+        runtime, md = self._base_runtime_and_md()
+
+        runtime.konflux_db = MagicMock()
+        runtime.konflux_db.get_build_records_by_nvrs = AsyncMock(return_value=[])
+        runtime.image_map = {md.distgit_key: md}
+
+        inputs = await images_cli._snapshot_inputs_from_konflux_success_builds(runtime, ["nosuch-container-v1-1.el9"])
+        self.assertEqual(inputs, [])
+
+    async def test_golang_builder_flag_from_metadata(self):
+        runtime = MagicMock()
+        runtime.group = "openshift-4.22"
+        runtime.product = "ocp"
+        runtime.variant = BuildVariant.OCP
+        runtime.assembly = "stream"
+
+        image_model = Model(
+            {
+                "name": GOLANG_BUILDER_IMAGE_NAME,
+                "base_image_release": {"enabled": True},
+                "distgit": {"component": "ose-golang-builder-container"},
+            }
+        )
+        data = Model({"key": "openshift-golang-builder", "data": image_model, "filename": "golang.yaml"})
+        md = ImageMetadata(runtime, data)
+        md.distgit_key = "openshift-golang-builder"
+
+        record = MagicMock()
+        record.nvr = "openshift-golang-builder-container-v1-1.el9"
+        record.name = "openshift-golang-builder"
+        record.image_pullspec = "quay.io/golang@sha256:x"
+        record.rebase_repo_url = ""
+        record.rebase_commitish = ""
+
+        runtime.konflux_db = MagicMock()
+        runtime.konflux_db.get_build_records_by_nvrs = AsyncMock(return_value=[record])
+        runtime.image_map = {record.name: md}
+
+        inputs = await images_cli._snapshot_inputs_from_konflux_success_builds(runtime, [record.nvr])
+        self.assertEqual(len(inputs), 1)
+        self.assertTrue(inputs[0].is_golang_builder)
 
 
 if __name__ == '__main__':

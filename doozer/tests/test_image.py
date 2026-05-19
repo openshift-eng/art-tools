@@ -3,7 +3,6 @@ import os
 import shutil
 import tempfile
 import unittest
-from datetime import datetime, timezone
 from unittest import IsolatedAsyncioTestCase, mock
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -1425,7 +1424,7 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         self.assertEqual(metadata.runtime.konflux_db.get_latest_build.await_count, 1)
 
     async def test_fetch_rpms_from_build_regular_queries_success_only(self):
-        """Non base-image/golang images issue a single SUCCESS get_latest_build (no UNRELEASED query)."""
+        """Non-base images query the latest SUCCESS Konflux build once."""
         metadata = self._create_image_metadata('openshift/test-regular-lookup')
         mock_build = MagicMock()
         mock_build.installed_rpms = ['pkg-a']
@@ -1437,74 +1436,20 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         called = metadata.runtime.konflux_db.get_latest_build.await_args.kwargs
         self.assertEqual(called['outcome'], KonfluxBuildOutcome.SUCCESS)
 
-    async def test_fetch_rpms_from_build_prefers_newer_unreleased(self):
-        """Latest unreleased build wins over older success when seeding lockfile RPMs."""
+    async def test_fetch_rpms_from_build_golang_queries_success_only(self):
+        """Golang/base images use the same single SUCCESS latest-build lookup as other images."""
         metadata = self._create_image_metadata(GOLANG_BUILDER_IMAGE_NAME, distgit_key='openshift-golang-builder')
 
-        older = MagicMock()
-        older.installed_rpms = ['golang-1.22.12-11.el9']
-        older.nvr = 'openshift-golang-builder-container-v1-old'
-        older.outcome = KonfluxBuildOutcome.SUCCESS
-        older.end_time = datetime(2026, 5, 1, 12, 0, 0, tzinfo=timezone.utc)
-
-        newer = MagicMock()
-        newer.installed_rpms = ['golang-1.22.12-12.el9']
-        newer.nvr = 'openshift-golang-builder-container-v1-new'
-        newer.outcome = KonfluxBuildOutcome.UNRELEASED
-        newer.end_time = datetime(2026, 5, 7, 12, 0, 0, tzinfo=timezone.utc)
-
-        metadata.runtime.konflux_db.get_latest_build = AsyncMock(side_effect=[older, newer])
+        mock_build = MagicMock()
+        mock_build.installed_rpms = ['golang-pkg-1']
+        metadata.runtime.konflux_db.get_latest_build = AsyncMock(return_value=mock_build)
 
         result = await metadata.fetch_rpms_from_build()
 
-        self.assertEqual(result, {'golang-1.22.12-12.el9'})
-        self.assertEqual(metadata.runtime.konflux_db.get_latest_build.await_count, 2)
-
-    async def test_fetch_rpms_from_build_prefers_newer_success(self):
-        """Latest success build wins over older unreleased when seeding lockfile RPMs."""
-        metadata = self._create_image_metadata(GOLANG_BUILDER_IMAGE_NAME, distgit_key='openshift-golang-builder')
-
-        older = MagicMock()
-        older.installed_rpms = ['pkg-old']
-        older.nvr = 'img-old'
-        older.outcome = KonfluxBuildOutcome.UNRELEASED
-        older.end_time = datetime(2026, 5, 1, 12, 0, 0, tzinfo=timezone.utc)
-
-        newer = MagicMock()
-        newer.installed_rpms = ['pkg-new']
-        newer.nvr = 'img-new'
-        newer.outcome = KonfluxBuildOutcome.SUCCESS
-        newer.end_time = datetime(2026, 5, 8, 12, 0, 0, tzinfo=timezone.utc)
-
-        metadata.runtime.konflux_db.get_latest_build = AsyncMock(side_effect=[newer, older])
-
-        result = await metadata.fetch_rpms_from_build()
-
-        self.assertEqual(result, {'pkg-new'})
-        self.assertEqual(metadata.runtime.konflux_db.get_latest_build.await_count, 2)
-
-    async def test_fetch_rpms_from_build_uses_other_when_newer_has_no_installed_rpms(self):
-        """If the time-newest row has no installed_rpms, use the other candidate when it does."""
-        metadata = self._create_image_metadata(GOLANG_BUILDER_IMAGE_NAME, distgit_key='openshift-golang-builder')
-
-        newer_empty = MagicMock()
-        newer_empty.installed_rpms = []
-        newer_empty.nvr = 'img-newer-empty'
-        newer_empty.outcome = KonfluxBuildOutcome.UNRELEASED
-        newer_empty.end_time = datetime(2026, 5, 10, 12, 0, 0, tzinfo=timezone.utc)
-
-        older_filled = MagicMock()
-        older_filled.installed_rpms = ['golang-1.22.12-12.el9']
-        older_filled.nvr = 'img-older'
-        older_filled.outcome = KonfluxBuildOutcome.SUCCESS
-        older_filled.end_time = datetime(2026, 5, 5, 12, 0, 0, tzinfo=timezone.utc)
-
-        metadata.runtime.konflux_db.get_latest_build = AsyncMock(side_effect=[older_filled, newer_empty])
-
-        result = await metadata.fetch_rpms_from_build()
-
-        self.assertEqual(result, {'golang-1.22.12-12.el9'})
-        self.assertEqual(metadata.runtime.konflux_db.get_latest_build.await_count, 2)
+        self.assertEqual(result, {'golang-pkg-1'})
+        self.assertEqual(metadata.runtime.konflux_db.get_latest_build.await_count, 1)
+        called = metadata.runtime.konflux_db.get_latest_build.await_args.kwargs
+        self.assertEqual(called['outcome'], KonfluxBuildOutcome.SUCCESS)
 
     def _setup_mock_config(self, metadata, lockfile_rpms=None):
         """Helper to setup mock config with lockfile RPMs."""

@@ -10,25 +10,99 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from numbers import Number
-from typing import Optional, cast
+from typing import List, Optional, cast
 
 import click
 import koji
 import yaml
 from artcommonlib import exectools, logutil
+from artcommonlib.constants import GOLANG_BUILDER_IMAGE_NAME
 from artcommonlib.format_util import color_print, green_print, yellow_print
-from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord
+from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
 from dockerfile_parse import DockerfileParser
 
 from doozerlib import Runtime, coverity, state
-from doozerlib.backend.base_image_handler import BaseImageHandler
+from doozerlib.backend.base_image_handler import BaseImageHandler, BaseImageSnapshotInput
 from doozerlib.brew import get_watch_task_info_copy
 from doozerlib.cli import cli, option_commit_message, option_push, pass_runtime, validate_semver_major_minor_patch
 from doozerlib.distgit import ImageDistGitRepo
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.source_resolver import SourceResolver
+
+LOGGER = logutil.get_logger(__name__)
+
+
+async def _snapshot_inputs_from_konflux_success_builds(runtime, nvrs: List[str]) -> List[BaseImageSnapshotInput]:
+    """
+    Map NVRs to :class:`BaseImageSnapshotInput` using latest matching **SUCCESS** Konflux image rows for ``runtime.group``.
+
+    Skips NVRs with no row, missing pullspec, unknown image metadata, or images that do not participate in the
+    base-image workflow. Callers should treat an empty list as failure to prepare any releasable snapshot.
+    """
+    if not nvrs:
+        return []
+
+    konflux_db = getattr(runtime, "konflux_db", None)
+    if not konflux_db:
+        LOGGER.warning("No Konflux database configured; cannot resolve NVRs to snapshot inputs")
+        return []
+
+    where = {"group": runtime.group, "engine": Engine.KONFLUX.value}
+    records = await konflux_db.get_build_records_by_nvrs(
+        nvrs, outcome=KonfluxBuildOutcome.SUCCESS, where=where, strict=False, exclude_large_columns=True
+    )
+
+    by_nvr = {r.nvr: r for r in records if r is not None}
+    inputs: List[BaseImageSnapshotInput] = []
+
+    for nvr in nvrs:
+        rec = by_nvr.get(nvr)
+        if not rec:
+            LOGGER.warning(
+                "No SUCCESS Konflux image build record for NVR %s in group %s",
+                nvr,
+                runtime.group,
+            )
+            continue
+        if not rec.name:
+            LOGGER.warning("Konflux record for NVR %s has no component name", nvr)
+            continue
+
+        md = runtime.image_map.get(rec.name)
+        if not md:
+            LOGGER.warning(
+                "No loaded image metadata for Konflux component %s (NVR %s); check --group and image list",
+                rec.name,
+                nvr,
+            )
+            continue
+
+        if not md.should_trigger_base_image_release():
+            LOGGER.warning(
+                "Image %s does not qualify for base image release workflow (NVR %s), skipping",
+                rec.name,
+                nvr,
+            )
+            continue
+
+        if not rec.image_pullspec:
+            LOGGER.warning("Konflux record for NVR %s has no image_pullspec", nvr)
+            continue
+
+        inputs.append(
+            BaseImageSnapshotInput(
+                nvr=nvr,
+                distgit_key=rec.name,
+                container_image=rec.image_pullspec,
+                rebase_repo_url=rec.rebase_repo_url or "",
+                rebase_commitish=rec.rebase_commitish or "",
+                is_golang_builder=(md.config.name == GOLANG_BUILDER_IMAGE_NAME),
+            )
+        )
+
+    return inputs
 
 
 @cli.command("images:clone", help="Clone a group's image distgit repos locally.")
@@ -1453,38 +1527,28 @@ def query_rpm_version(runtime, repo_type):
     click.echo("version: {}".format(version))
 
 
-@cli.command("images:release-to-base-repo", short_help="Process base images through snapshot-to-release workflow")
+@cli.command("images:release-to-base-repo", short_help="Snapshot→release one base image build (Konflux SUCCESS row)")
 @click.option(
-    '--nvrs',
-    metavar='NVRS',
+    '--nvr',
+    metavar='NVR',
     required=True,
-    help='Comma-separated list of build NVRs to process',
+    help='Exactly one Konflux image build NVR (must have a SUCCESS row for this group)',
 )
 @pass_runtime
-def release_to_base_repo(runtime, nvrs):
+def release_to_base_repo(runtime, nvr):
     """
-    Process completed base image builds through the snapshot-to-release workflow.
-    
-    This command handles the batch base image workflow that:
-    1. Resolves NVRs to image metadata using Konflux infrastructure
-    2. Creates a unified Konflux snapshot from all base image builds
-    3. Creates a release from the snapshot using the appropriate release plan
-    4. Waits for release completion
-    
-    This is intended to be called as a separate job after base image builds complete.
-    Only processes images for which the base-image release workflow applies (see
-    ``should_trigger_base_image_release``): base_only or golang builder, OCP variant,
-    ``base_image_release.enabled`` not disabled at image or group level.
-    
-    Examples:
-    
-    Process single base image workflow:
-    doozer --group openshift-4.22 images:release-to-base-repo \\
-        --nvrs openshift-enterprise-base-rhel9-container-v4.22.0-202602202227.p2.gcf42b3d.assembly.stream.el9
-    
-    Process multiple base images workflow:
-    doozer --group openshift-4.22 images:release-to-base-repo \\
-        --nvrs "nvr1,nvr2,nvr3"
+    Process one completed base image build through the snapshot-to-release workflow.
+
+    Resolves the NVR to a SUCCESS Konflux image record and loaded image metadata, builds one Snapshot component,
+    creates the Release for ``ocp-art-images-base-silent``, and waits for completion.
+
+    Intended as a separate job after that base image Konflux build completes. Only applies when
+    ``should_trigger_base_image_release`` is true for the image.
+
+    Example::
+
+        doozer --group openshift-4.22 images:release-to-base-repo \\
+            --nvr openshift-enterprise-base-rhel9-container-v4.22.0-202602202227.p2.gcf42b3d.assembly.stream.el9
     """
 
     async def run_workflow():
@@ -1495,15 +1559,24 @@ def release_to_base_repo(runtime, nvrs):
 
             runtime.konflux_db.bind(KonfluxBuildRecord)
 
-            nvr_list = [nvr.strip() for nvr in nvrs.split(',')]
+            one_nvr = nvr.strip()
+            if not one_nvr:
+                logger.error("--nvr must be non-empty")
+                return False
+            if "," in one_nvr:
+                logger.error("Only one NVR is supported; do not pass comma-separated values (use one --nvr)")
+                return False
 
-            logger.info(f"Processing {len(nvr_list)} NVRs through base image snapshot-to-release workflow")
-            logger.info(f"Group: {runtime.group}")
-            for nvr in nvr_list:
-                logger.info(f"NVR: {nvr}")
+            logger.info("Processing NVR %s through base image snapshot-to-release workflow", one_nvr)
+            logger.info("Group: %s", runtime.group)
 
-            handler = BaseImageHandler(runtime, nvr_list, dry_run=False)
-            result = await handler.process_base_image_completion()
+            snapshot_inputs = await _snapshot_inputs_from_konflux_success_builds(runtime, [one_nvr])
+            if len(snapshot_inputs) != 1:
+                logger.error("Could not derive exactly one snapshot input from Konflux SUCCESS row for %s", one_nvr)
+                return False
+
+            handler = BaseImageHandler(runtime, dry_run=False)
+            result = await handler.snapshot_release(snapshot_inputs[0])
 
             if result:
                 release_name, snapshot_name = result

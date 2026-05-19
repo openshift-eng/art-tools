@@ -16,6 +16,7 @@ from artcommonlib import constants as artlib_constants
 from artcommonlib import util as artlib_util
 from artcommonlib.arch_util import go_arch_for_brew_arch
 from artcommonlib.build_visibility import is_release_embargoed
+from artcommonlib.constants import GOLANG_BUILDER_IMAGE_NAME
 from artcommonlib.konflux.konflux_build_record import (
     ArtifactType,
     Engine,
@@ -30,6 +31,7 @@ from artcommonlib.rpm_utils import compare_nvr, parse_nvr
 from artcommonlib.util import fetch_slsa_attestation, get_konflux_data
 from dockerfile_parse import DockerfileParser
 from doozerlib import constants, util
+from doozerlib.backend.base_image_handler import BaseImageHandler, BaseImageSnapshotInput
 from doozerlib.backend.build_repo import BuildRepo
 from doozerlib.backend.konflux_client import KonfluxClient
 from doozerlib.backend.pipelinerun_utils import PipelineRunInfo
@@ -40,8 +42,6 @@ from doozerlib.record_logger import RecordLogger
 from doozerlib.source_resolver import SourceResolution
 from packageurl import PackageURL
 from tenacity import retry, stop_after_attempt, wait_fixed
-
-from pyartcd import jenkins
 
 LOGGER = logging.getLogger(__name__)
 
@@ -359,11 +359,20 @@ class KonfluxImageBuilder:
                     logger.info("Dry run: Would have inserted build record in Konflux DB")
 
                 else:
-                    # Create a build record after every attempt (both success and failure)
-                    # Base images need a synchronous release to registry.redhat.io before dependents can use RH
-                    # pullspecs. Mark SUCCESS as UNRELEASED in the DB until that release completes; see below.
+                    # One completion record per attempt. Base images run snapshot→release inline (digest pullspec)
+                    # before persisting SUCCESS or FAILURE so Jenkins/batch workflows can query SUCCESS rows.
                     if outcome is KonfluxBuildOutcome.SUCCESS and metadata.should_trigger_base_image_release():
-                        outcome = KonfluxBuildOutcome.UNRELEASED
+                        base_image_release_success = await self._trigger_base_image_release(
+                            metadata, nvr, definitive_image_pullspec, build_repo
+                        )
+                        if base_image_release_success:
+                            logger.info("Base image release succeeded for %s, persisting build record", nvr)
+                        else:
+                            logger.error("Base image release failed for %s, persisting build record as FAILURE", nvr)
+                        released_outcome = (
+                            KonfluxBuildOutcome.SUCCESS if base_image_release_success else KonfluxBuildOutcome.FAILURE
+                        )
+                        outcome = released_outcome
 
                     build_record = await self.update_konflux_db(
                         metadata,
@@ -377,27 +386,6 @@ class KonfluxImageBuilder:
                     )
                     if build_record:
                         record["record_id"] = build_record.record_id
-
-                    # Check base image release AFTER saving to database
-                    if outcome is KonfluxBuildOutcome.UNRELEASED and metadata.should_trigger_base_image_release():
-                        base_image_release_success = await self._trigger_base_image_release(metadata, nvr)
-                        if base_image_release_success:
-                            logger.info(f"Base image release succeeded for {nvr}, updating build record")
-                        else:
-                            logger.error(f"Base image release failed for {nvr}, updating build record to FAILURE")
-                        outcome = (
-                            KonfluxBuildOutcome.SUCCESS if base_image_release_success else KonfluxBuildOutcome.FAILURE
-                        )
-                        await self.update_konflux_db(
-                            metadata,
-                            build_repo,
-                            pipelinerun_info,
-                            outcome,
-                            building_arches,
-                            build_priority,
-                            ec_status=ec_status,
-                            ec_pipeline_url=ec_pipeline_url,
-                        )
 
                 if outcome is not KonfluxBuildOutcome.SUCCESS:
                     error = KonfluxImageBuildError(
@@ -976,25 +964,23 @@ class KonfluxImageBuilder:
             'ec_pipeline_url': ec_pipeline_url,
         }
 
-        # SUCCESS: normal completed build. UNRELEASED: build succeeded and is waiting for
-        # snapshot→release before final SUCCESS + registry.redhat.io pullspec — same pipelinerun IMAGE_URL/results.
-        if outcome in (KonfluxBuildOutcome.SUCCESS, KonfluxBuildOutcome.UNRELEASED):
-            # results:
-            # - name: IMAGE_URL
-            #   value: quay.io/openshift-release-dev/ocp-v4.0-art-dev-test:ose-network-metrics-daemon-rhel9-v4.18.0-20241001.151532
-            # - name: IMAGE_DIGEST
-            #   value: sha256:49d65afba393950a93517f09385e1b441d1735e0071678edf6fc0fc1fe501807
+        # SUCCESS: completed image in pipelinerun results. FAILURE may still have IMAGE_URL/DIGEST when the pipeline
+        # produced an image but we mark FAILURE (e.g. base-image release failed after EC pass).
+        results = pipelinerun_dict.get('status', {}).get('results', [])
+        image_pullspec = next((r['value'] for r in results if r['name'] == 'IMAGE_URL'), None)
+        image_digest = next((r['value'] for r in results if r['name'] == 'IMAGE_DIGEST'), None)
 
-            results = pipelinerun_dict.get('status', {}).get('results', [])
-            image_pullspec = next((r['value'] for r in results if r['name'] == 'IMAGE_URL'), None)
-            image_digest = next((r['value'] for r in results if r['name'] == 'IMAGE_DIGEST'), None)
-
+        enrich_image = False
+        if outcome is KonfluxBuildOutcome.SUCCESS:
+            enrich_image = True
             if not (image_pullspec and image_digest):
                 raise ValueError(
-                    f"[{metadata.distgit_key}] Could not find expected results in konflux "
-                    f"pipelinerun {pipelinerun_name}"
+                    f"[{metadata.distgit_key}] Could not find expected results in konflux pipelinerun {pipelinerun_name}"
                 )
+        elif outcome is KonfluxBuildOutcome.FAILURE and image_pullspec and image_digest:
+            enrich_image = True
 
+        if enrich_image:
             definitive_image_pullspec = f"{image_pullspec.split(':')[0]}@{image_digest}"
 
             # use image_digest here to be precise, image_pullspec can collide in case of golang-builder images
@@ -1223,39 +1209,49 @@ class KonfluxImageBuilder:
 
         return parent_image_nvrs
 
-    async def _trigger_base_image_release(self, metadata: ImageMetadata, nvr: str) -> bool:
-        """Trigger base image release for a single successful base image build.
+    async def _trigger_base_image_release(
+        self,
+        metadata: ImageMetadata,
+        nvr: str,
+        container_image: str,
+        build_repo: BuildRepo,
+    ) -> bool:
+        """Run snapshot→release for one base image via :class:`BaseImageHandler` (no Jenkins job).
 
-        Expects group_name format 'openshift-X.Y' (e.g., 'openshift-4.22') for
-        version extraction. Falls back to full group_name if format doesn't match.
+        Args:
+            metadata: Image metadata for the built image
+            nvr: Image NVR string
+            container_image: Definitive digest pullspec (``repo@sha256:…``)
+            build_repo: Build repo (rebase git URL and commit for snapshot source)
 
         Returns:
-            bool: True if base image release was triggered successfully, False otherwise
+            bool: True if base image release completed successfully
         """
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
 
-        logger.info(f"Triggering base image release for {nvr}")
+        logger.info(f"Running inline base image snapshot-release for {nvr}")
 
         try:
-            build_version = self._config.group_name
-
-            result = jenkins.start_base_image_release(
-                build_version=build_version,
-                assembly=metadata.runtime.assembly,
-                base_image_nvrs=[nvr],
-                doozer_data_path=getattr(metadata.runtime, 'data_path', ''),
-                doozer_data_gitref=getattr(metadata.runtime, 'data_gitref', ''),
-                dry_run=self._config.dry_run,
-                block_until_complete=True,
+            snapshot_input = BaseImageSnapshotInput(
+                nvr=nvr,
+                distgit_key=metadata.distgit_key,
+                container_image=container_image,
+                rebase_repo_url=build_repo.https_url,
+                rebase_commitish=build_repo.commit_hash,
+                is_golang_builder=(metadata.config.name == GOLANG_BUILDER_IMAGE_NAME),
             )
-            # start_build(..., block_until_complete=True) returns Jenkins result strings (SUCCESS, FAILURE, …), not None.
-            success = result == "SUCCESS"
+            handler = BaseImageHandler(
+                metadata.runtime,
+                dry_run=self._config.dry_run,
+            )
+            result = await handler.snapshot_release(snapshot_input)
+            success = result is not None
             if success:
-                logger.info(f"Successfully completed base image release for {nvr}")
+                logger.info(f"Successfully completed inline base image release for {nvr}")
                 return True
-            logger.error("Base image release job failed for %s with Jenkins result=%r", nvr, result)
+            logger.error("Inline base image release did not complete successfully for %s", nvr)
             return False
 
         except Exception as e:
-            logger.error(f"Failed to trigger base image release for {nvr}: {e}")
+            logger.error(f"Failed inline base image release for {nvr}: {e}")
             return False
