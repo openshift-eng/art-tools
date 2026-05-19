@@ -286,6 +286,11 @@ class TestGetEffectivePackage(unittest.TestCase):
 class TestFindGoMainPackages(unittest.TestCase):
     """Tests for ``find_go_main_packages``."""
 
+    @staticmethod
+    def _root(td: str) -> pathlib.Path:
+        """Match find_go_main_packages(), which resolves *root_path* (needed on macOS /private/var)."""
+        return pathlib.Path(td).resolve()
+
     def _write(self, dir_path: pathlib.Path, name: str, content: str) -> pathlib.Path:
         dir_path.mkdir(parents=True, exist_ok=True)
         p = dir_path / name
@@ -294,7 +299,7 @@ class TestFindGoMainPackages(unittest.TestCase):
 
     def test_finds_simple_main_package(self):
         with tempfile.TemporaryDirectory() as td:
-            root = pathlib.Path(td)
+            root = self._root(td)
             cmd_dir = root / 'cmd' / 'myapp'
             self._write(cmd_dir, 'main.go', 'package main\n\nfunc main() {}\n')
             result = util.find_go_main_packages(root)
@@ -302,14 +307,14 @@ class TestFindGoMainPackages(unittest.TestCase):
 
     def test_skips_vendor_dirs(self):
         with tempfile.TemporaryDirectory() as td:
-            root = pathlib.Path(td)
+            root = self._root(td)
             self._write(root / 'vendor' / 'pkg', 'main.go', 'package main\n')
             result = util.find_go_main_packages(root)
             self.assertEqual(result, [])
 
     def test_skips_test_files(self):
         with tempfile.TemporaryDirectory() as td:
-            root = pathlib.Path(td)
+            root = self._root(td)
             # Directory with only a test file declaring package main
             self._write(root / 'pkg', 'main_test.go', 'package main\n')
             result = util.find_go_main_packages(root)
@@ -318,7 +323,7 @@ class TestFindGoMainPackages(unittest.TestCase):
     def test_skips_build_ignored_main(self):
         """A directory with only ``//go:build ignore`` main files should be skipped."""
         with tempfile.TemporaryDirectory() as td:
-            root = pathlib.Path(td)
+            root = self._root(td)
             plugins_dir = root / 'plugins'
             self._write(plugins_dir, 'example.go', '//go:build ignore\n\npackage main\n\nfunc main() {}\n')
             self._write(plugins_dir, 'minimum.go', 'package plugins\n')
@@ -331,7 +336,7 @@ class TestFindGoMainPackages(unittest.TestCase):
         check) should be skipped.
         """
         with tempfile.TemporaryDirectory() as td:
-            root = pathlib.Path(td)
+            root = self._root(td)
             mixed_dir = root / 'mixed'
             self._write(mixed_dir, 'main.go', 'package main\n\nfunc main() {}\n')
             self._write(mixed_dir, 'lib.go', 'package mixed\n')
@@ -344,7 +349,7 @@ class TestFindGoMainPackages(unittest.TestCase):
         ``//go:build ignore`` file with ``package main``.
         """
         with tempfile.TemporaryDirectory() as td:
-            root = pathlib.Path(td)
+            root = self._root(td)
             plugins_dir = root / 'plugins'
             self._write(plugins_dir, 'minimum.go', 'package plugins\n\nvar _ = 1\n')
             self._write(
@@ -367,7 +372,7 @@ class TestFindGoMainPackages(unittest.TestCase):
 
     def test_multiple_main_packages(self):
         with tempfile.TemporaryDirectory() as td:
-            root = pathlib.Path(td)
+            root = self._root(td)
             cmd1 = root / 'cmd' / 'app1'
             cmd2 = root / 'cmd' / 'app2'
             self._write(cmd1, 'main.go', 'package main\n\nfunc main() {}\n')
@@ -381,7 +386,7 @@ class TestFindGoMainPackages(unittest.TestCase):
         that ``go mod vendor`` does not copy injected files into vendor/.
         """
         with tempfile.TemporaryDirectory() as td:
-            root = pathlib.Path(td)
+            root = self._root(td)
             # Root module
             self._write(root, 'go.mod', 'module example.com/myproject\n')
             root_cmd = root / 'cmd' / 'myapp'
@@ -403,7 +408,7 @@ class TestFindGoMainPackages(unittest.TestCase):
         vendor/.
         """
         with tempfile.TemporaryDirectory() as td:
-            root = pathlib.Path(td)
+            root = self._root(td)
             self._write(root, 'go.mod', 'module example.com/olm\n')
             # Root cmd directories
             cmd_a = root / 'cmd' / 'collect-profiles'

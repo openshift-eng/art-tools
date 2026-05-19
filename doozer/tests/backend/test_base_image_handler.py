@@ -51,7 +51,7 @@ class TestBaseImageHandler(IsolatedAsyncioTestCase):
         handler = BaseImageHandler(self.runtime, dry_run=True)
         self.runtime.image_map = {"test-base": self.metadata}
 
-        with patch.object(handler, "_snapshot_from_components", new=AsyncMock(return_value="test-snapshot")):
+        with patch.object(handler, "_snapshot_from_component", new=AsyncMock(return_value="test-snapshot")):
             with patch.object(handler, "_create_release_from_snapshot", new=AsyncMock(return_value="test-release")):
                 with patch.object(handler, "_wait_for_release_completion", return_value=True):
                     result = await handler.snapshot_release(self.default_input)
@@ -72,15 +72,14 @@ class TestBaseImageHandler(IsolatedAsyncioTestCase):
         handler = BaseImageHandler(self.runtime, dry_run=True)
         self.runtime.image_map = {"test-base": self.metadata}
 
-        with patch.object(handler, "_snapshot_from_components", new=AsyncMock(return_value="snap")) as mock_snap:
+        with patch.object(handler, "_snapshot_from_component", new=AsyncMock(return_value="snap")) as mock_snap:
             with patch.object(handler, "_create_release_from_snapshot", new=AsyncMock(return_value="rel")):
                 with patch.object(handler, "_wait_for_release_completion", return_value=True):
                     await handler.snapshot_release(self.default_input)
 
         mock_snap.assert_awaited_once()
-        comps = mock_snap.await_args.args[0]
-        self.assertEqual(len(comps), 1)
-        self.assertEqual(comps[0]["containerImage"], self.image_pullspec)
+        comp = mock_snap.await_args.args[0]
+        self.assertEqual(comp["containerImage"], self.image_pullspec)
 
     @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
     @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
@@ -156,7 +155,7 @@ class TestBaseImageHandler(IsolatedAsyncioTestCase):
         handler = BaseImageHandler(self.runtime, dry_run=True)
         self.runtime.image_map = {"golang-builder": golang_metadata}
 
-        with patch.object(handler, "_snapshot_from_components", new=AsyncMock(return_value="golang-snapshot")):
+        with patch.object(handler, "_snapshot_from_component", new=AsyncMock(return_value="golang-snapshot")):
             with patch.object(handler, "_create_release_from_snapshot", new=AsyncMock(return_value="golang-release")):
                 with patch.object(handler, "_wait_for_release_completion", return_value=True):
                     result = await handler.snapshot_release(inp)

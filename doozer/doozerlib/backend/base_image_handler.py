@@ -7,7 +7,7 @@ CLI lives in ``doozerlib.cli.images`` (see ``images:release-to-base-repo``).
 
 import asyncio
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import Optional, Tuple
 
 from artcommonlib import logutil
 from artcommonlib.util import (
@@ -64,39 +64,41 @@ class BaseImageHandler:
         Returns:
             ``(release_name, snapshot_name)`` on success, else ``None``.
         """
-        inp = snapshot_input
-
-        if not inp.container_image:
-            self.logger.error("No container image pullspec on snapshot input for NVR %s", inp.nvr)
+        if not snapshot_input.container_image:
+            self.logger.error("No container image pullspec on snapshot input for NVR %s", snapshot_input.nvr)
             return None
 
-        metadata = self.runtime.image_map.get(inp.distgit_key)
+        metadata = self.runtime.image_map.get(snapshot_input.distgit_key)
         if metadata is None:
-            self.logger.error("Could not resolve metadata for distgit %s (%s)", inp.distgit_key, inp.nvr)
+            self.logger.error(
+                "Could not resolve metadata for distgit %s (%s)",
+                snapshot_input.distgit_key,
+                snapshot_input.nvr,
+            )
             return None
 
         if not metadata.should_trigger_base_image_release():
             self.logger.warning(
                 "Image %s does not qualify for base image release workflow (NVR %s)",
-                inp.distgit_key,
-                inp.nvr,
+                snapshot_input.distgit_key,
+                snapshot_input.nvr,
             )
             return None
 
-        if inp.rebase_repo_url and inp.rebase_commitish:
-            self.logger.debug("Snapshot input %s includes source git revision", inp.nvr)
+        if snapshot_input.rebase_repo_url and snapshot_input.rebase_commitish:
+            self.logger.debug("Snapshot input %s includes source git revision", snapshot_input.nvr)
         else:
-            self.logger.warning("No source git URL/revision on snapshot input for %s", inp.nvr)
+            self.logger.warning("No source git URL/revision on snapshot input for %s", snapshot_input.nvr)
 
-        self.logger.info("Starting base image snapshot-release for NVR %s", inp.nvr)
+        self.logger.info("Starting base image snapshot-release for NVR %s", snapshot_input.nvr)
 
-        component = self._build_component_from_snapshot_input(inp)
-        snapshot_name = await self._snapshot_from_components([component])
+        component = self._build_component_from_snapshot_input(snapshot_input)
+        snapshot_name = await self._snapshot_from_component(component)
         if not snapshot_name:
             self.logger.error("Failed to create snapshot, aborting workflow")
             return None
 
-        release_name = await self._create_release_from_snapshot(snapshot_name, inp.nvr)
+        release_name = await self._create_release_from_snapshot(snapshot_name, snapshot_input.nvr)
         if not release_name:
             self.logger.error("Failed to create release, aborting workflow")
             return None
@@ -140,8 +142,8 @@ class BaseImageHandler:
 
         return component
 
-    async def _snapshot_from_components(self, components: List[dict]) -> Optional[str]:
-        """Build Snapshot CR from component list and create it in Konflux."""
+    async def _snapshot_from_component(self, component: dict) -> Optional[str]:
+        """Build Snapshot CR with one component and create it in Konflux."""
         try:
             group_safe = normalize_group_name_for_k8s(self.runtime.group)
 
@@ -168,7 +170,7 @@ class BaseImageHandler:
                 },
                 "spec": {
                     "application": ART_IMAGES_BASE_APPLICATION,
-                    "components": components,
+                    "components": [component],
                 },
             }
 
@@ -191,9 +193,13 @@ class BaseImageHandler:
             self.logger.error("Failed to create snapshot: %s", e)
             return None
 
-    async def _create_release_from_snapshot(self, snapshot_name: str, released_nvrs: str) -> Optional[str]:
+    async def _create_release_from_snapshot(self, snapshot_name: str, released_nvr: str) -> Optional[str]:
         """
         Create Konflux Release from snapshot using the ocp-art-images-base-silent ReleasePlan.
+
+        Args:
+            snapshot_name: Snapshot resource name.
+            released_nvr: Single image NVR (stored on annotation ``art.redhat.com/nvrs`` for compatibility).
         """
         try:
             if not self.dry_run:
@@ -221,7 +227,7 @@ class BaseImageHandler:
                     "art.redhat.com/group": self.runtime.group_config.name,
                     "art.redhat.com/assembly": getattr(self.runtime, "assembly", "stream"),
                     "art.redhat.com/env": "base-image-workflow",
-                    "art.redhat.com/nvrs": released_nvrs,
+                    "art.redhat.com/nvrs": released_nvr,
                 },
             }
 

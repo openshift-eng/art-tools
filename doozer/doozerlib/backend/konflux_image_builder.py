@@ -16,7 +16,6 @@ from artcommonlib import constants as artlib_constants
 from artcommonlib import util as artlib_util
 from artcommonlib.arch_util import go_arch_for_brew_arch
 from artcommonlib.build_visibility import is_release_embargoed
-from artcommonlib.constants import GOLANG_BUILDER_IMAGE_NAME
 from artcommonlib.konflux.konflux_build_record import (
     ArtifactType,
     Engine,
@@ -1238,7 +1237,7 @@ class KonfluxImageBuilder:
                 container_image=container_image,
                 rebase_repo_url=build_repo.https_url,
                 rebase_commitish=build_repo.commit_hash,
-                is_golang_builder=(metadata.config.name == GOLANG_BUILDER_IMAGE_NAME),
+                is_golang_builder=metadata.is_golang_builder(),
             )
             handler = BaseImageHandler(
                 metadata.runtime,

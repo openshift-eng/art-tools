@@ -10,7 +10,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from numbers import Number
-from typing import List, Optional, cast
+from typing import Optional, cast
 
 import click
 import koji
@@ -34,75 +34,42 @@ from doozerlib.source_resolver import SourceResolver
 LOGGER = logutil.get_logger(__name__)
 
 
-async def _snapshot_inputs_from_konflux_success_builds(runtime, nvrs: List[str]) -> List[BaseImageSnapshotInput]:
-    """
-    Map NVRs to :class:`BaseImageSnapshotInput` using latest matching **SUCCESS** Konflux image rows for ``runtime.group``.
+async def _snapshot_input_from_konflux_success_build(runtime, nvr: str) -> Optional[BaseImageSnapshotInput]:
+    """Map a Konflux **SUCCESS** image row to :class:`BaseImageSnapshotInput`, or ``None`` if missing or unusable."""
+    nvr = (nvr or "").strip()
+    if not nvr:
+        return None
 
-    Skips NVRs with no row, missing pullspec, unknown image metadata, or images that do not participate in the
-    base-image workflow. Callers should treat an empty list as failure to prepare any releasable snapshot.
-    """
-    if not nvrs:
-        return []
+    db = getattr(runtime, "konflux_db", None)
+    if not db:
+        return None
 
-    konflux_db = getattr(runtime, "konflux_db", None)
-    if not konflux_db:
-        LOGGER.warning("No Konflux database configured; cannot resolve NVRs to snapshot inputs")
-        return []
-
-    where = {"group": runtime.group, "engine": Engine.KONFLUX.value}
-    records = await konflux_db.get_build_records_by_nvrs(
-        nvrs, outcome=KonfluxBuildOutcome.SUCCESS, where=where, strict=False, exclude_large_columns=True
+    rec = await db.get_latest_build(
+        nvr=nvr,
+        group=runtime.group,
+        engine=Engine.KONFLUX,
+        outcome=KonfluxBuildOutcome.SUCCESS,
+        strict=False,
+        exclude_large_columns=True,
     )
+    if not rec or not rec.name or not rec.image_pullspec:
+        return None
 
-    by_nvr = {r.nvr: r for r in records if r is not None}
-    inputs: List[BaseImageSnapshotInput] = []
+    md = (getattr(runtime, "image_map", None) or {}).get(rec.name)
+    if md is not None:
+        is_golang_builder = md.is_golang_builder()
+    else:
+        # NVR uses distgit-style openshift-golang-builder; keep substring check for older rows / missing image_map
+        is_golang_builder = GOLANG_BUILDER_IMAGE_NAME in nvr
 
-    for nvr in nvrs:
-        rec = by_nvr.get(nvr)
-        if not rec:
-            LOGGER.warning(
-                "No SUCCESS Konflux image build record for NVR %s in group %s",
-                nvr,
-                runtime.group,
-            )
-            continue
-        if not rec.name:
-            LOGGER.warning("Konflux record for NVR %s has no component name", nvr)
-            continue
-
-        md = runtime.image_map.get(rec.name)
-        if not md:
-            LOGGER.warning(
-                "No loaded image metadata for Konflux component %s (NVR %s); check --group and image list",
-                rec.name,
-                nvr,
-            )
-            continue
-
-        if not md.should_trigger_base_image_release():
-            LOGGER.warning(
-                "Image %s does not qualify for base image release workflow (NVR %s), skipping",
-                rec.name,
-                nvr,
-            )
-            continue
-
-        if not rec.image_pullspec:
-            LOGGER.warning("Konflux record for NVR %s has no image_pullspec", nvr)
-            continue
-
-        inputs.append(
-            BaseImageSnapshotInput(
-                nvr=nvr,
-                distgit_key=rec.name,
-                container_image=rec.image_pullspec,
-                rebase_repo_url=rec.rebase_repo_url or "",
-                rebase_commitish=rec.rebase_commitish or "",
-                is_golang_builder=(md.config.name == GOLANG_BUILDER_IMAGE_NAME),
-            )
-        )
-
-    return inputs
+    return BaseImageSnapshotInput(
+        nvr=nvr,
+        distgit_key=rec.name,
+        container_image=rec.image_pullspec,
+        rebase_repo_url=rec.rebase_repo_url or "",
+        rebase_commitish=rec.rebase_commitish or "",
+        is_golang_builder=is_golang_builder,
+    )
 
 
 @cli.command("images:clone", help="Clone a group's image distgit repos locally.")
@@ -1527,29 +1494,16 @@ def query_rpm_version(runtime, repo_type):
     click.echo("version: {}".format(version))
 
 
-@cli.command("images:release-to-base-repo", short_help="Snapshot→release one base image build (Konflux SUCCESS row)")
+@cli.command("images:release-to-base-repo", short_help="Snapshot→release one base image (SUCCESS Konflux row)")
 @click.option(
     '--nvr',
     metavar='NVR',
     required=True,
-    help='Exactly one Konflux image build NVR (must have a SUCCESS row for this group)',
+    help='Image build NVR',
 )
 @pass_runtime
 def release_to_base_repo(runtime, nvr):
-    """
-    Process one completed base image build through the snapshot-to-release workflow.
-
-    Resolves the NVR to a SUCCESS Konflux image record and loaded image metadata, builds one Snapshot component,
-    creates the Release for ``ocp-art-images-base-silent``, and waits for completion.
-
-    Intended as a separate job after that base image Konflux build completes. Only applies when
-    ``should_trigger_base_image_release`` is true for the image.
-
-    Example::
-
-        doozer --group openshift-4.22 images:release-to-base-repo \\
-            --nvr openshift-enterprise-base-rhel9-container-v4.22.0-202602202227.p2.gcf42b3d.assembly.stream.el9
-    """
+    """Run Konflux snapshot→release for one NVR (row must exist and be SUCCESS for this group)."""
 
     async def run_workflow():
         logger = logutil.get_logger(__name__)
@@ -1559,38 +1513,29 @@ def release_to_base_repo(runtime, nvr):
 
             runtime.konflux_db.bind(KonfluxBuildRecord)
 
-            one_nvr = nvr.strip()
-            if not one_nvr:
-                logger.error("--nvr must be non-empty")
-                return False
-            if "," in one_nvr:
-                logger.error("Only one NVR is supported; do not pass comma-separated values (use one --nvr)")
+            image_nvr = (nvr or "").strip()
+            if not image_nvr:
+                logger.error("NVR is empty")
                 return False
 
-            logger.info("Processing NVR %s through base image snapshot-to-release workflow", one_nvr)
-            logger.info("Group: %s", runtime.group)
-
-            snapshot_inputs = await _snapshot_inputs_from_konflux_success_builds(runtime, [one_nvr])
-            if len(snapshot_inputs) != 1:
-                logger.error("Could not derive exactly one snapshot input from Konflux SUCCESS row for %s", one_nvr)
+            snapshot_input = await _snapshot_input_from_konflux_success_build(runtime, image_nvr)
+            if snapshot_input is None:
+                logger.error("No SUCCESS Konflux image row for %s", image_nvr)
                 return False
 
             handler = BaseImageHandler(runtime, dry_run=False)
-            result = await handler.snapshot_release(snapshot_inputs[0])
+            result = await handler.snapshot_release(snapshot_input)
 
             if result:
                 release_name, snapshot_name = result
-                logger.info("Base image workflow completed successfully")
-                logger.info(f"Release: {release_name}")
-                logger.info(f"Snapshot: {snapshot_name}")
+                logger.info("Done: release=%s snapshot=%s", release_name, snapshot_name)
                 return True
-            else:
-                logger.error("Base image workflow failed")
-                return False
+            logger.error("snapshot_release returned no result")
+            return False
 
         except Exception as e:
-            logger.error(f"Base image workflow failed: {e}")
-            logger.debug(f"Base image workflow traceback: {traceback.format_exc()}")
+            logger.error("Base image workflow failed: %s", e)
+            logger.debug(traceback.format_exc())
             return False
 
     success = asyncio.run(run_workflow())

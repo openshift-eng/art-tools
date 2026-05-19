@@ -55,6 +55,7 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         metadata.get_konflux_network_mode.return_value = "open"
         metadata.is_base_image.return_value = False
         metadata.should_trigger_base_image_release.return_value = False
+        metadata.is_golang_builder = MagicMock(return_value=False)
         return metadata
 
     async def test_build_uses_definitive_pullspec_for_attestation_validation(self):
@@ -576,6 +577,30 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(inp.nvr, "test-nvr")
         self.assertEqual(inp.distgit_key, metadata.distgit_key)
         self.assertEqual(inp.container_image, pullspec)
+        self.assertFalse(inp.is_golang_builder)
+
+    async def test_trigger_base_image_release_golang_calls_is_golang_builder(self):
+        """Inline release passes through metadata.is_golang_builder() (openshift/golang-builder vs hyphen)."""
+        from doozerlib.backend import base_image_handler
+
+        metadata = self._metadata()
+        metadata.is_golang_builder = MagicMock(return_value=True)
+        build_repo = MagicMock()
+        build_repo.https_url = "https://example.com/repo.git"
+        build_repo.commit_hash = "abc123"
+        pullspec = "quay.io/test/img@sha256:deadbeef"
+
+        with patch.object(
+            base_image_handler.BaseImageHandler,
+            "snapshot_release",
+            new=AsyncMock(return_value=("test-release", "test-snapshot")),
+        ) as mock_snap:
+            result = await self.builder._trigger_base_image_release(metadata, "test-nvr", pullspec, build_repo)
+
+        self.assertTrue(result)
+        metadata.is_golang_builder.assert_called_once()
+        inp = mock_snap.await_args[0][0]
+        self.assertTrue(inp.is_golang_builder)
 
     async def test_trigger_base_image_release_inline_failure_returns_false(self):
         """When handler returns None, _trigger_base_image_release is False."""
