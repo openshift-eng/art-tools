@@ -78,7 +78,9 @@ class ImagesHealthPipeline:
         if skipped_images:
             self.runtime.logger.warning(
                 'Filtered out %d image(s) from Redis that do not exist in %s metadata: %s',
-                len(skipped_images), group, ', '.join(sorted(skipped_images))
+                len(skipped_images),
+                group,
+                ', '.join(sorted(skipped_images)),
             )
 
         if not filtered_failing_images:
@@ -89,7 +91,9 @@ class ImagesHealthPipeline:
             return
 
         self.runtime.logger.info(
-            'Redis reports %d failing image(s) for %s; querying BigQuery for details', len(filtered_failing_images), group
+            'Redis reports %d failing image(s) for %s; querying BigQuery for details',
+            len(filtered_failing_images),
+            group,
         )
 
         group_param = f'--group=openshift-{version}'
@@ -151,7 +155,9 @@ class ImagesHealthPipeline:
         if skipped_images:
             self.runtime.logger.warning(
                 'Filtered out %d rebase failure(s) from Redis that do not exist in okd-%s metadata: %s',
-                len(skipped_images), version, ', '.join(sorted(skipped_images))
+                len(skipped_images),
+                version,
+                ', '.join(sorted(skipped_images)),
             )
 
         self.rebase_failures[version] = filtered_failures
@@ -189,8 +195,7 @@ class ImagesHealthPipeline:
             return valid_images
         except Exception as e:
             self.runtime.logger.warning(
-                'Failed to fetch valid OKD images for openshift-%s: %s. Proceeding without filtering.',
-                version, e
+                'Failed to fetch valid OKD images for openshift-%s: %s. Proceeding without filtering.', version, e
             )
             # On failure, return empty set to fail safe (don't process any images from Redis)
             return set()
