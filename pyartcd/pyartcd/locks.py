@@ -32,6 +32,7 @@ class Lock(enum.Enum):
     SCAN_OKD = 'lock:scan-okd:{version}'
     SCAN_PLASHET_RPMS = 'lock:scan-plashet-rpms:{assembly}:{group}'
     SCAN_OPERATOR = 'lock:scan-operator:{version}'
+    SYNC_CI_IMAGES = 'lock:sync-ci-images:{version}'
 
 
 class Keys(enum.Enum):
@@ -151,6 +152,11 @@ LOCK_POLICY = {
         'lock_timeout': DEFAULT_LOCK_TIMEOUT,
     },
     Lock.SCAN_PLASHET_RPMS: {
+        'retry_count': 36000,
+        'retry_delay_min': 0.1,
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
+    },
+    Lock.SYNC_CI_IMAGES: {
         'retry_count': 36000,
         'retry_delay_min': 0.1,
         'lock_timeout': DEFAULT_LOCK_TIMEOUT,
