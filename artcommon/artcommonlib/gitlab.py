@@ -161,14 +161,28 @@ class GitLabClient:
             if not user_ids:
                 logger.warning(f"No valid user IDs resolved for approval rule '{name}', skipping")
                 continue
-            mr.approval_rules.create(
+            rule = mr.approval_rules.create(
                 {
                     "name": name,
                     "approvals_required": 1,
                     "user_ids": user_ids,
                 }
             )
-            logger.info(f"Created approval rule '{name}' with users: {usernames} (ids: {user_ids})")
+            actual_ids = [u["id"] for u in rule.users]
+            dropped = set(user_ids) - set(actual_ids)
+            if dropped:
+                dropped_names = [u for u, uid in zip(usernames, user_ids) if uid in dropped]
+                logger.warning(
+                    "Approval rule '%s': GitLab dropped users %s (ids: %s) "
+                    "— these users must be members of the ocp-shipment-data project "
+                    "(or a group shared with it, e.g. team-ert or layered-products) to be eligible as approvers",
+                    name,
+                    dropped_names,
+                    sorted(dropped),
+                )
+            logger.info(
+                f"Created approval rule '{name}' with users: {usernames} (ids: {user_ids}, actual: {actual_ids})"
+            )
 
     async def trigger_ci_pipeline(self, mr) -> str | None:
         """
