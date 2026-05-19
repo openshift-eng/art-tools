@@ -95,8 +95,25 @@ class ImagesHealthPipeline:
             self.runtime.logger.info('No build failures in Redis for %s; skipping BigQuery scan', group)
             return
 
+        # Filter failing_images to only include images that exist in current ocp-build-data
+        valid_images = await self._get_valid_images(version, doozer_working)
+        filtered_failing_images = failing_images & valid_images
+        skipped_images = failing_images - valid_images
+
+        if skipped_images:
+            self.runtime.logger.warning(
+                'Filtered out %d image(s) from Redis that do not exist in %s metadata: %s',
+                len(skipped_images), group, ', '.join(sorted(skipped_images))
+            )
+
+        if not filtered_failing_images:
+            self.runtime.logger.info(
+                'No valid failing images remain for %s after filtering; skipping BigQuery scan', group
+            )
+            return
+
         self.runtime.logger.info(
-            'Redis reports %d failing image(s) for %s; querying BigQuery for details', len(failing_images), group
+            'Redis reports %d failing image(s) for %s; querying BigQuery for details', len(filtered_failing_images), group
         )
 
         group_param = f'--group={group}'
@@ -107,7 +124,7 @@ class ImagesHealthPipeline:
             f'--working-dir={doozer_working}',
             f'--data-path={self.data_path}',
             group_param,
-            f'--images={",".join(sorted(failing_images))}',
+            f'--images={",".join(sorted(filtered_failing_images))}',
             'images:health',
         ]
 
@@ -123,17 +140,79 @@ class ImagesHealthPipeline:
         """
         Fetch OCP rebase failure data from Redis for a specific version.
         Checks both Brew and Konflux build systems.
+        Filters out images that don't exist in current ocp-build-data.
         Populates self.rebase_failures[version] with {image: {failure_count, url, build_system}}.
 
         Arg(s):
             version (str): OCP version (e.g., "4.18")
         """
-        self.rebase_failures[version] = await util.get_rebase_failures(
+        # Fetch all rebase failures from Redis
+        all_failures = await util.get_rebase_failures(
             version=version,
             branches=['rebase-failure'],
             build_systems=['brew', 'konflux'],
             logger=self.runtime.logger,
         )
+
+        # Get list of valid images for this version from metadata
+        doozer_working = f'{self.doozer_working}-{version}'
+        valid_images = await self._get_valid_images(version, doozer_working)
+
+        # Filter to only include images that exist in metadata
+        filtered_failures = {}
+        skipped_images = []
+
+        for image_name, failure_info in all_failures.items():
+            if image_name in valid_images:
+                filtered_failures[image_name] = failure_info
+            else:
+                skipped_images.append(image_name)
+
+        if skipped_images:
+            self.runtime.logger.warning(
+                'Filtered out %d rebase failure(s) from Redis that do not exist in openshift-%s metadata: %s',
+                len(skipped_images), version, ', '.join(sorted(skipped_images))
+            )
+
+        self.rebase_failures[version] = filtered_failures
+
+    async def _get_valid_images(self, version: str, doozer_working: str) -> set[str]:
+        """
+        Get the set of valid image names for a given version from ocp-build-data.
+
+        Arg(s):
+            version (str): OCP version (e.g., "4.18")
+            doozer_working (str): Doozer working directory path
+        Return Value(s):
+            set[str]: Set of valid image distgit keys
+        """
+        group_param = f'--group=openshift-{version}'
+        if self.data_gitref:
+            group_param += f'@{self.data_gitref}'
+
+        cmd = [
+            'doozer',
+            f'--working-dir={doozer_working}',
+            f'--data-path={self.data_path}',
+            group_param,
+            'images:print',
+            '--short',
+            '{name}',
+        ]
+
+        try:
+            _, out, _ = await exectools.cmd_gather_async(cmd, stderr=None)
+            # Parse the output - one image name per line
+            valid_images = {line.strip() for line in out.strip().split('\n') if line.strip()}
+            self.runtime.logger.info('Found %d valid images for openshift-%s', len(valid_images), version)
+            return valid_images
+        except Exception as e:
+            self.runtime.logger.warning(
+                'Failed to fetch valid images for openshift-%s: %s. Proceeding without filtering.',
+                version, e
+            )
+            # On failure, return empty set to fail safe (don't process any images from Redis)
+            return set()
 
     def sync_jira(self):
         jira_client = self.runtime.new_jira_client()
