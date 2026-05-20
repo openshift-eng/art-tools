@@ -746,8 +746,8 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
         pipeline.koji_session.gssapi_login.assert_not_called()
 
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
-    def test_get_expected_golang_url_suffixes(self, mock_konflux_db):
-        """Test get_expected_golang_url_suffixes returns both brewroot and plashet patterns"""
+    def test_get_content_repo_url_suffix(self, mock_konflux_db):
+        """Test get_content_repo_url_suffix returns plashet URL pattern"""
         mock_runtime = Mock(
             dry_run=False,
             working_dir=Path("/tmp/working"),
@@ -764,9 +764,8 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
             tag_builds=True,
         )
 
-        suffixes = pipeline.get_expected_golang_url_suffixes(8, 4, 16)
-        self.assertIn("/brewroot/repos/rhaos-4.16-rhel-8-build/latest", suffixes)
-        self.assertIn("/pub/RHOCP/plashets/4.16/stream/golang-el8/latest", suffixes)
+        suffix = pipeline.get_content_repo_url_suffix(8, 4, 16)
+        self.assertEqual(suffix, "/pub/RHOCP/plashets/4.16/stream/golang-el8/latest")
 
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     def test_get_builder_pullspec(self, mock_konflux_db):
@@ -1095,7 +1094,7 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
         with patch.object(pipeline, 'get_module_tag', return_value='module-go-toolset-rhel8-123'):
             await pipeline.tag_build(8, "golang-1.20.12-2.el8")
 
-        # Should tag all module builds
+        # Should tag all 3 module builds into override
         self.assertEqual(pipeline.koji_session.tagBuild.call_count, 3)
 
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
