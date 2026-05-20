@@ -20,7 +20,6 @@ from doozerlib.backend.konflux_client import API_VERSION, KIND_RELEASE, KIND_REL
 from doozerlib.constants import ART_IMAGES_BASE_APPLICATION
 from kubernetes.dynamic import exceptions
 
-LOGGER = logutil.get_logger(__name__)
 ART_IMAGES_BASE_RELEASE_PLAN = "ocp-art-images-base-silent"
 
 
@@ -45,7 +44,8 @@ class BaseImageHandler:
     def __init__(self, runtime, dry_run: bool = False):
         self.runtime = runtime
         self.dry_run = dry_run
-        self.logger = LOGGER
+        # Prefix until snapshot_release scopes `[entity]` to the image (same pattern as ImageMetadata).
+        self.logger = logutil.EntityLoggingAdapter(self.runtime.logger, extra={'entity': 'base-image'})
 
         self.namespace = resolve_konflux_namespace_by_product(self.runtime.product, None)
         kubeconfig = resolve_konflux_kubeconfig_by_product(self.runtime.product, None)
@@ -57,6 +57,9 @@ class BaseImageHandler:
             dry_run=dry_run,
         )
 
+    def _scoped_logger(self, entity: str):
+        return logutil.EntityLoggingAdapter(self.runtime.logger, extra={'entity': entity})
+
     async def snapshot_release(self, snapshot_input: BaseImageSnapshotInput) -> Optional[Tuple[str, str]]:
         """
         Run snapshot→release for exactly one base-image component.
@@ -64,53 +67,47 @@ class BaseImageHandler:
         Returns:
             ``(release_name, snapshot_name)`` on success, else ``None``.
         """
+        # Provisional entity (matches qualified_key for typical OCP images) until image_map lookup succeeds.
+        self.logger = self._scoped_logger(f"containers/{snapshot_input.distgit_key}")
+
         if not snapshot_input.container_image:
-            self.logger.error("No container image pullspec on snapshot input for NVR %s", snapshot_input.nvr)
+            self.logger.error(f"No container image pullspec (nvr={snapshot_input.nvr})")
             return None
 
         metadata = self.runtime.image_map.get(snapshot_input.distgit_key)
         if metadata is None:
-            self.logger.error(
-                "Could not resolve metadata for distgit %s (%s)",
-                snapshot_input.distgit_key,
-                snapshot_input.nvr,
-            )
+            self.logger.error("Image metadata not found in runtime.image_map")
             return None
 
+        self.logger = self._scoped_logger(metadata.qualified_key)
+
         if not metadata.should_trigger_base_image_release():
-            self.logger.warning(
-                "Image %s does not qualify for base image release workflow (NVR %s)",
-                snapshot_input.distgit_key,
-                snapshot_input.nvr,
-            )
+            self.logger.warning("Does not qualify for base image release workflow")
             return None
 
         if snapshot_input.rebase_repo_url and snapshot_input.rebase_commitish:
-            self.logger.debug("Snapshot input %s includes source git revision", snapshot_input.nvr)
+            self.logger.debug("Snapshot input includes source git revision")
         else:
-            self.logger.warning("No source git URL/revision on snapshot input for %s", snapshot_input.nvr)
-
-        self.logger.info("Starting base image snapshot-release for NVR %s", snapshot_input.nvr)
+            self.logger.warning("No source git URL/revision on snapshot input")
 
         component = self._build_component_from_snapshot_input(snapshot_input)
+        self.logger.info(f"Starting snapshot-release (nvr={snapshot_input.nvr}, component={component['name']})")
+
         snapshot_name = await self._snapshot_from_component(component)
         if not snapshot_name:
-            self.logger.error("Failed to create snapshot, aborting workflow")
+            self.logger.error("Failed to create snapshot")
             return None
 
         release_name = await self._create_release_from_snapshot(snapshot_name, snapshot_input.nvr)
         if not release_name:
-            self.logger.error("Failed to create release, aborting workflow")
+            self.logger.error(f"Failed to create release (snapshot={snapshot_name})")
             return None
 
         if not await self._wait_for_release_completion(release_name):
-            self.logger.error("Release did not complete successfully, aborting workflow")
+            self.logger.error(f"Release did not complete successfully (release={release_name})")
             return None
 
-        self.logger.info("✓ Base image workflow completed successfully")
-        self.logger.info("  Snapshot: %s", snapshot_name)
-        self.logger.info("  Release: %s", release_name)
-        self.logger.info("  Release plan: %s", ART_IMAGES_BASE_RELEASE_PLAN)
+        self.logger.info(f"Snapshot-release completed (nvr={snapshot_input.nvr}, snapshot={snapshot_name}, release={release_name})")
 
         return release_name, snapshot_name
 
@@ -138,7 +135,7 @@ class BaseImageHandler:
                     "revision": snapshot_input.rebase_commitish,
                 }
             }
-            self.logger.debug("Added source information for %s from snapshot input", nvr)
+            self.logger.debug("Added source git from snapshot input")
 
         return component
 
@@ -154,7 +151,7 @@ class BaseImageHandler:
             snapshot_name = f"{group_safe}-base-image-{timestamp}"
 
             if self.dry_run:
-                self.logger.info("[DRY-RUN] Would create snapshot: %s", snapshot_name)
+                self.logger.info(f"[DRY-RUN] Would create snapshot {snapshot_name}")
                 return snapshot_name
 
             snapshot_obj = {
@@ -177,9 +174,7 @@ class BaseImageHandler:
             return await self._create_snapshot_object(snapshot_obj)
 
         except Exception as e:
-            self.logger.error("Failed to create snapshot: %s", e)
-            self.logger.error("Exception type: %s", type(e).__name__)
-            self.logger.error("Exception details: %s", str(e))
+            self.logger.error(f"Failed to create snapshot ({type(e).__name__}: {e})")
             return None
 
     async def _create_snapshot_object(self, snapshot_obj) -> Optional[str]:
@@ -187,10 +182,12 @@ class BaseImageHandler:
         try:
             result_snapshot = await self.konflux_client._create(snapshot_obj)
             snapshot_url = self.konflux_client.resource_url(result_snapshot)
-            self.logger.info("✓ Created base-image snapshot: %s", snapshot_url)
-            return result_snapshot.metadata.name
+            name = result_snapshot.metadata.name
+            self.logger.info(f"Created snapshot {name} ({snapshot_url})")
+            return name
         except Exception as e:
-            self.logger.error("Failed to create snapshot: %s", e)
+            meta_name = snapshot_obj.get("metadata", {}).get("name", "")
+            self.logger.error(f"Failed to create snapshot object (name={meta_name}): {type(e).__name__}: {e}")
             return None
 
     async def _create_release_from_snapshot(self, snapshot_name: str, released_nvr: str) -> Optional[str]:
@@ -203,7 +200,7 @@ class BaseImageHandler:
         """
         try:
             if not self.dry_run:
-                self.logger.info("Verifying release plan %s exists...", ART_IMAGES_BASE_RELEASE_PLAN)
+                self.logger.info(f"Verifying release plan {ART_IMAGES_BASE_RELEASE_PLAN} exists")
                 try:
                     await self.konflux_client._get(API_VERSION, KIND_RELEASE_PLAN, ART_IMAGES_BASE_RELEASE_PLAN)
                 except exceptions.NotFoundError:
@@ -211,12 +208,12 @@ class BaseImageHandler:
                         f"Release plan {ART_IMAGES_BASE_RELEASE_PLAN} not found in namespace {self.namespace}"
                     ) from None
 
-                self.logger.info("Waiting for snapshot %s to become available...", snapshot_name)
+                self.logger.info(f"Waiting for snapshot {snapshot_name} to become available")
                 snapshot_available = await self._wait_for_snapshot_availability(snapshot_name)
                 if not snapshot_available:
                     raise RuntimeError(f"Snapshot {snapshot_name} did not become available in time")
 
-            metadata = {
+            release_metadata = {
                 "generateName": "ocp-base-image-release-",
                 "namespace": self.namespace,
                 "labels": {
@@ -234,7 +231,7 @@ class BaseImageHandler:
             release_obj = {
                 "apiVersion": API_VERSION,
                 "kind": KIND_RELEASE,
-                "metadata": metadata,
+                "metadata": release_metadata,
                 "spec": {
                     "releasePlan": ART_IMAGES_BASE_RELEASE_PLAN,
                     "snapshot": snapshot_name,
@@ -242,21 +239,25 @@ class BaseImageHandler:
             }
 
             if self.dry_run:
-                self.logger.info("[DRY-RUN] Would create release with plan: %s", ART_IMAGES_BASE_RELEASE_PLAN)
-                self.logger.info("[DRY-RUN] Release object: %s", release_obj)
+                self.logger.info(
+                    f"[DRY-RUN] Would create release for snapshot={snapshot_name} plan={ART_IMAGES_BASE_RELEASE_PLAN}"
+                )
+                self.logger.debug(f"[DRY-RUN] Release object: {release_obj}")
                 return f"dry-run-release-{snapshot_name}"
 
             created_release = await self.konflux_client._create(release_obj)
             release_name = created_release.metadata.name
             release_url = self.konflux_client.resource_url(created_release)
 
-            self.logger.info("✓ Created base-image release: %s", release_url)
+            self.logger.info(
+                f"Created release {release_name} for snapshot {snapshot_name} ({release_url})"
+            )
             return release_name
 
         except Exception as e:
-            self.logger.error("Failed to create release from snapshot %s: %s", snapshot_name, e)
-            self.logger.error("Exception type: %s", type(e).__name__)
-            self.logger.error("Exception details: %s", str(e))
+            self.logger.error(
+                f"Failed to create release from snapshot {snapshot_name} ({type(e).__name__}: {e})"
+            )
             return None
 
     async def _wait_for_release_completion(self, release_name: str, timeout_minutes: int = 30) -> bool:
@@ -281,38 +282,36 @@ class BaseImageHandler:
                             reason = condition.get("reason", "")
 
                             if cond_status == "True" and reason == "Succeeded":
-                                self.logger.info("✓ Release %s completed successfully", release_name)
+                                self.logger.info(f"Release {release_name} completed successfully")
                                 return True
                             elif cond_status == "False" and reason == "Failed":
                                 message = condition.get("message", "No details")
-                                self.logger.error("Release %s failed: %s", release_name, message)
+                                self.logger.error(f"Release {release_name} failed: {message}")
                                 for cond in conditions:
                                     if cond.get("type") == "ManagedPipelineProcessed" and cond.get("status") == "False":
                                         pipeline_msg = cond.get("message", "")
                                         if pipeline_msg:
-                                            self.logger.error("Pipeline failure details: %s", pipeline_msg)
+                                            self.logger.error(f"Pipeline failure: {pipeline_msg}")
                                 return False
                             elif cond_status == "False" and reason == "Progressing":
                                 if elapsed % 60 == 0:
                                     self.logger.info(
-                                        "Release %s is progressing... (%s minutes elapsed)",
-                                        release_name,
-                                        elapsed // 60,
+                                        f"Release {release_name} still progressing ({elapsed // 60} min elapsed)"
                                     )
                                 break
 
                 except exceptions.NotFoundError:
-                    self.logger.error("Release %s not found", release_name)
+                    self.logger.error(f"Release {release_name} not found")
                     return False
 
                 await asyncio.sleep(poll_interval)
                 elapsed += poll_interval
 
-            self.logger.error("Release %s timed out after %s minutes", release_name, timeout_minutes)
+            self.logger.error(f"Release {release_name} timed out after {timeout_minutes} minutes")
             return False
 
         except Exception as e:
-            self.logger.error("Failed to monitor release %s: %s", release_name, e)
+            self.logger.error(f"Failed to monitor release {release_name}: {type(e).__name__}: {e}")
             return False
 
     async def _wait_for_snapshot_availability(self, snapshot_name: str, timeout_minutes: int = 1) -> bool:
@@ -328,16 +327,16 @@ class BaseImageHandler:
             while elapsed < timeout_seconds:
                 try:
                     await self.konflux_client._get(API_VERSION, KIND_SNAPSHOT, snapshot_name)
-                    self.logger.info("✓ Snapshot %s is available", snapshot_name)
+                    self.logger.info(f"Snapshot {snapshot_name} is available")
                     return True
                 except exceptions.NotFoundError:
-                    self.logger.info("Waiting for snapshot %s... (%ss elapsed)", snapshot_name, elapsed)
+                    self.logger.info(f"Waiting for snapshot {snapshot_name} ({elapsed}s elapsed)")
                     await asyncio.sleep(poll_interval)
                     elapsed += poll_interval
 
-            self.logger.error("Snapshot %s not available after %s minutes", snapshot_name, timeout_minutes)
+            self.logger.error(f"Snapshot {snapshot_name} not available after {timeout_minutes} minutes")
             return False
 
         except Exception as e:
-            self.logger.error("Failed to wait for snapshot %s: %s", snapshot_name, e)
+            self.logger.error(f"Failed waiting for snapshot {snapshot_name}: {type(e).__name__}: {e}")
             return False
