@@ -12,6 +12,7 @@ from artcommonlib.brew import BuildStates
 from artcommonlib.constants import (
     BREW_HUB,
     GOLANG_BUILDER_IMAGE_NAME,
+    KONFLUX_DEFAULT_IMAGE_REPO,
     PRODUCT_NAMESPACE_MAP,
     REGISTRY_REDHAT_IO,
 )
@@ -369,19 +370,19 @@ class UpdateGolangPipeline:
         # Check if openshift-golang-builder image builds exist for the provided compiler builds
         # Only for RHEL versions that support golang-builder images (excludes el10 for now)
         brew_nvrs = {}
-        konflux_nvrs = {}
+        konflux_records: dict[int, KonfluxBuildRecord] = {}
         if not self.force_image_build:
             if self.build_system in ['both', 'brew']:
                 brew_nvrs = self.get_existing_builders(el_nvr_map_for_images, go_version)
             if self.build_system in ['both', 'konflux']:
-                konflux_nvrs = await self.get_existing_builders_konflux(el_nvr_map_for_images, go_version)
+                konflux_records = await self.get_existing_builders_konflux(el_nvr_map_for_images, go_version)
 
         # Determine which rhel versions need builds
         brew_missing = (
             el_nvr_map_for_images.keys() - brew_nvrs.keys() if self.build_system in ['both', 'brew'] else set()
         )
         konflux_missing = (
-            el_nvr_map_for_images.keys() - konflux_nvrs.keys() if self.build_system in ['both', 'konflux'] else set()
+            el_nvr_map_for_images.keys() - konflux_records.keys() if self.build_system in ['both', 'konflux'] else set()
         )
 
         if brew_missing or konflux_missing:
@@ -406,13 +407,13 @@ class UpdateGolangPipeline:
             if self.build_system in ['both', 'brew']:
                 brew_nvrs = self.get_existing_builders(el_nvr_map_for_images, go_version)
             if self.build_system in ['both', 'konflux']:
-                konflux_nvrs = await self.get_existing_builders_konflux(el_nvr_map_for_images, go_version)
+                konflux_records = await self.get_existing_builders_konflux(el_nvr_map_for_images, go_version)
 
             brew_still_missing = (
                 el_nvr_map_for_images.keys() - brew_nvrs.keys() if self.build_system in ['both', 'brew'] else set()
             )
             konflux_still_missing = (
-                el_nvr_map_for_images.keys() - konflux_nvrs.keys()
+                el_nvr_map_for_images.keys() - konflux_records.keys()
                 if self.build_system in ['both', 'konflux']
                 else set()
             )
@@ -439,14 +440,27 @@ class UpdateGolangPipeline:
             _LOGGER.info(skip_message)
             await self._slack_client.say_in_thread(skip_message)
         else:
-            builder_nvrs = konflux_nvrs
-            builder_pullspecs = {el_v: self._get_builder_pullspec(nvr) for el_v, nvr in builder_nvrs.items()}
+            builder_pullspecs = {}
+            for el_v, record in konflux_records.items():
+                published_pullspec = self._get_builder_pullspec(record.nvr)
+                try:
+                    await self._ensure_builder_pullspec_available(published_pullspec)
+                    builder_pullspecs[el_v] = published_pullspec
+                except RuntimeError:
+                    konflux_pullspec = self._get_konflux_builder_pullspec(record.nvr)
+                    _LOGGER.warning(
+                        "Published pullspec not available: %s, falling back to Konflux pullspec: %s",
+                        published_pullspec,
+                        konflux_pullspec,
+                    )
+                    await self._ensure_builder_pullspec_available(konflux_pullspec)
+                    builder_pullspecs[el_v] = konflux_pullspec
             if builder_pullspecs:
-                await asyncio.gather(
-                    *[self._ensure_builder_pullspec_available(pullspec) for pullspec in builder_pullspecs.values()]
-                )
                 builder_details = "\n".join(
-                    [f"  - RHEL {el_v}: {nvr} -> {builder_pullspecs[el_v]}" for el_v, nvr in builder_nvrs.items()]
+                    [
+                        f"  - RHEL {el_v}: {record.nvr} -> {builder_pullspecs[el_v]}"
+                        for el_v, record in konflux_records.items()
+                    ]
                 )
                 builder_message = "Konflux golang builders available for streams.yml:\n" + builder_details
                 _LOGGER.info(builder_message)
@@ -548,15 +562,17 @@ class UpdateGolangPipeline:
                     builder_nvrs[el_v] = build['nvr']
         return builder_nvrs
 
-    async def get_existing_builders_konflux(self, el_nvr_map: dict[int, str], go_version: str):
+    async def get_existing_builders_konflux(
+        self, el_nvr_map: dict[int, str], go_version: str
+    ) -> dict[int, KonfluxBuildRecord]:
         """
         Check if openshift-golang-builder builds exist in Konflux for the provided compiler builds.
         Similar to get_existing_builders but queries KonfluxDb instead of Brew.
+        Returns {el_v: KonfluxBuildRecord} so callers have access to image_pullspec.
         """
-        # group = f'openshift-{self.ocp_version}'
         _LOGGER.info(f"Checking if {GOLANG_BUILDER_IMAGE_NAME} builds exist in Konflux for given golang builds")
 
-        builder_nvrs = {}
+        builder_records: dict[int, KonfluxBuildRecord] = {}
         extra_patterns = {'nvr': f"{GOLANG_BUILDER_CVE_COMPONENT}-v{go_version}"}
         build_records = await asyncio.gather(
             *(
@@ -583,9 +599,6 @@ class UpdateGolangPipeline:
             if build_record
         }
 
-        # The found builder records until this point, their NVRs contain the go version substring that we are looking for
-        # Sometimes due to misconfiguration, installed golang rpm may be different/incorrect
-        # So ensure that the installed rpm is exactly the one we want
         for el_v, build_record in found_records.items():
             go_nvr_map = elliottutil.get_golang_container_nvrs_for_konflux_record(
                 [build_record],
@@ -602,8 +615,8 @@ class UpdateGolangPipeline:
                 _LOGGER.info(
                     f"Found existing builder image in Konflux: {build_record.nvr} built with {expected_go_nvr}"
                 )
-                builder_nvrs[el_v] = build_record.nvr
-        return builder_nvrs
+                builder_records[el_v] = build_record
+        return builder_records
 
     def _get_builder_pullspec(self, builder_nvr: str):
         """Generate the published pullspec used in streams.yml for Konflux-built builders."""
@@ -615,6 +628,12 @@ class UpdateGolangPipeline:
             raise ValueError(f"Expected a golang builder image NVR, got: {builder_nvr}")
         published_nvr = f'{component_name}-{parsed_nvr["version"]}-{parsed_nvr["release"]}'
         return f'{PUBLISHED_GOLANG_BUILDER_REPO}:{published_nvr}'
+
+    @staticmethod
+    def _get_konflux_builder_pullspec(builder_nvr: str):
+        """Generate a human-readable Konflux pullspec as fallback when registry.redhat.io is unavailable."""
+        parsed_nvr = parse_nvr(builder_nvr)
+        return f'{KONFLUX_DEFAULT_IMAGE_REPO}:golang-builder-{parsed_nvr["version"]}-{parsed_nvr["release"]}'
 
     async def _ensure_builder_pullspec_available(self, pullspec: str):
         """Verify the published golang builder pullspec is available before updating streams.yml."""
@@ -717,10 +736,7 @@ class UpdateGolangPipeline:
                         info['image'] = pullspec
                     if info['image'] == previous_go:
                         info['image'] = latest_go
-                group_content['vars'][go_latest_var] = go_version
-                group_content['vars']['GO_EXTRA'] = go_version
-                if go_previous:
-                    group_content['vars'][go_previous_var] = go_latest
+                group_content['vars'][go_latest_var] = build_major_minor
                 update_streams = update_group = True
         # save changes and create pr
         if update_streams:
