@@ -334,11 +334,18 @@ def is_release_next_week(group):
 
 def get_inflight(assembly, group, date=None):
     """
-    Get inflight release name from current assembly release
+    Get inflight release name from current assembly release.
+
+    Searches the previous minor's release schedule for a Y-1 z-stream release
+    whose date_start falls within 7 days before (or on the same day as) the
+    assembly release date. When multiple releases qualify, the latest is chosen.
+    A same-day release is included because it is expected to ship by the time
+    the assembly reaches customers.
 
     :param assembly: Assembly name
     :param group: Group name
     :param date: Optional explicitly provided date in format YYYY-MMM-DD (e.g., 2026-Mar-31)
+    :return: Version string (e.g., '4.21.16') of the in-flight release, or None
     """
     inflight_release = None
     assembly_release_date = get_assembly_release_date(assembly, group, date)
@@ -357,22 +364,26 @@ def get_inflight(assembly, group, date=None):
         response.raise_for_status()
         try:
             data = response.json()
+            assembly_date = datetime.strptime(assembly_release_date, "%Y-%b-%d")
+            best_candidate = None
+            best_date = None
+
             for release in data['all_ga_tasks']:
-                is_future = is_future_release_date(release['date_start'])
-                if is_future:
-                    days_diff = abs(
-                        (
-                            datetime.strptime(assembly_release_date, "%Y-%b-%d")
-                            - datetime.strptime(release['date_start'], "%Y-%m-%d")
-                        ).days
-                    )
-                    if days_diff <= 5:  # if next Y-1 release and assembly release in the same week
-                        match = re.search(r'\d+\.\d+\.\d+', release['name'])
-                        if match:
-                            inflight_release = match.group()
-                            break
-                        else:
-                            raise ValueError(f"Didn't find in_inflight release in {release['name']}")
+                release_date = datetime.strptime(release['date_start'], "%Y-%m-%d")
+                if release_date > assembly_date:
+                    continue
+                days_diff = (assembly_date - release_date).days
+                if days_diff <= 7:  # if next Y-1 release and assembly release in the same week
+                    match = re.search(r'\d+\.\d+\.\d+', release['name'])
+                    if match:
+                        if best_date is None or release_date > best_date:
+                            best_candidate = match.group()
+                            best_date = release_date
+                    else:
+                        LOGGER.warning(f"Release '{release['name']}' qualified but has no X.Y.Z version in its name")
+
+            if best_candidate:
+                inflight_release = best_candidate
         except json.JSONDecodeError as e:
             raise ValueError(f'Failed to parse JSON for {prev_group}: {e}')
         except ValueError as e:

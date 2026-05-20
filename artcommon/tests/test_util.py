@@ -10,6 +10,7 @@ from artcommonlib.release_util import SoftwareLifecyclePhase
 from artcommonlib.util import (
     deep_merge,
     extract_related_images_from_fbc,
+    get_inflight,
     isolate_major_minor_in_group,
     normalize_group_name_for_k8s,
 )
@@ -1077,3 +1078,119 @@ class TestExtractRelatedImagesFromFBC(unittest.TestCase):
         self.assertEqual(len(result), 2)
         self.assertIn('sha256:444', str(result))
         self.assertIn('sha256:555', str(result))
+
+class TestGetInflight(unittest.TestCase):
+    """Tests for get_inflight() — ART-18958 fix."""
+
+    def _mock_pp_response(self, all_ga_tasks):
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json.return_value = {'all_ga_tasks': all_ga_tasks}
+        return mock_response
+
+    @patch('artcommonlib.util.get_assembly_release_date')
+    @patch('artcommonlib.util.requests_gssapi')
+    @patch('artcommonlib.util.requests.Session')
+    def test_selects_release_scheduled_before_assembly_date(self, mock_session_cls, mock_gssapi, mock_get_date):
+        """A Y-1 release with date_start 1 day before assembly date should be selected."""
+        mock_get_date.return_value = '2026-May-25'
+        mock_session = MagicMock()
+        mock_session_cls.return_value = mock_session
+        mock_session.get.return_value = self._mock_pp_response(
+            [
+                {'name': '4.21.15 in Fast Channel', 'date_start': '2026-05-12'},
+                {'name': '4.21.16 in Fast Channel', 'date_start': '2026-05-24'},
+            ]
+        )
+
+        result = get_inflight('rc.4', 'openshift-4.22', date='2026-05-25')
+
+        self.assertEqual(result, '4.21.16')
+
+    @patch('artcommonlib.util.get_assembly_release_date')
+    @patch('artcommonlib.util.requests_gssapi')
+    @patch('artcommonlib.util.requests.Session')
+    def test_does_not_select_release_after_assembly_date(self, mock_session_cls, mock_gssapi, mock_get_date):
+        """A Y-1 release with date_start after assembly date must NOT be selected (the ART-18958 bug)."""
+        mock_get_date.return_value = '2026-May-25'
+        mock_session = MagicMock()
+        mock_session_cls.return_value = mock_session
+        mock_session.get.return_value = self._mock_pp_response(
+            [
+                {'name': '4.21.16 in Fast Channel', 'date_start': '2026-05-19'},
+                {'name': '4.21.17 in Fast Channel', 'date_start': '2026-05-26'},
+            ]
+        )
+
+        result = get_inflight('rc.4', 'openshift-4.22', date='2026-05-25')
+
+        # 4.21.16 is 6 days before (outside 7-day window: 25-19=6, within 7)
+        # 4.21.17 is 1 day AFTER — must be excluded
+        self.assertEqual(result, '4.21.16')
+
+    @patch('artcommonlib.util.get_assembly_release_date')
+    @patch('artcommonlib.util.requests_gssapi')
+    @patch('artcommonlib.util.requests.Session')
+    def test_picks_latest_when_multiple_qualify(self, mock_session_cls, mock_gssapi, mock_get_date):
+        """When multiple Y-1 releases are within the window, the latest one wins."""
+        mock_get_date.return_value = '2026-May-25'
+        mock_session = MagicMock()
+        mock_session_cls.return_value = mock_session
+        mock_session.get.return_value = self._mock_pp_response(
+            [
+                {'name': '4.21.15 in Fast Channel', 'date_start': '2026-05-20'},
+                {'name': '4.21.16 in Fast Channel', 'date_start': '2026-05-23'},
+            ]
+        )
+
+        result = get_inflight('rc.4', 'openshift-4.22', date='2026-05-25')
+
+        self.assertEqual(result, '4.21.16')
+
+    @patch('artcommonlib.util.get_assembly_release_date')
+    @patch('artcommonlib.util.requests_gssapi')
+    @patch('artcommonlib.util.requests.Session')
+    def test_returns_none_when_no_release_in_window(self, mock_session_cls, mock_gssapi, mock_get_date):
+        """When no Y-1 releases are within the 7-day window, returns None."""
+        mock_get_date.return_value = '2026-May-25'
+        mock_session = MagicMock()
+        mock_session_cls.return_value = mock_session
+        mock_session.get.return_value = self._mock_pp_response(
+            [
+                {'name': '4.21.14 in Fast Channel', 'date_start': '2026-05-10'},
+                {'name': '4.21.15 in Fast Channel', 'date_start': '2026-05-17'},
+                {'name': '4.21.16 in Fast Channel', 'date_start': '2026-05-30'},
+            ]
+        )
+
+        result = get_inflight('rc.4', 'openshift-4.22', date='2026-05-25')
+
+        # 4.21.14: 15 days before (outside), 4.21.15: 8 days before (outside), 4.21.16: after
+        self.assertIsNone(result)
+
+    @patch('artcommonlib.util.get_assembly_release_date')
+    def test_returns_none_for_minor_zero(self, mock_get_date):
+        """When minor version is 0, there is no Y-1 group to query."""
+        mock_get_date.return_value = '2026-May-25'
+
+        result = get_inflight('rc.0', 'openshift-5.0', date='2026-05-25')
+
+        self.assertIsNone(result)
+
+    @patch('artcommonlib.util.get_assembly_release_date')
+    @patch('artcommonlib.util.requests_gssapi')
+    @patch('artcommonlib.util.requests.Session')
+    def test_exact_same_day_is_selected(self, mock_session_cls, mock_gssapi, mock_get_date):
+        """A Y-1 release on exactly the same day as assembly should be selected (days_diff=0)."""
+        mock_get_date.return_value = '2026-May-25'
+        mock_session = MagicMock()
+        mock_session_cls.return_value = mock_session
+        mock_session.get.return_value = self._mock_pp_response(
+            [
+                {'name': '4.21.16 in Fast Channel', 'date_start': '2026-05-25'},
+            ]
+        )
+
+        result = get_inflight('rc.4', 'openshift-4.22', date='2026-05-25')
+
+        self.assertEqual(result, '4.21.16')
