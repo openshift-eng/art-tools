@@ -56,6 +56,7 @@ from pyartcd.pipelines.scheduled import (
     schedule_ocp4_scan_konflux,
     schedule_scan_operator,
     schedule_scan_plashet_rpms,
+    schedule_sync_ci_images,
 )
 
 __all__ = [
@@ -111,6 +112,7 @@ __all__ = [
     "schedule_ocp4_scan_konflux",
     "schedule_scan_operator",
     "schedule_scan_plashet_rpms",
+    "schedule_sync_ci_images",
 ]
 
 
