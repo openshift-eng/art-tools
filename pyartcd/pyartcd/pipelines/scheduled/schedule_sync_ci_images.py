@@ -24,8 +24,9 @@ async def run_for(version: str, runtime: Runtime, lock_manager: LockManager, ser
     lock_name = Lock.SYNC_CI_IMAGES.value.format(version=version)
     lock = None
     try:
-        # Try non-blocking acquire to prevent race conditions
-        lock = await lock_manager.lock(lock_name, lock_timeout=10)
+        # Acquire lock with 60s timeout to handle parallel scheduling of multiple versions
+        # Each version has its own lock, but Redis can be slow under parallel load
+        lock = await lock_manager.lock(lock_name, lock_timeout=60)
     except Exception as e:
         runtime.logger.info(
             f'[{version}] Failed to acquire lock {lock_name}, skipping (already running or scheduled): {e}'
@@ -43,7 +44,11 @@ async def run_for(version: str, runtime: Runtime, lock_manager: LockManager, ser
     finally:
         # Release scheduler lock once worker has started (worker holds its own lock)
         if lock:
-            await lock_manager.unlock(lock)
+            try:
+                await lock_manager.unlock(lock)
+            except Exception as e:
+                # Suppress errors during unlock - connection pool might be closing
+                runtime.logger.debug('[%s] Error releasing lock (ignored): %s', version, e)
 
 
 @cli.command('schedule-sync-ci-images')
@@ -93,6 +98,13 @@ async def schedule_sync_ci_images(runtime: Runtime, version: tuple, serial: bool
                 await run_for(v, runtime, lock_manager, serial=True)
         else:
             runtime.logger.info('Running syncs in parallel for versions: %s', ', '.join(versions_to_process))
-            await asyncio.gather(*[run_for(v, runtime, lock_manager) for v in versions_to_process])
+            # Gather with return_exceptions=True to handle failures gracefully
+            results = await asyncio.gather(
+                *[run_for(v, runtime, lock_manager) for v in versions_to_process], return_exceptions=True
+            )
+            # Log any exceptions that occurred
+            for i, result in enumerate(results):
+                if isinstance(result, Exception):
+                    runtime.logger.error(f'Version {versions_to_process[i]} failed: {result}', exc_info=result)
     finally:
         await lock_manager.destroy()
