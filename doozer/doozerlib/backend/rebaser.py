@@ -41,6 +41,7 @@ from tenacity import retry, stop_after_attempt, wait_fixed
 # Product name mapping for CPE labels
 CPE_PRODUCT_NAME_MAPPING = {
     'acm': 'advanced_cluster_management',
+    'mce': 'multicluster_engine',
     'rhmtc': 'rhmt',
     'oadp': 'openshift_api_data_protection',
     'mta': 'migration_toolkit_applications',
