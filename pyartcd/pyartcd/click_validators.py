@@ -19,4 +19,4 @@ def validate_release_date(ctx, param, value):
             click.echo(f"Converted release date from {value} to {normalized} (elliott format)")
         return normalized
     except ValueError as e:
-        raise click.BadParameter(str(e))
+        raise click.BadParameter(str(e)) from e

@@ -45,7 +45,7 @@ from artcommonlib.rhcos import (
 )
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import get_inflight, new_roundtrip_yaml_handler, normalize_release_date
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from doozerlib.cli import click_coroutine, pass_runtime
@@ -99,6 +99,12 @@ class AssemblyParams(BaseModel, frozen=True):
         if v is None:
             return None
         return normalize_release_date(v)
+
+    @model_validator(mode="after")
+    def _validate_has_target_content(self) -> "AssemblyParams":
+        if not self.kernel_nvrs and not self.image_nvrs:
+            raise ValueError("At least one --kernel-nvr or --image-nvr must be provided.")
+        return self
 
 
 @releases_gen_assembly.command(
@@ -403,36 +409,35 @@ class GenAssemblyTargetedCli:
             if not container_conf.get("primary", False):
                 continue
             container_name = str(container_conf.name)
-            pullspec = rhcos_config.get(container_name, {}).get("images", {}).get("x86_64")
-            if not pullspec:
+            images = rhcos_config.get(container_name, {}).get("images", {})
+            if not images:
                 continue
 
-            with tempfile.TemporaryDirectory() as temp_dir:
-                reg_conf_arg = (
-                    f" --registry-config={self.runtime.registry_config}" if self.runtime.registry_config else ""
-                )
-                cmd_assert(
-                    f"oc image extract {pullspec}[-1] --path /usr/share/openshift/base/meta.json:{temp_dir} --confirm{reg_conf_arg}",
-                    retries=3,
-                )
-                with open(os.path.join(temp_dir, "meta.json"), "r") as f:
-                    meta_data = json.load(f)
+            reg_conf_arg = f" --registry-config={self.runtime.registry_config}" if self.runtime.registry_config else ""
+            for arch, pullspec in images.items():
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    cmd_assert(
+                        f"oc image extract {pullspec}[-1] --path /usr/share/openshift/base/meta.json:{temp_dir} --confirm{reg_conf_arg}",
+                        retries=3,
+                    )
+                    with open(os.path.join(temp_dir, "meta.json"), "r") as f:
+                        meta_data = json.load(f)
 
-            rpm_list = meta_data.get("rpmdb.pkglist", [])
-            build_kernel_nvrs = set()
-            for entry in rpm_list:
-                if entry[0] == "kernel-core":
-                    build_kernel_nvrs.add(f"kernel-core-{entry[2]}-{entry[3]}")
+                rpm_list = meta_data.get("rpmdb.pkglist", [])
+                build_kernel_nvrs = set()
+                for entry in rpm_list:
+                    if entry[0] == "kernel-core":
+                        build_kernel_nvrs.add(f"kernel-core-{entry[2]}-{entry[3]}")
 
-            if not (target_kernel_nvrs & build_kernel_nvrs):
-                raise RuntimeError(
-                    f"Latest layered RHCOS build does not contain target kernel. "
-                    f"Expected one of {target_kernel_nvrs}, "
-                    f"found {build_kernel_nvrs}. "
-                    f"The RHCOS pipeline may not have run yet with this kernel. "
-                    f"Trigger an RHCOS build and retry."
-                )
-            self.logger.info("Verified layered RHCOS contains target kernel")
+                if not (target_kernel_nvrs & build_kernel_nvrs):
+                    raise RuntimeError(
+                        f"Latest layered RHCOS build ({arch}) does not contain target kernel. "
+                        f"Expected one of {target_kernel_nvrs}, "
+                        f"found {build_kernel_nvrs}. "
+                        f"The RHCOS pipeline may not have run yet with this kernel. "
+                        f"Trigger an RHCOS build and retry."
+                    )
+                self.logger.info("Verified layered RHCOS contains target kernel for arch %s", arch)
             return
 
         raise RuntimeError("No primary RHCOS container config found in group config")

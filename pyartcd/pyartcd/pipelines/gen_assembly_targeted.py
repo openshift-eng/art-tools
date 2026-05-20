@@ -194,7 +194,9 @@ class GenAssemblyTargetedPipeline:
         if self.release_date:
             cmd.append(f"--date={self.release_date}")
 
-        _, out, _ = await exectools.cmd_gather_async(cmd, stderr=None, env=self._doozer_env_vars)
+        rc, out, _ = await exectools.cmd_gather_async(cmd, stderr=None, env=self._doozer_env_vars)
+        if rc != 0:
+            raise ChildProcessError(f"doozer command failed (rc={rc}): {out}")
         return yaml.load(out)
 
     async def _create_or_update_pull_request(self, assembly_definition: dict):

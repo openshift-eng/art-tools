@@ -55,12 +55,20 @@ class TestAssemblyParamsValidation(TestCase):
             _make_params(kernel_nvrs=("httpd-2.4.0-1.el9",))
         self.assertIn("does not look like a kernel package", str(ctx.exception))
 
-    def test_empty_kernel_nvrs_allowed(self):
+    def test_empty_kernel_nvrs_allowed_with_image_nvrs(self):
         """
-        Empty kernel NVRs tuple is valid (image-only assembly).
+        Empty kernel NVRs tuple is valid when image NVRs are provided (image-only assembly).
         """
-        params = _make_params(kernel_nvrs=())
+        params = _make_params(kernel_nvrs=(), image_nvrs=("ose-installer-container-v4.17.0-202502110000.p0.el9",))
         self.assertEqual(params.kernel_nvrs, ())
+
+    def test_both_empty_pins_rejected(self):
+        """
+        Both kernel_nvrs and image_nvrs empty raises ValidationError.
+        """
+        with self.assertRaises(ValidationError) as ctx:
+            _make_params(kernel_nvrs=(), image_nvrs=())
+        self.assertIn("At least one --kernel-nvr or --image-nvr must be provided", str(ctx.exception))
 
     def test_valid_params(self):
         """
@@ -323,7 +331,12 @@ class TestBuildAssemblyDefinition(TestCase):
         """
         Assembly name like rc.5 produces candidate type.
         """
-        cli = _make_cli(assembly_name="rc.5", basis_assembly="rc.4", kernel_nvrs=())
+        cli = _make_cli(
+            assembly_name="rc.5",
+            basis_assembly="rc.4",
+            kernel_nvrs=(),
+            image_nvrs=("ose-installer-container-v4.17.0-202502110000.p0.el9",),
+        )
         result = cli._build_assembly_definition()
         assembly = result["releases"]["rc.5"]["assembly"]
 
@@ -333,7 +346,7 @@ class TestBuildAssemblyDefinition(TestCase):
         """
         targeted_fixes_only not set when no bug IDs provided.
         """
-        cli = _make_cli(bug_ids=(), kernel_nvrs=())
+        cli = _make_cli(bug_ids=(), kernel_nvrs=(), image_nvrs=("ose-installer-container-v4.17.0-202502110000.p0.el9",))
         result = cli._build_assembly_definition()
         assembly = result["releases"]["4.17.5"]["assembly"]
 
@@ -383,7 +396,11 @@ class TestBuildAssemblyDefinition(TestCase):
         """
         Release date included in group config when provided.
         """
-        cli = _make_cli(release_date="2026-Jun-15", kernel_nvrs=())
+        cli = _make_cli(
+            release_date="2026-Jun-15",
+            kernel_nvrs=(),
+            image_nvrs=("ose-installer-container-v4.17.0-202502110000.p0.el9",),
+        )
         result = cli._build_assembly_definition()
         assembly = result["releases"]["4.17.5"]["assembly"]
 
