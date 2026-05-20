@@ -20,7 +20,12 @@ import asyncstdlib as a
 import click
 import semver
 from artcommonlib import exectools
-from artcommonlib.assembly import AssemblyTypes, assembly_config_struct, assembly_group_config
+from artcommonlib.assembly import (
+    AssemblyTypes,
+    assembly_config_struct,
+    assembly_group_config,
+    assembly_targeted_fixes_only,
+)
 from artcommonlib.constants import (
     REGISTRY_QUAY_OCP_RELEASE_DEV,
     SHIPMENT_DATA_URL_TEMPLATE,
@@ -376,6 +381,15 @@ class PrepareReleaseKonfluxPipeline:
         if self.assembly_type != AssemblyTypes.STANDARD:
             self.logger.info(f"Skipping Blocker Bugs check for non-standard assembly {self.assembly}")
             return
+
+        releases_model = Model(self.releases_config)
+        if assembly_targeted_fixes_only(releases_model, self.assembly):
+            self.logger.info(
+                "Skipping blocker bug check: assembly %s has targeted_fixes_only=true.",
+                self.assembly,
+            )
+            return
+
         self.logger.info(f"Checking Blocker Bugs for release {self.assembly}")
         cmd = self._elliott_base_command + ["find-bugs:blocker", "--exclude-status=ON_QA"]
         stdout = await self.execute_command_with_logging(cmd)

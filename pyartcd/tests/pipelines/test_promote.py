@@ -2163,3 +2163,89 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
                     str(Path(temp_dir) / "4.10.99.manifest-list.yaml"),
                 ],
             )
+
+    @patch("pyartcd.pipelines.promote.RegistryConfig")
+    @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
+    @patch(
+        "pyartcd.pipelines.promote.util.load_releases_config",
+        return_value={
+            "releases": {
+                "4.10.99": {
+                    "assembly": {
+                        "type": "standard",
+                        "basis": {"assembly": "4.10.98"},
+                        "issues": {
+                            "targeted_fixes_only": True,
+                            "include": [{"id": "OCPBUGS-85292"}, {"id": "OCPBUGS-99999"}],
+                        },
+                    }
+                }
+            }
+        },
+    )
+    @patch(
+        "pyartcd.pipelines.promote.util.load_group_config",
+        return_value=Model(dict(arches=["x86_64", "s390x"], upgrades="4.10.98,4.9.99", advisories={"image": 2})),
+    )
+    async def test_run_skips_blocker_check_when_targeted_fixes_only_set(
+        self, load_group_config: AsyncMock, load_releases_config: AsyncMock, _, __
+    ):
+        """Blocker bug check skipped when assembly has issues.targeted_fixes_only=true."""
+        runtime = MagicMock(
+            config={
+                "build_config": {
+                    "ocp_build_data_url": "https://example.com/ocp-build-data.git",
+                },
+                "jira": {
+                    "url": JIRA_SERVER_URL,
+                },
+            },
+            working_dir=Path("/path/to/working"),
+            dry_run=False,
+        )
+        runtime.new_slack_client.return_value = AsyncMock()
+        runtime.new_slack_client.return_value.say.return_value = {'message': {'ts': ''}}
+        runtime.new_slack_client.return_value.bind_channel = MagicMock()
+
+        pipeline = await PromotePipeline.create(
+            runtime, group="openshift-4.10", assembly="4.10.99", signing_env="prod", skip_sigstore=True
+        )
+        pipeline.check_blocker_bugs = AsyncMock()
+        pipeline.change_advisory_state_qe = AsyncMock()
+        pipeline.get_advisory_info = AsyncMock(return_value={"id": 2, "errata_id": 2, "status": "QE"})
+
+        # Pipeline will fail later (no live ID), but blocker check should already have been skipped
+        with self.assertRaisesRegex(VerificationError, "Could not find live ID from image advisory"):
+            await pipeline.run()
+
+        pipeline.check_blocker_bugs.assert_not_called()
+
+    @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
+    @patch("pyartcd.pipelines.promote.exectools.cmd_gather_async")
+    async def test_check_blocker_bugs_no_excluded_bugs(self, cmd_gather_async: AsyncMock, _):
+        """Test that check_blocker_bugs works without excluded bugs."""
+        runtime = MagicMock(
+            config={
+                "build_config": {
+                    "ocp_build_data_url": "https://example.com/ocp-build-data.git",
+                },
+                "jira": {"url": JIRA_SERVER_URL},
+            },
+            dry_run=False,
+            logger=MagicMock(),
+            new_slack_client=MagicMock(return_value=AsyncMock()),
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            runtime.working_dir = Path(temp_dir)
+            pipeline = PromotePipeline(runtime, group="openshift-4.10", assembly="4.10.99", signing_env="prod")
+
+            # Mock exectools.cmd_gather_async to return "Found 0 bugs"
+            cmd_gather_async.return_value = ("", "Found 0 bugs: ", "")
+
+            # Call check_blocker_bugs without excluded bug IDs
+            await pipeline.check_blocker_bugs()
+
+            # Verify the command does not include --exclude-bugs
+            call_args = cmd_gather_async.call_args[0][0]
+            self.assertIn("find-bugs:blocker", call_args)
+            self.assertNotIn("--exclude-bugs", call_args)

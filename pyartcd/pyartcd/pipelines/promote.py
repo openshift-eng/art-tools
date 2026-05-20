@@ -25,7 +25,7 @@ from artcommonlib.arch_util import (
     go_arch_for_brew_arch,
     go_suffix_for_arch,
 )
-from artcommonlib.assembly import AssemblyTypes, assembly_config_struct
+from artcommonlib.assembly import AssemblyTypes, assembly_config_struct, assembly_targeted_fixes_only
 from artcommonlib.constants import REGISTRY_CI_OPENSHIFT, REGISTRY_QUAY_OCP_RELEASE_DEV
 from artcommonlib.exceptions import VerificationError
 from artcommonlib.exectools import manifest_tool, manifest_tool_auth_file, to_thread
@@ -299,7 +299,14 @@ class PromotePipeline:
             else:
                 logger.info("Checking for blocker bugs...")
                 try:
-                    await self.check_blocker_bugs()
+                    releases_model = Model(releases_config)
+                    if assembly_targeted_fixes_only(releases_model, self.assembly):
+                        logger.info(
+                            "Skipping blocker bug check: assembly %s has targeted_fixes_only=true.",
+                            self.assembly,
+                        )
+                    else:
+                        await self.check_blocker_bugs()
                 except VerificationError as err:
                     logger.warn("Blocker bugs found for release: %s", err)
                     justification = self._reraise_if_not_permitted(err, "BLOCKER_BUGS", permits)
