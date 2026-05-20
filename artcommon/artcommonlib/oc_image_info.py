@@ -34,8 +34,8 @@ from tenacity import retry, stop_after_attempt, wait_fixed
 
 logger = logging.getLogger(__name__)
 
-# Cached entries expire after 60 days (seconds).
-_CACHE_EXPIRY_SECONDS = 60 * 24 * 60 * 60
+# Cached entries expire after 14 days (seconds).
+_CACHE_EXPIRY_SECONDS = 14 * 24 * 60 * 60
 
 # Bump to invalidate every cached entry at once.
 _CACHE_KEY_VERSION = "v1"
