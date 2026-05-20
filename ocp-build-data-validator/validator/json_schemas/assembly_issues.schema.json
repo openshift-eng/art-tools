@@ -52,14 +52,26 @@
       "description": "When true, skips the Jira bug sweep, uses only own issues.include/exclude without inheritance, and skips the blocker bug check. Use for targeted/emergency releases. Requires issues.include to be non-empty.",
       "type": "boolean"
     },
-    "targeted_fixes_only!": {
-      "$ref": "#/properties/targeted_fixes_only"
-    },
-    "targeted_fixes_only?": {
-      "$ref": "#/properties/targeted_fixes_only"
-    },
-    "targeted_fixes_only-": {},
     "additionalProperties": false
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "targeted_fixes_only": {"const": true}
+        },
+        "required": ["targeted_fixes_only"]
+      },
+      "then": {
+        "required": ["include"],
+        "properties": {
+          "include": {
+            "type": "array",
+            "minItems": 1
+          }
+        }
+      }
+    }
+  ],
   "additionalProperties": false
 }

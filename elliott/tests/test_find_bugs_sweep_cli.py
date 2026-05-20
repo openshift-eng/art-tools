@@ -133,7 +133,7 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
     ):
         """When targeted_fixes_only=true, Jira search must not run; only explicit includes are returned."""
         included_bug = flexmock(id="OCPBUGS-84781")
-        mock_own_issues.return_value = flexmock(include=[{"id": "OCPBUGS-84781"}])
+        mock_own_issues.return_value = flexmock(include=[{"id": "OCPBUGS-84781"}], exclude=[])
         mock_get_bug_ids.return_value = ({"OCPBUGS-84781"}, set())
 
         find_bugs_obj = sweep_cli.FindBugsSweep()
@@ -145,6 +145,8 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
         actual = await sweep_cli.get_bugs_sweep(runtime, find_bugs_obj, bug_tracker)
 
         find_bugs_obj.search.assert_not_called()
+        mock_own_issues.assert_called_once_with(runtime.get_releases_config(), runtime.assembly)
+        mock_get_bug_ids.assert_called_once_with(runtime, bug_tracker_type="jira", use_own_only=True)
         self.assertEqual([b.id for b in actual], ["OCPBUGS-84781"])
 
     @patch("elliottlib.cli.find_bugs_sweep_cli.assembly_own_issues_config")
@@ -154,12 +156,27 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
         self, mock_get_bug_ids, mock_targeted_fixes_only, mock_own_issues
     ):
         """When targeted_fixes_only=true but issues.include is empty, raise ValueError."""
-        mock_own_issues.return_value = flexmock(include=[])
+        mock_own_issues.return_value = flexmock(include=[], exclude=[])
         find_bugs_obj = sweep_cli.FindBugsSweep()
         bug_tracker = MagicMock(type="jira")
         runtime = MagicMock(debug=False)
 
         with self.assertRaises(ValueError, msg="targeted_fixes_only=true but issues.include is empty"):
+            await sweep_cli.get_bugs_sweep(runtime, find_bugs_obj, bug_tracker)
+
+    @patch("elliottlib.cli.find_bugs_sweep_cli.assembly_own_issues_config")
+    @patch("elliottlib.cli.find_bugs_sweep_cli.assembly_targeted_fixes_only", return_value=True)
+    @patch("elliottlib.cli.find_bugs_sweep_cli.get_assembly_bug_ids")
+    async def test_get_bugs_sweep_targeted_fixes_only_fails_with_exclude(
+        self, mock_get_bug_ids, mock_targeted_fixes_only, mock_own_issues
+    ):
+        """When targeted_fixes_only=true but issues.exclude is non-empty, raise ValueError."""
+        mock_own_issues.return_value = flexmock(include=[{"id": "OCPBUGS-1"}], exclude=[{"id": "OCPBUGS-2"}])
+        find_bugs_obj = sweep_cli.FindBugsSweep()
+        bug_tracker = MagicMock(type="jira")
+        runtime = MagicMock(debug=False)
+
+        with self.assertRaises(ValueError, msg="targeted_fixes_only=true but issues.exclude is non-empty"):
             await sweep_cli.get_bugs_sweep(runtime, find_bugs_obj, bug_tracker)
 
     @patch("elliottlib.cli.find_bugs_sweep_cli.get_assembly_bug_ids", return_value=(set(), set()))

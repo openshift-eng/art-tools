@@ -256,6 +256,11 @@ async def get_bugs_sweep(runtime: Runtime, find_bugs_obj, bug_tracker):
                 f"Assembly {runtime.assembly} has targeted_fixes_only=true but issues.include is empty. "
                 "A targeted release must explicitly list the bugs it ships."
             )
+        if list(own_issues.exclude):
+            raise ValueError(
+                f"Assembly {runtime.assembly} has targeted_fixes_only=true but issues.exclude is non-empty. "
+                "A targeted release must not use exclude; only include the bugs it ships."
+            )
         logger.info(
             "Skipping Jira sweep: assembly %s has targeted_fixes_only=true. Only explicitly included bugs will be attached.",
             runtime.assembly,
@@ -436,7 +441,7 @@ def get_builds_by_advisory_kind(runtime: Runtime) -> Dict[str, List[str]]:
 
 
 def get_assembly_bug_ids(runtime, bug_tracker_type, use_own_only: bool = False) -> tuple[Set[str], Set[str]]:
-    # For hotfix releases, use only the assembly's own issues (no inheritance).
+    # For targeted fix releases, use only the assembly's own issues (no inheritance).
     # Otherwise use the merged inheritance chain so explicit includes/excludes work across releases.
     if use_own_only:
         issues_config = assembly_own_issues_config(runtime.get_releases_config(), runtime.assembly)
