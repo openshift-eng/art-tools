@@ -963,23 +963,23 @@ class KonfluxImageBuilder:
             'ec_pipeline_url': ec_pipeline_url,
         }
 
-        # SUCCESS: completed image in pipelinerun results. FAILURE may still have IMAGE_URL/DIGEST when the pipeline
-        # produced an image but we mark FAILURE (e.g. base-image release failed after EC pass).
-        results = pipelinerun_dict.get('status', {}).get('results', [])
-        image_pullspec = next((r['value'] for r in results if r['name'] == 'IMAGE_URL'), None)
-        image_digest = next((r['value'] for r in results if r['name'] == 'IMAGE_DIGEST'), None)
-
-        enrich_image = False
         if outcome is KonfluxBuildOutcome.SUCCESS:
-            enrich_image = True
+            # results:
+            # - name: IMAGE_URL
+            #   value: quay.io/openshift-release-dev/ocp-v4.0-art-dev-test:ose-network-metrics-daemon-rhel9-v4.18.0-20241001.151532
+            # - name: IMAGE_DIGEST
+            #   value: sha256:49d65afba393950a93517f09385e1b441d1735e0071678edf6fc0fc1fe501807
+
+            results = pipelinerun_dict.get('status', {}).get('results', [])
+            image_pullspec = next((r['value'] for r in results if r['name'] == 'IMAGE_URL'), None)
+            image_digest = next((r['value'] for r in results if r['name'] == 'IMAGE_DIGEST'), None)
+
             if not (image_pullspec and image_digest):
                 raise ValueError(
-                    f"[{metadata.distgit_key}] Could not find expected results in konflux pipelinerun {pipelinerun_name}"
+                    f"[{metadata.distgit_key}] Could not find expected results in konflux "
+                    f"pipelinerun {pipelinerun_name}"
                 )
-        elif outcome is KonfluxBuildOutcome.FAILURE and image_pullspec and image_digest:
-            enrich_image = True
 
-        if enrich_image:
             definitive_image_pullspec = f"{image_pullspec.split(':')[0]}@{image_digest}"
 
             # use image_digest here to be precise, image_pullspec can collide in case of golang-builder images
