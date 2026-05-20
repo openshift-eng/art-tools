@@ -332,6 +332,24 @@ class BuildMicroShiftBootcPipeline:
         )
         return cast(Optional[KonfluxBuildRecord], build)
 
+    async def get_bootc_build_for_seeding(self) -> Optional[KonfluxBuildRecord]:
+        """Find the most recent successful bootc build across any assembly to use as a lockfile seed."""
+        if not self.konflux_db:
+            self.konflux_db = KonfluxDb()
+            self.konflux_db.bind(KonfluxBuildRecord)
+            self._logger.info('Konflux DB initialized')
+
+        build = await self.konflux_db.get_latest_build(
+            name="microshift-bootc",
+            group=self.group,
+            outcome=KonfluxBuildOutcome.SUCCESS,
+            engine=Engine.KONFLUX,
+            artifact_type=ArtifactType.IMAGE,
+            el_target='el9',
+            exclude_large_columns=True,
+        )
+        return cast(Optional[KonfluxBuildRecord], build)
+
     async def _build_plashet_for_bootc(self):
         microshift_plashet_name = "rhel-9-server-microshift-rpms"
         major, minor = self._ocp_version
@@ -531,6 +549,14 @@ class BuildMicroShiftBootcPipeline:
         # Determine the assembly label value based on assembly type
         assembly_label_value = self._get_assembly_label_value()
 
+        # Find the most recent prior bootc build (any assembly) to seed the RPM lockfile.
+        # This is a no-op when the image is not configured as hermetic in ocp-build-data.
+        seed_build = await self.get_bootc_build_for_seeding()
+        if seed_build:
+            self._logger.info("Found bootc build for lockfile seeding: %s", seed_build.nvr)
+        else:
+            self._logger.info("No prior bootc build found for lockfile seeding")
+
         # Rebase and build bootc image
         version = f"v{major}.{minor}"
         release = default_release_suffix()
@@ -557,6 +583,8 @@ class BuildMicroShiftBootcPipeline:
             "--release",
             release,
         ]
+        if seed_build:
+            rebase_cmd += ["--lockfile-seed-nvrs", seed_build.nvr]
         if assembly_label_value:
             rebase_cmd += ["--extra-label", f"assembly={assembly_label_value}"]
         rebase_cmd += [
