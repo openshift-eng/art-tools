@@ -218,7 +218,7 @@ class SyncCIImagesPipeline:
 
             # Get authenticated client - uses GitHub App (blocking call, run in thread)
             client = await asyncio.to_thread(get_github_client_for_org, owner)
-            repo_obj = await asyncio.to_thread(client.get_repo, self._get_github_repo_url(owner, repo))
+            repo_obj = await asyncio.to_thread(client.get_repo, self._get_github_repo_path(owner, repo))
 
             # Try resolving gitref (could be branch, SHA, or tag)
             return await self._resolve_github_ref(repo_obj, gitref, version)
@@ -237,9 +237,9 @@ class SyncCIImagesPipeline:
         return self.data_gitref or f"openshift-{version}"
 
     @staticmethod
-    def _get_github_repo_url(owner: str, repo: str) -> str:
-        """Construct GitHub repository URL."""
-        return f"https://github.com/{owner}/{repo}"
+    def _get_github_repo_path(owner: str, repo: str) -> str:
+        """Construct GitHub repository path for PyGithub API (format: owner/repo)."""
+        return f"{owner}/{repo}"
 
     async def _resolve_github_ref(self, repo_obj, gitref: str, version: str) -> str:
         """
@@ -523,10 +523,12 @@ class SyncCIImagesPipeline:
             doozer_opts, "images:streams gen-buildconfigs", f"-o {self._working_dir}/buildconfigs.yaml {apply_flag}"
         )
 
-    async def _mirror_images_to_ci(self, doozer_opts: str) -> None:
+    async def _mirror_images_to_ci(self, doozer_opts: str, auth_file: str) -> None:
         """Mirror builder and base images to CI registries."""
         self._logger.info(f"{self.version}: Mirroring images")
-        mirror_args = ""
+        # Pass --registry-auth at command level to work around doozer bug where
+        # global --registry-config doesn't get passed to oc image mirror commands
+        mirror_args = f"--registry-auth {auth_file} "
         if self.update_images_only_when_missing:
             mirror_args += "--only-if-missing "
         if self.runtime.dry_run:
@@ -640,7 +642,7 @@ class SyncCIImagesPipeline:
                 doozer_opts = self._build_doozer_options(group_dir, auth_file)
 
                 await self._generate_and_apply_buildconfigs(doozer_opts)
-                await self._mirror_images_to_ci(doozer_opts)
+                await self._mirror_images_to_ci(doozer_opts, auth_file)
                 await self._trigger_ci_builds(doozer_opts)
                 await self._wait_for_builds()
                 await self._verify_upstream_consistency(doozer_opts)
