@@ -103,8 +103,17 @@ async def schedule_sync_ci_images(runtime: Runtime, version: tuple, serial: bool
                 *[run_for(v, runtime, lock_manager) for v in versions_to_process], return_exceptions=True
             )
             # Log any exceptions that occurred
+            failed_versions = []
             for i, result in enumerate(results):
                 if isinstance(result, Exception):
-                    runtime.logger.error(f'Version {versions_to_process[i]} failed: {result}', exc_info=result)
+                    failed_versions.append(versions_to_process[i])
+                    runtime.logger.error(
+                        'Version %s failed: %s',
+                        versions_to_process[i],
+                        result,
+                        exc_info=result,
+                    )
+            if failed_versions:
+                raise RuntimeError(f"Failed to schedule sync-ci-images for: {', '.join(failed_versions)}")
     finally:
         await lock_manager.destroy()
