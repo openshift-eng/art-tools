@@ -39,11 +39,9 @@ from pyartcd.util import (
     build_history_link_url,
     get_group_images,
     get_group_rpms,
-    increment_build_fail_counter,
-    increment_rebase_fail_counter,
+    increment_fail_counter,
     mass_rebuild_score,
-    reset_build_fail_counter,
-    reset_rebase_fail_counter,
+    reset_fail_counter,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -223,13 +221,16 @@ class KonfluxOcpPipeline:
                     f"Unknown build strategy: {self.build_plan.image_build_strategy}. Valid strategies: {[s.value for s in BuildStrategy]}"
                 )
         await asyncio.gather(
-            *[reset_rebase_fail_counter(image, self.version, 'konflux') for image in successful_images]
+            *[reset_fail_counter(f'count:rebase-failure:konflux:{self.version}:{image}') for image in successful_images]
         )
 
         # Increment fail counters only for images that failed rebase directly
         job_url = os.getenv('BUILD_URL')
         await asyncio.gather(
-            *[increment_rebase_fail_counter(image, self.version, 'konflux', job_url=job_url) for image in failed_images]
+            *[
+                increment_fail_counter(f'count:rebase-failure:konflux:{self.version}:{image}', jenkins_url=job_url)
+                for image in failed_images
+            ]
         )
 
     async def update_build_fail_counters(self, built_images, failed_images, record_log):
@@ -250,13 +251,14 @@ class KonfluxOcpPipeline:
             entry['name']: entry for entry in record_log.get('image_build_konflux', []) if int(entry['status'])
         }
 
-        await asyncio.gather(*[reset_build_fail_counter(image, group) for image in built_images])
+        await asyncio.gather(
+            *[reset_fail_counter(f'count:build-failure:konflux:{group}:{image}') for image in built_images]
+        )
         await asyncio.gather(
             *[
-                increment_build_fail_counter(
-                    image,
-                    group,
-                    url=job_url,
+                increment_fail_counter(
+                    f'count:build-failure:konflux:{group}:{image}',
+                    jenkins_url=job_url,
                     nvr=failed_entries.get(image, {}).get('nvrs'),
                 )
                 for image in failed_images

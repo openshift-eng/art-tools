@@ -245,45 +245,45 @@ class TestUtil(IsolatedAsyncioTestCase):
         await util.reset_fail_counter('count:test:branch')
         mock_delete.assert_called_once_with('count:test:branch:*')
 
-    @patch("artcommonlib.redis.set_value", new_callable=AsyncMock)
-    @patch("artcommonlib.redis.get_value", new_callable=AsyncMock)
-    async def test_increment_build_fail_counter_new(self, mock_get, mock_set):
-        mock_get.return_value = None
-        await util.increment_build_fail_counter('ironic', 'openshift-4.21', url='http://j/1', nvr='ironic-1.0-1')
-        mock_set.assert_any_call(key='count:build-failure:konflux:openshift-4.21:ironic:failure', value=1)
-        mock_set.assert_any_call(key='count:build-failure:konflux:openshift-4.21:ironic:url', value='http://j/1')
-        mock_set.assert_any_call(key='count:build-failure:konflux:openshift-4.21:ironic:nvr', value='ironic-1.0-1')
-
-    @patch("artcommonlib.redis.set_value", new_callable=AsyncMock)
-    @patch("artcommonlib.redis.get_value", new_callable=AsyncMock)
-    async def test_increment_build_fail_counter_existing(self, mock_get, mock_set):
-        mock_get.return_value = '3'
-        await util.increment_build_fail_counter('ironic', 'openshift-4.21')
-        mock_set.assert_any_call(key='count:build-failure:konflux:openshift-4.21:ironic:failure', value=4)
-
-    @patch("artcommonlib.redis.delete_keys_by_pattern", new_callable=AsyncMock)
-    async def test_reset_build_fail_counter(self, mock_delete):
-        await util.reset_build_fail_counter('ironic', 'openshift-4.21')
-        mock_delete.assert_called_once_with('count:build-failure:konflux:openshift-4.21:ironic:*')
-
     @patch("artcommonlib.redis.get_value", new_callable=AsyncMock)
     @patch("artcommonlib.redis.get_keys", new_callable=AsyncMock)
     async def test_get_build_failures(self, mock_get_keys, mock_get_value):
-        mock_get_keys.return_value = [
-            'count:build-failure:konflux:openshift-4.21:ironic:failure',
-            'count:build-failure:konflux:openshift-4.21:ovn-kubernetes:failure',
-        ]
+        # Mock get_keys to handle both the initial failure key search and metadata discovery
+        def mock_get_keys_side_effect(pattern):
+            if pattern.endswith(':*:failure'):
+                # Initial search for failure keys
+                return [
+                    'count:build-failure:konflux:openshift-4.21:ironic:failure',
+                    'count:build-failure:konflux:openshift-4.21:ovn-kubernetes:failure',
+                ]
+            elif 'ironic' in pattern:
+                # Metadata discovery for ironic
+                return [
+                    'count:build-failure:konflux:openshift-4.21:ironic:failure',
+                    'count:build-failure:konflux:openshift-4.21:ironic:jenkins_url',
+                    'count:build-failure:konflux:openshift-4.21:ironic:nvr',
+                ]
+            elif 'ovn-kubernetes' in pattern:
+                # Metadata discovery for ovn-kubernetes
+                return [
+                    'count:build-failure:konflux:openshift-4.21:ovn-kubernetes:failure',
+                    'count:build-failure:konflux:openshift-4.21:ovn-kubernetes:jenkins_url',
+                    'count:build-failure:konflux:openshift-4.21:ovn-kubernetes:nvr',
+                ]
+            return []
+
+        mock_get_keys.side_effect = mock_get_keys_side_effect
         mock_get_value.side_effect = lambda key: {
             'count:build-failure:konflux:openshift-4.21:ironic:failure': '5',
-            'count:build-failure:konflux:openshift-4.21:ironic:url': 'http://j/1',
+            'count:build-failure:konflux:openshift-4.21:ironic:jenkins_url': 'http://j/1',
             'count:build-failure:konflux:openshift-4.21:ironic:nvr': 'ironic-1.0-1',
             'count:build-failure:konflux:openshift-4.21:ovn-kubernetes:failure': '2',
-            'count:build-failure:konflux:openshift-4.21:ovn-kubernetes:url': '',
+            'count:build-failure:konflux:openshift-4.21:ovn-kubernetes:jenkins_url': '',
             'count:build-failure:konflux:openshift-4.21:ovn-kubernetes:nvr': None,
         }.get(key)
         result = await util.get_build_failures('openshift-4.21')
         self.assertEqual(result['ironic']['failure_count'], 5)
-        self.assertEqual(result['ironic']['url'], 'http://j/1')
+        self.assertEqual(result['ironic']['jenkins_url'], 'http://j/1')
         self.assertEqual(result['ironic']['nvr'], 'ironic-1.0-1')
         self.assertEqual(result['ovn-kubernetes']['failure_count'], 2)
 

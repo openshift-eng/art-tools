@@ -946,8 +946,8 @@ class TestKonfluxOcpPipelineRebaseFailures(unittest.IsolatedAsyncioTestCase):
 
         mock_counters.assert_called_once_with(['parent-img'], ['child-a', 'child-b'])
 
-    @patch('pyartcd.pipelines.ocp4_konflux.increment_rebase_fail_counter', new_callable=AsyncMock)
-    @patch('pyartcd.pipelines.ocp4_konflux.reset_rebase_fail_counter', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.ocp4_konflux.increment_fail_counter', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.ocp4_konflux.reset_fail_counter', new_callable=AsyncMock)
     async def test_update_rebase_fail_counters_skipped_children_unchanged_in_redis(self, mock_reset, mock_incr):
         """Children skipped because a parent failed are not reset nor incremented (no-op)."""
         from pyartcd.pipelines.ocp4_konflux import BuildStrategy
@@ -958,8 +958,9 @@ class TestKonfluxOcpPipelineRebaseFailures(unittest.IsolatedAsyncioTestCase):
 
         await pipeline.update_rebase_fail_counters(['parent-img'], ['child-a'])
 
-        reset_names = {c.args[0] for c in mock_reset.call_args_list}
-        incr_names = {c.args[0] for c in mock_incr.call_args_list}
+        # Extract image names from the redis branch strings
+        reset_names = {c.args[0].split(':')[-1] for c in mock_reset.call_args_list}
+        incr_names = {c.args[0].split(':')[-1] for c in mock_incr.call_args_list}
         self.assertEqual(reset_names, {'healthy'})
         self.assertEqual(incr_names, {'parent-img'})
         self.assertNotIn('child-a', reset_names)
