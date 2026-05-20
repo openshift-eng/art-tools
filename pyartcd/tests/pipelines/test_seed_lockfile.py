@@ -425,7 +425,7 @@ class TestSeedLockfilePipeline(unittest.IsolatedAsyncioTestCase):
 
         mock_title.assert_not_called()
 
-    @patch('pyartcd.pipelines.seed_lockfile.reset_rebase_fail_counter', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.seed_lockfile.reset_fail_counter', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.seed_lockfile.jenkins.init_jenkins')
     @patch('pyartcd.pipelines.seed_lockfile.jenkins.update_title')
     @patch('pyartcd.pipelines.seed_lockfile.jenkins.update_description')
@@ -443,9 +443,9 @@ class TestSeedLockfilePipeline(unittest.IsolatedAsyncioTestCase):
         with patch.object(pipeline, '_extract_stream_results_from_record_log', side_effect=populate_stream_results):
             await pipeline.run()
 
-        mock_reset.assert_awaited_once_with('ironic', '4.22', 'konflux')
+        mock_reset.assert_awaited_once_with('count:rebase-failure:konflux:4.22:ironic')
 
-    @patch('pyartcd.pipelines.seed_lockfile.reset_rebase_fail_counter', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.seed_lockfile.reset_fail_counter', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.seed_lockfile.jenkins.init_jenkins')
     @patch('pyartcd.pipelines.seed_lockfile.jenkins.update_title')
     @patch('pyartcd.pipelines.seed_lockfile.jenkins.update_description')
@@ -466,7 +466,7 @@ class TestSeedLockfilePipeline(unittest.IsolatedAsyncioTestCase):
 
         mock_reset.assert_not_awaited()
 
-    @patch('pyartcd.pipelines.seed_lockfile.reset_rebase_fail_counter', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.seed_lockfile.reset_fail_counter', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.seed_lockfile.jenkins.init_jenkins')
     @patch('pyartcd.pipelines.seed_lockfile.jenkins.update_title')
     @patch('pyartcd.pipelines.seed_lockfile.jenkins.update_description')
@@ -486,7 +486,7 @@ class TestSeedLockfilePipeline(unittest.IsolatedAsyncioTestCase):
 
         mock_reset.assert_not_awaited()
 
-    @patch('pyartcd.pipelines.seed_lockfile.reset_rebase_fail_counter', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.seed_lockfile.reset_fail_counter', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.seed_lockfile.jenkins.init_jenkins')
     @patch('pyartcd.pipelines.seed_lockfile.jenkins.update_title')
     @patch('pyartcd.pipelines.seed_lockfile.jenkins.update_description')
@@ -507,7 +507,7 @@ class TestSeedLockfilePipeline(unittest.IsolatedAsyncioTestCase):
 
         mock_reset.assert_not_awaited()
 
-    @patch('pyartcd.pipelines.seed_lockfile.reset_rebase_fail_counter', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.seed_lockfile.reset_fail_counter', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.seed_lockfile.jenkins.init_jenkins')
     @patch('pyartcd.pipelines.seed_lockfile.jenkins.update_title')
     @patch('pyartcd.pipelines.seed_lockfile.jenkins.update_description')
@@ -527,7 +527,7 @@ class TestSeedLockfilePipeline(unittest.IsolatedAsyncioTestCase):
             # Should not raise despite Redis error
             await pipeline.run()
 
-        mock_reset.assert_awaited_once_with('ironic', '4.22', 'konflux')
+        mock_reset.assert_awaited_once_with('count:rebase-failure:konflux:4.22:ironic')
 
     def test_init_stores_jira_key(self):
         pipeline = self._create_pipeline(jira_key='ART-12345')

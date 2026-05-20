@@ -24,10 +24,8 @@ from pyartcd.util import (
     build_history_link_url,
     default_release_suffix,
     get_group_images,
-    increment_build_fail_counter,
-    increment_rebase_fail_counter,
-    reset_build_fail_counter,
-    reset_rebase_fail_counter,
+    increment_fail_counter,
+    reset_fail_counter,
 )
 
 OKD_ARCHES = ['x86_64']
@@ -313,7 +311,7 @@ class KonfluxOkdPipeline:
 
         await asyncio.gather(
             *[
-                reset_rebase_fail_counter(image, self.version, 'konflux', branch='okd-rebase-failure')
+                reset_fail_counter(f'count:okd-rebase-failure:konflux:{self.version}:{image}')
                 for image in successful_images
             ]
         )
@@ -322,9 +320,7 @@ class KonfluxOkdPipeline:
         job_url = os.getenv('BUILD_URL')
         await asyncio.gather(
             *[
-                increment_rebase_fail_counter(
-                    image, self.version, 'konflux', branch='okd-rebase-failure', job_url=job_url
-                )
+                increment_fail_counter(f'count:okd-rebase-failure:konflux:{self.version}:{image}', jenkins_url=job_url)
                 for image in failed_images
             ]
         )
@@ -455,13 +451,14 @@ class KonfluxOkdPipeline:
             entry['name']: entry for entry in record_log.get('image_build_okd', []) if int(entry['status'])
         }
 
-        await asyncio.gather(*[reset_build_fail_counter(image, group) for image in built_images])
+        await asyncio.gather(
+            *[reset_fail_counter(f'count:build-failure:konflux:{group}:{image}') for image in built_images]
+        )
         await asyncio.gather(
             *[
-                increment_build_fail_counter(
-                    image,
-                    group,
-                    url=job_url,
+                increment_fail_counter(
+                    f'count:build-failure:konflux:{group}:{image}',
+                    jenkins_url=job_url,
                     nvr=failed_entries.get(image, {}).get('nvrs'),
                 )
                 for image in failed_images

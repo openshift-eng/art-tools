@@ -15,7 +15,7 @@ from pyartcd import constants, jenkins
 from pyartcd import record as record_util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.runtime import Runtime
-from pyartcd.util import build_history_link_url, default_release_suffix, reset_rebase_fail_counter
+from pyartcd.util import build_history_link_url, default_release_suffix, reset_fail_counter
 
 LOGGER = logging.getLogger(__name__)
 
@@ -229,7 +229,7 @@ class SeedLockfilePipeline:
 
         LOGGER.info('Resetting rebase-fail counters for solved images: %s', ', '.join(solved))
         results = await asyncio.gather(
-            *[reset_rebase_fail_counter(image, self.version, 'konflux') for image in solved],
+            *[reset_fail_counter(f'count:rebase-failure:konflux:{self.version}:{image}') for image in solved],
             return_exceptions=True,
         )
         for image, result in zip(solved, results):

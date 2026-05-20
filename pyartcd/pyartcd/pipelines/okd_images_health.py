@@ -264,10 +264,10 @@ class ImagesHealthPipeline:
             report += '*Rebase Failures:*\n'
             for image_name, failure_info in sorted(rebase_failures.items()):
                 failure_count = failure_info.get('failure_count', 0)
-                job_url = failure_info.get('url', '')
+                jenkins_url = failure_info.get('jenkins_url', '')
                 report += f'- `{image_name}`: Failed {failure_count} time{"s" if failure_count != 1 else ""}'
-                if job_url:
-                    report += f' ({self.url_text(job_url, "Last failure job")})'
+                if jenkins_url:
+                    report += f' ({self.url_text(jenkins_url, "Last failure job")})'
                 report += '\n'
 
         await self.slack_client.say(report, thread_ts=response['ts'])
@@ -302,7 +302,7 @@ class ImagesHealthPipeline:
                     {
                         'version': version,
                         'failure_count': failure_info.get('failure_count', 0),
-                        'url': failure_info.get('url', ''),
+                        'jenkins_url': failure_info.get('jenkins_url', ''),
                     }
                 )
 
@@ -340,10 +340,10 @@ class ImagesHealthPipeline:
             for failure in failures:
                 version = failure['version']
                 failure_count = failure['failure_count']
-                job_url = failure['url']
+                jenkins_url = failure['jenkins_url']
                 image_message += f'\n• okd-{version}: Failed {failure_count} time{"s" if failure_count != 1 else ""}'
-                if job_url:
-                    image_message += f' ({self.url_text(job_url, "Last failure job")})'
+                if jenkins_url:
+                    image_message += f' ({self.url_text(jenkins_url, "Last failure job")})'
             await self.slack_client.say(image_message, thread_ts=response['ts'], link_build_url=False)
 
     def get_message_for_release(self, concern: dict):

@@ -14,7 +14,7 @@ from pyartcd import record as record_util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import Lock
 from pyartcd.runtime import Runtime
-from pyartcd.util import get_group_images, increment_rebase_fail_counter, mass_rebuild_score, reset_rebase_fail_counter
+from pyartcd.util import get_group_images, increment_fail_counter, mass_rebuild_score, reset_fail_counter
 
 
 class BuildPlan:
@@ -495,10 +495,14 @@ class OcpPipeline:
             ]
         elif self.build_images.lower() == 'only':
             successful_images = [image for image in self.build_plan.images_included if image not in failed_images]
-        await asyncio.gather(*[reset_rebase_fail_counter(image, self.version, 'brew') for image in successful_images])
+        await asyncio.gather(
+            *[reset_fail_counter(f'count:rebase-failure:brew:{self.version}:{image}') for image in successful_images]
+        )
 
         # Increment fail counters for failing images.
-        await asyncio.gather(*[increment_rebase_fail_counter(image, self.version, 'brew') for image in failed_images])
+        await asyncio.gather(
+            *[increment_fail_counter(f'count:rebase-failure:brew:{self.version}:{image}') for image in failed_images]
+        )
 
     def _handle_image_build_failures(self):
         with open(f'{self.runtime.doozer_working}/record.log', 'r') as file:
