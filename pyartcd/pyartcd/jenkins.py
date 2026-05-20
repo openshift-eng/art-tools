@@ -51,7 +51,7 @@ class Jobs(Enum):
     LAYERED_PRODUCTS_SCAN = 'aos-cd-builds/build%2Flayered-products-scan'
     SCAN_PLASHET_RPMS = 'scanning/scanning%2Fplashet-rpms'
     SCAN_OPERATOR = 'aos-cd-builds/build%2Fscan-operator'
-    SYNC_CI_IMAGES = 'hack/shruti/sync-ci-images-pyartcd'  # Testing path
+    SYNC_CI_IMAGES = 'aos-cd-builds/build%2Fsync-ci-images'
 
 
 def get_jenkins_url():
