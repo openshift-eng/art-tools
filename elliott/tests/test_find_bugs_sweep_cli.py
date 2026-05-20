@@ -125,6 +125,60 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(actual, [])
 
+    @patch("elliottlib.cli.find_bugs_sweep_cli.assembly_own_issues_config")
+    @patch("elliottlib.cli.find_bugs_sweep_cli.assembly_targeted_fixes_only", return_value=True)
+    @patch("elliottlib.cli.find_bugs_sweep_cli.get_assembly_bug_ids")
+    async def test_get_bugs_sweep_targeted_fixes_only_skips_jira_search(
+        self, mock_get_bug_ids, mock_targeted_fixes_only, mock_own_issues
+    ):
+        """When targeted_fixes_only=true, Jira search must not run; only explicit includes are returned."""
+        included_bug = flexmock(id="OCPBUGS-84781")
+        mock_own_issues.return_value = flexmock(include=[{"id": "OCPBUGS-84781"}], exclude=[])
+        mock_get_bug_ids.return_value = ({"OCPBUGS-84781"}, set())
+
+        find_bugs_obj = sweep_cli.FindBugsSweep()
+        find_bugs_obj.search = Mock(return_value=[])
+        bug_tracker = MagicMock(type="jira")
+        bug_tracker.get_bugs = Mock(return_value=[included_bug])
+        runtime = MagicMock(debug=False)
+
+        actual = await sweep_cli.get_bugs_sweep(runtime, find_bugs_obj, bug_tracker)
+
+        find_bugs_obj.search.assert_not_called()
+        mock_own_issues.assert_called_once_with(runtime.get_releases_config(), runtime.assembly)
+        mock_get_bug_ids.assert_called_once_with(runtime, bug_tracker_type="jira", use_own_only=True)
+        self.assertEqual([b.id for b in actual], ["OCPBUGS-84781"])
+
+    @patch("elliottlib.cli.find_bugs_sweep_cli.assembly_own_issues_config")
+    @patch("elliottlib.cli.find_bugs_sweep_cli.assembly_targeted_fixes_only", return_value=True)
+    @patch("elliottlib.cli.find_bugs_sweep_cli.get_assembly_bug_ids")
+    async def test_get_bugs_sweep_targeted_fixes_only_fails_without_include(
+        self, mock_get_bug_ids, mock_targeted_fixes_only, mock_own_issues
+    ):
+        """When targeted_fixes_only=true but issues.include is empty, raise ValueError."""
+        mock_own_issues.return_value = flexmock(include=[], exclude=[])
+        find_bugs_obj = sweep_cli.FindBugsSweep()
+        bug_tracker = MagicMock(type="jira")
+        runtime = MagicMock(debug=False)
+
+        with self.assertRaises(ValueError, msg="targeted_fixes_only=true but issues.include is empty"):
+            await sweep_cli.get_bugs_sweep(runtime, find_bugs_obj, bug_tracker)
+
+    @patch("elliottlib.cli.find_bugs_sweep_cli.assembly_own_issues_config")
+    @patch("elliottlib.cli.find_bugs_sweep_cli.assembly_targeted_fixes_only", return_value=True)
+    @patch("elliottlib.cli.find_bugs_sweep_cli.get_assembly_bug_ids")
+    async def test_get_bugs_sweep_targeted_fixes_only_fails_with_exclude(
+        self, mock_get_bug_ids, mock_targeted_fixes_only, mock_own_issues
+    ):
+        """When targeted_fixes_only=true but issues.exclude is non-empty, raise ValueError."""
+        mock_own_issues.return_value = flexmock(include=[{"id": "OCPBUGS-1"}], exclude=[{"id": "OCPBUGS-2"}])
+        find_bugs_obj = sweep_cli.FindBugsSweep()
+        bug_tracker = MagicMock(type="jira")
+        runtime = MagicMock(debug=False)
+
+        with self.assertRaises(ValueError, msg="targeted_fixes_only=true but issues.exclude is non-empty"):
+            await sweep_cli.get_bugs_sweep(runtime, find_bugs_obj, bug_tracker)
+
     @patch("elliottlib.cli.find_bugs_sweep_cli.get_assembly_bug_ids", return_value=(set(), set()))
     @patch("elliottlib.cli.find_bugs_sweep_cli.get_sweep_cutoff_timestamp", new_callable=AsyncMock, return_value=0)
     async def test_get_bugs_sweep_opt_out_skips_art_managed_filter(self, *_):
@@ -158,6 +212,7 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
         # common mocks
         flexmock(Runtime).should_receive("initialize").and_return(None)
         flexmock(Runtime).should_receive("get_major_minor").and_return(4, 6)
+        flexmock(Runtime).should_receive("get_releases_config").and_return(MagicMock())
         flexmock(sweep_cli).should_receive("get_assembly_bug_ids").and_return(set(), set())
         flexmock(Runtime).should_receive("get_default_advisories").and_return({})
         flexmock(sweep_cli).should_receive("get_builds_by_advisory_kind")
@@ -186,6 +241,7 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
         bugs = [flexmock(id='BZ1', status='ON_QA')]
         flexmock(Runtime).should_receive("initialize").and_return(None)
         flexmock(Runtime).should_receive("get_major_minor").and_return(4, 6)
+        flexmock(Runtime).should_receive("get_releases_config").and_return(MagicMock())
 
         # jira mocks
         flexmock(JIRABugTracker).should_receive("get_config").and_return({'target_release': ['4.6.z']})
@@ -225,6 +281,7 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
         # common mocks
         flexmock(Runtime).should_receive("initialize")
         flexmock(Runtime).should_receive("get_major_minor").and_return(4, 6)
+        flexmock(Runtime).should_receive("get_releases_config").and_return(MagicMock())
         flexmock(sweep_cli).should_receive("get_assembly_bug_ids").and_return(set(), set())
         flexmock(Runtime).should_receive("get_default_advisories").and_return({})
         flexmock(sweep_cli).should_receive("get_builds_by_advisory_kind").and_return({})
@@ -257,6 +314,7 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
         # common mocks
         flexmock(Runtime).should_receive("initialize")
         flexmock(Runtime).should_receive("get_major_minor").and_return(4, 6)
+        flexmock(Runtime).should_receive("get_releases_config").and_return(MagicMock())
         flexmock(sweep_cli).should_receive("get_assembly_bug_ids").and_return(set(), set())
         flexmock(Runtime).should_receive("get_default_advisories").and_return({'image': 123})
         flexmock(sweep_cli).should_receive("get_builds_by_advisory_kind")
@@ -300,6 +358,7 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
         # common mocks
         flexmock(Runtime).should_receive("initialize").and_return(None)
         flexmock(Runtime).should_receive("get_major_minor").and_return(4, 6)
+        flexmock(Runtime).should_receive("get_releases_config").and_return(MagicMock())
         flexmock(sweep_cli).should_receive("get_assembly_bug_ids").and_return(set(), set())
         flexmock(sweep_cli).should_receive("get_builds_by_advisory_kind")
         flexmock(sweep_cli).should_receive("categorize_bugs_by_type").and_return(
@@ -663,22 +722,32 @@ class TestGenAssemblyBugIDs(unittest.TestCase):
     @patch("elliottlib.cli.find_bugs_sweep_cli.assembly_issues_config")
     def test_gen_assembly_bug_ids_jira(self, assembly_issues_config: Mock):
         assembly_issues_config.return_value = flexmock(
-            include=[{"id": 1}, {"id": 'OCPBUGS-2'}], exclude=[{"id": "2"}, {"id": 'OCPBUGS-3'}]
+            include=[{"id": 1}, {"id": "OCPBUGS-2"}], exclude=[{"id": "2"}, {"id": "OCPBUGS-3"}]
         )
-        runtime = flexmock(get_releases_config=lambda: None, assembly='foo')
+        runtime = flexmock(get_releases_config=lambda: None, assembly="foo")
         expected = ({"OCPBUGS-2"}, {"OCPBUGS-3"})
-        actual = get_assembly_bug_ids(runtime, 'jira')
+        actual = get_assembly_bug_ids(runtime, "jira")
         self.assertEqual(actual, expected)
 
     @patch("elliottlib.cli.find_bugs_sweep_cli.assembly_issues_config")
     def test_gen_assembly_bug_ids_bz(self, assembly_issues_config: Mock):
         assembly_issues_config.return_value = flexmock(
-            include=[{"id": 1}, {"id": 'OCPBUGS-2'}], exclude=[{"id": "2"}, {"id": 'OCPBUGS-3'}]
+            include=[{"id": 1}, {"id": "OCPBUGS-2"}], exclude=[{"id": "2"}, {"id": "OCPBUGS-3"}]
         )
-        runtime = flexmock(get_releases_config=lambda: None, assembly='foo')
+        runtime = flexmock(get_releases_config=lambda: None, assembly="foo")
         expected = ({1}, {"2"})
-        actual = get_assembly_bug_ids(runtime, 'bugzilla')
+        actual = get_assembly_bug_ids(runtime, "bugzilla")
         self.assertEqual(actual, expected)
+
+    @patch("elliottlib.cli.find_bugs_sweep_cli.assembly_own_issues_config")
+    def test_gen_assembly_bug_ids_use_own_only(self, assembly_own_issues_config: Mock):
+        """When use_own_only=True, get_assembly_bug_ids uses assembly_own_issues_config (no inheritance)."""
+        assembly_own_issues_config.return_value = flexmock(include=[{"id": "OCPBUGS-99999"}], exclude=[])
+        runtime = flexmock(get_releases_config=lambda: None, assembly="child_assembly")
+        included, excluded = get_assembly_bug_ids(runtime, "jira", use_own_only=True)
+        self.assertEqual(included, {"OCPBUGS-99999"})
+        self.assertEqual(excluded, set())
+        assembly_own_issues_config.assert_called_once()
 
 
 class TestExtrasBugs(unittest.TestCase):
