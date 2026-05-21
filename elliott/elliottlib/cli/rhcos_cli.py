@@ -136,8 +136,11 @@ def _get_non_layered_tags(runtime, build_id, arch, container_configs, art_repo):
     meta_url = f"{RHCOS_RELEASES_STREAM_URL}/{url_key}/builds/{build_id}/{arch}/meta.json"
 
     LOGGER.info("Fetching RHCOS metadata: %s", meta_url)
-    with request.urlopen(meta_url) as resp:
-        meta = json.loads(resp.read().decode())
+    try:
+        with request.urlopen(meta_url) as resp:
+            meta = json.loads(resp.read().decode())
+    except Exception as e:
+        raise RuntimeError(f"Failed to fetch {meta_url}: {e}") from e
 
     tags = {}
     for container_conf in container_configs:

@@ -1375,7 +1375,10 @@ def distgit_config_template(url):
     for a config yaml for the image.
     """
 
-    f = urllib.request.urlopen(url)
+    try:
+        f = urllib.request.urlopen(url)
+    except Exception as e:
+        raise click.ClickException(f"Failed to fetch {url}: {e}") from e
     if f.code != 200:
         click.echo("Error fetching {}: {}".format(url, f.code), err=True)
         exit(1)

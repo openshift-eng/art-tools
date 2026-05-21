@@ -45,8 +45,12 @@ def latest_build_id(runtime, version, arch="x86_64", private=False):
 def _latest_build_id(runtime, version, arch="x86_64", private=False):
     # returns the build id string or None (or raise exception)
     # (may want to return "schema-version" also if this ever gets more complex)
-    with request.urlopen(f"{release_url(runtime, version, arch, private)}/builds.json") as req:
-        data = json.loads(req.read().decode())
+    url = f"{release_url(runtime, version, arch, private)}/builds.json"
+    try:
+        with request.urlopen(url) as req:
+            data = json.loads(req.read().decode())
+    except Exception as e:
+        raise RuntimeError(f"Failed to fetch {url}: {e}") from e
     if not data["builds"]:
         return None
     build = data["builds"][0]
@@ -81,8 +85,11 @@ def _build_meta(runtime, build_id, version, arch="x86_64", private=False, meta_t
     # before 4.3 the arch was not included in the path
     vtuple = tuple(int(f) for f in version.split("."))
     url += f"{meta_type}.json" if vtuple < (4, 3) else f"{arch}/{meta_type}.json"
-    with request.urlopen(url) as req:
-        return json.loads(req.read().decode())
+    try:
+        with request.urlopen(url) as req:
+            return json.loads(req.read().decode())
+    except Exception as e:
+        raise RuntimeError(f"Failed to fetch {url}: {e}") from e
 
 
 def get_build_from_payload(runtime, payload_pullspec):
