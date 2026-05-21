@@ -482,11 +482,11 @@ class UpdateGolangPipeline:
         await self._slack_client.say_in_thread(f":white_check_mark: Updating golang for {self.ocp_version} complete.")
 
     async def process_build(self, el_v, nvr):
+        await self.ensure_signed(el_v, nvr)
         if await is_latest_and_available(self.ocp_version, el_v, nvr, self.koji_session):
             return True
         if not self.tag_builds:
             return False
-        await self.ensure_signed(el_v, nvr)
         await self.tag_build(el_v, nvr)
 
         # retry 5 times to request repo regen and check availability,
