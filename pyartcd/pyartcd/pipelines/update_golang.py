@@ -1064,14 +1064,14 @@ class UpdateGolangPipeline:
             )
 
         major, minor = group_config['vars']['MAJOR'], group_config['vars']['MINOR']
-        content_repo_url_suffix = self.get_content_repo_url_suffix(el_v, major, minor)
+        expected_suffixes = self.get_expected_golang_url_suffixes(el_v, major, minor)
         err = False
         for arch, template_url in group_config['repos'][golang_repo]['conf']['baseurl'].items():
-            expected_suffix = f'{content_repo_url_suffix}/{arch}/os/'
             actual_url = template_url.format(MAJOR=major, MINOR=minor)
-            if not actual_url.endswith(expected_suffix):
+            if not any(actual_url.endswith(f'{suffix}/{arch}/') or actual_url.endswith(f'{suffix}/{arch}/os/')
+                       for suffix in expected_suffixes):
                 err = True
-                _LOGGER.error(f"{expected_suffix} not found in URL {actual_url}")
+                _LOGGER.error(f"URL {actual_url} does not match any expected pattern for arch {arch}")
 
         if err:
             raise ValueError(
@@ -1080,8 +1080,10 @@ class UpdateGolangPipeline:
 
         _LOGGER.info(f"Builder branch {branch} has the expected content set urls")
 
-    def get_content_repo_url_suffix(self, el_v, major, minor):
-        return f'/pub/RHOCP/plashets/{major}.{minor}/stream/golang-el{el_v}/latest'
+    def get_expected_golang_url_suffixes(self, el_v, major, minor):
+        brewroot_suffix = f'/brewroot/repos/rhaos-{self.ocp_version}-rhel-{el_v}-build/latest'
+        plashet_suffix = f'/pub/RHOCP/plashets/{major}.{minor}/stream/golang-el{el_v}/latest'
+        return [brewroot_suffix, plashet_suffix]
 
     def get_module_tag(self, nvr, el_v) -> str:
         tags = [t['name'] for t in self.koji_session.listTags(build=nvr)]
