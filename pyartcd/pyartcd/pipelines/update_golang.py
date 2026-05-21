@@ -233,6 +233,18 @@ class UpdateGolangPipeline:
     def _get_upstream_ocp_build_data_repo(self):
         return get_github_client_for_org("openshift-eng").get_repo("openshift-eng/ocp-build-data")
 
+    def _get_ocp_build_data_repo_and_branch(self, default_branch):
+        """Get the ocp-build-data repo and branch, respecting data_path/data_gitref overrides."""
+        if self.data_path:
+            match = re.search(r'github\.com[:/](.+?)(?:\.git)?$', self.data_path)
+            if match:
+                repo_name = match.group(1)
+                org = repo_name.split('/')[0]
+                repo = get_github_client_for_org(org).get_repo(repo_name)
+                branch = self.data_gitref or default_branch
+                return repo, branch
+        return self._get_upstream_ocp_build_data_repo(), default_branch
+
     def _get_branch_content(self):
         if self._branch_content is None:
             branch = f"openshift-{self.ocp_version}"
@@ -564,8 +576,8 @@ class UpdateGolangPipeline:
         """Check sign_golang_rpm in the golang branch group.yml.
         Defaults to False so that RHEL-shipped golang is never accidentally signed by us.
         """
-        branch = self.get_golang_branch(el_v, go_version)
-        repo = self._get_upstream_ocp_build_data_repo()
+        default_branch = self.get_golang_branch(el_v, go_version)
+        repo, branch = self._get_ocp_build_data_repo_and_branch(default_branch)
         content = repo.get_contents("group.yml", ref=branch)
         group_config = yaml.load(content.decoded_content)
         return group_config.get('sign_golang_rpm', False)
@@ -1010,10 +1022,10 @@ class UpdateGolangPipeline:
         return f'rhel-{el_v}-golang-{go_v}'
 
     def verify_golang_builder_repo(self, el_v, go_version):
-        branch = self.get_golang_branch(el_v, go_version)
+        default_branch = self.get_golang_branch(el_v, go_version)
         filename = 'group.yml'
 
-        repo = get_github_client_for_org("openshift-eng").get_repo("openshift-eng/ocp-build-data")
+        repo, branch = self._get_ocp_build_data_repo_and_branch(default_branch)
         content = repo.get_contents(filename, ref=branch)
         group_config = yaml.load(content.decoded_content)
 
@@ -1026,14 +1038,14 @@ class UpdateGolangPipeline:
             )
 
         major, minor = group_config['vars']['MAJOR'], group_config['vars']['MINOR']
-        expected_suffixes = self.get_expected_golang_url_suffixes(el_v, major, minor)
+        content_repo_url_suffix = self.get_content_repo_url_suffix(el_v, major, minor)
         err = False
         for arch, template_url in group_config['repos'][golang_repo]['conf']['baseurl'].items():
+            expected_suffix = f'{content_repo_url_suffix}/{arch}/os/'
             actual_url = template_url.format(MAJOR=major, MINOR=minor)
-            if not any(actual_url.endswith(f'{suffix}/{arch}/') or actual_url.endswith(f'{suffix}/{arch}/os/')
-                       for suffix in expected_suffixes):
+            if not actual_url.endswith(expected_suffix):
                 err = True
-                _LOGGER.error(f"URL {actual_url} does not match any expected pattern for arch {arch}")
+                _LOGGER.error(f"{expected_suffix} not found in URL {actual_url}")
 
         if err:
             raise ValueError(
@@ -1042,10 +1054,8 @@ class UpdateGolangPipeline:
 
         _LOGGER.info(f"Builder branch {branch} has the expected content set urls")
 
-    def get_expected_golang_url_suffixes(self, el_v, major, minor):
-        brewroot_suffix = f'/brewroot/repos/rhaos-{self.ocp_version}-rhel-{el_v}-build/latest'
-        plashet_suffix = f'/pub/RHOCP/plashets/{major}.{minor}/stream/golang-el{el_v}/latest'
-        return [brewroot_suffix, plashet_suffix]
+    def get_content_repo_url_suffix(self, el_v, major, minor):
+        return f'/pub/RHOCP/plashets/{major}.{minor}/stream/golang-el{el_v}/latest'
 
     def get_module_tag(self, nvr, el_v) -> str:
         tags = [t['name'] for t in self.koji_session.listTags(build=nvr)]
