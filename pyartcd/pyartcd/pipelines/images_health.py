@@ -202,6 +202,8 @@ class ImagesHealthPipeline:
             f'--data-path={self.data_path}',
             group_param,
             'images:print',
+            '--show-base',
+            '--show-non-release',
             '--short',
             '{name}',
         ]
