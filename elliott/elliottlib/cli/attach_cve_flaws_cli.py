@@ -11,7 +11,7 @@ from artcommonlib.assembly import assembly_config_struct
 from artcommonlib.gitdata import SafeFormatter
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import is_ocp_delivery_repo, new_roundtrip_yaml_handler
-from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
+from doozerlib.util import konflux_application_name, konflux_image_component_name
 from errata_tool import Erratum
 
 from elliottlib import constants
@@ -45,8 +45,8 @@ def get_konflux_component_by_component(runtime: Runtime, component_name: str) ->
     if not image_meta:
         return None
 
-    application = KonfluxImageBuilder.get_application_name(runtime.group)
-    return KonfluxImageBuilder.get_component_name(application, image_meta.distgit_key)
+    application = konflux_application_name(runtime.group)
+    return konflux_image_component_name(application, image_meta.distgit_key)
 
 
 def _get_components_using_builder(runtime: Runtime, attached_components: Set[str], logger) -> Set[str]:
@@ -79,8 +79,8 @@ def _get_components_using_builder(runtime: Runtime, attached_components: Set[str
         # Check if this image uses the golang builder in its configuration
         if _image_uses_builder(image_meta, logger):
             # Get the Konflux component name for this image
-            application = KonfluxImageBuilder.get_application_name(runtime.group)
-            konflux_component_name = KonfluxImageBuilder.get_component_name(application, image_meta.distgit_key)
+            application = konflux_application_name(runtime.group)
+            konflux_component_name = konflux_image_component_name(application, image_meta.distgit_key)
 
             components_using_builder.append(f"{image_name} -> {konflux_component_name}")
 

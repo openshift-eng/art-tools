@@ -11,6 +11,7 @@ from doozerlib.backend.konflux_image_builder import (
     _normalize_version,
 )
 from doozerlib.backend.pipelinerun_utils import PipelineRunInfo
+from doozerlib.util import konflux_golang_builder_component_name
 
 
 class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
@@ -673,14 +674,14 @@ class TestKonfluxImageBuilderGolangComponent(unittest.TestCase):
         """Test basic golang builder component name generation."""
         nvr = "openshift-golang-builder-container-v1.25.8-202604081607.p0.g2aa6a05.el8"
         expected = "golang-builder-v1.25-rhel8"
-        result = KonfluxImageBuilder.get_golang_builder_component_name(nvr)
+        result = konflux_golang_builder_component_name(nvr)
         self.assertEqual(result, expected)
 
     def test_get_golang_builder_component_name_el9(self):
         """Test golang builder component name with el9."""
         nvr = "openshift-golang-builder-container-v1.24.13-202603271102.p2.ge8e5642.el9"
         expected = "golang-builder-v1.24-rhel9"
-        result = KonfluxImageBuilder.get_golang_builder_component_name(nvr)
+        result = konflux_golang_builder_component_name(nvr)
         self.assertEqual(result, expected)
 
     def test_get_golang_builder_component_name_various_versions(self):
@@ -697,7 +698,7 @@ class TestKonfluxImageBuilderGolangComponent(unittest.TestCase):
 
         for nvr, expected in test_cases:
             with self.subTest(nvr=nvr):
-                result = KonfluxImageBuilder.get_golang_builder_component_name(nvr)
+                result = konflux_golang_builder_component_name(nvr)
                 self.assertEqual(result, expected)
 
     def test_get_golang_builder_component_name_comprehensive_dataset(self):
@@ -721,28 +722,28 @@ class TestKonfluxImageBuilderGolangComponent(unittest.TestCase):
 
         for nvr, expected in test_nvrs:
             with self.subTest(nvr=nvr):
-                result = KonfluxImageBuilder.get_golang_builder_component_name(nvr)
+                result = konflux_golang_builder_component_name(nvr)
                 self.assertEqual(result, expected, f"Failed for NVR: {nvr}")
 
     def test_get_golang_builder_component_name_no_el_version_defaults_to_rhel9(self):
         """Test that missing RHEL version defaults to rhel9."""
         nvr = "openshift-golang-builder-container-v1.25.8-202604081607.p0.g2aa6a05.unknown"
         expected = "golang-builder-v1.25-rhel9"
-        result = KonfluxImageBuilder.get_golang_builder_component_name(nvr)
+        result = konflux_golang_builder_component_name(nvr)
         self.assertEqual(result, expected)
 
     def test_get_golang_builder_component_name_version_without_v_prefix(self):
         """Test version without 'v' prefix."""
         nvr = "openshift-golang-builder-container-1.25.8-202604081607.p0.g2aa6a05.el8"
         expected = "golang-builder-v1.25-rhel8"
-        result = KonfluxImageBuilder.get_golang_builder_component_name(nvr)
+        result = konflux_golang_builder_component_name(nvr)
         self.assertEqual(result, expected)
 
     def test_get_golang_builder_component_name_single_version_part(self):
         """Test with single version part (fallback behavior)."""
         nvr = "openshift-golang-builder-container-v1-202604081607.p0.g2aa6a05.el9"
         expected = "golang-builder-v1-rhel9"  # Should fallback to original version
-        result = KonfluxImageBuilder.get_golang_builder_component_name(nvr)
+        result = konflux_golang_builder_component_name(nvr)
         self.assertEqual(result, expected)
 
     def test_get_golang_builder_component_name_edge_cases(self):
@@ -758,7 +759,7 @@ class TestKonfluxImageBuilderGolangComponent(unittest.TestCase):
 
         for nvr, expected in test_cases:
             with self.subTest(nvr=nvr):
-                result = KonfluxImageBuilder.get_golang_builder_component_name(nvr)
+                result = konflux_golang_builder_component_name(nvr)
                 self.assertEqual(result, expected)
 
     def test_get_golang_builder_component_name_multiple_el_patterns(self):
@@ -766,5 +767,5 @@ class TestKonfluxImageBuilderGolangComponent(unittest.TestCase):
         # This documents the expected behavior: .el8 override wins due to simplified logic
         nvr = "openshift-golang-builder-container-v1.25.8-202604081607.p0.g2aa6a05.el8.dependency.el9"
         expected = "golang-builder-v1.25-rhel8"  # .el8 override takes precedence
-        result = KonfluxImageBuilder.get_golang_builder_component_name(nvr)
+        result = konflux_golang_builder_component_name(nvr)
         self.assertEqual(result, expected)

@@ -303,7 +303,7 @@ class KonfluxImageBuilder:
                     and metadata.for_release
                 )
                 if should_run_ec:
-                    app_name = self.get_application_name(self._config.group_name)
+                    app_name = util.konflux_application_name(self._config.group_name)
 
                     # Select EC policy based on software lifecycle phase:
                     # - pre-release phase uses a more permissive policy that allows unsigned RPMs
@@ -319,7 +319,7 @@ class KonfluxImageBuilder:
 
                     image_with_digest = f"{image_pullspec.split(':')[0]}@{image_digest}"
                     source_url = artlib_util.convert_remote_git_to_https(build_repo.url)
-                    konflux_component_name = self.get_component_name(app_name, metadata.distgit_key)
+                    konflux_component_name = util.konflux_image_component_name(app_name, metadata.distgit_key)
 
                     ec_result = await self._konflux_client.verify_enterprise_contract(
                         namespace=self._config.namespace,
@@ -504,55 +504,6 @@ class KonfluxImageBuilder:
         return parent_members
 
     @staticmethod
-    def get_application_name(group_name: str):
-        # "openshift-4-18" -> "openshift-4-18"
-        return group_name.replace(".", "-")
-
-    @staticmethod
-    def get_component_name(application_name: str, image_name: str):
-        # Openshift doesn't allow dots or underscores in any of its fields, so we replace them with dashes
-        name = f"{application_name}-{image_name}".replace(".", "-").replace("_", "-")
-        # 'openshift-4-18-ose-installer-terraform' -> 'ose-4-18-ose-installer-terraform'
-        # A component resource name must start with a lower case letter and must be no more than 63 characters long.
-        name = f"ose-{name[10:]}" if name.startswith("openshift-") else name
-        return name
-
-    @staticmethod
-    def get_golang_builder_component_name(nvr: str) -> str:
-        """
-        Generate golang builder specific component name from NVR.
-
-        Args:
-            nvr: Build NVR (e.g., "openshift-golang-builder-container-v1.25.8-202604081607.p0.g2aa6a05.el8")
-
-        Returns:
-            Component name (e.g., "golang-builder-v1.25-rhel8")
-        """
-        nvr_parsed = parse_nvr(nvr)
-        version = nvr_parsed["version"]
-        release = nvr_parsed["release"]
-
-        # Extract major.minor from semantic version (e.g., "v1.25.8" -> "v1.25")
-        if version.startswith("v"):
-            version_parts = version[1:].split(".")  # Remove 'v' prefix and split
-        else:
-            version_parts = version.split(".")
-
-        if len(version_parts) >= 2:
-            major_minor = f"v{version_parts[0]}.{version_parts[1]}"
-        else:
-            # Fallback to original version if parsing fails
-            major_minor = version
-
-        # Determine RHEL version from release field
-        # Assumes exactly one .elX pattern per release (validated by production data)
-        el_suffix = "rhel9"  # Default to latest RHEL version
-        if ".el8" in release:
-            el_suffix = "rhel8"
-
-        return f"golang-builder-{major_minor}-{el_suffix}"
-
-    @staticmethod
     def _repo_gets_hermetic_module_hotfixes(repo_name: str, group: str, golang_pattern: re.Pattern) -> bool:
         """
         art-unsigned.repo sets module_hotfixes=1 on OSE (plashet) repos so non-modular RPMs there can win over
@@ -720,12 +671,12 @@ class KonfluxImageBuilder:
         git_commit = build_repo.commit_hash
 
         # Ensure the Application resource exists
-        app_name = self.get_application_name(self._config.group_name)
+        app_name = util.konflux_application_name(self._config.group_name)
         logger.info(f"Using application: {app_name}")
         await self._konflux_client.ensure_application(name=app_name, display_name=app_name)
 
         # Ensure the component resource exists
-        component_name = self.get_component_name(app_name, metadata.distgit_key)
+        component_name = util.konflux_image_component_name(app_name, metadata.distgit_key)
         default_revision = f"art-{self._config.group_name}-assembly-test-dgk-{metadata.distgit_key}"
         logger.info(f"Using component: {component_name}")
         await self._konflux_client.ensure_component(

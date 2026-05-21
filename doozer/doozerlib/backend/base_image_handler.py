@@ -16,6 +16,7 @@ from artcommonlib.util import (
     resolve_konflux_kubeconfig_by_product,
     resolve_konflux_namespace_by_product,
 )
+from doozerlib import util as doozer_util
 from doozerlib.backend.konflux_client import API_VERSION, KIND_RELEASE, KIND_RELEASE_PLAN, KIND_SNAPSHOT, KonfluxClient
 from doozerlib.constants import ART_IMAGES_BASE_APPLICATION
 from kubernetes.dynamic import exceptions
@@ -115,15 +116,13 @@ class BaseImageHandler:
 
     def _build_component_from_snapshot_input(self, snapshot_input: BaseImageSnapshotInput) -> dict:
         """One Konflux snapshot component dict from :class:`BaseImageSnapshotInput`."""
-        from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
-
-        app_name = KonfluxImageBuilder.get_application_name(self.runtime.group_config.name)
+        app_name = doozer_util.konflux_application_name(self.runtime.group_config.name)
         nvr = snapshot_input.nvr
 
         if snapshot_input.is_golang_builder:
-            comp_name = KonfluxImageBuilder.get_golang_builder_component_name(nvr)
+            comp_name = doozer_util.konflux_golang_builder_component_name(nvr)
         else:
-            comp_name = KonfluxImageBuilder.get_component_name(app_name, snapshot_input.distgit_key)
+            comp_name = doozer_util.konflux_image_component_name(app_name, snapshot_input.distgit_key)
 
         component = {
             "name": comp_name,
