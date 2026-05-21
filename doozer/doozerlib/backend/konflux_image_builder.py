@@ -358,7 +358,7 @@ class KonfluxImageBuilder:
                     logger.info("Dry run: Would have inserted build record in Konflux DB")
 
                 else:
-                    # One completion record per attempt. Base images run snapshot→release inline (digest pullspec)
+                    # One completion record per attempt. Base images trigger snapshot→release (digest pullspec)
                     # before persisting SUCCESS or FAILURE so Jenkins/batch workflows can query SUCCESS rows.
                     if outcome is KonfluxBuildOutcome.SUCCESS and metadata.should_trigger_base_image_release():
                         base_image_release_success = await self._trigger_base_image_release(
@@ -1228,7 +1228,7 @@ class KonfluxImageBuilder:
         """
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
 
-        logger.info(f"Running inline base image snapshot-release for {nvr}")
+        logger.info(f"Triggering base image snapshot-release for {nvr}")
 
         try:
             snapshot_input = BaseImageSnapshotInput(
@@ -1246,11 +1246,11 @@ class KonfluxImageBuilder:
             result = await handler.snapshot_release(snapshot_input)
             success = result is not None
             if success:
-                logger.info(f"Successfully completed inline base image release for {nvr}")
+                logger.info(f"Successfully triggered base image snapshot-release for {nvr}")
                 return True
-            logger.error("Inline base image release did not complete successfully for %s", nvr)
+            logger.error("Base image snapshot-release did not complete successfully for %s", nvr)
             return False
 
         except Exception as e:
-            logger.error(f"Failed inline base image release for {nvr}: {e}")
+            logger.error(f"Failed base image snapshot-release for {nvr}: {e}")
             return False

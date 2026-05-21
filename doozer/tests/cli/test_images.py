@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 from artcommonlib.constants import GOLANG_BUILDER_IMAGE_NAME
 from artcommonlib.gitdata import DataObj
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome
 from artcommonlib.model import Model
 from artcommonlib.variants import BuildVariant
 from click.testing import CliRunner
@@ -141,11 +142,17 @@ class TestSnapshotInputFromKonfluxSuccessBuild(IsolatedAsyncioTestCase):
         record.rebase_commitish = "deadbeef"
 
         runtime.konflux_db = MagicMock()
-        runtime.konflux_db.get_latest_build = AsyncMock(return_value=record)
+        runtime.konflux_db.get_build_record_by_nvr = AsyncMock(return_value=record)
         runtime.image_map = {record.name: md}
 
         inp = await images_cli._snapshot_input_from_konflux_success_build(runtime, record.nvr)
 
+        runtime.konflux_db.get_build_record_by_nvr.assert_awaited_once_with(
+            nvr=record.nvr,
+            outcome=KonfluxBuildOutcome.SUCCESS,
+            strict=False,
+            exclude_large_columns=True,
+        )
         self.assertIsNotNone(inp)
         assert inp is not None
         self.assertEqual(inp.nvr, record.nvr)
@@ -158,7 +165,7 @@ class TestSnapshotInputFromKonfluxSuccessBuild(IsolatedAsyncioTestCase):
         runtime, _ = self._base_runtime_and_md()
 
         runtime.konflux_db = MagicMock()
-        runtime.konflux_db.get_latest_build = AsyncMock(return_value=None)
+        runtime.konflux_db.get_build_record_by_nvr = AsyncMock(return_value=None)
 
         inp = await images_cli._snapshot_input_from_konflux_success_build(runtime, "nosuch-container-v1-1.el9")
         self.assertIsNone(inp)
@@ -189,7 +196,7 @@ class TestSnapshotInputFromKonfluxSuccessBuild(IsolatedAsyncioTestCase):
         record.rebase_commitish = ""
 
         runtime.konflux_db = MagicMock()
-        runtime.konflux_db.get_latest_build = AsyncMock(return_value=record)
+        runtime.konflux_db.get_build_record_by_nvr = AsyncMock(return_value=record)
         runtime.image_map = {record.name: md}
 
         inp = await images_cli._snapshot_input_from_konflux_success_build(runtime, record.nvr)
@@ -224,7 +231,7 @@ class TestSnapshotInputFromKonfluxSuccessBuild(IsolatedAsyncioTestCase):
         record.rebase_commitish = ""
 
         runtime.konflux_db = MagicMock()
-        runtime.konflux_db.get_latest_build = AsyncMock(return_value=record)
+        runtime.konflux_db.get_build_record_by_nvr = AsyncMock(return_value=record)
         runtime.image_map = {record.name: md}
 
         inp = await images_cli._snapshot_input_from_konflux_success_build(runtime, record.nvr)

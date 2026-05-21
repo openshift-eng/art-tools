@@ -107,7 +107,9 @@ class BaseImageHandler:
             self.logger.error(f"Release did not complete successfully (release={release_name})")
             return None
 
-        self.logger.info(f"Snapshot-release completed (nvr={snapshot_input.nvr}, snapshot={snapshot_name}, release={release_name})")
+        self.logger.info(
+            f"Snapshot-release completed (nvr={snapshot_input.nvr}, snapshot={snapshot_name}, release={release_name})"
+        )
 
         return release_name, snapshot_name
 
@@ -249,15 +251,11 @@ class BaseImageHandler:
             release_name = created_release.metadata.name
             release_url = self.konflux_client.resource_url(created_release)
 
-            self.logger.info(
-                f"Created release {release_name} for snapshot {snapshot_name} ({release_url})"
-            )
+            self.logger.info(f"Created release {release_name} for snapshot {snapshot_name} ({release_url})")
             return release_name
 
         except Exception as e:
-            self.logger.error(
-                f"Failed to create release from snapshot {snapshot_name} ({type(e).__name__}: {e})"
-            )
+            self.logger.error(f"Failed to create release from snapshot {snapshot_name} ({type(e).__name__}: {e})")
             return None
 
     async def _wait_for_release_completion(self, release_name: str, timeout_minutes: int = 30) -> bool:

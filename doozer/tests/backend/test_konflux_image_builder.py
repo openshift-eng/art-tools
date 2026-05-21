@@ -423,7 +423,7 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
 
         mock_trigger_release.assert_awaited_once()
 
-        # PENDING write + single completion write (SUCCESS after inline base release)
+        # PENDING write + single completion write (SUCCESS after base image snapshot-release)
         self.assertEqual(mock_update_db.await_count, 2)
         success_call_args = mock_update_db.await_args_list[1][0]
         self.assertEqual(success_call_args[3], KonfluxBuildOutcome.SUCCESS)
@@ -602,7 +602,7 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         inp = mock_snap.await_args[0][0]
         self.assertTrue(inp.is_golang_builder)
 
-    async def test_trigger_base_image_release_inline_failure_returns_false(self):
+    async def test_trigger_base_image_release_returns_false_when_handler_returns_none(self):
         """When handler returns None, _trigger_base_image_release is False."""
         from doozerlib.backend import base_image_handler
 

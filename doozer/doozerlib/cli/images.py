@@ -17,7 +17,7 @@ import yaml
 from artcommonlib import exectools, logutil
 from artcommonlib.constants import GOLANG_BUILDER_IMAGE_NAME
 from artcommonlib.format_util import color_print, green_print, yellow_print
-from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildOutcome, KonfluxBuildRecord
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
 from dockerfile_parse import DockerfileParser
@@ -50,10 +50,8 @@ async def _snapshot_input_from_konflux_success_build(runtime, nvr: str) -> Optio
     if not db:
         return None
 
-    rec = await db.get_latest_build(
+    rec = await db.get_build_record_by_nvr(
         nvr=nvr,
-        group=runtime.group,
-        engine=Engine.KONFLUX,
         outcome=KonfluxBuildOutcome.SUCCESS,
         strict=False,
         exclude_large_columns=True,
@@ -61,9 +59,9 @@ async def _snapshot_input_from_konflux_success_build(runtime, nvr: str) -> Optio
     if not rec or not rec.name or not rec.image_pullspec:
         return None
 
-    md = (getattr(runtime, "image_map", None) or {}).get(rec.name)
-    if md is not None:
-        is_golang_builder = md.is_golang_builder()
+    image_metadata = runtime.image_map.get(rec.name)
+    if image_metadata is not None:
+        is_golang_builder = image_metadata.is_golang_builder()
     else:
         # NVR uses distgit-style openshift-golang-builder; keep substring check for older rows / missing image_map
         is_golang_builder = GOLANG_BUILDER_IMAGE_NAME in nvr
