@@ -1,4 +1,3 @@
-import asyncio
 import io
 import json
 import pathlib
@@ -26,7 +25,14 @@ from dockerfile_parse import DockerfileParser
 from doozerlib import Runtime, coverity, state
 from doozerlib.backend.base_image_handler import BaseImageHandler, BaseImageSnapshotInput
 from doozerlib.brew import get_watch_task_info_copy
-from doozerlib.cli import cli, option_commit_message, option_push, pass_runtime, validate_semver_major_minor_patch
+from doozerlib.cli import (
+    cli,
+    click_coroutine,
+    option_commit_message,
+    option_push,
+    pass_runtime,
+    validate_semver_major_minor_patch,
+)
 from doozerlib.distgit import ImageDistGitRepo
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.source_resolver import SourceResolver
@@ -1501,44 +1507,30 @@ def query_rpm_version(runtime, repo_type):
     required=True,
     help='Image build NVR',
 )
+@click_coroutine
 @pass_runtime
-def release_to_base_repo(runtime, nvr):
+async def release_to_base_repo(runtime, nvr):
     """Run Konflux snapshot→release for one NVR (row must exist and be SUCCESS for this group)."""
+    logger = logutil.get_logger(__name__)
 
-    async def run_workflow():
-        logger = logutil.get_logger(__name__)
+    runtime.initialize(mode='images', build_system='konflux', clone_distgits=False, prevent_cloning=True)
 
-        try:
-            runtime.initialize(mode='images', build_system='konflux', clone_distgits=False, prevent_cloning=True)
+    runtime.konflux_db.bind(KonfluxBuildRecord)
 
-            runtime.konflux_db.bind(KonfluxBuildRecord)
+    image_nvr = (nvr or "").strip()
+    if not image_nvr:
+        raise DoozerFatalError("NVR is empty")
 
-            image_nvr = (nvr or "").strip()
-            if not image_nvr:
-                logger.error("NVR is empty")
-                return False
+    snapshot_input = await _snapshot_input_from_konflux_success_build(runtime, image_nvr)
+    if snapshot_input is None:
+        raise DoozerFatalError(f"No SUCCESS Konflux image row for {image_nvr}")
 
-            snapshot_input = await _snapshot_input_from_konflux_success_build(runtime, image_nvr)
-            if snapshot_input is None:
-                logger.error("No SUCCESS Konflux image row for %s", image_nvr)
-                return False
+    handler = BaseImageHandler(runtime, dry_run=False)
+    result = await handler.snapshot_release(snapshot_input)
 
-            handler = BaseImageHandler(runtime, dry_run=False)
-            result = await handler.snapshot_release(snapshot_input)
+    if result:
+        release_name, snapshot_name = result
+        logger.info("Done: release=%s snapshot=%s", release_name, snapshot_name)
+        return
 
-            if result:
-                release_name, snapshot_name = result
-                logger.info("Done: release=%s snapshot=%s", release_name, snapshot_name)
-                return True
-            logger.error("snapshot_release returned no result")
-            return False
-
-        except Exception as e:
-            logger.error("Base image workflow failed: %s", e)
-            logger.debug(traceback.format_exc())
-            return False
-
-    success = asyncio.run(run_workflow())
-
-    if not success:
-        sys.exit(1)
+    raise DoozerFatalError("snapshot_release returned no result")
