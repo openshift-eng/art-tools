@@ -233,8 +233,12 @@ class RHCOSBuildFinder:
             rhel_minor = build_id.split(".")[1]
             url = f"{RHCOS_RELEASES_STREAM_URL}/rhel-{rhel_major}.{rhel_minor}/builds/{build_id}/{self.brew_arch}/commitmeta.json"
             logger.info(f"Send request to {url}")
-            with request.urlopen(url, timeout=60) as req:
-                return json.loads(req.read().decode())['rpmostree.rpmdb.pkglist']
+            try:
+                with request.urlopen(url, timeout=60) as req:
+                    data = json.loads(req.read().decode())
+            except Exception as e:
+                raise type(e)(f"Failed to fetch {url} for pullspec {pullspec}: {e}") from e
+            return data['rpmostree.rpmdb.pkglist']
         else:
             return []
 
