@@ -45,6 +45,11 @@ type_bug_set = Set[Bug]
     default=True,
     help="Filter image component CVE trackers to ART-managed images only",
 )
+@click.option(
+    "--filter-attached-bugs/--no-filter-attached-bugs",
+    default=True,
+    help="Filter out bugs already attached to errata advisories or open shipment MRs",
+)
 @click.pass_obj
 @click_coroutine
 async def find_bugs_cli(
@@ -54,6 +59,7 @@ async def find_bugs_cli(
     output,
     cve_only,
     art_managed_trackers_only,
+    filter_attached_bugs,
 ):
     """Find OCP bugs for the given group and assembly, eligible for release.
 
@@ -84,6 +90,7 @@ async def find_bugs_cli(
         cve_only=cve_only,
         exclude_trackers=exclude_trackers,
         art_managed_trackers_only=art_managed_trackers_only,
+        filter_attached_bugs=filter_attached_bugs,
     )
     await cli.run()
 
@@ -97,6 +104,7 @@ class FindBugsCli:
         cve_only: bool,
         exclude_trackers: bool,
         art_managed_trackers_only: bool,
+        filter_attached_bugs: bool = True,
     ):
         self.runtime = runtime
         self.permissive = permissive
@@ -104,6 +112,7 @@ class FindBugsCli:
         self.cve_only = cve_only
         self.exclude_trackers = exclude_trackers
         self.art_managed_trackers_only = art_managed_trackers_only
+        self.filter_attached_bugs = filter_attached_bugs
         self.bug_tracker = None
 
     async def run(self):
@@ -129,7 +138,9 @@ class FindBugsCli:
         tr = self.bug_tracker.target_release()
         LOGGER.info(f"Searching {self.bug_tracker.type} for bugs with status {statuses} and target releases: {tr}\n")
 
-        bugs = await get_bugs_sweep(self.runtime, find_bugs_obj, self.bug_tracker)
+        bugs = await get_bugs_sweep(
+            self.runtime, find_bugs_obj, self.bug_tracker, filter_attached_bugs=self.filter_attached_bugs
+        )
         major_version, minor_version = self.runtime.get_major_minor()
 
         builds_by_advisory_kind = get_builds_by_advisory_kind(self.runtime)

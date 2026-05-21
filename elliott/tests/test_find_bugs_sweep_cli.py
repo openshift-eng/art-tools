@@ -179,6 +179,7 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError, msg="targeted_fixes_only=true but issues.exclude is non-empty"):
             await sweep_cli.get_bugs_sweep(runtime, find_bugs_obj, bug_tracker)
 
+    @patch("elliottlib.cli.find_bugs_sweep_cli.get_bug_ids_from_open_shipment_mrs", return_value=set())
     @patch("elliottlib.cli.find_bugs_sweep_cli.get_assembly_bug_ids", return_value=(set(), set()))
     @patch("elliottlib.cli.find_bugs_sweep_cli.get_sweep_cutoff_timestamp", new_callable=AsyncMock, return_value=0)
     async def test_get_bugs_sweep_opt_out_skips_art_managed_filter(self, *_):
@@ -194,6 +195,54 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(actual, [bug])
         filter_mock.assert_not_called()
+
+    @patch("elliottlib.cli.find_bugs_sweep_cli.get_bug_ids_from_open_shipment_mrs")
+    @patch("elliottlib.cli.find_bugs_sweep_cli.get_assembly_bug_ids", return_value=(set(), set()))
+    @patch("elliottlib.cli.find_bugs_sweep_cli.get_sweep_cutoff_timestamp", new_callable=AsyncMock, return_value=0)
+    async def test_get_bugs_sweep_filters_shipment_bugs(self, mock_cutoff, mock_bug_ids, mock_shipment_bugs):
+        """When filter_attached_bugs=True, bugs in open shipment MRs should be filtered out."""
+        runtime = MagicMock(debug=False, group="openshift-4.18", assembly="4.18.40")
+        runtime.shipment_path = "https://gitlab.example.com/project"
+
+        bug_keep = flexmock(id="OCPBUGS-1")
+        bug_filter = flexmock(id="OCPBUGS-2")
+
+        find_bugs_obj = sweep_cli.FindBugsSweep(art_managed_trackers_only=False)
+        find_bugs_obj.search = Mock(return_value=[bug_keep, bug_filter])
+
+        bug_tracker = MagicMock(type="jira")
+        bug_tracker.filter_attached_bugs = AsyncMock(return_value=[])
+
+        mock_shipment_bugs.return_value = {"OCPBUGS-2"}
+
+        actual = await sweep_cli.get_bugs_sweep(runtime, find_bugs_obj, bug_tracker, filter_attached_bugs=True)
+
+        self.assertEqual([b.id for b in actual], ["OCPBUGS-1"])
+        mock_shipment_bugs.assert_called_once_with(
+            shipment_data_url="https://gitlab.example.com/project",
+            group="openshift-4.18",
+            exclude_assembly="4.18.40",
+        )
+
+    @patch("elliottlib.cli.find_bugs_sweep_cli.get_bug_ids_from_open_shipment_mrs")
+    @patch("elliottlib.cli.find_bugs_sweep_cli.get_assembly_bug_ids", return_value=(set(), set()))
+    @patch("elliottlib.cli.find_bugs_sweep_cli.get_sweep_cutoff_timestamp", new_callable=AsyncMock, return_value=0)
+    async def test_get_bugs_sweep_no_filter_skips_both(self, mock_cutoff, mock_bug_ids, mock_shipment_bugs):
+        """When filter_attached_bugs=False, skip both errata and shipment filtering."""
+        runtime = MagicMock(debug=False)
+        bug = flexmock(id="OCPBUGS-1")
+
+        find_bugs_obj = sweep_cli.FindBugsSweep(art_managed_trackers_only=False)
+        find_bugs_obj.search = Mock(return_value=[bug])
+
+        bug_tracker = MagicMock(type="jira")
+        bug_tracker.filter_attached_bugs = AsyncMock(return_value=[])
+
+        actual = await sweep_cli.get_bugs_sweep(runtime, find_bugs_obj, bug_tracker, filter_attached_bugs=False)
+
+        self.assertEqual([b.id for b in actual], ["OCPBUGS-1"])
+        bug_tracker.filter_attached_bugs.assert_not_called()
+        mock_shipment_bugs.assert_not_called()
 
     @patch('elliottlib.bzutil.JIRABugTracker.filter_attached_bugs')
     @patch('elliottlib.cli.find_bugs_sweep_cli.FindBugsSweep.search')
@@ -214,6 +263,7 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
         flexmock(Runtime).should_receive("get_major_minor").and_return(4, 6)
         flexmock(Runtime).should_receive("get_releases_config").and_return(MagicMock())
         flexmock(sweep_cli).should_receive("get_assembly_bug_ids").and_return(set(), set())
+        flexmock(sweep_cli).should_receive("get_bug_ids_from_open_shipment_mrs").and_return(set())
         flexmock(Runtime).should_receive("get_default_advisories").and_return({})
         flexmock(sweep_cli).should_receive("get_builds_by_advisory_kind")
         flexmock(sweep_cli).should_receive("categorize_bugs_by_type").and_return({"image": {jira_bug}}, [])
@@ -253,6 +303,7 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
 
         # common mocks
         flexmock(sweep_cli).should_receive("get_assembly_bug_ids").and_return(set(), set())
+        flexmock(sweep_cli).should_receive("get_bug_ids_from_open_shipment_mrs").and_return(set())
         flexmock(Runtime).should_receive("get_default_advisories").and_return({})
 
         result = runner.invoke(
@@ -283,6 +334,7 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
         flexmock(Runtime).should_receive("get_major_minor").and_return(4, 6)
         flexmock(Runtime).should_receive("get_releases_config").and_return(MagicMock())
         flexmock(sweep_cli).should_receive("get_assembly_bug_ids").and_return(set(), set())
+        flexmock(sweep_cli).should_receive("get_bug_ids_from_open_shipment_mrs").and_return(set())
         flexmock(Runtime).should_receive("get_default_advisories").and_return({})
         flexmock(sweep_cli).should_receive("get_builds_by_advisory_kind").and_return({})
 
@@ -316,6 +368,7 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
         flexmock(Runtime).should_receive("get_major_minor").and_return(4, 6)
         flexmock(Runtime).should_receive("get_releases_config").and_return(MagicMock())
         flexmock(sweep_cli).should_receive("get_assembly_bug_ids").and_return(set(), set())
+        flexmock(sweep_cli).should_receive("get_bug_ids_from_open_shipment_mrs").and_return(set())
         flexmock(Runtime).should_receive("get_default_advisories").and_return({'image': 123})
         flexmock(sweep_cli).should_receive("get_builds_by_advisory_kind")
         flexmock(sweep_cli).should_receive("categorize_bugs_by_type").and_return({"image": set(bugs)}, [])
@@ -360,6 +413,7 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
         flexmock(Runtime).should_receive("get_major_minor").and_return(4, 6)
         flexmock(Runtime).should_receive("get_releases_config").and_return(MagicMock())
         flexmock(sweep_cli).should_receive("get_assembly_bug_ids").and_return(set(), set())
+        flexmock(sweep_cli).should_receive("get_bug_ids_from_open_shipment_mrs").and_return(set())
         flexmock(sweep_cli).should_receive("get_builds_by_advisory_kind")
         flexmock(sweep_cli).should_receive("categorize_bugs_by_type").and_return(
             {

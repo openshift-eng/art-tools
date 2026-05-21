@@ -20,7 +20,7 @@ from elliottlib.bzutil import Bug, BugTracker, JIRABug
 from elliottlib.cli import common
 from elliottlib.cli.common import click_coroutine
 from elliottlib.exceptions import ElliottFatalError
-from elliottlib.shipment_utils import get_builds_from_mr
+from elliottlib.shipment_utils import get_bug_ids_from_open_shipment_mrs, get_builds_from_mr
 from elliottlib.util import chunk, normalize_component_by_ocp_delivery_repo
 
 logger = logutil.get_logger(__name__)
@@ -246,7 +246,7 @@ async def find_bugs_sweep_cli(
     sys.exit(0)
 
 
-async def get_bugs_sweep(runtime: Runtime, find_bugs_obj, bug_tracker):
+async def get_bugs_sweep(runtime: Runtime, find_bugs_obj, bug_tracker, filter_attached_bugs: bool = True):
     releases_config = runtime.get_releases_config()
     is_targeted = assembly_targeted_fixes_only(releases_config, runtime.assembly)
     if is_targeted:
@@ -290,14 +290,31 @@ async def get_bugs_sweep(runtime: Runtime, find_bugs_obj, bug_tracker):
             logger.info(f"{len(qualified_bugs)} of {len(bugs)} bugs are qualified for the cutoff time {utc_ts}")
             bugs = qualified_bugs
 
-        # filter bugs that have been swept into other advisories
-        logger.info("Filtering bugs that haven't been attached to any advisories...")
-        attached_bugs = await bug_tracker.filter_attached_bugs(bugs)
-        if attached_bugs:
-            attached_bug_ids = {b.id for b in attached_bugs}
-            logger.debug(f"Bugs attached to other advisories: {sorted(attached_bug_ids)}")
-            bugs = [b for b in bugs if b.id not in attached_bug_ids]
-            logger.info(f"Filtered {len(attached_bugs)} bugs since they are attached to other advisories")
+        if filter_attached_bugs:
+            # filter bugs that have been swept into other advisories
+            logger.info("Filtering bugs that haven't been attached to any advisories...")
+            attached_bugs = await bug_tracker.filter_attached_bugs(bugs)
+            if attached_bugs:
+                attached_bug_ids = {b.id for b in attached_bugs}
+                logger.debug(f"Bugs attached to other advisories: {sorted(attached_bug_ids)}")
+                bugs = [b for b in bugs if b.id not in attached_bug_ids]
+                logger.info(f"Filtered {len(attached_bugs)} bugs since they are attached to other advisories")
+
+            # filter bugs that are attached to open shipment MRs
+            shipment_data_url = runtime.shipment_path
+            shipment_bug_ids = set()
+            if shipment_data_url:
+                shipment_bug_ids = get_bug_ids_from_open_shipment_mrs(
+                    shipment_data_url=shipment_data_url,
+                    group=runtime.group,
+                    exclude_assembly=runtime.assembly,
+                )
+            if shipment_bug_ids:
+                before_count = len(bugs)
+                bugs = [b for b in bugs if b.id not in shipment_bug_ids]
+                filtered_count = before_count - len(bugs)
+                if filtered_count:
+                    logger.info(f"Filtered {filtered_count} bugs already attached to open shipment MRs")
 
         if find_bugs_obj.art_managed_trackers_only:
             bugs = filter_art_managed_jira_trackers(runtime, bugs, bug_tracker_type=bug_tracker.type)

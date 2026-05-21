@@ -294,5 +294,197 @@ shipment:
         self.assertEqual(set(result.keys()), expected_kinds)
 
 
+@patch.dict(os.environ, {"GITLAB_TOKEN": "fake-token"})
+class TestGetBugIdsFromOpenShipmentMrs(unittest.TestCase):
+    """Test cases for get_bug_ids_from_open_shipment_mrs"""
+
+    @patch("elliottlib.shipment_utils.get_shipment_configs_from_mr")
+    @patch("elliottlib.shipment_utils.GitLabClient")
+    def test_filters_bugs_from_matching_group(self, mock_gitlab_cls, mock_get_configs):
+        """Bugs from open MRs matching the group should be returned."""
+        mock_client = Mock()
+        mock_gitlab_cls.from_url.return_value = mock_client
+
+        mock_mr = Mock()
+        mock_mr.web_url = "https://gitlab.example.com/project/-/merge_requests/1"
+        mock_client.list_merge_requests.return_value = [mock_mr]
+
+        mock_shipment = Mock()
+        mock_shipment.shipment.metadata.group = "openshift-4.18"
+        mock_shipment.shipment.metadata.assembly = "4.18.39"
+        mock_shipment.shipment.metadata.fbc = False
+        mock_shipment.shipment.data.releaseNotes.issues.fixed = [
+            Mock(id="OCPBUGS-100", source="issues.redhat.com"),
+            Mock(id="OCPBUGS-200", source="issues.redhat.com"),
+        ]
+        mock_get_configs.return_value = {"image": mock_shipment}
+
+        result = shipment_utils.get_bug_ids_from_open_shipment_mrs(
+            shipment_data_url="https://gitlab.example.com/project",
+            group="openshift-4.18",
+        )
+
+        self.assertEqual(result, {"OCPBUGS-100", "OCPBUGS-200"})
+
+    @patch("elliottlib.shipment_utils.get_shipment_configs_from_mr")
+    @patch("elliottlib.shipment_utils.GitLabClient")
+    def test_excludes_current_assembly(self, mock_gitlab_cls, mock_get_configs):
+        """Bugs from the current assembly's MR should be excluded."""
+        mock_client = Mock()
+        mock_gitlab_cls.from_url.return_value = mock_client
+
+        mock_mr = Mock()
+        mock_mr.web_url = "https://gitlab.example.com/project/-/merge_requests/1"
+        mock_client.list_merge_requests.return_value = [mock_mr]
+
+        mock_shipment = Mock()
+        mock_shipment.shipment.metadata.group = "openshift-4.18"
+        mock_shipment.shipment.metadata.assembly = "4.18.40"
+        mock_shipment.shipment.metadata.fbc = False
+        mock_shipment.shipment.data.releaseNotes.issues.fixed = [
+            Mock(id="OCPBUGS-300", source="issues.redhat.com"),
+        ]
+        mock_get_configs.return_value = {"image": mock_shipment}
+
+        result = shipment_utils.get_bug_ids_from_open_shipment_mrs(
+            shipment_data_url="https://gitlab.example.com/project",
+            group="openshift-4.18",
+            exclude_assembly="4.18.40",
+        )
+
+        self.assertEqual(result, set())
+
+    @patch("elliottlib.shipment_utils.get_shipment_configs_from_mr")
+    @patch("elliottlib.shipment_utils.GitLabClient")
+    def test_skips_different_group(self, mock_gitlab_cls, mock_get_configs):
+        """Bugs from MRs for a different OCP group should not be returned."""
+        mock_client = Mock()
+        mock_gitlab_cls.from_url.return_value = mock_client
+
+        mock_mr = Mock()
+        mock_mr.web_url = "https://gitlab.example.com/project/-/merge_requests/1"
+        mock_client.list_merge_requests.return_value = [mock_mr]
+
+        mock_shipment = Mock()
+        mock_shipment.shipment.metadata.group = "openshift-4.17"
+        mock_shipment.shipment.metadata.assembly = "4.17.10"
+        mock_shipment.shipment.metadata.fbc = False
+        mock_shipment.shipment.data.releaseNotes.issues.fixed = [
+            Mock(id="OCPBUGS-999", source="issues.redhat.com"),
+        ]
+        mock_get_configs.return_value = {"image": mock_shipment}
+
+        result = shipment_utils.get_bug_ids_from_open_shipment_mrs(
+            shipment_data_url="https://gitlab.example.com/project",
+            group="openshift-4.18",
+        )
+
+        self.assertEqual(result, set())
+
+    @patch.dict(os.environ, {"GITLAB_TOKEN": ""})
+    def test_raises_when_no_gitlab_token(self):
+        """When GITLAB_TOKEN env var is empty, GitLabClient raises ValueError."""
+        with self.assertRaises(ValueError):
+            shipment_utils.get_bug_ids_from_open_shipment_mrs(
+                shipment_data_url="https://gitlab.example.com/project",
+                group="openshift-4.18",
+            )
+
+    @patch("elliottlib.shipment_utils.get_shipment_configs_from_mr")
+    @patch("elliottlib.shipment_utils.GitLabClient")
+    def test_skips_fbc_shipments(self, mock_gitlab_cls, mock_get_configs):
+        """FBC shipments (no releaseNotes) should be skipped without error."""
+        mock_client = Mock()
+        mock_gitlab_cls.from_url.return_value = mock_client
+
+        mock_mr = Mock()
+        mock_mr.web_url = "https://gitlab.example.com/project/-/merge_requests/1"
+        mock_client.list_merge_requests.return_value = [mock_mr]
+
+        mock_fbc_shipment = Mock()
+        mock_fbc_shipment.shipment.metadata.group = "openshift-4.18"
+        mock_fbc_shipment.shipment.metadata.assembly = "4.18.39"
+        mock_fbc_shipment.shipment.metadata.fbc = True
+        mock_fbc_shipment.shipment.data = None
+
+        mock_image_shipment = Mock()
+        mock_image_shipment.shipment.metadata.group = "openshift-4.18"
+        mock_image_shipment.shipment.metadata.assembly = "4.18.39"
+        mock_image_shipment.shipment.metadata.fbc = False
+        mock_image_shipment.shipment.data.releaseNotes.issues.fixed = [
+            Mock(id="OCPBUGS-500", source="issues.redhat.com"),
+        ]
+
+        mock_get_configs.return_value = {
+            "fbc": mock_fbc_shipment,
+            "image": mock_image_shipment,
+        }
+
+        result = shipment_utils.get_bug_ids_from_open_shipment_mrs(
+            shipment_data_url="https://gitlab.example.com/project",
+            group="openshift-4.18",
+        )
+
+        self.assertEqual(result, {"OCPBUGS-500"})
+
+    @patch("elliottlib.shipment_utils.get_shipment_configs_from_mr")
+    @patch("elliottlib.shipment_utils.GitLabClient")
+    def test_handles_mr_parse_error_gracefully(self, mock_gitlab_cls, mock_get_configs):
+        """If parsing an MR fails, skip it and continue with others."""
+        mock_client = Mock()
+        mock_gitlab_cls.from_url.return_value = mock_client
+
+        mock_mr_bad = Mock()
+        mock_mr_bad.web_url = "https://gitlab.example.com/project/-/merge_requests/1"
+        mock_mr_good = Mock()
+        mock_mr_good.web_url = "https://gitlab.example.com/project/-/merge_requests/2"
+        mock_client.list_merge_requests.return_value = [mock_mr_bad, mock_mr_good]
+
+        mock_shipment = Mock()
+        mock_shipment.shipment.metadata.group = "openshift-4.18"
+        mock_shipment.shipment.metadata.assembly = "4.18.39"
+        mock_shipment.shipment.metadata.fbc = False
+        mock_shipment.shipment.data.releaseNotes.issues.fixed = [
+            Mock(id="OCPBUGS-700", source="issues.redhat.com"),
+        ]
+
+        mock_get_configs.side_effect = [
+            ValueError("YAML parse error"),
+            {"image": mock_shipment},
+        ]
+
+        result = shipment_utils.get_bug_ids_from_open_shipment_mrs(
+            shipment_data_url="https://gitlab.example.com/project",
+            group="openshift-4.18",
+        )
+
+        self.assertEqual(result, {"OCPBUGS-700"})
+
+    @patch("elliottlib.shipment_utils.get_shipment_configs_from_mr")
+    @patch("elliottlib.shipment_utils.GitLabClient")
+    def test_shipment_with_no_issues_fixed(self, mock_gitlab_cls, mock_get_configs):
+        """Shipments with no issues.fixed should be handled gracefully."""
+        mock_client = Mock()
+        mock_gitlab_cls.from_url.return_value = mock_client
+
+        mock_mr = Mock()
+        mock_mr.web_url = "https://gitlab.example.com/project/-/merge_requests/1"
+        mock_client.list_merge_requests.return_value = [mock_mr]
+
+        mock_shipment = Mock()
+        mock_shipment.shipment.metadata.group = "openshift-4.18"
+        mock_shipment.shipment.metadata.assembly = "4.18.39"
+        mock_shipment.shipment.metadata.fbc = False
+        mock_shipment.shipment.data.releaseNotes.issues = None
+        mock_get_configs.return_value = {"image": mock_shipment}
+
+        result = shipment_utils.get_bug_ids_from_open_shipment_mrs(
+            shipment_data_url="https://gitlab.example.com/project",
+            group="openshift-4.18",
+        )
+
+        self.assertEqual(result, set())
+
+
 if __name__ == '__main__':
     unittest.main()

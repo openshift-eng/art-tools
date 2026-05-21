@@ -1,5 +1,4 @@
 import logging
-import os
 from typing import Dict, Iterable, List, Tuple
 from urllib.parse import urlparse
 
@@ -26,14 +25,7 @@ def get_shipment_configs_from_mr(
 
     shipment_configs: Dict[str, ShipmentConfig] = {}
 
-    gitlab_token = os.getenv("GITLAB_TOKEN")
-    if not gitlab_token:
-        raise ValueError("GITLAB_TOKEN environment variable is required for Konflux operations")
-
-    parsed_url = urlparse(mr_url)
-    gitlab_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
-
-    gl = GitLabClient(gitlab_url, gitlab_token)
+    gl = GitLabClient.from_url(mr_url)
 
     mr = gl.get_mr_from_url(mr_url)
     source_project = gl.get_project(mr.source_project_id)
@@ -112,3 +104,55 @@ def set_jira_bug_ids(release_notes: ReleaseNotes, bug_ids: Iterable[str]):
         release_notes.issues = None
     else:
         release_notes.issues = Issues(fixed=fixed)
+
+
+def get_bug_ids_from_open_shipment_mrs(
+    shipment_data_url: str,
+    group: str,
+    exclude_assembly: str | None = None,
+) -> set[str]:
+    """
+    Collect bug IDs from all open shipment MRs in ocp-shipment-data that match
+    the given group, excluding the current assembly's own MR.
+
+    Arg(s):
+        shipment_data_url (str): GitLab URL for ocp-shipment-data repo
+        group (str): OCP group to match (e.g., 'openshift-4.18')
+        exclude_assembly (str | None): Assembly name to skip (current assembly)
+    Return Value(s):
+        set[str]: Set of bug IDs already attached to open shipment MRs
+    """
+    parsed_url = urlparse(shipment_data_url)
+    project_path = parsed_url.path.strip("/")
+
+    gl = GitLabClient.from_url(shipment_data_url)
+    open_mrs = gl.list_merge_requests(project_path, state="opened")
+
+    bug_ids: set[str] = set()
+    for mr in open_mrs:
+        try:
+            shipment_configs = get_shipment_configs_from_mr(mr.web_url)
+        except (ValueError, TypeError, KeyError):
+            logger.warning("Failed to parse shipment configs from MR %s, skipping", mr.web_url, exc_info=True)
+            continue
+
+        for kind, config in shipment_configs.items():
+            metadata = config.shipment.metadata
+            if metadata.group != group:
+                continue
+            if exclude_assembly and metadata.assembly == exclude_assembly:
+                continue
+            if metadata.fbc:
+                continue
+            if not config.shipment.data or not config.shipment.data.releaseNotes:
+                continue
+            issues = config.shipment.data.releaseNotes.issues
+            if not issues or not issues.fixed:
+                continue
+            for issue in issues.fixed:
+                bug_ids.add(issue.id)
+
+    if bug_ids:
+        logger.info("Found %d bugs attached to open shipment MRs: %s", len(bug_ids), sorted(bug_ids))
+
+    return bug_ids
