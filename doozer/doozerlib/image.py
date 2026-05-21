@@ -1464,7 +1464,8 @@ class ImageMetadata(Metadata):
     def is_base_image_release_quay_fallback_enabled(self) -> bool:
         """
         When False and ``should_trigger_base_image_release()`` applies, late parent resolve
-        must not fall back to Konflux ``image_pullspec`` if ``registry.redhat.io`` art-images-base
+        must not fall back to Konflux ``image_pullspec`` if the ``registry.redhat.io`` delivery mirror
+        (``openshift/golang-builder`` for golang builders, ``openshift/art-images-base`` for other base_only images)
         is unreachable (rebase fails instead).
 
         Image ``base_image_release.quay_fallback`` overrides group; default True

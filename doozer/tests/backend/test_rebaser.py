@@ -1313,10 +1313,19 @@ class TestCpeVersionExtraction(TestCase):
 
 
 class TestRhArtImagesBasePullspec(TestCase):
-    def test_rh_art_images_base_pullspec_matches_db_convention(self):
+    def test_golang_builder_uses_delivery_golang_repo(self):
         from doozerlib.util import rh_art_images_base_pullspec
 
         nvr = "openshift-golang-builder-container-v1.21-1.el9"
+        self.assertEqual(
+            rh_art_images_base_pullspec(nvr),
+            f"registry.redhat.io/openshift/golang-builder:{nvr}",
+        )
+
+    def test_non_golang_base_uses_art_images_base_repo(self):
+        from doozerlib.util import rh_art_images_base_pullspec
+
+        nvr = "ose-base-rhel9-container-v1.0.0-test"
         self.assertEqual(
             rh_art_images_base_pullspec(nvr),
             f"registry.redhat.io/openshift/art-images-base:{nvr}",
@@ -1355,11 +1364,11 @@ class TestRebaserResolveMemberParentRegistryRedhat(IsolatedAsyncioTestCase):
         resolved, _embargo = await rebaser._resolve_member_parent("golang-builder", "ignored")
         self.assertEqual(
             resolved,
-            "registry.redhat.io/openshift/art-images-base:openshift-golang-builder-container-v1.21-1.el9",
+            "registry.redhat.io/openshift/golang-builder:openshift-golang-builder-container-v1.21-1.el9",
         )
 
-    async def test_resolve_member_parent_late_resolve_uses_rh_art_base_tag(self):
-        """Late-resolve (DB) base/golang: RH art-images-base if tag is reachable, else Konflux digest from DB."""
+    async def test_resolve_member_parent_late_resolve_uses_rh_delivery_tag(self):
+        """Late-resolve (DB) golang-builder: openshift/golang-builder on RH if reachable, else Konflux digest."""
         parent = MagicMock()
         parent.distgit_key = "golang-builder"
         parent.should_trigger_base_image_release.return_value = True
@@ -1387,7 +1396,7 @@ class TestRebaserResolveMemberParentRegistryRedhat(IsolatedAsyncioTestCase):
 
         resolved, emb = await rebaser._resolve_member_parent("golang-builder", "orig")
         self.assertEqual(
-            resolved, "registry.redhat.io/openshift/art-images-base:openshift-golang-builder-container-v1.21-1.el9"
+            resolved, "registry.redhat.io/openshift/golang-builder:openshift-golang-builder-container-v1.21-1.el9"
         )
         self.assertFalse(emb)
 

@@ -52,8 +52,17 @@ logger = logging.getLogger(__name__)
 
 
 def rh_art_images_base_pullspec(nvr: str) -> str:
-    """Pullspec for golang/base images after art-images-base release (NVR = component-version-release)."""
-    return f"{doozer_constants.DELIVERY_IMAGE_REGISTRY}/openshift/{doozer_constants.ART_IMAGES_BASE_APPLICATION}:{nvr}"
+    """registry.redhat.io pullspec after Konflux silent release (image tag = full publish NVR string).
+
+    openshift-golang-builder image NVRs publish under openshift/ ``ART_IMAGES_GOLANG_BUILDER_APPLICATION``.
+    Other silent-released base images publish under openshift/ ``ART_IMAGES_BASE_APPLICATION``.
+    """
+    repo_app = (
+        doozer_constants.ART_IMAGES_GOLANG_BUILDER_APPLICATION
+        if nvr.startswith("openshift-golang-builder")
+        else doozer_constants.ART_IMAGES_BASE_APPLICATION
+    )
+    return f"{doozer_constants.DELIVERY_IMAGE_REGISTRY}/openshift/{repo_app}:{nvr}"
 
 
 def dict_get(dct, path, default=DICT_EMPTY):
