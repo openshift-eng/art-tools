@@ -6,6 +6,7 @@ from doozerlib.lockfile_prototype.dockerfile_transforms import (
     fix_rpm_verify_commands,
     strip_bare_updates,
     strip_bare_updates_from_scripts,
+    strip_reinstall_commands,
 )
 
 
@@ -126,6 +127,58 @@ class TestStripBareUpdatesFromScripts(unittest.TestCase):
             self.assertEqual(mtime_before, mtime_after)
 
 
+class TestStripReinstallCommands(unittest.TestCase):
+    def test_strips_microdnf_reinstall(self):
+        content = "RUN microdnf -y install openssl && microdnf -y reinstall tzdata && microdnf clean all\n"
+        result = strip_reinstall_commands(content)
+        self.assertNotIn("reinstall", result)
+        self.assertIn("microdnf -y install openssl", result)
+        self.assertIn("microdnf clean all", result)
+
+    def test_strips_dnf_reinstall(self):
+        content = "RUN dnf -y reinstall tzdata && dnf clean all\n"
+        result = strip_reinstall_commands(content)
+        self.assertNotIn("reinstall", result)
+        self.assertIn("dnf clean all", result)
+
+    def test_strips_yum_reinstall(self):
+        content = "RUN yum reinstall -y glibc && yum clean all\n"
+        result = strip_reinstall_commands(content)
+        self.assertNotIn("reinstall", result)
+        self.assertIn("yum clean all", result)
+
+    def test_strips_reinstall_multiple_packages(self):
+        content = "RUN microdnf -y reinstall tzdata glibc && microdnf clean all\n"
+        result = strip_reinstall_commands(content)
+        self.assertNotIn("reinstall", result)
+        self.assertIn("microdnf clean all", result)
+
+    def test_preserves_install_commands(self):
+        content = "RUN microdnf -y install openssl && microdnf clean all\n"
+        result = strip_reinstall_commands(content)
+        self.assertEqual(result, content)
+
+    def test_no_reinstall_unchanged(self):
+        content = "FROM base\nRUN yum install -y wget\n"
+        result = strip_reinstall_commands(content)
+        self.assertEqual(result, content)
+
+    def test_real_world_oadp_pattern(self):
+        """
+        Pattern from oadp-operator Dockerfile.
+        """
+        content = (
+            "RUN . /cachi2/cachi2.env && "
+            "    microdnf -y install openssl && "
+            "microdnf -y reinstall tzdata && "
+            "microdnf clean all\n"
+        )
+        result = strip_reinstall_commands(content)
+        self.assertNotIn("reinstall", result)
+        self.assertIn("microdnf -y install openssl", result)
+        self.assertIn("microdnf clean all", result)
+
+
 class TestFixRpmVerifyCommands(unittest.TestCase):
     def test_transforms_variable_package_list(self):
         """
@@ -142,7 +195,7 @@ class TestFixRpmVerifyCommands(unittest.TestCase):
         self.assertIn("rpm -V --nogroup --nosize --nofiledigest --nomtime --nomode", result)
         self.assertIn("$(for _art_pkg in $INSTALL_PKGS; do", result)
         self.assertIn("--whatprovides", result)
-        self.assertIn('|| echo "$_art_pkg"; done)', result)
+        self.assertIn("_art_name=$_art_pkg;", result)
         self.assertNotIn("rpm -V --nogroup --nosize --nofiledigest --nomtime --nomode $INSTALL_PKGS", result)
 
     def test_transforms_literal_package_names(self):
@@ -185,3 +238,51 @@ class TestFixRpmVerifyCommands(unittest.TestCase):
         content = "RUN rpm -q bind-utils && rpm -i foo.rpm\n"
         result = fix_rpm_verify_commands(content)
         self.assertEqual(result, content)
+
+    def test_does_not_corrupt_subsequent_instructions(self):
+        """
+        rpm -V transformation must not cross Dockerfile instruction
+        boundaries. Regression test: the regex previously used \\s+ for
+        the package-args group, which matched newlines and consumed
+        COPY/WORKDIR/FROM/etc. instructions that followed the RUN.
+        """
+        content = (
+            "RUN INSTALL_PKGS=\"gcc-c++ git\" && \\\n"
+            "    microdnf install -y $INSTALL_PKGS && \\\n"
+            "    rpm -V $INSTALL_PKGS\n"
+            "\n"
+            "COPY . /opt/app-root/src\n"
+            "WORKDIR /opt/app-root/src\n"
+            "\n"
+            "COPY --from=builder /usr/bin/vector /usr/bin/\n"
+        )
+        result = fix_rpm_verify_commands(content)
+        self.assertIn("$(for _art_pkg in $INSTALL_PKGS; do", result)
+        self.assertIn("COPY . /opt/app-root/src\n", result)
+        self.assertIn("WORKDIR /opt/app-root/src\n", result)
+        self.assertIn("COPY --from=builder /usr/bin/vector /usr/bin/\n", result)
+
+    def test_does_not_corrupt_multistage_dockerfile(self):
+        """
+        Full multi-stage Dockerfile with rpm -V in the builder stage
+        must not have the transformation leak into the second stage.
+        """
+        content = (
+            "FROM ubi9 AS builder\n"
+            "RUN INSTALL_PKGS=\"gcc-c++ openssl-devel\" && \\\n"
+            "    microdnf install -y $INSTALL_PKGS && \\\n"
+            "    rpm -V $INSTALL_PKGS\n"
+            "COPY . /src\n"
+            "RUN make build\n"
+            "\n"
+            "FROM ubi9\n"
+            "COPY --from=builder /usr/bin/app /usr/bin/\n"
+            "RUN microdnf install -y systemd\n"
+        )
+        result = fix_rpm_verify_commands(content)
+        self.assertIn("$(for _art_pkg in $INSTALL_PKGS; do", result)
+        self.assertIn("COPY . /src\n", result)
+        self.assertIn("RUN make build\n", result)
+        self.assertIn("FROM ubi9\n", result)
+        self.assertIn("COPY --from=builder /usr/bin/app /usr/bin/\n", result)
+        self.assertIn("RUN microdnf install -y systemd\n", result)

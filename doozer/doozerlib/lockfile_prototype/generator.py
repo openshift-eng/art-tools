@@ -6,6 +6,7 @@ rpms.in.yaml input configs, and delegating resolution to RpmResolver.
 Container image interactions are delegated to ContainerImageHelper.
 """
 
+import fnmatch
 import logging
 import re
 import shlex
@@ -14,6 +15,7 @@ from pathlib import Path
 import yaml
 from artcommonlib import logutil
 from artcommonlib.arch_util import BREW_ARCHES
+from artcommonlib.exectools import cmd_gather_async
 from dockerfile_parse import DockerfileParser
 
 from doozerlib.image import ImageMetadata
@@ -49,6 +51,7 @@ def build_rpms_in_yaml(
     packages: list[str],
     arch_specific_packages: dict[str, list[str]] | None = None,
     upgrade_packages: list[str] | None = None,
+    module_enable: list[str] | None = None,
 ) -> RpmsInConfig:
     """
     Build the rpms.in.yaml config for rpm-lockfile-prototype.
@@ -59,6 +62,8 @@ def build_rpms_in_yaml(
         packages (list[str]): Common package names for all arches.
         arch_specific_packages (dict[str, list[str]] | None): Per-arch packages.
         upgrade_packages (list[str] | None): Packages to upgrade.
+        module_enable (list[str] | None): Module streams to enable
+            (e.g., ["nodejs:18", "python36:3.6"]).
     Return Value(s):
         RpmsInConfig: Config ready for YAML serialization.
     """
@@ -74,6 +79,7 @@ def build_rpms_in_yaml(
         contentOrigin={"repos": repos},
         packages=package_entries,
         upgradePackages=list(upgrade_packages) if upgrade_packages else [],
+        moduleEnable=list(module_enable) if module_enable else [],
     )
 
 
@@ -147,6 +153,7 @@ class RpmLockfilePrototypeGenerator:
 
         analysis, entries = self._analyze_dockerfile(dockerfile_path, dest_dir)
         analysis = await self._enrich_with_cat_packages(analysis, entries, image_meta.distgit_key)
+        self._enrich_with_module_install_packages(analysis, image_meta.distgit_key)
         stages = self._select_stages_to_resolve(analysis)
 
         out_file_path = dest_dir / filename
@@ -154,7 +161,9 @@ class RpmLockfilePrototypeGenerator:
             self._write_lockfile(None, out_file_path, image_meta.distgit_key)
             return
 
-        stage_lockfiles = await self._resolve_all_stages(stages, analysis, repo_list, arches, image_meta.distgit_key)
+        stage_lockfiles = await self._resolve_all_stages(
+            stages, analysis, repo_list, arches, image_meta.distgit_key, dest_dir=dest_dir
+        )
         lockfile = self._assemble_lockfile(stage_lockfiles, image_meta)
         self._write_lockfile(lockfile, out_file_path, image_meta.distgit_key)
 
@@ -184,6 +193,31 @@ class RpmLockfilePrototypeGenerator:
                     f"{distgit_key}: stage {stage_num}: added {len(pkgs)} packages from $(cat ...) resolution"
                 )
         return analysis
+
+    def _enrich_with_module_install_packages(self, analysis: StageAnalysis, distgit_key: str) -> None:
+        """
+        Convert module install specs (from dnf module install) to
+        @module:stream package entries that rpm-lockfile-prototype
+        understands. For example, nodejs:18/development becomes
+        @nodejs:18/development in the packages list.
+        """
+        for stage in analysis.stages:
+            if not stage.module_specs:
+                continue
+
+            install_specs = [s for s in stage.module_specs if "/" in s]
+            if not install_specs:
+                continue
+
+            added: list[str] = []
+            for spec in install_specs:
+                at_spec = f"@{spec}"
+                if at_spec not in stage.packages:
+                    stage.packages = sorted(set(stage.packages) | {at_spec})
+                    added.append(at_spec)
+
+            if added:
+                self.logger.info(f"{distgit_key}: added module install packages: {added}")
 
     async def _resolve_cat_packages(
         self,
@@ -334,12 +368,17 @@ class RpmLockfilePrototypeGenerator:
 
     def _select_stages_to_resolve(self, analysis: StageAnalysis) -> list[tuple[int, list[str]]]:
         """
-        Filter to stages that have packages, arch-specific packages, or updates.
+        Filter to stages that have packages, arch-specific packages, updates,
+        or builddep packages.
         """
         return [
             (stage_num, stage.packages)
             for stage_num, stage in enumerate(analysis.stages)
-            if stage.packages or stage.arch_packages or stage.has_update
+            if stage.packages
+            or stage.arch_packages
+            or stage.has_update
+            or stage.builddep_packages
+            or stage.module_specs
         ]
 
     async def _resolve_all_stages(
@@ -349,6 +388,7 @@ class RpmLockfilePrototypeGenerator:
         repo_list: list[RepoEntry],
         arches: list[str],
         distgit_key: str,
+        dest_dir: Path | None = None,
     ) -> list[LockfileData]:
         """
         Resolve RPM packages for each Dockerfile stage.
@@ -358,6 +398,15 @@ class RpmLockfilePrototypeGenerator:
 
         for stage_num, packages in stages:
             image_pullspec = await self._determine_stage_pullspec(stage_num, distgit_key)
+
+            stage_info = analysis.stages[stage_num]
+            if stage_info.builddep_packages and dest_dir:
+                builddep_pkgs = await self._resolve_builddep_packages(
+                    stage_info.builddep_packages, dest_dir, distgit_key
+                )
+                extra = [p for p in builddep_pkgs if p not in packages]
+                if extra:
+                    packages = list(packages) + extra
 
             if not packages:
                 packages, upgrade_targets, image_pullspec = await self._handle_update_only_stage(
@@ -384,7 +433,7 @@ class RpmLockfilePrototypeGenerator:
                             packages = packages + extra
                 image_pullspec = None
 
-            stage_info = analysis.stages[stage_num]
+            enable_only = [s.split("/")[0] for s in stage_info.module_specs] if stage_info.module_specs else None
 
             result = await self._resolve_with_reconciliation(
                 repo_list,
@@ -395,6 +444,7 @@ class RpmLockfilePrototypeGenerator:
                 image_pullspec,
                 distgit_key,
                 stage_num,
+                module_enable=enable_only,
             )
             if result:
                 stage_lockfiles.append(result)
@@ -496,6 +546,83 @@ class RpmLockfilePrototypeGenerator:
         )
         return []
 
+    @staticmethod
+    def _is_builddep_requirement(req: str) -> bool:
+        """
+        Return True if a requirement from rpm -qpR looks like a real
+        package name (not a virtual provide, rpmlib dep, or file path).
+        """
+        if not req:
+            return False
+        if req.startswith("/") or req.startswith("rpmlib(") or req.startswith("config("):
+            return False
+        if "(" in req:
+            return False
+        return True
+
+    async def _resolve_builddep_packages(
+        self,
+        builddep_patterns: list[str],
+        dest_dir: Path,
+        distgit_key: str,
+    ) -> list[str]:
+        """
+        Resolve dnf builddep patterns to concrete package names by
+        finding matching SRPMs in the source directory and extracting
+        their BuildRequires.
+
+        Arg(s):
+            builddep_patterns (list[str]): Glob patterns from dnf builddep
+                commands (e.g., ["pkcs11-helper*", "openvpn*"]).
+            dest_dir (Path): Build source directory containing SRPMs.
+            distgit_key (str): Image identifier for logging.
+        Return Value(s):
+            list[str]: Deduplicated package names from BuildRequires.
+        """
+        resolved: set[str] = set()
+
+        for pattern in builddep_patterns:
+            srpm_pattern = pattern if pattern.endswith(".src.rpm") else f"{pattern}.src.rpm"
+            matching_srpms = [
+                f
+                for f in dest_dir.iterdir()
+                if f.is_file() and f.name.endswith(".src.rpm") and fnmatch.fnmatch(f.name, srpm_pattern)
+            ]
+
+            if not matching_srpms:
+                matching_specs = [
+                    f
+                    for f in dest_dir.iterdir()
+                    if f.is_file() and f.name.endswith(".spec") and fnmatch.fnmatch(f.name, pattern)
+                ]
+                if matching_specs:
+                    matching_srpms = matching_specs
+
+            if not matching_srpms:
+                self.logger.warning(
+                    f"{distgit_key}: no SRPM or spec file matching '{pattern}' found in {dest_dir}, "
+                    "builddep packages will not be included in lockfile"
+                )
+                continue
+
+            for srpm_path in matching_srpms:
+                self.logger.info(f"{distgit_key}: extracting BuildRequires from {srpm_path.name}")
+                try:
+                    rc, stdout, stderr = await cmd_gather_async(["rpm", "-qpR", str(srpm_path)], check=False)
+                    if rc != 0:
+                        self.logger.warning(f"{distgit_key}: rpm -qpR {srpm_path.name} failed (rc={rc}): {stderr}")
+                        continue
+                    for line in stdout.strip().splitlines():
+                        req = line.strip().split()[0] if line.strip() else ""
+                        if self._is_builddep_requirement(req):
+                            resolved.add(req)
+                except Exception as exc:
+                    self.logger.warning(f"{distgit_key}: failed to extract BuildRequires from {srpm_path.name}: {exc}")
+
+        if resolved:
+            self.logger.info(f"{distgit_key}: resolved {len(resolved)} builddep packages: {sorted(resolved)}")
+        return sorted(resolved)
+
     async def _resolve_stage_with_retry(
         self,
         repo_list: list[RepoEntry],
@@ -506,6 +633,7 @@ class RpmLockfilePrototypeGenerator:
         image_pullspec: str | None,
         distgit_key: str,
         stage_num: int,
+        module_enable: list[str] | None = None,
     ) -> LockfileData | None:
         """
         Resolve a single stage, retrying after removing unavailable packages.
@@ -524,6 +652,7 @@ class RpmLockfilePrototypeGenerator:
                 remaining_packages,
                 arch_specific_packages=arch_pkgs,
                 upgrade_packages=remaining_update_targets if image_pullspec else None,
+                module_enable=module_enable,
             )
 
             try:
@@ -650,6 +779,7 @@ class RpmLockfilePrototypeGenerator:
         image_pullspec: str | None,
         distgit_key: str,
         stage_num: int,
+        module_enable: list[str] | None = None,
     ) -> LockfileData | None:
         """
         Resolve a stage with cross-arch version reconciliation.
@@ -667,6 +797,7 @@ class RpmLockfilePrototypeGenerator:
             image_pullspec (str | None): Base image pullspec.
             distgit_key (str): Image identifier for logging.
             stage_num (int): Dockerfile stage number.
+            module_enable (list[str] | None): Module streams to enable.
         Return Value(s):
             LockfileData | None: Resolved lockfile with consistent
                 versions, or None if no packages remain.
@@ -680,6 +811,7 @@ class RpmLockfilePrototypeGenerator:
             image_pullspec,
             distgit_key,
             stage_num,
+            module_enable=module_enable,
         )
         if not first_pass:
             return None
@@ -710,6 +842,7 @@ class RpmLockfilePrototypeGenerator:
                 image_pullspec,
                 distgit_key,
                 stage_num,
+                module_enable=module_enable,
             )
         except RuntimeError:
             self.logger.warning(

@@ -936,3 +936,78 @@ class TestCrossArchReconciliation(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(result, mismatched)
         self.assertEqual(gen._resolve_stage_with_retry.await_count, 2)
+
+
+class TestIsBuilddepRequirement(unittest.TestCase):
+    def test_accepts_package_name(self):
+        self.assertTrue(RpmLockfilePrototypeGenerator._is_builddep_requirement("gcc"))
+
+    def test_accepts_package_with_dashes(self):
+        self.assertTrue(RpmLockfilePrototypeGenerator._is_builddep_requirement("openssl-devel"))
+
+    def test_rejects_rpmlib(self):
+        self.assertFalse(RpmLockfilePrototypeGenerator._is_builddep_requirement("rpmlib(CompressedFileNames)"))
+
+    def test_rejects_config(self):
+        self.assertFalse(RpmLockfilePrototypeGenerator._is_builddep_requirement("config(pkcs11-helper)"))
+
+    def test_rejects_file_path(self):
+        self.assertFalse(RpmLockfilePrototypeGenerator._is_builddep_requirement("/usr/bin/perl"))
+
+    def test_rejects_pkgconfig(self):
+        self.assertFalse(RpmLockfilePrototypeGenerator._is_builddep_requirement("pkgconfig(openssl)"))
+
+    def test_rejects_empty(self):
+        self.assertFalse(RpmLockfilePrototypeGenerator._is_builddep_requirement(""))
+
+
+class TestResolveBuilddepPackages(unittest.TestCase):
+    def _make_gen(self):
+        repos = MagicMock()
+        return RpmLockfilePrototypeGenerator(repos=repos)
+
+    def test_no_matching_srpm(self):
+        gen = self._make_gen()
+        with TemporaryDirectory() as tmpdir:
+            result = asyncio.run(gen._resolve_builddep_packages(["pkcs11-helper*"], Path(tmpdir), "test-img"))
+            self.assertEqual(result, [])
+
+    def test_matching_srpm(self):
+        gen = self._make_gen()
+        with TemporaryDirectory() as tmpdir:
+            srpm_path = Path(tmpdir) / "pkcs11-helper-1.26.0-3.el8.src.rpm"
+            srpm_path.touch()
+
+            async def mock_gather(cmd, check=True, env=None):
+                return 0, "gcc\nopenssl-devel\nrpmlib(CompressedFileNames)\n/usr/bin/perl\nmake\n", ""
+
+            import doozerlib.lockfile_prototype.generator as gen_mod
+
+            original = gen_mod.cmd_gather_async
+            gen_mod.cmd_gather_async = mock_gather
+            try:
+                result = asyncio.run(gen._resolve_builddep_packages(["pkcs11-helper*"], Path(tmpdir), "test-img"))
+            finally:
+                gen_mod.cmd_gather_async = original
+
+            self.assertEqual(result, ["gcc", "make", "openssl-devel"])
+
+    def test_matching_spec_file(self):
+        gen = self._make_gen()
+        with TemporaryDirectory() as tmpdir:
+            spec_path = Path(tmpdir) / "pkcs11-helper.spec"
+            spec_path.touch()
+
+            async def mock_gather(cmd, check=True, env=None):
+                return 0, "gcc\nmake\n", ""
+
+            import doozerlib.lockfile_prototype.generator as gen_mod
+
+            original = gen_mod.cmd_gather_async
+            gen_mod.cmd_gather_async = mock_gather
+            try:
+                result = asyncio.run(gen._resolve_builddep_packages(["pkcs11-helper*"], Path(tmpdir), "test-img"))
+            finally:
+                gen_mod.cmd_gather_async = original
+
+            self.assertEqual(result, ["gcc", "make"])

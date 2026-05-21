@@ -36,6 +36,7 @@ class RpmsInConfig(BaseModel):
     contentOrigin: dict[str, list[RepoEntry]]
     packages: list[str | ArchSpecificPackage] = Field(default_factory=list)
     upgradePackages: list[str] = Field(default_factory=list)
+    moduleEnable: list[str] = Field(default_factory=list)
 
 
 # ── Lockfile output models ──
@@ -102,6 +103,8 @@ class StageInfo(BaseModel):
     has_update: bool = False
     arch_packages: dict[str, list[str]] = Field(default_factory=dict)
     update_targets: list[str] = Field(default_factory=list)
+    builddep_packages: list[str] = Field(default_factory=list)
+    module_specs: list[str] = Field(default_factory=list)
 
     def merge(self, other: "StageInfo") -> "StageInfo":
         """
@@ -118,6 +121,8 @@ class StageInfo(BaseModel):
             has_update=self.has_update or other.has_update,
             arch_packages=merged_arch,
             update_targets=sorted(set(self.update_targets + other.update_targets)),
+            builddep_packages=sorted(set(self.builddep_packages + other.builddep_packages)),
+            module_specs=sorted(set(self.module_specs + other.module_specs)),
         )
 
 

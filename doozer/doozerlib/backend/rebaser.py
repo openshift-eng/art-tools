@@ -981,10 +981,14 @@ class KonfluxRebaser:
                 from doozerlib.lockfile_prototype.dockerfile_transforms import (
                     strip_bare_updates,
                     strip_bare_updates_from_scripts,
+                    strip_reinstall_commands,
                 )
 
                 df_path = dest_dir / "Dockerfile"
-                df_path.write_text(strip_bare_updates(df_path.read_text()))
+                df_content = df_path.read_text()
+                df_content = strip_bare_updates(df_content)
+                df_content = strip_reinstall_commands(df_content)
+                df_path.write_text(df_content)
                 strip_bare_updates_from_scripts(dest_dir, logger=self._logger)
 
             await self._update_csv(metadata, dest_dir, version, release)

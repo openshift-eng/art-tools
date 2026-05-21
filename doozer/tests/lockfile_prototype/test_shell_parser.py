@@ -7,6 +7,7 @@ import unittest
 import pytest
 from doozerlib.lockfile_prototype.shell_parser import (
     ARCH_VALUE_RE,
+    analyze_run_commands,
     extract_packages_from_run_commands,
     resolve_bash_expansion,
 )
@@ -380,3 +381,70 @@ def test_arch_value_regex_no_match():
     ARCH_VALUE_RE should not match plain text.
     """
     assert ARCH_VALUE_RE.search("echo hello") is None
+
+
+class TestBuilddepParsing(unittest.TestCase):
+    def test_simple_builddep(self):
+        run_values = ["dnf builddep -y pkcs11-helper*"]
+        _, _, _, _, builddep, _ = analyze_run_commands(run_values)
+        self.assertEqual(builddep, ["pkcs11-helper*"])
+
+    def test_builddep_with_flags(self):
+        run_values = ["dnf builddep -y --skip-broken --nobest openvpn*"]
+        _, _, _, _, builddep, _ = analyze_run_commands(run_values)
+        self.assertEqual(builddep, ["openvpn*"])
+
+    def test_builddep_multiple_patterns(self):
+        run_values = ["dnf builddep -y pkcs11-helper* && dnf builddep -y openvpn*"]
+        _, _, _, _, builddep, _ = analyze_run_commands(run_values)
+        self.assertEqual(builddep, ["openvpn*", "pkcs11-helper*"])
+
+    def test_builddep_does_not_interfere_with_install(self):
+        run_values = ["dnf install -y gcc make && dnf builddep -y pkcs11-helper*"]
+        common, arch, _, _, builddep, _ = analyze_run_commands(run_values)
+        self.assertEqual(common, ["gcc", "make"])
+        self.assertEqual(arch, {})
+        self.assertEqual(builddep, ["pkcs11-helper*"])
+
+    def test_builddep_without_glob(self):
+        run_values = ["dnf builddep -y pkcs11-helper"]
+        _, _, _, _, builddep, _ = analyze_run_commands(run_values)
+        self.assertEqual(builddep, ["pkcs11-helper"])
+
+    def test_yum_builddep(self):
+        run_values = ["yum builddep -y mypackage"]
+        _, _, _, _, builddep, _ = analyze_run_commands(run_values)
+        self.assertEqual(builddep, ["mypackage"])
+
+    def test_builddep_spec_file(self):
+        run_values = ["dnf builddep -y mypackage.spec"]
+        _, _, _, _, builddep, _ = analyze_run_commands(run_values)
+        self.assertEqual(builddep, ["mypackage.spec"])
+
+
+class TestModuleParsing(unittest.TestCase):
+    def test_module_install(self):
+        run_values = ["dnf module install -y nodejs:18/development"]
+        _, _, _, _, _, modules = analyze_run_commands(run_values)
+        self.assertEqual(modules, ["nodejs:18/development"])
+
+    def test_module_enable(self):
+        run_values = ["dnf module enable -y nodejs:18"]
+        _, _, _, _, _, modules = analyze_run_commands(run_values)
+        self.assertEqual(modules, ["nodejs:18"])
+
+    def test_module_with_install_does_not_interfere(self):
+        run_values = ["dnf -y install gcc && dnf module install -y nodejs:18/development"]
+        common, _, _, _, _, modules = analyze_run_commands(run_values)
+        self.assertEqual(common, ["gcc"])
+        self.assertEqual(modules, ["nodejs:18/development"])
+
+    def test_module_multiple(self):
+        run_values = ["dnf module enable -y nodejs:18 python36:3.6"]
+        _, _, _, _, _, modules = analyze_run_commands(run_values)
+        self.assertEqual(modules, ["nodejs:18", "python36:3.6"])
+
+    def test_module_without_stream_ignored(self):
+        run_values = ["dnf module enable -y nodejs"]
+        _, _, _, _, _, modules = analyze_run_commands(run_values)
+        self.assertEqual(modules, [])

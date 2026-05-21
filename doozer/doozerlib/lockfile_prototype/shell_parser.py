@@ -30,6 +30,8 @@ class _WalkContext(BaseModel):
     arch_packages: dict[str, set[str]] = Field(default_factory=dict)
     update_targets: set[str] = Field(default_factory=set)
     has_update: bool = False
+    builddep_packages: set[str] = Field(default_factory=set)
+    module_specs: set[str] = Field(default_factory=set)
 
 
 _ARCH_PATTERN = "|".join(re.escape(kw).replace(r"\ ", r"\s+") for kw in ARCH_KEYWORDS)
@@ -105,6 +107,20 @@ def _is_valid_package_token(token: str) -> bool:
     if not token or token.startswith("-") or token.endswith("-"):
         return False
     if "$" in token or "*" in token:
+        return False
+    if token in (">=", "<=", "==", ">", "<", "!="):
+        return False
+    return True
+
+
+def _is_valid_builddep_token(token: str) -> bool:
+    """
+    Return True if token looks like a builddep argument (package name or glob).
+    Allows glob wildcards (*) unlike _is_valid_package_token.
+    """
+    if not token or token.startswith("-") or token.endswith("-"):
+        return False
+    if "$" in token:
         return False
     if token in (">=", "<=", "==", ">", "<", "!="):
         return False
@@ -274,6 +290,16 @@ def _detect_pkg_action(word_values: list[str], ctx: _WalkContext) -> tuple[str |
         if wl in ("update", "upgrade"):
             ctx.has_update = True
             return "update", idx
+        if wl == "builddep":
+            return "builddep", idx
+        if wl == "module":
+            for sub_idx, sub_w in enumerate(word_values[idx + 1 :], idx + 1):
+                sub_wl = sub_w.lower()
+                if sub_wl in ("install", "enable"):
+                    return "module", sub_idx
+                if not sub_wl.startswith("-"):
+                    break
+            return None, -1
 
     return None, -1
 
@@ -344,6 +370,17 @@ def _classify_package_tokens(
             skip_next = True
             continue
         token = re.split(r"\s+(?:>=|<=|==|!=|>|<)\s+", token)[0].strip()
+
+        if action == "builddep":
+            if _is_valid_builddep_token(token):
+                ctx.builddep_packages.add(token)
+            continue
+
+        if action == "module":
+            if _is_valid_builddep_token(token) and ":" in token:
+                ctx.module_specs.add(token)
+            continue
+
         if not _is_valid_package_token(token):
             continue
         if token in arch_resolved_tokens:
@@ -427,7 +464,7 @@ def _extract_subshell_packages(subshell_body: str) -> str:
 def _parse_and_walk(
     run_values: list[str],
     env_vars: dict[str, str] | None = None,
-) -> tuple[set[str], dict[str, set[str]], set[str], bool]:
+) -> tuple[set[str], dict[str, set[str]], set[str], bool, set[str], set[str]]:
     """
     Single pass: preprocess, parse with bashlex, and walk all RUN bodies.
 
@@ -435,11 +472,13 @@ def _parse_and_walk(
         run_values (list[str]): RUN command bodies.
         env_vars (dict[str, str] | None): Variables from ARG/ENV directives.
     Return Value(s):
-        tuple[set[str], dict[str, set[str]], set[str], bool]:
+        tuple[set[str], dict[str, set[str]], set[str], bool, set[str], set[str]]:
             - Install packages (common to all arches).
             - Arch-specific install packages.
             - Update target packages.
             - Whether any update command was found.
+            - Builddep package patterns.
+            - Module specs (e.g., nodejs:18, nodejs:18/development).
     """
     logger = logging.getLogger(__name__)
     ctx = _WalkContext(variables=dict(env_vars or {}))
@@ -456,30 +495,42 @@ def _parse_and_walk(
         ctx.arch_shell_vars = {}
         _walk_nodes(ast_nodes, ctx)
 
-    return ctx.packages, ctx.arch_packages, ctx.update_targets, ctx.has_update
+    return ctx.packages, ctx.arch_packages, ctx.update_targets, ctx.has_update, ctx.builddep_packages, ctx.module_specs
 
 
 def analyze_run_commands(
     run_values: list[str],
     env_vars: dict[str, str] | None = None,
-) -> tuple[list[str], dict[str, list[str]], list[str], bool]:
+) -> tuple[list[str], dict[str, list[str]], list[str], bool, list[str], list[str]]:
     """
     Single-pass analysis of RUN command bodies. Returns all install
-    packages, arch-specific packages, update targets, and update flag.
+    packages, arch-specific packages, update targets, update flag,
+    builddep package patterns, and module specs.
 
     Arg(s):
         run_values (list[str]): RUN command bodies.
         env_vars (dict[str, str] | None): Variables from ARG/ENV directives.
     Return Value(s):
-        tuple[list[str], dict[str, list[str]], list[str], bool]:
+        tuple[list[str], dict[str, list[str]], list[str], bool, list[str], list[str]]:
             - Sorted common package names.
             - Dict mapping arch to sorted package names.
             - Sorted update target package names.
             - Whether any update command was found.
+            - Sorted builddep package patterns.
+            - Sorted module specs.
     """
-    packages, arch_packages, update_targets, found_update = _parse_and_walk(run_values, env_vars)
+    packages, arch_packages, update_targets, found_update, builddep_packages, module_specs = _parse_and_walk(
+        run_values, env_vars
+    )
     arch_result = {arch: sorted(pkgs) for arch, pkgs in sorted(arch_packages.items())}
-    return sorted(packages), arch_result, sorted(update_targets), found_update
+    return (
+        sorted(packages),
+        arch_result,
+        sorted(update_targets),
+        found_update,
+        sorted(builddep_packages),
+        sorted(module_specs),
+    )
 
 
 def extract_packages_from_run_commands(
@@ -497,6 +548,6 @@ def extract_packages_from_run_commands(
             - Sorted unique list of common package names (all arches).
             - Dict mapping arch to sorted unique package names for that arch only.
     """
-    packages, arch_packages, _, _ = _parse_and_walk(run_values, env_vars)
+    packages, arch_packages, _, _, _, _ = _parse_and_walk(run_values, env_vars)
     arch_result = {arch: sorted(pkgs) for arch, pkgs in sorted(arch_packages.items())}
     return sorted(packages), arch_result

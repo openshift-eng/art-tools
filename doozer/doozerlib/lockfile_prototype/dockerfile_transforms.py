@@ -58,6 +58,31 @@ def strip_bare_updates_from_scripts(
                 logger.debug(f"Stripped bare updates from {script.relative_to(dest_dir)}")
 
 
+def strip_reinstall_commands(df_content: str) -> str:
+    """
+    Remove microdnf/dnf/yum reinstall commands from a Dockerfile.
+
+    In hermetic builds the base image packages are already at the exact
+    pinned version, so reinstalling them is redundant. The reinstall also
+    fails because the installed NEVRA is not available in the lockfile
+    repos (e.g. ``microdnf -y reinstall tzdata`` fails with
+    "Installed package tzdata-... not available").
+
+    Strips ``reinstall`` subcommands (with their package arguments) from
+    chained commands while preserving the rest of the chain.
+
+    Arg(s):
+        df_content (str): Raw Dockerfile text.
+    Return Value(s):
+        str: Transformed Dockerfile text with reinstall commands removed.
+    """
+    reinstall_re = re.compile(
+        r"\b(?:microdnf|dnf|yum)\s+(?:-\w+\s+)*reinstall\b[^&|;\\]*(?:\\\n[^&|;\\]*)*"
+        r"(?:\s*&&\s*|\s*;\s*)?",
+    )
+    return reinstall_re.sub("", df_content)
+
+
 def fix_rpm_verify_commands(df_content: str) -> str:
     """
     Transform rpm -V commands in Dockerfile RUN instructions so that
@@ -87,17 +112,24 @@ def fix_rpm_verify_commands(df_content: str) -> str:
     """
     rpm_v_re = re.compile(
         r"\brpm\s+-V\b"
-        r"((?:\s+--[\w-]+(?:=\S+)?)*)"  # optional --flags (group 1)
-        r"((?:\s+(?!--)(?!\s)[^\s&|;\\]+)+)"  # package args (group 2)
+        r"((?:[ \t]+--[\w-]+(?:=\S+)?)*)"  # optional --flags (group 1)
+        r"((?:[ \t]+(?!--)(?![ \t])[^ \t\n&|;\\]+)+)"  # package args (group 2), same line only
     )
 
     def _replace(m: re.Match) -> str:
         flags = m.group(1)  # e.g. " --nogroup --nosize --nofiledigest --nomtime --nomode"
         pkgs = m.group(2).strip()  # e.g. "$INSTALL_PKGS" or "bind-utils wget"
+        # rpm -q errors ("no package provides ...") go to stdout, not stderr,
+        # so piping through head -1 always exits 0 and || never triggers.
+        # Use variable assignment + exit code chain instead:
+        # 1. Try rpm -q by name (handles name-version like llvm-toolset-19.1.7)
+        # 2. Try rpm -q --whatprovides (handles virtual provides like bind-utils)
+        # 3. Fall back to original name
         resolve_loop = (
             "$(for _art_pkg in " + pkgs + "; do "
-            "rpm -q --qf '%{NAME}\\n' --whatprovides \"$_art_pkg\" 2>/dev/null | head -1 "
-            '|| echo "$_art_pkg"; done)'
+            '_art_name=$(rpm -q --qf \'%{NAME}\\n\' "$_art_pkg" 2>/dev/null) || '
+            '_art_name=$(rpm -q --qf \'%{NAME}\\n\' --whatprovides "$_art_pkg" 2>/dev/null) || '
+            '_art_name=$_art_pkg; echo "$_art_name" | head -1; done)'
         )
         return "rpm -V" + flags + " " + resolve_loop
 
