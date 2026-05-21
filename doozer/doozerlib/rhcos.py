@@ -237,7 +237,7 @@ class RHCOSBuildFinder:
                 with request.urlopen(url, timeout=60) as req:
                     data = json.loads(req.read().decode())
             except Exception as e:
-                raise type(e)(f"Failed to fetch {url} for pullspec {pullspec}: {e}") from e
+                raise RuntimeError(f"Failed to fetch {url} for pullspec {pullspec}: {e}") from e
             return data['rpmostree.rpmdb.pkglist']
         else:
             return []

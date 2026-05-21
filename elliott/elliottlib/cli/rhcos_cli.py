@@ -140,7 +140,7 @@ def _get_non_layered_tags(runtime, build_id, arch, container_configs, art_repo):
         with request.urlopen(meta_url) as resp:
             meta = json.loads(resp.read().decode())
     except Exception as e:
-        raise type(e)(f"Failed to fetch {meta_url}: {e}") from e
+        raise RuntimeError(f"Failed to fetch {meta_url}: {e}") from e
 
     tags = {}
     for container_conf in container_configs:

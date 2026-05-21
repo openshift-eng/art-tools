@@ -50,7 +50,7 @@ def _latest_build_id(runtime, version, arch="x86_64", private=False):
         with request.urlopen(url) as req:
             data = json.loads(req.read().decode())
     except Exception as e:
-        raise type(e)(f"Failed to fetch {url}: {e}") from e
+        raise RuntimeError(f"Failed to fetch {url}: {e}") from e
     if not data["builds"]:
         return None
     build = data["builds"][0]
@@ -89,7 +89,7 @@ def _build_meta(runtime, build_id, version, arch="x86_64", private=False, meta_t
         with request.urlopen(url) as req:
             return json.loads(req.read().decode())
     except Exception as e:
-        raise type(e)(f"Failed to fetch {url}: {e}") from e
+        raise RuntimeError(f"Failed to fetch {url}: {e}") from e
 
 
 def get_build_from_payload(runtime, payload_pullspec):
