@@ -1,6 +1,7 @@
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome
 from artcommonlib.model import Model
 from doozerlib.backend.base_image_handler import BaseImageHandler
 from doozerlib.image import ImageMetadata
@@ -30,6 +31,110 @@ class TestBaseImageHandler(IsolatedAsyncioTestCase):
         self.image_pullspec = "quay.io/test/test-base:latest"
 
         self.nvr_list = [self.nvr]
+
+    @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_kubeconfig_by_product")
+    async def test_fetch_build_records_success_fallback_after_unreleased_miss(
+        self, mock_kubeconfig, mock_namespace, mock_konflux_client_init
+    ):
+        mock_namespace.return_value = "ocp-art-tenant"
+        mock_kubeconfig.return_value = "/path/to/kubeconfig"
+        mock_konflux_client_init.return_value = AsyncMock()
+
+        konflux_db = AsyncMock()
+        success_only = MagicMock()
+        success_only.nvr = self.nvr
+
+        async def get_by_nvrs(nvrs_arg, outcome=None, **_kwargs):
+            if outcome == KonfluxBuildOutcome.UNRELEASED:
+                self.assertEqual(list(nvrs_arg), self.nvr_list)
+                return [None]
+            if outcome == KonfluxBuildOutcome.SUCCESS:
+                self.assertEqual(list(nvrs_arg), self.nvr_list)
+                return [success_only]
+            raise AssertionError(f"unexpected outcome {outcome}")
+
+        konflux_db.get_build_records_by_nvrs = get_by_nvrs
+
+        handler = BaseImageHandler(self.runtime, self.nvr_list, konflux_db=konflux_db, dry_run=True)
+        result = await handler._fetch_build_records(self.nvr_list)
+
+        self.assertEqual(result, {self.nvr: success_only})
+
+    @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_kubeconfig_by_product")
+    async def test_fetch_build_records_skips_success_when_unreleased_hits(
+        self, mock_kubeconfig, mock_namespace, mock_konflux_client_init
+    ):
+        mock_namespace.return_value = "ocp-art-tenant"
+        mock_kubeconfig.return_value = "/path/to/kubeconfig"
+        mock_konflux_client_init.return_value = AsyncMock()
+
+        unreleased_rec = MagicMock()
+        unreleased_rec.nvr = self.nvr
+
+        calls = []
+
+        async def get_by_nvrs(nvrs_arg, outcome=None, **_kwargs):
+            calls.append((outcome, list(nvrs_arg)))
+            if outcome == KonfluxBuildOutcome.UNRELEASED:
+                return [unreleased_rec]
+            raise AssertionError(f"unexpected outcome {outcome}")
+
+        konflux_db = AsyncMock()
+        konflux_db.get_build_records_by_nvrs = get_by_nvrs
+
+        handler = BaseImageHandler(self.runtime, self.nvr_list, konflux_db=konflux_db, dry_run=True)
+        result = await handler._fetch_build_records(self.nvr_list)
+
+        self.assertEqual(result, {self.nvr: unreleased_rec})
+        self.assertEqual(calls, [(KonfluxBuildOutcome.UNRELEASED, self.nvr_list)])
+
+    @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_kubeconfig_by_product")
+    async def test_fetch_build_records_success_only_for_missing_nvrs_in_batch(
+        self, mock_kubeconfig, mock_namespace, mock_konflux_client_init
+    ):
+        mock_namespace.return_value = "ocp-art-tenant"
+        mock_kubeconfig.return_value = "/path/to/kubeconfig"
+        mock_konflux_client_init.return_value = AsyncMock()
+
+        nvr_kept = "kept-base-container-v1.0.0-1.el9"
+        nvr_fallback = "fallback-base-container-v1.0.0-1.el9"
+        nvr_list = [nvr_kept, nvr_fallback]
+
+        unreleased_kept = MagicMock()
+        unreleased_kept.nvr = nvr_kept
+        success_fallback = MagicMock()
+        success_fallback.nvr = nvr_fallback
+
+        calls = []
+
+        async def get_by_nvrs(nvrs_arg, outcome=None, **_kwargs):
+            calls.append((outcome, list(nvrs_arg)))
+            if outcome == KonfluxBuildOutcome.UNRELEASED:
+                return [unreleased_kept, None]
+            if outcome == KonfluxBuildOutcome.SUCCESS:
+                return [success_fallback]
+            raise AssertionError(f"unexpected outcome {outcome}")
+
+        konflux_db = AsyncMock()
+        konflux_db.get_build_records_by_nvrs = get_by_nvrs
+
+        handler = BaseImageHandler(self.runtime, nvr_list, konflux_db=konflux_db, dry_run=True)
+        result = await handler._fetch_build_records(nvr_list)
+
+        self.assertEqual(
+            calls,
+            [
+                (KonfluxBuildOutcome.UNRELEASED, nvr_list),
+                (KonfluxBuildOutcome.SUCCESS, [nvr_fallback]),
+            ],
+        )
+        self.assertEqual(result, {nvr_kept: unreleased_kept, nvr_fallback: success_fallback})
 
     @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
     @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
