@@ -294,7 +294,7 @@ class TestFindGoMainPackages(unittest.TestCase):
 
     def test_finds_simple_main_package(self):
         with tempfile.TemporaryDirectory() as td:
-            root = pathlib.Path(td)
+            root = pathlib.Path(td).resolve()
             cmd_dir = root / 'cmd' / 'myapp'
             self._write(cmd_dir, 'main.go', 'package main\n\nfunc main() {}\n')
             result = util.find_go_main_packages(root)
@@ -344,7 +344,7 @@ class TestFindGoMainPackages(unittest.TestCase):
         ``//go:build ignore`` file with ``package main``.
         """
         with tempfile.TemporaryDirectory() as td:
-            root = pathlib.Path(td)
+            root = pathlib.Path(td).resolve()
             plugins_dir = root / 'plugins'
             self._write(plugins_dir, 'minimum.go', 'package plugins\n\nvar _ = 1\n')
             self._write(
@@ -367,7 +367,7 @@ class TestFindGoMainPackages(unittest.TestCase):
 
     def test_multiple_main_packages(self):
         with tempfile.TemporaryDirectory() as td:
-            root = pathlib.Path(td)
+            root = pathlib.Path(td).resolve()
             cmd1 = root / 'cmd' / 'app1'
             cmd2 = root / 'cmd' / 'app2'
             self._write(cmd1, 'main.go', 'package main\n\nfunc main() {}\n')
@@ -381,7 +381,7 @@ class TestFindGoMainPackages(unittest.TestCase):
         that ``go mod vendor`` does not copy injected files into vendor/.
         """
         with tempfile.TemporaryDirectory() as td:
-            root = pathlib.Path(td)
+            root = pathlib.Path(td).resolve()
             # Root module
             self._write(root, 'go.mod', 'module example.com/myproject\n')
             root_cmd = root / 'cmd' / 'myapp'
@@ -403,7 +403,7 @@ class TestFindGoMainPackages(unittest.TestCase):
         vendor/.
         """
         with tempfile.TemporaryDirectory() as td:
-            root = pathlib.Path(td)
+            root = pathlib.Path(td).resolve()
             self._write(root, 'go.mod', 'module example.com/olm\n')
             # Root cmd directories
             cmd_a = root / 'cmd' / 'collect-profiles'
