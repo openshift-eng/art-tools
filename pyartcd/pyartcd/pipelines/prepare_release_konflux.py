@@ -1344,7 +1344,7 @@ class PrepareReleaseKonfluxPipeline:
         target_owner = self.build_data_repo_pull_url.split('/')[-2]
 
         head = f"{source_owner}:{branch}"
-        base = self.build_data_gitref or self.group
+        base = self.group
         gh_repo = get_github_client_for_org(target_owner).get_repo(f"{target_owner}/{target_repo}")
         existing_prs = list(gh_repo.get_pulls(state="open", head=head, base=base))
 
