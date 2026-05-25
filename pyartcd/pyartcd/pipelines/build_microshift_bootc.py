@@ -188,7 +188,7 @@ class BuildMicroShiftBootcPipeline:
 
     async def _run_pipeline(self):
         data_path = self._doozer_env_vars["DOOZER_DATA_PATH"]
-        self.releases_config = await load_releases_config(group=self.doozer_group, data_path=data_path)
+        self.releases_config = await load_releases_config(group=self.group, data_path=constants.OCP_BUILD_DATA_URL)
         self.assembly_type = get_assembly_type(self.releases_config, self.assembly)
         # Load group config
         self.group_config = await load_group_config(
@@ -697,7 +697,7 @@ class BuildMicroShiftBootcPipeline:
             )
             return "https://github.example.com/foo/bar/pull/1234"
 
-        user, repo = self.extract_git_repo(self._doozer_env_vars["DOOZER_DATA_PATH"])
+        user, repo = self.extract_git_repo(constants.OCP_BUILD_DATA_URL)
         github_client = get_github_client_for_org(user)
         upstream_repo = github_client.get_repo(f"{user}/{repo}")
         release_file_content = yaml.load(upstream_repo.get_contents("releases.yml", ref=self.group).decoded_content)
@@ -749,7 +749,7 @@ class BuildMicroShiftBootcPipeline:
                 raise TimeoutError(error_msg)
 
             # Refresh PR to get latest status
-            user, repo = self.extract_git_repo(self._doozer_env_vars['DOOZER_DATA_PATH'])
+            user, repo = self.extract_git_repo(constants.OCP_BUILD_DATA_URL)
             pr = get_github_client_for_org(user).get_repo(f"{user}/{repo}").get_pull(pr.number)
 
             # Check if PR was closed/merged by someone else
@@ -945,8 +945,7 @@ class BuildMicroShiftBootcPipeline:
             )
             return True
 
-        data_path = self._doozer_env_vars["DOOZER_DATA_PATH"]
-        user, repo = self.extract_git_repo(data_path)
+        user, repo = self.extract_git_repo(constants.OCP_BUILD_DATA_URL)
         github_client = get_github_client_for_org(user)
         upstream_repo = github_client.get_repo(f"{user}/{repo}")
 
