@@ -11,8 +11,10 @@ from artcommonlib import logutil
 from artcommonlib.arch_util import BREW_ARCHES
 from artcommonlib.assembly import assembly_excluded_components, assembly_metadata_config, assembly_rhcos_config
 from artcommonlib.constants import COREOS_RHEL10_STREAMS
+from artcommonlib.exectools import cmd_gather_async
 from artcommonlib.format_util import green_print, red_print, yellow_print
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord, KonfluxBundleBuildRecord
+from artcommonlib.model import Missing
 from artcommonlib.release_util import isolate_el_version_in_release
 from artcommonlib.rhcos import get_build_id_from_rhcos_pullspec, get_container_configs
 from artcommonlib.rpm_utils import parse_nvr
@@ -33,6 +35,8 @@ from elliottlib.util import (
 )
 
 LOGGER = logutil.get_logger(__name__)
+DELIVERY_IMAGE_REGISTRY = "registry.redhat.io"
+REGISTRY_CHECK_CONCURRENCY = 30
 
 pass_runtime = click.make_pass_decorator(Runtime)
 
@@ -177,19 +181,18 @@ async def find_builds_cli(
                 default_advisory_type,
                 clean,
                 no_cdn_repos,
-                include_shipped,
                 member_only,
             ]
         ):
             raise click.BadParameter(
-                'Konflux does not support --build, --builds-file, --attach, --use-default-advisory, --clean, --no-cdn-repos, --include-shipped or --member-only options.'
+                'Konflux does not support --build, --builds-file, --attach, --use-default-advisory, --clean, --no-cdn-repos, or --member-only options.'
             )
         if kind != 'image':
             raise click.BadParameter('Konflux only supports --kind image.')
         if all_image_types:
-            data = await find_builds_konflux_all_types(runtime)
+            data = await find_builds_konflux_all_types(runtime, include_shipped=include_shipped)
         else:
-            data = await find_builds_konflux(runtime, payload)
+            data = await find_builds_konflux(runtime, payload, include_shipped=include_shipped)
 
         if as_json:
             _json_dump(as_json, data)
@@ -733,15 +736,98 @@ def _filter_out_attached_builds(
     return unattached_builds, attached_to_advisories
 
 
-async def find_builds_konflux(runtime, payload) -> list[dict]:
+async def _is_image_released(delivery_repo: str, version: str, release: str) -> bool:
+    """
+    Check if an image tag exists on registry.redhat.io (already released).
+
+    Arg(s):
+        delivery_repo (str): Delivery repository name (e.g. "openshift4/ose-cli-rhel9").
+        version (str): Build version (e.g. "4.19.0").
+        release (str): Build release (e.g. "202505210330.p0.g8f1c8b5.assembly.stream.el9").
+
+    Return Value(s):
+        bool: True if image tag exists on registry.redhat.io, False otherwise.
+    """
+    tag = f"v{version}-{release}"
+    pullspec = f"{DELIVERY_IMAGE_REGISTRY}/{delivery_repo}:{tag}"
+    try:
+        rc, _, stderr = await cmd_gather_async(
+            ["skopeo", "inspect", "--raw", f"docker://{pullspec}"],
+            check=False,
+        )
+    except Exception:
+        LOGGER.warning("skopeo inspect failed for %s, assuming not released", pullspec, exc_info=True)
+        return False
+    if rc != 0:
+        LOGGER.debug("Image not found on registry: %s (rc=%d)", pullspec, rc)
+    return rc == 0
+
+
+async def _filter_shipped_konflux_builds(
+    image_metas: list[ImageMetadata],
+    records: list[KonfluxBuildRecord],
+) -> tuple[list[KonfluxBuildRecord], set[int]]:
+    """
+    Filter out Konflux builds that are already released on registry.redhat.io.
+
+    For each (image_meta, record) pair, checks if the build's tag exists on
+    registry.redhat.io under the image's delivery repository. Builds found
+    on registry.redhat.io are considered already shipped and are excluded.
+
+    Arg(s):
+        image_metas (list[ImageMetadata]): Image metadata objects with delivery repo config.
+        records (list[KonfluxBuildRecord]): Corresponding build records from Konflux DB.
+
+    Return Value(s):
+        tuple: (filtered records not yet released, set of shipped indices).
+    """
+    semaphore = asyncio.Semaphore(REGISTRY_CHECK_CONCURRENCY)
+
+    async def _check_with_limit(delivery_repo: str, version: str, release: str) -> bool:
+        async with semaphore:
+            return await _is_image_released(delivery_repo, version, release)
+
+    check_tasks = []
+    check_indices = []
+
+    for i, (image, record) in enumerate(zip(image_metas, records)):
+        delivery_repo_names = image.config.delivery.delivery_repo_names
+        if delivery_repo_names is Missing or not delivery_repo_names:
+            LOGGER.warning("No delivery_repo_names for %s, skipping shipped check", image.distgit_key)
+            continue
+
+        delivery_repo = str(delivery_repo_names[0])
+        check_indices.append(i)
+        check_tasks.append(_check_with_limit(delivery_repo, record.version, record.release))
+
+    if not check_tasks:
+        return list(records), set()
+
+    LOGGER.info("Checking %d images against %s for shipped status...", len(check_tasks), DELIVERY_IMAGE_REGISTRY)
+    released_flags = await asyncio.gather(*check_tasks)
+
+    shipped_indices: set[int] = set()
+    for idx, is_released in zip(check_indices, released_flags):
+        if is_released:
+            shipped_indices.add(idx)
+
+    if shipped_indices:
+        LOGGER.info("Filtered %d already-shipped Konflux builds", len(shipped_indices))
+
+    filtered = [r for i, r in enumerate(records) if i not in shipped_indices]
+    return filtered, shipped_indices
+
+
+async def find_builds_konflux(runtime, payload, include_shipped: bool = False) -> list[dict]:
     """
     Find konflux builds for group/assembly.
 
-    Args:
+    Arg(s):
         runtime: The runtime object providing access to image metadata and the Konflux database.
         payload: If True, only include payload images; if False, only non-payload images.
+        include_shipped (bool): If True, do not filter out already-shipped builds.
 
-    Returns:
+    Return Value(s):
         list[dict]: List of build records for each image.
     """
     runtime.konflux_db.bind(KonfluxBuildRecord)
@@ -770,10 +856,14 @@ async def find_builds_konflux(runtime, payload) -> list[dict]:
         message = f"Failed to find Konflux builds for {len(images_not_found)} images: {images_not_found}"
         LOGGER.error(message)
         raise ElliottFatalError(message)
+
+    if not include_shipped:
+        records, _ = await _filter_shipped_konflux_builds(image_metas, list(records))
+
     return records
 
 
-async def find_builds_konflux_all_types(runtime: Runtime) -> dict[str, list]:
+async def find_builds_konflux_all_types(runtime: Runtime, include_shipped: bool = False) -> dict[str, list]:
     """
     Find Konflux builds for a group/assembly, separating payload and non-payload images,
     and fetch related OLM bundle builds.
@@ -789,10 +879,11 @@ async def find_builds_konflux_all_types(runtime: Runtime) -> dict[str, list]:
         3. 'olm_builds': NVRs of OLM bundle builds found.
         4. 'olm_builds_not_found': NVRs of OLM operator builds for which no bundle build was found.
 
-    Args:
+    Arg(s):
         runtime: The runtime object providing access to image metadata and the Konflux database.
+        include_shipped (bool): If True, do not filter out already-shipped builds.
 
-    Returns:
+    Return Value(s):
         dict[str, list]: A dictionary containing four lists:
             - 'payload': List of build nvrs for payload images.
             - 'non_payload': List of build nvrs for non-payload images.
@@ -828,6 +919,13 @@ async def find_builds_konflux_all_types(runtime: Runtime) -> dict[str, list]:
         message = f"Failed to find Konflux builds for {len(images_not_found)} images: {images_not_found}"
         LOGGER.error(message)
         raise ElliottFatalError(message)
+
+    if not include_shipped:
+        all_images = [img for _, img in image_metas]
+        _, shipped_indices = await _filter_shipped_konflux_builds(all_images, list(results))
+        results = [r for i, r in enumerate(results) if i not in shipped_indices]
+        olm_flags = [f for i, f in enumerate(olm_flags) if i not in shipped_indices]
+        payload_flags = [f for i, f in enumerate(payload_flags) if i not in shipped_indices]
 
     # get related bundle records in KonfluxBundleBuildRecord
     LOGGER.info("Fetching bundle NVRs from DB ...")
