@@ -647,7 +647,9 @@ class BuildMicroShiftBootcPipeline:
             else:
                 self._logger.info("No prior bootc build found for lockfile seeding")
             await self._do_rebase_and_build(
-                "hermetic", upstream_commit, assembly_label_value,
+                "hermetic",
+                upstream_commit,
+                assembly_label_value,
                 seed_nvr=seed_build.nvr if seed_build else None,
             )
 
