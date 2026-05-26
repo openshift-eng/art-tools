@@ -1453,7 +1453,7 @@
         "build_args": {
           "description": "List of KEY=VALUE strings passed as the build-args pipeline param for this image",
           "type": "array",
-          "items": { "type": "string", "minLength": 1 }
+          "items": { "type": "string", "pattern": "^[^=\\s]+=.+$" }
         },
         "build_args!": {
           "$ref": "#/properties/konflux/properties/build_args"

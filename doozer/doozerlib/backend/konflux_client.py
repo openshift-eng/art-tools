@@ -1351,6 +1351,11 @@ class KonfluxClient:
                 kept.append(task)
             obj["spec"]["pipelineSpec"]["tasks"] = kept
 
+        remaining_task_names = {t["name"] for t in obj["spec"]["pipelineSpec"]["tasks"]}
+        has_build_images_task = "build-images" in remaining_task_names
+        has_prefetch_task = "prefetch-dependencies" in remaining_task_names
+        has_sast_task = "sast-shell-check" in remaining_task_names
+
         # https://konflux.pages.redhat.com/docs/users/how-tos/configuring/overriding-compute-resources.html
         # ose-installer-artifacts fails with OOM with default values, hence bumping memory limit
         task_run_specs = []
@@ -1397,6 +1402,7 @@ class KonfluxClient:
                     "stepSpecs": build_images_step_specs,
                 }
             ]
+        if has_prefetch_task:
             task_run_specs += [
                 {
                     "pipelineTaskName": "prefetch-dependencies",

@@ -634,6 +634,9 @@ class KonfluxFbcFragmentMerger:
 
         arches = self.group_config.get("arches", list(KonfluxClient.SUPPORTED_ARCHES.keys()))
 
+        group_skip_tasks = self.group_config.get("konflux", {}).get("skip_tasks", [])
+        merged_skip_tasks = tuple(dict.fromkeys([*self.skip_tasks, *group_skip_tasks]))
+
         build_kwargs = dict(
             generate_name=f"{comp_name}-",
             namespace=self.konflux_namespace,
@@ -650,7 +653,7 @@ class KonfluxFbcFragmentMerger:
                 dockerfile="catalog.Dockerfile",
                 skip_checks=self.skip_checks,
                 skip_fips_check=self.skip_fips_check,
-                skip_tasks=self.skip_tasks,
+                skip_tasks=merged_skip_tasks,
                 build_priority=FBC_BUILD_PRIORITY,
             ),
         )
@@ -1999,6 +2002,9 @@ class KonfluxFbcBuilder:
         else:
             logger.info("No additional tags to be added")
 
+        group_skip_tasks = metadata.runtime.group_config.get("konflux", {}).get("skip_tasks", [])
+        merged_skip_tasks = tuple(dict.fromkeys([*self.skip_tasks, *group_skip_tasks]))
+
         build_kwargs = dict(
             generate_name=f"{component_name}-",
             namespace=self.konflux_namespace,
@@ -2013,7 +2019,7 @@ class KonfluxFbcBuilder:
             build_params=ImageBuildParams(
                 additional_tags=list(additional_tags),
                 skip_checks=self.skip_checks,
-                skip_tasks=self.skip_tasks,
+                skip_tasks=merged_skip_tasks,
                 hermetic=True,
                 dockerfile="catalog.Dockerfile",
                 build_priority=FBC_BUILD_PRIORITY,
