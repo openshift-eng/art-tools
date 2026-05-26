@@ -1006,3 +1006,202 @@ class TestKonfluxOcpPipelineRebaseFailures(unittest.IsolatedAsyncioTestCase):
         build_cmd = mock_cmd.call_args_list[1][0][0]
         self.assertIn('--images=survivor', build_cmd)
         self.assertEqual(pipeline.build_plan.images_included, ['survivor'])
+
+
+class TestKonfluxOcpPipelineBuildFailCounters(unittest.IsolatedAsyncioTestCase):
+    """Tests for update_build_fail_counters categorizing failures by type."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.runtime = MagicMock()
+        self.runtime.dry_run = False
+        self.runtime.doozer_working = str(Path(self.tmpdir) / 'doozer_working')
+        Path(self.runtime.doozer_working).mkdir(parents=True)
+
+    def _make_pipeline(self, assembly='stream', **kwargs):
+        from pyartcd.pipelines.ocp4_konflux import KonfluxOcpPipeline
+
+        defaults = {
+            'runtime': self.runtime,
+            'assembly': assembly,
+            'version': '4.18',
+            'data_path': 'test-path',
+            'image_build_strategy': 'all',
+            'image_list': '',
+            'rpm_build_strategy': 'none',
+            'rpm_list': '',
+            'data_gitref': '',
+            'kubeconfig': None,
+            'skip_rebase': False,
+            'skip_bundle_build': False,
+            'arches': (),
+            'plr_template': '',
+            'lock_identifier': 'test',
+            'skip_plashets': False,
+            'build_priority': 'auto',
+            'use_mass_rebuild_locks': False,
+            'network_mode': None,
+        }
+        defaults.update(kwargs)
+        return KonfluxOcpPipeline(**defaults)
+
+    @patch('pyartcd.pipelines.ocp4_konflux.increment_fail_counter', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.ocp4_konflux.reset_fail_counter', new_callable=AsyncMock)
+    async def test_build_fail_counters_categorize_ec_failures(self, mock_reset, mock_incr):
+        """EC failures use count:ec-failure key pattern."""
+        pipeline = self._make_pipeline()
+        record_log = {
+            'image_build_konflux': [
+                {
+                    'name': 'ironic',
+                    'status': '-1',
+                    'nvrs': 'ironic-1.0-1',
+                    'ec_failed': 'true',
+                    'ec_pipeline_url': 'http://its/plr/1',
+                    'base_image_release_failed': 'false',
+                },
+            ]
+        }
+        await pipeline.update_build_fail_counters([], ['ironic'], record_log)
+
+        incr_branches = [c.args[0] for c in mock_incr.call_args_list]
+        self.assertEqual(len(incr_branches), 1)
+        self.assertIn('count:ec-failure:konflux:openshift-4.18:ironic', incr_branches[0])
+
+        # Verify ec_pipeline_url is passed as metadata
+        incr_kwargs = mock_incr.call_args_list[0].kwargs
+        self.assertEqual(incr_kwargs['ec_pipeline_url'], 'http://its/plr/1')
+
+    @patch('pyartcd.pipelines.ocp4_konflux.increment_fail_counter', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.ocp4_konflux.reset_fail_counter', new_callable=AsyncMock)
+    async def test_build_fail_counters_categorize_release_failures(self, mock_reset, mock_incr):
+        """Base image release failures use count:release-failure key pattern."""
+        pipeline = self._make_pipeline()
+        record_log = {
+            'image_build_konflux': [
+                {
+                    'name': 'ose-base',
+                    'status': '-1',
+                    'nvrs': 'ose-base-1.0-1',
+                    'ec_failed': 'false',
+                    'ec_pipeline_url': '',
+                    'base_image_release_failed': 'true',
+                },
+            ]
+        }
+        await pipeline.update_build_fail_counters([], ['ose-base'], record_log)
+
+        incr_branches = [c.args[0] for c in mock_incr.call_args_list]
+        self.assertEqual(len(incr_branches), 1)
+        self.assertIn('count:release-failure:konflux:openshift-4.18:ose-base', incr_branches[0])
+
+    @patch('pyartcd.pipelines.ocp4_konflux.increment_fail_counter', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.ocp4_konflux.reset_fail_counter', new_callable=AsyncMock)
+    async def test_build_fail_counters_regular_build_failure(self, mock_reset, mock_incr):
+        """Regular build failures still use count:build-failure key pattern."""
+        pipeline = self._make_pipeline()
+        record_log = {
+            'image_build_konflux': [
+                {
+                    'name': 'cluster-etcd-operator',
+                    'status': '-1',
+                    'nvrs': 'ceo-1.0-1',
+                    'ec_failed': 'false',
+                    'ec_pipeline_url': '',
+                    'base_image_release_failed': 'false',
+                },
+            ]
+        }
+        await pipeline.update_build_fail_counters([], ['cluster-etcd-operator'], record_log)
+
+        incr_branches = [c.args[0] for c in mock_incr.call_args_list]
+        self.assertEqual(len(incr_branches), 1)
+        self.assertIn('count:build-failure:konflux:openshift-4.18:cluster-etcd-operator', incr_branches[0])
+
+    @patch('pyartcd.pipelines.ocp4_konflux.increment_fail_counter', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.ocp4_konflux.reset_fail_counter', new_callable=AsyncMock)
+    async def test_build_fail_counters_mixed_failures(self, mock_reset, mock_incr):
+        """Mixed failure types: each uses its own counter pattern."""
+        pipeline = self._make_pipeline()
+        record_log = {
+            'image_build_konflux': [
+                {
+                    'name': 'ironic',
+                    'status': '-1',
+                    'nvrs': 'ironic-1.0-1',
+                    'ec_failed': 'true',
+                    'ec_pipeline_url': 'http://its/1',
+                    'base_image_release_failed': 'false',
+                },
+                {
+                    'name': 'ose-base',
+                    'status': '-1',
+                    'nvrs': 'ose-base-1.0-1',
+                    'ec_failed': 'false',
+                    'ec_pipeline_url': '',
+                    'base_image_release_failed': 'true',
+                },
+                {
+                    'name': 'ceo',
+                    'status': '-1',
+                    'nvrs': 'ceo-1.0-1',
+                    'ec_failed': 'false',
+                    'ec_pipeline_url': '',
+                    'base_image_release_failed': 'false',
+                },
+            ]
+        }
+        await pipeline.update_build_fail_counters([], ['ironic', 'ose-base', 'ceo'], record_log)
+
+        incr_branches = {c.args[0] for c in mock_incr.call_args_list}
+        self.assertEqual(len(incr_branches), 3)
+        self.assertIn('count:ec-failure:konflux:openshift-4.18:ironic', incr_branches)
+        self.assertIn('count:release-failure:konflux:openshift-4.18:ose-base', incr_branches)
+        self.assertIn('count:build-failure:konflux:openshift-4.18:ceo', incr_branches)
+
+    @patch('pyartcd.pipelines.ocp4_konflux.increment_fail_counter', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.ocp4_konflux.reset_fail_counter', new_callable=AsyncMock)
+    async def test_build_fail_counters_success_resets_all_types(self, mock_reset, mock_incr):
+        """Successfully built images reset all three counter types."""
+        pipeline = self._make_pipeline()
+        record_log = {
+            'image_build_konflux': [
+                {
+                    'name': 'ironic',
+                    'status': '0',
+                    'nvrs': 'ironic-1.0-1',
+                    'ec_failed': 'false',
+                    'ec_pipeline_url': '',
+                    'base_image_release_failed': 'false',
+                },
+            ]
+        }
+        await pipeline.update_build_fail_counters(['ironic'], [], record_log)
+
+        reset_branches = {c.args[0] for c in mock_reset.call_args_list}
+        self.assertEqual(len(reset_branches), 3)
+        self.assertIn('count:build-failure:konflux:openshift-4.18:ironic', reset_branches)
+        self.assertIn('count:ec-failure:konflux:openshift-4.18:ironic', reset_branches)
+        self.assertIn('count:release-failure:konflux:openshift-4.18:ironic', reset_branches)
+        mock_incr.assert_not_called()
+
+    @patch('pyartcd.pipelines.ocp4_konflux.increment_fail_counter', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.ocp4_konflux.reset_fail_counter', new_callable=AsyncMock)
+    async def test_build_fail_counters_non_stream_skipped(self, mock_reset, mock_incr):
+        """Non-stream assemblies skip counter updates entirely."""
+        pipeline = self._make_pipeline(assembly='4.18.1')
+        record_log = {
+            'image_build_konflux': [
+                {
+                    'name': 'ironic',
+                    'status': '-1',
+                    'nvrs': 'ironic-1.0-1',
+                    'ec_failed': 'true',
+                    'ec_pipeline_url': 'http://its/1',
+                    'base_image_release_failed': 'false',
+                },
+            ]
+        }
+        await pipeline.update_build_fail_counters([], ['ironic'], record_log)
+        mock_reset.assert_not_called()
+        mock_incr.assert_not_called()

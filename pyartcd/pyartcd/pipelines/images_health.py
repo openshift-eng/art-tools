@@ -83,7 +83,7 @@ class ImagesHealthPipeline:
         self.scanned_versions.append(version)
 
         group = f'openshift-{version}'
-        failures = await util.get_build_failures(group=group, logger=self.runtime.logger)
+        failures = await util.get_counter_failures('build-failure', group=group, logger=self.runtime.logger)
 
         # Use Redis failures to scope the image list for the BigQuery query.
         # If an explicit image_list was provided, intersect it with failing images.

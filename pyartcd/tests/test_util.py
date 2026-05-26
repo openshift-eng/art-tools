@@ -225,20 +225,19 @@ class TestUtil(IsolatedAsyncioTestCase):
         self.assertEqual(util.get_rpm_if_pinned_directly(releases_config, '4.11.0', 'bar'), dict())
 
     @patch("artcommonlib.redis.set_value", new_callable=AsyncMock)
-    @patch("artcommonlib.redis.get_value", new_callable=AsyncMock)
-    async def test_increment_fail_counter_new(self, mock_get, mock_set):
-        mock_get.return_value = None
+    @patch("artcommonlib.redis.call", new_callable=AsyncMock)
+    async def test_increment_fail_counter_new(self, mock_call, mock_set):
+        mock_call.return_value = 1
         await util.increment_fail_counter('count:test:branch', url='http://j/1', nvr='test-1.0-1')
-        mock_set.assert_any_call(key='count:test:branch:failure', value=1)
+        mock_call.assert_called_once_with('incr', 'count:test:branch:failure')
         mock_set.assert_any_call(key='count:test:branch:url', value='http://j/1')
         mock_set.assert_any_call(key='count:test:branch:nvr', value='test-1.0-1')
 
-    @patch("artcommonlib.redis.set_value", new_callable=AsyncMock)
-    @patch("artcommonlib.redis.get_value", new_callable=AsyncMock)
-    async def test_increment_fail_counter_existing(self, mock_get, mock_set):
-        mock_get.return_value = '5'
+    @patch("artcommonlib.redis.call", new_callable=AsyncMock)
+    async def test_increment_fail_counter_existing(self, mock_call):
+        mock_call.return_value = 6
         await util.increment_fail_counter('count:test:branch')
-        mock_set.assert_any_call(key='count:test:branch:failure', value=6)
+        mock_call.assert_called_once_with('incr', 'count:test:branch:failure')
 
     @patch("artcommonlib.redis.delete_keys_by_pattern", new_callable=AsyncMock)
     async def test_reset_fail_counter(self, mock_delete):
@@ -247,7 +246,7 @@ class TestUtil(IsolatedAsyncioTestCase):
 
     @patch("artcommonlib.redis.get_value", new_callable=AsyncMock)
     @patch("artcommonlib.redis.get_keys", new_callable=AsyncMock)
-    async def test_get_build_failures(self, mock_get_keys, mock_get_value):
+    async def test_get_counter_failures_build(self, mock_get_keys, mock_get_value):
         # Mock get_keys to handle both the initial failure key search and metadata discovery
         def mock_get_keys_side_effect(pattern):
             if pattern.endswith(':*:failure'):
@@ -281,20 +280,76 @@ class TestUtil(IsolatedAsyncioTestCase):
             'count:build-failure:konflux:openshift-4.21:ovn-kubernetes:jenkins_url': '',
             'count:build-failure:konflux:openshift-4.21:ovn-kubernetes:nvr': None,
         }.get(key)
-        result = await util.get_build_failures('openshift-4.21')
+        result = await util.get_counter_failures('build-failure', 'openshift-4.21')
         self.assertEqual(result['ironic']['failure_count'], 5)
         self.assertEqual(result['ironic']['jenkins_url'], 'http://j/1')
         self.assertEqual(result['ironic']['nvr'], 'ironic-1.0-1')
         self.assertEqual(result['ovn-kubernetes']['failure_count'], 2)
 
     @patch("artcommonlib.redis.get_keys", new_callable=AsyncMock)
-    async def test_get_build_failures_empty(self, mock_get_keys):
+    async def test_get_counter_failures_empty(self, mock_get_keys):
         mock_get_keys.return_value = []
-        result = await util.get_build_failures('openshift-4.21')
+        result = await util.get_counter_failures('build-failure', 'openshift-4.21')
         self.assertEqual(result, {})
 
     @patch("artcommonlib.redis.get_keys", new_callable=AsyncMock)
-    async def test_get_build_failures_redis_error(self, mock_get_keys):
+    async def test_get_counter_failures_redis_error(self, mock_get_keys):
         mock_get_keys.side_effect = Exception("Redis connection refused")
-        result = await util.get_build_failures('openshift-4.21', logger=MagicMock())
+        result = await util.get_counter_failures('build-failure', 'openshift-4.21', logger=MagicMock())
+        self.assertEqual(result, {})
+
+    @patch("artcommonlib.redis.get_value", new_callable=AsyncMock)
+    @patch("artcommonlib.redis.get_keys", new_callable=AsyncMock)
+    async def test_get_counter_failures_ec(self, mock_get_keys, mock_get_value):
+        def mock_get_keys_side_effect(pattern):
+            if pattern.endswith(':*:failure'):
+                return ['count:ec-failure:konflux:openshift-4.21:ironic:failure']
+            elif 'ironic' in pattern:
+                return [
+                    'count:ec-failure:konflux:openshift-4.21:ironic:failure',
+                    'count:ec-failure:konflux:openshift-4.21:ironic:jenkins_url',
+                    'count:ec-failure:konflux:openshift-4.21:ironic:ec_pipeline_url',
+                ]
+            return []
+
+        mock_get_keys.side_effect = mock_get_keys_side_effect
+        mock_get_value.side_effect = lambda key: {
+            'count:ec-failure:konflux:openshift-4.21:ironic:failure': '3',
+            'count:ec-failure:konflux:openshift-4.21:ironic:jenkins_url': 'http://j/1',
+            'count:ec-failure:konflux:openshift-4.21:ironic:ec_pipeline_url': 'http://its/plr/1',
+        }.get(key)
+        result = await util.get_counter_failures('ec-failure', 'openshift-4.21')
+        self.assertEqual(result['ironic']['failure_count'], 3)
+        self.assertEqual(result['ironic']['jenkins_url'], 'http://j/1')
+        self.assertEqual(result['ironic']['ec_pipeline_url'], 'http://its/plr/1')
+
+    @patch("artcommonlib.redis.get_value", new_callable=AsyncMock)
+    @patch("artcommonlib.redis.get_keys", new_callable=AsyncMock)
+    async def test_get_counter_failures_release(self, mock_get_keys, mock_get_value):
+        def mock_get_keys_side_effect(pattern):
+            if pattern.endswith(':*:failure'):
+                return ['count:release-failure:konflux:openshift-4.21:ose-base:failure']
+            elif 'ose-base' in pattern:
+                return [
+                    'count:release-failure:konflux:openshift-4.21:ose-base:failure',
+                    'count:release-failure:konflux:openshift-4.21:ose-base:jenkins_url',
+                    'count:release-failure:konflux:openshift-4.21:ose-base:nvr',
+                ]
+            return []
+
+        mock_get_keys.side_effect = mock_get_keys_side_effect
+        mock_get_value.side_effect = lambda key: {
+            'count:release-failure:konflux:openshift-4.21:ose-base:failure': '2',
+            'count:release-failure:konflux:openshift-4.21:ose-base:jenkins_url': 'http://j/2',
+            'count:release-failure:konflux:openshift-4.21:ose-base:nvr': 'ose-base-1.0-1',
+        }.get(key)
+        result = await util.get_counter_failures('release-failure', 'openshift-4.21')
+        self.assertEqual(result['ose-base']['failure_count'], 2)
+        self.assertEqual(result['ose-base']['jenkins_url'], 'http://j/2')
+        self.assertEqual(result['ose-base']['nvr'], 'ose-base-1.0-1')
+
+    @patch("artcommonlib.redis.get_keys", new_callable=AsyncMock)
+    async def test_get_counter_failures_ec_empty(self, mock_get_keys):
+        mock_get_keys.return_value = []
+        result = await util.get_counter_failures('ec-failure', 'openshift-4.21')
         self.assertEqual(result, {})

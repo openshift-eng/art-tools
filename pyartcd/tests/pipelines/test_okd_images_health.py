@@ -39,7 +39,7 @@ class TestGetReport(IsolatedAsyncioTestCase):
         )
 
     @patch("pyartcd.pipelines.okd_images_health.exectools.cmd_gather_async", new_callable=AsyncMock)
-    @patch("pyartcd.pipelines.okd_images_health.util.get_build_failures", new_callable=AsyncMock)
+    @patch("pyartcd.pipelines.okd_images_health.util.get_counter_failures", new_callable=AsyncMock)
     async def test_redis_pre_filters_doozer_call(self, mock_get_failures, mock_cmd):
         """Redis failures scope the --images flag on the doozer subprocess."""
         mock_get_failures.return_value = {
@@ -58,7 +58,7 @@ class TestGetReport(IsolatedAsyncioTestCase):
 
         await pipeline.get_report('4.21')
 
-        mock_get_failures.assert_called_once_with(group='okd-4.21', logger=pipeline.runtime.logger)
+        mock_get_failures.assert_called_once_with('build-failure', group='okd-4.21', logger=pipeline.runtime.logger)
         mock_cmd.assert_called_once()
         cmd = mock_cmd.call_args[0][0]
         images_arg = next(a for a in cmd if a.startswith('--images='))
@@ -67,7 +67,7 @@ class TestGetReport(IsolatedAsyncioTestCase):
         self.assertEqual(len(pipeline.report), 2)
 
     @patch("pyartcd.pipelines.okd_images_health.exectools.cmd_gather_async", new_callable=AsyncMock)
-    @patch("pyartcd.pipelines.okd_images_health.util.get_build_failures", new_callable=AsyncMock)
+    @patch("pyartcd.pipelines.okd_images_health.util.get_counter_failures", new_callable=AsyncMock)
     async def test_image_list_intersects_with_redis(self, mock_get_failures, mock_cmd):
         """When --image-list is provided, only images in BOTH lists are queried."""
         mock_get_failures.return_value = {
@@ -90,7 +90,7 @@ class TestGetReport(IsolatedAsyncioTestCase):
         self.assertEqual(images_arg, '--images=ironic')
 
     @patch("pyartcd.pipelines.okd_images_health.exectools.cmd_gather_async", new_callable=AsyncMock)
-    @patch("pyartcd.pipelines.okd_images_health.util.get_build_failures", new_callable=AsyncMock, return_value={})
+    @patch("pyartcd.pipelines.okd_images_health.util.get_counter_failures", new_callable=AsyncMock, return_value={})
     async def test_skips_bigquery_when_no_redis_failures(self, _mock_get_failures, mock_cmd):
         """When Redis reports no failures, doozer images:health is not called at all."""
         pipeline = self._make_pipeline()

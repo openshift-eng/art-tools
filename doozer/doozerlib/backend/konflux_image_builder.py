@@ -131,6 +131,9 @@ class KonfluxImageBuilder:
             "task_url": "n/a",
             "status": -1,  # Status defaults to failure until explicitly set by success. This handles raised exceptions.
             "has_olm_bundle": 1 if metadata.is_olm_operator else 0,
+            "ec_failed": "false",
+            "ec_pipeline_url": "",
+            "base_image_release_failed": "false",
         }
         try:
             if dest_dir.exists():
@@ -336,6 +339,8 @@ class KonfluxImageBuilder:
                     ec_failed = ec_result.ec_failed
                     if ec_failed:
                         outcome = KonfluxBuildOutcome.FAILURE
+                        record["ec_failed"] = "true"
+                        record["ec_pipeline_url"] = ec_pipeline_url
 
                 elif outcome is KonfluxBuildOutcome.SUCCESS:
                     if self._config.skip_ec_verify:
@@ -368,6 +373,7 @@ class KonfluxImageBuilder:
                             logger.info("Base image release succeeded for %s, persisting build record", nvr)
                         else:
                             logger.error("Base image release failed for %s, persisting build record as FAILURE", nvr)
+                            record["base_image_release_failed"] = "true"
                         released_outcome = (
                             KonfluxBuildOutcome.SUCCESS if base_image_release_success else KonfluxBuildOutcome.FAILURE
                         )
