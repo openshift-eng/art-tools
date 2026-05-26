@@ -3,8 +3,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from artcommonlib.model import Model
 from artcommonlib.variants import BuildVariant
-from doozerlib.backend.base_image_handler import BaseImageHandler, BaseImageSnapshotInput
+from doozerlib.backend.base_image_handler import BaseImageHandler, BaseImageReleaseResult, BaseImageSnapshotInput
 from doozerlib.image import ImageMetadata
+from doozerlib.util import rh_art_images_base_pullspec
 
 
 class TestBaseImageHandler(IsolatedAsyncioTestCase):
@@ -52,12 +53,20 @@ class TestBaseImageHandler(IsolatedAsyncioTestCase):
         self.runtime.image_map = {"test-base": self.metadata}
 
         with patch.object(handler, "_snapshot_from_component", new=AsyncMock(return_value="test-snapshot")):
-            with patch.object(handler, "_create_release_from_snapshot", new=AsyncMock(return_value="test-release")):
+            with patch.object(
+                handler,
+                "_create_release_from_snapshot",
+                new=AsyncMock(return_value=("test-release", "https://konflux.example/releases/test-release")),
+            ):
                 with patch.object(handler, "_wait_for_release_completion", return_value=True):
                     result = await handler.snapshot_release(self.default_input)
 
         self.assertIsNotNone(result)
-        self.assertEqual(result, ("test-release", "test-snapshot"))
+        self.assertIsInstance(result, BaseImageReleaseResult)
+        self.assertEqual(result.release_name, "test-release")
+        self.assertEqual(result.snapshot_name, "test-snapshot")
+        self.assertEqual(result.released_pipeline, "https://konflux.example/releases/test-release")
+        self.assertEqual(result.released_pullspec, rh_art_images_base_pullspec(self.default_input.nvr))
 
     @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
     @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
@@ -73,7 +82,11 @@ class TestBaseImageHandler(IsolatedAsyncioTestCase):
         self.runtime.image_map = {"test-base": self.metadata}
 
         with patch.object(handler, "_snapshot_from_component", new=AsyncMock(return_value="snap")) as mock_snap:
-            with patch.object(handler, "_create_release_from_snapshot", new=AsyncMock(return_value="rel")):
+            with patch.object(
+                handler,
+                "_create_release_from_snapshot",
+                new=AsyncMock(return_value=("rel", "https://example.com/releases/rel")),
+            ):
                 with patch.object(handler, "_wait_for_release_completion", return_value=True):
                     await handler.snapshot_release(self.default_input)
 
@@ -156,12 +169,20 @@ class TestBaseImageHandler(IsolatedAsyncioTestCase):
         self.runtime.image_map = {"golang-builder": golang_metadata}
 
         with patch.object(handler, "_snapshot_from_component", new=AsyncMock(return_value="golang-snapshot")):
-            with patch.object(handler, "_create_release_from_snapshot", new=AsyncMock(return_value="golang-release")):
+            with patch.object(
+                handler,
+                "_create_release_from_snapshot",
+                new=AsyncMock(return_value=("golang-release", "https://konflux.example/releases/golang-release")),
+            ):
                 with patch.object(handler, "_wait_for_release_completion", return_value=True):
                     result = await handler.snapshot_release(inp)
 
         self.assertIsNotNone(result)
-        self.assertEqual(result, ("golang-release", "golang-snapshot"))
+        self.assertIsInstance(result, BaseImageReleaseResult)
+        self.assertEqual(result.release_name, "golang-release")
+        self.assertEqual(result.snapshot_name, "golang-snapshot")
+        self.assertEqual(result.released_pipeline, "https://konflux.example/releases/golang-release")
+        self.assertEqual(result.released_pullspec, rh_art_images_base_pullspec(golang_nvr))
 
     @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
     @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
@@ -182,8 +203,9 @@ class TestBaseImageHandler(IsolatedAsyncioTestCase):
         handler = BaseImageHandler(self.runtime, dry_run=False)
 
         with patch.object(handler, "_wait_for_snapshot_availability", new=AsyncMock(return_value=True)):
-            await handler._create_release_from_snapshot("test-snapshot", self.default_input)
+            name_url = await handler._create_release_from_snapshot("test-snapshot", self.default_input)
 
+        self.assertEqual(name_url, ("test-release", "https://konflux.example/releases/test-release"))
         konflux_client._get.assert_awaited_once()
         konflux_client._create.assert_awaited_once()
         release_obj = konflux_client._create.await_args.args[0]

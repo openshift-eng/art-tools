@@ -1,18 +1,25 @@
+import asyncio
 import unittest
-from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
-from artcommonlib.constants import GOLANG_BUILDER_IMAGE_NAME
 from artcommonlib.gitdata import DataObj
-from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome
+from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.model import Model
 from artcommonlib.variants import BuildVariant
 from click.testing import CliRunner
 from doozerlib import Runtime
-from doozerlib.cli import images as images_cli
-from doozerlib.cli.images import images_show_ancestors
+from doozerlib.backend.base_image_handler import BaseImageReleaseResult
+from doozerlib.cli.images import images_show_ancestors, release_to_base_repo
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.image import ImageMetadata
+
+
+def _invoke_release_to_base_repo_inner(runtime, nvr: str):
+    """Call the bare async handler (avoid Click/pass_runtime context in unit tests)."""
+    fn = release_to_base_repo.callback
+    while hasattr(fn, '__wrapped__'):
+        fn = fn.__wrapped__
+    return asyncio.run(fn(runtime, nvr))
 
 
 class TestImagesCli(unittest.TestCase):
@@ -111,8 +118,8 @@ class TestImagesCli(unittest.TestCase):
         self.assertIn("Image 'non-existent' not found in group.", str(result.exception))
 
 
-class TestSnapshotInputFromKonfluxSuccessBuild(IsolatedAsyncioTestCase):
-    def _base_runtime_and_md(self):
+class TestReleaseToBaseRepo(unittest.TestCase):
+    def _runtime_with_base_image(self):
         runtime = MagicMock()
         runtime.group = "openshift-4.22"
         runtime.product = "ocp"
@@ -129,89 +136,76 @@ class TestSnapshotInputFromKonfluxSuccessBuild(IsolatedAsyncioTestCase):
         data = Model({"key": "openshift-enterprise-base-rhel9", "data": image_model, "filename": "base.yaml"})
         md = ImageMetadata(runtime, data)
         md.distgit_key = "openshift-enterprise-base-rhel9"
-        return runtime, md
+        runtime.image_map = {md.distgit_key: md}
+        return runtime
 
-    async def test_builds_inputs_from_success_rows(self):
-        runtime, md = self._base_runtime_and_md()
-
-        record = MagicMock()
-        record.nvr = "ose-base-container-v4.22-1.el9"
-        record.name = "openshift-enterprise-base-rhel9"
-        record.image_pullspec = "quay.io/x@sha256:abc"
-        record.rebase_repo_url = "https://git.example/r.git"
-        record.rebase_commitish = "deadbeef"
-
-        runtime.konflux_db = MagicMock()
-        runtime.konflux_db.get_build_record_by_nvr = AsyncMock(return_value=record)
-        runtime.image_map = {record.name: md}
-
-        inp = await images_cli._snapshot_input_from_konflux_success_build(runtime, record.nvr)
-
-        runtime.konflux_db.get_build_record_by_nvr.assert_awaited_once_with(
-            nvr=record.nvr,
+    def test_inserts_followup_row_after_snapshot_release(self):
+        runtime = self._runtime_with_base_image()
+        nvr = "ose-base-container-v4.22-1.el9"
+        source = KonfluxBuildRecord(
+            name="openshift-enterprise-base-rhel9",
+            group=runtime.group,
+            nvr=nvr,
             outcome=KonfluxBuildOutcome.SUCCESS,
-            strict=False,
-            exclude_large_columns=True,
+            engine=Engine.KONFLUX,
+            record_id="prior-id",
+            build_id="shared-bid",
+            image_pullspec="quay.io/base@sha256:abc",
+            rebase_repo_url="https://git.example/r.git",
+            rebase_commitish="deadbeef",
         )
-        self.assertIsNotNone(inp)
-        assert inp is not None
-        self.assertEqual(inp.nvr, record.nvr)
-        self.assertEqual(inp.distgit_key, record.name)
-        self.assertEqual(inp.container_image, record.image_pullspec)
-        self.assertEqual(inp.rebase_repo_url, record.rebase_repo_url)
-        self.assertFalse(inp.is_golang_builder)
 
-    async def test_skips_unknown_nvr(self):
-        runtime, _ = self._base_runtime_and_md()
+        kb = MagicMock()
+        kb.get_build_record_by_nvr = AsyncMock(return_value=source)
+        kb.bind = MagicMock()
 
-        runtime.konflux_db = MagicMock()
-        runtime.konflux_db.get_build_record_by_nvr = AsyncMock(return_value=None)
+        captured = []
 
-        inp = await images_cli._snapshot_input_from_konflux_success_build(runtime, "nosuch-container-v1-1.el9")
-        self.assertIsNone(inp)
+        async def capture_builds(builds):
+            captured.extend(builds)
 
-    async def test_golang_builder_flag_from_metadata(self):
-        runtime = MagicMock()
-        runtime.group = "openshift-4.22"
-        runtime.product = "ocp"
-        runtime.variant = BuildVariant.OCP
-        runtime.assembly = "stream"
+        kb.add_builds = AsyncMock(side_effect=capture_builds)
 
-        image_model = Model(
-            {
-                "name": GOLANG_BUILDER_IMAGE_NAME,
-                "base_image_release": {"enabled": True},
-                "distgit": {"component": "ose-golang-builder-container"},
-            }
+        runtime.konflux_db = kb
+        runtime.initialize = MagicMock()
+
+        release_out = BaseImageReleaseResult(
+            release_name="r1",
+            snapshot_name="s1",
+            nvr=nvr,
+            released_pipeline="https://pipeline",
+            released_pullspec="registry.example/img:tag",
         )
-        data = Model({"key": "openshift-golang-builder", "data": image_model, "filename": "golang.yaml"})
-        md = ImageMetadata(runtime, data)
-        md.distgit_key = "openshift-golang-builder"
 
-        record = MagicMock()
-        record.nvr = "openshift-golang-builder-container-v1-1.el9"
-        record.name = "openshift-golang-builder"
-        record.image_pullspec = "quay.io/golang@sha256:x"
-        record.rebase_repo_url = ""
-        record.rebase_commitish = ""
+        with patch("doozerlib.cli.images.BaseImageHandler") as bh_cls:
 
-        runtime.konflux_db = MagicMock()
-        runtime.konflux_db.get_build_record_by_nvr = AsyncMock(return_value=record)
-        runtime.image_map = {record.name: md}
+            async def snap_release(inp):
+                self.assertFalse(inp.is_golang_builder)
+                self.assertEqual(inp.distgit_key, source.name)
+                self.assertEqual(inp.container_image, source.image_pullspec)
+                self.assertEqual(inp.rebase_repo_url, source.rebase_repo_url)
+                self.assertEqual(inp.rebase_commitish, source.rebase_commitish)
+                return release_out
 
-        inp = await images_cli._snapshot_input_from_konflux_success_build(runtime, record.nvr)
-        self.assertIsNotNone(inp)
-        assert inp is not None
-        self.assertTrue(inp.is_golang_builder)
+            bh_cls.return_value.snapshot_release = snap_release
 
-    async def test_golang_builder_flag_slash_name_in_metadata(self):
-        """config.name openshift/golang-builder must match ImageMetadata.is_golang_builder (ART-18934)."""
+            _invoke_release_to_base_repo_inner(runtime, nvr)
+
+        kb.get_build_record_by_nvr.assert_awaited_once()
+        self.assertEqual(len(captured), 1)
+        followup = captured[0]
+        self.assertEqual(followup.build_id, "shared-bid")
+        self.assertEqual(followup.released_pipeline, release_out.released_pipeline)
+        self.assertEqual(followup.released_pullspec, release_out.released_pullspec)
+        self.assertNotEqual(followup.record_id, "prior-id")
+
+    def test_golang_builder_snapshot_input_openshift_slash_builder_name(self):
+        """Regression: openshift/golang-builder in metadata marks golang (ART-18934)."""
         runtime = MagicMock()
         runtime.group = "rhel-9-golang-1.23"
         runtime.product = "ocp"
         runtime.variant = BuildVariant.OCP
         runtime.assembly = "stream"
-
         image_model = Model(
             {
                 "name": "openshift/golang-builder",
@@ -222,22 +216,45 @@ class TestSnapshotInputFromKonfluxSuccessBuild(IsolatedAsyncioTestCase):
         data = Model({"key": "openshift-golang-builder", "data": image_model, "filename": "golang.yaml"})
         md = ImageMetadata(runtime, data)
         md.distgit_key = "openshift-golang-builder"
+        runtime.image_map = {"openshift-golang-builder": md}
 
-        record = MagicMock()
-        record.nvr = "openshift-golang-builder-container-v1.23.10-1.el9"
-        record.name = "openshift-golang-builder"
-        record.image_pullspec = "quay.io/golang@sha256:x"
-        record.rebase_repo_url = ""
-        record.rebase_commitish = ""
+        nvr = "openshift-golang-builder-container-v1.23.10-1.el9"
+        source = KonfluxBuildRecord(
+            name="openshift-golang-builder",
+            group=runtime.group,
+            nvr=nvr,
+            outcome=KonfluxBuildOutcome.SUCCESS,
+            engine=Engine.KONFLUX,
+            image_pullspec="quay.io/g@sha256:x",
+            rebase_repo_url="",
+            rebase_commitish="",
+        )
+        kb = MagicMock()
+        kb.get_build_record_by_nvr = AsyncMock(return_value=source)
+        kb.bind = MagicMock()
+        kb.add_builds = AsyncMock()
+        runtime.konflux_db = kb
+        runtime.initialize = MagicMock()
 
-        runtime.konflux_db = MagicMock()
-        runtime.konflux_db.get_build_record_by_nvr = AsyncMock(return_value=record)
-        runtime.image_map = {record.name: md}
+        release_out = BaseImageReleaseResult(
+            release_name="r1",
+            snapshot_name="s1",
+            nvr=nvr,
+            released_pipeline="https://p",
+            released_pullspec="registry.io/i:t",
+        )
 
-        inp = await images_cli._snapshot_input_from_konflux_success_build(runtime, record.nvr)
-        self.assertIsNotNone(inp)
-        assert inp is not None
-        self.assertTrue(inp.is_golang_builder)
+        with patch("doozerlib.cli.images.BaseImageHandler") as bh_cls:
+
+            async def snap_release(inp):
+                self.assertTrue(inp.is_golang_builder)
+                return release_out
+
+            bh_cls.return_value.snapshot_release = snap_release
+
+            _invoke_release_to_base_repo_inner(runtime, nvr)
+
+        kb.add_builds.assert_awaited_once()
 
 
 if __name__ == '__main__':

@@ -434,6 +434,72 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         persisted = mock_add_build.call_args[0][0]
         self.assertEqual(persisted.image_pullspec, expected_pullspec)
 
+    async def test_update_konflux_db_persists_released_fields_when_passed(self):
+        """released_pipeline and released_pullspec are forwarded to KonfluxBuildRecord."""
+        metadata = self._metadata()
+        build_repo = MagicMock()
+        build_repo.https_url = "https://example.com/repo.git"
+        build_repo.commit_hash = "test-commit-hash"
+        build_repo.local_dir = Path(self.temp_dir.name)
+
+        pipelinerun = PipelineRunInfo(
+            {
+                "metadata": {
+                    "name": "test-pipelinerun",
+                    "uid": "test-uid",
+                    "labels": {"appstudio.openshift.io/component": "test-component"},
+                },
+                "status": {
+                    "results": [
+                        {"name": "IMAGE_URL", "value": "quay.io/test/image:test-tag"},
+                        {"name": "IMAGE_DIGEST", "value": "sha256:testdigest"},
+                    ],
+                    "startTime": "2023-10-01T12:00:00Z",
+                    "completionTime": "2023-10-01T12:30:00Z",
+                },
+            },
+            {},
+        )
+
+        with (
+            patch("doozerlib.backend.konflux_image_builder.DockerfileParser") as mock_dockerfile_parser,
+            patch.object(self.builder, "extract_parent_image_nvrs", new=AsyncMock(return_value=[])),
+            patch.object(
+                self.builder,
+                "get_installed_packages",
+                new=AsyncMock(return_value=({"pkg-1.0-1"}, {"srcpkg-1.0-1"})),
+            ),
+            patch("doozerlib.backend.konflux_image_builder.bigquery.BigQueryClient") as mock_bigquery_client,
+        ):
+            mock_dockerfile = MagicMock()
+            mock_dockerfile.labels = {
+                "io.openshift.build.source-location": "https://example.com/source-repo.git",
+                "io.openshift.build.commit.id": "source-commit-id",
+                "com.redhat.component": "test-component",
+                "version": "1.0",
+                "release": "1.el9",
+            }
+            mock_dockerfile.parent_images = []
+            mock_dockerfile_parser.return_value = mock_dockerfile
+            mock_bigquery_client.return_value.client.insert_rows_json.return_value = None
+
+            await self.builder.update_konflux_db(
+                metadata,
+                build_repo,
+                pipelinerun,
+                KonfluxBuildOutcome.SUCCESS,
+                ["x86_64"],
+                "5",
+                released_pipeline="https://release.example/pipeline",
+                released_pullspec="registry.redhat.io/foo:bar",
+            )
+
+        mock_add_build = metadata.runtime.konflux_db.add_build
+        mock_add_build.assert_called_once()
+        persisted = mock_add_build.call_args[0][0]
+        self.assertEqual(persisted.released_pipeline, "https://release.example/pipeline")
+        self.assertEqual(persisted.released_pullspec, "registry.redhat.io/foo:bar")
+
     async def test_trigger_base_image_release_success_flow(self):
         """SUCCESS after base snapshot release refreshes Konflux DB without swapping image_pullspec to RH."""
         metadata = self._metadata()
@@ -475,9 +541,7 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
             patch.object(
                 self.builder, "update_konflux_db", new=AsyncMock(return_value=MagicMock(record_id="1"))
             ) as mock_update_db,
-            patch.object(
-                self.builder, "_trigger_base_image_release", new=AsyncMock(return_value=True)
-            ) as mock_trigger_release,
+            patch.object(self.builder, "_trigger_base_image_release", new_callable=AsyncMock) as mock_trigger_release,
             patch.object(self.builder, "_validate_build_attestation_and_signature", new=AsyncMock()),
             patch.object(
                 self.builder._konflux_client,
@@ -489,6 +553,15 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
                 return_value=KonfluxBuildOutcome.SUCCESS,
             ),
         ):
+            from doozerlib.backend import base_image_handler
+
+            mock_trigger_release.return_value = base_image_handler.BaseImageReleaseResult(
+                release_name="r",
+                snapshot_name="s",
+                nvr="test-nvr",
+                released_pipeline="https://example.com/rel",
+                released_pullspec="registry.example/pull:test",
+            )
             await self.builder.build(metadata)
 
         mock_trigger_release.assert_awaited_once()
@@ -497,6 +570,9 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(mock_update_db.await_count, 2)
         success_call_args = mock_update_db.await_args_list[1][0]
         self.assertEqual(success_call_args[3], KonfluxBuildOutcome.SUCCESS)
+        success_call_kwargs = mock_update_db.await_args_list[1].kwargs
+        self.assertEqual(success_call_kwargs.get("released_pipeline"), "https://example.com/rel")
+        self.assertEqual(success_call_kwargs.get("released_pullspec"), "registry.example/pull:test")
 
     async def test_trigger_base_image_release_failure_flow(self):
         """Test base image release failure handling with FAILURE outcome update."""
@@ -540,7 +616,7 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
                 self.builder, "update_konflux_db", new=AsyncMock(return_value=MagicMock(record_id="1"))
             ) as mock_update_db,
             patch.object(
-                self.builder, "_trigger_base_image_release", new=AsyncMock(return_value=False)
+                self.builder, "_trigger_base_image_release", new=AsyncMock(return_value=None)
             ) as mock_trigger_release,
             patch.object(self.builder, "_validate_build_attestation_and_signature", new=AsyncMock()),
             patch.object(
@@ -559,9 +635,12 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         mock_trigger_release.assert_awaited_once()
         self.assertEqual(mock_update_db.await_count, 2)
 
-        # Final update records FAILURE outcome
+        # Final update records FAILURE outcome; released_* omitted when base release failed
         failure_call_args = mock_update_db.await_args_list[1][0]
         self.assertEqual(failure_call_args[3], KonfluxBuildOutcome.FAILURE)
+        failure_kw = mock_update_db.await_args_list[1].kwargs
+        self.assertEqual(failure_kw.get("released_pipeline", ""), "")
+        self.assertEqual(failure_kw.get("released_pullspec", ""), "")
 
     async def test_non_base_image_skips_release_trigger(self):
         """Test that non-base images skip the release trigger logic entirely."""
@@ -634,14 +713,22 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         build_repo.commit_hash = "abc123"
         pullspec = "quay.io/test/img@sha256:deadbeef"
 
+        release_result = base_image_handler.BaseImageReleaseResult(
+            release_name="test-release",
+            snapshot_name="test-snapshot",
+            nvr="test-nvr",
+            released_pipeline="https://example.com/pipeline",
+            released_pullspec="example.com/openshift/foo:test-nvr",
+        )
+
         with patch.object(
             base_image_handler.BaseImageHandler,
             "snapshot_release",
-            new=AsyncMock(return_value=("test-release", "test-snapshot")),
+            new=AsyncMock(return_value=release_result),
         ) as mock_snap:
             result = await self.builder._trigger_base_image_release(metadata, "test-nvr", pullspec, build_repo)
 
-        self.assertTrue(result)
+        self.assertIs(result, release_result)
         mock_snap.assert_awaited_once()
         inp = mock_snap.await_args[0][0]
         self.assertEqual(inp.nvr, "test-nvr")
@@ -660,20 +747,28 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         build_repo.commit_hash = "abc123"
         pullspec = "quay.io/test/img@sha256:deadbeef"
 
+        release_result = base_image_handler.BaseImageReleaseResult(
+            release_name="test-release",
+            snapshot_name="test-snapshot",
+            nvr="test-nvr",
+            released_pipeline="https://example.com/pipeline",
+            released_pullspec="example.com/openshift/foo:test-nvr",
+        )
+
         with patch.object(
             base_image_handler.BaseImageHandler,
             "snapshot_release",
-            new=AsyncMock(return_value=("test-release", "test-snapshot")),
+            new=AsyncMock(return_value=release_result),
         ) as mock_snap:
             result = await self.builder._trigger_base_image_release(metadata, "test-nvr", pullspec, build_repo)
 
-        self.assertTrue(result)
+        self.assertIs(result, release_result)
         metadata.is_golang_builder.assert_called_once()
         inp = mock_snap.await_args[0][0]
         self.assertTrue(inp.is_golang_builder)
 
-    async def test_trigger_base_image_release_returns_false_when_handler_returns_none(self):
-        """When handler returns None, _trigger_base_image_release is False."""
+    async def test_trigger_base_image_release_returns_none_when_handler_returns_none(self):
+        """When handler returns None, _trigger_base_image_release returns None."""
         from doozerlib.backend import base_image_handler
 
         metadata = self._metadata()
@@ -690,7 +785,7 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
                 metadata, "test-nvr", "quay.io/x@sha256:y", build_repo
             )
 
-        self.assertFalse(result)
+        self.assertIsNone(result)
         mock_snap.assert_awaited_once()
 
 

@@ -35,6 +35,17 @@ class BaseImageSnapshotInput:
     is_golang_builder: bool = False
 
 
+@dataclass(frozen=True)
+class BaseImageReleaseResult:
+    """Outputs from :meth:`BaseImageHandler.snapshot_release` after the Release succeeds."""
+
+    release_name: str
+    snapshot_name: str
+    nvr: str
+    released_pipeline: str
+    released_pullspec: str
+
+
 class BaseImageHandler:
     """
     Create a Konflux Snapshot for the product's base-image Application with **one** component, then a Release using
@@ -44,7 +55,6 @@ class BaseImageHandler:
     def __init__(self, runtime, dry_run: bool = False):
         self.runtime = runtime
         self.dry_run = dry_run
-        # Prefix until snapshot_release scopes `[entity]` to the image (same pattern as ImageMetadata).
         self.logger = logutil.EntityLoggingAdapter(self.runtime.logger, extra={'entity': 'base-image'})
 
         self.namespace = resolve_konflux_namespace_by_product(self.runtime.product, None)
@@ -68,14 +78,13 @@ class BaseImageHandler:
     def _scoped_logger(self, entity: str):
         return logutil.EntityLoggingAdapter(self.runtime.logger, extra={'entity': entity})
 
-    async def snapshot_release(self, snapshot_input: BaseImageSnapshotInput) -> Optional[Tuple[str, str]]:
+    async def snapshot_release(self, snapshot_input: BaseImageSnapshotInput) -> Optional[BaseImageReleaseResult]:
         """
         Run snapshot→release for exactly one base-image component.
 
         Returns:
-            ``(release_name, snapshot_name)`` on success, else ``None``.
+            :class:`BaseImageReleaseResult` on success, else ``None``.
         """
-        # Provisional entity (matches qualified_key for typical OCP images) until image_map lookup succeeds.
         self.logger = self._scoped_logger(f"containers/{snapshot_input.distgit_key}")
 
         if not snapshot_input.container_image:
@@ -106,20 +115,30 @@ class BaseImageHandler:
             self.logger.error("Failed to create snapshot")
             return None
 
-        release_name = await self._create_release_from_snapshot(snapshot_name, snapshot_input)
-        if not release_name:
+        result = await self._create_release_from_snapshot(snapshot_name, snapshot_input)
+        if not result:
             self.logger.error(f"Failed to create release (snapshot={snapshot_name})")
             return None
+
+        release_name, release_url = result
 
         if not await self._wait_for_release_completion(release_name):
             self.logger.error(f"Release did not complete successfully (release={release_name})")
             return None
 
+        released_pullspec = doozer_util.rh_art_images_base_pullspec(snapshot_input.nvr)
+
         self.logger.info(
             f"Snapshot-release completed (nvr={snapshot_input.nvr}, snapshot={snapshot_name}, release={release_name})"
         )
 
-        return release_name, snapshot_name
+        return BaseImageReleaseResult(
+            release_name=release_name,
+            snapshot_name=snapshot_name,
+            nvr=snapshot_input.nvr,
+            released_pipeline=release_url,
+            released_pullspec=released_pullspec,
+        )
 
     def _build_component_from_snapshot_input(self, snapshot_input: BaseImageSnapshotInput) -> dict:
         """One Konflux snapshot component dict from :class:`BaseImageSnapshotInput`."""
@@ -200,13 +219,16 @@ class BaseImageHandler:
 
     async def _create_release_from_snapshot(
         self, snapshot_name: str, snapshot_input: BaseImageSnapshotInput
-    ) -> Optional[str]:
+    ) -> Optional[Tuple[str, str]]:
         """
         Create Konflux Release from snapshot using the product's silent base-image ReleasePlan.
 
         Args:
             snapshot_name: Snapshot resource name.
             snapshot_input: Base-image component input (NVR and distgit key stored on Release annotations).
+
+        Returns:
+            ``(release_name, release_console_url)`` or ``None`` on failure.
         """
         try:
             if not self.dry_run:
@@ -259,14 +281,14 @@ class BaseImageHandler:
                     f"[DRY-RUN] Would create release for snapshot={snapshot_name} plan={self.base_image_release_plan}"
                 )
                 self.logger.debug(f"[DRY-RUN] Release object: {release_obj}")
-                return f"dry-run-release-{snapshot_name}"
+                return f"dry-run-release-{snapshot_name}", "https://dry-run.invalid"
 
             created_release = await self.konflux_client._create(release_obj)
             release_name = created_release.metadata.name
             release_url = self.konflux_client.resource_url(created_release)
 
             self.logger.info(f"Created release {release_name} for snapshot {snapshot_name} ({release_url})")
-            return release_name
+            return release_name, release_url
 
         except Exception as e:
             self.logger.error(f"Failed to create release from snapshot {snapshot_name} ({type(e).__name__}: {e})")
