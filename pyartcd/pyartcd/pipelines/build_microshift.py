@@ -69,10 +69,13 @@ class BuildMicroShiftPipeline:
         skip_prepare_advisory: bool,
         data_path: str,
         slack_client,
+        data_gitref: str | None = None,
         logger: Optional[logging.Logger] = None,
     ):
         self.runtime = runtime
         self.group = group
+        self.data_gitref = data_gitref or ""
+        self.doozer_group = f"{self.group}@{self.data_gitref}" if self.data_gitref else self.group
         self.assembly = assembly
         self.assembly_type = AssemblyTypes.STREAM
         self.payloads = payloads
@@ -141,7 +144,7 @@ class BuildMicroShiftPipeline:
         group_config = await load_group_config(self.group, self.assembly, env=self._doozer_env_vars)
         advisories = group_config.get("advisories", {})
         self.releases_config = await load_releases_config(
-            group=self.group,
+            group=self.doozer_group,
             data_path=self._doozer_env_vars.get("DOOZER_DATA_PATH", None) or constants.OCP_BUILD_DATA_URL,
         )
         self.assembly_type = get_assembly_type(self.releases_config, self.assembly)
@@ -316,7 +319,7 @@ class BuildMicroShiftPipeline:
                 await self.slack_client.say_in_thread(message)
                 nvrs = list(pinned_nvrs.values())
             else:
-                nvrs = await get_microshift_builds(self.group, self.assembly, env=self._elliott_env_vars)
+                nvrs = await get_microshift_builds(self.doozer_group, self.assembly, env=self._elliott_env_vars)
 
         if nvrs:
             self._logger.info("Builds already exist: %s", nvrs)
@@ -392,7 +395,7 @@ class BuildMicroShiftPipeline:
 
     def _elliott_base_cmd(self) -> List[str]:
         """Create base elliott command with group and assembly"""
-        cmd = ["elliott", "--group", self.group, "--assembly", self.assembly]
+        cmd = ["elliott", "--group", self.doozer_group, "--assembly", self.assembly]
         if self._registry_config:
             cmd.append(f"--registry-config={self._registry_config}")
         return cmd
@@ -697,6 +700,12 @@ class BuildMicroShiftPipeline:
     help=f"Git repo or directory containing groups metadata e.g. {constants.OCP_BUILD_DATA_URL}",
 )
 @click.option(
+    "--data-gitref",
+    required=False,
+    default="",
+    help="Doozer data path git [branch / tag / sha] to use",
+)
+@click.option(
     "-g",
     "--group",
     metavar='NAME',
@@ -738,6 +747,7 @@ async def build_microshift(
     no_rebase: bool,
     force: bool,
     skip_prepare_advisory: bool,
+    data_gitref: str | None = None,
 ):
     # slack client is dry-run aware and will not send messages if dry-run is enabled
     slack_client = runtime.new_slack_client()
@@ -753,6 +763,7 @@ async def build_microshift(
             skip_prepare_advisory=skip_prepare_advisory,
             data_path=data_path,
             slack_client=slack_client,
+            data_gitref=data_gitref,
         )
         await pipeline.run()
     except Exception as err:
