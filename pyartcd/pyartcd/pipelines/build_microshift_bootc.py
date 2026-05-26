@@ -515,6 +515,9 @@ class BuildMicroShiftBootcPipeline:
             "--latest-parent-version",
             "-i",
             self.BOOTC_IMAGE_NAME,
+            # Lock to the same commit as the microshift RPM to ensure consistency
+            # between RPM and bootc artifacts. Without this, doozer would try to
+            # use brew to find the commit which fails for Konflux-built images.
             "--lock-upstream",
             self.BOOTC_IMAGE_NAME,
             upstream_commit,
@@ -554,6 +557,7 @@ class BuildMicroShiftBootcPipeline:
             [
                 "-i",
                 self.BOOTC_IMAGE_NAME,
+                # Lock to the same commit as the microshift RPM to ensure consistency
                 "--lock-upstream",
                 self.BOOTC_IMAGE_NAME,
                 upstream_commit,
