@@ -2,6 +2,7 @@
 GitLab client for ART tools.
 """
 
+import os
 from logging import getLogger
 from urllib.parse import urlparse
 
@@ -43,6 +44,24 @@ class GitLabClient:
         except Exception as e:
             logger.error(f"Failed to connect to GitLab at {gitlab_url}: {e}")
             raise
+
+    @classmethod
+    def from_url(cls, url: str, gitlab_token: str | None = None, dry_run: bool = False) -> "GitLabClient":
+        """
+        Create a GitLabClient from a full GitLab URL, extracting the server base URL automatically.
+
+        Arg(s):
+            url (str): Any GitLab URL (project, MR, etc.)
+            gitlab_token (str | None): GitLab token. If None, reads from GITLAB_TOKEN env var.
+            dry_run (bool): If True, operations will be logged but not executed
+        Return Value(s):
+            GitLabClient: Authenticated client instance
+        """
+        parsed = urlparse(url)
+        gitlab_url = f"{parsed.scheme}://{parsed.netloc}"
+        if gitlab_token is None:
+            gitlab_token = os.getenv("GITLAB_TOKEN", "")
+        return cls(gitlab_url, gitlab_token, dry_run=dry_run)
 
     def get_project(self, project_path: str):
         """
@@ -204,3 +223,17 @@ class GitLabClient:
         pipeline_url = pipeline.web_url
         logger.info(f"CI MR pipeline triggered successfully: {pipeline_url}")
         return pipeline_url
+
+    def list_merge_requests(self, project_path: str, state: str = "opened", **kwargs):
+        """
+        List merge requests for a project, filtered by state and optional criteria.
+
+        Arg(s):
+            project_path (str): Project path (e.g., "hybrid-platforms/art/ocp-shipment-data")
+            state (str): MR state filter ("opened", "closed", "merged", "all")
+            **kwargs: Additional filters passed to python-gitlab (source_branch, target_branch, etc.)
+        Return Value(s):
+            list: List of merge request objects
+        """
+        project = self.get_project(project_path)
+        return project.mergerequests.list(state=state, get_all=True, **kwargs)

@@ -470,7 +470,7 @@ class PrepareReleaseKonfluxPipeline:
         bug categorization sees builds from both brew and konflux sources.
         """
         self.logger.info("Finding bugs for all advisories and shipments...")
-        bugs_by_kind = await self.find_bugs()
+        bugs_by_kind = await self.find_bugs(filter_attached_bugs=True)
 
         # Attach bugs to ET advisories
         # Process bugs
@@ -1106,12 +1106,14 @@ class PrepareReleaseKonfluxPipeline:
         build_system='konflux',
         permissive: bool | None = None,
         exclude_trackers: bool | None = None,
+        filter_attached_bugs: bool = True,
     ) -> Dict[str, List[str]]:
         """Find bugs for the current assembly.
 
         :param build_system: The build system to use (default: 'konflux').
         :param permissive: Whether to use permissive mode. None means use default behavior.
         :param exclude_trackers: Whether to exclude tracker bugs. None means use default behavior.
+        :param filter_attached_bugs: Whether to filter bugs already attached to advisories/shipments.
         :return: A dictionary mapping advisory kinds to lists of bug IDs
         """
         match build_system:
@@ -1133,6 +1135,10 @@ class PrepareReleaseKonfluxPipeline:
             find_bugs_cmd.append("--exclude-trackers")
         if permissive:
             find_bugs_cmd.append("--permissive")
+        if filter_attached_bugs:
+            find_bugs_cmd.append("--filter-attached-bugs")
+        else:
+            find_bugs_cmd.append("--no-filter-attached-bugs")
         stdout = await self.execute_command_with_logging(find_bugs_cmd)
         return json.loads(stdout)
 

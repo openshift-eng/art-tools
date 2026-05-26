@@ -1,8 +1,8 @@
 import logging
-import os
 from typing import Dict, Iterable, List, Tuple
 from urllib.parse import urlparse
 
+from artcommonlib.assembly import assembly_config_struct
 from artcommonlib.gitlab import GitLabClient
 from artcommonlib.jira_config import JIRA_DOMAIN_NAME
 from artcommonlib.model import Model
@@ -26,14 +26,7 @@ def get_shipment_configs_from_mr(
 
     shipment_configs: Dict[str, ShipmentConfig] = {}
 
-    gitlab_token = os.getenv("GITLAB_TOKEN")
-    if not gitlab_token:
-        raise ValueError("GITLAB_TOKEN environment variable is required for Konflux operations")
-
-    parsed_url = urlparse(mr_url)
-    gitlab_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
-
-    gl = GitLabClient(gitlab_url, gitlab_token)
+    gl = GitLabClient.from_url(mr_url)
 
     mr = gl.get_mr_from_url(mr_url)
     source_project = gl.get_project(mr.source_project_id)
@@ -112,3 +105,98 @@ def set_jira_bug_ids(release_notes: ReleaseNotes, bug_ids: Iterable[str]):
         release_notes.issues = None
     else:
         release_notes.issues = Issues(fixed=fixed)
+
+
+def get_bug_ids_from_open_shipment_mrs(
+    shipment_data_url: str,
+    group: str,
+    releases_config: Model,
+    current_assembly: str,
+) -> set[str]:
+    """
+    Collect bug IDs from all open shipment MRs in ocp-shipment-data that match
+    the given group, excluding the current assembly's own MR.
+
+    Only considers MRs whose assembly is defined in releases_config and whose
+    MR URL matches the shipment URL configured for that assembly. This filters
+    out test/incomplete MRs.
+
+    Arg(s):
+        shipment_data_url (str): GitLab URL for ocp-shipment-data repo
+        group (str): OCP group to match (e.g., 'openshift-4.18')
+        releases_config (Model): Parsed releases.yml config for assembly validation
+        current_assembly (str): Assembly being prepared (its own MR is excluded)
+    Return Value(s):
+        set[str]: Set of bug IDs already attached to open shipment MRs
+    """
+    parsed_url = urlparse(shipment_data_url)
+    project_path = parsed_url.path.strip("/")
+
+    gl = GitLabClient.from_url(shipment_data_url)
+    open_mrs = gl.list_merge_requests(project_path, state="opened")
+
+    bug_ids: set[str] = set()
+    for mr in open_mrs:
+        try:
+            shipment_configs = get_shipment_configs_from_mr(mr.web_url)
+        except (ValueError, TypeError, KeyError):
+            logger.warning("Failed to parse shipment configs from MR %s, skipping", mr.web_url, exc_info=True)
+            continue
+
+        for config in shipment_configs.values():
+            metadata = config.shipment.metadata
+            if metadata.group != group:
+                continue
+            if metadata.assembly == current_assembly:
+                continue
+            if not _is_assembly_shipment_valid(releases_config, metadata.assembly, mr.web_url):
+                continue
+            if metadata.fbc:
+                continue
+            if not config.shipment.data or not config.shipment.data.releaseNotes:
+                continue
+            issues = config.shipment.data.releaseNotes.issues
+            if not issues or not issues.fixed:
+                continue
+            for issue in issues.fixed:
+                bug_ids.add(issue.id)
+
+    if bug_ids:
+        logger.info("Found %d bugs attached to open shipment MRs: %s", len(bug_ids), sorted(bug_ids))
+
+    return bug_ids
+
+
+def _is_assembly_shipment_valid(releases_config: Model, assembly: str, mr_url: str) -> bool:
+    """
+    Check that an assembly exists in releases_config and that its configured
+    shipment URL matches the given MR URL.
+
+    Arg(s):
+        releases_config (Model): Parsed releases.yml
+        assembly (str): Assembly name from shipment metadata
+        mr_url (str): MR web URL to validate against
+    Return Value(s):
+        bool: True if assembly is defined and its shipment URL matches mr_url
+    """
+    if not releases_config.releases[assembly]:
+        logger.debug("Assembly %s not found in releases_config, skipping MR %s", assembly, mr_url)
+        return False
+
+    assembly_group_config = assembly_config_struct(releases_config, assembly, "group", {})
+    shipment = assembly_group_config.get("shipment") or {}
+    configured_url = shipment.get("url") if isinstance(shipment, dict) else getattr(shipment, "url", None)
+    if not configured_url:
+        logger.debug("No shipment URL configured for assembly %s, skipping MR %s", assembly, mr_url)
+        return False
+
+    if configured_url != mr_url:
+        logger.debug(
+            "MR URL %s does not match configured shipment URL %s for assembly %s, skipping",
+            mr_url,
+            configured_url,
+            assembly,
+        )
+        return False
+
+    return True
