@@ -316,13 +316,13 @@ class BuildMicroShiftBootcPipeline:
             await _run_for(local_dir, release_path)
             await _run_for(local_dir, latest_path)
 
-    async def get_latest_bootc_build(self):
+    async def get_latest_bootc_build(self, hermetic: Optional[bool] = None):
         if not self.konflux_db:
             self.konflux_db = KonfluxDb()
             self.konflux_db.bind(KonfluxBuildRecord)
             self._logger.info('Konflux DB initialized')
 
-        build = await self.konflux_db.get_latest_build(
+        kwargs: dict = dict(
             name=self.BOOTC_IMAGE_NAME,
             group=self.group,
             assembly=self.assembly,
@@ -332,6 +332,10 @@ class BuildMicroShiftBootcPipeline:
             el_target='el9',
             exclude_large_columns=True,
         )
+        if hermetic is not None:
+            kwargs['extra_patterns'] = {'hermetic': hermetic}
+
+        build = await self.konflux_db.get_latest_build(**kwargs)
         return cast(Optional[KonfluxBuildRecord], build)
 
     async def get_bootc_build_for_seeding(self) -> Optional[KonfluxBuildRecord]:
@@ -342,7 +346,7 @@ class BuildMicroShiftBootcPipeline:
             self._logger.info('Konflux DB initialized')
 
         build = await self.konflux_db.get_latest_build(
-            name="microshift-bootc",
+            name=self.BOOTC_IMAGE_NAME,
             group=self.group,
             outcome=KonfluxBuildOutcome.SUCCESS,
             engine=Engine.KONFLUX,
@@ -542,7 +546,11 @@ class BuildMicroShiftBootcPipeline:
             rebase_cmd.append("--push")
         await exectools.cmd_assert_async(rebase_cmd, env=self._doozer_env_vars)
 
-        kubeconfig = os.environ['KONFLUX_SA_KUBECONFIG']
+        kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
+        if not kubeconfig:
+            raise ValueError(
+                f"KONFLUX_SA_KUBECONFIG environment variable is required to build {self.BOOTC_IMAGE_NAME} image"
+            )
         build_cmd = [
             "doozer",
             "--group",
@@ -619,11 +627,6 @@ class BuildMicroShiftBootcPipeline:
         else:
             self._logger.info("Force flag is set. Forcing bootc image build")
 
-        if not os.environ.get('KONFLUX_SA_KUBECONFIG'):
-            raise ValueError(
-                f"KONFLUX_SA_KUBECONFIG environment variable is required to build {self.BOOTC_IMAGE_NAME} image"
-            )
-
         await self._build_plashet_for_bootc()
 
         # Extract the commit from the microshift RPM to ensure bootc is built from the same source
@@ -660,8 +663,8 @@ class BuildMicroShiftBootcPipeline:
         # sleep a little bit to account for time drift between systems
         await asyncio.sleep(10)
 
-        # now that build is complete, fetch it
-        return await self.get_latest_bootc_build()
+        # now that build is complete, fetch the hermetic build
+        return await self.get_latest_bootc_build(hermetic=True)
 
     def extract_git_repo(self, data_path: str):
         """
@@ -1274,7 +1277,7 @@ class BuildMicroShiftBootcPipeline:
     "--trigger-open-build-first",
     is_flag=True,
     default=False,
-    help="Run an open (non-hermetic) build before the hermetic build to produce an installed-RPMs record for lockfile generation.",
+    help="Run an open (non-hermetic) build before the hermetic build to populate the installed_rpms DB field used for lockfile generation.",
 )
 @pass_runtime
 @click_coroutine

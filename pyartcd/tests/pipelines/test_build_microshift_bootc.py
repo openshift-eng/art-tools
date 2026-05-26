@@ -376,10 +376,13 @@ class TestBuildMicroShiftBootcPipeline(IsolatedAsyncioTestCase):
         self.assertIsNone(pipeline._get_assembly_label_value())
 
     @patch("pyartcd.pipelines.build_microshift_bootc.exectools.cmd_assert_async", new_callable=AsyncMock)
+    @patch.object(BuildMicroShiftBootcPipeline, "get_bootc_build_for_seeding", new_callable=AsyncMock)
     @patch.object(BuildMicroShiftBootcPipeline, "get_latest_bootc_build", new_callable=AsyncMock)
     @patch.object(BuildMicroShiftBootcPipeline, "_get_microshift_rpm_commit", new_callable=AsyncMock)
     @patch.object(BuildMicroShiftBootcPipeline, "_build_plashet_for_bootc", new_callable=AsyncMock)
-    async def test_rebase_uses_two_segment_version(self, mock_plashet, mock_get_commit, mock_get_build, mock_cmd):
+    async def test_rebase_uses_two_segment_version(
+        self, mock_plashet, mock_get_commit, mock_get_build, mock_get_seed, mock_cmd
+    ):
         """
         Test that _rebase_and_build_bootc passes --version v4.21 (2 segments)
         instead of v4.21.0 to avoid confusing tags on the container catalog
@@ -410,11 +413,12 @@ class TestBuildMicroShiftBootcPipeline(IsolatedAsyncioTestCase):
             os.environ.pop("KONFLUX_SA_KUBECONFIG", None)
 
     @patch("pyartcd.pipelines.build_microshift_bootc.exectools.cmd_assert_async", new_callable=AsyncMock)
+    @patch.object(BuildMicroShiftBootcPipeline, "get_bootc_build_for_seeding", new_callable=AsyncMock)
     @patch.object(BuildMicroShiftBootcPipeline, "get_latest_bootc_build", new_callable=AsyncMock)
     @patch.object(BuildMicroShiftBootcPipeline, "_get_microshift_rpm_commit", new_callable=AsyncMock)
     @patch.object(BuildMicroShiftBootcPipeline, "_build_plashet_for_bootc", new_callable=AsyncMock)
     async def test_rebase_and_build_bootc_uses_rpm_commit(
-        self, mock_plashet, mock_get_commit, mock_get_build, mock_cmd
+        self, mock_plashet, mock_get_commit, mock_get_build, mock_get_seed, mock_cmd
     ):
         """
         Test that _rebase_and_build_bootc passes the RPM commit to --lock-upstream
