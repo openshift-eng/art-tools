@@ -970,26 +970,13 @@ class KonfluxRebaser:
             # sees the rebased FROM lines with resolved ART pullspecs
             await self._write_rpms_lock_file(metadata, dest_dir, downstream_parents, parent_members)
 
-            # Strip bare yum/dnf update commands AFTER lockfile generation
-            # so the generator resolves upgrade targets into the lockfile,
-            # but the build doesn't hit unreachable external repos (e.g.
-            # cdn-ubi.redhat.com) in hermetic mode.
             if (
                 metadata.is_lockfile_generation_enabled()
                 and metadata.get_lockfile_backend() == LockfileBackend.RPM_LOCKFILE_PROTOTYPE.value
             ):
-                from doozerlib.lockfile_prototype.dockerfile_transforms import (
-                    strip_bare_updates,
-                    strip_bare_updates_from_scripts,
-                    strip_reinstall_commands,
-                )
+                from doozerlib.lockfile_prototype.rebaser_hooks import apply_dockerfile_transforms
 
-                df_path = dest_dir / "Dockerfile"
-                df_content = df_path.read_text()
-                df_content = strip_bare_updates(df_content)
-                df_content = strip_reinstall_commands(df_content)
-                df_path.write_text(df_content)
-                strip_bare_updates_from_scripts(dest_dir, logger=self._logger)
+                apply_dockerfile_transforms(dest_dir, logger=self._logger)
 
             await self._update_csv(metadata, dest_dir, version, release)
 
@@ -1010,52 +997,29 @@ class KonfluxRebaser:
         self._logger.info(f"Generating RPM lockfile for {metadata.distgit_key} (backend={backend_str})")
 
         if backend_str == LockfileBackend.RPM_LOCKFILE_PROTOTYPE.value:
-            from doozerlib.lockfile_prototype.constants import DEFAULT_RPM_LOCKFILE_NAME
-            from doozerlib.lockfile_prototype.generator import RpmLockfilePrototypeGenerator
-            from doozerlib.lockfile_prototype.resolver import RpmResolver
-
-            if self._shared_dnf_cache is None:
-                self._shared_dnf_cache = TemporaryDirectory(prefix="rpm-lockfile-cache-")
-
-            resolver = RpmResolver(logger=self._logger, cache_dir=self._shared_dnf_cache.name)
-            generator = RpmLockfilePrototypeGenerator(self._runtime.repos, resolver=resolver)
-
-            fallback: dict[int, list[str]] = {}
-            parent_dirs: dict[int, Path] = {}
-            if parent_members and downstream_parents:
-                for stage_num, pullspec in enumerate(downstream_parents):
-                    for parent in parent_members or []:
-                        if parent is None:
-                            continue
-                        if parent.distgit_key in pullspec:
-                            if parent.lockfile_packages:
-                                fallback[stage_num] = parent.lockfile_packages
-                            parent_dir = self._base_dir / parent.qualified_key
-                            if parent_dir.is_dir():
-                                parent_dirs[stage_num] = parent_dir
-                            break
-
-            await generator.generate_lockfile(
-                metadata,
-                dest_dir,
-                downstream_parents=downstream_parents,
-                fallback_installed=fallback or None,
-                parent_source_dirs=parent_dirs or None,
-            )
-
-            # Store resolved package names for child images
-            lockfile_path = dest_dir / DEFAULT_RPM_LOCKFILE_NAME
-            if lockfile_path.exists():
-                lockfile_data = yaml.safe_load(lockfile_path.read_text())
-                pkg_names: set[str] = set()
-                for arch_entry in lockfile_data.get("arches", []):
-                    for pkg in arch_entry.get("packages", []):
-                        name = pkg.get("name")
-                        if name:
-                            pkg_names.add(name)
-                metadata.lockfile_packages = sorted(pkg_names)
+            await self._write_rpms_lock_file_prototype(metadata, dest_dir, downstream_parents, parent_members)
         else:
             await self.rpm_lockfile_generator.generate_lockfile(metadata, dest_dir)
+
+    async def _write_rpms_lock_file_prototype(
+        self,
+        metadata: ImageMetadata,
+        dest_dir: Path,
+        downstream_parents: list[str] | None = None,
+        parent_members: list | None = None,
+    ):
+        from doozerlib.lockfile_prototype.rebaser_hooks import generate_lockfile
+
+        self._shared_dnf_cache = await generate_lockfile(
+            metadata,
+            dest_dir,
+            repos=self._runtime.repos,
+            base_dir=self._base_dir,
+            downstream_parents=downstream_parents,
+            parent_members=parent_members,
+            shared_dnf_cache=self._shared_dnf_cache,
+            logger=self._logger,
+        )
 
     async def _write_artifacts_lock_file(self, metadata: ImageMetadata, dest_dir: Path):
         if not metadata.is_artifact_lockfile_enabled():
