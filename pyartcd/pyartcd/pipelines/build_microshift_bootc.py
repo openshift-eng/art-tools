@@ -642,9 +642,21 @@ class BuildMicroShiftBootcPipeline:
                 "Running open build phase (needed for hermetic lockfile generation)..."
             )
             await self._do_rebase_and_build("open", upstream_commit, assembly_label_value)
-            # Wait for the open build record to propagate in BigQuery before the hermetic build queries it
-            await asyncio.sleep(10)
-            await self._do_rebase_and_build("hermetic", upstream_commit, assembly_label_value)
+
+            # Fetch the open build record and verify it belongs to this job run before using it as seed
+            open_build = await self.get_latest_bootc_build(hermetic=False)
+            if not open_build:
+                raise IOError("Open build phase completed but no build record found in Konflux DB")
+            build_url = os.environ.get('BUILD_URL')
+            if build_url and open_build.art_job_url != build_url:
+                raise IOError(
+                    f"Open build record art_job_url ({open_build.art_job_url}) does not match "
+                    f"current BUILD_URL ({build_url}). Refusing to proceed with hermetic build."
+                )
+            self._logger.info("Open build record verified: %s", open_build.nvr)
+
+            # Phase 2: hermetic build — pass the verified open build NVR so doozer uses its installed_rpms for lockfile generation
+            await self._do_rebase_and_build("hermetic", upstream_commit, assembly_label_value, seed_nvr=open_build.nvr)
         else:
             # Find the most recent prior bootc build (any assembly) to seed the RPM lockfile.
             # This is a no-op when the image is not configured as hermetic in ocp-build-data.
