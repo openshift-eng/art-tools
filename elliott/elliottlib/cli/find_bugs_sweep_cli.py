@@ -307,7 +307,8 @@ async def get_bugs_sweep(runtime: Runtime, find_bugs_obj, bug_tracker, filter_at
                 shipment_bug_ids = get_bug_ids_from_open_shipment_mrs(
                     shipment_data_url=shipment_data_url,
                     group=runtime.group,
-                    exclude_assembly=runtime.assembly,
+                    releases_config=releases_config,
+                    current_assembly=runtime.assembly,
                 )
             if shipment_bug_ids:
                 before_count = len(bugs)

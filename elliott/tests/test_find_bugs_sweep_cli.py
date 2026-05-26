@@ -221,7 +221,8 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
         mock_shipment_bugs.assert_called_once_with(
             shipment_data_url="https://gitlab.example.com/project",
             group="openshift-4.18",
-            exclude_assembly="4.18.40",
+            releases_config=runtime.get_releases_config(),
+            current_assembly="4.18.40",
         )
 
     @patch("elliottlib.cli.find_bugs_sweep_cli.get_bug_ids_from_open_shipment_mrs")
