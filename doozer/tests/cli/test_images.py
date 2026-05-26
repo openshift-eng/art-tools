@@ -173,7 +173,7 @@ class TestReleaseToBaseRepo(unittest.TestCase):
             release_name="r1",
             snapshot_name="s1",
             nvr=nvr,
-            released_pipeline="https://pipeline",
+            release_pipeline="https://pipeline",
             released_pullspec="registry.example/img:tag",
         )
 
@@ -195,7 +195,7 @@ class TestReleaseToBaseRepo(unittest.TestCase):
         self.assertEqual(len(captured), 1)
         followup = captured[0]
         self.assertEqual(followup.build_id, "shared-bid")
-        self.assertEqual(followup.released_pipeline, release_out.released_pipeline)
+        self.assertEqual(followup.release_pipeline, release_out.release_pipeline)
         self.assertEqual(followup.released_pullspec, release_out.released_pullspec)
         self.assertNotEqual(followup.record_id, "prior-id")
 
@@ -240,7 +240,7 @@ class TestReleaseToBaseRepo(unittest.TestCase):
             release_name="r1",
             snapshot_name="s1",
             nvr=nvr,
-            released_pipeline="https://p",
+            release_pipeline="https://p",
             released_pullspec="registry.io/i:t",
         )
 

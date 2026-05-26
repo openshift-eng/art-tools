@@ -65,7 +65,7 @@ class TestBaseImageHandler(IsolatedAsyncioTestCase):
         self.assertIsInstance(result, BaseImageReleaseResult)
         self.assertEqual(result.release_name, "test-release")
         self.assertEqual(result.snapshot_name, "test-snapshot")
-        self.assertEqual(result.released_pipeline, "https://konflux.example/releases/test-release")
+        self.assertEqual(result.release_pipeline, "https://konflux.example/releases/test-release")
         self.assertEqual(result.released_pullspec, rh_art_images_base_pullspec(self.default_input.nvr))
 
     @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
@@ -181,7 +181,7 @@ class TestBaseImageHandler(IsolatedAsyncioTestCase):
         self.assertIsInstance(result, BaseImageReleaseResult)
         self.assertEqual(result.release_name, "golang-release")
         self.assertEqual(result.snapshot_name, "golang-snapshot")
-        self.assertEqual(result.released_pipeline, "https://konflux.example/releases/golang-release")
+        self.assertEqual(result.release_pipeline, "https://konflux.example/releases/golang-release")
         self.assertEqual(result.released_pullspec, rh_art_images_base_pullspec(golang_nvr))
 
     @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")

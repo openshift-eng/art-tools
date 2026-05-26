@@ -394,7 +394,7 @@ class KonfluxImageBuilder:
                         build_priority,
                         ec_status=ec_status,
                         ec_pipeline_url=ec_pipeline_url,
-                        released_pipeline=release_result.released_pipeline if release_result else '',
+                        release_pipeline=release_result.release_pipeline if release_result else '',
                         released_pullspec=release_result.released_pullspec if release_result else '',
                     )
                     if build_record:
@@ -893,7 +893,7 @@ class KonfluxImageBuilder:
         build_priority,
         ec_status=KonfluxECStatus.NOT_APPLICABLE,
         ec_pipeline_url='',
-        released_pipeline='',
+        release_pipeline='',
         released_pullspec='',
     ) -> Optional[KonfluxBuildRecord]:
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
@@ -961,7 +961,7 @@ class KonfluxImageBuilder:
             'build_priority': int(build_priority),
             'ec_status': ec_status,
             'ec_pipeline_url': ec_pipeline_url,
-            'released_pipeline': released_pipeline,
+            'release_pipeline': release_pipeline,
             'released_pullspec': released_pullspec,
         }
 

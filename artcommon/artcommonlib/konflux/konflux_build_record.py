@@ -68,7 +68,7 @@ class KonfluxRecord:
         'nvr',
         'ec_status',
         'ec_pipeline_url',
-        'released_pipeline',
+        'release_pipeline',
         'released_pullspec',
     ]
 
@@ -294,7 +294,7 @@ class KonfluxBuildRecord(KonfluxRecord):
         build_priority: int = constants.KONFLUX_DEFAULT_BUILD_PRIORITY,
         ec_status: KonfluxECStatus = KonfluxECStatus.NOT_APPLICABLE,
         ec_pipeline_url: str = '',
-        released_pipeline: str = '',
+        release_pipeline: str = '',
         released_pullspec: str = '',
     ):
         super().__init__(
@@ -336,7 +336,7 @@ class KonfluxBuildRecord(KonfluxRecord):
             else KonfluxECStatus(ec_status or KonfluxECStatus.NOT_APPLICABLE.value)
         )
         self.ec_pipeline_url = ec_pipeline_url
-        self.released_pipeline = released_pipeline
+        self.release_pipeline = release_pipeline
         self.released_pullspec = released_pullspec
         self.init_uuids(record_id, build_id, nvr)
 

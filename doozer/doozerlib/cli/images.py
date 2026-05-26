@@ -1476,7 +1476,7 @@ def query_rpm_version(runtime, repo_type):
 @click_coroutine
 @pass_runtime
 async def release_to_base_repo(runtime, nvr):
-    """Latest SUCCESS Konflux image row → snapshot/release, then INSERT follow-up with ``released_pipeline`` / ``released_pullspec``.
+    """Latest SUCCESS Konflux image row → snapshot/release, then INSERT follow-up with ``release_pipeline`` / ``released_pullspec``.
 
     Golang builder is inferred from image metadata when present; otherwise from the openshift-golang-builder name in the NVR.
     """
@@ -1516,13 +1516,13 @@ async def release_to_base_repo(runtime, nvr):
 
     if result:
         logger.info(
-            "Done: release=%s snapshot=%s released_pipeline=%s",
+            "Done: release=%s snapshot=%s release_pipeline=%s",
             result.release_name,
             result.snapshot_name,
-            result.released_pipeline,
+            result.release_pipeline,
         )
         followup = copy.deepcopy(source_row)
-        followup.released_pipeline = result.released_pipeline
+        followup.release_pipeline = result.release_pipeline
         followup.released_pullspec = result.released_pullspec
         followup.record_id = KonfluxBuildRecord.generate_record_id()
         await runtime.konflux_db.add_builds([followup])

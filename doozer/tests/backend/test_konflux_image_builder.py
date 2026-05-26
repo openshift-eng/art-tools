@@ -435,7 +435,7 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(persisted.image_pullspec, expected_pullspec)
 
     async def test_update_konflux_db_persists_released_fields_when_passed(self):
-        """released_pipeline and released_pullspec are forwarded to KonfluxBuildRecord."""
+        """release_pipeline and released_pullspec are forwarded to KonfluxBuildRecord."""
         metadata = self._metadata()
         build_repo = MagicMock()
         build_repo.https_url = "https://example.com/repo.git"
@@ -490,14 +490,14 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
                 KonfluxBuildOutcome.SUCCESS,
                 ["x86_64"],
                 "5",
-                released_pipeline="https://release.example/pipeline",
+                release_pipeline="https://release.example/pipeline",
                 released_pullspec="registry.redhat.io/foo:bar",
             )
 
         mock_add_build = metadata.runtime.konflux_db.add_build
         mock_add_build.assert_called_once()
         persisted = mock_add_build.call_args[0][0]
-        self.assertEqual(persisted.released_pipeline, "https://release.example/pipeline")
+        self.assertEqual(persisted.release_pipeline, "https://release.example/pipeline")
         self.assertEqual(persisted.released_pullspec, "registry.redhat.io/foo:bar")
 
     async def test_trigger_base_image_release_success_flow(self):
@@ -559,7 +559,7 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
                 release_name="r",
                 snapshot_name="s",
                 nvr="test-nvr",
-                released_pipeline="https://example.com/rel",
+                release_pipeline="https://example.com/rel",
                 released_pullspec="registry.example/pull:test",
             )
             await self.builder.build(metadata)
@@ -571,7 +571,7 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         success_call_args = mock_update_db.await_args_list[1][0]
         self.assertEqual(success_call_args[3], KonfluxBuildOutcome.SUCCESS)
         success_call_kwargs = mock_update_db.await_args_list[1].kwargs
-        self.assertEqual(success_call_kwargs.get("released_pipeline"), "https://example.com/rel")
+        self.assertEqual(success_call_kwargs.get("release_pipeline"), "https://example.com/rel")
         self.assertEqual(success_call_kwargs.get("released_pullspec"), "registry.example/pull:test")
 
     async def test_trigger_base_image_release_failure_flow(self):
@@ -639,7 +639,7 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         failure_call_args = mock_update_db.await_args_list[1][0]
         self.assertEqual(failure_call_args[3], KonfluxBuildOutcome.FAILURE)
         failure_kw = mock_update_db.await_args_list[1].kwargs
-        self.assertEqual(failure_kw.get("released_pipeline", ""), "")
+        self.assertEqual(failure_kw.get("release_pipeline", ""), "")
         self.assertEqual(failure_kw.get("released_pullspec", ""), "")
 
     async def test_non_base_image_skips_release_trigger(self):
@@ -717,7 +717,7 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
             release_name="test-release",
             snapshot_name="test-snapshot",
             nvr="test-nvr",
-            released_pipeline="https://example.com/pipeline",
+            release_pipeline="https://example.com/pipeline",
             released_pullspec="example.com/openshift/foo:test-nvr",
         )
 
@@ -751,7 +751,7 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
             release_name="test-release",
             snapshot_name="test-snapshot",
             nvr="test-nvr",
-            released_pipeline="https://example.com/pipeline",
+            release_pipeline="https://example.com/pipeline",
             released_pullspec="example.com/openshift/foo:test-nvr",
         )
 

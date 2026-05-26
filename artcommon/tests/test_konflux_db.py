@@ -660,7 +660,7 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
             SchemaField('build_priority', 'INTEGER', 'REQUIRED'),
             SchemaField('ec_status', 'STRING', 'REQUIRED'),
             SchemaField('ec_pipeline_url', 'STRING', 'REQUIRED'),
-            SchemaField('released_pipeline', 'STRING', 'REQUIRED'),
+            SchemaField('release_pipeline', 'STRING', 'REQUIRED'),
             SchemaField('released_pullspec', 'STRING', 'REQUIRED'),
         ]
         self.db.bind(KonfluxBuildRecord)

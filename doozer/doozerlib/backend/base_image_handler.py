@@ -42,7 +42,7 @@ class BaseImageReleaseResult:
     release_name: str
     snapshot_name: str
     nvr: str
-    released_pipeline: str
+    release_pipeline: str
     released_pullspec: str
 
 
@@ -136,7 +136,7 @@ class BaseImageHandler:
             release_name=release_name,
             snapshot_name=snapshot_name,
             nvr=snapshot_input.nvr,
-            released_pipeline=release_url,
+            release_pipeline=release_url,
             released_pullspec=released_pullspec,
         )
 
