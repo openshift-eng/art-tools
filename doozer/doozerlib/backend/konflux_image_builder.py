@@ -30,6 +30,7 @@ from artcommonlib.rpm_utils import compare_nvr, parse_nvr
 from artcommonlib.util import fetch_slsa_attestation, get_konflux_data
 from dockerfile_parse import DockerfileParser
 from doozerlib import constants, util
+from doozerlib.backend.base_image_handler import BaseImageHandler, BaseImageSnapshotInput
 from doozerlib.backend.build_repo import BuildRepo
 from doozerlib.backend.konflux_client import KonfluxClient
 from doozerlib.backend.pipelinerun_utils import PipelineRunInfo
@@ -40,8 +41,6 @@ from doozerlib.record_logger import RecordLogger
 from doozerlib.source_resolver import SourceResolution
 from packageurl import PackageURL
 from tenacity import retry, stop_after_attempt, wait_fixed
-
-from pyartcd import jenkins
 
 LOGGER = logging.getLogger(__name__)
 
@@ -304,7 +303,7 @@ class KonfluxImageBuilder:
                     and metadata.for_release
                 )
                 if should_run_ec:
-                    app_name = self.get_application_name(self._config.group_name)
+                    app_name = util.konflux_application_name(self._config.group_name)
 
                     # Select EC policy based on software lifecycle phase:
                     # - pre-release phase uses a more permissive policy that allows unsigned RPMs
@@ -320,7 +319,7 @@ class KonfluxImageBuilder:
 
                     image_with_digest = f"{image_pullspec.split(':')[0]}@{image_digest}"
                     source_url = artlib_util.convert_remote_git_to_https(build_repo.url)
-                    konflux_component_name = self.get_component_name(app_name, metadata.distgit_key)
+                    konflux_component_name = util.konflux_image_component_name(app_name, metadata.distgit_key)
 
                     ec_result = await self._konflux_client.verify_enterprise_contract(
                         namespace=self._config.namespace,
@@ -359,11 +358,20 @@ class KonfluxImageBuilder:
                     logger.info("Dry run: Would have inserted build record in Konflux DB")
 
                 else:
-                    # Create a build record after every attempt (both success and failure)
-                    # Base images need a synchronous release to registry.redhat.io before dependents can use RH
-                    # pullspecs. Mark SUCCESS as UNRELEASED in the DB until that release completes; see below.
+                    # One completion record per attempt. Base images trigger snapshot→release (digest pullspec)
+                    # before persisting SUCCESS or FAILURE so Jenkins/batch workflows can query SUCCESS rows.
                     if outcome is KonfluxBuildOutcome.SUCCESS and metadata.should_trigger_base_image_release():
-                        outcome = KonfluxBuildOutcome.UNRELEASED
+                        base_image_release_success = await self._trigger_base_image_release(
+                            metadata, nvr, definitive_image_pullspec, build_repo
+                        )
+                        if base_image_release_success:
+                            logger.info("Base image release succeeded for %s, persisting build record", nvr)
+                        else:
+                            logger.error("Base image release failed for %s, persisting build record as FAILURE", nvr)
+                        released_outcome = (
+                            KonfluxBuildOutcome.SUCCESS if base_image_release_success else KonfluxBuildOutcome.FAILURE
+                        )
+                        outcome = released_outcome
 
                     build_record = await self.update_konflux_db(
                         metadata,
@@ -377,27 +385,6 @@ class KonfluxImageBuilder:
                     )
                     if build_record:
                         record["record_id"] = build_record.record_id
-
-                    # Check base image release AFTER saving to database
-                    if outcome is KonfluxBuildOutcome.UNRELEASED and metadata.should_trigger_base_image_release():
-                        base_image_release_success = await self._trigger_base_image_release(metadata, nvr)
-                        if base_image_release_success:
-                            logger.info(f"Base image release succeeded for {nvr}, updating build record")
-                        else:
-                            logger.error(f"Base image release failed for {nvr}, updating build record to FAILURE")
-                        outcome = (
-                            KonfluxBuildOutcome.SUCCESS if base_image_release_success else KonfluxBuildOutcome.FAILURE
-                        )
-                        await self.update_konflux_db(
-                            metadata,
-                            build_repo,
-                            pipelinerun_info,
-                            outcome,
-                            building_arches,
-                            build_priority,
-                            ec_status=ec_status,
-                            ec_pipeline_url=ec_pipeline_url,
-                        )
 
                 if outcome is not KonfluxBuildOutcome.SUCCESS:
                     error = KonfluxImageBuildError(
@@ -515,55 +502,6 @@ class KonfluxImageBuilder:
                 # asyncio.sleep instead of Event.wait since it's less CPU intensive
                 await asyncio.sleep(20)  # check every 20 seconds
         return parent_members
-
-    @staticmethod
-    def get_application_name(group_name: str):
-        # "openshift-4-18" -> "openshift-4-18"
-        return group_name.replace(".", "-")
-
-    @staticmethod
-    def get_component_name(application_name: str, image_name: str):
-        # Openshift doesn't allow dots or underscores in any of its fields, so we replace them with dashes
-        name = f"{application_name}-{image_name}".replace(".", "-").replace("_", "-")
-        # 'openshift-4-18-ose-installer-terraform' -> 'ose-4-18-ose-installer-terraform'
-        # A component resource name must start with a lower case letter and must be no more than 63 characters long.
-        name = f"ose-{name[10:]}" if name.startswith("openshift-") else name
-        return name
-
-    @staticmethod
-    def get_golang_builder_component_name(nvr: str) -> str:
-        """
-        Generate golang builder specific component name from NVR.
-
-        Args:
-            nvr: Build NVR (e.g., "openshift-golang-builder-container-v1.25.8-202604081607.p0.g2aa6a05.el8")
-
-        Returns:
-            Component name (e.g., "golang-builder-v1.25-rhel8")
-        """
-        nvr_parsed = parse_nvr(nvr)
-        version = nvr_parsed["version"]
-        release = nvr_parsed["release"]
-
-        # Extract major.minor from semantic version (e.g., "v1.25.8" -> "v1.25")
-        if version.startswith("v"):
-            version_parts = version[1:].split(".")  # Remove 'v' prefix and split
-        else:
-            version_parts = version.split(".")
-
-        if len(version_parts) >= 2:
-            major_minor = f"v{version_parts[0]}.{version_parts[1]}"
-        else:
-            # Fallback to original version if parsing fails
-            major_minor = version
-
-        # Determine RHEL version from release field
-        # Assumes exactly one .elX pattern per release (validated by production data)
-        el_suffix = "rhel9"  # Default to latest RHEL version
-        if ".el8" in release:
-            el_suffix = "rhel8"
-
-        return f"golang-builder-{major_minor}-{el_suffix}"
 
     @staticmethod
     def _repo_gets_hermetic_module_hotfixes(repo_name: str, group: str, golang_pattern: re.Pattern) -> bool:
@@ -733,12 +671,12 @@ class KonfluxImageBuilder:
         git_commit = build_repo.commit_hash
 
         # Ensure the Application resource exists
-        app_name = self.get_application_name(self._config.group_name)
+        app_name = util.konflux_application_name(self._config.group_name)
         logger.info(f"Using application: {app_name}")
         await self._konflux_client.ensure_application(name=app_name, display_name=app_name)
 
         # Ensure the component resource exists
-        component_name = self.get_component_name(app_name, metadata.distgit_key)
+        component_name = util.konflux_image_component_name(app_name, metadata.distgit_key)
         default_revision = f"art-{self._config.group_name}-assembly-test-dgk-{metadata.distgit_key}"
         logger.info(f"Using component: {component_name}")
         await self._konflux_client.ensure_component(
@@ -976,9 +914,7 @@ class KonfluxImageBuilder:
             'ec_pipeline_url': ec_pipeline_url,
         }
 
-        # SUCCESS: normal completed build. UNRELEASED: build succeeded and is waiting for
-        # snapshot→release before final SUCCESS + registry.redhat.io pullspec — same pipelinerun IMAGE_URL/results.
-        if outcome in (KonfluxBuildOutcome.SUCCESS, KonfluxBuildOutcome.UNRELEASED):
+        if outcome is KonfluxBuildOutcome.SUCCESS:
             # results:
             # - name: IMAGE_URL
             #   value: quay.io/openshift-release-dev/ocp-v4.0-art-dev-test:ose-network-metrics-daemon-rhel9-v4.18.0-20241001.151532
@@ -1223,39 +1159,49 @@ class KonfluxImageBuilder:
 
         return parent_image_nvrs
 
-    async def _trigger_base_image_release(self, metadata: ImageMetadata, nvr: str) -> bool:
-        """Trigger base image release for a single successful base image build.
+    async def _trigger_base_image_release(
+        self,
+        metadata: ImageMetadata,
+        nvr: str,
+        container_image: str,
+        build_repo: BuildRepo,
+    ) -> bool:
+        """Run snapshot→release for one base image via :class:`BaseImageHandler` (no Jenkins job).
 
-        Expects group_name format 'openshift-X.Y' (e.g., 'openshift-4.22') for
-        version extraction. Falls back to full group_name if format doesn't match.
+        Args:
+            metadata: Image metadata for the built image
+            nvr: Image NVR string
+            container_image: Definitive digest pullspec (``repo@sha256:…``)
+            build_repo: Build repo (rebase git URL and commit for snapshot source)
 
         Returns:
-            bool: True if base image release was triggered successfully, False otherwise
+            bool: True if base image release completed successfully
         """
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
 
-        logger.info(f"Triggering base image release for {nvr}")
+        logger.info(f"Triggering base image snapshot-release for {nvr}")
 
         try:
-            build_version = self._config.group_name
-
-            result = jenkins.start_base_image_release(
-                build_version=build_version,
-                assembly=metadata.runtime.assembly,
-                base_image_nvrs=[nvr],
-                doozer_data_path=getattr(metadata.runtime, 'data_path', ''),
-                doozer_data_gitref=getattr(metadata.runtime, 'data_gitref', ''),
-                dry_run=self._config.dry_run,
-                block_until_complete=True,
+            snapshot_input = BaseImageSnapshotInput(
+                nvr=nvr,
+                distgit_key=metadata.distgit_key,
+                container_image=container_image,
+                rebase_repo_url=build_repo.https_url,
+                rebase_commitish=build_repo.commit_hash,
+                is_golang_builder=metadata.is_golang_builder(),
             )
-            # start_build(..., block_until_complete=True) returns Jenkins result strings (SUCCESS, FAILURE, …), not None.
-            success = result == "SUCCESS"
+            handler = BaseImageHandler(
+                metadata.runtime,
+                dry_run=self._config.dry_run,
+            )
+            result = await handler.snapshot_release(snapshot_input)
+            success = result is not None
             if success:
-                logger.info(f"Successfully completed base image release for {nvr}")
+                logger.info(f"Successfully triggered base image snapshot-release for {nvr}")
                 return True
-            logger.error("Base image release job failed for %s with Jenkins result=%r", nvr, result)
+            logger.error("Base image snapshot-release did not complete successfully for %s", nvr)
             return False
 
         except Exception as e:
-            logger.error(f"Failed to trigger base image release for {nvr}: {e}")
+            logger.error(f"Failed base image snapshot-release for {nvr}: {e}")
             return False

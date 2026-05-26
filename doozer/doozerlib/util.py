@@ -22,6 +22,7 @@ from artcommonlib.arch_util import GO_ARCHES, brew_arch_for_go_arch, go_arch_for
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.format_util import red_print
 from artcommonlib.model import Missing, Model
+from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import (
     isolate_major_minor_in_group,
     oc_image_info,  # noqa: F401 - re-exported for backward compatibility
@@ -532,6 +533,58 @@ def get_konflux_build_priority(metadata, group):
 
     # Default
     return higher_by(0)
+
+
+def konflux_application_name(group_name: str) -> str:
+    """
+    Konflux Application slug for standard OCP image builds (not FBC ``fbc-*``).
+
+    Converts group dots to dashes so values match Konflux/Application Studio constraints.
+    """
+    # "openshift-4.18" -> "openshift-4-18"
+    return group_name.replace(".", "-")
+
+
+def konflux_image_component_name(application_name: str, image_name: str) -> str:
+    """
+    Konflux Component name for a container image (distgit member), given the Application slug.
+
+    OpenShift forbids dots/underscores; component names must be RFC1123-ish (lowercase, length limits).
+    """
+    name = f"{application_name}-{image_name}".replace(".", "-").replace("_", "-")
+    # 'openshift-4-18-ose-installer-terraform' -> 'ose-4-18-ose-installer-terraform'
+    name = f"ose-{name[10:]}" if name.startswith("openshift-") else name
+    return name
+
+
+def konflux_golang_builder_component_name(nvr: str) -> str:
+    """
+    Konflux Component name for a golang-builder image derived from build NVR.
+
+    Example NVR::
+        openshift-golang-builder-container-v1.25.8-202604081607.p0.g2aa6a05.el8
+    yields something like::
+        golang-builder-v1.25-rhel8
+    """
+    nvr_parsed = parse_nvr(nvr)
+    version = nvr_parsed["version"]
+    release = nvr_parsed["release"]
+
+    if version.startswith("v"):
+        version_parts = version[1:].split(".")
+    else:
+        version_parts = version.split(".")
+
+    if len(version_parts) >= 2:
+        major_minor = f"v{version_parts[0]}.{version_parts[1]}"
+    else:
+        major_minor = version
+
+    el_suffix = "rhel9"
+    if ".el8" in release:
+        el_suffix = "rhel8"
+
+    return f"golang-builder-{major_minor}-{el_suffix}"
 
 
 def rc_api_url(tag: str, arch: str, private_nightly: bool) -> str:

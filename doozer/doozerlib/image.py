@@ -5,7 +5,6 @@ import pathlib
 import re
 from collections import OrderedDict
 from copy import copy
-from datetime import datetime, timezone
 from functools import lru_cache
 from multiprocessing import Event
 from typing import Any, Dict, List, Optional, Set, Tuple, cast
@@ -27,44 +26,6 @@ from doozerlib.build_info import BrewBuildRecordInspector
 from doozerlib.distgit import pull_image
 from doozerlib.metadata import Metadata, RebuildHint, RebuildHintCode
 from doozerlib.source_resolver import SourceResolver
-
-
-def _lockfile_seed_build_completion_ts(record: KonfluxBuildRecord) -> datetime:
-    """Best-effort completion timestamp for comparing Konflux builds (end_time, else start_time)."""
-    t = record.end_time or record.start_time
-    if t is None:
-        return datetime.min.replace(tzinfo=timezone.utc)
-    if t.tzinfo is None:
-        t = t.replace(tzinfo=timezone.utc)
-    return t.astimezone(timezone.utc)
-
-
-def _pick_lockfile_seed_build(
-    success_build: Optional[KonfluxBuildRecord],
-    unreleased_build: Optional[KonfluxBuildRecord],
-) -> Optional[KonfluxBuildRecord]:
-    """
-    Choose which Konflux DB row should seed lockfile installed_rpms: the latest of SUCCESS and UNRELEASED
-    by completion time. If the time-newest row has no installed_rpms, prefer the other when it does.
-    """
-    if success_build is None and unreleased_build is None:
-        return None
-    if success_build is None:
-        chosen = unreleased_build
-    elif unreleased_build is None:
-        chosen = success_build
-    else:
-        success_ts = _lockfile_seed_build_completion_ts(success_build)
-        unreleased_ts = _lockfile_seed_build_completion_ts(unreleased_build)
-        # Prefer UNRELEASED on equal completion time (same tie-break as index-based max before).
-        chosen = unreleased_build if unreleased_ts >= success_ts else success_build
-
-    if chosen.installed_rpms:
-        return chosen
-    for candidate in (success_build, unreleased_build):
-        if candidate is not None and candidate is not chosen and candidate.installed_rpms:
-            return candidate
-    return chosen
 
 
 @lru_cache(maxsize=256)
@@ -1194,10 +1155,8 @@ class ImageMetadata(Metadata):
         Returns either the full image RPM set or difference from parent packages,
         based on the inspect_parent configuration. Caches result in installed_rpms attribute.
 
-        When resolving the latest build (no matching lockfile_seed_nvrs): for images that participate
-        in the base-image release workflow (same predicate as Konflux: ``should_trigger_base_image_release()``),
-        uses the newer of the latest **success** and **unreleased** Konflux outcomes by completion time so
-        that builds waiting on release still contribute fresh SBOM RPMs. Other images query **success** only.
+        When resolving the latest build (no matching lockfile_seed_nvrs), uses the latest successful
+        Konflux build (outcome SUCCESS), including base/golang images after inline snapshot→release.
 
         Args:
             lockfile_seed_nvrs: NVRs of builds whose installed RPMs should seed lockfile
@@ -1229,16 +1188,9 @@ class ImageMetadata(Metadata):
                     'name': self.distgit_key,
                     'assembly': self.runtime.assembly,
                 }
-                build_success = await self.runtime.konflux_db.get_latest_build(
+                build = await self.runtime.konflux_db.get_latest_build(
                     **base_search_params, outcome=KonfluxBuildOutcome.SUCCESS
                 )
-                if self.should_trigger_base_image_release():
-                    build_unreleased = await self.runtime.konflux_db.get_latest_build(
-                        **base_search_params, outcome=KonfluxBuildOutcome.UNRELEASED
-                    )
-                    build = _pick_lockfile_seed_build(build_success, build_unreleased)
-                else:
-                    build = build_success
                 if build:
                     self.logger.info(
                         'Lockfile seed for %s: nvr=%s outcome=%s end_time=%s',

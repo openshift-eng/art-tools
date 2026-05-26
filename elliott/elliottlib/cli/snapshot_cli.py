@@ -24,9 +24,8 @@ from artcommonlib.util import (
     resolve_konflux_namespace_by_product,
 )
 from doozerlib.backend.konflux_client import API_VERSION, KIND_SNAPSHOT, KonfluxClient
-from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
 from doozerlib.backend.konflux_olm_bundler import KonfluxOlmBundleBuilder
-from doozerlib.util import oc_image_info_for_arch_async
+from doozerlib.util import konflux_image_component_name, oc_image_info_for_arch_async
 from kubernetes.dynamic import exceptions
 from kubernetes.dynamic.resource import ResourceInstance
 
@@ -225,10 +224,10 @@ class CreateSnapshotCli:
                     await self.konflux_client.get_component__caching(comp_name, strict=True)
                 except exceptions.NotFoundError:
                     if isinstance(record, KonfluxBuildRecord):
-                        comp_name = KonfluxImageBuilder.get_component_name(app_name, record.name)
+                        comp_name = konflux_image_component_name(app_name, record.name)
                         await self.konflux_client.get_component__caching(comp_name, strict=True)
                     elif isinstance(record, KonfluxBundleBuildRecord):
-                        comp_name = KonfluxOlmBundleBuilder.get_component_name(app_name, record.name)
+                        comp_name = konflux_image_component_name(app_name, record.name)
                         try:
                             await self.konflux_client.get_component__caching(comp_name, strict=True)
                         except exceptions.NotFoundError:

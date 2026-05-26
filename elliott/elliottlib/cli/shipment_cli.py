@@ -4,7 +4,7 @@ import click
 from artcommonlib import logutil
 from artcommonlib.gitdata import SafeFormatter
 from doozerlib.backend.konflux_fbc import KonfluxFbcBuilder
-from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
+from doozerlib.util import konflux_application_name
 from ruamel.yaml import YAML
 
 from elliottlib.cli.common import cli, click_coroutine
@@ -48,7 +48,7 @@ class InitShipmentCli:
         if self.kind == "fbc":
             application = KonfluxFbcBuilder.get_application_name(self.runtime.group)
         else:
-            application = KonfluxImageBuilder.get_application_name(self.runtime.group)
+            application = konflux_application_name(self.runtime.group)
 
         # load stage/prod rpa from shipment repo config
         # where defaults are set per application
