@@ -1,7 +1,9 @@
-.PHONY: venv tox lint test pylint pylint-imports format format-check reinstall clean-reinstall unit unit-artcommon unit-doozer unit-elliott unit-pyartcd unit-ocp-build-data-validator
+PYTHON_VERSION := 3.11
+
+.PHONY: venv tox lint test pylint pylint-imports format format-check reinstall clean-reinstall unit unit-artcommon unit-doozer unit-elliott unit-pyartcd unit-ocp-build-data-validator audit
 
 venv:
-	uv venv --python 3.11
+	uv venv --python $(PYTHON_VERSION)
 	# Install base requirements files first to ensure all runtime dependencies are available
 	./install.sh
 
@@ -46,6 +48,9 @@ functional-elliott:
 
 functional-doozer:
 	uv run pytest --verbose --color=yes doozer/tests_functional
+
+audit:
+	uv audit --preview-features audit --python-version $(PYTHON_VERSION)
 
 test: lint unit
 
