@@ -104,7 +104,10 @@ class BuildConformaVerifyPipeline:
 
         where = {"group": self.group, "engine": Engine.KONFLUX.value}
         records = await db.get_build_records_by_nvrs(
-            nvrs, where=where, strict=True, exclude_large_columns=True,
+            nvrs,
+            where=where,
+            strict=True,
+            exclude_large_columns=True,
         )
         return {str(record.nvr): record for record in records if record is not None}
 
