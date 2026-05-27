@@ -90,7 +90,8 @@ class BuildConformaVerifyPipeline:
             group_param += f'@{self.data_gitref}'
         elliott_runtime.group = group_param
         elliott_runtime.assembly = self.assembly
-        elliott_runtime.initialize(mode='images', build_system='konflux', data_path=self.data_path)
+        elliott_runtime.data_path = self.data_path
+        elliott_runtime.initialize(mode='images', build_system='konflux')
         return elliott_runtime
 
     async def _find_latest_builds(self) -> List[str]:
