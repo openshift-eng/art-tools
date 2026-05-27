@@ -82,6 +82,31 @@ class TestBuildRpmsInYaml(unittest.TestCase):
         repoids = [r.repoid for r in result.contentOrigin["repos"]]
         self.assertEqual(repoids, ["rhel-9-baseos-rpms", "rhel-9-appstream-rpms"])
 
+    def test_repo_options_flattened_in_serialization(self):
+        """
+        RepoEntry options must be flattened into the top-level dict
+        during serialization so rpm-lockfile-prototype receives them
+        as direct repo attributes (e.g. includepkgs, module_hotfixes).
+        """
+        repos = [
+            RepoEntry(
+                repoid="rhel-9-golang-rpms",
+                baseurl="https://example.com/golang/$basearch/os/",
+                options={"includepkgs": "golang*", "module_hotfixes": 1},
+            ),
+        ]
+        result = build_rpms_in_yaml(
+            repos=repos,
+            arches=["x86_64"],
+            packages=["golang"],
+        )
+        dumped = result.model_dump(exclude_none=True)
+        repo_dict = dumped["contentOrigin"]["repos"][0]
+        self.assertEqual(repo_dict["repoid"], "rhel-9-golang-rpms")
+        self.assertEqual(repo_dict["includepkgs"], "golang*")
+        self.assertEqual(repo_dict["module_hotfixes"], 1)
+        self.assertNotIn("options", repo_dict)
+
 
 FAKE_LOCKFILE_DATA = LockfileData(
     lockfileVersion=1,
@@ -710,6 +735,45 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
         generator = self._make_generator()
         result = generator._templatize_baseurl("https://example.com/baseos/$basearch/os/")
         self.assertEqual(result, "https://example.com/baseos/$basearch/os/")
+
+    def test_build_repo_list_passes_extra_options(self):
+        golang = MagicMock()
+        golang.name = "rhel-9-golang-rpms"
+        golang.baseurl.return_value = (
+            "https://download.devel.redhat.com/brewroot/repos/rhaos-5.0-rhel-9-build/latest/x86_64/"
+        )
+        golang.content_set.return_value = "rhocp-5.0-for-rhel-9-x86_64-rpms"
+        golang._data.conf.get.side_effect = lambda key, default=None: (
+            {"includepkgs": "module-build-macros golang* goversioninfo", "module_hotfixes": 1}
+            if key == "extra_options"
+            else default
+        )
+
+        repo_map = {"rhel-9-golang-rpms": golang}
+        repos = MagicMock()
+        repos.__getitem__ = lambda self_repos, key: repo_map[key]
+
+        generator = RpmLockfilePrototypeGenerator(repos=repos)
+        result = generator._build_repo_list(enabled_repos={"rhel-9-golang-rpms"}, arches=["x86_64"])
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].options["includepkgs"], "module-build-macros golang* goversioninfo")
+        self.assertEqual(result[0].options["module_hotfixes"], 1)
+
+    def test_build_repo_list_no_extra_options(self):
+        rt = MagicMock()
+        rt.name = "rhel-9-rt-rpms"
+        rt.baseurl.return_value = "https://example.com/e4s/rhel9/9.8/x86_64/rt/os/"
+        rt.content_set.return_value = "rhel-9-for-x86_64-rt-rpms"
+        rt._data.conf.get.side_effect = lambda key, default=None: default if key == "extra_options" else default
+
+        repo_map = {"rhel-9-rt-rpms": rt}
+        repos = MagicMock()
+        repos.__getitem__ = lambda self_repos, key: repo_map[key]
+
+        generator = RpmLockfilePrototypeGenerator(repos=repos)
+        result = generator._build_repo_list(enabled_repos={"rhel-9-rt-rpms"}, arches=["x86_64"])
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].options, {})
 
     def test_build_repo_list_templatizes_multi_arch_url(self):
         baseos = MagicMock()
