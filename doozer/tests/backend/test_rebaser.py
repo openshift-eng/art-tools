@@ -1373,6 +1373,7 @@ class TestRebaserResolveMemberParentRegistryRedhat(IsolatedAsyncioTestCase):
         kb = MagicMock()
         kb.nvr = "openshift-golang-builder-container-v1.21-1.el9"
         kb.image_pullspec = "quay.io/k@sha256:abc"
+        kb.released_pullspec = ""
         kb.embargoed = False
         parent.get_latest_build = AsyncMock(return_value=kb)
 
@@ -1406,6 +1407,7 @@ class TestRebaserResolveMemberParentRegistryRedhat(IsolatedAsyncioTestCase):
         kb = MagicMock()
         kb.nvr = "openshift-golang-builder-container-v1.21-1.el9"
         kb.image_pullspec = "quay.io/k@sha256:beef"
+        kb.released_pullspec = ""
         kb.embargoed = False
         parent.get_latest_build = AsyncMock(return_value=kb)
 
@@ -1427,8 +1429,41 @@ class TestRebaserResolveMemberParentRegistryRedhat(IsolatedAsyncioTestCase):
         self.assertEqual(resolved, "quay.io/k@sha256:beef")
         self.assertFalse(emb)
 
-    async def test_resolve_member_parent_late_resolve_fails_when_art_base_missing_and_quay_fallback_disabled(self):
-        """Late-resolve: no Konflux fallback when base_image_release.quay_fallback is false."""
+    async def test_resolve_member_parent_late_resolve_uses_db_released_pullspec_when_set(self):
+        parent = MagicMock()
+        parent.distgit_key = "golang-builder"
+        parent.should_trigger_base_image_release.return_value = True
+        parent.branch_el_target.return_value = 9
+        kb = MagicMock()
+        kb.nvr = "openshift-golang-builder-container-v1.21-1.el9"
+        kb.image_pullspec = "quay.io/k@sha256:beef"
+        kb.released_pullspec = "registry.redhat.io/openshift/released@sha256:dead"
+        kb.embargoed = True
+        parent.get_latest_build = AsyncMock(return_value=kb)
+
+        runtime = MagicMock()
+        runtime.resolve_image.return_value = None
+        runtime.ignore_missing_base = True
+        runtime.latest_parent_version = True
+        runtime.late_resolve_image = MagicMock(return_value=parent)
+        runtime.group_config = Model({"konflux": Model({})})
+
+        rebaser = KonfluxRebaser(runtime, self.base_dir, MagicMock(), "unsigned")
+        rebaser.variant = BuildVariant.OCP
+        rebaser.image_repo = "quay.io/fake"
+        rebaser.uuid_tag = "v4.18-tag"
+        rebaser.derived_group = "openshift-4.18"
+        rebaser._registry_pullspec_exists = AsyncMock(
+            side_effect=AssertionError("_registry_pullspec_exists should not be consulted")
+        )
+
+        resolved, emb = await rebaser._resolve_member_parent("golang-builder", "orig")
+        self.assertEqual(resolved, kb.released_pullspec)
+        self.assertTrue(emb)
+
+    async def test_resolve_member_parent_late_resolve_falls_back_when_art_base_missing_even_if_quay_fallback_disabled(
+        self,
+    ):
         parent = MagicMock()
         parent.distgit_key = "golang-builder"
         parent.should_trigger_base_image_release.return_value = True
@@ -1437,6 +1472,7 @@ class TestRebaserResolveMemberParentRegistryRedhat(IsolatedAsyncioTestCase):
         kb = MagicMock()
         kb.nvr = "openshift-golang-builder-container-v1.21-1.el9"
         kb.image_pullspec = "quay.io/k@sha256:beef"
+        kb.released_pullspec = ""
         kb.embargoed = False
         parent.get_latest_build = AsyncMock(return_value=kb)
 
@@ -1451,12 +1487,12 @@ class TestRebaserResolveMemberParentRegistryRedhat(IsolatedAsyncioTestCase):
         rebaser.variant = BuildVariant.OCP
         rebaser.image_repo = "quay.io/fake"
         rebaser.uuid_tag = "v4.18-tag"
-        rebaser.group = "openshift-4.18"
+        rebaser.derived_group = "openshift-4.18"
         rebaser._registry_pullspec_exists = AsyncMock(return_value=False)
 
-        with self.assertRaises(IOError) as ctx:
-            await rebaser._resolve_member_parent("golang-builder", "orig")
-        self.assertIn("quay_fallback is false", str(ctx.exception))
+        resolved, emb = await rebaser._resolve_member_parent("golang-builder", "orig")
+        self.assertEqual(resolved, "quay.io/k@sha256:beef")
+        self.assertFalse(emb)
 
     async def test_resolve_member_parent_keeps_quay_for_regular_member(self):
         parent = MagicMock()
