@@ -1393,23 +1393,17 @@ class ImageMetadata(Metadata):
         Determines whether this image should trigger the base image release workflow.
 
         The method checks preconditions in the following order:
-        1. When ``runtime.product`` is set and not ``ocp``, skip (layered products). Unset or
-           falsy product continues to later checks.
-        2. Variant must be OCP (not OKD)
-        3. Assembly must not be ``test``
-        4. Image must be ``base_only`` or a golang builder
-        5. Base image release enabled override:
+        1. Variant must be OCP (not OKD)
+        2. Assembly must not be ``test``
+        3. Image must be ``base_only`` or a golang builder
+        4. Base image release enabled override:
            - Image metadata configuration (``self.config.base_image_release.enabled``)
            - Group configuration (``self.runtime.group_config.base_image_release.enabled``)
-           If no override is set for step 5, the enabled flag defaults to True.
+           If no override is set for step 4, the enabled flag defaults to True.
 
         Returns:
             bool: True if base image release workflow should be triggered, False otherwise.
         """
-        rp = self.runtime.product
-        if rp and rp != "ocp":
-            return False
-
         if self.runtime.variant is BuildVariant.OKD:
             return False
 
