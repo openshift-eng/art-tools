@@ -22,7 +22,7 @@ from pyartcd.runtime import Runtime
 
 LOGGER = logutil.get_logger(__name__)
 
-EC_WORKERS = "35"
+BATCH_SIZE = 10
 
 
 class BuildConformaVerifyPipeline:
@@ -114,6 +114,8 @@ class BuildConformaVerifyPipeline:
         return {str(record.nvr): record for record in records if record is not None}
 
     async def _verify_builds(self, nvr_record_map: dict[str, KonfluxRecord]):
+        from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome
+
         kubeconfig = os.getenv("KONFLUX_SA_KUBECONFIG")
         konflux_client = KonfluxClient.from_kubeconfig(
             default_namespace=KONFLUX_DEFAULT_NAMESPACE,
@@ -126,24 +128,19 @@ class BuildConformaVerifyPipeline:
         records = list(nvr_record_map.values())
         application_name = records[0].get_konflux_application_name()
 
-        # Build a single multi-component Snapshot JSON
-        components = []
-        for record in records:
-            components.append(
-                {
-                    "name": record.get_konflux_component_name(),
-                    "containerImage": record.image_pullspec,
-                    "source": {
-                        "git": {
-                            "url": record.rebase_repo_url,
-                            "revision": record.rebase_commitish,
-                        }
-                    },
-                }
-            )
-        snapshot_spec = {"application": application_name, "components": components}
-        snapshot_json = json.dumps(snapshot_spec)
-        self.logger.info("Built snapshot with %d components for application %s", len(components), application_name)
+        components = [
+            {
+                "name": record.get_konflux_component_name(),
+                "containerImage": record.image_pullspec,
+                "source": {
+                    "git": {
+                        "url": record.rebase_repo_url,
+                        "revision": record.rebase_commitish,
+                    }
+                },
+            }
+            for record in records
+        ]
 
         # Ensure IntegrationTestScenario exists
         policy_suffix = ec_policy.split('/')[-1]
@@ -155,93 +152,106 @@ class BuildConformaVerifyPipeline:
             policy_configuration=ec_policy,
         )
 
-        # Create and submit a single EC PipelineRun for all components
-        generate_name = f"{application_name}-ec-conforma-verify-"
-        if len(generate_name) > 248:
-            generate_name = generate_name[:248]
+        # Split into batches
+        batches = [components[i : i + BATCH_SIZE] for i in range(0, len(components), BATCH_SIZE)]
+        total_batches = len(batches)
+        self.logger.info("Split %d components into %d batches of up to %d", len(components), total_batches, BATCH_SIZE)
 
-        watch_labels = get_common_runtime_watcher_labels()
-        labels = {
-            "appstudio.openshift.io/application": application_name,
-            "test.appstudio.openshift.io/scenario": its_name,
-            "kueue.x-k8s.io/priority-class": "build-priority-2",
-        }
-        labels.update(watch_labels)
+        failed_batches: list[dict] = []
+        passed_count = 0
 
-        manifest = {
-            "apiVersion": "tekton.dev/v1",
-            "kind": "PipelineRun",
-            "metadata": {
-                "generateName": generate_name,
-                "namespace": KONFLUX_DEFAULT_NAMESPACE,
-                "labels": labels,
-                "annotations": {
-                    "test.appstudio.openshift.io/kind": "enterprise-contract",
-                    "art-jenkins-job-url": os.getenv("BUILD_URL", "n/a"),
+        for batch_idx, batch in enumerate(batches, start=1):
+            self.logger.info("=== Batch %d/%d (%d components) ===", batch_idx, total_batches, len(batch))
+
+            snapshot_spec = {"application": application_name, "components": batch}
+            snapshot_json = json.dumps(snapshot_spec)
+
+            generate_name = f"{application_name}-ec-verify-{batch_idx}-"
+            if len(generate_name) > 248:
+                generate_name = generate_name[:248]
+
+            watch_labels = get_common_runtime_watcher_labels()
+            labels = {
+                "appstudio.openshift.io/application": application_name,
+                "test.appstudio.openshift.io/scenario": its_name,
+                "kueue.x-k8s.io/priority-class": "build-priority-2",
+            }
+            labels.update(watch_labels)
+
+            manifest = {
+                "apiVersion": "tekton.dev/v1",
+                "kind": "PipelineRun",
+                "metadata": {
+                    "generateName": generate_name,
+                    "namespace": KONFLUX_DEFAULT_NAMESPACE,
+                    "labels": labels,
+                    "annotations": {
+                        "test.appstudio.openshift.io/kind": "enterprise-contract",
+                        "art-jenkins-job-url": os.getenv("BUILD_URL", "n/a"),
+                    },
                 },
-            },
-            "spec": {
-                "pipelineRef": {
-                    "resolver": "git",
-                    "params": [
-                        {"name": "url", "value": KONFLUX_EC_PIPELINE_GIT_URL},
-                        {"name": "revision", "value": KONFLUX_EC_PIPELINE_REVISION},
-                        {"name": "pathInRepo", "value": KONFLUX_EC_PIPELINE_PATH},
-                    ],
-                },
-                "params": [
-                    {"name": "POLICY_CONFIGURATION", "value": ec_policy},
-                    {"name": "SINGLE_COMPONENT", "value": "false"},
-                    {"name": "SNAPSHOT", "value": snapshot_json},
-                    {"name": "WORKERS", "value": EC_WORKERS},
-                ],
-                "taskRunTemplate": {
-                    "serviceAccountName": f"build-pipeline-{components[0]['name']}",
-                },
-                "taskRunSpecs": [
-                    {
-                        "pipelineTaskName": "verify",
-                        "stepSpecs": [
-                            {
-                                "name": "validate",
-                                "computeResources": {
-                                    "limits": {"cpu": "16", "memory": "16Gi"},
-                                    "requests": {"cpu": "10", "memory": "10Gi"},
-                                },
-                            }
+                "spec": {
+                    "pipelineRef": {
+                        "resolver": "git",
+                        "params": [
+                            {"name": "url", "value": KONFLUX_EC_PIPELINE_GIT_URL},
+                            {"name": "revision", "value": KONFLUX_EC_PIPELINE_REVISION},
+                            {"name": "pathInRepo", "value": KONFLUX_EC_PIPELINE_PATH},
                         ],
-                    }
-                ],
-                "timeouts": {
-                    "pipeline": "4h",
+                    },
+                    "params": [
+                        {"name": "POLICY_CONFIGURATION", "value": ec_policy},
+                        {"name": "SINGLE_COMPONENT", "value": "false"},
+                        {"name": "SNAPSHOT", "value": snapshot_json},
+                    ],
+                    "taskRunTemplate": {
+                        "serviceAccountName": f"build-pipeline-{batch[0]['name']}",
+                    },
+                    "timeouts": {
+                        "pipeline": "1h",
+                    },
                 },
-            },
-        }
+            }
 
-        if self.dry_run:
-            self.logger.warning("[DRY RUN] Would have created EC PipelineRun for %d components", len(components))
-            return
+            if self.dry_run:
+                self.logger.warning("[DRY RUN] Would have created EC PipelineRun for batch %d", batch_idx)
+                passed_count += len(batch)
+                continue
 
-        self.logger.info("Creating EC PipelineRun for %d components...", len(components))
-        plr = await konflux_client._create(manifest)
-        plr_name = plr.metadata.name
-        plr_url = KonfluxClient.resource_url(plr.to_dict())
-        self.logger.info("Created EC PipelineRun: %s", plr_url)
+            plr = await konflux_client._create(manifest)
+            plr_name = plr.metadata.name
+            plr_url = KonfluxClient.resource_url(plr.to_dict())
+            self.logger.info("Created EC PipelineRun: %s", plr_url)
 
-        self.logger.info("Waiting for EC PipelineRun %s to complete...", plr_name)
-        plr_info = await konflux_client.wait_for_pipelinerun(plr_name, namespace=KONFLUX_DEFAULT_NAMESPACE)
-        plr_url = KonfluxClient.resource_url(plr_info.to_dict())
+            self.logger.info("Waiting for batch %d PipelineRun %s...", batch_idx, plr_name)
+            plr_info = await konflux_client.wait_for_pipelinerun(plr_name, namespace=KONFLUX_DEFAULT_NAMESPACE)
+            plr_url = KonfluxClient.resource_url(plr_info.to_dict())
 
-        from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome
+            condition = plr_info.find_condition('Succeeded')
+            outcome = KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition(condition)
 
-        condition = plr_info.find_condition('Succeeded')
-        outcome = KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition(condition)
+            if outcome is not KonfluxBuildOutcome.SUCCESS:
+                self.logger.error("Batch %d FAILED. PLR: %s", batch_idx, plr_url)
+                failed_batches.append({"batch": batch_idx, "plr_url": plr_url})
+            else:
+                self.logger.info("Batch %d PASSED. PLR: %s", batch_idx, plr_url)
+                passed_count += len(batch)
 
-        if outcome is not KonfluxBuildOutcome.SUCCESS:
-            self.logger.error("EC verification FAILED. PLR: %s", plr_url)
+        self.logger.info("=== EC Verification Summary ===")
+        self.logger.info(
+            "Passed: %d / %d components (%d / %d batches)",
+            passed_count,
+            len(components),
+            total_batches - len(failed_batches),
+            total_batches,
+        )
+        if failed_batches:
+            self.logger.error("Failed batches:")
+            for fb in failed_batches:
+                self.logger.error("  Batch %d: %s", fb["batch"], fb["plr_url"])
             sys.exit(1)
 
-        self.logger.info("EC verification PASSED for all %d components. PLR: %s", len(components), plr_url)
+        self.logger.info("All %d components passed EC verification", len(components))
 
 
 @cli.command("build-conforma-verify", short_help="Run Conforma (EC) verification on OCP image builds")
