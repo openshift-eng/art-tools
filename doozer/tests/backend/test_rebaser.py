@@ -224,6 +224,7 @@ ENV ART_BUILD_DEPS_METHOD=cachi2
 ENV ART_BUILD_NETWORK=hermetic
 RUN go clean -cache || true
 ENV ART_BUILD_DEPS_MODE=default
+USER 0
 # End Konflux-specific steps
 LABEL foo="bar baz"
 USER 1000
@@ -235,6 +236,7 @@ ENV ART_BUILD_DEPS_METHOD=cachi2
 ENV ART_BUILD_NETWORK=hermetic
 RUN go clean -cache || true
 ENV ART_BUILD_DEPS_MODE=default
+USER 0
 # End Konflux-specific steps
 USER 2000
 RUN commands
@@ -281,6 +283,7 @@ ENV ART_BUILD_DEPS_METHOD=cachi2
 ENV ART_BUILD_NETWORK=hermetic
 RUN go clean -cache || true
 ENV ART_BUILD_DEPS_MODE=default
+USER 0
 # End Konflux-specific steps
 LABEL foo="bar baz"
 USER 1000
@@ -292,6 +295,7 @@ ENV ART_BUILD_DEPS_METHOD=cachi2
 ENV ART_BUILD_NETWORK=hermetic
 RUN go clean -cache || true
 ENV ART_BUILD_DEPS_MODE=default
+USER 0
 # End Konflux-specific steps
 USER 2000
 RUN commands
@@ -374,6 +378,7 @@ USER 3000
         metadata = MagicMock()
         metadata.distgit_key = "foo"
         metadata.is_lockfile_generation_enabled.return_value = True
+        metadata.get_lockfile_backend.return_value = "art-internal"
 
         mock_generator = AsyncMock()
         rebaser = KonfluxRebaser(MagicMock(), MagicMock(), MagicMock(), "unsigned", "test-repo")
@@ -383,7 +388,7 @@ USER 3000
         asyncio.run(rebaser._write_rpms_lock_file(metadata, Path(".")))
 
         mock_generator.generate_lockfile.assert_awaited_once_with(metadata, Path("."))
-        rebaser._logger.info.assert_called_with('Generating RPM lockfile for foo')
+        rebaser._logger.info.assert_called_with("Generating RPM lockfile for foo (backend=art-internal)")
 
     def test_write_rpms_lock_file_disabled(self):
         metadata = MagicMock()

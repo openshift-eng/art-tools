@@ -122,6 +122,8 @@ class ImageMetadata(Metadata):
         """ Event that is set when this image is being rebased. """
         self.rebase_status = False
         """ True if this image has been successfully rebased. """
+        self.lockfile_packages: list[str] = []
+        """ Resolved RPM package names from lockfile, used by child images for conflict detection. """
         self.build_event = Event()
         """ Event that is set when this image is being built. """
         self.build_status = False
@@ -1093,6 +1095,26 @@ class ImageMetadata(Metadata):
         self.logger.info(f"Lockfile generation set from {source} {lockfile_enabled}")
 
         return lockfile_enabled
+
+    def get_lockfile_backend(self) -> str:
+        """
+        Determine the lockfile backend to use.
+
+        Checks in order:
+            1. Image config: konflux.cachi2.lockfile.backend
+            2. Group config: konflux.cachi2.lockfile.backend
+            3. Default: "art-internal"
+
+        Return Value(s):
+            str: The lockfile backend name.
+        """
+        image_backend = self.config.konflux.cachi2.lockfile.get("backend")
+        group_backend = self.runtime.group_config.konflux.cachi2.lockfile.get("backend")
+
+        backend = image_backend or group_backend or "art-internal"
+
+        self.logger.info(f"Lockfile backend: {backend}")
+        return backend
 
     def is_dnf_modules_enable_enabled(self) -> bool:
         """
