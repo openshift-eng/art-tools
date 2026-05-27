@@ -1,6 +1,9 @@
+import asyncio
 import json
 import os
+import re
 import sys
+from collections import defaultdict
 from typing import List, Optional
 
 import click
@@ -9,6 +12,7 @@ from artcommonlib.constants import KONFLUX_DEFAULT_NAMESPACE
 from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildRecord, KonfluxRecord
 from artcommonlib.konflux.konflux_db import KonfluxDb
 from doozerlib.backend.konflux_client import KonfluxClient, get_common_runtime_watcher_labels
+from doozerlib.backend.pipelinerun_utils import PipelineRunInfo
 from doozerlib.constants import (
     KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION,
     KONFLUX_EC_PIPELINE_GIT_URL,
@@ -157,11 +161,16 @@ class BuildConformaVerifyPipeline:
         total_batches = len(batches)
         self.logger.info("Split %d components into %d batches of up to %d", len(components), total_batches, BATCH_SIZE)
 
-        failed_batches: list[dict] = []
-        passed_count = 0
+        if self.dry_run:
+            for batch_idx in range(1, total_batches + 1):
+                self.logger.warning("[DRY RUN] Would have created EC PipelineRun for batch %d", batch_idx)
+            self.logger.info("All %d components passed EC verification (dry run)", len(components))
+            return
 
+        # Create all PipelineRuns up front
+        batch_plrs: list[tuple[int, list[dict], str]] = []  # (batch_idx, batch, plr_name)
         for batch_idx, batch in enumerate(batches, start=1):
-            self.logger.info("=== Batch %d/%d (%d components) ===", batch_idx, total_batches, len(batch))
+            self.logger.info("=== Creating batch %d/%d (%d components) ===", batch_idx, total_batches, len(batch))
 
             snapshot_spec = {"application": application_name, "components": batch}
             snapshot_json = json.dumps(snapshot_spec)
@@ -213,29 +222,31 @@ class BuildConformaVerifyPipeline:
                 },
             }
 
-            if self.dry_run:
-                self.logger.warning("[DRY RUN] Would have created EC PipelineRun for batch %d", batch_idx)
-                passed_count += len(batch)
-                continue
-
             plr = await konflux_client._create(manifest)
             plr_name = plr.metadata.name
             plr_url = KonfluxClient.resource_url(plr.to_dict())
-            self.logger.info("Created EC PipelineRun: %s", plr_url)
+            self.logger.info("Created EC PipelineRun for batch %d: %s", batch_idx, plr_url)
+            batch_plrs.append((batch_idx, batch, plr_name))
 
-            self.logger.info("Waiting for batch %d PipelineRun %s...", batch_idx, plr_name)
+        self.logger.info("All %d batches submitted, waiting for completion in parallel...", total_batches)
+
+        # Wait for all batches in parallel
+        async def _wait_for_batch(batch_idx: int, batch: list[dict], plr_name: str) -> dict:
             plr_info = await konflux_client.wait_for_pipelinerun(plr_name, namespace=KONFLUX_DEFAULT_NAMESPACE)
             plr_url = KonfluxClient.resource_url(plr_info.to_dict())
-
-            condition = plr_info.find_condition('Succeeded')
+            condition = plr_info.find_condition("Succeeded")
             outcome = KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition(condition)
-
             if outcome is not KonfluxBuildOutcome.SUCCESS:
                 self.logger.error("Batch %d FAILED. PLR: %s", batch_idx, plr_url)
-                failed_batches.append({"batch": batch_idx, "plr_url": plr_url})
-            else:
-                self.logger.info("Batch %d PASSED. PLR: %s", batch_idx, plr_url)
-                passed_count += len(batch)
+                violations = self._extract_violations_from_plr(plr_info, batch)
+                return {"batch": batch_idx, "plr_url": plr_url, "passed": False, "violations": violations}
+            self.logger.info("Batch %d PASSED. PLR: %s", batch_idx, plr_url)
+            return {"batch": batch_idx, "plr_url": plr_url, "passed": True, "count": len(batch)}
+
+        results = await asyncio.gather(*[_wait_for_batch(idx, batch, name) for idx, batch, name in batch_plrs])
+
+        failed_batches = [r for r in results if not r["passed"]]
+        passed_count = sum(r["count"] for r in results if r["passed"])
 
         self.logger.info("=== EC Verification Summary ===")
         self.logger.info(
@@ -246,12 +257,139 @@ class BuildConformaVerifyPipeline:
             total_batches,
         )
         if failed_batches:
-            self.logger.error("Failed batches:")
-            for fb in failed_batches:
-                self.logger.error("  Batch %d: %s", fb["batch"], fb["plr_url"])
+            all_violations = self._aggregate_violations(failed_batches)
+            self._log_violation_summary(all_violations, failed_batches)
             sys.exit(1)
 
         self.logger.info("All %d components passed EC verification", len(components))
+
+    def _extract_violations_from_plr(self, plr_info: PipelineRunInfo, batch: list[dict]) -> list[dict]:
+        """Parse violation details from the verify pod logs of a failed PipelineRun.
+
+        Returns a list of dicts with keys: component_name, image_ref, rule, title, reason
+        """
+        digest_to_name = {}
+        for comp in batch:
+            image_ref = comp.get("containerImage", "")
+            digest = image_ref.split("@")[-1] if "@" in image_ref else image_ref
+            digest_to_name[digest] = comp["name"]
+
+        log_text = self._get_verify_pod_log(plr_info)
+        if not log_text:
+            self.logger.warning("No verify pod log available for violation extraction")
+            return []
+
+        return self._parse_violations_from_log(log_text, digest_to_name)
+
+    @staticmethod
+    def _get_verify_pod_log(plr_info: PipelineRunInfo) -> Optional[str]:
+        """Extract the step-report or step-detailed-report log from a PLR's verify pod."""
+        for pod_info in plr_info.get_pods():
+            pod_name = pod_info.name or ""
+            if "verify" not in pod_name:
+                continue
+            for step_name in ("step-report", "step-detailed-report"):
+                log = pod_info.get_log_content(step_name)
+                if log:
+                    return log
+            for container in pod_info.get_all_containers():
+                if container.is_failed():
+                    log = container.get_log_content()
+                    if log:
+                        return log
+        return None
+
+    @staticmethod
+    def _parse_violations_from_log(log_text: str, digest_to_name: dict[str, str]) -> list[dict]:
+        """Parse the EC detailed-report log and extract violation entries.
+
+        Each violation block in the log looks like:
+            ✕ [Violation] rule.name
+              ImageRef: quay.io/...@sha256:abc123
+              Reason: <multiline reason text>
+              Term: ...
+              Title: Human readable title
+              Description: ...
+              Solution: ...
+        """
+        violations: list[dict] = []
+
+        block_pattern = re.compile(r'✕ \[Violation\] (\S+)(.*?)(?=✕ \[Violation\]|\Z)', re.DOTALL)
+        image_ref_pattern = re.compile(r'ImageRef:\s*(\S+)')
+        reason_pattern = re.compile(r'Reason:\s*(.*?)(?=\n\s*(?:Term|Title):)', re.DOTALL)
+        title_pattern = re.compile(r'Title:\s*(.*)')
+
+        for block_match in block_pattern.finditer(log_text):
+            rule = block_match.group(1)
+            block_body = block_match.group(2)
+
+            ref_match = image_ref_pattern.search(block_body)
+            image_ref = ref_match.group(1) if ref_match else ""
+
+            reason = ""
+            reason_match = reason_pattern.search(block_body)
+            if reason_match:
+                reason = " ".join(reason_match.group(1).strip().split())
+
+            title = ""
+            title_match = title_pattern.search(block_body)
+            if title_match:
+                title = title_match.group(1).strip()
+
+            digest = image_ref.split("@")[-1] if "@" in image_ref else image_ref
+            component_name = digest_to_name.get(digest, image_ref)
+
+            violations.append(
+                {
+                    "component_name": component_name,
+                    "image_ref": image_ref,
+                    "rule": rule,
+                    "title": title,
+                    "reason": reason,
+                }
+            )
+
+        return violations
+
+    def _aggregate_violations(self, failed_batches: list[dict]) -> dict[str, list[dict]]:
+        """Aggregate violations across all failed batches, keyed by component name."""
+        by_component: dict[str, list[dict]] = defaultdict(list)
+        for fb in failed_batches:
+            for v in fb.get("violations", []):
+                by_component[v["component_name"]].append(v)
+        return dict(by_component)
+
+    def _log_violation_summary(self, all_violations: dict[str, list[dict]], failed_batches: list[dict]):
+        """Log a human-readable summary of all EC violations."""
+        self.logger.error("=== EC Violation Details ===")
+        if not all_violations:
+            self.logger.error("Failed batches:")
+            for fb in failed_batches:
+                self.logger.error("  Batch %d: %s (no violation details available)", fb["batch"], fb["plr_url"])
+            return
+
+        unique_rules: set[str] = set()
+        for component_name, violations in sorted(all_violations.items()):
+            self.logger.error("  Component: %s", component_name)
+            self.logger.error("    ImageRef: %s", violations[0]["image_ref"])
+            seen_rules: set[str] = set()
+            for v in violations:
+                if v["rule"] not in seen_rules:
+                    seen_rules.add(v["rule"])
+                    unique_rules.add(v["rule"])
+                    self.logger.error("    - [%s] %s", v["rule"], v["title"])
+                    if v["reason"]:
+                        self.logger.error("      Reason: %s", v["reason"])
+
+        self.logger.error("---")
+        self.logger.error(
+            "Total: %d unique component(s) with violations, %d unique rule(s) violated",
+            len(all_violations),
+            len(unique_rules),
+        )
+        self.logger.error("Failed batches:")
+        for fb in failed_batches:
+            self.logger.error("  Batch %d: %s", fb["batch"], fb["plr_url"])
 
 
 @cli.command("build-conforma-verify", short_help="Run Conforma (EC) verification on OCP image builds")
