@@ -85,6 +85,18 @@ PRODUCT_NAMESPACE_MAP = {
     "zero-trust": "art-oap-tenant",
 }
 
+# Konflux silent base-image workflow: ReleasePlan metadata.name and Application (Snapshot/Releases spec.application).
+# Must stay aligned with konflux-release-data ReleasePlan resources per product tenant.
+# Konflux Application: OCP uses art-images-base; layered products use <product>-images-base (no stream suffix).
+PRODUCT_BASE_IMAGE_KONFLUX_RELEASE_MAP = {
+    "ocp": ("ocp-art-images-base-silent", "art-images-base"),
+    "rhmtc": ("mtc-images-base-silent", "mtc-images-base"),
+    "mta": ("mta-images-base-silent", "mta-images-base"),
+    "oadp": ("oadp-images-base-silent", "oadp-images-base"),
+    "logging": ("logging-images-base-silent", "logging-images-base"),
+    "openshift-logging": ("logging-images-base-silent", "logging-images-base"),
+}
+
 PRODUCT_KUBECONFIG_MAP = {
     "acm": "ACM_KONFLUX_SA_KUBECONFIG",
     "mce": "ACM_KONFLUX_SA_KUBECONFIG",

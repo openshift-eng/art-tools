@@ -1831,15 +1831,15 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         both_metadata = ImageMetadata(runtime_both, both_data)
         self.assertTrue(both_metadata.should_trigger_base_image_release())
 
-        # Layered product: base-image registry workflow is OCP-only
+        # Layered product: same base/golang trigger rules as OCP when variant and assembly allow
         layered_runtime = MagicMock()
         layered_runtime.logger = logging.getLogger('test_runtime')
         layered_runtime.variant = BuildVariant.OCP
         layered_runtime.assembly = 'stream'
         layered_runtime.product = 'rhmtc'
         layered_runtime.group_config = Model({})
-        self.assertFalse(ImageMetadata(layered_runtime, base_data).should_trigger_base_image_release())
-        self.assertFalse(ImageMetadata(layered_runtime, golang_data).should_trigger_base_image_release())
+        self.assertTrue(ImageMetadata(layered_runtime, base_data).should_trigger_base_image_release())
+        self.assertTrue(ImageMetadata(layered_runtime, golang_data).should_trigger_base_image_release())
 
         # OKD: base image would trigger on OCP but never on OKD (no RH registry release)
         okd_runtime = MagicMock()

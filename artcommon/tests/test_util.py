@@ -292,6 +292,38 @@ alternative_upstream:
         self.assertEqual(major, None)
         self.assertEqual(minor, None)
 
+    def test_resolve_konflux_base_image_release_targets_known_products(self):
+        self.assertEqual(
+            util.resolve_konflux_base_image_release_targets("ocp"),
+            ("ocp-art-images-base-silent", "art-images-base"),
+        )
+        self.assertEqual(
+            util.resolve_konflux_base_image_release_targets("rhmtc"),
+            ("mtc-images-base-silent", "mtc-images-base"),
+        )
+        self.assertEqual(
+            util.resolve_konflux_base_image_release_targets("mta"),
+            ("mta-images-base-silent", "mta-images-base"),
+        )
+        self.assertEqual(
+            util.resolve_konflux_base_image_release_targets("oadp"),
+            ("oadp-images-base-silent", "oadp-images-base"),
+        )
+        self.assertEqual(
+            util.resolve_konflux_base_image_release_targets("logging"),
+            ("logging-images-base-silent", "logging-images-base"),
+        )
+        self.assertEqual(
+            util.resolve_konflux_base_image_release_targets("openshift-logging"),
+            ("logging-images-base-silent", "logging-images-base"),
+        )
+
+    def test_resolve_konflux_base_image_release_targets_unknown_defaults_to_ocp(self):
+        self.assertEqual(
+            util.resolve_konflux_base_image_release_targets("unknown-product"),
+            ("ocp-art-images-base-silent", "art-images-base"),
+        )
+
 
 class TestSoftwareLifecyclePhase(unittest.TestCase):
     def test_from_name_valid(self):

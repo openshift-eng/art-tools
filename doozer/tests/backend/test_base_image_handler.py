@@ -188,3 +188,37 @@ class TestBaseImageHandler(IsolatedAsyncioTestCase):
         konflux_client._create.assert_awaited_once()
         release_obj = konflux_client._create.await_args.args[0]
         self.assertEqual(release_obj["metadata"]["annotations"]["art.redhat.com/nvrs"], self.nvr)
+
+    @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_kubeconfig_by_product")
+    async def test_create_release_from_snapshot_rhmtc_uses_product_plan_and_application(
+        self, mock_kubeconfig, mock_namespace, mock_konflux_client_init
+    ):
+        mock_namespace.return_value = "art-mtc-tenant"
+        mock_kubeconfig.return_value = "/path/to/kubeconfig"
+
+        konflux_client = AsyncMock()
+        created_release = MagicMock()
+        created_release.metadata.name = "test-release"
+        konflux_client._create.return_value = created_release
+        konflux_client.resource_url = MagicMock(return_value="https://konflux.example/releases/test-release")
+        mock_konflux_client_init.return_value = konflux_client
+
+        self.runtime.product = "rhmtc"
+
+        handler = BaseImageHandler(self.runtime, dry_run=False)
+
+        with patch.object(handler, "_wait_for_snapshot_availability", new=AsyncMock(return_value=True)):
+            await handler._create_release_from_snapshot("test-snapshot", self.nvr)
+
+        konflux_client._get.assert_awaited_once()
+        self.assertEqual(konflux_client._get.await_args.args[2], "mtc-images-base-silent")
+
+        konflux_client._create.assert_awaited_once()
+        release_obj = konflux_client._create.await_args.args[0]
+        self.assertEqual(release_obj["spec"]["releasePlan"], "mtc-images-base-silent")
+        self.assertEqual(
+            release_obj["metadata"]["labels"]["appstudio.openshift.io/application"],
+            "mtc-images-base",
+        )
