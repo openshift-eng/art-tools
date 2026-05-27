@@ -1407,8 +1407,8 @@ class ImageMetadata(Metadata):
         if self.runtime.variant is BuildVariant.OKD:
             return False
 
-        if self.runtime.assembly == "test":
-            return False
+        # if self.runtime.assembly == "test":
+        #     return False
 
         if not (self.is_base_image() or self.is_golang_builder()):
             return False
