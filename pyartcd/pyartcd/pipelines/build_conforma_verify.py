@@ -7,10 +7,10 @@ from typing import List, Optional
 import click
 from artcommonlib import exectools, logutil
 from artcommonlib.constants import KONFLUX_DEFAULT_NAMESPACE
-from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord, KonfluxRecord
+from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildRecord, KonfluxRecord
+from artcommonlib.konflux.konflux_db import KonfluxDb
 from doozerlib.backend.konflux_client import KonfluxClient
 from doozerlib.constants import KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION
-from elliottlib.cli.snapshot_cli import get_build_records_by_nvrs
 
 from pyartcd import constants
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -74,25 +74,10 @@ class BuildConformaVerifyPipeline:
             raise RuntimeError("No builds found to verify")
 
         self.logger.info("Looking up build records for %d NVRs...", len(nvrs))
-        elliott_runtime = self._init_elliott_runtime()
-        nvr_record_map = await get_build_records_by_nvrs(elliott_runtime, nvrs)
+        nvr_record_map = await self._lookup_build_records(nvrs)
 
         self.logger.info("Running EC verification for %d builds...", len(nvr_record_map))
         await self._verify_builds(nvr_record_map)
-
-    def _init_elliott_runtime(self):
-        """Initialize a lightweight Elliott Runtime for DB access."""
-        from elliottlib.runtime import Runtime as ElliottRuntime
-
-        elliott_runtime = ElliottRuntime()
-        group_param = self.group
-        if self.data_gitref:
-            group_param += f'@{self.data_gitref}'
-        elliott_runtime.group = group_param
-        elliott_runtime.assembly = self.assembly
-        elliott_runtime.data_path = self.data_path
-        elliott_runtime.initialize(mode='images', build_system='konflux')
-        return elliott_runtime
 
     async def _find_latest_builds(self) -> List[str]:
         cmd = self._elliott_base_command + [
@@ -112,6 +97,16 @@ class BuildConformaVerifyPipeline:
         nvrs = sorted(set(payload + non_payload))
         self.logger.info("Found %d payload and %d non-payload builds", len(payload), len(non_payload))
         return nvrs
+
+    async def _lookup_build_records(self, nvrs: List[str]) -> dict[str, KonfluxRecord]:
+        db = KonfluxDb()
+        db.bind(KonfluxBuildRecord)
+
+        where = {"group": self.group, "engine": Engine.KONFLUX.value}
+        records = await db.get_build_records_by_nvrs(
+            nvrs, where=where, strict=True, exclude_large_columns=True,
+        )
+        return {str(record.nvr): record for record in records if record is not None}
 
     async def _verify_builds(self, nvr_record_map: dict[str, KonfluxRecord]):
         kubeconfig = os.getenv("KONFLUX_SA_KUBECONFIG")
