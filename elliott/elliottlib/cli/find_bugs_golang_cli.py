@@ -449,7 +449,7 @@ class FindBugsGolangCli:
             query = (
                 'project = "OCPBUGS" '
                 'and labels = "SecurityTracking" '
-                'and component = "Release" '
+                'and component in ("Release", "Security") '
                 f'and "Target Version" in ({tr}) '
                 f'{exclude_status_clause}'
             )
