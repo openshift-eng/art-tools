@@ -579,6 +579,9 @@ class KonfluxImageBuilder:
                                 content_set_id = f'{repo_name}-{arch}'
 
                             opts: dict = {}
+                            extra_options = repo._data.conf.get("extra_options", {})
+                            for k, v in dict(extra_options).items():
+                                opts[k] = str(v)
                             if should_disable_gpg:
                                 opts["gpgcheck"] = "0"
                             if self._repo_gets_hermetic_module_hotfixes(repo_name, group, golang_pattern):
