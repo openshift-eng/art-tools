@@ -196,7 +196,7 @@ class BuildConformaVerifyPipeline:
                     {"name": "WORKERS", "value": EC_WORKERS},
                 ],
                 "taskRunTemplate": {
-                    "serviceAccountName": "appstudio-pipeline",
+                    "serviceAccountName": f"build-pipeline-{components[0]['name']}",
                 },
                 "taskRunSpecs": [
                     {
