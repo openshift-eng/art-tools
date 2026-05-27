@@ -235,10 +235,14 @@ class KonfluxOcpPipeline:
 
     async def update_build_fail_counters(self, built_images, failed_images, record_log):
         """
-        Update Redis build-failure counters after Konflux build run.
+        Update Redis failure counters after Konflux build run.
 
-        - Successfully built images: reset counter
-        - Failed builds: increment counter and store metadata
+        Categorizes failures into three types with separate Redis key patterns:
+        - Build failures:              count:build-failure:konflux:{group}:{image}
+        - EC (ITS) failures:           count:ec-failure:konflux:{group}:{image}
+        - Base image release failures: count:release-failure:konflux:{group}:{image}
+
+        Successfully built images reset all three counter types.
         """
         if self.assembly != 'stream':
             return
@@ -246,14 +250,35 @@ class KonfluxOcpPipeline:
         group = f'openshift-{self.version}'
         job_url = os.getenv('BUILD_URL')
 
-        # Build a lookup of failed entries for NVR metadata
+        # Build a lookup of failed entries for metadata
         failed_entries = {
             entry['name']: entry for entry in record_log.get('image_build_konflux', []) if int(entry['status'])
         }
 
+        # Categorize failures by type
+        ec_failed_images = []
+        release_failed_images = []
+        build_failed_images = []
+        for image in failed_images:
+            entry = failed_entries.get(image, {})
+            if entry.get('ec_failed') == 'true':
+                ec_failed_images.append(image)
+            elif entry.get('base_image_release_failed') == 'true':
+                release_failed_images.append(image)
+            else:
+                build_failed_images.append(image)
+
+        # Reset all counter types for successful builds
+        counter_types = ['build-failure', 'ec-failure', 'release-failure']
         await asyncio.gather(
-            *[reset_fail_counter(f'count:build-failure:konflux:{group}:{image}') for image in built_images]
+            *[
+                reset_fail_counter(f'count:{counter_type}:konflux:{group}:{image}')
+                for image in built_images
+                for counter_type in counter_types
+            ]
         )
+
+        # Increment counters for each failure type
         await asyncio.gather(
             *[
                 increment_fail_counter(
@@ -261,8 +286,25 @@ class KonfluxOcpPipeline:
                     jenkins_url=job_url,
                     nvr=failed_entries.get(image, {}).get('nvrs'),
                 )
-                for image in failed_images
-            ]
+                for image in build_failed_images
+            ],
+            *[
+                increment_fail_counter(
+                    f'count:ec-failure:konflux:{group}:{image}',
+                    jenkins_url=job_url,
+                    nvr=failed_entries.get(image, {}).get('nvrs'),
+                    ec_pipeline_url=failed_entries.get(image, {}).get('ec_pipeline_url'),
+                )
+                for image in ec_failed_images
+            ],
+            *[
+                increment_fail_counter(
+                    f'count:release-failure:konflux:{group}:{image}',
+                    jenkins_url=job_url,
+                    nvr=failed_entries.get(image, {}).get('nvrs'),
+                )
+                for image in release_failed_images
+            ],
         )
 
     def building_images(self):

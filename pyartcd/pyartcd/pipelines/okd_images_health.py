@@ -58,7 +58,7 @@ class ImagesHealthPipeline:
 
     async def get_report(self, version: str) -> Optional[list]:
         group = OKD_GROUP_TEMPLATE.format(version)
-        failures = await util.get_build_failures(group=group, logger=self.runtime.logger)
+        failures = await util.get_counter_failures('build-failure', group=group, logger=self.runtime.logger)
 
         failing_images = set(failures.keys())
         if self.image_list:

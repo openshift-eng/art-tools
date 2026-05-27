@@ -1023,9 +1023,7 @@ async def increment_fail_counter(branch: str, **kwargs):
         await increment_fail_counter('count:build:4.17:ironic', url='http://...', nvr='ironic-1.0')
     """
     failure_key = f'{branch}:failure'
-    fail_count = await redis.get_value(failure_key)
-    fail_count = int(fail_count) if fail_count else 0
-    await redis.set_value(key=failure_key, value=fail_count + 1)
+    await redis.call('incr', failure_key)
 
     for key, value in kwargs.items():
         if value is not None:
@@ -1171,16 +1169,22 @@ async def get_rebase_failures(version: str, branches: list[str], build_systems: 
     return all_failures
 
 
-async def get_build_failures(group: str, build_system: str = 'konflux', logger=None):
+async def get_counter_failures(
+    counter_type: str,
+    group: str,
+    build_system: str = 'konflux',
+    logger=None,
+):
     """
-    Fetch build failure data from Redis for a specific group.
+    Fetch failure data from Redis for a specific counter type and group.
 
     Arg(s):
+        counter_type (str): Counter type key segment (e.g., 'build-failure', 'ec-failure', 'release-failure')
         group (str): Group name (e.g., 'openshift-4.18', 'okd-4.21')
         build_system (str): Build system (default: 'konflux')
         logger (Logger): Optional logger for debugging
     Return Value(s):
         dict: {image_name: {failure_count, <all_metadata>}}
     """
-    pattern = f'count:build-failure:{build_system}:{group}:*:failure'
+    pattern = f'count:{counter_type}:{build_system}:{group}:*:failure'
     return await get_failures(pattern, entity_index=-2, logger=logger)
