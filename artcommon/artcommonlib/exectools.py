@@ -724,7 +724,8 @@ async def cmd_gather_async(
     """Runs a command asynchronously and returns rc,stdout,stderr as a tuple
     :param cmd <string|list>: A shell command
     :param check: If check is True and the exit code was non-zero, it raises a ChildProcessError
-    :param log_stdout: If True, stream stdout lines to the logger in real time
+    :param log_stdout: If True, stream stdout lines to the logger in real time. Stderr is merged
+        into stdout to avoid pipe deadlocks, so the returned stderr will be empty.
     :param kwargs: Other arguments passing to asyncio.subprocess.create_subprocess_exec
     :return: rc, stdout, stderr
     """
@@ -751,7 +752,9 @@ async def cmd_gather_async(
     # capture stdout and stderr if they are not set in kwargs
     if "stdout" not in kwargs:
         kwargs["stdout"] = asyncio.subprocess.PIPE
-    if "stderr" not in kwargs:
+    if log_stdout:
+        kwargs["stderr"] = asyncio.subprocess.STDOUT
+    elif "stderr" not in kwargs:
         kwargs["stderr"] = asyncio.subprocess.PIPE
 
     # Propagate trace context to subprocess
@@ -777,10 +780,9 @@ async def cmd_gather_async(
             line = raw_line.decode("utf-8", errors="replace").rstrip()
             logger.info(line)
             stdout_lines.append(line)
-        stderr_raw = await proc.stderr.read() if proc.stderr else b""
         await proc.wait()
         stdout = "\n".join(stdout_lines)
-        stderr = stderr_raw.decode("utf-8", errors="replace") if stderr_raw else ""
+        stderr = ""
     else:
         stdout_raw, stderr_raw = await proc.communicate()
         stdout = stdout_raw.decode() if stdout_raw else ""
