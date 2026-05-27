@@ -321,7 +321,7 @@ class BuildFbcPipeline:
     '--skip-task',
     'skip_tasks',
     multiple=True,
-    help='Remove a named Tekton task from the PipelineRun. Repeatable (e.g. --skip-task clair-scan).',
+    help='Remove a named Tekton task from the PipelineRun. Repeatable (e.g. --skip-task clair-scan --skip-task sast-snyk-check).',
 )
 @click.option(
     "--reset-to-prod/--no-reset-to-prod", is_flag=True, help="Reset FBC builds to the latest production version"

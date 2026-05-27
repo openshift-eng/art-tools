@@ -162,7 +162,7 @@ class BuildMergedFbcPipeline:
     '--skip-task',
     'skip_tasks',
     multiple=True,
-    help='Remove a named Tekton task from the PipelineRun. Repeatable (e.g. --skip-task clair-scan).',
+    help='Remove a named Tekton task from the PipelineRun. Repeatable (e.g. --skip-task clair-scan --skip-task sast-snyk-check).',
 )
 @pass_runtime
 @click_coroutine

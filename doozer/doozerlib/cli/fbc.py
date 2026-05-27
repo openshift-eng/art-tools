@@ -404,7 +404,7 @@ class FbcMergeCli:
     '--skip-task',
     'skip_tasks',
     multiple=True,
-    help='Remove a named Tekton task from the PipelineRun. Repeatable (e.g. --skip-task clair-scan).',
+    help='Remove a named Tekton task from the PipelineRun. Repeatable (e.g. --skip-task clair-scan --skip-task sast-snyk-check).',
 )
 @click.option(
     '--target-index',
@@ -871,7 +871,7 @@ class FbcRebaseAndBuildCli:
     '--skip-task',
     'skip_tasks',
     multiple=True,
-    help='Remove a named Tekton task from the PipelineRun. Repeatable (e.g. --skip-task clair-scan).',
+    help='Remove a named Tekton task from the PipelineRun. Repeatable (e.g. --skip-task clair-scan --skip-task sast-snyk-check).',
 )
 @click.option('--dry-run', default=False, is_flag=True, help='Do not build anything, but only print build operations.')
 @click.option(
