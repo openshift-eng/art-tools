@@ -778,7 +778,7 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
 
         self.assertEqual(
             pullspec,
-            "registry.redhat.io/openshift/art-images-base:"
+            "registry.redhat.io/openshift/golang-builder:"
             "openshift-golang-builder-container-v1.25.8-202604150744.p2.gf28329a.el9",
         )
 
@@ -792,7 +792,7 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
 
         self.assertEqual(
             pullspec,
-            "registry.redhat.io/openshift/art-images-base:"
+            "registry.redhat.io/openshift/golang-builder:"
             "openshift-golang-builder-container-v1.25.8-202604150744.p2.gf28329a.el9",
         )
 
@@ -810,7 +810,7 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
         """Test published pullspec availability check reuses pyartcd.oc.get_image_info with quay auth"""
         pipeline = self._make_pipeline(build_system="konflux")
 
-        pullspec = "registry.redhat.io/openshift/art-images-base:openshift-golang-builder-container-v1.25.8-test"
+        pullspec = "registry.redhat.io/openshift/golang-builder:openshift-golang-builder-container-v1.25.8-test"
         quay_auth_file = str(Path(self.enterContext(tempfile.TemporaryDirectory())) / "quay-auth.json")
 
         with patch.dict(
@@ -828,7 +828,7 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
         """Test published pullspec availability check raises when pyartcd.oc.get_image_info fails"""
         pipeline = self._make_pipeline(build_system="konflux")
 
-        pullspec = "registry.redhat.io/openshift/art-images-base:openshift-golang-builder-container-v1.25.8-test"
+        pullspec = "registry.redhat.io/openshift/golang-builder:openshift-golang-builder-container-v1.25.8-test"
         get_image_info.side_effect = ValueError("Image pullspec is not found.")
         quay_auth_file = str(Path(self.enterContext(tempfile.TemporaryDirectory())) / "quay-auth.json")
 

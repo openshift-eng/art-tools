@@ -79,3 +79,4 @@ KONFLUX_PREGA_EC_POLICY_CONFIGURATION = "ocp-art-tenant/conforma-build-ec-stage"
 KONFLUX_BASE_IMAGE_EC_POLICY_CONFIGURATION = "rhtap-releng-tenant/registry-ocp-art-base-prod"
 
 ART_IMAGES_BASE_APPLICATION = "art-images-base"
+ART_IMAGES_GOLANG_BUILDER_APPLICATION = "golang-builder"

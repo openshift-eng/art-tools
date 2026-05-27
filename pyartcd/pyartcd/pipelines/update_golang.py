@@ -14,7 +14,6 @@ from artcommonlib.constants import (
     GOLANG_BUILDER_IMAGE_NAME,
     KONFLUX_DEFAULT_IMAGE_REPO,
     PRODUCT_NAMESPACE_MAP,
-    REGISTRY_REDHAT_IO,
 )
 from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
@@ -22,7 +21,7 @@ from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.release_util import split_el_suffix_in_release
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import new_roundtrip_yaml_handler
-from doozerlib.backend.base_image_handler import ART_IMAGES_BASE_APPLICATION
+from doozerlib.util import rh_art_images_base_pullspec
 from elliottlib import util as elliottutil
 from elliottlib.constants import GOLANG_BUILDER_CVE_COMPONENT
 
@@ -34,7 +33,6 @@ from pyartcd.util import default_release_suffix, kinit
 
 _LOGGER = logging.getLogger(__name__)
 yaml = new_roundtrip_yaml_handler()
-PUBLISHED_GOLANG_BUILDER_REPO = f"{REGISTRY_REDHAT_IO}/openshift/{ART_IMAGES_BASE_APPLICATION}"
 
 
 def is_latest_build(ocp_version: str, el_v: int, nvr: str, koji_session) -> bool:
@@ -627,7 +625,7 @@ class UpdateGolangPipeline:
         elif component_name != GOLANG_BUILDER_CVE_COMPONENT:
             raise ValueError(f"Expected a golang builder image NVR, got: {builder_nvr}")
         published_nvr = f'{component_name}-{parsed_nvr["version"]}-{parsed_nvr["release"]}'
-        return f'{PUBLISHED_GOLANG_BUILDER_REPO}:{published_nvr}'
+        return rh_art_images_base_pullspec(published_nvr)
 
     @staticmethod
     def _get_konflux_builder_pullspec(builder_nvr: str):

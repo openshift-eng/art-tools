@@ -78,7 +78,8 @@ def golang_report_for_version(runtime, ocp_version: str, ignore_rhel: bool = Fal
         else:
             tag = image_nvr_like.split(':')[-1]
             if tag.startswith('openshift-golang-builder-container-'):
-                # registry.redhat.io/openshift/art-images-base:openshift-golang-builder-container-v1.25.8-...
+                # registry.redhat.io/openshift/golang-builder:openshift-golang-builder-container-v1.25.8-...
+                # (formerly art-images-base before ART moved published golang builders)
                 # Tag is already in NVR name format
                 nvr = tag
             else:
