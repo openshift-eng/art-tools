@@ -238,7 +238,7 @@ class BuildConformaVerifyPipeline:
             outcome = KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition(condition)
             if outcome is not KonfluxBuildOutcome.SUCCESS:
                 self.logger.error("Batch %d FAILED. PLR: %s", batch_idx, plr_url)
-                violations = self._extract_violations_from_plr(plr_info, batch)
+                violations = self._extract_violations_from_plr(plr_info, batch, konflux_client)
                 return {"batch": batch_idx, "plr_url": plr_url, "passed": False, "violations": violations}
             self.logger.info("Batch %d PASSED. PLR: %s", batch_idx, plr_url)
             return {"batch": batch_idx, "plr_url": plr_url, "passed": True, "count": len(batch)}
@@ -263,7 +263,9 @@ class BuildConformaVerifyPipeline:
 
         self.logger.info("All %d components passed EC verification", len(components))
 
-    def _extract_violations_from_plr(self, plr_info: PipelineRunInfo, batch: list[dict]) -> list[dict]:
+    def _extract_violations_from_plr(
+        self, plr_info: PipelineRunInfo, batch: list[dict], konflux_client: KonfluxClient
+    ) -> list[dict]:
         """Parse violation details from the verify pod logs of a failed PipelineRun.
 
         Returns a list of dicts with keys: component_name, image_ref, rule, title, reason
@@ -274,24 +276,40 @@ class BuildConformaVerifyPipeline:
             digest = image_ref.split("@")[-1] if "@" in image_ref else image_ref
             digest_to_name[digest] = comp["name"]
 
-        log_text = self._get_verify_pod_log(plr_info)
+        log_text = self._get_verify_pod_log(plr_info, konflux_client)
         if not log_text:
             self.logger.warning("No verify pod log available for violation extraction")
             return []
 
         return self._parse_violations_from_log(log_text, digest_to_name)
 
-    @staticmethod
-    def _get_verify_pod_log(plr_info: PipelineRunInfo) -> Optional[str]:
-        """Extract the step-report or step-detailed-report log from a PLR's verify pod."""
+    def _get_verify_pod_log(self, plr_info: PipelineRunInfo, konflux_client: KonfluxClient) -> Optional[str]:
+        """Fetch the report log from the verify pod of a failed PipelineRun.
+
+        The watcher only caches logs for failed containers, but the report step
+        typically exits 0 even when violations are found. We fetch it directly
+        from the Kubernetes API instead.
+        """
         for pod_info in plr_info.get_pods():
             pod_name = pod_info.name or ""
             if "verify" not in pod_name:
                 continue
+
+            namespace = pod_info.namespace or KONFLUX_DEFAULT_NAMESPACE
             for step_name in ("step-report", "step-detailed-report"):
-                log = pod_info.get_log_content(step_name)
-                if log:
-                    return log
+                try:
+                    log = konflux_client.corev1_client.read_namespaced_pod_log(
+                        name=pod_name,
+                        namespace=namespace,
+                        container=step_name,
+                        _request_timeout=120,
+                    )
+                    if log:
+                        return log
+                except Exception as e:
+                    self.logger.debug("Could not fetch log for %s/%s: %s", pod_name, step_name, e)
+
+            # Fall back to any pre-fetched failed container log
             for container in pod_info.get_all_containers():
                 if container.is_failed:
                     log = container.get_log_content()
