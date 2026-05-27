@@ -293,7 +293,7 @@ class BuildConformaVerifyPipeline:
                 if log:
                     return log
             for container in pod_info.get_all_containers():
-                if container.is_failed():
+                if container.is_failed:
                     log = container.get_log_content()
                     if log:
                         return log
