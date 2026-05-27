@@ -1,4 +1,3 @@
-import asyncio
 import json
 import os
 import sys
@@ -9,8 +8,13 @@ from artcommonlib import exectools, logutil
 from artcommonlib.constants import KONFLUX_DEFAULT_NAMESPACE
 from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildRecord, KonfluxRecord
 from artcommonlib.konflux.konflux_db import KonfluxDb
-from doozerlib.backend.konflux_client import KonfluxClient
-from doozerlib.constants import KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION
+from doozerlib.backend.konflux_client import KonfluxClient, get_common_runtime_watcher_labels
+from doozerlib.constants import (
+    KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION,
+    KONFLUX_EC_PIPELINE_GIT_URL,
+    KONFLUX_EC_PIPELINE_PATH,
+    KONFLUX_EC_PIPELINE_REVISION,
+)
 
 from pyartcd import constants
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -18,7 +22,7 @@ from pyartcd.runtime import Runtime
 
 LOGGER = logutil.get_logger(__name__)
 
-MAX_CONCURRENCY = 10
+EC_WORKERS = "35"
 
 
 class BuildConformaVerifyPipeline:
@@ -28,7 +32,6 @@ class BuildConformaVerifyPipeline:
         version: str,
         assembly: str,
         builds: Optional[List[str]],
-        fail_fast: bool,
         data_path: Optional[str] = None,
         data_gitref: Optional[str] = None,
     ):
@@ -36,7 +39,6 @@ class BuildConformaVerifyPipeline:
         self.version = version
         self.assembly = assembly
         self.builds = builds or []
-        self.fail_fast = fail_fast
         self.data_path = data_path or constants.OCP_BUILD_DATA_URL
         self.data_gitref = data_gitref
         self.dry_run = runtime.dry_run
@@ -121,55 +123,125 @@ class BuildConformaVerifyPipeline:
         )
 
         ec_policy = KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION
-        semaphore = asyncio.Semaphore(MAX_CONCURRENCY)
-        results: dict[str, dict] = {}
+        records = list(nvr_record_map.values())
+        application_name = records[0].get_konflux_application_name()
 
-        async def _verify_one(nvr: str, record: KonfluxRecord):
-            async with semaphore:
-                app_name = record.get_konflux_application_name()
-                comp_name = record.get_konflux_component_name()
-                self.logger.info("Verifying %s (component=%s)...", nvr, comp_name)
-
-                ec_result = await konflux_client.verify_enterprise_contract(
-                    namespace=KONFLUX_DEFAULT_NAMESPACE,
-                    application_name=app_name,
-                    component_name=comp_name,
-                    image_pullspec=record.image_pullspec,
-                    source_url=record.rebase_repo_url,
-                    commit_sha=record.rebase_commitish,
-                    ec_policy=ec_policy,
-                    logger=self.logger.getChild(nvr),
-                )
-
-                status = "PASS" if not ec_result.ec_failed else "FAIL"
-                results[nvr] = {
-                    "status": status,
-                    "plr_url": ec_result.ec_pipeline_url,
+        # Build a single multi-component Snapshot JSON
+        components = []
+        for record in records:
+            components.append(
+                {
+                    "name": record.get_konflux_component_name(),
+                    "containerImage": record.image_pullspec,
+                    "source": {
+                        "git": {
+                            "url": record.rebase_repo_url,
+                            "revision": record.rebase_commitish,
+                        }
+                    },
                 }
-                self.logger.info("%s: %s (PLR: %s)", nvr, status, ec_result.ec_pipeline_url)
-                return ec_result
+            )
+        snapshot_spec = {"application": application_name, "components": components}
+        snapshot_json = json.dumps(snapshot_spec)
+        self.logger.info("Built snapshot with %d components for application %s", len(components), application_name)
 
-        if self.fail_fast:
-            for nvr, record in nvr_record_map.items():
-                ec_result = await _verify_one(nvr, record)
-                if ec_result.ec_failed:
-                    self.logger.error("Stopping early due to --fail-fast: %s failed", nvr)
-                    break
-        else:
-            await asyncio.gather(*(_verify_one(nvr, record) for nvr, record in nvr_record_map.items()))
+        # Ensure IntegrationTestScenario exists
+        policy_suffix = ec_policy.split('/')[-1]
+        its_name = f"{application_name}-ec-{policy_suffix}"
+        self.logger.info("Ensuring IntegrationTestScenario %s exists...", its_name)
+        await konflux_client.ensure_integration_test_scenario(
+            name=its_name,
+            application_name=application_name,
+            policy_configuration=ec_policy,
+        )
 
-        failed = [nvr for nvr, r in results.items() if r["status"] == "FAIL"]
-        passed = [nvr for nvr, r in results.items() if r["status"] == "PASS"]
+        # Create and submit a single EC PipelineRun for all components
+        generate_name = f"{application_name}-ec-conforma-verify-"
+        if len(generate_name) > 248:
+            generate_name = generate_name[:248]
 
-        self.logger.info("=== EC Verification Summary ===")
-        self.logger.info("Passed: %d / %d", len(passed), len(results))
-        if failed:
-            self.logger.error("Failed: %d / %d", len(failed), len(results))
-            for nvr in failed:
-                self.logger.error("  FAIL: %s  PLR: %s", nvr, results[nvr]["plr_url"])
+        watch_labels = get_common_runtime_watcher_labels()
+        labels = {
+            "appstudio.openshift.io/application": application_name,
+            "test.appstudio.openshift.io/scenario": its_name,
+            "kueue.x-k8s.io/priority-class": "build-priority-2",
+        }
+        labels.update(watch_labels)
+
+        manifest = {
+            "apiVersion": "tekton.dev/v1",
+            "kind": "PipelineRun",
+            "metadata": {
+                "generateName": generate_name,
+                "namespace": KONFLUX_DEFAULT_NAMESPACE,
+                "labels": labels,
+                "annotations": {
+                    "test.appstudio.openshift.io/kind": "enterprise-contract",
+                    "art-jenkins-job-url": os.getenv("BUILD_URL", "n/a"),
+                },
+            },
+            "spec": {
+                "pipelineRef": {
+                    "resolver": "git",
+                    "params": [
+                        {"name": "url", "value": KONFLUX_EC_PIPELINE_GIT_URL},
+                        {"name": "revision", "value": KONFLUX_EC_PIPELINE_REVISION},
+                        {"name": "pathInRepo", "value": KONFLUX_EC_PIPELINE_PATH},
+                    ],
+                },
+                "params": [
+                    {"name": "POLICY_CONFIGURATION", "value": ec_policy},
+                    {"name": "SINGLE_COMPONENT", "value": "false"},
+                    {"name": "SNAPSHOT", "value": snapshot_json},
+                    {"name": "WORKERS", "value": EC_WORKERS},
+                ],
+                "taskRunTemplate": {
+                    "serviceAccountName": "appstudio-pipeline",
+                },
+                "taskRunSpecs": [
+                    {
+                        "pipelineTaskName": "verify",
+                        "stepSpecs": [
+                            {
+                                "name": "validate",
+                                "computeResources": {
+                                    "limits": {"cpu": "16", "memory": "16Gi"},
+                                    "requests": {"cpu": "10", "memory": "10Gi"},
+                                },
+                            }
+                        ],
+                    }
+                ],
+                "timeouts": {
+                    "pipeline": "4h",
+                },
+            },
+        }
+
+        if self.dry_run:
+            self.logger.warning("[DRY RUN] Would have created EC PipelineRun for %d components", len(components))
+            return
+
+        self.logger.info("Creating EC PipelineRun for %d components...", len(components))
+        plr = await konflux_client._create(manifest)
+        plr_name = plr.metadata.name
+        plr_url = KonfluxClient.resource_url(plr.to_dict())
+        self.logger.info("Created EC PipelineRun: %s", plr_url)
+
+        self.logger.info("Waiting for EC PipelineRun %s to complete...", plr_name)
+        plr_info = await konflux_client.wait_for_pipelinerun(plr_name, namespace=KONFLUX_DEFAULT_NAMESPACE)
+        plr_url = KonfluxClient.resource_url(plr_info.to_dict())
+
+        from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome
+
+        condition = plr_info.find_condition('Succeeded')
+        outcome = KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition(condition)
+
+        if outcome is not KonfluxBuildOutcome.SUCCESS:
+            self.logger.error("EC verification FAILED. PLR: %s", plr_url)
             sys.exit(1)
 
-        self.logger.info("All %d builds passed EC verification", len(passed))
+        self.logger.info("EC verification PASSED for all %d components. PLR: %s", len(components), plr_url)
 
 
 @cli.command("build-conforma-verify", short_help="Run Conforma (EC) verification on OCP image builds")
@@ -178,7 +250,6 @@ class BuildConformaVerifyPipeline:
 @click.option("--data-path", default=None, help="ocp-build-data repo URL or path")
 @click.option("--data-gitref", default=None, help="ocp-build-data git ref")
 @click.option("--builds", default="", help="Comma-separated NVRs to verify (empty = fetch latest)")
-@click.option("--fail-fast", is_flag=True, default=False, help="Stop on first failure")
 @pass_runtime
 @click_coroutine
 async def build_conforma_verify(
@@ -188,7 +259,6 @@ async def build_conforma_verify(
     data_path: Optional[str],
     data_gitref: Optional[str],
     builds: str,
-    fail_fast: bool,
 ):
     builds_list = [b.strip() for b in builds.split(",") if b.strip()] if builds else []
 
@@ -197,7 +267,6 @@ async def build_conforma_verify(
         version=version,
         assembly=assembly,
         builds=builds_list,
-        fail_fast=fail_fast,
         data_path=data_path,
         data_gitref=data_gitref,
     )
