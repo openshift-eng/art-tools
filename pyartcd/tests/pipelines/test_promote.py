@@ -240,27 +240,25 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
     @patch("pyartcd.pipelines.promote.PromotePipeline.build_release_image", return_value=None)
     @patch(
         "pyartcd.pipelines.promote.get_release_image_info",
-        side_effect=lambda pullspec, raise_if_not_found=False, registry_config=None: (
-            {
-                "image": pullspec,
-                "digest": f"fake:deadbeef-{pullspec}",
-                "metadata": {
-                    "version": "4.10.99-assembly.art0001",
+        side_effect=lambda pullspec, raise_if_not_found=False, registry_config=None: {
+            "image": pullspec,
+            "digest": f"fake:deadbeef-{pullspec}",
+            "metadata": {
+                "version": "4.10.99-assembly.art0001",
+            },
+            "references": {
+                "spec": {
+                    "tags": [
+                        {
+                            "name": "machine-os-content",
+                            "annotations": {"io.openshift.build.versions": "machine-os=00.00.212301010000-0"},
+                        },
+                    ],
                 },
-                "references": {
-                    "spec": {
-                        "tags": [
-                            {
-                                "name": "machine-os-content",
-                                "annotations": {"io.openshift.build.versions": "machine-os=00.00.212301010000-0"},
-                            },
-                        ],
-                    },
-                },
-            }
-            if raise_if_not_found
-            else None
-        ),
+            },
+        }
+        if raise_if_not_found
+        else None,
     )
     @patch(
         "pyartcd.pipelines.promote.util.load_releases_config",
@@ -537,32 +535,30 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
     @patch("pyartcd.pipelines.promote.PromotePipeline.build_release_image", return_value=None)
     @patch(
         "pyartcd.pipelines.promote.get_release_image_info",
-        side_effect=lambda pullspec, raise_if_not_found=False, registry_config=None: (
-            {
-                "image": pullspec,
-                "digest": f"fake:deadbeef-{pullspec}",
+        side_effect=lambda pullspec, raise_if_not_found=False, registry_config=None: {
+            "image": pullspec,
+            "digest": f"fake:deadbeef-{pullspec}",
+            "metadata": {
+                "version": "4.10.99",
+            },
+            "references": {
+                "spec": {
+                    "tags": [
+                        {
+                            "name": "machine-os-content",
+                            "annotations": {"io.openshift.build.versions": "machine-os=00.00.212301010000-0"},
+                        },
+                    ],
+                },
                 "metadata": {
-                    "version": "4.10.99",
+                    "annotations": {
+                        "release.openshift.io/from-release": 'registry.ci.openshift.org/ocp/release:nightly'
+                    }
                 },
-                "references": {
-                    "spec": {
-                        "tags": [
-                            {
-                                "name": "machine-os-content",
-                                "annotations": {"io.openshift.build.versions": "machine-os=00.00.212301010000-0"},
-                            },
-                        ],
-                    },
-                    "metadata": {
-                        "annotations": {
-                            "release.openshift.io/from-release": 'registry.ci.openshift.org/ocp/release:nightly'
-                        }
-                    },
-                },
-            }
-            if raise_if_not_found
-            else None
-        ),
+            },
+        }
+        if raise_if_not_found
+        else None,
     )
     @patch(
         "pyartcd.pipelines.promote.util.load_releases_config",
@@ -741,27 +737,25 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
     @patch("pyartcd.pipelines.promote.PromotePipeline.build_release_image", return_value=None)
     @patch(
         "pyartcd.pipelines.promote.get_release_image_info",
-        side_effect=lambda pullspec, raise_if_not_found=False, registry_config=None: (
-            {
-                "image": pullspec,
-                "digest": "fake:deadbeef",
-                "metadata": {
-                    "version": "4.10.99",
+        side_effect=lambda pullspec, raise_if_not_found=False, registry_config=None: {
+            "image": pullspec,
+            "digest": "fake:deadbeef",
+            "metadata": {
+                "version": "4.10.99",
+            },
+            "references": {
+                "spec": {
+                    "tags": [
+                        {
+                            "name": "machine-os-content",
+                            "annotations": {"io.openshift.build.versions": "machine-os=00.00.212301010000-0"},
+                        },
+                    ],
                 },
-                "references": {
-                    "spec": {
-                        "tags": [
-                            {
-                                "name": "machine-os-content",
-                                "annotations": {"io.openshift.build.versions": "machine-os=00.00.212301010000-0"},
-                            },
-                        ],
-                    },
-                },
-            }
-            if raise_if_not_found
-            else None
-        ),
+            },
+        }
+        if raise_if_not_found
+        else None,
     )
     @patch("pyartcd.pipelines.promote.PromotePipeline.get_image_stream")
     async def test_promote_arch(
