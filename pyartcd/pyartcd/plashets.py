@@ -443,10 +443,14 @@ async def build_plashet_from_tags(
         cmd.extend(["--exclude-package", pkg])
     from_tags_args = ["from-tags"]
     if signing_advisory and str(signing_advisory) != '0':
-        from_tags_args.extend([
-            "--signing-advisory-id", str(signing_advisory),
-            "--signing-advisory-mode", "clean",
-        ])
+        from_tags_args.extend(
+            [
+                "--signing-advisory-id",
+                str(signing_advisory),
+                "--signing-advisory-mode",
+                "clean",
+            ]
+        )
     from_tags_args.append("--inherit")
     cmd.extend(from_tags_args)
     if include_embargoed:
