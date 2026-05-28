@@ -235,13 +235,21 @@ def get_nvr_root_log(name, version, release, arch='x86_64') -> Tuple[str, str]:
         logger.warning("Assuming rhel-8")
         rhel_version = 8
 
-    root_log_url = f'{constants.BREW_DOWNLOAD_URL}/vol/rhel-{rhel_version}/packages/{name}/{version}/{release}/data/logs/{arch}/root.log'
+    arches = [arch, 'noarch'] if arch != 'noarch' else ['noarch']
+    tried_urls = []
+    for a in arches:
+        root_log_url = f'{constants.BREW_DOWNLOAD_URL}/vol/rhel-{rhel_version}/packages/{name}/{version}/{release}/data/logs/{a}/root.log'
+        logger.debug(f"Trying {root_log_url}")
+        res = requests.get(
+            root_log_url,
+            verify=ssl.get_default_verify_paths().openssl_cafile,
+            timeout=30,
+        )
+        if res.status_code == 200:
+            return res.text, root_log_url
+        tried_urls.append(root_log_url)
 
-    logger.debug(f"Trying {root_log_url}")
-    res = requests.get(root_log_url, verify=ssl.get_default_verify_paths().openssl_cafile)
-    if res.status_code != 200:
-        raise exceptions.BrewBuildException("Could not get root.log for {}-{}-{}".format(name, version, release))
-    return res.text, root_log_url
+    raise exceptions.BrewBuildException(f"Could not get root.log for {name}-{version}-{release}, tried: {tried_urls}")
 
 
 class Build(object):

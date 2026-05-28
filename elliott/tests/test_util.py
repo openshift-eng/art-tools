@@ -126,6 +126,25 @@ class TestUtil(unittest.TestCase):
         actual = util.get_golang_container_nvrs(nvrs, None)
         self.assertEqual(expected, actual)
 
+    def test_get_golang_rpm_nvrs_skips_non_golang_rpms(self):
+        golang_nvr = ('openshift', '4.19.0', '202506111249.p0.gd2acdd5.assembly.stream.el8')
+        non_golang_nvr = ('openshift4-aws-iso', '4.19.0', '202506111249.p0.gd2acdd5.assembly.stream.el8')
+        golang_root_log = 'golang-bin               x86_64  1.23.6-2.module+el8.11.0+22775+e8b271ec'
+        non_golang_root_log = 'ansible-core             noarch  2.16.3-2.el8'
+
+        flexmock(brew).should_receive("get_nvr_root_log").with_args(*golang_nvr).and_return(
+            (golang_root_log, 'http://fake/golang/root.log')
+        ).once()
+        flexmock(brew).should_receive("get_nvr_root_log").with_args(*non_golang_nvr).and_return(
+            (non_golang_root_log, 'http://fake/noarch/root.log')
+        ).once()
+
+        result = util.get_golang_rpm_nvrs([golang_nvr, non_golang_nvr])
+        self.assertIn('1.23.6-2.module+el8.11.0+22775+e8b271ec', result)
+        self.assertEqual(result['1.23.6-2.module+el8.11.0+22775+e8b271ec'], {golang_nvr})
+        for nvrs in result.values():
+            self.assertNotIn(non_golang_nvr, nvrs)
+
 
 if __name__ == '__main__':
     unittest.main()
