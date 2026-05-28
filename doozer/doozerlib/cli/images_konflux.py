@@ -34,6 +34,7 @@ from doozerlib.cli import (
 )
 from doozerlib.exceptions import DoozerFatalError, ParentRebaseFailedError
 from doozerlib.image import ImageMetadata
+from doozerlib.lockfile_prototype.constants import LockfileBackend
 from doozerlib.runtime import Runtime
 
 TRACER = trace.get_tracer(__name__)
@@ -107,7 +108,10 @@ class KonfluxRebaseCli:
             extra_labels=self.extra_labels,
         )
 
-        await rebaser.rpm_lockfile_generator.ensure_repositories_loaded(metas, base_dir)
+        art_internal_metas = [
+            m for m in metas if m.get_lockfile_backend() != LockfileBackend.RPM_LOCKFILE_PROTOTYPE.value
+        ]
+        await rebaser.rpm_lockfile_generator.ensure_repositories_loaded(art_internal_metas, base_dir)
 
         tasks = []
         for image_meta in metas:
