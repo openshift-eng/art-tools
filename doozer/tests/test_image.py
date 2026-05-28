@@ -1783,6 +1783,20 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         regular_metadata = ImageMetadata(runtime, regular_data)
         self.assertFalse(regular_metadata.should_trigger_base_image_release())
 
+        # Regular image with force=true should trigger regardless of base/golang qualification
+        forced_regular = Model({'name': 'test-regular', 'base_image_release': Model({'force': True})})
+        forced_regular_data = Model(
+            {'key': 'forced-regular', 'data': forced_regular, 'filename': 'forced-regular.yaml'}
+        )
+        forced_regular_metadata = ImageMetadata(runtime, forced_regular_data)
+        self.assertTrue(forced_regular_metadata.should_trigger_base_image_release())
+
+        # Regular image with force=false should keep existing behavior
+        regular_force_off = Model({'name': 'test-regular', 'base_image_release': Model({'force': False})})
+        regular_force_off_data = Model({'key': 'regular-force-off', 'data': regular_force_off, 'filename': 'rfo.yaml'})
+        regular_force_off_metadata = ImageMetadata(runtime, regular_force_off_data)
+        self.assertFalse(regular_force_off_metadata.should_trigger_base_image_release())
+
         # Regular image with base_image_release.enabled: true does not qualify (not base/golang)
         snap_regular = Model({'name': 'test-regular', 'base_image_release': Model({'enabled': True})})
         snap_regular_data = Model({'key': 'test-snap', 'data': snap_regular, 'filename': 'test-snap.yaml'})
@@ -1800,6 +1814,14 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         golang_snap_off_data = Model({'key': 'go-off', 'data': golang_snap_off, 'filename': 'go-off.yaml'})
         golang_snap_off_metadata = ImageMetadata(runtime, golang_snap_off_data)
         self.assertFalse(golang_snap_off_metadata.should_trigger_base_image_release())
+
+        # Force=true overrides enabled=false
+        force_enabled_off = Model(
+            {'name': 'test-regular', 'base_image_release': Model({'enabled': False, 'force': True})}
+        )
+        force_enabled_off_data = Model({'key': 'force-enabled-off', 'data': force_enabled_off, 'filename': 'feo.yaml'})
+        force_enabled_off_metadata = ImageMetadata(runtime, force_enabled_off_data)
+        self.assertTrue(force_enabled_off_metadata.should_trigger_base_image_release())
 
         # Group base_image_release.enabled: false, image omits field (inherits group -> off)
         runtime_group_off = MagicMock()
@@ -1853,6 +1875,26 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
 
         okd_golang_metadata = ImageMetadata(okd_runtime, golang_data)
         self.assertFalse(okd_golang_metadata.should_trigger_base_image_release())
+
+        # Force=true bypasses OKD and test-assembly guards
+        okd_forced = Model({'name': 'test-regular', 'base_image_release': Model({'force': True})})
+        okd_forced_metadata = ImageMetadata(
+            okd_runtime, Model({'key': 'okd-forced', 'data': okd_forced, 'filename': 'okd-forced.yaml'})
+        )
+        self.assertTrue(okd_forced_metadata.should_trigger_base_image_release())
+
+        test_assembly_forced_runtime = MagicMock()
+        test_assembly_forced_runtime.logger = logging.getLogger('test_runtime')
+        test_assembly_forced_runtime.variant = BuildVariant.OCP
+        test_assembly_forced_runtime.assembly = 'test'
+        test_assembly_forced_runtime.product = 'ocp'
+        test_assembly_forced_runtime.group_config = Model({})
+        test_assembly_forced = Model({'name': 'test-regular', 'base_image_release': Model({'force': True})})
+        test_assembly_forced_metadata = ImageMetadata(
+            test_assembly_forced_runtime,
+            Model({'key': 'test-assembly-forced', 'data': test_assembly_forced, 'filename': 'taf.yaml'}),
+        )
+        self.assertTrue(test_assembly_forced_metadata.should_trigger_base_image_release())
 
     def test_base_image_release_quay_fallback_image_overrides_group(self):
         from artcommonlib.model import Model

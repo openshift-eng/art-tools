@@ -174,9 +174,20 @@
     },
     "base_only-": {},
     "base_image_release": {
-      "description": "Controls Konflux base-image snapshot-to-release and rebaser RH art-images-base behavior for qualifying images. Per-image overrides group.",
+      "description": "Controls Konflux base-image snapshot-to-release and rebaser RH art-images-base behavior for this image. `force: true` bypasses normal qualification checks.",
       "type": "object",
       "properties": {
+        "force": {
+          "description": "When true, always run base-image release workflow for this image regardless of qualification checks.",
+          "type": "boolean"
+        },
+        "force!": {
+          "$ref": "#/properties/base_image_release/properties/force"
+        },
+        "force?": {
+          "$ref": "#/properties/base_image_release/properties/force"
+        },
+        "force-": {},
         "enabled": {
           "description": "If false, disables snapshot-to-release for this image when it qualifies as a base-image workflow target. Omitted: inherit group or default true.",
           "type": "boolean"
