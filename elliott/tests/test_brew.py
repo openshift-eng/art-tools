@@ -434,6 +434,47 @@ class TestBrew(unittest.TestCase):
         actual = brew.get_latest_builds(tag_component_tuples, fake_session)
         self.assertListEqual(actual, expected)
 
+    @mock.patch("requests.get")
+    @mock.patch("ssl.get_default_verify_paths", return_value=mock.MagicMock(openssl_cafile="/my/cert.pem"))
+    def test_get_nvr_root_log_falls_back_to_noarch(self, _, mock_get):
+        def fake_get(url, **kwargs):
+            resp = mock.MagicMock()
+            if '/noarch/root.log' in url:
+                resp.status_code = 200
+                resp.text = 'fake root log content'
+            else:
+                resp.status_code = 404
+            return resp
+
+        mock_get.side_effect = fake_get
+        text, url = brew.get_nvr_root_log(
+            'openshift4-aws-iso', '4.19.0', '202506111249.p0.gd2acdd5.assembly.stream.el8'
+        )
+        self.assertEqual(text, 'fake root log content')
+        self.assertIn('/noarch/root.log', url)
+
+    @mock.patch("requests.get")
+    @mock.patch("ssl.get_default_verify_paths", return_value=mock.MagicMock(openssl_cafile="/my/cert.pem"))
+    def test_get_nvr_root_log_prefers_given_arch(self, _, mock_get):
+        def fake_get(url, **kwargs):
+            resp = mock.MagicMock()
+            resp.status_code = 200
+            resp.text = 'x86_64 root log'
+            return resp
+
+        mock_get.side_effect = fake_get
+        text, url = brew.get_nvr_root_log('openshift', '4.19.0', '202506111249.p0.gd2acdd5.assembly.stream.el8')
+        self.assertEqual(text, 'x86_64 root log')
+        self.assertIn('/x86_64/root.log', url)
+        mock_get.assert_called_once()
+
+    @mock.patch("requests.get")
+    @mock.patch("ssl.get_default_verify_paths", return_value=mock.MagicMock(openssl_cafile="/my/cert.pem"))
+    def test_get_nvr_root_log_raises_when_all_arches_fail(self, _, mock_get):
+        mock_get.return_value = mock.MagicMock(status_code=404)
+        with self.assertRaises(exceptions.BrewBuildException):
+            brew.get_nvr_root_log('nonexistent', '1.0', '1.el8')
+
 
 if __name__ == '__main__':
     unittest.main()

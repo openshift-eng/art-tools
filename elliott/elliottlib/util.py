@@ -640,8 +640,9 @@ def get_golang_rpm_nvrs(nvrs, exact=False):
         root_log, log_url = brew.get_nvr_root_log(*nvr)
         try:
             go_version = get_golang_version_from_log(root_log, log_url)
-        except Exception as e:
-            raise ValueError(f'Could not find go version in root log for {nvr}: {e}') from e
+        except Exception:
+            LOGGER.warning(f'No golang version found in root log for {nvr}, skipping (not a golang RPM?)')
+            continue
 
         if exact:
             go_version = f'golang-{go_version}'
