@@ -2,7 +2,7 @@
 Data models for RPM lockfile generation.
 """
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_serializer
 
 from doozerlib.lockfile_prototype.constants import LOCKFILE_VENDOR, LOCKFILE_VERSION
 
@@ -16,6 +16,13 @@ class RepoEntry(BaseModel):
 
     repoid: str
     baseurl: str
+    options: dict[str, str | int] = Field(default_factory=dict)
+
+    @model_serializer
+    def _serialize(self) -> dict:
+        d: dict = {"repoid": self.repoid, "baseurl": self.baseurl}
+        d.update(self.options)
+        return d
 
 
 class ArchSpecificPackage(BaseModel):

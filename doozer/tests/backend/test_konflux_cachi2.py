@@ -382,6 +382,49 @@ class TestKonfluxCachi2(TestCase):
         self.assertEqual(result, expected)
 
     @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
+    def test_prefetch_repo_extra_options_propagated(self, mock_konflux_client_init):
+        """Repo extra_options (e.g. module_hotfixes, includepkgs) from group.yml are propagated to prefetch DNF options."""
+        builder = KonfluxImageBuilder(MagicMock())
+        metadata = MagicMock()
+
+        metadata.is_cachi2_enabled.return_value = True
+        metadata.is_lockfile_generation_enabled.return_value = True
+        metadata.is_artifact_lockfile_enabled.return_value = False
+        metadata.get_konflux_network_mode.return_value = "hermetic"
+        metadata.config.content.source.pkg_managers = ["gomod"]
+        metadata.config.cachito.packages = {'gomod': [{'path': '.'}]}
+        metadata.config.konflux.cachi2.lockfile.get.return_value = "."
+
+        metadata.get_enabled_repos.return_value = {'rhel-8-golang-rpms', 'rhel-8-baseos-rpms'}
+        metadata.get_arches.return_value = ['x86_64']
+
+        mock_golang = MagicMock()
+        mock_golang.content_set.side_effect = lambda arch: f'rhocp-5.0-for-rhel-8-{arch}-rpms'
+        mock_golang._data.conf.get.side_effect = lambda key, default=None: (
+            {'module_hotfixes': 1, 'includepkgs': 'golang* goversioninfo'} if key == 'extra_options' else default
+        )
+
+        mock_baseos = MagicMock()
+        mock_baseos.content_set.side_effect = lambda arch: f'rhel-8-for-{arch}-baseos-rpms'
+        mock_baseos._data.conf.get.side_effect = lambda key, default=None: default
+
+        metadata.runtime.repos = {
+            'rhel-8-golang-rpms': mock_golang,
+            'rhel-8-baseos-rpms': mock_baseos,
+        }
+
+        result = builder._prefetch(metadata=metadata, group="rhel-8-golang-1.26")
+
+        rpm_data = next(d for d in result if d['type'] == 'rpm')
+        golang_opts = rpm_data['options']['dnf']['rhocp-5.0-for-rhel-8-x86_64-rpms']
+        self.assertEqual(golang_opts['module_hotfixes'], '1')
+        self.assertEqual(golang_opts['includepkgs'], 'golang* goversioninfo')
+        self.assertEqual(golang_opts['gpgcheck'], '0')
+        baseos_opts = rpm_data['options']['dnf']['rhel-8-for-x86_64-baseos-rpms']
+        self.assertNotIn('module_hotfixes', baseos_opts)
+        self.assertNotIn('includepkgs', baseos_opts)
+
+    @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
     def test_prefetch_prerelease_all_repos_included(self, mock_konflux_client_init):
         """Test that prerelease phase includes ALL repositories regardless of URL"""
         builder = KonfluxImageBuilder(MagicMock())

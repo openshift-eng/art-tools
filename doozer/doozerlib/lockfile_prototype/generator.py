@@ -951,5 +951,6 @@ class RpmLockfilePrototypeGenerator:
                 baseurl_template = self._templatize_baseurl(baseurl)
 
             repoid = self._get_repoid_for_content_set(repo, repo_name, first_arch)
-            repo_list.append(RepoEntry(repoid=repoid, baseurl=baseurl_template))
+            extra_options = dict(repo._data.conf.get("extra_options", {}))
+            repo_list.append(RepoEntry(repoid=repoid, baseurl=baseurl_template, options=extra_options))
         return repo_list
