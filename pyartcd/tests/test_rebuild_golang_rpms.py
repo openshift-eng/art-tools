@@ -184,6 +184,7 @@ class TestRunForceGolangVersionCheck(IsolatedAsyncioTestCase):
         p.koji_session = MagicMock()
         return p
 
+    @patch(f'{MODULE}.exectools.cmd_gather_async', new_callable=AsyncMock)
     @patch(f'{MODULE}.move_golang_bugs', new_callable=AsyncMock)
     @patch(f'{MODULE}.RebuildGolangRPMsPipeline.bump_and_rebuild_rpm', new_callable=AsyncMock)
     @patch(f'{MODULE}.RebuildGolangRPMsPipeline.get_rpms')
@@ -200,6 +201,7 @@ class TestRunForceGolangVersionCheck(IsolatedAsyncioTestCase):
         mock_get_rpms,
         mock_bump_rebuild,
         mock_move_bugs,
+        mock_cmd_gather,
     ):
         """With --force, RPMs already on the latest golang version should still be rebuilt."""
         mock_extract.return_value = ('1.22.0', {'9': 'golang-1.22.0-1.el9'})
@@ -208,6 +210,10 @@ class TestRunForceGolangVersionCheck(IsolatedAsyncioTestCase):
         mock_go_nvr_map.return_value = {
             '1.22.0': [('foo-rpm', '1.0', '1.el9')],
         }
+        mock_cmd_gather.side_effect = [
+            (0, 'ART Bot', ''),
+            (0, 'aos-team-art@redhat.com', ''),
+        ]
         mock_bump_rebuild.return_value = True
 
         pipeline = self._make_pipeline(force=True)
@@ -215,6 +221,7 @@ class TestRunForceGolangVersionCheck(IsolatedAsyncioTestCase):
 
         mock_bump_rebuild.assert_called_once_with('foo-rpm', '9', unittest.mock.ANY, unittest.mock.ANY)
 
+    @patch(f'{MODULE}.exectools.cmd_gather_async', new_callable=AsyncMock)
     @patch(f'{MODULE}.move_golang_bugs', new_callable=AsyncMock)
     @patch(f'{MODULE}.RebuildGolangRPMsPipeline.bump_and_rebuild_rpm', new_callable=AsyncMock)
     @patch(f'{MODULE}.RebuildGolangRPMsPipeline.get_rpms')
@@ -231,6 +238,7 @@ class TestRunForceGolangVersionCheck(IsolatedAsyncioTestCase):
         mock_get_rpms,
         mock_bump_rebuild,
         mock_move_bugs,
+        mock_cmd_gather,
     ):
         """Without --force, RPMs already on the latest golang version should be skipped."""
         mock_extract.return_value = ('1.22.0', {'9': 'golang-1.22.0-1.el9'})
@@ -245,6 +253,7 @@ class TestRunForceGolangVersionCheck(IsolatedAsyncioTestCase):
 
         mock_bump_rebuild.assert_not_called()
 
+    @patch(f'{MODULE}.exectools.cmd_gather_async', new_callable=AsyncMock)
     @patch(f'{MODULE}.move_golang_bugs', new_callable=AsyncMock)
     @patch(f'{MODULE}.RebuildGolangRPMsPipeline.bump_and_rebuild_rpm', new_callable=AsyncMock)
     @patch(f'{MODULE}.RebuildGolangRPMsPipeline.get_rpms')
@@ -261,6 +270,7 @@ class TestRunForceGolangVersionCheck(IsolatedAsyncioTestCase):
         mock_get_rpms,
         mock_bump_rebuild,
         mock_move_bugs,
+        mock_cmd_gather,
     ):
         """Without --force, RPMs on an older golang version should be rebuilt."""
         mock_extract.return_value = ('1.22.0', {'9': 'golang-1.22.0-1.el9'})
@@ -269,6 +279,10 @@ class TestRunForceGolangVersionCheck(IsolatedAsyncioTestCase):
         mock_go_nvr_map.return_value = {
             '1.21.0': [('foo-rpm', '1.0', '1.el9')],
         }
+        mock_cmd_gather.side_effect = [
+            (0, 'ART Bot', ''),
+            (0, 'aos-team-art@redhat.com', ''),
+        ]
         mock_bump_rebuild.return_value = True
 
         pipeline = self._make_pipeline(force=False)
