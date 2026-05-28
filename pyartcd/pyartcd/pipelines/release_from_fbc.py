@@ -66,6 +66,12 @@ class ReleaseFromFbcPipeline:
     This pipeline is designed for non-OpenShift products (e.g., OADP, MTA, MTC, logging)
     that need to create shipment files from FBC images. For OpenShift releases,
     use the PrepareReleaseKonfluxPipeline instead.
+
+    When --ocp-optional is set, the pipeline operates in OCP optional-operator mode:
+    it categorizes NVRs into extras/fbc kinds (matching the OCP shipment
+    structure) instead of the default image/fbc split. All FBC related images are
+    included by default, supporting the use case of shipping OCP optional operators
+    that were excluded from the main release due to dependency version conflicts.
     """
 
     def __init__(
@@ -80,6 +86,8 @@ class ReleaseFromFbcPipeline:
         jira_bugs: Optional[List[str]] = None,
         target_release_date: Optional[str] = None,
         extra_image_nvrs: Optional[List[str]] = None,
+        ocp_optional: bool = False,
+        exclude_nvr_components: Optional[List[str]] = None,
     ) -> None:
         self.logger = logging.getLogger(__name__)
         self.runtime = runtime
@@ -89,6 +97,8 @@ class ReleaseFromFbcPipeline:
         self.extra_image_nvrs = extra_image_nvrs or []
         self.create_mr = create_mr
         self.dry_run = self.runtime.dry_run
+        self.ocp_optional = ocp_optional
+        self.excluded_components = set(exclude_nvr_components) if exclude_nvr_components else set()
 
         # Setup working directories
         self.working_dir = self.runtime.working_dir.absolute()
@@ -480,32 +490,55 @@ class ReleaseFromFbcPipeline:
 
     def categorize_nvrs(self, nvrs: List[str]) -> Dict[str, List[str]]:
         """
-        Categorize NVRs into image builds, FBC builds, and external dependencies.
+        Categorize NVRs into build kinds.
+
+        In default mode: image / fbc / external (based on group version matching).
+        In OCP optional mode (--ocp-optional): extras / fbc / external.
+        All non-FBC images (including bundles) go into extras by default;
+        only explicitly listed --exclude-nvr-components are filtered out.
         """
         self.logger.info(f"Categorizing {len(nvrs)} extracted NVRs...")
 
-        categorized = {"image": [], "fbc": [], "external": []}
+        if self.ocp_optional:
+            categorized: Dict[str, List[str]] = {"extras": [], "fbc": [], "external": []}
 
-        for nvr in nvrs:
-            nvr_dict = parse_nvr(nvr)
-            component_name = nvr_dict['name']
+            for nvr in nvrs:
+                component_name = parse_nvr(nvr)['name']
 
-            if component_name.endswith('-fbc'):
-                categorized["fbc"].append(nvr)
-            elif self.is_nvr_from_current_group(nvr):
-                # All other builds from current group are considered image builds
-                categorized["image"].append(nvr)
-            else:
-                # External dependencies from other groups
-                categorized["external"].append(nvr)
+                if component_name.endswith('-fbc'):
+                    categorized["fbc"].append(nvr)
+                elif self.excluded_components and component_name in self.excluded_components:
+                    categorized["external"].append(nvr)
+                else:
+                    categorized["extras"].append(nvr)
 
-        self.logger.info("Categorization results:")
-        self.logger.info(f"  • Image builds: {len(categorized['image'])}")
-        self.logger.info(f"  • FBC builds: {len(categorized['fbc'])}")
-        if categorized['external']:
-            self.logger.info(f"  • External dependencies (filtered): {len(categorized['external'])}")
-            for ext_nvr in categorized['external']:
-                self.logger.info(f"    - {ext_nvr}")
+            self.logger.info("Categorization results (OCP optional mode):")
+            self.logger.info(f"  • Extras (all non-FBC images): {len(categorized['extras'])}")
+            self.logger.info(f"  • FBC builds: {len(categorized['fbc'])}")
+            if categorized['external']:
+                self.logger.info(f"  • Excluded: {len(categorized['external'])}")
+                for ext_nvr in categorized['external']:
+                    self.logger.info(f"    - {ext_nvr}")
+        else:
+            categorized = {"image": [], "fbc": [], "external": []}
+
+            for nvr in nvrs:
+                component_name = parse_nvr(nvr)['name']
+
+                if component_name.endswith('-fbc'):
+                    categorized["fbc"].append(nvr)
+                elif self.is_nvr_from_current_group(nvr):
+                    categorized["image"].append(nvr)
+                else:
+                    categorized["external"].append(nvr)
+
+            self.logger.info("Categorization results:")
+            self.logger.info(f"  • Image builds: {len(categorized['image'])}")
+            self.logger.info(f"  • FBC builds: {len(categorized['fbc'])}")
+            if categorized['external']:
+                self.logger.info(f"  • External dependencies (filtered): {len(categorized['external'])}")
+                for ext_nvr in categorized['external']:
+                    self.logger.info(f"    - {ext_nvr}")
 
         return categorized
 
@@ -603,13 +636,12 @@ class ReleaseFromFbcPipeline:
 
         self.logger.info(f"Creating shipment config for {kind}...")
 
-        # Create metadata - only set fbc=True for actual FBC catalog files
         metadata = Metadata(
-            product=self.product,  # Get product from group configuration
+            product=self.product,
             application=snapshot.spec.application if snapshot else "default-app",
             group=self.group,
             assembly=self.assembly,
-            fbc=kind == 'fbc',  # Only True for FBC catalog files, False for image shipments
+            fbc=kind == 'fbc',
         )
 
         # Create environments - read from shipment repo config if available
@@ -635,21 +667,21 @@ class ReleaseFromFbcPipeline:
 
         environments = Environments(stage=ShipmentEnv(releasePlan=stage_rpa), prod=ShipmentEnv(releasePlan=prod_rpa))
 
-        # Create release notes data
-        # If release_notes was provided (from JIRA bug processing), use it for image shipments
-        # Otherwise, set to null for release-from-fbc pipeline
-        # Exception: For OpenShift groups, provide minimal release notes to satisfy validation (required)
+        # Determine which kinds carry release notes.
+        # - 'fbc' shipments never carry release notes.
+        # - For openshift-* groups, ALL non-FBC shipments (image, extras)
+        #   require data.releaseNotes per shipment model validation.
+        # - For non-openshift groups, release notes are included only if provided.
         data = None
-        if kind == 'image' and release_notes:
-            self.logger.info("Using provided release notes (type=%s) for image shipment", release_notes.type)
+        if kind != 'fbc' and release_notes:
+            self.logger.info("Using provided release notes (type=%s) for %s shipment", release_notes.type, kind)
             data = Data(releaseNotes=release_notes)
-        elif kind == 'image' and self.group.startswith('openshift-'):
+        elif kind != 'fbc' and self.group.startswith('openshift-'):
             self.logger.info(
-                f"[Warning] Group '{self.group}' starts with 'openshift-' - generating minimal release notes "
-                f"to satisfy shipment validation requirements. This is a special situation case, "
-                f"PLEASE REVIEW!!"
+                f"Group '{self.group}' starts with 'openshift-' - generating minimal release notes "
+                f"for {kind} shipment to satisfy shipment validation requirements."
             )
-            rn = ReleaseNotes(type='RHBA', synopsis=f'FBC-derived image shipment for {self.product} {self.assembly}')
+            rn = ReleaseNotes(type='RHBA', synopsis=f'FBC-derived {kind} shipment for {self.product} {self.assembly}')
             data = Data(releaseNotes=rn)
 
         # Create shipment
@@ -926,9 +958,22 @@ class ReleaseFromFbcPipeline:
 
     async def run(self) -> None:
         """
-        Execute the simplified FBC release workflow for non-OpenShift products.
+        Execute the FBC release workflow.
+
+        In default mode, produces image + fbc shipments for layered products.
+        In OCP optional mode (--ocp-optional), produces extras + fbc
+        shipments for OCP optional operators that were excluded from the main release.
         """
         self.logger.info(f"Starting FBC-based release workflow for {self.assembly}")
+        if self.ocp_optional:
+            self.logger.info("OCP optional-operator mode enabled (extras/fbc)")
+            if self.excluded_components:
+                self.logger.info(f"Excluding NVR components: {sorted(self.excluded_components)}")
+            if not self.group.startswith('openshift-'):
+                self.logger.warning(
+                    f"--ocp-optional is intended for openshift-* groups, but group is '{self.group}'. "
+                    "This will include ALL related images without group-version filtering."
+                )
         self.logger.info(f"Processing {len(self.fbc_pullspecs)} FBC pullspecs")
         if self.extra_image_nvrs:
             self.logger.info(f"Including {len(self.extra_image_nvrs)} extra image NVRs")
@@ -943,9 +988,6 @@ class ReleaseFromFbcPipeline:
         self.product = await self._load_product_from_group_config()
         self.logger.info(f"Loaded product '{self.product}' - continuing workflow for {self.product} {self.assembly}")
 
-        # Note: All products use the same shipment data repository
-        # No need to update shipment repository based on product
-
         related_nvrs = []
         fbc_nvrs = []
 
@@ -959,7 +1001,7 @@ class ReleaseFromFbcPipeline:
             ]
 
             if fbc_nvrs:
-                self.logger.info(f"✓ Extracted {len(fbc_nvrs)} FBC NVRs: {fbc_nvrs}")
+                self.logger.info(f"Extracted {len(fbc_nvrs)} FBC NVRs: {fbc_nvrs}")
             else:
                 self.logger.warning("Could not extract any FBC NVRs - FBC shipments will not be created")
 
@@ -970,22 +1012,30 @@ class ReleaseFromFbcPipeline:
             raise RuntimeError("No NVRs extracted from FBC images and no extra image NVRs provided")
 
         # Categorize the extracted NVRs
-        categorized_nvrs = self.categorize_nvrs(all_nvrs) if all_nvrs else {"image": [], "fbc": [], "external": []}
+        empty_categorized: Dict[str, List[str]]
+        if self.ocp_optional:
+            empty_categorized = {"extras": [], "fbc": [], "external": []}
+        else:
+            empty_categorized = {"image": [], "fbc": [], "external": []}
+        categorized_nvrs = self.categorize_nvrs(all_nvrs) if all_nvrs else empty_categorized
 
-        # Merge extra image NVRs into the image category so they end up in the same image shipment
+        # The key for the primary non-FBC image shipment depends on mode
+        image_key = "extras" if self.ocp_optional else "image"
+
+        # Merge extra image NVRs into the primary image category
         if self.extra_image_nvrs:
             fbc_extras = [nvr for nvr in self.extra_image_nvrs if parse_nvr(nvr)['name'].endswith('-fbc')]
             if fbc_extras:
                 raise RuntimeError(
                     f"--extra-image-nvrs contains FBC builds which belong in --fbc-pullspecs instead: {fbc_extras}"
                 )
-            self.logger.info(f"Adding {len(self.extra_image_nvrs)} extra image NVRs to image shipment")
-            categorized_nvrs['image'] = list(dict.fromkeys([*categorized_nvrs['image'], *self.extra_image_nvrs]))
+            self.logger.info(f"Adding {len(self.extra_image_nvrs)} extra image NVRs to {image_key} shipment")
+            categorized_nvrs[image_key] = list(dict.fromkeys([*categorized_nvrs[image_key], *self.extra_image_nvrs]))
 
-        # Create snapshots for image builds (only once since they're shared)
+        # Create snapshots for the primary image/extras builds
         image_snapshot = None
-        if categorized_nvrs.get('image'):
-            image_snapshot = await self.create_snapshot(categorized_nvrs['image'])
+        if categorized_nvrs.get(image_key):
+            image_snapshot = await self.create_snapshot(categorized_nvrs[image_key])
 
         # Create separate FBC snapshots for each FBC build
         fbc_snapshots = {}
@@ -1009,19 +1059,18 @@ class ReleaseFromFbcPipeline:
 
         # Create shipment configurations
         timestamp = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
-        shipments_by_kind = {}
+        shipments_by_kind: Dict[str, ShipmentConfig] = {}
 
-        # Create image shipment (shared for all FBC builds)
+        # Create the primary image/extras shipment
         if image_snapshot:
-            shipment_config = self.create_shipment_config('image', image_snapshot, release_notes=release_notes)
-            shipments_by_kind['image'] = shipment_config
+            shipment_config = self.create_shipment_config(image_key, image_snapshot, release_notes=release_notes)
+            shipments_by_kind[image_key] = shipment_config
 
         # Create separate FBC shipment for each FBC build
         fbc_counter = 1
         for _, fbc_snapshot in fbc_snapshots.items():
             if fbc_snapshot:
                 shipment_config = self.create_shipment_config('fbc', fbc_snapshot)
-                # Use counter-based key for unique naming
                 shipment_kind = f"fbc{fbc_counter:02d}"
                 shipments_by_kind[shipment_kind] = shipment_config
                 fbc_counter += 1
@@ -1043,7 +1092,12 @@ class ReleaseFromFbcPipeline:
                     self.logger.info("Continuing with local files only")
 
         # Generate completion message
-        completion_msg = f"FBC-based release workflow completed for {self.product} {self.assembly}. Created {len(shipments_by_kind)} shipment files in repository: {self.shipment_data_repo._directory}"
+        completion_msg = (
+            f"FBC-based release workflow completed for {self.product} {self.assembly}. "
+            f"Created {len(shipments_by_kind)} shipment file(s) "
+            f"({', '.join(shipments_by_kind.keys())}) "
+            f"in repository: {self.shipment_data_repo._directory}"
+        )
 
         if self.shipment_mr_url:
             completion_msg += f". MR: {self.shipment_mr_url}"
@@ -1056,7 +1110,7 @@ class ReleaseFromFbcPipeline:
     "--group",
     metavar='NAME',
     required=True,
-    help="The group to operate on e.g. oadp-1.5, mta-7.0, mtc-1.8, logging-5.9 (NOTE: This command is intended for non-OpenShift products)",
+    help="The group to operate on e.g. oadp-1.5, mta-7.0, mtc-1.8, logging-5.9, or openshift-4.22 (with --ocp-optional)",
 )
 @click.option(
     "--assembly",
@@ -1103,6 +1157,20 @@ class ReleaseFromFbcPipeline:
     help='Target ship date for the release (e.g., 2026-Mar-31 or 2026-03-31). '
     'When provided, the date is included in the shipment MR title.',
 )
+@click.option(
+    '--ocp-optional',
+    is_flag=True,
+    default=False,
+    help='Enable OCP optional-operator mode. Categorizes NVRs into extras/fbc '
+    'kinds (matching the OCP shipment structure) instead of the default image/fbc split. '
+    'All FBC related images are included by default. Use with --group openshift-4.x.',
+)
+@click.option(
+    '--exclude-nvr-components',
+    default=None,
+    help='Comma-separated NVR component names to explicitly exclude from the shipment '
+    '(e.g., kube-rbac-proxy-container). Only needed in edge cases with --ocp-optional.',
+)
 @pass_runtime
 @click_coroutine
 async def release_from_fbc(
@@ -1116,47 +1184,53 @@ async def release_from_fbc(
     shipment_path: Optional[str],
     jira_bugs: Optional[str],
     target_release_date: Optional[str],
+    ocp_optional: bool,
+    exclude_nvr_components: Optional[str],
 ):
     """
-    Create shipment files from an FBC image for non-OpenShift products.
+    Create shipment files from an FBC image.
 
-    This command is designed for products other than OpenShift (e.g., OADP, MTA, MTC, logging).
-    It extracts NVRs from an FBC image and creates separate shipment files for
-    image builds and FBC builds. Extra image NVRs (not part of the FBC) can be
-    included in the same image shipment file.
+    This command extracts NVRs from an FBC image and creates separate shipment files.
+    It supports two modes:
+
+    \b
+    DEFAULT MODE (layered products):
+      For non-OpenShift products (OADP, MTA, MTC, logging). Creates image + fbc
+      shipment files. External dependencies from other groups are filtered out.
+
+    \b
+    OCP OPTIONAL MODE (--ocp-optional):
+      For OCP optional operators that were excluded from the main OCP release
+      (e.g., due to a dependency version conflict like kube-rbac-proxy). Creates
+      extras + fbc shipment files. ALL related images from the FBC are
+      included by default.
 
     At least one of --fbc-pullspecs or --extra-image-nvrs must be provided.
 
-    Note: For OpenShift releases, use the prepare-release-konflux command instead.
-
     \b
-    # Create shipment files using default OCP shipment repository:
+    # Layered product (default mode):
     $ artcd release-from-fbc \\
         --group oadp-1.5 \\
         --assembly 1.5.3 \\
         --fbc-pullspecs quay.io/redhat-user-workloads/ocp-art-tenant/art-fbc:oadp-operator-fbc-1.5.3-20251028153444
 
     \b
-    # Create shipment files with extra image NVRs:
+    # OCP optional operator (all related images included):
     $ artcd release-from-fbc \\
-        --group oadp-1.5 \\
-        --assembly 1.5.3 \\
-        --fbc-pullspecs quay.io/redhat-user-workloads/ocp-art-tenant/art-fbc:oadp-operator-fbc-1.5.3-20251028153444 \\
-        --extra-image-nvrs oadp-velero-container-1.5.3-20251028.el9,oadp-helper-container-1.5.3-20251028.el9
+        --group openshift-4.22 \\
+        --assembly 4.22.0 \\
+        --fbc-pullspecs quay.io/redhat-user-workloads/ocp-art-tenant/art-fbc:ose-metallb-operator-fbc-4.22.0-20260528170921 \\
+        --ocp-optional \\
+        --create-mr
 
     \b
-    # Ship only extra image NVRs (no FBC):
+    # OCP optional operator with explicit exclusion (edge case):
     $ artcd release-from-fbc \\
-        --group oadp-1.5 \\
-        --assembly 1.5.3 \\
-        --extra-image-nvrs oadp-velero-container-1.5.3-20251028.el9
-
-    \b
-    # Create shipment files and MR (requires GITLAB_TOKEN env var):
-    $ artcd release-from-fbc \\
-        --group oadp-1.5 \\
-        --assembly 1.5.3 \\
-        --fbc-pullspecs quay.io/redhat-user-workloads/ocp-art-tenant/art-fbc:oadp-operator-fbc-1.5.3-20251028153444 \\
+        --group openshift-4.22 \\
+        --assembly 4.22.0 \\
+        --fbc-pullspecs quay.io/redhat-user-workloads/ocp-art-tenant/art-fbc:ose-metallb-operator-fbc-4.22.0-20260528170921 \\
+        --ocp-optional \\
+        --exclude-nvr-components kube-rbac-proxy-container \\
         --create-mr
     """
     fbc_pullspecs_list = [spec.strip() for spec in fbc_pullspecs.split(',') if spec.strip()]
@@ -1177,6 +1251,11 @@ async def release_from_fbc(
     if target_release_date:
         normalized_date = _normalize_release_date(target_release_date)
 
+    # Parse comma-separated exclude NVR components
+    exclude_nvr_components_list = None
+    if exclude_nvr_components:
+        exclude_nvr_components_list = [c.strip() for c in exclude_nvr_components.split(',') if c.strip()]
+
     pipeline = ReleaseFromFbcPipeline(
         runtime=runtime,
         group=group,
@@ -1188,6 +1267,8 @@ async def release_from_fbc(
         jira_bugs=jira_bugs_list,
         target_release_date=normalized_date,
         extra_image_nvrs=extra_image_nvrs_list,
+        ocp_optional=ocp_optional,
+        exclude_nvr_components=exclude_nvr_components_list,
     )
 
     await pipeline.run()

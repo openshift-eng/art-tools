@@ -976,5 +976,182 @@ class TestRunWithTemplate(unittest.TestCase):
         self.assertIsNone(release_notes)
 
 
+class TestOcpOptionalMode(unittest.TestCase):
+    """Tests for OCP optional-operator mode (--ocp-optional)."""
+
+    def _make_pipeline(
+        self, ocp_optional=False, exclude_nvr_components=None, group="openshift-4.22", assembly="4.22.0"
+    ):
+        runtime = MagicMock()
+        runtime.dry_run = False
+        runtime.working_dir = MagicMock()
+        runtime.working_dir.absolute.return_value = MagicMock()
+        runtime.config = {}
+
+        pipeline = ReleaseFromFbcPipeline(
+            runtime=runtime,
+            group=group,
+            assembly=assembly,
+            fbc_pullspecs=["quay.io/test/fbc:latest"],
+            create_mr=False,
+            ocp_optional=ocp_optional,
+            exclude_nvr_components=exclude_nvr_components,
+        )
+        pipeline.product = "ocp"
+        return pipeline
+
+    def test_ocp_optional_flag_stored(self):
+        pipeline = self._make_pipeline(ocp_optional=True)
+        self.assertTrue(pipeline.ocp_optional)
+
+    def test_ocp_optional_default_false(self):
+        pipeline = self._make_pipeline()
+        self.assertFalse(pipeline.ocp_optional)
+
+    def test_exclude_nvr_components_stored_as_set(self):
+        pipeline = self._make_pipeline(
+            ocp_optional=True,
+            exclude_nvr_components=["kube-rbac-proxy-container", "other-container"],
+        )
+        self.assertEqual(pipeline.excluded_components, {"kube-rbac-proxy-container", "other-container"})
+
+    def test_exclude_nvr_components_default_empty_set(self):
+        pipeline = self._make_pipeline(ocp_optional=True)
+        self.assertEqual(pipeline.excluded_components, set())
+
+    # -- categorize_nvrs tests --
+
+    def test_categorize_ocp_optional_all_included(self):
+        """In OCP optional mode, all non-FBC images (including bundles and payload deps) go to extras."""
+        pipeline = self._make_pipeline(ocp_optional=True)
+        nvrs = [
+            "ose-metallb-operator-container-v4.22.0-202605281227.el9",
+            "ose-metallb-container-v4.22.0-202605281227.el9",
+            "ose-frr-container-v4.22.0-202605281227.el9",
+            "kube-rbac-proxy-container-v4.22.0-202605281227.el9",
+            "ose-metallb-operator-bundle-container-v4.22.0.202605281227.el9-1",
+            "ose-metallb-operator-fbc-4.22.0-20260528170921",
+        ]
+        result = pipeline.categorize_nvrs(nvrs)
+
+        self.assertEqual(
+            result["extras"],
+            [
+                "ose-metallb-operator-container-v4.22.0-202605281227.el9",
+                "ose-metallb-container-v4.22.0-202605281227.el9",
+                "ose-frr-container-v4.22.0-202605281227.el9",
+                "kube-rbac-proxy-container-v4.22.0-202605281227.el9",
+                "ose-metallb-operator-bundle-container-v4.22.0.202605281227.el9-1",
+            ],
+        )
+        self.assertNotIn("metadata", result)
+        self.assertEqual(
+            result["fbc"],
+            [
+                "ose-metallb-operator-fbc-4.22.0-20260528170921",
+            ],
+        )
+        self.assertEqual(result["external"], [])
+
+    def test_categorize_ocp_optional_with_exclusion(self):
+        """Explicitly excluded components go to external."""
+        pipeline = self._make_pipeline(
+            ocp_optional=True,
+            exclude_nvr_components=["kube-rbac-proxy-container"],
+        )
+        nvrs = [
+            "ose-metallb-operator-container-v4.22.0-202605281227.el9",
+            "kube-rbac-proxy-container-v4.22.0-202605281227.el9",
+            "ose-metallb-operator-fbc-4.22.0-20260528170921",
+        ]
+        result = pipeline.categorize_nvrs(nvrs)
+
+        self.assertEqual(
+            result["extras"],
+            [
+                "ose-metallb-operator-container-v4.22.0-202605281227.el9",
+            ],
+        )
+        self.assertEqual(
+            result["external"],
+            [
+                "kube-rbac-proxy-container-v4.22.0-202605281227.el9",
+            ],
+        )
+        self.assertEqual(
+            result["fbc"],
+            [
+                "ose-metallb-operator-fbc-4.22.0-20260528170921",
+            ],
+        )
+
+    def test_categorize_default_mode_unchanged(self):
+        """Default (non-OCP-optional) mode still uses image/fbc/external."""
+        pipeline = self._make_pipeline(ocp_optional=False)
+        nvrs = [
+            "ose-metallb-operator-container-v4.22.0-202605281227.el9",
+            "ose-metallb-operator-fbc-4.22.0-20260528170921",
+        ]
+        result = pipeline.categorize_nvrs(nvrs)
+
+        self.assertIn("image", result)
+        self.assertIn("fbc", result)
+        self.assertNotIn("extras", result)
+        self.assertNotIn("metadata", result)
+
+    def test_categorize_bundles_go_to_extras(self):
+        """Bundle NVRs go to extras alongside all other non-FBC images."""
+        pipeline = self._make_pipeline(ocp_optional=True)
+        nvrs = [
+            "ose-metallb-operator-bundle-container-v4.22.0.202605281227.el9-1",
+            "some-other-bundle-thing-container-v1.0.0-1.el9",
+        ]
+        result = pipeline.categorize_nvrs(nvrs)
+        self.assertNotIn("metadata", result)
+        self.assertEqual(len(result["extras"]), 2)
+
+    # -- create_shipment_config tests --
+
+    def test_create_shipment_config_extras_with_release_notes(self):
+        """extras kind should include release notes when provided."""
+        pipeline = self._make_pipeline(ocp_optional=True)
+        snapshot = _make_snapshot(app="openshift-4-22")
+        release_notes = ReleaseNotes(type="RHBA", synopsis="test")
+        config = pipeline.create_shipment_config("extras", snapshot, release_notes=release_notes)
+
+        self.assertIsNotNone(config.shipment.data)
+        self.assertEqual(config.shipment.data.releaseNotes.type, "RHBA")
+        self.assertFalse(config.shipment.metadata.fbc)
+
+    def test_create_shipment_config_extras_openshift_minimal_notes(self):
+        """extras kind for openshift-* group gets minimal release notes automatically."""
+        pipeline = self._make_pipeline(ocp_optional=True)
+        snapshot = _make_snapshot(app="openshift-4-22")
+        config = pipeline.create_shipment_config("extras", snapshot)
+
+        self.assertIsNotNone(config.shipment.data)
+        self.assertEqual(config.shipment.data.releaseNotes.type, "RHBA")
+        self.assertIn("extras", config.shipment.data.releaseNotes.synopsis)
+
+    def test_create_shipment_config_extras_no_notes_for_non_openshift(self):
+        """extras kind for non-openshift group should have no data when no release notes provided."""
+        pipeline = self._make_pipeline(ocp_optional=True, group="oadp-1.4", assembly="1.4.5")
+        pipeline.product = "oadp"
+        snapshot = _make_snapshot(app="oadp-1-4")
+        config = pipeline.create_shipment_config("extras", snapshot)
+
+        self.assertIsNone(config.shipment.data)
+        self.assertFalse(config.shipment.metadata.fbc)
+
+    def test_create_shipment_config_fbc_still_works(self):
+        """fbc kind in OCP optional mode should still set fbc=True and no data."""
+        pipeline = self._make_pipeline(ocp_optional=True)
+        snapshot = _make_snapshot(app="fbc-openshift-4-22")
+        config = pipeline.create_shipment_config("fbc", snapshot)
+
+        self.assertTrue(config.shipment.metadata.fbc)
+        self.assertIsNone(config.shipment.data)
+
+
 if __name__ == "__main__":
     unittest.main()
