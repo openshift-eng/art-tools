@@ -432,7 +432,18 @@
                 "force?": {
                   "$ref": "#/properties/konflux/properties/cachi2/properties/lockfile/properties/force"
                 },
-                "force-": {}
+                "force-": {},
+                "backend": {
+                  "description": "Lockfile generation backend to use (e.g., 'art-internal', 'rpm-lockfile-prototype')",
+                  "type": "string"
+                },
+                "backend!": {
+                  "$ref": "#/properties/konflux/properties/cachi2/properties/lockfile/properties/backend"
+                },
+                "backend?": {
+                  "$ref": "#/properties/konflux/properties/cachi2/properties/lockfile/properties/backend"
+                },
+                "backend-": {}
               },
               "additionalProperties": false
             },
@@ -541,7 +552,14 @@
                     "force": {"type": "boolean"},
                     "force!": {"$ref": "#/properties/okd/properties/konflux/properties/cachi2/properties/lockfile/properties/force"},
                     "force?": {"$ref": "#/properties/okd/properties/konflux/properties/cachi2/properties/lockfile/properties/force"},
-                    "force-": {}
+                    "force-": {},
+                    "backend": {
+                      "description": "Lockfile generation backend to use (e.g., 'art-internal', 'rpm-lockfile-prototype')",
+                      "type": "string"
+                    },
+                    "backend!": {"$ref": "#/properties/okd/properties/konflux/properties/cachi2/properties/lockfile/properties/backend"},
+                    "backend?": {"$ref": "#/properties/okd/properties/konflux/properties/cachi2/properties/lockfile/properties/backend"},
+                    "backend-": {}
                   },
                   "additionalProperties": false
                 },
