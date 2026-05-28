@@ -240,7 +240,11 @@ def get_nvr_root_log(name, version, release, arch='x86_64') -> Tuple[str, str]:
     for a in arches:
         root_log_url = f'{constants.BREW_DOWNLOAD_URL}/vol/rhel-{rhel_version}/packages/{name}/{version}/{release}/data/logs/{a}/root.log'
         logger.debug(f"Trying {root_log_url}")
-        res = requests.get(root_log_url, verify=ssl.get_default_verify_paths().openssl_cafile)
+        res = requests.get(
+            root_log_url,
+            verify=ssl.get_default_verify_paths().openssl_cafile,
+            timeout=30,
+        )
         if res.status_code == 200:
             return res.text, root_log_url
         tried_urls.append(root_log_url)
