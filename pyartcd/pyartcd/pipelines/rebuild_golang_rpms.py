@@ -287,14 +287,8 @@ class RebuildGolangRPMsPipeline:
         if rc != 0:
             raise ValueError(f'Cannot get last commit message for {rpm} for {branch}')
         if bump_msg in commit_message:
-            _LOGGER.warning(f'{dg_dir}/{branch} - Bump commit exists on branch, build in queue?')
-            if not self.force:
-                raise ValueError(
-                    f'Bump commit already exists for {rpm} for {branch}. Use --force to trigger another build anyway'
-                )
-            else:
-                _LOGGER.warning('Forcing another build since --force flag is set')
-                skip_bump = True
+            _LOGGER.warning(f'{dg_dir}/{branch} - Bump commit exists on branch, skipping bump')
+            skip_bump = True
 
         if not skip_bump:
             # get all .spec files
