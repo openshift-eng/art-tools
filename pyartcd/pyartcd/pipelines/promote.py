@@ -1510,9 +1510,6 @@ class PromotePipeline:
             if self._registry_config:
                 cmd.append(f"--registry-config={self._registry_config}")
             cmd += ["verify-payload", imagestream]
-            if self.runtime.dry_run:
-                self._logger.info("[DRY-RUN] Would have run command: %s", ' '.join(cmd))
-                return
             async with self._elliott_lock:
                 _, stdout, _ = await exectools.cmd_gather_async(
                     cmd, env=self._elliott_env_vars, stderr=None, check=True
@@ -1520,11 +1517,15 @@ class PromotePipeline:
             results = json.loads(stdout)
             self._logger.info("Verify payload results for %s:\n%s", imagestream, json.dumps(results, indent=4))
             if results.get("missing_in_advisory") or results.get("payload_advisory_mismatch"):
-                raise VerificationError(
+                msg = (
                     f"Payload verification failed for imagestream {imagestream}. "
                     "The imagestream contents do not match the advisory builds. "
                     "Ensure gen-payload/build-sync has been run for the current assembly spec."
                 )
+                if self.runtime.dry_run:
+                    self._logger.warning("[DRY-RUN] %s", msg)
+                    return
+                raise VerificationError(msg)
             self._logger.info("Payload verification succeeded for imagestream %s", imagestream)
 
         imagestreams = [
