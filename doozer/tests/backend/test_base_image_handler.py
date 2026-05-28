@@ -188,6 +188,7 @@ class TestBaseImageHandler(IsolatedAsyncioTestCase):
         konflux_client._create.assert_awaited_once()
         release_obj = konflux_client._create.await_args.args[0]
         self.assertEqual(release_obj["metadata"]["annotations"]["art.redhat.com/nvrs"], self.nvr)
+        self.assertEqual(release_obj["metadata"]["generateName"], "openshift-4-22-base-image-release-")
 
     @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
     @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
