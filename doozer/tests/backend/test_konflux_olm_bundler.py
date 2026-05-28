@@ -9,6 +9,7 @@ import yaml
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBundleBuildRecord
 from artcommonlib.konflux.konflux_db import Engine
 from doozerlib import constants
+from doozerlib.backend.konflux_client import ImageBuildParams
 from doozerlib.backend.konflux_olm_bundler import KonfluxOlmBundleBuilder, KonfluxOlmBundleRebaser
 from doozerlib.backend.pipelinerun_utils import PipelineRunInfo
 
@@ -566,7 +567,7 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
             f"{self.image_repo}:test-component-1.0-1",
             self.konflux_namespace,
             self.skip_checks,
-            additional_tags,
+            additional_tags=additional_tags,
         )
 
         self.konflux_client.ensure_application.assert_called_once_with(name="test-group", display_name="test-group")
@@ -587,14 +588,15 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
             commit_sha=bundle_build_repo.commit_hash,
             target_branch=bundle_build_repo.commit_hash,
             output_image=f"{self.image_repo}:test-component-1.0-1",
-            vm_override={},
             building_arches=["x86_64"],
-            additional_tags=additional_tags,
-            skip_checks=self.skip_checks,
-            hermetic=True,
             pipelinerun_template_url=constants.KONFLUX_DEFAULT_BUNDLE_BUILD_PLR_TEMPLATE_URL,
-            artifact_type="operatorbundle",
-            build_priority="3",
+            build_params=ImageBuildParams(
+                additional_tags=additional_tags,
+                skip_checks=self.skip_checks,
+                hermetic=True,
+                artifact_type="operatorbundle",
+                build_priority="3",
+            ),
         )
         self.assertEqual(url, "https://example.com/pipelinerun")
 

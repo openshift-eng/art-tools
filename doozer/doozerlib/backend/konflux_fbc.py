@@ -32,7 +32,7 @@ from async_lru import alru_cache
 from dockerfile_parse import DockerfileParser
 from doozerlib import constants, opm, util
 from doozerlib.backend.build_repo import BuildRepo
-from doozerlib.backend.konflux_client import KonfluxClient
+from doozerlib.backend.konflux_client import ImageBuildParams, KonfluxClient
 from doozerlib.backend.pipelinerun_utils import PipelineRunInfo
 from doozerlib.constants import KONFLUX_DEFAULT_IMAGE_REPO
 from doozerlib.image import ImageMetadata
@@ -366,6 +366,7 @@ class KonfluxFbcFragmentMerger:
         registry_auth: Optional[str] = None,
         skip_checks: bool = False,
         skip_fips_check: bool = False,
+        skip_tasks: Sequence[str] = (),
         plr_template: Optional[str] = None,
         major_minor_override: Optional[Tuple[int, int]] = None,
         logger: logging.Logger | None = None,
@@ -391,6 +392,7 @@ class KonfluxFbcFragmentMerger:
         self.registry_auth = registry_auth
         self.skip_checks = skip_checks
         self.skip_fips_check = skip_fips_check
+        self.skip_tasks = tuple(skip_tasks)
         self.plr_template = plr_template or constants.KONFLUX_DEFAULT_FBC_BUILD_PLR_TEMPLATE_URL
         self.major_minor_override = major_minor_override
         self._logger = logger or LOGGER.getChild(self.__class__.__name__)
@@ -632,6 +634,9 @@ class KonfluxFbcFragmentMerger:
 
         arches = self.group_config.get("arches", list(KonfluxClient.SUPPORTED_ARCHES.keys()))
 
+        group_skip_tasks = self.group_config.get("konflux", {}).get("skip_tasks", [])
+        merged_skip_tasks = tuple(dict.fromkeys([*self.skip_tasks, *group_skip_tasks]))
+
         build_kwargs = dict(
             generate_name=f"{comp_name}-",
             namespace=self.konflux_namespace,
@@ -641,15 +646,16 @@ class KonfluxFbcFragmentMerger:
             commit_sha=commit_sha,
             target_branch=self.fbc_git_branch or commit_sha,
             output_image=f"{output_image_repo}:{output_image_tag}",
-            additional_tags=[],
-            vm_override={},
             building_arches=arches,
-            hermetic=True,
-            dockerfile="catalog.Dockerfile",
-            skip_checks=self.skip_checks,
-            skip_fips_check=self.skip_fips_check,
             pipelinerun_template_url=self.plr_template,
-            build_priority=FBC_BUILD_PRIORITY,
+            build_params=ImageBuildParams(
+                hermetic=True,
+                dockerfile="catalog.Dockerfile",
+                skip_checks=self.skip_checks,
+                skip_fips_check=self.skip_fips_check,
+                skip_tasks=merged_skip_tasks,
+                build_priority=FBC_BUILD_PRIORITY,
+            ),
         )
         if git_auth_secret:
             build_kwargs["git_auth_secret"] = git_auth_secret
@@ -1594,6 +1600,7 @@ class KonfluxFbcBuilder:
         konflux_context: Optional[str] = None,
         image_repo: str = constants.KONFLUX_DEFAULT_IMAGE_REPO,
         skip_checks: bool = False,
+        skip_tasks: Sequence[str] = (),
         pipelinerun_template_url: str = constants.KONFLUX_DEFAULT_FBC_BUILD_PLR_TEMPLATE_URL,
         dry_run: bool = False,
         major_minor_override: Optional[Tuple[int, int]] = None,
@@ -1611,6 +1618,7 @@ class KonfluxFbcBuilder:
         self.konflux_context = konflux_context
         self.image_repo = image_repo
         self.skip_checks = skip_checks
+        self.skip_tasks = tuple(skip_tasks)
         self.pipelinerun_template_url = pipelinerun_template_url
         self.dry_run = dry_run
         self.major_minor_override = major_minor_override
@@ -1994,6 +2002,9 @@ class KonfluxFbcBuilder:
         else:
             logger.info("No additional tags to be added")
 
+        group_skip_tasks = metadata.runtime.group_config.get("konflux", {}).get("skip_tasks", [])
+        merged_skip_tasks = tuple(dict.fromkeys([*self.skip_tasks, *group_skip_tasks]))
+
         build_kwargs = dict(
             generate_name=f"{component_name}-",
             namespace=self.konflux_namespace,
@@ -2003,14 +2014,16 @@ class KonfluxFbcBuilder:
             commit_sha=build_repo.commit_hash,
             target_branch=build_repo.branch or build_repo.commit_hash,
             output_image=output_image,
-            vm_override={},
             building_arches=arches,
-            additional_tags=list(additional_tags),
-            skip_checks=self.skip_checks,
-            hermetic=True,
-            dockerfile="catalog.Dockerfile",
             pipelinerun_template_url=self.pipelinerun_template_url,
-            build_priority=FBC_BUILD_PRIORITY,
+            build_params=ImageBuildParams(
+                additional_tags=list(additional_tags),
+                skip_checks=self.skip_checks,
+                skip_tasks=merged_skip_tasks,
+                hermetic=True,
+                dockerfile="catalog.Dockerfile",
+                build_priority=FBC_BUILD_PRIORITY,
+            ),
         )
         if git_auth_secret:
             build_kwargs["git_auth_secret"] = git_auth_secret

@@ -5,6 +5,7 @@ from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import yaml
+from doozerlib.constants import KONFLUX_DEFAULT_IMAGE_REPO
 from pyartcd.pipelines.build_layered_products import BuildLayeredProductsPipeline
 from pyartcd.runtime import Runtime
 
@@ -161,7 +162,7 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
             new_callable=AsyncMock,
             side_effect=ChildProcessError('exit code 1'),
         ):
-            await self.pipeline._rebase_and_build('oadp')
+            await self.pipeline._rebase_and_build('oadp', KONFLUX_DEFAULT_IMAGE_REPO)
 
         self.pipeline._logger.warning.assert_any_call('No buildable images remaining after rebase; skipping build')
 
@@ -192,7 +193,7 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
                 return_value='/path/to/kubeconfig',
             ),
         ):
-            await self.pipeline._rebase_and_build('oadp')
+            await self.pipeline._rebase_and_build('oadp', KONFLUX_DEFAULT_IMAGE_REPO)
 
         self.assertEqual(call_count, 2)
         self.pipeline._logger.info.assert_any_call('Successfully built oadp-velero-restic-restore-helper')
@@ -211,9 +212,85 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
                 return_value='/path/to/kubeconfig',
             ),
         ):
-            await self.pipeline._rebase_and_build('oadp')
+            await self.pipeline._rebase_and_build('oadp', KONFLUX_DEFAULT_IMAGE_REPO)
 
         mock_cmd.assert_called_once()
         cmd = mock_cmd.call_args[0][0]
         self.assertIn(f'--images={self.pipeline.image_list}', cmd)
         self.assertIn('beta:images:konflux:build', cmd)
+
+    @patch('pyartcd.pipelines.build_layered_products.jenkins.init_jenkins')
+    @patch('pyartcd.pipelines.build_layered_products.load_group_config')
+    @patch('pyartcd.pipelines.build_layered_products.exectools.cmd_assert_async', new_callable=AsyncMock)
+    @patch(
+        'pyartcd.pipelines.build_layered_products.resolve_konflux_kubeconfig_by_product',
+        return_value='/path/to/kubeconfig',
+    )
+    @patch('pyartcd.pipelines.build_layered_products.resolve_konflux_namespace_by_product', return_value='test-ns')
+    async def test_image_repo_from_group_config(
+        self, mock_resolve_ns, mock_resolve_kube, mock_cmd, mock_load_config, mock_jenkins
+    ):
+        """When group config has konflux.image_repo, it should be used instead of the default."""
+        mock_load_config.return_value = {
+            'product': 'installer-ove-ui',
+            'version': '4.20',
+            'konflux': {
+                'image_repo': 'quay.io/redhat-user-workloads/ocp-agent-based-installer-tenant/ove-ui-iso',
+            },
+        }
+
+        pipeline = BuildLayeredProductsPipeline(
+            runtime=self.runtime,
+            group='installer-ove-ui-4.20',
+            version='4.20',
+            assembly='stream',
+            image_list='art-agent-installer-iso',
+            data_path='https://github.com/openshift-eng/ocp-build-data',
+            skip_bundle_build=True,
+            skip_rebase=True,
+        )
+
+        await pipeline.run()
+
+        build_cmd = mock_cmd.call_args[0][0]
+        image_repo_args = [arg for arg in build_cmd if arg.startswith('--image-repo=')]
+        self.assertEqual(len(image_repo_args), 1)
+        self.assertEqual(
+            image_repo_args[0],
+            '--image-repo=quay.io/redhat-user-workloads/ocp-agent-based-installer-tenant/ove-ui-iso',
+        )
+
+    @patch('pyartcd.pipelines.build_layered_products.jenkins.init_jenkins')
+    @patch('pyartcd.pipelines.build_layered_products.load_group_config')
+    @patch('pyartcd.pipelines.build_layered_products.exectools.cmd_assert_async', new_callable=AsyncMock)
+    @patch(
+        'pyartcd.pipelines.build_layered_products.resolve_konflux_kubeconfig_by_product',
+        return_value='/path/to/kubeconfig',
+    )
+    @patch('pyartcd.pipelines.build_layered_products.resolve_konflux_namespace_by_product', return_value='test-ns')
+    async def test_image_repo_falls_back_to_default(
+        self, mock_resolve_ns, mock_resolve_kube, mock_cmd, mock_load_config, mock_jenkins
+    ):
+        """When group config does not have konflux.image_repo, fall back to KONFLUX_DEFAULT_IMAGE_REPO."""
+        mock_load_config.return_value = {
+            'product': 'ocp',
+            'version': '4.18',
+        }
+
+        pipeline = BuildLayeredProductsPipeline(
+            runtime=self.runtime,
+            group='openshift-4.18',
+            version='4.18',
+            assembly='stream',
+            image_list='some-image',
+            data_path='https://github.com/openshift-eng/ocp-build-data',
+            skip_bundle_build=True,
+            skip_rebase=True,
+        )
+
+        await pipeline.run()
+
+        build_cmd = mock_cmd.call_args[0][0]
+        image_repo_args = [arg for arg in build_cmd if arg.startswith('--image-repo=')]
+        self.assertEqual(len(image_repo_args), 1)
+        self.assertEqual(image_repo_args[0], f'--image-repo={KONFLUX_DEFAULT_IMAGE_REPO}')
