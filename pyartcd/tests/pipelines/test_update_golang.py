@@ -228,7 +228,7 @@ class TestMoveGolangBugs(IsolatedAsyncioTestCase):
             "--component",
             "openshift-golang-builder-container",
         ]
-        mock_cmd_assert.assert_called_once_with(expected_cmd)
+        mock_cmd_assert.assert_called_once_with(expected_cmd, log_stdout=True)
 
     @patch("artcommonlib.exectools.cmd_assert_async")
     async def test_move_golang_bugs_with_force_update(self, mock_cmd_assert):

@@ -160,7 +160,7 @@ async def move_golang_bugs(
         cmd.append('--rpms-only')
     if dry_run:
         cmd.append('--dry-run')
-    await exectools.cmd_assert_async(cmd)
+    await exectools.cmd_assert_async(cmd, log_stdout=True)
 
 
 class UpdateGolangPipeline:
@@ -812,7 +812,7 @@ class UpdateGolangPipeline:
         )
         if not self.dry_run:
             cmd.append("--push")
-        await exectools.cmd_assert_async(cmd, env=self._doozer_env_vars)
+        await exectools.cmd_assert_async(cmd, env=self._doozer_env_vars, log_stdout=True)
 
     async def _build_brew(self, el_v, go_version):
         _LOGGER.info("Building on Brew...")
@@ -842,7 +842,7 @@ class UpdateGolangPipeline:
             cmd.append("--dry-run")
         if self.scratch:
             cmd.append("--scratch")
-        await exectools.cmd_assert_async(cmd, env=self._doozer_env_vars)
+        await exectools.cmd_assert_async(cmd, env=self._doozer_env_vars, log_stdout=True)
 
     async def _rebase_and_build_brew(self, el_v, go_version):
         await self._rebase_brew(el_v, go_version)
@@ -915,7 +915,7 @@ class UpdateGolangPipeline:
             cmd.extend(["--network-mode", self.network_mode])
         if self.dry_run:
             cmd.append("--dry-run")
-        await exectools.cmd_assert_async(cmd, env=self._doozer_env_vars)
+        await exectools.cmd_assert_async(cmd, env=self._doozer_env_vars, log_stdout=True)
 
     async def _rebase_and_build_konflux(self, el_v, go_version):
         """Rebase and build golang-builder image on Konflux"""
