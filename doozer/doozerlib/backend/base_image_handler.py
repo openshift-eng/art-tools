@@ -220,8 +220,9 @@ class BaseImageHandler:
                 if not snapshot_available:
                     raise RuntimeError(f"Snapshot {snapshot_name} did not become available in time")
 
+            group_safe = normalize_group_name_for_k8s(self.runtime.group)
             release_metadata = {
-                "generateName": "ocp-base-image-release-",
+                "generateName": f"{group_safe}-base-image-release-",
                 "namespace": self.namespace,
                 "labels": {
                     "appstudio.openshift.io/application": self.base_image_application,
