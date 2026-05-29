@@ -243,7 +243,7 @@ class BuildLayeredProductsPipeline:
         if 1 <= len(failed_images) <= 10:
             jenkins.update_description(f'Failed images: {", ".join(failed_images)}<br/>')
         elif len(failed_images) > 10:
-            jenkins.update_description(f'Check record.log for the full list of failed images<br/>')
+            jenkins.update_description('Check record.log for the full list of failed images<br/>')
 
     async def _build(self, image_list: str, product: str, image_repo: str):
         """Build layered product images."""

@@ -231,10 +231,7 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
     def test_update_build_description_all_succeeded(self, mock_update_desc):
         """When all images succeed, description shows count with no failures."""
         record_log_path = Path(self.runtime.doozer_working, 'record.log')
-        record_log_path.write_text(
-            'image_build_konflux|name=img-a|status=0\n'
-            'image_build_konflux|name=img-b|status=0\n'
-        )
+        record_log_path.write_text('image_build_konflux|name=img-a|status=0\nimage_build_konflux|name=img-b|status=0\n')
         self.pipeline._update_build_description()
         mock_update_desc.assert_called_once_with('2 image(s) succeeded<br/>')
 
