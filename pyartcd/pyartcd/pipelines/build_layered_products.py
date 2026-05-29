@@ -162,6 +162,7 @@ class BuildLayeredProductsPipeline:
             return
 
         await self._build(image_list, product, image_repo)
+        self._update_build_description()
 
     async def _rebase(self, image_list: str) -> str:
         """Rebase layered product images.
@@ -221,6 +222,26 @@ class BuildLayeredProductsPipeline:
             requested = [img.strip() for img in image_list.split(',') if img.strip()]
             remaining = [img for img in requested if img not in excluded]
             return ','.join(remaining)
+
+    def _update_build_description(self):
+        """Update Jenkins description with build results (succeeded/failed counts and failed image names)."""
+        record_log = self.parse_record_log()
+        if not record_log:
+            return
+
+        records = record_log.get('image_build_konflux', [])
+        built_images = [entry['name'] for entry in records if not int(entry['status'])]
+        failed_images = [entry['name'] for entry in records if int(entry['status'])]
+
+        desc_parts = [f'{len(built_images)} image(s) succeeded']
+        if failed_images:
+            desc_parts.append(f'{len(failed_images)} image(s) failed')
+        jenkins.update_description(f'{", ".join(desc_parts)}<br/>')
+
+        if 1 <= len(failed_images) <= 10:
+            jenkins.update_description(f'Failed images: {", ".join(failed_images)}<br/>')
+        elif len(failed_images) > 10:
+            jenkins.update_description(f'Check record.log for the full list of failed images<br/>')
 
     async def _build(self, image_list: str, product: str, image_repo: str):
         """Build layered product images."""
