@@ -82,6 +82,7 @@ PRODUCT_NAMESPACE_MAP = {
     "openshift-logging": "art-logging-tenant",
     "quay": "art-quay-tenant",
     "rhmtc": "art-mtc-tenant",
+    "supplemental-tools": "ocp-art-tenant",
     "zero-trust": "art-oap-tenant",
 }
 
@@ -110,6 +111,7 @@ PRODUCT_KUBECONFIG_MAP = {
     "openshift-logging": "LOGGING_KONFLUX_SA_KUBECONFIG",
     "quay": "QUAY_KONFLUX_SA_KUBECONFIG",
     "rhmtc": "MTC_KONFLUX_SA_KUBECONFIG",
+    "supplemental-tools": "KONFLUX_SA_KUBECONFIG",
     "zero-trust": "OAP_KONFLUX_SA_KUBECONFIG",
 }
 
