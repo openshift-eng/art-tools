@@ -481,6 +481,9 @@ class UpdateGolangPipeline:
             if self.dry_run:
                 return True
 
+        if await is_available(self.ocp_version, el_v, nvr):
+            return True
+
         _LOGGER.warning("build not available after 5 hours")
         return False
 

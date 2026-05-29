@@ -974,6 +974,34 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
         self.assertFalse(result)
 
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    @patch("pyartcd.pipelines.update_golang.is_available", new_callable=AsyncMock, side_effect=[False, False, True])
+    @patch("pyartcd.pipelines.update_golang.is_latest", return_value=True)
+    async def test_process_build_available_after_retries(self, mock_is_latest, mock_is_available, mock_konflux_db):
+        """Test process_build succeeds after retrying request_repo"""
+        mock_runtime = Mock(
+            dry_run=False,
+            working_dir=Path("/tmp/working"),
+        )
+        mock_runtime.new_slack_client.return_value = Mock()
+
+        pipeline = UpdateGolangPipeline(
+            runtime=mock_runtime,
+            ocp_version="4.16",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.20.12-2.el8"],
+            art_jira="ART-1234",
+            tag_builds=True,
+        )
+        pipeline.request_repo = AsyncMock()
+
+        result = await pipeline.process_build(8, "golang-1.20.12-2.el8")
+
+        self.assertTrue(result)
+        self.assertEqual(mock_is_available.call_count, 3)
+        self.assertEqual(pipeline.request_repo.call_count, 2)
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     async def test_tag_build_dry_run(self, mock_konflux_db):
         """Test tag_build in dry-run mode"""
         mock_runtime = Mock(

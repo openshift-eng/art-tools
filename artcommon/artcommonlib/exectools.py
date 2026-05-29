@@ -793,8 +793,11 @@ async def cmd_gather_async(
             stdout_raw, stderr_raw = await asyncio.wait_for(proc.communicate(), timeout=timeout)
             stdout = stdout_raw.decode() if stdout_raw else ""
             stderr = stderr_raw.decode() if stderr_raw else ""
-    except asyncio.TimeoutError:
-        proc.kill()
+    except (asyncio.TimeoutError, asyncio.CancelledError):
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
         await proc.wait()
         raise
     duration_seconds = time.time() - start_time
@@ -930,8 +933,11 @@ async def cmd_assert_async(
             returncode = await asyncio.wait_for(_stream_and_wait(), timeout=timeout)
         else:
             returncode = await asyncio.wait_for(proc.wait(), timeout=timeout)
-    except asyncio.TimeoutError:
-        proc.kill()
+    except (asyncio.TimeoutError, asyncio.CancelledError):
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
         await proc.wait()
         raise
     duration_seconds = time.time() - start_time
