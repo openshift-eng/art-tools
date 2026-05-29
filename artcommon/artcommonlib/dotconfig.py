@@ -92,7 +92,8 @@ class Config(object):
         self._data = defaults
         with open(self.full_path, 'r') as f:
             data = yaml.full_load(f)
-            self._data.update(data)
+            if data:
+                self._data.update(data)
             # load envvars if given and override
             for k, v in envvars.items():
                 if v in os.environ:
