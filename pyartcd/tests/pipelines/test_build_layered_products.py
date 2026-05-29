@@ -192,6 +192,7 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
                 'pyartcd.pipelines.build_layered_products.resolve_konflux_kubeconfig_by_product',
                 return_value='/path/to/kubeconfig',
             ),
+            patch.object(self.pipeline, '_update_build_description'),
         ):
             await self.pipeline._rebase_and_build('oadp', KONFLUX_DEFAULT_IMAGE_REPO)
 
@@ -211,6 +212,7 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
                 'pyartcd.pipelines.build_layered_products.resolve_konflux_kubeconfig_by_product',
                 return_value='/path/to/kubeconfig',
             ),
+            patch.object(self.pipeline, '_update_build_description'),
         ):
             await self.pipeline._rebase_and_build('oadp', KONFLUX_DEFAULT_IMAGE_REPO)
 
@@ -218,6 +220,48 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
         cmd = mock_cmd.call_args[0][0]
         self.assertIn(f'--images={self.pipeline.image_list}', cmd)
         self.assertIn('beta:images:konflux:build', cmd)
+
+    @patch('pyartcd.pipelines.build_layered_products.jenkins.update_description')
+    def test_update_build_description_no_record_log(self, mock_update_desc):
+        """When record.log does not exist, no description update is made."""
+        self.pipeline._update_build_description()
+        mock_update_desc.assert_not_called()
+
+    @patch('pyartcd.pipelines.build_layered_products.jenkins.update_description')
+    def test_update_build_description_all_succeeded(self, mock_update_desc):
+        """When all images succeed, description shows count with no failures."""
+        record_log_path = Path(self.runtime.doozer_working, 'record.log')
+        record_log_path.write_text('image_build_konflux|name=img-a|status=0\nimage_build_konflux|name=img-b|status=0\n')
+        self.pipeline._update_build_description()
+        mock_update_desc.assert_called_once_with('2 image(s) succeeded<br/>')
+
+    @patch('pyartcd.pipelines.build_layered_products.jenkins.update_description')
+    def test_update_build_description_some_failed(self, mock_update_desc):
+        """When some images fail, description shows succeeded/failed counts and lists failed names."""
+        record_log_path = Path(self.runtime.doozer_working, 'record.log')
+        record_log_path.write_text(
+            'image_build_konflux|name=img-a|status=0\n'
+            'image_build_konflux|name=img-b|status=1\n'
+            'image_build_konflux|name=img-c|status=1\n'
+        )
+        self.pipeline._update_build_description()
+        calls = [c[0][0] for c in mock_update_desc.call_args_list]
+        self.assertEqual(calls[0], '1 image(s) succeeded, 2 image(s) failed<br/>')
+        self.assertEqual(calls[1], 'Failed images: img-b, img-c<br/>')
+
+    @patch('pyartcd.pipelines.build_layered_products.jenkins.update_description')
+    def test_update_build_description_many_failed(self, mock_update_desc):
+        """When more than 10 images fail, description omits individual names."""
+        record_log_path = Path(self.runtime.doozer_working, 'record.log')
+        lines = []
+        for i in range(12):
+            lines.append(f'image_build_konflux|name=img-{i}|status=1\n')
+        lines.append('image_build_konflux|name=img-ok|status=0\n')
+        record_log_path.write_text(''.join(lines))
+        self.pipeline._update_build_description()
+        calls = [c[0][0] for c in mock_update_desc.call_args_list]
+        self.assertEqual(calls[0], '1 image(s) succeeded, 12 image(s) failed<br/>')
+        self.assertEqual(calls[1], 'Check record.log for the full list of failed images<br/>')
 
     @patch('pyartcd.pipelines.build_layered_products.jenkins.init_jenkins')
     @patch('pyartcd.pipelines.build_layered_products.load_group_config')
