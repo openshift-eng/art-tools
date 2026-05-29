@@ -402,6 +402,96 @@ def test_arch_value_regex_no_match():
     assert ARCH_VALUE_RE.search("echo hello") is None
 
 
+class TestListArchConditional(unittest.TestCase):
+    """
+    Tests for ``[ test ] || cmd`` and ``[ test ] && cmd`` arch-conditional
+    patterns in list nodes.
+    """
+
+    def test_neq_or_extracts_arch_packages(self):
+        """
+        ``[ $(arch) != x86_64 ] || dnf install -y pkg`` installs only on x86_64.
+        """
+        pkgs, arch_pkgs = extract_packages_from_run_commands(
+            ['[ $(arch) != x86_64 ] || dnf install -y special-pkg']
+        )
+        self.assertEqual(pkgs, [])
+        self.assertEqual(arch_pkgs, {"x86_64": ["special-pkg"]})
+
+    def test_eq_and_extracts_arch_packages(self):
+        """
+        ``[ $(arch) = x86_64 ] && dnf install -y pkg`` installs only on x86_64.
+        """
+        pkgs, arch_pkgs = extract_packages_from_run_commands(
+            ['[ $(arch) = x86_64 ] && dnf install -y special-pkg']
+        )
+        self.assertEqual(pkgs, [])
+        self.assertEqual(arch_pkgs, {"x86_64": ["special-pkg"]})
+
+    def test_double_bracket_neq_or(self):
+        """
+        ``[[ $(arch) != aarch64 ]] || yum install -y arm-pkg`` with [[ ]] preprocessing.
+        """
+        pkgs, arch_pkgs = extract_packages_from_run_commands(
+            ['[[ $(arch) != aarch64 ]] || yum install -y arm-pkg']
+        )
+        self.assertEqual(pkgs, [])
+        self.assertEqual(arch_pkgs, {"aarch64": ["arm-pkg"]})
+
+    def test_eq_or_treated_as_unconditional(self):
+        """
+        ``[ $(arch) = x86_64 ] || dnf install -y pkg`` means "all except x86_64"
+        which needs the full arch set — treated as unconditional.
+        """
+        pkgs, arch_pkgs = extract_packages_from_run_commands(
+            ['[ $(arch) = x86_64 ] || dnf install -y pkg']
+        )
+        self.assertIn("pkg", pkgs)
+        self.assertEqual(arch_pkgs, {})
+
+    def test_neq_and_treated_as_unconditional(self):
+        """
+        ``[ $(arch) != x86_64 ] && dnf install -y pkg`` means "all except x86_64"
+        — treated as unconditional.
+        """
+        pkgs, arch_pkgs = extract_packages_from_run_commands(
+            ['[ $(arch) != x86_64 ] && dnf install -y pkg']
+        )
+        self.assertIn("pkg", pkgs)
+        self.assertEqual(arch_pkgs, {})
+
+    def test_arch_context_only_applies_to_next_command(self):
+        """
+        In ``[ test ] || cmd1 && cmd2``, only cmd1 gets the arch context.
+        """
+        pkgs, arch_pkgs = extract_packages_from_run_commands(
+            ['[ $(arch) != x86_64 ] || dnf install -y special-pkg && dnf install -y common-pkg']
+        )
+        self.assertIn("common-pkg", pkgs)
+        self.assertEqual(arch_pkgs, {"x86_64": ["special-pkg"]})
+
+    def test_regular_or_fallback_unchanged(self):
+        """
+        Regular ``cmd1 || cmd2`` without [ test ] stays unconditional.
+        """
+        pkgs, arch_pkgs = extract_packages_from_run_commands(
+            ['dnf install -y preferred-pkg || dnf install -y fallback-pkg']
+        )
+        self.assertIn("preferred-pkg", pkgs)
+        self.assertIn("fallback-pkg", pkgs)
+        self.assertEqual(arch_pkgs, {})
+
+    def test_uname_m_neq_or(self):
+        """
+        ``[ $(uname -m) != s390x ] || dnf install -y s390x-pkg``
+        """
+        pkgs, arch_pkgs = extract_packages_from_run_commands(
+            ['[ $(uname -m) != s390x ] || dnf install -y s390x-pkg']
+        )
+        self.assertEqual(pkgs, [])
+        self.assertEqual(arch_pkgs, {"s390x": ["s390x-pkg"]})
+
+
 class TestBuilddepParsing(unittest.TestCase):
     def test_simple_builddep(self):
         run_values = ["dnf builddep -y pkcs11-helper*"]
