@@ -192,6 +192,7 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
                 'pyartcd.pipelines.build_layered_products.resolve_konflux_kubeconfig_by_product',
                 return_value='/path/to/kubeconfig',
             ),
+            patch.object(self.pipeline, '_update_build_description'),
         ):
             await self.pipeline._rebase_and_build('oadp', KONFLUX_DEFAULT_IMAGE_REPO)
 
@@ -211,6 +212,7 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
                 'pyartcd.pipelines.build_layered_products.resolve_konflux_kubeconfig_by_product',
                 return_value='/path/to/kubeconfig',
             ),
+            patch.object(self.pipeline, '_update_build_description'),
         ):
             await self.pipeline._rebase_and_build('oadp', KONFLUX_DEFAULT_IMAGE_REPO)
 

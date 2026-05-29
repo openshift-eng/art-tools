@@ -161,8 +161,10 @@ class BuildLayeredProductsPipeline:
             self._logger.warning('No buildable images remaining after rebase; skipping build')
             return
 
-        await self._build(image_list, product, image_repo)
-        self._update_build_description()
+        try:
+            await self._build(image_list, product, image_repo)
+        finally:
+            self._update_build_description()
 
     async def _rebase(self, image_list: str) -> str:
         """Rebase layered product images.
