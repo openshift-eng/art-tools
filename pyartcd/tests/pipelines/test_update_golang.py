@@ -158,18 +158,17 @@ class TestIsLatestAndAvailable(IsolatedAsyncioTestCase):
     """Test the is_latest_and_available async function"""
 
     @patch("pyartcd.pipelines.update_golang.is_latest_build")
-    @patch("artcommonlib.exectools.cmd_gather_async")
-    async def test_build_is_latest_and_available(self, mock_cmd_gather, mock_is_latest):
+    @patch("artcommonlib.exectools.cmd_assert_async", return_value=0)
+    async def test_build_is_latest_and_available(self, mock_cmd_assert, mock_is_latest):
         """Test when build is latest and available"""
         mock_is_latest.return_value = True
-        mock_cmd_gather.return_value = (0, "", "")
         mock_koji_session = Mock()
 
         result = await is_latest_and_available("4.16", 8, "golang-1.20.12-2.el8", mock_koji_session)
 
         self.assertTrue(result)
         mock_is_latest.assert_called_once_with("4.16", 8, "golang-1.20.12-2.el8", mock_koji_session)
-        mock_cmd_gather.assert_called_once()
+        mock_cmd_assert.assert_called_once()
 
     @patch("pyartcd.pipelines.update_golang.is_latest_build")
     async def test_build_is_not_latest(self, mock_is_latest):
@@ -182,25 +181,18 @@ class TestIsLatestAndAvailable(IsolatedAsyncioTestCase):
         self.assertFalse(result)
 
     @patch("pyartcd.pipelines.update_golang.is_latest_build")
-    @patch("artcommonlib.exectools.cmd_gather_async")
-    async def test_build_is_latest_but_not_available(self, mock_cmd_gather, mock_is_latest):
+    @patch("artcommonlib.exectools.cmd_assert_async", return_value=1)
+    async def test_build_is_latest_but_not_available(self, mock_cmd_assert, mock_is_latest):
         """Test when build is latest but not available in repo"""
         mock_is_latest.return_value = True
-        mock_cmd_gather.return_value = (1, "", "timeout")
         mock_koji_session = Mock()
 
         with self.assertLogs("pyartcd.pipelines.update_golang", level="INFO") as cm:
             result = await is_latest_and_available("4.16", 8, "golang-1.20.12-2.el8", mock_koji_session)
 
         self.assertFalse(result)
-        self.assertEqual(len(cm.output), 2)
-        self.assertIn(
-            "brew wait-repo rhaos-4.16-rhel-8-build --build golang-1.20.12-2.el8 --timeout=1 --verbose",
-            cm.output[0],
-        )
-        self.assertIn("exit code 1", cm.output[0])
-        self.assertIn("timeout", cm.output[0])
-        self.assertIn("could not be confirmed available", cm.output[1])
+        self.assertEqual(len(cm.output), 1)
+        self.assertIn("could not be confirmed available", cm.output[0])
 
 
 class TestMoveGolangBugs(IsolatedAsyncioTestCase):
@@ -236,7 +228,7 @@ class TestMoveGolangBugs(IsolatedAsyncioTestCase):
             "--component",
             "openshift-golang-builder-container",
         ]
-        mock_cmd_assert.assert_called_once_with(expected_cmd)
+        mock_cmd_assert.assert_called_once_with(expected_cmd, log_stdout=True)
 
     @patch("artcommonlib.exectools.cmd_assert_async")
     async def test_move_golang_bugs_with_force_update(self, mock_cmd_assert):

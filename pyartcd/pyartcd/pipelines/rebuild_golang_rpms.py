@@ -259,7 +259,7 @@ class RebuildGolangRPMsPipeline:
     @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
     async def rhpkg_clone(branch, rpm, dg_dir):
         cmd = f'rhpkg clone --branch {branch} rpms/{rpm} {dg_dir}'
-        await exectools.cmd_assert_async(cmd)
+        await exectools.cmd_assert_async(cmd, log_stdout=True)
 
     async def bump_and_rebuild_rpm(self, rpm, el_v, author, email) -> bool:
         """
@@ -322,7 +322,7 @@ class RebuildGolangRPMsPipeline:
             _LOGGER.info(f'{dg_dir}/{branch} - Dry run, would have triggered build')
         else:
             cmd = 'rhpkg build'
-            await exectools.cmd_assert_async(cmd, cwd=dg_dir)
+            await exectools.cmd_assert_async(cmd, cwd=dg_dir, log_stdout=True)
 
         _LOGGER.info(f'{dg_dir}/{branch} - Successfully built rpm {rpm}')
         return True

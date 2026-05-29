@@ -718,10 +718,14 @@ async def manifest_tool(options, dry_run=False, auth_file: Optional[str] = None)
 
 
 @start_as_current_span_async(TRACER, "cmd_gather_async")
-async def cmd_gather_async(cmd: Union[List[str], str], check: bool = True, **kwargs) -> Tuple[Optional[int], str, str]:
+async def cmd_gather_async(
+    cmd: Union[List[str], str], check: bool = True, log_stdout: bool = False, **kwargs
+) -> Tuple[Optional[int], str, str]:
     """Runs a command asynchronously and returns rc,stdout,stderr as a tuple
     :param cmd <string|list>: A shell command
     :param check: If check is True and the exit code was non-zero, it raises a ChildProcessError
+    :param log_stdout: If True, stream stdout lines to the logger in real time. Stderr is merged
+        into stdout to avoid pipe deadlocks, so the returned stderr will be empty.
     :param kwargs: Other arguments passing to asyncio.subprocess.create_subprocess_exec
     :return: rc, stdout, stderr
     """
@@ -748,7 +752,9 @@ async def cmd_gather_async(cmd: Union[List[str], str], check: bool = True, **kwa
     # capture stdout and stderr if they are not set in kwargs
     if "stdout" not in kwargs:
         kwargs["stdout"] = asyncio.subprocess.PIPE
-    if "stderr" not in kwargs:
+    if log_stdout:
+        kwargs["stderr"] = asyncio.subprocess.STDOUT
+    elif "stderr" not in kwargs:
         kwargs["stderr"] = asyncio.subprocess.PIPE
 
     # Propagate trace context to subprocess
@@ -757,7 +763,7 @@ async def cmd_gather_async(cmd: Union[List[str], str], check: bool = True, **kwa
     if "traceparent" in carrier:
         env = kwargs.get("env")
         if env is None:
-            # Per Popen doc, a None env means "inheriting the current process’ environment".
+            # Per Popen doc, a None env means "inheriting the current process' environment".
             # To inject the trace context, we need to copy the current environment.
             env = kwargs["env"] = os.environ.copy()
         env["TRACEPARENT"] = carrier["traceparent"]
@@ -768,11 +774,20 @@ async def cmd_gather_async(cmd: Union[List[str], str], check: bool = True, **kwa
     proc = await asyncio.subprocess.create_subprocess_exec(cmd_list[0], *cmd_list[1:], **kwargs)
     span.set_attribute("process.pid", proc.pid)
 
-    stdout, stderr = await proc.communicate()
+    if log_stdout and kwargs.get("stdout") == asyncio.subprocess.PIPE:
+        stdout_lines: list[str] = []
+        async for raw_line in proc.stdout:
+            line = raw_line.decode("utf-8", errors="replace").rstrip()
+            logger.info(line)
+            stdout_lines.append(line)
+        await proc.wait()
+        stdout = "\n".join(stdout_lines)
+        stderr = ""
+    else:
+        stdout_raw, stderr_raw = await proc.communicate()
+        stdout = stdout_raw.decode() if stdout_raw else ""
+        stderr = stderr_raw.decode() if stderr_raw else ""
     duration_seconds = time.time() - start_time
-
-    stdout = stdout.decode() if stdout else ""
-    stderr = stderr.decode() if stderr else ""
 
     span.set_attribute("result.exit_code", str(proc.returncode))
     span.set_attribute("execution.duration_seconds", duration_seconds)
@@ -834,12 +849,13 @@ def _get_meaningful_span_name(cmd: Union[List[str], str]) -> str:
 
 @start_as_current_span_async(TRACER, "cmd_assert_async")
 async def cmd_assert_async(
-    cmd: Union[List[str], str], check: bool = True, suppress_output: bool = False, **kwargs
+    cmd: Union[List[str], str], check: bool = True, suppress_output: bool = False, log_stdout: bool = False, **kwargs
 ) -> int:
     """Runs a command and optionally raises an exception if the return code of the command indicates failure.
     :param cmd <string|list>: A shell command
     :param check: If check is True and the exit code was non-zero, it raises a ChildProcessError
     :param suppress_output: If True, stdout and stderr are discarded (/dev/null).
+    :param log_stdout: If True, pipe and stream stdout lines to the logger in real time.
     :param kwargs: Other arguments passing to asyncio.subprocess.create_subprocess_exec
     :return: return code of the command
     """
@@ -866,13 +882,17 @@ async def cmd_assert_async(
         kwargs.setdefault("stdout", asyncio.subprocess.DEVNULL)
         kwargs.setdefault("stderr", asyncio.subprocess.DEVNULL)
 
+    if log_stdout and not suppress_output:
+        kwargs.setdefault("stdout", asyncio.subprocess.PIPE)
+        kwargs.setdefault("stderr", asyncio.subprocess.STDOUT)
+
     # Propagate trace context to subprocess
     carrier = {}
     TraceContextTextMapPropagator().inject(carrier)
     if "traceparent" in carrier:
         env = kwargs.get("env")
         if env is None:
-            # Per Popen doc, a None env means "inheriting the current process’ environment".
+            # Per Popen doc, a None env means "inheriting the current process' environment".
             # To inject the trace context, we need to copy the current environment.
             env = kwargs["env"] = os.environ.copy()
         env["TRACEPARENT"] = carrier["traceparent"]
@@ -882,6 +902,10 @@ async def cmd_assert_async(
     start_time = time.time()
     proc = await asyncio.subprocess.create_subprocess_exec(cmd_list[0], *cmd_list[1:], **kwargs)
     span.set_attribute("process.pid", proc.pid)
+
+    if log_stdout and proc.stdout:
+        async for raw_line in proc.stdout:
+            logger.info(raw_line.decode("utf-8", errors="replace").rstrip())
 
     returncode = await proc.wait()
     duration_seconds = time.time() - start_time
