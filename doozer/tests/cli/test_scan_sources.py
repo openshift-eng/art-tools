@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from artcommonlib.model import Model
 from doozerlib import rhcos
 from doozerlib.cli.scan_sources import ConfigScanSources
+from doozerlib.metadata import RebuildHint, RebuildHintCode
 
 
 class TestScanSourcesCli(IsolatedAsyncioTestCase):
@@ -56,3 +57,81 @@ class TestScanSourcesCli(IsolatedAsyncioTestCase):
 
         mock_get_build.side_effect = rhcos.RHCOSNotFound("test")
         cli._latest_rhcos_build_id("4.9", "aarch64", False)
+
+    @patch("doozerlib.cli.scan_sources.exectools.parallel_exec")
+    async def test_scan_sources_skips_broken_canonical_image_and_continues(self, mock_parallel_exec):
+        broken_image = MagicMock()
+        broken_image.meta_type = "image"
+        broken_image.enabled = True
+        broken_image.mode = "enabled"
+        broken_image.distgit_key = "broken-image"
+        broken_image.ensure_canonical_builders_resolved.side_effect = Exception("bad canonical")
+        broken_image.does_image_need_change = AsyncMock()
+
+        good_image = MagicMock()
+        good_image.meta_type = "image"
+        good_image.enabled = True
+        good_image.mode = "enabled"
+        good_image.distgit_key = "good-image"
+        good_image.ensure_canonical_builders_resolved.return_value = None
+        good_image.needs_rebuild.return_value = RebuildHint(RebuildHintCode.BUILD_IS_UP_TO_DATE, "no change")
+        good_image.build_root_tag.return_value = "good-buildroot"
+        good_image.does_image_need_change = AsyncMock(return_value=None)
+
+        runtime = MagicMock()
+        runtime.rpm_metas.return_value = []
+        runtime.image_metas.return_value = [broken_image, good_image]
+        runtime.load_disabled = False
+
+        def fake_parallel_exec(f, args, n_threads):
+            return MagicMock(get=MagicMock(return_value=[f(arg, None) for arg in args]))
+
+        mock_parallel_exec.side_effect = fake_parallel_exec
+
+        scanner = ConfigScanSources(runtime, "dummy", False)
+        scanner.scan_for_upstream_changes(MagicMock())
+
+        self.assertEqual(
+            scanner.issues,
+            [
+                {
+                    "name": "broken-image",
+                    "issue": "Failed resolving canonical builders before upstream commit checks: bad canonical",
+                }
+            ],
+        )
+        self.assertIn("broken-image", scanner.skipped_image_dgks)
+        broken_image.needs_rebuild.assert_not_called()
+        good_image.needs_rebuild.assert_called_once()
+
+        await scanner.check_changing_rpms()
+
+        broken_image.ensure_canonical_builders_resolved.assert_called_once()
+        broken_image.does_image_need_change.assert_not_called()
+        good_image.ensure_canonical_builders_resolved.assert_called()
+        good_image.does_image_need_change.assert_awaited_once()
+
+    def test_skip_image_removes_broken_image_from_change_tracking(self):
+        broken_image = MagicMock()
+        broken_image.distgit_key = "broken-image"
+        broken_image.qualified_key = "images:broken-image"
+        broken_image.get_descendants.return_value = set()
+
+        good_image = MagicMock()
+        good_image.distgit_key = "good-image"
+        good_image.qualified_key = "images:good-image"
+        good_image.get_descendants.return_value = {broken_image}
+
+        runtime = MagicMock()
+        runtime.rpm_metas.return_value = []
+        runtime.image_metas.return_value = [broken_image, good_image]
+
+        scanner = ConfigScanSources(runtime, "dummy", False)
+        scanner.add_image_meta_change(broken_image, RebuildHint(RebuildHintCode.CONFIG_CHANGE, "broken"))
+
+        self.assertEqual({meta.distgit_key for meta in scanner.changing_image_metas}, {"broken-image"})
+
+        scanner._skip_image(broken_image, "broken")
+        scanner.add_image_meta_change(good_image, RebuildHint(RebuildHintCode.ANCESTOR_CHANGING, "good"))
+
+        self.assertEqual({meta.distgit_key for meta in scanner.changing_image_metas}, {"good-image"})

@@ -685,6 +685,46 @@ COPY --from=builder /some/path/a /some/path/b
         self.assertFalse(self.img_dg.should_match_upstream)
         self.assertEqual(self.img_dg.config['distgit']['branch'], 'rhaos-4.16-rhel-9')
 
+    @patch('builtins.open', create=True)
+    def test_determine_upstream_rhel_version_prefers_first_rhel_parent(self, mock_open):
+        self.img_dg.config = Model(
+            {
+                'distgit': {'branch': 'rhaos-4.16-rhel-9'},
+                'content': {'source': {'path': '.', 'dockerfile': 'Dockerfile'}},
+            }
+        )
+        mock_open.return_value.__enter__.return_value = io.StringIO("")
+
+        with patch('doozerlib.distgit.DockerfileParser') as mock_dfp:
+            mock_dfp_instance = MagicMock()
+            mock_dfp_instance.parent_images = [
+                'registry.ci.openshift.org/ocp/builder:rhel-9-golang-1.25-openshift-4.22',
+                'registry.ci.openshift.org/ocp/builder:rhel-8-golang-1.25-openshift-4.22',
+            ]
+            mock_dfp.return_value = mock_dfp_instance
+
+            self.assertEqual(9, self.img_dg._determine_upstream_rhel_version('/tmp/source'))
+
+    def test_init_raises_ioerror_when_source_resolution_has_no_path(self):
+        runtime = self.mock_runtime(
+            distgits_dir="/tmp/distgits",
+            source_resolver=flexmock(resolve_source=lambda *_: None),
+        )
+        metadata = flexmock(
+            runtime=runtime,
+            config=flexmock(distgit=flexmock(branch="rhaos-4.16-rhel-9")),
+            name="test-image",
+            distgit_key="test-image",
+            canonical_builders_enabled=True,
+            has_source=lambda: True,
+            logger=flexmock(info=lambda *_: None, warning=lambda *_: None),
+        )
+
+        with self.assertRaises(IOError) as ctx:
+            distgit.ImageDistGitRepo(metadata, autoclone=True)
+
+        self.assertIn("source could not be resolved", str(ctx.exception))
+
 
 if __name__ == "__main__":
     unittest.main()
