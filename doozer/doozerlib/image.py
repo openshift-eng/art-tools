@@ -967,14 +967,12 @@ class ImageMetadata(Metadata):
                 dfp = DockerfileParser(fileobj=f)
                 parent_images = dfp.parent_images
 
-            # Iterate forward: the first FROM in a multi-stage Dockerfile is the primary builder,
-            # which reliably encodes the target RHEL version. Reverse iteration would incorrectly
-            # pick up compatibility builders (e.g. rhel-8-golang used only for upgrade shim binaries
-            # in ovn-kubernetes) before the primary rhel-9 builder.
-            # Also, some images (e.g. deployer) use image stream tags like :cli or :base that don't encode RHEL version. In these cases, we want to iterate through all parent images in case any of them encode RHEL version info in the tag.
-            # NOTE: the rhel version should be determined by the final layer. This is a hotfix and is probably wrong,
-            # but is needed to unblock canonical builders for now.
-            for pullspec in parent_images:
+            # Try the final parent first — it's the base image that determines the shipped RHEL version.
+            # Fall back to earlier parents (builders) in forward order if the base tag is ambiguous
+            # (e.g. :ovn-kubernetes-base, :cli). Forward fallback order picks the primary builder
+            # before any compatibility builders (e.g. rhel-8-golang used only for upgrade shims).
+            ordered = [parent_images[-1]] + parent_images[:-1]
+            for pullspec in ordered:
                 rhel_version, golang_version = extract_builder_info_from_pullspec(pullspec)
                 if rhel_version:
                     break
