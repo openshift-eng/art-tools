@@ -48,6 +48,7 @@ class ImageBuildParams:
     """Optional build customization parameters for a Konflux PipelineRun."""
 
     hermetic: Optional[bool] = None
+    enable_symlink_check: Optional[bool] = None
     sast: Optional[bool] = None
     dockerfile: Optional[str] = None
     rebuild: Optional[bool] = None
@@ -1277,6 +1278,8 @@ class KonfluxClient:
             _modify_param(plr_params, "prefetch-input", build_params.prefetch)
         if build_params.hermetic is not None:
             _modify_param(plr_params, "hermetic", build_params.hermetic)
+        if build_params.enable_symlink_check is not None:
+            _modify_param(plr_params, "enable-symlink-check", build_params.enable_symlink_check)
 
         if build_params.rebuild is not None:
             _modify_param(plr_params, "rebuild", build_params.rebuild)
@@ -1325,6 +1328,8 @@ class KonfluxClient:
                         "refspec",
                         f"{commit_sha}:refs/remotes/origin/{target_branch} refs/tags/*:refs/tags/*",
                     )
+                    if build_params.enable_symlink_check is not None:
+                        _modify_param(task["params"], "enableSymlinkCheck", build_params.enable_symlink_check)
                 case "sast-snyk-check":
                     has_sast_task = True
                 case "ecosystem-cert-preflight-checks":
