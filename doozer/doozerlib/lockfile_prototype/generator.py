@@ -1366,6 +1366,17 @@ class RpmLockfilePrototypeGenerator:
             pins.append(format_version_pin(name, min_evr))
         return pins
 
+    @staticmethod
+    def _format_mismatches(mismatches: dict[str, dict[str, str]]) -> str:
+        """
+        Format cross-arch mismatches for error messages.
+        """
+        parts = []
+        for name, arch_evrs in sorted(mismatches.items()):
+            versions = ", ".join(f"{arch}={evr}" for arch, evr in sorted(arch_evrs.items()))
+            parts.append(f"{name} ({versions})")
+        return "; ".join(parts)
+
     async def _resolve_with_reconciliation(
         self,
         repo_list: list[RepoEntry],
@@ -1441,11 +1452,11 @@ class RpmLockfilePrototypeGenerator:
             f"{distgit_key}: stage {stage_num}: re-resolving with {len(version_pins)} version pins: {version_pins}"
         )
 
-        pinned_packages = list(packages) + version_pins
-        pinned_names = set(mismatches.keys())
-        pinned_update_targets = [t for t in update_targets if t not in pinned_names]
+        mismatched_names = set(mismatches.keys())
+        pinned_packages = [p for p in packages if p not in mismatched_names] + version_pins
+        pinned_update_targets = [p for p in update_targets if p not in mismatched_names]
         pinned_reinstall = (
-            [p for p in reinstall_packages if p not in pinned_names] if reinstall_packages else reinstall_packages
+            [p for p in reinstall_packages if p not in mismatched_names] if reinstall_packages else reinstall_packages
         )
 
         try:
@@ -1463,23 +1474,26 @@ class RpmLockfilePrototypeGenerator:
                 strippable_packages=strippable_packages,
                 dockerfile_packages=dockerfile_packages,
             )
-        except RuntimeError:
-            self.logger.warning(
-                f"{distgit_key}: stage {stage_num}: version-pinned re-resolution failed, "
-                "using original result with version mismatches"
-            )
-            return first_pass
+        except RuntimeError as e:
+            raise RuntimeError(
+                f"{distgit_key}: stage {stage_num}: cross-arch version reconciliation failed. "
+                f"Version-pinned re-resolution error: {e}. "
+                f"Mismatched packages: {self._format_mismatches(mismatches)}"
+            ) from e
 
         if not second_pass:
-            return first_pass
+            raise RuntimeError(
+                f"{distgit_key}: stage {stage_num}: cross-arch version reconciliation failed. "
+                f"Re-resolution returned no results. "
+                f"Mismatched packages: {self._format_mismatches(mismatches)}"
+            )
 
         remaining = self._detect_cross_arch_mismatches(second_pass)
         if remaining:
-            self.logger.warning(
-                f"{distgit_key}: stage {stage_num}: {len(remaining)} mismatches persist after "
-                "re-resolution, using original result"
+            raise RuntimeError(
+                f"{distgit_key}: stage {stage_num}: cross-arch version reconciliation failed. "
+                f"Mismatches persist after re-resolution: {self._format_mismatches(remaining)}"
             )
-            return first_pass
 
         self.logger.info(f"{distgit_key}: stage {stage_num}: cross-arch versions reconciled successfully")
         return second_pass
