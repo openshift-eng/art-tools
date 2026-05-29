@@ -1110,6 +1110,29 @@ class TestOcpOptionalMode(unittest.TestCase):
         self.assertNotIn("metadata", result)
         self.assertEqual(len(result["extras"]), 2)
 
+    # -- run() integration tests --
+
+    def test_extra_image_nvrs_merged_into_extras_key(self):
+        """In OCP optional mode, extra_image_nvrs should merge into 'extras', not 'image'."""
+        pipeline = self._make_pipeline(ocp_optional=True)
+        pipeline.extra_image_nvrs = ["extra-operator-container-v4.22.0-1.el9"]
+        pipeline.fbc_pullspecs = []
+        pipeline.check_env_vars = MagicMock()
+        pipeline.setup_working_dir = MagicMock()
+        pipeline._load_product_from_group_config = AsyncMock(return_value="ocp")
+        pipeline._load_release_notes_template = MagicMock(return_value=None)
+        pipeline.create_snapshot = AsyncMock(return_value=_make_snapshot(app="openshift-4-22"))
+        pipeline.create_shipment_config = MagicMock(return_value=MagicMock())
+        pipeline.write_shipment_files_locally = AsyncMock()
+
+        asyncio.run(pipeline.run())
+
+        snapshot_call_args = pipeline.create_snapshot.call_args[0][0]
+        self.assertIn("extra-operator-container-v4.22.0-1.el9", snapshot_call_args)
+
+        config_call_args = pipeline.create_shipment_config.call_args
+        self.assertEqual(config_call_args[0][0], "extras")
+
     # -- create_shipment_config tests --
 
     def test_create_shipment_config_extras_with_release_notes(self):

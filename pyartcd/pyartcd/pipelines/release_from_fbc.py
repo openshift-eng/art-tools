@@ -499,46 +499,32 @@ class ReleaseFromFbcPipeline:
         """
         self.logger.info(f"Categorizing {len(nvrs)} extracted NVRs...")
 
-        if self.ocp_optional:
-            categorized: Dict[str, List[str]] = {"extras": [], "fbc": [], "external": []}
+        non_fbc_key = "extras" if self.ocp_optional else "image"
+        categorized: Dict[str, List[str]] = {non_fbc_key: [], "fbc": [], "external": []}
 
-            for nvr in nvrs:
-                component_name = parse_nvr(nvr)['name']
+        for nvr in nvrs:
+            component_name = parse_nvr(nvr)['name']
 
-                if component_name.endswith('-fbc'):
-                    categorized["fbc"].append(nvr)
-                elif self.excluded_components and component_name in self.excluded_components:
+            if component_name.endswith('-fbc'):
+                categorized["fbc"].append(nvr)
+            elif self.ocp_optional:
+                if self.excluded_components and component_name in self.excluded_components:
                     categorized["external"].append(nvr)
                 else:
-                    categorized["extras"].append(nvr)
+                    categorized[non_fbc_key].append(nvr)
+            elif self.is_nvr_from_current_group(nvr):
+                categorized[non_fbc_key].append(nvr)
+            else:
+                categorized["external"].append(nvr)
 
-            self.logger.info("Categorization results (OCP optional mode):")
-            self.logger.info(f"  • Extras (all non-FBC images): {len(categorized['extras'])}")
-            self.logger.info(f"  • FBC builds: {len(categorized['fbc'])}")
-            if categorized['external']:
-                self.logger.info(f"  • Excluded: {len(categorized['external'])}")
-                for ext_nvr in categorized['external']:
-                    self.logger.info(f"    - {ext_nvr}")
-        else:
-            categorized = {"image": [], "fbc": [], "external": []}
-
-            for nvr in nvrs:
-                component_name = parse_nvr(nvr)['name']
-
-                if component_name.endswith('-fbc'):
-                    categorized["fbc"].append(nvr)
-                elif self.is_nvr_from_current_group(nvr):
-                    categorized["image"].append(nvr)
-                else:
-                    categorized["external"].append(nvr)
-
-            self.logger.info("Categorization results:")
-            self.logger.info(f"  • Image builds: {len(categorized['image'])}")
-            self.logger.info(f"  • FBC builds: {len(categorized['fbc'])}")
-            if categorized['external']:
-                self.logger.info(f"  • External dependencies (filtered): {len(categorized['external'])}")
-                for ext_nvr in categorized['external']:
-                    self.logger.info(f"    - {ext_nvr}")
+        self.logger.info(f"Categorization results{' (OCP optional mode)' if self.ocp_optional else ''}:")
+        self.logger.info(f"  • {non_fbc_key.title()} builds: {len(categorized[non_fbc_key])}")
+        self.logger.info(f"  • FBC builds: {len(categorized['fbc'])}")
+        if categorized['external']:
+            label = "Excluded" if self.ocp_optional else "External dependencies (filtered)"
+            self.logger.info(f"  • {label}: {len(categorized['external'])}")
+            for ext_nvr in categorized['external']:
+                self.logger.info(f"    - {ext_nvr}")
 
         return categorized
 
@@ -1254,6 +1240,8 @@ async def release_from_fbc(
     # Parse comma-separated exclude NVR components
     exclude_nvr_components_list = None
     if exclude_nvr_components:
+        if not ocp_optional:
+            raise click.ClickException("--exclude-nvr-components requires --ocp-optional to be set")
         exclude_nvr_components_list = [c.strip() for c in exclude_nvr_components.split(',') if c.strip()]
 
     pipeline = ReleaseFromFbcPipeline(
