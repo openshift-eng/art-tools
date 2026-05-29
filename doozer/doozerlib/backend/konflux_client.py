@@ -1328,6 +1328,8 @@ class KonfluxClient:
                         "refspec",
                         f"{commit_sha}:refs/remotes/origin/{target_branch} refs/tags/*:refs/tags/*",
                     )
+                    if build_params.enable_symlink_check is not None:
+                        _modify_param(task["params"], "enableSymlinkCheck", build_params.enable_symlink_check)
                 case "sast-snyk-check":
                     has_sast_task = True
                 case "ecosystem-cert-preflight-checks":
