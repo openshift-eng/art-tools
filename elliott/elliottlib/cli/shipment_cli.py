@@ -2,6 +2,7 @@ import sys
 
 import click
 from artcommonlib import logutil
+from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.gitdata import SafeFormatter
 from doozerlib.backend.konflux_fbc import KonfluxFbcBuilder
 from doozerlib.util import konflux_application_name
@@ -61,8 +62,10 @@ class InitShipmentCli:
         if self.kind != "fbc":
             et_data = self.runtime.get_errata_config()
             major, minor, patch = self.runtime.get_major_minor_patch()
+            is_ga = self.runtime.assembly_type == AssemblyTypes.STANDARD and self.runtime.assembly.endswith(".0")
+            errata_type = "RHEA" if is_ga else "RHBA"
             advisory_boilerplate = get_advisory_boilerplate(
-                runtime=self.runtime, et_data=et_data, art_advisory_key=self.kind, errata_type="RHBA"
+                runtime=self.runtime, et_data=et_data, art_advisory_key=self.kind, errata_type=errata_type
             )
             replace_vars = {"MAJOR": major, "MINOR": minor, "PATCH": patch}
             formatter = SafeFormatter()
@@ -73,7 +76,7 @@ class InitShipmentCli:
 
             data = Data(
                 releaseNotes=ReleaseNotes(
-                    type="RHBA",
+                    type=errata_type,
                     synopsis=synopsis,
                     topic=advisory_topic,
                     description=advisory_description,
