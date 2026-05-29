@@ -100,6 +100,7 @@ class Ocp4ScanPipeline:
                 '--yaml',
                 f'--ci-kubeconfig={os.environ["KUBECONFIG"]}',
                 '--rebase-priv',
+                '--skip-rpms',
             ]
         )
         if self.runtime.dry_run:
