@@ -650,6 +650,36 @@ class TestNewPipelinerunBuildArgs(IsolatedAsyncioTestCase):
         self.assertEqual(param_dict["build-args"], [])
 
 
+class TestNewPipelinerunEnableSymlinkCheck(IsolatedAsyncioTestCase):
+    """Tests for enable_symlink_check in _new_pipelinerun_for_image_build."""
+
+    @patch("doozerlib.backend.konflux_client.KonfluxClient._get_pipelinerun_template")
+    async def test_enable_symlink_check_false_sets_param(self, mock_get_template):
+        client = _make_mock_client(mock_get_template)
+
+        result = await client._new_pipelinerun_for_image_build(
+            **_COMMON_KWARGS,
+            build_params=ImageBuildParams(enable_symlink_check=False),
+        )
+
+        plr_params = result["spec"]["params"]
+        param_dict = {p["name"]: p["value"] for p in plr_params}
+        self.assertEqual(param_dict["enable-symlink-check"], "false")
+
+    @patch("doozerlib.backend.konflux_client.KonfluxClient._get_pipelinerun_template")
+    async def test_enable_symlink_check_none_is_noop(self, mock_get_template):
+        client = _make_mock_client(mock_get_template)
+
+        result = await client._new_pipelinerun_for_image_build(
+            **_COMMON_KWARGS,
+            build_params=ImageBuildParams(enable_symlink_check=None),
+        )
+
+        plr_params = result["spec"]["params"]
+        param_dict = {p["name"]: p["value"] for p in plr_params}
+        self.assertNotIn("enable-symlink-check", param_dict)
+
+
 class TestNewPipelinerunAdditionalSecret(IsolatedAsyncioTestCase):
     """Tests for additional_secret in _new_pipelinerun_for_image_build."""
 

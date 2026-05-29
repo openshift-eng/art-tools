@@ -745,8 +745,12 @@ class KonfluxImageBuilder:
             annotations["art-overall-timeout-minutes"] = str(build_timeout_minutes)
             logger.info(f"Setting custom build timeout: {build_timeout_minutes} minutes")
 
+        raw_symlink_check = _get_konflux_config(metadata, "enable_symlink_check")
+        enable_symlink_check = bool(raw_symlink_check) if raw_symlink_check is not None else None
+
         build_params = ImageBuildParams(
             hermetic=hermetic,
+            enable_symlink_check=enable_symlink_check,
             prefetch=prefetch,
             sast=sast,
             build_args=build_args,

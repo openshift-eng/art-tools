@@ -1506,6 +1506,17 @@
           "$ref": "#/properties/konflux/properties/privileged_nested"
         },
         "privileged_nested-": {},
+        "enable_symlink_check": {
+          "description": "Enable symlink check in the build pipeline. Defaults to true if not specified.",
+          "type": "boolean"
+        },
+        "enable_symlink_check!": {
+          "$ref": "#/properties/konflux/properties/enable_symlink_check"
+        },
+        "enable_symlink_check?": {
+          "$ref": "#/properties/konflux/properties/enable_symlink_check"
+        },
+        "enable_symlink_check-": {},
         "build_step_resources": {
           "description": "Kubernetes resource requests/limits for the build step (e.g. memory, ephemeral-storage)",
           "type": "object",
