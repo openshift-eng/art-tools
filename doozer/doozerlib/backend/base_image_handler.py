@@ -6,6 +6,7 @@ CLI lives in ``doozerlib.cli.images`` (see ``images:release-to-base-repo``).
 """
 
 import asyncio
+import os
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
@@ -105,7 +106,7 @@ class BaseImageHandler:
             self.logger.error("Failed to create snapshot")
             return None
 
-        release_name = await self._create_release_from_snapshot(snapshot_name, snapshot_input.nvr)
+        release_name = await self._create_release_from_snapshot(snapshot_name, snapshot_input)
         if not release_name:
             self.logger.error(f"Failed to create release (snapshot={snapshot_name})")
             return None
@@ -197,13 +198,15 @@ class BaseImageHandler:
             self.logger.error(f"Failed to create snapshot object (name={meta_name}): {type(e).__name__}: {e}")
             return None
 
-    async def _create_release_from_snapshot(self, snapshot_name: str, released_nvr: str) -> Optional[str]:
+    async def _create_release_from_snapshot(
+        self, snapshot_name: str, snapshot_input: BaseImageSnapshotInput
+    ) -> Optional[str]:
         """
         Create Konflux Release from snapshot using the product's silent base-image ReleasePlan.
 
         Args:
             snapshot_name: Snapshot resource name.
-            released_nvr: Single image NVR (stored on annotation ``art.redhat.com/nvrs`` for compatibility).
+            snapshot_input: Base-image component input (NVR and distgit key stored on Release annotations).
         """
         try:
             if not self.dry_run:
@@ -221,19 +224,24 @@ class BaseImageHandler:
                     raise RuntimeError(f"Snapshot {snapshot_name} did not become available in time")
 
             group_safe = normalize_group_name_for_k8s(self.runtime.group)
+            release_annotations = {
+                "art.redhat.com/kind": "image",
+                "art.redhat.com/group": self.runtime.group_config.name,
+                "art.redhat.com/assembly": getattr(self.runtime, "assembly", "stream"),
+                "art.redhat.com/env": "base-image-workflow",
+                "art.redhat.com/nvr": snapshot_input.nvr,
+                "art.redhat.com/distgit-key": snapshot_input.distgit_key,
+            }
+            if job_url := os.getenv("BUILD_URL"):
+                release_annotations["art.redhat.com/job-url"] = job_url
+
             release_metadata = {
                 "generateName": f"{group_safe}-base-image-release-",
                 "namespace": self.namespace,
                 "labels": {
                     "appstudio.openshift.io/application": self.base_image_application,
                 },
-                "annotations": {
-                    "art.redhat.com/kind": "image",
-                    "art.redhat.com/group": self.runtime.group_config.name,
-                    "art.redhat.com/assembly": getattr(self.runtime, "assembly", "stream"),
-                    "art.redhat.com/env": "base-image-workflow",
-                    "art.redhat.com/nvrs": released_nvr,
-                },
+                "annotations": release_annotations,
             }
 
             release_obj = {
