@@ -955,7 +955,81 @@ class TestCrossArchReconciliation(unittest.IsolatedAsyncioTestCase):
         second_call_packages = gen._resolve_stage_with_retry.call_args_list[1][0][2]
         self.assertIn("libeconf-0.4.1-5.el9", second_call_packages)
 
-    async def test_reconciliation_falls_back_on_error(self):
+    async def test_reconciliation_excludes_unversioned_name_from_pinned_packages(self):
+        """
+        When the packages list contains an unversioned name that matches a
+        mismatched package, the second resolution must exclude the unversioned
+        name so DNF doesn't override the version pin.
+        """
+        gen = self._make_generator()
+        mismatched = self._make_lockfile(
+            {
+                "x86_64": [("libeconf", "0.4.1-7.el9_8", "https://x86/libeconf-7.rpm")],
+                "aarch64": [("libeconf", "0.4.1-5.el9", "https://arm/libeconf-5.rpm")],
+            }
+        )
+        reconciled = self._make_lockfile(
+            {
+                "x86_64": [("libeconf", "0.4.1-5.el9", "https://x86/libeconf-5.rpm")],
+                "aarch64": [("libeconf", "0.4.1-5.el9", "https://arm/libeconf-5.rpm")],
+            }
+        )
+        gen._resolve_stage_with_retry = AsyncMock(side_effect=[mismatched, reconciled])
+
+        result = await gen._resolve_with_reconciliation(
+            [],
+            ["x86_64", "aarch64"],
+            ["curl", "libeconf"],
+            {},
+            [],
+            None,
+            "test-image",
+            0,
+        )
+        self.assertEqual(result, reconciled)
+
+        second_call_packages = gen._resolve_stage_with_retry.call_args_list[1][0][2]
+        self.assertIn("libeconf-0.4.1-5.el9", second_call_packages)
+        self.assertNotIn("libeconf", second_call_packages)
+        self.assertIn("curl", second_call_packages)
+
+    async def test_reconciliation_excludes_mismatched_from_update_targets(self):
+        """
+        Update targets matching mismatched packages must be excluded from the
+        second resolution to prevent base.upgrade() from overriding pins.
+        """
+        gen = self._make_generator()
+        mismatched = self._make_lockfile(
+            {
+                "x86_64": [("libeconf", "0.4.1-7.el9_8", "https://x86/libeconf-7.rpm")],
+                "aarch64": [("libeconf", "0.4.1-5.el9", "https://arm/libeconf-5.rpm")],
+            }
+        )
+        reconciled = self._make_lockfile(
+            {
+                "x86_64": [("libeconf", "0.4.1-5.el9", "https://x86/libeconf-5.rpm")],
+                "aarch64": [("libeconf", "0.4.1-5.el9", "https://arm/libeconf-5.rpm")],
+            }
+        )
+        gen._resolve_stage_with_retry = AsyncMock(side_effect=[mismatched, reconciled])
+
+        result = await gen._resolve_with_reconciliation(
+            [],
+            ["x86_64", "aarch64"],
+            ["curl", "libeconf"],
+            {},
+            ["libeconf", "curl"],
+            None,
+            "test-image",
+            0,
+        )
+        self.assertEqual(result, reconciled)
+
+        second_call_update_targets = gen._resolve_stage_with_retry.call_args_list[1][0][4]
+        self.assertNotIn("libeconf", second_call_update_targets)
+        self.assertIn("curl", second_call_update_targets)
+
+    async def test_reconciliation_raises_on_resolution_error(self):
         gen = self._make_generator()
         mismatched = self._make_lockfile(
             {
@@ -965,20 +1039,22 @@ class TestCrossArchReconciliation(unittest.IsolatedAsyncioTestCase):
         )
         gen._resolve_stage_with_retry = AsyncMock(side_effect=[mismatched, RuntimeError("DNF depsolve error")])
 
-        result = await gen._resolve_with_reconciliation(
-            [],
-            ["x86_64", "aarch64"],
-            ["curl"],
-            {},
-            [],
-            None,
-            "test-image",
-            0,
-        )
-        self.assertEqual(result, mismatched)
+        with self.assertRaises(RuntimeError) as ctx:
+            await gen._resolve_with_reconciliation(
+                [],
+                ["x86_64", "aarch64"],
+                ["curl"],
+                {},
+                [],
+                None,
+                "test-image",
+                0,
+            )
+        self.assertIn("reconciliation failed", str(ctx.exception))
+        self.assertIn("libeconf", str(ctx.exception))
         self.assertEqual(gen._resolve_stage_with_retry.await_count, 2)
 
-    async def test_reconciliation_falls_back_on_persistent_mismatch(self):
+    async def test_reconciliation_raises_on_persistent_mismatch(self):
         gen = self._make_generator()
         mismatched = self._make_lockfile(
             {
@@ -988,17 +1064,19 @@ class TestCrossArchReconciliation(unittest.IsolatedAsyncioTestCase):
         )
         gen._resolve_stage_with_retry = AsyncMock(return_value=mismatched)
 
-        result = await gen._resolve_with_reconciliation(
-            [],
-            ["x86_64", "aarch64"],
-            ["curl"],
-            {},
-            [],
-            None,
-            "test-image",
-            0,
-        )
-        self.assertEqual(result, mismatched)
+        with self.assertRaises(RuntimeError) as ctx:
+            await gen._resolve_with_reconciliation(
+                [],
+                ["x86_64", "aarch64"],
+                ["curl"],
+                {},
+                [],
+                None,
+                "test-image",
+                0,
+            )
+        self.assertIn("reconciliation failed", str(ctx.exception))
+        self.assertIn("libeconf", str(ctx.exception))
         self.assertEqual(gen._resolve_stage_with_retry.await_count, 2)
 
 
