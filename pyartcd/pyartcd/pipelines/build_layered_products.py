@@ -243,6 +243,9 @@ class BuildLayeredProductsPipeline:
 
     def _update_build_description(self):
         """Update Jenkins description with build results (succeeded/failed counts and failed image names)."""
+        if tekton.is_tekton_context():
+            return
+
         record_log = self.parse_record_log()
         if not record_log:
             return
