@@ -37,7 +37,7 @@ yaml = new_roundtrip_yaml_handler()
 PUBLISHED_GOLANG_BUILDER_REPO = f"{REGISTRY_REDHAT_IO}/openshift/{ART_IMAGES_BASE_APPLICATION}"
 
 
-def is_latest_build(ocp_version: str, el_v: int, nvr: str, koji_session) -> bool:
+def is_latest(ocp_version: str, el_v: int, nvr: str, koji_session) -> bool:
     build_tag = f'rhaos-{ocp_version}-rhel-{el_v}-build'
     parsed_nvr = parse_nvr(nvr)
     latest_build = koji_session.getLatestBuilds(build_tag, package=parsed_nvr['name'])
@@ -57,19 +57,24 @@ def get_latest_nvr_in_tag(tag: str, package: str, koji_session) -> str:
     return latest_build[0]['nvr']
 
 
-async def is_latest_and_available(ocp_version: str, el_v: int, nvr: str, koji_session) -> bool:
-    if not is_latest_build(ocp_version, el_v, nvr, koji_session):
-        return False
-    # If regen repo has been run this would take a few seconds
-    # sadly --timeout cannot be less than 1 minute, so we wait for 1 minute
+async def is_available(ocp_version: str, el_v: int, nvr: str) -> bool:
+    # Not using --timeout because it can be unreliable; using Python-level timeout instead.
     build_tag = f'rhaos-{ocp_version}-rhel-{el_v}-build'
-    cmd = f'brew wait-repo {build_tag} --build {nvr} --timeout=1 --verbose'
-    rc = await exectools.cmd_assert_async(cmd, check=False, log_stdout=True)
+    cmd = f'brew wait-repo {build_tag} --build {nvr} --verbose'
+    try:
+        rc = await exectools.cmd_assert_async(cmd, check=False, log_stdout=True, timeout=60)
+    except asyncio.TimeoutError:
+        _LOGGER.info(f'{nvr} is not available in {build_tag}.')
+        return False
     if rc != 0:
         _LOGGER.info(f'Build {nvr} could not be confirmed available in {build_tag}.')
         return False
     _LOGGER.info(f'{nvr} is available in {build_tag}')
     return True
+
+
+async def is_latest_and_available(ocp_version: str, el_v: int, nvr: str, koji_session) -> bool:
+    return is_latest(ocp_version, el_v, nvr, koji_session) and await is_available(ocp_version, el_v, nvr)
 
 
 def extract_and_validate_golang_nvrs(ocp_version: str, go_nvrs: List[str]):
@@ -355,7 +360,7 @@ class UpdateGolangPipeline:
         konflux_records: dict[int, KonfluxBuildRecord] = {}
         if not self.force_image_build:
             if self.build_system in ['both', 'brew']:
-                brew_nvrs = self.get_existing_builders(el_nvr_map_for_images, go_version)
+                brew_nvrs = self.get_existing_builders_brew(el_nvr_map_for_images, go_version)
             if self.build_system in ['both', 'konflux']:
                 konflux_records = await self.get_existing_builders_konflux(el_nvr_map_for_images, go_version)
 
@@ -387,7 +392,7 @@ class UpdateGolangPipeline:
 
             # Now all builders should be available, fetch again
             if self.build_system in ['both', 'brew']:
-                brew_nvrs = self.get_existing_builders(el_nvr_map_for_images, go_version)
+                brew_nvrs = self.get_existing_builders_brew(el_nvr_map_for_images, go_version)
             if self.build_system in ['both', 'konflux']:
                 konflux_records = await self.get_existing_builders_konflux(el_nvr_map_for_images, go_version)
 
@@ -462,32 +467,33 @@ class UpdateGolangPipeline:
         await self._slack_client.say_in_thread(f":white_check_mark: Updating golang for {self.ocp_version} complete.")
 
     async def process_build(self, el_v, nvr):
-        if await is_latest_and_available(self.ocp_version, el_v, nvr, self.koji_session):
-            return True
-        if not self.tag_builds:
-            return False
-        # Tag builds into override tag
-        await self.tag_build(el_v, nvr)
+        if not is_latest(self.ocp_version, el_v, nvr, self.koji_session):
+            if not self.tag_builds:
+                return False
+            await self.tag_build(el_v, nvr)
 
-        # Request a repo regen so the newly tagged build becomes available
-        build_tag = f'rhaos-{self.ocp_version}-rhel-{el_v}-build'
-        if self.dry_run:
-            _LOGGER.info(f"[DRY RUN] Would have run `brew regen-repo {build_tag}`")
-            _LOGGER.info(f"[DRY RUN] Would have waited for {nvr} to be available in build tags")
-            return True
-
-        regen_cmd = f'brew regen-repo {build_tag}'
-        _LOGGER.info("Requesting repo regen: %s", regen_cmd)
-        await exectools.cmd_assert_async(regen_cmd, log_stdout=True)
-
-        # Wait for repo to be available (5 hours max)
-        for _ in range(30):
-            await asyncio.sleep(600)  # 10 minutes
-            if await is_latest_and_available(self.ocp_version, el_v, nvr, self.koji_session):
+        # retry 5 times to request repo regen and check availability,
+        # which can take around 5 hours in worst case, before giving up and raise error
+        for _ in range(5):
+            if await is_available(self.ocp_version, el_v, nvr):
                 return True
-            _LOGGER.info("wait 10 mins...")
-        _LOGGER.info("build not available after 5 hours")
+            await self.request_repo(el_v, nvr)
+            if self.dry_run:
+                return True
+
+        _LOGGER.warning("build not available after 5 hours")
         return False
+
+    async def request_repo(self, el_v, nvr):
+        build_tag = f'rhaos-{self.ocp_version}-rhel-{el_v}-build'
+        # --request triggers a repo regen (like regen-repo) and waits for it to complete.
+        # Not using --timeout because it can be unreliable
+        # wait for 1hr
+        cmd = f'brew wait-repo {build_tag} --build={nvr} --request --verbose'
+        if self.dry_run:
+            _LOGGER.info(f"[DRY RUN] Would have run `{cmd}`")
+            return
+        await exectools.cmd_assert_async(cmd, log_stdout=True, timeout=3600)
 
     def brew_login(self):
         if not self.koji_session.logged_in:
@@ -512,9 +518,9 @@ class UpdateGolangPipeline:
             _LOGGER.info(f"Tagged {build} with {build_tag} tag")
             await self._slack_client.say_in_thread(f"Tagged {build} with {build_tag} tag")
 
-    def get_existing_builders(self, el_nvr_map, go_version):
+    def get_existing_builders_brew(self, el_nvr_map, go_version):
         component = GOLANG_BUILDER_CVE_COMPONENT
-        _LOGGER.info(f"Checking if {component} builds exist for given golang builds")
+        _LOGGER.info(f"Checking if {component} builds exist in Brew for given golang builds")
         package_info = self.koji_session.getPackage(component)
         if not package_info:
             raise IOError(f'Cannot find brew package info for {component}')
@@ -549,7 +555,7 @@ class UpdateGolangPipeline:
     ) -> dict[int, KonfluxBuildRecord]:
         """
         Check if openshift-golang-builder builds exist in Konflux for the provided compiler builds.
-        Similar to get_existing_builders but queries KonfluxDb instead of Brew.
+        Similar to get_existing_builders_brew but queries KonfluxDb instead of Brew.
         Returns {el_v: KonfluxBuildRecord} so callers have access to image_pullspec.
         """
         _LOGGER.info(f"Checking if {GOLANG_BUILDER_IMAGE_NAME} builds exist in Konflux for given golang builds")

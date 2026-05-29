@@ -12,8 +12,9 @@ from pyartcd.pipelines.update_golang import (
     UpdateGolangPipeline,
     extract_and_validate_golang_nvrs,
     get_latest_nvr_in_tag,
+    is_available,
+    is_latest,
     is_latest_and_available,
-    is_latest_build,
     move_golang_bugs,
 )
 
@@ -123,15 +124,15 @@ class TestGetLatestNvrInTag(unittest.TestCase):
         self.assertIsNone(result)
 
 
-class TestIsLatestBuild(unittest.TestCase):
-    """Test the is_latest_build function"""
+class TestIsLatest(unittest.TestCase):
+    """Test the is_latest function"""
 
     def test_build_is_latest(self):
         """Test when build is the latest"""
         mock_koji_session = Mock()
         mock_koji_session.getLatestBuilds.return_value = [{"nvr": "golang-1.20.12-2.el8"}]
 
-        result = is_latest_build("4.16", 8, "golang-1.20.12-2.el8", mock_koji_session)
+        result = is_latest("4.16", 8, "golang-1.20.12-2.el8", mock_koji_session)
 
         self.assertTrue(result)
         mock_koji_session.getLatestBuilds.assert_called_once_with("rhaos-4.16-rhel-8-build", package="golang")
@@ -141,7 +142,7 @@ class TestIsLatestBuild(unittest.TestCase):
         mock_koji_session = Mock()
         mock_koji_session.getLatestBuilds.return_value = [{"nvr": "golang-1.20.13-1.el8"}]
 
-        result = is_latest_build("4.16", 8, "golang-1.20.12-2.el8", mock_koji_session)
+        result = is_latest("4.16", 8, "golang-1.20.12-2.el8", mock_koji_session)
 
         self.assertFalse(result)
 
@@ -151,48 +152,54 @@ class TestIsLatestBuild(unittest.TestCase):
         mock_koji_session.getLatestBuilds.return_value = []
 
         with self.assertRaisesRegex(ValueError, "Cannot find latest golang build"):
-            is_latest_build("4.16", 8, "golang-1.20.12-2.el8", mock_koji_session)
+            is_latest("4.16", 8, "golang-1.20.12-2.el8", mock_koji_session)
+
+
+class TestIsAvailable(IsolatedAsyncioTestCase):
+    """Test the is_available async function"""
+
+    @patch("artcommonlib.exectools.cmd_assert_async", return_value=0)
+    async def test_build_is_available(self, mock_cmd_assert):
+        result = await is_available("4.16", 8, "golang-1.20.12-2.el8")
+
+        self.assertTrue(result)
+        mock_cmd_assert.assert_called_once()
+
+    @patch("artcommonlib.exectools.cmd_assert_async", return_value=1)
+    async def test_build_is_not_available(self, mock_cmd_assert):
+        with self.assertLogs("pyartcd.pipelines.update_golang", level="INFO") as cm:
+            result = await is_available("4.16", 8, "golang-1.20.12-2.el8")
+
+        self.assertFalse(result)
+        self.assertIn("could not be confirmed available", cm.output[0])
 
 
 class TestIsLatestAndAvailable(IsolatedAsyncioTestCase):
-    """Test the is_latest_and_available async function"""
+    """Test the is_latest_and_available wrapper"""
 
-    @patch("pyartcd.pipelines.update_golang.is_latest_build")
-    @patch("artcommonlib.exectools.cmd_assert_async", return_value=0)
-    async def test_build_is_latest_and_available(self, mock_cmd_assert, mock_is_latest):
-        """Test when build is latest and available"""
-        mock_is_latest.return_value = True
+    @patch("pyartcd.pipelines.update_golang.is_available", new_callable=AsyncMock, return_value=True)
+    @patch("pyartcd.pipelines.update_golang.is_latest", return_value=True)
+    async def test_latest_and_available(self, mock_is_latest, mock_is_available):
         mock_koji_session = Mock()
-
         result = await is_latest_and_available("4.16", 8, "golang-1.20.12-2.el8", mock_koji_session)
-
         self.assertTrue(result)
         mock_is_latest.assert_called_once_with("4.16", 8, "golang-1.20.12-2.el8", mock_koji_session)
-        mock_cmd_assert.assert_called_once()
+        mock_is_available.assert_called_once_with("4.16", 8, "golang-1.20.12-2.el8")
 
-    @patch("pyartcd.pipelines.update_golang.is_latest_build")
-    async def test_build_is_not_latest(self, mock_is_latest):
-        """Test when build is not latest"""
-        mock_is_latest.return_value = False
+    @patch("pyartcd.pipelines.update_golang.is_available", new_callable=AsyncMock)
+    @patch("pyartcd.pipelines.update_golang.is_latest", return_value=False)
+    async def test_not_latest_short_circuits(self, mock_is_latest, mock_is_available):
         mock_koji_session = Mock()
-
         result = await is_latest_and_available("4.16", 8, "golang-1.20.12-2.el8", mock_koji_session)
-
         self.assertFalse(result)
+        mock_is_available.assert_not_called()
 
-    @patch("pyartcd.pipelines.update_golang.is_latest_build")
-    @patch("artcommonlib.exectools.cmd_assert_async", return_value=1)
-    async def test_build_is_latest_but_not_available(self, mock_cmd_assert, mock_is_latest):
-        """Test when build is latest but not available in repo"""
-        mock_is_latest.return_value = True
+    @patch("pyartcd.pipelines.update_golang.is_available", new_callable=AsyncMock, return_value=False)
+    @patch("pyartcd.pipelines.update_golang.is_latest", return_value=True)
+    async def test_latest_but_not_available(self, mock_is_latest, mock_is_available):
         mock_koji_session = Mock()
-
-        with self.assertLogs("pyartcd.pipelines.update_golang", level="INFO") as cm:
-            result = await is_latest_and_available("4.16", 8, "golang-1.20.12-2.el8", mock_koji_session)
-
+        result = await is_latest_and_available("4.16", 8, "golang-1.20.12-2.el8", mock_koji_session)
         self.assertFalse(result)
-        self.assertEqual(len(cm.output), 1)
-        self.assertIn("could not be confirmed available", cm.output[0])
 
 
 class TestMoveGolangBugs(IsolatedAsyncioTestCase):
@@ -843,7 +850,7 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
         )
         pipeline.validate_tag_builds_go_latest = Mock()
         pipeline.process_build = AsyncMock(return_value=True)
-        pipeline.get_existing_builders = Mock(
+        pipeline.get_existing_builders_brew = Mock(
             return_value={9: "openshift-golang-builder-container-v1.25.8-202604150744.p2.gf28329a.el9"}
         )
         pipeline.update_golang_streams = AsyncMock()
@@ -916,10 +923,10 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
         self.assertIsNone(tag)
 
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
-    @patch("pyartcd.pipelines.update_golang.is_latest_and_available")
-    async def test_process_build_already_latest_and_available(self, mock_is_latest, mock_konflux_db):
+    @patch("pyartcd.pipelines.update_golang.is_available", new_callable=AsyncMock, return_value=True)
+    @patch("pyartcd.pipelines.update_golang.is_latest", return_value=True)
+    async def test_process_build_already_latest_and_available(self, mock_is_latest, mock_is_available, mock_konflux_db):
         """Test process_build when build is already latest and available"""
-        mock_is_latest.return_value = True
         mock_runtime = Mock(
             dry_run=False,
             working_dir=Path("/tmp/working"),
@@ -940,12 +947,12 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
 
         self.assertTrue(result)
         mock_is_latest.assert_called_once_with("4.16", 8, "golang-1.20.12-2.el8", pipeline.koji_session)
+        mock_is_available.assert_called_once_with("4.16", 8, "golang-1.20.12-2.el8")
 
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
-    @patch("pyartcd.pipelines.update_golang.is_latest_and_available")
+    @patch("pyartcd.pipelines.update_golang.is_latest", return_value=False)
     async def test_process_build_not_latest_no_tag(self, mock_is_latest, mock_konflux_db):
         """Test process_build when build is not latest and tag_builds is False"""
-        mock_is_latest.return_value = False
         mock_runtime = Mock(
             dry_run=False,
             working_dir=Path("/tmp/working"),
@@ -1063,8 +1070,8 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
 
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     @patch("elliottlib.util.get_golang_container_nvrs_brew")
-    def test_get_existing_builders(self, mock_get_golang_nvrs, mock_konflux_db):
-        """Test get_existing_builders for Brew"""
+    def test_get_existing_builders_brew(self, mock_get_golang_nvrs, mock_konflux_db):
+        """Test get_existing_builders_brew for Brew"""
         mock_runtime = Mock(
             dry_run=False,
             working_dir=Path("/tmp/working"),
@@ -1098,7 +1105,7 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
         }
 
         el_nvr_map = {8: "golang-1.20.12-2.el8"}
-        builder_nvrs = pipeline.get_existing_builders(el_nvr_map, "1.20.12")
+        builder_nvrs = pipeline.get_existing_builders_brew(el_nvr_map, "1.20.12")
 
         self.assertEqual(builder_nvrs, {8: "openshift-golang-builder-container-v1.20.12-202403212137.el8.g144a3f8"})
 
