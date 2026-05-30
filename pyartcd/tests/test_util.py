@@ -1,7 +1,12 @@
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from tenacity import wait_none
+
 from pyartcd import util
+
+# Disable retry wait for tests
+util.mirror_to_s3.retry.wait = wait_none()
 
 
 class TestUtil(IsolatedAsyncioTestCase):
@@ -353,3 +358,88 @@ class TestUtil(IsolatedAsyncioTestCase):
         mock_get_keys.return_value = []
         result = await util.get_counter_failures('ec-failure', 'openshift-4.21')
         self.assertEqual(result, {})
+
+
+class TestVerifySyncedToMirrors(IsolatedAsyncioTestCase):
+    CLOUDFLARE_ENDPOINT = "https://fake-r2.cloudflarestorage.com"
+
+    @patch.dict("os.environ", {"CLOUDFLARE_ENDPOINT": CLOUDFLARE_ENDPOINT})
+    @patch("pyartcd.util.exectools.cmd_gather_async", new_callable=AsyncMock)
+    async def test_passes_when_both_empty(self, mock_gather: AsyncMock):
+        mock_gather.return_value = (0, "", "")
+        await util._verify_synced_to_mirrors("/local/dir", "s3://art-srv-enterprise/path")
+        self.assertEqual(mock_gather.call_count, 2)
+
+    @patch.dict("os.environ", {"CLOUDFLARE_ENDPOINT": CLOUDFLARE_ENDPOINT})
+    @patch("pyartcd.util.exectools.cmd_gather_async", new_callable=AsyncMock)
+    async def test_raises_on_s3_mismatch(self, mock_gather: AsyncMock):
+        mock_gather.return_value = (0, "(dryrun) upload: ./foo.rpm to s3://bucket/foo.rpm\n", "")
+        with self.assertRaises(IOError) as ctx:
+            await util._verify_synced_to_mirrors("/local/dir", "s3://art-srv-enterprise/path")
+        self.assertIn("S3 post-sync verification failed", str(ctx.exception))
+
+    @patch.dict("os.environ", {"CLOUDFLARE_ENDPOINT": CLOUDFLARE_ENDPOINT})
+    @patch("pyartcd.util.exectools.cmd_gather_async", new_callable=AsyncMock)
+    async def test_raises_on_r2_mismatch(self, mock_gather: AsyncMock):
+        mock_gather.side_effect = [
+            (0, "", ""),  # S3 passes
+            (0, "(dryrun) upload: ./bar.rpm to s3://bucket/bar.rpm\n", ""),  # R2 fails
+        ]
+        with self.assertRaises(IOError) as ctx:
+            await util._verify_synced_to_mirrors("/local/dir", "s3://art-srv-enterprise/path")
+        self.assertIn("R2 post-sync verification failed", str(ctx.exception))
+
+    @patch.dict("os.environ", {"CLOUDFLARE_ENDPOINT": CLOUDFLARE_ENDPOINT})
+    @patch("pyartcd.util.exectools.cmd_gather_async", new_callable=AsyncMock)
+    async def test_verify_uses_size_only_not_exact_timestamps(self, mock_gather: AsyncMock):
+        mock_gather.return_value = (0, "", "")
+        await util._verify_synced_to_mirrors("/local/dir", "s3://art-srv-enterprise/path")
+        s3_cmd = mock_gather.call_args_list[0][0][0]
+        self.assertIn("--size-only", s3_cmd)
+        self.assertIn("--dryrun", s3_cmd)
+        self.assertNotIn("--exact-timestamps", s3_cmd)
+
+
+class TestMirrorToS3(IsolatedAsyncioTestCase):
+    CLOUDFLARE_ENDPOINT = "https://fake-r2.cloudflarestorage.com"
+
+    @patch.dict("os.environ", {"CLOUDFLARE_ENDPOINT": CLOUDFLARE_ENDPOINT})
+    @patch("pyartcd.util._verify_synced_to_mirrors", new_callable=AsyncMock)
+    @patch("pyartcd.util.exectools.cmd_assert_async", new_callable=AsyncMock)
+    async def test_calls_verify_after_sync(self, mock_assert: AsyncMock, mock_verify: AsyncMock):
+        await util.mirror_to_s3.__wrapped__("/local", "s3://art-srv-enterprise/path")
+        mock_verify.assert_awaited_once_with("/local", "s3://art-srv-enterprise/path")
+
+    @patch.dict("os.environ", {"CLOUDFLARE_ENDPOINT": CLOUDFLARE_ENDPOINT})
+    @patch("pyartcd.util._verify_synced_to_mirrors", new_callable=AsyncMock)
+    @patch("pyartcd.util.exectools.cmd_assert_async", new_callable=AsyncMock)
+    async def test_skips_verify_on_dry_run(self, mock_assert: AsyncMock, mock_verify: AsyncMock):
+        await util.mirror_to_s3.__wrapped__("/local", "s3://art-srv-enterprise/path", dry_run=True)
+        mock_verify.assert_not_awaited()
+
+    @patch.dict("os.environ", {"CLOUDFLARE_ENDPOINT": CLOUDFLARE_ENDPOINT})
+    @patch("pyartcd.util._verify_synced_to_mirrors", new_callable=AsyncMock)
+    @patch("pyartcd.util.exectools.cmd_assert_async", new_callable=AsyncMock)
+    async def test_retries_on_verify_failure(self, mock_assert: AsyncMock, mock_verify: AsyncMock):
+        mock_verify.side_effect = [IOError("R2 mismatch"), None]
+        await util.mirror_to_s3("/local", "s3://art-srv-enterprise/path")
+        self.assertEqual(mock_verify.await_count, 2)
+        self.assertEqual(mock_assert.await_count, 4)  # 2 syncs x 2 attempts
+
+    @patch.dict("os.environ", {"CLOUDFLARE_ENDPOINT": CLOUDFLARE_ENDPOINT})
+    @patch("pyartcd.util._verify_synced_to_mirrors", new_callable=AsyncMock)
+    @patch("pyartcd.util.exectools.cmd_assert_async", new_callable=AsyncMock)
+    async def test_retries_on_sync_failure(self, mock_assert: AsyncMock, mock_verify: AsyncMock):
+        mock_assert.side_effect = [Exception("S3 down"), None, None]
+        await util.mirror_to_s3("/local", "s3://art-srv-enterprise/path")
+        self.assertEqual(mock_assert.await_count, 3)  # 1 fail + 2 syncs on retry
+        mock_verify.assert_awaited_once()
+
+    @patch.dict("os.environ", {"CLOUDFLARE_ENDPOINT": CLOUDFLARE_ENDPOINT})
+    @patch("pyartcd.util._verify_synced_to_mirrors", new_callable=AsyncMock)
+    @patch("pyartcd.util.exectools.cmd_assert_async", new_callable=AsyncMock)
+    async def test_raises_after_all_retries_exhausted(self, mock_assert: AsyncMock, mock_verify: AsyncMock):
+        mock_verify.side_effect = IOError("R2 mismatch")
+        with self.assertRaises(IOError):
+            await util.mirror_to_s3("/local", "s3://art-srv-enterprise/path")
+        self.assertEqual(mock_verify.await_count, 3)  # 3 attempts then give up

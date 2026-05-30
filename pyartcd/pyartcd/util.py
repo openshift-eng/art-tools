@@ -21,6 +21,7 @@ from artcommonlib.release_util import SoftwareLifecyclePhase, isolate_assembly_i
 from doozerlib import util as doozerutil
 from doozerlib.constants import ART_BUILD_HISTORY_URL
 from errata_tool import ErrataConnector
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 from pyartcd import constants, record
 from pyartcd.mail import MailService
@@ -793,6 +794,7 @@ async def invalidate_cloudfront_cache(invalidation_path):
     await exectools.cmd_assert_async(cmd, env=os.environ.copy(), stdout=sys.stderr)
 
 
+@retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(30))
 async def mirror_to_s3(
     source: Union[str, Path],
     dest: str,
@@ -802,7 +804,8 @@ async def mirror_to_s3(
     delete: bool = False,
 ):
     """
-    Copy to AWS S3
+    Copy to AWS S3 and Cloudflare R2, then verify both destinations match.
+    Retries the entire sync+verify sequence up to 3 times.
     """
     cmd = ["aws", "s3", "sync", "--no-progress", "--exact-timestamps"]
     if delete:
@@ -822,6 +825,28 @@ async def mirror_to_s3(
         env=os.environ.copy(),
         stdout=sys.stderr,
     )
+
+    if not dry_run:
+        await _verify_synced_to_mirrors(source, dest)
+
+
+async def _verify_synced_to_mirrors(source: Union[str, Path], dest: str):
+    """Run a size-only dry-run sync to verify all local files exist at both S3 and R2 destinations."""
+    verify_cmd = ["aws", "s3", "sync", "--no-progress", "--size-only", "--dryrun"]
+    verify_paths = ['--', f'{source}', f'{dest}']
+
+    _, s3_out, _ = await exectools.cmd_gather_async(verify_cmd + verify_paths, env=os.environ.copy())
+    if s3_out.strip():
+        raise IOError(f"S3 post-sync verification failed -- files missing or size mismatch:\n{s3_out.strip()}")
+
+    _, r2_out, _ = await exectools.cmd_gather_async(
+        verify_cmd + ["--profile", "cloudflare", "--endpoint-url", os.environ["CLOUDFLARE_ENDPOINT"]] + verify_paths,
+        env=os.environ.copy(),
+    )
+    if r2_out.strip():
+        raise IOError(f"R2 post-sync verification failed -- files missing or size mismatch:\n{r2_out.strip()}")
+
+    logger.info("Verified: all local files present in S3 and R2 for %s", dest)
 
 
 async def mirror_to_google_cloud(source: Union[str, Path], dest: str, dry_run=False):
