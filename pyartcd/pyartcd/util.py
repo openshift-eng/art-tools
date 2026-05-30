@@ -827,22 +827,35 @@ async def mirror_to_s3(
     )
 
     if not dry_run:
-        await _verify_synced_to_mirrors(source, dest)
+        await _verify_synced_to_mirrors(source, dest, exclude=exclude, include=include)
 
 
-async def _verify_synced_to_mirrors(source: Union[str, Path], dest: str):
+async def _verify_synced_to_mirrors(
+    source: Union[str, Path],
+    dest: str,
+    exclude: Optional[str] = None,
+    include: Optional[str] = None,
+):
     """Run a size-only dry-run sync to verify all local files exist at both S3 and R2 destinations."""
     verify_cmd = ["aws", "s3", "sync", "--no-progress", "--size-only", "--dryrun"]
+    if exclude is not None:
+        verify_cmd.append(f"--exclude={exclude}")
+    if include is not None:
+        verify_cmd.append(f"--include={include}")
     verify_paths = ['--', f'{source}', f'{dest}']
 
-    _, s3_out, _ = await exectools.cmd_gather_async(verify_cmd + verify_paths, env=os.environ.copy())
+    rc, s3_out, s3_err = await exectools.cmd_gather_async(verify_cmd + verify_paths, env=os.environ.copy())
+    if rc != 0:
+        raise IOError(f"S3 post-sync verification command failed (rc={rc}):\n{s3_err.strip()}")
     if s3_out.strip():
         raise IOError(f"S3 post-sync verification failed -- files missing or size mismatch:\n{s3_out.strip()}")
 
-    _, r2_out, _ = await exectools.cmd_gather_async(
+    rc, r2_out, r2_err = await exectools.cmd_gather_async(
         verify_cmd + ["--profile", "cloudflare", "--endpoint-url", os.environ["CLOUDFLARE_ENDPOINT"]] + verify_paths,
         env=os.environ.copy(),
     )
+    if rc != 0:
+        raise IOError(f"R2 post-sync verification command failed (rc={rc}):\n{r2_err.strip()}")
     if r2_out.strip():
         raise IOError(f"R2 post-sync verification failed -- files missing or size mismatch:\n{r2_out.strip()}")
 

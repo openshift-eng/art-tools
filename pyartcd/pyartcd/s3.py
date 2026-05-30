@@ -105,14 +105,18 @@ async def _verify_synced_to_mirrors(local_dir: str, s3_path: str):
     verify_cmd = ['aws', 's3', 'sync', '--no-progress', '--size-only', '--dryrun', local_dir, full_s3_path]
     env = os.environ.copy()
 
-    _, s3_out, _ = await exectools.cmd_gather_async(verify_cmd, env=env)
+    rc, s3_out, s3_err = await exectools.cmd_gather_async(verify_cmd, env=env)
+    if rc != 0:
+        raise IOError(f"S3 post-sync verification command failed (rc={rc}):\n{s3_err.strip()}")
     if s3_out.strip():
         raise IOError(f"S3 post-sync verification failed -- files missing or size mismatch:\n{s3_out.strip()}")
 
-    _, r2_out, _ = await exectools.cmd_gather_async(
+    rc, r2_out, r2_err = await exectools.cmd_gather_async(
         verify_cmd + ['--profile', 'cloudflare', '--endpoint-url', os.environ['CLOUDFLARE_ENDPOINT']],
         env=env,
     )
+    if rc != 0:
+        raise IOError(f"R2 post-sync verification command failed (rc={rc}):\n{r2_err.strip()}")
     if r2_out.strip():
         raise IOError(f"R2 post-sync verification failed -- files missing or size mismatch:\n{r2_out.strip()}")
 

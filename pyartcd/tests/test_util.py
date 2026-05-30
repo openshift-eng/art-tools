@@ -399,6 +399,40 @@ class TestVerifySyncedToMirrors(IsolatedAsyncioTestCase):
         self.assertIn("--dryrun", s3_cmd)
         self.assertNotIn("--exact-timestamps", s3_cmd)
 
+    @patch.dict("os.environ", {"CLOUDFLARE_ENDPOINT": CLOUDFLARE_ENDPOINT})
+    @patch("pyartcd.util.exectools.cmd_gather_async", new_callable=AsyncMock)
+    async def test_raises_on_s3_command_failure(self, mock_gather: AsyncMock):
+        mock_gather.return_value = (1, "", "An error occurred (AccessDenied)")
+        with self.assertRaises(IOError) as ctx:
+            await util._verify_synced_to_mirrors("/local/dir", "s3://art-srv-enterprise/path")
+        self.assertIn("S3 post-sync verification command failed", str(ctx.exception))
+        self.assertIn("rc=1", str(ctx.exception))
+
+    @patch.dict("os.environ", {"CLOUDFLARE_ENDPOINT": CLOUDFLARE_ENDPOINT})
+    @patch("pyartcd.util.exectools.cmd_gather_async", new_callable=AsyncMock)
+    async def test_raises_on_r2_command_failure(self, mock_gather: AsyncMock):
+        mock_gather.side_effect = [
+            (0, "", ""),
+            (1, "", "connection timeout"),
+        ]
+        with self.assertRaises(IOError) as ctx:
+            await util._verify_synced_to_mirrors("/local/dir", "s3://art-srv-enterprise/path")
+        self.assertIn("R2 post-sync verification command failed", str(ctx.exception))
+
+    @patch.dict("os.environ", {"CLOUDFLARE_ENDPOINT": CLOUDFLARE_ENDPOINT})
+    @patch("pyartcd.util.exectools.cmd_gather_async", new_callable=AsyncMock)
+    async def test_verify_applies_exclude_include_filters(self, mock_gather: AsyncMock):
+        mock_gather.return_value = (0, "", "")
+        await util._verify_synced_to_mirrors(
+            "/local/dir", "s3://art-srv-enterprise/path", exclude="*", include="sha256=*"
+        )
+        s3_cmd = mock_gather.call_args_list[0][0][0]
+        self.assertIn("--exclude=*", s3_cmd)
+        self.assertIn("--include=sha256=*", s3_cmd)
+        r2_cmd = mock_gather.call_args_list[1][0][0]
+        self.assertIn("--exclude=*", r2_cmd)
+        self.assertIn("--include=sha256=*", r2_cmd)
+
 
 class TestMirrorToS3(IsolatedAsyncioTestCase):
     CLOUDFLARE_ENDPOINT = "https://fake-r2.cloudflarestorage.com"
@@ -408,7 +442,14 @@ class TestMirrorToS3(IsolatedAsyncioTestCase):
     @patch("pyartcd.util.exectools.cmd_assert_async", new_callable=AsyncMock)
     async def test_calls_verify_after_sync(self, mock_assert: AsyncMock, mock_verify: AsyncMock):
         await util.mirror_to_s3.__wrapped__("/local", "s3://art-srv-enterprise/path")
-        mock_verify.assert_awaited_once_with("/local", "s3://art-srv-enterprise/path")
+        mock_verify.assert_awaited_once_with("/local", "s3://art-srv-enterprise/path", exclude=None, include=None)
+
+    @patch.dict("os.environ", {"CLOUDFLARE_ENDPOINT": CLOUDFLARE_ENDPOINT})
+    @patch("pyartcd.util._verify_synced_to_mirrors", new_callable=AsyncMock)
+    @patch("pyartcd.util.exectools.cmd_assert_async", new_callable=AsyncMock)
+    async def test_passes_filters_to_verify(self, mock_assert: AsyncMock, mock_verify: AsyncMock):
+        await util.mirror_to_s3.__wrapped__("/local", "s3://art-srv-enterprise/path", exclude="*", include="sha256=*")
+        mock_verify.assert_awaited_once_with("/local", "s3://art-srv-enterprise/path", exclude="*", include="sha256=*")
 
     @patch.dict("os.environ", {"CLOUDFLARE_ENDPOINT": CLOUDFLARE_ENDPOINT})
     @patch("pyartcd.util._verify_synced_to_mirrors", new_callable=AsyncMock)

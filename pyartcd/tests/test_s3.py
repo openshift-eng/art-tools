@@ -52,6 +52,26 @@ class TestVerifySyncedToMirrors(IsolatedAsyncioTestCase):
 
     @patch.dict("os.environ", {"CLOUDFLARE_ENDPOINT": CLOUDFLARE_ENDPOINT})
     @patch("pyartcd.s3.exectools.cmd_gather_async", new_callable=AsyncMock)
+    async def test_raises_on_s3_command_failure(self, mock_gather: AsyncMock):
+        mock_gather.return_value = (1, "", "An error occurred (AccessDenied)")
+        with self.assertRaises(IOError) as ctx:
+            await _verify_synced_to_mirrors("/local/dir", "/enterprise/reposync/5.0")
+        self.assertIn("S3 post-sync verification command failed", str(ctx.exception))
+        self.assertIn("rc=1", str(ctx.exception))
+
+    @patch.dict("os.environ", {"CLOUDFLARE_ENDPOINT": CLOUDFLARE_ENDPOINT})
+    @patch("pyartcd.s3.exectools.cmd_gather_async", new_callable=AsyncMock)
+    async def test_raises_on_r2_command_failure(self, mock_gather: AsyncMock):
+        mock_gather.side_effect = [
+            (0, "", ""),
+            (1, "", "connection timeout"),
+        ]
+        with self.assertRaises(IOError) as ctx:
+            await _verify_synced_to_mirrors("/local/dir", "/enterprise/reposync/5.0")
+        self.assertIn("R2 post-sync verification command failed", str(ctx.exception))
+
+    @patch.dict("os.environ", {"CLOUDFLARE_ENDPOINT": CLOUDFLARE_ENDPOINT})
+    @patch("pyartcd.s3.exectools.cmd_gather_async", new_callable=AsyncMock)
     async def test_verify_checks_r2_with_cloudflare_profile(self, mock_gather: AsyncMock):
         mock_gather.return_value = (0, "", "")
         await _verify_synced_to_mirrors("/local/dir", "/enterprise/reposync/5.0")
