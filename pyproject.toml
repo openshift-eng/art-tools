@@ -226,3 +226,14 @@ skip-magic-trailing-comma = false
 
 # Like Black, automatically detect the appropriate line ending.
 line-ending = "auto"
+
+[tool.pylint.main]
+# Ignore generated/vendored directories that are not part of the source tree
+ignore-paths = [
+    ".*/\\.tox/.*",
+    ".*/\\.venv/.*",
+    ".*/\\.eggs/.*",
+    ".*/build/.*",
+    ".*/node_modules/.*",
+    ".*/site-packages/.*",
+]
