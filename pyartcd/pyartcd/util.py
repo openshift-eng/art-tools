@@ -18,7 +18,8 @@ from artcommonlib.assembly import assembly_type
 from artcommonlib.exectools import limit_concurrency
 from artcommonlib.model import Missing, Model
 from artcommonlib.release_util import SoftwareLifecyclePhase, isolate_assembly_in_release
-from artcommonlib.util import convert_remote_git_to_ssh, new_roundtrip_yaml_handler
+from artcommonlib.github_auth import get_github_client_for_org
+from artcommonlib.util import convert_remote_git_to_ssh, new_roundtrip_yaml_handler, split_git_url
 from doozerlib import util as doozerutil
 from doozerlib.constants import ART_BUILD_HISTORY_URL
 from errata_tool import ErrataConnector
@@ -155,8 +156,14 @@ async def set_assembly_status(
     status_value: bool,
     working_dir: Path,
     dry_run: bool = False,
+    gitref: str = '',
 ):
-    """Update a status field for an assembly in releases.yml and push to the group branch.
+    """Update a status field for an assembly in releases.yml.
+
+    If gitref is provided (e.g. a PR branch like 'auto-gen-assembly-openshift-4.17-4.17.1'),
+    the commit is pushed directly to that branch, updating the existing open PR.
+
+    If gitref is empty, a new branch is created and a PR is opened against the group branch.
 
     :param group: Group name (e.g. 'openshift-4.17')
     :param assembly: Assembly name (e.g. '4.17.1')
@@ -164,7 +171,9 @@ async def set_assembly_status(
     :param status_value: Boolean value to set
     :param working_dir: Working directory for the temporary git clone
     :param dry_run: If True, do not push changes
+    :param gitref: Existing PR branch to push to. If empty, creates a new PR.
     """
+    from io import StringIO
     from pyartcd.git import GitRepository
 
     push_url = os.environ.get("OCP_BUILD_DATA_PUSH_URL", constants.OCP_BUILD_DATA_URL)
@@ -175,13 +184,19 @@ async def set_assembly_status(
     repo = GitRepository(clone_dir, dry_run=dry_run)
     await repo.setup(convert_remote_git_to_ssh(push_url))
 
+    target_branch = gitref or group
+    new_branch = f"auto-status-{status_key}-{group}-{assembly}" if not gitref else ""
+
     max_attempts = 3
     commit_msg = f"Update status.{status_key}={status_value} for assembly {assembly}"
     yaml_handler = new_roundtrip_yaml_handler()
     releases_path = clone_dir / "releases.yml"
 
     for attempt in range(1, max_attempts + 1):
-        await repo.fetch_switch_branch(group)
+        if new_branch:
+            await repo.fetch_switch_branch(new_branch, target_branch)
+        else:
+            await repo.fetch_switch_branch(target_branch)
 
         with open(releases_path, "r") as f:
             releases_config = yaml_handler.load(f)
@@ -199,7 +214,6 @@ async def set_assembly_status(
             release_entry["status"] = {}
         release_entry["status"][status_key] = status_value
 
-        from io import StringIO
         out = StringIO()
         yaml_handler.dump(releases_config, out)
         await repo.write_file("releases.yml", out.getvalue())
@@ -213,10 +227,27 @@ async def set_assembly_status(
             logger.error("Failed to push status update after %d attempts for assembly %s", max_attempts, assembly)
             raise
 
-        if pushed:
-            logger.info("Pushed status update: %s.%s=%s for assembly %s", "status", status_key, status_value, assembly)
-        else:
+        if not pushed:
             logger.info("No changes to push for status update of assembly %s", assembly)
+            return
+
+        logger.info("Pushed status update: %s.%s=%s for assembly %s", "status", status_key, status_value, assembly)
+
+        if new_branch:
+            _, owner, repo_name = split_git_url(push_url)
+            gh_repo = get_github_client_for_org(owner).get_repo(f"{owner}/{repo_name}")
+            head = f"{owner}:{new_branch}"
+            existing_prs = list(gh_repo.get_pulls(state="open", base=group, head=head))
+            if not existing_prs:
+                title = f"Update {status_key} status for assembly {assembly}"
+                if not dry_run:
+                    pr = gh_repo.create_pull(head=head, base=group, title=title, body=commit_msg, maintainer_can_modify=True)
+                    logger.info("Created PR: %s", pr.html_url)
+                else:
+                    logger.warning("[DRY RUN] Would have created PR with head=%s base=%s", head, group)
+            else:
+                logger.info("PR already exists: %s", existing_prs[0].html_url)
+
         return
 
 

@@ -237,6 +237,7 @@ class BuildSyncPipeline:
                     status_value=True,
                     working_dir=self.working_dir,
                     dry_run=self.runtime.dry_run,
+                    gitref=self.doozer_data_gitref,
                 )
 
         #  All good: delete fail counter
