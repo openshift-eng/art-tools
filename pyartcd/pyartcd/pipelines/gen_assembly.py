@@ -393,6 +393,8 @@ class GenAssemblyPipeline:
         releases_yaml_path = build_data_path / "releases.yml"
         releases_yaml = yaml.load(releases_yaml_path) if releases_yaml_path.exists() else {}
         releases_yaml = merge_objects(assembly_definition, releases_yaml)
+        if self.assembly in releases_yaml.get("releases", {}):
+            releases_yaml["releases"][self.assembly].setdefault("status", {})["gen_assembly"] = True
         yaml.dump(releases_yaml, releases_yaml_path)
         pushed = await build_data.commit_push(f"{title}\n{body}")
         if not pushed:

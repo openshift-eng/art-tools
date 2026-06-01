@@ -1468,6 +1468,7 @@ class PrepareReleaseKonfluxPipeline:
                 updated_group_config["advisories!"] = updated_group_config.pop("advisories")
 
         new_releases_config["releases"][self.assembly]["assembly"]["group"] = updated_group_config
+        new_releases_config["releases"][self.assembly].setdefault("status", {})["prepare_release"] = True
 
         out = StringIO()
         yaml.dump(new_releases_config, out)

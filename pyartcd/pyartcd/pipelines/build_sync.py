@@ -24,6 +24,7 @@ from opentelemetry import trace
 
 from pyartcd import constants, jenkins, locks
 from pyartcd.cli import cli, click_coroutine, pass_runtime
+from pyartcd.util import set_assembly_status
 from pyartcd.jenkins import get_build_url
 from pyartcd.runtime import GroupRuntime, Runtime
 from pyartcd.util import branch_arches
@@ -228,6 +229,15 @@ class BuildSyncPipeline:
                 f"`{self.build_system.capitalize()}` <{self.job_run}|build-sync> "
                 f"for assembly `{self.assembly}` succeeded!"
             )
+            if self.assembly != 'test':
+                await set_assembly_status(
+                    group=self.group,
+                    assembly=self.assembly,
+                    status_key="build_sync",
+                    status_value=True,
+                    working_dir=self.working_dir,
+                    dry_run=self.runtime.dry_run,
+                )
 
         #  All good: delete fail counter
         if self.assembly == 'stream' and not self.runtime.dry_run:

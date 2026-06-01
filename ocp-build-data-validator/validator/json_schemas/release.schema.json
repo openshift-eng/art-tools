@@ -7,6 +7,16 @@
   "properties": {
     "assembly": {
       "$ref": "assembly.schema.json"
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "gen_assembly": { "type": "boolean" },
+        "prepare_release": { "type": "boolean" },
+        "build_sync": { "type": "boolean" },
+        "promoted": { "type": "boolean" }
+      },
+      "additionalProperties": false
     }
   },
   "required": [

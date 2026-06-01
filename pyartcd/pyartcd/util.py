@@ -18,6 +18,7 @@ from artcommonlib.assembly import assembly_type
 from artcommonlib.exectools import limit_concurrency
 from artcommonlib.model import Missing, Model
 from artcommonlib.release_util import SoftwareLifecyclePhase, isolate_assembly_in_release
+from artcommonlib.util import convert_remote_git_to_ssh, new_roundtrip_yaml_handler
 from doozerlib import util as doozerutil
 from doozerlib.constants import ART_BUILD_HISTORY_URL
 from errata_tool import ErrataConnector
@@ -145,6 +146,65 @@ async def load_assembly(
     except ChildProcessError as e:
         logger.error('Command "%s" failed: %s', ' '.join(cmd), e)
         return None
+
+
+async def set_assembly_status(
+    group: str,
+    assembly: str,
+    status_key: str,
+    status_value: bool,
+    working_dir: Path,
+    dry_run: bool = False,
+):
+    """Update a status field for an assembly in releases.yml and push to the group branch.
+
+    :param group: Group name (e.g. 'openshift-4.17')
+    :param assembly: Assembly name (e.g. '4.17.1')
+    :param status_key: Status field name (e.g. 'gen_assembly', 'build_sync', 'promoted')
+    :param status_value: Boolean value to set
+    :param working_dir: Working directory for the temporary git clone
+    :param dry_run: If True, do not push changes
+    """
+    from pyartcd.git import GitRepository
+
+    push_url = os.environ.get("OCP_BUILD_DATA_PUSH_URL", constants.OCP_BUILD_DATA_URL)
+    clone_dir = working_dir / "ocp-build-data-status"
+    if clone_dir.exists():
+        shutil.rmtree(clone_dir)
+
+    repo = GitRepository(clone_dir, dry_run=dry_run)
+    await repo.setup(convert_remote_git_to_ssh(push_url))
+    await repo.fetch_switch_branch(group)
+
+    yaml_handler = new_roundtrip_yaml_handler()
+    releases_path = clone_dir / "releases.yml"
+    with open(releases_path, "r") as f:
+        releases_config = yaml_handler.load(f)
+
+    if not releases_config or "releases" not in releases_config:
+        logger.warning("releases.yml is empty or missing 'releases' key; skipping status update")
+        return
+
+    release_entry = releases_config["releases"].get(assembly)
+    if release_entry is None:
+        logger.warning("Assembly %s not found in releases.yml; skipping status update", assembly)
+        return
+
+    if "status" not in release_entry:
+        release_entry["status"] = {}
+    release_entry["status"][status_key] = status_value
+
+    from io import StringIO
+    out = StringIO()
+    yaml_handler.dump(releases_config, out)
+    await repo.write_file("releases.yml", out.getvalue())
+
+    commit_msg = f"Update status.{status_key}={status_value} for assembly {assembly}"
+    pushed = await repo.commit_push(commit_msg, safe=True)
+    if pushed:
+        logger.info("Pushed status update: %s.%s=%s for assembly %s", "status", status_key, status_value, assembly)
+    else:
+        logger.info("No changes to push for status update of assembly %s", assembly)
 
 
 def get_assembly_type(releases_config: Dict, assembly_name: str):
