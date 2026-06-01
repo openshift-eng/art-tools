@@ -183,7 +183,7 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
 
     async def test_no_retry_when_ec_fails(self, mock_kc_init):
         """When EC verification fails, the build should NOT be retried."""
-        config = _make_config(group_name="openshift-4.18")
+        config = _make_config(group_name="openshift-4.18", dry_run=False)
         metadata = _make_metadata(for_release=True)
         metadata.get_konflux_build_attempts.return_value = 3
 
@@ -223,3 +223,6 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
                         await builder.build(metadata)
 
         builder._start_build.assert_called_once()
+        self.assertEqual(builder.update_konflux_db.await_count, 2)
+        completion_call = builder.update_konflux_db.await_args_list[1]
+        self.assertEqual(completion_call.args[3], KonfluxBuildOutcome.ITS_ERROR)

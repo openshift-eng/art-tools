@@ -2130,7 +2130,7 @@ class KonfluxFbcBuilder:
                             'image_tag': image_pullspec.split(':')[-1],
                         }
                     )
-                case KonfluxBuildOutcome.FAILURE:
+                case KonfluxBuildOutcome.BUILD_ERROR | KonfluxBuildOutcome.FAILURE:
                     status = pipelinerun_dict.get('status', {})
                     start_time = status.get('startTime')
                     end_time = status.get('completionTime')

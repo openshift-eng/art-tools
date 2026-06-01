@@ -805,7 +805,7 @@ class KonfluxOlmBundleBuilder:
                         ec_status = ec_result.ec_status
                         ec_pipeline_url = ec_result.ec_pipeline_url
                         if ec_result.ec_failed:
-                            outcome = KonfluxBuildOutcome.FAILURE
+                            outcome = KonfluxBuildOutcome.ITS_ERROR
                             ec_failed = True
                     elif outcome is KonfluxBuildOutcome.SUCCESS:
                         if self.skip_ec_verify:
@@ -1023,7 +1023,7 @@ class KonfluxOlmBundleBuilder:
                             'image_tag': image_pullspec.split(':')[-1],
                         }
                     )
-                case KonfluxBuildOutcome.FAILURE:
+                case KonfluxBuildOutcome.BUILD_ERROR | KonfluxBuildOutcome.FAILURE:
                     status = pipelinerun_dict.get('status', {})
                     start_time = status.get('startTime')
                     end_time = status.get('completionTime')

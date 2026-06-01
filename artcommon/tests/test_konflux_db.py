@@ -761,6 +761,9 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
         test_cases = [
             ('success', KonfluxBuildOutcome.SUCCESS),
             ('failure', KonfluxBuildOutcome.FAILURE),
+            ('build_error', KonfluxBuildOutcome.BUILD_ERROR),
+            ('its_error', KonfluxBuildOutcome.ITS_ERROR),
+            ('release_error', KonfluxBuildOutcome.RELEASE_ERROR),
             ('konflux', Engine.KONFLUX),
             ('brew', Engine.BREW),
             ('image', ArtifactType.IMAGE),

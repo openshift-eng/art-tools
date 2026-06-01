@@ -25,6 +25,22 @@ class KonfluxBuildOutcome(KonfluxEnum):
     PENDING = 'pending'
     TIMEOUT = 'timeout'
     CANCELLED = 'cancelled'
+    BUILD_ERROR = 'build_error'
+    ITS_ERROR = 'its_error'
+    RELEASE_ERROR = 'release_error'
+
+    def is_success(self) -> bool:
+        return self is KonfluxBuildOutcome.SUCCESS
+
+    def is_failure(self) -> bool:
+        return self in (
+            KonfluxBuildOutcome.FAILURE,
+            KonfluxBuildOutcome.BUILD_ERROR,
+            KonfluxBuildOutcome.ITS_ERROR,
+            KonfluxBuildOutcome.RELEASE_ERROR,
+            KonfluxBuildOutcome.TIMEOUT,
+            KonfluxBuildOutcome.CANCELLED,
+        )
 
     @classmethod
     def extract_from_pipelinerun_succeeded_condition(
@@ -34,13 +50,12 @@ class KonfluxBuildOutcome(KonfluxEnum):
             assert succeeded_condition.type == 'Succeeded'
             if succeeded_condition.is_status_true():
                 return cls.SUCCESS
-            else:
-                reason = succeeded_condition.reason
-                if reason == 'Cancelled':
-                    return cls.CANCELLED
-                if reason == 'Timeout':
-                    return cls.TIMEOUT
-                return cls.FAILURE
+            reason = succeeded_condition.reason
+            if reason == 'Cancelled':
+                return cls.CANCELLED
+            if reason == 'Timeout':
+                return cls.TIMEOUT
+            return cls.BUILD_ERROR
         return cls.PENDING
 
 

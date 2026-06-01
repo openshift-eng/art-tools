@@ -223,7 +223,6 @@ class KonfluxImageBuilder:
             logger.info(f"Building for arches: {building_arches}")
             error = None
             ec_failed = False
-            ec_status = KonfluxECStatus.NOT_APPLICABLE
             ec_pipeline_url = ''
             # Resolve build priority based on precedence rules
             if self._config.build_priority == "auto":
@@ -257,7 +256,6 @@ class KonfluxImageBuilder:
                     KonfluxBuildOutcome.PENDING,
                     building_arches,
                     build_priority,
-                    ec_status=KonfluxECStatus.NOT_APPLICABLE,
                 )
 
                 logger.info("Waiting for PipelineRun %s to complete...", pipelinerun_name)
@@ -293,9 +291,9 @@ class KonfluxImageBuilder:
                             )
                         except Exception as e:
                             logger.error(
-                                f"Failed to get SLA attestation / source signature from konflux for image {definitive_image_pullspec}, marking build as {KonfluxBuildOutcome.FAILURE}. Error: {e}"
+                                f"Failed to get SLA attestation / source signature from konflux for image {definitive_image_pullspec}, marking build as {KonfluxBuildOutcome.BUILD_ERROR}. Error: {e}"
                             )
-                            outcome = KonfluxBuildOutcome.FAILURE
+                            outcome = KonfluxBuildOutcome.BUILD_ERROR
                     else:
                         logger.info(
                             "Skipping SLSA attestation validation for %s: non-OCP group '%s'",
@@ -342,11 +340,10 @@ class KonfluxImageBuilder:
                         ec_policy=ec_policy,
                         logger=logger,
                     )
-                    ec_status = ec_result.ec_status
                     ec_pipeline_url = ec_result.ec_pipeline_url
                     ec_failed = ec_result.ec_failed
                     if ec_failed:
-                        outcome = KonfluxBuildOutcome.FAILURE
+                        outcome = KonfluxBuildOutcome.ITS_ERROR
                         record["ec_failed"] = "true"
                         record["ec_pipeline_url"] = ec_pipeline_url
 
@@ -381,9 +378,13 @@ class KonfluxImageBuilder:
                         if release_result:
                             logger.info("Base image release succeeded for %s, persisting build record", nvr)
                         else:
-                            logger.error("Base image release failed for %s, persisting build record as FAILURE", nvr)
+                            logger.error(
+                                "Base image release failed for %s, persisting build record as %s",
+                                nvr,
+                                KonfluxBuildOutcome.RELEASE_ERROR,
+                            )
                             record["base_image_release_failed"] = "true"
-                        outcome = KonfluxBuildOutcome.SUCCESS if release_result else KonfluxBuildOutcome.FAILURE
+                        outcome = KonfluxBuildOutcome.SUCCESS if release_result else KonfluxBuildOutcome.RELEASE_ERROR
 
                     build_record = await self.update_konflux_db(
                         metadata,
@@ -392,7 +393,6 @@ class KonfluxImageBuilder:
                         outcome,
                         building_arches,
                         build_priority,
-                        ec_status=ec_status,
                         ec_pipeline_url=ec_pipeline_url,
                         release_pipeline=release_result.release_pipeline if release_result else '',
                         released_pullspec=release_result.released_pullspec if release_result else '',
@@ -400,7 +400,8 @@ class KonfluxImageBuilder:
                     if build_record:
                         record["record_id"] = build_record.record_id
 
-                if outcome is not KonfluxBuildOutcome.SUCCESS:
+                if not outcome.is_success():
+                    record["outcome"] = str(outcome)
                     error = KonfluxImageBuildError(
                         f"Konflux image build for {metadata.distgit_key} failed with output={outcome}",
                         pipelinerun_name,

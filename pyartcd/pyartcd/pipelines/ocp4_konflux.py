@@ -21,6 +21,7 @@ from artcommonlib.constants import (
     REGISTRY_QUAY_OPENSHIFT,
     REGISTRY_REDHAT_IO,
 )
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome
 from artcommonlib.registry_config import RegistryConfig, RegistryCredential
 from artcommonlib.util import (
     new_roundtrip_yaml_handler,
@@ -255,13 +256,25 @@ class KonfluxOcpPipeline:
             entry['name']: entry for entry in record_log.get('image_build_konflux', []) if int(entry['status'])
         }
 
-        # Categorize failures by type
+        # Categorize failures by type (prefer granular outcome; fall back to legacy record flags)
         ec_failed_images = []
         release_failed_images = []
         build_failed_images = []
         for image in failed_images:
             entry = failed_entries.get(image, {})
-            if entry.get('ec_failed') == 'true':
+            outcome = entry.get('outcome', '')
+            if outcome == str(KonfluxBuildOutcome.ITS_ERROR):
+                ec_failed_images.append(image)
+            elif outcome == str(KonfluxBuildOutcome.RELEASE_ERROR):
+                release_failed_images.append(image)
+            elif outcome in (
+                str(KonfluxBuildOutcome.BUILD_ERROR),
+                str(KonfluxBuildOutcome.FAILURE),
+                str(KonfluxBuildOutcome.TIMEOUT),
+                str(KonfluxBuildOutcome.CANCELLED),
+            ):
+                build_failed_images.append(image)
+            elif entry.get('ec_failed') == 'true':
                 ec_failed_images.append(image)
             elif entry.get('base_image_release_failed') == 'true':
                 release_failed_images.append(image)
