@@ -146,7 +146,7 @@ class TestFindBugsBridgeCli(IsolatedAsyncioTestCase):
 
         existing_mirror = MagicMock()
         existing_mirror.status = "Closed"
-        existing_mirror.resolution = "Won't Fix"
+        existing_mirror.resolution = "Won't Do"
         self.cli.existing_mirrors_by_source = {"OCPBUGS-123": [existing_mirror]}
 
         result = await self.cli._sync_mirror(source_bug, image_meta)

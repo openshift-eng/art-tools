@@ -18,7 +18,7 @@ from elliottlib.cli.common import click_coroutine
 LOGGER = logging.getLogger(__name__)
 
 BRIDGE_LABEL = "art:bridge-bug"
-WONT_FIX_RESOLUTIONS = {"won't fix", "wontfix", "wont fix"}
+WONT_FIX_RESOLUTIONS = {"won't do"}
 REQUIRED_LINK_TYPES = {"depends_on", "blocked_by", "clones"}
 
 
@@ -285,7 +285,7 @@ class FindBugsBridgeCli:
         Returns:
             bool: `True` if the bug was handled by creating or updating a mirror,
             or by reusing a valid existing mirror. `False` if the bug was skipped
-            because an invalid state or a closed Won't Fix mirror was found.
+            because an invalid state or a closed Won't Do mirror was found.
         """
         assert self.target_tracker is not None
         if source_bug.id in self.invalid_bugs:
@@ -293,12 +293,12 @@ class FindBugsBridgeCli:
         existing = self.existing_mirrors_by_source.get(source_bug.id, [])
         if existing:
             if any(self._is_closed_wont_fix(mirror) for mirror in existing):
-                LOGGER.info("Skipping %s because an existing mirror is closed as Won't Fix", source_bug.id)
+                LOGGER.info("Skipping %s because an existing mirror is closed as Won't Do", source_bug.id)
                 return False
             if all(mirror.status.lower() == "closed" for mirror in existing):
                 self._record_invalid_bug(
                     source_bug.id,
-                    "Existing bridge mirror is closed without Won't Fix; manual investigation required",
+                    "Existing bridge mirror is closed without Won't Do; manual investigation required",
                 )
                 return False
             mirror = existing[0]
@@ -384,7 +384,7 @@ class FindBugsBridgeCli:
             "engineer decides otherwise.\n\n"
             f"How to disposition it for {self.major_minor}:\n"
             f"- You do not need to directly manage this issue's state unless you want to remove it from {self.major_minor} advisories.\n"
-            f"- If the issue should not appear in {self.major_minor} advisories, close this mirror with \"Won't Fix\".\n"
+            f"- If the issue should not appear in {self.major_minor} advisories, close this mirror with \"Won't Do\".\n"
             "- Otherwise, leave it open and ART automation will continue to manage its presence.\n\n"
             "Original description:\n"
             "----\n"
@@ -582,13 +582,13 @@ class FindBugsBridgeCli:
 
     @staticmethod
     def _is_closed_wont_fix(mirror_bug: JIRABug) -> bool:
-        """Return whether a mirror is closed with a Won't Fix resolution.
+        """Return whether a mirror is closed with a Won't Do resolution.
 
         Args:
             mirror_bug: Bridge mirror issue to inspect.
 
         Returns:
-            bool: `True` when the mirror is closed with a Won't Fix style
+            bool: `True` when the mirror is closed with a Won't Do
             resolution, otherwise `False`.
         """
         if mirror_bug.status.lower() != "closed":
