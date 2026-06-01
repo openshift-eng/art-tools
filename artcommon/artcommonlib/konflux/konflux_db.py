@@ -325,6 +325,47 @@ class BuildCache:
             )
             return None
 
+    def get_builds_by_name(
+        self,
+        name: str,
+        group: str,
+        assembly: typing.Optional[str] = None,
+        limit: typing.Optional[int] = None,
+        cache_type: CacheRecordsType = CacheRecordsType.SMALL_COLUMNS,
+    ) -> typing.List[KonfluxRecord]:
+        """
+        Get all cached builds for a name, sorted newest-first, with optional filtering.
+
+        Arg(s):
+            name (str): Component name (e.g., 'ironic')
+            group (str): Group name (e.g., 'openshift-4.18')
+            assembly (str): Optional assembly filter (e.g., 'stream')
+            limit (int): Optional max number of builds to return
+            cache_type (CacheRecordsType): Type of cache to search
+        Return Value(s):
+            list[KonfluxRecord]: Matching builds sorted by start_time descending, or empty list
+        """
+        with self._lock:
+            groups = self.cache_groups[cache_type]
+            if group not in groups:
+                self._increment_miss(cache_type)
+                return []
+
+            builds = groups[group]['by_name'].get(name, [])
+            if not builds:
+                self._increment_miss(cache_type)
+                return []
+
+            self._increment_hit(cache_type)
+
+            if assembly is not None:
+                builds = [b for b in builds if b.assembly == assembly]
+
+            if limit is not None:
+                builds = builds[:limit]
+
+            return builds
+
     def is_group_loaded(self, group: str, cache_type: CacheRecordsType = CacheRecordsType.SMALL_COLUMNS) -> bool:
         """
         Check if group is already loaded in cache.

@@ -1,4 +1,3 @@
-import asyncio
 import datetime
 import json
 import logging
@@ -8,7 +7,6 @@ import click
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.model import Missing
 from artcommonlib.variants import BuildVariant
-from tenacity import retry, stop_after_attempt, wait_fixed
 
 from doozerlib import Runtime
 from doozerlib.cli import cli, click_coroutine, pass_runtime
@@ -78,22 +76,22 @@ class ImagesHealthPipeline:
         self.variant = variant
 
     async def run(self):
-        # Gather concerns for all images we build with Konflux
-        tasks = []
+        # Pre-load the build cache for this group in a single BigQuery query
+        await self.runtime.konflux_db._ensure_group_cached(self.group)
+        self.logger.info('Build cache loaded for group %s', self.group)
 
         # Filter out images that are disabled for this variant
+        image_metas = []
         for image_meta in self.runtime.image_metas():
             if self.variant is BuildVariant.OKD:
-                # For OKD variant, determine effective mode: okd.mode overrides general mode
-                effective_mode = image_meta.mode  # Default to general mode
+                effective_mode = image_meta.mode
                 if image_meta.config.okd is not Missing and image_meta.config.okd.mode is not Missing:
-                    effective_mode = image_meta.config.okd.mode  # Override with OKD-specific mode if present
+                    effective_mode = image_meta.config.okd.mode
 
                 if effective_mode == 'disabled':
                     self.logger.info('Skipping OKD disabled image: %s', image_meta.distgit_key)
                     continue
 
-                # For OKD, skip non-payload images (they are not built/released)
                 for_payload = image_meta.config.for_payload
                 if for_payload is Missing:
                     for_payload = False
@@ -103,23 +101,23 @@ class ImagesHealthPipeline:
             elif image_meta.config.konflux.mode == 'disabled' or image_meta.mode == 'disabled':
                 self.logger.info('Skipping disabled image: %s', image_meta.distgit_key)
                 continue
-            tasks.append(self.get_concerns(image_meta))
+            image_metas.append(image_meta)
 
-        await asyncio.gather(*tasks)
+        for image_meta in image_metas:
+            self.get_concerns(image_meta)
 
-        # We should now have a dict of qualified_key => [concern, ...]
         if not self.concerns:
             self.logger.info('No concerns to report!')
         click.echo(
             json.dumps(self.concerns, indent=4, default=lambda o: o.to_dict() if isinstance(o, Concern) else str(o))
         )
 
-    async def get_concerns(self, image_meta):
+    def get_concerns(self, image_meta):
         for_release = image_meta.config.for_release
         if for_release is Missing:
             for_release = True
 
-        builds = await self.query(image_meta)
+        builds = self._query_cache(image_meta)
         if not builds:
             message = f'Image build for {image_meta.distgit_key} has never been attempted during last {DELTA_DAYS} days'
             self.logger.info(message)
@@ -189,28 +187,16 @@ class ImagesHealthPipeline:
         concern.group = self.runtime.group
         self.concerns.append(concern)
 
-    @retry(reraise=True, stop=stop_after_attempt(10), wait=wait_fixed(3))
-    async def query(self, image_meta):
+    def _query_cache(self, image_meta):
         """
-        For 'stream' assembly only, query 'builds' table  for component 'name' from BigQuery
+        Look up build records from the pre-loaded cache instead of querying BigQuery per image.
         """
-
-        self.logger.info('Querying builds for image: %s', image_meta.distgit_key)
-        results = [
-            build
-            async for build in self.runtime.konflux_db.search_builds_by_fields(
-                start_search=self.start_search,
-                where={
-                    'name': image_meta.distgit_key,
-                    'group': self.group,
-                    'engine': 'konflux',
-                    'assembly': self.assembly,
-                },
-                order_by='start_time',
-                limit=self.limit,
-            )
-        ]
-        return results
+        return self.runtime.konflux_db.cache.get_builds_by_name(
+            name=image_meta.distgit_key,
+            group=self.group,
+            assembly=self.assembly,
+            limit=self.limit,
+        )
 
 
 @cli.command("images:health", short_help="Create a health report for this image group (requires DB read)")
