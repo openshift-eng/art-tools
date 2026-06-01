@@ -24,6 +24,7 @@ class TestImagesHealthOKDModeFiltering(unittest.IsolatedAsyncioTestCase):
         self.mock_runtime.group = "openshift-4.20"
         self.mock_runtime.konflux_db = MagicMock()
         self.mock_runtime.konflux_db.bind = MagicMock()
+        self.mock_runtime.konflux_db._ensure_group_cached = AsyncMock()
 
     def _create_image_meta(self, distgit_key: str, mode: str, okd_mode=Missing, for_payload=True):
         """
@@ -63,7 +64,7 @@ class TestImagesHealthOKDModeFiltering(unittest.IsolatedAsyncioTestCase):
 
         pipeline = ImagesHealthPipeline(runtime=self.mock_runtime, limit=100, variant=BuildVariant.OKD)
 
-        with patch.object(pipeline, 'get_concerns', new=AsyncMock()) as mock_get_concerns:
+        with patch.object(pipeline, 'get_concerns', new=MagicMock()) as mock_get_concerns:
             await pipeline.run()
             # Image should be skipped, so get_concerns should not be called
             mock_get_concerns.assert_not_called()
@@ -79,7 +80,7 @@ class TestImagesHealthOKDModeFiltering(unittest.IsolatedAsyncioTestCase):
 
         pipeline = ImagesHealthPipeline(runtime=self.mock_runtime, limit=100, variant=BuildVariant.OKD)
 
-        with patch.object(pipeline, 'get_concerns', new=AsyncMock()) as mock_get_concerns:
+        with patch.object(pipeline, 'get_concerns', new=MagicMock()) as mock_get_concerns:
             await pipeline.run()
             # Image should NOT be skipped, so get_concerns should be called once
             mock_get_concerns.assert_called_once_with(image_meta)
@@ -95,7 +96,7 @@ class TestImagesHealthOKDModeFiltering(unittest.IsolatedAsyncioTestCase):
 
         pipeline = ImagesHealthPipeline(runtime=self.mock_runtime, limit=100, variant=BuildVariant.OKD)
 
-        with patch.object(pipeline, 'get_concerns', new=AsyncMock()) as mock_get_concerns:
+        with patch.object(pipeline, 'get_concerns', new=MagicMock()) as mock_get_concerns:
             await pipeline.run()
             # Image should be skipped, so get_concerns should not be called
             mock_get_concerns.assert_not_called()
@@ -111,7 +112,7 @@ class TestImagesHealthOKDModeFiltering(unittest.IsolatedAsyncioTestCase):
 
         pipeline = ImagesHealthPipeline(runtime=self.mock_runtime, limit=100, variant=BuildVariant.OKD)
 
-        with patch.object(pipeline, 'get_concerns', new=AsyncMock()) as mock_get_concerns:
+        with patch.object(pipeline, 'get_concerns', new=MagicMock()) as mock_get_concerns:
             await pipeline.run()
             # Image should NOT be skipped, so get_concerns should be called once
             mock_get_concerns.assert_called_once_with(image_meta)
@@ -127,7 +128,7 @@ class TestImagesHealthOKDModeFiltering(unittest.IsolatedAsyncioTestCase):
 
         pipeline = ImagesHealthPipeline(runtime=self.mock_runtime, limit=100, variant=BuildVariant.OCP)
 
-        with patch.object(pipeline, 'get_concerns', new=AsyncMock()) as mock_get_concerns:
+        with patch.object(pipeline, 'get_concerns', new=MagicMock()) as mock_get_concerns:
             await pipeline.run()
             # Image should be skipped, so get_concerns should not be called
             mock_get_concerns.assert_not_called()
@@ -143,7 +144,7 @@ class TestImagesHealthOKDModeFiltering(unittest.IsolatedAsyncioTestCase):
 
         pipeline = ImagesHealthPipeline(runtime=self.mock_runtime, limit=100, variant=BuildVariant.OCP)
 
-        with patch.object(pipeline, 'get_concerns', new=AsyncMock()) as mock_get_concerns:
+        with patch.object(pipeline, 'get_concerns', new=MagicMock()) as mock_get_concerns:
             await pipeline.run()
             # Image should NOT be skipped, so get_concerns should be called once
             mock_get_concerns.assert_called_once_with(image_meta)
@@ -159,7 +160,7 @@ class TestImagesHealthOKDModeFiltering(unittest.IsolatedAsyncioTestCase):
 
         pipeline = ImagesHealthPipeline(runtime=self.mock_runtime, limit=100, variant=BuildVariant.OKD)
 
-        with patch.object(pipeline, 'get_concerns', new=AsyncMock()) as mock_get_concerns:
+        with patch.object(pipeline, 'get_concerns', new=MagicMock()) as mock_get_concerns:
             await pipeline.run()
             # Non-payload image should be skipped for OKD
             mock_get_concerns.assert_not_called()
@@ -175,7 +176,7 @@ class TestImagesHealthOKDModeFiltering(unittest.IsolatedAsyncioTestCase):
 
         pipeline = ImagesHealthPipeline(runtime=self.mock_runtime, limit=100, variant=BuildVariant.OKD)
 
-        with patch.object(pipeline, 'get_concerns', new=AsyncMock()) as mock_get_concerns:
+        with patch.object(pipeline, 'get_concerns', new=MagicMock()) as mock_get_concerns:
             await pipeline.run()
             # Payload image should be processed for OKD
             mock_get_concerns.assert_called_once_with(image_meta)
@@ -195,7 +196,7 @@ class TestImagesHealthOKDModeFiltering(unittest.IsolatedAsyncioTestCase):
 
         pipeline = ImagesHealthPipeline(runtime=self.mock_runtime, limit=100, variant=BuildVariant.OKD)
 
-        with patch.object(pipeline, 'get_concerns', new=AsyncMock()) as mock_get_concerns:
+        with patch.object(pipeline, 'get_concerns', new=MagicMock()) as mock_get_concerns:
             await pipeline.run()
             # Only image2 and image4 should be processed
             self.assertEqual(mock_get_concerns.call_count, 2)
@@ -217,7 +218,7 @@ class TestImagesHealthOKDModeFiltering(unittest.IsolatedAsyncioTestCase):
 
         pipeline = ImagesHealthPipeline(runtime=self.mock_runtime, limit=100, variant=BuildVariant.OKD)
 
-        with patch.object(pipeline, 'get_concerns', new=AsyncMock()) as mock_get_concerns:
+        with patch.object(pipeline, 'get_concerns', new=MagicMock()) as mock_get_concerns:
             await pipeline.run()
             # Only image1 and image3 should be processed (both are payload images with effective mode 'enabled')
             self.assertEqual(mock_get_concerns.call_count, 2)
