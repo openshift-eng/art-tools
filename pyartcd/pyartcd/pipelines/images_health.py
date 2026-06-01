@@ -28,7 +28,7 @@ class ImagesHealthPipeline:
         runtime: Runtime,
         versions: str,
         send_to_release_channel: bool,
-        send_to_forum_ocp_art: bool,
+        public_channel: str,
         data_path: str,
         data_gitref: str,
         image_list: str,
@@ -39,7 +39,7 @@ class ImagesHealthPipeline:
         self.versions = versions.split(',') if versions else ACTIVE_OCP_VERSIONS
         self.doozer_working = self.runtime.working_dir / "doozer_working"
         self.send_to_release_channel = send_to_release_channel
-        self.send_to_forum_ocp_art = send_to_forum_ocp_art
+        self.public_channel = public_channel
         self.data_path = data_path
         self.data_gitref = data_gitref
         self.image_list = image_list.split(',') if image_list else []
@@ -66,8 +66,8 @@ class ImagesHealthPipeline:
             for version in self.scanned_versions:
                 await self.notify_release_channel(version)
 
-        if self.send_to_forum_ocp_art:
-            await self.notify_forum_ocp_art()
+        if self.public_channel:
+            await self.notify_public_channel()
 
     async def get_report(self, version: str) -> Optional[list]:
         doozer_working = f'{self.doozer_working}-{version}'
@@ -410,8 +410,8 @@ class ImagesHealthPipeline:
 
         await self.slack_client.say(report, thread_ts=response['ts'], unfurl_links=False, unfurl_media=False)
 
-    async def notify_forum_ocp_art(self):
-        self.slack_client.bind_channel('#forum-ocp-art')
+    async def notify_public_channel(self):
+        self.slack_client.bind_channel(self.public_channel)
 
         # Group build concerns by image name
         image_concerns = {}
@@ -600,7 +600,12 @@ class ImagesHealthPipeline:
 @cli.command('images-health')
 @click.option('--versions', required=False, default='', help='OCP versions to scan')
 @click.option('--send-to-release-channel', is_flag=True, help='If true, send output to #art-release-4-<version>')
-@click.option('--send-to-forum-ocp-art', is_flag=True, help='"If true, send notification to #forum-ocp-art')
+@click.option(
+    '--send-to-public-channel',
+    required=False,
+    default='',
+    help='Slack channel to send public notification to (e.g. #forum-ocp-art). Leave blank to skip.',
+)
 @click.option(
     '--data-path',
     required=False,
@@ -627,7 +632,7 @@ async def images_health(
     runtime: Runtime,
     versions: str,
     send_to_release_channel: bool,
-    send_to_forum_ocp_art: bool,
+    send_to_public_channel: str,
     data_path: str,
     data_gitref: str,
     image_list: str,
@@ -638,7 +643,7 @@ async def images_health(
         runtime,
         versions,
         send_to_release_channel,
-        send_to_forum_ocp_art,
+        send_to_public_channel,
         data_path,
         data_gitref,
         image_list,
