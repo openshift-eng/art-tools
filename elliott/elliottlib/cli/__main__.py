@@ -43,6 +43,7 @@ from elliottlib.cli.create_placeholder_cli import create_placeholder_cli
 from elliottlib.cli.create_textonly_cli import create_textonly_cli
 from elliottlib.cli.find_bugs_blocker_cli import find_bugs_blocker_cli
 from elliottlib.cli.find_bugs_cli import find_bugs_cli
+from elliottlib.cli.find_bugs_cutoff_cli import find_bugs_cutoff_cli
 from elliottlib.cli.find_bugs_golang_cli import find_bugs_golang_cli
 from elliottlib.cli.find_bugs_kernel_cli import find_bugs_kernel_cli
 from elliottlib.cli.find_bugs_kernel_clones_cli import find_bugs_kernel_clones_cli
@@ -321,6 +322,7 @@ cli.add_command(shipment_cli)
 cli.add_command(watch_release_cli)
 cli.add_command(find_bugs_second_fix_cli)
 cli.add_command(process_release_from_fbc_bugs_cli)
+cli.add_command(find_bugs_cutoff_cli)
 
 # -----------------------------------------------------------------------------
 # CLI Entry point
