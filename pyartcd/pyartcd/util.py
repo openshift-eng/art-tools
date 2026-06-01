@@ -174,37 +174,50 @@ async def set_assembly_status(
 
     repo = GitRepository(clone_dir, dry_run=dry_run)
     await repo.setup(convert_remote_git_to_ssh(push_url))
-    await repo.fetch_switch_branch(group)
 
+    max_attempts = 3
+    commit_msg = f"Update status.{status_key}={status_value} for assembly {assembly}"
     yaml_handler = new_roundtrip_yaml_handler()
     releases_path = clone_dir / "releases.yml"
-    with open(releases_path, "r") as f:
-        releases_config = yaml_handler.load(f)
 
-    if not releases_config or "releases" not in releases_config:
-        logger.warning("releases.yml is empty or missing 'releases' key; skipping status update")
+    for attempt in range(1, max_attempts + 1):
+        await repo.fetch_switch_branch(group)
+
+        with open(releases_path, "r") as f:
+            releases_config = yaml_handler.load(f)
+
+        if not releases_config or "releases" not in releases_config:
+            logger.warning("releases.yml is empty or missing 'releases' key; skipping status update")
+            return
+
+        release_entry = releases_config["releases"].get(assembly)
+        if release_entry is None:
+            logger.warning("Assembly %s not found in releases.yml; skipping status update", assembly)
+            return
+
+        if "status" not in release_entry:
+            release_entry["status"] = {}
+        release_entry["status"][status_key] = status_value
+
+        from io import StringIO
+        out = StringIO()
+        yaml_handler.dump(releases_config, out)
+        await repo.write_file("releases.yml", out.getvalue())
+
+        try:
+            pushed = await repo.commit_push(commit_msg, safe=True)
+        except Exception:
+            if attempt < max_attempts:
+                logger.warning("Push failed on attempt %d/%d, will re-fetch and retry", attempt, max_attempts)
+                continue
+            logger.error("Failed to push status update after %d attempts for assembly %s", max_attempts, assembly)
+            raise
+
+        if pushed:
+            logger.info("Pushed status update: %s.%s=%s for assembly %s", "status", status_key, status_value, assembly)
+        else:
+            logger.info("No changes to push for status update of assembly %s", assembly)
         return
-
-    release_entry = releases_config["releases"].get(assembly)
-    if release_entry is None:
-        logger.warning("Assembly %s not found in releases.yml; skipping status update", assembly)
-        return
-
-    if "status" not in release_entry:
-        release_entry["status"] = {}
-    release_entry["status"][status_key] = status_value
-
-    from io import StringIO
-    out = StringIO()
-    yaml_handler.dump(releases_config, out)
-    await repo.write_file("releases.yml", out.getvalue())
-
-    commit_msg = f"Update status.{status_key}={status_value} for assembly {assembly}"
-    pushed = await repo.commit_push(commit_msg, safe=True)
-    if pushed:
-        logger.info("Pushed status update: %s.%s=%s for assembly %s", "status", status_key, status_value, assembly)
-    else:
-        logger.info("No changes to push for status update of assembly %s", assembly)
 
 
 def get_assembly_type(releases_config: Dict, assembly_name: str):
