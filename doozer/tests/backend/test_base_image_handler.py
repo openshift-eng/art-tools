@@ -323,6 +323,92 @@ class TestBaseImageHandler(IsolatedAsyncioTestCase):
     @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
     @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
     @patch("doozerlib.backend.base_image_handler.resolve_konflux_kubeconfig_by_product")
+    async def test_snapshot_name_includes_component_name(
+        self, mock_kubeconfig, mock_namespace, mock_konflux_client_init
+    ):
+        mock_namespace.return_value = "ocp-art-tenant"
+        mock_kubeconfig.return_value = "/path/to/kubeconfig"
+        mock_konflux_client_init.return_value = AsyncMock()
+
+        handler = BaseImageHandler(self.runtime, dry_run=True)
+
+        component = {"name": "ose-4-22-openshift-base-rhel9", "containerImage": "quay.io/test:latest"}
+
+        with patch("doozerlib.backend.base_image_handler.get_utc_now_formatted_str", return_value="20260529104357"):
+            name = await handler._snapshot_from_component(component)
+
+        self.assertEqual(name, "openshift-4-22-ose-4-22-openshift-base-rhel9-20260529104357")
+
+    @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_kubeconfig_by_product")
+    async def test_snapshot_name_within_63_char_limit(self, mock_kubeconfig, mock_namespace, mock_konflux_client_init):
+        mock_namespace.return_value = "ocp-art-tenant"
+        mock_kubeconfig.return_value = "/path/to/kubeconfig"
+        mock_konflux_client_init.return_value = AsyncMock()
+
+        handler = BaseImageHandler(self.runtime, dry_run=True)
+
+        component = {"name": "a" * 100, "containerImage": "quay.io/test:latest"}
+
+        with patch("doozerlib.backend.base_image_handler.get_utc_now_formatted_str", return_value="20260529104357"):
+            name = await handler._snapshot_from_component(component)
+
+        self.assertLessEqual(len(name), 63)
+        self.assertTrue(name.startswith("openshift-4-22-"))
+        self.assertTrue(name.endswith("-20260529104357"))
+        self.assertNotRegex(name, r'--')
+
+    @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_kubeconfig_by_product")
+    async def test_different_components_produce_different_snapshot_names(
+        self, mock_kubeconfig, mock_namespace, mock_konflux_client_init
+    ):
+        mock_namespace.return_value = "ocp-art-tenant"
+        mock_kubeconfig.return_value = "/path/to/kubeconfig"
+        mock_konflux_client_init.return_value = AsyncMock()
+
+        handler = BaseImageHandler(self.runtime, dry_run=True)
+
+        comp1 = {"name": "ose-4-22-openshift-base-rhel9", "containerImage": "quay.io/test:latest"}
+        comp2 = {"name": "ose-4-22-openshift-base-nodejs-rhel9", "containerImage": "quay.io/test:latest"}
+
+        with patch("doozerlib.backend.base_image_handler.get_utc_now_formatted_str", return_value="20260529104357"):
+            name1 = await handler._snapshot_from_component(comp1)
+            name2 = await handler._snapshot_from_component(comp2)
+
+        self.assertNotEqual(name1, name2)
+
+    @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_kubeconfig_by_product")
+    async def test_release_generate_name_includes_component(
+        self, mock_kubeconfig, mock_namespace, mock_konflux_client_init
+    ):
+        mock_namespace.return_value = "ocp-art-tenant"
+        mock_kubeconfig.return_value = "/path/to/kubeconfig"
+
+        konflux_client = AsyncMock()
+        created_release = MagicMock()
+        created_release.metadata.name = "test-release"
+        konflux_client._create.return_value = created_release
+        konflux_client.resource_url = MagicMock(return_value="https://konflux.example/releases/test-release")
+        mock_konflux_client_init.return_value = konflux_client
+
+        handler = BaseImageHandler(self.runtime, dry_run=False)
+
+        with patch.object(handler, "_wait_for_snapshot_availability", new=AsyncMock(return_value=True)):
+            await handler._create_release_from_snapshot(
+                "test-snapshot", self.default_input, "ose-4-22-openshift-base-rhel9"
+            )
+
+        release_obj = konflux_client._create.await_args.args[0]
+        self.assertEqual(release_obj["metadata"]["generateName"], "openshift-4-22-ose-4-22-openshift-base-rhel9-")
+
+    @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_kubeconfig_by_product")
     async def test_create_release_from_snapshot_rhmtc_uses_product_plan_and_application(
         self, mock_kubeconfig, mock_namespace, mock_konflux_client_init
     ):

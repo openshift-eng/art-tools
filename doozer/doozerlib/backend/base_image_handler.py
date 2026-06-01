@@ -24,6 +24,13 @@ from doozerlib.backend.konflux_client import API_VERSION, KIND_RELEASE, KIND_REL
 from kubernetes.dynamic import exceptions
 
 
+def _truncate_for_k8s_name(name: str, max_len: int) -> str:
+    """Truncate *name* to *max_len* chars, stripping any trailing dash."""
+    if len(name) <= max_len:
+        return name
+    return name[:max_len].rstrip('-')
+
+
 def _software_lifecycle_phase(runtime) -> Optional[str]:
     """Return group.yml software_lifecycle.phase when configured on the runtime."""
     group_config = getattr(runtime, 'group_config', None)
@@ -157,7 +164,7 @@ class BaseImageHandler:
             self.logger.error("Failed to create snapshot")
             return None
 
-        result = await self._create_release_from_snapshot(snapshot_name, snapshot_input)
+        result = await self._create_release_from_snapshot(snapshot_name, snapshot_input, component["name"])
         if not result:
             # Release creation failed, but we have the snapshot - return partial result with snapshot URL for tracking
             snapshot_url = self._get_snapshot_url(snapshot_name)
@@ -234,7 +241,8 @@ class BaseImageHandler:
                 raise ValueError(f"Group name '{self.runtime.group}' produces invalid normalized name for Kubernetes")
 
             timestamp = get_utc_now_formatted_str()
-            snapshot_name = f"{group_safe}-base-image-{timestamp}"
+            comp_name = _truncate_for_k8s_name(component["name"], 63 - len(group_safe) - len(timestamp) - 2)
+            snapshot_name = f"{group_safe}-{comp_name}-{timestamp}"
 
             if self.dry_run:
                 self.logger.info(f"[DRY-RUN] Would create snapshot {snapshot_name}")
@@ -277,7 +285,7 @@ class BaseImageHandler:
             return None
 
     async def _create_release_from_snapshot(
-        self, snapshot_name: str, snapshot_input: BaseImageSnapshotInput
+        self, snapshot_name: str, snapshot_input: BaseImageSnapshotInput, component_name: str = ""
     ) -> Optional[Tuple[str, str]]:
         """
         Create Konflux Release from snapshot using the product's silent base-image ReleasePlan.
@@ -285,6 +293,7 @@ class BaseImageHandler:
         Args:
             snapshot_name: Snapshot resource name.
             snapshot_input: Base-image component input (NVR and distgit key stored on Release annotations).
+            component_name: Konflux component name, included in the Release generateName for traceability.
 
         Returns:
             ``(release_name, release_console_url)`` or ``None`` on failure.
@@ -316,8 +325,10 @@ class BaseImageHandler:
             if job_url := os.getenv("BUILD_URL"):
                 release_annotations["art.redhat.com/job-url"] = job_url
 
+            comp_safe = _truncate_for_k8s_name(component_name, 248 - len(group_safe) - 1) if component_name else ""
+            generate_name = f"{group_safe}-{comp_safe}-" if comp_safe else f"{group_safe}-base-image-release-"
             release_metadata = {
-                "generateName": f"{group_safe}-base-image-release-",
+                "generateName": generate_name,
                 "namespace": self.namespace,
                 "labels": {
                     "appstudio.openshift.io/application": self.base_image_application,
