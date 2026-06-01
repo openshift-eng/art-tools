@@ -141,6 +141,8 @@ class KonfluxImageBuilder:
             "has_olm_bundle": 1 if metadata.is_olm_operator else 0,
             "ec_failed": "false",
             "ec_pipeline_url": "",
+            "build_pipeline_url": "",
+            "release_pipeline": "",
             "base_image_release_failed": "false",
         }
         try:
@@ -249,6 +251,7 @@ class KonfluxImageBuilder:
                 pipelinerun_name = pipelinerun_info.name
                 record["task_id"] = pipelinerun_name
                 record["task_url"] = self._konflux_client.resource_url(pipelinerun_info.to_dict())
+                record["build_pipeline_url"] = record["task_url"]  # Store build pipeline URL for failure tracking
                 await self.update_konflux_db(
                     metadata,
                     build_repo,
@@ -377,6 +380,7 @@ class KonfluxImageBuilder:
                         )
                         if release_result:
                             logger.info("Base image release succeeded for %s, persisting build record", nvr)
+                            record["release_pipeline"] = release_result.release_pipeline
                         else:
                             logger.error(
                                 "Base image release failed for %s, persisting build record as %s",
@@ -384,6 +388,8 @@ class KonfluxImageBuilder:
                                 KonfluxBuildOutcome.RELEASE_ERROR,
                             )
                             record["base_image_release_failed"] = "true"
+                            if release_result and release_result.release_pipeline:
+                                record["release_pipeline"] = release_result.release_pipeline
                         outcome = KonfluxBuildOutcome.SUCCESS if release_result else KonfluxBuildOutcome.RELEASE_ERROR
 
                     build_record = await self.update_konflux_db(

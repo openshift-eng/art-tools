@@ -495,13 +495,14 @@ class OcpPipeline:
             ]
         elif self.build_images.lower() == 'only':
             successful_images = [image for image in self.build_plan.images_included if image not in failed_images]
+        group = f'openshift-{self.version}'
         await asyncio.gather(
-            *[reset_fail_counter(f'count:rebase-failure:brew:{self.version}:{image}') for image in successful_images]
+            *[reset_fail_counter(f'count:rebase-failure:brew:{group}:{image}') for image in successful_images]
         )
 
         # Increment fail counters for failing images.
         await asyncio.gather(
-            *[increment_fail_counter(f'count:rebase-failure:brew:{self.version}:{image}') for image in failed_images]
+            *[increment_fail_counter(f'count:rebase-failure:brew:{group}:{image}') for image in failed_images]
         )
 
     def _handle_image_build_failures(self):

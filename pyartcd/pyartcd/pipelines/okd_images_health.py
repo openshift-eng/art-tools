@@ -131,8 +131,9 @@ class ImagesHealthPipeline:
             version (str): OKD version (e.g., "4.21")
         """
         # Fetch all rebase failures from Redis
+        group = f'okd-{version}'
         all_failures = await util.get_rebase_failures(
-            version=version,
+            group=group,
             branches=['okd-rebase-failure'],
             build_systems=['konflux'],
             logger=self.runtime.logger,

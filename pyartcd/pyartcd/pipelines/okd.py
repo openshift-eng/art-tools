@@ -309,18 +309,16 @@ class KonfluxOkdPipeline:
                     f"Unknown build strategy: {self.build_plan.image_build_strategy}. Valid strategies: {[s.value for s in BuildStrategy]}"
                 )
 
+        group = f'okd-{self.version}'
         await asyncio.gather(
-            *[
-                reset_fail_counter(f'count:okd-rebase-failure:konflux:{self.version}:{image}')
-                for image in successful_images
-            ]
+            *[reset_fail_counter(f'count:okd-rebase-failure:konflux:{group}:{image}') for image in successful_images]
         )
 
         # Increment fail counters for failing images
         job_url = os.getenv('BUILD_URL')
         await asyncio.gather(
             *[
-                increment_fail_counter(f'count:okd-rebase-failure:konflux:{self.version}:{image}', jenkins_url=job_url)
+                increment_fail_counter(f'count:okd-rebase-failure:konflux:{group}:{image}', jenkins_url=job_url)
                 for image in failed_images
             ]
         )

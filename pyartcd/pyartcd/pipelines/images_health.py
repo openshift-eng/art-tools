@@ -49,8 +49,8 @@ class ImagesHealthPipeline:
         self.slack_client = self.runtime.new_slack_client()
         self.scanned_versions = []
         self.rebase_failures = {}  # version -> {image: {failure_count, url, build_system}}
-        self.ec_failures = {}  # version -> {image: {failure_count, jenkins_url, nvr, ec_pipeline_url, ...}}
-        self.release_failures = {}  # version -> {image: {failure_count, jenkins_url, nvr, ...}}
+        self.ec_failures = {}  # version -> {image: {failure_count, jenkins_url, nvr, pipeline_url, ...}}
+        self.release_failures = {}  # version -> {image: {failure_count, jenkins_url, nvr, pipeline_url, ...}}
         self.jira_tickets: dict[tuple[str, str], str] = {}  # (image_name, group) -> ticket key
         self._valid_images_cache: dict[str, set[str]] = {}
 
@@ -158,8 +158,9 @@ class ImagesHealthPipeline:
             version (str): OCP version (e.g., "4.18")
         """
         # Fetch all rebase failures from Redis
+        group = f'openshift-{version}'
         all_failures = await util.get_rebase_failures(
-            version=version,
+            group=group,
             branches=['rebase-failure'],
             build_systems=['brew', 'konflux'],
             logger=self.runtime.logger,
@@ -527,9 +528,9 @@ class ImagesHealthPipeline:
         )
         if jenkins_url:
             description += f"*Last failure job:* {jenkins_url}\n"
-        ec_pipeline_url = failure_data.get('ec_pipeline_url', '')
-        if ec_pipeline_url:
-            description += f"*EC pipeline:* {ec_pipeline_url}\n"
+        pipeline_url = failure_data.get('pipeline_url', '')
+        if pipeline_url:
+            description += f"*Pipeline:* {pipeline_url}\n"
         return description
 
     def _jira_link(self, concern: dict) -> str:
@@ -592,9 +593,9 @@ class ImagesHealthPipeline:
             report += f'*EC Verification Failures ({len(ec_failures)}):*\n'
             for image_name, failure_info in sorted(ec_failures.items()):
                 report += self._format_redis_failure_line(image_name, failure_info)
-                ec_url = failure_info.get('ec_pipeline_url', '')
-                if ec_url:
-                    report += f' | {self.url_text(ec_url, "EC pipeline")}'
+                pipeline_url = failure_info.get('pipeline_url', '')
+                if pipeline_url:
+                    report += f' | {self.url_text(pipeline_url, "Pipeline")}'
                 report += '\n'
             report += '\n'
 
@@ -687,9 +688,9 @@ class ImagesHealthPipeline:
                 message += f'\n`{image_name}`:'
                 for failure in failures:
                     line = f'\n  • {self._format_forum_redis_failure_inline(failure)}'
-                    ec_url = failure.get('ec_pipeline_url', '')
-                    if ec_url:
-                        line += f' | {self.url_text(ec_url, "EC pipeline")}'
+                    pipeline_url = failure.get('pipeline_url', '')
+                    if pipeline_url:
+                        line += f' | {self.url_text(pipeline_url, "Pipeline")}'
                     message += line
             await self.slack_client.say(
                 message, thread_ts=response['ts'], link_build_url=False, unfurl_links=False, unfurl_media=False

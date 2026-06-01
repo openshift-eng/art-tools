@@ -221,15 +221,16 @@ class KonfluxOcpPipeline:
                 raise ValueError(
                     f"Unknown build strategy: {self.build_plan.image_build_strategy}. Valid strategies: {[s.value for s in BuildStrategy]}"
                 )
+        group = f'openshift-{self.version}'
         await asyncio.gather(
-            *[reset_fail_counter(f'count:rebase-failure:konflux:{self.version}:{image}') for image in successful_images]
+            *[reset_fail_counter(f'count:rebase-failure:konflux:{group}:{image}') for image in successful_images]
         )
 
         # Increment fail counters only for images that failed rebase directly
         job_url = os.getenv('BUILD_URL')
         await asyncio.gather(
             *[
-                increment_fail_counter(f'count:rebase-failure:konflux:{self.version}:{image}', jenkins_url=job_url)
+                increment_fail_counter(f'count:rebase-failure:konflux:{group}:{image}', jenkins_url=job_url)
                 for image in failed_images
             ]
         )
@@ -298,6 +299,7 @@ class KonfluxOcpPipeline:
                     f'count:build-failure:konflux:{group}:{image}',
                     jenkins_url=job_url,
                     nvr=failed_entries.get(image, {}).get('nvrs'),
+                    pipeline_url=failed_entries.get(image, {}).get('build_pipeline_url'),
                 )
                 for image in build_failed_images
             ],
@@ -306,7 +308,7 @@ class KonfluxOcpPipeline:
                     f'count:ec-failure:konflux:{group}:{image}',
                     jenkins_url=job_url,
                     nvr=failed_entries.get(image, {}).get('nvrs'),
-                    ec_pipeline_url=failed_entries.get(image, {}).get('ec_pipeline_url'),
+                    pipeline_url=failed_entries.get(image, {}).get('ec_pipeline_url'),
                 )
                 for image in ec_failed_images
             ],
@@ -315,6 +317,7 @@ class KonfluxOcpPipeline:
                     f'count:release-failure:konflux:{group}:{image}',
                     jenkins_url=job_url,
                     nvr=failed_entries.get(image, {}).get('nvrs'),
+                    pipeline_url=failed_entries.get(image, {}).get('release_pipeline'),
                 )
                 for image in release_failed_images
             ],

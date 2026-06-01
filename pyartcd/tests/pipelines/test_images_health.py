@@ -96,9 +96,7 @@ class TestNotifyPublicChannel(IsolatedAsyncioTestCase):
             _make_concern("build-fail", "openshift-4.22", ConcernCode.FAILING_AT_LEAST_FOR.value),
         ]
         pipeline.ec_failures = {
-            '4.22': {
-                'ec-fail-image': {'failure_count': 3, 'jenkins_url': 'http://j/1', 'ec_pipeline_url': 'http://ec/1'}
-            },
+            '4.22': {'ec-fail-image': {'failure_count': 3, 'jenkins_url': 'http://j/1', 'pipeline_url': 'http://ec/1'}},
         }
         pipeline.release_failures = {
             '4.22': {'release-fail-image': {'failure_count': 2, 'jenkins_url': 'http://j/2'}},
@@ -151,7 +149,7 @@ class TestNotifyPublicChannel(IsolatedAsyncioTestCase):
         pipeline = _make_pipeline(self.mock_runtime, public_channel="#forum-ocp-art")
         pipeline.report = []
         pipeline.ec_failures = {
-            '4.22': {'image-a': {'failure_count': 5, 'jenkins_url': '', 'ec_pipeline_url': 'http://ec/1'}},
+            '4.22': {'image-a': {'failure_count': 5, 'jenkins_url': '', 'pipeline_url': 'http://ec/1'}},
         }
         mock_slack_client.say.return_value = {"ts": ""}
 
@@ -189,7 +187,7 @@ class TestNotifyReleaseChannel(IsolatedAsyncioTestCase):
             _make_concern("build-fail-2", "openshift-4.18", ConcernCode.FAILING_AT_LEAST_FOR.value),
         ]
         pipeline.ec_failures = {
-            '4.18': {'ec-img': {'failure_count': 3, 'jenkins_url': 'http://j/1', 'ec_pipeline_url': 'http://ec/1'}},
+            '4.18': {'ec-img': {'failure_count': 3, 'jenkins_url': 'http://j/1', 'pipeline_url': 'http://ec/1'}},
         }
         pipeline.release_failures = {
             '4.18': {'rel-img': {'failure_count': 1, 'jenkins_url': 'http://j/2'}},
@@ -294,7 +292,7 @@ class TestGetTypedFailures(IsolatedAsyncioTestCase):
     @patch("pyartcd.pipelines.images_health.util.get_counter_failures", new_callable=AsyncMock)
     async def test_ec_failures_filtered_by_valid_images(self, mock_get_failures):
         mock_get_failures.return_value = {
-            'valid-image': {'failure_count': 3, 'jenkins_url': 'http://j/1', 'ec_pipeline_url': 'http://ec/1'},
+            'valid-image': {'failure_count': 3, 'jenkins_url': 'http://j/1', 'pipeline_url': 'http://ec/1'},
             'invalid-image': {'failure_count': 1, 'jenkins_url': 'http://j/2'},
         }
         runtime = _make_runtime()
@@ -503,7 +501,7 @@ class TestSyncJira(TestCase):
                     'failure_count': 4,
                     'jenkins_url': 'http://j/1',
                     'nvr': 'ec-image-1.0-1',
-                    'ec_pipeline_url': 'http://ec/1',
+                    'pipeline_url': 'http://ec/1',
                 },
             },
         }
@@ -519,7 +517,7 @@ class TestSyncJira(TestCase):
         self.assertIn("art:image-ec-failure", ec_call[1]["labels"])
         self.assertIn("art:package:ec-image", ec_call[1]["labels"])
         self.assertIn("art:fail-count:4", ec_call[1]["labels"])
-        self.assertIn("EC pipeline", ec_call[1]["description"])
+        self.assertIn("Pipeline:", ec_call[1]["description"])
 
     def test_creates_ticket_for_release_failure(self):
         pipeline = self._make_pipeline()
