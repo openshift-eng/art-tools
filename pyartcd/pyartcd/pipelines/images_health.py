@@ -49,11 +49,18 @@ class ImagesHealthPipeline:
         self.slack_client = self.runtime.new_slack_client()
         self.scanned_versions = []
         self.rebase_failures = {}  # version -> {image: {failure_count, url, build_system}}
+        self.ec_failures = {}  # version -> {image: {failure_count, jenkins_url, nvr, ec_pipeline_url, ...}}
+        self.release_failures = {}  # version -> {image: {failure_count, jenkins_url, nvr, ...}}
         self.jira_tickets: dict[tuple[str, str], str] = {}  # (image_name, group) -> ticket key
+        self._valid_images_cache: dict[str, set[str]] = {}
 
     async def run(self):
         await asyncio.gather(*(self.get_report(v) for v in self.versions))
-        await asyncio.gather(*(self.get_rebase_failures(v) for v in self.versions))
+        await asyncio.gather(
+            *(self.get_rebase_failures(v) for v in self.versions),
+            *(self.get_ec_failures(v) for v in self.versions),
+            *(self.get_release_failures(v) for v in self.versions),
+        )
         self.runtime.logger.info('Found %s concerns', len(self.report))
 
         if self._sync_jira and self.assembly == "stream":
@@ -185,6 +192,7 @@ class ImagesHealthPipeline:
     async def _get_valid_images(self, version: str, doozer_working: str) -> set[str]:
         """
         Get the set of valid image names for a given version from ocp-build-data.
+        Results are cached per version to avoid duplicate doozer subprocess calls.
 
         Arg(s):
             version (str): OCP version (e.g., "4.18")
@@ -192,6 +200,9 @@ class ImagesHealthPipeline:
         Return Value(s):
             set[str]: Set of valid image distgit keys
         """
+        if version in self._valid_images_cache:
+            return self._valid_images_cache[version]
+
         group_param = f'--group=openshift-{version}'
         if self.data_gitref:
             group_param += f'@{self.data_gitref}'
@@ -210,32 +221,146 @@ class ImagesHealthPipeline:
 
         try:
             _, out, _ = await exectools.cmd_gather_async(cmd, stderr=None)
-            # Parse the output - one image name per line
             valid_images = {line.strip() for line in out.strip().split('\n') if line.strip()}
             self.runtime.logger.info('Found %d valid images for openshift-%s', len(valid_images), version)
+            self._valid_images_cache[version] = valid_images
             return valid_images
         except Exception as e:
             self.runtime.logger.warning(
                 'Failed to fetch valid images for openshift-%s: %s. Proceeding without filtering.', version, e
             )
-            # On failure, return empty set to fail safe (don't process any images from Redis)
             return set()
+
+    async def _get_typed_failures(self, version: str, counter_type: str) -> dict:
+        """
+        Fetch failure data from Redis for a specific counter type and version.
+        Filters out images that don't exist in current ocp-build-data.
+
+        Arg(s):
+            version (str): OCP version (e.g., "4.18")
+            counter_type (str): Redis counter type (e.g., 'ec-failure', 'release-failure')
+        Return Value(s):
+            dict: {image_name: {failure_count, jenkins_url, nvr, ...}}
+        """
+        group = f'openshift-{version}'
+        all_failures = await util.get_counter_failures(counter_type, group=group, logger=self.runtime.logger)
+
+        if not all_failures:
+            return {}
+
+        doozer_working = f'{self.doozer_working}-{version}'
+        valid_images = await self._get_valid_images(version, doozer_working)
+
+        filtered_failures = {}
+        skipped_images = []
+
+        for image_name, failure_info in all_failures.items():
+            if image_name in valid_images:
+                filtered_failures[image_name] = failure_info
+            else:
+                skipped_images.append(image_name)
+
+        if skipped_images:
+            self.runtime.logger.warning(
+                'Filtered out %d %s(s) from Redis that do not exist in %s metadata: %s',
+                len(skipped_images),
+                counter_type,
+                group,
+                ', '.join(sorted(skipped_images)),
+            )
+
+        return filtered_failures
+
+    async def get_ec_failures(self, version: str):
+        """
+        Fetch EC verification failure data from Redis for a specific version.
+
+        Arg(s):
+            version (str): OCP version (e.g., "4.18")
+        """
+        self.ec_failures[version] = await self._get_typed_failures(version, 'ec-failure')
+
+    async def get_release_failures(self, version: str):
+        """
+        Fetch release-to-authz failure data from Redis for a specific version.
+
+        Arg(s):
+            version (str): OCP version (e.g., "4.18")
+        """
+        self.release_failures[version] = await self._get_typed_failures(version, 'release-failure')
 
     def sync_jira(self):
         jira_client = self.runtime.new_jira_client()
+        scanned_groups = {f"openshift-{v}" for v in self.scanned_versions}
 
-        # Build current failure set keyed by (image_name, group)
-        current_failures: dict[tuple[str, str], dict] = {}
+        # Sync build failure tickets (from doozer concerns)
+        build_failures: dict[tuple[str, str], dict] = {}
         for concern in self.report:
             if concern['code'] in FAILURE_CODES:
                 key = (concern['image_name'], concern['group'])
-                current_failures[key] = concern
+                build_failures[key] = concern
+        self._sync_jira_for_label(
+            jira_client,
+            'art:image-build-failure',
+            build_failures,
+            scanned_groups,
+            summary_prefix='Image build failure',
+            description_builder=self._build_description,
+            label_builder=self._build_failure_labels,
+            updater=self._update_build_failure_ticket,
+        )
 
-        # Fetch all open image-build-failure tickets
-        jql = 'project = ART AND labels = "art:image-build-failure" AND statusCategory != Done'
+        # Sync EC failure tickets (from Redis)
+        ec_failures = self._redis_failures_to_jira_dict(self.ec_failures)
+        self._sync_jira_for_label(
+            jira_client,
+            'art:image-ec-failure',
+            ec_failures,
+            scanned_groups,
+            summary_prefix='Image EC verification failure',
+            description_builder=self._build_redis_description,
+            label_builder=self._redis_failure_labels,
+        )
+
+        # Sync release failure tickets (from Redis)
+        release_failures = self._redis_failures_to_jira_dict(self.release_failures)
+        self._sync_jira_for_label(
+            jira_client,
+            'art:image-release-failure',
+            release_failures,
+            scanned_groups,
+            summary_prefix='Image release to authz failure',
+            description_builder=self._build_redis_description,
+            label_builder=self._redis_failure_labels,
+        )
+
+    def _sync_jira_for_label(
+        self,
+        jira_client: JIRAClient,
+        failure_label: str,
+        current_failures: dict[tuple[str, str], dict],
+        scanned_groups: set[str],
+        summary_prefix: str,
+        description_builder,
+        label_builder,
+        updater=None,
+    ):
+        """
+        Generic Jira ticket sync for a specific failure label type.
+
+        Arg(s):
+            jira_client (JIRAClient): Jira client instance
+            failure_label (str): Jira label for this failure type (e.g., 'art:image-build-failure')
+            current_failures (dict): {(image_name, group): failure_data}
+            scanned_groups (set[str]): Groups that were scanned this run
+            summary_prefix (str): Prefix for ticket summary
+            description_builder (callable): Function to build ticket description from failure data
+            label_builder (callable): Function to build labels list from failure data
+            updater (callable): Optional custom updater for existing tickets
+        """
+        jql = f'project = ART AND labels = "{failure_label}" AND statusCategory != Done'
         open_tickets = jira_client.search_issues(jql, maxResults=False)
 
-        # Index open tickets by (image_name, group) extracted from labels
         ticket_index: dict[tuple[str, str], object] = {}
         for ticket in open_tickets:
             image_name = None
@@ -248,19 +373,34 @@ class ImagesHealthPipeline:
             if image_name and group:
                 ticket_index[(image_name, group)] = ticket
 
-        # Record existing tickets and create missing ones
-        scanned_groups = {f"openshift-{v}" for v in self.scanned_versions}
-        for (image_name, group), concern in current_failures.items():
+        for (image_name, group), failure_data in current_failures.items():
             if (image_name, group) in ticket_index:
                 ticket = ticket_index[(image_name, group)]
                 self.jira_tickets[(image_name, group)] = ticket.key
                 _LOGGER.info("Ticket already exists for %s (%s): %s — updating", image_name, group, ticket.key)
-                self._update_existing_ticket(ticket, concern)
+                if updater:
+                    updater(ticket, failure_data)
+                else:
+                    ticket.update(
+                        fields={
+                            "labels": label_builder(failure_label, image_name, group, failure_data),
+                            "description": description_builder(failure_data),
+                        }
+                    )
                 continue
-            new_ticket = self._create_failure_ticket(jira_client, concern)
-            self.jira_tickets[(image_name, group)] = new_ticket.key
 
-        # Close resolved tickets (with scope guard)
+            labels = label_builder(failure_label, image_name, group, failure_data)
+            ticket = jira_client.create_issue(
+                project="ART",
+                issue_type="Task",
+                summary=f"{summary_prefix}: {image_name} ({group})",
+                description=description_builder(failure_data),
+                labels=labels,
+                components=["daily-ops"],
+            )
+            _LOGGER.info("Created ticket %s for %s (%s)", ticket.key, image_name, group)
+            self.jira_tickets[(image_name, group)] = ticket.key
+
         for (image_name, group), ticket in ticket_index.items():
             if group not in scanned_groups:
                 _LOGGER.info("Skipping close check for %s (%s): version not scanned", image_name, group)
@@ -273,8 +413,27 @@ class ImagesHealthPipeline:
                 jira_client.close_task(ticket.key)
 
     @staticmethod
+    def _redis_failures_to_jira_dict(failures_by_version: dict) -> dict[tuple[str, str], dict]:
+        """
+        Convert version-keyed Redis failures to (image_name, group) keyed dict for Jira sync.
+
+        Arg(s):
+            failures_by_version (dict): {version: {image: {failure_count, ...}}}
+        Return Value(s):
+            dict: {(image_name, group): failure_data}
+        """
+        result = {}
+        for version, failures in failures_by_version.items():
+            group = f'openshift-{version}'
+            for image_name, failure_info in failures.items():
+                result[(image_name, group)] = {**failure_info, 'image_name': image_name, 'group': group}
+        return result
+
+    @staticmethod
     def _get_fail_count(concern: dict) -> int:
-        """Return the number of consecutive build failures from a concern."""
+        """
+        Return the number of consecutive build failures from a concern.
+        """
         if concern['code'] == ConcernCode.FAILING_AT_LEAST_FOR.value:
             return LIMIT_BUILD_RESULTS
         return concern['latest_success_idx']
@@ -283,8 +442,37 @@ class ImagesHealthPipeline:
     def _fail_count_label(concern: dict) -> str:
         return f"art:fail-count:{ImagesHealthPipeline._get_fail_count(concern)}"
 
-    def _update_existing_ticket(self, ticket, concern: dict):
-        """Update fail-count label and description on an existing ticket."""
+    @staticmethod
+    def _build_failure_labels(failure_label: str, image_name: str, group: str, concern: dict) -> list[str]:
+        """
+        Build labels for a build failure Jira ticket.
+        """
+        return [
+            failure_label,
+            f"art:package:{image_name}",
+            f"art:group:{group}",
+            ImagesHealthPipeline._fail_count_label(concern),
+        ]
+
+    @staticmethod
+    def _redis_failure_labels(failure_label: str, image_name: str, group: str, failure_data: dict) -> list[str]:
+        """
+        Build labels for an EC or release failure Jira ticket.
+        """
+        labels = [
+            failure_label,
+            f"art:package:{image_name}",
+            f"art:group:{group}",
+        ]
+        failure_count = failure_data.get('failure_count', 0)
+        if failure_count:
+            labels.append(f"art:fail-count:{failure_count}")
+        return labels
+
+    def _update_build_failure_ticket(self, ticket, concern: dict):
+        """
+        Update fail-count label and description on an existing build failure ticket.
+        """
         new_label = self._fail_count_label(concern)
         labels = [label for label in ticket.fields.labels if not label.startswith("art:fail-count:")]
         if new_label not in labels:
@@ -319,27 +507,30 @@ class ImagesHealthPipeline:
             description += f"*Last successful build:* {last_good_url}\n"
         return description
 
-    def _create_failure_ticket(self, jira_client: JIRAClient, concern: dict):
-        image_name = concern['image_name']
-        group = concern['group']
+    @staticmethod
+    def _build_redis_description(failure_data: dict) -> str:
+        """
+        Build a Jira ticket description from Redis failure data (EC or release failures).
+        """
+        image_name = failure_data.get('image_name', 'N/A')
+        group = failure_data.get('group', 'N/A')
+        failure_count = failure_data.get('failure_count', 0)
+        nvr = failure_data.get('nvr', 'N/A')
+        jenkins_url = failure_data.get('jenkins_url', '')
 
-        labels = [
-            "art:image-build-failure",
-            f"art:package:{image_name}",
-            f"art:group:{group}",
-            self._fail_count_label(concern),
-        ]
-
-        ticket = jira_client.create_issue(
-            project="ART",
-            issue_type="Task",
-            summary=f"Image build failure: {image_name} ({group})",
-            description=self._build_description(concern),
-            labels=labels,
-            components=["daily-ops"],
+        description = (
+            f"Image failure detected by images-health.\n\n"
+            f"*Image:* {image_name}\n"
+            f"*Group:* {group}\n"
+            f"*NVR:* {nvr}\n"
+            f"*Consecutive failures:* {failure_count}\n"
         )
-        _LOGGER.info("Created ticket %s for %s (%s)", ticket.key, image_name, group)
-        return ticket
+        if jenkins_url:
+            description += f"*Last failure job:* {jenkins_url}\n"
+        ec_pipeline_url = failure_data.get('ec_pipeline_url', '')
+        if ec_pipeline_url:
+            description += f"*EC pipeline:* {ec_pipeline_url}\n"
+        return description
 
     def _jira_link(self, concern: dict) -> str:
         key = self.jira_tickets.get((concern['image_name'], concern['group']))
@@ -358,45 +549,64 @@ class ImagesHealthPipeline:
             and concern['code'] != ConcernCode.LATEST_BUILD_SUCCEEDED.value
         ]
 
-        # Get rebase failures for this version
         rebase_failures = self.rebase_failures.get(version, {})
+        ec_failures = self.ec_failures.get(version, {})
+        release_failures = self.release_failures.get(version, {})
 
         version_tag = f'`openshift-{version}`'
         if self.assembly != 'stream':
             version_tag += f' (assembly `{self.assembly}`)'
 
-        # If no concerns and no rebase failures, report all healthy
-        if not concerns and not rebase_failures:
+        if not concerns and not rebase_failures and not ec_failures and not release_failures:
             await self.slack_client.say(f':white_check_mark: All images are healthy for {version_tag}')
             return
 
-        # Build summary message
         summary_parts = []
         if concerns:
-            summary_parts.append(self.get_component_tag(concerns))
+            n = len(concerns)
+            summary_parts.append(f'{n} image{"s" if n > 1 else ""} failed to build')
+        if ec_failures:
+            n = len(ec_failures)
+            summary_parts.append(f'{n} image{"s" if n > 1 else ""} failed EC verification')
+        if release_failures:
+            n = len(release_failures)
+            summary_parts.append(f'{n} image{"s" if n > 1 else ""} failed to be released to authz')
         if rebase_failures:
-            rebase_count = len(rebase_failures)
-            summary_parts.append(f'{rebase_count} image{"s" if rebase_count > 1 else ""} with rebase failures')
+            n = len(rebase_failures)
+            summary_parts.append(f'{n} image{"s" if n > 1 else ""} with rebase failures')
 
-        # Post parent message
         issues = '\n- '.join(summary_parts)
         response = await self.slack_client.say(
             f':alert: There are some issues to look into for {version_tag}:\n- {issues}'
         )
 
-        # Post detailed report in thread
         report = ''
 
-        # Add build concerns
         if concerns:
-            report += '*Build Issues:*\n'
+            report += f'*Build Failures ({len(concerns)}):*\n'
             for concern in concerns:
                 report += f'{self.get_message_for_release(concern)}\n'
             report += '\n'
 
-        # Add rebase failures
+        if ec_failures:
+            report += f'*EC Verification Failures ({len(ec_failures)}):*\n'
+            for image_name, failure_info in sorted(ec_failures.items()):
+                report += self._format_redis_failure_line(image_name, failure_info)
+                ec_url = failure_info.get('ec_pipeline_url', '')
+                if ec_url:
+                    report += f' | {self.url_text(ec_url, "EC pipeline")}'
+                report += '\n'
+            report += '\n'
+
+        if release_failures:
+            report += f'*Release to Authz Failures ({len(release_failures)}):*\n'
+            for image_name, failure_info in sorted(release_failures.items()):
+                report += self._format_redis_failure_line(image_name, failure_info)
+                report += '\n'
+            report += '\n'
+
         if rebase_failures:
-            report += '*Rebase Failures:*\n'
+            report += f'*Rebase Failures ({len(rebase_failures)}):*\n'
             for image_name, failure_info in sorted(rebase_failures.items()):
                 failure_count = failure_info.get('failure_count', 0)
                 jenkins_url = failure_info.get('jenkins_url', '')
@@ -414,45 +624,44 @@ class ImagesHealthPipeline:
         self.slack_client.bind_channel(self.public_channel)
 
         # Group build concerns by image name
-        image_concerns = {}
+        image_build_failures = {}
         for concern in self.report:
-            if (
-                concern['code'] == ConcernCode.NEVER_BUILT.value
-                or concern['code'] == ConcernCode.LATEST_BUILD_SUCCEEDED.value
-            ):
-                # We don't report NEVER_BUILT concerns to forum-ocp-art. Latest built succeeded is not a concern.
+            if concern['code'] in (ConcernCode.NEVER_BUILT.value, ConcernCode.LATEST_BUILD_SUCCEEDED.value):
                 continue
             image_name = concern['image_name']
-            image_concerns.setdefault(image_name, []).append(concern)
+            image_build_failures.setdefault(image_name, []).append(concern)
+
+        # Group EC failures by image name across all versions
+        image_ec_failures = self._group_failures_by_image(self.ec_failures)
+
+        # Group release failures by image name across all versions
+        image_release_failures = self._group_failures_by_image(self.release_failures)
 
         # Group rebase failures by image name across all versions
-        image_rebase_failures = {}
-        for version, failures in self.rebase_failures.items():
-            for image_name, failure_info in failures.items():
-                if image_name not in image_rebase_failures:
-                    image_rebase_failures[image_name] = []
-                image_rebase_failures[image_name].append(
-                    {
-                        'version': version,
-                        'failure_count': failure_info.get('failure_count', 0),
-                        'jenkins_url': failure_info.get('jenkins_url', ''),
-                        'build_system': failure_info.get('build_system', 'unknown'),
-                    }
-                )
+        image_rebase_failures = self._group_failures_by_image(self.rebase_failures)
 
-        # If no concerns and no rebase failures, report all healthy
-        if not image_concerns and not image_rebase_failures:
+        if (
+            not image_build_failures
+            and not image_ec_failures
+            and not image_release_failures
+            and not image_rebase_failures
+        ):
             await self.slack_client.say(':white_check_mark: All images are healthy for all monitored releases')
             return
 
-        # Build summary message
         summary_parts = []
-        if image_concerns:
-            n_build_issues = len(image_concerns)
-            summary_parts.append(f'{n_build_issues} image{"s" if n_build_issues > 1 else ""} with build issues')
+        if image_build_failures:
+            n = len(image_build_failures)
+            summary_parts.append(f'{n} image{"s" if n > 1 else ""} with build failures')
+        if image_ec_failures:
+            n = len(image_ec_failures)
+            summary_parts.append(f'{n} image{"s" if n > 1 else ""} with EC verification failures')
+        if image_release_failures:
+            n = len(image_release_failures)
+            summary_parts.append(f'{n} image{"s" if n > 1 else ""} with release to authz failures')
         if image_rebase_failures:
-            n_rebase_issues = len(image_rebase_failures)
-            summary_parts.append(f'{n_rebase_issues} image{"s" if n_rebase_issues > 1 else ""} with rebase failures')
+            n = len(image_rebase_failures)
+            summary_parts.append(f'{n} image{"s" if n > 1 else ""} with rebase failures')
 
         issues = '\n- '.join(summary_parts)
         response = await self.slack_client.say(
@@ -460,33 +669,109 @@ class ImagesHealthPipeline:
             link_build_url=False,
         )
 
-        # Post detailed report in thread
-        # Build concerns
-        for image_name, concerns in image_concerns.items():
-            image_message = f'`{image_name}` (build issues):'
-            for concern in concerns:
-                image_message += f'\n• {self.get_message_for_forum(concern)}'
+        if image_build_failures:
+            n = len(image_build_failures)
+            message = f'*Build Failures ({n} image{"s" if n > 1 else ""}):*'
+            for image_name, concerns in sorted(image_build_failures.items()):
+                message += f'\n`{image_name}`:'
+                for concern in concerns:
+                    message += f'\n  • {self.get_message_for_forum(concern)}'
             await self.slack_client.say(
-                image_message, thread_ts=response['ts'], link_build_url=False, unfurl_links=False, unfurl_media=False
+                message, thread_ts=response['ts'], link_build_url=False, unfurl_links=False, unfurl_media=False
             )
 
-        # Rebase failures
-        for image_name, failures in sorted(image_rebase_failures.items()):
-            image_message = f'`{image_name}` (rebase failures):'
-            for failure in failures:
-                version = failure['version']
-                failure_count = failure['failure_count']
-                jenkins_url = failure['jenkins_url']
-                build_system = failure['build_system']
-                image_message += (
-                    f'\n• openshift-{version} ({build_system}): '
-                    f'Failed {failure_count} time{"s" if failure_count != 1 else ""}'
-                )
-                if jenkins_url:
-                    image_message += f' ({self.url_text(jenkins_url, "Last failure job")})'
+        if image_ec_failures:
+            n = len(image_ec_failures)
+            message = f'*EC Verification Failures ({n} image{"s" if n > 1 else ""}):*'
+            for image_name, failures in sorted(image_ec_failures.items()):
+                message += f'\n`{image_name}`:'
+                for failure in failures:
+                    line = f'\n  • {self._format_forum_redis_failure_inline(failure)}'
+                    ec_url = failure.get('ec_pipeline_url', '')
+                    if ec_url:
+                        line += f' | {self.url_text(ec_url, "EC pipeline")}'
+                    message += line
             await self.slack_client.say(
-                image_message, thread_ts=response['ts'], link_build_url=False, unfurl_links=False, unfurl_media=False
+                message, thread_ts=response['ts'], link_build_url=False, unfurl_links=False, unfurl_media=False
             )
+
+        if image_release_failures:
+            n = len(image_release_failures)
+            message = f'*Release to Authz Failures ({n} image{"s" if n > 1 else ""}):*'
+            for image_name, failures in sorted(image_release_failures.items()):
+                message += f'\n`{image_name}`:'
+                for failure in failures:
+                    message += f'\n  • {self._format_forum_redis_failure_inline(failure)}'
+            await self.slack_client.say(
+                message, thread_ts=response['ts'], link_build_url=False, unfurl_links=False, unfurl_media=False
+            )
+
+        if image_rebase_failures:
+            n = len(image_rebase_failures)
+            message = f'*Rebase Failures ({n} image{"s" if n > 1 else ""}):*'
+            for image_name, failures in sorted(image_rebase_failures.items()):
+                message += f'\n`{image_name}`:'
+                for failure in failures:
+                    message += f'\n  • {self._format_forum_redis_failure_inline(failure)}'
+            await self.slack_client.say(
+                message, thread_ts=response['ts'], link_build_url=False, unfurl_links=False, unfurl_media=False
+            )
+
+    @staticmethod
+    def _group_failures_by_image(failures_by_version: dict) -> dict[str, list[dict]]:
+        """
+        Group version-keyed Redis failures into an image-keyed structure.
+
+        Arg(s):
+            failures_by_version (dict): {version: {image: {failure_count, ...}}}
+        Return Value(s):
+            dict: {image_name: [{version, failure_count, jenkins_url, build_system, ...}, ...]}
+        """
+        grouped = {}
+        for version, failures in failures_by_version.items():
+            for image_name, failure_info in failures.items():
+                grouped.setdefault(image_name, []).append(
+                    {
+                        'version': version,
+                        **failure_info,
+                    }
+                )
+        return grouped
+
+    def _format_redis_failure_line(self, image_name: str, failure_info: dict) -> str:
+        """
+        Format a single Redis failure entry for the release channel thread.
+
+        Arg(s):
+            image_name (str): Image distgit key
+            failure_info (dict): Redis failure data with failure_count, jenkins_url, etc.
+        Return Value(s):
+            str: Formatted line (without trailing newline)
+        """
+        failure_count = failure_info.get('failure_count', 0)
+        jenkins_url = failure_info.get('jenkins_url', '')
+        line = f'- `{image_name}`: Failed {failure_count} time{"s" if failure_count != 1 else ""}'
+        if jenkins_url:
+            line += f' ({self.url_text(jenkins_url, "Last failure job")})'
+        return line
+
+    def _format_forum_redis_failure_inline(self, failure: dict) -> str:
+        """
+        Format a single Redis failure entry as inline text (no leading bullet/newline).
+
+        Arg(s):
+            failure (dict): Failure data with version, failure_count, jenkins_url, etc.
+        Return Value(s):
+            str: Formatted text fragment
+        """
+        version = failure.get('version', '?')
+        failure_count = failure.get('failure_count', 0)
+        jenkins_url = failure.get('jenkins_url', '')
+        build_system = failure.get('build_system', 'unknown')
+        line = f'openshift-{version} ({build_system}): Failed {failure_count} time{"s" if failure_count != 1 else ""}'
+        if jenkins_url:
+            line += f' ({self.url_text(jenkins_url, "Last failure job")})'
+        return line
 
     def get_message_for_release(self, concern: dict):
         """
@@ -573,15 +858,6 @@ class ImagesHealthPipeline:
         end_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
         return f'{ART_BUILD_HISTORY_URL}/?name=^{image_name}$&group={group}&assembly=stream&engine=konflux&dateRange={start_date}+to+{end_date}&outcome=success&outcome=failure'
 
-    @staticmethod
-    def get_component_tag(report):
-        n_components = len(report)
-
-        if n_components > 1:
-            return f'{n_components} components have failed!'
-        else:
-            return '1 component has failed!'
-
     def url_text(self, url, text):
         """
         Slack requires URLs to be encoded in a specific way when using the <url|text> format.
@@ -604,7 +880,7 @@ class ImagesHealthPipeline:
     '--send-to-public-channel',
     required=False,
     default='',
-    help='Slack channel to send public notification to (e.g. #forum-ocp-art). Leave blank to skip.',
+    help='Slack channel to send public notification to (e.g. #forum-ocp-art)',
 )
 @click.option(
     '--data-path',
