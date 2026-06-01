@@ -205,8 +205,7 @@ class TestBridgeBugMirroring(unittest.IsolatedAsyncioTestCase):
         slack_client.bind_channel = MagicMock()
         self.runtime.new_slack_client.return_value = slack_client
 
-        with self.assertRaises(ChildProcessError):
-            await self.pipeline.handle_bridge_bug_mirroring()
+        await self.pipeline.handle_bridge_bug_mirroring()
 
         slack_client.bind_channel.assert_called_once_with("openshift-4.23")
         slack_client.say.assert_awaited_once_with("Bridge bug mirroring failed for 4.23. Please investigate")

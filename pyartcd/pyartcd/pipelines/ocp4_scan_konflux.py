@@ -272,13 +272,7 @@ class Ocp4ScanPipeline:
     async def handle_bridge_bug_mirroring(self):
         """Run bridge bug mirroring for groups that enable it.
 
-        Returns:
-            None.
-
-        Raises:
-            ChildProcessError: If the `elliott find-bugs:bridge-mirror` command
-                fails. In non-dry-run mode, a Slack notification is sent before
-                the exception is re-raised.
+        Failures are logged and reported to Slack but do not fail the pipeline.
         """
         group = f"openshift-{self.version}"
         group_config = await util.load_group_config(
@@ -309,13 +303,12 @@ class Ocp4ScanPipeline:
 
         try:
             await exectools.cmd_assert_async(cmd)
-        except ChildProcessError:
-            if self.runtime.dry_run:
-                raise
-            slack_client = self.runtime.new_slack_client()
-            slack_client.bind_channel(f"openshift-{self.version}")
-            await slack_client.say(f"Bridge bug mirroring failed for {self.version}. Please investigate")
-            raise
+        except ChildProcessError as e:
+            self.logger.error("Bridge bug mirroring failed for %s: %s", self.version, e)
+            if not self.runtime.dry_run:
+                slack_client = self.runtime.new_slack_client()
+                slack_client.bind_channel(f"openshift-{self.version}")
+                await slack_client.say(f"Bridge bug mirroring failed for {self.version}. Please investigate")
 
 
 @cli.command('beta:konflux:ocp4-scan')
