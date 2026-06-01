@@ -18,7 +18,7 @@ lint: format-check pylint-imports
 	uv run ruff check --output-format concise
 
 pylint-imports:
-	uv run pylint --disable=all --enable=E0401,E0611 --score=no artcommon/ doozer/ elliott/ pyartcd/ ocp-build-data-validator/
+	uv run pylint --disable=all --enable=E0401,E0611 --score=no --jobs=0 artcommon/artcommonlib doozer/doozerlib elliott/elliottlib pyartcd/pyartcd ocp-build-data-validator/validator
 
 pylint:
 	uv run pylint --errors-only .
