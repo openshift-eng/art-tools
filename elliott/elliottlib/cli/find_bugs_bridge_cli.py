@@ -334,7 +334,12 @@ class FindBugsBridgeCli:
             metadata such as priority and security level.
         """
         assert self.target_tracker is not None
-        summary = f"{source_bug.summary} [bridge to {self.target_release}]"
+        suffix = f" [bridge to {self.target_release}]"
+        base = source_bug.summary or ""
+        max_base = 255 - len(suffix)
+        if len(base) > max_base:
+            base = base[: max_base - 3] + "..."
+        summary = f"{base}{suffix}"
         description = self._build_description(source_bug, image_meta)
         issue_type = getattr(source_bug.bug.fields.issuetype, "name", "Bug")
         components = [{"name": component.name} for component in getattr(source_bug.bug.fields, "components", [])]

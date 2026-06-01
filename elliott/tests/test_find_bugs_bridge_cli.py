@@ -193,6 +193,40 @@ class TestFindBugsBridgeCli(IsolatedAsyncioTestCase):
         self.assertIn("OCPBUGS-123", self.cli.invalid_bugs)
         self.assertIn("Expected exactly one bridge mirror", self.cli.invalid_bugs["OCPBUGS-123"][0])
 
+    def test_build_issue_fields_truncates_long_summary(self):
+        source_bug = MagicMock()
+        source_bug.summary = "A" * 300
+        source_bug.bug.fields.issuetype.name = "Bug"
+        source_bug.bug.fields.components = []
+        source_bug.bug.fields.description = ""
+        source_bug.bug.fields.priority = None
+        source_bug.bug.fields.security = None
+
+        image_meta = MagicMock()
+        image_meta.distgit_key = "test-image"
+
+        fields = self.cli._build_issue_fields(source_bug, image_meta)
+
+        self.assertLessEqual(len(fields["summary"]), 255)
+        self.assertTrue(fields["summary"].endswith(f" [bridge to {self.cli.target_release}]"))
+        self.assertIn("...", fields["summary"])
+
+    def test_build_issue_fields_short_summary_unchanged(self):
+        source_bug = MagicMock()
+        source_bug.summary = "Short title"
+        source_bug.bug.fields.issuetype.name = "Bug"
+        source_bug.bug.fields.components = []
+        source_bug.bug.fields.description = ""
+        source_bug.bug.fields.priority = None
+        source_bug.bug.fields.security = None
+
+        image_meta = MagicMock()
+        image_meta.distgit_key = "test-image"
+
+        fields = self.cli._build_issue_fields(source_bug, image_meta)
+
+        self.assertEqual(fields["summary"], f"Short title [bridge to {self.cli.target_release}]")
+
     async def test_run_reports_invalid_cases_and_fails_at_end(self):
         self.cli.runtime.initialize = MagicMock()
         self.cli.runtime.get_major_minor_fields = MagicMock(return_value=(4, 23))
