@@ -138,7 +138,6 @@ class KonfluxImageBuilder:
             "task_url": "n/a",
             "status": -1,  # Status defaults to failure until explicitly set by success. This handles raised exceptions.
             "has_olm_bundle": 1 if metadata.is_olm_operator else 0,
-            "ec_failed": "false",
             "ec_pipeline_url": "",
             "build_pipeline_url": "",
             "release_pipeline": "",
@@ -223,7 +222,6 @@ class KonfluxImageBuilder:
             building_arches = metadata.get_arches()
             logger.info(f"Building for arches: {building_arches}")
             error = None
-            ec_failed = False
             ec_pipeline_url = ''
             # Resolve build priority based on precedence rules
             if self._config.build_priority == "auto":
@@ -342,11 +340,9 @@ class KonfluxImageBuilder:
                         ec_policy=ec_policy,
                         logger=logger,
                     )
-                    ec_pipeline_url = ec_result.ec_pipeline_url
-                    ec_failed = ec_result.ec_failed
-                    if ec_failed:
+                    if ec_result.ec_failed:
+                        ec_pipeline_url = ec_result.ec_pipeline_url
                         outcome = KonfluxBuildOutcome.ITS_ERROR
-                        record["ec_failed"] = "true"
                         record["ec_pipeline_url"] = ec_pipeline_url
 
                 elif outcome is KonfluxBuildOutcome.SUCCESS:
@@ -412,7 +408,7 @@ class KonfluxImageBuilder:
                         pipelinerun_name,
                         pipelinerun_info.to_dict(),
                     )
-                    if ec_failed:
+                    if ec_pipeline_url:
                         # EC policy failures are not recoverable by rebuilding -- the image
                         # artifact is valid but violates policy. Retrying would just rebuild
                         # the same image and fail EC again, wasting cluster resources.
