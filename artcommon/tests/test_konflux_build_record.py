@@ -40,6 +40,15 @@ class TestKonfluxBuildOutcome(TestCase):
         self.assertFalse(KonfluxBuildOutcome.PENDING.is_failure())
         self.assertFalse(KonfluxBuildOutcome.PENDING.is_success())
 
+    def test_db_filter_values_includes_granular_outcomes(self):
+        values = KonfluxBuildOutcome.db_filter_values()
+        self.assertIn('success', values)
+        self.assertIn('failure', values)
+        self.assertIn('build_error', values)
+        self.assertIn('its_error', values)
+        self.assertIn('release_error', values)
+        self.assertNotIn('pending', values)
+
     def test_extract_from_pipelinerun_failed_plr(self):
         failed_condition = artlib_util.KubeCondition(
             {'type': 'Succeeded', 'status': 'False', 'reason': 'Failed', 'message': 'build failed'}

@@ -1023,17 +1023,17 @@ class KonfluxOlmBundleBuilder:
                             'image_tag': image_pullspec.split(':')[-1],
                         }
                     )
-                case KonfluxBuildOutcome.BUILD_ERROR | KonfluxBuildOutcome.FAILURE:
-                    status = pipelinerun_dict.get('status', {})
-                    start_time = status.get('startTime')
-                    end_time = status.get('completionTime')
-                    build_record_params.update(
-                        {
-                            'start_time': datetime.strptime(start_time, '%Y-%m-%dT%H:%M:%SZ').replace(
-                                tzinfo=timezone.utc
-                            ),
-                            'end_time': datetime.strptime(end_time, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc),
-                        }
+            status = pipelinerun_dict.get('status', {})
+            if status:
+                start_time = status.get('startTime')
+                if start_time:
+                    build_record_params['start_time'] = datetime.strptime(start_time, '%Y-%m-%dT%H:%M:%SZ').replace(
+                        tzinfo=timezone.utc
+                    )
+                completion_time = status.get('completionTime')
+                if completion_time:
+                    build_record_params['end_time'] = datetime.strptime(completion_time, '%Y-%m-%dT%H:%M:%SZ').replace(
+                        tzinfo=timezone.utc
                     )
 
             build_record = KonfluxBundleBuildRecord(**build_record_params)

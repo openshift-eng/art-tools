@@ -187,7 +187,8 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
         metadata = _make_metadata(for_release=True)
         metadata.get_konflux_build_attempts.return_value = 3
 
-        builder = KonfluxImageBuilder(config)
+        record_logger = MagicMock()
+        builder = KonfluxImageBuilder(config, record_logger=record_logger)
 
         plr_info = _make_successful_pipelinerun_info()
         builder._start_build = AsyncMock(return_value=plr_info)
@@ -226,3 +227,8 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
         self.assertEqual(builder.update_konflux_db.await_count, 2)
         completion_call = builder.update_konflux_db.await_args_list[1]
         self.assertEqual(completion_call.args[3], KonfluxBuildOutcome.ITS_ERROR)
+
+        record_logger.add_record.assert_called_once()
+        add_args, add_kwargs = record_logger.add_record.call_args
+        self.assertEqual(add_args[0], 'image_build_konflux')
+        self.assertEqual(add_kwargs['outcome'], str(KonfluxBuildOutcome.ITS_ERROR))
