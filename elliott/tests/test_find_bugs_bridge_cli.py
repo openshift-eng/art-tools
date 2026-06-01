@@ -154,6 +154,116 @@ class TestFindBugsBridgeCli(IsolatedAsyncioTestCase):
         self.assertFalse(result)
         self.cli.target_tracker.create_issue.assert_not_called()
 
+    async def test_sync_mirror_skips_update_when_unchanged(self):
+        source_bug = MagicMock()
+        source_bug.id = "OCPBUGS-123"
+        source_bug.summary = "Visible bug"
+        source_bug.bug.fields.description = "Source description"
+        source_bug.bug.fields.issuetype.name = "Bug"
+        source_bug.bug.fields.components = [MagicMock()]
+        source_bug.bug.fields.components[0].name = "Visible"
+        source_bug.bug.fields.priority = None
+        source_bug.bug.fields.security = None
+        source_bug.bug.fields.versions = []
+
+        image_meta = MagicMock()
+        image_meta.distgit_key = "visible-image"
+
+        existing_mirror = MagicMock()
+        existing_mirror.id = "OCPBUGS-900"
+        existing_mirror.status = "New"
+        existing_mirror.keywords = [BRIDGE_LABEL]
+        # Mirror fields match what _build_issue_fields would produce
+        existing_mirror.bug.fields.summary = "Visible bug [bridge to 4.23.z]"
+        existing_mirror.bug.fields.description = self.cli._build_description(source_bug, image_meta)
+        existing_mirror.bug.fields.components = source_bug.bug.fields.components
+        existing_mirror.bug.fields.priority = None
+        # All required links present
+        existing_mirror.bug.fields.issuelinks = [
+            self._link("Blocks", inward_key="OCPBUGS-123"),
+            self._link("Depend", outward_key="OCPBUGS-123"),
+            self._link("Cloners", outward_key="OCPBUGS-123"),
+        ]
+        self.cli.existing_mirrors_by_source = {"OCPBUGS-123": [existing_mirror]}
+
+        result = await self.cli._sync_mirror(source_bug, image_meta)
+
+        self.assertTrue(result)
+        existing_mirror.bug.update.assert_not_called()
+        self.cli.target_tracker.create_issue_link.assert_not_called()
+        self.assertEqual(self.cli.updated_mirror_count, 0)
+
+    async def test_sync_mirror_updates_when_summary_changed(self):
+        source_bug = MagicMock()
+        source_bug.id = "OCPBUGS-123"
+        source_bug.summary = "Updated summary"
+        source_bug.bug.fields.description = "Source description"
+        source_bug.bug.fields.issuetype.name = "Bug"
+        source_bug.bug.fields.components = [MagicMock()]
+        source_bug.bug.fields.components[0].name = "Visible"
+        source_bug.bug.fields.priority = None
+        source_bug.bug.fields.security = None
+        source_bug.bug.fields.versions = []
+
+        image_meta = MagicMock()
+        image_meta.distgit_key = "visible-image"
+
+        existing_mirror = MagicMock()
+        existing_mirror.id = "OCPBUGS-900"
+        existing_mirror.status = "New"
+        existing_mirror.keywords = [BRIDGE_LABEL]
+        existing_mirror.bug.fields.summary = "Old summary [bridge to 4.23.z]"
+        existing_mirror.bug.fields.description = self.cli._build_description(source_bug, image_meta)
+        existing_mirror.bug.fields.components = source_bug.bug.fields.components
+        existing_mirror.bug.fields.priority = None
+        existing_mirror.bug.fields.issuelinks = [
+            self._link("Blocks", inward_key="OCPBUGS-123"),
+            self._link("Depend", outward_key="OCPBUGS-123"),
+            self._link("Cloners", outward_key="OCPBUGS-123"),
+        ]
+        self.cli.existing_mirrors_by_source = {"OCPBUGS-123": [existing_mirror]}
+
+        result = await self.cli._sync_mirror(source_bug, image_meta)
+
+        self.assertTrue(result)
+        existing_mirror.bug.update.assert_called_once()
+        self.assertEqual(self.cli.updated_mirror_count, 1)
+
+    async def test_sync_mirror_creates_missing_links(self):
+        source_bug = MagicMock()
+        source_bug.id = "OCPBUGS-123"
+        source_bug.summary = "Visible bug"
+        source_bug.bug.fields.description = "Source description"
+        source_bug.bug.fields.issuetype.name = "Bug"
+        source_bug.bug.fields.components = [MagicMock()]
+        source_bug.bug.fields.components[0].name = "Visible"
+        source_bug.bug.fields.priority = None
+        source_bug.bug.fields.security = None
+        source_bug.bug.fields.versions = []
+
+        image_meta = MagicMock()
+        image_meta.distgit_key = "visible-image"
+
+        existing_mirror = MagicMock()
+        existing_mirror.id = "OCPBUGS-900"
+        existing_mirror.status = "New"
+        existing_mirror.keywords = [BRIDGE_LABEL]
+        existing_mirror.bug.fields.summary = "Visible bug [bridge to 4.23.z]"
+        existing_mirror.bug.fields.description = self.cli._build_description(source_bug, image_meta)
+        existing_mirror.bug.fields.components = source_bug.bug.fields.components
+        existing_mirror.bug.fields.priority = None
+        # Only one of three links present
+        existing_mirror.bug.fields.issuelinks = [
+            self._link("Blocks", inward_key="OCPBUGS-123"),
+        ]
+        self.cli.existing_mirrors_by_source = {"OCPBUGS-123": [existing_mirror]}
+
+        result = await self.cli._sync_mirror(source_bug, image_meta)
+
+        self.assertTrue(result)
+        existing_mirror.bug.update.assert_not_called()
+        self.assertTrue(self.cli.target_tracker.create_issue_link.called)
+
     def test_get_existing_mirrors_by_source_uses_linked_issue(self):
         mirror_for_source = MagicMock()
         mirror_for_source.id = "OCPBUGS-900"

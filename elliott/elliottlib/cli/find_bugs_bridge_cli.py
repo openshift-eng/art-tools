@@ -301,12 +301,15 @@ class FindBugsBridgeCli:
                     "Existing bridge mirror is closed without Won't Fix; manual investigation required",
                 )
                 return False
-            fields = self._build_issue_fields(source_bug, image_meta)
             mirror = existing[0]
             if mirror.status.lower() != "closed":
-                self._update_issue(mirror, fields)
-                self._ensure_issue_links(mirror.id, source_bug.id)
-                self.updated_mirror_count += 1
+                fields = self._build_issue_fields(source_bug, image_meta)
+                if self._needs_update(mirror, fields):
+                    self._update_issue(mirror, fields)
+                    self.updated_mirror_count += 1
+                missing_links = REQUIRED_LINK_TYPES - self._required_link_types_for_source(mirror, source_bug.id)
+                if missing_links:
+                    self._ensure_issue_links(mirror.id, source_bug.id)
             return True
 
         fields = self._build_issue_fields(source_bug, image_meta)
@@ -350,6 +353,7 @@ class FindBugsBridgeCli:
             "components": components,
             "labels": [BRIDGE_LABEL],
         }
+        fields["versions"] = []
         priority = getattr(getattr(source_bug.bug.fields, "priority", None), "name", None)
         if priority:
             fields["priority"] = {"name": priority}
@@ -425,6 +429,24 @@ class FindBugsBridgeCli:
             elif linked_mirrors:
                 self._validate_required_links(linked_mirrors[0], source_bug_id)
         return mirrors_by_source
+
+    @staticmethod
+    def _needs_update(mirror_bug: JIRABug, fields: dict) -> bool:
+        """Check whether the mirror's fields differ from the desired state."""
+        mirror_fields = mirror_bug.bug.fields
+        if getattr(mirror_fields, "summary", "") != fields.get("summary"):
+            return True
+        if getattr(mirror_fields, "description", "") != fields.get("description"):
+            return True
+        mirror_components = sorted(c.name for c in getattr(mirror_fields, "components", []))
+        desired_components = sorted(c["name"] for c in fields.get("components", []))
+        if mirror_components != desired_components:
+            return True
+        mirror_priority = getattr(getattr(mirror_fields, "priority", None), "name", None)
+        desired_priority = fields.get("priority", {}).get("name") if "priority" in fields else None
+        if mirror_priority != desired_priority:
+            return True
+        return False
 
     def _update_issue(self, mirror_bug: JIRABug, fields: dict):
         """Update an existing bridge mirror with the latest source fields.
