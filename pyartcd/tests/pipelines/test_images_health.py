@@ -39,14 +39,14 @@ class TestImagesHealthPipeline(IsolatedAsyncioTestCase):
 
         self.mock_runtime.new_slack_client = MagicMock(return_value=mock_slack_client)
 
-    async def test_notify_forum_ocp_art_with_no_concerns_after_filtering(self):
+    async def test_notify_public_channel_with_no_concerns_after_filtering(self):
         # given
         mock_slack_client = self.mock_runtime.new_slack_client.return_value
         pipeline = ImagesHealthPipeline(
             runtime=self.mock_runtime,
             versions="4.22",
             send_to_release_channel=False,
-            send_to_forum_ocp_art=True,
+            public_channel="#forum-ocp-art",
             data_path=DATA_PATH,
             data_gitref="",
             image_list="",
@@ -65,20 +65,20 @@ class TestImagesHealthPipeline(IsolatedAsyncioTestCase):
             },
         ]
         # when
-        await pipeline.notify_forum_ocp_art()
+        await pipeline.notify_public_channel()
         # then
         mock_slack_client.say.assert_called_once_with(
             ":white_check_mark: All images are healthy for all monitored releases"
         )
 
-    async def test_notify_forum_ocp_art_with_concerns(self):
+    async def test_notify_public_channel_with_concerns(self):
         # given
         mock_slack_client = self.mock_runtime.new_slack_client.return_value
         pipeline = ImagesHealthPipeline(
             runtime=self.mock_runtime,
             versions="4.21",
             send_to_release_channel=False,
-            send_to_forum_ocp_art=True,
+            public_channel="#forum-ocp-art",
             data_path=DATA_PATH,
             data_gitref="",
             image_list="",
@@ -106,21 +106,21 @@ class TestImagesHealthPipeline(IsolatedAsyncioTestCase):
         mock_response = {"ts": ""}
         mock_slack_client.say.return_value = mock_response
         # when
-        await pipeline.notify_forum_ocp_art()
+        await pipeline.notify_public_channel()
         # then
         calls = mock_slack_client.say.call_args_list
         self.assertEqual(len(calls), 2)
         first_call_args = calls[0][0][0]
         self.assertIn(":alert: There are some issues to look into for Openshift builds:", first_call_args)
 
-    async def test_notify_forum_ocp_art_with_mixed_concerns(self):
+    async def test_notify_public_channel_with_mixed_concerns(self):
         # given
         mock_slack_client = self.mock_runtime.new_slack_client.return_value
         pipeline = ImagesHealthPipeline(
             runtime=self.mock_runtime,
             versions="4.22",
             send_to_release_channel=False,
-            send_to_forum_ocp_art=True,
+            public_channel="#forum-ocp-art",
             data_path=DATA_PATH,
             data_gitref="",
             image_list="",
@@ -151,20 +151,20 @@ class TestImagesHealthPipeline(IsolatedAsyncioTestCase):
         mock_response = {"ts": ""}
         mock_slack_client.say.return_value = mock_response
         # when
-        await pipeline.notify_forum_ocp_art()
+        await pipeline.notify_public_channel()
         # then
         calls = mock_slack_client.say.call_args_list
         self.assertEqual(len(calls), 2)
         first_call_args = calls[0][0][0]
         self.assertIn(":alert:", first_call_args)
 
-    async def test_notify_forum_ocp_art_with_empty_report(self):
+    async def test_notify_public_channel_with_empty_report(self):
         mock_slack_client = self.mock_runtime.new_slack_client.return_value
         pipeline = ImagesHealthPipeline(
             runtime=self.mock_runtime,
             versions="4.22",
             send_to_release_channel=False,
-            send_to_forum_ocp_art=True,
+            public_channel="#forum-ocp-art",
             data_path=DATA_PATH,
             data_gitref="",
             image_list="",
@@ -172,7 +172,7 @@ class TestImagesHealthPipeline(IsolatedAsyncioTestCase):
         )
         pipeline.report = []
         # when
-        await pipeline.notify_forum_ocp_art()
+        await pipeline.notify_public_channel()
         # then
         mock_slack_client.say.assert_called_once_with(
             ":white_check_mark: All images are healthy for all monitored releases"
@@ -189,7 +189,7 @@ class TestGetReport(IsolatedAsyncioTestCase):
             runtime=runtime,
             versions=versions,
             send_to_release_channel=False,
-            send_to_forum_ocp_art=False,
+            public_channel="",
             data_path=DATA_PATH,
             data_gitref="",
             image_list=image_list,
@@ -286,7 +286,7 @@ class TestSyncJira(TestCase):
             runtime=runtime,
             versions="5.0",
             send_to_release_channel=False,
-            send_to_forum_ocp_art=False,
+            public_channel="",
             data_path=DATA_PATH,
             data_gitref="",
             image_list=image_list,
@@ -464,7 +464,7 @@ class TestSyncJiraIntegration(IsolatedAsyncioTestCase):
             runtime=runtime,
             versions="5.0",
             send_to_release_channel=False,
-            send_to_forum_ocp_art=False,
+            public_channel="",
             data_path=DATA_PATH,
             data_gitref="",
             image_list="",
