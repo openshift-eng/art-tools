@@ -37,6 +37,11 @@ from artcommonlib.oc_image_info import oc_image_info__cached_async
 from artcommonlib.registry_config import RegistryConfig
 from artcommonlib.rhcos import get_primary_container_name
 from artcommonlib.util import isolate_major_minor_in_group
+from doozerlib.cli.release_gen_payload import (
+    assembly_imagestream_base_name_generic,
+    default_imagestream_namespace_base_name,
+    payload_imagestream_namespace_and_name,
+)
 from elliottlib.errata import get_errata_live_id
 from elliottlib.shipment_model import ShipmentConfig
 from elliottlib.shipment_utils import (
@@ -424,6 +429,13 @@ class PromotePipeline:
                     else:
                         justification = self._reraise_if_not_permitted(err, "ATTACHED_BUGS", permits)
                         justifications.append(justification)
+
+            # Verify payload imagestreams match advisory builds before promoting
+            if image_advisory > 0 or shipment_config:
+                logger.info("Verifying payload imagestreams match advisory builds...")
+                await self.verify_payload(assembly_type, arches)
+            else:
+                logger.info("Skipping payload verification: no image advisory or shipment config defined")
 
             # Promote release images
             metadata = {}
@@ -1477,6 +1489,55 @@ class PromotePipeline:
         async with self._elliott_lock:
             await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars, stdout=sys.stderr)
 
+    async def verify_payload(self, assembly_type: AssemblyTypes, arches: List[str]):
+        """Verify that the imagestream contents match the advisory builds before promoting."""
+        major, minor = isolate_major_minor_in_group(self.group)
+        version = f"{major}.{minor}"
+
+        assembly_is_base_name = assembly_imagestream_base_name_generic(
+            version, self.assembly, assembly_type, build_system='konflux'
+        )
+
+        @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
+        async def _verify(imagestream):
+            self._logger.info("Verifying payload against imagestream %s", imagestream)
+            cmd = [
+                "elliott",
+                f"--group={self.group}",
+                f"--assembly={self.assembly}",
+                "--build-system=konflux",
+            ]
+            if self._registry_config:
+                cmd.append(f"--registry-config={self._registry_config}")
+            cmd += ["verify-payload", imagestream]
+            async with self._elliott_lock:
+                _, stdout, _ = await exectools.cmd_gather_async(
+                    cmd, env=self._elliott_env_vars, stderr=None, check=True
+                )
+            results = json.loads(stdout)
+            self._logger.info("Verify payload results for %s:\n%s", imagestream, json.dumps(results, indent=4))
+            if results.get("missing_in_advisory") or results.get("payload_advisory_mismatch"):
+                msg = (
+                    f"Payload verification failed for imagestream {imagestream}. "
+                    "The imagestream contents do not match the advisory builds. "
+                    "Ensure gen-payload/build-sync has been run for the current assembly spec."
+                )
+                if self.runtime.dry_run:
+                    self._logger.warning("[DRY-RUN] %s", msg)
+                    return
+                raise VerificationError(msg)
+            self._logger.info("Payload verification succeeded for imagestream %s", imagestream)
+
+        imagestreams = [
+            "{}/{}".format(
+                *payload_imagestream_namespace_and_name(
+                    default_imagestream_namespace_base_name(), assembly_is_base_name, arch, private=False
+                )
+            )
+            for arch in arches
+        ]
+        await asyncio.gather(*[_verify(is_ref) for is_ref in imagestreams])
+
     async def promote(
         self,
         assembly_type: AssemblyTypes,
@@ -1593,15 +1654,21 @@ class PromotePipeline:
             self._logger.warning(
                 "Release image %s for %s (%s) already exists", release_name, arch, dest_image_info["image"]
             )
-            # TODO: Check if the existing release image matches the assembly definition.
 
         if not dest_image_info or self.permit_overwrite:
             if dest_image_info:
                 self._logger.warning("The existing release image %s will be overwritten!", dest_image_pullspec)
             major, minor = isolate_major_minor_in_group(self.group)
             # Ensure build-sync has been run for this assembly
-            is_name = f"{major}.{minor}-art-assembly-{self.assembly}{go_arch_suffix}"
-            imagestream = await self.get_image_stream(f"ocp{go_arch_suffix}", is_name)
+            is_namespace, is_name = payload_imagestream_namespace_and_name(
+                default_imagestream_namespace_base_name(),
+                assembly_imagestream_base_name_generic(
+                    f"{major}.{minor}", self.assembly, assembly_type, build_system='konflux'
+                ),
+                arch,
+                private=False,
+            )
+            imagestream = await self.get_image_stream(is_namespace, is_name)
             if not imagestream:
                 raise ValueError(f"Image stream {is_name} is not found. Did you run build-sync?")
             await self._fix_failed_imagestream_imports(f"ocp{go_arch_suffix}", is_name)
