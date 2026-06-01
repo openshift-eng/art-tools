@@ -1,3 +1,4 @@
+import copy
 import io
 import json
 import pathlib
@@ -38,42 +39,6 @@ from doozerlib.exceptions import DoozerFatalError
 from doozerlib.source_resolver import SourceResolver
 
 LOGGER = logutil.get_logger(__name__)
-
-
-async def _snapshot_input_from_konflux_success_build(runtime, nvr: str) -> Optional[BaseImageSnapshotInput]:
-    """Map a Konflux **SUCCESS** image row to :class:`BaseImageSnapshotInput`, or ``None`` if missing or unusable."""
-    nvr = (nvr or "").strip()
-    if not nvr:
-        return None
-
-    db = getattr(runtime, "konflux_db", None)
-    if not db:
-        return None
-
-    rec = await db.get_build_record_by_nvr(
-        nvr=nvr,
-        outcome=KonfluxBuildOutcome.SUCCESS,
-        strict=False,
-        exclude_large_columns=True,
-    )
-    if not rec or not rec.name or not rec.image_pullspec:
-        return None
-
-    image_metadata = runtime.image_map.get(rec.name)
-    if image_metadata is not None:
-        is_golang_builder = image_metadata.is_golang_builder()
-    else:
-        # NVR uses distgit-style openshift-golang-builder; keep substring check for older rows / missing image_map
-        is_golang_builder = GOLANG_BUILDER_IMAGE_NAME in nvr
-
-    return BaseImageSnapshotInput(
-        nvr=nvr,
-        distgit_key=rec.name,
-        container_image=rec.image_pullspec,
-        rebase_repo_url=rec.rebase_repo_url or "",
-        rebase_commitish=rec.rebase_commitish or "",
-        is_golang_builder=is_golang_builder,
-    )
 
 
 @cli.command("images:clone", help="Clone a group's image distgit repos locally.")
@@ -1511,7 +1476,10 @@ def query_rpm_version(runtime, repo_type):
 @click_coroutine
 @pass_runtime
 async def release_to_base_repo(runtime, nvr):
-    """Run Konflux snapshot→release for one NVR (row must exist and be SUCCESS for this group)."""
+    """Latest SUCCESS Konflux image row → snapshot/release, then INSERT follow-up with ``release_pipeline`` / ``released_pullspec``.
+
+    Golang builder is inferred from image metadata when present; otherwise from the openshift-golang-builder name in the NVR.
+    """
     logger = logutil.get_logger(__name__)
 
     runtime.initialize(mode='images', build_system='konflux', clone_distgits=False, prevent_cloning=True)
@@ -1522,16 +1490,42 @@ async def release_to_base_repo(runtime, nvr):
     if not image_nvr:
         raise DoozerFatalError("NVR is empty")
 
-    snapshot_input = await _snapshot_input_from_konflux_success_build(runtime, image_nvr)
-    if snapshot_input is None:
+    source_row = await runtime.konflux_db.get_build_record_by_nvr(
+        image_nvr,
+        outcome=KonfluxBuildOutcome.SUCCESS,
+        strict=False,
+        exclude_large_columns=False,
+    )
+    if not source_row:
         raise DoozerFatalError(f"No SUCCESS Konflux image row for {image_nvr}")
+
+    metadata = runtime.image_map.get(source_row.name)
+    is_golang_builder = metadata.is_golang_builder() if metadata else GOLANG_BUILDER_IMAGE_NAME in image_nvr
+
+    snapshot_input = BaseImageSnapshotInput(
+        nvr=image_nvr,
+        distgit_key=source_row.name,
+        container_image=source_row.image_pullspec,
+        rebase_repo_url=source_row.rebase_repo_url or "",
+        rebase_commitish=source_row.rebase_commitish or "",
+        is_golang_builder=is_golang_builder,
+    )
 
     handler = BaseImageHandler(runtime, dry_run=False)
     result = await handler.snapshot_release(snapshot_input)
 
     if result:
-        release_name, snapshot_name = result
-        logger.info("Done: release=%s snapshot=%s", release_name, snapshot_name)
+        logger.info(
+            "Done: release=%s snapshot=%s release_pipeline=%s",
+            result.release_name,
+            result.snapshot_name,
+            result.release_pipeline,
+        )
+        followup = copy.deepcopy(source_row)
+        followup.release_pipeline = result.release_pipeline
+        followup.released_pullspec = result.released_pullspec
+        followup.record_id = KonfluxBuildRecord.generate_record_id()
+        await runtime.konflux_db.add_builds([followup])
         return
 
     raise DoozerFatalError("snapshot_release returned no result")

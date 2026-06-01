@@ -551,20 +551,24 @@ class KonfluxRebaser:
                 if not build:
                     raise IOError(f"A build of parent image {member} is not found.")
                 if parent_metadata.should_trigger_base_image_release():
+                    released_pullspec = (build.released_pullspec or "").strip()
+                    if released_pullspec:
+                        return released_pullspec, build.embargoed
+                    self._logger.warning(
+                        "Late-resolved parent %s: Konflux latest build has empty released_pullspec (nvr=%s); "
+                        "trying art-images-base URL",
+                        member,
+                        build.nvr,
+                    )
                     rh_pullspec = util.rh_art_images_base_pullspec(build.nvr)
                     if await self._registry_pullspec_exists(rh_pullspec):
                         return rh_pullspec, build.embargoed
-                    if parent_metadata.is_base_image_release_quay_fallback_enabled():
-                        self._logger.info(
-                            "art-images-base %s not reachable; using Konflux image_pullspec for late-resolved parent %s",
-                            rh_pullspec,
-                            member,
-                        )
-                        return build.image_pullspec, build.embargoed
-                    raise IOError(
-                        f"art-images-base pullspec not reachable for late-resolved parent {member} ({rh_pullspec!r}); "
-                        "base_image_release.quay_fallback is false"
+                    self._logger.warning(
+                        "Late-resolved parent %s: art-images-base unreachable (%s); using Konflux image_pullspec",
+                        member,
+                        rh_pullspec,
                     )
+                    return build.image_pullspec, build.embargoed
                 return build.image_pullspec, build.embargoed
 
             return original_parent, False

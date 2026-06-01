@@ -30,7 +30,7 @@ from artcommonlib.rpm_utils import compare_nvr, parse_nvr
 from artcommonlib.util import fetch_slsa_attestation, get_konflux_data
 from dockerfile_parse import DockerfileParser
 from doozerlib import constants, util
-from doozerlib.backend.base_image_handler import BaseImageHandler, BaseImageSnapshotInput
+from doozerlib.backend.base_image_handler import BaseImageHandler, BaseImageReleaseResult, BaseImageSnapshotInput
 from doozerlib.backend.build_repo import BuildRepo
 from doozerlib.backend.konflux_client import ImageBuildParams, KonfluxClient
 from doozerlib.backend.pipelinerun_utils import PipelineRunInfo
@@ -373,19 +373,17 @@ class KonfluxImageBuilder:
                 else:
                     # One completion record per attempt. Base images trigger snapshot→release (digest pullspec)
                     # before persisting SUCCESS or FAILURE so Jenkins/batch workflows can query SUCCESS rows.
+                    release_result: Optional[BaseImageReleaseResult] = None
                     if outcome is KonfluxBuildOutcome.SUCCESS and metadata.should_trigger_base_image_release():
-                        base_image_release_success = await self._trigger_base_image_release(
+                        release_result = await self._trigger_base_image_release(
                             metadata, nvr, definitive_image_pullspec, build_repo
                         )
-                        if base_image_release_success:
+                        if release_result:
                             logger.info("Base image release succeeded for %s, persisting build record", nvr)
                         else:
                             logger.error("Base image release failed for %s, persisting build record as FAILURE", nvr)
                             record["base_image_release_failed"] = "true"
-                        released_outcome = (
-                            KonfluxBuildOutcome.SUCCESS if base_image_release_success else KonfluxBuildOutcome.FAILURE
-                        )
-                        outcome = released_outcome
+                        outcome = KonfluxBuildOutcome.SUCCESS if release_result else KonfluxBuildOutcome.FAILURE
 
                     build_record = await self.update_konflux_db(
                         metadata,
@@ -396,6 +394,8 @@ class KonfluxImageBuilder:
                         build_priority,
                         ec_status=ec_status,
                         ec_pipeline_url=ec_pipeline_url,
+                        release_pipeline=release_result.release_pipeline if release_result else '',
+                        released_pullspec=release_result.released_pullspec if release_result else '',
                     )
                     if build_record:
                         record["record_id"] = build_record.record_id
@@ -893,6 +893,8 @@ class KonfluxImageBuilder:
         build_priority,
         ec_status=KonfluxECStatus.NOT_APPLICABLE,
         ec_pipeline_url='',
+        release_pipeline='',
+        released_pullspec='',
     ) -> Optional[KonfluxBuildRecord]:
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
         if not metadata.runtime.konflux_db:
@@ -959,6 +961,8 @@ class KonfluxImageBuilder:
             'build_priority': int(build_priority),
             'ec_status': ec_status,
             'ec_pipeline_url': ec_pipeline_url,
+            'release_pipeline': release_pipeline,
+            'released_pullspec': released_pullspec,
         }
 
         if outcome is KonfluxBuildOutcome.SUCCESS:
@@ -1220,7 +1224,7 @@ class KonfluxImageBuilder:
         nvr: str,
         container_image: str,
         build_repo: BuildRepo,
-    ) -> bool:
+    ) -> Optional[BaseImageReleaseResult]:
         """Run snapshot→release for one base image via :class:`BaseImageHandler` (no Jenkins job).
 
         Args:
@@ -1230,7 +1234,7 @@ class KonfluxImageBuilder:
             build_repo: Build repo (rebase git URL and commit for snapshot source)
 
         Returns:
-            bool: True if base image release completed successfully
+            :class:`BaseImageReleaseResult` when snapshot→release completes; ``None`` on failure or exception.
         """
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
 
@@ -1250,13 +1254,12 @@ class KonfluxImageBuilder:
                 dry_run=self._config.dry_run,
             )
             result = await handler.snapshot_release(snapshot_input)
-            success = result is not None
-            if success:
-                logger.info(f"Successfully triggered base image snapshot-release for {nvr}")
-                return True
-            logger.error("Base image snapshot-release did not complete successfully for %s", nvr)
-            return False
+            if result is None:
+                logger.error("Base image snapshot-release did not complete successfully for %s", nvr)
+                return None
+            logger.info(f"Successfully triggered base image snapshot-release for {nvr}")
+            return result
 
         except Exception as e:
             logger.error(f"Failed base image snapshot-release for {nvr}: {e}")
-            return False
+            return None
