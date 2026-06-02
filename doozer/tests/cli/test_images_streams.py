@@ -320,6 +320,10 @@ def test_gen_buildconfigs_uses_get_upstreaming_entries():
         ((4, 99), (5, 0), False),
         # Next major with minor 0 vs high minor — target is ahead
         ((5, 0), (4, 23), True),
+        # Same new major, target ahead — target is ahead
+        ((5, 2), (5, 1), True),
+        # Same new major, target behind — target is not ahead
+        ((5, 1), (5, 2), False),
     ],
     ids=[
         "same-major-ahead",
@@ -329,6 +333,8 @@ def test_gen_buildconfigs_uses_get_upstreaming_entries():
         "cross-major-4.23-vs-5.0",
         "cross-major-4.99-vs-5.0",
         "next-major-5.0-vs-4.23",
+        "same-major-5.2-vs-5.1",
+        "same-major-5.1-vs-5.2",
     ],
 )
 def test_master_version_comparison(target, master, expect_ahead):
