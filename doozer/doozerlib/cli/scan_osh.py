@@ -494,7 +494,7 @@ class ScanOshCli:
             "issuetype": {"name": "Bug"},
             "versions": [{"name": self.jira_target_version}],  # Affects Version/s
             "components": [{"name": potential_component}],
-            "security": {"id": "11697"},  # Restrict to Red Hat Employee
+            "security": {"name": "Red Hat Employee"},
             "summary": summary,
             "description": description,
             "labels": ["art:sast", f"art:package:{build['package_name']}"],
