@@ -1288,6 +1288,105 @@ class TestOcpOptionalMode(unittest.TestCase):
         self.assertTrue(config.shipment.metadata.fbc)
         self.assertIsNone(config.shipment.data)
 
+    # -- _get_main_ocp_shipment_url tests --
+
+    def test_get_main_ocp_shipment_url_found(self):
+        """Should return URL when releases.yml has shipment.url for the assembly."""
+        pipeline = self._make_pipeline(ocp_optional=True, assembly="rc.5")
+        releases_yml = {
+            "releases": {
+                "rc.5": {
+                    "assembly": {
+                        "group": {
+                            "shipment": {
+                                "url": "https://gitlab.cee.redhat.com/hybrid-platforms/art/ocp-shipment-data/-/merge_requests/549"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        import yaml as stdlib_yaml
+
+        pipeline.get_file_from_branch = MagicMock(return_value=stdlib_yaml.dump(releases_yml).encode())
+        result = pipeline._get_main_ocp_shipment_url()
+        self.assertEqual(
+            result,
+            "https://gitlab.cee.redhat.com/hybrid-platforms/art/ocp-shipment-data/-/merge_requests/549",
+        )
+
+    def test_get_main_ocp_shipment_url_missing(self):
+        """Should return None when assembly exists but has no shipment URL."""
+        pipeline = self._make_pipeline(ocp_optional=True, assembly="rc.5")
+        releases_yml = {"releases": {"rc.5": {"assembly": {"group": {"release_jira": "ART-12345"}}}}}
+        import yaml as stdlib_yaml
+
+        pipeline.get_file_from_branch = MagicMock(return_value=stdlib_yaml.dump(releases_yml).encode())
+        result = pipeline._get_main_ocp_shipment_url()
+        self.assertIsNone(result)
+
+    def test_get_main_ocp_shipment_url_error(self):
+        """Should return None and log warning on fetch failure."""
+        pipeline = self._make_pipeline(ocp_optional=True)
+        pipeline.get_file_from_branch = MagicMock(side_effect=ValueError("GitHub auth failed"))
+        result = pipeline._get_main_ocp_shipment_url()
+        self.assertIsNone(result)
+
+    # -- MR dependency wiring in run() --
+
+    def test_mr_dependency_set_in_ocp_optional_run(self):
+        """run() should call _set_shipment_mr_dependency when ocp_optional and MR created."""
+        pipeline = self._make_pipeline(ocp_optional=True)
+        pipeline.create_mr = True
+        pipeline.fbc_pullspecs = []
+        pipeline.extra_image_nvrs = ["extra-op-container-v4.22.0-1.el9"]
+        pipeline.check_env_vars = MagicMock()
+        pipeline.setup_working_dir = MagicMock()
+        pipeline.setup_shipment_repo = AsyncMock()
+        pipeline._load_product_from_group_config = AsyncMock(return_value="ocp")
+        pipeline._load_release_notes_template = MagicMock(return_value=None)
+        pipeline.create_snapshot = AsyncMock(return_value=_make_snapshot(app="openshift-4-22"))
+        pipeline.create_shipment_config = MagicMock(return_value=MagicMock())
+        pipeline.create_shipment_mr = AsyncMock(return_value="https://gitlab.example.com/g/p/-/merge_requests/100")
+        pipeline.shipment_mr_url = "https://gitlab.example.com/g/p/-/merge_requests/100"
+        pipeline._get_main_ocp_shipment_url = MagicMock(
+            return_value="https://gitlab.example.com/g/p/-/merge_requests/50"
+        )
+        pipeline._set_shipment_mr_dependency = AsyncMock()
+        pipeline.set_shipment_mr_ready = AsyncMock()
+
+        asyncio.run(pipeline.run())
+
+        pipeline._get_main_ocp_shipment_url.assert_called_once()
+        pipeline._set_shipment_mr_dependency.assert_awaited_once_with(
+            "https://gitlab.example.com/g/p/-/merge_requests/50"
+        )
+
+    def test_mr_dependency_not_set_for_default_mode(self):
+        """run() should NOT call _set_shipment_mr_dependency in default (non-ocp-optional) mode."""
+        pipeline = self._make_pipeline(ocp_optional=False, group="oadp-1.5", assembly="1.5.0")
+        pipeline.product = "oadp"
+        pipeline.create_mr = True
+        pipeline.fbc_pullspecs = []
+        pipeline.extra_image_nvrs = ["oadp-container-v1.5.0-1.el9"]
+        pipeline.check_env_vars = MagicMock()
+        pipeline.setup_working_dir = MagicMock()
+        pipeline.setup_shipment_repo = AsyncMock()
+        pipeline._load_product_from_group_config = AsyncMock(return_value="oadp")
+        pipeline._load_release_notes_template = MagicMock(return_value=None)
+        pipeline.create_snapshot = AsyncMock(return_value=_make_snapshot(app="oadp-1-5"))
+        pipeline.create_shipment_config = MagicMock(return_value=MagicMock())
+        pipeline.create_shipment_mr = AsyncMock(return_value="https://gitlab.example.com/g/p/-/merge_requests/200")
+        pipeline.shipment_mr_url = "https://gitlab.example.com/g/p/-/merge_requests/200"
+        pipeline._get_main_ocp_shipment_url = MagicMock()
+        pipeline._set_shipment_mr_dependency = AsyncMock()
+        pipeline.set_shipment_mr_ready = AsyncMock()
+
+        asyncio.run(pipeline.run())
+
+        pipeline._get_main_ocp_shipment_url.assert_not_called()
+        pipeline._set_shipment_mr_dependency.assert_not_awaited()
+
 
 if __name__ == "__main__":
     unittest.main()

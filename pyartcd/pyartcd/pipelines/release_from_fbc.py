@@ -293,6 +293,27 @@ class ReleaseFromFbcPipeline:
         project_path = parsed_url.path.strip('/').removesuffix('.git')
         return self._gitlab.get_project(project_path)
 
+    def _get_main_ocp_shipment_url(self) -> str | None:
+        """Read releases.yml from ocp-build-data and return the main OCP shipment MR URL
+        for the current assembly.
+
+        Path: releases.<assembly>.assembly.group.shipment.url
+        """
+        try:
+            content = self.get_file_from_branch(self.group, "releases.yml")
+            releases_config = stdlib_yaml.safe_load(content)
+            assembly_def = releases_config.get("releases", {}).get(self.assembly, {})
+            shipment = assembly_def.get("assembly", {}).get("group", {}).get("shipment", {})
+            url = shipment.get("url") if isinstance(shipment, dict) else None
+            if url:
+                self.logger.info("Found main OCP shipment MR: %s", url)
+            else:
+                self.logger.warning("No shipment URL in releases.yml for assembly '%s'", self.assembly)
+            return url
+        except Exception as e:
+            self.logger.warning("Failed to read main OCP shipment URL from releases.yml: %s", e)
+            return None
+
     def check_env_vars(self):
         """
         Check required environment variables for MR creation.
@@ -778,6 +799,24 @@ class ReleaseFromFbcPipeline:
             except Exception as e:
                 self.logger.warning(f"Failed to trigger CI MR pipeline for branch {mr.source_branch}: {e}")
 
+    async def _set_shipment_mr_dependency(self, blocking_mr_url: str):
+        """Set a native GitLab MR dependency so the shipment MR cannot merge
+        before *blocking_mr_url* is merged.
+
+        Failures are logged as warnings and do not block the pipeline.
+        """
+        if not self.shipment_mr_url or not blocking_mr_url:
+            return
+        try:
+            self._gitlab.add_mr_dependency(self.shipment_mr_url, blocking_mr_url)
+        except Exception as e:
+            self.logger.warning(
+                "Failed to set MR dependency (%s depends on %s): %s",
+                self.shipment_mr_url,
+                blocking_mr_url,
+                e,
+            )
+
     async def update_shipment_data(
         self, shipments_by_kind: Dict[str, ShipmentConfig], env: str, commit_message: str, branch: str
     ) -> bool:
@@ -1100,6 +1139,12 @@ class ReleaseFromFbcPipeline:
                 mr_url = await self.create_shipment_mr(shipments_by_kind, env="prod")
                 if mr_url:
                     self.logger.info(f"Created shipment MR: {mr_url}")
+
+                    if self.ocp_optional:
+                        main_ocp_mr_url = self._get_main_ocp_shipment_url()
+                        if main_ocp_mr_url:
+                            await self._set_shipment_mr_dependency(main_ocp_mr_url)
+
                     await self.set_shipment_mr_ready()
             except Exception as e:
                 self.logger.exception(f"Failed to create MR: {e}")
