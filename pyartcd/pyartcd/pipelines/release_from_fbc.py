@@ -973,9 +973,10 @@ class ReleaseFromFbcPipeline:
             if self.excluded_components:
                 self.logger.info(f"Excluding NVR components: {sorted(self.excluded_components)}")
             if not self.group.startswith('openshift-'):
-                self.logger.warning(
-                    f"--ocp-optional is intended for openshift-* groups, but group is '{self.group}'. "
-                    "This will include ALL related images without group-version filtering."
+                raise ValueError(
+                    f"--ocp-optional requires an openshift-* group, but got '{self.group}'. "
+                    "This flag is only for OCP optional operators excluded from the main OCP release. "
+                    "Layered products (OADP, MTA, MTC, Logging) should use the default mode."
                 )
         self.logger.info(f"Processing {len(self.fbc_pullspecs)} FBC pullspecs")
         if self.extra_image_nvrs:
