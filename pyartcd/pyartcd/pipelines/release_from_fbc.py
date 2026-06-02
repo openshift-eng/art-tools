@@ -175,23 +175,35 @@ class ReleaseFromFbcPipeline:
         except GithubException as e:
             raise ValueError(f"Failed to fetch {filename} from {data_path} branch {branch}: {e}")
 
-    def _load_release_notes_template(self) -> dict | None:
+    def _load_release_notes_template(self, kind: str | None = None) -> dict | None:
         """
-        Load and populate release notes template from ocp-build-data using get_advisory_boilerplate(),
-        matching the pattern used by get_advisory_boilerplate().
+        Load and populate release notes template from ocp-build-data advisory_templates.yml.
 
-        Return Value(s):
+        Two modes:
+        - OCP optional (kind provided): Uses kind (e.g., 'extras') as template key,
+          populates {MAJOR}/{MINOR}/{PATCH} from group.yml vars section.
+        - Layered product (kind=None): Uses self.product as template key,
+          populates {PRODUCT_MAJOR}/{PRODUCT_MINOR}/{PRODUCT_PATCH} from assembly
+          and {OCP_RELEASE_NOTES_VERSION} from group.yml.
+
+        Args:
+            kind: When provided, used as the boilerplate lookup key (OCP optional mode).
+                  When None, self.product is used (layered product mode).
+
+        Returns:
             dict | None: Template dict with synopsis, topic, description, solution, or None if not found.
         """
+        art_advisory_key = kind if kind else self.product
+
         try:
             boilerplate = get_advisory_boilerplate(
                 runtime=self,
                 et_data={},
-                art_advisory_key=self.product,
+                art_advisory_key=art_advisory_key,
                 errata_type="RHBA",
             )
         except (ValueError, KeyError):
-            self.logger.debug("No release notes template found for product '%s'", self.product)
+            self.logger.debug("No release notes template found for key '%s'", art_advisory_key)
             return None
         except Exception as e:
             self.logger.warning("Failed to load release notes template: %s", e)
@@ -201,21 +213,31 @@ class ReleaseFromFbcPipeline:
             group_content = self.get_file_from_branch(self.group, "group.yml")
             group_config = stdlib_yaml.safe_load(group_content)
 
-            ocp_version = str(group_config.get("OCP_RELEASE_NOTES_VERSION", ""))
-            if not ocp_version:
-                self.logger.warning("OCP_RELEASE_NOTES_VERSION not found in group.yml for group '%s'", self.group)
-                return None
-
-            ocp_version_dashed = ocp_version.replace(".", "-")
-
-            assembly_parts = self.assembly.split(".")
-            replace_vars = {
-                "OCP_RELEASE_NOTES_VERSION": ocp_version,
-                "OCP_RELEASE_NOTES_VERSION_DASHED": ocp_version_dashed,
-                "PRODUCT_MAJOR": assembly_parts[0] if len(assembly_parts) > 0 else "",
-                "PRODUCT_MINOR": assembly_parts[1] if len(assembly_parts) > 1 else "",
-                "PRODUCT_PATCH": assembly_parts[2] if len(assembly_parts) > 2 else "",
-            }
+            if kind:
+                # OCP optional mode: use {MAJOR}, {MINOR}, {PATCH} from vars section
+                vars_section = group_config.get("vars", {})
+                major = str(vars_section.get("MAJOR", ""))
+                minor = str(vars_section.get("MINOR", ""))
+                assembly_parts = self.assembly.split(".")
+                patch = assembly_parts[2] if len(assembly_parts) > 2 else "0"
+                if not major or not minor:
+                    self.logger.warning("MAJOR/MINOR not found in group.yml vars for group '%s'", self.group)
+                    return None
+                replace_vars = {"MAJOR": major, "MINOR": minor, "PATCH": patch}
+            else:
+                # Layered product mode: use {PRODUCT_*} and {OCP_RELEASE_NOTES_VERSION}
+                ocp_version = str(group_config.get("OCP_RELEASE_NOTES_VERSION", ""))
+                if not ocp_version:
+                    self.logger.warning("OCP_RELEASE_NOTES_VERSION not found in group.yml for group '%s'", self.group)
+                    return None
+                assembly_parts = self.assembly.split(".")
+                replace_vars = {
+                    "OCP_RELEASE_NOTES_VERSION": ocp_version,
+                    "OCP_RELEASE_NOTES_VERSION_DASHED": ocp_version.replace(".", "-"),
+                    "PRODUCT_MAJOR": assembly_parts[0] if len(assembly_parts) > 0 else "",
+                    "PRODUCT_MINOR": assembly_parts[1] if len(assembly_parts) > 1 else "",
+                    "PRODUCT_PATCH": assembly_parts[2] if len(assembly_parts) > 2 else "",
+                }
 
             formatter = SafeFormatter()
             result = {}
@@ -223,12 +245,7 @@ class ReleaseFromFbcPipeline:
                 value = boilerplate.get(field, "")
                 result[field] = formatter.format(value, **replace_vars)
 
-            self.logger.info(
-                "Loaded release notes template for '%s' (OCP_RELEASE_NOTES_VERSION=%s, assembly=%s)",
-                self.product,
-                ocp_version,
-                self.assembly,
-            )
+            self.logger.info("Loaded release notes template for key '%s'", art_advisory_key)
             return result
 
         except Exception as e:
@@ -1034,7 +1051,11 @@ class ReleaseFromFbcPipeline:
             release_notes = self.generate_release_notes()
 
         # Load release notes template from ocp-build-data
-        template = self._load_release_notes_template()
+        if self.ocp_optional:
+            template = self._load_release_notes_template(kind=image_key)
+        else:
+            template = self._load_release_notes_template()
+
         if template:
             if release_notes is None:
                 release_notes = ReleaseNotes(type="RHBA")

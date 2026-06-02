@@ -785,7 +785,7 @@ class TestGetFileFromBranch(unittest.TestCase):
 class TestLoadReleaseNotesTemplate(unittest.TestCase):
     """Tests for _load_release_notes_template method."""
 
-    def _make_pipeline(self, group="logging-6.5", assembly="6.5.0"):
+    def _make_pipeline(self, group="openshift-4.22", assembly="4.22.0"):
         runtime = MagicMock()
         runtime.dry_run = False
         runtime.working_dir = MagicMock()
@@ -798,48 +798,49 @@ class TestLoadReleaseNotesTemplate(unittest.TestCase):
             assembly=assembly,
             fbc_pullspecs=["quay.io/test/fbc:latest"],
         )
-        pipeline.product = "openshift-logging"
+        pipeline.product = "ocp"
         return pipeline
 
     @patch("pyartcd.pipelines.release_from_fbc.get_advisory_boilerplate")
     @patch.object(ReleaseFromFbcPipeline, "get_file_from_branch")
     def test_template_found_with_placeholder_substitution(self, mock_get_file, mock_get_boilerplate):
-        """Template is found via get_advisory_boilerplate and all placeholders are substituted."""
+        """Template is found via get_advisory_boilerplate using kind as key, placeholders substituted."""
         mock_get_boilerplate.return_value = {
-            "synopsis": "Logging {PRODUCT_MAJOR}.{PRODUCT_MINOR}.{PRODUCT_PATCH}",
-            "topic": "Logging {PRODUCT_MAJOR}.{PRODUCT_MINOR}.{PRODUCT_PATCH}",
-            "description": "Logging {PRODUCT_MAJOR}.{PRODUCT_MINOR}.{PRODUCT_PATCH} update",
-            "solution": "For OCP {OCP_RELEASE_NOTES_VERSION} see ocp-{OCP_RELEASE_NOTES_VERSION_DASHED}-release-notes",
+            "synopsis": "OpenShift Container Platform 4.{MINOR}.{PATCH} extras update",
+            "topic": "Red Hat OpenShift Container Platform release 4.{MINOR}.{PATCH} is now available.",
+            "description": "This advisory contains updates for OCP 4.{MINOR}.{PATCH}.",
+            "solution": "For OCP 4.{MINOR} see the docs.",
         }
         mock_get_file.return_value = b"""
-OCP_RELEASE_NOTES_VERSION: "4.21"
+vars:
+  MAJOR: 4
+  MINOR: 22
 """
 
         pipeline = self._make_pipeline()
-        result = pipeline._load_release_notes_template()
+        result = pipeline._load_release_notes_template(kind="extras")
 
         self.assertIsNotNone(result)
-        self.assertEqual(result["synopsis"], "Logging 6.5.0")
-        self.assertEqual(result["topic"], "Logging 6.5.0")
-        self.assertEqual(result["description"], "Logging 6.5.0 update")
-        self.assertEqual(result["solution"], "For OCP 4.21 see ocp-4-21-release-notes")
+        self.assertEqual(result["synopsis"], "OpenShift Container Platform 4.22.0 extras update")
+        self.assertEqual(result["topic"], "Red Hat OpenShift Container Platform release 4.22.0 is now available.")
+        self.assertEqual(result["description"], "This advisory contains updates for OCP 4.22.0.")
+        self.assertEqual(result["solution"], "For OCP 4.22 see the docs.")
 
         mock_get_boilerplate.assert_called_once_with(
             runtime=pipeline,
             et_data={},
-            art_advisory_key="openshift-logging",
+            art_advisory_key="extras",
             errata_type="RHBA",
         )
-        mock_get_file.assert_called_once_with("logging-6.5", "group.yml")
+        mock_get_file.assert_called_once_with("openshift-4.22", "group.yml")
 
     @patch("pyartcd.pipelines.release_from_fbc.get_advisory_boilerplate")
     def test_template_not_found_returns_none(self, mock_get_boilerplate):
         """When get_advisory_boilerplate raises ValueError, return None."""
-        mock_get_boilerplate.side_effect = ValueError("Boilerplate mta not found")
+        mock_get_boilerplate.side_effect = ValueError("Boilerplate ocp not found")
 
         pipeline = self._make_pipeline()
-        pipeline.product = "mta"
-        result = pipeline._load_release_notes_template()
+        result = pipeline._load_release_notes_template(kind="extras")
 
         self.assertIsNone(result)
 
@@ -849,14 +850,14 @@ OCP_RELEASE_NOTES_VERSION: "4.21"
         mock_get_boilerplate.side_effect = Exception("GitHub API failure")
 
         pipeline = self._make_pipeline()
-        result = pipeline._load_release_notes_template()
+        result = pipeline._load_release_notes_template(kind="extras")
 
         self.assertIsNone(result)
 
     @patch("pyartcd.pipelines.release_from_fbc.get_advisory_boilerplate")
     @patch.object(ReleaseFromFbcPipeline, "get_file_from_branch")
-    def test_missing_ocp_release_notes_version_returns_none(self, mock_get_file, mock_get_boilerplate):
-        """When group.yml has no OCP_RELEASE_NOTES_VERSION, return None."""
+    def test_missing_major_minor_in_group_yml_returns_none(self, mock_get_file, mock_get_boilerplate):
+        """When group.yml has no MAJOR/MINOR in vars section, return None."""
         mock_get_boilerplate.return_value = {
             "synopsis": "Synopsis",
             "topic": "Topic",
@@ -868,29 +869,141 @@ product: logging
 """
 
         pipeline = self._make_pipeline()
-        result = pipeline._load_release_notes_template()
+        result = pipeline._load_release_notes_template(kind="extras")
 
         self.assertIsNone(result)
 
     @patch("pyartcd.pipelines.release_from_fbc.get_advisory_boilerplate")
     @patch.object(ReleaseFromFbcPipeline, "get_file_from_branch")
     def test_assembly_version_parsing_two_components(self, mock_get_file, mock_get_boilerplate):
-        """Assembly with only major.minor (no PRODUCT_PATCH) uses empty string for PRODUCT_PATCH."""
+        """Assembly with only major.minor (no patch) defaults patch to '0'."""
         mock_get_boilerplate.return_value = {
-            "synopsis": "Version {PRODUCT_MAJOR}.{PRODUCT_MINOR}.{PRODUCT_PATCH}",
+            "synopsis": "Version {MAJOR}.{MINOR}.{PATCH}",
             "topic": "Topic",
             "description": "Description",
             "solution": "Solution",
         }
         mock_get_file.return_value = b"""
+vars:
+  MAJOR: 4
+  MINOR: 22
+"""
+
+        pipeline = self._make_pipeline(assembly="4.22")
+        result = pipeline._load_release_notes_template(kind="extras")
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result["synopsis"], "Version 4.22.0")
+
+    @patch("pyartcd.pipelines.release_from_fbc.get_advisory_boilerplate")
+    @patch.object(ReleaseFromFbcPipeline, "get_file_from_branch")
+    def test_unresolved_placeholders_left_as_is(self, mock_get_file, mock_get_boilerplate):
+        """SafeFormatter leaves unrecognized placeholders (like {IMAGE_ADVISORY}) intact."""
+        mock_get_boilerplate.return_value = {
+            "synopsis": "OCP 4.{MINOR}.{PATCH} extras update",
+            "topic": "Topic",
+            "description": "See https://access.redhat.com/errata/{IMAGE_ADVISORY}",
+            "solution": "Solution",
+        }
+        mock_get_file.return_value = b"""
+vars:
+  MAJOR: 4
+  MINOR: 22
+"""
+
+        pipeline = self._make_pipeline()
+        result = pipeline._load_release_notes_template(kind="extras")
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result["synopsis"], "OCP 4.22.0 extras update")
+        self.assertEqual(result["description"], "See https://access.redhat.com/errata/{IMAGE_ADVISORY}")
+
+    # -- Layered product mode tests (kind=None, uses self.product as key) --
+
+    @patch("pyartcd.pipelines.release_from_fbc.get_advisory_boilerplate")
+    @patch.object(ReleaseFromFbcPipeline, "get_file_from_branch")
+    def test_layered_product_template_with_product_vars(self, mock_get_file, mock_get_boilerplate):
+        """Layered product path uses self.product as key and PRODUCT_* placeholders."""
+        mock_get_boilerplate.return_value = {
+            "synopsis": "Logging for Red Hat OpenShift - {PRODUCT_MAJOR}.{PRODUCT_MINOR}.{PRODUCT_PATCH}",
+            "topic": "Logging for Red Hat OpenShift - {PRODUCT_MAJOR}.{PRODUCT_MINOR}.{PRODUCT_PATCH}",
+            "description": "Red Hat OpenShift Logging {PRODUCT_MAJOR}.{PRODUCT_MINOR}.{PRODUCT_PATCH} update",
+            "solution": "For OCP {OCP_RELEASE_NOTES_VERSION} see ocp-{OCP_RELEASE_NOTES_VERSION_DASHED}-release-notes",
+        }
+        mock_get_file.return_value = b"""
+OCP_RELEASE_NOTES_VERSION: "4.18"
+"""
+
+        pipeline = self._make_pipeline(group="logging-6.2", assembly="6.2.1")
+        pipeline.product = "openshift-logging"
+        result = pipeline._load_release_notes_template()
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result["synopsis"], "Logging for Red Hat OpenShift - 6.2.1")
+        self.assertEqual(result["topic"], "Logging for Red Hat OpenShift - 6.2.1")
+        self.assertEqual(result["description"], "Red Hat OpenShift Logging 6.2.1 update")
+        self.assertEqual(result["solution"], "For OCP 4.18 see ocp-4-18-release-notes")
+
+        mock_get_boilerplate.assert_called_once_with(
+            runtime=pipeline,
+            et_data={},
+            art_advisory_key="openshift-logging",
+            errata_type="RHBA",
+        )
+        mock_get_file.assert_called_once_with("logging-6.2", "group.yml")
+
+    @patch("pyartcd.pipelines.release_from_fbc.get_advisory_boilerplate")
+    @patch.object(ReleaseFromFbcPipeline, "get_file_from_branch")
+    def test_layered_product_missing_ocp_release_notes_version_returns_none(self, mock_get_file, mock_get_boilerplate):
+        """Layered product without OCP_RELEASE_NOTES_VERSION in group.yml returns None."""
+        mock_get_boilerplate.return_value = {
+            "synopsis": "Synopsis",
+            "topic": "Topic",
+            "description": "Description",
+            "solution": "Solution",
+        }
+        mock_get_file.return_value = b"""
+product: openshift-logging
+"""
+
+        pipeline = self._make_pipeline(group="logging-6.3", assembly="6.3.5")
+        pipeline.product = "openshift-logging"
+        result = pipeline._load_release_notes_template()
+
+        self.assertIsNone(result)
+
+    @patch("pyartcd.pipelines.release_from_fbc.get_advisory_boilerplate")
+    def test_layered_product_no_template_key_returns_none(self, mock_get_boilerplate):
+        """Layered product whose product name has no template key returns None."""
+        mock_get_boilerplate.side_effect = ValueError("Boilerplate mta not found")
+
+        pipeline = self._make_pipeline(group="mta-7.2", assembly="7.2.0")
+        pipeline.product = "mta"
+        result = pipeline._load_release_notes_template()
+
+        self.assertIsNone(result)
+
+    @patch("pyartcd.pipelines.release_from_fbc.get_advisory_boilerplate")
+    @patch.object(ReleaseFromFbcPipeline, "get_file_from_branch")
+    def test_layered_product_assembly_two_components(self, mock_get_file, mock_get_boilerplate):
+        """Layered product with major.minor assembly (no patch) uses empty string for PRODUCT_PATCH."""
+        mock_get_boilerplate.return_value = {
+            "synopsis": "Version {PRODUCT_MAJOR}.{PRODUCT_MINOR}.{PRODUCT_PATCH}",
+            "topic": "Topic",
+            "description": "Description",
+            "solution": "Solution for {OCP_RELEASE_NOTES_VERSION}",
+        }
+        mock_get_file.return_value = b"""
 OCP_RELEASE_NOTES_VERSION: "4.21"
 """
 
-        pipeline = self._make_pipeline(assembly="6.5")
+        pipeline = self._make_pipeline(group="logging-6.5", assembly="6.5")
+        pipeline.product = "openshift-logging"
         result = pipeline._load_release_notes_template()
 
         self.assertIsNotNone(result)
         self.assertEqual(result["synopsis"], "Version 6.5.")
+        self.assertEqual(result["solution"], "Solution for 4.21")
 
 
 class TestRunWithTemplate(unittest.TestCase):
