@@ -13,7 +13,7 @@ import yaml
 from artcommonlib import exectools
 from artcommonlib.format_util import green_print, yellow_print
 from artcommonlib.git_helper import git_clone
-from artcommonlib.github_auth import get_github_client_for_org, get_github_git_auth_env
+from artcommonlib.github_auth import build_git_auth_env, get_github_client_for_org, get_github_git_auth_env
 from artcommonlib.jira_config import get_jira_browse_url
 from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
@@ -1360,14 +1360,25 @@ def images_streams_prs(
         public_repo_url = ensure_github_https_url(public_repo_url)
         fork_url = ensure_github_https_url(fork_repo.git_url)
         clone_dir = os.path.join(runtime.working_dir, 'clones', dgk)
-        git_auth_env = get_github_git_auth_env(url=public_repo_url)
         # Clone the private url to make the best possible use of our doozer_cache
         git_clone(source_repo_url, clone_dir, git_cache_dir=runtime.git_cache_dir)
 
         with Dir(clone_dir):
-            exectools.cmd_assert(f'git remote add public {public_repo_url}', set_env=git_auth_env)
-            exectools.cmd_assert(f'git remote add fork {fork_url}', set_env=git_auth_env)
-            exectools.cmd_assert('git fetch --all', retries=3, set_env=git_auth_env)
+            # Generate per-org auth credentials for each remote.
+            # GIT_ASKPASS/GIT_PASSWORD can only hold a single token, so
+            # `git fetch --all` fails when remotes span different GitHub
+            # orgs (e.g. openshift-priv vs openshift vs openshift-bot).
+            # Fetching each remote individually with the correct per-org
+            # token avoids "Repository not found" auth errors.
+            priv_auth = get_github_git_auth_env(url=source_repo_url)
+            pub_auth = get_github_git_auth_env(url=public_repo_url)
+            fork_auth = build_git_auth_env(github_access_token)
+
+            exectools.cmd_assert(f'git remote add public {public_repo_url}')
+            exectools.cmd_assert(f'git remote add fork {fork_url}')
+
+            for remote_name, auth_env in [('origin', priv_auth), ('public', pub_auth), ('fork', fork_auth)]:
+                exectools.cmd_assert(f'git fetch {remote_name}', retries=3, set_env=auth_env)
 
             # The path to the Dockerfile in the target branch
             if image_meta.config.content.source.dockerfile is not Missing:
@@ -1565,7 +1576,7 @@ open_prs: {open_prs}
                     )  # Add a commit atop the public branch's current state
                     # Create or update the remote fork branch
                     exectools.cmd_assert(
-                        f'git push --force fork {work_branch_name}:{fork_branch_name}', retries=3, set_env=git_auth_env
+                        f'git push --force fork {work_branch_name}:{fork_branch_name}', retries=3, set_env=fork_auth
                     )
 
             # At this point, we have a fork branch in the proper state
