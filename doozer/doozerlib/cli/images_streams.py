@@ -13,7 +13,7 @@ import yaml
 from artcommonlib import exectools
 from artcommonlib.format_util import green_print, yellow_print
 from artcommonlib.git_helper import git_clone
-from artcommonlib.github_auth import get_github_client_for_org, get_github_git_auth_env
+from artcommonlib.github_auth import build_git_auth_env, get_github_client_for_org, get_github_git_auth_env
 from artcommonlib.jira_config import get_jira_browse_url
 from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
@@ -1372,7 +1372,7 @@ def images_streams_prs(
             # token avoids "Repository not found" auth errors.
             priv_auth = get_github_git_auth_env(url=source_repo_url)
             pub_auth = get_github_git_auth_env(url=public_repo_url)
-            fork_auth = get_github_git_auth_env(url=fork_url)
+            fork_auth = build_git_auth_env(github_access_token)
 
             exectools.cmd_assert(f'git remote add public {public_repo_url}')
             exectools.cmd_assert(f'git remote add fork {fork_url}')

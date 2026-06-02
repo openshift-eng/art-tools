@@ -225,6 +225,30 @@ def get_github_git_pat_env() -> dict[str, str]:
     }
 
 
+def build_git_auth_env(token: str) -> dict[str, str]:
+    """
+    Build GIT_ASKPASS environment variables from an explicit token.
+
+    Unlike :func:`get_github_git_auth_env`, this does **not** resolve
+    credentials via GitHub App installations or environment variables --
+    it uses the supplied *token* directly.  Useful when the caller already
+    holds the correct PAT (e.g. the ``--github-access-token`` CLI option)
+    and org-based App-token resolution would pick the wrong installation
+    or fall through to an unrelated ``GITHUB_TOKEN``.
+
+    :param token: A GitHub personal-access or fine-grained token.
+    :return: Dict with GIT_ASKPASS, GIT_PASSWORD, GIT_TERMINAL_PROMPT.
+    """
+    if not token:
+        raise ValueError("build_git_auth_env() requires a non-empty token")
+    script = _ensure_askpass_script()
+    return {
+        "GIT_ASKPASS": script,
+        "GIT_PASSWORD": token,
+        "GIT_TERMINAL_PROMPT": "0",
+    }
+
+
 def _generate_app_token_for_url(url: str | None) -> str:
     """Generate an App installation token, using the URL's org when available."""
     app_id, private_key, installation_id = _read_env_credentials()
