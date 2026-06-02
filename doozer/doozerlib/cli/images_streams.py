@@ -1162,7 +1162,7 @@ def images_streams_prs(
         exit(0)
 
     master_major, master_minor = extract_version_fields(what_is_in_master(), at_least=2)
-    if not ignore_ci_master and (major > master_major or minor > master_minor):
+    if not ignore_ci_master and (major, minor) > (master_major, master_minor):
         # ART building a release before it is in master. Too early to open PRs.
         runtime.logger.warning(
             f'Target {major}.{minor} has not been in master yet (it is tracking {master_major}.{master_minor}); skipping PRs'
