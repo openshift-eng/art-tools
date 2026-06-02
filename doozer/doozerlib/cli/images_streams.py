@@ -1021,7 +1021,7 @@ This ticket was created by ART pipline run [sync-ci-images|{jenkins_build_url}]
             'components': [{'name': component}],
             'summary': summary,
             'description': description,
-            "security": {"id": "11697"},  # Restrict to Red Hat Employee
+            "security": {"name": "Red Hat Employee"},
         }
 
         if not dry_run:
