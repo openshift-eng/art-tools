@@ -978,6 +978,13 @@ class ReleaseFromFbcPipeline:
                     "This flag is only for OCP optional operators excluded from the main OCP release. "
                     "Layered products (OADP, MTA, MTC, Logging) should use the default mode."
                 )
+        else:
+            if self.group.startswith('openshift-'):
+                raise ValueError(
+                    f"Group '{self.group}' is an openshift-* group but --ocp-optional was not set. "
+                    "OCP FBCs must use --ocp-optional to produce extras/fbc shipments. "
+                    "Without it, cross-group filtering may discard images and produce only FBC yaml."
+                )
         self.logger.info(f"Processing {len(self.fbc_pullspecs)} FBC pullspecs")
         if self.extra_image_nvrs:
             self.logger.info(f"Including {len(self.extra_image_nvrs)} extra image NVRs")
