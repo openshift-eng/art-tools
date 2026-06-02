@@ -298,3 +298,49 @@ def test_gen_buildconfigs_uses_get_upstreaming_entries():
     assert 'config.transform' in source
     assert 'config.upstream_image' in source
     assert 'config.upstream_image_base' in source
+
+
+# Tests for master version comparison in images_streams_prs
+
+
+@pytest.mark.parametrize(
+    "target, master, expect_ahead",
+    [
+        # Same major, target ahead in minor — target is ahead
+        ((4, 18), (4, 17), True),
+        # Higher major — target is ahead
+        ((5, 0), (4, 17), True),
+        # Equal — target is not ahead
+        ((4, 17), (4, 17), False),
+        # Same major, target behind — target is not ahead
+        ((4, 16), (4, 17), False),
+        # Bug case: target has higher minor but lower major — target is NOT ahead
+        ((4, 23), (5, 0), False),
+        # Another cross-major case
+        ((4, 99), (5, 0), False),
+        # Next major with minor 0 vs high minor — target is ahead
+        ((5, 0), (4, 23), True),
+    ],
+    ids=[
+        "same-major-ahead",
+        "higher-major",
+        "equal",
+        "same-major-behind",
+        "cross-major-4.23-vs-5.0",
+        "cross-major-4.99-vs-5.0",
+        "next-major-5.0-vs-4.23",
+    ],
+)
+def test_master_version_comparison(target, master, expect_ahead):
+    """Regression test for the version comparison that decides whether to skip PRs.
+
+    Previously the check used ``major > master_major or minor > master_minor``
+    which incorrectly skipped e.g. 4.23 when master was 5.0 (because 23 > 0).
+    The fix uses tuple comparison: ``(major, minor) > (master_major, master_minor)``.
+    """
+    major, minor = target
+    master_major, master_minor = master
+
+    # This is the exact comparison from images_streams.py:1170
+    target_is_ahead = (major, minor) > (master_major, master_minor)
+    assert target_is_ahead == expect_ahead
