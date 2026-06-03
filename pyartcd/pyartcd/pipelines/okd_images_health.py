@@ -134,7 +134,7 @@ class ImagesHealthPipeline:
         group = f'okd-{version}'
         all_failures = await util.get_rebase_failures(
             group=group,
-            branches=['okd-rebase-failure'],
+            branches=['rebase-failure'],
             build_systems=['konflux'],
             logger=self.runtime.logger,
         )
