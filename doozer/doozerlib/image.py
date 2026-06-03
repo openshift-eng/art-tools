@@ -1391,8 +1391,8 @@ class ImageMetadata(Metadata):
         Determines whether this image should trigger the base image release workflow.
 
         The method checks preconditions in the following order:
-        0. Image metadata `base_image_release.force` set to true always enables workflow
-        1. Variant must be OCP (not OKD)
+        0. Variant must be OCP (not OKD); OKD never uses RH base-image snapshot→release
+        1. Image metadata ``base_image_release.force`` set to true enables workflow (OCP only)
         2. Assembly must not be ``test``
         3. Image must be ``base_only`` or a golang builder
         4. Base image release enabled override:
@@ -1403,13 +1403,13 @@ class ImageMetadata(Metadata):
         Returns:
             bool: True if base image release workflow should be triggered, False otherwise.
         """
+        if self.runtime.variant is BuildVariant.OKD:
+            return False
+
         base_image_release_force_override = self.config.base_image_release.force
         if base_image_release_force_override not in [Missing, None] and bool(base_image_release_force_override):
             self.logger.info("Base image release force enabled from metadata config True")
             return True
-
-        if self.runtime.variant is BuildVariant.OKD:
-            return False
 
         if self.runtime.assembly == "test":
             return False
