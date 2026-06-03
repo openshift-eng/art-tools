@@ -28,7 +28,7 @@ from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import deep_merge, fetch_slsa_attestation, uses_konflux_imagestream_override
 from artcommonlib.variants import BuildVariant
 from async_lru import alru_cache
-from tenacity import retry, stop_after_attempt, wait_fixed
+from tenacity import retry, retry_if_not_exception_type, stop_after_attempt, wait_fixed
 
 from doozerlib import rhcos, util
 from doozerlib.build_info import KonfluxBuildRecordInspector
@@ -1073,23 +1073,26 @@ class ConfigScanSources:
         """
         from github import UnknownObjectException
 
-        _, org, _ = artcommonlib.util.split_git_url(rebase_repo_url)
+        _, org, repo_name = artcommonlib.util.split_git_url(rebase_repo_url)
         manifests_dir = manifests_dir.strip('/')
         art_yaml_path = '/'.join(part for part in (manifests_dir, 'art.yaml') if part)
+        github_client = get_github_client_for_org(org)
 
-        with tempfile.NamedTemporaryFile(delete=True, suffix='.yaml') as temp_file:
-            try:
-                await artcommonlib.util.download_file_from_github(
-                    repository=rebase_repo_url,
-                    branch=rebase_commitish,
-                    path=art_yaml_path,
-                    github_client=get_github_client_for_org(org),
-                    destination=temp_file.name,
-                )
-                with open(temp_file.name) as f:
-                    return yaml.safe_load(f.read())
-            except (UnknownObjectException, FileNotFoundError):
-                return None
+        @retry(
+            reraise=True,
+            wait=wait_fixed(10),
+            stop=stop_after_attempt(3),
+            retry=retry_if_not_exception_type(UnknownObjectException),
+        )
+        def _fetch():
+            repo = github_client.get_repo(f"{org}/{repo_name}")
+            return repo.get_contents(art_yaml_path, ref=rebase_commitish).decoded_content
+
+        try:
+            data = await asyncio.to_thread(_fetch)
+            return yaml.safe_load(data)
+        except UnknownObjectException:
+            return None
 
     async def _fetch_image_references_from_rebase(
         self, rebase_repo_url: str, rebase_commitish: str, manifests_dir: str, bundle_dir: str
@@ -1103,7 +1106,7 @@ class ConfigScanSources:
         """
         from github import UnknownObjectException
 
-        _, org, _ = artcommonlib.util.split_git_url(rebase_repo_url)
+        _, org, repo_name = artcommonlib.util.split_git_url(rebase_repo_url)
         github_client = get_github_client_for_org(org)
         manifests_dir = manifests_dir.strip('/')
         bundle_dir = bundle_dir.strip('/')
@@ -1115,20 +1118,24 @@ class ConfigScanSources:
         ]
         candidate_paths = list(dict.fromkeys(candidate_paths))
 
+        repo = github_client.get_repo(f"{org}/{repo_name}")
+
         for ref_path in candidate_paths:
-            with tempfile.NamedTemporaryFile(delete=True, suffix='.yaml') as temp_file:
-                try:
-                    await artcommonlib.util.download_file_from_github(
-                        repository=rebase_repo_url,
-                        branch=rebase_commitish,
-                        path=ref_path,
-                        github_client=github_client,
-                        destination=temp_file.name,
-                    )
-                    with open(temp_file.name) as f:
-                        return yaml.safe_load(f.read())
-                except (UnknownObjectException, FileNotFoundError):
-                    continue
+
+            @retry(
+                reraise=True,
+                wait=wait_fixed(10),
+                stop=stop_after_attempt(3),
+                retry=retry_if_not_exception_type(UnknownObjectException),
+            )
+            def _fetch(path=ref_path):
+                return repo.get_contents(path, ref=rebase_commitish).decoded_content
+
+            try:
+                data = await asyncio.to_thread(_fetch)
+                return yaml.safe_load(data)
+            except UnknownObjectException:
+                continue
         return None
 
     @skip_check_if_changing
