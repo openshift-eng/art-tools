@@ -1075,7 +1075,7 @@ class ConfigScanSources:
 
         _, org, _ = artcommonlib.util.split_git_url(rebase_repo_url)
         manifests_dir = manifests_dir.strip('/')
-        art_yaml_path = f'{manifests_dir}/art.yaml'
+        art_yaml_path = '/'.join(part for part in (manifests_dir, 'art.yaml') if part)
 
         with tempfile.NamedTemporaryFile(delete=True, suffix='.yaml') as temp_file:
             try:
@@ -1107,13 +1107,13 @@ class ConfigScanSources:
         github_client = get_github_client_for_org(org)
         manifests_dir = manifests_dir.strip('/')
         bundle_dir = bundle_dir.strip('/')
-        bundle_manifests_dir = f'{manifests_dir}/{bundle_dir}' if bundle_dir else manifests_dir
+        bundle_manifests_dir = '/'.join(part for part in (manifests_dir, bundle_dir) if part)
         candidate_paths = [
-            f'{bundle_manifests_dir}/image-references',
-            f'{manifests_dir}/image-references',
+            '/'.join(part for part in (bundle_manifests_dir, 'image-references') if part),
+            '/'.join(part for part in (manifests_dir, 'image-references') if part),
+            '/'.join(part for part in (bundle_dir, 'image-references') if part),
         ]
-        if bundle_dir:
-            candidate_paths.append(f'{bundle_dir}/image-references')
+        candidate_paths = list(dict.fromkeys(candidate_paths))
 
         for ref_path in candidate_paths:
             with tempfile.NamedTemporaryFile(delete=True, suffix='.yaml') as temp_file:
