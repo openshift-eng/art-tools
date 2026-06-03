@@ -23,7 +23,7 @@ from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.release_util import isolate_el_version_in_release
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import new_roundtrip_yaml_handler
-from doozerlib.backend.base_image_handler import ART_IMAGES_BASE_APPLICATION
+from doozerlib.constants import ART_IMAGES_BASE_APPLICATION
 from doozerlib.cli.config_plashet import KNOWN_SIGNING_KEYS
 from elliottlib import util as elliottutil
 from elliottlib.constants import GOLANG_BUILDER_CVE_COMPONENT
@@ -495,11 +495,10 @@ class UpdateGolangPipeline:
 
     async def process_build(self, el_v, nvr):
         await self.ensure_signed(el_v, nvr)
-        if await is_latest_and_available(self.ocp_version, el_v, nvr, self.koji_session):
-            return True
-        if not self.tag_builds:
-            return False
-        await self.tag_build(el_v, nvr)
+        if not is_latest(self.ocp_version, el_v, nvr, self.koji_session):
+            if not self.tag_builds:
+                return False
+            await self.tag_build(el_v, nvr)
 
         # retry 5 times to request repo regen and check availability,
         # which can take around 5 hours in worst case, before giving up and raise error
