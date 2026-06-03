@@ -469,8 +469,9 @@ class SigstoreSignatory:
             return need_signing, need_examining, errors
 
         if isinstance(img_info, list):
-            # Manifest list: examine each arch manifest
+            # Manifest list: sign the list itself AND examine each arch manifest
             self._logger.debug("%s is a manifest list", pullspec)
+            need_signing.add(pullspec)
             for manifest in img_info:
                 need_examining.add(self.redigest_pullspec(manifest["name"], manifest["digest"]))
         else:
