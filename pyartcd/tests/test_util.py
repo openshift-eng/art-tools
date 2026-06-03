@@ -308,7 +308,7 @@ class TestUtil(IsolatedAsyncioTestCase):
                 return [
                     'count:ec-failure:konflux:openshift-4.21:ironic:failure',
                     'count:ec-failure:konflux:openshift-4.21:ironic:jenkins_url',
-                    'count:ec-failure:konflux:openshift-4.21:ironic:ec_pipeline_url',
+                    'count:ec-failure:konflux:openshift-4.21:ironic:pipeline_url',
                 ]
             return []
 
@@ -316,12 +316,12 @@ class TestUtil(IsolatedAsyncioTestCase):
         mock_get_value.side_effect = lambda key: {
             'count:ec-failure:konflux:openshift-4.21:ironic:failure': '3',
             'count:ec-failure:konflux:openshift-4.21:ironic:jenkins_url': 'http://j/1',
-            'count:ec-failure:konflux:openshift-4.21:ironic:ec_pipeline_url': 'http://its/plr/1',
+            'count:ec-failure:konflux:openshift-4.21:ironic:pipeline_url': 'http://its/plr/1',
         }.get(key)
         result = await util.get_counter_failures('ec-failure', 'openshift-4.21')
         self.assertEqual(result['ironic']['failure_count'], 3)
         self.assertEqual(result['ironic']['jenkins_url'], 'http://j/1')
-        self.assertEqual(result['ironic']['ec_pipeline_url'], 'http://its/plr/1')
+        self.assertEqual(result['ironic']['pipeline_url'], 'http://its/plr/1')
 
     @patch("artcommonlib.redis.get_value", new_callable=AsyncMock)
     @patch("artcommonlib.redis.get_keys", new_callable=AsyncMock)

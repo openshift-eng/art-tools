@@ -228,8 +228,9 @@ class SeedLockfilePipeline:
             return
 
         LOGGER.info('Resetting rebase-fail counters for solved images: %s', ', '.join(solved))
+        group = f'openshift-{self.version}'
         results = await asyncio.gather(
-            *[reset_fail_counter(f'count:rebase-failure:konflux:{self.version}:{image}') for image in solved],
+            *[reset_fail_counter(f'count:rebase-failure:konflux:{group}:{image}') for image in solved],
             return_exceptions=True,
         )
         for image, result in zip(solved, results):

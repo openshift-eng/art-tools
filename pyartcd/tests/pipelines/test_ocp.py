@@ -1058,6 +1058,8 @@ class TestKonfluxOcpPipelineBuildFailCounters(unittest.IsolatedAsyncioTestCase):
                     'nvrs': 'ironic-1.0-1',
                     'ec_failed': 'true',
                     'ec_pipeline_url': 'http://its/plr/1',
+                    'build_pipeline_url': 'http://build/plr/1',
+                    'release_pipeline': '',
                     'base_image_release_failed': 'false',
                 },
             ]
@@ -1068,9 +1070,9 @@ class TestKonfluxOcpPipelineBuildFailCounters(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(incr_branches), 1)
         self.assertIn('count:ec-failure:konflux:openshift-4.18:ironic', incr_branches[0])
 
-        # Verify ec_pipeline_url is passed as metadata
+        # Verify pipeline_url is passed as metadata
         incr_kwargs = mock_incr.call_args_list[0].kwargs
-        self.assertEqual(incr_kwargs['ec_pipeline_url'], 'http://its/plr/1')
+        self.assertEqual(incr_kwargs['pipeline_url'], 'http://its/plr/1')
 
     @patch('pyartcd.pipelines.ocp4_konflux.increment_fail_counter', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.ocp4_konflux.reset_fail_counter', new_callable=AsyncMock)
@@ -1085,6 +1087,8 @@ class TestKonfluxOcpPipelineBuildFailCounters(unittest.IsolatedAsyncioTestCase):
                     'nvrs': 'ose-base-1.0-1',
                     'ec_failed': 'false',
                     'ec_pipeline_url': '',
+                    'build_pipeline_url': 'http://build/plr/2',
+                    'release_pipeline': 'http://release/plr/1',
                     'base_image_release_failed': 'true',
                 },
             ]
@@ -1108,6 +1112,8 @@ class TestKonfluxOcpPipelineBuildFailCounters(unittest.IsolatedAsyncioTestCase):
                     'nvrs': 'ceo-1.0-1',
                     'ec_failed': 'false',
                     'ec_pipeline_url': '',
+                    'build_pipeline_url': 'http://build/plr/3',
+                    'release_pipeline': '',
                     'base_image_release_failed': 'false',
                 },
             ]
@@ -1131,6 +1137,8 @@ class TestKonfluxOcpPipelineBuildFailCounters(unittest.IsolatedAsyncioTestCase):
                     'nvrs': 'ironic-1.0-1',
                     'ec_failed': 'true',
                     'ec_pipeline_url': 'http://its/1',
+                    'build_pipeline_url': 'http://build/plr/4',
+                    'release_pipeline': '',
                     'base_image_release_failed': 'false',
                 },
                 {
@@ -1139,6 +1147,8 @@ class TestKonfluxOcpPipelineBuildFailCounters(unittest.IsolatedAsyncioTestCase):
                     'nvrs': 'ose-base-1.0-1',
                     'ec_failed': 'false',
                     'ec_pipeline_url': '',
+                    'build_pipeline_url': 'http://build/plr/2',
+                    'release_pipeline': 'http://release/plr/1',
                     'base_image_release_failed': 'true',
                 },
                 {
@@ -1147,6 +1157,8 @@ class TestKonfluxOcpPipelineBuildFailCounters(unittest.IsolatedAsyncioTestCase):
                     'nvrs': 'ceo-1.0-1',
                     'ec_failed': 'false',
                     'ec_pipeline_url': '',
+                    'build_pipeline_url': 'http://build/plr/5',
+                    'release_pipeline': '',
                     'base_image_release_failed': 'false',
                 },
             ]
@@ -1172,6 +1184,8 @@ class TestKonfluxOcpPipelineBuildFailCounters(unittest.IsolatedAsyncioTestCase):
                     'nvrs': 'ironic-1.0-1',
                     'ec_failed': 'false',
                     'ec_pipeline_url': '',
+                    'build_pipeline_url': '',
+                    'release_pipeline': '',
                     'base_image_release_failed': 'false',
                 },
             ]
@@ -1241,6 +1255,8 @@ class TestKonfluxOcpPipelineBuildFailCounters(unittest.IsolatedAsyncioTestCase):
                     'nvrs': 'ironic-1.0-1',
                     'ec_failed': 'true',
                     'ec_pipeline_url': 'http://its/1',
+                    'build_pipeline_url': 'http://build/plr/4',
+                    'release_pipeline': '',
                     'base_image_release_failed': 'false',
                 },
             ]

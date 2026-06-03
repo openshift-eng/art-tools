@@ -1061,9 +1061,11 @@ async def get_failures(pattern: str, entity_index: int = -2, logger=None, **cont
         # Get build failures
         await get_failures('count:build-failure:konflux:openshift-4.18:*:failure', build_system='konflux')
 
-        # Get rebase failures for multiple patterns
-        for branch in ['rebase-failure', 'okd-rebase-failure']:
-            await get_failures(f'count:{branch}:konflux:4.18:*:failure', branch=branch, build_system='konflux')
+        # Get rebase failures for OCP
+        await get_failures('count:rebase-failure:konflux:openshift-4.18:*:failure', branch='rebase-failure', build_system='konflux')
+
+        # Get rebase failures for OKD
+        await get_failures('count:rebase-failure:konflux:okd-4.18:*:failure', branch='rebase-failure', build_system='konflux')
     """
     failures = {}
 
@@ -1136,14 +1138,14 @@ async def get_failures(pattern: str, entity_index: int = -2, logger=None, **cont
     return failures
 
 
-async def get_rebase_failures(version: str, branches: list[str], build_systems: list[str], logger=None):
+async def get_rebase_failures(group: str, branches: list[str], build_systems: list[str], logger=None):
     """
-    Fetch rebase failure data from Redis for a specific version.
+    Fetch rebase failure data from Redis for a specific group.
     Checks multiple branch patterns and build systems.
 
     Arg(s):
-        version (str): Version (e.g., "4.18")
-        branches (list[str]): Branch identifiers (e.g., ['rebase-failure'] or ['okd-rebase-failure'])
+        group (str): Group name (e.g., "openshift-4.18", "okd-4.18")
+        branches (list[str]): Branch identifiers (e.g., ['rebase-failure'])
         build_systems (list[str]): Build systems to check (e.g., ['brew', 'konflux'])
         logger (Logger): Optional logger for debugging
     Return Value(s):
@@ -1153,7 +1155,7 @@ async def get_rebase_failures(version: str, branches: list[str], build_systems: 
 
     for branch in branches:
         for build_system in build_systems:
-            pattern = f'count:{branch}:{build_system}:{version}:*:failure'
+            pattern = f'count:{branch}:{build_system}:{group}:*:failure'
             failures = await get_failures(
                 pattern, entity_index=-2, logger=logger, build_system=build_system, branch=branch
             )
