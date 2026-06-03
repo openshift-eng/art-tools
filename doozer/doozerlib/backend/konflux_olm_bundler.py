@@ -805,7 +805,7 @@ class KonfluxOlmBundleBuilder:
                         ec_status = ec_result.ec_status
                         ec_pipeline_url = ec_result.ec_pipeline_url
                         if ec_result.ec_failed:
-                            outcome = KonfluxBuildOutcome.FAILURE
+                            outcome = KonfluxBuildOutcome.ITS_ERROR
                             ec_failed = True
                     elif outcome is KonfluxBuildOutcome.SUCCESS:
                         if self.skip_ec_verify:
@@ -1023,17 +1023,17 @@ class KonfluxOlmBundleBuilder:
                             'image_tag': image_pullspec.split(':')[-1],
                         }
                     )
-                case KonfluxBuildOutcome.FAILURE:
-                    status = pipelinerun_dict.get('status', {})
-                    start_time = status.get('startTime')
-                    end_time = status.get('completionTime')
-                    build_record_params.update(
-                        {
-                            'start_time': datetime.strptime(start_time, '%Y-%m-%dT%H:%M:%SZ').replace(
-                                tzinfo=timezone.utc
-                            ),
-                            'end_time': datetime.strptime(end_time, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc),
-                        }
+            status = pipelinerun_dict.get('status', {})
+            if status:
+                start_time = status.get('startTime')
+                if start_time:
+                    build_record_params['start_time'] = datetime.strptime(start_time, '%Y-%m-%dT%H:%M:%SZ').replace(
+                        tzinfo=timezone.utc
+                    )
+                completion_time = status.get('completionTime')
+                if completion_time:
+                    build_record_params['end_time'] = datetime.strptime(completion_time, '%Y-%m-%dT%H:%M:%SZ').replace(
+                        tzinfo=timezone.utc
                     )
 
             build_record = KonfluxBundleBuildRecord(**build_record_params)

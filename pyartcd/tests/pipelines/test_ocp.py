@@ -1187,6 +1187,49 @@ class TestKonfluxOcpPipelineBuildFailCounters(unittest.IsolatedAsyncioTestCase):
 
     @patch('pyartcd.pipelines.ocp4_konflux.increment_fail_counter', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.ocp4_konflux.reset_fail_counter', new_callable=AsyncMock)
+    async def test_build_fail_counters_categorize_by_outcome(self, mock_reset, mock_incr):
+        """Granular outcome values take precedence over legacy record flags."""
+        from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome
+
+        pipeline = self._make_pipeline()
+        record_log = {
+            'image_build_konflux': [
+                {
+                    'name': 'ironic',
+                    'status': '-1',
+                    'nvrs': 'ironic-1.0-1',
+                    'outcome': str(KonfluxBuildOutcome.ITS_ERROR),
+                    'ec_failed': 'false',
+                    'base_image_release_failed': 'false',
+                },
+                {
+                    'name': 'ose-base',
+                    'status': '-1',
+                    'nvrs': 'ose-base-1.0-1',
+                    'outcome': str(KonfluxBuildOutcome.RELEASE_ERROR),
+                    'ec_failed': 'false',
+                    'base_image_release_failed': 'false',
+                },
+                {
+                    'name': 'ceo',
+                    'status': '-1',
+                    'nvrs': 'ceo-1.0-1',
+                    'outcome': str(KonfluxBuildOutcome.BUILD_ERROR),
+                    'ec_failed': 'true',
+                    'base_image_release_failed': 'true',
+                },
+            ]
+        }
+        await pipeline.update_build_fail_counters([], ['ironic', 'ose-base', 'ceo'], record_log)
+
+        incr_branches = {c.args[0] for c in mock_incr.call_args_list}
+        self.assertEqual(len(incr_branches), 3)
+        self.assertIn('count:ec-failure:konflux:openshift-4.18:ironic', incr_branches)
+        self.assertIn('count:release-failure:konflux:openshift-4.18:ose-base', incr_branches)
+        self.assertIn('count:build-failure:konflux:openshift-4.18:ceo', incr_branches)
+
+    @patch('pyartcd.pipelines.ocp4_konflux.increment_fail_counter', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.ocp4_konflux.reset_fail_counter', new_callable=AsyncMock)
     async def test_build_fail_counters_non_stream_skipped(self, mock_reset, mock_incr):
         """Non-stream assemblies skip counter updates entirely."""
         pipeline = self._make_pipeline(assembly='4.18.1')

@@ -20,11 +20,52 @@ class KonfluxEnum(Enum):
 
 
 class KonfluxBuildOutcome(KonfluxEnum):
+    """Konflux build lifecycle outcome stored in BigQuery.
+
+    Taxonomy:
+    - SUCCESS: releasable build completed all required stages.
+    - PENDING: in-progress or awaiting further processing (intermediate row).
+    - BUILD_ERROR: build PipelineRun failed (canonical PLR failure; prefer over FAILURE).
+    - ITS_ERROR: Enterprise Contract / IntegrationTestScenario verification failed after a successful build.
+    - RELEASE_ERROR: base-image snapshot/release failed after a successful build.
+    - FAILURE: legacy generic failure; retained for old rows and out-of-scope writers (FBC/OLM may still emit it).
+    - TIMEOUT / CANCELLED: pipelinerun terminal states from Tekton Succeeded condition.
+    """
+
     FAILURE = 'failure'
     SUCCESS = 'success'
     PENDING = 'pending'
     TIMEOUT = 'timeout'
     CANCELLED = 'cancelled'
+    BUILD_ERROR = 'build_error'
+    ITS_ERROR = 'its_error'
+    RELEASE_ERROR = 'release_error'
+
+    @classmethod
+    def db_filter_values(cls) -> tuple[str, ...]:
+        """Outcome values included in KonfluxDb default and cache queries."""
+        return (
+            cls.SUCCESS.value,
+            cls.FAILURE.value,
+            cls.BUILD_ERROR.value,
+            cls.ITS_ERROR.value,
+            cls.RELEASE_ERROR.value,
+            cls.TIMEOUT.value,
+            cls.CANCELLED.value,
+        )
+
+    def is_success(self) -> bool:
+        return self is KonfluxBuildOutcome.SUCCESS
+
+    def is_failure(self) -> bool:
+        return self in (
+            KonfluxBuildOutcome.FAILURE,
+            KonfluxBuildOutcome.BUILD_ERROR,
+            KonfluxBuildOutcome.ITS_ERROR,
+            KonfluxBuildOutcome.RELEASE_ERROR,
+            KonfluxBuildOutcome.TIMEOUT,
+            KonfluxBuildOutcome.CANCELLED,
+        )
 
     @classmethod
     def extract_from_pipelinerun_succeeded_condition(
@@ -34,13 +75,12 @@ class KonfluxBuildOutcome(KonfluxEnum):
             assert succeeded_condition.type == 'Succeeded'
             if succeeded_condition.is_status_true():
                 return cls.SUCCESS
-            else:
-                reason = succeeded_condition.reason
-                if reason == 'Cancelled':
-                    return cls.CANCELLED
-                if reason == 'Timeout':
-                    return cls.TIMEOUT
-                return cls.FAILURE
+            reason = succeeded_condition.reason
+            if reason == 'Cancelled':
+                return cls.CANCELLED
+            if reason == 'Timeout':
+                return cls.TIMEOUT
+            return cls.BUILD_ERROR
         return cls.PENDING
 
 

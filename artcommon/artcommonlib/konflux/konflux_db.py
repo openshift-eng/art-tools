@@ -584,7 +584,7 @@ class KonfluxDb:
             # Build query for last N days of builds in this group
             start_time = datetime.now(tz=timezone.utc) - timedelta(days=self.cache._cache_days)
             where_clauses = [
-                Column('outcome', String).in_(['success', 'failure']),
+                Column('outcome', String).in_(list(KonfluxBuildOutcome.db_filter_values())),
                 Column('start_time', DateTime) >= start_time,
             ]
 
@@ -795,9 +795,9 @@ class KonfluxDb:
             k: str(v) if isinstance(v, (KonfluxBuildOutcome, ArtifactType, Engine)) else v for k, v in where.items()
         }
 
-        # Unless otherwise specified, only look for builds in 'success' or 'failure' state
+        # Unless otherwise specified, include terminal success and failure outcomes (incl. granular types)
         if 'outcome' not in where:
-            base_clauses.append(Column('outcome', String).in_(['success', 'failure']))
+            base_clauses.append(Column('outcome', String).in_(list(KonfluxBuildOutcome.db_filter_values())))
 
         for col_name, col_value in where.items():
             if col_value is not None:
