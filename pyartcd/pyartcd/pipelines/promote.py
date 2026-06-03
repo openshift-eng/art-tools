@@ -598,11 +598,11 @@ class PromotePipeline:
                         await self.sign_artifacts(release_name, client_type, release_infos, message_digests)
 
                 # publish rhcos on mirror via rhcos_sync job
-                # only if release is EC or a GA release (.0)
+                # only if release is EC, RC, or a GA release (.0)
                 # job will not mirror & overwrite if destination already exists (sync already happened)
                 # if that is desired, run rhcos_sync with FORCE=true
                 is_ga = assembly_type == AssemblyTypes.STANDARD and self.assembly.endswith(".0")
-                if assembly_type == AssemblyTypes.PREVIEW or is_ga:
+                if assembly_type in (AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE) or is_ga:
                     for arch, pullspec in pullspecs.items():
                         if arch == "multi":
                             continue
