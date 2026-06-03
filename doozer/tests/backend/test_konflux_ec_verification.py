@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxECStatus
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome
 from doozerlib.backend.konflux_client import ECVerificationResult
 from doozerlib.backend.konflux_image_builder import (
     KonfluxImageBuilder,
@@ -83,15 +83,16 @@ def _make_metadata(distgit_key="test-image", for_release=True, is_base_image=Fal
 
 
 def _ec_passed_result():
-    return ECVerificationResult(
-        ec_status=KonfluxECStatus.PASSED, ec_pipeline_url="https://example.com/ec-plr", ec_failed=False
-    )
+    return ECVerificationResult(ec_pipeline_url="https://example.com/ec-plr", ec_failed=False)
 
 
 def _ec_failed_result():
-    return ECVerificationResult(
-        ec_status=KonfluxECStatus.FAILED, ec_pipeline_url="https://example.com/ec-plr", ec_failed=True
-    )
+    return ECVerificationResult(ec_pipeline_url="https://example.com/ec-plr", ec_failed=True)
+
+
+def _ec_exception_result():
+    """EC verification failed due to exception (e.g., ITS creation failed) before PLR was created."""
+    return ECVerificationResult(ec_pipeline_url="", ec_failed=True)
 
 
 @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
@@ -232,3 +233,52 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
         add_args, add_kwargs = record_logger.add_record.call_args
         self.assertEqual(add_args[0], 'image_build_konflux')
         self.assertEqual(add_kwargs['outcome'], str(KonfluxBuildOutcome.ITS_ERROR))
+
+    async def test_retry_when_ec_exception_without_plr_url(self, mock_kc_init):
+        """
+        When EC verification fails due to exception (e.g., ITS creation failed) before
+        a PipelineRun is created, ec_failed=True but ec_pipeline_url=''. This should:
+        1. Allow retries (not break the retry loop)
+        2. Be counted as a build failure, not EC failure (for pyartcd metrics)
+        """
+        config = _make_config(group_name="openshift-4.18")
+        metadata = _make_metadata(for_release=True)
+        metadata.get_konflux_build_attempts.return_value = 3
+
+        builder = KonfluxImageBuilder(config)
+
+        plr_info = _make_successful_pipelinerun_info()
+        builder._start_build = AsyncMock(return_value=plr_info)
+        builder._validate_build_attestation_and_signature = AsyncMock()
+        builder._wait_for_parent_members = AsyncMock(return_value=[])
+        builder.update_konflux_db = AsyncMock(return_value=None)
+        builder._parse_dockerfile = MagicMock(
+            return_value=("uuid-tag", "test-component", "v4.18.0", "202604100000.p0.el9")
+        )
+
+        with patch.object(Path, "exists", return_value=True):
+            with patch(
+                "doozerlib.backend.konflux_image_builder.BuildRepo.from_local_dir",
+                new_callable=AsyncMock,
+            ) as mock_build_repo:
+                mock_repo = MagicMock()
+                mock_repo.url = "https://github.com/openshift/test-repo"
+                mock_repo.commit_hash = "deadbeef"
+                mock_repo.branch = "art-openshift-4.18-assembly-stream-dgk-test-image"
+                mock_build_repo.return_value = mock_repo
+
+                wait_plr_info = _make_successful_pipelinerun_info()
+                builder._konflux_client.wait_for_pipelinerun = AsyncMock(return_value=wait_plr_info)
+                builder._konflux_client.resource_url = MagicMock(return_value="https://example.com/plr")
+                builder._konflux_client.verify_enterprise_contract = AsyncMock(return_value=_ec_exception_result())
+
+                with patch.object(
+                    KonfluxBuildOutcome,
+                    "extract_from_pipelinerun_succeeded_condition",
+                    return_value=KonfluxBuildOutcome.SUCCESS,
+                ):
+                    with self.assertRaises(KonfluxImageBuildError):
+                        await builder.build(metadata)
+
+        # Verify that all retries were attempted (exception path allows retries)
+        self.assertEqual(builder._start_build.call_count, 3)

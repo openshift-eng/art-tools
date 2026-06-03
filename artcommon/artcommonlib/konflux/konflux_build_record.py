@@ -84,12 +84,6 @@ class KonfluxBuildOutcome(KonfluxEnum):
         return cls.PENDING
 
 
-class KonfluxECStatus(KonfluxEnum):
-    PASSED = 'passed'
-    FAILED = 'failed'
-    NOT_APPLICABLE = 'n/a'
-
-
 class ArtifactType(KonfluxEnum):
     RPM = 'rpm'
     IMAGE = 'image'
@@ -106,7 +100,6 @@ class KonfluxRecord:
         'record_id',
         'build_id',
         'nvr',
-        'ec_status',
         'ec_pipeline_url',
         'release_pipeline',
         'released_pullspec',
@@ -332,7 +325,6 @@ class KonfluxBuildRecord(KonfluxRecord):
         nvr: str = None,
         build_component: str = '',
         build_priority: int = constants.KONFLUX_DEFAULT_BUILD_PRIORITY,
-        ec_status: KonfluxECStatus = KonfluxECStatus.NOT_APPLICABLE,
         ec_pipeline_url: str = '',
         release_pipeline: str = '',
         released_pullspec: str = '',
@@ -370,11 +362,6 @@ class KonfluxBuildRecord(KonfluxRecord):
         self.embargoed = embargoed
         self.hermetic = hermetic
         self.artifact_type = artifact_type if isinstance(artifact_type, ArtifactType) else ArtifactType(artifact_type)
-        self.ec_status = (
-            ec_status
-            if isinstance(ec_status, KonfluxECStatus)
-            else KonfluxECStatus(ec_status or KonfluxECStatus.NOT_APPLICABLE.value)
-        )
         self.ec_pipeline_url = ec_pipeline_url
         self.release_pipeline = release_pipeline
         self.released_pullspec = released_pullspec
@@ -415,7 +402,6 @@ class KonfluxBundleBuildRecord(KonfluxRecord):
         nvr: str = None,
         build_component: str = '',
         build_priority: int = constants.KONFLUX_DEFAULT_BUILD_PRIORITY,
-        ec_status: KonfluxECStatus = KonfluxECStatus.NOT_APPLICABLE,
         ec_pipeline_url: str = '',
     ):
         super().__init__(
@@ -446,11 +432,6 @@ class KonfluxBundleBuildRecord(KonfluxRecord):
         self.operator_nvr = operator_nvr
         self.bundle_package_name = bundle_package_name
         self.bundle_csv_name = bundle_csv_name
-        self.ec_status = (
-            ec_status
-            if isinstance(ec_status, KonfluxECStatus)
-            else KonfluxECStatus(ec_status or KonfluxECStatus.NOT_APPLICABLE.value)
-        )
         self.ec_pipeline_url = ec_pipeline_url
         self.init_uuids(record_id, build_id, nvr)
 
@@ -487,7 +468,6 @@ class KonfluxFbcBuildRecord(KonfluxRecord):
         nvr: str = '',
         build_component: str = '',
         build_priority: int = constants.KONFLUX_DEFAULT_BUILD_PRIORITY,
-        ec_status: KonfluxECStatus = KonfluxECStatus.NOT_APPLICABLE,
         ec_pipeline_url: str = '',
     ):
         super().__init__(
@@ -516,10 +496,5 @@ class KonfluxFbcBuildRecord(KonfluxRecord):
         )
         self.bundle_nvrs = bundle_nvrs
         self.arches = arches
-        self.ec_status = (
-            ec_status
-            if isinstance(ec_status, KonfluxECStatus)
-            else KonfluxECStatus(ec_status or KonfluxECStatus.NOT_APPLICABLE.value)
-        )
         self.ec_pipeline_url = ec_pipeline_url
         self.init_uuids(record_id, build_id, nvr)

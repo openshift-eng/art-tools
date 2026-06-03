@@ -275,11 +275,8 @@ class KonfluxOcpPipeline:
                 str(KonfluxBuildOutcome.CANCELLED),
             ):
                 build_failed_images.append(image)
-            elif entry.get('ec_failed') == 'true':
-                ec_failed_images.append(image)
-            elif entry.get('base_image_release_failed') == 'true':
-                release_failed_images.append(image)
             else:
+                # Fallback: unknown outcome, treat as build failure
                 build_failed_images.append(image)
 
         # Reset all counter types for successful builds

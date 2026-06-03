@@ -1056,7 +1056,7 @@ class TestKonfluxOcpPipelineBuildFailCounters(unittest.IsolatedAsyncioTestCase):
                     'name': 'ironic',
                     'status': '-1',
                     'nvrs': 'ironic-1.0-1',
-                    'ec_failed': 'true',
+                    'outcome': 'its_error',
                     'ec_pipeline_url': 'http://its/plr/1',
                     'build_pipeline_url': 'http://build/plr/1',
                     'release_pipeline': '',
@@ -1085,7 +1085,7 @@ class TestKonfluxOcpPipelineBuildFailCounters(unittest.IsolatedAsyncioTestCase):
                     'name': 'ose-base',
                     'status': '-1',
                     'nvrs': 'ose-base-1.0-1',
-                    'ec_failed': 'false',
+                    'outcome': 'release_error',
                     'ec_pipeline_url': '',
                     'build_pipeline_url': 'http://build/plr/2',
                     'release_pipeline': 'http://release/plr/1',
@@ -1110,7 +1110,6 @@ class TestKonfluxOcpPipelineBuildFailCounters(unittest.IsolatedAsyncioTestCase):
                     'name': 'cluster-etcd-operator',
                     'status': '-1',
                     'nvrs': 'ceo-1.0-1',
-                    'ec_failed': 'false',
                     'ec_pipeline_url': '',
                     'build_pipeline_url': 'http://build/plr/3',
                     'release_pipeline': '',
@@ -1135,7 +1134,7 @@ class TestKonfluxOcpPipelineBuildFailCounters(unittest.IsolatedAsyncioTestCase):
                     'name': 'ironic',
                     'status': '-1',
                     'nvrs': 'ironic-1.0-1',
-                    'ec_failed': 'true',
+                    'outcome': 'its_error',
                     'ec_pipeline_url': 'http://its/1',
                     'build_pipeline_url': 'http://build/plr/4',
                     'release_pipeline': '',
@@ -1145,7 +1144,7 @@ class TestKonfluxOcpPipelineBuildFailCounters(unittest.IsolatedAsyncioTestCase):
                     'name': 'ose-base',
                     'status': '-1',
                     'nvrs': 'ose-base-1.0-1',
-                    'ec_failed': 'false',
+                    'outcome': 'release_error',
                     'ec_pipeline_url': '',
                     'build_pipeline_url': 'http://build/plr/2',
                     'release_pipeline': 'http://release/plr/1',
@@ -1155,7 +1154,7 @@ class TestKonfluxOcpPipelineBuildFailCounters(unittest.IsolatedAsyncioTestCase):
                     'name': 'ceo',
                     'status': '-1',
                     'nvrs': 'ceo-1.0-1',
-                    'ec_failed': 'false',
+                    'outcome': 'build_error',
                     'ec_pipeline_url': '',
                     'build_pipeline_url': 'http://build/plr/5',
                     'release_pipeline': '',
@@ -1182,7 +1181,6 @@ class TestKonfluxOcpPipelineBuildFailCounters(unittest.IsolatedAsyncioTestCase):
                     'name': 'ironic',
                     'status': '0',
                     'nvrs': 'ironic-1.0-1',
-                    'ec_failed': 'false',
                     'ec_pipeline_url': '',
                     'build_pipeline_url': '',
                     'release_pipeline': '',
@@ -1202,7 +1200,7 @@ class TestKonfluxOcpPipelineBuildFailCounters(unittest.IsolatedAsyncioTestCase):
     @patch('pyartcd.pipelines.ocp4_konflux.increment_fail_counter', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.ocp4_konflux.reset_fail_counter', new_callable=AsyncMock)
     async def test_build_fail_counters_categorize_by_outcome(self, mock_reset, mock_incr):
-        """Granular outcome values take precedence over legacy record flags."""
+        """Granular outcome values categorize failures correctly."""
         from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome
 
         pipeline = self._make_pipeline()
@@ -1213,24 +1211,18 @@ class TestKonfluxOcpPipelineBuildFailCounters(unittest.IsolatedAsyncioTestCase):
                     'status': '-1',
                     'nvrs': 'ironic-1.0-1',
                     'outcome': str(KonfluxBuildOutcome.ITS_ERROR),
-                    'ec_failed': 'false',
-                    'base_image_release_failed': 'false',
                 },
                 {
                     'name': 'ose-base',
                     'status': '-1',
                     'nvrs': 'ose-base-1.0-1',
                     'outcome': str(KonfluxBuildOutcome.RELEASE_ERROR),
-                    'ec_failed': 'false',
-                    'base_image_release_failed': 'false',
                 },
                 {
                     'name': 'ceo',
                     'status': '-1',
                     'nvrs': 'ceo-1.0-1',
                     'outcome': str(KonfluxBuildOutcome.BUILD_ERROR),
-                    'ec_failed': 'true',
-                    'base_image_release_failed': 'true',
                 },
             ]
         }
@@ -1253,7 +1245,7 @@ class TestKonfluxOcpPipelineBuildFailCounters(unittest.IsolatedAsyncioTestCase):
                     'name': 'ironic',
                     'status': '-1',
                     'nvrs': 'ironic-1.0-1',
-                    'ec_failed': 'true',
+                    'outcome': 'its_error',
                     'ec_pipeline_url': 'http://its/1',
                     'build_pipeline_url': 'http://build/plr/4',
                     'release_pipeline': '',

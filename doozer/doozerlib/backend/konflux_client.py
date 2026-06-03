@@ -97,7 +97,6 @@ def get_common_runtime_watcher_labels() -> Dict[str, str]:
 class ECVerificationResult:
     """Result of an enterprise-contract verification run."""
 
-    ec_status: object  # KonfluxECStatus (imported lazily to avoid circular imports)
     ec_pipeline_url: str
     ec_failed: bool
 
@@ -1097,9 +1096,8 @@ class KonfluxClient:
         waits for completion, and returns the result. This is the shared entry
         point used by image, FBC, and bundle builders.
         """
-        from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxECStatus
+        from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome
 
-        ec_status = KonfluxECStatus.NOT_APPLICABLE
         ec_pipeline_url = ''
         ec_failed = False
 
@@ -1135,18 +1133,15 @@ class KonfluxClient:
             ec_outcome = KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition(ec_condition)
             if ec_outcome is not KonfluxBuildOutcome.SUCCESS:
                 logger.error("EC verification failed. PLR: %s", ec_pipeline_url)
-                ec_status = KonfluxECStatus.FAILED
                 ec_failed = True
             else:
                 logger.info("EC verification passed. PLR: %s", ec_pipeline_url)
-                ec_status = KonfluxECStatus.PASSED
 
         except Exception:
             logger.exception("EC verification error")
-            ec_status = KonfluxECStatus.FAILED
             ec_failed = True
 
-        return ECVerificationResult(ec_status=ec_status, ec_pipeline_url=ec_pipeline_url, ec_failed=ec_failed)
+        return ECVerificationResult(ec_pipeline_url=ec_pipeline_url, ec_failed=ec_failed)
 
     @staticmethod
     @alru_cache

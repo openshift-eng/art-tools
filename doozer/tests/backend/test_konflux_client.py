@@ -4,7 +4,6 @@ from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import jinja2
-from artcommonlib.konflux.konflux_build_record import KonfluxECStatus
 from doozerlib.backend.konflux_client import (
     API_VERSION,
     API_VERSION_V1BETA2,
@@ -513,7 +512,6 @@ class TestVerifyEnterpriseContract(IsolatedAsyncioTestCase):
         )
 
         self.assertIsInstance(result, ECVerificationResult)
-        self.assertEqual(result.ec_status, KonfluxECStatus.PASSED)
         self.assertFalse(result.ec_failed)
         self.assertEqual(result.ec_pipeline_url, "https://example.com/plr/test")
         client.ensure_integration_test_scenario.assert_called_once_with(
@@ -537,7 +535,6 @@ class TestVerifyEnterpriseContract(IsolatedAsyncioTestCase):
             logger=logging.getLogger("test"),
         )
 
-        self.assertEqual(result.ec_status, KonfluxECStatus.FAILED)
         self.assertTrue(result.ec_failed)
 
     async def test_ec_exception_returns_failed(self):
@@ -556,7 +553,6 @@ class TestVerifyEnterpriseContract(IsolatedAsyncioTestCase):
             logger=logging.getLogger("test"),
         )
 
-        self.assertEqual(result.ec_status, KonfluxECStatus.FAILED)
         self.assertTrue(result.ec_failed)
 
     async def test_its_name_derived_from_fbc_policy(self):
