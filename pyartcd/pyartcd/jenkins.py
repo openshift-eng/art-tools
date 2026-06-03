@@ -773,7 +773,8 @@ def start_rhcos_sync(release_tag_or_pullspec: str, dry_run: bool, **kwargs) -> O
 
 
 def start_build_plashets(
-    group, release, assembly, repos=None, data_path='', data_gitref='', copy_links=False, dry_run=False, **kwargs
+    group, release, assembly, repos=None, data_path='', data_gitref='', copy_links=False, dry_run=False,
+    art_tools_commit='', **kwargs
 ) -> Optional[str]:
     params = {
         'GROUP': group,
@@ -784,6 +785,7 @@ def start_build_plashets(
         'DATA_GITREF': data_gitref,
         'COPY_LINKS': copy_links,
         'DRY_RUN': dry_run,
+        'ART_TOOLS_COMMIT': art_tools_commit or os.environ.get('ART_TOOLS_COMMIT', ''),
     }
 
     return start_build(
