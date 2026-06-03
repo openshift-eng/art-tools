@@ -747,7 +747,7 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
 
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     def test_get_content_repo_url_suffix(self, mock_konflux_db):
-        """Test get_content_repo_url_suffix method"""
+        """Test get_content_repo_url_suffix returns plashet URL pattern"""
         mock_runtime = Mock(
             dry_run=False,
             working_dir=Path("/tmp/working"),
@@ -764,8 +764,8 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
             tag_builds=True,
         )
 
-        url = pipeline.get_content_repo_url_suffix(8)
-        self.assertEqual(url, "/brewroot/repos/rhaos-4.16-rhel-8-build/latest")
+        suffix = pipeline.get_content_repo_url_suffix(8, 4, 16)
+        self.assertEqual(suffix, "/pub/RHOCP/plashets/4.16/stream/golang-el8/latest")
 
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     def test_get_builder_pullspec(self, mock_konflux_db):
@@ -850,6 +850,7 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
         )
         pipeline.validate_tag_builds_go_latest = Mock()
         pipeline.process_build = AsyncMock(return_value=True)
+        pipeline._build_golang_plashets = AsyncMock()
         pipeline.get_existing_builders_brew = Mock(
             return_value={9: "openshift-golang-builder-container-v1.25.8-202604150744.p2.gf28329a.el9"}
         )
@@ -925,7 +926,10 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     @patch("pyartcd.pipelines.update_golang.is_available", new_callable=AsyncMock, return_value=True)
     @patch("pyartcd.pipelines.update_golang.is_latest", return_value=True)
-    async def test_process_build_already_latest_and_available(self, mock_is_latest, mock_is_available, mock_konflux_db):
+    @patch.object(UpdateGolangPipeline, "ensure_signed", new_callable=AsyncMock)
+    async def test_process_build_already_latest_and_available(
+        self, mock_ensure_signed, mock_is_latest, mock_is_available, mock_konflux_db
+    ):
         """Test process_build when build is already latest and available"""
         mock_runtime = Mock(
             dry_run=False,
@@ -951,7 +955,8 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
 
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     @patch("pyartcd.pipelines.update_golang.is_latest", return_value=False)
-    async def test_process_build_not_latest_no_tag(self, mock_is_latest, mock_konflux_db):
+    @patch.object(UpdateGolangPipeline, "ensure_signed", new_callable=AsyncMock)
+    async def test_process_build_not_latest_no_tag(self, mock_ensure_signed, mock_is_latest, mock_konflux_db):
         """Test process_build when build is not latest and tag_builds is False"""
         mock_runtime = Mock(
             dry_run=False,
@@ -976,7 +981,10 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     @patch("pyartcd.pipelines.update_golang.is_available", new_callable=AsyncMock, side_effect=[False, False, True])
     @patch("pyartcd.pipelines.update_golang.is_latest", return_value=True)
-    async def test_process_build_available_after_retries(self, mock_is_latest, mock_is_available, mock_konflux_db):
+    @patch.object(UpdateGolangPipeline, "ensure_signed", new_callable=AsyncMock)
+    async def test_process_build_available_after_retries(
+        self, mock_ensure_signed, mock_is_latest, mock_is_available, mock_konflux_db
+    ):
         """Test process_build succeeds after retrying request_repo"""
         mock_runtime = Mock(
             dry_run=False,
@@ -1093,7 +1101,7 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
         with patch.object(pipeline, 'get_module_tag', return_value='module-go-toolset-rhel8-123'):
             await pipeline.tag_build(8, "golang-1.20.12-2.el8")
 
-        # Should tag all module builds
+        # Should tag all 3 module builds into override
         self.assertEqual(pipeline.koji_session.tagBuild.call_count, 3)
 
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
@@ -1467,6 +1475,260 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
 
         # Should call both rebase and build
         self.assertEqual(mock_cmd_assert.call_count, 2)
+
+
+class TestShouldSignGolangRpm(unittest.TestCase):
+    """Test the should_sign_golang_rpm method"""
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
+    def test_returns_true_when_config_set(self, mock_get_github_client, mock_konflux_db):
+        mock_repo = Mock()
+        mock_repo.get_contents.return_value = Mock(decoded_content=b"sign_golang_rpm: true\n")
+        mock_get_github_client.return_value.get_repo.return_value = mock_repo
+
+        pipeline = UpdateGolangPipeline(
+            runtime=Mock(dry_run=False, working_dir=Path("/tmp/working")),
+            ocp_version="4.18",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.22.9-1.el9"],
+            art_jira="ART-1234",
+            tag_builds=True,
+        )
+
+        result = pipeline.should_sign_golang_rpm(9, "1.22.9")
+
+        self.assertTrue(result)
+        mock_repo.get_contents.assert_called_with("group.yml", ref="rhel-9-golang-1.22")
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
+    def test_returns_false_when_config_not_set(self, mock_get_github_client, mock_konflux_db):
+        mock_repo = Mock()
+        mock_repo.get_contents.return_value = Mock(decoded_content=b"name: rhel-9-golang-1.25\n")
+        mock_get_github_client.return_value.get_repo.return_value = mock_repo
+
+        pipeline = UpdateGolangPipeline(
+            runtime=Mock(dry_run=False, working_dir=Path("/tmp/working")),
+            ocp_version="4.22",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.25.3-1.el9"],
+            art_jira="ART-1234",
+            tag_builds=True,
+        )
+
+        result = pipeline.should_sign_golang_rpm(9, "1.25.3")
+
+        self.assertFalse(result)
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
+    def test_returns_false_when_explicitly_false(self, mock_get_github_client, mock_konflux_db):
+        mock_repo = Mock()
+        mock_repo.get_contents.return_value = Mock(decoded_content=b"sign_golang_rpm: false\n")
+        mock_get_github_client.return_value.get_repo.return_value = mock_repo
+
+        pipeline = UpdateGolangPipeline(
+            runtime=Mock(dry_run=False, working_dir=Path("/tmp/working")),
+            ocp_version="4.22",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.25.3-1.el9"],
+            art_jira="ART-1234",
+            tag_builds=True,
+        )
+
+        result = pipeline.should_sign_golang_rpm(9, "1.25.3")
+
+        self.assertFalse(result)
+
+
+class TestEnsureSigned(IsolatedAsyncioTestCase):
+    """Test the ensure_signed method"""
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    async def test_already_signed_skips(self, mock_konflux_db):
+        pipeline = UpdateGolangPipeline(
+            runtime=Mock(dry_run=False, working_dir=Path("/tmp/working")),
+            ocp_version="4.18",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.22.9-1.el9"],
+            art_jira="ART-1234",
+            tag_builds=True,
+        )
+        pipeline.is_rpm_signed = Mock(return_value=True)
+        pipeline.should_sign_golang_rpm = Mock()
+
+        await pipeline.ensure_signed(9, "golang-1.22.9-1.el9")
+
+        pipeline.should_sign_golang_rpm.assert_not_called()
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    async def test_unsigned_sustaining_tags_for_signing(self, mock_konflux_db):
+        mock_slack = Mock()
+        mock_slack.say_in_thread = AsyncMock()
+        mock_runtime = Mock(dry_run=False, working_dir=Path("/tmp/working"))
+        mock_runtime.new_slack_client.return_value = mock_slack
+
+        pipeline = UpdateGolangPipeline(
+            runtime=mock_runtime,
+            ocp_version="4.18",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.22.9-1.el9"],
+            art_jira="ART-1234",
+            tag_builds=True,
+        )
+        pipeline.is_rpm_signed = Mock(return_value=False)
+        pipeline.should_sign_golang_rpm = Mock(return_value=True)
+        pipeline.koji_session = Mock(logged_in=True)
+
+        await pipeline.ensure_signed(9, "golang-1.22.9-1.el9")
+
+        pipeline.koji_session.tagBuild.assert_called_once_with("rhaos-4.18-rhel-9-golang", "golang-1.22.9-1.el9")
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    async def test_unsigned_sustaining_dry_run(self, mock_konflux_db):
+        mock_slack = Mock()
+        mock_slack.say_in_thread = AsyncMock()
+        mock_runtime = Mock(dry_run=True, working_dir=Path("/tmp/working"))
+        mock_runtime.new_slack_client.return_value = mock_slack
+
+        pipeline = UpdateGolangPipeline(
+            runtime=mock_runtime,
+            ocp_version="4.18",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.22.9-1.el9"],
+            art_jira="ART-1234",
+            tag_builds=True,
+        )
+        pipeline.is_rpm_signed = Mock(return_value=False)
+        pipeline.should_sign_golang_rpm = Mock(return_value=True)
+        pipeline.koji_session = Mock(logged_in=True)
+
+        await pipeline.ensure_signed(9, "golang-1.22.9-1.el9")
+
+        pipeline.koji_session.tagBuild.assert_not_called()
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    async def test_unsigned_rhel_golang_raises(self, mock_konflux_db):
+        pipeline = UpdateGolangPipeline(
+            runtime=Mock(dry_run=False, working_dir=Path("/tmp/working")),
+            ocp_version="4.22",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.25.3-1.el9"],
+            art_jira="ART-1234",
+            tag_builds=True,
+        )
+        pipeline.is_rpm_signed = Mock(return_value=False)
+        pipeline.should_sign_golang_rpm = Mock(return_value=False)
+
+        with self.assertRaisesRegex(ValueError, "not signed.*RHEL"):
+            await pipeline.ensure_signed(9, "golang-1.25.3-1.el9")
+
+
+class TestIsRpmSigned(unittest.TestCase):
+    """Test the is_rpm_signed static method"""
+
+    def test_signed_rpm_found(self):
+        parsed = {"name": "golang", "version": "1.22.9", "release": "1.el9"}
+        with tempfile.TemporaryDirectory() as tmpdir:
+            signed_dir = Path(tmpdir) / 'packages' / 'golang' / '1.22.9' / '1.el9' / 'data' / 'signed' / 'fd431d51'
+            signed_dir.mkdir(parents=True)
+            with patch("pyartcd.pipelines.update_golang.Path", return_value=Path(tmpdir)):
+                result = UpdateGolangPipeline.is_rpm_signed(parsed)
+            self.assertTrue(result)
+
+    def test_unsigned_rpm(self):
+        parsed = {"name": "golang", "version": "1.22.9", "release": "1.el9"}
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create the build path but no signed directory
+            build_dir = Path(tmpdir) / 'packages' / 'golang' / '1.22.9' / '1.el9'
+            build_dir.mkdir(parents=True)
+            with patch("pyartcd.pipelines.update_golang.Path", return_value=Path(tmpdir)):
+                result = UpdateGolangPipeline.is_rpm_signed(parsed)
+            self.assertFalse(result)
+
+
+class TestBuildGolangPlashets(IsolatedAsyncioTestCase):
+    """Test the _build_golang_plashets method"""
+
+    @patch("pyartcd.pipelines.update_golang.jenkins")
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    async def test_triggers_jenkins_for_each_el_version(self, mock_konflux_db, mock_jenkins):
+        mock_slack = Mock()
+        mock_slack.say_in_thread = AsyncMock()
+        mock_runtime = Mock(dry_run=False, working_dir=Path("/tmp/working"))
+        mock_runtime.new_slack_client.return_value = mock_slack
+
+        pipeline = UpdateGolangPipeline(
+            runtime=mock_runtime,
+            ocp_version="4.18",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.22.9-1.el9"],
+            art_jira="ART-1234",
+            tag_builds=True,
+        )
+        mock_jenkins.start_build_plashets.return_value = "SUCCESS"
+
+        await pipeline._build_golang_plashets("1.22.9", [8, 9])
+
+        self.assertEqual(mock_jenkins.start_build_plashets.call_count, 2)
+        calls = mock_jenkins.start_build_plashets.call_args_list
+        self.assertEqual(calls[0].kwargs["group"], "rhel-8-golang-1.22")
+        self.assertEqual(calls[0].kwargs["repos"], ["rhel-8-golang-rpms"])
+        self.assertEqual(calls[1].kwargs["group"], "rhel-9-golang-1.22")
+        self.assertEqual(calls[1].kwargs["repos"], ["rhel-9-golang-rpms"])
+
+    @patch("pyartcd.pipelines.update_golang.jenkins")
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    async def test_raises_on_jenkins_failure(self, mock_konflux_db, mock_jenkins):
+        mock_slack = Mock()
+        mock_slack.say_in_thread = AsyncMock()
+        mock_runtime = Mock(dry_run=False, working_dir=Path("/tmp/working"))
+        mock_runtime.new_slack_client.return_value = mock_slack
+
+        pipeline = UpdateGolangPipeline(
+            runtime=mock_runtime,
+            ocp_version="4.18",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.22.9-1.el9"],
+            art_jira="ART-1234",
+            tag_builds=True,
+        )
+        mock_jenkins.start_build_plashets.return_value = "FAILURE"
+
+        with self.assertRaisesRegex(RuntimeError, "failed with result: FAILURE"):
+            await pipeline._build_golang_plashets("1.22.9", [9])
+
+    @patch("pyartcd.pipelines.update_golang.jenkins")
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    async def test_dry_run_skips_jenkins(self, mock_konflux_db, mock_jenkins):
+        mock_slack = Mock()
+        mock_slack.say_in_thread = AsyncMock()
+        mock_runtime = Mock(dry_run=True, working_dir=Path("/tmp/working"))
+        mock_runtime.new_slack_client.return_value = mock_slack
+
+        pipeline = UpdateGolangPipeline(
+            runtime=mock_runtime,
+            ocp_version="4.18",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.22.9-1.el9"],
+            art_jira="ART-1234",
+            tag_builds=True,
+        )
+
+        await pipeline._build_golang_plashets("1.22.9", [9])
+
+        mock_jenkins.start_build_plashets.assert_not_called()
 
 
 if __name__ == "__main__":
