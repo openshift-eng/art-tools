@@ -1243,7 +1243,7 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
             tag_builds=True,
         )
 
-        await pipeline._rebase_brew(8, "1.20.12")
+        await pipeline._rebase_brew(8, "1.20.12", "golang-1.20.12-2.el8")
 
         mock_cmd_assert.assert_called_once()
         cmd = mock_cmd_assert.call_args[0][0]
@@ -1254,6 +1254,8 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
         self.assertIn("--version", cmd)
         self.assertIn("v1.20.12", cmd)
         self.assertIn("--push", cmd)
+        self.assertIn("--extra-label", cmd)
+        self.assertIn("io.openshift.build.golang-nvr=golang-1.20.12-2.el8", cmd)
 
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     @patch("artcommonlib.exectools.cmd_assert_async")
@@ -1275,10 +1277,12 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
             tag_builds=True,
         )
 
-        await pipeline._rebase_brew(8, "1.20.12")
+        await pipeline._rebase_brew(8, "1.20.12", "golang-1.20.12-2.el8")
 
         cmd = mock_cmd_assert.call_args[0][0]
         self.assertNotIn("--push", cmd)
+        self.assertIn("--extra-label", cmd)
+        self.assertIn("io.openshift.build.golang-nvr=golang-1.20.12-2.el8", cmd)
 
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     @patch("artcommonlib.exectools.cmd_assert_async")
@@ -1331,10 +1335,12 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
             build_system="konflux",
         )
 
-        await pipeline._rebase_konflux(8, "1.20.12")
+        await pipeline._rebase_konflux(8, "1.20.12", "golang-1.20.12-2.el8")
 
         cmd = mock_cmd_assert.call_args[0][0]
         self.assertIn("beta:images:konflux:rebase", cmd)
+        self.assertIn("--extra-label", cmd)
+        self.assertIn("io.openshift.build.golang-nvr=golang-1.20.12-2.el8", cmd)
 
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     @patch("artcommonlib.exectools.cmd_assert_async")
@@ -1357,10 +1363,12 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
             build_system="konflux",
         )
 
-        await pipeline._rebase_konflux(8, "1.20.12")
+        await pipeline._rebase_konflux(8, "1.20.12", "golang-1.20.12-2.el8")
 
         cmd = mock_cmd_assert.call_args[0][0]
         self.assertNotIn("--push", cmd)
+        self.assertIn("--extra-label", cmd)
+        self.assertIn("io.openshift.build.golang-nvr=golang-1.20.12-2.el8", cmd)
 
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     @patch("artcommonlib.exectools.cmd_assert_async")
@@ -1437,7 +1445,7 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
             tag_builds=True,
         )
 
-        await pipeline._rebase_and_build_brew(8, "1.20.12")
+        await pipeline._rebase_and_build_brew(8, "1.20.12", "golang-1.20.12-2.el8")
 
         # Should call both rebase and build
         self.assertEqual(mock_cmd_assert.call_count, 2)
@@ -1463,7 +1471,7 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
             build_system="konflux",
         )
 
-        await pipeline._rebase_and_build_konflux(8, "1.20.12")
+        await pipeline._rebase_and_build_konflux(8, "1.20.12", "golang-1.20.12-2.el8")
 
         # Should call both rebase and build
         self.assertEqual(mock_cmd_assert.call_count, 2)

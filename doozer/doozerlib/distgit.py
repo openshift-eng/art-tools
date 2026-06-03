@@ -1984,7 +1984,7 @@ class ImageDistGitRepo(DistGitRepo):
             all_stages=True,
         )
 
-    def update_distgit_dir(self, version, release, prev_release=None, force_yum_updates=False):
+    def update_distgit_dir(self, version, release, prev_release=None, force_yum_updates=False, extra_labels=None):
         dg_path = self.dg_path
         with Dir(self.distgit_dir):
             # Source or not, we should find a Dockerfile in the root at this point or something is wrong
@@ -2041,6 +2041,10 @@ class ImageDistGitRepo(DistGitRepo):
             if self.config.labels is not Missing:
                 for k, v in self.config.labels.items():
                     dfp.labels[k] = str(v)
+
+            if extra_labels:
+                for k, v in extra_labels.items():
+                    dfp.labels[k] = v
 
             # Set the image name
             dfp.labels["name"] = self.config.name
@@ -2956,7 +2960,9 @@ class ImageDistGitRepo(DistGitRepo):
             return version, prev_release, private_fix
         return None, None, None
 
-    def rebase_dir(self, version: str, release: str, terminate_event, force_yum_updates=False) -> Tuple[str, str]:
+    def rebase_dir(
+        self, version: str, release: str, terminate_event, force_yum_updates=False, extra_labels=None
+    ) -> Tuple[str, str]:
         """
         - Copies the checked out upstream source commit over the content the checked out distgit commit.
         - Runs any configured source modifications for the component.
@@ -3009,7 +3015,9 @@ class ImageDistGitRepo(DistGitRepo):
             if self.metadata.private_fix:
                 self.logger.warning("The source of this image contains embargoed fixes.")
 
-            real_version, real_release = self.update_distgit_dir(version, release, prev_release, force_yum_updates)
+            real_version, real_release = self.update_distgit_dir(
+                version, release, prev_release, force_yum_updates, extra_labels=extra_labels
+            )
             self.metadata.rebase_status = True
             return real_version, real_release
         except Exception:

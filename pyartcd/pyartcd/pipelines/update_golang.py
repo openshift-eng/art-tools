@@ -380,9 +380,19 @@ class UpdateGolangPipeline:
             # Rebase and build missing images
             build_tasks = []
             if self.build_system in ['both', 'brew'] and brew_missing:
-                build_tasks.extend([self._rebase_and_build_brew(el_v, go_version) for el_v in brew_missing])
+                build_tasks.extend(
+                    [
+                        self._rebase_and_build_brew(el_v, go_version, el_nvr_map_for_images[el_v])
+                        for el_v in brew_missing
+                    ]
+                )
             if self.build_system in ['both', 'konflux'] and konflux_missing:
-                build_tasks.extend([self._rebase_and_build_konflux(el_v, go_version) for el_v in konflux_missing])
+                build_tasks.extend(
+                    [
+                        self._rebase_and_build_konflux(el_v, go_version, el_nvr_map_for_images[el_v])
+                        for el_v in konflux_missing
+                    ]
+                )
             if build_tasks:
                 results = await asyncio.gather(*build_tasks, return_exceptions=True)
             errors = [r for r in results if isinstance(r, Exception)]
@@ -790,7 +800,7 @@ class UpdateGolangPipeline:
             else:
                 _LOGGER.info(f"No update needed in {branch}")
 
-    async def _rebase_brew(self, el_v, go_version):
+    async def _rebase_brew(self, el_v, go_version, go_nvr: str):
         _LOGGER.info("Rebasing for Brew...")
         branch = self.get_golang_branch(el_v, go_version)
         if self.data_gitref:
@@ -815,6 +825,8 @@ class UpdateGolangPipeline:
                 version,
                 "--release",
                 release,
+                "--extra-label",
+                f"io.openshift.build.golang-nvr={go_nvr}",
                 "--message",
                 f"bumping to {version}-{release}",
             ]
@@ -853,11 +865,11 @@ class UpdateGolangPipeline:
             cmd.append("--scratch")
         await exectools.cmd_assert_async(cmd, env=self._doozer_env_vars, log_stdout=True)
 
-    async def _rebase_and_build_brew(self, el_v, go_version):
-        await self._rebase_brew(el_v, go_version)
+    async def _rebase_and_build_brew(self, el_v, go_version, go_nvr: str):
+        await self._rebase_brew(el_v, go_version, go_nvr)
         await self._build_brew(el_v, go_version)
 
-    async def _rebase_konflux(self, el_v, go_version):
+    async def _rebase_konflux(self, el_v, go_version, go_nvr: str):
         """Rebase golang-builder image for Konflux"""
         _LOGGER.info("Rebasing for Konflux...")
         branch = self.get_golang_branch(el_v, go_version)
@@ -883,6 +895,8 @@ class UpdateGolangPipeline:
                 version,
                 "--release",
                 release,
+                "--extra-label",
+                f"io.openshift.build.golang-nvr={go_nvr}",
                 "--message",
                 f"bumping to {version}-{release}",
             ]
@@ -926,9 +940,9 @@ class UpdateGolangPipeline:
             cmd.append("--dry-run")
         await exectools.cmd_assert_async(cmd, env=self._doozer_env_vars, log_stdout=True)
 
-    async def _rebase_and_build_konflux(self, el_v, go_version):
+    async def _rebase_and_build_konflux(self, el_v, go_version, go_nvr: str):
         """Rebase and build golang-builder image on Konflux"""
-        await self._rebase_konflux(el_v, go_version)
+        await self._rebase_konflux(el_v, go_version, go_nvr)
         await self._build_konflux(el_v, go_version)
 
     @staticmethod
