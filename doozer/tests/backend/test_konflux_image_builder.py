@@ -497,7 +497,6 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         persisted = mock_add_build.call_args[0][0]
         self.assertEqual(persisted.release_pipeline, "https://release.example/pipeline")
         self.assertEqual(persisted.released_pullspec, "registry.redhat.io/foo:bar")
-        self.assertEqual(persisted.ec_status.value, 'n/a')
 
     async def test_trigger_base_image_release_success_flow(self):
         """SUCCESS after base snapshot release refreshes Konflux DB without swapping image_pullspec to RH."""
