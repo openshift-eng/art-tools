@@ -28,7 +28,7 @@ from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import deep_merge, fetch_slsa_attestation, uses_konflux_imagestream_override
 from artcommonlib.variants import BuildVariant
 from async_lru import alru_cache
-from tenacity import retry, stop_after_attempt, wait_fixed
+from tenacity import retry, retry_if_not_exception_type, stop_after_attempt, wait_fixed
 
 from doozerlib import rhcos, util
 from doozerlib.build_info import KonfluxBuildRecordInspector
@@ -625,6 +625,10 @@ class ConfigScanSources:
             stage = 'builder checks'
             await self.scan_builders_changes(image_meta)
 
+            # Check for external image reference changes (floating tags) - layered products only
+            stage = 'external image checks'
+            await self.scan_external_image_changes(image_meta)
+
             # For OCP variant, perform additional checks that don't apply to OKD
             if self.variant != BuildVariant.OKD:
                 # Check for changes in image arches (skip for OKD - arch changes don't trigger OKD rebuilds)
@@ -1056,6 +1060,194 @@ class ConfigScanSources:
                         RebuildHintCode.BUILDER_CHANGING,
                         f'A builder or parent image build {builder_build_nvr} is newer than latest '
                         f'{image_meta.distgit_key} build',
+                    ),
+                )
+                return
+
+    @alru_cache
+    async def _fetch_art_yaml_from_rebase(self, rebase_repo_url: str, rebase_commitish: str, manifests_dir: str):
+        """Fetch and parse art.yaml from an operator's rebase commit.
+
+        Returns the parsed YAML dict, or None if the file does not exist in the repo.
+        Raises on auth/network/parse errors so they surface as scan failures.
+        """
+        from github import UnknownObjectException
+
+        _, org, repo_name = artcommonlib.util.split_git_url(rebase_repo_url)
+        manifests_dir = manifests_dir.strip('/')
+        art_yaml_path = '/'.join(part for part in (manifests_dir, 'art.yaml') if part)
+        github_client = get_github_client_for_org(org)
+
+        @retry(
+            reraise=True,
+            wait=wait_fixed(10),
+            stop=stop_after_attempt(3),
+            retry=retry_if_not_exception_type(UnknownObjectException),
+        )
+        def _fetch():
+            repo = github_client.get_repo(f"{org}/{repo_name}")
+            return repo.get_contents(art_yaml_path, ref=rebase_commitish).decoded_content
+
+        try:
+            data = await asyncio.to_thread(_fetch)
+            return yaml.safe_load(data)
+        except UnknownObjectException:
+            return None
+
+    async def _fetch_image_references_from_rebase(
+        self, rebase_repo_url: str, rebase_commitish: str, manifests_dir: str, bundle_dir: str
+    ):
+        """Fetch and parse image-references from an operator's rebase commit.
+
+        Searches multiple candidate paths (bundle_manifests_dir, manifests_dir, bundle_dir)
+        matching the pattern used by _find_image_refs_path in the rebaser.
+        Returns the parsed YAML dict, or None if the file is not found in any candidate path.
+        Raises on auth/network/parse errors so they surface as scan failures.
+        """
+        from github import UnknownObjectException
+
+        _, org, repo_name = artcommonlib.util.split_git_url(rebase_repo_url)
+        github_client = get_github_client_for_org(org)
+        manifests_dir = manifests_dir.strip('/')
+        bundle_dir = bundle_dir.strip('/')
+        bundle_manifests_dir = '/'.join(part for part in (manifests_dir, bundle_dir) if part)
+        candidate_paths = [
+            '/'.join(part for part in (bundle_manifests_dir, 'image-references') if part),
+            '/'.join(part for part in (manifests_dir, 'image-references') if part),
+            '/'.join(part for part in (bundle_dir, 'image-references') if part),
+        ]
+        candidate_paths = list(dict.fromkeys(candidate_paths))
+
+        repo = github_client.get_repo(f"{org}/{repo_name}")
+
+        for ref_path in candidate_paths:
+
+            @retry(
+                reraise=True,
+                wait=wait_fixed(10),
+                stop=stop_after_attempt(3),
+                retry=retry_if_not_exception_type(UnknownObjectException),
+            )
+            def _fetch(path=ref_path):
+                return repo.get_contents(path, ref=rebase_commitish).decoded_content
+
+            try:
+                data = await asyncio.to_thread(_fetch)
+                return yaml.safe_load(data)
+            except UnknownObjectException:
+                continue
+        return None
+
+    @skip_check_if_changing
+    async def scan_external_image_changes(self, image_meta: ImageMetadata):
+        """Check if external image floating tags have drifted since the last operator build.
+
+        Only applicable to layered products (non-OCP). For operators that define
+        external-images in their art.yaml, resolves the current digest of each
+        floating tag and compares it to the digest pinned in the last rebase commit.
+        """
+        if self.runtime.product == "ocp":
+            return
+
+        if not image_meta.is_olm_operator:
+            return
+
+        build_record = self.latest_image_build_records_map.get(image_meta.distgit_key)
+        if not build_record or not build_record.rebase_repo_url or not build_record.rebase_commitish:
+            return
+
+        csv_config = image_meta.config.get('update-csv', None)
+        if not csv_config:
+            return
+
+        manifests_dir = csv_config.get('manifests-dir', 'manifests')
+        art_yaml_data = await self._fetch_art_yaml_from_rebase(
+            build_record.rebase_repo_url, build_record.rebase_commitish, manifests_dir
+        )
+        if not art_yaml_data:
+            return
+
+        external_images = art_yaml_data.get('external-images', [])
+        if not external_images:
+            return
+
+        # Filter to only entries with tag-based replace fields (not already digests)
+        tag_based_externals = []
+        for ext_img in external_images:
+            replace_ref = ext_img.get('replace', '')
+            if not replace_ref or '@' in replace_ref:
+                continue
+            tag_based_externals.append(ext_img)
+
+        if not tag_based_externals:
+            return
+
+        # Fetch image-references from the rebase commit to get pinned digests
+        gvars = self.runtime.group_config.vars
+        bundle_dir = csv_config.get('bundle-dir', f'{gvars["MAJOR"]}.{gvars["MINOR"]}')
+        ref_data = await self._fetch_image_references_from_rebase(
+            build_record.rebase_repo_url, build_record.rebase_commitish, manifests_dir, bundle_dir
+        )
+        if not ref_data:
+            self.logger.warning(
+                '%s: could not fetch image-references from rebase commit, skipping external image check',
+                image_meta.distgit_key,
+            )
+            return
+
+        # Build a map of image name -> pinned pullspec from image-references
+        pinned_pullspecs: Dict[str, str] = {}
+        for tag in ref_data.get('spec', {}).get('tags', []):
+            tag_name = tag.get('name', '')
+            pullspec = tag.get('from', {}).get('name', '')
+            if tag_name and pullspec:
+                pinned_pullspecs[tag_name] = pullspec
+
+        # Resolve current digests for all external images concurrently
+        registry_auth = os.getenv("KONFLUX_OPERATOR_INDEX_AUTH_FILE") or self.runtime.registry_config
+
+        async def resolve_current_digest(replace_ref: str) -> Optional[str]:
+            try:
+                image_info = await oc_image_info_for_arch_async(replace_ref, registry_config=registry_auth)
+                return image_info.get('listDigest') or image_info.get('digest')
+            except Exception as e:
+                self.logger.warning('Failed to resolve current digest for %s: %s', replace_ref, e)
+                return None
+
+        resolve_tasks = [resolve_current_digest(ext['replace']) for ext in tag_based_externals]
+        current_digests = await asyncio.gather(*resolve_tasks)
+
+        # Compare current digests to pinned digests
+        for ext_img, current_digest in zip(tag_based_externals, current_digests):
+            if not current_digest:
+                continue
+
+            name = ext_img.get('name', '')
+            pinned = pinned_pullspecs.get(name, '')
+            if not pinned:
+                continue
+
+            # Extract digest from pinned pullspec (format: registry/path@sha256:...)
+            if '@' in pinned:
+                pinned_digest = pinned.split('@', 1)[1]
+            else:
+                # Pinned pullspec doesn't have a digest -- possibly not yet resolved
+                continue
+
+            if current_digest != pinned_digest:
+                self.logger.info(
+                    '%s: external image %s (%s) has a new digest: pinned=%s current=%s',
+                    image_meta.distgit_key,
+                    name,
+                    ext_img.get('replace'),
+                    pinned_digest,
+                    current_digest,
+                )
+                self.add_image_meta_change(
+                    image_meta,
+                    RebuildHint(
+                        RebuildHintCode.EXTERNAL_IMAGE_CHANGE,
+                        f'External image {name} ({ext_img.get("replace")}) has a newer digest',
                     ),
                 )
                 return

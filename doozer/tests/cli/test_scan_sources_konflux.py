@@ -73,6 +73,7 @@ class TestMinimalCrashIsolation(TestScanSourcesKonflux):
             patch.object(self.scanner, 'scan_for_upstream_changes', AsyncMock(side_effect=RuntimeError('boom'))),
             patch.object(self.scanner, 'scan_dependency_changes', AsyncMock()),
             patch.object(self.scanner, 'scan_builders_changes', AsyncMock()),
+            patch.object(self.scanner, 'scan_external_image_changes', AsyncMock()),
             patch.object(self.scanner, 'scan_arch_changes', AsyncMock()),
             patch.object(self.scanner, 'scan_network_mode_changes', AsyncMock()),
             patch.object(self.scanner, 'scan_for_config_changes', AsyncMock()),
@@ -688,3 +689,243 @@ class TestFindImagesWithDisabledDependencies(TestScanSourcesKonflux):
 
         result = self.scanner._find_images_with_disabled_dependencies()
         self.assertEqual(result, set())
+
+
+class TestScanExternalImageChanges(TestScanSourcesKonflux):
+    """Test the scan_external_image_changes method."""
+
+    def setUp(self):
+        super().setUp()
+        self.runtime.product = 'oadp'
+        self.scanner.runtime = self.runtime
+
+        self.image_meta.is_olm_operator = True
+        self.image_meta.config.get = MagicMock(
+            return_value={
+                'manifests-dir': 'manifests',
+                'bundle-dir': 'stable/',
+            }
+        )
+
+        self.build_record.rebase_repo_url = 'https://github.com/openshift-priv/oadp-operator.git'
+        self.build_record.rebase_commitish = 'abc123def'
+
+        self.runtime.group_config = MagicMock()
+        self.runtime.group_config.vars = {'MAJOR': '1', 'MINOR': '5'}
+
+    async def test_skips_for_ocp_product(self):
+        """Should early-return for OCP product."""
+        self.runtime.product = 'ocp'
+        with patch.object(self.scanner, '_fetch_art_yaml_from_rebase', new_callable=AsyncMock) as mock_fetch:
+            await self.scanner.scan_external_image_changes(self.image_meta)
+            mock_fetch.assert_not_called()
+
+    async def test_skips_non_olm_operator(self):
+        """Should early-return for non-OLM operator images."""
+        self.image_meta.is_olm_operator = False
+        with patch.object(self.scanner, '_fetch_art_yaml_from_rebase', new_callable=AsyncMock) as mock_fetch:
+            await self.scanner.scan_external_image_changes(self.image_meta)
+            mock_fetch.assert_not_called()
+
+    async def test_skips_no_build_record(self):
+        """Should early-return when no build record exists."""
+        self.scanner.latest_image_build_records_map = {}
+        with patch.object(self.scanner, '_fetch_art_yaml_from_rebase', new_callable=AsyncMock) as mock_fetch:
+            await self.scanner.scan_external_image_changes(self.image_meta)
+            mock_fetch.assert_not_called()
+
+    async def test_skips_no_art_yaml(self):
+        """Should skip when art.yaml cannot be fetched."""
+        with patch.object(self.scanner, '_fetch_art_yaml_from_rebase', new_callable=AsyncMock) as mock_fetch:
+            mock_fetch.return_value = None
+            await self.scanner.scan_external_image_changes(self.image_meta)
+        self.assertEqual(len(self.scanner.changing_image_names), 0)
+
+    async def test_skips_no_external_images(self):
+        """Should skip when art.yaml has no external-images."""
+        with patch.object(self.scanner, '_fetch_art_yaml_from_rebase', new_callable=AsyncMock) as mock_fetch:
+            mock_fetch.return_value = {'updates': []}
+            await self.scanner.scan_external_image_changes(self.image_meta)
+        self.assertEqual(len(self.scanner.changing_image_names), 0)
+
+    async def test_skips_digest_based_replace(self):
+        """Should skip external images that already use digest references."""
+        art_yaml = {
+            'external-images': [
+                {
+                    'name': 'postgresql',
+                    'search': 'RELATED_IMAGE_POSTGRESQL',
+                    'replace': 'registry.redhat.io/rhel9/postgresql-15@sha256:already_pinned',
+                }
+            ]
+        }
+        with (
+            patch.object(self.scanner, '_fetch_art_yaml_from_rebase', new_callable=AsyncMock, return_value=art_yaml),
+            patch.object(
+                self.scanner, '_fetch_image_references_from_rebase', new_callable=AsyncMock
+            ) as mock_fetch_refs,
+        ):
+            await self.scanner.scan_external_image_changes(self.image_meta)
+            mock_fetch_refs.assert_not_called()
+        self.assertEqual(len(self.scanner.changing_image_names), 0)
+
+    @patch('doozerlib.cli.scan_sources_konflux.oc_image_info_for_arch_async')
+    async def test_no_rebuild_when_digest_unchanged(self, mock_oc_image_info):
+        """Should not trigger rebuild when external image digest is the same."""
+        art_yaml = {
+            'external-images': [
+                {
+                    'name': 'postgresql',
+                    'search': 'RELATED_IMAGE_POSTGRESQL',
+                    'replace': 'registry.redhat.io/rhel9/postgresql-15:latest',
+                }
+            ]
+        }
+        image_refs = {
+            'spec': {
+                'tags': [
+                    {
+                        'name': 'postgresql',
+                        'from': {'name': 'registry.redhat.io/rhel9/postgresql-15@sha256:currentdigest123'},
+                    }
+                ]
+            }
+        }
+        mock_oc_image_info.return_value = {'listDigest': 'sha256:currentdigest123'}
+
+        with (
+            patch.object(self.scanner, '_fetch_art_yaml_from_rebase', new_callable=AsyncMock, return_value=art_yaml),
+            patch.object(
+                self.scanner, '_fetch_image_references_from_rebase', new_callable=AsyncMock, return_value=image_refs
+            ),
+            patch.object(self.scanner, 'add_image_meta_change') as mock_add_change,
+        ):
+            await self.scanner.scan_external_image_changes(self.image_meta)
+            mock_add_change.assert_not_called()
+
+    @patch('doozerlib.cli.scan_sources_konflux.oc_image_info_for_arch_async')
+    async def test_triggers_rebuild_when_digest_changed(self, mock_oc_image_info):
+        """Should trigger rebuild when external image has a new digest."""
+        art_yaml = {
+            'external-images': [
+                {
+                    'name': 'postgresql',
+                    'search': 'RELATED_IMAGE_POSTGRESQL',
+                    'replace': 'registry.redhat.io/rhel9/postgresql-15:latest',
+                }
+            ]
+        }
+        image_refs = {
+            'spec': {
+                'tags': [
+                    {
+                        'name': 'postgresql',
+                        'from': {'name': 'registry.redhat.io/rhel9/postgresql-15@sha256:olddigest456'},
+                    }
+                ]
+            }
+        }
+        mock_oc_image_info.return_value = {'listDigest': 'sha256:newdigest789'}
+
+        with (
+            patch.object(self.scanner, '_fetch_art_yaml_from_rebase', new_callable=AsyncMock, return_value=art_yaml),
+            patch.object(
+                self.scanner, '_fetch_image_references_from_rebase', new_callable=AsyncMock, return_value=image_refs
+            ),
+            patch.object(self.scanner, 'add_image_meta_change') as mock_add_change,
+        ):
+            await self.scanner.scan_external_image_changes(self.image_meta)
+            mock_add_change.assert_called_once()
+            call_args = mock_add_change.call_args[0]
+            self.assertEqual(call_args[0], self.image_meta)
+            self.assertEqual(call_args[1].code, RebuildHintCode.EXTERNAL_IMAGE_CHANGE)
+            self.assertIn('postgresql', call_args[1].reason)
+
+    @patch('doozerlib.cli.scan_sources_konflux.oc_image_info_for_arch_async')
+    async def test_graceful_handling_when_registry_unreachable(self, mock_oc_image_info):
+        """Should not crash when external registry is unreachable."""
+        art_yaml = {
+            'external-images': [
+                {
+                    'name': 'postgresql',
+                    'search': 'RELATED_IMAGE_POSTGRESQL',
+                    'replace': 'registry.redhat.io/rhel9/postgresql-15:latest',
+                }
+            ]
+        }
+        image_refs = {
+            'spec': {
+                'tags': [
+                    {
+                        'name': 'postgresql',
+                        'from': {'name': 'registry.redhat.io/rhel9/postgresql-15@sha256:olddigest456'},
+                    }
+                ]
+            }
+        }
+        mock_oc_image_info.side_effect = Exception('connection refused')
+
+        with (
+            patch.object(self.scanner, '_fetch_art_yaml_from_rebase', new_callable=AsyncMock, return_value=art_yaml),
+            patch.object(
+                self.scanner, '_fetch_image_references_from_rebase', new_callable=AsyncMock, return_value=image_refs
+            ),
+            patch.object(self.scanner, 'add_image_meta_change') as mock_add_change,
+        ):
+            await self.scanner.scan_external_image_changes(self.image_meta)
+            mock_add_change.assert_not_called()
+
+    @patch('doozerlib.cli.scan_sources_konflux.oc_image_info_for_arch_async')
+    async def test_multiple_external_images_first_changed(self, mock_oc_image_info):
+        """Should trigger rebuild and stop at the first changed external image."""
+        art_yaml = {
+            'external-images': [
+                {
+                    'name': 'postgresql',
+                    'search': 'RELATED_IMAGE_POSTGRESQL',
+                    'replace': 'registry.redhat.io/rhel9/postgresql-15:latest',
+                },
+                {
+                    'name': 'redis',
+                    'search': 'RELATED_IMAGE_REDIS',
+                    'replace': 'registry.redhat.io/rhel9/redis-7:latest',
+                },
+            ]
+        }
+        image_refs = {
+            'spec': {
+                'tags': [
+                    {
+                        'name': 'postgresql',
+                        'from': {'name': 'registry.redhat.io/rhel9/postgresql-15@sha256:oldpostgres'},
+                    },
+                    {
+                        'name': 'redis',
+                        'from': {'name': 'registry.redhat.io/rhel9/redis-7@sha256:oldredis'},
+                    },
+                ]
+            }
+        }
+        mock_oc_image_info.side_effect = [
+            {'listDigest': 'sha256:newpostgres'},
+            {'listDigest': 'sha256:oldredis'},
+        ]
+
+        with (
+            patch.object(self.scanner, '_fetch_art_yaml_from_rebase', new_callable=AsyncMock, return_value=art_yaml),
+            patch.object(
+                self.scanner, '_fetch_image_references_from_rebase', new_callable=AsyncMock, return_value=image_refs
+            ),
+            patch.object(self.scanner, 'add_image_meta_change') as mock_add_change,
+        ):
+            await self.scanner.scan_external_image_changes(self.image_meta)
+            mock_add_change.assert_called_once()
+            call_args = mock_add_change.call_args[0]
+            self.assertIn('postgresql', call_args[1].reason)
+
+    async def test_skip_check_if_already_changing(self):
+        """Should skip scan entirely if image is already marked for rebuild."""
+        self.scanner.changing_image_names = {'test-image'}
+        with patch.object(self.scanner, '_fetch_art_yaml_from_rebase', new_callable=AsyncMock) as mock_fetch:
+            await self.scanner.scan_external_image_changes(self.image_meta)
+            mock_fetch.assert_not_called()
