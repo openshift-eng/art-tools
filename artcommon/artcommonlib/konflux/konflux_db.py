@@ -1279,10 +1279,10 @@ class KonfluxDb:
             row_fields = set(row.keys())
             filtered_fields = {field: row[field] for field in row_fields if field in valid_params}
 
-            # Log warning if any fields were ignored
+            # Log debug message if any fields were ignored
             ignored_fields = row_fields - valid_params
             if ignored_fields:
-                self.logger.warning(
+                self.logger.debug(
                     'Ignoring unexpected fields from BigQuery row for %s: %s',
                     self.record_cls.__name__,
                     sorted(ignored_fields),
