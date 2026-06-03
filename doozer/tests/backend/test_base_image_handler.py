@@ -246,6 +246,71 @@ class TestBaseImageHandler(IsolatedAsyncioTestCase):
     @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
     @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
     @patch("doozerlib.backend.base_image_handler.resolve_konflux_kubeconfig_by_product")
+    async def test_snapshot_name_includes_component_name(
+        self, mock_kubeconfig, mock_namespace, mock_konflux_client_init
+    ):
+        """Snapshot names must include the component name to avoid collisions when
+        multiple images are snapshotted within the same second."""
+        mock_namespace.return_value = "ocp-art-tenant"
+        mock_kubeconfig.return_value = "/path/to/kubeconfig"
+        mock_konflux_client_init.return_value = AsyncMock()
+
+        handler = BaseImageHandler(self.runtime, dry_run=True)
+
+        component = {"name": "ose-4-22-openshift-base-rhel9", "containerImage": "quay.io/test:latest"}
+
+        with patch("doozerlib.backend.base_image_handler.get_utc_now_formatted_str", return_value="20260529104357"):
+            name = await handler._snapshot_from_component(component)
+
+        self.assertEqual(name, "openshift-4-22-ose-4-22-openshift-base-rhel9-20260529104357")
+
+    @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_kubeconfig_by_product")
+    async def test_snapshot_name_within_63_char_limit(self, mock_kubeconfig, mock_namespace, mock_konflux_client_init):
+        """Snapshot names must not exceed the 63-char Kubernetes DNS label limit."""
+        mock_namespace.return_value = "ocp-art-tenant"
+        mock_kubeconfig.return_value = "/path/to/kubeconfig"
+        mock_konflux_client_init.return_value = AsyncMock()
+
+        handler = BaseImageHandler(self.runtime, dry_run=True)
+
+        component = {"name": "a" * 100, "containerImage": "quay.io/test:latest"}
+
+        with patch("doozerlib.backend.base_image_handler.get_utc_now_formatted_str", return_value="20260529104357"):
+            name = await handler._snapshot_from_component(component)
+
+        self.assertLessEqual(len(name), 63)
+        self.assertTrue(name.startswith("openshift-4-22-"))
+        self.assertTrue(name.endswith("-20260529104357"))
+        # Must not have consecutive dashes from truncation
+        self.assertNotRegex(name, r'--')
+
+    @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_kubeconfig_by_product")
+    async def test_different_components_produce_different_snapshot_names(
+        self, mock_kubeconfig, mock_namespace, mock_konflux_client_init
+    ):
+        """Two different components at the same timestamp must produce different snapshot names."""
+        mock_namespace.return_value = "ocp-art-tenant"
+        mock_kubeconfig.return_value = "/path/to/kubeconfig"
+        mock_konflux_client_init.return_value = AsyncMock()
+
+        handler = BaseImageHandler(self.runtime, dry_run=True)
+
+        comp1 = {"name": "ose-4-22-openshift-base-rhel9", "containerImage": "quay.io/test:latest"}
+        comp2 = {"name": "ose-4-22-openshift-base-nodejs-rhel9", "containerImage": "quay.io/test:latest"}
+
+        with patch("doozerlib.backend.base_image_handler.get_utc_now_formatted_str", return_value="20260529104357"):
+            name1 = await handler._snapshot_from_component(comp1)
+            name2 = await handler._snapshot_from_component(comp2)
+
+        self.assertNotEqual(name1, name2)
+
+    @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_kubeconfig_by_product")
     async def test_create_release_from_snapshot_rhmtc_uses_product_plan_and_application(
         self, mock_kubeconfig, mock_namespace, mock_konflux_client_init
     ):

@@ -175,7 +175,18 @@ class BaseImageHandler:
                 raise ValueError(f"Group name '{self.runtime.group}' produces invalid normalized name for Kubernetes")
 
             timestamp = get_utc_now_formatted_str()
-            snapshot_name = f"{group_safe}-base-image-{timestamp}"
+
+            # Include the component name in the snapshot name to avoid collisions
+            # when multiple images are snapshotted within the same second.
+            # Format: {group_safe}-{comp_safe}-{timestamp}
+            # Total must fit within the 63-char Kubernetes DNS label limit.
+            comp_name = component["name"]
+            # Component names are already k8s-safe; just truncate if needed
+            max_comp_len = 63 - len(group_safe) - len(timestamp) - 2  # 2 separator dashes
+            if len(comp_name) > max_comp_len:
+                comp_name = comp_name[:max_comp_len].rstrip('-')
+
+            snapshot_name = f"{group_safe}-{comp_name}-{timestamp}"
 
             if self.dry_run:
                 self.logger.info(f"[DRY-RUN] Would create snapshot {snapshot_name}")
