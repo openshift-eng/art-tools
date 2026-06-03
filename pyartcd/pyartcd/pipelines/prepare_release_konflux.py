@@ -1065,6 +1065,8 @@ class PrepareReleaseKonfluxPipeline:
         """
 
         _, stdout, _ = await exectools.cmd_gather_async(cmd, stderr=None)
+        if stdout:
+            self.logger.info("Command stdout:\n %s", stdout)
         return stdout
 
     @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
