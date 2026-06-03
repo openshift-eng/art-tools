@@ -124,7 +124,14 @@ class BaseImageHandler:
 
         if not await self._wait_for_release_completion(release_name):
             self.logger.error(f"Release did not complete successfully (release={release_name})")
-            return None
+            # Return partial result with release_pipeline URL for failure tracking
+            return BaseImageReleaseResult(
+                release_name=release_name,
+                snapshot_name=snapshot_name,
+                nvr=snapshot_input.nvr,
+                release_pipeline=release_url,
+                released_pullspec='',  # No pullspec on failure
+            )
 
         released_pullspec = doozer_util.rh_art_images_base_pullspec(snapshot_input.nvr)
 

@@ -373,7 +373,9 @@ class KonfluxImageBuilder:
                         release_result = await self._trigger_base_image_release(
                             metadata, nvr, definitive_image_pullspec, build_repo
                         )
-                        if release_result:
+                        # Success is indicated by having a released_pullspec (empty on failure)
+                        release_succeeded = release_result and release_result.released_pullspec
+                        if release_succeeded:
                             logger.info("Base image release succeeded for %s, persisting build record", nvr)
                             record["release_pipeline"] = release_result.release_pipeline
                         else:
@@ -385,7 +387,9 @@ class KonfluxImageBuilder:
                             record["base_image_release_failed"] = "true"
                             if release_result and release_result.release_pipeline:
                                 record["release_pipeline"] = release_result.release_pipeline
-                        outcome = KonfluxBuildOutcome.SUCCESS if release_result else KonfluxBuildOutcome.RELEASE_ERROR
+                        outcome = (
+                            KonfluxBuildOutcome.SUCCESS if release_succeeded else KonfluxBuildOutcome.RELEASE_ERROR
+                        )
 
                     build_record = await self.update_konflux_db(
                         metadata,

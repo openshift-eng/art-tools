@@ -573,7 +573,7 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(success_call_kwargs.get("released_pullspec"), "registry.example/pull:test")
 
     async def test_trigger_base_image_release_failure_flow(self):
-        """Test base image release failure handling with FAILURE outcome update."""
+        """Test base image release failure handling when _trigger_base_image_release returns None."""
         metadata = self._metadata()
         metadata.should_trigger_base_image_release.return_value = True
         dest_dir = self.builder._config.base_dir.joinpath(metadata.qualified_key)
@@ -638,6 +638,85 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(failure_call_args[3], KonfluxBuildOutcome.RELEASE_ERROR)
         failure_kw = mock_update_db.await_args_list[1].kwargs
         self.assertEqual(failure_kw.get("release_pipeline", ""), "")
+        self.assertEqual(failure_kw.get("released_pullspec", ""), "")
+
+    async def test_trigger_base_image_release_failure_preserves_pipeline_url(self):
+        """Test base image release failure preserves release_pipeline URL when available."""
+        metadata = self._metadata()
+        metadata.should_trigger_base_image_release.return_value = True
+        dest_dir = self.builder._config.base_dir.joinpath(metadata.qualified_key)
+        dest_dir.mkdir(parents=True)
+
+        build_repo = MagicMock()
+        build_repo.local_dir = dest_dir
+        build_repo.url = "https://github.com/test/repo.git"
+        build_repo.commit_hash = "test-commit"
+
+        initial_pipelinerun = MagicMock()
+        initial_pipelinerun.name = "test-pipelinerun"
+        initial_pipelinerun.to_dict.return_value = {"metadata": {"name": "test-pipelinerun"}}
+
+        completed_pipelinerun = MagicMock()
+        completed_pipelinerun.name = "test-pipelinerun"
+        completed_pipelinerun.find_condition.return_value = {"status": "True"}
+        completed_pipelinerun.to_dict.return_value = {
+            "metadata": {"name": "test-pipelinerun"},
+            "status": {
+                "results": [
+                    {"name": "IMAGE_URL", "value": "quay.io/test/image:test-tag"},
+                    {"name": "IMAGE_DIGEST", "value": "sha256:testdigest"},
+                ]
+            },
+        }
+        self.mock_konflux_client.wait_for_pipelinerun = AsyncMock(return_value=completed_pipelinerun)
+
+        # Create a failed release result with release_pipeline but no released_pullspec
+        from doozerlib.backend.base_image_handler import BaseImageReleaseResult
+
+        failed_result = BaseImageReleaseResult(
+            release_name="failed-release",
+            snapshot_name="test-snapshot",
+            nvr="test-nvr",
+            release_pipeline="https://example.com/failed-release",
+            released_pullspec="",  # Empty indicates failure
+        )
+
+        with (
+            patch(
+                "doozerlib.backend.konflux_image_builder.BuildRepo.from_local_dir",
+                new=AsyncMock(return_value=build_repo),
+            ),
+            patch.object(self.builder, "_parse_dockerfile", return_value=("test-uuid", "test-component", "1.0", "1")),
+            patch.object(self.builder, "_wait_for_parent_members", new=AsyncMock(return_value=[])),
+            patch.object(self.builder, "_start_build", new=AsyncMock(return_value=initial_pipelinerun)),
+            patch.object(
+                self.builder, "update_konflux_db", new=AsyncMock(return_value=MagicMock(record_id="1"))
+            ) as mock_update_db,
+            patch.object(
+                self.builder, "_trigger_base_image_release", new=AsyncMock(return_value=failed_result)
+            ) as mock_trigger_release,
+            patch.object(self.builder, "_validate_build_attestation_and_signature", new=AsyncMock()),
+            patch.object(
+                self.builder._konflux_client,
+                "verify_enterprise_contract",
+                new=AsyncMock(return_value=MagicMock(ec_pipeline_url="", ec_failed=False)),
+            ),
+            patch(
+                "doozerlib.backend.konflux_image_builder.KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition",
+                return_value=KonfluxBuildOutcome.SUCCESS,
+            ),
+        ):
+            with self.assertRaises(KonfluxImageBuildError):
+                await self.builder.build(metadata)
+
+        mock_trigger_release.assert_awaited_once()
+        self.assertEqual(mock_update_db.await_count, 2)
+
+        # Final update records RELEASE_ERROR outcome with release_pipeline preserved
+        failure_call_args = mock_update_db.await_args_list[1][0]
+        self.assertEqual(failure_call_args[3], KonfluxBuildOutcome.RELEASE_ERROR)
+        failure_kw = mock_update_db.await_args_list[1].kwargs
+        self.assertEqual(failure_kw.get("release_pipeline"), "https://example.com/failed-release")
         self.assertEqual(failure_kw.get("released_pullspec", ""), "")
 
     async def test_non_base_image_skips_release_trigger(self):
