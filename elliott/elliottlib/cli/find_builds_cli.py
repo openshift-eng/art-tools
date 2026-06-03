@@ -857,5 +857,6 @@ async def find_builds_konflux_all_types(runtime: Runtime) -> dict[str, list]:
         'non_payload': sorted([record.nvr for _, is_payload, record in records_with_olm if not is_payload]),
         'olm_builds': sorted([b.nvr for b in olm_records]),
         'olm_builds_not_found': sorted([b.nvr for b in olm_records_not_found]),
+        'olm_operator_nvrs': sorted([b.nvr for b in operator_builds]),
     }
     return builds_tuple

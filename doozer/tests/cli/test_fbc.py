@@ -148,6 +148,17 @@ class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
         mock_rebaser_class.return_value = mock_rebaser
 
         mock_builder = mock.AsyncMock()
+        mock_builder.build.return_value = (
+            "test-pipelinerun",
+            {
+                "status": {
+                    "results": [
+                        {"name": "IMAGE_URL", "value": "quay.io/test/image:test-fbc-1.0.0-1"},
+                        {"name": "IMAGE_DIGEST", "value": "sha256:abc123"},
+                    ]
+                }
+            },
+        )
         mock_builder_class.return_value = mock_builder
 
         mock_importer = mock.AsyncMock()
@@ -182,6 +193,17 @@ class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
         mock_rebaser_class.return_value = mock_rebaser
 
         mock_builder = mock.AsyncMock()
+        mock_builder.build.return_value = (
+            "test-pipelinerun",
+            {
+                "status": {
+                    "results": [
+                        {"name": "IMAGE_URL", "value": "quay.io/test/image:test-fbc-1.0.0-1"},
+                        {"name": "IMAGE_DIGEST", "value": "sha256:abc123"},
+                    ]
+                }
+            },
+        )
         mock_builder_class.return_value = mock_builder
 
         mock_importer = mock.AsyncMock()
@@ -199,7 +221,11 @@ class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
         bundle_build = self._create_mock_bundle_build(
             "test-operator-bundle", "test-operator-bundle-1.0.0-1", "test-operator-1.0.0-1"
         )
-        existing_fbc = mock.Mock(spec=KonfluxFbcBuildRecord, nvr="test-fbc-1.0.0-1")
+        existing_fbc = mock.Mock(
+            spec=KonfluxFbcBuildRecord,
+            nvr="test-fbc-1.0.0-1",
+            image_pullspec="quay.io/test/image@sha256:existing123",
+        )
 
         self.runtime.konflux_db.get_build_records_by_nvrs.return_value = [operator_build]
         self.runtime.images = ["test-operator"]
@@ -233,7 +259,11 @@ class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
         bundle_build = self._create_mock_bundle_build(
             "test-operator-bundle", "test-operator-bundle-1.0.0-1", "test-operator-1.0.0-1"
         )
-        existing_fbc = mock.Mock(spec=KonfluxFbcBuildRecord, nvr="test-fbc-1.0.0-1")
+        existing_fbc = mock.Mock(
+            spec=KonfluxFbcBuildRecord,
+            nvr="test-fbc-1.0.0-1",
+            image_pullspec="quay.io/test/image@sha256:existing123",
+        )
 
         self.runtime.konflux_db.get_build_records_by_nvrs.return_value = [operator_build]
         self.runtime.images = ["test-operator"]
@@ -248,6 +278,17 @@ class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
         mock_rebaser_class.return_value = mock_rebaser
 
         mock_builder = mock.AsyncMock()
+        mock_builder.build.return_value = (
+            "test-pipelinerun",
+            {
+                "status": {
+                    "results": [
+                        {"name": "IMAGE_URL", "value": "quay.io/test/image:test-fbc-1.0.0-2"},
+                        {"name": "IMAGE_DIGEST", "value": "sha256:def456"},
+                    ]
+                }
+            },
+        )
         mock_builder_class.return_value = mock_builder
 
         mock_importer = mock.AsyncMock()
@@ -297,6 +338,17 @@ class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
         mock_rebaser_class.return_value = mock_rebaser
 
         mock_builder = mock.AsyncMock()
+        mock_builder.build.return_value = (
+            "test-pipelinerun",
+            {
+                "status": {
+                    "results": [
+                        {"name": "IMAGE_URL", "value": "quay.io/test/image:test-operator-1-fbc-1.0.0-1"},
+                        {"name": "IMAGE_DIGEST", "value": "sha256:abc123"},
+                    ]
+                }
+            },
+        )
         mock_builder_class.return_value = mock_builder
 
         mock_importer = mock.AsyncMock()
