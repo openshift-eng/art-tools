@@ -84,12 +84,6 @@ class KonfluxBuildOutcome(KonfluxEnum):
         return cls.PENDING
 
 
-class KonfluxECStatus(KonfluxEnum):
-    PASSED = 'passed'
-    FAILED = 'failed'
-    NOT_APPLICABLE = 'n/a'
-
-
 class ArtifactType(KonfluxEnum):
     RPM = 'rpm'
     IMAGE = 'image'
