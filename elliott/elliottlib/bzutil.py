@@ -782,7 +782,7 @@ class JIRABugTracker(BugTracker):
 
     def __init__(self, config):
         super().__init__(config, 'jira')
-        self._project = self.config.get('project', '')
+        self.project = self.config.get('project', '')
         self._client: JIRA = self.login()
         self._init_fields()
         self._available_target_versions = None
@@ -807,10 +807,10 @@ class JIRABugTracker(BugTracker):
                 target_versions = self._get_target_versions_via_project_issue_types()
 
             self._available_target_versions = target_versions
-            logger.info(f"Found {len(self._available_target_versions)} target versions in JIRA project {self._project}")
+            logger.info(f"Found {len(self._available_target_versions)} target versions in JIRA project {self.project}")
             return self._available_target_versions
         except Exception as e:
-            logger.error(f"Failed to fetch target versions for project {self._project}: {e}")
+            logger.error(f"Failed to fetch target versions for project {self.project}: {e}")
             self._available_target_versions = []
             return self._available_target_versions
 
@@ -822,13 +822,13 @@ class JIRABugTracker(BugTracker):
             list[str]: List of target version names for the Bug issue type.
         """
         # Use createmeta API which is compatible with newer JIRA Cloud instances
-        create_meta = self._client.createmeta(projectKeys=[self._project], expand='projects.issuetypes.fields')
+        create_meta = self._client.createmeta(projectKeys=[self.project], expand='projects.issuetypes.fields')
 
         target_versions = []
         # Navigate through the createmeta structure to find target version field
         if create_meta and 'projects' in create_meta:
             for project in create_meta['projects']:
-                if project.get('key') == self._project:
+                if project.get('key') == self.project:
                     for issue_type in project.get('issuetypes', []):
                         if issue_type.get('name') == 'Bug':
                             fields = issue_type.get('fields', {})
@@ -849,7 +849,7 @@ class JIRABugTracker(BugTracker):
         Return Value(s):
             list[str]: List of target version names for the Bug issue type.
         """
-        issue_types = self._client.project_issue_types(self._project)
+        issue_types = self._client.project_issue_types(self.project)
 
         bug_issue_type = None
         for issue_type in issue_types:
@@ -858,11 +858,11 @@ class JIRABugTracker(BugTracker):
                 break
 
         if not bug_issue_type:
-            logger.warning(f"Bug issue type not found in JIRA project {self._project}")
+            logger.warning(f"Bug issue type not found in JIRA project {self.project}")
             return []
 
         bug_id = getattr(bug_issue_type, 'id', None)
-        fields = self._client.project_issue_fields(self._project, bug_id)
+        fields = self._client.project_issue_fields(self.project, bug_id)
 
         target_versions = []
         for field in fields:
@@ -878,10 +878,10 @@ class JIRABugTracker(BugTracker):
 
     @property
     def product(self):
-        return self._project
+        return self.project
 
     def looks_like_a_jira_project_bug(self, bug_id) -> bool:
-        pattern = re.compile(rf'{self._project}-\d+')
+        pattern = re.compile(rf'{self.project}-\d+')
         return bool(pattern.match(str(bug_id)))
 
     def get_bug(self, bugid: str, **kwargs) -> JIRABug:
@@ -890,9 +890,7 @@ class JIRABugTracker(BugTracker):
     def get_bugs(self, bugids: List[str], permissive=False, verbose=False, **kwargs) -> List[JIRABug]:
         invalid_bugs = [b for b in bugids if not self.looks_like_a_jira_project_bug(b)]
         if invalid_bugs:
-            logger.warn(
-                f"Cannot fetch bugs from a different project (current project: {self._project}): {invalid_bugs}"
-            )
+            logger.warn(f"Cannot fetch bugs from a different project (current project: {self.project}): {invalid_bugs}")
         bugids = [b for b in bugids if self.looks_like_a_jira_project_bug(b)]
         if not bugids:
             return []
@@ -927,21 +925,57 @@ class JIRABugTracker(BugTracker):
         self, bug_title: str, bug_description: str, target_status: str, keywords: List, noop=False
     ) -> JIRABug:
         fields = {
-            'project': {'key': self._project},
             'issuetype': {'name': 'Bug'},
             'components': [{'name': 'Release'}],
-            'versions': [{'name': self.config.get('version')[0]}],  # Affects Version/s
-            self.field_target_version: [{'name': self.config.get('target_release')[0]}],  # Target Version
             'summary': bug_title,
             'labels': keywords,
             'description': bug_description,
         }
+        return self.create_issue(fields=fields, target_status=target_status, noop=noop)
+
+    def create_issue(
+        self,
+        fields: Dict,
+        target_status: Optional[str] = None,
+        target_releases: Optional[List[str]] = None,
+        versions: Optional[List[str]] = None,
+        noop: bool = False,
+    ) -> JIRABug:
+        """Create a JIRA issue, filling in tracker defaults when fields omit them.
+
+        Args:
+            fields: Raw JIRA issue fields to submit. The mapping may omit
+                `project`, `versions`, and target-version fields because this
+                helper fills them from tracker configuration when needed.
+            target_status: Optional workflow status to transition the new issue
+                to after creation.
+            target_releases: Optional target-version values to use instead of the
+                tracker's configured target releases.
+            versions: Optional affects-version values to use instead of the
+                tracker's configured versions.
+            noop: If `True`, log the create request without creating the issue.
+
+        Returns:
+            JIRABug | None: The created issue wrapper, or `None` when `noop` is
+            enabled.
+        """
+        fields = fields.copy()
+        fields.setdefault('project', {'key': self.project})
+        if versions is None:
+            versions = self.config.get('version')
+        if versions and 'versions' not in fields:
+            fields['versions'] = [{'name': version} for version in versions]
+        if target_releases is None:
+            target_releases = self.target_release()
+        if target_releases and self.field_target_version not in fields:
+            fields[self.field_target_version] = [{'name': target_release} for target_release in target_releases]
         if noop:
             logger.info(f"Would have created JIRA Issue with status={target_status} and fields={fields}")
             return
-        bug = self._client.create_issue(fields=fields)
-        self._client.transition_issue(bug, target_status)
-        return JIRABug(bug)
+        issue = self._client.create_issue(fields=fields)
+        if target_status:
+            self._client.transition_issue(issue, target_status)
+        return JIRABug(issue)
 
     def _update_bug_status(self, bugid, target_status):
         return self._client.transition_issue(bugid, target_status)
@@ -975,7 +1009,7 @@ class JIRABugTracker(BugTracker):
             available_versions = self._get_available_target_versions()
             if not available_versions:
                 logger.warning(
-                    f"Could not fetch available target versions for project {self._project}. Proceeding with original query."
+                    f"Could not fetch available target versions for project {self.project}. Proceeding with original query."
                 )
             else:
                 valid_target_releases = [tr for tr in target_release if tr in available_versions]
@@ -983,13 +1017,13 @@ class JIRABugTracker(BugTracker):
 
                 if invalid_target_releases:
                     logger.warning(
-                        f"Target versions {invalid_target_releases} do not exist in JIRA project {self._project}. "
+                        f"Target versions {invalid_target_releases} do not exist in JIRA project {self.project}. "
                         f"They will be excluded from the query."
                     )
 
                 if not valid_target_releases:
                     logger.warning(
-                        f"No valid target versions found for query. All requested versions do not exist in JIRA project {self._project}."
+                        f"No valid target versions found for query. All requested versions do not exist in JIRA project {self.project}."
                     )
                     logger.warning(
                         f"Target version filtering removed configured versions. "
@@ -1009,7 +1043,7 @@ class JIRABugTracker(BugTracker):
         if search_filter:
             exclude_components = self.component_filter(search_filter)
 
-        query = f"project={self._project}"
+        query = f"project={self.project}"
         if bugids:
             query += f" and issue in ({','.join(bugids)})"
         if status:
@@ -1082,6 +1116,49 @@ class JIRABugTracker(BugTracker):
             return []
         return self._search(query, verbose=verbose)
 
+    def search_bugs(
+        self,
+        status: Optional[List] = None,
+        search_filter: Optional[str] = None,
+        include_labels: Optional[List] = None,
+        exclude_labels: Optional[List] = None,
+        with_target_release: bool = True,
+        custom_query: Optional[str] = None,
+        verbose: bool = False,
+    ) -> List[JIRABug]:
+        """Search JIRA bugs with optional status, label, and query filters.
+
+        Args:
+            status: Optional allowed workflow statuses.
+            search_filter: Named component filter to exclude non-relevant
+                components.
+            include_labels: Optional labels that matching issues must include.
+            exclude_labels: Optional labels that matching issues must not include.
+            with_target_release: If `True`, constrain the search to the tracker's
+                configured target releases.
+            custom_query: Extra JQL appended to the generated query.
+            verbose: If `True`, log the generated JQL before searching.
+
+        Returns:
+            list[JIRABug]: Matching issues, or an empty list if version filtering
+            removes all configured target releases.
+        """
+        query = self._query(
+            status=status,
+            search_filter=search_filter,
+            include_labels=include_labels,
+            exclude_labels=exclude_labels,
+            with_target_release=with_target_release,
+            custom_query=custom_query,
+        )
+        if query is None:
+            return []
+        return self._search(query, verbose=verbose)
+
+    def create_issue_link(self, link_name: str, inward_issue: str, outward_issue: str):
+        """Create a JIRA issue link between two issues."""
+        self._client.create_issue_link(link_name, inward_issue, outward_issue)
+
     def remove_bugs(self, advisory_obj, bugids: List, noop=False):
         if noop:
             print(f"Would've removed bugs: {bugids}")
@@ -1148,7 +1225,16 @@ class BugzillaBugTracker(BugTracker):
     def __init__(self, config):
         super().__init__(config, 'bugzilla')
         self._client = self.login()
-        self.product = self.config.get('product', '')
+
+    @property
+    def product(self):
+        """Return the configured Bugzilla product name."""
+        return self.config.get('product', '')
+
+    @property
+    def project(self):
+        """Return the Bugzilla product for tracker-agnostic callers."""
+        return self.config.get('product', '')
 
     def get_bug(self, bugid, **kwargs):
         return BugzillaBug(self._client.getbug(bugid, **kwargs))
