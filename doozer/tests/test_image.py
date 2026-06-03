@@ -1921,12 +1921,12 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         okd_golang_metadata = ImageMetadata(okd_runtime, golang_data)
         self.assertFalse(okd_golang_metadata.should_trigger_base_image_release())
 
-        # Force=true bypasses OKD and test-assembly guards
+        # Force=true does not enable base image release on OKD (OCP-only workflow)
         okd_forced = Model({'name': 'test-regular', 'base_image_release': Model({'force': True})})
         okd_forced_metadata = ImageMetadata(
             okd_runtime, Model({'key': 'okd-forced', 'data': okd_forced, 'filename': 'okd-forced.yaml'})
         )
-        self.assertTrue(okd_forced_metadata.should_trigger_base_image_release())
+        self.assertFalse(okd_forced_metadata.should_trigger_base_image_release())
 
         test_assembly_forced_runtime = MagicMock()
         test_assembly_forced_runtime.logger = logging.getLogger('test_runtime')
