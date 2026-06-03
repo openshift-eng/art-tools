@@ -280,7 +280,7 @@ class KonfluxRebaser:
 
         # Determine if this image contains private fixes
         if private_fix is None:
-            if source and source_dir and not source.is_fork_build:
+            if source and source_dir and source.has_public_upstream and not source.is_fork_build:
                 # If the private org branch commit doesn't exist in the public org,
                 # this image contains private fixes
                 is_commit_in_public_upstream = await util.is_commit_in_public_upstream_async(
@@ -288,8 +288,7 @@ class KonfluxRebaser:
                 )
 
                 if (
-                    source.has_public_upstream
-                    and not SourceResolver.is_branch_commit_hash(source.public_upstream_branch)
+                    not SourceResolver.is_branch_commit_hash(source.public_upstream_branch)
                     and not is_commit_in_public_upstream
                 ):
                     private_fix = True
