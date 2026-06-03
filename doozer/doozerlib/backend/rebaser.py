@@ -980,7 +980,11 @@ class KonfluxRebaser:
             ):
                 from doozerlib.lockfile_prototype.rebaser_hooks import apply_dockerfile_transforms
 
-                apply_dockerfile_transforms(dest_dir, logger=self._logger)
+                apply_dockerfile_transforms(
+                    dest_dir,
+                    strip_updates=not downstream_parents,
+                    logger=self._logger,
+                )
 
             await self._update_csv(metadata, dest_dir, version, release)
 

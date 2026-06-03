@@ -96,6 +96,7 @@ async def generate_lockfile(
 
 def apply_dockerfile_transforms(
     dest_dir: Path,
+    strip_updates: bool = True,
     logger: logging.Logger | None = None,
 ) -> None:
     """
@@ -108,13 +109,18 @@ def apply_dockerfile_transforms(
 
     Arg(s):
         dest_dir (Path): Build directory containing the Dockerfile.
+        strip_updates (bool): Whether to strip bare dnf/yum update commands.
+            Set to False when the lockfile includes upgrade packages
+            (resolved with --image mode) so dnf update runs at build
+            time using the pre-fetched RPMs.
         logger (logging.Logger | None): Logger instance.
     """
     _logger = logger or logging.getLogger(__name__)
 
     df_path = dest_dir / "Dockerfile"
     df_content = df_path.read_text()
-    df_content = strip_bare_updates(df_content)
+    if strip_updates:
+        df_content = strip_bare_updates(df_content)
+        strip_bare_updates_from_scripts(dest_dir, logger=_logger)
     df_content = strip_reinstall_commands(df_content)
     df_path.write_text(df_content)
-    strip_bare_updates_from_scripts(dest_dir, logger=_logger)

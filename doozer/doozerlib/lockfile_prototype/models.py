@@ -42,6 +42,7 @@ class RpmsInConfig(BaseModel):
     arches: list[str]
     contentOrigin: dict[str, list[RepoEntry]]
     packages: list[str | ArchSpecificPackage] = Field(default_factory=list)
+    reinstallPackages: list[str] = Field(default_factory=list)
     upgradePackages: list[str] = Field(default_factory=list)
     moduleEnable: list[str] = Field(default_factory=list)
 

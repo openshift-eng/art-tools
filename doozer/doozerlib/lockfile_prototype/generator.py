@@ -50,6 +50,7 @@ def build_rpms_in_yaml(
     arches: list[str],
     packages: list[str],
     arch_specific_packages: dict[str, list[str]] | None = None,
+    reinstall_packages: list[str] | None = None,
     upgrade_packages: list[str] | None = None,
     module_enable: list[str] | None = None,
 ) -> RpmsInConfig:
@@ -61,6 +62,8 @@ def build_rpms_in_yaml(
         arches (list[str]): Target architectures.
         packages (list[str]): Common package names for all arches.
         arch_specific_packages (dict[str, list[str]] | None): Per-arch packages.
+        reinstall_packages (list[str] | None): Installed packages to reinstall
+            from repos (ensures they appear in the lockfile).
         upgrade_packages (list[str] | None): Packages to upgrade.
         module_enable (list[str] | None): Module streams to enable
             (e.g., ["nodejs:18", "python36:3.6"]).
@@ -78,6 +81,7 @@ def build_rpms_in_yaml(
         arches=arches,
         contentOrigin={"repos": repos},
         packages=package_entries,
+        reinstallPackages=list(reinstall_packages) if reinstall_packages else [],
         upgradePackages=list(upgrade_packages) if upgrade_packages else [],
         moduleEnable=list(module_enable) if module_enable else [],
     )
@@ -419,19 +423,28 @@ class RpmLockfilePrototypeGenerator:
                     stage_num, analysis.stages[stage_num], distgit_key
                 )
 
+            reinstall_pkgs: list[str] | None = None
             if stage_num == last_stage_num:
-                # Final stage resolves in bare mode. Add base image packages
-                # to the install list so dependency conflicts (e.g.
-                # crypto-policies vs gnutls) are caught during resolution.
-                # Skip when upgrade_targets already include base image
-                # packages (e.g. update-only stages).
-                if not upgrade_targets:
+                if image_pullspec:
+                    # --image mode: pass base image packages as reinstallPackages
+                    # so they appear in the lockfile at repo versions. base.reinstall()
+                    # handles missing/renamed packages gracefully (warns, skips).
                     base_pkgs = await self._get_base_image_packages(stage_num, image_pullspec, distgit_key)
+                    if base_pkgs:
+                        reinstall_pkgs = list(base_pkgs)
+                        self.logger.info(
+                            f"{distgit_key}: stage {stage_num}: {len(reinstall_pkgs)} base image "
+                            "packages will be reinstalled into lockfile"
+                        )
+                else:
+                    # No base image available — resolve in bare mode with
+                    # base image packages added to the install list for
+                    # conflict detection.
+                    base_pkgs = await self._get_base_image_packages(stage_num, None, distgit_key)
                     if base_pkgs:
                         extra = [p for p in base_pkgs if p not in packages]
                         if extra:
                             packages = packages + extra
-                image_pullspec = None
 
             enable_only = [s.split("/")[0] for s in stage_info.module_specs] if stage_info.module_specs else None
 
@@ -445,6 +458,7 @@ class RpmLockfilePrototypeGenerator:
                 distgit_key,
                 stage_num,
                 module_enable=enable_only,
+                reinstall_packages=reinstall_pkgs,
             )
             if result:
                 stage_lockfiles.append(result)
@@ -535,15 +549,10 @@ class RpmLockfilePrototypeGenerator:
             return stage_info.update_targets
         if stage_info.update_targets:
             return stage_info.update_targets
-        # Bare yum/dnf update (no named packages). The bare update
-        # command is stripped from the Dockerfile by strip_bare_updates()
-        # after lockfile generation, so there's no need to expand all
-        # base image packages as upgrade targets. Skipping avoids
-        # PackagesNotInstalledError when packages differ across arches.
-        self.logger.info(
-            f"{distgit_key}: stage {stage_num}: bare update command detected, "
-            "skipping upgrade target expansion (command will be stripped from Dockerfile)"
-        )
+        # Bare yum/dnf update (no named packages). Return empty here;
+        # _resolve_all_stages expands upgrade targets from the base
+        # image when --image mode is available.
+        self.logger.info(f"{distgit_key}: stage {stage_num}: bare update detected")
         return []
 
     @staticmethod
@@ -634,6 +643,7 @@ class RpmLockfilePrototypeGenerator:
         distgit_key: str,
         stage_num: int,
         module_enable: list[str] | None = None,
+        reinstall_packages: list[str] | None = None,
     ) -> LockfileData | None:
         """
         Resolve a single stage, retrying after removing unavailable packages.
@@ -645,18 +655,24 @@ class RpmLockfilePrototypeGenerator:
         remaining_update_targets = list(update_targets)
         arch_pkgs = dict(arch_pkgs)
 
+        # rpm-lockfile-prototype uses skopeo to pull the base image rpmdb.
+        # brew.registry.redhat.io requires auth that skopeo may not have;
+        # use the no-auth registry proxy instead.
+        resolver_pullspec = ContainerImageHelper._proxy_pullspec(image_pullspec) if image_pullspec else None
+
         for attempt in range(MAX_RESOLUTION_RETRIES):
             in_yaml = build_rpms_in_yaml(
                 repo_list,
                 arches,
                 remaining_packages,
                 arch_specific_packages=arch_pkgs,
+                reinstall_packages=reinstall_packages if image_pullspec else None,
                 upgrade_packages=remaining_update_targets if image_pullspec else None,
                 module_enable=module_enable,
             )
 
             try:
-                return await self._resolver.resolve(in_yaml, image_pullspec=image_pullspec)
+                return await self._resolver.resolve(in_yaml, image_pullspec=resolver_pullspec)
             except RuntimeError as e:
                 missing = RpmResolver.parse_missing_packages(str(e))
                 if not missing:
@@ -780,6 +796,7 @@ class RpmLockfilePrototypeGenerator:
         distgit_key: str,
         stage_num: int,
         module_enable: list[str] | None = None,
+        reinstall_packages: list[str] | None = None,
     ) -> LockfileData | None:
         """
         Resolve a stage with cross-arch version reconciliation.
@@ -798,6 +815,8 @@ class RpmLockfilePrototypeGenerator:
             distgit_key (str): Image identifier for logging.
             stage_num (int): Dockerfile stage number.
             module_enable (list[str] | None): Module streams to enable.
+            reinstall_packages (list[str] | None): Base image packages to
+                reinstall from repos into the lockfile.
         Return Value(s):
             LockfileData | None: Resolved lockfile with consistent
                 versions, or None if no packages remain.
@@ -812,6 +831,7 @@ class RpmLockfilePrototypeGenerator:
             distgit_key,
             stage_num,
             module_enable=module_enable,
+            reinstall_packages=reinstall_packages,
         )
         if not first_pass:
             return None
@@ -843,6 +863,7 @@ class RpmLockfilePrototypeGenerator:
                 distgit_key,
                 stage_num,
                 module_enable=module_enable,
+                reinstall_packages=reinstall_packages,
             )
         except RuntimeError:
             self.logger.warning(
