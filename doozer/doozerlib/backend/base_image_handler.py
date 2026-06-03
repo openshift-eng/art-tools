@@ -37,13 +37,18 @@ class BaseImageSnapshotInput:
 
 @dataclass(frozen=True)
 class BaseImageReleaseResult:
-    """Outputs from :meth:`BaseImageHandler.snapshot_release` after the Release succeeds."""
+    """Outputs from :meth:`BaseImageHandler.snapshot_release`.
+
+    ``release_pipeline`` is set when the Release CR was created (even if the release pipeline failed).
+    ``released_pullspec`` is set only when the release completes successfully.
+    """
 
     release_name: str
     snapshot_name: str
     nvr: str
     release_pipeline: str
     released_pullspec: str
+    succeeded: bool = True
 
 
 class BaseImageHandler:
@@ -83,7 +88,8 @@ class BaseImageHandler:
         Run snapshot→release for exactly one base-image component.
 
         Returns:
-            :class:`BaseImageReleaseResult` on success, else ``None``.
+            :class:`BaseImageReleaseResult` when snapshot and Release CR succeed (``succeeded`` reflects
+            release pipeline outcome), else ``None`` when snapshot or Release CR creation fails.
         """
         self.logger = self._scoped_logger(f"containers/{snapshot_input.distgit_key}")
 
@@ -123,8 +129,17 @@ class BaseImageHandler:
         release_name, release_url = result
 
         if not await self._wait_for_release_completion(release_name):
-            self.logger.error(f"Release did not complete successfully (release={release_name})")
-            return None
+            self.logger.error(
+                f"Release did not complete successfully (release={release_name}, url={release_url})"
+            )
+            return BaseImageReleaseResult(
+                release_name=release_name,
+                snapshot_name=snapshot_name,
+                nvr=snapshot_input.nvr,
+                release_pipeline=release_url,
+                released_pullspec='',
+                succeeded=False,
+            )
 
         released_pullspec = doozer_util.rh_art_images_base_pullspec(snapshot_input.nvr)
 
@@ -138,6 +153,7 @@ class BaseImageHandler:
             nvr=snapshot_input.nvr,
             release_pipeline=release_url,
             released_pullspec=released_pullspec,
+            succeeded=True,
         )
 
     def _build_component_from_snapshot_input(self, snapshot_input: BaseImageSnapshotInput) -> dict:

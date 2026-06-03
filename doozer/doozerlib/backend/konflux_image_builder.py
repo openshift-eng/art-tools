@@ -43,6 +43,7 @@ from packageurl import PackageURL
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 LOGGER = logging.getLogger(__name__)
+RELEASE_PIPELINE_NOT_AVAILABLE = 'N/A'
 
 
 def _normalize_version(version: str) -> str:
@@ -375,7 +376,7 @@ class KonfluxImageBuilder:
                         release_result = await self._trigger_base_image_release(
                             metadata, nvr, definitive_image_pullspec, build_repo
                         )
-                        if release_result:
+                        if release_result and release_result.succeeded:
                             logger.info("Base image release succeeded for %s, persisting build record", nvr)
                         else:
                             logger.error(
@@ -384,7 +385,20 @@ class KonfluxImageBuilder:
                                 KonfluxBuildOutcome.RELEASE_ERROR,
                             )
                             record["base_image_release_failed"] = "true"
-                        outcome = KonfluxBuildOutcome.SUCCESS if release_result else KonfluxBuildOutcome.RELEASE_ERROR
+                        outcome = (
+                            KonfluxBuildOutcome.SUCCESS
+                            if release_result and release_result.succeeded
+                            else KonfluxBuildOutcome.RELEASE_ERROR
+                        )
+
+                    release_pipeline = ''
+                    released_pullspec = ''
+                    if release_result:
+                        release_pipeline = release_result.release_pipeline
+                        if release_result.succeeded:
+                            released_pullspec = release_result.released_pullspec
+                    elif metadata.should_trigger_base_image_release() and outcome is KonfluxBuildOutcome.RELEASE_ERROR:
+                        release_pipeline = RELEASE_PIPELINE_NOT_AVAILABLE
 
                     build_record = await self.update_konflux_db(
                         metadata,
@@ -394,8 +408,8 @@ class KonfluxImageBuilder:
                         building_arches,
                         build_priority,
                         ec_pipeline_url=ec_pipeline_url,
-                        release_pipeline=release_result.release_pipeline if release_result else '',
-                        released_pullspec=release_result.released_pullspec if release_result else '',
+                        release_pipeline=release_pipeline,
+                        released_pullspec=released_pullspec,
                     )
                     if build_record:
                         record["record_id"] = build_record.record_id
@@ -1235,7 +1249,8 @@ class KonfluxImageBuilder:
             build_repo: Build repo (rebase git URL and commit for snapshot source)
 
         Returns:
-            :class:`BaseImageReleaseResult` when snapshot→release completes; ``None`` on failure or exception.
+            :class:`BaseImageReleaseResult` when snapshot and Release CR are created (``succeeded`` reflects
+            release pipeline outcome); ``None`` when snapshot/Release CR creation fails or on exception.
         """
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
 
@@ -1258,6 +1273,14 @@ class KonfluxImageBuilder:
             if result is None:
                 logger.error("Base image snapshot-release did not complete successfully for %s", nvr)
                 return None
+            if not result.succeeded:
+                logger.error(
+                    "Base image release pipeline failed for %s (release=%s, url=%s)",
+                    nvr,
+                    result.release_name,
+                    result.release_pipeline,
+                )
+                return result
             logger.info(f"Successfully triggered base image snapshot-release for {nvr}")
             return result
 

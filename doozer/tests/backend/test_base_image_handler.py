@@ -71,6 +71,36 @@ class TestBaseImageHandler(IsolatedAsyncioTestCase):
     @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
     @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
     @patch("doozerlib.backend.base_image_handler.resolve_konflux_kubeconfig_by_product")
+    async def test_snapshot_release_wait_failure_returns_partial_result_with_release_url(
+        self, mock_kubeconfig, mock_namespace, mock_konflux_client_init
+    ):
+        mock_namespace.return_value = "ocp-art-tenant"
+        mock_kubeconfig.return_value = "/path/to/kubeconfig"
+        mock_konflux_client_init.return_value = AsyncMock()
+
+        handler = BaseImageHandler(self.runtime, dry_run=True)
+        self.runtime.image_map = {"test-base": self.metadata}
+        release_url = "https://konflux.example/releases/failed-release"
+
+        with patch.object(handler, "_snapshot_from_component", new=AsyncMock(return_value="test-snapshot")):
+            with patch.object(
+                handler,
+                "_create_release_from_snapshot",
+                new=AsyncMock(return_value=("failed-release", release_url)),
+            ):
+                with patch.object(handler, "_wait_for_release_completion", return_value=False):
+                    result = await handler.snapshot_release(self.default_input)
+
+        self.assertIsNotNone(result)
+        self.assertFalse(result.succeeded)
+        self.assertEqual(result.release_name, "failed-release")
+        self.assertEqual(result.snapshot_name, "test-snapshot")
+        self.assertEqual(result.release_pipeline, release_url)
+        self.assertEqual(result.released_pullspec, "")
+
+    @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_kubeconfig_by_product")
     async def test_snapshot_release_builds_one_component(
         self, mock_kubeconfig, mock_namespace, mock_konflux_client_init
     ):

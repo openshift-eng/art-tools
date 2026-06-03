@@ -1514,7 +1514,7 @@ async def release_to_base_repo(runtime, nvr):
     handler = BaseImageHandler(runtime, dry_run=False)
     result = await handler.snapshot_release(snapshot_input)
 
-    if result:
+    if result and result.succeeded:
         logger.info(
             "Done: release=%s snapshot=%s release_pipeline=%s",
             result.release_name,
@@ -1527,5 +1527,11 @@ async def release_to_base_repo(runtime, nvr):
         followup.record_id = KonfluxBuildRecord.generate_record_id()
         await runtime.konflux_db.add_builds([followup])
         return
+
+    if result and not result.succeeded:
+        raise DoozerFatalError(
+            f"snapshot_release failed (release={result.release_name}, "
+            f"release_pipeline={result.release_pipeline})"
+        )
 
     raise DoozerFatalError("snapshot_release returned no result")
