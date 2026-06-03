@@ -10,6 +10,7 @@ from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome
+from artcommonlib.variants import BuildVariant
 from doozerlib.backend.konflux_client import ECVerificationResult
 from doozerlib.backend.konflux_image_builder import (
     KonfluxImageBuilder,
@@ -61,7 +62,7 @@ def _make_successful_pipelinerun_info():
     return plr_info
 
 
-def _make_metadata(distgit_key="test-image", for_release=True, is_base_image=False):
+def _make_metadata(distgit_key="test-image", for_release=True, is_base_image=False, variant=None):
     """Create a mock ImageMetadata."""
     metadata = MagicMock()
     metadata.distgit_key = distgit_key
@@ -77,6 +78,7 @@ def _make_metadata(distgit_key="test-image", for_release=True, is_base_image=Fal
     metadata.build_event = asyncio.Event()
     metadata.get_parent_members.return_value = {}
     metadata.runtime.assembly = "stream"
+    metadata.runtime.variant = variant if variant is not None else BuildVariant.OCP
     metadata.runtime.group_config.software_lifecycle.phase = "release"
     metadata.runtime.konflux_db = None
     return metadata
@@ -178,6 +180,14 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
         """EC verification should be skipped for non-OCP groups (e.g. logging)."""
         config = _make_config(group_name="logging-6.2")
         metadata = _make_metadata(for_release=True)
+
+        verify_ec = await self._run_build_and_get_ec_calls(config, metadata, mock_kc_init)
+        verify_ec.assert_not_called()
+
+    async def test_ec_skipped_for_okd_variant(self, mock_kc_init):
+        """EC verification should be skipped for OKD variant (not OCP)."""
+        config = _make_config(group_name="openshift-5.0")
+        metadata = _make_metadata(for_release=True, variant=BuildVariant.OKD)
 
         verify_ec = await self._run_build_and_get_ec_calls(config, metadata, mock_kc_init)
         verify_ec.assert_not_called()
