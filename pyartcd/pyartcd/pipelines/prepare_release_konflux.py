@@ -783,7 +783,7 @@ class PrepareReleaseKonfluxPipeline:
 
         # Run command and tolerate non-zero exit code
         # The doozer command returns partial results in JSON even on failure
-        _, stdout, _ = await exectools.cmd_gather_async(cmd, check=False)
+        _, stdout, _ = await exectools.cmd_gather_async(cmd, check=False, log_stdout=True)
 
         output_data = json.loads(stdout)
         successful_nvrs = output_data.get("nvrs", [])
@@ -838,7 +838,7 @@ class PrepareReleaseKonfluxPipeline:
         if self.dry_run:
             cmd += ["--dry-run"]
         cmd += ["--", *olm_operator_nvrs]
-        _, stdout, _ = await exectools.cmd_gather_async(cmd, check=False)
+        _, stdout, _ = await exectools.cmd_gather_async(cmd, check=False, log_stdout=True)
 
         output_data = json.loads(stdout)
         successful_nvrs = output_data.get("nvrs", [])
@@ -1059,14 +1059,12 @@ class PrepareReleaseKonfluxPipeline:
 
     async def execute_command_with_logging(self, cmd: list[str]) -> str:
         """
-        Execute a command asynchronously and log its output. Stream stderr in real-time.
+        Execute a command asynchronously and stream its output to the logger in real-time.
         :param cmd: The command to execute, including arguments
         :return: The stdout of the command
         """
 
-        _, stdout, _ = await exectools.cmd_gather_async(cmd, stderr=None)
-        if stdout:
-            self.logger.info("Command stdout:\n %s", stdout)
+        _, stdout, _ = await exectools.cmd_gather_async(cmd, log_stdout=True)
         return stdout
 
     @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
@@ -1502,7 +1500,7 @@ class PrepareReleaseKonfluxPipeline:
                     self.logger.info("[DRY-RUN] Would have run command: %s", ' '.join(verify_payload_command))
                     return
 
-                _, stdout, _ = await exectools.cmd_gather_async(verify_payload_command)
+                _, stdout, _ = await exectools.cmd_gather_async(verify_payload_command, log_stdout=True)
                 results = json.loads(stdout)
 
                 self.logger.info("Summary results for %s:\n%s", imagestream, json.dumps(results, indent=4))
