@@ -303,3 +303,49 @@ class SourceResolverTestCase(TestCase):
 
         SourceResolver.setup_and_fetch_public_upstream_source("https://github.com/openshift/repo", "main", "/src")
         mock_auth.assert_called_once_with(url="https://github.com/openshift/repo")
+
+
+class TestSourceResolutionIsForkBuild(TestCase):
+    """Tests for the is_fork_build property of SourceResolution."""
+
+    def _make_source_resolution(self, url: str, pull_url=None):
+        """Helper to create a SourceResolution with the given url and pull_url."""
+        from datetime import datetime, timezone
+
+        return SourceResolution(
+            source_path="/tmp/source",
+            url=url,
+            branch="release-4.18",
+            https_url=url.replace("git@github.com:", "https://github.com/").rstrip(".git"),
+            commit_hash="abc123def456789",
+            committer_date=datetime.now(timezone.utc),
+            latest_tag="v4.18.0",
+            has_public_upstream=True,
+            public_upstream_url="https://github.com/openshift/router",
+            public_upstream_branch="release-4.18",
+            pull_url=pull_url,
+        )
+
+    def test_is_fork_build_pull_url_none(self):
+        """When pull_url is None, is_fork_build should be False."""
+        source = self._make_source_resolution(
+            url="git@github.com:openshift-priv/router.git",
+            pull_url=None,
+        )
+        self.assertFalse(source.is_fork_build)
+
+    def test_is_fork_build_pull_url_equals_url(self):
+        """When pull_url equals url, is_fork_build should be False."""
+        source = self._make_source_resolution(
+            url="git@github.com:openshift-priv/router.git",
+            pull_url="git@github.com:openshift-priv/router.git",
+        )
+        self.assertFalse(source.is_fork_build)
+
+    def test_is_fork_build_pull_url_differs_from_url(self):
+        """When pull_url differs from url (fork build), is_fork_build should be True."""
+        source = self._make_source_resolution(
+            url="git@github.com:openshift-priv/router.git",
+            pull_url="git@github.com:myuser/router-fork.git",
+        )
+        self.assertTrue(source.is_fork_build)
