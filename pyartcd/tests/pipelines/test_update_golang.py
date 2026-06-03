@@ -981,7 +981,11 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     @patch("pyartcd.pipelines.update_golang.is_available", new_callable=AsyncMock, side_effect=[False, False, True])
     @patch("pyartcd.pipelines.update_golang.is_latest", return_value=True)
-    async def test_process_build_available_after_retries(self, mock_is_latest, mock_is_available, mock_konflux_db):
+    @patch.object(UpdateGolangPipeline, "ensure_signed", new_callable=AsyncMock)
+    async def test_process_build_available_after_retries(
+        self, mock_ensure_signed, mock_is_latest, mock_is_available, mock_konflux_db
+    ):
+
         """Test process_build succeeds after retrying request_repo"""
         mock_runtime = Mock(
             dry_run=False,
