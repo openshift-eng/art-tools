@@ -1066,8 +1066,15 @@ class ConfigScanSources:
 
     @alru_cache
     async def _fetch_art_yaml_from_rebase(self, rebase_repo_url: str, rebase_commitish: str, manifests_dir: str):
-        """Fetch and parse art.yaml from an operator's rebase commit."""
+        """Fetch and parse art.yaml from an operator's rebase commit.
+
+        Returns the parsed YAML dict, or None if the file does not exist in the repo.
+        Raises on auth/network/parse errors so they surface as scan failures.
+        """
+        from github import UnknownObjectException
+
         _, org, _ = artcommonlib.util.split_git_url(rebase_repo_url)
+        manifests_dir = manifests_dir.strip('/')
         art_yaml_path = f'{manifests_dir}/art.yaml'
 
         with tempfile.NamedTemporaryFile(delete=True, suffix='.yaml') as temp_file:
@@ -1081,7 +1088,7 @@ class ConfigScanSources:
                 )
                 with open(temp_file.name) as f:
                     return yaml.safe_load(f.read())
-            except Exception:
+            except (UnknownObjectException, FileNotFoundError):
                 return None
 
     async def _fetch_image_references_from_rebase(
@@ -1091,15 +1098,22 @@ class ConfigScanSources:
 
         Searches multiple candidate paths (bundle_manifests_dir, manifests_dir, bundle_dir)
         matching the pattern used by _find_image_refs_path in the rebaser.
+        Returns the parsed YAML dict, or None if the file is not found in any candidate path.
+        Raises on auth/network/parse errors so they surface as scan failures.
         """
+        from github import UnknownObjectException
+
         _, org, _ = artcommonlib.util.split_git_url(rebase_repo_url)
         github_client = get_github_client_for_org(org)
-        bundle_manifests_dir = f'{manifests_dir}/{bundle_dir}'
+        manifests_dir = manifests_dir.strip('/')
+        bundle_dir = bundle_dir.strip('/')
+        bundle_manifests_dir = f'{manifests_dir}/{bundle_dir}' if bundle_dir else manifests_dir
         candidate_paths = [
             f'{bundle_manifests_dir}/image-references',
             f'{manifests_dir}/image-references',
-            f'{bundle_dir}/image-references',
         ]
+        if bundle_dir:
+            candidate_paths.append(f'{bundle_dir}/image-references')
 
         for ref_path in candidate_paths:
             with tempfile.NamedTemporaryFile(delete=True, suffix='.yaml') as temp_file:
@@ -1113,7 +1127,7 @@ class ConfigScanSources:
                     )
                     with open(temp_file.name) as f:
                         return yaml.safe_load(f.read())
-                except Exception:
+                except (UnknownObjectException, FileNotFoundError):
                     continue
         return None
 
