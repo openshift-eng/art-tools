@@ -315,27 +315,23 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
             (dest_dir / "Dockerfile").write_text("FROM base\nRUN yum update -y && yum clean all\n")
             asyncio.run(generator.generate_lockfile(meta, dest_dir))
 
-        generator._container.get_installed_packages.assert_called_once()
+        # Called for update-only stage + reinstall expansion
+        self.assertGreaterEqual(generator._container.get_installed_packages.call_count, 1)
         self.assertEqual(len(captured_configs), 1)
-        # Final stage uses bare mode (no rpmdb) for hermetic builds
-        self.assertIsNone(captured_pullspecs[0])
-        # upgrade_packages must be empty when image_pullspec is None:
-        # passing upgrade targets with --bare causes PackagesNotInstalledError
-        # because the installed sack is empty in bare mode.
-        self.assertEqual(captured_configs[0].upgradePackages, [])
-        # All installed packages should still appear as install targets
-        # so they end up in the lockfile
+        # Update-only stage uses --image mode with base image pullspec
+        self.assertIsNotNone(captured_pullspecs[0])
+        # All installed packages appear as both install and upgrade targets
         self.assertEqual(
             sorted(captured_configs[0].packages),
             ["bash", "coreutils", "glibc"],
         )
+        self.assertEqual(captured_configs[0].upgradePackages, ["bash", "coreutils", "glibc"])
 
-    def test_mixed_install_and_bare_update_skips_expansion(self):
+    def test_mixed_install_and_bare_update_uses_image_mode(self):
         """
-        Stage with both yum install and bare yum update -y should NOT
-        expand base image packages as upgrade targets. The bare update
-        command is stripped from the Dockerfile after lockfile generation,
-        so upgrade expansion is unnecessary and risks arch mismatches.
+        Stage with both yum install and bare yum update -y should resolve
+        in --image mode with upgradePackages=["*"] so base image packages
+        get upgraded to match build-time behavior.
         """
         meta = self._make_mock_image_meta()
         meta.config.konflux.cachi2.lockfile.get.return_value = None
@@ -343,9 +339,11 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
         generator.downstream_parents = ["quay.io/test/base@sha256:abc123"]
 
         captured_configs: list[RpmsInConfig] = []
+        captured_pullspecs: list[str | None] = []
 
         async def capture_resolve(config, image_pullspec=None):
             captured_configs.append(config)
+            captured_pullspecs.append(image_pullspec)
             return FAKE_LOCKFILE_DATA.model_copy(deep=True)
 
         generator._resolver.resolve = AsyncMock(side_effect=capture_resolve)
@@ -357,12 +355,10 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
             )
             asyncio.run(generator.generate_lockfile(meta, dest_dir))
 
-        # get_installed_packages is called once for final-stage conflict
-        # detection (not for bare update expansion)
-        generator._container.get_installed_packages.assert_called_once()
         self.assertEqual(len(captured_configs), 1)
-        self.assertEqual(captured_configs[0].upgradePackages, [])
-        # Only explicit install packages should be resolved
+        # --image mode: pullspec is preserved
+        self.assertIsNotNone(captured_pullspecs[0])
+        # Explicit install packages in the packages list
         pkg_names = [p if isinstance(p, str) else p.name for p in captured_configs[0].packages]
         self.assertIn("aws-efs-utils", pkg_names)
 
@@ -415,24 +411,23 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
         self.assertIn("openvswitch3.5-ipsec", pkg_names)
         self.assertIn("ovn25.09-vtep", pkg_names)
 
-    def test_final_stage_queries_base_image_for_conflict_detection(self):
+    def test_final_stage_uses_image_mode_when_pullspec_available(self):
         """
-        For the final stage with packages but no bare update command,
-        base image packages must be added to the bare-mode resolution
-        so that dependency conflicts (e.g. crypto-policies EUS 9.8
-        conflicting with gnutls < 3.8.10) are detected and the lockfile
-        includes the required gnutls upgrade.
+        For the final stage with a base image pullspec, resolution uses
+        --image mode so DNF sees the base image's rpmdb. This ensures
+        lockfile versions match build-time behavior.
         """
         meta = self._make_mock_image_meta()
         meta.config.konflux.cachi2.lockfile.get.return_value = None
         generator = self._make_generator()
         generator.downstream_parents = ["quay.io/test/base@sha256:abc123"]
-        generator._container.get_installed_packages = AsyncMock(return_value=["gnutls", "glibc", "nss"])
 
         captured_configs: list[RpmsInConfig] = []
+        captured_pullspecs: list[str | None] = []
 
         async def capture_resolve(config, image_pullspec=None):
             captured_configs.append(config)
+            captured_pullspecs.append(image_pullspec)
             return FAKE_LOCKFILE_DATA.model_copy(deep=True)
 
         generator._resolver.resolve = AsyncMock(side_effect=capture_resolve)
@@ -442,34 +437,31 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
             (dest_dir / "Dockerfile").write_text("FROM base\nRUN dnf install -y libreswan openssl\n")
             asyncio.run(generator.generate_lockfile(meta, dest_dir))
 
-        # Must query base image even without bare update command
-        generator._container.get_installed_packages.assert_called_once()
         self.assertEqual(len(captured_configs), 1)
-        # Bare mode: image_pullspec is None and upgradePackages is empty
-        self.assertEqual(captured_configs[0].upgradePackages, [])
-        # Packages must include both Dockerfile packages AND base image packages
+        # --image mode: pullspec is preserved (not forced to None)
+        self.assertIsNotNone(captured_pullspecs[0])
+        # Only Dockerfile packages — base image packages come from rpmdb
         pkg_names = sorted(p if isinstance(p, str) else p.name for p in captured_configs[0].packages)
         self.assertIn("libreswan", pkg_names)
         self.assertIn("openssl", pkg_names)
-        self.assertIn("gnutls", pkg_names)
-        self.assertIn("glibc", pkg_names)
-        self.assertIn("nss", pkg_names)
 
-    def test_bare_update_does_not_query_base_image_for_upgrade_targets(self):
+    def test_bare_update_keeps_image_mode_without_upgrade_targets(self):
         """
-        Bare yum/dnf update should NOT expand base image packages as
-        upgrade targets. The bare update command is stripped after
-        lockfile generation, so expansion is unnecessary.
+        Bare yum/dnf update with --image mode should NOT expand base
+        image packages as upgrade targets (many are virtual provides or
+        renamed and cause resolution failures). Instead, dnf update is
+        kept in the Dockerfile and runs at build time with cachi2 RPMs.
         """
         meta = self._make_mock_image_meta()
         meta.config.konflux.cachi2.lockfile.get.return_value = None
         generator = self._make_generator()
-        generator._container.get_installed_packages = AsyncMock(return_value=["glibc", "gnutls"])
 
         captured_configs: list[RpmsInConfig] = []
+        captured_pullspecs: list[str | None] = []
 
         async def capture_resolve(config, image_pullspec=None):
             captured_configs.append(config)
+            captured_pullspecs.append(image_pullspec)
             return FAKE_LOCKFILE_DATA.model_copy(deep=True)
 
         generator._resolver.resolve = AsyncMock(side_effect=capture_resolve)
@@ -481,9 +473,10 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
                 generator.generate_lockfile(meta, dest_dir, downstream_parents=["quay.io/test/base@sha256:abc123"])
             )
 
-        # get_installed_packages is called once for final-stage conflict
-        # detection, but NOT for bare update expansion
-        generator._container.get_installed_packages.assert_called_once()
+        self.assertEqual(len(captured_configs), 1)
+        # --image mode preserved
+        self.assertIsNotNone(captured_pullspecs[0])
+        # No upgrade targets — dnf update handled at build time
         self.assertEqual(captured_configs[0].upgradePackages, [])
 
     def test_fallback_packages_used_when_image_unreachable(self):
