@@ -63,6 +63,16 @@ class SourceResolution:
             return art_util.convert_remote_git_to_https(self.pull_url)
         return self.https_url
 
+    @property
+    def is_fork_build(self) -> bool:
+        """True if building from a fork (pull_url differs from push url).
+
+        When url_pull is set in image metadata to a different URL than url,
+        it indicates a fork-based test build. In this case, embargo detection
+        should fall back to Dockerfile extraction.
+        """
+        return self.pull_url is not None and self.pull_url != self.url
+
 
 class SourceResolver:
     """A class for resolving source code repositories."""
