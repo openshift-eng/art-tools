@@ -27,6 +27,7 @@ from artcommonlib.oc_image_info import oc_image_info__cached_async
 from artcommonlib.release_util import SoftwareLifecyclePhase, isolate_el_version_in_release, split_el_suffix_in_release
 from artcommonlib.rpm_utils import compare_nvr, parse_nvr
 from artcommonlib.util import fetch_slsa_attestation, get_konflux_data
+from artcommonlib.variants import BuildVariant
 from dockerfile_parse import DockerfileParser
 from doozerlib import constants, util
 from doozerlib.backend.base_image_handler import BaseImageHandler, BaseImageReleaseResult, BaseImageSnapshotInput
@@ -307,6 +308,7 @@ class KonfluxImageBuilder:
                 is_ocp_group = self._config.group_name.startswith("openshift-")
                 should_run_ec = (
                     outcome is KonfluxBuildOutcome.SUCCESS
+                    and metadata.runtime.variant is not BuildVariant.OKD
                     and is_ocp_group
                     and not self._config.skip_ec_verify
                     and metadata.for_release
@@ -346,7 +348,12 @@ class KonfluxImageBuilder:
                         record["ec_pipeline_url"] = ec_pipeline_url
 
                 elif outcome is KonfluxBuildOutcome.SUCCESS:
-                    if self._config.skip_ec_verify:
+                    if metadata.runtime.variant is BuildVariant.OKD:
+                        logger.info(
+                            "Skipping EC verification for %s: OKD variant does not use RH EC workflow",
+                            metadata.distgit_key,
+                        )
+                    elif self._config.skip_ec_verify:
                         logger.info(
                             "Skipping EC verification for %s: --skip-ec-verify flag is set", metadata.distgit_key
                         )
