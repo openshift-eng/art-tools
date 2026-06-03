@@ -985,7 +985,6 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
     async def test_process_build_available_after_retries(
         self, mock_ensure_signed, mock_is_latest, mock_is_available, mock_konflux_db
     ):
-
         """Test process_build succeeds after retrying request_repo"""
         mock_runtime = Mock(
             dry_run=False,

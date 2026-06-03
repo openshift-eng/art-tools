@@ -23,8 +23,8 @@ from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.release_util import split_el_suffix_in_release
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import new_roundtrip_yaml_handler
-from doozerlib.constants import ART_IMAGES_BASE_APPLICATION
 from doozerlib.cli.config_plashet import KNOWN_SIGNING_KEYS
+from doozerlib.constants import ART_IMAGES_BASE_APPLICATION
 from elliottlib import util as elliottutil
 from elliottlib.constants import GOLANG_BUILDER_CVE_COMPONENT
 
