@@ -1261,7 +1261,10 @@ class KonfluxImageBuilder:
             if result is None:
                 logger.error("Base image snapshot-release did not complete successfully for %s", nvr)
                 return None
-            logger.info(f"Successfully triggered base image snapshot-release for {nvr}")
+            if not result.released_pullspec:
+                logger.error(f"Base image release failed to complete for {nvr} - see {result.release_pipeline}")
+            else:
+                logger.info(f"Successfully triggered base image snapshot-release for {nvr}")
             return result
 
         except Exception as e:
