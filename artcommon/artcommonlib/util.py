@@ -20,6 +20,7 @@ from artcommonlib.constants import (
     GOLANG_BUILDER_IMAGE_NAME,
     KONFLUX_DEFAULT_IMAGE_REPO,
     KONFLUX_DEFAULT_NAMESPACE,
+    PRODUCT_BASE_IMAGE_KONFLUX_EC_RELEASE_MAP,
     PRODUCT_BASE_IMAGE_KONFLUX_RELEASE_MAP,
     PRODUCT_KUBECONFIG_MAP,
     PRODUCT_NAMESPACE_MAP,
@@ -31,7 +32,7 @@ from artcommonlib.oc_image_info import (
     oc_image_info__cached__lru,
     oc_image_info__cached_async__lru,
 )
-from artcommonlib.release_util import isolate_el_version_in_release
+from artcommonlib.release_util import SoftwareLifecyclePhase, isolate_el_version_in_release
 from ruamel.yaml import YAML
 from semver import VersionInfo
 from tenacity import before_sleep_log, retry, retry_if_exception_type, stop_after_attempt, wait_fixed
@@ -1197,7 +1198,10 @@ def resolve_konflux_namespace_by_product(product: str, provided_namespace: Optio
     return KONFLUX_DEFAULT_NAMESPACE
 
 
-def resolve_konflux_base_image_release_targets(product: str) -> Tuple[str, str]:
+def resolve_konflux_base_image_release_targets(
+    product: str,
+    lifecycle_phase: Optional[str] = None,
+) -> Tuple[str, str]:
     """
     Resolve the Konflux ReleasePlan name and Application for the silent base-image workflow.
 
@@ -1205,14 +1209,36 @@ def resolve_konflux_base_image_release_targets(product: str) -> Tuple[str, str]:
     spec.application and matching labels. These must match konflux-release-data for the product's tenant.
     Layered products use `<product>-images-base` (e.g. `mtc-images-base`). OCP keeps `art-images-base`.
 
+    When ``lifecycle_phase`` is ``pre-release`` and the product has an EC release plan configured
+    (OCP today), use the EC-stage base image ReleasePlan (``registry-ocp-art-base-ec-stage`` policy).
+    See https://redhat.atlassian.net/browse/ART-19498.
+
     Unknown products default to the OCP targets (same as resolve_konflux_namespace_by_product fallback).
 
     Args:
         product: Runtime product key (e.g. ocp, rhmtc, mta).
+        lifecycle_phase: ``group.yml`` ``software_lifecycle.phase`` value, if known.
 
     Returns:
         (release_plan_name, application_name)
     """
+    if lifecycle_phase not in (None, '', Missing):
+        try:
+            if SoftwareLifecyclePhase.from_name(lifecycle_phase) == SoftwareLifecyclePhase.PRE_RELEASE:
+                ec_targets = PRODUCT_BASE_IMAGE_KONFLUX_EC_RELEASE_MAP.get(product)
+                if ec_targets:
+                    plan, app = ec_targets
+                    KONFLUX_LOGGER.info(
+                        f"Using pre-release base-image Konflux releasePlan '{plan}' "
+                        f"and application '{app}' for product '{product}'"
+                    )
+                    return ec_targets
+        except ValueError:
+            KONFLUX_LOGGER.warning(
+                f"Unknown software_lifecycle.phase '{lifecycle_phase}' for product '{product}'; "
+                "using default base-image release plan"
+            )
+
     targets = PRODUCT_BASE_IMAGE_KONFLUX_RELEASE_MAP.get(product)
     if targets:
         plan, app = targets

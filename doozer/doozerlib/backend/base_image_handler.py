@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Optional, Tuple
 
 from artcommonlib import logutil
+from artcommonlib.model import Missing
 from artcommonlib.util import (
     get_utc_now_formatted_str,
     normalize_group_name_for_k8s,
@@ -21,6 +22,20 @@ from artcommonlib.util import (
 from doozerlib import util as doozer_util
 from doozerlib.backend.konflux_client import API_VERSION, KIND_RELEASE, KIND_RELEASE_PLAN, KIND_SNAPSHOT, KonfluxClient
 from kubernetes.dynamic import exceptions
+
+
+def _software_lifecycle_phase(runtime) -> Optional[str]:
+    """Return group.yml software_lifecycle.phase when configured on the runtime."""
+    group_config = getattr(runtime, 'group_config', None)
+    if group_config in (None, Missing):
+        return None
+    software_lifecycle = getattr(group_config, 'software_lifecycle', None)
+    if software_lifecycle in (None, Missing):
+        return None
+    phase = getattr(software_lifecycle, 'phase', None)
+    if phase in (None, Missing):
+        return None
+    return str(phase)
 
 
 @dataclass(frozen=True)
@@ -60,7 +75,11 @@ class BaseImageHandler:
         self.namespace = resolve_konflux_namespace_by_product(self.runtime.product, None)
         kubeconfig = resolve_konflux_kubeconfig_by_product(self.runtime.product, None)
 
-        resolved_plan, resolved_application = resolve_konflux_base_image_release_targets(self.runtime.product)
+        lifecycle_phase = _software_lifecycle_phase(self.runtime)
+        resolved_plan, resolved_application = resolve_konflux_base_image_release_targets(
+            self.runtime.product,
+            lifecycle_phase=lifecycle_phase,
+        )
         self.base_image_release_plan = resolved_plan
         self.base_image_application = resolved_application
         self.logger.info(
