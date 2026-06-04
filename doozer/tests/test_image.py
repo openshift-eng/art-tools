@@ -900,7 +900,6 @@ RUN echo "test"
     ):
         """Test RHEL version detection from ubi-based images"""
         # Clear lru_cache to avoid interference from other tests or cached real calls
-        extract_builder_info_from_pullspec.cache_clear()
         metadata = self._create_image_metadata('openshift/test_ubi')
 
         # Mock config
@@ -957,7 +956,6 @@ RUN echo "test"
         self, mock_oc_image_info, mock_joinpath, mock_open, mock_source_resolver
     ):
         """Test that RHEL version detection falls back to builder images when the base image tag is unhelpful"""
-        extract_builder_info_from_pullspec.cache_clear()
         metadata = self._create_image_metadata('openshift/test_fallback')
 
         metadata.config = Model(
@@ -1000,7 +998,6 @@ RUN echo "test"
         self, mock_oc_image_info, mock_joinpath, mock_open, mock_source_resolver
     ):
         """Test that primary rhel-9 builder is detected over a rhel-8 compatibility builder"""
-        extract_builder_info_from_pullspec.cache_clear()
         metadata = self._create_image_metadata('openshift/ose-ovn-kubernetes-rhel9')
 
         metadata.config = Model(
@@ -1045,7 +1042,6 @@ RUN echo "test"
         self, mock_oc_image_info, mock_joinpath, mock_open, mock_source_resolver
     ):
         """Test that final base image RHEL version wins even when compat builder is listed first"""
-        extract_builder_info_from_pullspec.cache_clear()
         metadata = self._create_image_metadata('openshift/test-reversed-builders')
 
         metadata.config = Model(
@@ -1090,7 +1086,6 @@ RUN echo "test"
         self, mock_oc_image_info, mock_joinpath, mock_open, mock_source_resolver
     ):
         """Test that undetermined RHEL version logs a warning and returns instead of raising"""
-        extract_builder_info_from_pullspec.cache_clear()
         metadata = self._create_image_metadata('openshift/ose-deployer-rhel9')
 
         metadata.config = Model(
@@ -1973,7 +1968,6 @@ class TestExtractBuilderInfoFromPullspec(unittest.TestCase):
         The digest portion should be stripped before parsing the tag.
         """
         # Clear cache to avoid interference
-        extract_builder_info_from_pullspec.cache_clear()
 
         pullspec_with_digest = (
             "registry.ci.openshift.org/ocp/builder:rhel-9-golang-1.24-openshift-4.21"
@@ -1989,7 +1983,6 @@ class TestExtractBuilderInfoFromPullspec(unittest.TestCase):
         """
         Test that pullspecs without SHA digests still work correctly.
         """
-        extract_builder_info_from_pullspec.cache_clear()
 
         pullspec_without_digest = "registry.ci.openshift.org/ocp/builder:rhel-9-golang-1.24-openshift-4.21"
 
@@ -2002,7 +1995,6 @@ class TestExtractBuilderInfoFromPullspec(unittest.TestCase):
         """
         Test RHEL 8 builder with digest.
         """
-        extract_builder_info_from_pullspec.cache_clear()
 
         pullspec = (
             "registry.ci.openshift.org/ocp/builder:rhel-8-golang-1.21-openshift-4.18"
