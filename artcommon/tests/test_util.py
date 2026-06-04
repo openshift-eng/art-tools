@@ -192,6 +192,10 @@ class TestUtil(unittest.TestCase):
             ),
             ('1.2.3-y.p.p1.assembly.4.9.99.scos8', '1.2.3-y.p.p1.assembly.4.9.99', 'scos8'),
             ('1.2.3-y.p.p1.assembly.art12398.scos10', '1.2.3-y.p.p1.assembly.art12398', 'scos10'),
+            # RHEL minor version test cases
+            ('202401221732.p0.g00c615b.el9_6', '202401221732.p0.g00c615b', 'el9_6'),
+            ('202401221732.p0.g00c615b.el9_4', '202401221732.p0.g00c615b', 'el9_4'),
+            ('1.2.3-y.p.p1.assembly.stream.el10_2', '1.2.3-y.p.p1.assembly.stream', 'el10_2'),
         ]
 
         for t in test_cases:
@@ -212,6 +216,10 @@ class TestUtil(unittest.TestCase):
             ('4.17.0-202407241200.p0.assembly.stream.gdeadbee.scos9', 9),
             ('1.2.3-y.p.p1.assembly.4.9.99.scos8', 8),
             ('1.2.3-y.p.p1.assembly.art12398.scos10', 10),
+            # RHEL minor version test cases (should still return major version only)
+            ('202401221732.p0.g00c615b.el9_6', 9),
+            ('202401221732.p0.g00c615b.el9_4', 9),
+            ('1.2.3-y.p.p1.assembly.stream.el10_2', 10),
         ]
 
         for t in test_cases:

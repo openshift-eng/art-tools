@@ -36,7 +36,11 @@ from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, Konf
 from artcommonlib.lock import get_named_semaphore
 from artcommonlib.model import ListModel, Missing, Model
 from artcommonlib.pushd import Dir
-from artcommonlib.release_util import isolate_assembly_in_release, isolate_el_version_in_release
+from artcommonlib.release_util import (
+    isolate_assembly_in_release,
+    isolate_el_version_in_release,
+    split_el_suffix_in_release,
+)
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import (
     convert_remote_git_to_https,
@@ -1424,7 +1428,7 @@ class ImageDistGitRepo(DistGitRepo):
                 'nvr': nvr,
                 'version': version,
                 'release': release,
-                'el_target': f'el{isolate_el_version_in_release(release)}',
+                'el_target': split_el_suffix_in_release(release)[1] or f'el{isolate_el_version_in_release(release)}',
                 'embargoed': is_release_embargoed(release, self.runtime.build_system),
                 'arches': self.metadata.get_arches(),
                 'source_repo': source_repo,
@@ -2135,8 +2139,12 @@ class ImageDistGitRepo(DistGitRepo):
                 if self.runtime.assembly:
                     release += f'.assembly.{self.runtime.assembly}'
 
+                el_minor = self.metadata.config.get('el_minor', None)
                 if self.get_branch_el():
-                    release += ".el" + str(self.get_branch_el())
+                    el_suffix = "el" + str(self.get_branch_el())
+                    if el_minor is not Missing and el_minor is not None:
+                        el_suffix += "_" + str(el_minor)
+                    release += "." + el_suffix
 
                 dfp.labels['release'] = release
             else:
