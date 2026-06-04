@@ -1030,7 +1030,9 @@ This ticket was created by ART pipline run [sync-ci-images|{jenkins_build_url}]
             )
             try:
                 # retrieve the target version string (e.g., 'z' or '4.21.0')
-                target_version_segment = Model(runtime.gitdata.load_data(key='bug').data).target_release[-1]
+                target_version_segment = Model(
+                    runtime.gitdata.load_data(key='bug', replace_vars=runtime.group_config.vars).data
+                ).target_release[-1]
 
                 # Build the update payload using the retrieved string
                 issue_update = {
