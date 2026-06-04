@@ -44,6 +44,7 @@ def _build_mocks(
     # Runtime mock
     runtime = MagicMock()
     runtime.get_major_minor_fields.return_value = (major, minor)
+    runtime.group_config.vars = {'MAJOR': major, 'MINOR': minor}
 
     # gitdata.load_data returns bug.yml with target_release
     bug_data = MagicMock()
@@ -228,6 +229,18 @@ class TestReconcileJiraIssuesCustomFields(unittest.TestCase):
         runtime.logger.error.assert_called_once()
         error_msg = runtime.logger.error.call_args[0][0]
         self.assertIn('Target Version', error_msg)
+
+    @patch('doozerlib.cli.images_streams.connect_issue_with_pr')
+    def test_load_data_passes_replace_vars(self, mock_connect):
+        """
+        Verify that load_data is called with replace_vars so that
+        template strings like {MAJOR}.{MINOR} are interpolated.
+        """
+        runtime, pr_map, mock_issue, mock_jira_client = _build_mocks()
+
+        reconcile_jira_issues(runtime, pr_map, dry_run=False)
+
+        runtime.gitdata.load_data.assert_called_with(key='bug', replace_vars=runtime.group_config.vars)
 
     @patch('doozerlib.cli.images_streams.connect_issue_with_pr')
     def test_version_below_4_16_skips_entirely(self, mock_connect):
