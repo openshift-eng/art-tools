@@ -24,7 +24,7 @@ def split_el_suffix_in_release(release: str) -> Tuple[str, Optional[str]]:
     For OCP builds, this returns the el suffix (e.g., 'el9').
     """
 
-    el_suffix_match = re.match(r'(.*)[.+]((?:el|scos)\d+)(?:.*|$)', release)
+    el_suffix_match = re.match(r'(.*)[.+]((?:el|scos)\d+(?:_\d+)?)(?:.*|$)', release)
     if el_suffix_match:
         prefix = el_suffix_match.group(1)
         el_suffix = el_suffix_match.group(2)
@@ -62,11 +62,12 @@ def isolate_el_version_in_release(release: str) -> Optional[int]:
     """
     _, el_suffix = split_el_suffix_in_release(release)
     if el_suffix:
-        # Strip the prefix ('el' or 'scos') and return the numeric version
+        # Strip the prefix ('el' or 'scos') and return the major numeric version
         if el_suffix.startswith('scos'):
-            return int(el_suffix[4:])
+            numeric = el_suffix[4:]
         else:  # starts with 'el'
-            return int(el_suffix[2:])
+            numeric = el_suffix[2:]
+        return int(numeric.split('_')[0])
     return None
 
 

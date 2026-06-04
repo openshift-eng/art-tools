@@ -2135,8 +2135,15 @@ class ImageDistGitRepo(DistGitRepo):
                 if self.runtime.assembly:
                     release += f'.assembly.{self.runtime.assembly}'
 
+                el_minor = self.metadata.config.get('el_minor', None)
+                if el_minor is not Missing and el_minor is not None:
+                    if not isinstance(el_minor, int) or el_minor < 0:
+                        raise ValueError(f"el_minor must be a non-negative integer, got: {el_minor!r}")
                 if self.get_branch_el():
-                    release += ".el" + str(self.get_branch_el())
+                    el_suffix = "el" + str(self.get_branch_el())
+                    if el_minor is not Missing and el_minor is not None:
+                        el_suffix += "_" + str(el_minor)
+                    release += "." + el_suffix
 
                 dfp.labels['release'] = release
             else:
