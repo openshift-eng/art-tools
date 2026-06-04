@@ -660,14 +660,22 @@ class RpmLockfilePrototypeGenerator:
         # use the no-auth registry proxy instead.
         resolver_pullspec = ContainerImageHelper._proxy_pullspec(image_pullspec) if image_pullspec else None
 
+        # When reinstall_packages is set, also pass them as upgrade targets.
+        # base.reinstall() raises PackagesNotAvailableError when the installed
+        # version isn't in the configured repos — but rpm-lockfile-prototype
+        # swallows that error when the package is also in upgradePackages
+        # (the upgrade provides a replacement version).
+        remaining_reinstall = list(reinstall_packages) if reinstall_packages else []
+
         for attempt in range(MAX_RESOLUTION_RETRIES):
+            effective_upgrade = list(set(remaining_update_targets + remaining_reinstall)) if image_pullspec else None
             in_yaml = build_rpms_in_yaml(
                 repo_list,
                 arches,
                 remaining_packages,
                 arch_specific_packages=arch_pkgs,
-                reinstall_packages=reinstall_packages if image_pullspec else None,
-                upgrade_packages=remaining_update_targets if image_pullspec else None,
+                reinstall_packages=remaining_reinstall if image_pullspec else None,
+                upgrade_packages=effective_upgrade,
                 module_enable=module_enable,
             )
 
@@ -678,16 +686,23 @@ class RpmLockfilePrototypeGenerator:
                 if not missing:
                     raise
                 prev_count = (
-                    len(remaining_packages) + sum(len(v) for v in arch_pkgs.values()) + len(remaining_update_targets)
+                    len(remaining_packages)
+                    + sum(len(v) for v in arch_pkgs.values())
+                    + len(remaining_update_targets)
+                    + len(remaining_reinstall)
                 )
                 remaining_packages = [p for p in remaining_packages if p not in missing]
                 remaining_update_targets = [p for p in remaining_update_targets if p not in missing]
+                remaining_reinstall = [p for p in remaining_reinstall if p not in missing]
                 for arch in list(arch_pkgs.keys()):
                     arch_pkgs[arch] = [p for p in arch_pkgs[arch] if p not in missing]
                     if not arch_pkgs[arch]:
                         del arch_pkgs[arch]
                 new_count = (
-                    len(remaining_packages) + sum(len(v) for v in arch_pkgs.values()) + len(remaining_update_targets)
+                    len(remaining_packages)
+                    + sum(len(v) for v in arch_pkgs.values())
+                    + len(remaining_update_targets)
+                    + len(remaining_reinstall)
                 )
                 if new_count == prev_count:
                     raise

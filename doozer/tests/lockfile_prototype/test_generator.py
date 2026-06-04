@@ -325,7 +325,7 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
             sorted(captured_configs[0].packages),
             ["bash", "coreutils", "glibc"],
         )
-        self.assertEqual(captured_configs[0].upgradePackages, ["bash", "coreutils", "glibc"])
+        self.assertEqual(sorted(captured_configs[0].upgradePackages), ["bash", "coreutils", "glibc"])
 
     def test_mixed_install_and_bare_update_uses_image_mode(self):
         """
@@ -478,6 +478,79 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
         self.assertIsNotNone(captured_pullspecs[0])
         # No upgrade targets — dnf update handled at build time
         self.assertEqual(captured_configs[0].upgradePackages, [])
+
+    def test_reinstall_packages_also_passed_as_upgrade_targets(self):
+        """
+        Base image packages passed as reinstallPackages must also appear
+        in upgradePackages so rpm-lockfile-prototype skips
+        PackagesNotAvailableError (installed version not in repos) instead
+        of crashing.
+        """
+        meta = self._make_mock_image_meta()
+        meta.config.konflux.cachi2.lockfile.get.return_value = None
+        generator = self._make_generator()
+        generator.downstream_parents = ["quay.io/test/base@sha256:abc123"]
+        generator._container.get_installed_packages = AsyncMock(return_value=["sed", "glibc", "libnghttp2"])
+
+        captured_configs: list[RpmsInConfig] = []
+
+        async def capture_resolve(config, image_pullspec=None):
+            captured_configs.append(config)
+            return FAKE_LOCKFILE_DATA.model_copy(deep=True)
+
+        generator._resolver.resolve = AsyncMock(side_effect=capture_resolve)
+
+        with TemporaryDirectory() as tmpdir:
+            dest_dir = Path(tmpdir)
+            (dest_dir / "Dockerfile").write_text("FROM base\nRUN dnf install -y curl\n")
+            asyncio.run(generator.generate_lockfile(meta, dest_dir))
+
+        self.assertEqual(len(captured_configs), 1)
+        reinstall = captured_configs[0].reinstallPackages
+        upgrade = captured_configs[0].upgradePackages
+        # All reinstall packages must also be in upgrade targets
+        for pkg in reinstall:
+            self.assertIn(pkg, upgrade)
+        # Dockerfile install packages are NOT in reinstall or upgrade
+        self.assertNotIn("curl", reinstall)
+
+    def test_reinstall_retry_removes_unavailable_packages(self):
+        """
+        When a reinstall/upgrade package fails resolution (e.g. package
+        not found in repos at all), the retry loop must remove it from
+        reinstallPackages and upgradePackages before retrying.
+        """
+        meta = self._make_mock_image_meta()
+        meta.config.konflux.cachi2.lockfile.get.return_value = None
+        generator = self._make_generator()
+        generator.downstream_parents = ["quay.io/test/base@sha256:abc123"]
+        generator._container.get_installed_packages = AsyncMock(return_value=["nonexistent-pkg", "glibc"])
+
+        call_count = 0
+
+        async def mock_resolve(config, image_pullspec=None):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise RuntimeError("No match for argument: nonexistent-pkg")
+            return FAKE_LOCKFILE_DATA.model_copy(deep=True)
+
+        generator._resolver.resolve = AsyncMock(side_effect=mock_resolve)
+
+        with TemporaryDirectory() as tmpdir:
+            dest_dir = Path(tmpdir)
+            (dest_dir / "Dockerfile").write_text("FROM base\nRUN dnf install -y curl\n")
+            asyncio.run(generator.generate_lockfile(meta, dest_dir))
+
+        # Should have retried successfully
+        self.assertEqual(call_count, 2)
+        # Second call should not have "nonexistent-pkg" in reinstall or upgrade
+        second_config = generator._resolver.resolve.call_args_list[1][0][0]
+        self.assertNotIn("nonexistent-pkg", second_config.reinstallPackages)
+        self.assertNotIn("nonexistent-pkg", second_config.upgradePackages)
+        # "glibc" should still be present
+        self.assertIn("glibc", second_config.reinstallPackages)
+        self.assertIn("glibc", second_config.upgradePackages)
 
     def test_fallback_packages_used_when_image_unreachable(self):
         """
