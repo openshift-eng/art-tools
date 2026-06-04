@@ -93,6 +93,7 @@ class Runtime(GroupRuntime):
         self.variant = BuildVariant.OCP  # Default to OCP variant
         self.data_path = None
         self.data_dir = None
+        self.extra_vars: dict[str, str] = {}
         self.group_commitish = None
         self.latest_parent_version = False
         self.rhpkg_config = None
@@ -394,6 +395,16 @@ class Runtime(GroupRuntime):
                 # for example: replace_vars = {'CVES': 'None', 'IMPACT': 'Low', 'MAJOR': 4, 'MINOR': 12, 'RHCOS_EL_MAJOR': 8, 'RHCOS_EL_MINOR': 6, 'release_name': '4.12.77', 'runtime_assembly': '4.12.77'}
                 if 'PATCH' not in replace_vars:
                     replace_vars['PATCH'] = Version.parse(release_name).patch
+        if self.extra_vars:
+            for item in self.extra_vars:
+                if '=' not in item:
+                    raise ValueError(f"Invalid --var format '{item}', expected KEY=VALUE")
+                key, value = item.split('=', 1)
+                try:
+                    value = int(value)
+                except ValueError:
+                    pass
+                replace_vars[key] = value
         return replace_vars
 
     def init_state(self):
