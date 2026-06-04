@@ -2302,7 +2302,10 @@ class KonfluxRebaser:
             self._logger.debug('Retrieving image info for image %s', original_parent)
 
             # Use the cached function to extract builder info
-            el_version, golang_version = extract_builder_info_from_pullspec(original_parent)
+            el_version, golang_version = extract_builder_info_from_pullspec(
+                original_parent,
+                registry_config=self._runtime.registry_config,
+            )
 
             if not el_version or not golang_version:
                 raise ValueError(f'Could not extract RHEL version or golang version from {original_parent}')

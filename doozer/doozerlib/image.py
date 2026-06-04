@@ -5,7 +5,6 @@ import pathlib
 import re
 from collections import OrderedDict
 from copy import copy
-from functools import lru_cache
 from multiprocessing import Event
 from typing import Any, Dict, List, Optional, Set, Tuple, cast
 
@@ -28,18 +27,19 @@ from doozerlib.metadata import Metadata, RebuildHint, RebuildHintCode
 from doozerlib.source_resolver import SourceResolver
 
 
-@lru_cache(maxsize=256)
-def extract_builder_info_from_pullspec(pullspec: str) -> tuple[int | None, tuple[int, int] | None]:
+def extract_builder_info_from_pullspec(
+    pullspec: str,
+    registry_config: Optional[str] = None,
+) -> tuple[int | None, tuple[int, int] | None]:
     """
     Extract RHEL version and golang version from a container image pullspec.
-
-    This function is cached to avoid repeated image inspections for the same pullspec.
 
     First attempts to extract versions from the pullspec tag, then falls back to
     inspecting the image's 'release' and 'version' labels.
 
     Args:
         pullspec: Full image pullspec (e.g., registry.ci.openshift.org/ocp/builder:rhel-9-golang-1.21)
+        registry_config: Optional path to registry auth config file for image inspection
 
     Returns:
         Tuple of (rhel_version, golang_version) where:
@@ -67,7 +67,7 @@ def extract_builder_info_from_pullspec(pullspec: str) -> tuple[int | None, tuple
                     return rhel_version, golang_version
 
         # At this point, we're missing at least one value - fall back to inspecting image labels
-        image_info = cast(Dict, util.oc_image_info_for_arch(pullspec))
+        image_info = cast(Dict, util.oc_image_info_for_arch(pullspec, registry_config=registry_config))
         labels = image_info['config']['config']['Labels']
 
         # Extract RHEL version from release label if we don't have it yet
@@ -973,7 +973,10 @@ class ImageMetadata(Metadata):
             # before any compatibility builders (e.g. rhel-8-golang used only for upgrade shims).
             ordered = [parent_images[-1]] + parent_images[:-1]
             for pullspec in ordered:
-                rhel_version, golang_version = extract_builder_info_from_pullspec(pullspec)
+                rhel_version, golang_version = extract_builder_info_from_pullspec(
+                    pullspec,
+                    registry_config=self.runtime.registry_config,
+                )
                 if rhel_version:
                     break
 
