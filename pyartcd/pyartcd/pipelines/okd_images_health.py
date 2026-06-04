@@ -275,9 +275,9 @@ class ImagesHealthPipeline:
 
     async def notify_okd_channel(self):
         """
-        Send aggregated notifications to #art-okd-release channel for all OKD versions.
-        Groups concerns and rebase failures by image name across all versions.
-        Excludes NEVER_BUILT and LATEST_BUILD_SUCCEEDED concerns.
+        Send a summary message to #art-okd-release channel with a link to the dashboard.
+        Instead of posting detailed failure lists (which can overflow Jira API limits),
+        we now only post a summary and direct users to the art-build-failures dashboard.
         """
         self.slack_client.bind_channel('#art-okd-release')
 
@@ -322,30 +322,19 @@ class ImagesHealthPipeline:
             summary_parts.append(f'{n_rebase_issues} image{"s" if n_rebase_issues > 1 else ""} with rebase failures')
 
         issues = '\n- '.join(summary_parts)
-        response = await self.slack_client.say(
-            f':alert: There are some issues to look into for OKD builds:\n- {issues}',
-            link_build_url=False,
+
+        # Build dashboard URL showing OKD failures
+        start_date = (datetime.now(timezone.utc) - timedelta(days=DELTA_DAYS)).strftime('%Y-%m-%d')
+        end_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+        # Filter dashboard to show only OKD groups (okd-*)
+        dashboard_url = f'{ART_BUILD_HISTORY_URL}/?dateRange={start_date}+to+{end_date}&outcome=failure&engine=konflux'
+
+        message = (
+            f':alert: There are some issues to look into for OKD builds:\n- {issues}\n\n'
+            f'For detailed information, please check the {self.url_text(dashboard_url, "ART Build Failures Dashboard")}'
         )
 
-        # Post detailed report in thread
-        # Build concerns
-        for image_name, concerns in image_concerns.items():
-            image_message = f'`{image_name}` (build issues):'
-            for concern in concerns:
-                image_message += f'\n• {self.get_message_for_okd_channel(concern)}'
-            await self.slack_client.say(image_message, thread_ts=response['ts'], link_build_url=False)
-
-        # Rebase failures
-        for image_name, failures in sorted(image_rebase_failures.items()):
-            image_message = f'`{image_name}` (rebase failures):'
-            for failure in failures:
-                version = failure['version']
-                failure_count = failure['failure_count']
-                jenkins_url = failure['jenkins_url']
-                image_message += f'\n• okd-{version}: Failed {failure_count} time{"s" if failure_count != 1 else ""}'
-                if jenkins_url:
-                    image_message += f' ({self.url_text(jenkins_url, "Last failure job")})'
-            await self.slack_client.say(image_message, thread_ts=response['ts'], link_build_url=False)
+        await self.slack_client.say(message, link_build_url=False, unfurl_links=False, unfurl_media=False)
 
     def get_message_for_release(self, concern: dict):
         """

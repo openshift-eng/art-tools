@@ -83,11 +83,13 @@ class TestNotifyPublicChannel(IsolatedAsyncioTestCase):
 
         await pipeline.notify_public_channel()
 
+        # Now only posts a single summary message with dashboard link
         calls = mock_slack_client.say.call_args_list
-        self.assertEqual(len(calls), 2)
+        self.assertEqual(len(calls), 1)
         first_call_args = calls[0][0][0]
         self.assertIn(":alert:", first_call_args)
         self.assertIn("build failures", first_call_args)
+        self.assertIn("ART Build Failures Dashboard", first_call_args)
 
     async def test_with_mixed_failure_types(self):
         mock_slack_client = self.mock_runtime.new_slack_client.return_value
@@ -108,21 +110,15 @@ class TestNotifyPublicChannel(IsolatedAsyncioTestCase):
 
         await pipeline.notify_public_channel()
 
+        # Now only posts a single summary message with dashboard link
         calls = mock_slack_client.say.call_args_list
-        # Summary + 4 thread messages (one per failure type)
-        self.assertEqual(len(calls), 5)
+        self.assertEqual(len(calls), 1)
         summary = calls[0][0][0]
         self.assertIn("build failures", summary)
         self.assertIn("EC verification failures", summary)
         self.assertIn("release to authz failures", summary)
         self.assertIn("rebase failures", summary)
-        # Thread messages: section header with image name, then group bullets below
-        build_thread = calls[1][0][0]
-        self.assertIn("Build Failures (1 image)", build_thread)
-        self.assertIn("`build-fail`:", build_thread)
-        ec_thread = calls[2][0][0]
-        self.assertIn("EC Verification Failures (1 image)", ec_thread)
-        self.assertIn("`ec-fail-image`:", ec_thread)
+        self.assertIn("ART Build Failures Dashboard", summary)
 
     async def test_binds_to_configured_channel(self):
         mock_slack_client = self.mock_runtime.new_slack_client.return_value
@@ -155,11 +151,13 @@ class TestNotifyPublicChannel(IsolatedAsyncioTestCase):
 
         await pipeline.notify_public_channel()
 
+        # Now only posts a single summary message with dashboard link
         calls = mock_slack_client.say.call_args_list
-        self.assertEqual(len(calls), 2)
+        self.assertEqual(len(calls), 1)
         summary = calls[0][0][0]
         self.assertIn("EC verification failures", summary)
         self.assertNotIn("build failures", summary)
+        self.assertIn("ART Build Failures Dashboard", summary)
 
 
 class TestNotifyReleaseChannel(IsolatedAsyncioTestCase):
