@@ -11,6 +11,7 @@ STREAMS_SCHEMA = {
         Optional('transform'): And(str, len),
         Optional('upstream_image_mirror'): list,
         Optional('aliases'): list,
+        Optional('skip_nvr_check'): bool,
     },
 }
 

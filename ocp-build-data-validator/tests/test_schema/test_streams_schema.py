@@ -16,7 +16,11 @@ class TestStreamsSchema(unittest.TestCase):
             'rhel-8-golang-ci-build-root': {
                 'image': 'not_applicable',
                 'upstream_image_base': 'registry.ci.openshift.org/ocp/builder:rhel-8-golang-1.16-openshift-{MAJOR}.{MINOR}',
-                'upstream_image': 'upstream_image: registry.ci.openshift.org/openshift/release:rhel-8-release-golang-1.16-openshift-{MAJOR}.{MINOR}',
+                'upstream_image': 'upstream_image: registry.ci.openshift.org/ocp/builder:rhel-8-base-openshift-{MAJOR}.{MINOR}',
+            },
+            'rhel_coreos': {
+                'image': 'registry.ci.openshift.org/coreos/rhel-coreos-base:9.8',
+                'skip_nvr_check': True,
             },
         }
         self.assertIsNone(streams_schema.validate('filename', valid_data))
@@ -50,6 +54,10 @@ class TestStreamsSchema(unittest.TestCase):
                 'upstream_image_base': 'registry.ci.openshift.org/ocp/builder:rhel-8-base-openshift-{MAJOR}.{MINOR}.art',
                 'upstream_image': 1234,
             },
+            'invalid-skip_nvr_check': {
+                'image': 'registry.ci.openshift.org/coreos/rhel-coreos-base:9.8',
+                'skip_nvr_check': 'yes',
+            },
         }
 
         expected_errors = {
@@ -58,6 +66,7 @@ class TestStreamsSchema(unittest.TestCase):
             'invalid-upstream_image_base': "Key 'invalid-upstream_image_base' error:\nKey 'upstream_image_base' error:\nlen('') should evaluate to True",
             'invalid-transform': "Key 'invalid-transform' error:\nKey 'transform' error:\nTrue should be instance of 'str'",
             'invalid-upstream_image': "Key 'invalid-upstream_image' error:\nKey 'upstream_image' error:\n1234 should be instance of 'str'",
+            'invalid-skip_nvr_check': "Key 'invalid-skip_nvr_check' error:\nKey 'skip_nvr_check' error:\n'yes' should be instance of 'bool'",
         }
 
         for k, v in invalid_data.items():
