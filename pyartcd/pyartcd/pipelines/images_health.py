@@ -622,6 +622,11 @@ class ImagesHealthPipeline:
         await self.slack_client.say(report, thread_ts=response['ts'], unfurl_links=False, unfurl_media=False)
 
     async def notify_public_channel(self):
+        """
+        Send a summary message to the public channel with a link to the dashboard.
+        Instead of posting detailed failure lists (which can overflow Jira API limits),
+        we now only post a summary and direct users to the art-build-failures dashboard.
+        """
         self.slack_client.bind_channel(self.public_channel)
 
         # Group build concerns by image name
@@ -665,58 +670,18 @@ class ImagesHealthPipeline:
             summary_parts.append(f'{n} image{"s" if n > 1 else ""} with rebase failures')
 
         issues = '\n- '.join(summary_parts)
-        response = await self.slack_client.say(
-            f':alert: There are some issues to look into for Openshift builds:\n- {issues}',
-            link_build_url=False,
+
+        # Build dashboard URL showing failures for all scanned versions
+        start_date = (datetime.now(timezone.utc) - timedelta(days=DELTA_DAYS)).strftime('%Y-%m-%d')
+        end_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+        dashboard_url = f'{ART_BUILD_HISTORY_URL}/?dateRange={start_date}+to+{end_date}&outcome=failure&engine=konflux'
+
+        message = (
+            f':alert: There are some issues to look into for Openshift builds:\n- {issues}\n\n'
+            f'For detailed information, please check the {self.url_text(dashboard_url, "ART Build Failures Dashboard")}'
         )
 
-        if image_build_failures:
-            n = len(image_build_failures)
-            message = f'*Build Failures ({n} image{"s" if n > 1 else ""}):*'
-            for image_name, concerns in sorted(image_build_failures.items()):
-                message += f'\n`{image_name}`:'
-                for concern in concerns:
-                    message += f'\n  • {self.get_message_for_forum(concern)}'
-            await self.slack_client.say(
-                message, thread_ts=response['ts'], link_build_url=False, unfurl_links=False, unfurl_media=False
-            )
-
-        if image_ec_failures:
-            n = len(image_ec_failures)
-            message = f'*EC Verification Failures ({n} image{"s" if n > 1 else ""}):*'
-            for image_name, failures in sorted(image_ec_failures.items()):
-                message += f'\n`{image_name}`:'
-                for failure in failures:
-                    line = f'\n  • {self._format_forum_redis_failure_inline(failure)}'
-                    pipeline_url = failure.get('pipeline_url', '')
-                    if pipeline_url:
-                        line += f' | {self.url_text(pipeline_url, "Pipeline")}'
-                    message += line
-            await self.slack_client.say(
-                message, thread_ts=response['ts'], link_build_url=False, unfurl_links=False, unfurl_media=False
-            )
-
-        if image_release_failures:
-            n = len(image_release_failures)
-            message = f'*Release to Authz Failures ({n} image{"s" if n > 1 else ""}):*'
-            for image_name, failures in sorted(image_release_failures.items()):
-                message += f'\n`{image_name}`:'
-                for failure in failures:
-                    message += f'\n  • {self._format_forum_redis_failure_inline(failure)}'
-            await self.slack_client.say(
-                message, thread_ts=response['ts'], link_build_url=False, unfurl_links=False, unfurl_media=False
-            )
-
-        if image_rebase_failures:
-            n = len(image_rebase_failures)
-            message = f'*Rebase Failures ({n} image{"s" if n > 1 else ""}):*'
-            for image_name, failures in sorted(image_rebase_failures.items()):
-                message += f'\n`{image_name}`:'
-                for failure in failures:
-                    message += f'\n  • {self._format_forum_redis_failure_inline(failure)}'
-            await self.slack_client.say(
-                message, thread_ts=response['ts'], link_build_url=False, unfurl_links=False, unfurl_media=False
-            )
+        await self.slack_client.say(message, link_build_url=False, unfurl_links=False, unfurl_media=False)
 
     @staticmethod
     def _group_failures_by_image(failures_by_version: dict) -> dict[str, list[dict]]:
