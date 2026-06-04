@@ -323,6 +323,12 @@ def images_covscan(
     default=False,
     help="Inject \"yum update -y\" in the final stage of an image build. This ensures the component image will be able to override RPMs it is inheriting from its parent image using RPMs in the rebuild plashet.",
 )
+@click.option(
+    '--extra-label',
+    multiple=True,
+    metavar='KEY=VALUE',
+    help='Extra labels to add to the Dockerfile. Can be specified multiple times. e.g. --extra-label io.openshift.build.golang-nvr=golang-1.25.3-1.el9',
+)
 @option_commit_message
 @option_push
 @pass_runtime
@@ -333,6 +339,7 @@ def images_rebase(
     embargoed: bool,
     repo_type: str,
     force_yum_updates: bool,
+    extra_label: tuple,
     message: str,
     push: bool,
 ):
@@ -353,6 +360,13 @@ def images_rebase(
     """
 
     runtime.initialize(validate_content_sets=True)
+
+    extra_labels = {}
+    for label in extra_label:
+        if '=' not in label:
+            raise click.BadParameter(f"Extra label must be in KEY=VALUE format, got: {label}")
+        key, value = label.split('=', 1)
+        extra_labels[key] = value
 
     if runtime.group_config.public_upstreams and (release is None or release != "+" and not release.endswith(".p?")):
         raise click.BadParameter(
@@ -388,7 +402,9 @@ def images_rebase(
             dgr = image_meta.distgit_repo()
             if embargoed:
                 dgr.private_fix = True
-            (real_version, real_release) = dgr.rebase_dir(version, release, terminate_event, force_yum_updates)
+            (real_version, real_release) = dgr.rebase_dir(
+                version, release, terminate_event, force_yum_updates, extra_labels=extra_labels
+            )
             sha = dgr.commit(message, log_diff=True)
             dgr.tag(real_version, real_release)
             runtime.record_logger.add_record(
