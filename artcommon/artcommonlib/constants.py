@@ -98,7 +98,7 @@ PRODUCT_BASE_IMAGE_KONFLUX_RELEASE_MAP = {
     "openshift-logging": ("logging-images-base-silent", "logging-images-base"),
 }
 
-# Pre-release lifecycle (software_lifecycle.phase) — registry-ocp-art-base-ec-stage via ART-19498.
+# Pre-release lifecycle (software_lifecycle.phase) — registry-ocp-art-base-ec-prod via ART-19498.
 PRODUCT_BASE_IMAGE_KONFLUX_EC_RELEASE_MAP = {
     "ocp": ("ocp-art-images-base-silent-ec", "art-images-base"),
 }

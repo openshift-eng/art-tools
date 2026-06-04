@@ -76,8 +76,8 @@ KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION = "ocp-art-tenant/conforma-build-stage"
 KONFLUX_PREGA_EC_POLICY_CONFIGURATION = "ocp-art-tenant/conforma-build-ec-stage"
 # Base image release EC policies (ReleasePlanAdmission policy name suffix). Selection is by
 # software_lifecycle.phase in resolve_konflux_base_image_release_targets — ART-19498.
-# Prod: registry-ocp-art-base-prod | Pre-release: registry-ocp-art-base-ec-stage
+# Prod: registry-ocp-art-base-prod | Pre-release: registry-ocp-art-base-ec-prod
 KONFLUX_BASE_IMAGE_EC_POLICY_CONFIGURATION = "rhtap-releng-tenant/registry-ocp-art-base-prod"
-KONFLUX_BASE_IMAGE_PREGA_EC_POLICY_CONFIGURATION = "rhtap-releng-tenant/registry-ocp-art-base-ec-stage"
+KONFLUX_BASE_IMAGE_PREGA_EC_POLICY_CONFIGURATION = "rhtap-releng-tenant/registry-ocp-art-base-ec-prod"
 
 ART_IMAGES_BASE_APPLICATION = "art-images-base"

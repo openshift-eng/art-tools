@@ -1210,7 +1210,7 @@ def resolve_konflux_base_image_release_targets(
     Layered products use `<product>-images-base` (e.g. `mtc-images-base`). OCP keeps `art-images-base`.
 
     When ``lifecycle_phase`` is ``pre-release`` and the product has an EC release plan configured
-    (OCP today), use the EC-stage base image ReleasePlan (``registry-ocp-art-base-ec-stage`` policy).
+    (OCP today), use the EC base image ReleasePlan (``registry-ocp-art-base-ec-prod`` policy).
     See https://redhat.atlassian.net/browse/ART-19498.
 
     Unknown products default to the OCP targets (same as resolve_konflux_namespace_by_product fallback).
