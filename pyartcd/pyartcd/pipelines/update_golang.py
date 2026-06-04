@@ -187,6 +187,7 @@ class UpdateGolangPipeline:
         skip_pr: bool = False,
         external_golang_rpms: bool = False,
         network_mode: str | None = None,
+        use_new_golang_branch: bool = False,
         major_bump: bool = False,
     ):
         self.runtime = runtime
@@ -206,6 +207,7 @@ class UpdateGolangPipeline:
         self.skip_pr = skip_pr
         self.external_golang_rpms = external_golang_rpms
         self.network_mode = network_mode
+        self.use_new_golang_branch = use_new_golang_branch
         self.major_bump = major_bump
         self._slack_client = self.runtime.new_slack_client()
         self._doozer_working_dir = self.runtime.working_dir / "doozer-working"
@@ -802,9 +804,7 @@ class UpdateGolangPipeline:
 
     async def _rebase_brew(self, el_v, go_version, go_nvr: str):
         _LOGGER.info("Rebasing for Brew...")
-        branch = self.get_golang_branch(el_v, go_version)
-        if self.data_gitref:
-            branch += f'@{self.data_gitref}'
+        group, image_key = self._get_doozer_group_and_image(el_v, go_version)
         version = f"v{go_version}"
         release = default_release_suffix()
         cmd = [
@@ -814,12 +814,13 @@ class UpdateGolangPipeline:
         ]
         if self.data_path:
             cmd.append(f"--data-path={self.data_path}")
+        cmd.extend(self._get_doozer_var_args())
         cmd.extend(
             [
                 "--group",
-                branch,
+                group,
                 "-i",
-                GOLANG_BUILDER_IMAGE_NAME,
+                image_key,
                 "images:rebase",
                 "--version",
                 version,
@@ -837,9 +838,7 @@ class UpdateGolangPipeline:
 
     async def _build_brew(self, el_v, go_version):
         _LOGGER.info("Building on Brew...")
-        branch = self.get_golang_branch(el_v, go_version)
-        if self.data_gitref:
-            branch += f'@{self.data_gitref}'
+        group, image_key = self._get_doozer_group_and_image(el_v, go_version)
         cmd = [
             "doozer",
             f"--working-dir={self._doozer_working_dir}-brew-{el_v}",
@@ -847,12 +846,13 @@ class UpdateGolangPipeline:
         ]
         if self.data_path:
             cmd.append(f"--data-path={self.data_path}")
+        cmd.extend(self._get_doozer_var_args())
         cmd.extend(
             [
                 "--group",
-                branch,
+                group,
                 "-i",
-                GOLANG_BUILDER_IMAGE_NAME,
+                image_key,
                 "images:build",
                 "--repo-type",
                 "unsigned",
@@ -872,9 +872,7 @@ class UpdateGolangPipeline:
     async def _rebase_konflux(self, el_v, go_version, go_nvr: str):
         """Rebase golang-builder image for Konflux"""
         _LOGGER.info("Rebasing for Konflux...")
-        branch = self.get_golang_branch(el_v, go_version)
-        if self.data_gitref:
-            branch += f'@{self.data_gitref}'
+        group, image_key = self._get_doozer_group_and_image(el_v, go_version)
         version = f"v{go_version}"
         release = default_release_suffix()
         cmd = [
@@ -884,12 +882,13 @@ class UpdateGolangPipeline:
         ]
         if self.data_path:
             cmd.append(f"--data-path={self.data_path}")
+        cmd.extend(self._get_doozer_var_args())
         cmd.extend(
             [
                 "--group",
-                branch,
+                group,
                 "-i",
-                GOLANG_BUILDER_IMAGE_NAME,
+                image_key,
                 "beta:images:konflux:rebase",
                 "--version",
                 version,
@@ -910,9 +909,7 @@ class UpdateGolangPipeline:
     async def _build_konflux(self, el_v, go_version):
         """Build golang-builder image on Konflux"""
         _LOGGER.info("Building on Konflux...")
-        branch = self.get_golang_branch(el_v, go_version)
-        if self.data_gitref:
-            branch += f'@{self.data_gitref}'
+        group, image_key = self._get_doozer_group_and_image(el_v, go_version)
         konflux_namespace = PRODUCT_NAMESPACE_MAP["ocp"]
         cmd = [
             "doozer",
@@ -921,12 +918,13 @@ class UpdateGolangPipeline:
         ]
         if self.data_path:
             cmd.append(f"--data-path={self.data_path}")
+        cmd.extend(self._get_doozer_var_args())
         cmd.extend(
             [
                 "--group",
-                branch,
+                group,
                 "-i",
-                GOLANG_BUILDER_IMAGE_NAME,
+                image_key,
                 "beta:images:konflux:build",
                 f"--konflux-namespace={konflux_namespace}",
                 "--skip-ec-verify",
@@ -945,14 +943,42 @@ class UpdateGolangPipeline:
         await self._rebase_konflux(el_v, go_version, go_nvr)
         await self._build_konflux(el_v, go_version)
 
+    GOLANG_DATA_BRANCH = 'golang'
+
     @staticmethod
     def get_golang_branch(el_v, go_version):
         major_go, minor_go, _ = go_version.split('.')
         go_v = f"{major_go}.{minor_go}"
         return f'rhel-{el_v}-golang-{go_v}'
 
+    @staticmethod
+    def get_golang_image_key(el_v, go_version):
+        major_go, minor_go, _ = go_version.split('.')
+        go_v = f"{major_go}-{minor_go}"
+        return f'{GOLANG_BUILDER_IMAGE_NAME}-{go_v}.rhel{el_v}'
+
+    def _get_doozer_var_args(self) -> list[str]:
+        if not self.use_new_golang_branch:
+            return []
+        ocp_major, ocp_minor = self.ocp_version.split('.')
+        return ['--var', f'MAJOR={ocp_major}', '--var', f'MINOR={ocp_minor}']
+
+    def _get_doozer_group_and_image(self, el_v, go_version):
+        if self.use_new_golang_branch:
+            group = self.GOLANG_DATA_BRANCH
+            image_key = self.get_golang_image_key(el_v, go_version)
+        else:
+            group = self.get_golang_branch(el_v, go_version)
+            image_key = GOLANG_BUILDER_IMAGE_NAME
+        if self.data_gitref:
+            group += f'@{self.data_gitref}'
+        return group, image_key
+
     def verify_golang_builder_repo(self, el_v, go_version):
-        branch = self.get_golang_branch(el_v, go_version)
+        if self.use_new_golang_branch:
+            branch = self.GOLANG_DATA_BRANCH
+        else:
+            branch = self.get_golang_branch(el_v, go_version)
         filename = 'group.yml'
 
         repo = get_github_client_for_org("openshift-eng").get_repo("openshift-eng/ocp-build-data")
@@ -1051,6 +1077,12 @@ class UpdateGolangPipeline:
     help='Override network mode for Konflux builds. Takes precedence over image and group config settings.',
 )
 @click.option(
+    '--use-new-golang-branch',
+    is_flag=True,
+    default=False,
+    help='Use the unified "golang" branch layout in ocp-build-data instead of per-variant branches (e.g. rhel-9-golang-1.26).',
+)
+@click.option(
     '--major-bump',
     is_flag=True,
     default=False,
@@ -1077,6 +1109,7 @@ async def update_golang(
     skip_pr: bool,
     external_golang_rpms: bool,
     network_mode: str | None,
+    use_new_golang_branch: bool,
     major_bump: bool,
 ):
     if not runtime.dry_run and not confirm:
@@ -1109,5 +1142,6 @@ async def update_golang(
         skip_pr,
         external_golang_rpms,
         network_mode,
+        use_new_golang_branch,
         major_bump,
     ).run()

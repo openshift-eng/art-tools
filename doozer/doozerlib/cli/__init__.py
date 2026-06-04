@@ -210,6 +210,13 @@ def print_version(ctx, param, value):
     default=None,
     help="Whether to store & retrieve data in int / stage / prod database environment",
 )
+@click.option(
+    "--var",
+    "extra_vars",
+    metavar="KEY=VALUE",
+    multiple=True,
+    help="Override or inject a group.yml var at runtime (e.g. --var MAJOR=5 --var MINOR=0). [multiple]",
+)
 @click.option("--profile", metavar="NAME", default="", help="Name of build profile")
 @click.option(
     "--brew-event", metavar='EVENT', default=None, type=int, help="Lock koji clients from runtime to this brew event."

@@ -410,6 +410,16 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
         branch = UpdateGolangPipeline.get_golang_branch(9, "1.21.5")
         self.assertEqual(branch, "rhel-9-golang-1.21")
 
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    def test_get_doozer_var_args(self, mock_konflux_db):
+        """Test _get_doozer_var_args returns --var args when use_new_golang_branch is set"""
+        pipeline = self._make_pipeline()
+        self.assertEqual(pipeline._get_doozer_var_args(), [])
+
+        pipeline.use_new_golang_branch = True
+        pipeline.ocp_version = "5.0"
+        self.assertEqual(pipeline._get_doozer_var_args(), ['--var', 'MAJOR=5', '--var', 'MINOR=0'])
+
     @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     def test_validate_tag_builds_go_latest_accepts_matching_major_minor(self, mock_konflux_db, mock_get_github_client):
