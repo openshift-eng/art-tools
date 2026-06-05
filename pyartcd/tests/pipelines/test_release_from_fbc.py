@@ -1315,6 +1315,31 @@ class TestOcpOptionalMode(unittest.TestCase):
             "https://gitlab.cee.redhat.com/hybrid-platforms/art/ocp-shipment-data/-/merge_requests/549",
         )
 
+    def test_get_main_ocp_shipment_url_found_override_suffix(self):
+        """Should return URL when releases.yml uses 'shipment!' override marker."""
+        pipeline = self._make_pipeline(ocp_optional=True, assembly="4.22.0")
+        releases_yml = {
+            "releases": {
+                "4.22.0": {
+                    "assembly": {
+                        "group": {
+                            "shipment!": {
+                                "url": "https://gitlab.cee.redhat.com/hybrid-platforms/art/ocp-shipment-data/-/merge_requests/562"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        import yaml as stdlib_yaml
+
+        pipeline.get_file_from_branch = MagicMock(return_value=stdlib_yaml.dump(releases_yml).encode())
+        result = pipeline._get_main_ocp_shipment_url()
+        self.assertEqual(
+            result,
+            "https://gitlab.cee.redhat.com/hybrid-platforms/art/ocp-shipment-data/-/merge_requests/562",
+        )
+
     def test_get_main_ocp_shipment_url_missing(self):
         """Should return None when assembly exists but has no shipment URL."""
         pipeline = self._make_pipeline(ocp_optional=True, assembly="rc.5")

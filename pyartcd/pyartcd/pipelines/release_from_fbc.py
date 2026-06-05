@@ -298,13 +298,24 @@ class ReleaseFromFbcPipeline:
         for the current assembly.
 
         Path: releases.<assembly>.assembly.group.shipment.url
+              (key may also be 'shipment!' or other merge-operator variant)
         """
         try:
             content = self.get_file_from_branch(self.group, "releases.yml")
             releases_config = stdlib_yaml.safe_load(content)
             assembly_def = releases_config.get("releases", {}).get(self.assembly, {})
-            shipment = assembly_def.get("assembly", {}).get("group", {}).get("shipment", {})
-            url = shipment.get("url") if isinstance(shipment, dict) else None
+            group = assembly_def.get("assembly", {}).get("group", {})
+            shipment = group.get("shipment")
+            if shipment is None:
+                # Handle assembly merge-operator suffixes (e.g. 'shipment!' override marker
+                # written by prepare-release-konflux for child assemblies with basis.assembly)
+                for key in group:
+                    if isinstance(key, str) and key.startswith("shipment") and len(key) == len("shipment") + 1:
+                        shipment = group[key]
+                        break
+            if not isinstance(shipment, dict):
+                shipment = {}
+            url = shipment.get("url")
             if url:
                 self.logger.info("Found main OCP shipment MR: %s", url)
             else:
