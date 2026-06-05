@@ -377,6 +377,43 @@ USER 3000
 
         self.assertEqual(dfp.content.strip(), expected.strip())
 
+    def test_add_build_repos_scratch_stream(self):
+        """
+        Test that RUN/USER shell commands are skipped when from.stream is 'scratch'.
+        """
+        from types import SimpleNamespace
+
+        metadata = MagicMock()
+        metadata.get_konflux_network_mode.return_value = "hermetic"
+        metadata.config.konflux = Model({})
+        metadata.config.konflux['cachito'] = SimpleNamespace(mode=Missing)
+        metadata.config.final_stage_user = Missing
+        metadata.is_lockfile_generation_enabled.return_value = False
+        # Simulate from: stream: scratch
+        metadata.config.get.return_value = {'stream': 'scratch'}
+
+        dfp = DockerfileParser(path=self.directory.name)
+        dfp.content = """
+FROM scratch
+COPY . /skills/
+"""
+        expected = """
+FROM scratch
+
+# Start Konflux-specific steps
+ENV ART_BUILD_ENGINE=konflux
+ENV ART_BUILD_DEPS_METHOD=cachi2
+ENV ART_BUILD_NETWORK=hermetic
+ENV ART_BUILD_DEPS_MODE=default
+# End Konflux-specific steps
+COPY . /skills/
+"""
+        rebaser = KonfluxRebaser(MagicMock(), MagicMock(), MagicMock(), "unsigned", "test-repo")
+        rebaser._add_build_repos(dfp=dfp, metadata=metadata, dest_dir=Path(self.directory.name))
+        self.assertEqual(expected.strip(), dfp.content.strip())
+        self.assertNotIn("RUN go clean", dfp.content)
+        self.assertNotIn("USER 0", dfp.content)
+
     def test_write_rpms_lock_file_enabled(self):
         metadata = MagicMock()
         metadata.distgit_key = "foo"
