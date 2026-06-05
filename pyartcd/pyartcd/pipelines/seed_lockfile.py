@@ -9,13 +9,14 @@ from urllib.parse import quote
 
 import click
 from artcommonlib import exectools
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome
 from doozerlib.constants import ART_BUILD_HISTORY_URL
 
 from pyartcd import constants, jenkins
 from pyartcd import record as record_util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.runtime import Runtime
-from pyartcd.util import build_history_link_url, default_release_suffix, reset_fail_counter
+from pyartcd.util import build_history_link_url, default_release_suffix, increment_fail_counter, reset_fail_counter
 
 LOGGER = logging.getLogger(__name__)
 
@@ -127,6 +128,7 @@ class SeedLockfilePipeline:
 
         test_failed, solved, stream_failed = self._categorize_results()
         await self._reset_rebase_counters_for_solved(solved)
+        await self._update_build_fail_counters(solved, stream_failed)
         await self._post_report(test_failed, solved, stream_failed)
 
     async def _build_in_test_assembly(self):
@@ -236,6 +238,101 @@ class SeedLockfilePipeline:
         for image, result in zip(solved, results):
             if isinstance(result, Exception):
                 LOGGER.warning('Failed to reset rebase-fail counter for %s: %s', image, result)
+
+    async def _update_build_fail_counters(self, solved: list[str], stream_failed: list[str]):
+        """
+        Update Redis build/EC/release failure counters after stream assembly builds.
+
+        Mirrors the counter logic from ocp4_konflux.update_build_fail_counters:
+        - Successfully built (solved) images: reset build-failure, ec-failure, and release-failure counters.
+        - Failed images: categorize by outcome and increment the appropriate counter.
+
+        Only applies to stream assembly runs; test assembly results are ignored.
+        """
+        if self.assembly != 'stream' or self.runtime.dry_run:
+            return
+
+        group = f'openshift-{self.version}'
+        job_url = os.getenv('BUILD_URL')
+
+        # Reset all counter types for successfully built images
+        counter_types = ['build-failure', 'ec-failure', 'release-failure']
+        if solved:
+            LOGGER.info('Resetting build/ec/release fail counters for solved images: %s', ', '.join(solved))
+            results = await asyncio.gather(
+                *[
+                    reset_fail_counter(f'count:{counter_type}:konflux:{group}:{image}')
+                    for image in solved
+                    for counter_type in counter_types
+                ],
+                return_exceptions=True,
+            )
+            for i, result in enumerate(results):
+                if isinstance(result, Exception):
+                    image = solved[i // len(counter_types)]
+                    counter_type = counter_types[i % len(counter_types)]
+                    LOGGER.warning('Failed to reset %s counter for %s: %s', counter_type, image, result)
+
+        if not stream_failed:
+            return
+
+        # Categorize failures by outcome (same logic as ocp4_konflux)
+        ec_failed = []
+        release_failed = []
+        build_failed = []
+        for image in stream_failed:
+            entry = self.stream_results.get(image, {})
+            outcome = entry.get('outcome', '')
+            if outcome == str(KonfluxBuildOutcome.ITS_ERROR):
+                ec_failed.append(image)
+            elif outcome == str(KonfluxBuildOutcome.RELEASE_ERROR):
+                release_failed.append(image)
+            else:
+                # BUILD_ERROR, FAILURE, TIMEOUT, CANCELLED, or unknown
+                build_failed.append(image)
+
+        # Increment counters for each failure type
+        LOGGER.info(
+            'Incrementing fail counters: build=%s, ec=%s, release=%s',
+            build_failed, ec_failed, release_failed,
+        )
+        increment_tasks = []
+        for image in build_failed:
+            entry = self.stream_results.get(image, {})
+            increment_tasks.append(
+                increment_fail_counter(
+                    f'count:build-failure:konflux:{group}:{image}',
+                    jenkins_url=job_url,
+                    nvr=entry.get('nvrs'),
+                    pipeline_url=entry.get('build_pipeline_url'),
+                )
+            )
+        for image in ec_failed:
+            entry = self.stream_results.get(image, {})
+            increment_tasks.append(
+                increment_fail_counter(
+                    f'count:ec-failure:konflux:{group}:{image}',
+                    jenkins_url=job_url,
+                    nvr=entry.get('nvrs'),
+                    pipeline_url=entry.get('ec_pipeline_url'),
+                )
+            )
+        for image in release_failed:
+            entry = self.stream_results.get(image, {})
+            increment_tasks.append(
+                increment_fail_counter(
+                    f'count:release-failure:konflux:{group}:{image}',
+                    jenkins_url=job_url,
+                    nvr=entry.get('nvrs'),
+                    pipeline_url=entry.get('release_pipeline'),
+                )
+            )
+
+        if increment_tasks:
+            results = await asyncio.gather(*increment_tasks, return_exceptions=True)
+            for result in results:
+                if isinstance(result, Exception):
+                    LOGGER.warning('Failed to increment fail counter: %s', result)
 
     async def _rebase_and_build_with_seed_map(self):
         """Phase 2: Rebase and build in the target assembly with --lockfile-seed-nvrs for lockfile generation."""

@@ -425,12 +425,13 @@ class TestSeedLockfilePipeline(unittest.IsolatedAsyncioTestCase):
 
         mock_title.assert_not_called()
 
+    @patch('pyartcd.pipelines.seed_lockfile.increment_fail_counter', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.seed_lockfile.reset_fail_counter', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.seed_lockfile.jenkins.init_jenkins')
     @patch('pyartcd.pipelines.seed_lockfile.jenkins.update_title')
     @patch('pyartcd.pipelines.seed_lockfile.jenkins.update_description')
     @patch('pyartcd.pipelines.seed_lockfile.exectools.cmd_assert_async', new_callable=AsyncMock)
-    async def test_stream_build_resets_rebase_counter(self, mock_cmd, _desc, _title, _init, mock_reset):
+    async def test_stream_build_resets_rebase_counter(self, mock_cmd, _desc, _title, _init, mock_reset, _inc):
         """When stream build succeeds, rebase-fail counter is reset to 0."""
         pipeline = self._create_pipeline(
             seed_nvrs='ironic@ironic-container-v4.22.0-assembly.test',
@@ -443,15 +444,16 @@ class TestSeedLockfilePipeline(unittest.IsolatedAsyncioTestCase):
         with patch.object(pipeline, '_extract_stream_results_from_record_log', side_effect=populate_stream_results):
             await pipeline.run()
 
-        mock_reset.assert_awaited_once_with('count:rebase-failure:konflux:openshift-4.22:ironic')
+        mock_reset.assert_any_await('count:rebase-failure:konflux:openshift-4.22:ironic')
 
+    @patch('pyartcd.pipelines.seed_lockfile.increment_fail_counter', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.seed_lockfile.reset_fail_counter', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.seed_lockfile.jenkins.init_jenkins')
     @patch('pyartcd.pipelines.seed_lockfile.jenkins.update_title')
     @patch('pyartcd.pipelines.seed_lockfile.jenkins.update_description')
     @patch('pyartcd.pipelines.seed_lockfile.exectools.cmd_assert_async', new_callable=AsyncMock)
-    async def test_non_stream_assembly_does_not_reset_counter(self, mock_cmd, _desc, _title, _init, mock_reset):
-        """When assembly is not stream, rebase-fail counter is not reset."""
+    async def test_non_stream_assembly_does_not_reset_counter(self, mock_cmd, _desc, _title, _init, mock_reset, _inc):
+        """When assembly is not stream, no counters are reset."""
         pipeline = self._create_pipeline(
             assembly='test',
             seed_nvrs='ironic@ironic-container-v4.22.0-assembly.test',
@@ -466,13 +468,14 @@ class TestSeedLockfilePipeline(unittest.IsolatedAsyncioTestCase):
 
         mock_reset.assert_not_awaited()
 
+    @patch('pyartcd.pipelines.seed_lockfile.increment_fail_counter', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.seed_lockfile.reset_fail_counter', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.seed_lockfile.jenkins.init_jenkins')
     @patch('pyartcd.pipelines.seed_lockfile.jenkins.update_title')
     @patch('pyartcd.pipelines.seed_lockfile.jenkins.update_description')
     @patch('pyartcd.pipelines.seed_lockfile.exectools.cmd_assert_async', new_callable=AsyncMock)
-    async def test_failed_stream_build_does_not_reset_counter(self, mock_cmd, _desc, _title, _init, mock_reset):
-        """When stream build fails, rebase-fail counter is not reset."""
+    async def test_failed_stream_build_does_not_reset_counter(self, mock_cmd, _desc, _title, _init, mock_reset, mock_inc):
+        """When stream build fails, no counters are reset but failure counter is incremented."""
         pipeline = self._create_pipeline(
             seed_nvrs='ironic@ironic-container-v4.22.0-assembly.test',
         )
@@ -485,14 +488,17 @@ class TestSeedLockfilePipeline(unittest.IsolatedAsyncioTestCase):
             await pipeline.run()
 
         mock_reset.assert_not_awaited()
+        # Failed build should increment build-failure counter
+        mock_inc.assert_awaited()
 
+    @patch('pyartcd.pipelines.seed_lockfile.increment_fail_counter', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.seed_lockfile.reset_fail_counter', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.seed_lockfile.jenkins.init_jenkins')
     @patch('pyartcd.pipelines.seed_lockfile.jenkins.update_title')
     @patch('pyartcd.pipelines.seed_lockfile.jenkins.update_description')
     @patch('pyartcd.pipelines.seed_lockfile.exectools.cmd_assert_async', new_callable=AsyncMock)
-    async def test_dry_run_does_not_reset_counter(self, mock_cmd, _desc, _title, _init, mock_reset):
-        """In dry-run mode, rebase-fail counter is not reset."""
+    async def test_dry_run_does_not_reset_counter(self, mock_cmd, _desc, _title, _init, mock_reset, _inc):
+        """In dry-run mode, no counters are reset or incremented."""
         pipeline = self._create_pipeline(
             runtime=MagicMock(dry_run=True, doozer_working='/tmp/doozer-working'),
             seed_nvrs='ironic@ironic-container-v4.22.0-assembly.test',
@@ -507,12 +513,13 @@ class TestSeedLockfilePipeline(unittest.IsolatedAsyncioTestCase):
 
         mock_reset.assert_not_awaited()
 
+    @patch('pyartcd.pipelines.seed_lockfile.increment_fail_counter', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.seed_lockfile.reset_fail_counter', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.seed_lockfile.jenkins.init_jenkins')
     @patch('pyartcd.pipelines.seed_lockfile.jenkins.update_title')
     @patch('pyartcd.pipelines.seed_lockfile.jenkins.update_description')
     @patch('pyartcd.pipelines.seed_lockfile.exectools.cmd_assert_async', new_callable=AsyncMock)
-    async def test_redis_error_does_not_fail_pipeline(self, mock_cmd, _desc, _title, _init, mock_reset):
+    async def test_redis_error_does_not_fail_pipeline(self, mock_cmd, _desc, _title, _init, mock_reset, _inc):
         """Redis errors during counter reset are logged but do not fail the pipeline."""
         mock_reset.side_effect = ConnectionError('Redis unavailable')
         pipeline = self._create_pipeline(
@@ -527,7 +534,116 @@ class TestSeedLockfilePipeline(unittest.IsolatedAsyncioTestCase):
             # Should not raise despite Redis error
             await pipeline.run()
 
-        mock_reset.assert_awaited_once_with('count:rebase-failure:konflux:openshift-4.22:ironic')
+        mock_reset.assert_any_await('count:rebase-failure:konflux:openshift-4.22:ironic')
+
+    @patch('pyartcd.pipelines.seed_lockfile.increment_fail_counter', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.seed_lockfile.reset_fail_counter', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.seed_lockfile.jenkins.init_jenkins')
+    @patch('pyartcd.pipelines.seed_lockfile.jenkins.update_title')
+    @patch('pyartcd.pipelines.seed_lockfile.jenkins.update_description')
+    @patch('pyartcd.pipelines.seed_lockfile.exectools.cmd_assert_async', new_callable=AsyncMock)
+    async def test_stream_build_resets_all_counter_types(self, mock_cmd, _desc, _title, _init, mock_reset, _inc):
+        """When stream build succeeds, all counter types are reset."""
+        pipeline = self._create_pipeline(
+            seed_nvrs='ironic@ironic-container-v4.22.0-assembly.test',
+        )
+        pipeline.slack_client.say = AsyncMock()
+
+        def populate_stream_results():
+            pipeline.stream_results = {'ironic': {'name': 'ironic', 'status': '0', 'nvrs': 'ironic-nvr'}}
+
+        with patch.object(pipeline, '_extract_stream_results_from_record_log', side_effect=populate_stream_results):
+            await pipeline.run()
+
+        # Rebase counter + build/ec/release counters should all be reset
+        expected_resets = [
+            'count:rebase-failure:konflux:openshift-4.22:ironic',
+            'count:build-failure:konflux:openshift-4.22:ironic',
+            'count:ec-failure:konflux:openshift-4.22:ironic',
+            'count:release-failure:konflux:openshift-4.22:ironic',
+        ]
+        for key in expected_resets:
+            mock_reset.assert_any_await(key)
+        self.assertEqual(mock_reset.await_count, 4)
+
+    @patch('pyartcd.pipelines.seed_lockfile.increment_fail_counter', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.seed_lockfile.reset_fail_counter', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.seed_lockfile.jenkins.init_jenkins')
+    @patch('pyartcd.pipelines.seed_lockfile.jenkins.update_title')
+    @patch('pyartcd.pipelines.seed_lockfile.jenkins.update_description')
+    @patch('pyartcd.pipelines.seed_lockfile.exectools.cmd_assert_async', new_callable=AsyncMock)
+    async def test_stream_build_failure_increments_build_counter(self, mock_cmd, _desc, _title, _init, mock_reset, mock_inc):
+        """When stream build fails with build_error outcome, build-failure counter is incremented."""
+        pipeline = self._create_pipeline(
+            seed_nvrs='ironic@ironic-container-v4.22.0-assembly.test',
+        )
+        pipeline.slack_client.say = AsyncMock()
+
+        def populate_stream_results():
+            pipeline.stream_results = {
+                'ironic': {'name': 'ironic', 'status': '-1', 'nvrs': 'n/a', 'outcome': 'build_error',
+                           'build_pipeline_url': 'https://example.com/plr/1'},
+            }
+
+        with patch.object(pipeline, '_extract_stream_results_from_record_log', side_effect=populate_stream_results):
+            await pipeline.run()
+
+        mock_reset.assert_not_awaited()
+        mock_inc.assert_awaited_once()
+        call_args = mock_inc.call_args
+        self.assertIn('count:build-failure:konflux:openshift-4.22:ironic', call_args.args)
+
+    @patch('pyartcd.pipelines.seed_lockfile.increment_fail_counter', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.seed_lockfile.reset_fail_counter', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.seed_lockfile.jenkins.init_jenkins')
+    @patch('pyartcd.pipelines.seed_lockfile.jenkins.update_title')
+    @patch('pyartcd.pipelines.seed_lockfile.jenkins.update_description')
+    @patch('pyartcd.pipelines.seed_lockfile.exectools.cmd_assert_async', new_callable=AsyncMock)
+    async def test_stream_ec_failure_increments_ec_counter(self, mock_cmd, _desc, _title, _init, mock_reset, mock_inc):
+        """When stream build fails with its_error outcome, ec-failure counter is incremented."""
+        pipeline = self._create_pipeline(
+            seed_nvrs='ironic@ironic-container-v4.22.0-assembly.test',
+        )
+        pipeline.slack_client.say = AsyncMock()
+
+        def populate_stream_results():
+            pipeline.stream_results = {
+                'ironic': {'name': 'ironic', 'status': '-1', 'nvrs': 'ironic-nvr', 'outcome': 'its_error',
+                           'ec_pipeline_url': 'https://example.com/plr/2'},
+            }
+
+        with patch.object(pipeline, '_extract_stream_results_from_record_log', side_effect=populate_stream_results):
+            await pipeline.run()
+
+        mock_inc.assert_awaited_once()
+        call_args = mock_inc.call_args
+        self.assertIn('count:ec-failure:konflux:openshift-4.22:ironic', call_args.args)
+
+    @patch('pyartcd.pipelines.seed_lockfile.increment_fail_counter', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.seed_lockfile.reset_fail_counter', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.seed_lockfile.jenkins.init_jenkins')
+    @patch('pyartcd.pipelines.seed_lockfile.jenkins.update_title')
+    @patch('pyartcd.pipelines.seed_lockfile.jenkins.update_description')
+    @patch('pyartcd.pipelines.seed_lockfile.exectools.cmd_assert_async', new_callable=AsyncMock)
+    async def test_stream_release_failure_increments_release_counter(self, mock_cmd, _desc, _title, _init, mock_reset, mock_inc):
+        """When stream build fails with release_error outcome, release-failure counter is incremented."""
+        pipeline = self._create_pipeline(
+            seed_nvrs='ironic@ironic-container-v4.22.0-assembly.test',
+        )
+        pipeline.slack_client.say = AsyncMock()
+
+        def populate_stream_results():
+            pipeline.stream_results = {
+                'ironic': {'name': 'ironic', 'status': '-1', 'nvrs': 'ironic-nvr', 'outcome': 'release_error',
+                           'release_pipeline': 'https://example.com/plr/3'},
+            }
+
+        with patch.object(pipeline, '_extract_stream_results_from_record_log', side_effect=populate_stream_results):
+            await pipeline.run()
+
+        mock_inc.assert_awaited_once()
+        call_args = mock_inc.call_args
+        self.assertIn('count:release-failure:konflux:openshift-4.22:ironic', call_args.args)
 
     def test_init_stores_jira_key(self):
         pipeline = self._create_pipeline(jira_key='ART-12345')
