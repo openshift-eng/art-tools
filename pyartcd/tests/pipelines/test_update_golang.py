@@ -98,6 +98,19 @@ class TestExtractAndValidateGolangNvrs(unittest.TestCase):
             },
         )
 
+    def test_el_with_minor_version_suffix(self):
+        """Test NVRs with RHEL minor version suffix like el8_10, el9_5"""
+        go_version, el_nvr_map = extract_and_validate_golang_nvrs(
+            "4.16", ["golang-1.26.3-1.el8_10", "golang-1.26.3-1.el9_6"]
+        )
+        self.assertEqual(go_version, "1.26.3")
+        self.assertEqual(el_nvr_map, {8: "golang-1.26.3-1.el8_10", 9: "golang-1.26.3-1.el9_6"})
+
+    def test_el_minor_version_unsupported_major(self):
+        """Test that el7_9 is still rejected even with minor version suffix"""
+        with self.assertRaisesRegex(ValueError, "Unsupported RHEL version detected"):
+            extract_and_validate_golang_nvrs("4.16", ["golang-1.20.12-2.el7_9"])
+
 
 class TestGetLatestNvrInTag(unittest.TestCase):
     """Test the get_latest_nvr_in_tag function"""
