@@ -926,6 +926,7 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
     @patch.object(PrepareReleaseKonfluxPipeline, 'sweep_et_builds', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'create_et_advisories', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'check_blockers', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'check_bug_config_for_ga', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'check_advisory_stage_policy', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'initialize', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.prepare_release_konflux.RegistryConfig')
@@ -934,6 +935,7 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         mock_registry_config,
         mock_initialize,
         mock_check_advisory_stage_policy,
+        mock_check_bug_config_for_ga,
         mock_check_blockers,
         mock_create_et_advisories,
         mock_sweep_et_builds,
