@@ -291,18 +291,23 @@ class TestGenAssemblyLPMultiFBC(unittest.TestCase):
         self.assertIn("cluster-logging-operator", result)
 
     @patch('pyartcd.pipelines.gen_assembly_lp.validate_fbc_related_images', new_callable=AsyncMock)
-    def test_extract_nvrs_skips_validation_for_single_pullspec(self, mock_validate):
+    @patch('elliottlib.util.extract_nvrs_from_fbc', new_callable=AsyncMock)
+    def test_extract_nvrs_skips_validation_for_single_pullspec(self, mock_extract_nvrs, mock_validate):
         """When only one FBC pullspec is provided, skip validation and extract directly."""
+        mock_extract_nvrs.return_value = [
+            "cluster-logging-operator-6.4.1-1",
+            "log-file-metric-exporter-6.4.1-1",
+        ]
         pipeline = self._make_pipeline(
             fbc_pullspecs=["quay.io/test/fbc@sha256:single"],
         )
 
-        with patch('pyartcd.pipelines.gen_assembly_lp.GenAssemblyLPPipeline._extract_nvrs_from_fbc') as mock_extract:
-            mock_extract.return_value = {"some-container": "some-container-6.4.1-1"}
-            # Just verify the method exists and is callable
-            self.assertTrue(callable(pipeline._extract_nvrs_from_fbc))
+        result = asyncio.run(pipeline._extract_nvrs_from_fbc())
 
         mock_validate.assert_not_called()
+        mock_extract_nvrs.assert_called_once_with("quay.io/test/fbc@sha256:single", "openshift-logging")
+        self.assertIn("cluster-logging-operator", result)
+        self.assertIn("log-file-metric-exporter", result)
 
     @patch('pyartcd.pipelines.gen_assembly_lp.extract_fbc_labels', new_callable=AsyncMock)
     def test_build_fbc_pullspecs_map(self, mock_labels):

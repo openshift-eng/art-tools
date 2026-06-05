@@ -679,7 +679,7 @@ class FbcRebaseAndBuildCli:
         results = pipelinerun_dict.get('status', {}).get('results', [])
         image_url = next((r['value'] for r in results if r['name'] == 'IMAGE_URL'), None)
         image_digest = next((r['value'] for r in results if r['name'] == 'IMAGE_DIGEST'), None)
-        pullspec = f"{image_url.split(':')[0]}@{image_digest}" if image_url and image_digest else ""
+        pullspec = f"{image_url.rsplit(':', 1)[0]}@{image_digest}" if image_url and image_digest else ""
         if not pullspec:
             LOGGER.warning("Could not extract pullspec from pipelinerun results for %s", nvr)
         return nvr, pullspec
