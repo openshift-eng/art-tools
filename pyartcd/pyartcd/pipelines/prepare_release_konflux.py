@@ -18,6 +18,7 @@ from urllib.parse import urlparse
 import aiohttp
 import asyncstdlib as a
 import click
+import ruamel.yaml
 import semver
 from artcommonlib import exectools
 from artcommonlib.assembly import (
@@ -261,6 +262,7 @@ class PrepareReleaseKonfluxPipeline:
     async def _run_pipeline(self):
         # Check advisory stage policy early for fail-fast behavior
         await self.check_advisory_stage_policy(self.assembly_type)
+        await self.check_bug_config_for_ga()
 
         await self.check_blockers()
         err = None
@@ -1665,6 +1667,48 @@ class PrepareReleaseKonfluxPipeline:
             self.logger.info('Jira unchanged, not updating issue')
 
         return jira_changed
+
+    async def check_bug_config_for_ga(self):
+        """For standard (GA/z-stream) assemblies, verify that ocp-build-data is
+        correctly configured for post-GA releases:
+        - software_lifecycle.phase must be 'release'
+        - bug.yml target_release must include the z-stream entry (e.g. '4.22.z')
+        """
+        if self.assembly_type != AssemblyTypes.STANDARD:
+            self.logger.info("Assembly type is %s; skipping GA readiness check.", self.assembly_type)
+            return
+
+        errors = []
+        major, minor = self.release_name.split('.')[:2]
+
+        # Check 1: software_lifecycle.phase must be 'release'
+        phase = (self.group_config.get('software_lifecycle') or {}).get('phase')
+        if phase != 'release':
+            errors.append(
+                f"group.yml software_lifecycle.phase must be 'release' for a standard assembly, but found '{phase}'"
+            )
+
+        # Check 2: bug.yml target_release must include .z
+        bug_config = None
+        try:
+            bug_config = yaml.load(await self.build_data_repo.read_file("bug.yml"))
+        except OSError:
+            self.logger.warning("bug.yml not found or unreadable; skipping target_release check.")
+        except ruamel.yaml.YAMLError as e:
+            errors.append(f"bug.yml could not be parsed: {e}")
+        if bug_config is not None:
+            target_release = (bug_config or {}).get('target_release', [])
+            z_stream = f"{major}.{minor}.z"
+            if z_stream not in target_release:
+                errors.append(f"bug.yml 'target_release' must include '{z_stream}', but found: {target_release}")
+
+        if errors:
+            raise ValueError(
+                "ocp-build-data is not configured for GA/z-stream releases:\n"
+                + "\n".join(f"  - {e}" for e in errors)
+                + "\nSee ocp-build-data PR #11046 for an example of the required changes."
+            )
+        self.logger.info("GA readiness check passed.")
 
     async def check_advisory_stage_policy(self, assembly_type: AssemblyTypes):
         """
