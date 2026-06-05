@@ -1068,3 +1068,134 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
 
         # Verify that execute_command_with_logging was not called
         pipeline.execute_command_with_logging.assert_not_called()
+
+
+class TestCheckBugConfigForGa(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.runtime = Mock(spec=Runtime)
+        self.runtime.working_dir = Path("/tmp/working-dir")
+        self.runtime.dry_run = False
+        self.runtime.config = {
+            "gitlab_url": "https://gitlab.example.com",
+            "build_config": {
+                "ocp_build_data_url": "https://github.com/user1/repo1",
+                "ocp_build_data_push_url": "https://github.com/user2/repo2",
+            },
+            "shipment_config": {
+                "shipment_data_url": "https://gitlab.example.com/user3/repo3",
+                "shipment_data_push_url": "https://gitlab.example.com/user4/repo4",
+            },
+        }
+        self.mock_slack_client = Mock(spec=SlackClient)
+
+    def _make_pipeline(self, group="openshift-4.22", assembly="4.22.1"):
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=group,
+            assembly=assembly,
+        )
+        pipeline.gitlab_token = "gl_token"
+        pipeline.logger = Mock()
+        pipeline.build_data_repo = AsyncMock()
+        pipeline.releases_config = {
+            "releases": {
+                assembly: {
+                    "assembly": {
+                        "type": AssemblyTypes.STANDARD.value,
+                        "group": {"release_date": "2026-Jun-18"},
+                    }
+                }
+            }
+        }
+        return pipeline
+
+    async def test_passes_when_phase_release_and_z_stream_present(self):
+        """Standard assembly with correct phase and z-stream in bug.yml -> passes."""
+        pipeline = self._make_pipeline()
+        pipeline.assembly_type = AssemblyTypes.STANDARD
+        pipeline.group_config = {'software_lifecycle': {'phase': 'release'}}
+        pipeline.build_data_repo.read_file.return_value = "target_release:\n  - '4.22.0'\n  - '4.22.z'\n  - '4.22'\n"
+
+        await pipeline.check_bug_config_for_ga()
+
+        pipeline.logger.info.assert_called_with("GA readiness check passed.")
+
+    async def test_fails_when_phase_is_signing(self):
+        """Standard assembly with phase 'signing' -> raises ValueError."""
+        pipeline = self._make_pipeline()
+        pipeline.assembly_type = AssemblyTypes.STANDARD
+        pipeline.group_config = {'software_lifecycle': {'phase': 'signing'}}
+        pipeline.build_data_repo.read_file.return_value = "target_release:\n  - '4.22.0'\n  - '4.22.z'\n"
+
+        with self.assertRaises(ValueError) as ctx:
+            await pipeline.check_bug_config_for_ga()
+
+        self.assertIn("software_lifecycle.phase must be 'release'", str(ctx.exception))
+        self.assertIn("'signing'", str(ctx.exception))
+
+    async def test_fails_when_z_stream_absent_in_bug_yml(self):
+        """Standard assembly with correct phase but missing .z in target_release -> raises ValueError."""
+        pipeline = self._make_pipeline()
+        pipeline.assembly_type = AssemblyTypes.STANDARD
+        pipeline.group_config = {'software_lifecycle': {'phase': 'release'}}
+        pipeline.build_data_repo.read_file.return_value = "target_release:\n  - '4.22.0'\n  - '4.22'\n"
+
+        with self.assertRaises(ValueError) as ctx:
+            await pipeline.check_bug_config_for_ga()
+
+        self.assertIn("4.22.z", str(ctx.exception))
+
+    async def test_fails_with_both_errors_reported(self):
+        """Standard assembly with phase 'signing' and missing .z -> raises ValueError listing both issues."""
+        pipeline = self._make_pipeline()
+        pipeline.assembly_type = AssemblyTypes.STANDARD
+        pipeline.group_config = {'software_lifecycle': {'phase': 'signing'}}
+        pipeline.build_data_repo.read_file.return_value = "target_release:\n  - '4.22.0'\n"
+
+        with self.assertRaises(ValueError) as ctx:
+            await pipeline.check_bug_config_for_ga()
+
+        error_msg = str(ctx.exception)
+        self.assertIn("software_lifecycle.phase must be 'release'", error_msg)
+        self.assertIn("4.22.z", error_msg)
+
+    async def test_skips_for_non_standard_assembly(self):
+        """Preview/candidate assemblies are skipped -> no error raised."""
+        pipeline = self._make_pipeline()
+        pipeline.assembly_type = AssemblyTypes.PREVIEW
+        pipeline.group_config = {'software_lifecycle': {'phase': 'pre-release'}}
+
+        await pipeline.check_bug_config_for_ga()
+
+        pipeline.logger.info.assert_called_with(
+            "Assembly type is %s; skipping GA readiness check.", AssemblyTypes.PREVIEW
+        )
+        pipeline.build_data_repo.read_file.assert_not_called()
+
+    async def test_skips_target_release_check_when_bug_yml_missing(self):
+        """If bug.yml cannot be read, skip that check but still validate phase."""
+        pipeline = self._make_pipeline()
+        pipeline.assembly_type = AssemblyTypes.STANDARD
+        pipeline.group_config = {'software_lifecycle': {'phase': 'release'}}
+        pipeline.build_data_repo.read_file.side_effect = FileNotFoundError("bug.yml not found")
+
+        # Phase is correct, bug.yml is missing -> passes gracefully
+        await pipeline.check_bug_config_for_ga()
+
+        pipeline.logger.warning.assert_called_with(
+            "bug.yml not found or unreadable; skipping target_release check."
+        )
+        pipeline.logger.info.assert_called_with("GA readiness check passed.")
+
+    async def test_fails_phase_even_when_bug_yml_missing(self):
+        """If bug.yml is missing but phase is wrong, the phase error is still raised."""
+        pipeline = self._make_pipeline()
+        pipeline.assembly_type = AssemblyTypes.STANDARD
+        pipeline.group_config = {'software_lifecycle': {'phase': 'signing'}}
+        pipeline.build_data_repo.read_file.side_effect = FileNotFoundError("bug.yml not found")
+
+        with self.assertRaises(ValueError) as ctx:
+            await pipeline.check_bug_config_for_ga()
+
+        self.assertIn("software_lifecycle.phase must be 'release'", str(ctx.exception))
