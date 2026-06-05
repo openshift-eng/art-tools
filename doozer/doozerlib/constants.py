@@ -62,6 +62,7 @@ REGISTRY_PROXY_BASE_URL = "registry-proxy.engineering.redhat.com"
 BREW_REGISTRY_BASE_URL = "brew.registry.redhat.io"
 
 ART_BUILD_HISTORY_URL = 'https://art-build-history-art-build-history.apps.artc2023.pc3z.p1.openshiftapps.com'
+ART_BUILD_FAILURES_URL = 'https://art-build-failures-art-build-failures.apps.artc2023.pc3z.p1.openshiftapps.com'
 
 # Enterprise Contract (EC) verification pipeline constants
 # TODO: Expand EC verification to layered products (logging, oadp, mta, rhmtc, quay, cert-manager, etc.)

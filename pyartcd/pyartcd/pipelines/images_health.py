@@ -9,7 +9,7 @@ import click
 from artcommonlib import exectools
 from artcommonlib.constants import ACTIVE_OCP_VERSIONS
 from doozerlib.cli.images_health import DELTA_DAYS, LIMIT_BUILD_RESULTS, ConcernCode
-from doozerlib.constants import ART_BUILD_HISTORY_URL
+from doozerlib.constants import ART_BUILD_FAILURES_URL, ART_BUILD_HISTORY_URL
 
 from pyartcd import util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -671,10 +671,8 @@ class ImagesHealthPipeline:
 
         issues = '\n- '.join(summary_parts)
 
-        # Build dashboard URL showing failures for all scanned versions
-        start_date = (datetime.now(timezone.utc) - timedelta(days=DELTA_DAYS)).strftime('%Y-%m-%d')
-        end_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
-        dashboard_url = f'{ART_BUILD_HISTORY_URL}/?dateRange={start_date}+to+{end_date}&outcome=failure&engine=konflux'
+        # Link to art-build-failures dashboard
+        dashboard_url = ART_BUILD_FAILURES_URL
 
         message = (
             f':alert: There are some issues to look into for Openshift builds:\n- {issues}\n\n'
