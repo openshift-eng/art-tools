@@ -938,9 +938,14 @@ class KonfluxImageBuilder:
         build_pipeline_url = self._konflux_client.resource_url(pipelinerun_dict)
         build_component = pipelinerun_dict['metadata']['labels']['appstudio.openshift.io/component']
 
-        # Extract the el_target (e.g., 'el9' for OCP or 'scos9' for OKD) from the release string
+        # Extract the el_target (e.g., 'el9' for OCP or 'scos9' for OKD) from the release string.
+        # Strip RHEL minor version suffix (e.g., el8_10 -> el8) to keep el_target scoped to major version,
+        # consistent with how queries filter by el_target.
         _, el_suffix = split_el_suffix_in_release(release)
-        el_target_value = el_suffix if el_suffix else f'el{isolate_el_version_in_release(release)}'
+        if el_suffix:
+            el_target_value = re.sub(r'_\d+$', '', el_suffix)
+        else:
+            el_target_value = f'el{isolate_el_version_in_release(release)}'
 
         build_record_params = {
             'name': metadata.distgit_key,

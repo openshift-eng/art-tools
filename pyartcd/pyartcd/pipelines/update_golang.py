@@ -19,7 +19,7 @@ from artcommonlib.constants import (
 from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.konflux.konflux_db import KonfluxDb
-from artcommonlib.release_util import split_el_suffix_in_release
+from artcommonlib.release_util import isolate_el_version_in_release
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import new_roundtrip_yaml_handler
 from doozerlib.constants import ART_IMAGES_BASE_APPLICATION
@@ -105,11 +105,9 @@ def extract_and_validate_golang_nvrs(ocp_version: str, go_nvrs: List[str]):
             )
         go_version = parsed_nvr['version']
 
-        _, el_version = split_el_suffix_in_release(parsed_nvr['release'])
-        # el_version is either None or something like "el8"
-        if not el_version:
+        el_version = isolate_el_version_in_release(parsed_nvr['release'])
+        if el_version is None:
             raise ValueError(f'Cannot detect an el version in NVR {nvr}')
-        el_version = int(el_version[2:])
         if el_version not in supported_els:
             raise ValueError(
                 f'Unsupported RHEL version detected for nvr {nvr}, supported versions are: {supported_els}'
