@@ -482,7 +482,28 @@ class KonfluxOcpPipeline:
         built_images = [
             entry['name'] for entry in record_log.get('image_build_konflux', []) if not int(entry['status'])
         ]
-        failed_images = [entry['name'] for entry in record_log.get('image_build_konflux', []) if int(entry['status'])]
+
+        # Separate actual build failures from images that were only skipped
+        # because a parent image failed to build.  Those children never ran a
+        # real build pipeline, so they should not increment failure counters.
+        parent_fail_marker = 'parent images failed to build'
+        failed_images = [
+            entry['name']
+            for entry in record_log.get('image_build_konflux', [])
+            if int(entry['status']) and parent_fail_marker not in entry.get('message', '')
+        ]
+        parent_skipped_images = [
+            entry['name']
+            for entry in record_log.get('image_build_konflux', [])
+            if int(entry['status']) and parent_fail_marker in entry.get('message', '')
+        ]
+        if parent_skipped_images:
+            LOGGER.info(
+                'Following images were not built because a parent image failed '
+                '(will not increment failure counters): %s',
+                ', '.join(parent_skipped_images),
+            )
+
         if 1 <= len(failed_images) <= 10:
             jenkins.update_description(f'Failed images: {", ".join(failed_images)}<br/>')
         elif len(failed_images) > 10:

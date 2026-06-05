@@ -1256,3 +1256,213 @@ class TestKonfluxOcpPipelineBuildFailCounters(unittest.IsolatedAsyncioTestCase):
         await pipeline.update_build_fail_counters([], ['ironic'], record_log)
         mock_reset.assert_not_called()
         mock_incr.assert_not_called()
+
+
+class TestKonfluxSyncImagesParentFailures(unittest.IsolatedAsyncioTestCase):
+    """Tests that sync_images excludes children of failed parents from failure counters."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.runtime = MagicMock()
+        self.runtime.dry_run = False
+        self.runtime.doozer_working = str(Path(self.tmpdir) / 'doozer_working')
+        Path(self.runtime.doozer_working).mkdir(parents=True)
+
+    def _make_pipeline(self, assembly='stream', **kwargs):
+        from pyartcd.pipelines.ocp4_konflux import KonfluxOcpPipeline
+
+        defaults = {
+            'runtime': self.runtime,
+            'assembly': assembly,
+            'version': '4.18',
+            'data_path': 'test-path',
+            'image_build_strategy': 'all',
+            'image_list': '',
+            'rpm_build_strategy': 'none',
+            'rpm_list': '',
+            'data_gitref': '',
+            'kubeconfig': None,
+            'skip_rebase': False,
+            'skip_bundle_build': False,
+            'arches': (),
+            'plr_template': '',
+            'lock_identifier': 'test',
+            'skip_plashets': False,
+            'build_priority': 'auto',
+            'use_mass_rebuild_locks': False,
+            'network_mode': None,
+        }
+        defaults.update(kwargs)
+        return KonfluxOcpPipeline(**defaults)
+
+    def _write_record_log(self, entries):
+        """Write a record.log file with the given image_build_konflux entries.
+
+        record.log uses pipe-delimited lines: ``type|key1=val1|key2=val2|...``
+        """
+        lines = []
+        for entry in entries:
+            fields = '|'.join(f'{k}={v}' for k, v in entry.items())
+            lines.append(f'image_build_konflux|{fields}')
+        record_log_path = Path(self.runtime.doozer_working) / 'record.log'
+        record_log_path.write_text('\n'.join(lines) + '\n')
+
+    @patch('pyartcd.pipelines.ocp4_konflux.increment_fail_counter', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.ocp4_konflux.reset_fail_counter', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.ocp4_konflux.jenkins')
+    async def test_parent_failure_children_excluded_from_counters(self, mock_jenkins, mock_reset, mock_incr):
+        """Images that failed only because a parent failed should not increment any counter."""
+        pipeline = self._make_pipeline()
+
+        self._write_record_log(
+            [
+                {
+                    'name': 'ose-base',
+                    'status': '-1',
+                    'nvrs': 'ose-base-1.0-1',
+                    'message': 'Konflux image build for ose-base failed with output=build_error',
+                    'outcome': 'build_error',
+                    'build_pipeline_url': 'http://build/plr/1',
+                    'ec_pipeline_url': '',
+                    'release_pipeline': '',
+                    'base_image_release_failed': 'false',
+                },
+                {
+                    'name': 'child-image',
+                    'status': '-1',
+                    'nvrs': 'n/a',
+                    'message': "Couldn't build child-image because the following parent images failed to build: ose-base",
+                    'build_pipeline_url': '',
+                    'ec_pipeline_url': '',
+                    'release_pipeline': '',
+                    'base_image_release_failed': 'false',
+                },
+            ]
+        )
+
+        await pipeline.sync_images()
+
+        # Only the real failure (ose-base) should have its counter incremented
+        incr_keys = [c.args[0] for c in mock_incr.call_args_list]
+        self.assertEqual(len(incr_keys), 1)
+        self.assertIn('ose-base', incr_keys[0])
+
+        # child-image should NOT appear in any increment call
+        for key in incr_keys:
+            self.assertNotIn('child-image', key)
+
+    @patch('pyartcd.pipelines.ocp4_konflux.increment_fail_counter', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.ocp4_konflux.reset_fail_counter', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.ocp4_konflux.jenkins')
+    async def test_mixed_real_and_parent_failures(self, mock_jenkins, mock_reset, mock_incr):
+        """Mixed scenario: real failures increment counters, parent-failure children do not."""
+        pipeline = self._make_pipeline()
+
+        self._write_record_log(
+            [
+                {
+                    'name': 'real-failure',
+                    'status': '-1',
+                    'nvrs': 'real-failure-1.0-1',
+                    'message': 'Konflux image build for real-failure failed with output=build_error',
+                    'outcome': 'build_error',
+                    'build_pipeline_url': 'http://build/plr/1',
+                    'ec_pipeline_url': '',
+                    'release_pipeline': '',
+                    'base_image_release_failed': 'false',
+                },
+                {
+                    'name': 'ec-failure',
+                    'status': '-1',
+                    'nvrs': 'ec-failure-1.0-1',
+                    'message': 'Konflux image build for ec-failure failed with output=its_error',
+                    'outcome': 'its_error',
+                    'ec_pipeline_url': 'http://its/plr/1',
+                    'build_pipeline_url': 'http://build/plr/2',
+                    'release_pipeline': '',
+                    'base_image_release_failed': 'false',
+                },
+                {
+                    'name': 'child-a',
+                    'status': '-1',
+                    'nvrs': 'n/a',
+                    'message': "Couldn't build child-a because the following parent images failed to build: real-failure",
+                    'build_pipeline_url': '',
+                    'ec_pipeline_url': '',
+                    'release_pipeline': '',
+                    'base_image_release_failed': 'false',
+                },
+                {
+                    'name': 'child-b',
+                    'status': '-1',
+                    'nvrs': 'n/a',
+                    'message': "Couldn't build child-b because the following parent images failed to build: real-failure",
+                    'build_pipeline_url': '',
+                    'ec_pipeline_url': '',
+                    'release_pipeline': '',
+                    'base_image_release_failed': 'false',
+                },
+                {
+                    'name': 'success-image',
+                    'status': '0',
+                    'nvrs': 'success-image-1.0-1',
+                    'message': 'Success',
+                    'outcome': 'success',
+                    'build_pipeline_url': 'http://build/plr/3',
+                    'ec_pipeline_url': '',
+                    'release_pipeline': '',
+                    'base_image_release_failed': 'false',
+                },
+            ]
+        )
+
+        await pipeline.sync_images()
+
+        incr_keys = {c.args[0] for c in mock_incr.call_args_list}
+        # Real failure and EC failure should be incremented
+        self.assertTrue(any('real-failure' in k for k in incr_keys))
+        self.assertTrue(any('ec-failure' in k for k in incr_keys))
+        # Children should NOT be incremented
+        self.assertFalse(any('child-a' in k for k in incr_keys))
+        self.assertFalse(any('child-b' in k for k in incr_keys))
+
+        # Success image should have counters reset
+        reset_keys = {c.args[0] for c in mock_reset.call_args_list}
+        self.assertTrue(any('success-image' in k for k in reset_keys))
+
+    @patch('pyartcd.pipelines.ocp4_konflux.increment_fail_counter', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.ocp4_konflux.reset_fail_counter', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.ocp4_konflux.jenkins')
+    async def test_only_parent_failures_no_counter_increments(self, mock_jenkins, mock_reset, mock_incr):
+        """When all failures are parent-caused, no failure counters should be incremented."""
+        pipeline = self._make_pipeline()
+
+        self._write_record_log(
+            [
+                {
+                    'name': 'child-x',
+                    'status': '-1',
+                    'nvrs': 'n/a',
+                    'message': "Couldn't build child-x because the following parent images failed to build: ose-base",
+                    'build_pipeline_url': '',
+                    'ec_pipeline_url': '',
+                    'release_pipeline': '',
+                    'base_image_release_failed': 'false',
+                },
+                {
+                    'name': 'child-y',
+                    'status': '-1',
+                    'nvrs': 'n/a',
+                    'message': "Couldn't build child-y because the following parent images failed to build: ose-base",
+                    'build_pipeline_url': '',
+                    'ec_pipeline_url': '',
+                    'release_pipeline': '',
+                    'base_image_release_failed': 'false',
+                },
+            ]
+        )
+
+        await pipeline.sync_images()
+
+        # No counters should be incremented
+        mock_incr.assert_not_called()
