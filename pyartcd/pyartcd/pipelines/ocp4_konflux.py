@@ -495,10 +495,37 @@ class KonfluxOcpPipeline:
             entry['name'] for entry in record_log.get('image_build_konflux', []) if not int(entry['status'])
         ]
         failed_images = [entry['name'] for entry in record_log.get('image_build_konflux', []) if int(entry['status'])]
-        if 1 <= len(failed_images) <= 10:
-            jenkins.update_description(f'Failed images: {", ".join(failed_images)}<br/>')
-        elif len(failed_images) > 10:
-            jenkins.update_description(f'{len(failed_images)} images failed. Check record.log for details<br/>')
+
+        # Separate real failures from parent-failure children
+        real_failed_images = []
+        skipped_due_to_parent_failure = []
+        for image in failed_images:
+            entry = next((e for e in record_log.get('image_build_konflux', []) if e['name'] == image), {})
+            message = entry.get('message', '')
+            if 'parent images failed to build' in message:
+                skipped_due_to_parent_failure.append(image)
+            else:
+                real_failed_images.append(image)
+
+        # Log skipped images
+        if skipped_due_to_parent_failure:
+            LOGGER.info(f'Skipped images due to parent build failures: {", ".join(skipped_due_to_parent_failure)}')
+
+        # Update description with real failures and skipped images
+        description_parts = []
+        if 1 <= len(real_failed_images) <= 10:
+            description_parts.append(f'Failed images: {", ".join(real_failed_images)}')
+        elif len(real_failed_images) > 10:
+            description_parts.append(f'{len(real_failed_images)} images failed. Check record.log for details')
+
+        if skipped_due_to_parent_failure:
+            if len(skipped_due_to_parent_failure) <= 10:
+                description_parts.append(f'Skipped (parent failure): {", ".join(skipped_due_to_parent_failure)}')
+            else:
+                description_parts.append(f'{len(skipped_due_to_parent_failure)} images skipped due to parent failures')
+
+        if description_parts:
+            jenkins.update_description('<br/>'.join(description_parts) + '<br/>')
 
         await self.update_build_fail_counters(built_images, failed_images, record_log)
 

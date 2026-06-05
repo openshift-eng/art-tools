@@ -1369,3 +1369,124 @@ class TestKonfluxOcpPipelineBuildFailCounters(unittest.IsolatedAsyncioTestCase):
         }
         await pipeline.update_build_fail_counters([], ['child-a', 'child-b'], record_log)
         mock_incr.assert_not_called()
+
+    @patch('pyartcd.pipelines.ocp4_konflux.jenkins')
+    @patch('pyartcd.pipelines.ocp4_konflux.KonfluxOcpPipeline.update_build_fail_counters', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.ocp4_konflux.KonfluxOcpPipeline.parse_record_log')
+    async def test_sync_images_excludes_parent_failures_from_description(self, mock_parse, mock_counters, mock_jenkins):
+        """Parent-failure children should be logged as skipped, not shown in the description."""
+        pipeline = self._make_pipeline()
+
+        record_log = {
+            'image_build_konflux': [
+                {
+                    'name': 'ose-must-gather',
+                    'status': '-1',
+                    'nvrs': 'n/a',
+                    'outcome': 'failure',
+                    'message': 'Konflux image build for ose-must-gather failed with output=build_error',
+                },
+                {
+                    'name': 'local-storage-mustgather',
+                    'status': '-1',
+                    'nvrs': 'n/a',
+                    'outcome': '',
+                    'message': "Couldn't build local-storage-mustgather because the following parent images failed to build: ose-must-gather",
+                },
+                {
+                    'name': 'ose-cli',
+                    'status': '0',
+                    'nvrs': 'ose-cli-4.14.0-1',
+                    'outcome': 'success',
+                    'message': '',
+                },
+            ]
+        }
+        mock_parse.return_value = record_log
+
+        await pipeline.sync_images()
+
+        # Verify the description includes both the real failure and the skipped image
+        expected_description = (
+            'Failed images: ose-must-gather<br/>Skipped (parent failure): local-storage-mustgather<br/>'
+        )
+        mock_jenkins.update_description.assert_called_once_with(expected_description)
+
+    @patch('pyartcd.pipelines.ocp4_konflux.jenkins')
+    @patch('pyartcd.pipelines.ocp4_konflux.KonfluxOcpPipeline.update_build_fail_counters', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.ocp4_konflux.KonfluxOcpPipeline.parse_record_log')
+    async def test_sync_images_all_parent_failures_no_description(self, mock_parse, mock_counters, mock_jenkins):
+        """When all failures are parent-caused, description should not show any failures."""
+        pipeline = self._make_pipeline()
+
+        record_log = {
+            'image_build_konflux': [
+                {
+                    'name': 'child-a',
+                    'status': '-1',
+                    'nvrs': 'n/a',
+                    'outcome': '',
+                    'message': "Couldn't build child-a because the following parent images failed to build: parent-x",
+                },
+                {
+                    'name': 'child-b',
+                    'status': '-1',
+                    'nvrs': 'n/a',
+                    'outcome': '',
+                    'message': "Couldn't build child-b because the following parent images failed to build: parent-x",
+                },
+                {
+                    'name': 'ose-cli',
+                    'status': '0',
+                    'nvrs': 'ose-cli-4.14.0-1',
+                    'outcome': 'success',
+                    'message': '',
+                },
+            ]
+        }
+        mock_parse.return_value = record_log
+
+        await pipeline.sync_images()
+
+        # When there are no real failures, only the skipped images description should be set
+        expected_description = 'Skipped (parent failure): child-a, child-b<br/>'
+        mock_jenkins.update_description.assert_called_once_with(expected_description)
+
+    @patch('pyartcd.pipelines.ocp4_konflux.jenkins')
+    @patch('pyartcd.pipelines.ocp4_konflux.KonfluxOcpPipeline.update_build_fail_counters', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.ocp4_konflux.KonfluxOcpPipeline.parse_record_log')
+    async def test_sync_images_many_skipped_uses_count(self, mock_parse, mock_counters, mock_jenkins):
+        """When there are >10 skipped images, show count instead of listing them."""
+        pipeline = self._make_pipeline()
+
+        # Create 12 skipped images
+        skipped_images = [
+            {
+                'name': f'child-{i}',
+                'status': '-1',
+                'nvrs': 'n/a',
+                'outcome': '',
+                'message': f"Couldn't build child-{i} because the following parent images failed to build: parent-x",
+            }
+            for i in range(12)
+        ]
+
+        record_log = {
+            'image_build_konflux': skipped_images
+            + [
+                {
+                    'name': 'ose-cli',
+                    'status': '0',
+                    'nvrs': 'ose-cli-4.14.0-1',
+                    'outcome': 'success',
+                    'message': '',
+                },
+            ]
+        }
+        mock_parse.return_value = record_log
+
+        await pipeline.sync_images()
+
+        # Should show count instead of listing all skipped images
+        expected_description = '12 images skipped due to parent failures<br/>'
+        mock_jenkins.update_description.assert_called_once_with(expected_description)
