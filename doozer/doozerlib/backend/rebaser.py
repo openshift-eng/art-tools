@@ -1273,7 +1273,9 @@ class KonfluxRebaser:
         df_lines = filtered_content
 
         # ART-8476 assert rhel version equivalence
-        if metadata.canonical_builders_enabled and self.variant != BuildVariant.OKD:
+        # Skip for scratch images — no shell available to run the check
+        _from_stream = metadata.config.get('from', {}).get('stream')
+        if metadata.canonical_builders_enabled and self.variant != BuildVariant.OKD and _from_stream != 'scratch':
             el_version = metadata.branch_el_target()
             df_lines.extend(
                 [
