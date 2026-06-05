@@ -413,9 +413,7 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
                 return_value='/path/to/kubeconfig',
             ),
         ):
-            await self.pipeline._build(
-                BuildStrategy.ALL, None, ['img-a', 'img-b'], 'oadp', KONFLUX_DEFAULT_IMAGE_REPO
-            )
+            await self.pipeline._build(BuildStrategy.ALL, None, ['img-a', 'img-b'], 'oadp', KONFLUX_DEFAULT_IMAGE_REPO)
 
         cmd = mock_cmd.call_args[0][0]
         self.assertIn('--images=', cmd)
