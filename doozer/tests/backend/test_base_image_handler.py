@@ -246,6 +246,21 @@ class TestBaseImageHandler(IsolatedAsyncioTestCase):
     @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
     @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
     @patch("doozerlib.backend.base_image_handler.resolve_konflux_kubeconfig_by_product")
+    async def test_handler_pre_release_lifecycle_uses_ec_release_plan(
+        self, mock_kubeconfig, mock_namespace, mock_konflux_client_init
+    ):
+        mock_namespace.return_value = "ocp-art-tenant"
+        mock_kubeconfig.return_value = "/path/to/kubeconfig"
+        mock_konflux_client_init.return_value = AsyncMock()
+
+        self.runtime.group_config = Model({"software_lifecycle": Model({"phase": "pre-release"})})
+
+        handler = BaseImageHandler(self.runtime, dry_run=True)
+        self.assertEqual(handler.base_image_release_plan, "ocp-art-images-base-silent-ec")
+
+    @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_kubeconfig_by_product")
     async def test_snapshot_release_failure_preserves_release_pipeline(
         self, mock_kubeconfig, mock_namespace, mock_konflux_client_init
     ):

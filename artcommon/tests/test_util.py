@@ -332,6 +332,24 @@ alternative_upstream:
             ("ocp-art-images-base-silent", "art-images-base"),
         )
 
+    def test_resolve_konflux_base_image_release_targets_pre_release_ocp_uses_ec_plan(self):
+        self.assertEqual(
+            util.resolve_konflux_base_image_release_targets("ocp", lifecycle_phase="pre-release"),
+            ("ocp-art-images-base-silent-ec", "art-images-base"),
+        )
+
+    def test_resolve_konflux_base_image_release_targets_release_phase_uses_prod_plan(self):
+        self.assertEqual(
+            util.resolve_konflux_base_image_release_targets("ocp", lifecycle_phase="release"),
+            ("ocp-art-images-base-silent", "art-images-base"),
+        )
+
+    def test_resolve_konflux_base_image_release_targets_pre_release_non_ocp_uses_prod_plan(self):
+        self.assertEqual(
+            util.resolve_konflux_base_image_release_targets("rhmtc", lifecycle_phase="pre-release"),
+            ("mtc-images-base-silent", "mtc-images-base"),
+        )
+
 
 class TestSoftwareLifecyclePhase(unittest.TestCase):
     def test_from_name_valid(self):

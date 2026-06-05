@@ -75,8 +75,10 @@ KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION = "ocp-art-tenant/conforma-build-stage"
 # PreGA (PREVIEW assembly) EC policy: same as stage but allows unsigned RPMs
 # https://gitlab.cee.redhat.com/releng/konflux-release-data/-/blob/main/tenants-config/cluster/kflux-ocp-p01/tenants/ocp-art-tenant/ecp-build-ec-stage.yaml
 KONFLUX_PREGA_EC_POLICY_CONFIGURATION = "ocp-art-tenant/conforma-build-ec-stage"
-# Base image EC policy (base_only images use a dedicated prod policy for all assembly types)
-# https://gitlab.cee.redhat.com/releng/konflux-release-data/-/blob/main/config/kflux-ocp-p01.7ayg.p1/product/EnterpriseContractPolicy/registry-ocp-art-base-prod.yaml
+# Base image release EC policies (ReleasePlanAdmission policy name suffix). Selection is by
+# software_lifecycle.phase in resolve_konflux_base_image_release_targets — ART-19498.
+# Prod: registry-ocp-art-base-prod | Pre-release: registry-ocp-art-base-ec-prod
 KONFLUX_BASE_IMAGE_EC_POLICY_CONFIGURATION = "rhtap-releng-tenant/registry-ocp-art-base-prod"
+KONFLUX_BASE_IMAGE_PREGA_EC_POLICY_CONFIGURATION = "rhtap-releng-tenant/registry-ocp-art-base-ec-prod"
 
 ART_IMAGES_BASE_APPLICATION = "art-images-base"
