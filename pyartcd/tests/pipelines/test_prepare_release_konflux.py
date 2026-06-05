@@ -1183,9 +1183,7 @@ class TestCheckBugConfigForGa(unittest.IsolatedAsyncioTestCase):
         # Phase is correct, bug.yml is missing -> passes gracefully
         await pipeline.check_bug_config_for_ga()
 
-        pipeline.logger.warning.assert_called_with(
-            "bug.yml not found or unreadable; skipping target_release check."
-        )
+        pipeline.logger.warning.assert_called_with("bug.yml not found or unreadable; skipping target_release check.")
         pipeline.logger.info.assert_called_with("GA readiness check passed.")
 
     async def test_fails_phase_even_when_bug_yml_missing(self):
@@ -1199,3 +1197,17 @@ class TestCheckBugConfigForGa(unittest.IsolatedAsyncioTestCase):
             await pipeline.check_bug_config_for_ga()
 
         self.assertIn("software_lifecycle.phase must be 'release'", str(ctx.exception))
+
+    async def test_fails_when_bug_yml_is_malformed(self):
+        """If bug.yml exists but cannot be parsed, a validation error is raised (not silently skipped)."""
+        import ruamel.yaml
+
+        pipeline = self._make_pipeline()
+        pipeline.assembly_type = AssemblyTypes.STANDARD
+        pipeline.group_config = {'software_lifecycle': {'phase': 'release'}}
+        pipeline.build_data_repo.read_file.side_effect = ruamel.yaml.YAMLError("bad yaml")
+
+        with self.assertRaises(ValueError) as ctx:
+            await pipeline.check_bug_config_for_ga()
+
+        self.assertIn("bug.yml could not be parsed", str(ctx.exception))

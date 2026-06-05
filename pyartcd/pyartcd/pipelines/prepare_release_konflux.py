@@ -1692,8 +1692,10 @@ class PrepareReleaseKonfluxPipeline:
         bug_config = None
         try:
             bug_config = yaml.load(await self.build_data_repo.read_file("bug.yml"))
-        except (OSError, ruamel.yaml.YAMLError):
+        except OSError:
             self.logger.warning("bug.yml not found or unreadable; skipping target_release check.")
+        except ruamel.yaml.YAMLError as e:
+            errors.append(f"bug.yml could not be parsed: {e}")
         if bug_config is not None:
             target_release = (bug_config or {}).get('target_release', [])
             z_stream = f"{major}.{minor}.z"
