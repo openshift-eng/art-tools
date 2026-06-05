@@ -579,6 +579,7 @@ class TestSeedLockfilePipeline(unittest.IsolatedAsyncioTestCase):
     ):
         """When stream build fails with build_error outcome, build-failure counter is incremented."""
         pipeline = self._create_pipeline(
+            image_list='ironic',
             seed_nvrs='ironic@ironic-container-v4.22.0-assembly.test',
         )
         pipeline.slack_client.say = AsyncMock()
@@ -611,6 +612,7 @@ class TestSeedLockfilePipeline(unittest.IsolatedAsyncioTestCase):
     async def test_stream_ec_failure_increments_ec_counter(self, mock_cmd, _desc, _title, _init, mock_reset, mock_inc):
         """When stream build fails with its_error outcome, ec-failure counter is incremented."""
         pipeline = self._create_pipeline(
+            image_list='ironic',
             seed_nvrs='ironic@ironic-container-v4.22.0-assembly.test',
         )
         pipeline.slack_client.say = AsyncMock()
@@ -644,6 +646,7 @@ class TestSeedLockfilePipeline(unittest.IsolatedAsyncioTestCase):
     ):
         """When stream build fails with release_error outcome, release-failure counter is incremented."""
         pipeline = self._create_pipeline(
+            image_list='ironic',
             seed_nvrs='ironic@ironic-container-v4.22.0-assembly.test',
         )
         pipeline.slack_client.say = AsyncMock()
