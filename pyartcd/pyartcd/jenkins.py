@@ -834,6 +834,7 @@ def start_layered_products(
     group: str,
     assembly: str,
     image_list: list = None,
+    image_build_strategy: str = None,
     **kwargs,
 ) -> Optional[str]:
     params = {
@@ -844,6 +845,8 @@ def start_layered_products(
     # Build only changed images or none
     if image_list:
         params['IMAGE_LIST'] = ','.join(image_list)
+    if image_build_strategy:
+        params['IMAGE_BUILD_STRATEGY'] = image_build_strategy
 
     return start_build(
         job=Jobs.LAYERED_PRODUCTS,

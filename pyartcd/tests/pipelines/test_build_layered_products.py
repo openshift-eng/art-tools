@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 import yaml
 from doozerlib.constants import KONFLUX_DEFAULT_IMAGE_REPO
 from pyartcd.pipelines.build_layered_products import BuildLayeredProductsPipeline
+from pyartcd.pipelines.ocp4_konflux import BuildStrategy
 from pyartcd.runtime import Runtime
 
 
@@ -66,14 +67,14 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
             )
         mock_update_title.assert_not_called()
 
-    async def test_rebase_success_returns_original_image_list(self):
-        """When rebase succeeds, the full image list is returned unchanged."""
+    async def test_rebase_success_returns_no_excluded_images(self):
+        """When rebase succeeds, no images are excluded."""
         with patch('pyartcd.pipelines.build_layered_products.exectools.cmd_assert_async', new_callable=AsyncMock):
             result = await self.pipeline._rebase('img-a,img-b')
-        self.assertEqual(result, 'img-a,img-b')
+        self.assertEqual(result, [])
 
-    async def test_rebase_failure_excludes_failed_images(self):
-        """When rebase fails and state.yaml records failed images, those images are excluded."""
+    async def test_rebase_failure_returns_excluded_images(self):
+        """When rebase fails and state.yaml records failed images, those images are returned as excluded."""
         state = {'images:konflux:rebase': {'failed-images': ['oadp-operator']}}
         state_path = Path(self.runtime.doozer_working, 'state.yaml')
         with state_path.open('w') as f:
@@ -86,10 +87,10 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
         ):
             result = await self.pipeline._rebase('oadp-velero-restic-restore-helper,oadp-operator')
 
-        self.assertEqual(result, 'oadp-velero-restic-restore-helper')
+        self.assertEqual(result, ['oadp-operator'])
 
-    async def test_rebase_failure_excludes_skipped_due_to_parent_images(self):
-        """Images listed only as skipped due to parent rebase failure are excluded from the build list."""
+    async def test_rebase_failure_returns_skipped_due_to_parent_images(self):
+        """Images listed as skipped due to parent rebase failure are included in the excluded list."""
         state = {
             'images:konflux:rebase': {
                 'failed-images': ['parent-image'],
@@ -107,10 +108,10 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
         ):
             result = await self.pipeline._rebase('parent-image,child-image,other-image')
 
-        self.assertEqual(result, 'other-image')
+        self.assertEqual(result, ['parent-image', 'child-image'])
 
-    async def test_rebase_failure_all_images_failed(self):
-        """When all requested images fail rebase, an empty string is returned."""
+    async def test_rebase_failure_all_images_excluded(self):
+        """When all requested images fail rebase, all are returned as excluded."""
         state = {'images:konflux:rebase': {'failed-images': ['img-a', 'img-b']}}
         state_path = Path(self.runtime.doozer_working, 'state.yaml')
         with state_path.open('w') as f:
@@ -123,7 +124,7 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
         ):
             result = await self.pipeline._rebase('img-a,img-b')
 
-        self.assertEqual(result, '')
+        self.assertEqual(result, ['img-a', 'img-b'])
 
     async def test_rebase_failure_no_state_file_reraises(self):
         """When rebase fails but state.yaml does not exist, the error is re-raised."""
@@ -338,3 +339,82 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
         image_repo_args = [arg for arg in build_cmd if arg.startswith('--image-repo=')]
         self.assertEqual(len(image_repo_args), 1)
         self.assertEqual(image_repo_args[0], f'--image-repo={KONFLUX_DEFAULT_IMAGE_REPO}')
+
+    def test_all_strategy_with_image_list_raises(self):
+        """When strategy is all and image_list is non-empty, ValueError is raised."""
+        with patch('pyartcd.pipelines.build_layered_products.jenkins.init_jenkins'):
+            with self.assertRaises(ValueError) as ctx:
+                BuildLayeredProductsPipeline(
+                    runtime=self.runtime,
+                    group='oadp-1.4',
+                    version='1.4.9',
+                    assembly='stream',
+                    image_list='oadp-operator',
+                    image_build_strategy='all',
+                    data_path='https://github.com/openshift-eng/ocp-build-data',
+                    skip_bundle_build=True,
+                )
+        self.assertIn("image_list must be empty", str(ctx.exception))
+
+    async def test_rebase_all_strategy_no_images_flag(self):
+        """When strategy is all, rebase command does not include --images=."""
+        with patch(
+            'pyartcd.pipelines.build_layered_products.exectools.cmd_assert_async',
+            new_callable=AsyncMock,
+        ) as mock_cmd:
+            await self.pipeline._rebase(None)
+
+        cmd = mock_cmd.call_args[0][0]
+        self.assertFalse(any(arg.startswith('--images=') for arg in cmd))
+
+    async def test_rebase_all_strategy_returns_excluded_on_failure(self):
+        """When all-strategy rebase fails, excluded images are returned."""
+        state = {'images:konflux:rebase': {'failed-images': ['img-a']}}
+        state_path = Path(self.runtime.doozer_working, 'state.yaml')
+        with state_path.open('w') as f:
+            yaml.safe_dump(state, f)
+
+        with patch(
+            'pyartcd.pipelines.build_layered_products.exectools.cmd_assert_async',
+            new_callable=AsyncMock,
+            side_effect=ChildProcessError('exit code 1'),
+        ):
+            result = await self.pipeline._rebase(None)
+
+        self.assertEqual(result, ['img-a'])
+
+    async def test_build_all_strategy_no_exclusions(self):
+        """When strategy is all with no exclusions, build command has no --images= flag."""
+        with (
+            patch(
+                'pyartcd.pipelines.build_layered_products.exectools.cmd_assert_async',
+                new_callable=AsyncMock,
+            ) as mock_cmd,
+            patch(
+                'pyartcd.pipelines.build_layered_products.resolve_konflux_kubeconfig_by_product',
+                return_value='/path/to/kubeconfig',
+            ),
+        ):
+            await self.pipeline._build(BuildStrategy.ALL, None, [], 'oadp', KONFLUX_DEFAULT_IMAGE_REPO)
+
+        cmd = mock_cmd.call_args[0][0]
+        self.assertFalse(any(arg.startswith('--images=') for arg in cmd))
+        self.assertFalse(any(arg.startswith('--exclude=') for arg in cmd))
+
+    async def test_build_all_strategy_with_exclusions(self):
+        """When strategy is all with rebase exclusions, build uses --images= --exclude=."""
+        with (
+            patch(
+                'pyartcd.pipelines.build_layered_products.exectools.cmd_assert_async',
+                new_callable=AsyncMock,
+            ) as mock_cmd,
+            patch(
+                'pyartcd.pipelines.build_layered_products.resolve_konflux_kubeconfig_by_product',
+                return_value='/path/to/kubeconfig',
+            ),
+        ):
+            await self.pipeline._build(BuildStrategy.ALL, None, ['img-a', 'img-b'], 'oadp', KONFLUX_DEFAULT_IMAGE_REPO)
+
+        cmd = mock_cmd.call_args[0][0]
+        self.assertIn('--images=', cmd)
+        self.assertIn('--exclude=img-a,img-b', cmd)

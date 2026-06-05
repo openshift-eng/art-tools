@@ -15,6 +15,7 @@ from pyartcd import constants, jenkins, locks
 from pyartcd import record as record_util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import Lock
+from pyartcd.pipelines.ocp4_konflux import BuildStrategy
 from pyartcd.runtime import Runtime
 from pyartcd.util import default_release_suffix, load_group_config
 
@@ -31,6 +32,7 @@ class BuildLayeredProductsPipeline:
         image_list: str,
         data_path: str,
         skip_bundle_build: bool,
+        image_build_strategy: str = 'only',
         skip_rebase: bool = False,
         kubeconfig: Optional[str] = None,
         data_gitref: Optional[str] = None,
@@ -42,7 +44,8 @@ class BuildLayeredProductsPipeline:
         self.group = group
         self.version = version
         self.assembly = assembly
-        self.image_list = image_list
+        self.image_list = image_list or ''
+        self.image_build_strategy = BuildStrategy(image_build_strategy)
         self.skip_bundle_build = skip_bundle_build
         self.skip_rebase = skip_rebase
         self.kubeconfig = kubeconfig
@@ -50,6 +53,11 @@ class BuildLayeredProductsPipeline:
         self.network_mode = network_mode
         self.plr_template = plr_template
         self._logger = logger or runtime.logger
+
+        if self.image_build_strategy == BuildStrategy.ALL and self.image_list:
+            raise ValueError("image_list must be empty when image_build_strategy is 'all'")
+        if self.image_build_strategy == BuildStrategy.ONLY and not self.image_list:
+            raise ValueError("image_list is required when image_build_strategy is 'only'")
 
         self._working_dir = self.runtime.working_dir.absolute()
 
@@ -149,37 +157,47 @@ class BuildLayeredProductsPipeline:
         ]
 
     async def _rebase_and_build(self, product: str, image_repo: str):
-        """Rebase and build layered product image"""
-        image_list = self.image_list
+        """Rebase and build layered product images."""
+        strategy = self.image_build_strategy
+        rebase_image_list = self.image_list if strategy == BuildStrategy.ONLY else None
+        excluded: List[str] = []
 
         if not self.skip_rebase:
-            image_list = await self._rebase(image_list)
+            excluded = await self._rebase(rebase_image_list)
         else:
             self._logger.warning("Skipping rebase step because --skip-rebase flag is set")
 
-        if not image_list:
-            self._logger.warning('No buildable images remaining after rebase; skipping build')
-            return
+        if strategy == BuildStrategy.ONLY:
+            requested = [img.strip() for img in self.image_list.split(',') if img.strip()]
+            remaining = [img for img in requested if img not in excluded]
+            if not remaining:
+                self._logger.warning('No buildable images remaining after rebase; skipping build')
+                return
+            build_image_list = ','.join(remaining)
+        else:
+            build_image_list = None
 
         try:
-            await self._build(image_list, product, image_repo)
+            await self._build(strategy, build_image_list, excluded, product, image_repo)
         finally:
             self._update_build_description()
 
-    async def _rebase(self, image_list: str) -> str:
+    async def _rebase(self, image_list: Optional[str]) -> List[str]:
         """Rebase layered product images.
 
-        Returns the (possibly reduced) comma-separated image list after
-        excluding images that failed to rebase, following the same pattern
-        used by the OCP4 pipeline.
+        Returns the list of images excluded due to rebase failure.
         """
         release = default_release_suffix()
-        self._logger.info(f"Rebasing {image_list} image(s) for assembly {self.assembly}")
+        if image_list:
+            self._logger.info(f"Rebasing {image_list} image(s) for assembly {self.assembly}")
+        else:
+            self._logger.info(f"Rebasing all images for assembly {self.assembly}")
 
         rebase_cmd = self._doozer_base_command()
+        if image_list:
+            rebase_cmd.append(f"--images={image_list}")
         rebase_cmd.extend(
             [
-                f"--images={image_list}",
                 "beta:images:konflux:rebase",
                 f"--version={self.version}",
                 f"--release={release}",
@@ -193,8 +211,11 @@ class BuildLayeredProductsPipeline:
 
         try:
             await exectools.cmd_assert_async(rebase_cmd, env=self._doozer_env_vars)
-            self._logger.info(f"Successfully rebased {image_list}")
-            return image_list
+            if image_list:
+                self._logger.info(f"Successfully rebased {image_list}")
+            else:
+                self._logger.info("Successfully rebased all images")
+            return []
 
         except ChildProcessError:
             state_path = Path(self.runtime.doozer_working, 'state.yaml')
@@ -221,9 +242,7 @@ class BuildLayeredProductsPipeline:
                     ','.join(skipped_due_to_parent),
                 )
 
-            requested = [img.strip() for img in image_list.split(',') if img.strip()]
-            remaining = [img for img in requested if img not in excluded]
-            return ','.join(remaining)
+            return excluded
 
     def _update_build_description(self):
         """Update Jenkins description with build results (succeeded/failed counts and failed image names)."""
@@ -245,14 +264,27 @@ class BuildLayeredProductsPipeline:
         elif len(failed_images) > 10:
             jenkins.update_description('Check record.log for the full list of failed images<br/>')
 
-    async def _build(self, image_list: str, product: str, image_repo: str):
+    async def _build(
+        self,
+        strategy: BuildStrategy,
+        image_list: Optional[str],
+        excluded: List[str],
+        product: str,
+        image_repo: str,
+    ):
         """Build layered product images."""
-        self._logger.info(f"Building {image_list} image(s) for assembly {self.assembly}")
+        if image_list:
+            self._logger.info(f"Building {image_list} image(s) for assembly {self.assembly}")
+        else:
+            self._logger.info(f"Building all images for assembly {self.assembly}")
 
         build_cmd = self._doozer_base_command()
+        if strategy == BuildStrategy.ONLY:
+            build_cmd.append(f"--images={image_list}")
+        elif excluded:
+            build_cmd.extend(["--images=", f"--exclude={','.join(excluded)}"])
         build_cmd.extend(
             [
-                f"--images={image_list}",
                 "beta:images:konflux:build",
                 f"--image-repo={image_repo}",
                 "--build-priority=1",
@@ -290,7 +322,10 @@ class BuildLayeredProductsPipeline:
             build_env["QUAY_AUTH_FILE"] = konflux_registry_auth_file
 
         await exectools.cmd_assert_async(build_cmd, env=build_env)
-        self._logger.info(f"Successfully built {image_list}")
+        if image_list:
+            self._logger.info(f"Successfully built {image_list}")
+        else:
+            self._logger.info("Successfully built all images")
 
 
 @cli.command("build-layered-products")
@@ -320,9 +355,15 @@ class BuildLayeredProductsPipeline:
     help="The name of an assembly to rebase & build for. e.g. 4.9.1",
 )
 @click.option(
+    "--image-build-strategy",
+    type=click.Choice(['all', 'only']),
+    default='only',
+    help="'all' builds every image in the group; 'only' builds IMAGE_LIST images only",
+)
+@click.option(
     "--image-list",
     metavar="IMAGE_NAME",
-    help="List of images to build",
+    help="List of images to build (required when --image-build-strategy=only)",
 )
 @click.option("--skip-bundle-build", is_flag=True, default=False, help="(For testing) Skip the bundle build step")
 @click.option("--skip-rebase", is_flag=True, default=False, help="(For testing) Skip the rebase step")
@@ -353,6 +394,7 @@ async def build_layered_products(
     group: str,
     version: Optional[str],
     assembly: str,
+    image_build_strategy: str,
     image_list: str,
     skip_bundle_build: bool,
     skip_rebase: bool,
@@ -370,6 +412,7 @@ async def build_layered_products(
             version=version,
             assembly=assembly,
             image_list=image_list,
+            image_build_strategy=image_build_strategy,
             data_path=data_path,
             skip_bundle_build=skip_bundle_build,
             skip_rebase=skip_rebase,
