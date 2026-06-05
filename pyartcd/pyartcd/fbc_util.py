@@ -116,16 +116,14 @@ async def validate_fbc_related_images(fbc_pullspecs: List[str], product: str) ->
                             operator,
                         )
                     else:
-                        operator = f"UNKNOWN-{hash(fbc_pullspec) & 0xFFFFFFFF:08x}"
-                        logger.error(
-                            "Could not determine operator for %s (nvr=%s), using: %s",
-                            fbc_pullspec,
-                            nvr,
-                            operator,
+                        raise RuntimeError(
+                            f"Could not determine operator for FBC {fbc_pullspec} (nvr={nvr}). "
+                            f"Cannot validate related-image consistency without operator identity."
                         )
+                except RuntimeError:
+                    raise
                 except Exception as e:
-                    logger.error("Failed to extract operator from %s: %s", fbc_pullspec, e)
-                    operator = f"UNKNOWN-{hash(fbc_pullspec) & 0xFFFFFFFF:08x}"
+                    raise RuntimeError(f"Failed to extract operator from {fbc_pullspec}: {e}") from e
 
         fbc_to_operator[fbc_pullspec] = operator
 
