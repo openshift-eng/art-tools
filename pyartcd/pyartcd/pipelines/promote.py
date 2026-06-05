@@ -2215,7 +2215,7 @@ class PromotePipeline:
 
     @staticmethod
     async def get_release_phase(release_controller_url: str, release_stream: str, release_name: str):
-        api_path = f"/api/v1/releasestream/{quote(release_stream)}/release/{quote(release_name)}"
+        api_path = f"/api/v1/releasestream/{quote(release_stream)}/release/{quote(release_name)}?format=short"
         full_url = f"{release_controller_url}{api_path}"
         async with aiohttp.ClientSession() as session:
             async with session.get(full_url) as response:
