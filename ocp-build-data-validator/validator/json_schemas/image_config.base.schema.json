@@ -402,6 +402,18 @@
       "$ref": "#/properties/final_stage_user"
     },
     "final_stage_user-": {},
+    "el_minor": {
+      "description": "RHEL minor version to include in the NVR release suffix (e.g., 6 produces .el9_6). When omitted, only the major version is used.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "el_minor!": {
+      "$ref": "#/properties/el_minor"
+    },
+    "el_minor?": {
+      "$ref": "#/properties/el_minor"
+    },
+    "el_minor-": {},
     "enabled_repos": {
       "description": "List of repositories that should be enabled at image build time. List of keys of group.yml's `repos`",
       "items": {
