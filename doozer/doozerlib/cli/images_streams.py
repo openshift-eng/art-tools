@@ -5,7 +5,6 @@ import os
 import random
 import re
 import time
-from datetime import datetime
 from typing import Dict, Optional, Set, Tuple
 
 import click
@@ -137,44 +136,84 @@ def images_streams_mirror(
         registry_config_file = get_docker_config_json(runtime.registry_config_dir)
 
     def mirror_image(cmd_start: str, upstream_dest: str):
-        full_cmd_1 = f'{cmd_start} {upstream_dest}'
-        if dry_run:
-            print(f'For {upstream_entry_name}, would have run: {full_cmd_1}')
-        else:
-            exectools.cmd_assert(full_cmd_1, retries=3, realtime=True)
-
         if upstream_dest.startswith('registry.ci.openshift.org/'):
-            # If the image is being mirrored the CI imagestreams, we must also mirror it
-            # to the quay.io/openshift/ci (aka QCI) repository. QCI is the location from which
-            # imagestream references will be resolved for CI operations. Eventually, the
-            # internal registry on the app.ci cluster will not be used at all.
-            # upstream_dest might look something like: registry.ci.openshift.org/ocp/{MAJOR}.{MINOR}:base-rhel9
-            # We want to transform this into: quay.io/openshift/ci:<datetime>_prune_art__ocp_{MAJOR}.{MINOR}:base-rhel9
-            # This tag convention allows images to be pruned over time if they are no longer being
-            # used. See https://github.com/openshift/release/blob/244558fe310225fa8d9895c0c70a279cc104c612/hack/qci_registry_pruner.py#L3-L25
-            # We also mirror to a floating tag that will be overwritten as new images are
-            # mirrored: quay.io/openshift/ci:art__ocp_{MAJOR}.{MINOR}:base-rhel9 . This ensures that
-            # at least one copy of the image will stay around until a new version is mirrored
-            # to the same tag, regardless of whether the prune tag is removed.
+            # Images targeting CI imagestreams must be mirrored to quay.io/openshift/ci (QCI) first,
+            # then imagestreams updated to reference the QCI image by digest.
+            # upstream_dest looks like: registry.ci.openshift.org/ocp/{MAJOR}.{MINOR}:base-rhel9
+            # Extract namespace and imagestreamtag
+            _, dest_ns, dest_istag = upstream_dest.rsplit('/', maxsplit=2)
+            dest_imagestream, dest_tag = dest_istag.split(':')
 
-            _, org_repo_tag = upstream_dest.split('/', 1)  # isolate "ocp/{MAJOR}.{MINOR}:base-rhel9"
+            # Build QCI floating tag: art__ocp_{MAJOR}.{MINOR}_base-rhel9
+            org_repo_tag = re.sub(r"[:/]", "_", f"{dest_ns}/{dest_istag}")
+            floating_qci_tag = f"art__{org_repo_tag}"
+            floating_qci_dest = f"quay.io/openshift/ci:{floating_qci_tag}"
 
-            # Use re.sub() to replace any character in the set [:/] with '_'
-            org_repo_tag = re.sub(r"[:/]", "_", org_repo_tag)  # => ocp_{MAJOR}.{MINOR}_base-rhel9
-            prune_timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-            prunable_qci_upstream_dest = f"quay.io/openshift/ci:{prune_timestamp}_prune_art__{org_repo_tag}"
-            full_cmd_2 = f'{cmd_start} {prunable_qci_upstream_dest}'
+            # Mirror to QCI floating tag
+            full_cmd_floating = f'{cmd_start} {floating_qci_dest}'
             if dry_run:
-                print(f'For {upstream_entry_name}, would have run: {full_cmd_2}')
+                print(f'For {upstream_entry_name}, would have run: {full_cmd_floating}')
             else:
-                exectools.cmd_assert(full_cmd_2, retries=3, realtime=True)
+                exectools.cmd_assert(full_cmd_floating, retries=3, realtime=True)
 
-            floating_qci_upstream_dest = f"quay.io/openshift/ci:art__{org_repo_tag}"
-            full_cmd_3 = f'{cmd_start} {floating_qci_upstream_dest}'
+                # Get digest of the newly mirrored image
+                image_info_cmd = f'oc image info {floating_qci_dest} -o json'
+                if registry_config_file:
+                    image_info_cmd += f' --registry-config={registry_config_file}'
+
+                info_stdout, _ = exectools.cmd_assert(image_info_cmd, retries=3)
+                image_info = json.loads(info_stdout)
+                qci_digest = image_info.get('digest', '')
+
+                if qci_digest:
+                    # Mirror to GC-prevention tag: art__<digest>
+                    gc_prevention_tag = f"art__{qci_digest[7:23]}"
+                    gc_prevention_dest = f"quay.io/openshift/ci:{gc_prevention_tag}"
+                    gc_mirror_cmd = f'oc image mirror {floating_qci_dest}@{qci_digest} {gc_prevention_dest}'
+                    if registry_config_file:
+                        gc_mirror_cmd += f' --registry-config={registry_config_file}'
+                    exectools.cmd_assert(gc_mirror_cmd, retries=3, realtime=True)
+
+                    # Update imagestream to reference QCI by digest via quay-proxy
+                    istag_patch = {
+                        'tag': {
+                            'name': dest_tag,
+                            'from': {
+                                'kind': 'DockerImage',
+                                'name': f'quay-proxy.ci.openshift.org/openshift/ci@{qci_digest}',
+                            },
+                            'reference': True,
+                            'referencePolicy': {'type': 'Source'},
+                            'importPolicy': {'importMode': 'PreserveOriginal'},
+                        }
+                    }
+
+                    # Get current imagestream to find tag index
+                    get_istag_cmd = f'oc get imagestream {dest_imagestream} -n {dest_ns} -o json'
+                    istag_stdout, _ = exectools.cmd_assert(get_istag_cmd, retries=3)
+                    imagestream_data = json.loads(istag_stdout)
+                    existing_tags = imagestream_data.get('spec', {}).get('tags', [])
+                    tag_index = next((i for i, t in enumerate(existing_tags) if t.get('name') == dest_tag), None)
+
+                    if tag_index is not None:
+                        patch_cmd = f'oc patch imagestream {dest_imagestream} -n {dest_ns} --type=json -p \'[{{"op": "replace", "path": "/spec/tags/{tag_index}", "value": {json.dumps(istag_patch["tag"])}}}]\''
+                    else:
+                        patch_cmd = f'oc patch imagestream {dest_imagestream} -n {dest_ns} --type=json -p \'[{{"op": "add", "path": "/spec/tags/-", "value": {json.dumps(istag_patch["tag"])}}}]\''
+
+                    exectools.cmd_assert(patch_cmd, retries=3)
+                    print(
+                        f'For {upstream_entry_name}, updated imagestream {dest_ns}/{dest_istag} to reference QCI@{qci_digest}'
+                    )
+                else:
+                    runtime.logger.warning(f'Failed to get digest for {floating_qci_dest}')
+
+        else:
+            # Not a CI imagestream - mirror directly to destination
+            full_cmd_1 = f'{cmd_start} {upstream_dest}'
             if dry_run:
-                print(f'For {upstream_entry_name}, would have run: {full_cmd_3}')
+                print(f'For {upstream_entry_name}, would have run: {full_cmd_1}')
             else:
-                exectools.cmd_assert(full_cmd_3, retries=3, realtime=True)
+                exectools.cmd_assert(full_cmd_1, retries=3, realtime=True)
 
     upstreaming_entries = _get_upstreaming_entries(runtime, streams)
 
@@ -284,7 +323,8 @@ def images_streams_mirror(
 
 
 @images_streams.command(
-    'check-upstream', short_help='Dumps information about CI buildconfigs/mirrored images associated with this group.'
+    'check-upstream',
+    short_help='Check and sync QCI images to imagestreams (mirrors to GC-prevention tags and updates references)',
 )
 @click.option(
     '--stream',
@@ -295,11 +335,25 @@ def images_streams_mirror(
     help='If specified, only check these streams',
 )
 @click.option('--live-test-mode', default=False, is_flag=True, help='Scan for live-test mode buildconfigs')
+@click.option('--dry-run', default=False, is_flag=True, help='Do not actually mirror or update imagestreams')
+@option_registry_auth
 @pass_runtime
-def images_streams_check_upstream(runtime, streams, live_test_mode):
+def images_streams_check_upstream(runtime, streams, live_test_mode, dry_run, registry_auth: Optional[str]):
     runtime.initialize(clone_distgits=False, clone_source=False, prevent_cloning=True)
 
+    # Determine which registry config to use
+    registry_config_file = None
+    if registry_auth:
+        registry_config_file = registry_auth
+    elif runtime.registry_config_dir is not None:
+        registry_config_file = get_docker_config_json(runtime.registry_config_dir)
+
+    major = runtime.group_config.vars['MAJOR']
+    minor = runtime.group_config.vars['MINOR']
+
     istags_status = []
+    qci_status = []
+
     if not streams:
         streams = runtime.get_stream_names()
     upstreaming_entries = _get_upstreaming_entries(runtime, streams)
@@ -311,15 +365,145 @@ def images_streams_check_upstream(runtime, streams, live_test_mode):
         if live_test_mode:
             dest_istag += '.test'
 
-        rc, stdout, stderr = exectools.cmd_gather(f'oc get -n {dest_ns} istag {dest_istag} --no-headers')
+        dest_imagestream, dest_tag = dest_istag.split(':')
+
+        # Check imagestream tag exists and inspect its configuration
+        rc, stdout, stderr = exectools.cmd_gather(f'oc get -n {dest_ns} istag {dest_istag} -o json')
         if rc:
             istags_status.append(
-                f'ERROR: {upstream_entry_name}\nIs not yet represented upstream in {dest_ns} istag/{dest_istag}'
+                f'ERROR: {upstream_entry_name}\nImagestream tag does not exist: {dest_ns}/istag/{dest_istag}'
             )
         else:
-            istags_status.append(
-                f'OK: {upstream_entry_name} exists, but check whether it is recently updated\n{stdout}'
-            )
+            try:
+                istag_data = json.loads(stdout)
+                # Check if it's referencing QCI by sha256
+                image_ref = istag_data.get('tag', {}).get('from', {}).get('name', '')
+                ref_policy = istag_data.get('tag', {}).get('referencePolicy', {}).get('type', '')
+
+                if image_ref.startswith('quay.io/openshift/ci@sha256:'):
+                    if ref_policy == 'Source':
+                        istags_status.append(
+                            f'OK: {upstream_entry_name}\n  Imagestream: {dest_ns}/{dest_istag}\n  Reference: {image_ref}\n  Policy: {ref_policy}'
+                        )
+                    else:
+                        istags_status.append(
+                            f'WARNING: {upstream_entry_name}\n  Imagestream: {dest_ns}/{dest_istag}\n  Reference: {image_ref}\n  Policy: {ref_policy} (expected "Source")'
+                        )
+                else:
+                    istags_status.append(
+                        f'WARNING: {upstream_entry_name}\n  Imagestream: {dest_ns}/{dest_istag}\n  Reference: {image_ref} (expected quay.io/openshift/ci@sha256:...)\n  Policy: {ref_policy}'
+                    )
+            except Exception as e:
+                istags_status.append(f'ERROR: {upstream_entry_name}\n  Failed to parse imagestream tag: {e}')
+
+        # Check QCI tag exists and sync if needed (only for entries with transforms, which have buildconfigs)
+        transform = config.transform
+        if transform is not Missing and transform in transforms:
+            qci_tag = f'art-builder-{major}.{minor}-{dest_tag}'
+            qci_pullspec = f'quay.io/openshift/ci:{qci_tag}'
+
+            image_info_cmd = f'oc image info {qci_pullspec} -o json'
+            if registry_config_file:
+                image_info_cmd += f' --registry-config={registry_config_file}'
+
+            rc, info_stdout, info_stderr = exectools.cmd_gather(image_info_cmd)
+            if rc:
+                qci_status.append(f'ERROR: {upstream_entry_name}\n  QCI image does not exist: {qci_pullspec}')
+            else:
+                try:
+                    image_info = json.loads(info_stdout)
+                    current_digest = image_info.get('digest', '')
+
+                    if not current_digest:
+                        qci_status.append(f'WARNING: {upstream_entry_name}\n  No digest found for {qci_pullspec}')
+                        continue
+
+                    # Check if imagestream already points to this digest
+                    needs_sync = False
+                    rc_istag, istag_stdout, istag_stderr = exectools.cmd_gather(
+                        f'oc get -n {dest_ns} istag {dest_istag} -o json'
+                    )
+                    if rc_istag == 0:
+                        try:
+                            istag_data = json.loads(istag_stdout)
+                            istag_ref = istag_data.get('tag', {}).get('from', {}).get('name', '')
+                            # Extract digest from imagestream reference (quay-proxy.ci.openshift.org/openshift/ci@sha256:...)
+                            if '@' in istag_ref:
+                                istag_digest = istag_ref.split('@')[1]
+                                if istag_digest != current_digest:
+                                    needs_sync = True
+                            else:
+                                needs_sync = True  # Not using digest reference
+                        except json.JSONDecodeError:
+                            needs_sync = True  # Can't parse, assume needs sync
+                    else:
+                        needs_sync = True  # Imagestream tag doesn't exist
+
+                    if needs_sync:
+                        qci_status.append(
+                            f'SYNCING: {upstream_entry_name}\n  QCI image: {qci_pullspec}\n  Digest: {current_digest}'
+                        )
+
+                        # Mirror to GC-prevention tag
+                        gc_prevention_tag = f'art-builder-{current_digest[7:23]}'  # sha256:abc... -> first 16 chars
+                        gc_prevention_pullspec = f'quay.io/openshift/ci:{gc_prevention_tag}'
+
+                        if dry_run:
+                            qci_status.append(
+                                f'  DRY RUN: Would mirror to {gc_prevention_pullspec} and update imagestream'
+                            )
+                        else:
+                            # Perform mirror
+                            mirror_cmd = f'oc image mirror {qci_pullspec}@{current_digest} {gc_prevention_pullspec}'
+                            if registry_config_file:
+                                mirror_cmd += f' --registry-config={registry_config_file}'
+
+                            try:
+                                exectools.cmd_assert(mirror_cmd, retries=3)
+                                qci_status.append(f'  Mirrored to {gc_prevention_pullspec}')
+
+                                # Update imagestream
+                                istag_patch = {
+                                    'tag': {
+                                        'name': dest_tag,
+                                        'from': {
+                                            'kind': 'DockerImage',
+                                            'name': f'quay-proxy.ci.openshift.org/openshift/ci@{current_digest}',
+                                        },
+                                        'reference': True,
+                                        'referencePolicy': {'type': 'Source'},
+                                        'importPolicy': {'importMode': 'PreserveOriginal'},
+                                    }
+                                }
+
+                                # Get current imagestream to find tag index
+                                get_istag_cmd = f'oc get imagestream {dest_imagestream} -n {dest_ns} -o json'
+                                istag_get_stdout, _ = exectools.cmd_assert(get_istag_cmd, retries=3)
+                                imagestream_data = json.loads(istag_get_stdout)
+                                existing_tags = imagestream_data.get('spec', {}).get('tags', [])
+                                tag_index = next(
+                                    (i for i, t in enumerate(existing_tags) if t.get('name') == dest_tag), None
+                                )
+
+                                if tag_index is not None:
+                                    patch_cmd = f'oc patch imagestream {dest_imagestream} -n {dest_ns} --type=json -p \'[{{"op": "replace", "path": "/spec/tags/{tag_index}", "value": {json.dumps(istag_patch["tag"])}}}]\''
+                                else:
+                                    patch_cmd = f'oc patch imagestream {dest_imagestream} -n {dest_ns} --type=json -p \'[{{"op": "add", "path": "/spec/tags/-", "value": {json.dumps(istag_patch["tag"])}}}]\''
+
+                                exectools.cmd_assert(patch_cmd, retries=3)
+                                qci_status.append(f'  Updated imagestream {dest_ns}/{dest_istag}')
+
+                            except Exception as e:
+                                qci_status.append(f'  ERROR during sync: {e}')
+                    else:
+                        qci_status.append(
+                            f'OK: {upstream_entry_name}\n  QCI image: {qci_pullspec}\n  Digest: {current_digest}\n  Imagestream is up-to-date'
+                        )
+
+                except json.JSONDecodeError:
+                    qci_status.append(
+                        f'WARNING: {upstream_entry_name}\n  QCI image exists but could not parse info: {qci_pullspec}'
+                    )
 
     group_label = runtime.group_config.name
     if live_test_mode:
@@ -331,10 +515,17 @@ def images_streams_check_upstream(runtime, streams, live_test_mode):
     )
     print('Build configs:')
     print(bc_stdout or bc_stderr)
+    print()
     print('Recent builds:')
     print(builds_stdout or builds_stderr)
+    print()
 
-    print('Upstream imagestream tag status')
+    print('QCI image status:')
+    for status in qci_status:
+        print(status)
+        print()
+
+    print('Imagestream tag status:')
     for istag_status in istags_status:
         print(istag_status)
         print()
@@ -381,39 +572,420 @@ def get_eligible_buildconfigs(runtime, streams, live_test_mode):
 )
 @click.option('--live-test-mode', default=False, is_flag=True, help='Act on live-test mode buildconfigs')
 @click.option('--dry-run', default=False, is_flag=True, help='Do not build anything, but only print build operations.')
+@option_registry_auth
 @pass_runtime
-def images_streams_start_buildconfigs(runtime, streams, as_user, live_test_mode, dry_run):
+def images_streams_start_buildconfigs(runtime, streams, as_user, live_test_mode, dry_run, registry_auth: Optional[str]):
     runtime.initialize(clone_distgits=False, clone_source=False, prevent_cloning=True)
+
+    # Determine which registry config to use
+    registry_config_file = None
+    if registry_auth:
+        registry_config_file = registry_auth
+    elif runtime.registry_config_dir is not None:
+        registry_config_file = get_docker_config_json(runtime.registry_config_dir)
 
     group_label = runtime.group_config.name
     if live_test_mode:
         group_label += '.test'
 
-    cmd = f'oc -n ci get -o=name buildconfigs -l art-builder-group={group_label}'
+    cmd = f'oc -n ci get -o=json buildconfigs -l art-builder-group={group_label}'
     if as_user:
         cmd += f' --as {as_user}'
     bc_stdout, bc_stderr = exectools.cmd_assert(cmd, retries=3)
     bc_stdout = bc_stdout.strip()
 
-    eligible_bcs = get_eligible_buildconfigs(runtime, streams, live_test_mode)
+    if not bc_stdout:
+        print(f'No buildconfigs associated with this group: {group_label}')
+        return
 
-    if bc_stdout:
-        for name in bc_stdout.splitlines():
-            #  buildconfig.build.openshift.io/release-rhel-8-release-golang-1.20-openshift-4.16--art-builder
-            if name.split('/')[-1] not in eligible_bcs:
-                print(f'Skipping outdated buildconfig: {name}')
-                continue
-            print(f'Triggering: {name}')
-            cmd = f'oc -n ci start-build {name}'
-            if as_user:
-                cmd += f' --as {as_user}'
+    buildconfigs = json.loads(bc_stdout).get('items', [])
+    eligible_bc_names = get_eligible_buildconfigs(runtime, streams, live_test_mode)
+
+    # Track triggered builds for post-build preservation
+    triggered_builds = []
+
+    for bc in buildconfigs:
+        bc_name = bc['metadata']['name']
+
+        if bc_name not in eligible_bc_names:
+            print(f'Skipping outdated buildconfig: {bc_name}')
+            continue
+
+        # Extract metadata for pre-build operations
+        labels = bc['metadata'].get('labels', {})
+        annotations = bc['metadata'].get('annotations', {})
+        qci_tag = labels.get('art-builder-qci-tag')
+        dest_ns = annotations.get('art-builder-imagestream-namespace')
+        dest_imagestream = annotations.get('art-builder-imagestream-name')
+        dest_tag = annotations.get('art-builder-imagestream-tag')
+
+        if not qci_tag:
+            runtime.logger.warning(f'BuildConfig {bc_name} missing art-builder-qci-tag label; skipping pre-build steps')
+        else:
+            qci_pullspec = f'quay.io/openshift/ci:{qci_tag}'
+
+            # Step 0: FIRST, preserve the current registry.ci.openshift.org imagestream content
+            # This ensures we don't lose the old image if something goes wrong during migration
+            if dest_ns and dest_imagestream and dest_tag:
+                old_istag_pullspec = f'registry.ci.openshift.org/{dest_ns}/{dest_imagestream}:{dest_tag}'
+                print(f'Preserving current imagestream content from {old_istag_pullspec}')
+
+                if dry_run:
+                    print('  DRY RUN: Would check and preserve old imagestream content')
+                else:
+                    # Get the current digest from the old imagestream tag
+                    old_image_info_cmd = f'oc image info {old_istag_pullspec} -o json'
+                    if registry_config_file:
+                        old_image_info_cmd += f' --registry-config={registry_config_file}'
+
+                    rc, old_info_stdout, old_info_stderr = exectools.cmd_gather(old_image_info_cmd)
+                    if rc == 0:
+                        try:
+                            old_image_info = json.loads(old_info_stdout)
+                            old_digest = old_image_info.get('digest', '')
+                            if old_digest:
+                                print(f'  Current imagestream digest: {old_digest}')
+
+                                # Mirror to a preservation tag to prevent garbage collection
+                                old_gc_prevention_tag = f'art-builder-{old_digest.replace("sha256:", "")[:16]}'
+                                old_gc_prevention_pullspec = f'quay.io/openshift/ci:{old_gc_prevention_tag}'
+
+                                print(f'  Mirroring old content to GC-prevention tag: {old_gc_prevention_pullspec}')
+                                old_mirror_cmd = (
+                                    f'oc image mirror {old_istag_pullspec}@{old_digest} {old_gc_prevention_pullspec}'
+                                )
+                                if registry_config_file:
+                                    old_mirror_cmd += f' --registry-config={registry_config_file}'
+
+                                # CRITICAL: This MUST succeed before we proceed
+                                exectools.cmd_assert(old_mirror_cmd, retries=3)
+                                print(
+                                    f'  Successfully preserved old imagestream content to {old_gc_prevention_pullspec}'
+                                )
+                            else:
+                                runtime.logger.warning(f'Could not extract digest from {old_istag_pullspec}')
+                                print('  WARNING: No digest found in old imagestream (may be empty)')
+                        except json.JSONDecodeError as e:
+                            runtime.logger.warning(f'Failed to parse old imagestream info: {e}')
+                            print('  WARNING: Could not parse old imagestream info (continuing anyway)')
+                    else:
+                        # Old imagestream doesn't exist - this is OK for initial setup
+                        print(f'  Old imagestream tag does not exist at {old_istag_pullspec} (initial setup)')
+
+            # Step 1: Get current digest of the QCI tag (if it exists)
+            print(f'Checking current digest of {qci_pullspec}')
+            current_digest = None
+
             if dry_run:
-                print(f'Would have run: {cmd}')
-                continue
+                print('  DRY RUN: Simulating existing image for testing')
+                current_digest = 'sha256:0000000000000000000000000000000000000000000000000000000000000000'
+            else:
+                # Try to get image info - will fail with non-zero rc if image doesn't exist
+                image_info_cmd = f'oc image info {qci_pullspec} -o json'
+                if registry_config_file:
+                    image_info_cmd += f' --registry-config={registry_config_file}'
+
+                rc, info_stdout, info_stderr = exectools.cmd_gather(image_info_cmd)
+                if rc == 0:
+                    try:
+                        image_info = json.loads(info_stdout)
+                        current_digest = image_info.get('digest', '')
+                    except json.JSONDecodeError as e:
+                        runtime.logger.warning(f'Failed to parse image info JSON for {qci_pullspec}: {e}')
+                        print('  WARNING: Could not parse image info (continuing anyway)')
+                else:
+                    # Image does not exist yet - this is expected during initial migration
+                    print(f'  Image does not exist yet at {qci_pullspec} (first build for this buildconfig)')
+
+            if current_digest:
+                print(f'  Current digest: {current_digest}')
+
+                # Step 2: Mirror current image to GC-prevention tag
+                # CRITICAL: If image exists, this step MUST succeed before proceeding
+                gc_prevention_tag = f'art-builder-{current_digest.replace("sha256:", "")[:16]}'
+                gc_prevention_pullspec = f'quay.io/openshift/ci:{gc_prevention_tag}'
+
+                print(f'Mirroring to GC-prevention tag: {gc_prevention_pullspec}')
+                mirror_cmd = f'oc image mirror {qci_pullspec}@{current_digest} {gc_prevention_pullspec}'
+                if registry_config_file:
+                    mirror_cmd += f' --registry-config={registry_config_file}'
+
+                if dry_run:
+                    print(f'  Would have run: {mirror_cmd}')
+                else:
+                    # Use cmd_assert to fail fast if mirroring fails
+                    exectools.cmd_assert(mirror_cmd, retries=3)
+                    print(f'  Successfully mirrored to {gc_prevention_pullspec}')
+
+                # Step 3: Update imagestream tag to reference QCI by sha256
+                # CRITICAL: If image exists, this step MUST succeed before proceeding
+                if dest_ns and dest_imagestream and dest_tag:
+                    istag_name = f'{dest_imagestream}:{dest_tag}'
+                    print(
+                        f'Updating imagestream tag {dest_ns}/{istag_name} to reference quay-proxy.ci.openshift.org/openshift/ci@{current_digest}'
+                    )
+
+                    # Build imagestream tag patch
+                    # Use quay-proxy for better performance/caching in CI cluster
+                    istag_patch = {
+                        'tag': {
+                            'name': dest_tag,
+                            'from': {
+                                'kind': 'DockerImage',
+                                'name': f'quay-proxy.ci.openshift.org/openshift/ci@{current_digest}',
+                            },
+                            'reference': True,
+                            'referencePolicy': {'type': 'Source'},
+                            'importPolicy': {'importMode': 'PreserveOriginal'},
+                        }
+                    }
+
+                    if dry_run:
+                        print(f'  Would have updated imagestream tag {dest_ns}/{istag_name}')
+                    else:
+                        # First check if tag exists, if so use replace instead of add
+                        get_istag_cmd = f'oc get imagestream {dest_imagestream} -n {dest_ns} -o json'
+                        if as_user:
+                            get_istag_cmd += f' --as {as_user}'
+
+                        istag_stdout, _ = exectools.cmd_assert(get_istag_cmd, retries=3)
+                        imagestream_data = json.loads(istag_stdout)
+                        existing_tags = imagestream_data.get('spec', {}).get('tags', [])
+                        tag_index = next((i for i, t in enumerate(existing_tags) if t.get('name') == dest_tag), None)
+
+                        if tag_index is not None:
+                            # Tag exists, use replace
+                            patch_cmd = f'oc patch imagestream {dest_imagestream} -n {dest_ns} --type=json -p \'[{{"op": "replace", "path": "/spec/tags/{tag_index}", "value": {json.dumps(istag_patch["tag"])}}}]\''
+                        else:
+                            # Tag doesn't exist, use add
+                            patch_cmd = f'oc patch imagestream {dest_imagestream} -n {dest_ns} --type=json -p \'[{{"op": "add", "path": "/spec/tags/-", "value": {json.dumps(istag_patch["tag"])}}}]\''
+
+                        if as_user:
+                            patch_cmd += f' --as {as_user}'
+
+                        # Use cmd_assert to fail fast if imagestream update fails
+                        exectools.cmd_assert(patch_cmd, retries=3)
+                        print('  Successfully updated imagestream tag')
+            else:
+                # No existing QCI image - bootstrap from old imagestream if available
+                print('  QCI floating tag does not exist yet (initial migration)')
+
+                if dest_ns and dest_imagestream and dest_tag:
+                    old_istag_pullspec = f'registry.ci.openshift.org/{dest_ns}/{dest_imagestream}:{dest_tag}'
+                    print(f'  Attempting to bootstrap QCI tag from old imagestream: {old_istag_pullspec}')
+
+                    if dry_run:
+                        print('  DRY RUN: Would bootstrap QCI tag from old imagestream')
+                    else:
+                        # Try to get the old imagestream tag
+                        old_image_info_cmd = f'oc image info {old_istag_pullspec} -o json'
+                        if registry_config_file:
+                            old_image_info_cmd += f' --registry-config={registry_config_file}'
+
+                        rc, old_info_stdout, old_info_stderr = exectools.cmd_gather(old_image_info_cmd)
+                        if rc == 0:
+                            try:
+                                old_image_info = json.loads(old_info_stdout)
+                                bootstrap_digest = old_image_info.get('digest', '')
+                                if bootstrap_digest:
+                                    print(f'  Found old imagestream with digest: {bootstrap_digest}')
+
+                                    # Bootstrap the QCI floating tag from the old imagestream
+                                    print(f'  Bootstrapping QCI tag: {qci_pullspec}')
+                                    bootstrap_mirror_cmd = (
+                                        f'oc image mirror {old_istag_pullspec}@{bootstrap_digest} {qci_pullspec}'
+                                    )
+                                    if registry_config_file:
+                                        bootstrap_mirror_cmd += f' --registry-config={registry_config_file}'
+
+                                    # CRITICAL: Bootstrap must succeed to have a starting point
+                                    exectools.cmd_assert(bootstrap_mirror_cmd, retries=3)
+                                    print(f'  Successfully bootstrapped {qci_pullspec}')
+
+                                    # Also create GC-prevention tag for the bootstrapped image
+                                    bootstrap_gc_tag = f'art-builder-{bootstrap_digest.replace("sha256:", "")[:16]}'
+                                    bootstrap_gc_pullspec = f'quay.io/openshift/ci:{bootstrap_gc_tag}'
+                                    print(f'  Creating GC-prevention tag: {bootstrap_gc_pullspec}')
+                                    gc_mirror_cmd = (
+                                        f'oc image mirror {qci_pullspec}@{bootstrap_digest} {bootstrap_gc_pullspec}'
+                                    )
+                                    if registry_config_file:
+                                        gc_mirror_cmd += f' --registry-config={registry_config_file}'
+                                    exectools.cmd_assert(gc_mirror_cmd, retries=3)
+                                    print('  Successfully created GC-prevention tag')
+
+                                    # Update imagestream to reference the bootstrapped QCI image
+                                    istag_name = f'{dest_imagestream}:{dest_tag}'
+                                    print(
+                                        f'  Updating imagestream tag {dest_ns}/{istag_name} to reference quay-proxy.ci.openshift.org/openshift/ci@{bootstrap_digest}'
+                                    )
+
+                                    istag_patch = {
+                                        'tag': {
+                                            'name': dest_tag,
+                                            'from': {
+                                                'kind': 'DockerImage',
+                                                'name': f'quay-proxy.ci.openshift.org/openshift/ci@{bootstrap_digest}',
+                                            },
+                                            'reference': True,
+                                            'referencePolicy': {'type': 'Source'},
+                                            'importPolicy': {'importMode': 'PreserveOriginal'},
+                                        }
+                                    }
+
+                                    # Check if tag exists, use replace or add
+                                    get_istag_cmd = f'oc get imagestream {dest_imagestream} -n {dest_ns} -o json'
+                                    if as_user:
+                                        get_istag_cmd += f' --as {as_user}'
+
+                                    istag_stdout, _ = exectools.cmd_assert(get_istag_cmd, retries=3)
+                                    imagestream_data = json.loads(istag_stdout)
+                                    existing_tags = imagestream_data.get('spec', {}).get('tags', [])
+                                    tag_index = next(
+                                        (i for i, t in enumerate(existing_tags) if t.get('name') == dest_tag), None
+                                    )
+
+                                    if tag_index is not None:
+                                        patch_cmd = f'oc patch imagestream {dest_imagestream} -n {dest_ns} --type=json -p \'[{{"op": "replace", "path": "/spec/tags/{tag_index}", "value": {json.dumps(istag_patch["tag"])}}}]\''
+                                    else:
+                                        patch_cmd = f'oc patch imagestream {dest_imagestream} -n {dest_ns} --type=json -p \'[{{"op": "add", "path": "/spec/tags/-", "value": {json.dumps(istag_patch["tag"])}}}]\''
+
+                                    if as_user:
+                                        patch_cmd += f' --as {as_user}'
+
+                                    exectools.cmd_assert(patch_cmd, retries=3)
+                                    print('  Successfully updated imagestream tag to bootstrapped QCI image')
+                                else:
+                                    runtime.logger.warning(f'No digest found in old imagestream {old_istag_pullspec}')
+                                    print('  WARNING: Could not extract digest from old imagestream')
+                                    print(f'  The buildconfig will create the initial image at {qci_pullspec}')
+                            except json.JSONDecodeError as e:
+                                runtime.logger.warning(f'Failed to parse old imagestream info: {e}')
+                                print('  WARNING: Could not parse old imagestream info')
+                                print(f'  The buildconfig will create the initial image at {qci_pullspec}')
+                        else:
+                            # Old imagestream doesn't exist either - truly initial setup
+                            print(f'  Old imagestream tag does not exist at {old_istag_pullspec}')
+                            print(f'  The buildconfig will create the initial image at {qci_pullspec}')
+                else:
+                    print(f'  The buildconfig will create the initial image at {qci_pullspec}')
+
+        # Finally, trigger the build
+        # NOTE: We only reach here if:
+        # 1. No image existed (initial migration), OR
+        # 2. Image existed AND mirroring AND imagestream update both succeeded
+        print(f'Triggering build: {bc_name}')
+        cmd = f'oc -n ci start-build {bc_name}'
+        if as_user:
+            cmd += f' --as {as_user}'
+        if dry_run:
+            print(f'Would have run: {cmd}')
+            triggered_builds.append((bc_name, qci_pullspec, dest_ns, dest_imagestream, dest_tag))
+        else:
             stdout, stderr = exectools.cmd_assert(cmd, retries=3)
             print('   ' + stdout or stderr)
-    else:
-        print(f'No buildconfigs associated with this group: {group_label}')
+            # Track build for post-build preservation
+            triggered_builds.append((bc_name, qci_pullspec, dest_ns, dest_imagestream, dest_tag))
+
+    # Post-build preservation: wait for builds and preserve newly built images
+    if triggered_builds and not dry_run:
+        print('\n=== Post-Build Preservation ===')
+        print(f'Waiting for {len(triggered_builds)} builds to complete...')
+
+        for bc_name, qci_pullspec, dest_ns, dest_imagestream, dest_tag in triggered_builds:
+            print(f'\nWaiting for build: {bc_name}')
+
+            # Wait for the build to complete
+            wait_cmd = f'oc -n ci wait --for=condition=Complete --timeout=3600s build -l buildconfig={bc_name} --sort-by={{.metadata.creationTimestamp}} | tail -1'
+            if as_user:
+                wait_cmd = f'oc -n ci wait --for=condition=Complete --timeout=3600s build -l buildconfig={bc_name} --sort-by={{.metadata.creationTimestamp}} --as {as_user} | tail -1'
+
+            try:
+                exectools.cmd_assert(wait_cmd, retries=1)
+                print(f'  Build {bc_name} completed successfully')
+
+                # Now preserve the newly built image
+                print(f'  Preserving newly built image at {qci_pullspec}')
+
+                # Get the new digest
+                image_info_cmd = f'oc image info {qci_pullspec} -o json'
+                if registry_config_file:
+                    image_info_cmd += f' --registry-config={registry_config_file}'
+
+                rc, info_stdout, info_stderr = exectools.cmd_gather(image_info_cmd)
+                if rc == 0:
+                    try:
+                        image_info = json.loads(info_stdout)
+                        new_digest = image_info.get('digest', '')
+
+                        if new_digest:
+                            # Mirror to GC-prevention tag
+                            gc_prevention_tag = (
+                                f'art-builder-{new_digest[7:23]}'  # sha256:abc... -> abc (first 16 chars)
+                            )
+                            gc_prevention_pullspec = f'quay.io/openshift/ci:{gc_prevention_tag}'
+
+                            print(f'  Mirroring to GC-prevention tag: {gc_prevention_pullspec}')
+                            mirror_cmd = f'oc image mirror {qci_pullspec}@{new_digest} {gc_prevention_pullspec}'
+                            if registry_config_file:
+                                mirror_cmd += f' --registry-config={registry_config_file}'
+
+                            exectools.cmd_assert(mirror_cmd, retries=3)
+                            print(f'  Successfully mirrored to {gc_prevention_pullspec}')
+
+                            # Update imagestream to reference the new image
+                            if dest_ns and dest_imagestream and dest_tag:
+                                istag_name = f'{dest_imagestream}:{dest_tag}'
+                                print(f'  Updating imagestream tag {dest_ns}/{istag_name} to reference new build')
+
+                                istag_patch = {
+                                    'tag': {
+                                        'name': dest_tag,
+                                        'from': {
+                                            'kind': 'DockerImage',
+                                            'name': f'quay-proxy.ci.openshift.org/openshift/ci@{new_digest}',
+                                        },
+                                        'reference': True,
+                                        'referencePolicy': {'type': 'Source'},
+                                        'importPolicy': {'importMode': 'PreserveOriginal'},
+                                    }
+                                }
+
+                                # Get current imagestream to find tag index
+                                get_istag_cmd = f'oc get imagestream {dest_imagestream} -n {dest_ns} -o json'
+                                if as_user:
+                                    get_istag_cmd += f' --as {as_user}'
+
+                                istag_stdout, _ = exectools.cmd_assert(get_istag_cmd, retries=3)
+                                imagestream_data = json.loads(istag_stdout)
+                                existing_tags = imagestream_data.get('spec', {}).get('tags', [])
+                                tag_index = next(
+                                    (i for i, t in enumerate(existing_tags) if t.get('name') == dest_tag), None
+                                )
+
+                                if tag_index is not None:
+                                    patch_cmd = f'oc patch imagestream {dest_imagestream} -n {dest_ns} --type=json -p \'[{{"op": "replace", "path": "/spec/tags/{tag_index}", "value": {json.dumps(istag_patch["tag"])}}}]\''
+                                else:
+                                    patch_cmd = f'oc patch imagestream {dest_imagestream} -n {dest_ns} --type=json -p \'[{{"op": "add", "path": "/spec/tags/-", "value": {json.dumps(istag_patch["tag"])}}}]\''
+
+                                if as_user:
+                                    patch_cmd += f' --as {as_user}'
+
+                                exectools.cmd_assert(patch_cmd, retries=3)
+                                print('  Successfully updated imagestream tag')
+                        else:
+                            runtime.logger.warning(f'No digest found for {qci_pullspec}')
+                    except json.JSONDecodeError as e:
+                        runtime.logger.warning(f'Failed to parse image info for {qci_pullspec}: {e}')
+                else:
+                    runtime.logger.warning(f'Failed to get image info for {qci_pullspec}: {info_stderr}')
+
+            except Exception as e:
+                runtime.logger.error(f'Failed to wait for or preserve build {bc_name}: {e}')
+                # Continue with other builds even if one fails
+                continue
+
+        print('\n=== Post-Build Preservation Complete ===')
 
 
 def _get_upstreaming_entries(runtime, stream_names=None):
@@ -452,7 +1024,12 @@ def _get_upstreaming_entries(runtime, stream_names=None):
                 )  # Make a copy
 
                 # Use pull_url() which handles both Brew and Konflux build systems
-                upstream_entry['image'] = image_meta.pull_url()
+                try:
+                    upstream_entry['image'] = image_meta.pull_url()
+                except IOError as e:
+                    # Skip images that don't have builds yet (e.g., new images in Konflux)
+                    runtime.logger.warning(f'Skipping {image_meta.distgit_key} for CI alignment: {e}')
+                    continue
 
                 if upstream_entry.final_user is Missing:
                     upstream_entry.final_user = image_meta.config.final_stage_user
@@ -660,6 +1237,11 @@ def images_streams_gen_buildconfigs(runtime, streams, output, as_user, apply, li
         # We've arrived at a Dockerfile.
         dockerfile_content = dfp.content
 
+        # Construct QCI destination tag: quay.io/openshift/ci:art-builder-{MAJOR}.{MINOR}-{tag}
+        # Example: quay.io/openshift/ci:art-builder-4.19-base-rhel9
+        qci_tag = f'art-builder-{major}.{minor}-{dest_tag}'
+        qci_destination = f'quay.io/openshift/ci:{qci_tag}'
+
         # Now to create a buildconfig for it.
         buildconfig = {
             'apiVersion': 'build.openshift.io/v1',
@@ -670,18 +1252,24 @@ def images_streams_gen_buildconfigs(runtime, streams, output, as_user, apply, li
                 'labels': {
                     'art-builder-group': group_label,
                     'art-builder-stream': upstream_entry_name,
+                    'art-builder-qci-tag': qci_tag,  # Store QCI tag for use by start-builds
                 },
                 'annotations': {
                     'description': 'Generated by the ART pipeline by doozer. Processes raw ART images into ART equivalent images for CI.',
+                    'art-builder-imagestream-namespace': dest_ns,  # Store for imagestream updates
+                    'art-builder-imagestream-name': dest_imagestream,  # Store for imagestream updates
+                    'art-builder-imagestream-tag': dest_tag,  # Store for imagestream updates
                 },
             },
             'spec': {
                 'failedBuildsHistoryLimit': 2,
                 'output': {
                     'to': {
-                        'kind': 'ImageStreamTag',
-                        'namespace': dest_ns,
-                        'name': dest_istag,
+                        'kind': 'DockerImage',
+                        'name': qci_destination,
+                    },
+                    'pushSecret': {
+                        'name': 'registry-push-credentials-quay-qci-art-builder',
                     },
                 },
                 'source': {
@@ -699,12 +1287,6 @@ def images_streams_gen_buildconfigs(runtime, streams, output, as_user, apply, li
                     },
                 },
                 'successfulBuildsHistoryLimit': 2,
-                'triggers': [
-                    {
-                        'imageChange': {},
-                        'type': 'ImageChange',
-                    }
-                ],
             },
         }
 

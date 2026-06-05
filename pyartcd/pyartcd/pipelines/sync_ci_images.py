@@ -535,11 +535,14 @@ class SyncCIImagesPipeline:
             mirror_args += "--dry-run"
         await self._run_doozer_command(doozer_opts, "images:streams mirror", mirror_args.strip())
 
-    async def _trigger_ci_builds(self, doozer_opts: str) -> None:
+    async def _trigger_ci_builds(self, doozer_opts: str, auth_file: str) -> None:
         """Start CI builds for updated images."""
         self._logger.info(f"{self.version}: Starting builds")
-        start_builds_args = "--dry-run" if self.runtime.dry_run else ""
-        await self._run_doozer_command(doozer_opts, "images:streams start-builds", start_builds_args)
+        # Pass --registry-auth for image info and mirror operations in pre-build steps
+        start_builds_args = f"--registry-auth {auth_file} "
+        if self.runtime.dry_run:
+            start_builds_args += "--dry-run"
+        await self._run_doozer_command(doozer_opts, "images:streams start-builds", start_builds_args.strip())
 
     async def _wait_for_builds(self) -> None:
         """Wait for CI builds to complete."""
@@ -547,10 +550,10 @@ class SyncCIImagesPipeline:
             self._logger.info(f"{self.version}: Waiting {self.WAIT_TIME_MINUTES} minutes for builds")
             await asyncio.sleep(self.WAIT_TIME_MINUTES * 60)
 
-    async def _verify_upstream_consistency(self, doozer_opts: str) -> None:
+    async def _verify_upstream_consistency(self, doozer_opts: str, auth_file: str) -> None:
         """Verify CI imagestreams match expected state."""
         self._logger.info(f"{self.version}: Checking upstream consistency")
-        await self._run_doozer_command(doozer_opts, "images:streams check-upstream", "")
+        await self._run_doozer_command(doozer_opts, "images:streams check-upstream", f"--registry-auth {auth_file}")
 
     async def _open_reconciliation_prs(self, doozer_opts: str) -> int:
         """Open PRs to reconcile BuildConfig drift."""
@@ -643,9 +646,9 @@ class SyncCIImagesPipeline:
 
                 await self._generate_and_apply_buildconfigs(doozer_opts)
                 await self._mirror_images_to_ci(doozer_opts, auth_file)
-                await self._trigger_ci_builds(doozer_opts)
+                await self._trigger_ci_builds(doozer_opts, auth_file)
                 await self._wait_for_builds()
-                await self._verify_upstream_consistency(doozer_opts)
+                await self._verify_upstream_consistency(doozer_opts, auth_file)
 
                 rc = await self._open_reconciliation_prs(doozer_opts)
                 if rc == 25:
