@@ -991,7 +991,6 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(result)
         mock_snap.assert_awaited_once()
 
-
     async def test_build_parent_failure_captures_message_in_record(self):
         """When parent images fail, the record message should capture the actual error, not 'Unknown failure'."""
         metadata = self._metadata()
@@ -1018,7 +1017,9 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
             ),
             patch.object(self.builder, "_parse_dockerfile", return_value=("test-uuid", "test-component", "1.0", "1")),
             patch.object(
-                self.builder, "_wait_for_parent_members", new=AsyncMock(return_value=[failed_parent]),
+                self.builder,
+                "_wait_for_parent_members",
+                new=AsyncMock(return_value=[failed_parent]),
             ),
         ):
             with self.assertRaises(IOError) as ctx:
@@ -1053,7 +1054,8 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
                 new=AsyncMock(return_value=build_repo),
             ),
             patch.object(
-                self.builder, "_parse_dockerfile",
+                self.builder,
+                "_parse_dockerfile",
                 side_effect=ValueError("Target NVR 1.0-1 is not greater than the latest"),
             ),
         ):
