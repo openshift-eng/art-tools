@@ -217,7 +217,12 @@ class GenAssemblyLPPipeline:
         return operand_map
 
     async def _resolve_parent_operands(self) -> Dict[str, str]:
-        """Resolve the full operand set from the parent (basis) assembly."""
+        """Resolve the full operand set from the parent (basis) assembly.
+
+        NOTE: Only resolves one level of inheritance. Multi-level chains
+        (A->B->C) are not supported; the basis assembly must list all
+        operands explicitly.
+        """
         self._logger.info("Resolving operand set from basis assembly '%s'...", self.basis_assembly)
 
         build_data_path = self._working_dir / "ocp-build-data-read"

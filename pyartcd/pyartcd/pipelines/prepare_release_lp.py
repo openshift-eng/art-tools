@@ -222,6 +222,11 @@ class PrepareReleaseLPPipeline:
         """Extract pinned operand NVRs from the assembly definition.
 
         Walks the members.images list and collects NVRs from is.nvr or is.nvr! entries.
+
+        NOTE: For inherited (delta) assemblies, only NVRs explicitly listed
+        in this assembly's members.images are returned. Parent chain
+        resolution is not performed -- doozer/elliott commands handle
+        inheritance internally via --assembly.
         """
         members_images = assembly_config.get('assembly', {}).get('members', {}).get('images', [])
         nvrs = []
