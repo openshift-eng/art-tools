@@ -474,7 +474,9 @@ class TestSeedLockfilePipeline(unittest.IsolatedAsyncioTestCase):
     @patch('pyartcd.pipelines.seed_lockfile.jenkins.update_title')
     @patch('pyartcd.pipelines.seed_lockfile.jenkins.update_description')
     @patch('pyartcd.pipelines.seed_lockfile.exectools.cmd_assert_async', new_callable=AsyncMock)
-    async def test_failed_stream_build_does_not_reset_counter(self, mock_cmd, _desc, _title, _init, mock_reset, mock_inc):
+    async def test_failed_stream_build_does_not_reset_counter(
+        self, mock_cmd, _desc, _title, _init, mock_reset, mock_inc
+    ):
         """When stream build fails, no counters are reset but failure counter is incremented."""
         pipeline = self._create_pipeline(
             seed_nvrs='ironic@ironic-container-v4.22.0-assembly.test',
@@ -572,7 +574,9 @@ class TestSeedLockfilePipeline(unittest.IsolatedAsyncioTestCase):
     @patch('pyartcd.pipelines.seed_lockfile.jenkins.update_title')
     @patch('pyartcd.pipelines.seed_lockfile.jenkins.update_description')
     @patch('pyartcd.pipelines.seed_lockfile.exectools.cmd_assert_async', new_callable=AsyncMock)
-    async def test_stream_build_failure_increments_build_counter(self, mock_cmd, _desc, _title, _init, mock_reset, mock_inc):
+    async def test_stream_build_failure_increments_build_counter(
+        self, mock_cmd, _desc, _title, _init, mock_reset, mock_inc
+    ):
         """When stream build fails with build_error outcome, build-failure counter is incremented."""
         pipeline = self._create_pipeline(
             seed_nvrs='ironic@ironic-container-v4.22.0-assembly.test',
@@ -581,8 +585,13 @@ class TestSeedLockfilePipeline(unittest.IsolatedAsyncioTestCase):
 
         def populate_stream_results():
             pipeline.stream_results = {
-                'ironic': {'name': 'ironic', 'status': '-1', 'nvrs': 'n/a', 'outcome': 'build_error',
-                           'build_pipeline_url': 'https://example.com/plr/1'},
+                'ironic': {
+                    'name': 'ironic',
+                    'status': '-1',
+                    'nvrs': 'n/a',
+                    'outcome': 'build_error',
+                    'build_pipeline_url': 'https://example.com/plr/1',
+                },
             }
 
         with patch.object(pipeline, '_extract_stream_results_from_record_log', side_effect=populate_stream_results):
@@ -608,8 +617,13 @@ class TestSeedLockfilePipeline(unittest.IsolatedAsyncioTestCase):
 
         def populate_stream_results():
             pipeline.stream_results = {
-                'ironic': {'name': 'ironic', 'status': '-1', 'nvrs': 'ironic-nvr', 'outcome': 'its_error',
-                           'ec_pipeline_url': 'https://example.com/plr/2'},
+                'ironic': {
+                    'name': 'ironic',
+                    'status': '-1',
+                    'nvrs': 'ironic-nvr',
+                    'outcome': 'its_error',
+                    'ec_pipeline_url': 'https://example.com/plr/2',
+                },
             }
 
         with patch.object(pipeline, '_extract_stream_results_from_record_log', side_effect=populate_stream_results):
@@ -625,7 +639,9 @@ class TestSeedLockfilePipeline(unittest.IsolatedAsyncioTestCase):
     @patch('pyartcd.pipelines.seed_lockfile.jenkins.update_title')
     @patch('pyartcd.pipelines.seed_lockfile.jenkins.update_description')
     @patch('pyartcd.pipelines.seed_lockfile.exectools.cmd_assert_async', new_callable=AsyncMock)
-    async def test_stream_release_failure_increments_release_counter(self, mock_cmd, _desc, _title, _init, mock_reset, mock_inc):
+    async def test_stream_release_failure_increments_release_counter(
+        self, mock_cmd, _desc, _title, _init, mock_reset, mock_inc
+    ):
         """When stream build fails with release_error outcome, release-failure counter is incremented."""
         pipeline = self._create_pipeline(
             seed_nvrs='ironic@ironic-container-v4.22.0-assembly.test',
@@ -634,8 +650,13 @@ class TestSeedLockfilePipeline(unittest.IsolatedAsyncioTestCase):
 
         def populate_stream_results():
             pipeline.stream_results = {
-                'ironic': {'name': 'ironic', 'status': '-1', 'nvrs': 'ironic-nvr', 'outcome': 'release_error',
-                           'release_pipeline': 'https://example.com/plr/3'},
+                'ironic': {
+                    'name': 'ironic',
+                    'status': '-1',
+                    'nvrs': 'ironic-nvr',
+                    'outcome': 'release_error',
+                    'release_pipeline': 'https://example.com/plr/3',
+                },
             }
 
         with patch.object(pipeline, '_extract_stream_results_from_record_log', side_effect=populate_stream_results):

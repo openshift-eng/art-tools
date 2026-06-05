@@ -294,7 +294,9 @@ class SeedLockfilePipeline:
         # Increment counters for each failure type
         LOGGER.info(
             'Incrementing fail counters: build=%s, ec=%s, release=%s',
-            build_failed, ec_failed, release_failed,
+            build_failed,
+            ec_failed,
+            release_failed,
         )
         increment_tasks = []
         for image in build_failed:
