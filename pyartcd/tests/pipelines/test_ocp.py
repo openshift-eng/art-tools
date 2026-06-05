@@ -1256,3 +1256,116 @@ class TestKonfluxOcpPipelineBuildFailCounters(unittest.IsolatedAsyncioTestCase):
         await pipeline.update_build_fail_counters([], ['ironic'], record_log)
         mock_reset.assert_not_called()
         mock_incr.assert_not_called()
+
+    @patch('pyartcd.pipelines.ocp4_konflux.increment_fail_counter', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.ocp4_konflux.reset_fail_counter', new_callable=AsyncMock)
+    async def test_build_fail_counters_exclude_parent_failures(self, mock_reset, mock_incr):
+        """Images that failed because their parent images failed should not increment counters."""
+        pipeline = self._make_pipeline()
+        record_log = {
+            'image_build_konflux': [
+                {
+                    'name': 'ose-baremetal-installer',
+                    'status': '-1',
+                    'nvrs': 'n/a',
+                    'outcome': '',
+                    'ec_pipeline_url': '',
+                    'build_pipeline_url': '',
+                    'release_pipeline': '',
+                    'base_image_release_failed': 'false',
+                    'task_id': 'n/a',
+                    'message': "Couldn't build ose-baremetal-installer because the following parent images failed to build: ose-etcd, openshift-enterprise-hyperkube",
+                },
+            ]
+        }
+        await pipeline.update_build_fail_counters([], ['ose-baremetal-installer'], record_log)
+        mock_incr.assert_not_called()
+
+    @patch('pyartcd.pipelines.ocp4_konflux.increment_fail_counter', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.ocp4_konflux.reset_fail_counter', new_callable=AsyncMock)
+    async def test_build_fail_counters_mixed_real_and_parent_failures(self, mock_reset, mock_incr):
+        """Real failures should be counted, parent-failure children should not."""
+        pipeline = self._make_pipeline()
+        record_log = {
+            'image_build_konflux': [
+                {
+                    'name': 'openshift-enterprise-base-rhel9',
+                    'status': '-1',
+                    'nvrs': 'base-rhel9-1.0-1',
+                    'outcome': 'failure',
+                    'ec_pipeline_url': '',
+                    'build_pipeline_url': 'http://build/plr/base',
+                    'release_pipeline': '',
+                    'base_image_release_failed': 'false',
+                    'message': 'Build timed out',
+                },
+                {
+                    'name': 'ose-baremetal-installer',
+                    'status': '-1',
+                    'nvrs': 'n/a',
+                    'outcome': '',
+                    'ec_pipeline_url': '',
+                    'build_pipeline_url': '',
+                    'release_pipeline': '',
+                    'base_image_release_failed': 'false',
+                    'task_id': 'n/a',
+                    'message': "Couldn't build ose-baremetal-installer because the following parent images failed to build: openshift-enterprise-base-rhel9",
+                },
+                {
+                    'name': 'ose-network-tools',
+                    'status': '-1',
+                    'nvrs': 'n/a',
+                    'outcome': '',
+                    'ec_pipeline_url': '',
+                    'build_pipeline_url': '',
+                    'release_pipeline': '',
+                    'base_image_release_failed': 'false',
+                    'task_id': 'n/a',
+                    'message': "Couldn't build ose-network-tools because the following parent images failed to build: openshift-enterprise-base-rhel9",
+                },
+            ]
+        }
+        await pipeline.update_build_fail_counters(
+            [],
+            ['openshift-enterprise-base-rhel9', 'ose-baremetal-installer', 'ose-network-tools'],
+            record_log,
+        )
+        # Only the real failure (base-rhel9) should increment
+        incr_keys = [c.args[0] for c in mock_incr.call_args_list]
+        self.assertEqual(len(incr_keys), 1)
+        self.assertIn('openshift-enterprise-base-rhel9', incr_keys[0])
+        self.assertIn('build-failure', incr_keys[0])
+
+    @patch('pyartcd.pipelines.ocp4_konflux.increment_fail_counter', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.ocp4_konflux.reset_fail_counter', new_callable=AsyncMock)
+    async def test_build_fail_counters_all_parent_failures_no_increments(self, mock_reset, mock_incr):
+        """When all failures are parent-caused, no counters should be incremented."""
+        pipeline = self._make_pipeline()
+        record_log = {
+            'image_build_konflux': [
+                {
+                    'name': 'child-a',
+                    'status': '-1',
+                    'nvrs': 'n/a',
+                    'outcome': '',
+                    'ec_pipeline_url': '',
+                    'build_pipeline_url': '',
+                    'release_pipeline': '',
+                    'base_image_release_failed': 'false',
+                    'message': "Couldn't build child-a because the following parent images failed to build: parent-x",
+                },
+                {
+                    'name': 'child-b',
+                    'status': '-1',
+                    'nvrs': 'n/a',
+                    'outcome': '',
+                    'ec_pipeline_url': '',
+                    'build_pipeline_url': '',
+                    'release_pipeline': '',
+                    'base_image_release_failed': 'false',
+                    'message': "Couldn't build child-b because the following parent images failed to build: parent-x, parent-y",
+                },
+            ]
+        }
+        await pipeline.update_build_fail_counters([], ['child-a', 'child-b'], record_log)
+        mock_incr.assert_not_called()

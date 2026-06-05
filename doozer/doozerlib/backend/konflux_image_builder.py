@@ -434,6 +434,16 @@ class KonfluxImageBuilder:
                 record["message"] = str(error)
                 raise error
 
+        except Exception as exc:
+            # Capture the actual error message for any exception that bypasses
+            # the build loop's error handling (e.g., parent build failures,
+            # NVR validation errors). Without this, record["message"] would
+            # remain "Unknown failure" and downstream counter logic couldn't
+            # distinguish failure types.
+            if record["message"] == "Unknown failure":
+                record["message"] = str(exc)
+            raise
+
         finally:
             if self._record_logger:
                 if 'okd' in self._config.group_name:

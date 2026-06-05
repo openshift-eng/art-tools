@@ -992,6 +992,81 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         mock_snap.assert_awaited_once()
 
 
+    async def test_build_parent_failure_captures_message_in_record(self):
+        """When parent images fail, the record message should capture the actual error, not 'Unknown failure'."""
+        metadata = self._metadata()
+        dest_dir = self.builder._config.base_dir.joinpath(metadata.qualified_key)
+        dest_dir.mkdir(parents=True)
+
+        build_repo = MagicMock()
+        build_repo.local_dir = dest_dir
+        build_repo.url = "https://github.com/test/repo.git"
+        build_repo.commit_hash = "test-commit"
+
+        # Simulate a parent member that failed to build
+        failed_parent = MagicMock()
+        failed_parent.distgit_key = "openshift-enterprise-base-rhel9"
+        failed_parent.build_status = False
+
+        record_logger = MagicMock()
+        self.builder._record_logger = record_logger
+
+        with (
+            patch(
+                "doozerlib.backend.konflux_image_builder.BuildRepo.from_local_dir",
+                new=AsyncMock(return_value=build_repo),
+            ),
+            patch.object(self.builder, "_parse_dockerfile", return_value=("test-uuid", "test-component", "1.0", "1")),
+            patch.object(
+                self.builder, "_wait_for_parent_members", new=AsyncMock(return_value=[failed_parent]),
+            ),
+        ):
+            with self.assertRaises(IOError) as ctx:
+                await self.builder.build(metadata)
+
+        # Verify the error message mentions the parent failure
+        self.assertIn("parent images failed to build", str(ctx.exception))
+        self.assertIn("openshift-enterprise-base-rhel9", str(ctx.exception))
+
+        # Verify the record message was captured (not left as "Unknown failure")
+        add_record_call = record_logger.add_record
+        add_record_call.assert_called_once()
+        _, kwargs = add_record_call.call_args
+        self.assertIn("parent images failed to build", kwargs["message"])
+        self.assertNotEqual(kwargs["message"], "Unknown failure")
+
+    async def test_build_unknown_exception_captures_message_in_record(self):
+        """Any exception before the build loop should capture its message in the record."""
+        metadata = self._metadata()
+        dest_dir = self.builder._config.base_dir.joinpath(metadata.qualified_key)
+        dest_dir.mkdir(parents=True)
+
+        build_repo = MagicMock()
+        build_repo.local_dir = dest_dir
+
+        record_logger = MagicMock()
+        self.builder._record_logger = record_logger
+
+        with (
+            patch(
+                "doozerlib.backend.konflux_image_builder.BuildRepo.from_local_dir",
+                new=AsyncMock(return_value=build_repo),
+            ),
+            patch.object(
+                self.builder, "_parse_dockerfile",
+                side_effect=ValueError("Target NVR 1.0-1 is not greater than the latest"),
+            ),
+        ):
+            with self.assertRaises(ValueError):
+                await self.builder.build(metadata)
+
+        add_record_call = record_logger.add_record
+        add_record_call.assert_called_once()
+        _, kwargs = add_record_call.call_args
+        self.assertIn("Target NVR", kwargs["message"])
+        self.assertNotEqual(kwargs["message"], "Unknown failure")
+
+
 class TestNormalizeVersion(unittest.TestCase):
     """
     Tests for _normalize_version.

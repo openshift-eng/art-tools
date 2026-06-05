@@ -257,11 +257,23 @@ class KonfluxOcpPipeline:
             entry['name']: entry for entry in record_log.get('image_build_konflux', []) if int(entry['status'])
         }
 
+        # Exclude images that failed only because their parent images failed to build.
+        # These children were never actually attempted, so incrementing their counters
+        # would be misleading.
+        real_failed_images = []
+        for image in failed_images:
+            entry = failed_entries.get(image, {})
+            message = entry.get('message', '')
+            if 'parent images failed to build' in message:
+                LOGGER.info(f'Excluding {image} from counter updates (parent build failure, not a real build issue)')
+            else:
+                real_failed_images.append(image)
+
         # Categorize failures by type (prefer granular outcome; fall back to legacy record flags)
         ec_failed_images = []
         release_failed_images = []
         build_failed_images = []
-        for image in failed_images:
+        for image in real_failed_images:
             entry = failed_entries.get(image, {})
             outcome = entry.get('outcome', '')
             if outcome == str(KonfluxBuildOutcome.ITS_ERROR):
