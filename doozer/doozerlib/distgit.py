@@ -29,7 +29,7 @@ from artcommonlib.build_visibility import (
     is_release_embargoed,
     isolate_pflag_in_release,
 )
-from artcommonlib.constants import GIT_NO_PROMPTS
+from artcommonlib.constants import GIT_NO_PROMPTS, GOLANG_NVR_ENV, GOLANG_NVR_LABEL
 from artcommonlib.format_util import yellow_print
 from artcommonlib.git_helper import gather_git, git_clone
 from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
@@ -2248,6 +2248,11 @@ class ImageDistGitRepo(DistGitRepo):
             if self.config.envs:
                 # Allow environment variables to be specified in the ART image metadata
                 metadata_envs.update(self.config.envs.primitive())
+
+            if extra_labels:
+                golang_nvr = extra_labels.get(GOLANG_NVR_LABEL)
+                if golang_nvr:
+                    metadata_envs[GOLANG_NVR_ENV] = golang_nvr
 
             if self.runtime.group_config.build_profiles.enable_go_cover is True:
                 # This must be implemented by the ART golang wrappers

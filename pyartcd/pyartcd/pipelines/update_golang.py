@@ -12,6 +12,7 @@ from artcommonlib.brew import BuildStates
 from artcommonlib.constants import (
     BREW_HUB,
     GOLANG_BUILDER_IMAGE_NAME,
+    GOLANG_NVR_LABEL,
     KONFLUX_DEFAULT_IMAGE_REPO,
     PRODUCT_NAMESPACE_MAP,
     REGISTRY_REDHAT_IO,
@@ -827,7 +828,7 @@ class UpdateGolangPipeline:
                 "--release",
                 release,
                 "--extra-label",
-                f"io.openshift.build.golang-nvr={go_nvr}",
+                f"{GOLANG_NVR_LABEL}={go_nvr}",
                 "--message",
                 f"bumping to {version}-{release}",
             ]
@@ -895,7 +896,7 @@ class UpdateGolangPipeline:
                 "--release",
                 release,
                 "--extra-label",
-                f"io.openshift.build.golang-nvr={go_nvr}",
+                f"{GOLANG_NVR_LABEL}={go_nvr}",
                 "--message",
                 f"bumping to {version}-{release}",
             ]
