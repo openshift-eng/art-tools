@@ -306,6 +306,14 @@ def images_streams_check_upstream(runtime, streams, live_test_mode):
 
     for upstream_entry_name, config in upstreaming_entries.items():
         upstream_dest = config.upstream_image
+        openshift_imagestream_prefixes = (
+            'registry.ci.openshift.org/',
+            'registry.svc.ci.openshift.org/',
+        )
+        if not upstream_dest.startswith(openshift_imagestream_prefixes):
+            istags_status.append(f'SKIP: {upstream_entry_name}\nNot an OpenShift imagestream target: {upstream_dest}')
+            continue
+
         _, dest_ns, dest_istag = upstream_dest.rsplit('/', maxsplit=2)
 
         if live_test_mode:

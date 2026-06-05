@@ -398,6 +398,7 @@ class ImageMetadata(Metadata):
             build = asyncio.run(get_latest_konflux_build())
             if not build:
                 raise IOError(f'No Konflux build found for {self.distgit_key} in group {self.runtime.group}')
+            self.logger.info('Selected Konflux build %s', build.nvr)
             return build.image_pullspec
         else:
             # Brew build system (existing behavior)
