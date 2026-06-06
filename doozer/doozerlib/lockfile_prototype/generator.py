@@ -398,7 +398,7 @@ class RpmLockfilePrototypeGenerator:
         Resolve RPM packages for each Dockerfile stage.
         """
         stage_lockfiles: list[LockfileData] = []
-        last_stage_num = stages[-1][0]
+        final_stage_num = len(analysis.stages) - 1
 
         for stage_num, packages in stages:
             image_pullspec = await self._determine_stage_pullspec(stage_num, distgit_key)
@@ -424,7 +424,7 @@ class RpmLockfilePrototypeGenerator:
                 )
 
             reinstall_pkgs: list[str] | None = None
-            if stage_num == last_stage_num:
+            if stage_num == final_stage_num:
                 if image_pullspec:
                     # --image mode: pass base image packages as reinstallPackages
                     # so they appear in the lockfile at repo versions. base.reinstall()
