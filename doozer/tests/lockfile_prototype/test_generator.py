@@ -288,6 +288,47 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
         self.assertEqual(captured_pullspecs[0], "quay.io/test/builder@sha256:abc123")
         self.assertIsNone(captured_pullspecs[1])
 
+    def test_builder_stage_skips_reinstall_when_final_stage_has_no_installs(self):
+        """
+        Multi-stage Dockerfile where only the builder stage installs
+        packages (e.g. thanos). reinstallPackages should NOT be added
+        to the builder stage — only the actual final Dockerfile stage
+        should get reinstallPackages.
+        """
+        meta = self._make_mock_image_meta()
+        meta.config.konflux.cachi2.lockfile.get.return_value = None
+        generator = self._make_generator()
+        generator.downstream_parents = [
+            "quay.io/test/golang-builder@sha256:abc123",
+            "quay.io/test/base@sha256:def456",
+        ]
+        generator._container.get_installed_packages = AsyncMock(return_value=["bash", "gcc", "golang", "glibc"])
+
+        captured_configs: list[RpmsInConfig] = []
+
+        async def capture_resolve(config, image_pullspec=None):
+            captured_configs.append(config)
+            return FAKE_LOCKFILE_DATA.model_copy(deep=True)
+
+        generator._resolver.resolve = AsyncMock(side_effect=capture_resolve)
+
+        with TemporaryDirectory() as tmpdir:
+            dest_dir = Path(tmpdir)
+            (dest_dir / "Dockerfile").write_text(
+                "FROM golang-builder AS builder\n"
+                "RUN yum install -y prometheus-promu\n"
+                "\n"
+                "FROM base-rhel9\n"
+                "COPY --from=builder /bin/thanos /bin/thanos\n"
+            )
+            asyncio.run(generator.generate_lockfile(meta, dest_dir))
+
+        self.assertEqual(len(captured_configs), 1)
+        # Builder stage should NOT have reinstallPackages
+        self.assertEqual(captured_configs[0].reinstallPackages, [])
+        # get_installed_packages should NOT be called for non-final stage
+        generator._container.get_installed_packages.assert_not_called()
+
     def test_update_only_queries_base_image(self):
         """
         Update-only stages should pass installed packages as upgrade
