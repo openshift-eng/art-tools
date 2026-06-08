@@ -1840,7 +1840,14 @@ If you have any questions about this pull request, please reach out in the `#for
 
     if pr_dgk_map:
         print('Currently open PRs:')
-        print(yaml.safe_dump({key: pr_dgk_map[key][0].html_url for key in pr_dgk_map}))
+        print(
+            yaml.safe_dump(
+                {
+                    key: pr_dgk_map[key][0].html_url if hasattr(pr_dgk_map[key][0], 'html_url') else pr_dgk_map[key][0]
+                    for key in pr_dgk_map
+                }
+            )
+        )
         reconcile_jira_issues(runtime, pr_dgk_map, moist_run or dry_run)
 
     if skipping_dgks:
