@@ -18,8 +18,9 @@ LOCKFILE_VENDOR = "redhat"
 MAX_RESOLUTION_RETRIES = 5
 DEFAULT_PLATFORM = "linux/amd64"
 
-SYSTEM_PYTHON = "/usr/bin/python3"
-RPM_LOCKFILE_ENTRY_POINT = "from rpm_lockfile import main; main()"
+RPM_LOCKFILE_IMAGE = "localhost/rpm-lockfile-prototype:v0.22.0"
+RPM_LOCKFILE_CONTAINERFILE = Path(__file__).parent / "Containerfile"
+CONTAINER_RPMDB_CACHE_PATH = Path("/root/.cache/rpm-lockfile-prototype/rpmdbs")
 
 # Shell subshell expressions that evaluate to the current architecture
 ARCH_SUBSHELL_KEYWORDS = ("$(arch)", "$(uname -m)", "$(uname -p)")

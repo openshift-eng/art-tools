@@ -1,0 +1,15 @@
+ARG BASE_IMAGE=registry.fedoraproject.org/fedora:latest
+
+FROM ${BASE_IMAGE}
+RUN dnf install -y python3 python3-pip python3-dnf skopeo rpm git-core && dnf clean all
+# Install RH IT CA bundle so DNF can reach internal repos (rhsm-pulp.corp.redhat.com)
+RUN curl -sko /etc/pki/ca-trust/source/anchors/2022-IT-Root-CA.pem \
+        https://certs.corp.redhat.com/certs/2022-IT-Root-CA.pem && \
+    curl -sko /etc/pki/ca-trust/source/anchors/2015-IT-Root-CA.pem \
+        https://certs.corp.redhat.com/certs/2015-IT-Root-CA.pem && \
+    update-ca-trust
+WORKDIR /app
+ARG GIT_REF=tags/v0.22.0
+RUN python3 -m pip install https://github.com/konflux-ci/rpm-lockfile-prototype/archive/refs/${GIT_REF}.tar.gz
+WORKDIR /work
+ENTRYPOINT ["/usr/local/bin/rpm-lockfile-prototype"]
