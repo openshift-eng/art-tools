@@ -247,7 +247,7 @@ def test_get_upstreaming_entries_with_konflux_build_system(
 
 
 def test_get_upstreaming_entries_konflux_build_not_found(mocker, mock_runtime_konflux, mock_image_meta):
-    """Test error when Konflux build is not found"""
+    """Test graceful skip when Konflux build is not found"""
     # Customize image metadata
     mock_image_meta.distgit_key = 'ose-missing'
     mock_image_meta.config.content.source.ci_alignment.upstream_image = 'registry.ci.openshift.org/ocp/4.17:missing'
@@ -259,8 +259,11 @@ def test_get_upstreaming_entries_konflux_build_not_found(mocker, mock_runtime_ko
     mock_image_meta.pull_url.side_effect = IOError('No Konflux build found for ose-missing in group openshift-4.17')
     mock_runtime_konflux.ordered_image_metas.return_value = [mock_image_meta]
 
-    with pytest.raises(IOError, match='No Konflux build found for ose-missing'):
-        images_streams._get_upstreaming_entries(mock_runtime_konflux)
+    # Should skip gracefully rather than raise
+    result = images_streams._get_upstreaming_entries(mock_runtime_konflux)
+
+    # Result should be empty dict since the only image was skipped
+    assert result == {}
 
 
 def test_get_upstreaming_entries_with_final_user(mock_runtime, mock_image_meta):
