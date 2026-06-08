@@ -75,5 +75,82 @@ class TestGitLabClient(unittest.TestCase):
         self.assertIsInstance(client, GitLabClient)
 
 
+class TestParseMrUrl(unittest.TestCase):
+    def test_valid_url(self):
+        from artcommonlib.gitlab import GitLabClient
+
+        path, iid = GitLabClient._parse_mr_url(
+            "https://gitlab.cee.redhat.com/hybrid-platforms/art/ocp-shipment-data/-/merge_requests/549"
+        )
+        self.assertEqual(path, "hybrid-platforms/art/ocp-shipment-data")
+        self.assertEqual(iid, "549")
+
+    def test_invalid_url_raises(self):
+        from artcommonlib.gitlab import GitLabClient
+
+        with self.assertRaises(ValueError):
+            GitLabClient._parse_mr_url("https://gitlab.cee.redhat.com/group/project")
+
+
+class TestAddMrDependency(unittest.TestCase):
+    MR_URL = "https://gitlab.example.com/group/project/-/merge_requests/10"
+    BLOCKING_URL = "https://gitlab.example.com/group/project/-/merge_requests/5"
+    CROSS_PROJECT_URL = "https://gitlab.example.com/other/repo/-/merge_requests/7"
+
+    @patch("artcommonlib.gitlab.gitlab.Gitlab")
+    def test_same_project(self, mock_gitlab_class):
+        from artcommonlib.gitlab import GitLabClient
+
+        mock_gl = mock_gitlab_class.return_value
+        mock_project = MagicMock()
+        mock_project.id = 42
+        mock_gl.projects.get.return_value = mock_project
+
+        client = GitLabClient("https://gitlab.example.com", "fake-token")
+        client.add_mr_dependency(self.MR_URL, self.BLOCKING_URL)
+
+        mock_gl.http_post.assert_called_once_with(
+            "/projects/42/merge_requests/10/blocks",
+            query_data={"blocking_merge_request_iid": 5},
+        )
+
+    @patch("artcommonlib.gitlab.gitlab.Gitlab")
+    def test_cross_project(self, mock_gitlab_class):
+        from artcommonlib.gitlab import GitLabClient
+
+        mock_gl = mock_gitlab_class.return_value
+
+        project_a = MagicMock()
+        project_a.id = 42
+        project_b = MagicMock()
+        project_b.id = 99
+
+        def get_project(path):
+            if path == "group/project":
+                return project_a
+            return project_b
+
+        mock_gl.projects.get.side_effect = get_project
+
+        client = GitLabClient("https://gitlab.example.com", "fake-token")
+        client.add_mr_dependency(self.MR_URL, self.CROSS_PROJECT_URL)
+
+        mock_gl.http_post.assert_called_once_with(
+            "/projects/42/merge_requests/10/blocks",
+            query_data={"blocking_merge_request_iid": 7, "blocking_project_id": 99},
+        )
+
+    @patch("artcommonlib.gitlab.gitlab.Gitlab")
+    def test_dry_run_skips_api_call(self, mock_gitlab_class):
+        from artcommonlib.gitlab import GitLabClient
+
+        mock_gl = mock_gitlab_class.return_value
+
+        client = GitLabClient("https://gitlab.example.com", "fake-token", dry_run=True)
+        client.add_mr_dependency(self.MR_URL, self.BLOCKING_URL)
+
+        mock_gl.http_post.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

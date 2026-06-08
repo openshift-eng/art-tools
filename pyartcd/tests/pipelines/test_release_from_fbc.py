@@ -785,7 +785,7 @@ class TestGetFileFromBranch(unittest.TestCase):
 class TestLoadReleaseNotesTemplate(unittest.TestCase):
     """Tests for _load_release_notes_template method."""
 
-    def _make_pipeline(self, group="logging-6.5", assembly="6.5.0"):
+    def _make_pipeline(self, group="openshift-4.22", assembly="4.22.0"):
         runtime = MagicMock()
         runtime.dry_run = False
         runtime.working_dir = MagicMock()
@@ -798,48 +798,49 @@ class TestLoadReleaseNotesTemplate(unittest.TestCase):
             assembly=assembly,
             fbc_pullspecs=["quay.io/test/fbc:latest"],
         )
-        pipeline.product = "openshift-logging"
+        pipeline.product = "ocp"
         return pipeline
 
     @patch("pyartcd.pipelines.release_from_fbc.get_advisory_boilerplate")
     @patch.object(ReleaseFromFbcPipeline, "get_file_from_branch")
     def test_template_found_with_placeholder_substitution(self, mock_get_file, mock_get_boilerplate):
-        """Template is found via get_advisory_boilerplate and all placeholders are substituted."""
+        """Template is found via get_advisory_boilerplate using kind as key, placeholders substituted."""
         mock_get_boilerplate.return_value = {
-            "synopsis": "Logging {PRODUCT_MAJOR}.{PRODUCT_MINOR}.{PRODUCT_PATCH}",
-            "topic": "Logging {PRODUCT_MAJOR}.{PRODUCT_MINOR}.{PRODUCT_PATCH}",
-            "description": "Logging {PRODUCT_MAJOR}.{PRODUCT_MINOR}.{PRODUCT_PATCH} update",
-            "solution": "For OCP {OCP_RELEASE_NOTES_VERSION} see ocp-{OCP_RELEASE_NOTES_VERSION_DASHED}-release-notes",
+            "synopsis": "OpenShift Container Platform 4.{MINOR}.{PATCH} extras update",
+            "topic": "Red Hat OpenShift Container Platform release 4.{MINOR}.{PATCH} is now available.",
+            "description": "This advisory contains updates for OCP 4.{MINOR}.{PATCH}.",
+            "solution": "For OCP 4.{MINOR} see the docs.",
         }
         mock_get_file.return_value = b"""
-OCP_RELEASE_NOTES_VERSION: "4.21"
+vars:
+  MAJOR: 4
+  MINOR: 22
 """
 
         pipeline = self._make_pipeline()
-        result = pipeline._load_release_notes_template()
+        result = pipeline._load_release_notes_template(kind="extras")
 
         self.assertIsNotNone(result)
-        self.assertEqual(result["synopsis"], "Logging 6.5.0")
-        self.assertEqual(result["topic"], "Logging 6.5.0")
-        self.assertEqual(result["description"], "Logging 6.5.0 update")
-        self.assertEqual(result["solution"], "For OCP 4.21 see ocp-4-21-release-notes")
+        self.assertEqual(result["synopsis"], "OpenShift Container Platform 4.22.0 extras update")
+        self.assertEqual(result["topic"], "Red Hat OpenShift Container Platform release 4.22.0 is now available.")
+        self.assertEqual(result["description"], "This advisory contains updates for OCP 4.22.0.")
+        self.assertEqual(result["solution"], "For OCP 4.22 see the docs.")
 
         mock_get_boilerplate.assert_called_once_with(
             runtime=pipeline,
             et_data={},
-            art_advisory_key="openshift-logging",
+            art_advisory_key="extras",
             errata_type="RHBA",
         )
-        mock_get_file.assert_called_once_with("logging-6.5", "group.yml")
+        mock_get_file.assert_called_once_with("openshift-4.22", "group.yml")
 
     @patch("pyartcd.pipelines.release_from_fbc.get_advisory_boilerplate")
     def test_template_not_found_returns_none(self, mock_get_boilerplate):
         """When get_advisory_boilerplate raises ValueError, return None."""
-        mock_get_boilerplate.side_effect = ValueError("Boilerplate mta not found")
+        mock_get_boilerplate.side_effect = ValueError("Boilerplate ocp not found")
 
         pipeline = self._make_pipeline()
-        pipeline.product = "mta"
-        result = pipeline._load_release_notes_template()
+        result = pipeline._load_release_notes_template(kind="extras")
 
         self.assertIsNone(result)
 
@@ -849,14 +850,14 @@ OCP_RELEASE_NOTES_VERSION: "4.21"
         mock_get_boilerplate.side_effect = Exception("GitHub API failure")
 
         pipeline = self._make_pipeline()
-        result = pipeline._load_release_notes_template()
+        result = pipeline._load_release_notes_template(kind="extras")
 
         self.assertIsNone(result)
 
     @patch("pyartcd.pipelines.release_from_fbc.get_advisory_boilerplate")
     @patch.object(ReleaseFromFbcPipeline, "get_file_from_branch")
-    def test_missing_ocp_release_notes_version_returns_none(self, mock_get_file, mock_get_boilerplate):
-        """When group.yml has no OCP_RELEASE_NOTES_VERSION, return None."""
+    def test_missing_major_minor_in_group_yml_returns_none(self, mock_get_file, mock_get_boilerplate):
+        """When group.yml has no MAJOR/MINOR in vars section, return None."""
         mock_get_boilerplate.return_value = {
             "synopsis": "Synopsis",
             "topic": "Topic",
@@ -868,29 +869,141 @@ product: logging
 """
 
         pipeline = self._make_pipeline()
-        result = pipeline._load_release_notes_template()
+        result = pipeline._load_release_notes_template(kind="extras")
 
         self.assertIsNone(result)
 
     @patch("pyartcd.pipelines.release_from_fbc.get_advisory_boilerplate")
     @patch.object(ReleaseFromFbcPipeline, "get_file_from_branch")
     def test_assembly_version_parsing_two_components(self, mock_get_file, mock_get_boilerplate):
-        """Assembly with only major.minor (no PRODUCT_PATCH) uses empty string for PRODUCT_PATCH."""
+        """Assembly with only major.minor (no patch) defaults patch to '0'."""
         mock_get_boilerplate.return_value = {
-            "synopsis": "Version {PRODUCT_MAJOR}.{PRODUCT_MINOR}.{PRODUCT_PATCH}",
+            "synopsis": "Version {MAJOR}.{MINOR}.{PATCH}",
             "topic": "Topic",
             "description": "Description",
             "solution": "Solution",
         }
         mock_get_file.return_value = b"""
+vars:
+  MAJOR: 4
+  MINOR: 22
+"""
+
+        pipeline = self._make_pipeline(assembly="4.22")
+        result = pipeline._load_release_notes_template(kind="extras")
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result["synopsis"], "Version 4.22.0")
+
+    @patch("pyartcd.pipelines.release_from_fbc.get_advisory_boilerplate")
+    @patch.object(ReleaseFromFbcPipeline, "get_file_from_branch")
+    def test_unresolved_placeholders_left_as_is(self, mock_get_file, mock_get_boilerplate):
+        """SafeFormatter leaves unrecognized placeholders (like {IMAGE_ADVISORY}) intact."""
+        mock_get_boilerplate.return_value = {
+            "synopsis": "OCP 4.{MINOR}.{PATCH} extras update",
+            "topic": "Topic",
+            "description": "See https://access.redhat.com/errata/{IMAGE_ADVISORY}",
+            "solution": "Solution",
+        }
+        mock_get_file.return_value = b"""
+vars:
+  MAJOR: 4
+  MINOR: 22
+"""
+
+        pipeline = self._make_pipeline()
+        result = pipeline._load_release_notes_template(kind="extras")
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result["synopsis"], "OCP 4.22.0 extras update")
+        self.assertEqual(result["description"], "See https://access.redhat.com/errata/{IMAGE_ADVISORY}")
+
+    # -- Layered product mode tests (kind=None, uses self.product as key) --
+
+    @patch("pyartcd.pipelines.release_from_fbc.get_advisory_boilerplate")
+    @patch.object(ReleaseFromFbcPipeline, "get_file_from_branch")
+    def test_layered_product_template_with_product_vars(self, mock_get_file, mock_get_boilerplate):
+        """Layered product path uses self.product as key and PRODUCT_* placeholders."""
+        mock_get_boilerplate.return_value = {
+            "synopsis": "Logging for Red Hat OpenShift - {PRODUCT_MAJOR}.{PRODUCT_MINOR}.{PRODUCT_PATCH}",
+            "topic": "Logging for Red Hat OpenShift - {PRODUCT_MAJOR}.{PRODUCT_MINOR}.{PRODUCT_PATCH}",
+            "description": "Red Hat OpenShift Logging {PRODUCT_MAJOR}.{PRODUCT_MINOR}.{PRODUCT_PATCH} update",
+            "solution": "For OCP {OCP_RELEASE_NOTES_VERSION} see ocp-{OCP_RELEASE_NOTES_VERSION_DASHED}-release-notes",
+        }
+        mock_get_file.return_value = b"""
+OCP_RELEASE_NOTES_VERSION: "4.18"
+"""
+
+        pipeline = self._make_pipeline(group="logging-6.2", assembly="6.2.1")
+        pipeline.product = "openshift-logging"
+        result = pipeline._load_release_notes_template()
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result["synopsis"], "Logging for Red Hat OpenShift - 6.2.1")
+        self.assertEqual(result["topic"], "Logging for Red Hat OpenShift - 6.2.1")
+        self.assertEqual(result["description"], "Red Hat OpenShift Logging 6.2.1 update")
+        self.assertEqual(result["solution"], "For OCP 4.18 see ocp-4-18-release-notes")
+
+        mock_get_boilerplate.assert_called_once_with(
+            runtime=pipeline,
+            et_data={},
+            art_advisory_key="openshift-logging",
+            errata_type="RHBA",
+        )
+        mock_get_file.assert_called_once_with("logging-6.2", "group.yml")
+
+    @patch("pyartcd.pipelines.release_from_fbc.get_advisory_boilerplate")
+    @patch.object(ReleaseFromFbcPipeline, "get_file_from_branch")
+    def test_layered_product_missing_ocp_release_notes_version_returns_none(self, mock_get_file, mock_get_boilerplate):
+        """Layered product without OCP_RELEASE_NOTES_VERSION in group.yml returns None."""
+        mock_get_boilerplate.return_value = {
+            "synopsis": "Synopsis",
+            "topic": "Topic",
+            "description": "Description",
+            "solution": "Solution",
+        }
+        mock_get_file.return_value = b"""
+product: openshift-logging
+"""
+
+        pipeline = self._make_pipeline(group="logging-6.3", assembly="6.3.5")
+        pipeline.product = "openshift-logging"
+        result = pipeline._load_release_notes_template()
+
+        self.assertIsNone(result)
+
+    @patch("pyartcd.pipelines.release_from_fbc.get_advisory_boilerplate")
+    def test_layered_product_no_template_key_returns_none(self, mock_get_boilerplate):
+        """Layered product whose product name has no template key returns None."""
+        mock_get_boilerplate.side_effect = ValueError("Boilerplate mta not found")
+
+        pipeline = self._make_pipeline(group="mta-7.2", assembly="7.2.0")
+        pipeline.product = "mta"
+        result = pipeline._load_release_notes_template()
+
+        self.assertIsNone(result)
+
+    @patch("pyartcd.pipelines.release_from_fbc.get_advisory_boilerplate")
+    @patch.object(ReleaseFromFbcPipeline, "get_file_from_branch")
+    def test_layered_product_assembly_two_components(self, mock_get_file, mock_get_boilerplate):
+        """Layered product with major.minor assembly (no patch) uses empty string for PRODUCT_PATCH."""
+        mock_get_boilerplate.return_value = {
+            "synopsis": "Version {PRODUCT_MAJOR}.{PRODUCT_MINOR}.{PRODUCT_PATCH}",
+            "topic": "Topic",
+            "description": "Description",
+            "solution": "Solution for {OCP_RELEASE_NOTES_VERSION}",
+        }
+        mock_get_file.return_value = b"""
 OCP_RELEASE_NOTES_VERSION: "4.21"
 """
 
-        pipeline = self._make_pipeline(assembly="6.5")
+        pipeline = self._make_pipeline(group="logging-6.5", assembly="6.5")
+        pipeline.product = "openshift-logging"
         result = pipeline._load_release_notes_template()
 
         self.assertIsNotNone(result)
         self.assertEqual(result["synopsis"], "Version 6.5.")
+        self.assertEqual(result["solution"], "Solution for 4.21")
 
 
 class TestRunWithTemplate(unittest.TestCase):
@@ -974,6 +1087,330 @@ class TestRunWithTemplate(unittest.TestCase):
                 release_notes = ReleaseNotes(type="RHBA")
 
         self.assertIsNone(release_notes)
+
+
+class TestOcpOptionalMode(unittest.TestCase):
+    """Tests for OCP optional-operator mode (--ocp-optional)."""
+
+    def _make_pipeline(
+        self, ocp_optional=False, exclude_nvr_components=None, group="openshift-4.22", assembly="4.22.0"
+    ):
+        runtime = MagicMock()
+        runtime.dry_run = False
+        runtime.working_dir = MagicMock()
+        runtime.working_dir.absolute.return_value = MagicMock()
+        runtime.config = {}
+
+        pipeline = ReleaseFromFbcPipeline(
+            runtime=runtime,
+            group=group,
+            assembly=assembly,
+            fbc_pullspecs=["quay.io/test/fbc:latest"],
+            create_mr=False,
+            ocp_optional=ocp_optional,
+            exclude_nvr_components=exclude_nvr_components,
+        )
+        pipeline.product = "ocp"
+        return pipeline
+
+    def test_ocp_optional_flag_stored(self):
+        pipeline = self._make_pipeline(ocp_optional=True)
+        self.assertTrue(pipeline.ocp_optional)
+
+    def test_ocp_optional_default_false(self):
+        pipeline = self._make_pipeline()
+        self.assertFalse(pipeline.ocp_optional)
+
+    def test_exclude_nvr_components_stored_as_set(self):
+        pipeline = self._make_pipeline(
+            ocp_optional=True,
+            exclude_nvr_components=["kube-rbac-proxy-container", "other-container"],
+        )
+        self.assertEqual(pipeline.excluded_components, {"kube-rbac-proxy-container", "other-container"})
+
+    def test_exclude_nvr_components_default_empty_set(self):
+        pipeline = self._make_pipeline(ocp_optional=True)
+        self.assertEqual(pipeline.excluded_components, set())
+
+    # -- categorize_nvrs tests --
+
+    def test_categorize_ocp_optional_all_included(self):
+        """In OCP optional mode, all non-FBC images (including bundles and payload deps) go to extras."""
+        pipeline = self._make_pipeline(ocp_optional=True)
+        nvrs = [
+            "ose-metallb-operator-container-v4.22.0-202605281227.el9",
+            "ose-metallb-container-v4.22.0-202605281227.el9",
+            "ose-frr-container-v4.22.0-202605281227.el9",
+            "kube-rbac-proxy-container-v4.22.0-202605281227.el9",
+            "ose-metallb-operator-bundle-container-v4.22.0.202605281227.el9-1",
+            "ose-metallb-operator-fbc-4.22.0-20260528170921",
+        ]
+        result = pipeline.categorize_nvrs(nvrs)
+
+        self.assertEqual(
+            result["extras"],
+            [
+                "ose-metallb-operator-container-v4.22.0-202605281227.el9",
+                "ose-metallb-container-v4.22.0-202605281227.el9",
+                "ose-frr-container-v4.22.0-202605281227.el9",
+                "kube-rbac-proxy-container-v4.22.0-202605281227.el9",
+                "ose-metallb-operator-bundle-container-v4.22.0.202605281227.el9-1",
+            ],
+        )
+        self.assertNotIn("metadata", result)
+        self.assertEqual(
+            result["fbc"],
+            [
+                "ose-metallb-operator-fbc-4.22.0-20260528170921",
+            ],
+        )
+        self.assertEqual(result["external"], [])
+
+    def test_categorize_ocp_optional_with_exclusion(self):
+        """Explicitly excluded components go to external."""
+        pipeline = self._make_pipeline(
+            ocp_optional=True,
+            exclude_nvr_components=["kube-rbac-proxy-container"],
+        )
+        nvrs = [
+            "ose-metallb-operator-container-v4.22.0-202605281227.el9",
+            "kube-rbac-proxy-container-v4.22.0-202605281227.el9",
+            "ose-metallb-operator-fbc-4.22.0-20260528170921",
+        ]
+        result = pipeline.categorize_nvrs(nvrs)
+
+        self.assertEqual(
+            result["extras"],
+            [
+                "ose-metallb-operator-container-v4.22.0-202605281227.el9",
+            ],
+        )
+        self.assertEqual(
+            result["external"],
+            [
+                "kube-rbac-proxy-container-v4.22.0-202605281227.el9",
+            ],
+        )
+        self.assertEqual(
+            result["fbc"],
+            [
+                "ose-metallb-operator-fbc-4.22.0-20260528170921",
+            ],
+        )
+
+    def test_categorize_default_mode_unchanged(self):
+        """Default (non-OCP-optional) mode still uses image/fbc/external."""
+        pipeline = self._make_pipeline(ocp_optional=False)
+        nvrs = [
+            "ose-metallb-operator-container-v4.22.0-202605281227.el9",
+            "ose-metallb-operator-fbc-4.22.0-20260528170921",
+        ]
+        result = pipeline.categorize_nvrs(nvrs)
+
+        self.assertIn("image", result)
+        self.assertIn("fbc", result)
+        self.assertNotIn("extras", result)
+        self.assertNotIn("metadata", result)
+
+    def test_categorize_bundles_go_to_extras(self):
+        """Bundle NVRs go to extras alongside all other non-FBC images."""
+        pipeline = self._make_pipeline(ocp_optional=True)
+        nvrs = [
+            "ose-metallb-operator-bundle-container-v4.22.0.202605281227.el9-1",
+            "some-other-bundle-thing-container-v1.0.0-1.el9",
+        ]
+        result = pipeline.categorize_nvrs(nvrs)
+        self.assertNotIn("metadata", result)
+        self.assertEqual(len(result["extras"]), 2)
+
+    # -- run() integration tests --
+
+    def test_extra_image_nvrs_merged_into_extras_key(self):
+        """In OCP optional mode, extra_image_nvrs should merge into 'extras', not 'image'."""
+        pipeline = self._make_pipeline(ocp_optional=True)
+        pipeline.extra_image_nvrs = ["extra-operator-container-v4.22.0-1.el9"]
+        pipeline.fbc_pullspecs = []
+        pipeline.check_env_vars = MagicMock()
+        pipeline.setup_working_dir = MagicMock()
+        pipeline._load_product_from_group_config = AsyncMock(return_value="ocp")
+        pipeline._load_release_notes_template = MagicMock(return_value=None)
+        pipeline.create_snapshot = AsyncMock(return_value=_make_snapshot(app="openshift-4-22"))
+        pipeline.create_shipment_config = MagicMock(return_value=MagicMock())
+        pipeline.write_shipment_files_locally = AsyncMock()
+
+        asyncio.run(pipeline.run())
+
+        snapshot_call_args = pipeline.create_snapshot.call_args[0][0]
+        self.assertIn("extra-operator-container-v4.22.0-1.el9", snapshot_call_args)
+
+        config_call_args = pipeline.create_shipment_config.call_args
+        self.assertEqual(config_call_args[0][0], "extras")
+
+    # -- create_shipment_config tests --
+
+    def test_create_shipment_config_extras_with_release_notes(self):
+        """extras kind should include release notes when provided."""
+        pipeline = self._make_pipeline(ocp_optional=True)
+        snapshot = _make_snapshot(app="openshift-4-22")
+        release_notes = ReleaseNotes(type="RHBA", synopsis="test")
+        config = pipeline.create_shipment_config("extras", snapshot, release_notes=release_notes)
+
+        self.assertIsNotNone(config.shipment.data)
+        self.assertEqual(config.shipment.data.releaseNotes.type, "RHBA")
+        self.assertFalse(config.shipment.metadata.fbc)
+
+    def test_create_shipment_config_extras_openshift_minimal_notes(self):
+        """extras kind for openshift-* group gets minimal release notes automatically."""
+        pipeline = self._make_pipeline(ocp_optional=True)
+        snapshot = _make_snapshot(app="openshift-4-22")
+        config = pipeline.create_shipment_config("extras", snapshot)
+
+        self.assertIsNotNone(config.shipment.data)
+        self.assertEqual(config.shipment.data.releaseNotes.type, "RHBA")
+        self.assertIn("extras", config.shipment.data.releaseNotes.synopsis)
+
+    def test_create_shipment_config_extras_no_notes_for_non_openshift(self):
+        """extras kind for non-openshift group should have no data when no release notes provided."""
+        pipeline = self._make_pipeline(ocp_optional=True, group="oadp-1.4", assembly="1.4.5")
+        pipeline.product = "oadp"
+        snapshot = _make_snapshot(app="oadp-1-4")
+        config = pipeline.create_shipment_config("extras", snapshot)
+
+        self.assertIsNone(config.shipment.data)
+        self.assertFalse(config.shipment.metadata.fbc)
+
+    def test_create_shipment_config_fbc_still_works(self):
+        """fbc kind in OCP optional mode should still set fbc=True and no data."""
+        pipeline = self._make_pipeline(ocp_optional=True)
+        snapshot = _make_snapshot(app="fbc-openshift-4-22")
+        config = pipeline.create_shipment_config("fbc", snapshot)
+
+        self.assertTrue(config.shipment.metadata.fbc)
+        self.assertIsNone(config.shipment.data)
+
+    # -- _get_main_ocp_shipment_url tests --
+
+    def test_get_main_ocp_shipment_url_found(self):
+        """Should return URL when releases.yml has shipment.url for the assembly."""
+        pipeline = self._make_pipeline(ocp_optional=True, assembly="rc.5")
+        releases_yml = {
+            "releases": {
+                "rc.5": {
+                    "assembly": {
+                        "group": {
+                            "shipment": {
+                                "url": "https://gitlab.cee.redhat.com/hybrid-platforms/art/ocp-shipment-data/-/merge_requests/549"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        import yaml as stdlib_yaml
+
+        pipeline.get_file_from_branch = MagicMock(return_value=stdlib_yaml.dump(releases_yml).encode())
+        result = pipeline._get_main_ocp_shipment_url()
+        self.assertEqual(
+            result,
+            "https://gitlab.cee.redhat.com/hybrid-platforms/art/ocp-shipment-data/-/merge_requests/549",
+        )
+
+    def test_get_main_ocp_shipment_url_found_override_suffix(self):
+        """Should return URL when releases.yml uses 'shipment!' override marker."""
+        pipeline = self._make_pipeline(ocp_optional=True, assembly="4.22.0")
+        releases_yml = {
+            "releases": {
+                "4.22.0": {
+                    "assembly": {
+                        "group": {
+                            "shipment!": {
+                                "url": "https://gitlab.cee.redhat.com/hybrid-platforms/art/ocp-shipment-data/-/merge_requests/562"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        import yaml as stdlib_yaml
+
+        pipeline.get_file_from_branch = MagicMock(return_value=stdlib_yaml.dump(releases_yml).encode())
+        result = pipeline._get_main_ocp_shipment_url()
+        self.assertEqual(
+            result,
+            "https://gitlab.cee.redhat.com/hybrid-platforms/art/ocp-shipment-data/-/merge_requests/562",
+        )
+
+    def test_get_main_ocp_shipment_url_missing(self):
+        """Should return None when assembly exists but has no shipment URL."""
+        pipeline = self._make_pipeline(ocp_optional=True, assembly="rc.5")
+        releases_yml = {"releases": {"rc.5": {"assembly": {"group": {"release_jira": "ART-12345"}}}}}
+        import yaml as stdlib_yaml
+
+        pipeline.get_file_from_branch = MagicMock(return_value=stdlib_yaml.dump(releases_yml).encode())
+        result = pipeline._get_main_ocp_shipment_url()
+        self.assertIsNone(result)
+
+    def test_get_main_ocp_shipment_url_error(self):
+        """Should return None and log warning on fetch failure."""
+        pipeline = self._make_pipeline(ocp_optional=True)
+        pipeline.get_file_from_branch = MagicMock(side_effect=ValueError("GitHub auth failed"))
+        result = pipeline._get_main_ocp_shipment_url()
+        self.assertIsNone(result)
+
+    # -- MR dependency wiring in run() --
+
+    def test_mr_dependency_set_in_ocp_optional_run(self):
+        """run() should call _set_shipment_mr_dependency when ocp_optional and MR created."""
+        pipeline = self._make_pipeline(ocp_optional=True)
+        pipeline.create_mr = True
+        pipeline.fbc_pullspecs = []
+        pipeline.extra_image_nvrs = ["extra-op-container-v4.22.0-1.el9"]
+        pipeline.check_env_vars = MagicMock()
+        pipeline.setup_working_dir = MagicMock()
+        pipeline.setup_shipment_repo = AsyncMock()
+        pipeline._load_product_from_group_config = AsyncMock(return_value="ocp")
+        pipeline._load_release_notes_template = MagicMock(return_value=None)
+        pipeline.create_snapshot = AsyncMock(return_value=_make_snapshot(app="openshift-4-22"))
+        pipeline.create_shipment_config = MagicMock(return_value=MagicMock())
+        pipeline.create_shipment_mr = AsyncMock(return_value="https://gitlab.example.com/g/p/-/merge_requests/100")
+        pipeline.shipment_mr_url = "https://gitlab.example.com/g/p/-/merge_requests/100"
+        pipeline._get_main_ocp_shipment_url = MagicMock(
+            return_value="https://gitlab.example.com/g/p/-/merge_requests/50"
+        )
+        pipeline._set_shipment_mr_dependency = AsyncMock()
+        pipeline.set_shipment_mr_ready = AsyncMock()
+
+        asyncio.run(pipeline.run())
+
+        pipeline._get_main_ocp_shipment_url.assert_called_once()
+        pipeline._set_shipment_mr_dependency.assert_awaited_once_with(
+            "https://gitlab.example.com/g/p/-/merge_requests/50"
+        )
+
+    def test_mr_dependency_not_set_for_default_mode(self):
+        """run() should NOT call _set_shipment_mr_dependency in default (non-ocp-optional) mode."""
+        pipeline = self._make_pipeline(ocp_optional=False, group="oadp-1.5", assembly="1.5.0")
+        pipeline.product = "oadp"
+        pipeline.create_mr = True
+        pipeline.fbc_pullspecs = []
+        pipeline.extra_image_nvrs = ["oadp-container-v1.5.0-1.el9"]
+        pipeline.check_env_vars = MagicMock()
+        pipeline.setup_working_dir = MagicMock()
+        pipeline.setup_shipment_repo = AsyncMock()
+        pipeline._load_product_from_group_config = AsyncMock(return_value="oadp")
+        pipeline._load_release_notes_template = MagicMock(return_value=None)
+        pipeline.create_snapshot = AsyncMock(return_value=_make_snapshot(app="oadp-1-5"))
+        pipeline.create_shipment_config = MagicMock(return_value=MagicMock())
+        pipeline.create_shipment_mr = AsyncMock(return_value="https://gitlab.example.com/g/p/-/merge_requests/200")
+        pipeline.shipment_mr_url = "https://gitlab.example.com/g/p/-/merge_requests/200"
+        pipeline._get_main_ocp_shipment_url = MagicMock()
+        pipeline._set_shipment_mr_dependency = AsyncMock()
+        pipeline.set_shipment_mr_ready = AsyncMock()
+
+        asyncio.run(pipeline.run())
+
+        pipeline._get_main_ocp_shipment_url.assert_not_called()
+        pipeline._set_shipment_mr_dependency.assert_not_awaited()
 
 
 if __name__ == "__main__":

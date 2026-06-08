@@ -826,7 +826,11 @@ async def sync_to_quay(source_pullspec, destination_repo, tags=None):
 def _extract_images_from_catalog_json(catalog_path: str) -> list[str]:
     """Parse catalog.json (FBC format) and return relatedImages from olm.bundle entries.
 
-    Handles both NDJSON (one JSON object per line) and top-level JSON array formats.
+    Handles three catalog.json formats:
+      1. Single JSON document (array or object)
+      2. Compact NDJSON (one JSON object per line)
+      3. Pretty-printed concatenated JSON (multiple multi-line objects)
+
     Only extracts from entries where schema == "olm.bundle", mirroring:
         jq -r 'select(.schema == "olm.bundle") | .relatedImages[].image'
     """
@@ -854,6 +858,23 @@ def _extract_images_from_catalog_json(catalog_path: str) -> list[str]:
                     entries.append(obj)
             except json.JSONDecodeError:
                 continue
+
+    if not entries:
+        decoder = json.JSONDecoder()
+        idx = 0
+        content_len = len(content)
+        while idx < content_len:
+            remaining = content[idx:].lstrip()
+            if not remaining:
+                break
+            idx = content_len - len(remaining)
+            try:
+                obj, end_offset = decoder.raw_decode(content, idx)
+                if isinstance(obj, dict):
+                    entries.append(obj)
+                idx = end_offset
+            except json.JSONDecodeError:
+                break
 
     if not entries:
         raise RuntimeError(f"Failed to parse catalog.json: no valid JSON entries found in {catalog_path}")

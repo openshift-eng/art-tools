@@ -74,6 +74,26 @@ class GitLabClient:
         """
         return self._client.projects.get(project_path)
 
+    @staticmethod
+    def _parse_mr_url(mr_url: str) -> tuple[str, str]:
+        """
+        Extract the project path and MR IID from a full GitLab MR URL.
+
+        Arg(s):
+            mr_url (str): Full URL, e.g. "https://gitlab.example.com/group/project/-/merge_requests/42"
+        Return Value(s):
+            Tuple of (project_path, mr_iid) e.g. ("group/project", "42")
+        Raises:
+            ValueError: If the URL cannot be parsed as a GitLab MR URL
+        """
+        parsed = urlparse(mr_url)
+        path = parsed.path.strip("/")
+        if "/-/merge_requests/" not in path:
+            raise ValueError(f"Not a valid GitLab MR URL: {mr_url}")
+        project_path = path.split("/-/merge_requests")[0]
+        mr_iid = path.split("/")[-1]
+        return project_path, mr_iid
+
     def get_mr_from_url(self, mr_url: str):
         """
         Get MR object from URL.
@@ -86,12 +106,9 @@ class GitLabClient:
         if not mr_url:
             return None
 
-        parsed_url = urlparse(mr_url)
-        target_project_path = parsed_url.path.strip("/").split("/-/merge_requests")[0]
-        mr_id = parsed_url.path.split("/")[-1]
-
-        project = self._client.projects.get(target_project_path)
-        return project.mergerequests.get(mr_id)
+        project_path, mr_iid = self._parse_mr_url(mr_url)
+        project = self._client.projects.get(project_path)
+        return project.mergerequests.get(mr_iid)
 
     async def set_mr_ready(self, mr_url: str):
         """
@@ -223,6 +240,39 @@ class GitLabClient:
         pipeline_url = pipeline.web_url
         logger.info(f"CI MR pipeline triggered successfully: {pipeline_url}")
         return pipeline_url
+
+    def add_mr_dependency(self, mr_url: str, blocking_mr_url: str):
+        """
+        Set a native GitLab MR dependency so *mr_url* cannot be merged until
+        *blocking_mr_url* is merged first.
+
+        Uses the ``POST /projects/:id/merge_requests/:iid/blocks`` API.
+        Cross-project dependencies are supported by passing ``blocking_project_id``
+        when the two MRs belong to different projects.
+
+        Arg(s):
+            mr_url (str): Full URL of the merge request to be blocked
+            blocking_mr_url (str): Full URL of the merge request that must merge first
+        """
+        mr_project_path, mr_iid = self._parse_mr_url(mr_url)
+        blocking_project_path, blocking_mr_iid = self._parse_mr_url(blocking_mr_url)
+
+        project = self._client.projects.get(mr_project_path)
+
+        query: dict = {"blocking_merge_request_iid": int(blocking_mr_iid)}
+        if mr_project_path != blocking_project_path:
+            blocking_project = self._client.projects.get(blocking_project_path)
+            query["blocking_project_id"] = blocking_project.id
+
+        if self.dry_run:
+            logger.info("[DRY-RUN] Would add MR dependency: %s depends on %s", mr_url, blocking_mr_url)
+            return
+
+        self._client.http_post(
+            f"/projects/{project.id}/merge_requests/{mr_iid}/blocks",
+            query_data=query,
+        )
+        logger.info("Set MR dependency: %s depends on %s", mr_url, blocking_mr_url)
 
     def list_merge_requests(self, project_path: str, state: str = "opened", **kwargs):
         """
