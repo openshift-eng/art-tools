@@ -751,7 +751,7 @@ async def sync_ci_images_cli(
 
     # Run with per-version lock
     lock_name = locks.Lock.SYNC_CI_IMAGES.value.format(version=for_release)
-    lock_id = jenkins.get_build_url()  # Jenkins build identifier
+    lock_id = jenkins.get_build_path_or_random()  # Jenkins build identifier
 
     try:
         exit_code = await locks.run_with_lock(

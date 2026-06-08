@@ -424,7 +424,7 @@ async def build_sync_multi(
     try:
         # Only for stream assembly, lock the build to avoid parallel runs
         if assembly == 'stream':
-            lock_identifier = get_build_url().replace(f'{constants.JENKINS_UI_URL}/', '')
+            lock_identifier = jenkins.get_build_path_or_random()
             runtime.logger.info('Lock identifier: %s', lock_identifier)
 
             await locks.run_with_lock(
