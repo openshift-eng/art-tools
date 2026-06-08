@@ -157,13 +157,18 @@ def images_streams_mirror(
                 exectools.cmd_assert(full_cmd_floating, retries=3, realtime=True)
 
                 # Get digest of the newly mirrored image
-                image_info_cmd = f'oc image info {floating_qci_dest} -o json'
+                # For manifest lists, oc image info -o json fails, so try without -o json first
+                image_info_cmd = f'oc image info {floating_qci_dest}'
                 if registry_config_file:
                     image_info_cmd += f' --registry-config={registry_config_file}'
 
                 info_stdout, _ = exectools.cmd_assert(image_info_cmd, retries=3)
-                image_info = json.loads(info_stdout)
-                qci_digest = image_info.get('digest', '')
+                # Parse digest from text output: "Digest: sha256:..."
+                qci_digest = ''
+                for line in info_stdout.splitlines():
+                    if line.startswith('Digest:'):
+                        qci_digest = line.split(':', 1)[1].strip()
+                        break
 
                 if qci_digest:
                     # Mirror to GC-prevention tag: art__<digest>
