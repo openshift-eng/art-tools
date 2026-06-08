@@ -1094,6 +1094,10 @@ This ticket was created by ART pipline run [sync-ci-images|{jenkins_build_url}]
             print(f'A JIRA issue has been opened for {pr.html_url}: {issue.key}')
             connect_issue_with_pr(pr, issue.key)
             try:
+                jira_client.add_remote_link(issue.key, {'url': pr.html_url, 'title': pr.title})
+            except Exception as e:
+                runtime.logger.error(f"Failed to add remote link to {issue.key}: {e}")
+            try:
                 # Retrieve the value of the custom field
                 release_notes_text_cf_value = getattr(issue.fields, JIRABugTracker.field_release_notes_text, None)
                 release_notes_type_cf_value = getattr(issue.fields, JIRABugTracker.field_release_notes_type, None)
