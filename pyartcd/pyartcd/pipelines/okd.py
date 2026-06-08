@@ -616,9 +616,11 @@ class KonfluxOkdPipeline:
                 continue
 
             # Determine payload tag name
-            # Note: Only images with for_payload=true should be tagged into imagestreams
-            if not image_metadata.get('for_payload', False):
-                self.logger.debug('Skipping non-payload image %s from imagestream tagging', image_name)
+            # Tag payload images and base_only images (which other images depend on)
+            is_payload = image_metadata.get('for_payload', False)
+            is_base_only = image_metadata.get('base_only', False)
+            if not (is_payload or is_base_only):
+                self.logger.debug('Skipping non-payload, non-base image %s from imagestream tagging', image_name)
                 continue
 
             payload_tag = self._get_payload_tag_name(image_name, image_metadata)
