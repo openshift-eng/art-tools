@@ -1130,7 +1130,13 @@ This ticket was created by ART pipline run [sync-ci-images|{jenkins_build_url}]
 @prs.command(
     'open', short_help='Open PRs against upstream component repos that have a FROM that differs from ART metadata.'
 )
-@click.option('--github-access-token', metavar='TOKEN', required=False, help='Github access token for user.')
+@click.option(
+    '--github-access-token',
+    metavar='TOKEN',
+    required=False,
+    envvar='GITHUB_TOKEN',
+    help='Github access token for user.',
+)
 @click.option('--bug', metavar='BZ#', required=False, default=None, help='Title with Bug #: prefix')
 @click.option(
     '--interstitial',
@@ -1508,7 +1514,7 @@ Fork build_root (in .ci-operator.yaml): {fork_ci_build_root_coordinate}
                 )
                 if fork_branch:
                     for pr in list(public_source_repo.get_pulls(state='open', head=fork_branch_head)):
-                        if moist_run:
+                        if moist_run or dry_run:
                             yellow_print(f'Would have closed existing PR: {pr.html_url}')
                         else:
                             yellow_print(f'Closing unnecessary PR: {pr.html_url}')
@@ -1604,7 +1610,7 @@ open_prs: {open_prs}
                 yellow_print('Found that fork branch is not in sync with public Dockerfile/.ci-operator.yaml changes')
                 yellow_print(diff_text)
 
-                if not moist_run:
+                if not moist_run and not dry_run:
                     commit_prefix = image_meta.config.content.source.ci_alignment.streams_prs.commit_prefix or ''
                     if repo_name.startswith('kubernetes') and not commit_prefix:
                         # Repos starting with 'kubernetes' don't have this in metadata atm. Preserving
@@ -1724,23 +1730,24 @@ If you have any questions about this pull request, please reach out in the `#for
                 # Update body, but never title; The upstream team may need set something like a Bug XXXX: there.
                 # Don't muck with it.
 
-                try:
-                    if streams_pr_config.auto_label and add_auto_labels:
-                        # If we are to automatically add labels to this upstream PR, do so.
-                        existing_pr.add_to_labels(*streams_pr_config.auto_label)
+                if not dry_run:
+                    try:
+                        if streams_pr_config.auto_label and add_auto_labels:
+                            # If we are to automatically add labels to this upstream PR, do so.
+                            existing_pr.add_to_labels(*streams_pr_config.auto_label)
 
-                    if add_label:
-                        existing_pr.add_to_labels(*add_label)
-                except GithubException as pr_e:
-                    # We are not admin on all repos
-                    yellow_print(f'Unable to add labels to {existing_pr.html_url}: {str(pr_e)}')
+                        if add_label:
+                            existing_pr.add_to_labels(*add_label)
+                    except GithubException as pr_e:
+                        # We are not admin on all repos
+                        yellow_print(f'Unable to add labels to {existing_pr.html_url}: {str(pr_e)}')
 
                 pr_dgk_map[dgk] = (existing_pr, jenkins_build_url)
 
                 # The pr_body may change and the base branch may change (i.e. at branch cut,
                 # a version 4.6 in master starts being tracked in release-4.6 and master tracks
                 # 4.7.
-                if moist_run:
+                if moist_run or dry_run:
                     if existing_pr.base.sha != public_branch_commit:
                         yellow_print(
                             f'Would have changed PR {existing_pr.html_url} to use base {public_branch} ({public_branch_commit}) vs existing {existing_pr.base.sha}'
@@ -1768,7 +1775,7 @@ If you have any questions about this pull request, please reach out in the `#for
                 continue
 
             # Otherwise, we need to create a pull request
-            if moist_run:
+            if moist_run or dry_run:
                 pr_dgk_map[dgk] = (f'MOIST-RUN-PR:{dgk}', jenkins_build_url)
                 green_print(
                     f'Would have opened PR against: {public_source_repo.html_url}/blob/{public_branch}/{dockerfile_name}.'
@@ -1834,7 +1841,7 @@ If you have any questions about this pull request, please reach out in the `#for
     if pr_dgk_map:
         print('Currently open PRs:')
         print(yaml.safe_dump({key: pr_dgk_map[key][0].html_url for key in pr_dgk_map}))
-        reconcile_jira_issues(runtime, pr_dgk_map, moist_run)
+        reconcile_jira_issues(runtime, pr_dgk_map, moist_run or dry_run)
 
     if skipping_dgks:
         print('Some PRs were skipped; Exiting with return code 25 to indicate this')
