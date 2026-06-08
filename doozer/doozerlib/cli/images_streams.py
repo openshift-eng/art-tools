@@ -927,9 +927,7 @@ def images_streams_start_buildconfigs(runtime, streams, as_user, live_test_mode,
                         istag_stdout, _ = exectools.cmd_assert(get_istag_cmd, retries=3)
                         imagestream_data = json.loads(istag_stdout)
                         existing_tags = imagestream_data.get('spec', {}).get('tags', [])
-                        tag_index = next(
-                            (i for i, t in enumerate(existing_tags) if t.get('name') == dest_tag), None
-                        )
+                        tag_index = next((i for i, t in enumerate(existing_tags) if t.get('name') == dest_tag), None)
 
                         if tag_index is not None:
                             patch_cmd = f'oc patch imagestream {dest_imagestream} -n {dest_ns} --type=json -p \'[{{"op": "replace", "path": "/spec/tags/{tag_index}", "value": {json.dumps(istag_patch["tag"])}}}]\''
