@@ -950,21 +950,49 @@ def reconcile_jira_issues(runtime, pr_map: Dict[str, Tuple[PullRequest.PullReque
             # If the component in prodsec data does not exist in the Jira project, use Unknown.
             component = 'Unknown'
 
-        query = f'project={project} AND ( summary ~ "{summary}" OR summary ~ "{old_summary_format}" ) AND issueFunction in linkedIssuesOfRemote("url", "{pr.html_url}")'
-
         @retry(reraise=True, stop=stop_after_attempt(10), wait=wait_fixed(3))
         def search_issues(query):
             return jira_client.search_issues(query)
 
-        # jira title search is fuzzy, so we need to check if an issue is really the one we want
-        open_issues = [
-            i for i in search_issues(query) if i.fields.summary == summary or i.fields.summary == old_summary_format
-        ]
+        @retry(reraise=True, stop=stop_after_attempt(10), wait=wait_fixed(3))
+        def fetch_issue(key):
+            return jira_client.issue(key)
 
-        if open_issues:
-            print(f'A JIRA issue is already open for {pr.html_url}: {open_issues[0].key}')
-            existing_issues[distgit_key] = open_issues[0]
-            connect_issue_with_pr(pr, open_issues[0].key)
+        # Tier A: check if the PR title already references a Jira issue for this project.
+        # connect_issue_with_pr prepends the issue key to the PR title, so this is the
+        # fastest and most reliable way to find existing issues.
+        found_issue = None
+        title_issue_keys = re.findall(r'([A-Z][A-Z0-9]+-\d+)', pr.title)
+        for candidate_key in title_issue_keys:
+            if not candidate_key.startswith(f'{project}-'):
+                continue
+            try:
+                candidate_issue = fetch_issue(candidate_key)
+                if candidate_issue.fields.summary in (summary, old_summary_format):
+                    found_issue = candidate_issue
+                    break
+            except Exception:
+                continue
+
+        # Tier B: fall back to JQL search by summary and labels, without requiring
+        # remote links (which depend on external systems and may be broken).
+        if not found_issue:
+            query = (
+                f'project={project} AND '
+                f'( summary ~ "{summary}" OR summary ~ "{old_summary_format}" ) AND '
+                f'labels = "art:reconciliation" AND '
+                f'labels = "art:package:{image_meta.get_component_name()}"'
+            )
+            candidates = [i for i in search_issues(query) if i.fields.summary in (summary, old_summary_format)]
+            for candidate in candidates:
+                if candidate.fields.description and pr.html_url in candidate.fields.description:
+                    found_issue = candidate
+                    break
+
+        if found_issue:
+            print(f'A JIRA issue is already open for {pr.html_url}: {found_issue.key}')
+            existing_issues[distgit_key] = found_issue
+            connect_issue_with_pr(pr, found_issue.key)
             continue
 
         description = f'''
@@ -1790,7 +1818,6 @@ If you have any questions about this pull request, please reach out in the `#for
                 pr_msg = f'A new PR has been opened: {new_pr.html_url}'
                 pr_dgk_map[dgk] = (new_pr, jenkins_build_url)
                 new_pr_links[dgk] = new_pr.html_url
-                reconcile_jira_issues(runtime, {dgk: (new_pr, jenkins_build_url)}, moist_run)
                 logger.info(pr_msg)
                 yellow_print(pr_msg)
                 print(f'Sleeping {interstitial} seconds before opening another PR to prevent flooding prow...')
