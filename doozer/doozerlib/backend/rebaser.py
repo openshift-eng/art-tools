@@ -1273,7 +1273,9 @@ class KonfluxRebaser:
         df_lines = filtered_content
 
         # ART-8476 assert rhel version equivalence
-        if metadata.canonical_builders_enabled and self.variant != BuildVariant.OKD:
+        # Skip for scratch images — no shell available to run the check
+        _from_stream = metadata.config.get('from', {}).get('stream')
+        if metadata.canonical_builders_enabled and self.variant != BuildVariant.OKD and _from_stream != 'scratch':
             el_version = metadata.branch_el_target()
             df_lines.extend(
                 [
@@ -1469,8 +1471,10 @@ class KonfluxRebaser:
         # files in the cache, and causing the rhel9 go build to make inappropriate decisions.
         # As a temporary guard against this cache pollution, clean the cache after every stage.
         # Use || true to prevent an error if this not a builder stage.
-        # Can be disabled via konflux.no_shell for build stages without /bin/sh
-        no_shell = metadata.config.konflux.get("no_shell", False)
+        # Can be disabled via konflux.no_shell for build stages without /bin/sh.
+        # Also auto-disabled when the base image is 'scratch' (no shell available).
+        from_stream = metadata.config.get('from', {}).get('stream')
+        no_shell = metadata.config.konflux.get("no_shell", False) or from_stream == 'scratch'
         if not no_shell:
             konflux_lines.append("RUN go clean -cache || true")
 
