@@ -182,9 +182,13 @@ def images_streams_mirror(
 
                 if qci_digest:
                     # Mirror to GC-prevention tag: art__<digest>
+                    # Preserve --keep-manifest-list flag if it was in the original command
                     gc_prevention_tag = f"art__{qci_digest[7:23]}"
                     gc_prevention_dest = f"quay.io/openshift/ci:{gc_prevention_tag}"
-                    gc_mirror_cmd = f'oc image mirror {floating_qci_dest}@{qci_digest} {gc_prevention_dest}'
+                    keep_manifest_list = '--keep-manifest-list' if '--keep-manifest-list' in cmd_start else ''
+                    gc_mirror_cmd = (
+                        f'oc image mirror {keep_manifest_list} {floating_qci_dest}@{qci_digest} {gc_prevention_dest}'
+                    )
                     if registry_config_file:
                         gc_mirror_cmd += f' --registry-config={registry_config_file}'
                     exectools.cmd_assert(gc_mirror_cmd, retries=3, realtime=True)
