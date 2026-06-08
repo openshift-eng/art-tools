@@ -9,6 +9,7 @@ dnf cannot be imported.
 
 import logging
 import re
+import shutil
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -20,6 +21,8 @@ from doozerlib.lockfile_prototype.constants import (
     DEFAULT_RPM_INFILE_NAME,
     DEFAULT_RPM_LOCKFILE_NAME,
     RPM_LOCKFILE_ENTRY_POINT,
+    RPMDB_CACHE_ERROR_PATTERNS,
+    RPMDB_CACHE_PATH,
     SYSTEM_PYTHON,
 )
 from doozerlib.lockfile_prototype.models import LockfileData, RpmsInConfig
@@ -49,6 +52,9 @@ class RpmResolver:
         Resolve RPM packages by running rpm-lockfile-prototype via
         system Python as a subprocess.
 
+        On RPMDB corruption errors, clears the cached RPMDB for the
+        image and retries once before raising.
+
         Arg(s):
             config (RpmsInConfig): Input configuration.
             image_pullspec (str | None): Base image for rpmdb context.
@@ -74,9 +80,65 @@ class RpmResolver:
             rc, _, stderr = await cmd_gather_async(cmd, check=False, env=env)
 
             if rc != 0:
+                if image_pullspec and self._is_rpmdb_corrupt(stderr):
+                    cleared = self._clear_rpmdb_cache(image_pullspec)
+                    if cleared:
+                        self.logger.info("Retrying rpm-lockfile-prototype after clearing corrupt RPMDB cache")
+                        retry_rc, _, retry_stderr = await cmd_gather_async(cmd, check=False, env=env)
+                        if retry_rc == 0:
+                            return LockfileData.model_validate(yaml.safe_load(out_file.read_text()))
+                        self.logger.warning("Retry also failed (exit code %d): %s", retry_rc, retry_stderr)
+
                 raise RuntimeError(f"rpm-lockfile-prototype failed (exit code {rc}): {stderr}")
 
             return LockfileData.model_validate(yaml.safe_load(out_file.read_text()))
+
+    @staticmethod
+    def _is_rpmdb_corrupt(stderr: str) -> bool:
+        """
+        Check if stderr indicates a corrupt RPMDB cache.
+
+        Arg(s):
+            stderr (str): Standard error output from rpm-lockfile-prototype.
+        Return Value(s):
+            bool: True if corruption patterns are detected.
+        """
+        return any(pattern in stderr for pattern in RPMDB_CACHE_ERROR_PATTERNS)
+
+    def _clear_rpmdb_cache(self, image_pullspec: str) -> bool:
+        """
+        Delete cached RPMDB entries for an image digest across all arches.
+
+        Arg(s):
+            image_pullspec (str): Image pullspec containing a digest
+                (e.g. "registry.example.com/repo@sha256:abc123...").
+        Return Value(s):
+            bool: True if any cache entries were deleted.
+        """
+        match = re.search(r"@(sha256:[a-f0-9]+)", image_pullspec)
+        if not match:
+            self.logger.warning("Cannot extract digest from pullspec %s, skipping RPMDB cache cleanup", image_pullspec)
+            return False
+
+        digest = match.group(1)
+        cleared = False
+
+        if not RPMDB_CACHE_PATH.is_dir():
+            return False
+
+        for arch_dir in RPMDB_CACHE_PATH.iterdir():
+            cache_entry = arch_dir / digest
+            if cache_entry.is_dir():
+                self.logger.warning("Clearing corrupt RPMDB cache: %s", cache_entry)
+                try:
+                    shutil.rmtree(cache_entry)
+                    cleared = True
+                except FileNotFoundError:
+                    continue
+                except OSError as ex:
+                    self.logger.warning("Failed to remove RPMDB cache %s: %s", cache_entry, ex)
+
+        return cleared
 
     @staticmethod
     def parse_missing_packages(error_text: str) -> set[str]:
