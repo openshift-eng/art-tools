@@ -63,6 +63,27 @@ transforms = set(
 )
 
 
+def get_image_digest(pullspec: str, registry_config: Optional[str] = None) -> Optional[str]:
+    """
+    Get the digest of an image, handling both single-arch and manifest lists.
+    Returns the digest string (e.g., 'sha256:...') or None if not found.
+    """
+    # Use text output (not -o json) because -o json fails for manifest lists
+    cmd = f'oc image info {pullspec}'
+    if registry_config:
+        cmd += f' --registry-config={registry_config}'
+
+    rc, stdout, stderr = exectools.cmd_gather(cmd)
+    if rc != 0:
+        return None
+
+    # Parse digest from text output: "Digest: sha256:..."
+    for line in stdout.splitlines():
+        if line.startswith('Digest:'):
+            return line.split(':', 1)[1].strip()
+    return None
+
+
 @cli.group("images:streams", short_help="Manage ART equivalent images in upstream CI.")
 def images_streams():
     """
@@ -155,22 +176,33 @@ def images_streams_mirror(
             if dry_run:
                 print(f'For {upstream_entry_name}, would have run: {full_cmd_floating}')
             else:
-                exectools.cmd_assert(full_cmd_floating, retries=3, realtime=True)
+                # Try to mirror - if source doesn't exist, log warning and skip
+                rc, stdout, stderr = exectools.cmd_gather(full_cmd_floating, realtime=True)
+                if rc != 0:
+                    if 'manifest unknown' in stderr or 'not found' in stderr:
+                        runtime.logger.warning(
+                            f'Source image does not exist for {upstream_entry_name}, skipping: {stderr.strip()}'
+                        )
+                        print(f'For {upstream_entry_name}, source image not found - skipping')
+                        return
+                    else:
+                        # Other error - raise it
+                        raise ChildProcessError(
+                            f'Failed to mirror {upstream_entry_name}: {stderr}', (rc, stdout, stderr)
+                        )
 
-                # Get digest of the newly mirrored image
-                image_info_cmd = f'oc image info {floating_qci_dest} -o json'
-                if registry_config_file:
-                    image_info_cmd += f' --registry-config={registry_config_file}'
-
-                info_stdout, _ = exectools.cmd_assert(image_info_cmd, retries=3)
-                image_info = json.loads(info_stdout)
-                qci_digest = image_info.get('digest', '')
+                # Get digest of the newly mirrored image (handles manifest lists)
+                qci_digest = get_image_digest(floating_qci_dest, registry_config_file)
 
                 if qci_digest:
                     # Mirror to GC-prevention tag: art__<digest>
+                    # Preserve --keep-manifest-list flag if it was in the original command
                     gc_prevention_tag = f"art__{qci_digest[7:23]}"
                     gc_prevention_dest = f"quay.io/openshift/ci:{gc_prevention_tag}"
-                    gc_mirror_cmd = f'oc image mirror {floating_qci_dest}@{qci_digest} {gc_prevention_dest}'
+                    keep_manifest_list = '--keep-manifest-list' if '--keep-manifest-list' in cmd_start else ''
+                    gc_mirror_cmd = (
+                        f'oc image mirror {keep_manifest_list} {floating_qci_dest}@{qci_digest} {gc_prevention_dest}'
+                    )
                     if registry_config_file:
                         gc_mirror_cmd += f' --registry-config={registry_config_file}'
                     exectools.cmd_assert(gc_mirror_cmd, retries=3, realtime=True)
@@ -214,7 +246,20 @@ def images_streams_mirror(
             if dry_run:
                 print(f'For {upstream_entry_name}, would have run: {full_cmd_1}')
             else:
-                exectools.cmd_assert(full_cmd_1, retries=3, realtime=True)
+                # Try to mirror - if source doesn't exist, log warning and skip
+                rc, stdout, stderr = exectools.cmd_gather(full_cmd_1, realtime=True)
+                if rc != 0:
+                    if 'manifest unknown' in stderr or 'not found' in stderr:
+                        runtime.logger.warning(
+                            f'Source image does not exist for {upstream_entry_name}, skipping: {stderr.strip()}'
+                        )
+                        print(f'For {upstream_entry_name}, source image not found - skipping')
+                        return
+                    else:
+                        # Other error - raise it
+                        raise ChildProcessError(
+                            f'Failed to mirror {upstream_entry_name}: {stderr}', (rc, stdout, stderr)
+                        )
 
     upstreaming_entries = _get_upstreaming_entries(runtime, streams)
 
@@ -411,24 +456,15 @@ def images_streams_check_upstream(runtime, streams, live_test_mode, dry_run, reg
             qci_tag = f'art-builder-{major}.{minor}-{dest_tag}'
             qci_pullspec = f'quay.io/openshift/ci:{qci_tag}'
 
-            image_info_cmd = f'oc image info {qci_pullspec} -o json'
-            if registry_config_file:
-                image_info_cmd += f' --registry-config={registry_config_file}'
+            # Get digest (handles manifest lists)
+            current_digest = get_image_digest(qci_pullspec, registry_config_file)
 
-            rc, info_stdout, info_stderr = exectools.cmd_gather(image_info_cmd)
-            if rc:
+            if not current_digest:
                 qci_status.append(f'ERROR: {upstream_entry_name}\n  QCI image does not exist: {qci_pullspec}')
             else:
+                # Check if imagestream already points to this digest
+                needs_sync = False
                 try:
-                    image_info = json.loads(info_stdout)
-                    current_digest = image_info.get('digest', '')
-
-                    if not current_digest:
-                        qci_status.append(f'WARNING: {upstream_entry_name}\n  No digest found for {qci_pullspec}')
-                        continue
-
-                    # Check if imagestream already points to this digest
-                    needs_sync = False
                     rc_istag, istag_stdout, istag_stderr = exectools.cmd_gather(
                         f'oc get -n {dest_ns} istag {dest_istag} -o json'
                     )
@@ -642,43 +678,26 @@ def images_streams_start_buildconfigs(runtime, streams, as_user, live_test_mode,
                 if dry_run:
                     print('  DRY RUN: Would check and preserve old imagestream content')
                 else:
-                    # Get the current digest from the old imagestream tag
-                    old_image_info_cmd = f'oc image info {old_istag_pullspec} -o json'
-                    if registry_config_file:
-                        old_image_info_cmd += f' --registry-config={registry_config_file}'
+                    # Get the current digest from the old imagestream tag (handles manifest lists)
+                    old_digest = get_image_digest(old_istag_pullspec, registry_config_file)
+                    if old_digest:
+                        print(f'  Current imagestream digest: {old_digest}')
 
-                    rc, old_info_stdout, old_info_stderr = exectools.cmd_gather(old_image_info_cmd)
-                    if rc == 0:
-                        try:
-                            old_image_info = json.loads(old_info_stdout)
-                            old_digest = old_image_info.get('digest', '')
-                            if old_digest:
-                                print(f'  Current imagestream digest: {old_digest}')
+                        # Mirror to a preservation tag to prevent garbage collection
+                        old_gc_prevention_tag = f'art-builder-{old_digest.replace("sha256:", "")[:16]}'
+                        old_gc_prevention_pullspec = f'quay.io/openshift/ci:{old_gc_prevention_tag}'
 
-                                # Mirror to a preservation tag to prevent garbage collection
-                                old_gc_prevention_tag = f'art-builder-{old_digest.replace("sha256:", "")[:16]}'
-                                old_gc_prevention_pullspec = f'quay.io/openshift/ci:{old_gc_prevention_tag}'
+                        print(f'  Mirroring old content to GC-prevention tag: {old_gc_prevention_pullspec}')
+                        old_mirror_cmd = (
+                            f'oc image mirror {old_istag_pullspec}@{old_digest} {old_gc_prevention_pullspec}'
+                        )
+                        if registry_config_file:
+                            old_mirror_cmd += f' --registry-config={registry_config_file}'
 
-                                print(f'  Mirroring old content to GC-prevention tag: {old_gc_prevention_pullspec}')
-                                old_mirror_cmd = (
-                                    f'oc image mirror {old_istag_pullspec}@{old_digest} {old_gc_prevention_pullspec}'
-                                )
-                                if registry_config_file:
-                                    old_mirror_cmd += f' --registry-config={registry_config_file}'
-
-                                # CRITICAL: This MUST succeed before we proceed
-                                exectools.cmd_assert(old_mirror_cmd, retries=3)
-                                print(
-                                    f'  Successfully preserved old imagestream content to {old_gc_prevention_pullspec}'
-                                )
-                            else:
-                                runtime.logger.warning(f'Could not extract digest from {old_istag_pullspec}')
-                                print('  WARNING: No digest found in old imagestream (may be empty)')
-                        except json.JSONDecodeError as e:
-                            runtime.logger.warning(f'Failed to parse old imagestream info: {e}')
-                            print('  WARNING: Could not parse old imagestream info (continuing anyway)')
+                        # CRITICAL: This MUST succeed before we proceed
+                        exectools.cmd_assert(old_mirror_cmd, retries=3)
+                        print(f'  Successfully preserved old imagestream content to {old_gc_prevention_pullspec}')
                     else:
-                        # Old imagestream doesn't exist - this is OK for initial setup
                         print(f'  Old imagestream tag does not exist at {old_istag_pullspec} (initial setup)')
 
             # Step 1: Get current digest of the QCI tag (if it exists)
@@ -689,20 +708,9 @@ def images_streams_start_buildconfigs(runtime, streams, as_user, live_test_mode,
                 print('  DRY RUN: Simulating existing image for testing')
                 current_digest = 'sha256:0000000000000000000000000000000000000000000000000000000000000000'
             else:
-                # Try to get image info - will fail with non-zero rc if image doesn't exist
-                image_info_cmd = f'oc image info {qci_pullspec} -o json'
-                if registry_config_file:
-                    image_info_cmd += f' --registry-config={registry_config_file}'
-
-                rc, info_stdout, info_stderr = exectools.cmd_gather(image_info_cmd)
-                if rc == 0:
-                    try:
-                        image_info = json.loads(info_stdout)
-                        current_digest = image_info.get('digest', '')
-                    except json.JSONDecodeError as e:
-                        runtime.logger.warning(f'Failed to parse image info JSON for {qci_pullspec}: {e}')
-                        print('  WARNING: Could not parse image info (continuing anyway)')
-                else:
+                # Try to get image info (handles manifest lists)
+                current_digest = get_image_digest(qci_pullspec, registry_config_file)
+                if not current_digest:
                     # Image does not exist yet - this is expected during initial migration
                     print(f'  Image does not exist yet at {qci_pullspec} (first build for this buildconfig)')
 
@@ -904,90 +912,88 @@ def images_streams_start_buildconfigs(runtime, streams, as_user, live_test_mode,
         for bc_name, qci_pullspec, dest_ns, dest_imagestream, dest_tag in triggered_builds:
             print(f'\nWaiting for build: {bc_name}')
 
-            # Wait for the build to complete
-            wait_cmd = f'oc -n ci wait --for=condition=Complete --timeout=3600s build -l buildconfig={bc_name} --sort-by={{.metadata.creationTimestamp}} | tail -1'
+            # Get the latest build for this buildconfig and wait for it
+            # First, get the latest build name
+            get_build_cmd = f'oc -n ci get builds -l buildconfig={bc_name} --sort-by={{.metadata.creationTimestamp}} -o jsonpath={{.items[-1].metadata.name}}'
             if as_user:
-                wait_cmd = f'oc -n ci wait --for=condition=Complete --timeout=3600s build -l buildconfig={bc_name} --sort-by={{.metadata.creationTimestamp}} --as {as_user} | tail -1'
+                get_build_cmd += f' --as {as_user}'
 
             try:
+                build_name, _ = exectools.cmd_assert(get_build_cmd, retries=1)
+                build_name = build_name.strip()
+                if not build_name:
+                    runtime.logger.warning(f'No build found for buildconfig {bc_name}')
+                    continue
+
+                print(f'  Waiting for build {build_name}...')
+
+                # Wait for the specific build to complete
+                wait_cmd = f'oc -n ci wait --for=condition=Complete --timeout=3600s build/{build_name}'
+                if as_user:
+                    wait_cmd += f' --as {as_user}'
+
                 exectools.cmd_assert(wait_cmd, retries=1)
                 print(f'  Build {bc_name} completed successfully')
 
                 # Now preserve the newly built image
                 print(f'  Preserving newly built image at {qci_pullspec}')
 
-                # Get the new digest
-                image_info_cmd = f'oc image info {qci_pullspec} -o json'
-                if registry_config_file:
-                    image_info_cmd += f' --registry-config={registry_config_file}'
+                # Get the new digest (handles manifest lists)
+                new_digest = get_image_digest(qci_pullspec, registry_config_file)
 
-                rc, info_stdout, info_stderr = exectools.cmd_gather(image_info_cmd)
-                if rc == 0:
-                    try:
-                        image_info = json.loads(info_stdout)
-                        new_digest = image_info.get('digest', '')
+                if new_digest:
+                    # Mirror to GC-prevention tag
+                    gc_prevention_tag = f'art-builder-{new_digest[7:23]}'  # sha256:abc... -> abc (first 16 chars)
+                    gc_prevention_pullspec = f'quay.io/openshift/ci:{gc_prevention_tag}'
 
-                        if new_digest:
-                            # Mirror to GC-prevention tag
-                            gc_prevention_tag = (
-                                f'art-builder-{new_digest[7:23]}'  # sha256:abc... -> abc (first 16 chars)
-                            )
-                            gc_prevention_pullspec = f'quay.io/openshift/ci:{gc_prevention_tag}'
+                    print(f'  Mirroring to GC-prevention tag: {gc_prevention_pullspec}')
+                    mirror_cmd = f'oc image mirror {qci_pullspec}@{new_digest} {gc_prevention_pullspec}'
+                    if registry_config_file:
+                        mirror_cmd += f' --registry-config={registry_config_file}'
 
-                            print(f'  Mirroring to GC-prevention tag: {gc_prevention_pullspec}')
-                            mirror_cmd = f'oc image mirror {qci_pullspec}@{new_digest} {gc_prevention_pullspec}'
-                            if registry_config_file:
-                                mirror_cmd += f' --registry-config={registry_config_file}'
+                    exectools.cmd_assert(mirror_cmd, retries=3)
+                    print(f'  Successfully mirrored to {gc_prevention_pullspec}')
 
-                            exectools.cmd_assert(mirror_cmd, retries=3)
-                            print(f'  Successfully mirrored to {gc_prevention_pullspec}')
+                    # Update imagestream to reference the new image
+                    if dest_ns and dest_imagestream and dest_tag:
+                        istag_name = f'{dest_imagestream}:{dest_tag}'
+                        print(f'  Updating imagestream tag {dest_ns}/{istag_name} to reference new build')
 
-                            # Update imagestream to reference the new image
-                            if dest_ns and dest_imagestream and dest_tag:
-                                istag_name = f'{dest_imagestream}:{dest_tag}'
-                                print(f'  Updating imagestream tag {dest_ns}/{istag_name} to reference new build')
+                        istag_patch = {
+                            'tag': {
+                                'name': dest_tag,
+                                'from': {
+                                    'kind': 'DockerImage',
+                                    'name': f'quay-proxy.ci.openshift.org/openshift/ci@{new_digest}',
+                                },
+                                'reference': True,
+                                'referencePolicy': {'type': 'Source'},
+                                'importPolicy': {'importMode': 'PreserveOriginal'},
+                            }
+                        }
 
-                                istag_patch = {
-                                    'tag': {
-                                        'name': dest_tag,
-                                        'from': {
-                                            'kind': 'DockerImage',
-                                            'name': f'quay-proxy.ci.openshift.org/openshift/ci@{new_digest}',
-                                        },
-                                        'reference': True,
-                                        'referencePolicy': {'type': 'Source'},
-                                        'importPolicy': {'importMode': 'PreserveOriginal'},
-                                    }
-                                }
+                        # Get current imagestream to find tag index
+                        get_istag_cmd = f'oc get imagestream {dest_imagestream} -n {dest_ns} -o json'
+                        if as_user:
+                            get_istag_cmd += f' --as {as_user}'
 
-                                # Get current imagestream to find tag index
-                                get_istag_cmd = f'oc get imagestream {dest_imagestream} -n {dest_ns} -o json'
-                                if as_user:
-                                    get_istag_cmd += f' --as {as_user}'
+                        istag_stdout, _ = exectools.cmd_assert(get_istag_cmd, retries=3)
+                        imagestream_data = json.loads(istag_stdout)
+                        existing_tags = imagestream_data.get('spec', {}).get('tags', [])
+                        tag_index = next((i for i, t in enumerate(existing_tags) if t.get('name') == dest_tag), None)
 
-                                istag_stdout, _ = exectools.cmd_assert(get_istag_cmd, retries=3)
-                                imagestream_data = json.loads(istag_stdout)
-                                existing_tags = imagestream_data.get('spec', {}).get('tags', [])
-                                tag_index = next(
-                                    (i for i, t in enumerate(existing_tags) if t.get('name') == dest_tag), None
-                                )
-
-                                if tag_index is not None:
-                                    patch_cmd = f'oc patch imagestream {dest_imagestream} -n {dest_ns} --type=json -p \'[{{"op": "replace", "path": "/spec/tags/{tag_index}", "value": {json.dumps(istag_patch["tag"])}}}]\''
-                                else:
-                                    patch_cmd = f'oc patch imagestream {dest_imagestream} -n {dest_ns} --type=json -p \'[{{"op": "add", "path": "/spec/tags/-", "value": {json.dumps(istag_patch["tag"])}}}]\''
-
-                                if as_user:
-                                    patch_cmd += f' --as {as_user}'
-
-                                exectools.cmd_assert(patch_cmd, retries=3)
-                                print('  Successfully updated imagestream tag')
+                        if tag_index is not None:
+                            patch_cmd = f'oc patch imagestream {dest_imagestream} -n {dest_ns} --type=json -p \'[{{"op": "replace", "path": "/spec/tags/{tag_index}", "value": {json.dumps(istag_patch["tag"])}}}]\''
                         else:
-                            runtime.logger.warning(f'No digest found for {qci_pullspec}')
-                    except json.JSONDecodeError as e:
-                        runtime.logger.warning(f'Failed to parse image info for {qci_pullspec}: {e}')
+                            patch_cmd = f'oc patch imagestream {dest_imagestream} -n {dest_ns} --type=json -p \'[{{"op": "add", "path": "/spec/tags/-", "value": {json.dumps(istag_patch["tag"])}}}]\''
+
+                        if as_user:
+                            patch_cmd += f' --as {as_user}'
+
+                        exectools.cmd_assert(patch_cmd, retries=3)
+                        print('  Successfully updated imagestream tag')
                 else:
-                    runtime.logger.warning(f'Failed to get image info for {qci_pullspec}: {info_stderr}')
+                    runtime.logger.warning(f'No digest found for {qci_pullspec}')
 
             except Exception as e:
                 runtime.logger.error(f'Failed to wait for or preserve build {bc_name}: {e}')
