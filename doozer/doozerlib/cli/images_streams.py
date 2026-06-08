@@ -175,7 +175,20 @@ def images_streams_mirror(
             if dry_run:
                 print(f'For {upstream_entry_name}, would have run: {full_cmd_floating}')
             else:
-                exectools.cmd_assert(full_cmd_floating, retries=3, realtime=True)
+                # Try to mirror - if source doesn't exist, log warning and skip
+                rc, stdout, stderr = exectools.cmd_gather(full_cmd_floating, realtime=True)
+                if rc != 0:
+                    if 'manifest unknown' in stderr or 'not found' in stderr:
+                        runtime.logger.warning(
+                            f'Source image does not exist for {upstream_entry_name}, skipping: {stderr.strip()}'
+                        )
+                        print(f'For {upstream_entry_name}, source image not found - skipping')
+                        return
+                    else:
+                        # Other error - raise it
+                        raise ChildProcessError(
+                            f'Failed to mirror {upstream_entry_name}: {stderr}', (rc, stdout, stderr)
+                        )
 
                 # Get digest of the newly mirrored image (handles manifest lists)
                 qci_digest = get_image_digest(floating_qci_dest, registry_config_file)
@@ -232,7 +245,20 @@ def images_streams_mirror(
             if dry_run:
                 print(f'For {upstream_entry_name}, would have run: {full_cmd_1}')
             else:
-                exectools.cmd_assert(full_cmd_1, retries=3, realtime=True)
+                # Try to mirror - if source doesn't exist, log warning and skip
+                rc, stdout, stderr = exectools.cmd_gather(full_cmd_1, realtime=True)
+                if rc != 0:
+                    if 'manifest unknown' in stderr or 'not found' in stderr:
+                        runtime.logger.warning(
+                            f'Source image does not exist for {upstream_entry_name}, skipping: {stderr.strip()}'
+                        )
+                        print(f'For {upstream_entry_name}, source image not found - skipping')
+                        return
+                    else:
+                        # Other error - raise it
+                        raise ChildProcessError(
+                            f'Failed to mirror {upstream_entry_name}: {stderr}', (rc, stdout, stderr)
+                        )
 
     upstreaming_entries = _get_upstreaming_entries(runtime, streams)
 
