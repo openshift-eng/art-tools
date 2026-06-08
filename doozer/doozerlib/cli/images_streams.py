@@ -877,12 +877,26 @@ def images_streams_start_buildconfigs(runtime, streams, as_user, live_test_mode,
         for bc_name, qci_pullspec, dest_ns, dest_imagestream, dest_tag in triggered_builds:
             print(f'\nWaiting for build: {bc_name}')
 
-            # Wait for the build to complete
-            wait_cmd = f'oc -n ci wait --for=condition=Complete --timeout=3600s build -l buildconfig={bc_name} --sort-by={{.metadata.creationTimestamp}} | tail -1'
+            # Get the latest build for this buildconfig and wait for it
+            # First, get the latest build name
+            get_build_cmd = f'oc -n ci get builds -l buildconfig={bc_name} --sort-by={{.metadata.creationTimestamp}} -o jsonpath={{.items[-1].metadata.name}}'
             if as_user:
-                wait_cmd = f'oc -n ci wait --for=condition=Complete --timeout=3600s build -l buildconfig={bc_name} --sort-by={{.metadata.creationTimestamp}} --as {as_user} | tail -1'
+                get_build_cmd += f' --as {as_user}'
 
             try:
+                build_name, _ = exectools.cmd_assert(get_build_cmd, retries=1)
+                build_name = build_name.strip()
+                if not build_name:
+                    runtime.logger.warning(f'No build found for buildconfig {bc_name}')
+                    continue
+
+                print(f'  Waiting for build {build_name}...')
+
+                # Wait for the specific build to complete
+                wait_cmd = f'oc -n ci wait --for=condition=Complete --timeout=3600s build/{build_name}'
+                if as_user:
+                    wait_cmd += f' --as {as_user}'
+
                 exectools.cmd_assert(wait_cmd, retries=1)
                 print(f'  Build {bc_name} completed successfully')
 
