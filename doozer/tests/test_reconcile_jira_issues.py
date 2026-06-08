@@ -13,6 +13,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from doozerlib.cli.images_streams import reconcile_jira_issues
+from jira.exceptions import JIRAError
 
 
 def _build_mocks(
@@ -97,8 +98,17 @@ def _build_mocks(
     # PR mock
     mock_pr = MagicMock()
     mock_pr.html_url = 'https://github.com/openshift/metallb-operator/pull/42'
-    mock_pr.title = 'ART reconciliation PR'
     mock_pr.get_issue_comments.return_value = []
+
+    # Set up for two-tier Jira search
+    mock_issue.fields.description = f'Please review the following PR: {mock_pr.html_url}'
+    if existing_issue:
+        mock_pr.title = f'{mock_issue.key}: ART reconciliation PR'
+        mock_jira_client.issue.return_value = mock_issue
+    else:
+        mock_pr.title = 'ART reconciliation PR'
+        mock_jira_client.issue.side_effect = JIRAError(status_code=404, text="Issue not found")
+
     pr_map = {'ose-metallb-operator': (mock_pr, None)}
 
     return runtime, pr_map, mock_issue, mock_jira_client
@@ -257,6 +267,91 @@ class TestReconcileJiraIssuesCustomFields(unittest.TestCase):
 
         runtime.build_jira_client.assert_not_called()
         mock_jira_client.create_issue.assert_not_called()
+
+    @patch('doozerlib.cli.images_streams.connect_issue_with_pr')
+    def test_tier_a_skips_wrong_project_key_in_title(self, mock_connect):
+        """
+        When the PR title contains an issue key from a different project,
+        Tier A should skip it and fall through to Tier B.
+        """
+        runtime, pr_map, _mock_issue, mock_jira_client = _build_mocks()
+        mock_pr = pr_map['ose-metallb-operator'][0]
+        mock_pr.title = 'RHEL-555: ART reconciliation PR'
+        mock_jira_client.search_issues.return_value = []
+        mock_jira_client.issue.side_effect = Exception("Should not be called")
+
+        reconcile_jira_issues(runtime, pr_map, dry_run=False)
+
+        mock_jira_client.issue.assert_not_called()
+        mock_jira_client.search_issues.assert_called()
+        mock_jira_client.create_issue.assert_called_once()
+
+    @patch('doozerlib.cli.images_streams.connect_issue_with_pr')
+    def test_tier_a_skips_mismatched_summary(self, mock_connect):
+        """
+        When the PR title has an issue key from the right project but
+        the issue summary doesn't match, Tier A should skip it.
+        """
+        runtime, pr_map, _mock_issue, mock_jira_client = _build_mocks()
+        mock_pr = pr_map['ose-metallb-operator'][0]
+        mock_pr.title = 'OCPBUGS-55555: ART reconciliation PR'
+
+        unrelated_issue = MagicMock()
+        unrelated_issue.fields.summary = 'Unrelated bug summary'
+        mock_jira_client.issue.return_value = unrelated_issue
+        mock_jira_client.issue.side_effect = None
+        mock_jira_client.search_issues.return_value = []
+
+        reconcile_jira_issues(runtime, pr_map, dry_run=False)
+
+        mock_jira_client.issue.assert_called_once_with('OCPBUGS-55555')
+        mock_jira_client.search_issues.assert_called()
+        mock_jira_client.create_issue.assert_called_once()
+
+    @patch('doozerlib.cli.images_streams.connect_issue_with_pr')
+    def test_tier_b_finds_issue_via_jql_and_description(self, mock_connect):
+        """
+        When no issue key is in the PR title, Tier B should find an
+        existing issue via JQL search + description URL verification.
+        """
+        runtime, pr_map, mock_issue, mock_jira_client = _build_mocks()
+        mock_pr = pr_map['ose-metallb-operator'][0]
+        mock_pr.title = 'ART reconciliation PR'
+        mock_jira_client.issue.side_effect = JIRAError(status_code=404, text="Not found")
+        mock_jira_client.search_issues.return_value = [mock_issue]
+
+        reconcile_jira_issues(runtime, pr_map, dry_run=False)
+
+        mock_jira_client.search_issues.assert_called_once()
+        mock_jira_client.create_issue.assert_not_called()
+        mock_connect.assert_called_once_with(mock_pr, mock_issue.key)
+
+    @patch('doozerlib.cli.images_streams.connect_issue_with_pr')
+    def test_tier_b_rejects_wrong_pr_url_in_description(self, mock_connect):
+        """
+        When JQL returns a candidate whose description points to a
+        different PR, it should be rejected and a new issue created.
+        """
+        runtime, pr_map, mock_issue, mock_jira_client = _build_mocks()
+        mock_pr = pr_map['ose-metallb-operator'][0]
+        mock_pr.title = 'ART reconciliation PR'
+        mock_jira_client.issue.side_effect = JIRAError(status_code=404, text="Not found")
+
+        wrong_pr_issue = MagicMock()
+        wrong_pr_issue.fields.summary = mock_issue.fields.summary
+        wrong_pr_issue.fields.description = (
+            'Please review the following PR: https://github.com/openshift/other-repo/pull/99'
+        )
+        mock_jira_client.search_issues.return_value = [wrong_pr_issue]
+
+        reconcile_jira_issues(runtime, pr_map, dry_run=False)
+
+        mock_jira_client.search_issues.assert_called()
+        mock_jira_client.create_issue.assert_called_once()
+        mock_jira_client.add_remote_link.assert_called_once_with(
+            mock_issue.key,
+            {'url': mock_pr.html_url, 'title': mock_pr.title},
+        )
 
 
 if __name__ == '__main__':
