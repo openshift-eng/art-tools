@@ -746,9 +746,8 @@ async def build_sync(
     try:
         # Only for stream assembly, lock the build to avoid parallel runs
         if assembly == 'stream':
-            # https://art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com/job/aos-cd-builds/job/build%252Fbuild-sync/40333/
-            # will return job/aos-cd-builds/job/build%252Fbuild-sync/40333
-            lock_identifier = get_build_url().replace(f'{constants.JENKINS_UI_URL}/', '')
+            # Use get_build_path_or_random() to handle cases where BUILD_URL is not set
+            lock_identifier = jenkins.get_build_path_or_random()
             runtime.logger.info('Lock identifier: %s', lock_identifier)
 
             await locks.run_with_lock(

@@ -25,9 +25,17 @@ async def cleanup_locks(runtime: Runtime):
             # Lock ID is a build URL minus Jenkins server base URL
             build_path = await lock_manager.get_lock_id(lock_name)
 
+            # Skip locks with None or empty build_path
+            # These locks cannot be validated against Jenkins and cannot be safely deleted
+            if not build_path:
+                runtime.logger.warning(
+                    "Skipping lock %s with None or empty build path (cannot validate or delete)", lock_name
+                )
+                continue
+
             # Skip locks with random identifiers (created outside of Jenkins)
             # These locks cannot be validated against Jenkins builds and should not be cleaned up
-            if build_path and build_path.startswith('random-'):
+            if build_path.startswith('random-'):
                 runtime.logger.info(
                     "Skipping lock %s with random identifier %s (not a Jenkins build)", lock_name, build_path
                 )
