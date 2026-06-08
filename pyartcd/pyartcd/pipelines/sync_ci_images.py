@@ -612,9 +612,25 @@ class SyncCIImagesPipeline:
             shutil.rmtree(group_dir)
             self._logger.info(f"{self.version}: Cleaned up clone directory")
 
+    async def _run_step(self, name: str, coro) -> bool:
+        """Run a pipeline step, catching and logging errors.
+
+        Returns True if the step succeeded, False if it failed.
+        """
+        try:
+            await coro
+            return True
+        except Exception as e:
+            self._logger.warning('%s: Step "%s" failed: %s', self.version, name, e, exc_info=True)
+            return False
+
     async def run(self) -> int:
         """
         Main pipeline: sync CI images for a single OCP version.
+
+        Each doozer step is best-effort: if one fails (e.g. a missing Konflux
+        build), the pipeline continues with the remaining steps and returns 25
+        (partial/unstable) instead of crashing.
 
         Workflow:
         1. Check for changes in ocp-build-data
@@ -626,7 +642,7 @@ class SyncCIImagesPipeline:
         7. Open PRs to reconcile any BuildConfig drift
 
         Returns:
-            Return code: 0=success, 25=partial (PRs skipped), 50=failure
+            Return code: 0=success, 25=partial (some steps failed), 50=failure
         """
         jenkins.update_title(f' [{self.version}]')
         self._logger.info(f"Starting sync-ci-images for {self.version}")
@@ -642,24 +658,41 @@ class SyncCIImagesPipeline:
             # Prepare build data
             group_dir = await self._prepare_build_data()
 
-            # Execute sync workflow
+            # Execute sync workflow - each step is best-effort
+            failed_steps = []
             with self._create_registry_config() as auth_file:
                 self._logger.info(f"Created registry config: {auth_file}")
                 doozer_opts = self._build_doozer_options(group_dir, auth_file)
 
-                await self._generate_and_apply_buildconfigs(doozer_opts)
-                await self._mirror_images_to_ci(doozer_opts, auth_file)
-                await self._trigger_ci_builds(doozer_opts, auth_file)
+                if not await self._run_step('gen-buildconfigs', self._generate_and_apply_buildconfigs(doozer_opts)):
+                    failed_steps.append('gen-buildconfigs')
+
+                if not await self._run_step('mirror', self._mirror_images_to_ci(doozer_opts, auth_file)):
+                    failed_steps.append('mirror')
+
+                if not await self._run_step('start-builds', self._trigger_ci_builds(doozer_opts)):
+                    failed_steps.append('start-builds')
+
                 await self._wait_for_builds()
-                await self._verify_upstream_consistency(doozer_opts, auth_file)
 
-                rc = await self._open_reconciliation_prs(doozer_opts)
-                if rc == 25:
-                    return 25
+                if not await self._run_step('check-upstream', self._verify_upstream_consistency(doozer_opts)):
+                    failed_steps.append('check-upstream')
 
-            # Record success
+                if not await self._run_step('prs-open', self._open_reconciliation_prs(doozer_opts)):
+                    failed_steps.append('prs-open')
+
+            # Record success even if partial - prevents re-running the same SHA
             await self._record_successful_run(current_sha)
             self._cleanup(group_dir)
+
+            if failed_steps:
+                self._logger.warning(
+                    '%s: Completed with errors in: %s',
+                    self.version,
+                    ', '.join(failed_steps),
+                )
+                return 25
+
             return 0
 
         except Exception as e:
