@@ -91,7 +91,7 @@ class BuildMicroShiftBootcPipeline:
         self.force_plashet_sync = force_plashet_sync
         self.prepare_shipment = prepare_shipment
         self.slack_client = slack_client
-        self.trigger_open_build_first = True  # TEST MODE: always run open build first
+        self.trigger_open_build_first = trigger_open_build_first
         self._logger = logger or runtime.logger
 
         self._working_dir = self.runtime.working_dir.absolute()
