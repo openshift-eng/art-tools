@@ -463,7 +463,7 @@ def build_history_link_url(group: str, assembly: str, days: int = 2, job_url: st
     # Build URL with parameters in correct order and include empty parameters
     build_history_url = (
         f'{ART_BUILD_HISTORY_URL}/?name=&group={group}&assembly={assembly}'
-        f'&outcome=success&outcome=failure&engine=konflux'
+        f'&outcome=Success&outcome=Failure&engine=konflux'
         f'&dateRange={start_date}+to+{end_date}'
         f'&nvr=&record_id=&image_sha_tag=&source_repo=&commitish='
     )

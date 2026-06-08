@@ -257,7 +257,7 @@ class TestSeedLockfilePipeline(unittest.IsolatedAsyncioTestCase):
         self.assertIn('/build?', url)
         self.assertIn('nvr=ironic-container', url)
         self.assertIn('record_id=abc-123', url)
-        self.assertIn('outcome=success', url)
+        self.assertIn('outcome=Success', url)
 
     def test_build_url_without_record_id(self):
         """_build_url falls back to search page when record_id is absent."""

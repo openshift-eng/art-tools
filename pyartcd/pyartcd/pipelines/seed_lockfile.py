@@ -395,7 +395,7 @@ class SeedLockfilePipeline:
         """Build a direct link to a build page in art-build-history."""
         nvr = entry.get('nvrs', '').split(',')[0]
         record_id = entry.get('record_id', '')
-        outcome = 'success' if int(entry.get('status', -1)) == 0 else 'failure'
+        outcome = 'Success' if int(entry.get('status', -1)) == 0 else 'Failure'
         if nvr and nvr != 'n/a' and record_id:
             return (
                 f'{ART_BUILD_HISTORY_URL}/build?nvr={nvr}&record_id={record_id}'
@@ -412,7 +412,7 @@ class SeedLockfilePipeline:
         end_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
         return (
             f'{ART_BUILD_HISTORY_URL}/?name=^{image_name}$&group={group}'
-            f'&engine=konflux&dateRange={start_date}+to+{end_date}&outcome=success&outcome=failure'
+            f'&engine=konflux&dateRange={start_date}+to+{end_date}&outcome=Success&outcome=Failure'
         )
 
     def _categorize_results(self) -> tuple[list[str], list[str], list[str]]:

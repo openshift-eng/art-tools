@@ -327,7 +327,7 @@ class ImagesHealthPipeline:
         start_date = (datetime.now(timezone.utc) - timedelta(days=DELTA_DAYS)).strftime('%Y-%m-%d')
         end_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
         # Filter dashboard to show only OKD groups (okd-*)
-        dashboard_url = f'{ART_BUILD_HISTORY_URL}/?dateRange={start_date}+to+{end_date}&outcome=failure&engine=konflux'
+        dashboard_url = f'{ART_BUILD_HISTORY_URL}/?dateRange={start_date}+to+{end_date}&outcome=Failure&engine=konflux'
 
         message = (
             f':alert: There are some issues to look into for OKD builds:\n- {issues}\n\n'
@@ -386,7 +386,7 @@ class ImagesHealthPipeline:
 
         start_date = (datetime.now(timezone.utc) - timedelta(days=DELTA_DAYS)).strftime('%Y-%m-%d')
         end_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
-        art_dash_link = f'{ART_BUILD_HISTORY_URL}/?name=^{concern["image_name"]}$&group={okd_group}&assembly=stream&engine=konflux&dateRange={start_date}+to+{end_date}&outcome=success&outcome=failure'
+        art_dash_link = f'{ART_BUILD_HISTORY_URL}/?name=^{concern["image_name"]}$&group={okd_group}&assembly=stream&engine=konflux&dateRange={start_date}+to+{end_date}&outcome=Success&outcome=Failure'
         logs_link = self.url_text(self.get_logs_url(concern), "logs")
 
         message = f'{self.url_text(art_dash_link, f"{okd_group}")}: '
@@ -414,7 +414,7 @@ class ImagesHealthPipeline:
         okd_group = group.replace('openshift-', 'okd-')
         start_date = (datetime.now(timezone.utc) - timedelta(days=DELTA_DAYS)).strftime('%Y-%m-%d')
         end_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
-        return f'{ART_BUILD_HISTORY_URL}/?name=^{image_name}$&group={okd_group}&assembly=stream&engine=konflux&dateRange={start_date}+to+{end_date}&outcome=success&outcome=failure'
+        return f'{ART_BUILD_HISTORY_URL}/?name=^{image_name}$&group={okd_group}&assembly=stream&engine=konflux&dateRange={start_date}+to+{end_date}&outcome=Success&outcome=Failure'
 
     @staticmethod
     def get_logs_url(concern):
