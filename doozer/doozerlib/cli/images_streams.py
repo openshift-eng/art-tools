@@ -22,6 +22,7 @@ from dockerfile_parse import DockerfileParser
 from elliottlib.bzutil import JIRABugTracker
 from github import Auth, Github, GithubException, PullRequest, UnknownObjectException
 from jira import JIRA, Issue
+from jira.exceptions import JIRAError
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 from doozerlib import util
@@ -954,10 +955,6 @@ def reconcile_jira_issues(runtime, pr_map: Dict[str, Tuple[PullRequest.PullReque
         def search_issues(query):
             return jira_client.search_issues(query)
 
-        @retry(reraise=True, stop=stop_after_attempt(10), wait=wait_fixed(3))
-        def fetch_issue(key):
-            return jira_client.issue(key)
-
         # Tier A: check if the PR title already references a Jira issue for this project.
         # connect_issue_with_pr prepends the issue key to the PR title, so this is the
         # fastest and most reliable way to find existing issues.
@@ -967,12 +964,15 @@ def reconcile_jira_issues(runtime, pr_map: Dict[str, Tuple[PullRequest.PullReque
             if not candidate_key.startswith(f'{project}-'):
                 continue
             try:
-                candidate_issue = fetch_issue(candidate_key)
+                candidate_issue = jira_client.issue(candidate_key)
                 if candidate_issue.fields.summary in (summary, old_summary_format):
                     found_issue = candidate_issue
                     break
-            except Exception:
-                continue
+            except JIRAError as err:
+                if getattr(err, 'status_code', None) == 404:
+                    continue
+                runtime.logger.warning('Failed to fetch Jira issue %s: %s', candidate_key, err)
+                raise
 
         # Tier B: fall back to JQL search by summary and labels, without requiring
         # remote links (which depend on external systems and may be broken).
@@ -992,7 +992,8 @@ def reconcile_jira_issues(runtime, pr_map: Dict[str, Tuple[PullRequest.PullReque
         if found_issue:
             print(f'A JIRA issue is already open for {pr.html_url}: {found_issue.key}')
             existing_issues[distgit_key] = found_issue
-            connect_issue_with_pr(pr, found_issue.key)
+            if not dry_run:
+                connect_issue_with_pr(pr, found_issue.key)
             continue
 
         description = f'''
@@ -1776,7 +1777,6 @@ If you have any questions about this pull request, please reach out in the `#for
 
             # Otherwise, we need to create a pull request
             if moist_run or dry_run:
-                pr_dgk_map[dgk] = (f'MOIST-RUN-PR:{dgk}', jenkins_build_url)
                 green_print(
                     f'Would have opened PR against: {public_source_repo.html_url}/blob/{public_branch}/{dockerfile_name}.'
                 )
@@ -1840,14 +1840,7 @@ If you have any questions about this pull request, please reach out in the `#for
 
     if pr_dgk_map:
         print('Currently open PRs:')
-        print(
-            yaml.safe_dump(
-                {
-                    key: pr_dgk_map[key][0].html_url if hasattr(pr_dgk_map[key][0], 'html_url') else pr_dgk_map[key][0]
-                    for key in pr_dgk_map
-                }
-            )
-        )
+        print(yaml.safe_dump({key: pr_dgk_map[key][0].html_url for key in pr_dgk_map}))
         reconcile_jira_issues(runtime, pr_dgk_map, moist_run or dry_run)
 
     if skipping_dgks:

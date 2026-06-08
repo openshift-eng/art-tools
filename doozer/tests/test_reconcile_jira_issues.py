@@ -13,6 +13,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from doozerlib.cli.images_streams import reconcile_jira_issues
+from jira.exceptions import JIRAError
 
 
 def _build_mocks(
@@ -106,7 +107,7 @@ def _build_mocks(
         mock_jira_client.issue.return_value = mock_issue
     else:
         mock_pr.title = 'ART reconciliation PR'
-        mock_jira_client.issue.side_effect = Exception("Issue not found")
+        mock_jira_client.issue.side_effect = JIRAError(status_code=404, text="Issue not found")
 
     pr_map = {'ose-metallb-operator': (mock_pr, None)}
 
@@ -273,7 +274,7 @@ class TestReconcileJiraIssuesCustomFields(unittest.TestCase):
         When the PR title contains an issue key from a different project,
         Tier A should skip it and fall through to Tier B.
         """
-        runtime, pr_map, mock_issue, mock_jira_client = _build_mocks()
+        runtime, pr_map, _mock_issue, mock_jira_client = _build_mocks()
         mock_pr = pr_map['ose-metallb-operator'][0]
         mock_pr.title = 'RHEL-555: ART reconciliation PR'
         mock_jira_client.search_issues.return_value = []
@@ -281,6 +282,8 @@ class TestReconcileJiraIssuesCustomFields(unittest.TestCase):
 
         reconcile_jira_issues(runtime, pr_map, dry_run=False)
 
+        mock_jira_client.issue.assert_not_called()
+        mock_jira_client.search_issues.assert_called()
         mock_jira_client.create_issue.assert_called_once()
 
     @patch('doozerlib.cli.images_streams.connect_issue_with_pr')
@@ -289,7 +292,7 @@ class TestReconcileJiraIssuesCustomFields(unittest.TestCase):
         When the PR title has an issue key from the right project but
         the issue summary doesn't match, Tier A should skip it.
         """
-        runtime, pr_map, mock_issue, mock_jira_client = _build_mocks()
+        runtime, pr_map, _mock_issue, mock_jira_client = _build_mocks()
         mock_pr = pr_map['ose-metallb-operator'][0]
         mock_pr.title = 'OCPBUGS-55555: ART reconciliation PR'
 
@@ -301,6 +304,8 @@ class TestReconcileJiraIssuesCustomFields(unittest.TestCase):
 
         reconcile_jira_issues(runtime, pr_map, dry_run=False)
 
+        mock_jira_client.issue.assert_called_once_with('OCPBUGS-55555')
+        mock_jira_client.search_issues.assert_called()
         mock_jira_client.create_issue.assert_called_once()
 
     @patch('doozerlib.cli.images_streams.connect_issue_with_pr')
@@ -312,11 +317,12 @@ class TestReconcileJiraIssuesCustomFields(unittest.TestCase):
         runtime, pr_map, mock_issue, mock_jira_client = _build_mocks()
         mock_pr = pr_map['ose-metallb-operator'][0]
         mock_pr.title = 'ART reconciliation PR'
-        mock_jira_client.issue.side_effect = Exception("Not found")
+        mock_jira_client.issue.side_effect = JIRAError(status_code=404, text="Not found")
         mock_jira_client.search_issues.return_value = [mock_issue]
 
         reconcile_jira_issues(runtime, pr_map, dry_run=False)
 
+        mock_jira_client.search_issues.assert_called_once()
         mock_jira_client.create_issue.assert_not_called()
         mock_connect.assert_called_once_with(mock_pr, mock_issue.key)
 
@@ -329,7 +335,7 @@ class TestReconcileJiraIssuesCustomFields(unittest.TestCase):
         runtime, pr_map, mock_issue, mock_jira_client = _build_mocks()
         mock_pr = pr_map['ose-metallb-operator'][0]
         mock_pr.title = 'ART reconciliation PR'
-        mock_jira_client.issue.side_effect = Exception("Not found")
+        mock_jira_client.issue.side_effect = JIRAError(status_code=404, text="Not found")
 
         wrong_pr_issue = MagicMock()
         wrong_pr_issue.fields.summary = mock_issue.fields.summary
@@ -340,7 +346,12 @@ class TestReconcileJiraIssuesCustomFields(unittest.TestCase):
 
         reconcile_jira_issues(runtime, pr_map, dry_run=False)
 
+        mock_jira_client.search_issues.assert_called()
         mock_jira_client.create_issue.assert_called_once()
+        mock_jira_client.add_remote_link.assert_called_once_with(
+            mock_issue.key,
+            {'url': mock_pr.html_url, 'title': mock_pr.title},
+        )
 
 
 if __name__ == '__main__':
