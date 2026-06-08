@@ -3,6 +3,7 @@ Constants and enums for the lockfile prototype package.
 """
 
 from enum import Enum
+from pathlib import Path
 
 DEFAULT_RPM_LOCKFILE_NAME = "rpms.lock.yaml"
 DEFAULT_RPM_INFILE_NAME = "rpms.in.yaml"
@@ -31,6 +32,19 @@ ARCH_KEYWORDS = ARCH_SUBSHELL_KEYWORDS + tuple(form for name in ARCH_VAR_NAMES f
 
 # RPM pseudo-packages that appear in rpmdb but are not installable via DNF
 RPM_PSEUDO_PACKAGES = frozenset({"gpg-pubkey"})
+
+
+# rpm-lockfile-prototype stores extracted RPMDBs here. There is no env var
+# to override this path — only RPM_LOCKFILE_PROTOTYPE_DNF_CACHE controls
+# the DNF repodata cache, not the RPMDB cache.
+RPMDB_CACHE_PATH = Path.home() / ".cache" / "rpm-lockfile-prototype" / "rpmdbs"
+
+# Patterns in rpm-lockfile-prototype stderr that indicate a broken RPMDB
+# cache entry. When matched, doozer clears the cached entry and retries.
+RPMDB_CACHE_ERROR_PATTERNS = [
+    "database disk image is malformed",
+    "failed loading RPMDB",
+]
 
 
 class LockfileBackend(str, Enum):
