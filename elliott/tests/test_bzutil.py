@@ -1344,6 +1344,91 @@ class TestBZUtil(unittest.IsolatedAsyncioTestCase):
         actual = bzutil.is_first_fix_any(mock_runtime, flaw_bug, tracker_bugs)
         self.assertEqual(expected, actual)
 
+    def test_is_first_fix_normalizes_delivery_repo_tracker(self):
+        """When tracker has delivery-repo pscomponent (openshift4/foo) and Hydra
+        returns the same name resolved to its Brew component, normalization
+        should make them match."""
+        mock_runtime = flexmock()
+        mock_runtime.should_receive("get_major_minor").and_return((4, 17))
+
+        mock_meta = flexmock()
+        mock_config = flexmock()
+        mock_delivery = flexmock()
+        mock_delivery.delivery_repo_names = ["openshift4/ose-cli"]
+        mock_config.delivery = mock_delivery
+        mock_meta.config = mock_config
+        mock_meta.should_receive("get_component_name").and_return("ose-cli-container")
+
+        mock_runtime.should_receive("image_metas").and_return([mock_meta])
+
+        hydra_data = {
+            "package_state": [
+                {
+                    "product_name": "Red Hat OpenShift Container Platform 4",
+                    "fix_state": "Affected",
+                    "package_name": "openshift4/ose-cli",
+                },
+            ],
+        }
+        flexmock(requests).should_receive("get").and_return(
+            flexmock(json=lambda: hydra_data, raise_for_status=lambda: None)
+        )
+
+        flaw_bug = BugzillaBug(flexmock(id=1, alias=["CVE-2024-999"]))
+        tracker_bugs = [flexmock(id=2, whiteboard_component="openshift4/ose-cli")]
+        actual = bzutil.is_first_fix_any(mock_runtime, flaw_bug, tracker_bugs)
+        self.assertTrue(actual)
+
+    def test_is_first_fix_fallback_when_delivery_repo_unresolved(self):
+        """When Hydra returns a delivery-repo name that can't be translated,
+        the raw name should be kept in unfixed_components so trackers using
+        that same delivery-repo pscomponent still match."""
+        mock_runtime = flexmock()
+        mock_runtime.should_receive("get_major_minor").and_return((4, 17))
+
+        # Provide a dummy image meta that does NOT match the golang builder,
+        # so get_component_by_delivery_repo returns None instead of raising.
+        dummy_meta = flexmock()
+        dummy_config = flexmock()
+        dummy_delivery = flexmock()
+        dummy_delivery.delivery_repo_names = ["openshift4/unrelated-image"]
+        dummy_config.delivery = dummy_delivery
+        dummy_meta.config = dummy_config
+        dummy_meta.should_receive("get_component_name").and_return("unrelated-container")
+        mock_runtime.should_receive("image_metas").and_return([dummy_meta])
+
+        hydra_data = {
+            "package_state": [
+                {
+                    "product_name": "Red Hat OpenShift Container Platform 4",
+                    "fix_state": "Affected",
+                    "package_name": "openshift4/openshift-golang-builder",
+                },
+            ],
+        }
+        flexmock(requests).should_receive("get").and_return(
+            flexmock(json=lambda: hydra_data, raise_for_status=lambda: None)
+        )
+
+        flaw_bug = BugzillaBug(flexmock(id=1, alias=["CVE-2024-888"]))
+        tracker_bugs = [flexmock(id=2, whiteboard_component="openshift4/openshift-golang-builder")]
+        actual = bzutil.is_first_fix_any(mock_runtime, flaw_bug, tracker_bugs)
+        self.assertTrue(actual)
+
+
+class TestIsGolangBuilderComponent(unittest.TestCase):
+    def test_matches_cve_component(self):
+        self.assertTrue(constants.is_golang_builder_component(constants.GOLANG_BUILDER_CVE_COMPONENT))
+
+    def test_matches_brew_component(self):
+        self.assertTrue(constants.is_golang_builder_component(constants.GOLANG_BUILDER_BREW_COMPONENT))
+
+    def test_rejects_unrelated(self):
+        self.assertFalse(constants.is_golang_builder_component("some-other-container"))
+
+    def test_rejects_empty(self):
+        self.assertFalse(constants.is_golang_builder_component(""))
+
 
 class TestSearchFilter(unittest.TestCase):
     def test_search_filter(self):

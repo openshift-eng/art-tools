@@ -96,7 +96,7 @@ def filter_art_managed_jira_trackers(
             continue
 
         if (
-            normalized_component == constants.GOLANG_BUILDER_CVE_COMPONENT
+            constants.is_golang_builder_component(normalized_component)
             or normalized_component in art_managed_image_components
         ):
             art_trackers.append(bug)

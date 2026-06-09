@@ -537,7 +537,7 @@ class AttachCveFlaws:
                 raise ValueError(f"Bug {tracker.id} doesn't have a valid whiteboard component.")
 
             whiteboard_component = tracker.whiteboard_component
-            is_golang_builder = whiteboard_component == constants.GOLANG_BUILDER_CVE_COMPONENT
+            is_golang_builder = constants.is_golang_builder_component(whiteboard_component)
             if is_ocp_delivery_repo(whiteboard_component) and not is_golang_builder:
                 # this means the component here is the delivery repo name
                 # we need to translate it to build component name
@@ -554,7 +554,7 @@ class AttachCveFlaws:
                 )
                 if not new_component:
                     # Special case for builder containers: they should map to all components that use this builder
-                    if is_golang_builder or whiteboard_component == constants.GOLANG_BUILDER_BREW_COMPONENT:
+                    if is_golang_builder:
                         # Check which components actually use the golang builder
                         logger.info(f"Processing builder container CVE for '{whiteboard_component}' (golang builder)")
 

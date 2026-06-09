@@ -210,13 +210,13 @@ class FindBugsGolangCli:
             # In case this is for builder image
             # and if vulnerable builds make up for less than 10% of total builds, consider it fixed
             # this is due to etcd and a few payload images lagging behind due to special reasons
-            if bug.whiteboard_component == constants.GOLANG_BUILDER_CVE_COMPONENT and vuln_builds / total_builds < 0.1:
+            if constants.is_golang_builder_component(bug.whiteboard_component) and vuln_builds / total_builds < 0.1:
                 self._logger.info("Vulnerable builds make up for less than 10% of total builds, considering it fixed")
                 fixed = True
         else:
             fixed = True
 
-        if bug.whiteboard_component == constants.GOLANG_BUILDER_CVE_COMPONENT:
+        if constants.is_golang_builder_component(bug.whiteboard_component):
             build_artifacts = f"Images in {self.pullspec}"
         else:
             nvrs = []
@@ -486,7 +486,7 @@ class FindBugsGolangCli:
             if comp in not_art:
                 logger.info(f"{b.id} is for a component that is not built by ART: {comp}. Skipping")
                 return False
-            if comp.endswith("-container") and comp != constants.GOLANG_BUILDER_CVE_COMPONENT:
+            if comp.endswith("-container") and not constants.is_golang_builder_component(comp):
                 logger.info(f"{b.id} is for a non-builder image: {comp}. Skipping")
                 return False
             return True
@@ -510,7 +510,7 @@ class FindBugsGolangCli:
             filtered_bugs_rpms_only = []
             for b in bugs:
                 # Skip builder container bugs
-                if b.whiteboard_component == constants.GOLANG_BUILDER_CVE_COMPONENT:
+                if constants.is_golang_builder_component(b.whiteboard_component):
                     continue
                 # Skip image components (those that start with "openshift<digit>/")
                 if re.match(r'^openshift\d+/', b.whiteboard_component):
@@ -648,7 +648,7 @@ class FindBugsGolangCli:
         fixed_bugs, unfixed_bugs, updated_bugs = [], [], []
         for bug in bugs:
             component = bug.whiteboard_component
-            art_managed = (component == constants.GOLANG_BUILDER_CVE_COMPONENT) or (component in self._runtime.rpm_map)
+            art_managed = constants.is_golang_builder_component(component) or (component in self._runtime.rpm_map)
             logger.info(f"{bug.id} has security component: {component}")
             fixed, comment, component_builds, parent_golang_builds = False, '', [], []
 
@@ -658,7 +658,7 @@ class FindBugsGolangCli:
                 continue
             logger.info(f"{bug.id} is fixed in: {[str(v) for v in tracker_fixed_in]}")
 
-            if component == constants.GOLANG_BUILDER_CVE_COMPONENT:
+            if constants.is_golang_builder_component(component):
                 fixed, comment, component_builds, parent_golang_builds = await self.is_fixed_golang_builder(
                     bug, tracker_fixed_in=tracker_fixed_in
                 )

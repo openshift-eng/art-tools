@@ -25,6 +25,11 @@ BUG_SEVERITY_NUMBER_MAP = {
 GOLANG_BUILDER_CVE_COMPONENT = 'openshift4/openshift-golang-builder'
 GOLANG_BUILDER_BREW_COMPONENT = 'openshift-golang-builder-container'
 
+
+def is_golang_builder_component(component: str) -> bool:
+    """Accept both old (Brew) and new (JIRA) pscomponent names during migration."""
+    return component in (GOLANG_BUILDER_CVE_COMPONENT, GOLANG_BUILDER_BREW_COMPONENT)
+
 BUG_LOOKUP_CHUNK_SIZE = 100
 BUG_ATTACH_CHUNK_SIZE = 100
 
