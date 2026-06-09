@@ -1204,17 +1204,19 @@ class KonfluxImageBuilder:
         parent_image_nvrs = []
         for pullspec in parent_image_pullspecs:
             try:
+                # brew.registry.redhat.io requires auth that may not be available;
+                # use the no-auth registry proxy instead (image content is identical)
+                inspect_pullspec = pullspec.replace(constants.BREW_REGISTRY_BASE_URL, constants.REGISTRY_PROXY_BASE_URL)
                 # Use oc image info with optional auth file to get image labels
                 # Use --filter-by-os to handle manifest list images
                 try:
                     stdout = await oc_image_info__cached_async(
-                        pullspec,
+                        inspect_pullspec,
                         '--filter-by-os=amd64',
                         registry_config=registry_auth_file if registry_auth_file else None,
                     )
                 except ChildProcessError as e:
-                    # Could not access the image - this is unexpected and worth a warning
-                    logger.warning(f"Could not access parent image {pullspec}: {e}")
+                    logger.warning(f"Could not access parent image {inspect_pullspec}: {e}")
                     parent_image_nvrs.append(pullspec)
                     continue
 
