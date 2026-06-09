@@ -36,7 +36,13 @@ class SafeFormatter(string.Formatter):
             except KeyError:
                 return '{' + key + '}'
         else:
-            return string.Formatter.get_value(key, args, kwargs)
+            # Positional placeholder (e.g. bare '{}') — no positional args
+            # are expected, so return the placeholder as-is rather than
+            # raising IndexError and aborting the entire format call.
+            try:
+                return super().get_value(key, args, kwargs)
+            except (IndexError, KeyError):
+                return '{}'
 
 
 class GitDataException(Exception):
