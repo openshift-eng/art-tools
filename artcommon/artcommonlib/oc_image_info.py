@@ -25,7 +25,6 @@ For callers that don't expect the image to change during the process lifetime,
 import hashlib
 import logging
 import os
-from functools import lru_cache
 from typing import Optional, Tuple
 
 from artcommonlib import exectools
@@ -75,13 +74,8 @@ def _make_cache_key(pullspec: str, options: tuple[str, ...]) -> str:
     return f"oc_image_info:{_CACHE_KEY_VERSION}:{digest}"
 
 
-@lru_cache(maxsize=1000)
 def _is_cacheable(pullspec: str) -> bool:
-    """
-    Images referenced by sha256 digest are immutable and safe to cache.
-
-    Cached to avoid logging the same warning repeatedly for the same pullspec.
-    """
+    """Images referenced by sha256 digest are immutable and safe to cache."""
     cacheable = "@sha256:" in pullspec
     if not cacheable:
         logger.warning('Pullspec %r is not sha256-pinned: caching disabled', pullspec)
@@ -186,7 +180,11 @@ def oc_image_info__cached(
     return stdout
 
 
-@lru_cache(maxsize=1000)
+# Manual LRU cache implementation that excludes registry_config from the cache key
+_oc_image_info_lru_cache: dict = {}
+_oc_image_info_lru_order: list = []
+
+
 def oc_image_info__cached__lru(
     pullspec: str,
     *options: str,
@@ -199,8 +197,34 @@ def oc_image_info__cached__lru(
     Use this when you do not expect the image to change during the process
     lifetime (e.g. sha256-pinned pullspecs or tag lookups within a single
     doozer run).
+
+    NOTE: registry_config is intentionally excluded from the cache key because
+    it only affects authentication, not the output. The same image will produce
+    the same JSON output regardless of which registry config file is used.
     """
-    return oc_image_info__cached(pullspec, *options, registry_config=registry_config)
+    # Create cache key from pullspec and options only (exclude registry_config)
+    cache_key = (pullspec, options)
+
+    # Check cache
+    if cache_key in _oc_image_info_lru_cache:
+        # Move to end (most recently used)
+        _oc_image_info_lru_order.remove(cache_key)
+        _oc_image_info_lru_order.append(cache_key)
+        return _oc_image_info_lru_cache[cache_key]
+
+    # Not in cache - call underlying function with the actual registry_config
+    result = oc_image_info__cached(pullspec, *options, registry_config=registry_config)
+
+    # Store in cache
+    _oc_image_info_lru_cache[cache_key] = result
+    _oc_image_info_lru_order.append(cache_key)
+
+    # Evict oldest entries if cache is too large
+    while len(_oc_image_info_lru_cache) > 1000:
+        oldest = _oc_image_info_lru_order.pop(0)
+        del _oc_image_info_lru_cache[oldest]
+
+    return result
 
 
 @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
