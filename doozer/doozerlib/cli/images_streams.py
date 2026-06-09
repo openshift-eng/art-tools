@@ -927,12 +927,31 @@ def images_streams_start_buildconfigs(runtime, streams, as_user, live_test_mode,
 
                 print(f'  Waiting for build {build_name}...')
 
-                # Wait for the specific build to complete
-                wait_cmd = f'oc -n ci wait --for=condition=Complete --timeout=3600s build/{build_name}'
+                # Wait for the specific build to complete or fail (1 hour timeout)
+                # Using jsonpath to wait for either Complete or Failed phase
+                wait_cmd = f"oc -n ci wait --for=jsonpath='{{.status.phase}}'=Complete --for=jsonpath='{{.status.phase}}'=Failed --timeout=3600s build/{build_name}"
                 if as_user:
                     wait_cmd += f' --as {as_user}'
 
-                exectools.cmd_assert(wait_cmd, retries=1)
+                rc, stdout, stderr = exectools.cmd_gather(wait_cmd)
+                if rc != 0:
+                    runtime.logger.warning(f'Build {build_name} did not complete: {stderr}')
+                    continue
+
+                # Check if build succeeded or failed
+                check_phase_cmd = f'oc -n ci get build/{build_name} -o jsonpath={{.status.phase}}'
+                if as_user:
+                    check_phase_cmd += f' --as {as_user}'
+
+                phase_stdout, _ = exectools.cmd_assert(check_phase_cmd, retries=1)
+                phase = phase_stdout.strip()
+
+                if phase != 'Complete':
+                    runtime.logger.warning(
+                        f'Build {build_name} did not complete successfully (phase: {phase}), skipping preservation'
+                    )
+                    continue
+
                 print(f'  Build {bc_name} completed successfully')
 
                 # Now preserve the newly built image
