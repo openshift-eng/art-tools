@@ -9,6 +9,7 @@ import requests
 from artcommonlib.release_util import get_patch_from_release, isolate_el_version_in_release
 from artcommonlib.rhcos import get_container_configs
 from artcommonlib.rpm_utils import parse_nvr
+from artcommonlib.util import is_ocp_delivery_repo
 from doozerlib.cli.get_nightlies import find_rc_nightlies
 from prettytable import PrettyTable
 from pyartcd.util import get_release_name_for_assembly
@@ -486,7 +487,9 @@ class FindBugsGolangCli:
             if comp in not_art:
                 logger.info(f"{b.id} is for a component that is not built by ART: {comp}. Skipping")
                 return False
-            if comp.endswith("-container") and not constants.is_golang_builder_component(comp):
+            if (
+                comp.endswith("-container") or is_ocp_delivery_repo(comp)
+            ) and not constants.is_golang_builder_component(comp):
                 logger.info(f"{b.id} is for a non-builder image: {comp}. Skipping")
                 return False
             return True
