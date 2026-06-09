@@ -30,6 +30,7 @@ def is_golang_builder_component(component: str) -> bool:
     """Accept both old (Brew) and new (JIRA) pscomponent names during migration."""
     return component in (GOLANG_BUILDER_CVE_COMPONENT, GOLANG_BUILDER_BREW_COMPONENT)
 
+
 BUG_LOOKUP_CHUNK_SIZE = 100
 BUG_ATTACH_CHUNK_SIZE = 100
 
