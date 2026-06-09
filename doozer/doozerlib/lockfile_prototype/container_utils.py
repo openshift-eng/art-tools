@@ -43,8 +43,9 @@ class ContainerImageHelper:
         if DIGEST_PREFIX in pullspec:
             return pullspec
 
+        inspect_pullspec = self._proxy_pullspec(pullspec)
         env = build_env()
-        cmd = ["skopeo", "inspect", "--no-tags", f"docker://{pullspec}"]
+        cmd = ["skopeo", "inspect", "--no-tags", f"docker://{inspect_pullspec}"]
         self.logger.debug(f"Resolving tag to digest: {pullspec}")
 
         rc, stdout, stderr = await cmd_gather_async(cmd, check=False, env=env)
