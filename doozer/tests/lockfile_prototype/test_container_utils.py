@@ -36,6 +36,25 @@ class TestContainerImageHelper(unittest.TestCase):
         self.assertEqual(result, "quay.io/test/img@sha256:def456")
 
     @patch("doozerlib.lockfile_prototype.container_utils.cmd_gather_async")
+    def test_resolve_to_digest_brew_registry_uses_proxy(self, mock_gather):
+        """
+        brew.registry.redhat.io pullspecs should be inspected via the registry proxy,
+        but the returned pullspec should keep the original brew.registry domain.
+        """
+        import json
+
+        async def mock_skopeo(cmd, **kwargs):
+            assert "registry-proxy.engineering.redhat.com" in cmd[-1], (
+                f"Expected proxy URL in skopeo command, got {cmd}"
+            )
+            return (0, json.dumps({"Digest": "sha256:abc123"}), "")
+
+        mock_gather.side_effect = mock_skopeo
+        helper = ContainerImageHelper()
+        result = asyncio.run(helper.resolve_to_digest("brew.registry.redhat.io/rh-osbs/ubi8:8.6-754"))
+        self.assertEqual(result, "brew.registry.redhat.io/rh-osbs/ubi8@sha256:abc123")
+
+    @patch("doozerlib.lockfile_prototype.container_utils.cmd_gather_async")
     def test_resolve_to_digest_skopeo_fails(self, mock_gather):
         """
         If skopeo fails, return the original pullspec.
