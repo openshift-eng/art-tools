@@ -878,7 +878,19 @@ class ImageMetadata(Metadata):
             return
 
         # Get the source resolution - this clones the source if not already cloned
-        source_resolution = self.runtime.source_resolver.resolve_source(self)
+        try:
+            source_resolution = self.runtime.source_resolver.resolve_source(self)
+        except (IOError, Exception) as e:
+            # Source resolution can fail for various reasons (missing branch, network issues, etc.)
+            # Log warning and continue - the build will use default builder
+            self.logger.warning(
+                '[%s] canonical_builders_from_upstream is enabled but source could not be resolved: %s. '
+                'Will use default builder from metadata config.',
+                self.distgit_key,
+                e,
+            )
+            return
+
         if not source_resolution:
             self.logger.warning(
                 '[%s] canonical_builders_from_upstream is enabled but source could not be resolved.',
