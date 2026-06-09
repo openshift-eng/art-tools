@@ -75,8 +75,13 @@ def _make_cache_key(pullspec: str, options: tuple[str, ...]) -> str:
     return f"oc_image_info:{_CACHE_KEY_VERSION}:{digest}"
 
 
+@lru_cache(maxsize=1000)
 def _is_cacheable(pullspec: str) -> bool:
-    """Images referenced by sha256 digest are immutable and safe to cache."""
+    """
+    Images referenced by sha256 digest are immutable and safe to cache.
+
+    Cached to avoid logging the same warning repeatedly for the same pullspec.
+    """
     cacheable = "@sha256:" in pullspec
     if not cacheable:
         logger.warning('Pullspec %r is not sha256-pinned: caching disabled', pullspec)
