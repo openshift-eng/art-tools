@@ -572,8 +572,11 @@ class SyncCIImagesPipeline:
             )
 
         pr_args = f"--github-access-token {github_token} --interstitial {self.PR_INTERSTITIAL_SECONDS}"
+        pr_args += ' --add-auto-labels'
+        pr_args += ' --add-label "jira/valid-bug" --add-label "verified"'
         if self.add_labels:
-            pr_args += f" --add-labels {self.add_labels}"
+            for label in self.add_labels.split():
+                pr_args += f' --add-label "{label}"'
         if self.runtime.dry_run:
             pr_args += " --moist-run"  # doozer's dry-run equivalent for PRs
 
