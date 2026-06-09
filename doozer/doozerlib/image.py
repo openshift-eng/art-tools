@@ -14,7 +14,6 @@ from artcommonlib.constants import GOLANG_BUILDER_IMAGE_NAME
 from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
-from artcommonlib.release_util import isolate_el_version_in_release
 from artcommonlib.rpm_utils import parse_nvr, to_nevra
 from artcommonlib.util import deep_merge
 from artcommonlib.variants import BuildVariant
@@ -28,7 +27,43 @@ from doozerlib.metadata import Metadata, RebuildHint, RebuildHintCode
 from doozerlib.source_resolver import SourceResolver
 
 
-@lru_cache(maxsize=500)
+def extract_golang_version_from_pullspec(pullspec: str) -> Optional[Tuple[int, int]]:
+    """
+    Extract golang version from a container image pullspec tag.
+
+    Parses the tag portion of the pullspec for golang version patterns.
+    Does NOT fall back to oc image info - returns None if not found in tag.
+
+    Args:
+        pullspec: Full image pullspec (e.g., registry.ci.openshift.org/ocp/builder:rhel-9-golang-1.21)
+
+    Returns:
+        Tuple of (major, minor) or None (e.g., (1, 21) or None)
+
+    Examples:
+        >>> extract_golang_version_from_pullspec("registry.ci.openshift.org/ocp/builder:rhel-9-golang-1.21")
+        (1, 21)
+        >>> extract_golang_version_from_pullspec("registry.ci.openshift.org/ocp/builder:rhel-9-golang-1.21.3")
+        (1, 21)
+        >>> extract_golang_version_from_pullspec("registry.ci.openshift.org/ocp/builder:base-rhel9")
+        None
+    """
+    if ':' not in pullspec:
+        return None
+
+    # Strip digest (@sha256:...) if present before extracting tag
+    pullspec_without_digest = pullspec.split('@')[0]
+    tag = pullspec_without_digest.split(':')[-1]
+
+    # Extract golang version from tag (e.g., golang-1.21 or golang-1.21.3)
+    golang_match = re.search(r'golang-?(\d+)\.(\d+)', tag)
+    if golang_match:
+        return (int(golang_match.group(1)), int(golang_match.group(2)))
+
+    return None
+
+
+
 def extract_builder_info_from_pullspec(
     pullspec: str,
     registry_config: Optional[str] = None,
@@ -36,58 +71,37 @@ def extract_builder_info_from_pullspec(
     """
     Extract RHEL version and golang version from a container image pullspec.
 
-    First attempts to extract versions from the pullspec tag, then falls back to
-    inspecting the image's 'release' and 'version' labels.
+    First attempts to extract versions from the pullspec tag.
+    Does NOT fall back to oc image info (deprecated behavior removed).
 
     Args:
         pullspec: Full image pullspec (e.g., registry.ci.openshift.org/ocp/builder:rhel-9-golang-1.21)
-        registry_config: Optional path to registry auth config file for image inspection
+        registry_config: Optional path to registry auth config file (UNUSED - kept for compatibility)
 
     Returns:
         Tuple of (rhel_version, golang_version) where:
         - rhel_version: int or None (e.g., 9)
         - golang_version: tuple of (major, minor) or None (e.g., (1, 21))
+
+    Note:
+        This function is deprecated for canonical_builders logic but kept for rebaser compatibility.
+        For new code, use extract_golang_version_from_pullspec() directly.
     """
     rhel_version = None
     golang_version = None
 
-    try:
-        # Try to extract versions from the tag (fast path)
-        if ':' in pullspec:
-            # Strip digest (@sha256:...) if present before extracting tag
-            pullspec_without_digest = pullspec.split('@')[0]
-            tag = pullspec_without_digest.split(':')[-1]
-            # Extract RHEL version from patterns like rhel-9, rhel9, ubi-9, ubi9, centos-9, centos9
-            match = re.search(r'(?:rhel|ubi|centos)-?(\d+)', tag)
-            if match:
-                rhel_version = int(match.group(1))
-                # Try to extract golang version from tag (e.g., golang-1.21 or golang-1.21.3)
-                golang_match = re.search(r'golang-?(\d+)\.(\d+)', tag)
-                if golang_match:
-                    golang_version = (int(golang_match.group(1)), int(golang_match.group(2)))
-                    # Got both values from tag parsing - return immediately
-                    return rhel_version, golang_version
+    if ':' in pullspec:
+        # Strip digest (@sha256:...) if present before extracting tag
+        pullspec_without_digest = pullspec.split('@')[0]
+        tag = pullspec_without_digest.split(':')[-1]
 
-        # At this point, we're missing at least one value - fall back to inspecting image labels
-        image_info = cast(Dict, util.oc_image_info_for_arch(pullspec, registry_config=registry_config))
-        labels = image_info['config']['config']['Labels']
+        # Extract RHEL version from patterns like rhel-9, rhel9, ubi-9, ubi9, centos-9, centos9
+        match = re.search(r'(?:rhel|ubi|centos|scos)-?(\d+)', tag)
+        if match:
+            rhel_version = int(match.group(1))
 
-        # Extract RHEL version from release label if we don't have it yet
-        if not rhel_version:
-            release_label = labels.get('release')
-            if release_label:
-                rhel_version = isolate_el_version_in_release(release_label)
-
-        # Extract golang version from version label if we don't have it yet
-        if not golang_version:
-            version_label = labels.get('version')
-            if version_label:
-                version_fields = util.extract_version_fields(version_label, at_least=2)
-                golang_version = (version_fields[0], version_fields[1])
-
-    except Exception:
-        # Return whatever we managed to extract before the error
-        pass
+        # Extract golang version
+        golang_version = extract_golang_version_from_pullspec(pullspec)
 
     return rhel_version, golang_version
 
@@ -131,26 +145,25 @@ class ImageMetadata(Metadata):
         self.build_status = False
         """ True if this image has been successfully built. """
 
-        # Apply alternative upstream config if canonical builders is enabled
-        # This must happen early so config is correct for all subsequent operations
+        # Validate upstream builder stream if canonical builders is enabled
+        # This clones source to read the Dockerfile and check golang versions
         if self.canonical_builders_enabled:
             if prevent_cloning:
                 self.logger.warning(
                     '[%s] canonical_builders_from_upstream is enabled but prevent_cloning=True. '
-                    'Skipping upstream RHEL version detection; alternative_upstream config will not be applied.',
+                    'Skipping upstream builder validation.',
                     self.distgit_key,
                 )
             else:
                 if not clone_source:
-                    self.logger.warning(
+                    self.logger.info(
                         '[%s] canonical_builders_from_upstream is enabled but clone_source=False. '
-                        'Source will be cloned anyway to determine upstream RHEL version.',
+                        'Source will be cloned anyway to validate upstream builder.',
                         self.distgit_key,
                     )
-                # When canonical_builders_from_upstream is enabled, we need to determine
-                # the upstream RHEL version and merge alternative_upstream config if needed.
-                # This will clone source as part of the process.
-                self._apply_alternative_upstream_config()
+                # When canonical_builders_from_upstream is enabled, validate that upstream's
+                # golang builder version exists in our streams.yml. This will clone source.
+                self._validate_upstream_builder_stream()
         elif clone_source:
             # Normal case: clone source if requested (and canonical builders not enabled)
             runtime.source_resolver.resolve_source(self)
@@ -846,152 +859,137 @@ class ImageMetadata(Metadata):
             return str(group_override).strip()
         return default
 
-    def _apply_alternative_upstream_config(self) -> None:
+    def _validate_upstream_builder_stream(self) -> None:
         """
-        When canonical_builders_enabled, merge alternative_upstream config based on upstream RHEL version.
-        This must happen early in initialization so config is correct for all subsequent operations.
+        When canonical_builders_from_upstream is enabled, validate that the upstream golang builder
+        version has a corresponding stream defined in streams.yml.
 
-        This method determines both ART and upstream intended RHEL versions, then merges the appropriate
-        alternative_upstream config stanza if the versions differ. If versions match, no merge is needed.
+        This validation happens early in initialization. If the upstream builder is not in our streams,
+        a warning is logged and the default builder from metadata config will be used.
 
-        Raises:
-            IOError: If image doesn't have upstream source
-            IOError: If source is not available or upstream RHEL version cannot be determined
-            IOError: If RHEL versions differ but no matching alternative_upstream config is found
+        The actual FROM replacement happens during rebase, which uses the stream pullspec if available.
         """
         # Check if this image has upstream source
         if not self.has_source():
-            raise IOError(
-                f'[{self.distgit_key}] canonical_builders_from_upstream is enabled but image does not have '
-                'upstream source. Cannot determine upstream RHEL version.'
+            self.logger.warning(
+                '[%s] canonical_builders_from_upstream is enabled but image does not have upstream source.',
+                self.distgit_key,
             )
+            return
 
-        # Determine ART intended RHEL version using branch_el_target()
-        art_intended_el_version = self.branch_el_target()
-
-        # Get the source resolution
+        # Get the source resolution - this clones the source if not already cloned
         source_resolution = self.runtime.source_resolver.resolve_source(self)
         if not source_resolution:
-            raise IOError(
-                f'[{self.distgit_key}] canonical_builders_from_upstream is enabled but source could not be resolved. '
-                'Cannot determine upstream RHEL version.'
+            self.logger.warning(
+                '[%s] canonical_builders_from_upstream is enabled but source could not be resolved.',
+                self.distgit_key,
             )
+            return
 
         # Get the source directory
         source_dir = SourceResolver.get_source_dir(source_resolution, self)
 
-        # Determine upstream intended RHEL version and golang version from upstream Dockerfile
-        upstream_intended_el_version, _ = self._determine_upstream_builder_info(source_dir)
+        # Determine upstream's intended golang version from Dockerfile
+        upstream_golang_version = self._determine_upstream_golang_version(source_dir)
 
-        if not upstream_intended_el_version:
-            # Some images (e.g. deployer) use image stream tags like :cli or :base that don't
-            # encode RHEL version. Assume they match ART's intended version rather than crashing.
-            self.logger.warning(
-                '[%s] Could not determine upstream RHEL version from Dockerfile parent images. '
-                'Assuming it matches ART intended version (el%s). '
-                'If this is wrong, add rhel/ubi version info to the upstream Dockerfile base image tag.',
-                self.distgit_key,
-                art_intended_el_version,
-            )
-            return
-
-        # If ART and upstream RHEL versions match, no config merge needed
-        if upstream_intended_el_version == art_intended_el_version:
+        if not upstream_golang_version:
+            # No golang version found in upstream Dockerfile
+            # This is OK - upstream may be using a non-golang builder or image stream tags
             self.logger.info(
-                '[%s] ART and upstream intended RHEL versions match (el%s). No alternative config merge needed.',
+                '[%s] No golang version found in upstream Dockerfile. Will use default builder from metadata config.',
                 self.distgit_key,
-                art_intended_el_version,
             )
             return
 
-        # RHEL versions differ - look for matching alternative_upstream config
-        alt_configs = self.config.alternative_upstream
-        matched = False
-        for alt_config in alt_configs or []:
-            if alt_config['when'] == f'el{upstream_intended_el_version}':
-                self.logger.info(
-                    '[%s] Merging rhel%s alternative_upstream config to match upstream',
-                    self.distgit_key,
-                    upstream_intended_el_version,
-                )
-                # Merge the alternative config
-                self.config = Model(deep_merge(self.config.primitive(), alt_config.primitive()))
-                matched = True
-                break
+        # Check if we have a stream for this golang version
+        # Stream names follow pattern: rhel-{el_version}-golang-{major}.{minor}
+        el_version = self.branch_el_target()
+        stream_name = f'rhel-{el_version}-golang-{upstream_golang_version[0]}.{upstream_golang_version[1]}'
 
-        if not matched:
-            # For OKD variant, RHEL version mismatches are expected (e.g., OKD 5.0 uses el10 while upstream uses el9)
-            # Log a warning instead of raising an error to allow canonical builders to work
-            if self.runtime.variant == BuildVariant.OKD:
-                self.logger.warning(
-                    '[%s] OKD variant: Upstream uses el%s but ART uses el%s. '
-                    'No alternative_upstream config found, but continuing anyway for OKD.',
-                    self.distgit_key,
-                    upstream_intended_el_version,
-                    art_intended_el_version,
-                )
-                return
-
-            raise IOError(
-                f'[{self.distgit_key}] Upstream uses el{upstream_intended_el_version} but ART uses '
-                f'el{art_intended_el_version}, and no matching alternative_upstream config was found. '
-                f'Please add an alternative_upstream config with "when: el{upstream_intended_el_version}".'
+        # Check if stream exists in runtime.streams (loaded from streams.yml)
+        if stream_name not in self.runtime.streams:
+            # Stream not found - log warning and continue with default
+            self.logger.warning(
+                '[%s] Upstream wants golang %s.%s but stream "%s" not found in streams.yml. '
+                'Will use default builder from metadata config. '
+                'If this golang version should be supported, add it to streams.yml.',
+                self.distgit_key,
+                upstream_golang_version[0],
+                upstream_golang_version[1],
+                stream_name,
             )
+            return
 
-        # Update targets after config merge
-        self.targets = self.determine_targets()
+        # Stream found - log success
+        # The rebase process will handle FROM replacement using this stream's pullspec
+        stream_image = self.runtime.streams[stream_name].image
+        self.logger.info(
+            '[%s] Upstream golang %s.%s matches stream "%s" -> %s',
+            self.distgit_key,
+            upstream_golang_version[0],
+            upstream_golang_version[1],
+            stream_name,
+            stream_image,
+        )
 
-    def _determine_upstream_builder_info(
-        self, source_dir: pathlib.Path
-    ) -> Tuple[Optional[int], Optional[Tuple[int, int]]]:
+    def _determine_upstream_golang_version(self, source_dir: pathlib.Path) -> Optional[Tuple[int, int]]:
         """
-        Determine the upstream intended RHEL version and golang version from the last build layer in the upstream Dockerfile.
+        Determine the upstream intended golang version from builder images in the upstream Dockerfile.
 
-        Delegates to extract_builder_info_from_pullspec() for the actual extraction logic.
+        Parses the Dockerfile FROM clauses and extracts golang version from pullspec tags.
+        Checks builder images before the final base image.
 
         Args:
             source_dir: Path to the upstream source directory (already includes content.source.path if applicable)
 
         Returns:
-            Tuple of (rhel_version, golang_version) where:
-            - rhel_version: int or None (e.g., 9)
-            - golang_version: tuple of (major, minor) or None (e.g., (1, 21))
+            Tuple of (major, minor) or None (e.g., (1, 21) or None)
         """
         df_name = self.config.content.source.dockerfile
         if not df_name:
             df_name = 'Dockerfile'
 
         df_path = source_dir.joinpath(df_name)
-        rhel_version = None
-        golang_version = None
 
         try:
             with open(df_path) as f:
                 dfp = DockerfileParser(fileobj=f)
                 parent_images = dfp.parent_images
 
-            # Try the final parent first — it's the base image that determines the shipped RHEL version.
-            # Fall back to earlier parents (builders) in forward order if the base tag is ambiguous
-            # (e.g. :ovn-kubernetes-base, :cli). Forward fallback order picks the primary builder
-            # before any compatibility builders (e.g. rhel-8-golang used only for upgrade shims).
-            ordered = [parent_images[-1]] + parent_images[:-1]
-            for pullspec in ordered:
-                rhel_version, golang_version = extract_builder_info_from_pullspec(
-                    pullspec,
-                    registry_config=self.runtime.registry_config,
-                )
-                if rhel_version:
-                    break
+            # Check builder images first (everything except the last parent, which is the base)
+            # Builders are more likely to have explicit golang version in their tags
+            # e.g., FROM registry.ci.openshift.org/ocp/builder:rhel-9-golang-1.21 AS builder
+            for pullspec in parent_images[:-1]:
+                golang_version = extract_golang_version_from_pullspec(pullspec)
+                if golang_version:
+                    self.logger.info(
+                        '[%s] Found upstream golang version %s.%s from builder: %s',
+                        self.distgit_key,
+                        golang_version[0],
+                        golang_version[1],
+                        pullspec,
+                    )
+                    return golang_version
+
+            # If no builders have golang version, check the final base image
+            if parent_images:
+                golang_version = extract_golang_version_from_pullspec(parent_images[-1])
+                if golang_version:
+                    self.logger.info(
+                        '[%s] Found upstream golang version %s.%s from base image: %s',
+                        self.distgit_key,
+                        golang_version[0],
+                        golang_version[1],
+                        parent_images[-1],
+                    )
+                    return golang_version
 
         except Exception as e:
-            self.logger.warning('[%s] Failed determining upstream builder info: %s', self.distgit_key, e)
+            self.logger.warning('[%s] Failed determining upstream golang version: %s', self.distgit_key, e)
+            return None
 
-        if not rhel_version:
-            self.logger.warning('[%s] Could not determine rhel version from upstream', self.distgit_key)
-        if not golang_version:
-            self.logger.debug('[%s] Could not determine golang version from upstream', self.distgit_key)
-
-        return rhel_version, golang_version
+        self.logger.debug('[%s] Could not determine golang version from upstream Dockerfile', self.distgit_key)
+        return None
 
     def _default_brew_target(self):
         """Returns derived brew target name from the distgit branch name"""
