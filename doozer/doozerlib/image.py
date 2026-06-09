@@ -5,6 +5,7 @@ import pathlib
 import re
 from collections import OrderedDict
 from copy import copy
+from functools import lru_cache
 from multiprocessing import Event
 from typing import Any, Dict, List, Optional, Set, Tuple, cast
 
@@ -27,6 +28,7 @@ from doozerlib.metadata import Metadata, RebuildHint, RebuildHintCode
 from doozerlib.source_resolver import SourceResolver
 
 
+@lru_cache(maxsize=500)
 def extract_builder_info_from_pullspec(
     pullspec: str,
     registry_config: Optional[str] = None,
