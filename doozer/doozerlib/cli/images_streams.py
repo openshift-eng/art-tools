@@ -909,8 +909,23 @@ def images_streams_start_buildconfigs(runtime, streams, as_user, live_test_mode,
         print('\n=== Post-Build Preservation ===')
         print(f'Waiting for {len(triggered_builds)} builds to complete...')
 
+        import time
+
+        overall_timeout = 3600  # 1 hour total for all builds
+        overall_start_time = time.time()
+
         for bc_name, qci_pullspec, dest_ns, dest_imagestream, dest_tag in triggered_builds:
-            print(f'\nWaiting for build: {bc_name}')
+            # Check if we've exceeded overall timeout
+            elapsed = time.time() - overall_start_time
+            remaining = overall_timeout - elapsed
+            if remaining <= 0:
+                runtime.logger.warning(f'Overall timeout ({overall_timeout}s) exceeded, skipping remaining builds')
+                print(
+                    f'\nOverall wait timeout exceeded, skipping remaining {len(triggered_builds) - triggered_builds.index((bc_name, qci_pullspec, dest_ns, dest_imagestream, dest_tag))} builds'
+                )
+                break
+
+            print(f'\nWaiting for build: {bc_name} (timeout remaining: {int(remaining)}s)')
 
             # Get the latest build for this buildconfig and wait for it
             # First, get the latest build name
@@ -927,9 +942,9 @@ def images_streams_start_buildconfigs(runtime, streams, as_user, live_test_mode,
 
                 print(f'  Waiting for build {build_name}...')
 
-                # Wait for the specific build to complete or fail (1 hour timeout)
-                # Using jsonpath to wait for either Complete or Failed phase
-                wait_cmd = f"oc -n ci wait --for=jsonpath='{{.status.phase}}'=Complete --for=jsonpath='{{.status.phase}}'=Failed --timeout=3600s build/{build_name}"
+                # Wait for the specific build to complete or fail
+                # Use remaining time from overall timeout
+                wait_cmd = f"oc -n ci wait --for=jsonpath='{{.status.phase}}'=Complete --for=jsonpath='{{.status.phase}}'=Failed --timeout={int(remaining)}s build/{build_name}"
                 if as_user:
                     wait_cmd += f' --as {as_user}'
 
