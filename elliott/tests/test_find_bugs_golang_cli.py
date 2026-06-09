@@ -28,7 +28,7 @@ def _make_cli(**overrides):
     return FindBugsGolangCli(**defaults)
 
 
-def _make_bug(bug_id="OCPBUGS-99999", component="openshift-golang-builder-container"):
+def _make_bug(bug_id="OCPBUGS-99999", component=constants.GOLANG_BUILDER_CVE_COMPONENT):
     bug = MagicMock()
     bug.id = bug_id
     bug.whiteboard_component = component

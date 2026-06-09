@@ -615,6 +615,7 @@ def categorize_bugs_by_type(
             # golang builder is a special tracker component
             # which applies to all our golang images
             exception_packages.append(constants.GOLANG_BUILDER_CVE_COMPONENT)
+            exception_packages.append(constants.GOLANG_BUILDER_BREW_COMPONENT)
 
         for bug in tracker_bugs:
             package_name = bug.whiteboard_component

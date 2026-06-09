@@ -162,7 +162,7 @@ class FindBugsGolangCli:
         for go_build in go_nvr_map.keys():
             # if this is a builder image then fetch the golang rpm
             parent_go_build = go_build
-            if constants.GOLANG_BUILDER_CVE_COMPONENT in go_build:
+            if constants.GOLANG_BUILDER_BREW_COMPONENT in go_build:
                 parsed_nvr = parse_nvr(go_build)
                 go_builder_nvr_map = get_golang_container_nvrs(
                     [(parsed_nvr['name'], parsed_nvr['version'], parsed_nvr['release'])], self._logger, exact=True
@@ -748,7 +748,7 @@ class FindBugsGolangCli:
     "--component",
     "components",
     multiple=True,
-    help="Only operate on trackers for these JIRA Bug components e.g. openshift-golang-builder-container",
+    help="Only operate on trackers for these JIRA Bug components e.g. openshift4/openshift-golang-builder",
 )
 @click.option('--art-jira', help='Related ART Jira ticket for reference e.g. ART-1234')
 @click.option(
@@ -815,7 +815,7 @@ async def find_bugs_golang_cli(
 
     Bugs are compared with latest builds in `stream` assembly by default. Pass --assembly to specify.
 
-    For openshift-golang-builder-container build, use --pullspec <payload_pullspec> to determine if fixed for builds in
+    For openshift-golang-builder build, use --pullspec <payload_pullspec> to determine if fixed for builds in
     given pullspec
 
     Note: rpm trackers cannot be processed if --pullspec is used, for that rely on --assembly.
@@ -828,7 +828,7 @@ async def find_bugs_golang_cli(
     bugs like openshift-golang-builder where we want to move the bug to VERIFIED after or close to when mass rebuild is
     triggered.
 
-    --component: Only operate on trackers for these JIRA Bug components e.g. openshift-golang-builder-container.
+    --component: Only operate on trackers for these JIRA Bug components e.g. openshift4/openshift-golang-builder.
 
     --rpms-only: Ignore builder container bugs and only analyze RPM trackers.
 

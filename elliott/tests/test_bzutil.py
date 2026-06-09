@@ -740,36 +740,36 @@ class TestJIRABug(unittest.TestCase):
             flexmock(
                 key=1,
                 fields=flexmock(
-                    labels=["pscomponent:openshift-golang-builder-container/openshift-golang-builder-container"],
+                    labels=["pscomponent:some-component/some-component"],
                     issuetype=flexmock(name="Bug"),
                 ),
             )
         )
-        self.assertEqual(bug.whiteboard_component, "openshift-golang-builder-container")
+        self.assertEqual(bug.whiteboard_component, "some-component")
 
         # Non-duplicated component with slash should be left alone
         bug = JIRABug(
             flexmock(
                 key=2,
                 fields=flexmock(
-                    labels=["pscomponent:openshift4/ose-cli"],
+                    labels=["pscomponent:openshift4/openshift-golang-builder"],
                     issuetype=flexmock(name="Bug"),
                 ),
             )
         )
-        self.assertEqual(bug.whiteboard_component, "openshift4/ose-cli")
+        self.assertEqual(bug.whiteboard_component, "openshift4/openshift-golang-builder")
 
         # Component without slash should be unaffected
         bug = JIRABug(
             flexmock(
                 key=3,
                 fields=flexmock(
-                    labels=["pscomponent:openshift-golang-builder-container"],
+                    labels=["pscomponent:openshift-clients"],
                     issuetype=flexmock(name="Bug"),
                 ),
             )
         )
-        self.assertEqual(bug.whiteboard_component, "openshift-golang-builder-container")
+        self.assertEqual(bug.whiteboard_component, "openshift-clients")
 
 
 class TestBugzillaBug(unittest.TestCase):

@@ -22,7 +22,8 @@ BUG_SEVERITY_NUMBER_MAP = {
 }
 
 # Golang builder needs special treatment when associating security tracking bugs with builds:
-GOLANG_BUILDER_CVE_COMPONENT = 'openshift-golang-builder-container'
+GOLANG_BUILDER_CVE_COMPONENT = 'openshift4/openshift-golang-builder'
+GOLANG_BUILDER_BREW_COMPONENT = 'openshift-golang-builder-container'
 
 BUG_LOOKUP_CHUNK_SIZE = 100
 BUG_ATTACH_CHUNK_SIZE = 100

@@ -417,10 +417,10 @@ class AsyncErrataUtils:
             builder_nvr = parse_nvr(builder_nvr_string)
 
             # Make sure they are go builder nvrs (this should never happen)
-            if builder_nvr['name'] != constants.GOLANG_BUILDER_CVE_COMPONENT:
+            if builder_nvr['name'] != constants.GOLANG_BUILDER_BREW_COMPONENT:
                 raise ValueError(
                     f"Unexpected `name` value for nvr {builder_nvr}. Expected "
-                    f"{constants.GOLANG_BUILDER_CVE_COMPONENT}. Please investigate."
+                    f"{constants.GOLANG_BUILDER_BREW_COMPONENT}. Please investigate."
                 )
 
             if 'etcd' in list(go_nvr_map[builder_nvr_string])[0]:
