@@ -5,7 +5,6 @@ import pathlib
 import re
 from collections import OrderedDict
 from copy import copy
-from functools import lru_cache
 from multiprocessing import Event
 from typing import Any, Dict, List, Optional, Set, Tuple, cast
 
@@ -61,7 +60,6 @@ def extract_golang_version_from_pullspec(pullspec: str) -> Optional[Tuple[int, i
         return (int(golang_match.group(1)), int(golang_match.group(2)))
 
     return None
-
 
 
 def extract_builder_info_from_pullspec(
@@ -883,12 +881,24 @@ class ImageMetadata(Metadata):
         except (IOError, Exception) as e:
             # Source resolution can fail for various reasons (missing branch, network issues, etc.)
             # Log warning and continue - the build will use default builder
-            self.logger.warning(
-                '[%s] canonical_builders_from_upstream is enabled but source could not be resolved: %s. '
-                'Will use default builder from metadata config.',
-                self.distgit_key,
-                e,
-            )
+            error_msg = str(e)
+
+            # Check if the error is due to unsubstituted template variables
+            if '{MAJOR}' in error_msg or '{MINOR}' in error_msg:
+                self.logger.warning(
+                    '[%s] canonical_builders_from_upstream is enabled but source branch has unsubstituted '
+                    'template variables: %s. This indicates a metadata template substitution issue. '
+                    'Will use default builder from metadata config.',
+                    self.distgit_key,
+                    e,
+                )
+            else:
+                self.logger.warning(
+                    '[%s] canonical_builders_from_upstream is enabled but source could not be resolved: %s. '
+                    'Will use default builder from metadata config.',
+                    self.distgit_key,
+                    e,
+                )
             return
 
         if not source_resolution:
