@@ -771,10 +771,16 @@ class KonfluxImageBuilder:
         raw_symlink_check = _get_konflux_config(metadata, "enable_symlink_check")
         enable_symlink_check = bool(raw_symlink_check) if raw_symlink_check is not None else None
 
+        cachi2_config = _get_konflux_config(metadata, "cachi2", {})
+        prefetch_mode = (
+            str(cachi2_config.get("prefetch_mode")) if cachi2_config and cachi2_config.get("prefetch_mode") else None
+        )
+
         build_params = ImageBuildParams(
             hermetic=hermetic,
             enable_symlink_check=enable_symlink_check,
             prefetch=prefetch,
+            prefetch_mode=prefetch_mode,
             sast=sast,
             build_args=build_args,
             additional_secret=additional_secret,

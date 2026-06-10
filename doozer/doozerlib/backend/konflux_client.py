@@ -58,6 +58,7 @@ class ImageBuildParams:
     build_step_resources: Optional[dict[str, str]] = None
     workspace_storage: Optional[str] = None
     prefetch: Optional[list] = None
+    prefetch_mode: Optional[str] = None
     artifact_type: Optional[str] = None
     service_account: Optional[str] = None
     annotations: Optional[dict[str, str]] = None
@@ -1309,6 +1310,8 @@ class KonfluxClient:
                         _modify_param(task["params"], "PRIVILEGED_NESTED", str(build_params.privileged_nested).lower())
                 case "prefetch-dependencies":
                     _modify_param(task["params"], "sbom-type", "spdx")
+                    if build_params.prefetch_mode:
+                        _modify_param(task["params"], "mode", build_params.prefetch_mode)
                     if verbose_prefetch_enabled:
                         _modify_param(task["params"], "dev-package-managers", "true")
                         _modify_param(task["params"], "log-level", "debug")
