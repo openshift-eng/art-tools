@@ -337,14 +337,16 @@ def get_inflight(assembly, group, date=None):
     Get inflight release name from current assembly release.
 
     Searches the previous minor's release schedule for a Y-1 z-stream release
-    whose date_start falls within 7 days before (or on the same day as) the
-    assembly release date. When multiple releases qualify, the latest is chosen.
+    whose date_start (the scheduled GA/errata date from Product Pages) falls
+    within 7 days before (or on the same day as) the assembly release date.
+    When multiple releases qualify, the latest is chosen.
     A same-day release is included because it is expected to ship by the time
     the assembly reaches customers.
 
     :param assembly: Assembly name
     :param group: Group name
-    :param date: Optional explicitly provided date in format YYYY-MMM-DD (e.g., 2026-Mar-31)
+    :param date: Optional explicitly provided date. Accepts YYYY-MM-DD
+                 (e.g., 2026-03-31) or YYYY-MMM-DD (e.g., 2026-Mar-31)
     :return: Version string (e.g., '4.21.16') of the in-flight release, or None
     """
     inflight_release = None
@@ -373,7 +375,7 @@ def get_inflight(assembly, group, date=None):
                 if release_date > assembly_date:
                     continue
                 days_diff = (assembly_date - release_date).days
-                if days_diff <= 7:  # if next Y-1 release and assembly release in the same week
+                if days_diff <= 7:  # Y-1 release within 7-day lookback window
                     match = re.search(r'\d+\.\d+\.\d+', release['name'])
                     if match:
                         if best_date is None or release_date > best_date:

@@ -1079,6 +1079,7 @@ class TestExtractRelatedImagesFromFBC(unittest.TestCase):
         self.assertIn('sha256:444', str(result))
         self.assertIn('sha256:555', str(result))
 
+
 class TestGetInflight(unittest.TestCase):
     """Tests for get_inflight() — ART-18958 fix."""
 
