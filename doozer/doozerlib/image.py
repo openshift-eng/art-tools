@@ -7,7 +7,7 @@ from collections import OrderedDict
 from copy import copy
 from functools import lru_cache
 from multiprocessing import Event
-from typing import Any, Dict, List, Optional, Set, Tuple, cast
+from typing import Any, Dict, List, NamedTuple, Optional, Set, Tuple, cast
 
 from artcommonlib import util as artlib_util
 from artcommonlib.constants import GOLANG_BUILDER_IMAGE_NAME
@@ -26,6 +26,16 @@ from doozerlib.build_info import BrewBuildRecordInspector
 from doozerlib.distgit import pull_image
 from doozerlib.metadata import Metadata, RebuildHint, RebuildHintCode
 from doozerlib.source_resolver import SourceResolver
+
+
+class BaseImageReleaseQualification(NamedTuple):
+    """Whether base image snapshot→release should run, with an optional failure reason."""
+
+    trigger: bool
+    reason: Optional[str] = None
+
+    def __bool__(self) -> bool:
+        return self.trigger
 
 
 @lru_cache(maxsize=500)
@@ -1392,7 +1402,7 @@ class ImageMetadata(Metadata):
         image_name = self.config.name
         return image_name == GOLANG_BUILDER_IMAGE_NAME or image_name == 'openshift/golang-builder'
 
-    def should_trigger_base_image_release(self, enabled_override: bool = False) -> bool:
+    def should_trigger_base_image_release(self, enabled_override: bool = False) -> BaseImageReleaseQualification:
         """
         Determines whether this image should trigger the base image release workflow.
 
@@ -1408,25 +1418,34 @@ class ImageMetadata(Metadata):
            If no override is set for step 4, the enabled flag defaults to True.
 
         Returns:
-            bool: True if base image release workflow should be triggered, False otherwise.
+            :class:`BaseImageReleaseQualification`: ``trigger`` is True when the workflow should run;
+            ``reason`` is set when ``trigger`` is False. The result is truthy when ``trigger`` is True.
         """
         if self.runtime.variant is BuildVariant.OKD:
-            return False
+            return BaseImageReleaseQualification(
+                False, "OKD variant does not use RH base image snapshot→release"
+            )
 
         base_image_release_force_override = self.config.base_image_release.force
         if base_image_release_force_override not in [Missing, None] and bool(base_image_release_force_override):
             self.logger.info("Base image release force enabled from metadata config True")
-            return True
+            return BaseImageReleaseQualification(True)
 
         if self.runtime.assembly == "test":
-            return False
+            return BaseImageReleaseQualification(
+                False, "test assembly is excluded (--enabled-override does not bypass)"
+            )
 
         if not (self.is_base_image() or self.is_golang_builder()):
-            return False
+            return BaseImageReleaseQualification(
+                False,
+                "image must be base_only or a golang builder "
+                "(--enabled-override does not bypass; use base_image_release.force in image metadata instead)",
+            )
 
         if enabled_override:
             self.logger.info("Base image release enabled from --enabled-override")
-            return True
+            return BaseImageReleaseQualification(True)
 
         source = None
         base_image_release_enabled = True
@@ -1442,26 +1461,12 @@ class ImageMetadata(Metadata):
                 source = "group config"
 
         self.logger.info(f"Base image release enabled set from {source} {base_image_release_enabled}")
-        return base_image_release_enabled
-
-    def base_image_release_qualification_failure_reason(self, enabled_override: bool = False) -> str:
-        """
-        Human-readable reason when :meth:`should_trigger_base_image_release` is False.
-
-        Call only when qualification has already failed.
-        """
-        if self.runtime.variant is BuildVariant.OKD:
-            return "OKD variant does not use RH base image snapshot→release"
-        if self.runtime.assembly == "test":
-            return "test assembly is excluded (--enabled-override does not bypass)"
-        if not (self.is_base_image() or self.is_golang_builder()):
-            return (
-                "image must be base_only or a golang builder "
-                "(--enabled-override does not bypass; use base_image_release.force in image metadata instead)"
-            )
-        if not enabled_override:
-            return "base_image_release.enabled is false in image or group config; pass --enabled-override to run anyway"
-        return "see image/group base_image_release settings"
+        if base_image_release_enabled:
+            return BaseImageReleaseQualification(True)
+        return BaseImageReleaseQualification(
+            False,
+            "base_image_release.enabled is false in image or group config; pass --enabled-override to run anyway",
+        )
 
     def is_base_image_release_quay_fallback_enabled(self) -> bool:
         """

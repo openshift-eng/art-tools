@@ -1530,9 +1530,11 @@ async def release_to_base_repo(runtime, nvr, enabled_override):
     if metadata is None:
         raise DoozerFatalError(f"Image metadata not found for distgit key {source_row.name}")
 
-    if not metadata.should_trigger_base_image_release(enabled_override=enabled_override):
-        reason = metadata.base_image_release_qualification_failure_reason(enabled_override=enabled_override)
-        raise DoozerFatalError(f"Image does not qualify for base image release workflow: {reason}")
+    qualification = metadata.should_trigger_base_image_release(enabled_override=enabled_override)
+    if not qualification:
+        raise DoozerFatalError(
+            f"Image does not qualify for base image release workflow: {qualification.reason}"
+        )
 
     snapshot_input = BaseImageSnapshotInput(
         nvr=image_nvr,
