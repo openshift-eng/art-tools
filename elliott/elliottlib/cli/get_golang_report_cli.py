@@ -59,13 +59,18 @@ def golang_report_for_version(runtime, ocp_version: str, ignore_rhel: bool = Fal
     if not runtime.image_metas() or not runtime.rpm_metas():
         raise ValueError("runtime is not initialized properly. use mode=both")
 
-    streams_dict = runtime.gitdata.load_data(key='streams').data
+    streams_dict = runtime.get_streams_config()
+
+    # Build a reverse map from alias -> actual stream name
+    stream_alias_map = {}
+    for stream_name, info in streams_dict.items():
+        for alias in info.get('aliases', []):
+            stream_alias_map[alias] = stream_name
+
     golang_streams = {}
     golang_streams_images = {}
     _LOGGER.info(f"Analyzing golang streams for OCP {ocp_version}...")
     for stream_name, info in streams_dict.items():
-        # FIXME: This doesn't handle stream aliases
-
         if 'golang' not in stream_name:
             continue
         image_nvr_like = info['image']
@@ -112,7 +117,11 @@ def golang_report_for_version(runtime, ocp_version: str, ignore_rhel: bool = Fal
         for b in builders:
             if 'golang' not in b:
                 continue
-            v = golang_streams[b]
+            stream_key = stream_alias_map.get(b, b)
+            if stream_key not in golang_streams:
+                _LOGGER.warning(f"Image {image_name} references unknown golang stream: {b}")
+                continue
+            v = golang_streams[stream_key]
             golang_streams_images[v] += 1
 
     _LOGGER.info(f"image count by builders: {golang_streams_images}")
