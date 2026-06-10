@@ -51,6 +51,8 @@ spec:
       params:
       - name: ADDITIONAL_TAGS
         value: []
+    - name: prefetch-dependencies
+      params: []
     - name: clone-repository
       params: []
   taskRunTemplate:
@@ -993,3 +995,55 @@ class TestSkipTasks(IsolatedAsyncioTestCase):
         result = await self._build_plr(build_params=ImageBuildParams(skip_tasks=["nonexistent-task"]))
         task_names = [t["name"] for t in result["spec"]["pipelineSpec"]["tasks"]]
         self.assertEqual(len(task_names), 8)
+
+
+class TestNewPipelinerunPrefetchMode(IsolatedAsyncioTestCase):
+    """Tests for prefetch_mode in _new_pipelinerun_for_image_build."""
+
+    @patch("doozerlib.backend.konflux_client.KonfluxClient._get_pipelinerun_template")
+    async def test_prefetch_mode_permissive_sets_mode_param(self, mock_get_template):
+        """Test that prefetch_mode='permissive' sets mode on the prefetch-dependencies task."""
+        client = _make_mock_client(mock_get_template)
+
+        result = await client._new_pipelinerun_for_image_build(
+            **_COMMON_KWARGS,
+            build_params=ImageBuildParams(prefetch_mode="permissive"),
+        )
+
+        tasks = result["spec"]["pipelineSpec"]["tasks"]
+        prefetch_task = next(t for t in tasks if t["name"] == "prefetch-dependencies")
+        task_param_dict = {p["name"]: p["value"] for p in prefetch_task["params"]}
+
+        self.assertEqual(task_param_dict["mode"], "permissive")
+
+    @patch("doozerlib.backend.konflux_client.KonfluxClient._get_pipelinerun_template")
+    async def test_prefetch_mode_strict_sets_mode_param(self, mock_get_template):
+        """Test that prefetch_mode='strict' sets mode on the prefetch-dependencies task."""
+        client = _make_mock_client(mock_get_template)
+
+        result = await client._new_pipelinerun_for_image_build(
+            **_COMMON_KWARGS,
+            build_params=ImageBuildParams(prefetch_mode="strict"),
+        )
+
+        tasks = result["spec"]["pipelineSpec"]["tasks"]
+        prefetch_task = next(t for t in tasks if t["name"] == "prefetch-dependencies")
+        task_param_dict = {p["name"]: p["value"] for p in prefetch_task["params"]}
+
+        self.assertEqual(task_param_dict["mode"], "strict")
+
+    @patch("doozerlib.backend.konflux_client.KonfluxClient._get_pipelinerun_template")
+    async def test_prefetch_mode_none_is_noop(self, mock_get_template):
+        """Test that None prefetch_mode doesn't add mode to the prefetch-dependencies task."""
+        client = _make_mock_client(mock_get_template)
+
+        result = await client._new_pipelinerun_for_image_build(
+            **_COMMON_KWARGS,
+            build_params=ImageBuildParams(prefetch_mode=None),
+        )
+
+        tasks = result["spec"]["pipelineSpec"]["tasks"]
+        prefetch_task = next(t for t in tasks if t["name"] == "prefetch-dependencies")
+        task_param_names = {p["name"] for p in prefetch_task["params"]}
+
+        self.assertNotIn("mode", task_param_names)
