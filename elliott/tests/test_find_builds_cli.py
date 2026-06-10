@@ -1,13 +1,16 @@
 import unittest
 from unittest import IsolatedAsyncioTestCase, TestCase, mock
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from elliottlib import errata as erratalib
 from elliottlib.brew import Build
 from elliottlib.cli.find_builds_cli import (
+    REGISTRY_CHECK_TIMEOUT,
     _fetch_builds_by_kind_rpm,
     _filter_out_attached_builds,
+    _filter_shipped_konflux_builds,
     _find_shipped_builds,
+    _is_image_released,
     find_builds_konflux,
     find_builds_konflux_all_types,
 )
@@ -75,7 +78,7 @@ class TestFindBuildsKonflux(IsolatedAsyncioTestCase):
         image_meta_2.get_latest_build = AsyncMock(return_value={"nvr": "image2-2.0.0-1.el9"})
 
         runtime.should_receive("image_metas").and_return([image_meta_1, image_meta_2])
-        actual_records = await find_builds_konflux(runtime, payload=True)
+        actual_records = await find_builds_konflux(runtime, payload=True, include_shipped=True)
         self.assertEqual(len(actual_records), 1)
         self.assertEqual(actual_records[0]['nvr'], "image1-1.0.0-1.el8")
         image_meta_1.get_latest_build.assert_called_once_with(el_target="el8", exclude_large_columns=True)
@@ -96,7 +99,7 @@ class TestFindBuildsKonflux(IsolatedAsyncioTestCase):
         image_meta_2.get_latest_build = AsyncMock(return_value={"nvr": "image2-2.0.0-1.el9"})
 
         runtime.should_receive("image_metas").and_return([image_meta_1, image_meta_2])
-        actual_records = await find_builds_konflux(runtime, payload=False)
+        actual_records = await find_builds_konflux(runtime, payload=False, include_shipped=True)
         self.assertEqual(len(actual_records), 0)
         image_meta_2.get_latest_build.assert_not_called()
 
@@ -111,7 +114,7 @@ class TestFindBuildsKonflux(IsolatedAsyncioTestCase):
 
         runtime.should_receive("image_metas").and_return([image_meta_1])
         with self.assertRaises(ElliottFatalError):
-            await find_builds_konflux(runtime, payload=True)
+            await find_builds_konflux(runtime, payload=True, include_shipped=True)
 
 
 class TestFindBuildsKonfluxAllTypes(IsolatedAsyncioTestCase):
@@ -154,7 +157,7 @@ class TestFindBuildsKonfluxAllTypes(IsolatedAsyncioTestCase):
                 return default
 
         with mock.patch("elliottlib.cli.find_builds_cli.anext", side_effect=fake_anext):
-            builds_map = await find_builds_konflux_all_types(runtime)
+            builds_map = await find_builds_konflux_all_types(runtime, include_shipped=True)
 
         # Assertions
         self.assertEqual(len(builds_map['payload']), 1)
@@ -193,7 +196,7 @@ class TestFindBuildsKonfluxAllTypes(IsolatedAsyncioTestCase):
 
         runtime.should_receive("image_metas").and_return([image_meta_1, image_meta_2])
 
-        builds_map = await find_builds_konflux_all_types(runtime)
+        builds_map = await find_builds_konflux_all_types(runtime, include_shipped=True)
 
         self.assertEqual(builds_map['payload'], [build_1.nvr])
         self.assertEqual(builds_map['non_payload'], [])
@@ -218,7 +221,258 @@ class TestFindBuildsKonfluxAllTypes(IsolatedAsyncioTestCase):
 
         runtime.should_receive("image_metas").and_return([image_meta_1])
         with self.assertRaises(ElliottFatalError):
-            await find_builds_konflux_all_types(runtime)
+            await find_builds_konflux_all_types(runtime, include_shipped=True)
+
+
+class TestIsImageReleased(IsolatedAsyncioTestCase):
+    @patch("elliottlib.cli.find_builds_cli.cmd_gather_async", new_callable=AsyncMock)
+    async def test_released_image(self, mock_cmd):
+        mock_cmd.return_value = (0, "", "")
+        result = await _is_image_released("openshift4/ose-cli-rhel9", "4.19.0", "202505210330.p0.el9")
+        self.assertTrue(result)
+        mock_cmd.assert_called_once_with(
+            [
+                "skopeo",
+                "inspect",
+                "--raw",
+                "docker://registry.redhat.io/openshift4/ose-cli-rhel9:v4.19.0-202505210330.p0.el9",
+            ],
+            check=False,
+            timeout=REGISTRY_CHECK_TIMEOUT,
+        )
+
+    @patch("elliottlib.cli.find_builds_cli.cmd_gather_async", new_callable=AsyncMock)
+    async def test_unreleased_image(self, mock_cmd):
+        mock_cmd.return_value = (1, "", "not found")
+        result = await _is_image_released("openshift4/ose-cli-rhel9", "4.19.0", "202505210330.p0.el9")
+        self.assertFalse(result)
+
+    @patch("elliottlib.cli.find_builds_cli.cmd_gather_async", new_callable=AsyncMock)
+    async def test_skopeo_exception_returns_false(self, mock_cmd):
+        mock_cmd.side_effect = OSError("skopeo not found")
+        result = await _is_image_released("openshift4/ose-cli-rhel9", "4.19.0", "202505210330.p0.el9")
+        self.assertFalse(result)
+
+
+class TestFilterShippedKonfluxBuilds(IsolatedAsyncioTestCase):
+    @patch("elliottlib.cli.find_builds_cli._is_image_released", new_callable=AsyncMock)
+    async def test_filters_released_builds(self, mock_released):
+        mock_released.side_effect = [True, False]
+
+        image1 = MagicMock(distgit_key="img1")
+        image1.config.delivery.delivery_repo_names = ["openshift4/img1-rhel9"]
+        record1 = MagicMock(version="4.19.0", release="1.el9", nvr="img1-4.19.0-1.el9")
+
+        image2 = MagicMock(distgit_key="img2")
+        image2.config.delivery.delivery_repo_names = ["openshift4/img2-rhel9"]
+        record2 = MagicMock(version="4.19.0", release="2.el9", nvr="img2-4.19.0-2.el9")
+
+        filtered, shipped = await _filter_shipped_konflux_builds([image1, image2], [record1, record2])
+        self.assertEqual(filtered, [record2])
+        self.assertEqual(shipped, {0})
+
+    @patch("elliottlib.cli.find_builds_cli._is_image_released", new_callable=AsyncMock)
+    async def test_skips_missing_delivery_repo(self, mock_released):
+        from artcommonlib.model import Missing
+
+        mock_released.return_value = False
+
+        image1 = MagicMock(distgit_key="img1")
+        image1.config.delivery.delivery_repo_names = Missing
+        record1 = MagicMock(version="4.19.0", release="1.el9")
+
+        image2 = MagicMock(distgit_key="img2")
+        image2.config.delivery.delivery_repo_names = ["openshift4/img2-rhel9"]
+        record2 = MagicMock(version="4.19.0", release="2.el9")
+
+        filtered, shipped = await _filter_shipped_konflux_builds([image1, image2], [record1, record2])
+        self.assertEqual(filtered, [record1, record2])
+        self.assertEqual(shipped, set())
+        mock_released.assert_called_once()
+
+    @patch("elliottlib.cli.find_builds_cli._is_image_released", new_callable=AsyncMock)
+    async def test_skips_empty_delivery_repo_list(self, mock_released):
+        image1 = MagicMock(distgit_key="img1")
+        image1.config.delivery.delivery_repo_names = []
+        record1 = MagicMock(version="4.19.0", release="1.el9")
+
+        filtered, shipped = await _filter_shipped_konflux_builds([image1], [record1])
+        self.assertEqual(filtered, [record1])
+        self.assertEqual(shipped, set())
+        mock_released.assert_not_called()
+
+    @patch("elliottlib.cli.find_builds_cli._is_image_released", new_callable=AsyncMock)
+    async def test_returns_all_when_none_released(self, mock_released):
+        mock_released.return_value = False
+
+        image1 = MagicMock(distgit_key="img1")
+        image1.config.delivery.delivery_repo_names = ["openshift4/img1-rhel9"]
+        record1 = MagicMock(version="4.19.0", release="1.el9")
+
+        filtered, shipped = await _filter_shipped_konflux_builds([image1], [record1])
+        self.assertEqual(filtered, [record1])
+        self.assertEqual(shipped, set())
+
+    @patch("elliottlib.cli.find_builds_cli._is_image_released", new_callable=AsyncMock)
+    async def test_returns_empty_when_all_released(self, mock_released):
+        mock_released.return_value = True
+
+        image1 = MagicMock(distgit_key="img1")
+        image1.config.delivery.delivery_repo_names = ["openshift4/img1-rhel9"]
+        record1 = MagicMock(version="4.19.0", release="1.el9")
+
+        filtered, shipped = await _filter_shipped_konflux_builds([image1], [record1])
+        self.assertEqual(filtered, [])
+        self.assertEqual(shipped, {0})
+
+    @patch("elliottlib.cli.find_builds_cli._is_image_released", new_callable=AsyncMock)
+    async def test_empty_records(self, mock_released):
+        filtered, shipped = await _filter_shipped_konflux_builds([], [])
+        self.assertEqual(filtered, [])
+        self.assertEqual(shipped, set())
+        mock_released.assert_not_called()
+
+
+class TestFindBuildsKonfluxShippedFiltering(IsolatedAsyncioTestCase):
+    @patch("elliottlib.cli.find_builds_cli._filter_shipped_konflux_builds", new_callable=AsyncMock)
+    @patch("elliottlib.cli.find_builds_cli.KonfluxBuildRecord")
+    async def test_filters_shipped_by_default(self, MockKonfluxBuildRecord, mock_filter):
+        runtime = flexmock(konflux_db=flexmock(), assembly=None)
+        runtime.should_receive("get_releases_config").and_return(None)
+        runtime.konflux_db.should_receive("bind").with_args(MockKonfluxBuildRecord)
+
+        record1 = MagicMock(nvr="image1-1.0.0-1.el8")
+        image_meta = MagicMock(base_only=False, is_release=True, is_payload=True, distgit_key="image1")
+        image_meta.branch_el_target.return_value = "el8"
+        image_meta.get_latest_build = AsyncMock(return_value=record1)
+        runtime.should_receive("image_metas").and_return([image_meta])
+
+        mock_filter.return_value = ([record1], set())
+        result = await find_builds_konflux(runtime, payload=True)
+        mock_filter.assert_called_once()
+        self.assertEqual(len(result), 1)
+
+    @patch("elliottlib.cli.find_builds_cli._filter_shipped_konflux_builds", new_callable=AsyncMock)
+    @patch("elliottlib.cli.find_builds_cli.KonfluxBuildRecord")
+    async def test_skips_filter_with_include_shipped(self, MockKonfluxBuildRecord, mock_filter):
+        runtime = flexmock(konflux_db=flexmock(), assembly=None)
+        runtime.should_receive("get_releases_config").and_return(None)
+        runtime.konflux_db.should_receive("bind").with_args(MockKonfluxBuildRecord)
+
+        record1 = MagicMock(nvr="image1-1.0.0-1.el8")
+        image_meta = MagicMock(base_only=False, is_release=True, is_payload=True, distgit_key="image1")
+        image_meta.branch_el_target.return_value = "el8"
+        image_meta.get_latest_build = AsyncMock(return_value=record1)
+        runtime.should_receive("image_metas").and_return([image_meta])
+
+        result = await find_builds_konflux(runtime, payload=True, include_shipped=True)
+        mock_filter.assert_not_called()
+        self.assertEqual(len(result), 1)
+
+    @patch("elliottlib.cli.find_builds_cli._filter_shipped_konflux_builds", new_callable=AsyncMock)
+    @patch("elliottlib.cli.find_builds_cli.KonfluxBuildRecord")
+    @patch("elliottlib.cli.find_builds_cli.KonfluxBundleBuildRecord")
+    async def test_all_types_filters_shipped(self, MockBundle, MockKonflux, mock_filter):
+        runtime = flexmock(konflux_db=flexmock(), assembly=None)
+        runtime.should_receive("get_releases_config").and_return(None)
+        runtime.konflux_db.should_receive("bind").with_args(MockKonflux)
+        runtime.konflux_db.should_receive("bind").with_args(MockBundle)
+
+        build1 = MagicMock(nvr="image1-1.0.0-1.el8")
+        image_meta = MagicMock(
+            base_only=False, is_release=True, is_payload=True, is_olm_operator=False, distgit_key="image1"
+        )
+        image_meta.branch_el_target.return_value = "el8"
+        image_meta.get_latest_build = AsyncMock(return_value=build1)
+        runtime.should_receive("image_metas").and_return([image_meta])
+
+        mock_filter.return_value = ([build1], set())
+        builds_map = await find_builds_konflux_all_types(runtime)
+        mock_filter.assert_called_once()
+        self.assertEqual(builds_map["payload"], [build1.nvr])
+
+    @patch("elliottlib.cli.find_builds_cli._filter_shipped_konflux_builds", new_callable=AsyncMock)
+    @patch("elliottlib.cli.find_builds_cli.KonfluxBuildRecord")
+    @patch("elliottlib.cli.find_builds_cli.KonfluxBundleBuildRecord")
+    async def test_all_types_shipped_olm_operator_skips_bundle_lookup(self, MockBundle, MockKonflux, mock_filter):
+        """
+        When an OLM operator is filtered as shipped, its bundle lookup should also be skipped.
+        """
+        runtime = flexmock(konflux_db=flexmock(), assembly=None)
+        runtime.should_receive("get_releases_config").and_return(None)
+        runtime.konflux_db.should_receive("bind").with_args(MockKonflux)
+        runtime.konflux_db.should_receive("bind").with_args(MockBundle)
+
+        build_payload = MagicMock(nvr="payload-img-1.0.0-1.el8")
+        meta_payload = MagicMock(
+            base_only=False, is_release=True, is_payload=True, is_olm_operator=False, distgit_key="payload-img"
+        )
+        meta_payload.branch_el_target.return_value = "el8"
+        meta_payload.get_latest_build = AsyncMock(return_value=build_payload)
+
+        build_olm = MagicMock(nvr="olm-operator-2.0.0-1.el9")
+        meta_olm = MagicMock(
+            base_only=False, is_release=True, is_payload=False, is_olm_operator=True, distgit_key="olm-operator"
+        )
+        meta_olm.branch_el_target.return_value = "el9"
+        meta_olm.get_latest_build = AsyncMock(return_value=build_olm)
+
+        runtime.should_receive("image_metas").and_return([meta_payload, meta_olm])
+
+        # OLM operator (index 1) is shipped — DB should NOT be queried for bundle builds
+        mock_filter.return_value = ([build_payload], {1})
+        runtime.konflux_db.should_receive("search_builds_by_fields").never()
+
+        builds_map = await find_builds_konflux_all_types(runtime)
+
+        self.assertEqual(builds_map["payload"], [build_payload.nvr])
+        self.assertEqual(builds_map["non_payload"], [])
+        self.assertEqual(builds_map["olm_builds"], [])
+        self.assertEqual(builds_map["olm_builds_not_found"], [])
+
+    @patch("elliottlib.cli.find_builds_cli._filter_shipped_konflux_builds", new_callable=AsyncMock)
+    @patch("elliottlib.cli.find_builds_cli.KonfluxBuildRecord")
+    @patch("elliottlib.cli.find_builds_cli.KonfluxBundleBuildRecord")
+    async def test_all_types_preserves_flag_alignment(self, MockBundle, MockKonflux, mock_filter):
+        """
+        Verify that payload_flags, olm_flags, and results stay aligned after filtering.
+        3 images: payload (kept), non-payload OLM (shipped), non-payload (kept).
+        """
+        runtime = flexmock(konflux_db=flexmock(), assembly=None)
+        runtime.should_receive("get_releases_config").and_return(None)
+        runtime.konflux_db.should_receive("bind").with_args(MockKonflux)
+        runtime.konflux_db.should_receive("bind").with_args(MockBundle)
+
+        build1 = MagicMock(nvr="img1-1.0.0-1.el8")
+        meta1 = MagicMock(base_only=False, is_release=True, is_payload=True, is_olm_operator=False, distgit_key="img1")
+        meta1.branch_el_target.return_value = "el8"
+        meta1.get_latest_build = AsyncMock(return_value=build1)
+
+        build2 = MagicMock(nvr="olm-img-2.0.0-1.el9")
+        meta2 = MagicMock(
+            base_only=False, is_release=True, is_payload=False, is_olm_operator=True, distgit_key="olm-img"
+        )
+        meta2.branch_el_target.return_value = "el9"
+        meta2.get_latest_build = AsyncMock(return_value=build2)
+
+        build3 = MagicMock(nvr="nonpay-3.0.0-1.el9")
+        meta3 = MagicMock(
+            base_only=False, is_release=True, is_payload=False, is_olm_operator=False, distgit_key="nonpay"
+        )
+        meta3.branch_el_target.return_value = "el9"
+        meta3.get_latest_build = AsyncMock(return_value=build3)
+
+        runtime.should_receive("image_metas").and_return([meta1, meta2, meta3])
+
+        # Image at index 1 (OLM) shipped
+        mock_filter.return_value = ([build1, build3], {1})
+
+        builds_map = await find_builds_konflux_all_types(runtime)
+
+        self.assertEqual(sorted(builds_map["payload"]), [build1.nvr])
+        self.assertEqual(sorted(builds_map["non_payload"]), [build3.nvr])
+        self.assertEqual(builds_map["olm_builds"], [])
+        self.assertEqual(builds_map["olm_builds_not_found"], [])
 
 
 class TestFetchBuildsByKindRpm(IsolatedAsyncioTestCase):
