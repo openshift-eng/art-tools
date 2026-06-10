@@ -380,16 +380,16 @@ class AsyncErrataUtils:
 
         # separate out golang CVEs and non-golang CVEs
         # expected_brew_components contain non-golang CVEs components for regular analysis
-        # All golang CVEs will have component as constants.GOLANG_BUILDER_OCP4_DELIVERY_REPO
+        # Golang CVEs have a builder component (delivery repo or legacy name)
         # which we do not attach to our advisories since it's a builder image
         # It requires special treatment
         expected_brew_components = set()
         golang_cve_names = set()
         for cve_name, components in expected_cve_components.items():
-            if constants.GOLANG_BUILDER_OCP4_DELIVERY_REPO not in components:
-                expected_brew_components.update(components)
-            else:
+            if any(constants.is_golang_builder_component(c) for c in components):
                 golang_cve_names.add(cve_name)
+            else:
+                expected_brew_components.update(components)
 
         missing_brew_components = expected_brew_components - attached_brew_components
         if missing_brew_components:
