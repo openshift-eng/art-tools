@@ -380,13 +380,13 @@ class AsyncErrataUtils:
 
         # separate out golang CVEs and non-golang CVEs
         # expected_brew_components contain non-golang CVEs components for regular analysis
-        # All golang CVEs will have component as constants.GOLANG_BUILDER_CVE_COMPONENT
+        # All golang CVEs will have component as constants.GOLANG_BUILDER_OCP4_DELIVERY_REPO
         # which we do not attach to our advisories since it's a builder image
         # It requires special treatment
         expected_brew_components = set()
         golang_cve_names = set()
         for cve_name, components in expected_cve_components.items():
-            if constants.GOLANG_BUILDER_CVE_COMPONENT not in components:
+            if constants.GOLANG_BUILDER_OCP4_DELIVERY_REPO not in components:
                 expected_brew_components.update(components)
             else:
                 golang_cve_names.add(cve_name)
@@ -417,10 +417,10 @@ class AsyncErrataUtils:
             builder_nvr = parse_nvr(builder_nvr_string)
 
             # Make sure they are go builder nvrs (this should never happen)
-            if builder_nvr['name'] != constants.GOLANG_BUILDER_BREW_COMPONENT:
+            if builder_nvr['name'] != constants.GOLANG_BUILDER_COMPONENT:
                 raise ValueError(
                     f"Unexpected `name` value for nvr {builder_nvr}. Expected "
-                    f"{constants.GOLANG_BUILDER_BREW_COMPONENT}. Please investigate."
+                    f"{constants.GOLANG_BUILDER_COMPONENT}. Please investigate."
                 )
 
             if 'etcd' in list(go_nvr_map[builder_nvr_string])[0]:

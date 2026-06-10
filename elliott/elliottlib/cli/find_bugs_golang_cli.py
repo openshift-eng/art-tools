@@ -163,7 +163,7 @@ class FindBugsGolangCli:
         for go_build in go_nvr_map.keys():
             # if this is a builder image then fetch the golang rpm
             parent_go_build = go_build
-            if constants.GOLANG_BUILDER_BREW_COMPONENT in go_build:
+            if constants.GOLANG_BUILDER_COMPONENT in go_build:
                 parsed_nvr = parse_nvr(go_build)
                 go_builder_nvr_map = get_golang_container_nvrs(
                     [(parsed_nvr['name'], parsed_nvr['version'], parsed_nvr['release'])], self._logger, exact=True

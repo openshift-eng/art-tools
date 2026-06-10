@@ -28,7 +28,7 @@ def _make_cli(**overrides):
     return FindBugsGolangCli(**defaults)
 
 
-def _make_bug(bug_id="OCPBUGS-99999", component=constants.GOLANG_BUILDER_CVE_COMPONENT):
+def _make_bug(bug_id="OCPBUGS-99999", component=constants.GOLANG_BUILDER_OCP4_DELIVERY_REPO):
     bug = MagicMock()
     bug.id = bug_id
     bug.whiteboard_component = component
@@ -103,7 +103,7 @@ class TestIsFixed(TestCase):
     def test_builder_container_10pct_threshold(self, mock_get_golang, mock_errata):
         mock_get_golang.return_value = {"golang-1.22.12-11.el9": []}
         cli = _make_cli()
-        bug = _make_bug(component=constants.GOLANG_BUILDER_CVE_COMPONENT)
+        bug = _make_bug(component=constants.GOLANG_BUILDER_OCP4_DELIVERY_REPO)
         tracker_fixed_in = {Version.parse("1.22.12-11"), Version.parse("1.22.12-13")}
         go_nvr_map = {
             "golang-1.22.12-11.el9": [("img", "1.0", "1.el9")] * 173,

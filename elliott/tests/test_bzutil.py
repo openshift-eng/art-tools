@@ -1418,10 +1418,10 @@ class TestBZUtil(unittest.IsolatedAsyncioTestCase):
 
 class TestIsGolangBuilderComponent(unittest.TestCase):
     def test_matches_cve_component(self):
-        self.assertTrue(constants.is_golang_builder_component(constants.GOLANG_BUILDER_CVE_COMPONENT))
+        self.assertTrue(constants.is_golang_builder_component(constants.GOLANG_BUILDER_OCP4_DELIVERY_REPO))
 
     def test_matches_brew_component(self):
-        self.assertTrue(constants.is_golang_builder_component(constants.GOLANG_BUILDER_BREW_COMPONENT))
+        self.assertTrue(constants.is_golang_builder_component(constants.GOLANG_BUILDER_COMPONENT))
 
     def test_rejects_unrelated(self):
         self.assertFalse(constants.is_golang_builder_component("some-other-container"))
