@@ -995,13 +995,15 @@ class UpdateGolangPipeline:
 
         try:
             image_config = self._load_yaml_from_repo(repo, f"images/{image_key}.yml", ref)
-        except Exception:
+        except Exception as e:
+            _LOGGER.warning(f"Failed to load image config for {image_key}: {e}")
             image_config = {}
         image_config_network_mode = (image_config.get("konflux") or {}).get("network_mode")
 
         try:
             group_config = self._load_yaml_from_repo(repo, "group.yml", ref)
-        except Exception:
+        except Exception as e:
+            _LOGGER.warning(f"Failed to load group config from {ref}: {e}")
             group_config = {}
         group_config_network_mode = (group_config.get("konflux") or {}).get("network_mode")
 
