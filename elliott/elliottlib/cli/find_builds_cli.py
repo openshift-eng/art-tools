@@ -37,6 +37,7 @@ from elliottlib.util import (
 LOGGER = logutil.get_logger(__name__)
 DELIVERY_IMAGE_REGISTRY = "registry.redhat.io"
 REGISTRY_CHECK_CONCURRENCY = 30
+REGISTRY_CHECK_TIMEOUT = 30
 
 pass_runtime = click.make_pass_decorator(Runtime)
 
@@ -754,6 +755,7 @@ async def _is_image_released(delivery_repo: str, version: str, release: str) -> 
         rc, _, stderr = await cmd_gather_async(
             ["skopeo", "inspect", "--raw", f"docker://{pullspec}"],
             check=False,
+            timeout=REGISTRY_CHECK_TIMEOUT,
         )
     except Exception:
         LOGGER.warning("skopeo inspect failed for %s, assuming not released", pullspec, exc_info=True)

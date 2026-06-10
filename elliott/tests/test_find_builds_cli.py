@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from elliottlib import errata as erratalib
 from elliottlib.brew import Build
 from elliottlib.cli.find_builds_cli import (
+    REGISTRY_CHECK_TIMEOUT,
     _fetch_builds_by_kind_rpm,
     _filter_out_attached_builds,
     _filter_shipped_konflux_builds,
@@ -237,6 +238,7 @@ class TestIsImageReleased(IsolatedAsyncioTestCase):
                 "docker://registry.redhat.io/openshift4/ose-cli-rhel9:v4.19.0-202505210330.p0.el9",
             ],
             check=False,
+            timeout=REGISTRY_CHECK_TIMEOUT,
         )
 
     @patch("elliottlib.cli.find_builds_cli.cmd_gather_async", new_callable=AsyncMock)
