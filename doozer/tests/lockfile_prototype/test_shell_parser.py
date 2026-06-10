@@ -384,6 +384,9 @@ class TestExtractPackagesFromRunCommands(unittest.TestCase):
         ("[ $ARCH = aarch64 ]", "aarch64"),
         ('[ ${ARCH} == x86_64 ]', "x86_64"),
         ('[ $(arch) == "x86_64" ]', "x86_64"),
+        ("[ $(go env GOARCH) = amd64 ]", "amd64"),
+        ("[ $GOARCH = amd64 ]", "amd64"),
+        ('[ ${GOARCH} == arm64 ]', "arm64"),
     ],
 )
 def test_arch_value_regex_matches(text, expected):
@@ -400,6 +403,118 @@ def test_arch_value_regex_no_match():
     ARCH_VALUE_RE should not match plain text.
     """
     assert ARCH_VALUE_RE.search("echo hello") is None
+
+
+class TestListArchConditional(unittest.TestCase):
+    """
+    Tests for ``[ test ] || cmd`` and ``[ test ] && cmd`` arch-conditional
+    patterns in list nodes.
+    """
+
+    def test_neq_or_extracts_arch_packages(self):
+        """
+        ``[ $(arch) != x86_64 ] || dnf install -y pkg`` installs only on x86_64.
+        """
+        pkgs, arch_pkgs = extract_packages_from_run_commands(['[ $(arch) != x86_64 ] || dnf install -y special-pkg'])
+        self.assertEqual(pkgs, [])
+        self.assertEqual(arch_pkgs, {"x86_64": ["special-pkg"]})
+
+    def test_eq_and_extracts_arch_packages(self):
+        """
+        ``[ $(arch) = x86_64 ] && dnf install -y pkg`` installs only on x86_64.
+        """
+        pkgs, arch_pkgs = extract_packages_from_run_commands(['[ $(arch) = x86_64 ] && dnf install -y special-pkg'])
+        self.assertEqual(pkgs, [])
+        self.assertEqual(arch_pkgs, {"x86_64": ["special-pkg"]})
+
+    def test_double_bracket_neq_or(self):
+        """
+        ``[[ $(arch) != aarch64 ]] || yum install -y arm-pkg`` with [[ ]] preprocessing.
+        """
+        pkgs, arch_pkgs = extract_packages_from_run_commands(['[[ $(arch) != aarch64 ]] || yum install -y arm-pkg'])
+        self.assertEqual(pkgs, [])
+        self.assertEqual(arch_pkgs, {"aarch64": ["arm-pkg"]})
+
+    def test_eq_or_treated_as_unconditional(self):
+        """
+        ``[ $(arch) = x86_64 ] || dnf install -y pkg`` means "all except x86_64"
+        which needs the full arch set — treated as unconditional.
+        """
+        pkgs, arch_pkgs = extract_packages_from_run_commands(['[ $(arch) = x86_64 ] || dnf install -y pkg'])
+        self.assertIn("pkg", pkgs)
+        self.assertEqual(arch_pkgs, {})
+
+    def test_neq_and_treated_as_unconditional(self):
+        """
+        ``[ $(arch) != x86_64 ] && dnf install -y pkg`` means "all except x86_64"
+        — treated as unconditional.
+        """
+        pkgs, arch_pkgs = extract_packages_from_run_commands(['[ $(arch) != x86_64 ] && dnf install -y pkg'])
+        self.assertIn("pkg", pkgs)
+        self.assertEqual(arch_pkgs, {})
+
+    def test_arch_context_only_applies_to_next_command(self):
+        """
+        In ``[ test ] || cmd1 && cmd2``, only cmd1 gets the arch context.
+        bashlex parses this as ``(test || cmd1) && cmd2`` (left-associative),
+        so only cmd1 is ``parts[i+2]`` and cmd2 falls into remaining nodes.
+        """
+        pkgs, arch_pkgs = extract_packages_from_run_commands(
+            ['[ $(arch) != x86_64 ] || dnf install -y special-pkg && dnf install -y common-pkg']
+        )
+        self.assertIn("common-pkg", pkgs)
+        self.assertEqual(arch_pkgs, {"x86_64": ["special-pkg"]})
+
+    def test_regular_or_fallback_unchanged(self):
+        """
+        Regular ``cmd1 || cmd2`` without [ test ] stays unconditional.
+        """
+        pkgs, arch_pkgs = extract_packages_from_run_commands(
+            ['dnf install -y preferred-pkg || dnf install -y fallback-pkg']
+        )
+        self.assertIn("preferred-pkg", pkgs)
+        self.assertIn("fallback-pkg", pkgs)
+        self.assertEqual(arch_pkgs, {})
+
+    def test_uname_m_neq_or(self):
+        """
+        ``[ $(uname -m) != s390x ] || dnf install -y s390x-pkg``
+        """
+        pkgs, arch_pkgs = extract_packages_from_run_commands(['[ $(uname -m) != s390x ] || dnf install -y s390x-pkg'])
+        self.assertEqual(pkgs, [])
+        self.assertEqual(arch_pkgs, {"s390x": ["s390x-pkg"]})
+
+    def test_go_env_goarch_neq_or(self):
+        """
+        ``[ $(go env GOARCH) != "amd64" ] || yum install -y pkg``
+        Go arch name ``amd64`` is normalized to RPM name ``x86_64``.
+        """
+        pkgs, arch_pkgs = extract_packages_from_run_commands(
+            ['[ $(go env GOARCH) != "amd64" ] || yum install -y special-pkg']
+        )
+        self.assertEqual(pkgs, [])
+        self.assertEqual(arch_pkgs, {"x86_64": ["special-pkg"]})
+
+    def test_go_env_goarch_neq_or_subshell(self):
+        """
+        ``[ $(go env GOARCH) != "amd64" ] || (yum install -y pkg1 pkg2 && other)``
+        — subshell grouping after ``||`` should still extract arch packages.
+        Go arch name ``amd64`` is normalized to RPM name ``x86_64``.
+        """
+        pkgs, arch_pkgs = extract_packages_from_run_commands(
+            ['[ $(go env GOARCH) != "amd64" ] || (yum install -y llvm-toolset cmake3 gcc-c++ && tar zfx cross.tar.gz)']
+        )
+        self.assertEqual(pkgs, [])
+        self.assertEqual(arch_pkgs, {"x86_64": ["cmake3", "gcc-c++", "llvm-toolset"]})
+
+    def test_goarch_var_neq_or(self):
+        """
+        ``[ $GOARCH != "arm64" ] || dnf install -y pkg``
+        Go arch name ``arm64`` is normalized to RPM name ``aarch64``.
+        """
+        pkgs, arch_pkgs = extract_packages_from_run_commands(['[ $GOARCH != "arm64" ] || dnf install -y arm-only-pkg'])
+        self.assertEqual(pkgs, [])
+        self.assertEqual(arch_pkgs, {"aarch64": ["arm-only-pkg"]})
 
 
 class TestBuilddepParsing(unittest.TestCase):
