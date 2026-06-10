@@ -417,8 +417,9 @@ class TestFindBuildsKonfluxShippedFiltering(IsolatedAsyncioTestCase):
 
         runtime.should_receive("image_metas").and_return([meta_payload, meta_olm])
 
-        # OLM operator (index 1) is shipped
+        # OLM operator (index 1) is shipped — DB should NOT be queried for bundle builds
         mock_filter.return_value = ([build_payload], {1})
+        runtime.konflux_db.should_receive("search_builds_by_fields").never()
 
         builds_map = await find_builds_konflux_all_types(runtime)
 
@@ -426,8 +427,6 @@ class TestFindBuildsKonfluxShippedFiltering(IsolatedAsyncioTestCase):
         self.assertEqual(builds_map["non_payload"], [])
         self.assertEqual(builds_map["olm_builds"], [])
         self.assertEqual(builds_map["olm_builds_not_found"], [])
-        # DB should NOT have been queried for bundle builds
-        runtime.konflux_db.should_receive("search_builds_by_fields").never()
 
     @patch("elliottlib.cli.find_builds_cli._filter_shipped_konflux_builds", new_callable=AsyncMock)
     @patch("elliottlib.cli.find_builds_cli.KonfluxBuildRecord")

@@ -758,9 +758,15 @@ async def _is_image_released(delivery_repo: str, version: str, release: str) -> 
     except Exception:
         LOGGER.warning("skopeo inspect failed for %s, assuming not released", pullspec, exc_info=True)
         return False
-    if rc != 0:
-        LOGGER.debug("Image not found on registry: %s (rc=%d)", pullspec, rc)
-    return rc == 0
+    if rc == 0:
+        return True
+
+    lower_stderr = stderr.lower()
+    if "manifest unknown" in lower_stderr or "not found" in lower_stderr:
+        LOGGER.debug("Image not found on registry: %s", pullspec)
+    else:
+        LOGGER.warning("skopeo inspect failed for %s (rc=%d): %s", pullspec, rc, stderr.strip())
+    return False
 
 
 async def _filter_shipped_konflux_builds(
@@ -787,6 +793,12 @@ async def _filter_shipped_konflux_builds(
         async with semaphore:
             return await _is_image_released(delivery_repo, version, release)
 
+    async def _check_any_repo(delivery_repo_names: list, version: str, release: str) -> bool:
+        for repo in delivery_repo_names:
+            if await _check_with_limit(str(repo), version, release):
+                return True
+        return False
+
     check_tasks = []
     check_indices = []
 
@@ -796,9 +808,8 @@ async def _filter_shipped_konflux_builds(
             LOGGER.warning("No delivery_repo_names for %s, skipping shipped check", image.distgit_key)
             continue
 
-        delivery_repo = str(delivery_repo_names[0])
         check_indices.append(i)
-        check_tasks.append(_check_with_limit(delivery_repo, record.version, record.release))
+        check_tasks.append(_check_any_repo(delivery_repo_names, record.version, record.release))
 
     if not check_tasks:
         return list(records), set()
