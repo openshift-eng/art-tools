@@ -11,6 +11,7 @@ import logging
 import re
 
 import bashlex
+from artcommonlib.arch_util import brew_arch_for_go_arch
 from pydantic import BaseModel, Field
 
 from doozerlib.lockfile_prototype.constants import ARCH_KEYWORDS
@@ -148,8 +149,16 @@ def _extract_condition_arch(node) -> list[str]:
             words = [p.word for p in part.parts if hasattr(p, "word")]
             text = " ".join(words)
             if _has_arch_test(text):
-                arches.extend(_extract_arch_values(text))
+                arches.extend(_normalize_arch_names(_extract_arch_values(text)))
     return arches
+
+
+def _normalize_arch_names(arches: list[str]) -> list[str]:
+    """
+    Normalize Go-style arch names (amd64, arm64) to RPM/Brew names
+    (x86_64, aarch64). Names already in RPM form pass through unchanged.
+    """
+    return [brew_arch_for_go_arch(a) for a in arches]
 
 
 def _extract_list_arch_context(test_node, operator: str) -> list[str] | None:
@@ -175,9 +184,9 @@ def _extract_list_arch_context(test_node, operator: str) -> list[str] | None:
     eq_arches = ARCH_VALUE_RE.findall(text)
 
     if neq_arches and operator == "||":
-        return neq_arches
+        return _normalize_arch_names(neq_arches)
     if eq_arches and operator == "&&":
-        return eq_arches
+        return _normalize_arch_names(eq_arches)
 
     logger = logging.getLogger(__name__)
     logger.debug(f"Unsupported arch-conditional pattern (needs full arch set): {text} {operator} cmd")

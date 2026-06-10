@@ -25,7 +25,7 @@ RPM_LOCKFILE_ENTRY_POINT = "from rpm_lockfile import main; main()"
 ARCH_SUBSHELL_KEYWORDS = ("$(arch)", "$(uname -m)", "$(uname -p)", "$(go env GOARCH)")
 
 # Shell variable names that hold the current architecture
-ARCH_VAR_NAMES = ("HOSTTYPE", "ARCH")
+ARCH_VAR_NAMES = ("HOSTTYPE", "ARCH", "GOARCH")
 
 # All arch keywords: subshells + variables in both $VAR and ${VAR} forms
 ARCH_KEYWORDS = ARCH_SUBSHELL_KEYWORDS + tuple(form for name in ARCH_VAR_NAMES for form in (f"${name}", f"${{{name}}}"))
