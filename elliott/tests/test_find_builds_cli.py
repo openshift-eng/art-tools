@@ -63,7 +63,7 @@ class TestFindBuildsCli(TestCase):
 class TestFindBuildsKonflux(IsolatedAsyncioTestCase):
     @mock.patch("elliottlib.cli.find_builds_cli.KonfluxBuildRecord")
     async def test_find_builds_konflux(self, MockKonfluxBuildRecord: mock.MagicMock):
-        runtime = flexmock(konflux_db=flexmock(), assembly=None)
+        runtime = flexmock(konflux_db=flexmock(), assembly=None, registry_config=None)
         runtime.should_receive("get_releases_config").and_return(None)
         runtime.konflux_db.should_receive("bind").with_args(MockKonfluxBuildRecord)
 
@@ -122,7 +122,7 @@ class TestFindBuildsKonfluxAllTypes(IsolatedAsyncioTestCase):
     @mock.patch("elliottlib.cli.find_builds_cli.KonfluxBundleBuildRecord")
     async def test_find_builds_konflux_all_types(self, MockKonfluxBundleBuildRecord, MockKonfluxBuildRecord):
         # Setup runtime and DB mocks
-        runtime = flexmock(konflux_db=flexmock(), assembly=None)
+        runtime = flexmock(konflux_db=flexmock(), assembly=None, registry_config=None)
         runtime.should_receive("get_releases_config").and_return(None)
         runtime.konflux_db.should_receive("bind").with_args(MockKonfluxBuildRecord)
         runtime.konflux_db.should_receive("bind").with_args(MockKonfluxBundleBuildRecord)
@@ -242,6 +242,29 @@ class TestIsImageReleased(IsolatedAsyncioTestCase):
         )
 
     @patch("elliottlib.cli.find_builds_cli.cmd_gather_async", new_callable=AsyncMock)
+    async def test_released_image_with_registry_config(self, mock_cmd):
+        mock_cmd.return_value = (0, "", "")
+        result = await _is_image_released(
+            "openshift4/ose-cli-rhel9",
+            "4.19.0",
+            "202505210330.p0.el9",
+            registry_config="/tmp/auth.json",
+        )
+        self.assertTrue(result)
+        mock_cmd.assert_called_once_with(
+            [
+                "skopeo",
+                "inspect",
+                "--raw",
+                "--authfile",
+                "/tmp/auth.json",
+                "docker://registry.redhat.io/openshift4/ose-cli-rhel9:v4.19.0-202505210330.p0.el9",
+            ],
+            check=False,
+            timeout=REGISTRY_CHECK_TIMEOUT,
+        )
+
+    @patch("elliottlib.cli.find_builds_cli.cmd_gather_async", new_callable=AsyncMock)
     async def test_unreleased_image(self, mock_cmd):
         mock_cmd.return_value = (1, "", "not found")
         result = await _is_image_released("openshift4/ose-cli-rhel9", "4.19.0", "202505210330.p0.el9")
@@ -337,7 +360,7 @@ class TestFindBuildsKonfluxShippedFiltering(IsolatedAsyncioTestCase):
     @patch("elliottlib.cli.find_builds_cli._filter_shipped_konflux_builds", new_callable=AsyncMock)
     @patch("elliottlib.cli.find_builds_cli.KonfluxBuildRecord")
     async def test_filters_shipped_by_default(self, MockKonfluxBuildRecord, mock_filter):
-        runtime = flexmock(konflux_db=flexmock(), assembly=None)
+        runtime = flexmock(konflux_db=flexmock(), assembly=None, registry_config=None)
         runtime.should_receive("get_releases_config").and_return(None)
         runtime.konflux_db.should_receive("bind").with_args(MockKonfluxBuildRecord)
 
@@ -355,7 +378,7 @@ class TestFindBuildsKonfluxShippedFiltering(IsolatedAsyncioTestCase):
     @patch("elliottlib.cli.find_builds_cli._filter_shipped_konflux_builds", new_callable=AsyncMock)
     @patch("elliottlib.cli.find_builds_cli.KonfluxBuildRecord")
     async def test_skips_filter_with_include_shipped(self, MockKonfluxBuildRecord, mock_filter):
-        runtime = flexmock(konflux_db=flexmock(), assembly=None)
+        runtime = flexmock(konflux_db=flexmock(), assembly=None, registry_config=None)
         runtime.should_receive("get_releases_config").and_return(None)
         runtime.konflux_db.should_receive("bind").with_args(MockKonfluxBuildRecord)
 
@@ -373,7 +396,7 @@ class TestFindBuildsKonfluxShippedFiltering(IsolatedAsyncioTestCase):
     @patch("elliottlib.cli.find_builds_cli.KonfluxBuildRecord")
     @patch("elliottlib.cli.find_builds_cli.KonfluxBundleBuildRecord")
     async def test_all_types_filters_shipped(self, MockBundle, MockKonflux, mock_filter):
-        runtime = flexmock(konflux_db=flexmock(), assembly=None)
+        runtime = flexmock(konflux_db=flexmock(), assembly=None, registry_config=None)
         runtime.should_receive("get_releases_config").and_return(None)
         runtime.konflux_db.should_receive("bind").with_args(MockKonflux)
         runtime.konflux_db.should_receive("bind").with_args(MockBundle)
@@ -398,7 +421,7 @@ class TestFindBuildsKonfluxShippedFiltering(IsolatedAsyncioTestCase):
         """
         When an OLM operator is filtered as shipped, its bundle lookup should also be skipped.
         """
-        runtime = flexmock(konflux_db=flexmock(), assembly=None)
+        runtime = flexmock(konflux_db=flexmock(), assembly=None, registry_config=None)
         runtime.should_receive("get_releases_config").and_return(None)
         runtime.konflux_db.should_receive("bind").with_args(MockKonflux)
         runtime.konflux_db.should_receive("bind").with_args(MockBundle)
@@ -438,7 +461,7 @@ class TestFindBuildsKonfluxShippedFiltering(IsolatedAsyncioTestCase):
         Verify that payload_flags, olm_flags, and results stay aligned after filtering.
         3 images: payload (kept), non-payload OLM (shipped), non-payload (kept).
         """
-        runtime = flexmock(konflux_db=flexmock(), assembly=None)
+        runtime = flexmock(konflux_db=flexmock(), assembly=None, registry_config=None)
         runtime.should_receive("get_releases_config").and_return(None)
         runtime.konflux_db.should_receive("bind").with_args(MockKonflux)
         runtime.konflux_db.should_receive("bind").with_args(MockBundle)
