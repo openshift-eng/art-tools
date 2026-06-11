@@ -3,6 +3,7 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import elliottlib.cli.find_bugs_sweep_cli as sweep_cli
+from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
 from click.testing import CliRunner
 from elliottlib import constants, errata
 from elliottlib.bzutil import JIRABugTracker
@@ -202,7 +203,6 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
     async def test_get_bugs_sweep_filters_shipment_bugs(self, mock_cutoff, mock_bug_ids, mock_shipment_bugs):
         """When filter_attached_bugs=True, bugs in open shipment MRs should be filtered out."""
         runtime = MagicMock(debug=False, group="openshift-4.18", assembly="4.18.40")
-        runtime.shipment_path = "https://gitlab.example.com/project"
 
         bug_keep = flexmock(id="OCPBUGS-1")
         bug_filter = flexmock(id="OCPBUGS-2")
@@ -219,7 +219,7 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual([b.id for b in actual], ["OCPBUGS-1"])
         mock_shipment_bugs.assert_called_once_with(
-            shipment_data_url="https://gitlab.example.com/project",
+            shipment_data_url=SHIPMENT_DATA_URL_TEMPLATE,
             group="openshift-4.18",
             releases_config=runtime.get_releases_config(),
             current_assembly="4.18.40",
