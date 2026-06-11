@@ -5,12 +5,12 @@ import re
 from typing import Any, Dict, Iterable, List, Set, Tuple
 
 import click
-from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.ocp_version_lineage import (
     get_blocking_bug_target_version,
     get_next_scheduled_release_group,
     get_regression_check_gate_version,
 )
+from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import is_release_next_week
 from errata_tool import ErrataException
 

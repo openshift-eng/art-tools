@@ -27,13 +27,13 @@ from artcommonlib.constants import (
     PRODUCT_NAMESPACE_MAP,
     RELEASE_SCHEDULES,
 )
-from artcommonlib.ocp_version_lineage import resolve_inflight_schedule_group
 from artcommonlib.exectools import cmd_gather_async, limit_concurrency
 from artcommonlib.model import ListModel, Missing
 from artcommonlib.oc_image_info import (
     oc_image_info__cached__lru,
     oc_image_info__cached_async__lru,
 )
+from artcommonlib.ocp_version_lineage import resolve_inflight_schedule_group
 from artcommonlib.release_util import SoftwareLifecyclePhase, isolate_el_version_in_release
 from ruamel.yaml import YAML
 from semver import VersionInfo
@@ -553,8 +553,7 @@ def validate_bridge_release_basis_group(bridge_group: str, basis_group: str) -> 
             raise ValueError(f"{bridge_group!r} is not an OCP 5.x bridge release group")
         expected_basis_group = f"openshift-5.{bridge_minor - OCP5_BRIDGE_MINOR_BASE}"
         raise ValueError(
-            f"bridge_release.basis_group for {bridge_group!r} must be {expected_basis_group!r}, "
-            f"found {basis_group!r}"
+            f"bridge_release.basis_group for {bridge_group!r} must be {expected_basis_group!r}, found {basis_group!r}"
         )
 
 
