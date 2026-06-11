@@ -215,11 +215,13 @@ def oc_image_info__cached__lru(
         # Move to end (most recently used)
         _oc_image_info_lru_order.remove(cache_key)
         _oc_image_info_lru_order.append(cache_key)
-        logger.debug(f"LRU cache HIT for {pullspec} with options {options} (registry_config={registry_config!r})")
+        logger.warning(f"LRU cache HIT for {pullspec} with options {options} (registry_config={registry_config!r})")
         return _oc_image_info_lru_cache[cache_key]
 
     # Not in cache - call underlying function with the actual registry_config
-    logger.debug(f"LRU cache MISS for {pullspec} with options {options} (registry_config={registry_config!r})")
+    logger.warning(
+        f"LRU cache MISS for {pullspec} with options {options} (registry_config={registry_config!r}, cache_size={len(_oc_image_info_lru_cache)})"
+    )
     result = oc_image_info__cached(pullspec, *options, registry_config=registry_config)
 
     # Store in cache
@@ -305,11 +307,15 @@ async def oc_image_info__cached_async__lru(
         # Move to end (most recently used)
         _oc_image_info_async_lru_order.remove(cache_key)
         _oc_image_info_async_lru_order.append(cache_key)
-        logger.debug(f"Async LRU cache HIT for {pullspec} with options {options} (registry_config={registry_config!r})")
+        logger.warning(
+            f"Async LRU cache HIT for {pullspec} with options {options} (registry_config={registry_config!r})"
+        )
         return _oc_image_info_async_lru_cache[cache_key]
 
     # Not in cache - call underlying function with the actual registry_config
-    logger.debug(f"Async LRU cache MISS for {pullspec} with options {options} (registry_config={registry_config!r})")
+    logger.warning(
+        f"Async LRU cache MISS for {pullspec} with options {options} (registry_config={registry_config!r}, cache_size={len(_oc_image_info_async_lru_cache)})"
+    )
     result = await oc_image_info__cached_async(pullspec, *options, registry_config=registry_config)
 
     # Store in cache
