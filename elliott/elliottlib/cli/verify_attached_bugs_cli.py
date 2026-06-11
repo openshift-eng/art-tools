@@ -6,7 +6,12 @@ from typing import Any, Dict, Iterable, List, Set, Tuple
 
 import click
 from artcommonlib.rpm_utils import parse_nvr
-from artcommonlib.util import get_next_ocp_version, is_release_next_week
+from artcommonlib.ocp_version_lineage import (
+    get_blocking_bug_target_version,
+    get_next_scheduled_release_group,
+    get_regression_check_gate_version,
+)
+from artcommonlib.util import is_release_next_week
 from errata_tool import ErrataException
 
 from elliottlib import bzutil, constants
@@ -262,8 +267,7 @@ class BugValidator:
 
         # Make sure the next version is GA before regression check
         major, minor = self.runtime.get_major_minor()
-        next_major, next_minor = get_next_ocp_version(major, minor)
-        version = f"{next_major}.{next_minor}"
+        version = get_regression_check_gate_version(major, minor)
         try:
             next_is_ga = self.runtime.is_version_in_lifecycle_phase("release", version)
         except Exception as e:
@@ -483,7 +487,7 @@ class BugValidator:
         jira_ids, bz_ids = bzutil.get_jira_bz_bug_ids(set(candidate_blockers))
 
         v = minor_version_tuple(self.target_releases[0])
-        next_version = get_next_ocp_version(v[0], v[1])
+        next_version = get_blocking_bug_target_version(v[0], v[1])
 
         def is_next_target(target_v):
             pattern = re.compile(r'^\d+\.\d+\.([0z])$')
@@ -577,11 +581,10 @@ class BugValidator:
                             f"<{blocker.weburl}|{blocker.id}> which was CLOSED `{blocker.resolution}`"
                         )
                     self._complain(message)
-                next_major, next_minor = get_next_ocp_version(major, minor)
                 if (
                     is_attached
                     and blocker.status in ['ON_QA', 'Verified', 'VERIFIED']
-                    and is_release_next_week(f"openshift-{next_major}.{next_minor}")
+                    and is_release_next_week(get_next_scheduled_release_group(major, minor))
                 ):
                     try:
                         blocker_advisories = blocker.all_advisory_ids()

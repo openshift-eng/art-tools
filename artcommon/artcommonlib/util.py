@@ -17,17 +17,18 @@ import requests
 import requests_gssapi
 from artcommonlib import logutil
 from artcommonlib.constants import (
-    BRIDGE_OCP_VERSIONS,
     GOLANG_BUILDER_IMAGE_NAME,
     KONFLUX_DEFAULT_IMAGE_REPO,
     KONFLUX_DEFAULT_NAMESPACE,
     LAST_OCP_MINOR_VERSION,
+    OCP5_BRIDGE_MINOR_BASE,
     PRODUCT_BASE_IMAGE_KONFLUX_EC_RELEASE_MAP,
     PRODUCT_BASE_IMAGE_KONFLUX_RELEASE_MAP,
     PRODUCT_KUBECONFIG_MAP,
     PRODUCT_NAMESPACE_MAP,
     RELEASE_SCHEDULES,
 )
+from artcommonlib.ocp_version_lineage import resolve_inflight_schedule_group
 from artcommonlib.exectools import cmd_gather_async, limit_concurrency
 from artcommonlib.model import ListModel, Missing
 from artcommonlib.oc_image_info import (
@@ -346,10 +347,8 @@ def get_inflight(assembly, group, date=None):
     assembly_release_date = get_assembly_release_date(assembly, group, date)
     major, minor = get_ocp_version_from_group(group)
 
-    # Get previous version (handles major version boundaries like 5.0 → 4.22)
     try:
-        prev_major, prev_minor = get_previous_ocp_version(major, minor)
-        prev_group = f'openshift-{prev_major}.{prev_minor}'
+        prev_group = resolve_inflight_schedule_group(major, minor)
     except ValueError:
         # No previous version exists (e.g., OCP 3.0)
         return None
@@ -518,173 +517,68 @@ def get_art_prod_image_repo_for_version(major: int, repo_type: str = "dev") -> s
     return f"quay.io/openshift-release-dev/ocp-v{major}.0-art-{repo_type}"
 
 
-def is_bridge_ocp_version(major: int, minor: int) -> bool:
-    """Return True if major.minor is a known bridge (compat) OCP release."""
-    return (major, minor) in BRIDGE_OCP_VERSIONS
-
-
-def get_bridge_basis_version(major: int, minor: int) -> Optional[Tuple[int, int]]:
+def get_ocp5_bridge_release(major: int, minor: int) -> Tuple[int, int]:
     """
-    Return the basis (sibling) OCP version for a known bridge release.
+    Return the OCP 4.x compat bridge release for an OCP 5.x version.
 
-    Bridge releases ship alongside a new major (e.g. 4.23 with 5.0) and are not
-    part of the standard minor lineage tracked by LAST_OCP_MINOR_VERSION.
+    5.0 -> 4.23, 5.1 -> 4.24, and so on.
     """
-    return BRIDGE_OCP_VERSIONS.get((major, minor))
+    if major != 5:
+        raise ValueError(f"get_ocp5_bridge_release only supports OCP 5.x (got {major}.{minor})")
+    if minor < 0:
+        raise ValueError(f"Invalid OCP minor version: {major}.{minor}")
+
+    return 4, OCP5_BRIDGE_MINOR_BASE + minor
 
 
-def _bridge_release_config(group_config) -> dict:
-    if group_config is None:
-        return {}
-    bridge_release = group_config.get("bridge_release", {}) or {}
-    if hasattr(bridge_release, "primitive"):
-        return bridge_release.primitive() or {}
-    return bridge_release
-
-
-def resolve_bridge_basis_version(
-    major: int,
-    minor: int,
-    group_config=None,
-    group_name: Optional[str] = None,
-) -> Optional[Tuple[int, int]]:
+def validate_bridge_release_basis_group(bridge_group: str, basis_group: str) -> None:
     """
-    Resolve and optionally validate the basis version for bridge-release semantics.
+    Validate bridge_release.basis_group for an OCP 5.x compat bridge group.
 
-    When group_config is provided, bridge_release.basis_group must be set for known
-    bridge versions and must match BRIDGE_OCP_VERSIONS. Unknown bridge_release
-    configuration is rejected.
+    The bridge group (e.g. openshift-4.23) must be the sibling of the basis group
+    (e.g. openshift-5.0) per get_ocp5_bridge_release (5.0 -> 4.23, 5.1 -> 4.24, ...).
     """
-    expected_basis = get_bridge_basis_version(major, minor)
-    bridge_release = _bridge_release_config(group_config)
-    basis_group = bridge_release.get("basis_group")
-
-    if group_name is not None:
-        group_major, group_minor = get_ocp_version_from_group(group_name)
-        if (group_major, group_minor) != (major, minor):
-            raise ValueError(f"Group name {group_name} does not match requested OCP version {major}.{minor}")
-
-    if expected_basis is None:
-        if basis_group:
-            raise ValueError(
-                f"OCP {major}.{minor} is not a known bridge release, but bridge_release.basis_group "
-                f"is set to {basis_group!r}"
-            )
-        return None
-
-    if group_config is None:
-        return expected_basis
-
-    expected_group = f"openshift-{expected_basis[0]}.{expected_basis[1]}"
-    if not basis_group:
-        raise ValueError(
-            f"OCP {major}.{minor} is a bridge release and requires bridge_release.basis_group; "
-            f"expected {expected_group!r}"
-        )
-    if basis_group != expected_group:
-        raise ValueError(
-            f"bridge_release.basis_group for OCP {major}.{minor} must be {expected_group!r}, found {basis_group!r}"
-        )
-
+    bridge_major, bridge_minor = get_ocp_version_from_group(bridge_group)
     basis_major, basis_minor = get_ocp_version_from_group(basis_group)
-    if (basis_major, basis_minor) != expected_basis:
-        raise ValueError(
-            f"bridge_release.basis_group {basis_group!r} resolves to {basis_major}.{basis_minor}, "
-            f"expected {expected_basis[0]}.{expected_basis[1]}"
-        )
 
-    return expected_basis
+    try:
+        expected_bridge_major, expected_bridge_minor = get_ocp5_bridge_release(basis_major, basis_minor)
+    except ValueError as e:
+        raise ValueError(
+            f"bridge_release.basis_group {basis_group!r} is not a valid OCP 5.x basis "
+            f"for bridge group {bridge_group!r}: {e}"
+        ) from e
+
+    if (bridge_major, bridge_minor) != (expected_bridge_major, expected_bridge_minor):
+        if bridge_minor < OCP5_BRIDGE_MINOR_BASE:
+            raise ValueError(f"{bridge_group!r} is not an OCP 5.x bridge release group")
+        expected_basis_group = f"openshift-5.{bridge_minor - OCP5_BRIDGE_MINOR_BASE}"
+        raise ValueError(
+            f"bridge_release.basis_group for {bridge_group!r} must be {expected_basis_group!r}, "
+            f"found {basis_group!r}"
+        )
 
 
 def get_previous_ocp_version(major: int, minor: int) -> Tuple[int, int]:
     """
-    Get the previous OCP minor version, handling major version boundaries.
+    Deprecated: use scoped helpers in artcommonlib.ocp_version_lineage instead.
 
-    Version transitions:
-    - 5.0 → 4.22 (major version boundary)
-    - 4.1 → 4.0
-    - 4.0 → 3.11 (major version boundary)
-    - 3.1 → 3.0
-
-    :param major: Current major version (e.g., 5)
-    :param minor: Current minor version (e.g., 0)
-    :return: Tuple of (previous_major, previous_minor)
-    :raises ValueError: If previous major version is not in LAST_OCP_MINOR_VERSION
-
-    Examples:
-        >>> get_previous_ocp_version(5, 1)
-        (5, 0)
-        >>> get_previous_ocp_version(5, 0)
-        (4, 22)
-        >>> get_previous_ocp_version(4, 1)
-        (4, 0)
-        >>> get_previous_ocp_version(4, 0)
-        (3, 11)
+    Returns the previous release on the **standard OCP train** only (not bridge groups).
     """
+    from artcommonlib.ocp_version_lineage import get_standard_train_previous
 
-    # Handle simple case: decrement minor within same major version
-    if minor > 0:
-        return major, minor - 1
-
-    # Handle major version boundaries (x.0 → previous major)
-    # Need to transition to previous major version
-    prev_major = major - 1
-    prev_max = LAST_OCP_MINOR_VERSION.get(prev_major)
-
-    if prev_max is None:
-        raise ValueError(
-            f"Cannot determine previous version of OCP {major}.0: "
-            f"OCP {prev_major}.x maximum minor version is not set in LAST_OCP_MINOR_VERSION."
-        )
-
-    return prev_major, prev_max
+    return get_standard_train_previous(major, minor)
 
 
 def get_next_ocp_version(major: int, minor: int) -> Tuple[int, int]:
     """
-    Get the next OCP minor version, handling major version boundaries.
+    Deprecated: use scoped helpers in artcommonlib.ocp_version_lineage instead.
 
-    Version transitions:
-    - 4.22 → 5.0 (major version boundary)
-    - 4.21 → 4.22
-    - 3.11 → 4.0 (major version boundary)
-
-    :param major: Current major version (e.g., 4)
-    :param minor: Current minor version (e.g., 22)
-    :return: Tuple of (next_major, next_minor)
-    :raises ValueError: If at maximum version and next major is not defined
-
-    Examples:
-        >>> get_next_ocp_version(4, 21)
-        (4, 22)
-        >>> get_next_ocp_version(4, 22)
-        (5, 0)
-        >>> get_next_ocp_version(3, 11)
-        (4, 0)
+    Returns the next release on the **standard OCP train** only (not bridge groups).
     """
+    from artcommonlib.ocp_version_lineage import get_standard_train_next
 
-    # Get max minor from constants
-    max_minor = LAST_OCP_MINOR_VERSION.get(major)
-
-    # If max_minor is None, the maximum is unknown - allow infinite growth
-    if max_minor is None:
-        # No known maximum for this major version, just increment minor
-        return major, minor + 1
-
-    # Check if we're at the known boundary
-    if minor >= max_minor:
-        # Transition to next major version
-        next_major = major + 1
-        # Check if next major version is defined in LAST_OCP_MINOR_VERSION
-        if next_major not in LAST_OCP_MINOR_VERSION:
-            raise ValueError(
-                f"OCP {major}.{minor} is at or beyond maximum known version ({major}.{max_minor}). "
-                f"Cannot determine next version: OCP {next_major}.x is not defined in LAST_OCP_MINOR_VERSION."
-            )
-        return next_major, 0
-
-    # Simple case: increment within same major
-    return major, minor + 1
+    return get_standard_train_next(major, minor)
 
 
 def extract_group_from_nvr(nvr: str) -> Optional[str]:
