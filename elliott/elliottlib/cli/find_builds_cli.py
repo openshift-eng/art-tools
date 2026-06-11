@@ -737,7 +737,9 @@ def _filter_out_attached_builds(
     return unattached_builds, attached_to_advisories
 
 
-async def _is_image_released(delivery_repo: str, version: str, release: str) -> bool:
+async def _is_image_released(
+    delivery_repo: str, version: str, release: str, registry_config: str | None = None
+) -> bool:
     """
     Check if an image tag exists on registry.redhat.io (already released).
 
@@ -745,6 +747,7 @@ async def _is_image_released(delivery_repo: str, version: str, release: str) -> 
         delivery_repo (str): Delivery repository name (e.g. "openshift4/ose-cli-rhel9").
         version (str): Build version (e.g. "4.19.0").
         release (str): Build release (e.g. "202505210330.p0.g8f1c8b5.assembly.stream.el9").
+        registry_config (str | None): Path to Docker auth config file for registry auth.
 
     Return Value(s):
         bool: True if image tag exists on registry.redhat.io, False otherwise.
@@ -752,8 +755,13 @@ async def _is_image_released(delivery_repo: str, version: str, release: str) -> 
     tag = f"v{version}-{release}"
     pullspec = f"{DELIVERY_IMAGE_REGISTRY}/{delivery_repo}:{tag}"
     try:
+        cmd = ["skopeo", "inspect", "--raw"]
+        if registry_config:
+            cmd.extend(["--authfile", registry_config])
+        cmd.append(f"docker://{pullspec}")
+
         rc, _, stderr = await cmd_gather_async(
-            ["skopeo", "inspect", "--raw", f"docker://{pullspec}"],
+            cmd,
             check=False,
             timeout=REGISTRY_CHECK_TIMEOUT,
         )
@@ -774,6 +782,7 @@ async def _is_image_released(delivery_repo: str, version: str, release: str) -> 
 async def _filter_shipped_konflux_builds(
     image_metas: list[ImageMetadata],
     records: list[KonfluxBuildRecord],
+    registry_config: str | None = None,
 ) -> tuple[list[KonfluxBuildRecord], set[int]]:
     """
     Filter out Konflux builds that are already released on registry.redhat.io.
@@ -793,7 +802,7 @@ async def _filter_shipped_konflux_builds(
 
     async def _check_with_limit(delivery_repo: str, version: str, release: str) -> bool:
         async with semaphore:
-            return await _is_image_released(delivery_repo, version, release)
+            return await _is_image_released(delivery_repo, version, release, registry_config=registry_config)
 
     async def _check_any_repo(delivery_repo_names: list, version: str, release: str) -> bool:
         for repo in delivery_repo_names:
@@ -871,7 +880,9 @@ async def find_builds_konflux(runtime, payload, include_shipped: bool = False) -
         raise ElliottFatalError(message)
 
     if not include_shipped:
-        records, _ = await _filter_shipped_konflux_builds(image_metas, list(records))
+        records, _ = await _filter_shipped_konflux_builds(
+            image_metas, list(records), registry_config=runtime.registry_config
+        )
 
     return records
 
@@ -935,7 +946,9 @@ async def find_builds_konflux_all_types(runtime: Runtime, include_shipped: bool 
 
     if not include_shipped:
         all_images = [img for _, img in image_metas]
-        _, shipped_indices = await _filter_shipped_konflux_builds(all_images, list(results))
+        _, shipped_indices = await _filter_shipped_konflux_builds(
+            all_images, list(results), registry_config=runtime.registry_config
+        )
         results = [r for i, r in enumerate(results) if i not in shipped_indices]
         olm_flags = [f for i, f in enumerate(olm_flags) if i not in shipped_indices]
         payload_flags = [f for i, f in enumerate(payload_flags) if i not in shipped_indices]
