@@ -148,16 +148,6 @@ class BuildConformaVerifyPipeline:
             for record in records
         ]
 
-        # Ensure IntegrationTestScenario exists
-        policy_suffix = ec_policy.split('/')[-1]
-        its_name = f"{application_name}-ec-{policy_suffix}"
-        self.logger.info("Ensuring IntegrationTestScenario %s exists...", its_name)
-        await konflux_client.ensure_integration_test_scenario(
-            name=its_name,
-            application_name=application_name,
-            policy_configuration=ec_policy,
-        )
-
         # Split into batches
         batches = [components[i : i + BATCH_SIZE] for i in range(0, len(components), BATCH_SIZE)]
         total_batches = len(batches)
@@ -168,6 +158,16 @@ class BuildConformaVerifyPipeline:
                 self.logger.warning("[DRY RUN] Would have created EC PipelineRun for batch %d", batch_idx)
             self.logger.info("All %d components passed EC verification (dry run)", len(components))
             return
+
+        # Ensure IntegrationTestScenario exists
+        policy_suffix = ec_policy.split('/')[-1]
+        its_name = f"{application_name}-ec-{policy_suffix}"
+        self.logger.info("Ensuring IntegrationTestScenario %s exists...", its_name)
+        await konflux_client.ensure_integration_test_scenario(
+            name=its_name,
+            application_name=application_name,
+            policy_configuration=ec_policy,
+        )
 
         # Create all PipelineRuns up front
         batch_plrs: list[tuple[int, list[dict], str]] = []  # (batch_idx, batch, plr_name)
@@ -234,16 +234,20 @@ class BuildConformaVerifyPipeline:
 
         # Wait for all batches in parallel
         async def _wait_for_batch(batch_idx: int, batch: list[dict], plr_name: str) -> dict:
-            plr_info = await konflux_client.wait_for_pipelinerun(plr_name, namespace=KONFLUX_DEFAULT_NAMESPACE)
-            plr_url = KonfluxClient.resource_url(plr_info.to_dict())
-            condition = plr_info.find_condition("Succeeded")
-            outcome = KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition(condition)
-            if outcome is not KonfluxBuildOutcome.SUCCESS:
-                self.logger.error("Batch %d FAILED. PLR: %s", batch_idx, plr_url)
-                violations = self._extract_violations_from_plr(plr_info, batch, konflux_client)
-                return {"batch": batch_idx, "plr_url": plr_url, "passed": False, "violations": violations}
-            self.logger.info("Batch %d PASSED. PLR: %s", batch_idx, plr_url)
-            return {"batch": batch_idx, "plr_url": plr_url, "passed": True, "count": len(batch)}
+            try:
+                plr_info = await konflux_client.wait_for_pipelinerun(plr_name, namespace=KONFLUX_DEFAULT_NAMESPACE)
+                plr_url = KonfluxClient.resource_url(plr_info.to_dict())
+                condition = plr_info.find_condition("Succeeded")
+                outcome = KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition(condition)
+                if outcome is not KonfluxBuildOutcome.SUCCESS:
+                    self.logger.error("Batch %d FAILED. PLR: %s", batch_idx, plr_url)
+                    violations = self._extract_violations_from_plr(plr_info, batch, konflux_client)
+                    return {"batch": batch_idx, "plr_url": plr_url, "passed": False, "violations": violations}
+                self.logger.info("Batch %d PASSED. PLR: %s", batch_idx, plr_url)
+                return {"batch": batch_idx, "plr_url": plr_url, "passed": True, "count": len(batch)}
+            except Exception:
+                self.logger.exception("Batch %d ERROR: failed to wait for PipelineRun %s", batch_idx, plr_name)
+                return {"batch": batch_idx, "plr_url": None, "passed": False, "violations": []}
 
         results = await asyncio.gather(*[_wait_for_batch(idx, batch, name) for idx, batch, name in batch_plrs])
 
