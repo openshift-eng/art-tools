@@ -25,3 +25,14 @@ class TestGroupSchema(unittest.TestCase):
             },
         }
         self.assertIn("'yes' is not of type 'boolean'", group_schema.validate("group.yml", invalid_data))
+
+    def test_validate_with_mismatched_bridge_release_basis_group(self):
+        invalid_data = {
+            "name": "openshift-4.23",
+            "vars": {"MAJOR": 4, "MINOR": 23},
+            "bridge_release": {
+                "basis_group": "openshift-5.1",
+                "bug_mirroring": {"enabled": True},
+            },
+        }
+        self.assertIn("must be 'openshift-5.0'", group_schema.validate("group.yml", invalid_data))

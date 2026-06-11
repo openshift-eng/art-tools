@@ -2,7 +2,7 @@ import traceback
 
 import click
 from artcommonlib import logutil
-from artcommonlib.util import get_previous_ocp_version
+from artcommonlib.ocp_version_lineage import get_second_fix_reference_version
 
 from elliottlib import Runtime
 from elliottlib.bzutil import get_second_fix_trackers
@@ -62,7 +62,7 @@ def find_bugs_second_fix(runtime, find_bugs_obj, close, noop, bug_tracker):
             bug_tracker = runtime.get_bug_tracker('jira')
             for k in second_fix_trackers:
                 LOGGER.info(f"Tracker {k.id} is a second fix for it's associated CVE and therefore it will be closed")
-                prev_major, prev_minor = get_previous_ocp_version(int(major_version), int(minor_version))
+                prev_major, prev_minor = get_second_fix_reference_version(int(major_version), int(minor_version))
                 comment = f'''
 Closing this CVE tracker, as the CVE has been declared fixed for this component for {prev_major}.{prev_minor}.
 in pre-release

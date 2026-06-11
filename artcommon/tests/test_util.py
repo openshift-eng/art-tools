@@ -646,56 +646,34 @@ class TestIsFutureReleaseDate(unittest.TestCase):
 
 
 class TestBridgeOCPVersions(unittest.TestCase):
-    """Tests for bridge release helpers and validation."""
+    """Tests for OCP 5.x bridge release helpers."""
 
-    def test_is_bridge_ocp_version(self):
-        self.assertTrue(util.is_bridge_ocp_version(4, 23))
-        self.assertFalse(util.is_bridge_ocp_version(4, 22))
-        self.assertFalse(util.is_bridge_ocp_version(5, 0))
+    def test_get_ocp5_bridge_release(self):
+        self.assertEqual(util.get_ocp5_bridge_release(5, 0), (4, 23))
+        self.assertEqual(util.get_ocp5_bridge_release(5, 1), (4, 24))
+        self.assertEqual(util.get_ocp5_bridge_release(5, 2), (4, 25))
 
-    def test_get_bridge_basis_version(self):
-        self.assertEqual(util.get_bridge_basis_version(4, 23), (5, 0))
-        self.assertIsNone(util.get_bridge_basis_version(4, 22))
+    def test_get_ocp5_bridge_release_rejects_non_ocp5(self):
+        with self.assertRaisesRegex(ValueError, "only supports OCP 5.x"):
+            util.get_ocp5_bridge_release(6, 0)
+        with self.assertRaisesRegex(ValueError, "only supports OCP 5.x"):
+            util.get_ocp5_bridge_release(4, 0)
 
-    def test_resolve_bridge_basis_version_without_group_config(self):
-        self.assertEqual(util.resolve_bridge_basis_version(4, 23), (5, 0))
-        self.assertIsNone(util.resolve_bridge_basis_version(4, 22))
+    def test_validate_bridge_release_basis_group(self):
+        util.validate_bridge_release_basis_group("openshift-4.23", "openshift-5.0")
+        util.validate_bridge_release_basis_group("openshift-4.24", "openshift-5.1")
 
-    def test_resolve_bridge_basis_version_validates_group_config(self):
-        group_config = {
-            "bridge_release": {
-                "basis_group": "openshift-5.0",
-                "bug_mirroring": {"enabled": True},
-            }
-        }
-        self.assertEqual(
-            util.resolve_bridge_basis_version(4, 23, group_config=group_config, group_name="openshift-4.23"),
-            (5, 0),
-        )
-
-    def test_resolve_bridge_basis_version_rejects_mismatched_basis_group(self):
-        group_config = {
-            "bridge_release": {
-                "basis_group": "openshift-4.22",
-                "bug_mirroring": {"enabled": True},
-            }
-        }
+    def test_validate_bridge_release_basis_group_rejects_mismatch(self):
         with self.assertRaisesRegex(ValueError, "must be 'openshift-5.0'"):
-            util.resolve_bridge_basis_version(4, 23, group_config=group_config)
-
-    def test_resolve_bridge_basis_version_rejects_unknown_bridge_config(self):
-        group_config = {
-            "bridge_release": {
-                "basis_group": "openshift-5.0",
-                "bug_mirroring": {"enabled": True},
-            }
-        }
-        with self.assertRaisesRegex(ValueError, "not a known bridge release"):
-            util.resolve_bridge_basis_version(4, 22, group_config=group_config)
+            util.validate_bridge_release_basis_group("openshift-4.23", "openshift-5.1")
+        with self.assertRaisesRegex(ValueError, "must be 'openshift-5.1'"):
+            util.validate_bridge_release_basis_group("openshift-4.24", "openshift-5.0")
+        with self.assertRaisesRegex(ValueError, "only supports OCP 5.x"):
+            util.validate_bridge_release_basis_group("openshift-4.23", "openshift-4.22")
 
 
 class TestOCPVersionHelpers(unittest.TestCase):
-    """Tests for get_previous_ocp_version and get_next_ocp_version"""
+    """Tests for deprecated get_previous_ocp_version and get_next_ocp_version wrappers"""
 
     def setUp(self):
         """Set up test fixture with mocked LAST_OCP_MINOR_VERSION"""
@@ -705,7 +683,7 @@ class TestOCPVersionHelpers(unittest.TestCase):
             4: 22,  # Test with 4.22 as max
             5: None,  # OCP 5.x max unknown
         }
-        self.patcher = patch('artcommonlib.util.LAST_OCP_MINOR_VERSION', self.mock_version_map)
+        self.patcher = patch('artcommonlib.ocp_version_lineage.LAST_OCP_MINOR_VERSION', self.mock_version_map)
         self.patcher.start()
 
     def tearDown(self):
@@ -753,6 +731,14 @@ class TestOCPVersionHelpers(unittest.TestCase):
         # 3.11 → 4.0 (mocked max is 11)
         self.assertEqual(util.get_next_ocp_version(3, 11), (4, 0))
 
+    def test_get_next_ocp_version_rejects_bridge(self):
+        with self.assertRaises(ValueError):
+            util.get_next_ocp_version(4, 23)
+
+    def test_get_previous_ocp_version_rejects_bridge(self):
+        with self.assertRaises(ValueError):
+            util.get_previous_ocp_version(4, 23)
+
     def test_get_next_ocp_version_unknown_max(self):
         """Test behavior when max minor is None (unknown)"""
         # For OCP 5 with None max, should allow infinite growth
@@ -770,7 +756,7 @@ class TestOCPVersionHelpers(unittest.TestCase):
     def test_get_next_ocp_version_at_boundary_without_next_major(self):
         """Test error when at max version and next major not defined"""
         # Create a scenario where we're at max but next major isn't defined
-        with patch('artcommonlib.util.LAST_OCP_MINOR_VERSION', {3: 11}):
+        with patch('artcommonlib.ocp_version_lineage.LAST_OCP_MINOR_VERSION', {3: 11}):
             # 3.11 is max, but 4.x is not defined
             with self.assertRaises(ValueError) as ctx:
                 util.get_next_ocp_version(3, 11)

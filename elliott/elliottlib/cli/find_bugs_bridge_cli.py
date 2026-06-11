@@ -8,6 +8,7 @@ from typing import Dict, List, Optional, Tuple
 import click
 import yaml
 from artcommonlib.model import Model
+from artcommonlib.util import validate_bridge_release_basis_group
 from jira import JIRAError
 
 from elliottlib import Runtime
@@ -148,6 +149,8 @@ class FindBugsBridgeCli:
         enabled = bool(bug_mirroring.get("enabled", False))
         if enabled and not basis_group:
             raise ValueError(f"bridge_release.basis_group must be set for {runtime.group}")
+        if basis_group:
+            validate_bridge_release_basis_group(runtime.group, basis_group)
         return BridgeBugMirroringConfig(basis_group=basis_group or "", enabled=enabled)
 
     def _build_source_runtime(self, group: str) -> Runtime:

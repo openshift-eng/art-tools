@@ -45,11 +45,8 @@ LAST_OCP_MINOR_VERSION = {
     5: None,  # OCP 5.x max minor not yet known - allows infinite growth
 }
 
-# Bridge (compat) releases map bridge major.minor -> basis major.minor sibling.
-# Example: OCP 4.23 is a 4.x-compat sibling of OCP 5.0, not the predecessor of 5.0.
-BRIDGE_OCP_VERSIONS = {
-    (4, 23): (5, 0),
-}
+# OCP 5.x compat bridge on 4.x: 5.0 -> 4.23, 5.1 -> 4.24, ...
+OCP5_BRIDGE_MINOR_BASE = 23
 
 # Konflux DB related vars
 GOOGLE_CLOUD_PROJECT = 'openshift-art'
