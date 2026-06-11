@@ -28,7 +28,6 @@ import os
 from typing import Optional, Tuple
 
 from artcommonlib import exectools
-from async_lru import alru_cache
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 logger = logging.getLogger(__name__)
@@ -185,6 +184,12 @@ _oc_image_info_lru_cache: dict = {}
 _oc_image_info_lru_order: list = []
 
 
+def _clear_oc_image_info_lru_cache():
+    """Clear the LRU cache. Used by tests for isolation."""
+    _oc_image_info_lru_cache.clear()
+    _oc_image_info_lru_order.clear()
+
+
 def oc_image_info__cached__lru(
     pullspec: str,
     *options: str,
@@ -229,6 +234,10 @@ def oc_image_info__cached__lru(
     return result
 
 
+# Add cache_clear method to match @lru_cache API for backward compatibility
+oc_image_info__cached__lru.cache_clear = _clear_oc_image_info_lru_cache
+
+
 @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
 async def oc_image_info__cached_async(
     pullspec: str,
@@ -260,7 +269,17 @@ async def oc_image_info__cached_async(
     return stdout
 
 
-@alru_cache(maxsize=1000)
+# Manual async LRU cache implementation that excludes registry_config from the cache key
+_oc_image_info_async_lru_cache: dict = {}
+_oc_image_info_async_lru_order: list = []
+
+
+def _clear_oc_image_info_async_lru_cache():
+    """Clear the async LRU cache. Used by tests for isolation."""
+    _oc_image_info_async_lru_cache.clear()
+    _oc_image_info_async_lru_order.clear()
+
+
 async def oc_image_info__cached_async__lru(
     pullspec: str,
     *options: str,
@@ -273,5 +292,37 @@ async def oc_image_info__cached_async__lru(
     Use this when you do not expect the image to change during the process
     lifetime (e.g. sha256-pinned pullspecs or tag lookups within a single
     doozer run).
+
+    NOTE: registry_config is intentionally excluded from the cache key because
+    it only affects authentication, not the output. The same image will produce
+    the same JSON output regardless of which registry config file is used.
     """
-    return await oc_image_info__cached_async(pullspec, *options, registry_config=registry_config)
+    # Create cache key from pullspec and options only (exclude registry_config)
+    cache_key = (pullspec, options)
+
+    # Check cache
+    if cache_key in _oc_image_info_async_lru_cache:
+        # Move to end (most recently used)
+        _oc_image_info_async_lru_order.remove(cache_key)
+        _oc_image_info_async_lru_order.append(cache_key)
+        logger.debug(f"Async LRU cache HIT for {pullspec} with options {options} (registry_config={registry_config!r})")
+        return _oc_image_info_async_lru_cache[cache_key]
+
+    # Not in cache - call underlying function with the actual registry_config
+    logger.debug(f"Async LRU cache MISS for {pullspec} with options {options} (registry_config={registry_config!r})")
+    result = await oc_image_info__cached_async(pullspec, *options, registry_config=registry_config)
+
+    # Store in cache
+    _oc_image_info_async_lru_cache[cache_key] = result
+    _oc_image_info_async_lru_order.append(cache_key)
+
+    # Evict oldest entries if cache is too large
+    while len(_oc_image_info_async_lru_cache) > 1000:
+        oldest = _oc_image_info_async_lru_order.pop(0)
+        del _oc_image_info_async_lru_cache[oldest]
+
+    return result
+
+
+# Add cache_clear method to match @alru_cache API for backward compatibility
+oc_image_info__cached_async__lru.cache_clear = _clear_oc_image_info_async_lru_cache
