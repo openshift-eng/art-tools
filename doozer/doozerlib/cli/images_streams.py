@@ -15,8 +15,8 @@ from artcommonlib.git_helper import git_clone
 from artcommonlib.github_auth import build_git_auth_env, get_github_client_for_org, get_github_git_auth_env
 from artcommonlib.jira_config import get_jira_browse_url
 from artcommonlib.model import Missing, Model
-from artcommonlib.pushd import Dir
 from artcommonlib.ocp_version_lineage import get_reconciliation_depend_version
+from artcommonlib.pushd import Dir
 from artcommonlib.util import (
     convert_remote_git_to_https,
     ensure_github_https_url,
