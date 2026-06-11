@@ -3,7 +3,7 @@ import json
 from artcommonlib import logutil
 from artcommonlib.arch_util import go_arch_for_brew_arch
 from artcommonlib.model import ListModel, Model
-from artcommonlib.oc_image_info import oc_image_info__cached
+from artcommonlib.oc_image_info import oc_image_info__cached__lru
 from artcommonlib.runtime import GroupRuntime
 from artcommonlib.util import get_art_prod_image_repo_for_version
 
@@ -104,7 +104,7 @@ def get_build_id_from_rhcos_pullspec(pullspec, registry_config: str = None) -> s
 
     logger.info(f"Looking up BuildID from RHCOS pullspec: {pullspec}")
 
-    image_info_str = oc_image_info__cached(pullspec, registry_config=registry_config)
+    image_info_str = oc_image_info__cached__lru(pullspec, registry_config=registry_config)
     image_info = Model(json.loads(image_info_str))
     labels = image_info.config.config.Labels
 
@@ -143,7 +143,7 @@ def get_latest_layered_rhcos_build(container_conf: Model, arch: str, registry_co
     brew_arch = go_arch_for_brew_arch(arch)
 
     # Get build_id from rhel_build_id_index
-    rhel_info_str = oc_image_info__cached(
+    rhel_info_str = oc_image_info__cached__lru(
         container_conf.rhel_build_id_index, f'--filter-by-os={brew_arch}', registry_config=registry_config
     )
     rhel_info = json.loads(rhel_info_str)
@@ -152,7 +152,7 @@ def get_latest_layered_rhcos_build(container_conf: Model, arch: str, registry_co
     if container_conf.rhel_build_id_index == container_conf.rhcos_index_tag:
         digest = rhel_info['digest']
     else:
-        rhcos_info_str = oc_image_info__cached(
+        rhcos_info_str = oc_image_info__cached__lru(
             container_conf.rhcos_index_tag, f'--filter-by-os={brew_arch}', registry_config=registry_config
         )
         digest = json.loads(rhcos_info_str)['digest']
