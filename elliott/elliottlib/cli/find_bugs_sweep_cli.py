@@ -11,6 +11,7 @@ from artcommonlib.assembly import (
     assembly_own_issues_config,
     assembly_targeted_fixes_only,
 )
+from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
 from artcommonlib.format_util import green_print
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import is_ocp_delivery_repo, new_roundtrip_yaml_handler
@@ -301,15 +302,12 @@ async def get_bugs_sweep(runtime: Runtime, find_bugs_obj, bug_tracker, filter_at
                 logger.info(f"Filtered {len(attached_bugs)} bugs since they are attached to other advisories")
 
             # filter bugs that are attached to open shipment MRs
-            shipment_data_url = runtime.shipment_path
-            shipment_bug_ids = set()
-            if shipment_data_url:
-                shipment_bug_ids = get_bug_ids_from_open_shipment_mrs(
-                    shipment_data_url=shipment_data_url,
-                    group=runtime.group,
-                    releases_config=releases_config,
-                    current_assembly=runtime.assembly,
-                )
+            shipment_bug_ids = get_bug_ids_from_open_shipment_mrs(
+                shipment_data_url=SHIPMENT_DATA_URL_TEMPLATE,
+                group=runtime.group,
+                releases_config=releases_config,
+                current_assembly=runtime.assembly,
+            )
             if shipment_bug_ids:
                 before_count = len(bugs)
                 bugs = [b for b in bugs if b.id not in shipment_bug_ids]
