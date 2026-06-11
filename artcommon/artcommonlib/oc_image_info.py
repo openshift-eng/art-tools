@@ -215,13 +215,9 @@ def oc_image_info__cached__lru(
         # Move to end (most recently used)
         _oc_image_info_lru_order.remove(cache_key)
         _oc_image_info_lru_order.append(cache_key)
-        logger.warning(f"LRU cache HIT for {pullspec} with options {options} (registry_config={registry_config!r})")
         return _oc_image_info_lru_cache[cache_key]
 
     # Not in cache - call underlying function with the actual registry_config
-    logger.warning(
-        f"LRU cache MISS for {pullspec} with options {options} (registry_config={registry_config!r}, cache_size={len(_oc_image_info_lru_cache)})"
-    )
     result = oc_image_info__cached(pullspec, *options, registry_config=registry_config)
 
     # Store in cache
