@@ -38,6 +38,7 @@ class BuildConformaVerifyPipeline:
         builds: Optional[List[str]],
         data_path: Optional[str] = None,
         data_gitref: Optional[str] = None,
+        ec_policy: Optional[str] = None,
     ):
         self.runtime = runtime
         self.version = version
@@ -45,6 +46,7 @@ class BuildConformaVerifyPipeline:
         self.builds = builds or []
         self.data_path = data_path or constants.OCP_BUILD_DATA_URL
         self.data_gitref = data_gitref
+        self.ec_policy = ec_policy
         self.dry_run = runtime.dry_run
         self.logger = LOGGER
 
@@ -128,7 +130,7 @@ class BuildConformaVerifyPipeline:
             dry_run=self.dry_run,
         )
 
-        ec_policy = KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION
+        ec_policy = self.ec_policy or KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION
         records = list(nvr_record_map.values())
         application_name = records[0].get_konflux_application_name()
 
@@ -416,6 +418,11 @@ class BuildConformaVerifyPipeline:
 @click.option("--data-path", default=None, help="ocp-build-data repo URL or path")
 @click.option("--data-gitref", default=None, help="ocp-build-data git ref")
 @click.option("--builds", default="", help="Comma-separated NVRs to verify (empty = fetch latest)")
+@click.option(
+    "--ec-policy",
+    default=None,
+    help="EnterpriseContractPolicy CR reference (namespace/name). Defaults to ocp-art-tenant/conforma-build-stage",
+)
 @pass_runtime
 @click_coroutine
 async def build_conforma_verify(
@@ -425,6 +432,7 @@ async def build_conforma_verify(
     data_path: Optional[str],
     data_gitref: Optional[str],
     builds: str,
+    ec_policy: Optional[str],
 ):
     builds_list = [b.strip() for b in builds.split(",") if b.strip()] if builds else []
 
@@ -435,5 +443,6 @@ async def build_conforma_verify(
         builds=builds_list,
         data_path=data_path,
         data_gitref=data_gitref,
+        ec_policy=ec_policy,
     )
     await pipeline.run()
