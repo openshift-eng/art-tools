@@ -302,6 +302,73 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(build_record.installed_rpms, [])
         self.assertEqual(build_record.image_pullspec, "quay.io/test/image@sha256:testdigest")
 
+    async def test_update_konflux_db_skips_rpm_extraction_for_scratch_image(self):
+        """RPM extraction is auto-skipped when from.stream is 'scratch', even without explicit no_shell."""
+        metadata = self._metadata()
+        metadata.config.konflux.get.return_value = False  # no_shell not explicitly set
+        metadata.config.get.return_value = {'stream': 'scratch'}  # from.stream == 'scratch'
+        build_repo = MagicMock()
+        build_repo.https_url = "https://example.com/repo.git"
+        build_repo.commit_hash = "test-commit-hash"
+        build_repo.local_dir = Path(self.temp_dir.name)
+
+        pipelinerun = PipelineRunInfo(
+            {
+                "metadata": {
+                    "name": "test-pipelinerun",
+                    "uid": "test-uid",
+                    "labels": {"appstudio.openshift.io/component": "test-component"},
+                },
+                "status": {
+                    "results": [
+                        {"name": "IMAGE_URL", "value": "quay.io/test/image:test-tag"},
+                        {"name": "IMAGE_DIGEST", "value": "sha256:testdigest"},
+                    ],
+                    "startTime": "2023-10-01T12:00:00Z",
+                    "completionTime": "2023-10-01T12:30:00Z",
+                },
+            },
+            {},
+        )
+
+        with (
+            patch("doozerlib.backend.konflux_image_builder.DockerfileParser") as mock_dockerfile_parser,
+            patch.object(self.builder, "extract_parent_image_nvrs", new=AsyncMock(return_value=[])),
+            patch.object(
+                self.builder,
+                "get_installed_packages",
+                new=AsyncMock(return_value=({"pkg-1.0-1"}, {"srcpkg-1.0-1"})),
+            ) as mock_get_installed_packages,
+            patch("doozerlib.backend.konflux_image_builder.bigquery.BigQueryClient") as mock_bigquery_client,
+        ):
+            mock_dockerfile = MagicMock()
+            mock_dockerfile.labels = {
+                "io.openshift.build.source-location": "https://example.com/source-repo.git",
+                "io.openshift.build.commit.id": "source-commit-id",
+                "com.redhat.component": "test-component",
+                "version": "1.0",
+                "release": "1.el9",
+            }
+            mock_dockerfile.parent_images = []
+            mock_dockerfile_parser.return_value = mock_dockerfile
+            mock_bigquery_client.return_value.client.insert_rows_json.return_value = None
+
+            await self.builder.update_konflux_db(
+                metadata,
+                build_repo,
+                pipelinerun,
+                KonfluxBuildOutcome.SUCCESS,
+                ["x86_64"],
+                "5",
+            )
+
+        mock_get_installed_packages.assert_not_awaited()
+        add_build_call = metadata.runtime.konflux_db.add_build
+        add_build_call.assert_called_once()
+        build_record = add_build_call.call_args[0][0]
+        self.assertEqual(build_record.installed_packages, [])
+        self.assertEqual(build_record.installed_rpms, [])
+
     async def test_update_konflux_db_strips_rhel_minor_version_from_el_target(self):
         """el_target should be 'el9' even when the release contains a minor version suffix like 'el9_6'."""
         metadata = self._metadata()

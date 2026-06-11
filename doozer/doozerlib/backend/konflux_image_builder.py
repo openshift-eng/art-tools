@@ -1010,11 +1010,17 @@ class KonfluxImageBuilder:
 
             definitive_image_pullspec = f"{image_pullspec.split(':')[0]}@{image_digest}"
 
-            # Skip RPM extraction for images that don't use RPMs (e.g. FROM scratch ISO builds).
+            # Skip RPM extraction for images that don't use RPMs (e.g. FROM scratch builds).
             # no_shell implies no /bin/sh and no RPMs installed in the image.
-            skip_rpm_extraction = metadata.config.konflux.get("no_shell", False)
+            # Also auto-skip when base image is 'scratch' (consistent with rebaser logic).
+            from_stream = metadata.config.get('from', {}).get('stream')
+            skip_rpm_extraction = metadata.config.konflux.get("no_shell", False) or from_stream == 'scratch'
             if skip_rpm_extraction:
-                logger.info("Skipping RPM extraction (no_shell=true): image does not use RPMs")
+                logger.info(
+                    "Skipping RPM extraction (no_shell=%s, from.stream=%s): image does not use RPMs",
+                    metadata.config.konflux.get("no_shell", False),
+                    from_stream,
+                )
                 package_nvrs: set = set()
                 source_rpms: set = set()
             else:
