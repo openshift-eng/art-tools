@@ -601,28 +601,6 @@ def validate_bridge_release_basis_group(bridge_group: str, basis_group: str) -> 
         )
 
 
-def get_previous_ocp_version(major: int, minor: int) -> Tuple[int, int]:
-    """
-    Deprecated: use scoped helpers in artcommonlib.ocp_version_lineage instead.
-
-    Returns the previous release on the **standard OCP train** only (not bridge groups).
-    """
-    from artcommonlib.ocp_version_lineage import get_standard_train_previous
-
-    return get_standard_train_previous(major, minor)
-
-
-def get_next_ocp_version(major: int, minor: int) -> Tuple[int, int]:
-    """
-    Deprecated: use scoped helpers in artcommonlib.ocp_version_lineage instead.
-
-    Returns the next release on the **standard OCP train** only (not bridge groups).
-    """
-    from artcommonlib.ocp_version_lineage import get_standard_train_next
-
-    return get_standard_train_next(major, minor)
-
-
 def extract_group_from_nvr(nvr: str) -> Optional[str]:
     """
     Extract the group from an NVR by matching -vMAJOR.MINOR pattern.
