@@ -670,6 +670,7 @@ class TestBridgeOCPVersions(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "only supports OCP 5.x"):
             util.validate_bridge_release_basis_group("openshift-4.23", "openshift-4.22")
 
+
 # Legacy group-based resolver tests removed - functions no longer exist
 # Use product-based resolvers: resolve_konflux_kubeconfig_by_product() and resolve_konflux_namespace_by_product()
 
