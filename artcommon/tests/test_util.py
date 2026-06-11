@@ -645,6 +645,55 @@ class TestIsFutureReleaseDate(unittest.TestCase):
             self.assertEqual(result, expected, f"Failed for date: {date_str}")
 
 
+class TestBridgeOCPVersions(unittest.TestCase):
+    """Tests for bridge release helpers and validation."""
+
+    def test_is_bridge_ocp_version(self):
+        self.assertTrue(util.is_bridge_ocp_version(4, 23))
+        self.assertFalse(util.is_bridge_ocp_version(4, 22))
+        self.assertFalse(util.is_bridge_ocp_version(5, 0))
+
+    def test_get_bridge_basis_version(self):
+        self.assertEqual(util.get_bridge_basis_version(4, 23), (5, 0))
+        self.assertIsNone(util.get_bridge_basis_version(4, 22))
+
+    def test_resolve_bridge_basis_version_without_group_config(self):
+        self.assertEqual(util.resolve_bridge_basis_version(4, 23), (5, 0))
+        self.assertIsNone(util.resolve_bridge_basis_version(4, 22))
+
+    def test_resolve_bridge_basis_version_validates_group_config(self):
+        group_config = {
+            "bridge_release": {
+                "basis_group": "openshift-5.0",
+                "bug_mirroring": {"enabled": True},
+            }
+        }
+        self.assertEqual(
+            util.resolve_bridge_basis_version(4, 23, group_config=group_config, group_name="openshift-4.23"),
+            (5, 0),
+        )
+
+    def test_resolve_bridge_basis_version_rejects_mismatched_basis_group(self):
+        group_config = {
+            "bridge_release": {
+                "basis_group": "openshift-4.22",
+                "bug_mirroring": {"enabled": True},
+            }
+        }
+        with self.assertRaisesRegex(ValueError, "must be 'openshift-5.0'"):
+            util.resolve_bridge_basis_version(4, 23, group_config=group_config)
+
+    def test_resolve_bridge_basis_version_rejects_unknown_bridge_config(self):
+        group_config = {
+            "bridge_release": {
+                "basis_group": "openshift-5.0",
+                "bug_mirroring": {"enabled": True},
+            }
+        }
+        with self.assertRaisesRegex(ValueError, "not a known bridge release"):
+            util.resolve_bridge_basis_version(4, 22, group_config=group_config)
+
+
 class TestOCPVersionHelpers(unittest.TestCase):
     """Tests for get_previous_ocp_version and get_next_ocp_version"""
 

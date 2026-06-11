@@ -17,6 +17,7 @@ import requests
 import requests_gssapi
 from artcommonlib import logutil
 from artcommonlib.constants import (
+    BRIDGE_OCP_VERSIONS,
     GOLANG_BUILDER_IMAGE_NAME,
     KONFLUX_DEFAULT_IMAGE_REPO,
     KONFLUX_DEFAULT_NAMESPACE,
@@ -557,6 +558,84 @@ def get_art_prod_image_repo_for_version(major: int, repo_type: str = "dev") -> s
         raise ValueError(f"Invalid repo_type '{repo_type}'. Must be one of: {valid_repo_types}")
 
     return f"quay.io/openshift-release-dev/ocp-v{major}.0-art-{repo_type}"
+
+
+def is_bridge_ocp_version(major: int, minor: int) -> bool:
+    """Return True if major.minor is a known bridge (compat) OCP release."""
+    return (major, minor) in BRIDGE_OCP_VERSIONS
+
+
+def get_bridge_basis_version(major: int, minor: int) -> Optional[Tuple[int, int]]:
+    """
+    Return the basis (sibling) OCP version for a known bridge release.
+
+    Bridge releases ship alongside a new major (e.g. 4.23 with 5.0) and are not
+    part of the standard minor lineage tracked by LAST_OCP_MINOR_VERSION.
+    """
+    return BRIDGE_OCP_VERSIONS.get((major, minor))
+
+
+def _bridge_release_config(group_config) -> dict:
+    if group_config is None:
+        return {}
+    bridge_release = group_config.get("bridge_release", {}) or {}
+    if hasattr(bridge_release, "primitive"):
+        return bridge_release.primitive() or {}
+    return bridge_release
+
+
+def resolve_bridge_basis_version(
+    major: int,
+    minor: int,
+    group_config=None,
+    group_name: Optional[str] = None,
+) -> Optional[Tuple[int, int]]:
+    """
+    Resolve and optionally validate the basis version for bridge-release semantics.
+
+    When group_config is provided, bridge_release.basis_group must be set for known
+    bridge versions and must match BRIDGE_OCP_VERSIONS. Unknown bridge_release
+    configuration is rejected.
+    """
+    expected_basis = get_bridge_basis_version(major, minor)
+    bridge_release = _bridge_release_config(group_config)
+    basis_group = bridge_release.get("basis_group")
+
+    if group_name is not None:
+        group_major, group_minor = get_ocp_version_from_group(group_name)
+        if (group_major, group_minor) != (major, minor):
+            raise ValueError(f"Group name {group_name} does not match requested OCP version {major}.{minor}")
+
+    if expected_basis is None:
+        if basis_group:
+            raise ValueError(
+                f"OCP {major}.{minor} is not a known bridge release, but bridge_release.basis_group "
+                f"is set to {basis_group!r}"
+            )
+        return None
+
+    if group_config is None:
+        return expected_basis
+
+    expected_group = f"openshift-{expected_basis[0]}.{expected_basis[1]}"
+    if not basis_group:
+        raise ValueError(
+            f"OCP {major}.{minor} is a bridge release and requires bridge_release.basis_group; "
+            f"expected {expected_group!r}"
+        )
+    if basis_group != expected_group:
+        raise ValueError(
+            f"bridge_release.basis_group for OCP {major}.{minor} must be {expected_group!r}, found {basis_group!r}"
+        )
+
+    basis_major, basis_minor = get_ocp_version_from_group(basis_group)
+    if (basis_major, basis_minor) != expected_basis:
+        raise ValueError(
+            f"bridge_release.basis_group {basis_group!r} resolves to {basis_major}.{basis_minor}, "
+            f"expected {expected_basis[0]}.{expected_basis[1]}"
+        )
+
+    return expected_basis
 
 
 def get_previous_ocp_version(major: int, minor: int) -> Tuple[int, int]:
