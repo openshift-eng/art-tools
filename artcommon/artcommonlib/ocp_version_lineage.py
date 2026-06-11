@@ -24,6 +24,43 @@ def get_ocp5_basis_release(bridge_major: int, bridge_minor: int) -> tuple[int, i
     return 5, bridge_minor - OCP5_BRIDGE_MINOR_BASE
 
 
+def _bridge_release_for_basis_minor(basis_minor: int) -> tuple[int, int]:
+    if basis_minor < 0:
+        raise ValueError(f"Invalid OCP 5.x basis minor version: {basis_minor}")
+    return 4, OCP5_BRIDGE_MINOR_BASE + basis_minor
+
+
+def get_ocp5_bridge_train_next(bridge_major: int, bridge_minor: int) -> tuple[int, int]:
+    """
+    Next release on the OCP 5.x compat bridge track (e.g. 4.23 -> 4.24).
+
+    Follows the basis release's standard train-next (5.0 -> 5.1 maps to 4.23 -> 4.24).
+    """
+    basis_major, basis_minor = get_ocp5_basis_release(bridge_major, bridge_minor)
+    next_basis_major, next_basis_minor = get_standard_train_next(basis_major, basis_minor)
+    if next_basis_major != 5:
+        raise ValueError(
+            f"Unexpected basis train-next for bridge OCP {bridge_major}.{bridge_minor}: "
+            f"{next_basis_major}.{next_basis_minor}"
+        )
+    return _bridge_release_for_basis_minor(next_basis_minor)
+
+
+def get_ocp5_bridge_train_previous(bridge_major: int, bridge_minor: int) -> tuple[int, int]:
+    """
+    Previous release on the OCP 5.x compat bridge track (e.g. 4.24 -> 4.23).
+
+    The first bridge (4.23) steps back to the last standard 4.x (4.22), not another bridge.
+    """
+    basis_major, basis_minor = get_ocp5_basis_release(bridge_major, bridge_minor)
+    if basis_minor == 0:
+        last_standard = LAST_OCP_MINOR_VERSION[4]
+        if last_standard is None:
+            raise ValueError("LAST_OCP_MINOR_VERSION[4] is not set")
+        return 4, last_standard
+    return _bridge_release_for_basis_minor(basis_minor - 1)
+
+
 def group_from_version(major: int, minor: int) -> str:
     return f"openshift-{major}.{minor}"
 
@@ -83,16 +120,11 @@ def resolve_inflight_schedule_group(major: int, minor: int) -> str:
     """
     Group whose Product Pages schedule is used to detect concurrent in-flight releases.
 
-    Bridge groups use the last standard 4.x schedule for the first bridge (4.23 -> 4.22),
-    then the previous bridge minor for later bridge releases (4.24 -> 4.23).
+    Bridge groups use get_ocp5_bridge_train_previous (4.23 -> 4.22, 4.24 -> 4.23).
     """
     if is_ocp5_bridge_group(major, minor):
-        if minor == OCP5_BRIDGE_MINOR_BASE:
-            last_standard = LAST_OCP_MINOR_VERSION[4]
-            if last_standard is None:
-                raise ValueError("LAST_OCP_MINOR_VERSION[4] is not set")
-            return group_from_version(4, last_standard)
-        return group_from_version(major, minor - 1)
+        prev_major, prev_minor = get_ocp5_bridge_train_previous(major, minor)
+        return group_from_version(prev_major, prev_minor)
 
     prev_major, prev_minor = get_standard_train_previous(major, minor)
     return group_from_version(prev_major, prev_minor)

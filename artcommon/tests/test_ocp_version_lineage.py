@@ -118,3 +118,15 @@ class TestScopedLineageHelpers(unittest.TestCase):
     def test_get_ocp5_basis_release(self):
         self.assertEqual(lineage.get_ocp5_basis_release(4, 23), (5, 0))
         self.assertEqual(lineage.get_ocp5_basis_release(4, 24), (5, 1))
+
+    def test_get_ocp5_bridge_train_next_and_previous(self):
+        self.assertEqual(lineage.get_ocp5_bridge_train_next(4, 23), (4, 24))
+        self.assertEqual(lineage.get_ocp5_bridge_train_next(4, 24), (4, 25))
+        self.assertEqual(lineage.get_ocp5_bridge_train_previous(4, 24), (4, 23))
+        self.assertEqual(lineage.get_ocp5_bridge_train_previous(4, 23), (4, 22))
+
+    def test_get_ocp5_bridge_train_rejects_non_bridge(self):
+        with self.assertRaises(ValueError):
+            lineage.get_ocp5_bridge_train_next(4, 22)
+        with self.assertRaises(ValueError):
+            lineage.get_ocp5_bridge_train_previous(5, 0)
