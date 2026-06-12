@@ -49,6 +49,7 @@ CPE_PRODUCT_NAME_MAPPING = {
     'mta': 'migration_toolkit_applications',
     'logging': 'logging',
     'openshift-logging': 'logging',
+    'cert-manager': 'cert_manager',
 }
 
 LOGGER = logging.getLogger(__name__)
