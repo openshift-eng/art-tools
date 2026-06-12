@@ -699,6 +699,16 @@ class PromotePipeline:
 
         await self._slack_client.say_in_thread(f":white_check_mark: promote completed for {release_name}.")
 
+        if self.assembly not in ('stream', 'test'):
+            await util.set_assembly_status(
+                group=self.group,
+                assembly=self.assembly,
+                status_key="promoted",
+                status_value=True,
+                working_dir=self._working_dir,
+                dry_run=self.runtime.dry_run,
+            )
+
     def _get_release_stream_name(self, assembly_type: AssemblyTypes, arch: str):
         major, _ = isolate_major_minor_in_group(self.group)
         if major is None:
