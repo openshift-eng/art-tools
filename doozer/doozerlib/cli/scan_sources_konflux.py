@@ -1035,7 +1035,9 @@ class ConfigScanSources:
                 stream_config = self.runtime.resolve_stream(builder.stream)
                 builder_image_name = stream_config.image
             else:
-                raise IOError(f'Unable to determine builder or parent image pullspec from {builder}')
+                # If neither image nor stream is defined (e.g., parent 'from' object with only 'builder' list),
+                # skip this entry as there's no parent/base image to check
+                continue
             builder_build_nvr = await self.get_builder_build_nvr(builder_image_name)
 
             if not builder_build_nvr:
