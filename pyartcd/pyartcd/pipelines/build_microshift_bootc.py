@@ -62,6 +62,14 @@ from pyartcd.util import (
 
 yaml = new_roundtrip_yaml_handler()
 
+# Known bootc image variants. The pipeline will auto-discover which are available
+# in the current group's ocp-build-data. Both variants share the same el9 microshift
+# RPM plashet (ART-20305).
+BOOTC_VARIANTS = [
+    {"image_name": "microshift-bootc", "el_target": "el9"},
+    {"image_name": "microshift-bootc-rhel10", "el_target": "el10"},
+]
+
 
 class BuildMicroShiftBootcPipeline:
     """Rebase and build MicroShift for an assembly"""
@@ -197,27 +205,117 @@ class BuildMicroShiftBootcPipeline:
             doozer_data_path=data_path,
             doozer_data_gitref=self.data_gitref,
         )
-        bootc_build = await self._rebase_and_build_bootc()
-        if bootc_build:
-            self._logger.info("Bootc image build: %s", bootc_build.nvr)
-        else:
-            raise ValueError(f"Could not find bootc image build for assembly {self.assembly}")
 
-        # get image digests from manifest list for all arches
+        major, minor = self._ocp_version
+        if (major, minor) < (4, 18):
+            self._logger.info("Skipping bootc image build for version < 4.18")
+            return
+
+        # Shared plashet for all variants (both el9 and el10 images use el9 microshift RPMs)
+        await self._build_plashet_for_bootc()
+
+        # Discover which bootc variants exist in this group's build-data
+        variants = await self._get_bootc_variants()
+        self._logger.info("Discovered bootc variants for group %s: %s", self.group, variants)
+
+        # Build each variant
+        builds: dict[str, KonfluxBuildRecord] = {}
+        for variant in variants:
+            build = await self._rebase_and_build_bootc(variant)
+            if build:
+                builds[variant["image_name"]] = build
+                self._logger.info("Bootc image build for %s: %s", variant["image_name"], build.nvr)
+
+        if not builds:
+            raise ValueError(f"No bootc image builds produced for assembly {self.assembly}")
+
+        # Sync and publish each build
+        for image_name, bootc_build in builds.items():
+            await self._sync_and_publish_build(bootc_build)
+
+        # Pin and ship (non-STREAM assemblies)
+        if self.assembly_type != AssemblyTypes.STREAM:
+            # Check which builds need pinning
+            needs_pin = False
+            for image_name, bootc_build in builds.items():
+                pinned_nvr = get_image_if_pinned_directly(self.releases_config, self.assembly, image_name)
+                if bootc_build.nvr != pinned_nvr:
+                    needs_pin = True
+                    break
+
+            if needs_pin:
+                self._logger.info(
+                    "Creating PR to pin microshift-bootc image(s): %s", {k: v.nvr for k, v in builds.items()}
+                )
+                await self._create_or_update_pull_request_for_image(builds)
+
+            if self.prepare_shipment:
+                await self._prepare_shipment(builds)
+
+            if self.shipment_mr_url and not self.runtime.dry_run:
+                await self._set_shipment_mr_ready()
+                await self.slack_client.say_in_thread("Completed preparing microshift-bootc shipment.")
+
+    async def _get_bootc_variants(self) -> list[dict]:
+        """Discover which bootc image variants exist in the current group's build-data.
+
+        Queries doozer to check which known variant image configs are defined. Returns only
+        those variants whose image YAML exists in the current group.
+        """
+        all_image_names = " ".join(v["image_name"] for v in BOOTC_VARIANTS)
+        cmd = [
+            "doozer",
+            "--group",
+            self.doozer_group,
+            "--assembly",
+            "stream",
+            "-i",
+            ",".join(v["image_name"] for v in BOOTC_VARIANTS),
+            "config:print",
+            "--key",
+            "name",
+            "--yaml",
+        ]
+        rc, out, _ = await exectools.cmd_gather_async(cmd, env=self._doozer_env_vars)
+
+        available_keys = set()
+        if rc == 0 and out.strip():
+            image_data = yaml.load(out)
+            if image_data and isinstance(image_data, dict):
+                available_keys = set(image_data.get("images", {}).keys())
+
+        # Fall back: if doozer query fails or returns nothing, use only the base variant
+        if not available_keys:
+            self._logger.warning(
+                "Could not query build-data for bootc variants (%s). Falling back to base variant only.",
+                all_image_names,
+            )
+            return [BOOTC_VARIANTS[0]]
+
+        variants = [v for v in BOOTC_VARIANTS if v["image_name"] in available_keys]
+        if not variants:
+            self._logger.warning("No known bootc variants found in build-data. Using base variant.")
+            return [BOOTC_VARIANTS[0]]
+
+        return variants
+
+    async def _sync_and_publish_build(self, bootc_build: KonfluxBuildRecord):
+        """Inspect manifest list, sync to Quay, and mirror bootc-pullspec.txt for a single build."""
         cmd = [
             "skopeo",
             "inspect",
             f"docker://{bootc_build.image_pullspec}",
             "--raw",
         ]
-
         if self._registry_config:
             cmd += [f'--authfile={self._registry_config}']
 
         _, out, _ = await exectools.cmd_gather_async(cmd)
         manifest_list = json.loads(out)
         digest_by_arch = {m["platform"]["architecture"]: m["digest"] for m in manifest_list["manifests"]}
-        self._logger.info("Bootc image digests by arch: %s", json.dumps(digest_by_arch, indent=4))
+        self._logger.info(
+            "Bootc image digests by arch for %s: %s", bootc_build.name, json.dumps(digest_by_arch, indent=4)
+        )
 
         if not self.runtime.dry_run:
             major, _ = self._ocp_version
@@ -227,9 +325,8 @@ class BuildMicroShiftBootcPipeline:
             else:
                 art_repo = get_art_prod_image_repo_for_version(major, "dev")
                 await sync_to_quay(bootc_build.image_pullspec, art_repo)
-                # sync per-arch bootc-pullspec.txt to mirror
                 if self.assembly_type in [AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE]:
-                    self._logger.info(f"Found assembly type {self.assembly_type}. Syncing bootc build to mirror")
+                    self._logger.info(f"Syncing bootc build {bootc_build.name} to mirror")
                     await asyncio.gather(
                         *(
                             self.sync_to_mirror(arch, bootc_build.el_target, f"{art_repo}@{digest}")
@@ -239,22 +336,7 @@ class BuildMicroShiftBootcPipeline:
         else:
             major, _ = self._ocp_version
             art_repo = get_art_prod_image_repo_for_version(major, "dev")
-            self._logger.warning(f"Skipping sync to {art_repo} since in dry-run mode")
-
-        # Pin the image to the assembly if not STREAM
-        if self.assembly_type != AssemblyTypes.STREAM:
-            # Check if we need to create a PR to pin the build
-            pinned_nvr = get_image_if_pinned_directly(self.releases_config, self.assembly, 'microshift-bootc')
-            if bootc_build.nvr != pinned_nvr:
-                self._logger.info("Creating PR to pin microshift-bootc image: %s", bootc_build.nvr)
-                await self._create_or_update_pull_request_for_image(bootc_build.nvr)
-
-            if self.prepare_shipment:
-                await self._prepare_shipment(bootc_build)
-
-            if self.shipment_mr_url and not self.runtime.dry_run:
-                await self._set_shipment_mr_ready()
-                await self.slack_client.say_in_thread("Completed preparing microshift-bootc shipment.")
+            self._logger.warning(f"Skipping sync to {art_repo} for {bootc_build.name} since in dry-run mode")
 
     async def sync_to_mirror(self, arch, el_target, pullspec):
         arch = brew_arch_for_go_arch(arch)
@@ -312,22 +394,22 @@ class BuildMicroShiftBootcPipeline:
             await _run_for(local_dir, release_path)
             await _run_for(local_dir, latest_path)
 
-    async def get_latest_bootc_build(self):
-        bootc_image_name = "microshift-bootc"
-
+    async def get_latest_bootc_build(
+        self, image_name: str = "microshift-bootc", el_target: str = "el9"
+    ) -> Optional[KonfluxBuildRecord]:
         if not self.konflux_db:
             self.konflux_db = KonfluxDb()
             self.konflux_db.bind(KonfluxBuildRecord)
             self._logger.info('Konflux DB initialized')
 
         build = await self.konflux_db.get_latest_build(
-            name=bootc_image_name,
+            name=image_name,
             group=self.group,
             assembly=self.assembly,
             outcome=KonfluxBuildOutcome.SUCCESS,
             engine=Engine.KONFLUX,
             artifact_type=ArtifactType.IMAGE,
-            el_target='el9',
+            el_target=el_target,
             exclude_large_columns=True,
         )
         return cast(Optional[KonfluxBuildRecord], build)
@@ -475,19 +557,24 @@ class BuildMicroShiftBootcPipeline:
             )
         raise ValueError(f"Assembly type {self.assembly_type} is not supported for microshift-bootc builds")
 
-    async def _rebase_and_build_bootc(self):
-        bootc_image_name = "microshift-bootc"
+    async def _rebase_and_build_bootc(self, variant: dict) -> Optional[KonfluxBuildRecord]:
+        """Rebase and build a single bootc image variant.
+
+        Args:
+            variant: Dict with keys "image_name" and "el_target".
+        """
+        bootc_image_name = variant["image_name"]
+        el_target = variant["el_target"]
         major, minor = self._ocp_version
-        # do not run for version < 4.18
-        if (major, minor) < (4, 18):
-            self._logger.info("Skipping bootc image build for version < 4.18")
-            return
 
         # Check if an image is already pinned and don't rebuild unless forced
         if not self.force and self.assembly_type != AssemblyTypes.STREAM:
             pinned_nvr = get_image_if_pinned_directly(self.releases_config, self.assembly, bootc_image_name)
             if pinned_nvr:
-                message = f"For assembly {self.assembly} microshift-bootc image is already pinned: {pinned_nvr}. Use FORCE to rebuild."
+                message = (
+                    f"For assembly {self.assembly} {bootc_image_name} image is already pinned: "
+                    f"{pinned_nvr}. Use FORCE to rebuild."
+                )
                 self._logger.info(message)
                 await self.slack_client.say_in_thread(message)
 
@@ -505,25 +592,26 @@ class BuildMicroShiftBootcPipeline:
 
         # check if an image build already exists in Konflux DB
         if not self.force:
-            build = await self.get_latest_bootc_build()
+            build = await self.get_latest_bootc_build(image_name=bootc_image_name, el_target=el_target)
             if build:
                 self._logger.info(
-                    "Bootc image build exists for assembly: %s. Will use that. To force a rebuild use --force",
+                    "Bootc image build exists for %s assembly: %s. Will use that. To force a rebuild use --force",
+                    bootc_image_name,
                     build.nvr,
                 )
                 return build
             else:
-                self._logger.info("Bootc image build does not exist for assembly. Will proceed to build")
+                self._logger.info(
+                    "Bootc image build for %s does not exist for assembly. Will proceed to build", bootc_image_name
+                )
         else:
-            self._logger.info("Force flag is set. Forcing bootc image build")
+            self._logger.info("Force flag is set. Forcing bootc image build for %s", bootc_image_name)
 
         kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
         if not kubeconfig:
             raise ValueError(
                 f"KONFLUX_SA_KUBECONFIG environment variable is required to build {bootc_image_name} image"
             )
-
-        await self._build_plashet_for_bootc()
 
         # Extract the commit from the microshift RPM to ensure bootc is built from the same source
         upstream_commit = await self._get_microshift_rpm_commit()
@@ -604,7 +692,7 @@ class BuildMicroShiftBootcPipeline:
         await asyncio.sleep(10)
 
         # now that build is complete, fetch it
-        return await self.get_latest_bootc_build()
+        return await self.get_latest_bootc_build(image_name=bootc_image_name, el_target=el_target)
 
     def extract_git_repo(self, data_path: str):
         """
@@ -617,26 +705,20 @@ class BuildMicroShiftBootcPipeline:
             raise ValueError(f"Invalid git repo URL: {data_path}")
         return parts[-2], parts[-1]
 
-    def _pin_image_nvr(self, nvr: str, releases_config) -> dict:
-        """Update releases.yml to pin the specified image NVR.
-        Example:
-            releases:
-                4.18.1:
-                    assembly:
-                        members:
-                            images:
-                            - distgit_key: microshift-bootc
-                              metadata:
-                                is:
-                                  nvr: microshift-bootc-4.18.1-202311300751.p0.g7ebffc3.assembly.4.18.1.el9
+    def _pin_image_nvr(self, nvr: str, dg_key: str, releases_config) -> dict:
+        """Update releases.yml to pin the specified image NVR for a given distgit key.
+
+        Args:
+            nvr: The NVR to pin.
+            dg_key: The distgit key (e.g. "microshift-bootc" or "microshift-bootc-rhel10").
+            releases_config: The releases.yml config dict to modify in-place.
         """
-        dg_key = "microshift-bootc"
         image_pin = {
             "distgit_key": dg_key,
             "metadata": {
                 "is": {"nvr": nvr},
             },
-            "why": "Pin microshift-bootc image to assembly",
+            "why": f"Pin {dg_key} image to assembly",
         }
 
         images_entry = (
@@ -646,20 +728,24 @@ class BuildMicroShiftBootcPipeline:
             .setdefault("images", [])
         )
 
-        # Check if microshift-bootc entry already exists
-        microshift_bootc_entry = next(filter(lambda img: img.get("distgit_key") == dg_key, images_entry), None)
-        if microshift_bootc_entry is None:
+        existing_entry = next(filter(lambda img: img.get("distgit_key") == dg_key, images_entry), None)
+        if existing_entry is None:
             images_entry.append(image_pin)
             return image_pin
         else:
-            # Update existing entry
-            microshift_bootc_entry["metadata"]["is"] = image_pin["metadata"]["is"]
-            return microshift_bootc_entry
+            existing_entry["metadata"]["is"] = image_pin["metadata"]["is"]
+            return existing_entry
 
-    async def _create_or_update_pull_request_for_image(self, nvr: str):
+    async def _create_or_update_pull_request_for_image(self, builds: dict[str, KonfluxBuildRecord]):
+        """Create a single PR pinning all bootc variant NVRs in releases.yml.
+
+        Args:
+            builds: Mapping of image_name -> KonfluxBuildRecord for each built variant.
+        """
         branch = f"auto-pin-microshift-bootc-{self.group}-{self.assembly}"
-        title = f"Pin microshift-bootc image for {self.group} {self.assembly}"
-        body = f"Created by job run {jenkins.get_build_url()}"
+        image_names = ", ".join(builds.keys())
+        title = f"Pin microshift-bootc image(s) for {self.group} {self.assembly}"
+        body = f"Created by job run {jenkins.get_build_url()}\n\nPinned: {image_names}"
         if self.runtime.dry_run:
             self._logger.warning(
                 "[DRY RUN] Would have created pull-request with head '%s', title '%s', body '%s'",
@@ -674,7 +760,9 @@ class BuildMicroShiftBootcPipeline:
         upstream_repo = github_client.get_repo(f"{user}/{repo}")
         release_file_content = yaml.load(upstream_repo.get_contents("releases.yml", ref=self.group).decoded_content)
         source_file_content = copy.deepcopy(release_file_content)
-        self._pin_image_nvr(nvr, release_file_content)
+
+        for image_name, build in builds.items():
+            self._pin_image_nvr(build.nvr, image_name, release_file_content)
 
         if source_file_content == release_file_content:
             self._logger.warning("PR is not created: upstream already updated, nothing to change.")
@@ -697,8 +785,8 @@ class BuildMicroShiftBootcPipeline:
 
         # Create PR
         pr = upstream_repo.create_pull(title=title, body=body, base=self.group, head=branch)
-        self._logger.info("Created PR to pin microshift-bootc image: %s", pr.html_url)
-        await self.slack_client.say_in_thread(f"PR created to pin microshift-bootc image: {pr.html_url}")
+        self._logger.info("Created PR to pin microshift-bootc image(s): %s", pr.html_url)
+        await self.slack_client.say_in_thread(f"PR created to pin microshift-bootc image(s): {pr.html_url}")
 
         # Wait for CI tests to pass, then merge
         await self._wait_for_pr_merge(pr)
@@ -757,8 +845,12 @@ class BuildMicroShiftBootcPipeline:
 
             await asyncio.sleep(check_interval)
 
-    async def _prepare_shipment(self, bootc_build):
-        """Prepare shipment for microshift-bootc"""
+    async def _prepare_shipment(self, builds: dict[str, KonfluxBuildRecord]):
+        """Prepare shipment for microshift-bootc (all variants combined in one shipment MR).
+
+        Args:
+            builds: Mapping of image_name -> KonfluxBuildRecord for each built variant.
+        """
         await self.slack_client.say_in_thread(f"Start preparing shipment for assembly {self.assembly}..")
 
         # Step 1: Check environment variables and setup
@@ -774,11 +866,14 @@ class BuildMicroShiftBootcPipeline:
         assembly_shipment_config = self.assembly_group_config.get("microshift_bootc_shipment", {})
         had_existing_url = bool(assembly_shipment_config.get("url"))
 
-        # Step 4: Use the provided bootc build
-        self._logger.info("Using bootc build: %s", bootc_build.nvr)
+        # Step 4: Log all builds
+        for image_name, build in builds.items():
+            self._logger.info("Using bootc build for %s: %s", image_name, build.nvr)
 
-        # Step 5: Create snapshot from bootc build
-        snapshot = await self._create_snapshot(bootc_build.nvr)
+        # Step 5: Create snapshot from all bootc builds
+        image_names = list(builds.keys())
+        nvrs = [build.nvr for build in builds.values()]
+        snapshot = await self._create_snapshot(nvrs, image_names)
         shipment_config.shipment.snapshot = snapshot
 
         # Step 6: Create shipment MR
@@ -998,22 +1093,25 @@ class BuildMicroShiftBootcPipeline:
         self._logger.info("Shipment configuration initialized")
         return shipment
 
-    async def _create_snapshot(self, nvr: str) -> Optional[Snapshot]:
-        """Create snapshot from build NVR using elliott snapshot new"""
-        if not nvr:
+    async def _create_snapshot(self, nvrs: list[str], image_names: list[str]) -> Optional[Snapshot]:
+        """Create snapshot from build NVR(s) using elliott snapshot new.
+
+        Args:
+            nvrs: List of NVRs to include in the snapshot.
+            image_names: List of image distgit keys to explicitly include (mode:disabled images).
+        """
+        if not nvrs:
             return None
 
-        self._logger.info("Creating snapshot from build: %s", nvr)
+        self._logger.info("Creating snapshot from builds: %s", nvrs)
 
-        # Call elliott snapshot new with NVR directly
-        # explicitly include microshift-bootc as it is mode:disabled
-        snapshot_cmd = self._elliott_base_command + [
-            "-i",
-            "microshift-bootc",
-            "snapshot",
-            "new",
-            nvr,
-        ]
+        # Build command with all image includes and NVRs
+        snapshot_cmd = list(self._elliott_base_command)
+        for name in image_names:
+            snapshot_cmd.extend(["-i", name])
+        snapshot_cmd.append("snapshot")
+        snapshot_cmd.append("new")
+        snapshot_cmd.extend(nvrs)
 
         quay_auth_file = os.getenv("QUAY_AUTH_FILE")
         if quay_auth_file:
@@ -1028,7 +1126,7 @@ class BuildMicroShiftBootcPipeline:
             raise ValueError(f"Snapshot object is not valid: {stdout}")
 
         self._logger.info("Snapshot created successfully")
-        return Snapshot(spec=SnapshotSpec(**new_snapshot_obj.get("spec")), nvrs=[nvr])
+        return Snapshot(spec=SnapshotSpec(**new_snapshot_obj.get("spec")), nvrs=nvrs)
 
     async def _setup_shipment_data_repo(self):
         """Setup and clone shipment-data repository"""

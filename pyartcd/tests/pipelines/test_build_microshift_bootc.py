@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.model import Model
-from pyartcd.pipelines.build_microshift_bootc import BuildMicroShiftBootcPipeline
+from pyartcd.pipelines.build_microshift_bootc import BOOTC_VARIANTS, BuildMicroShiftBootcPipeline
 from pyartcd.runtime import Runtime
 from pyartcd.slack import SlackClient
 
@@ -378,8 +378,7 @@ class TestBuildMicroShiftBootcPipeline(IsolatedAsyncioTestCase):
     @patch("pyartcd.pipelines.build_microshift_bootc.exectools.cmd_assert_async", new_callable=AsyncMock)
     @patch.object(BuildMicroShiftBootcPipeline, "get_latest_bootc_build", new_callable=AsyncMock)
     @patch.object(BuildMicroShiftBootcPipeline, "_get_microshift_rpm_commit", new_callable=AsyncMock)
-    @patch.object(BuildMicroShiftBootcPipeline, "_build_plashet_for_bootc", new_callable=AsyncMock)
-    async def test_rebase_uses_two_segment_version(self, mock_plashet, mock_get_commit, mock_get_build, mock_cmd):
+    async def test_rebase_uses_two_segment_version(self, mock_get_commit, mock_get_build, mock_cmd):
         """
         Test that _rebase_and_build_bootc passes --version v4.21 (2 segments)
         instead of v4.21.0 to avoid confusing tags on the container catalog
@@ -393,8 +392,9 @@ class TestBuildMicroShiftBootcPipeline(IsolatedAsyncioTestCase):
         os.environ["KONFLUX_SA_KUBECONFIG"] = "/fake/kubeconfig"
 
         try:
+            variant = {"image_name": "microshift-bootc", "el_target": "el9"}
             with patch("asyncio.sleep", new_callable=AsyncMock):
-                await pipeline._rebase_and_build_bootc()
+                await pipeline._rebase_and_build_bootc(variant)
 
             rebase_cmd = mock_cmd.call_args_list[0][0][0]
 
@@ -412,10 +412,7 @@ class TestBuildMicroShiftBootcPipeline(IsolatedAsyncioTestCase):
     @patch("pyartcd.pipelines.build_microshift_bootc.exectools.cmd_assert_async", new_callable=AsyncMock)
     @patch.object(BuildMicroShiftBootcPipeline, "get_latest_bootc_build", new_callable=AsyncMock)
     @patch.object(BuildMicroShiftBootcPipeline, "_get_microshift_rpm_commit", new_callable=AsyncMock)
-    @patch.object(BuildMicroShiftBootcPipeline, "_build_plashet_for_bootc", new_callable=AsyncMock)
-    async def test_rebase_and_build_bootc_uses_rpm_commit(
-        self, mock_plashet, mock_get_commit, mock_get_build, mock_cmd
-    ):
+    async def test_rebase_and_build_bootc_uses_rpm_commit(self, mock_get_commit, mock_get_build, mock_cmd):
         """
         Test that _rebase_and_build_bootc passes the RPM commit to --lock-upstream
         instead of HEAD.
@@ -439,8 +436,9 @@ class TestBuildMicroShiftBootcPipeline(IsolatedAsyncioTestCase):
 
         try:
             # when
+            variant = {"image_name": "microshift-bootc", "el_target": "el9"}
             with patch("asyncio.sleep", new_callable=AsyncMock):
-                await pipeline._rebase_and_build_bootc()
+                await pipeline._rebase_and_build_bootc(variant)
 
             # then
             # Verify rebase command uses the RPM commit, not HEAD
@@ -458,6 +456,154 @@ class TestBuildMicroShiftBootcPipeline(IsolatedAsyncioTestCase):
             self.assertEqual(build_cmd[lock_idx + 2], "0d0943b")
         finally:
             os.environ.pop("KONFLUX_SA_KUBECONFIG", None)
+
+    @patch("pyartcd.pipelines.build_microshift_bootc.exectools.cmd_assert_async", new_callable=AsyncMock)
+    @patch.object(BuildMicroShiftBootcPipeline, "get_latest_bootc_build", new_callable=AsyncMock)
+    @patch.object(BuildMicroShiftBootcPipeline, "_get_microshift_rpm_commit", new_callable=AsyncMock)
+    async def test_rebase_and_build_bootc_el10_variant(self, mock_get_commit, mock_get_build, mock_cmd):
+        """
+        Test that _rebase_and_build_bootc correctly handles the el10 variant,
+        using the microshift-bootc-rhel10 image name in doozer commands.
+        """
+        # given
+        mock_get_commit.return_value = "abc1234"
+        mock_get_build.return_value = Mock(nvr="microshift-bootc-rhel10-container-v4.22-1.el10")
+        pipeline = self._make_pipeline(group="openshift-4.22", assembly="4.22.0")
+        pipeline.assembly_type = AssemblyTypes.STANDARD
+        pipeline.force = True
+        os.environ["KONFLUX_SA_KUBECONFIG"] = "/fake/kubeconfig"
+
+        try:
+            variant = {"image_name": "microshift-bootc-rhel10", "el_target": "el10"}
+            with patch("asyncio.sleep", new_callable=AsyncMock):
+                await pipeline._rebase_and_build_bootc(variant)
+
+            # Verify rebase command uses the el10 image name
+            rebase_cmd = mock_cmd.call_args_list[0][0][0]
+            img_idx = rebase_cmd.index("-i")
+            self.assertEqual(rebase_cmd[img_idx + 1], "microshift-bootc-rhel10")
+
+            lock_idx = rebase_cmd.index("--lock-upstream")
+            self.assertEqual(rebase_cmd[lock_idx + 1], "microshift-bootc-rhel10")
+            self.assertEqual(rebase_cmd[lock_idx + 2], "abc1234")
+
+            # Verify build command uses the el10 image name
+            build_cmd = mock_cmd.call_args_list[1][0][0]
+            img_idx = build_cmd.index("-i")
+            self.assertEqual(build_cmd[img_idx + 1], "microshift-bootc-rhel10")
+
+            # Verify get_latest_bootc_build called with el10 params
+            mock_get_build.assert_called_with(image_name="microshift-bootc-rhel10", el_target="el10")
+        finally:
+            os.environ.pop("KONFLUX_SA_KUBECONFIG", None)
+
+    @patch("pyartcd.pipelines.build_microshift_bootc.exectools.cmd_gather_async", new_callable=AsyncMock)
+    async def test_get_bootc_variants_discovers_both(self, mock_cmd_gather):
+        """
+        Test that _get_bootc_variants returns both el9 and el10 variants when both
+        image configs exist in build-data.
+        """
+        # given - doozer returns both image names
+        mock_cmd_gather.return_value = (
+            0,
+            "microshift-bootc: openshift/microshift-bootc-rhel9\nmicroshift-bootc-rhel10: openshift/microshift-bootc-rhel10\n",
+            "",
+        )
+        pipeline = self._make_pipeline(group="openshift-4.22", assembly="4.22.0")
+        pipeline.assembly_type = AssemblyTypes.STREAM
+
+        # Mock yaml.load to return the nested config:print output format
+        with patch("pyartcd.pipelines.build_microshift_bootc.yaml") as mock_yaml:
+            mock_yaml.load.return_value = {
+                "images": {
+                    "microshift-bootc": "openshift/microshift-bootc-rhel9",
+                    "microshift-bootc-rhel10": "openshift/microshift-bootc-rhel10",
+                },
+                "rpms": {},
+            }
+            variants = await pipeline._get_bootc_variants()
+
+        self.assertEqual(len(variants), 2)
+        self.assertEqual(variants[0]["image_name"], "microshift-bootc")
+        self.assertEqual(variants[0]["el_target"], "el9")
+        self.assertEqual(variants[1]["image_name"], "microshift-bootc-rhel10")
+        self.assertEqual(variants[1]["el_target"], "el10")
+
+    @patch("pyartcd.pipelines.build_microshift_bootc.exectools.cmd_gather_async", new_callable=AsyncMock)
+    async def test_get_bootc_variants_falls_back_to_el9_only(self, mock_cmd_gather):
+        """
+        Test that _get_bootc_variants falls back to just the el9 variant when doozer
+        query fails (e.g. for older versions without el10 config).
+        """
+        # given - doozer fails
+        mock_cmd_gather.return_value = (1, "", "error: image not found")
+        pipeline = self._make_pipeline(group="openshift-4.21", assembly="4.21.0")
+        pipeline.assembly_type = AssemblyTypes.STREAM
+
+        variants = await pipeline._get_bootc_variants()
+
+        self.assertEqual(len(variants), 1)
+        self.assertEqual(variants[0]["image_name"], "microshift-bootc")
+        self.assertEqual(variants[0]["el_target"], "el9")
+
+    def test_pin_image_nvr_multiple_variants(self):
+        """
+        Test that _pin_image_nvr correctly pins multiple variant NVRs in releases.yml.
+        """
+        pipeline = self._make_pipeline(group="openshift-4.22", assembly="4.22.0")
+        releases_config = {"releases": {"4.22.0": {"assembly": {"members": {"images": []}}}}}
+
+        # Pin el9 variant
+        pipeline._pin_image_nvr(
+            "microshift-bootc-container-v4.22-202606081229.el9",
+            "microshift-bootc",
+            releases_config,
+        )
+
+        # Pin el10 variant
+        pipeline._pin_image_nvr(
+            "microshift-bootc-rhel10-container-v4.22-202606081229.el10",
+            "microshift-bootc-rhel10",
+            releases_config,
+        )
+
+        images = releases_config["releases"]["4.22.0"]["assembly"]["members"]["images"]
+        self.assertEqual(len(images), 2)
+        self.assertEqual(images[0]["distgit_key"], "microshift-bootc")
+        self.assertEqual(images[0]["metadata"]["is"]["nvr"], "microshift-bootc-container-v4.22-202606081229.el9")
+        self.assertEqual(images[1]["distgit_key"], "microshift-bootc-rhel10")
+        self.assertEqual(
+            images[1]["metadata"]["is"]["nvr"], "microshift-bootc-rhel10-container-v4.22-202606081229.el10"
+        )
+
+    def test_pin_image_nvr_updates_existing_entry(self):
+        """
+        Test that _pin_image_nvr updates an existing pin entry instead of duplicating it.
+        """
+        pipeline = self._make_pipeline(group="openshift-4.22", assembly="4.22.0")
+        releases_config = {
+            "releases": {
+                "4.22.0": {
+                    "assembly": {
+                        "members": {
+                            "images": [
+                                {
+                                    "distgit_key": "microshift-bootc",
+                                    "metadata": {"is": {"nvr": "old-nvr.el9"}},
+                                    "why": "Pin microshift-bootc image to assembly",
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        }
+
+        pipeline._pin_image_nvr("new-nvr.el9", "microshift-bootc", releases_config)
+
+        images = releases_config["releases"]["4.22.0"]["assembly"]["members"]["images"]
+        self.assertEqual(len(images), 1)
+        self.assertEqual(images[0]["metadata"]["is"]["nvr"], "new-nvr.el9")
 
     def test_validate_shipment_mr_raises_on_closed_mr(self):
         """
