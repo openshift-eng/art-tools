@@ -925,11 +925,25 @@ class ImageMetadata(Metadata):
 
         # Check if we have a stream for this golang version
         # Stream names follow pattern: rhel-{el_version}-golang-{major}.{minor}
+        # This can be a direct stream name OR an alias (e.g., rhel-9-golang-{GO_LATEST} -> rhel-9-golang-1.26)
         el_version = self.branch_el_target()
         stream_name = f'rhel-{el_version}-golang-{upstream_golang_version[0]}.{upstream_golang_version[1]}'
 
-        # Check if stream exists in runtime.streams (loaded from streams.yml)
-        if stream_name not in self.runtime.streams:
+        # Use resolve_stream() to check if stream exists (handles both direct names and aliases)
+        try:
+            stream_config = self.runtime.resolve_stream(stream_name)
+            # Stream found - log success
+            # The rebase process will handle FROM replacement using this stream's pullspec
+            stream_image = stream_config.image
+            self.logger.info(
+                '[%s] Upstream golang %s.%s matches stream "%s" -> %s',
+                self.distgit_key,
+                upstream_golang_version[0],
+                upstream_golang_version[1],
+                stream_name,
+                stream_image,
+            )
+        except IOError:
             # Stream not found - log warning and continue with default
             self.logger.warning(
                 '[%s] Upstream wants golang %s.%s but stream "%s" not found in streams.yml. '
@@ -940,19 +954,6 @@ class ImageMetadata(Metadata):
                 upstream_golang_version[1],
                 stream_name,
             )
-            return
-
-        # Stream found - log success
-        # The rebase process will handle FROM replacement using this stream's pullspec
-        stream_image = self.runtime.streams[stream_name].image
-        self.logger.info(
-            '[%s] Upstream golang %s.%s matches stream "%s" -> %s',
-            self.distgit_key,
-            upstream_golang_version[0],
-            upstream_golang_version[1],
-            stream_name,
-            stream_image,
-        )
 
     def _determine_upstream_golang_version(self, source_dir: pathlib.Path) -> Optional[Tuple[int, int]]:
         """
