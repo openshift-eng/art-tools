@@ -153,7 +153,7 @@ class TestRhcos(unittest.IsolatedAsyncioTestCase):
             ("dummy", "test@sha256:abcd1234alt"), rhcos.RHCOSBuildFinder(self.runtime, "4.4").latest_container()
         )
 
-    @patch('artcommonlib.rhcos.oc_image_info__cached')
+    @patch('artcommonlib.rhcos.oc_image_info__cached__lru')
     @patch('doozerlib.rhcos.RHCOSBuildFinder.rhcos_build_meta')
     def test_rhcos_build_inspector(self, rhcos_build_meta_mock, oc_image_info_mock):
         """
@@ -199,7 +199,7 @@ class TestRhcos(unittest.IsolatedAsyncioTestCase):
         self.assertIn("util-linux-2.32.1-24.el8", rhcos_build.get_rpm_nvrs())
         self.assertEqual(rhcos_build.get_container_digest(), test_digest)
 
-    @patch('artcommonlib.rhcos.oc_image_info__cached')
+    @patch('artcommonlib.rhcos.oc_image_info__cached__lru')
     @patch('doozerlib.rhcos.RHCOSBuildFinder.rhcos_build_meta')
     def test_rhcos_build_inspector_extension(self, rhcos_build_meta_mock, oc_image_info_mock):
         """
@@ -220,7 +220,7 @@ class TestRhcos(unittest.IsolatedAsyncioTestCase):
         self.assertIn("kernel-rt-core-4.18.0-372.32.1.rt7.189.el8_6", rhcos_build.get_rpm_nvrs())
         self.assertIn("qemu-img-6.2.0-11.module+el8.6.0+16538+01ea313d.6", rhcos_build.get_rpm_nvrs())  # epoch stripped
 
-    @patch('artcommonlib.rhcos.oc_image_info__cached')
+    @patch('artcommonlib.rhcos.oc_image_info__cached__lru')
     @patch('doozerlib.rhcos.RHCOSBuildFinder.rhcos_build_meta')
     def test_inspector_get_container_pullspec(self, rhcos_build_meta_mock, oc_image_info_mock):
         # mock out the things RHCOSBuildInspector calls in __init__
@@ -238,7 +238,7 @@ class TestRhcos(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(RhcosMissingContainerException):
             rhcos_build.get_container_pullspec(Model(container_conf))
 
-    @patch('artcommonlib.rhcos.oc_image_info__cached')
+    @patch('artcommonlib.rhcos.oc_image_info__cached__lru')
     @patch('doozerlib.rhcos.RHCOSBuildFinder.rhcos_build_meta')
     async def test_find_non_latest_rpms_with_missing_enabled_repos(self, rhcos_build_meta_mock, oc_image_info_mock):
         # mock out the things RHCOSBuildInspector calls in __init__
@@ -256,7 +256,7 @@ class TestRhcos(unittest.IsolatedAsyncioTestCase):
 
     @patch('doozerlib.rhcos.RHCOSBuildInspector.get_os_metadata_rpm_list')
     @patch("doozerlib.repos.Repo.get_repodata_threadsafe")
-    @patch('artcommonlib.rhcos.oc_image_info__cached')
+    @patch('artcommonlib.rhcos.oc_image_info__cached__lru')
     @patch('doozerlib.rhcos.RHCOSBuildFinder.rhcos_build_meta')
     async def test_find_non_latest_rpms(
         self,
