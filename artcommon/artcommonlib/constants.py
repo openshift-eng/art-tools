@@ -33,6 +33,21 @@ ACTIVE_OCP_VERSIONS = [
     "5.0",
 ]
 
+# Last standard (non-bridge) minor for each OCP major release, used when crossing
+# major version boundaries (e.g. 5.0 -> 4.22, 4.22 -> 5.0).
+# Bridge releases such as 4.23 are active compat siblings of a new major (5.0)
+# and must NOT be included here or in lineage calculations. Keep bridge versions
+# in ACTIVE_OCP_VERSIONS only.
+# Use None for major versions where the maximum minor is not yet known.
+LAST_OCP_MINOR_VERSION = {
+    3: 11,  # OCP 3.11 was the last 3.x release
+    4: 22,  # Last standard 4.x before OCP 5.0 (excludes bridge 4.23)
+    5: None,  # OCP 5.x max minor not yet known - allows infinite growth
+}
+
+# OCP 5.x compat bridge on 4.x: 5.0 -> 4.23, 5.1 -> 4.24, ...
+OCP5_BRIDGE_MINOR_BASE = 23
+
 # Konflux DB related vars
 GOOGLE_CLOUD_PROJECT = 'openshift-art'
 DATASET_ID = 'events'

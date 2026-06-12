@@ -20,6 +20,7 @@ from artcommonlib.constants import (
     GOLANG_BUILDER_IMAGE_NAME,
     KONFLUX_DEFAULT_IMAGE_REPO,
     KONFLUX_DEFAULT_NAMESPACE,
+    OCP5_BRIDGE_MINOR_BASE,
     PRODUCT_BASE_IMAGE_KONFLUX_EC_RELEASE_MAP,
     PRODUCT_BASE_IMAGE_KONFLUX_RELEASE_MAP,
     PRODUCT_KUBECONFIG_MAP,
@@ -32,6 +33,7 @@ from artcommonlib.oc_image_info import (
     oc_image_info__cached__lru,
     oc_image_info__cached_async__lru,
 )
+from artcommonlib.ocp_version_lineage import resolve_inflight_schedule_group
 from artcommonlib.release_util import SoftwareLifecyclePhase, isolate_el_version_in_release
 from ruamel.yaml import YAML
 from semver import VersionInfo
@@ -344,55 +346,56 @@ def get_inflight(assembly, group, date=None):
     assembly_release_date = get_assembly_release_date(assembly, group, date)
     major, minor = get_ocp_version_from_group(group)
 
-    # Only look for previous group if minor > 0 to avoid negative minor versions (e.g., openshift-4.-1)
-    if minor > 0:
-        prev_group = f'openshift-{major}.{minor - 1}'
-        s = requests.Session()
-        auth = requests_gssapi.HTTPSPNEGOAuth(mutual_authentication=requests_gssapi.OPTIONAL)
-        s.post('https://pp.engineering.redhat.com/oidc/authenticate', auth=auth)
-        response = s.get(
-            f'{RELEASE_SCHEDULES}/{prev_group}.z/?fields=all_ga_tasks',
-            headers={'Accept': 'application/json'},
-        )
-        response.raise_for_status()
-        try:
-            data = response.json()
-            for release in data['all_ga_tasks']:
-                is_future = is_future_release_date(release['date_start'])
-                if is_future:
-                    days_diff = abs(
-                        (
-                            datetime.strptime(assembly_release_date, "%Y-%b-%d")
-                            - datetime.strptime(release['date_start'], "%Y-%m-%d")
-                        ).days
-                    )
-                    if days_diff <= 5:  # if next Y-1 release and assembly release in the same week
-                        match = re.search(r'\d+\.\d+\.\d+', release['name'])
-                        if match:
-                            inflight_release = match.group()
-                            break
-                        else:
-                            raise ValueError(f"Didn't find in_inflight release in {release['name']}")
-        except json.JSONDecodeError as e:
-            raise ValueError(f'Failed to parse JSON for {prev_group}: {e}')
-        except ValueError as e:
-            if "time data" in str(e) or "does not match format" in str(e):
-                raise ValueError(
-                    f"Invalid date format when comparing assembly_release_date with release['date_start'] for {prev_group}: {e}"
-                )
-            else:
-                raise  # Re-raise other ValueErrors unchanged
-        except KeyError as e:
-            raise ValueError(f'Failed to parse release schedule data for {prev_group}: {e}')
+    try:
+        prev_group = resolve_inflight_schedule_group(major, minor)
+    except ValueError:
+        # No previous version exists (e.g., OCP 3.0)
+        return None
 
-        if not inflight_release:
-            LOGGER.info(
-                f'Did not find a {prev_group} release that is releasing ~ in the same week as {assembly} {assembly_release_date}'
+    s = requests.Session()
+    auth = requests_gssapi.HTTPSPNEGOAuth(mutual_authentication=requests_gssapi.OPTIONAL)
+    s.post('https://pp.engineering.redhat.com/oidc/authenticate', auth=auth)
+    response = s.get(
+        f'{RELEASE_SCHEDULES}/{prev_group}.z/?fields=all_ga_tasks',
+        headers={'Accept': 'application/json'},
+    )
+    response.raise_for_status()
+    try:
+        data = response.json()
+        for release in data['all_ga_tasks']:
+            is_future = is_future_release_date(release['date_start'])
+            if is_future:
+                days_diff = abs(
+                    (
+                        datetime.strptime(assembly_release_date, "%Y-%b-%d")
+                        - datetime.strptime(release['date_start'], "%Y-%m-%d")
+                    ).days
+                )
+                if days_diff <= 5:  # if next Y-1 release and assembly release in the same week
+                    match = re.search(r'\d+\.\d+\.\d+', release['name'])
+                    if match:
+                        inflight_release = match.group()
+                        break
+                    else:
+                        raise ValueError(f"Didn't find in_inflight release in {release['name']}")
+    except json.JSONDecodeError as e:
+        raise ValueError(f'Failed to parse JSON for {prev_group}: {e}')
+    except ValueError as e:
+        if "time data" in str(e) or "does not match format" in str(e):
+            raise ValueError(
+                f"Invalid date format when comparing assembly_release_date with release['date_start'] for {prev_group}: {e}"
             )
         else:
-            LOGGER.info(f'Found {inflight_release} as in-flight release for {assembly} {assembly_release_date}')
+            raise  # Re-raise other ValueErrors unchanged
+    except KeyError as e:
+        raise ValueError(f'Failed to parse release schedule data for {prev_group}: {e}')
+
+    if not inflight_release:
+        LOGGER.info(
+            f'Did not find a {prev_group} release that is releasing ~ in the same week as {assembly} {assembly_release_date}'
+        )
     else:
-        LOGGER.info(f'No previous group available for {group} (minor version is 0)')
+        LOGGER.info(f'Found {inflight_release} as in-flight release for {assembly} {assembly_release_date}')
 
     return inflight_release
 
@@ -511,6 +514,47 @@ def get_art_prod_image_repo_for_version(major: int, repo_type: str = "dev") -> s
         raise ValueError(f"Invalid repo_type '{repo_type}'. Must be one of: {valid_repo_types}")
 
     return f"quay.io/openshift-release-dev/ocp-v{major}.0-art-{repo_type}"
+
+
+def get_ocp5_bridge_release(major: int, minor: int) -> Tuple[int, int]:
+    """
+    Return the OCP 4.x compat bridge release for an OCP 5.x version.
+
+    5.0 -> 4.23, 5.1 -> 4.24, and so on.
+    """
+    if major != 5:
+        raise ValueError(f"get_ocp5_bridge_release only supports OCP 5.x (got {major}.{minor})")
+    if minor < 0:
+        raise ValueError(f"Invalid OCP minor version: {major}.{minor}")
+
+    return 4, OCP5_BRIDGE_MINOR_BASE + minor
+
+
+def validate_bridge_release_basis_group(bridge_group: str, basis_group: str) -> None:
+    """
+    Validate bridge_release.basis_group for an OCP 5.x compat bridge group.
+
+    The bridge group (e.g. openshift-4.23) must be the sibling of the basis group
+    (e.g. openshift-5.0) per get_ocp5_bridge_release (5.0 -> 4.23, 5.1 -> 4.24, ...).
+    """
+    bridge_major, bridge_minor = get_ocp_version_from_group(bridge_group)
+    basis_major, basis_minor = get_ocp_version_from_group(basis_group)
+
+    try:
+        expected_bridge_major, expected_bridge_minor = get_ocp5_bridge_release(basis_major, basis_minor)
+    except ValueError as e:
+        raise ValueError(
+            f"bridge_release.basis_group {basis_group!r} is not a valid OCP 5.x basis "
+            f"for bridge group {bridge_group!r}: {e}"
+        ) from e
+
+    if (bridge_major, bridge_minor) != (expected_bridge_major, expected_bridge_minor):
+        if bridge_minor < OCP5_BRIDGE_MINOR_BASE:
+            raise ValueError(f"{bridge_group!r} is not an OCP 5.x bridge release group")
+        expected_basis_group = f"openshift-5.{bridge_minor - OCP5_BRIDGE_MINOR_BASE}"
+        raise ValueError(
+            f"bridge_release.basis_group for {bridge_group!r} must be {expected_basis_group!r}, found {basis_group!r}"
+        )
 
 
 def extract_group_from_nvr(nvr: str) -> Optional[str]:

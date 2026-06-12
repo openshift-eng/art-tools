@@ -7,6 +7,7 @@ This module provides validation for group.yml files using JSON schemas.
 import json
 import sys
 
+from artcommonlib.util import validate_bridge_release_basis_group
 from jsonschema import RefResolver, ValidationError
 from jsonschema.validators import validator_for
 from schema import SchemaError
@@ -75,5 +76,14 @@ def validate(_, data):
     except ValidationError:
         errors = validator.iter_errors(demerged_data)
         return '\n'.join([f"{e.json_path}: {e.message}" for e in errors])
+
+    bridge_release = demerged_data.get("bridge_release") or {}
+    basis_group = bridge_release.get("basis_group")
+    group_name = demerged_data.get("name")
+    if basis_group and group_name:
+        try:
+            validate_bridge_release_basis_group(group_name, basis_group)
+        except ValueError as e:
+            return str(e)
 
     return ''

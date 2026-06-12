@@ -644,6 +644,33 @@ class TestIsFutureReleaseDate(unittest.TestCase):
             self.assertEqual(result, expected, f"Failed for date: {date_str}")
 
 
+class TestBridgeOCPVersions(unittest.TestCase):
+    """Tests for OCP 5.x bridge release helpers."""
+
+    def test_get_ocp5_bridge_release(self):
+        self.assertEqual(util.get_ocp5_bridge_release(5, 0), (4, 23))
+        self.assertEqual(util.get_ocp5_bridge_release(5, 1), (4, 24))
+        self.assertEqual(util.get_ocp5_bridge_release(5, 2), (4, 25))
+
+    def test_get_ocp5_bridge_release_rejects_non_ocp5(self):
+        with self.assertRaisesRegex(ValueError, "only supports OCP 5.x"):
+            util.get_ocp5_bridge_release(6, 0)
+        with self.assertRaisesRegex(ValueError, "only supports OCP 5.x"):
+            util.get_ocp5_bridge_release(4, 0)
+
+    def test_validate_bridge_release_basis_group(self):
+        util.validate_bridge_release_basis_group("openshift-4.23", "openshift-5.0")
+        util.validate_bridge_release_basis_group("openshift-4.24", "openshift-5.1")
+
+    def test_validate_bridge_release_basis_group_rejects_mismatch(self):
+        with self.assertRaisesRegex(ValueError, "must be 'openshift-5.0'"):
+            util.validate_bridge_release_basis_group("openshift-4.23", "openshift-5.1")
+        with self.assertRaisesRegex(ValueError, "must be 'openshift-5.1'"):
+            util.validate_bridge_release_basis_group("openshift-4.24", "openshift-5.0")
+        with self.assertRaisesRegex(ValueError, "only supports OCP 5.x"):
+            util.validate_bridge_release_basis_group("openshift-4.23", "openshift-4.22")
+
+
 # Legacy group-based resolver tests removed - functions no longer exist
 # Use product-based resolvers: resolve_konflux_kubeconfig_by_product() and resolve_konflux_namespace_by_product()
 
