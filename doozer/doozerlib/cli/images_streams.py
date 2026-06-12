@@ -1849,7 +1849,9 @@ def images_streams_prs(
     checked_upstream_images = (
         set()
     )  # A PR will not be opened unless the upstream image exists; keep track of ones we have checked.
+    missing_upstream_images = set()  # Track images that failed the check so we don't retry slow oc calls.
     errors_raised = False  # If failures are found when opening a PR, won't break the loop but will return an exit code to signal this event
+    images_skipped = False  # If images are skipped due to missing upstream manifests, exit 25 (unstable)
 
     for image_meta in runtime.ordered_image_metas():
         dgk = image_meta.distgit_key
@@ -1868,21 +1870,28 @@ def images_streams_prs(
             logger.info('Skipping PR check since there is no configured .from')
             continue
 
-        def check_if_upstream_image_exists(upstream_image):
-            if upstream_image not in checked_upstream_images:
-                # We don't know yet whether this image exists; perhaps a buildconfig is
-                # failing. Don't open PRs for images that don't yet exist.
-                try:
-                    util.oc_image_info_for_arch(upstream_image)
-                except:
-                    yellow_print(
-                        f'Unable to access upstream image {upstream_image} for {dgk}-- check whether buildconfigs are running successfully.'
-                    )
-                    if not ignore_missing_images:
-                        raise
-                checked_upstream_images.add(
-                    upstream_image
-                )  # Don't check this image again since it is a little slow to do so.
+        def check_if_upstream_image_exists(upstream_image) -> bool:
+            """Check if an upstream image exists. Returns False if missing.
+
+            We don't know yet whether this image exists; perhaps a buildconfig is
+            failing. Don't open PRs for images that don't yet exist.
+            """
+            if upstream_image in checked_upstream_images:
+                return upstream_image not in missing_upstream_images
+            try:
+                util.oc_image_info_for_arch(upstream_image)
+                checked_upstream_images.add(upstream_image)
+                return True
+            except Exception:
+                yellow_print(
+                    f'Unable to access upstream image {upstream_image} for {dgk}'
+                    ' -- check whether buildconfigs are running successfully.'
+                )
+                checked_upstream_images.add(upstream_image)
+                if ignore_missing_images:
+                    return True
+                missing_upstream_images.add(upstream_image)
+                return False
 
         desired_parents = []
 
@@ -1903,23 +1912,28 @@ def images_streams_prs(
                 try:
                     upstream_image = resolve_upstream_from(runtime, builder)
                 except Exception as e:
-                    message = f'Error while resolving upstream image for {builder} in {dgk} for {major}.{minor}: {e}'
-                    logger.error(message)
-                    raise IOError(message)
+                    yellow_print(f'Unable to resolve upstream image for {builder} in {dgk} for {major}.{minor}: {e}')
+                    images_skipped = True
+                    break
                 if not upstream_image:
                     logger.warning(f'Unable to resolve upstream image for: {builder}')
                     break
-                check_if_upstream_image_exists(upstream_image)
+                if not check_if_upstream_image_exists(upstream_image):
+                    images_skipped = True
+                    break
                 desired_parents.append(upstream_image)
 
             try:
                 parent_upstream_image = resolve_upstream_from(runtime, from_config)
             except Exception as e:
-                message = f'Error while resolving upstream image for {from_config} in {dgk} for {major}.{minor}: {e}'
-                logger.error(message)
-                raise IOError(message)
+                yellow_print(f'Unable to resolve upstream image for {from_config} in {dgk} for {major}.{minor}: {e}')
+                images_skipped = True
+                continue
             if len(desired_parents) != len(builders) or not parent_upstream_image:
                 logger.warning('Unable to find all ART equivalent upstream images for this image')
+                continue
+            if not check_if_upstream_image_exists(parent_upstream_image):
+                images_skipped = True
                 continue
 
             desired_parents.append(parent_upstream_image)
@@ -1933,10 +1947,14 @@ def images_streams_prs(
             try:
                 desired_ci_build_root_image = resolve_upstream_from(runtime, streams_pr_config.ci_build_root)
             except Exception as e:
-                message = f'Error while resolving ci_build_root {streams_pr_config.ci_build_root} in {dgk} for {major}.{minor}: {e}'
-                logger.error(message)
-                raise IOError(message)
-            check_if_upstream_image_exists(desired_ci_build_root_image)
+                yellow_print(
+                    f'Unable to resolve ci_build_root {streams_pr_config.ci_build_root} in {dgk} for {major}.{minor}: {e}'
+                )
+                images_skipped = True
+                continue
+            if not check_if_upstream_image_exists(desired_ci_build_root_image):
+                images_skipped = True
+                continue
 
             # Split the pullspec into an openshift namespace, imagestream, and tag.
             # e.g. registry.openshift.org:999/ocp/release:golang-1.16 => tag=golang-1.16, namespace=ocp, imagestream=release
@@ -2472,3 +2490,7 @@ If you have any questions about this pull request, please reach out in the `#for
     if errors_raised:
         print('Some errors were raised: see the log for details')
         exit(50)
+
+    if images_skipped:
+        print('Some images were skipped due to missing upstream manifests: see the log for details')
+        exit(25)
