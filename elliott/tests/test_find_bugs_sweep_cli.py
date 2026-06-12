@@ -65,7 +65,7 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
         builder_tracker = flexmock(
             id="OCPBUGS-5",
             is_tracker_bug=lambda: True,
-            whiteboard_component=constants.GOLANG_BUILDER_CVE_COMPONENT,
+            whiteboard_component=constants.GOLANG_BUILDER_OCP4_DELIVERY_REPO,
         )
         delivery_repo_tracker = flexmock(
             id="OCPBUGS-6", is_tracker_bug=lambda: True, whiteboard_component="openshift5/payload-image-rhel9"

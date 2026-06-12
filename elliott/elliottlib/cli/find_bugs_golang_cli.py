@@ -9,6 +9,7 @@ import requests
 from artcommonlib.release_util import get_patch_from_release, isolate_el_version_in_release
 from artcommonlib.rhcos import get_container_configs
 from artcommonlib.rpm_utils import parse_nvr
+from artcommonlib.util import is_ocp_delivery_repo
 from doozerlib.cli.get_nightlies import find_rc_nightlies
 from prettytable import PrettyTable
 from pyartcd.util import get_release_name_for_assembly
@@ -162,7 +163,7 @@ class FindBugsGolangCli:
         for go_build in go_nvr_map.keys():
             # if this is a builder image then fetch the golang rpm
             parent_go_build = go_build
-            if constants.GOLANG_BUILDER_CVE_COMPONENT in go_build:
+            if constants.GOLANG_BUILDER_COMPONENT in go_build:
                 parsed_nvr = parse_nvr(go_build)
                 go_builder_nvr_map = get_golang_container_nvrs(
                     [(parsed_nvr['name'], parsed_nvr['version'], parsed_nvr['release'])], self._logger, exact=True
@@ -210,13 +211,13 @@ class FindBugsGolangCli:
             # In case this is for builder image
             # and if vulnerable builds make up for less than 10% of total builds, consider it fixed
             # this is due to etcd and a few payload images lagging behind due to special reasons
-            if bug.whiteboard_component == constants.GOLANG_BUILDER_CVE_COMPONENT and vuln_builds / total_builds < 0.1:
+            if constants.is_golang_builder_component(bug.whiteboard_component) and vuln_builds / total_builds < 0.1:
                 self._logger.info("Vulnerable builds make up for less than 10% of total builds, considering it fixed")
                 fixed = True
         else:
             fixed = True
 
-        if bug.whiteboard_component == constants.GOLANG_BUILDER_CVE_COMPONENT:
+        if constants.is_golang_builder_component(bug.whiteboard_component):
             build_artifacts = f"Images in {self.pullspec}"
         else:
             nvrs = []
@@ -486,7 +487,9 @@ class FindBugsGolangCli:
             if comp in not_art:
                 logger.info(f"{b.id} is for a component that is not built by ART: {comp}. Skipping")
                 return False
-            if comp.endswith("-container") and comp != constants.GOLANG_BUILDER_CVE_COMPONENT:
+            if (
+                comp.endswith("-container") or is_ocp_delivery_repo(comp)
+            ) and not constants.is_golang_builder_component(comp):
                 logger.info(f"{b.id} is for a non-builder image: {comp}. Skipping")
                 return False
             return True
@@ -510,7 +513,7 @@ class FindBugsGolangCli:
             filtered_bugs_rpms_only = []
             for b in bugs:
                 # Skip builder container bugs
-                if b.whiteboard_component == constants.GOLANG_BUILDER_CVE_COMPONENT:
+                if constants.is_golang_builder_component(b.whiteboard_component):
                     continue
                 # Skip image components (those that start with "openshift<digit>/")
                 if re.match(r'^openshift\d+/', b.whiteboard_component):
@@ -648,7 +651,7 @@ class FindBugsGolangCli:
         fixed_bugs, unfixed_bugs, updated_bugs = [], [], []
         for bug in bugs:
             component = bug.whiteboard_component
-            art_managed = (component == constants.GOLANG_BUILDER_CVE_COMPONENT) or (component in self._runtime.rpm_map)
+            art_managed = constants.is_golang_builder_component(component) or (component in self._runtime.rpm_map)
             logger.info(f"{bug.id} has security component: {component}")
             fixed, comment, component_builds, parent_golang_builds = False, '', [], []
 
@@ -658,7 +661,7 @@ class FindBugsGolangCli:
                 continue
             logger.info(f"{bug.id} is fixed in: {[str(v) for v in tracker_fixed_in]}")
 
-            if component == constants.GOLANG_BUILDER_CVE_COMPONENT:
+            if constants.is_golang_builder_component(component):
                 fixed, comment, component_builds, parent_golang_builds = await self.is_fixed_golang_builder(
                     bug, tracker_fixed_in=tracker_fixed_in
                 )
@@ -748,7 +751,7 @@ class FindBugsGolangCli:
     "--component",
     "components",
     multiple=True,
-    help="Only operate on trackers for these JIRA Bug components e.g. openshift-golang-builder-container",
+    help="Only operate on trackers for these JIRA Bug components e.g. openshift4/openshift-golang-builder",
 )
 @click.option('--art-jira', help='Related ART Jira ticket for reference e.g. ART-1234')
 @click.option(
@@ -815,7 +818,7 @@ async def find_bugs_golang_cli(
 
     Bugs are compared with latest builds in `stream` assembly by default. Pass --assembly to specify.
 
-    For openshift-golang-builder-container build, use --pullspec <payload_pullspec> to determine if fixed for builds in
+    For openshift-golang-builder build, use --pullspec <payload_pullspec> to determine if fixed for builds in
     given pullspec
 
     Note: rpm trackers cannot be processed if --pullspec is used, for that rely on --assembly.
@@ -828,7 +831,7 @@ async def find_bugs_golang_cli(
     bugs like openshift-golang-builder where we want to move the bug to VERIFIED after or close to when mass rebuild is
     triggered.
 
-    --component: Only operate on trackers for these JIRA Bug components e.g. openshift-golang-builder-container.
+    --component: Only operate on trackers for these JIRA Bug components e.g. openshift4/openshift-golang-builder.
 
     --rpms-only: Ignore builder container bugs and only analyze RPM trackers.
 
