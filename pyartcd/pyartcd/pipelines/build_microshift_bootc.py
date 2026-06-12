@@ -66,8 +66,8 @@ yaml = new_roundtrip_yaml_handler()
 # in the current group's ocp-build-data. Both variants share the same el9 microshift
 # RPM plashet (ART-20305).
 BOOTC_VARIANTS = [
-    {"image_name": "microshift-bootc", "el_target": "el9"},
     {"image_name": "microshift-bootc-rhel10", "el_target": "el10"},
+    {"image_name": "microshift-bootc", "el_target": "el9"},
 ]
 
 
