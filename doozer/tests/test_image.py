@@ -1784,6 +1784,7 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         runtime.assembly = 'stream'
         runtime.product = 'ocp'
         runtime.group_config = Model({})
+        runtime.base_image_release_override = None
 
         # Test base image - should trigger workflow
         base_image = Model({'name': 'test-base', 'base_only': True})
@@ -1804,6 +1805,7 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         test_assembly_runtime.assembly = 'test'
         test_assembly_runtime.product = 'ocp'
         test_assembly_runtime.group_config = Model({})
+        test_assembly_runtime.base_image_release_override = None
         self.assertFalse(ImageMetadata(test_assembly_runtime, base_data).should_trigger_base_image_release())
         self.assertFalse(ImageMetadata(test_assembly_runtime, golang_data).should_trigger_base_image_release())
 
@@ -1814,6 +1816,7 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         named_runtime.assembly = '4.17.1'
         named_runtime.product = 'ocp'
         named_runtime.group_config = Model({})
+        named_runtime.base_image_release_override = None
         self.assertTrue(ImageMetadata(named_runtime, base_data).should_trigger_base_image_release())
         self.assertTrue(ImageMetadata(named_runtime, golang_data).should_trigger_base_image_release())
 
@@ -1870,6 +1873,7 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         runtime_group_off.assembly = 'stream'
         runtime_group_off.product = 'ocp'
         runtime_group_off.group_config = Model({'base_image_release': Model({'enabled': False})})
+        runtime_group_off.base_image_release_override = None
         group_off_base = Model({'name': 'g-off-base', 'base_only': True})
         group_off_data = Model({'key': 'g-off-base', 'data': group_off_base, 'filename': 'g-off-base.yaml'})
         group_off_metadata = ImageMetadata(runtime_group_off, group_off_data)
@@ -1882,6 +1886,7 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         runtime_both.assembly = 'stream'
         runtime_both.product = 'ocp'
         runtime_both.group_config = Model({'base_image_release': Model({'enabled': False})})
+        runtime_both.base_image_release_override = None
         base_override = Model(
             {
                 'name': 'override-base',
@@ -1900,6 +1905,7 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         layered_runtime.assembly = 'stream'
         layered_runtime.product = 'rhmtc'
         layered_runtime.group_config = Model({})
+        layered_runtime.base_image_release_override = None
         self.assertTrue(ImageMetadata(layered_runtime, base_data).should_trigger_base_image_release())
         self.assertTrue(ImageMetadata(layered_runtime, golang_data).should_trigger_base_image_release())
 
@@ -1929,12 +1935,34 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         test_assembly_forced_runtime.assembly = 'test'
         test_assembly_forced_runtime.product = 'ocp'
         test_assembly_forced_runtime.group_config = Model({})
+        test_assembly_forced_runtime.base_image_release_override = None
         test_assembly_forced = Model({'name': 'test-regular', 'base_image_release': Model({'force': True})})
         test_assembly_forced_metadata = ImageMetadata(
             test_assembly_forced_runtime,
             Model({'key': 'test-assembly-forced', 'data': test_assembly_forced, 'filename': 'taf.yaml'}),
         )
         self.assertTrue(test_assembly_forced_metadata.should_trigger_base_image_release())
+
+        # CLI override: base_image_release_override=False disables for base images
+        override_off_runtime = MagicMock()
+        override_off_runtime.logger = logging.getLogger('test_runtime')
+        override_off_runtime.variant = BuildVariant.OCP
+        override_off_runtime.assembly = 'stream'
+        override_off_runtime.product = 'ocp'
+        override_off_runtime.group_config = Model({})
+        override_off_runtime.base_image_release_override = False
+        self.assertFalse(ImageMetadata(override_off_runtime, base_data).should_trigger_base_image_release())
+        self.assertFalse(ImageMetadata(override_off_runtime, golang_data).should_trigger_base_image_release())
+
+        # CLI override: base_image_release_override=True enables even when group config disables
+        override_on_runtime = MagicMock()
+        override_on_runtime.logger = logging.getLogger('test_runtime')
+        override_on_runtime.variant = BuildVariant.OCP
+        override_on_runtime.assembly = 'stream'
+        override_on_runtime.product = 'ocp'
+        override_on_runtime.group_config = Model({'base_image_release': Model({'enabled': False})})
+        override_on_runtime.base_image_release_override = True
+        self.assertTrue(ImageMetadata(override_on_runtime, base_data).should_trigger_base_image_release())
 
     def test_base_image_release_quay_fallback_image_overrides_group(self):
         from artcommonlib.model import Model

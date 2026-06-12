@@ -412,6 +412,11 @@ class KonfluxBuildCli:
     is_flag=True,
     help='Skip enterprise-contract verification after builds.',
 )
+@click.option(
+    '--base-image-release/--no-base-image-release',
+    default=None,
+    help='Override base image release trigger. Takes precedence over image and group config settings.',
+)
 @pass_runtime
 @click_coroutine
 async def images_konflux_build(
@@ -427,9 +432,12 @@ async def images_konflux_build(
     build_priority: Optional[str],
     network_mode: Optional[str],
     skip_ec_verify: bool,
+    base_image_release: Optional[bool],
 ):
     if network_mode:
         runtime.network_mode_override = network_mode
+    if base_image_release is not None:
+        runtime.base_image_release_override = base_image_release
 
     cli = KonfluxBuildCli(
         runtime=runtime,

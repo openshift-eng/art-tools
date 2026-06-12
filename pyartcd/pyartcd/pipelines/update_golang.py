@@ -932,6 +932,9 @@ class UpdateGolangPipeline:
             cmd.extend(['--konflux-kubeconfig', self.kubeconfig])
         if self.network_mode:
             cmd.extend(["--network-mode", self.network_mode])
+            if self.network_mode == "open":
+                # Base image release currently requires hermetic builds; this may change in the future
+                cmd.append("--no-base-image-release")
         if self.dry_run:
             cmd.append("--dry-run")
         await exectools.cmd_assert_async(cmd, env=self._doozer_env_vars, log_stdout=True)

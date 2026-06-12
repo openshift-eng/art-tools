@@ -161,6 +161,7 @@ class Runtime(GroupRuntime):
             self.variant = BuildVariant(self.variant.lower())
 
         self.network_mode_override = None
+        self.base_image_release_override = None
 
         if self.latest_parent_version:
             self.ignore_missing_base = True
