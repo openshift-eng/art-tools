@@ -1197,6 +1197,8 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
             "golang-1.20.12-2.el8": {("ignored-builder", "ignored-version", "ignored-release")}
         }
 
+        pipeline._get_effective_network_mode = Mock(return_value="open")
+
         el_nvr_map = {8: "golang-1.20.12-2.el8"}
         builder_nvrs = await pipeline.get_existing_builders_konflux(el_nvr_map, "1.20.12")
 
@@ -1240,6 +1242,8 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
         mock_get_golang_nvrs.return_value = {
             "golang-1.25.7-1.el9_5": {("openshift-golang-builder", "v1.25.7", "202602170955.g5015a16.el9")}
         }
+
+        pipeline._get_effective_network_mode = Mock(return_value="open")
 
         el_nvr_map = {9: "golang-1.25.7-1.el9"}
         builder_nvrs = await pipeline.get_existing_builders_konflux(el_nvr_map, "1.25.7")
@@ -1498,6 +1502,209 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
 
         # Should call both rebase and build
         self.assertEqual(mock_cmd_assert.call_count, 2)
+
+
+class TestGetEffectiveNetworkMode(IsolatedAsyncioTestCase):
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    def test_cli_override(self, mock_konflux_db):
+        mock_runtime = Mock(dry_run=False, working_dir=Path("/tmp/working"))
+        mock_runtime.new_slack_client.return_value = Mock()
+        pipeline = UpdateGolangPipeline(
+            runtime=mock_runtime,
+            ocp_version="4.16",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.22.9-1.el9"],
+            art_jira="ART-1234",
+            tag_builds=False,
+            network_mode="hermetic",
+        )
+        result = pipeline._get_effective_network_mode(9, "1.22.9")
+        self.assertEqual(result, "hermetic")
+
+    @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    def test_image_config(self, mock_konflux_db, mock_get_github_client):
+        mock_runtime = Mock(dry_run=False, working_dir=Path("/tmp/working"))
+        mock_runtime.new_slack_client.return_value = Mock()
+
+        upstream_repo = Mock()
+        upstream_repo.get_contents.side_effect = lambda path, ref: Mock(
+            decoded_content={
+                "images/openshift-golang-builder.yml": b"konflux:\n  network_mode: hermetic\n",
+                "group.yml": b"konflux:\n  network_mode: open\n",
+            }[path]
+        )
+        mock_get_github_client.return_value.get_repo.return_value = upstream_repo
+
+        pipeline = UpdateGolangPipeline(
+            runtime=mock_runtime,
+            ocp_version="4.16",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.22.9-1.el9"],
+            art_jira="ART-1234",
+            tag_builds=False,
+        )
+        result = pipeline._get_effective_network_mode(9, "1.22.9")
+        self.assertEqual(result, "hermetic")
+
+    @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    def test_group_config_fallback(self, mock_konflux_db, mock_get_github_client):
+        mock_runtime = Mock(dry_run=False, working_dir=Path("/tmp/working"))
+        mock_runtime.new_slack_client.return_value = Mock()
+
+        upstream_repo = Mock()
+        upstream_repo.get_contents.side_effect = lambda path, ref: Mock(
+            decoded_content={
+                "images/openshift-golang-builder.yml": b"{}\n",
+                "group.yml": b"konflux:\n  network_mode: hermetic\n",
+            }[path]
+        )
+        mock_get_github_client.return_value.get_repo.return_value = upstream_repo
+
+        pipeline = UpdateGolangPipeline(
+            runtime=mock_runtime,
+            ocp_version="4.16",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.22.9-1.el9"],
+            art_jira="ART-1234",
+            tag_builds=False,
+        )
+        result = pipeline._get_effective_network_mode(9, "1.22.9")
+        self.assertEqual(result, "hermetic")
+
+    @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    def test_default_open(self, mock_konflux_db, mock_get_github_client):
+        mock_runtime = Mock(dry_run=False, working_dir=Path("/tmp/working"))
+        mock_runtime.new_slack_client.return_value = Mock()
+
+        upstream_repo = Mock()
+        upstream_repo.get_contents.side_effect = lambda path, ref: Mock(
+            decoded_content={
+                "images/openshift-golang-builder.yml": b"{}\n",
+                "group.yml": b"{}\n",
+            }[path]
+        )
+        mock_get_github_client.return_value.get_repo.return_value = upstream_repo
+
+        pipeline = UpdateGolangPipeline(
+            runtime=mock_runtime,
+            ocp_version="4.16",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.22.9-1.el9"],
+            art_jira="ART-1234",
+            tag_builds=False,
+        )
+        result = pipeline._get_effective_network_mode(9, "1.22.9")
+        self.assertEqual(result, "open")
+
+    @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    def test_image_config_overrides_group(self, mock_konflux_db, mock_get_github_client):
+        mock_runtime = Mock(dry_run=False, working_dir=Path("/tmp/working"))
+        mock_runtime.new_slack_client.return_value = Mock()
+
+        upstream_repo = Mock()
+        upstream_repo.get_contents.side_effect = lambda path, ref: Mock(
+            decoded_content={
+                "images/openshift-golang-builder.yml": b"konflux:\n  network_mode: open\n",
+                "group.yml": b"konflux:\n  network_mode: hermetic\n",
+            }[path]
+        )
+        mock_get_github_client.return_value.get_repo.return_value = upstream_repo
+
+        pipeline = UpdateGolangPipeline(
+            runtime=mock_runtime,
+            ocp_version="4.16",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.22.9-1.el9"],
+            art_jira="ART-1234",
+            tag_builds=False,
+        )
+        result = pipeline._get_effective_network_mode(9, "1.22.9")
+        self.assertEqual(result, "open")
+
+
+class TestGetExistingBuildersKonfluxHermeticFilter(IsolatedAsyncioTestCase):
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    @patch("pyartcd.pipelines.update_golang.elliottutil.get_golang_container_nvrs_for_konflux_record")
+    async def test_hermetic_filter(self, mock_get_golang_nvrs, mock_konflux_db_class):
+        mock_runtime = Mock(dry_run=False, working_dir=Path("/tmp/working"))
+        mock_runtime.new_slack_client.return_value = Mock()
+
+        mock_db_instance = Mock()
+        mock_konflux_db_class.return_value = mock_db_instance
+
+        pipeline = UpdateGolangPipeline(
+            runtime=mock_runtime,
+            ocp_version="4.16",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.22.9-1.el9"],
+            art_jira="ART-1234",
+            tag_builds=False,
+            build_system="konflux",
+        )
+
+        mock_build_record = Mock(spec=KonfluxBuildRecord)
+        mock_build_record.nvr = "openshift-golang-builder-v1.22.9-202403212137.el9.g144a3f8"
+
+        async def mock_search_builds(*_args, **_kwargs):
+            yield mock_build_record
+
+        mock_db_instance.search_builds_by_fields = Mock(side_effect=mock_search_builds)
+        mock_get_golang_nvrs.return_value = {"golang-1.22.9-1.el9": {("ignored", "ignored", "ignored")}}
+
+        pipeline._get_effective_network_mode = Mock(return_value="hermetic")
+
+        el_nvr_map = {9: "golang-1.22.9-1.el9"}
+        await pipeline.get_existing_builders_konflux(el_nvr_map, "1.22.9")
+
+        where = mock_db_instance.search_builds_by_fields.call_args.kwargs["where"]
+        self.assertTrue(where["hermetic"])
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    @patch("pyartcd.pipelines.update_golang.elliottutil.get_golang_container_nvrs_for_konflux_record")
+    async def test_open_filter(self, mock_get_golang_nvrs, mock_konflux_db_class):
+        mock_runtime = Mock(dry_run=False, working_dir=Path("/tmp/working"))
+        mock_runtime.new_slack_client.return_value = Mock()
+
+        mock_db_instance = Mock()
+        mock_konflux_db_class.return_value = mock_db_instance
+
+        pipeline = UpdateGolangPipeline(
+            runtime=mock_runtime,
+            ocp_version="4.16",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.22.9-1.el9"],
+            art_jira="ART-1234",
+            tag_builds=False,
+            build_system="konflux",
+        )
+
+        mock_build_record = Mock(spec=KonfluxBuildRecord)
+        mock_build_record.nvr = "openshift-golang-builder-v1.22.9-202403212137.el9.g144a3f8"
+
+        async def mock_search_builds(*_args, **_kwargs):
+            yield mock_build_record
+
+        mock_db_instance.search_builds_by_fields = Mock(side_effect=mock_search_builds)
+        mock_get_golang_nvrs.return_value = {"golang-1.22.9-1.el9": {("ignored", "ignored", "ignored")}}
+
+        pipeline._get_effective_network_mode = Mock(return_value="open")
+
+        el_nvr_map = {9: "golang-1.22.9-1.el9"}
+        await pipeline.get_existing_builders_konflux(el_nvr_map, "1.22.9")
+
+        where = mock_db_instance.search_builds_by_fields.call_args.kwargs["where"]
+        self.assertFalse(where["hermetic"])
 
 
 if __name__ == "__main__":

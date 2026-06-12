@@ -805,6 +805,8 @@ class KonfluxDb:
                     # Translating into queries like "AND outcome IN ('success', 'failed')"
                     col_value = [str(outcome) for outcome in col_value]
                     base_clauses.append(Column(col_name, String).in_(col_value))
+                elif isinstance(col_value, bool):
+                    base_clauses.append(Column(col_name, Boolean) == col_value)
                 else:
                     base_clauses.append(Column(col_name, String) == col_value)
             else:
