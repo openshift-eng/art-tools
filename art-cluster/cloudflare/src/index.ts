@@ -1,12 +1,12 @@
 import { Env, SiteConfig } from './types';
 import { renderTemplFull } from './render';
 import { getSiteConfig } from './config';
-import { AccessChecker  } from './checkAccess';
+import { AccessChecker } from './checkAccess';
 import { Buffer } from "buffer";
 import * as crypto from 'crypto';
 
-const decode = (str: string):string => Buffer.from(str, 'base64').toString('binary');
-const encode = (str: string):string => Buffer.from(str, 'binary').toString('base64');
+const decode = (str: string): string => Buffer.from(str, 'base64').toString('binary');
+const encode = (str: string): string => Buffer.from(str, 'binary').toString('base64');
 
 // Pre-validated secure proxy URLs - no dynamic construction from user input
 const SECURE_PROXY_ENDPOINTS = new Map([
@@ -26,10 +26,35 @@ async function secureProxyToValidatedEndpoint(request: Request, targetBaseUrl: s
 
     // Get the pre-validated endpoint
     const secureEndpoint = SECURE_PROXY_ENDPOINTS.get(targetBaseUrl)!;
-    
-    // Create final URL by appending path to secure endpoint
-    const finalUrl = secureEndpoint + remainingPath;
 
+    // Sanitize remainingPath to prevent SSRF via path traversal or authority injection
+    let decodedPath: string;
+    try {
+        decodedPath = decodeURIComponent(remainingPath);
+    } catch {
+        return new Response('Invalid path', { status: 400 });
+    }
+    const segments = decodedPath.split('/');
+    if (segments.some((s) => s === '.' || s === '..') || /[@\\\u0000-\u001F\u007F]/.test(decodedPath)) {
+        return new Response('Invalid path', { status: 400 });
+    }
+
+    // Construct the final URL and verify the host was not altered
+    const parsedBase = new URL(secureEndpoint);
+    const parsedFinal = new URL(remainingPath, parsedBase);
+    if (parsedFinal.origin !== parsedBase.origin) {
+        return new Response('Invalid proxy target', { status: 400 });
+    }
+    const basePathWithSlash = parsedBase.pathname.endsWith('/')
+        ? parsedBase.pathname
+        : `${parsedBase.pathname}/`;
+    if (
+        parsedFinal.pathname !== parsedBase.pathname &&
+        !parsedFinal.pathname.startsWith(basePathWithSlash)
+    ) {
+        return new Response('Invalid path', { status: 400 });
+    }
+    const finalUrl = parsedFinal.toString();
     // Filter headers
     const allowedHeaders = ["Content-Type", "Authorization", "Accept"];
     const filteredHeaders = new Headers();
@@ -47,6 +72,7 @@ async function secureProxyToValidatedEndpoint(request: Request, targetBaseUrl: s
     });
 
     // Fetch from secure pre-validated endpoint
+    // SSRF: validated by allowlist + origin + path-prefix checks above
     const response = await fetch(proxyRequest);
 
     // Return the response to the client
