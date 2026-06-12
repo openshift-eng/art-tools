@@ -66,6 +66,8 @@ yaml = new_roundtrip_yaml_handler()
 class BuildMicroShiftBootcPipeline:
     """Rebase and build MicroShift for an assembly"""
 
+    BOOTC_IMAGE_NAME = "microshift-bootc"
+
     def __init__(
         self,
         runtime: Runtime,
@@ -77,6 +79,7 @@ class BuildMicroShiftBootcPipeline:
         data_path: str,
         slack_client,
         data_gitref: str | None = None,
+        trigger_open_build_first: bool = False,
         logger: Optional[logging.Logger] = None,
     ):
         self.runtime = runtime
@@ -88,6 +91,7 @@ class BuildMicroShiftBootcPipeline:
         self.force_plashet_sync = force_plashet_sync
         self.prepare_shipment = prepare_shipment
         self.slack_client = slack_client
+        self.trigger_open_build_first = trigger_open_build_first
         self._logger = logger or runtime.logger
 
         self._working_dir = self.runtime.working_dir.absolute()
@@ -188,7 +192,7 @@ class BuildMicroShiftBootcPipeline:
 
     async def _run_pipeline(self):
         data_path = self._doozer_env_vars["DOOZER_DATA_PATH"]
-        self.releases_config = await load_releases_config(group=self.doozer_group, data_path=data_path)
+        self.releases_config = await load_releases_config(group=self.group, data_path=constants.OCP_BUILD_DATA_URL)
         self.assembly_type = get_assembly_type(self.releases_config, self.assembly)
         # Load group config
         self.group_config = await load_group_config(
@@ -312,18 +316,38 @@ class BuildMicroShiftBootcPipeline:
             await _run_for(local_dir, release_path)
             await _run_for(local_dir, latest_path)
 
-    async def get_latest_bootc_build(self):
-        bootc_image_name = "microshift-bootc"
+    async def get_latest_bootc_build(self, hermetic: Optional[bool] = None):
+        if not self.konflux_db:
+            self.konflux_db = KonfluxDb()
+            self.konflux_db.bind(KonfluxBuildRecord)
+            self._logger.info('Konflux DB initialized')
 
+        kwargs: dict = dict(
+            name=self.BOOTC_IMAGE_NAME,
+            group=self.group,
+            assembly=self.assembly,
+            outcome=KonfluxBuildOutcome.SUCCESS,
+            engine=Engine.KONFLUX,
+            artifact_type=ArtifactType.IMAGE,
+            el_target='el9',
+            exclude_large_columns=True,
+        )
+        if hermetic is not None:
+            kwargs['extra_patterns'] = {'hermetic': hermetic}
+
+        build = await self.konflux_db.get_latest_build(**kwargs)
+        return cast(Optional[KonfluxBuildRecord], build)
+
+    async def get_bootc_build_for_seeding(self) -> Optional[KonfluxBuildRecord]:
+        """Find the most recent successful bootc build across any assembly to use as a lockfile seed."""
         if not self.konflux_db:
             self.konflux_db = KonfluxDb()
             self.konflux_db.bind(KonfluxBuildRecord)
             self._logger.info('Konflux DB initialized')
 
         build = await self.konflux_db.get_latest_build(
-            name=bootc_image_name,
+            name=self.BOOTC_IMAGE_NAME,
             group=self.group,
-            assembly=self.assembly,
             outcome=KonfluxBuildOutcome.SUCCESS,
             engine=Engine.KONFLUX,
             artifact_type=ArtifactType.IMAGE,
@@ -475,8 +499,94 @@ class BuildMicroShiftBootcPipeline:
             )
         raise ValueError(f"Assembly type {self.assembly_type} is not supported for microshift-bootc builds")
 
+    async def _do_rebase_and_build(
+        self,
+        network_mode: str,
+        upstream_commit: str,
+        assembly_label_value: Optional[str],
+        seed_nvr: Optional[str] = None,
+    ):
+        """Run a single rebase+build cycle with the given network mode."""
+        major, minor = self._ocp_version
+        version = f"v{major}.{minor}"
+        release = default_release_suffix()
+        rebase_cmd = [
+            "doozer",
+            "--group",
+            self.doozer_group,
+            "--assembly",
+            self.assembly,
+            "--latest-parent-version",
+            "-i",
+            self.BOOTC_IMAGE_NAME,
+            # Lock to the same commit as the microshift RPM to ensure consistency
+            # between RPM and bootc artifacts. Without this, doozer would try to
+            # use brew to find the commit which fails for Konflux-built images.
+            "--lock-upstream",
+            self.BOOTC_IMAGE_NAME,
+            upstream_commit,
+            "--build-system",
+            "konflux",
+            "beta:images:konflux:rebase",
+            "--version",
+            version,
+            "--release",
+            release,
+        ]
+        if seed_nvr:
+            rebase_cmd += ["--lockfile-seed-nvrs", seed_nvr]
+        if assembly_label_value:
+            rebase_cmd += ["--extra-label", f"assembly={assembly_label_value}"]
+        rebase_cmd += ["--network-mode", network_mode]
+        rebase_cmd += [
+            "--message",
+            f"Updating Dockerfile version and release {version}-{release}",
+        ]
+        if not self.runtime.dry_run:
+            rebase_cmd.append("--push")
+        await exectools.cmd_assert_async(rebase_cmd, env=self._doozer_env_vars)
+
+        kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
+        if not kubeconfig:
+            raise ValueError(
+                f"KONFLUX_SA_KUBECONFIG environment variable is required to build {self.BOOTC_IMAGE_NAME} image"
+            )
+        build_cmd = [
+            "doozer",
+            "--group",
+            self.doozer_group,
+            "--assembly",
+            self.assembly,
+            "--latest-parent-version",
+        ]
+        if self._registry_config:
+            build_cmd.append(f"--registry-config={self._registry_config}")
+        build_cmd.extend(
+            [
+                "-i",
+                self.BOOTC_IMAGE_NAME,
+                # Lock to the same commit as the microshift RPM to ensure consistency
+                "--lock-upstream",
+                self.BOOTC_IMAGE_NAME,
+                upstream_commit,
+                "--build-system",
+                "konflux",
+                "beta:images:konflux:build",
+                "--image-repo",
+                KONFLUX_DEFAULT_IMAGE_REPO,
+                "--konflux-kubeconfig",
+                kubeconfig,
+                "--konflux-namespace",
+                "ocp-art-tenant",
+                "--network-mode",
+                network_mode,
+            ]
+        )
+        if self.runtime.dry_run:
+            build_cmd.append("--dry-run")
+        await exectools.cmd_assert_async(build_cmd, env=self._doozer_env_vars)
+
     async def _rebase_and_build_bootc(self):
-        bootc_image_name = "microshift-bootc"
         major, minor = self._ocp_version
         # do not run for version < 4.18
         if (major, minor) < (4, 18):
@@ -485,7 +595,7 @@ class BuildMicroShiftBootcPipeline:
 
         # Check if an image is already pinned and don't rebuild unless forced
         if not self.force and self.assembly_type != AssemblyTypes.STREAM:
-            pinned_nvr = get_image_if_pinned_directly(self.releases_config, self.assembly, bootc_image_name)
+            pinned_nvr = get_image_if_pinned_directly(self.releases_config, self.assembly, self.BOOTC_IMAGE_NAME)
             if pinned_nvr:
                 message = f"For assembly {self.assembly} microshift-bootc image is already pinned: {pinned_nvr}. Use FORCE to rebuild."
                 self._logger.info(message)
@@ -517,12 +627,6 @@ class BuildMicroShiftBootcPipeline:
         else:
             self._logger.info("Force flag is set. Forcing bootc image build")
 
-        kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
-        if not kubeconfig:
-            raise ValueError(
-                f"KONFLUX_SA_KUBECONFIG environment variable is required to build {bootc_image_name} image"
-            )
-
         await self._build_plashet_for_bootc()
 
         # Extract the commit from the microshift RPM to ensure bootc is built from the same source
@@ -531,80 +635,48 @@ class BuildMicroShiftBootcPipeline:
         # Determine the assembly label value based on assembly type
         assembly_label_value = self._get_assembly_label_value()
 
-        # Rebase and build bootc image
-        version = f"v{major}.{minor}"
-        release = default_release_suffix()
-        rebase_cmd = [
-            "doozer",
-            "--group",
-            self.doozer_group,
-            "--assembly",
-            self.assembly,
-            "--latest-parent-version",
-            "-i",
-            bootc_image_name,
-            # Lock to the same commit as the microshift RPM to ensure consistency
-            # between RPM and bootc artifacts. Without this, doozer would try to
-            # use brew to find the commit which fails for Konflux-built images.
-            "--lock-upstream",
-            bootc_image_name,
-            upstream_commit,
-            "--build-system",
-            "konflux",
-            "beta:images:konflux:rebase",
-            "--version",
-            version,
-            "--release",
-            release,
-        ]
-        if assembly_label_value:
-            rebase_cmd += ["--extra-label", f"assembly={assembly_label_value}"]
-        rebase_cmd += [
-            "--message",
-            f"Updating Dockerfile version and release {version}-{release}",
-        ]
-        if not self.runtime.dry_run:
-            rebase_cmd.append("--push")
-        await exectools.cmd_assert_async(rebase_cmd, env=self._doozer_env_vars)
+        if self.trigger_open_build_first:
+            # Phase 1: open build — populates the installed_rpms DB field that doozer uses for lockfile generation
+            self._logger.info("Running open build phase (needed for hermetic lockfile generation)...")
+            await self.slack_client.say_in_thread(
+                "Running open build phase (needed for hermetic lockfile generation)..."
+            )
+            await self._do_rebase_and_build("open", upstream_commit, assembly_label_value)
 
-        build_cmd = [
-            "doozer",
-            "--group",
-            self.doozer_group,
-            "--assembly",
-            self.assembly,
-            "--latest-parent-version",
-        ]
-        if self._registry_config:
-            build_cmd.append(f"--registry-config={self._registry_config}")
-        build_cmd.extend(
-            [
-                "-i",
-                bootc_image_name,
-                # Lock to the same commit as the microshift RPM to ensure consistency
-                "--lock-upstream",
-                bootc_image_name,
+            # Fetch the open build record and verify it belongs to this job run before using it as seed
+            open_build = await self.get_latest_bootc_build(hermetic=False)
+            if not open_build:
+                raise IOError("Open build phase completed but no build record found in Konflux DB")
+            build_url = os.environ.get('BUILD_URL')
+            if build_url and open_build.art_job_url != build_url:
+                raise IOError(
+                    f"Open build record art_job_url ({open_build.art_job_url}) does not match "
+                    f"current BUILD_URL ({build_url}). Refusing to proceed with hermetic build."
+                )
+            self._logger.info("Open build record verified: %s", open_build.nvr)
+
+            # Phase 2: hermetic build — pass the verified open build NVR so doozer uses its installed_rpms for lockfile generation
+            await self._do_rebase_and_build("hermetic", upstream_commit, assembly_label_value, seed_nvr=open_build.nvr)
+        else:
+            # Find the most recent prior bootc build (any assembly) to seed the RPM lockfile.
+            # This is a no-op when the image is not configured as hermetic in ocp-build-data.
+            seed_build = await self.get_bootc_build_for_seeding()
+            if seed_build:
+                self._logger.info("Found bootc build for lockfile seeding: %s", seed_build.nvr)
+            else:
+                self._logger.info("No prior bootc build found for lockfile seeding")
+            await self._do_rebase_and_build(
+                "hermetic",
                 upstream_commit,
-                "--build-system",
-                "konflux",
-                "beta:images:konflux:build",
-                "--image-repo",
-                KONFLUX_DEFAULT_IMAGE_REPO,
-                "--konflux-kubeconfig",
-                kubeconfig,
-                "--konflux-namespace",
-                "ocp-art-tenant",
-            ]
-        )
-        if self.runtime.dry_run:
-            build_cmd.append("--dry-run")
-        await exectools.cmd_assert_async(build_cmd, env=self._doozer_env_vars)
+                assembly_label_value,
+                seed_nvr=seed_build.nvr if seed_build else None,
+            )
 
         # sleep a little bit to account for time drift between systems
         await asyncio.sleep(10)
 
-        # now that build is complete, fetch it
-        return await self.get_latest_bootc_build()
+        # now that build is complete, fetch the hermetic build
+        return await self.get_latest_bootc_build(hermetic=True)
 
     def extract_git_repo(self, data_path: str):
         """
@@ -669,7 +741,7 @@ class BuildMicroShiftBootcPipeline:
             )
             return "https://github.example.com/foo/bar/pull/1234"
 
-        user, repo = self.extract_git_repo(self._doozer_env_vars["DOOZER_DATA_PATH"])
+        user, repo = self.extract_git_repo(constants.OCP_BUILD_DATA_URL)
         github_client = get_github_client_for_org(user)
         upstream_repo = github_client.get_repo(f"{user}/{repo}")
         release_file_content = yaml.load(upstream_repo.get_contents("releases.yml", ref=self.group).decoded_content)
@@ -721,7 +793,7 @@ class BuildMicroShiftBootcPipeline:
                 raise TimeoutError(error_msg)
 
             # Refresh PR to get latest status
-            user, repo = self.extract_git_repo(self._doozer_env_vars['DOOZER_DATA_PATH'])
+            user, repo = self.extract_git_repo(constants.OCP_BUILD_DATA_URL)
             pr = get_github_client_for_org(user).get_repo(f"{user}/{repo}").get_pull(pr.number)
 
             # Check if PR was closed/merged by someone else
@@ -917,8 +989,7 @@ class BuildMicroShiftBootcPipeline:
             )
             return True
 
-        data_path = self._doozer_env_vars["DOOZER_DATA_PATH"]
-        user, repo = self.extract_git_repo(data_path)
+        user, repo = self.extract_git_repo(constants.OCP_BUILD_DATA_URL)
         github_client = get_github_client_for_org(user)
         upstream_repo = github_client.get_repo(f"{user}/{repo}")
 
@@ -1214,6 +1285,12 @@ class BuildMicroShiftBootcPipeline:
     default="",
     help="Doozer data path git [branch / tag / sha] to use",
 )
+@click.option(
+    "--trigger-open-build-first",
+    is_flag=True,
+    default=False,
+    help="Run an open (non-hermetic) build before the hermetic build to populate the installed_rpms DB field used for lockfile generation.",
+)
 @pass_runtime
 @click_coroutine
 async def build_microshift_bootc(
@@ -1225,6 +1302,7 @@ async def build_microshift_bootc(
     force_plashet_sync: bool,
     prepare_shipment: bool,
     data_gitref: str | None = None,
+    trigger_open_build_first: bool = False,
 ):
     # slack client is dry-run aware and will not send messages if dry-run is enabled
     slack_client = runtime.new_slack_client()
@@ -1240,6 +1318,7 @@ async def build_microshift_bootc(
             data_path=data_path,
             slack_client=slack_client,
             data_gitref=data_gitref,
+            trigger_open_build_first=trigger_open_build_first,
         )
         await pipeline.run()
     except Exception as err:
