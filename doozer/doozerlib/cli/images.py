@@ -1489,9 +1489,18 @@ def query_rpm_version(runtime, repo_type):
     required=True,
     help='Image build NVR',
 )
+@click.option(
+    '--enabled-override',
+    is_flag=True,
+    default=False,
+    help=(
+        'Bypass base_image_release.enabled: false for base_only/golang images on non-test assemblies. '
+        'Does not bypass test assembly, OKD, or non-qualifying images (use base_image_release.force in metadata for those).'
+    ),
+)
 @click_coroutine
 @pass_runtime
-async def release_to_base_repo(runtime, nvr):
+async def release_to_base_repo(runtime, nvr, enabled_override):
     """Latest SUCCESS Konflux image row → snapshot/release, then INSERT follow-up with ``release_pipeline`` / ``released_pullspec``.
 
     Golang builder is inferred from image metadata when present; otherwise from the openshift-golang-builder name in the NVR.
@@ -1518,6 +1527,15 @@ async def release_to_base_repo(runtime, nvr):
     metadata = runtime.image_map.get(source_row.name)
     is_golang_builder = metadata.is_golang_builder() if metadata else GOLANG_BUILDER_IMAGE_NAME in image_nvr
 
+    if metadata is None:
+        raise DoozerFatalError(f"Image metadata not found for distgit key {source_row.name}")
+
+    qualification = metadata.should_trigger_base_image_release(enabled_override=enabled_override)
+    if not qualification:
+        raise DoozerFatalError(
+            f"Image does not qualify for base image release workflow: {qualification.reason}"
+        )
+
     snapshot_input = BaseImageSnapshotInput(
         nvr=image_nvr,
         distgit_key=source_row.name,
@@ -1528,7 +1546,7 @@ async def release_to_base_repo(runtime, nvr):
     )
 
     handler = BaseImageHandler(runtime, dry_run=False)
-    result = await handler.snapshot_release(snapshot_input)
+    result = await handler.snapshot_release(snapshot_input, enabled_override=enabled_override)
 
     if result:
         logger.info(
@@ -1544,4 +1562,4 @@ async def release_to_base_repo(runtime, nvr):
         await runtime.konflux_db.add_builds([followup])
         return
 
-    raise DoozerFatalError("snapshot_release returned no result")
+    raise DoozerFatalError(f"snapshot-release did not complete for {image_nvr}; check logs for Konflux/snapshot errors")

@@ -97,9 +97,15 @@ class BaseImageHandler:
     def _scoped_logger(self, entity: str):
         return logutil.EntityLoggingAdapter(self.runtime.logger, extra={'entity': entity})
 
-    async def snapshot_release(self, snapshot_input: BaseImageSnapshotInput) -> Optional[BaseImageReleaseResult]:
+    async def snapshot_release(
+        self, snapshot_input: BaseImageSnapshotInput, enabled_override: bool = False
+    ) -> Optional[BaseImageReleaseResult]:
         """
         Run snapshot→release for exactly one base-image component.
+
+        Args:
+            enabled_override: When True, bypass image/group ``base_image_release.enabled: false``
+                (see :meth:`ImageMetadata.should_trigger_base_image_release`).
 
         Returns:
             :class:`BaseImageReleaseResult` on success, else ``None``.
@@ -117,7 +123,7 @@ class BaseImageHandler:
 
         self.logger = self._scoped_logger(metadata.qualified_key)
 
-        if not metadata.should_trigger_base_image_release():
+        if not metadata.should_trigger_base_image_release(enabled_override=enabled_override):
             self.logger.warning("Does not qualify for base image release workflow")
             return None
 
