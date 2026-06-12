@@ -196,6 +196,7 @@ class GenAssemblyPipeline:
         self._slack_client.bind_channel(self.group)
         slack_response = await self._slack_client.say(
             f":construction: Generating assembly definition {self.assembly} :construction:"
+            f"{self._slack_client.get_triggered_by_mention()}"
         )
         slack_thread = slack_response["message"]["ts"]
         try:
