@@ -3,6 +3,7 @@ import glob
 import json
 import os
 import re
+from datetime import datetime
 
 import click
 import yaml
@@ -11,12 +12,13 @@ from artcommonlib.arch_util import go_arch_for_brew_arch, go_suffix_for_arch
 from artcommonlib.constants import (
     KONFLUX_DEFAULT_IMAGE_REPO,
     REGISTRY_CI_OPENSHIFT,
+    REGISTRY_QUAY_CI,
     REGISTRY_QUAY_OCP_RELEASE_DEV,
 )
 from artcommonlib.exectools import limit_concurrency
 from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.redis import RedisError
-from artcommonlib.registry_config import RegistryConfig
+from artcommonlib.registry_config import RegistryConfig, RegistryCredential
 from artcommonlib.release_util import SoftwareLifecyclePhase
 from artcommonlib.telemetry import start_as_current_span_async
 from artcommonlib.util import split_git_url, uses_konflux_imagestream_override
@@ -163,14 +165,29 @@ class BuildSyncPipeline:
 
         source_files = [quay_auth_file]
 
+        # Build credentials and registries lists
+        # QCI (quay.io/openshift/ci) is only added if credentials are available
+        credentials = []
+        registries = [
+            REGISTRY_QUAY_OCP_RELEASE_DEV,
+            KONFLUX_DEFAULT_IMAGE_REPO,
+            REGISTRY_CI_OPENSHIFT,
+        ]
+
+        qci_user = os.environ.get('QCI_USER')
+        qci_password = os.environ.get('QCI_PASSWORD')
+        if qci_user and qci_password:
+            # QCI credentials are added as explicit credentials, not to the registries list
+            # (registries list is for extracting from source files)
+            credentials.append(RegistryCredential(REGISTRY_QUAY_CI, qci_user, qci_password))
+        else:
+            self.logger.warning('QCI_USER/QCI_PASSWORD not set - RHCOS images will not be mirrored to QCI')
+
         with RegistryConfig(
             kubeconfig=os.environ.get('KUBECONFIG'),
             source_files=source_files,
-            registries=[
-                REGISTRY_QUAY_OCP_RELEASE_DEV,
-                KONFLUX_DEFAULT_IMAGE_REPO,
-                REGISTRY_CI_OPENSHIFT,
-            ],
+            registries=registries,
+            credentials=credentials,
         ) as global_auth_file:
             self._registry_config = global_auth_file
 
@@ -434,6 +451,119 @@ class BuildSyncPipeline:
         except (ChildProcessError, KeyError) as e:
             await self.slack_client.say(f'Unable to mirror CoreOS images to CI for {self.version}: {e}')
 
+    @start_as_current_span_async(TRACER, "build-sync.mirror-rhcos-to-qci")
+    async def _mirror_rhcos_to_qci(self):
+        """
+        Mirror RHCOS images to quay.io/openshift/ci (QCI) for external CI consumption.
+
+        Uses the same tag convention as images:streams mirror:
+        - Prunable: {timestamp}_prune_art__ocp_{version}_{tag}
+        - Floating: art__ocp_{version}_{tag}
+        """
+        current_span = trace.get_current_span()
+        current_span.set_attribute("build-sync.version", self.version)
+        current_span.set_attribute("build-sync.assembly", self.assembly)
+
+        # Same guards as _populate_ci_imagestreams
+        major, minor = [int(n) for n in self.version.split('.')]
+        if major <= 4 and minor < 12:
+            self.logger.info('Skipping QCI mirror for version %s (< 4.12)', self.version)
+            return
+
+        if not self.assembly == 'stream' or self.doozer_data_gitref:
+            self.logger.info('Skipping QCI mirror for non-stream assembly or custom gitref')
+            return
+
+        # Check if QCI credentials are available
+        if not os.environ.get('QCI_USER') or not os.environ.get('QCI_PASSWORD'):
+            self.logger.warning('QCI_USER/QCI_PASSWORD not set - skipping QCI mirror')
+            return
+
+        try:
+            tags_to_transfer = rhcos.get_container_names(self.group_runtime)
+            prune_timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+
+            self.logger.info('Mirroring RHCOS images to QCI: %s', tags_to_transfer)
+
+            tasks = []
+            for tag in tags_to_transfer:
+                # Mirror to public QCI
+                tasks.append(self._mirror_single_rhcos_to_qci(tag, prune_timestamp, private=False))
+                # Mirror to private QCI (for openshift-priv CI)
+                tasks.append(self._mirror_single_rhcos_to_qci(tag, prune_timestamp, private=True))
+
+            await asyncio.gather(*tasks)
+            self.logger.info('Successfully mirrored RHCOS images to QCI')
+
+        except Exception as e:
+            self.logger.error('Failed to mirror RHCOS images to QCI: %s', e)
+            await self.slack_client.say(f'Unable to mirror CoreOS images to QCI for {self.version}: {e}')
+
+    @start_as_current_span_async(TRACER, "build-sync.mirror-single-rhcos-to-qci")
+    @limit_concurrency(10)
+    async def _mirror_single_rhcos_to_qci(self, tag: str, prune_timestamp: str, private: bool):
+        """
+        Mirror a single RHCOS image to QCI using oc image mirror.
+
+        Creates both a prunable tag (for cleanup) and a floating tag (always points to latest).
+        Uses oc image mirror with --keep-manifest-list to preserve multi-arch manifests.
+
+        For private mirroring, we use the same source pullspec from the public ART imagestream
+        (consistent with how _tag_into_ci_imagestream handles private CI).
+
+        Args:
+            tag: RHCOS container name (e.g., 'rhel-coreos', 'rhel-coreos-extensions')
+            prune_timestamp: Timestamp string for prunable tag naming
+            private: Whether to add _priv suffix for private CI consumption
+        """
+        current_span = trace.get_current_span()
+        current_span.set_attribute("build-sync.tag", tag)
+        current_span.set_attribute("build-sync.private", private)
+
+        # Always get pullspec from public ART imagestream (same source for both public and private,
+        # consistent with _tag_into_ci_imagestream which uses the same pullspec for private CI)
+        namespace = 'ocp'
+        is_name = self.is_base_name
+
+        # Get the pullspec from the ART imagestream (already multi-arch)
+        cmd = (
+            f'oc --kubeconfig {os.environ["KUBECONFIG"]} -n {namespace} '
+            f'get istag/{is_name}:{tag} -o=jsonpath={{.tag.from.name}}'
+        )
+        rc, tag_pullspec, stderr = await exectools.cmd_gather_async(cmd, check=False)
+        tag_pullspec = tag_pullspec.strip()
+
+        if rc != 0 or not tag_pullspec:
+            self.logger.warning(
+                'No pullspec found for %s/%s:%s (rc=%d, stderr=%s)', namespace, is_name, tag, rc, stderr
+            )
+            return
+
+        # Build QCI tag names following the images:streams mirror convention
+        priv_suffix = '_priv' if private else ''
+        qci_tag_base = f"ocp_{self.version}{priv_suffix}_{tag}"
+
+        prunable_tag = f"{prune_timestamp}_prune_art__{qci_tag_base}"
+        floating_tag = f"art__{qci_tag_base}"
+
+        self.logger.info('Mirroring %s/%s:%s to QCI: %s', namespace, is_name, tag, floating_tag)
+
+        if self.runtime.dry_run:
+            self.logger.info('[DRY RUN] Would mirror %s -> %s, %s', tag_pullspec, prunable_tag, floating_tag)
+            return
+
+        # Mirror to QCI using oc image mirror with --keep-manifest-list for multi-arch
+        for qci_tag in [prunable_tag, floating_tag]:
+            dest = f"{REGISTRY_QUAY_CI}:{qci_tag}"
+            cmd = (
+                f'oc image mirror --keep-manifest-list --registry-config={self._registry_config} {tag_pullspec} {dest}'
+            )
+            try:
+                await exectools.cmd_assert_async(cmd)
+            except ChildProcessError as e:
+                self.logger.error('Failed to mirror %s to %s: %s', tag_pullspec, dest, e)
+                raise
+
     @start_as_current_span_async(TRACER, "build-sync.update-nightly-imagestreams")
     async def _update_nightly_imagestreams(self):
         """
@@ -490,6 +620,9 @@ class BuildSyncPipeline:
 
         # Populate CI imagestreams
         await self._populate_ci_imagestreams()
+
+        # Mirror RHCOS images to QCI for external CI consumption
+        await self._mirror_rhcos_to_qci()
 
         if self.publish:
             # Run 'oc adm release new' in parallel
