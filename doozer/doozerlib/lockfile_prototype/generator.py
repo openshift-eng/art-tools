@@ -412,7 +412,7 @@ class RpmLockfilePrototypeGenerator:
                 if extra:
                     packages = list(packages) + extra
 
-            is_update_only = not packages
+            is_update_only = stage_info.has_update and not packages
             if is_update_only:
                 packages, upgrade_targets, image_pullspec = await self._handle_update_only_stage(
                     stage_num, image_pullspec, distgit_key
