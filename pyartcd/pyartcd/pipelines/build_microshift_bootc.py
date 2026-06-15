@@ -224,9 +224,12 @@ class BuildMicroShiftBootcPipeline:
         variants = await self._get_bootc_variants()
         self._logger.info("Discovered bootc variants for group %s: %s", self.group, variants)
 
+        # Extract the upstream commit once (shared across all variants)
+        upstream_commit = await self._get_microshift_rpm_commit()
+
         # Build all variants in parallel
         build_results = await asyncio.gather(
-            *(self._rebase_and_build_bootc(variant) for variant in variants),
+            *(self._rebase_and_build_bootc(variant, upstream_commit) for variant in variants),
             return_exceptions=True,
         )
         builds: dict[str, KonfluxBuildRecord] = {}
@@ -567,11 +570,12 @@ class BuildMicroShiftBootcPipeline:
             )
         raise ValueError(f"Assembly type {self.assembly_type} is not supported for microshift-bootc builds")
 
-    async def _rebase_and_build_bootc(self, variant: dict) -> Optional[KonfluxBuildRecord]:
+    async def _rebase_and_build_bootc(self, variant: dict, upstream_commit: str) -> Optional[KonfluxBuildRecord]:
         """Rebase and build a single bootc image variant.
 
         Args:
             variant: Dict with keys "image_name" and "el_target".
+            upstream_commit: The microshift RPM commit to lock the build to.
         """
         bootc_image_name = variant["image_name"]
         el_target = variant["el_target"]
@@ -622,9 +626,6 @@ class BuildMicroShiftBootcPipeline:
             raise ValueError(
                 f"KONFLUX_SA_KUBECONFIG environment variable is required to build {bootc_image_name} image"
             )
-
-        # Extract the commit from the microshift RPM to ensure bootc is built from the same source
-        upstream_commit = await self._get_microshift_rpm_commit()
 
         # Determine the assembly label value based on assembly type
         assembly_label_value = self._get_assembly_label_value()

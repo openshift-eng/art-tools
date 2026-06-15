@@ -377,14 +377,12 @@ class TestBuildMicroShiftBootcPipeline(IsolatedAsyncioTestCase):
 
     @patch("pyartcd.pipelines.build_microshift_bootc.exectools.cmd_assert_async", new_callable=AsyncMock)
     @patch.object(BuildMicroShiftBootcPipeline, "get_latest_bootc_build", new_callable=AsyncMock)
-    @patch.object(BuildMicroShiftBootcPipeline, "_get_microshift_rpm_commit", new_callable=AsyncMock)
-    async def test_rebase_uses_two_segment_version(self, mock_get_commit, mock_get_build, mock_cmd):
+    async def test_rebase_uses_two_segment_version(self, mock_get_build, mock_cmd):
         """
         Test that _rebase_and_build_bootc passes --version v4.21 (2 segments)
         instead of v4.21.0 to avoid confusing tags on the container catalog
         (OCPBUGS-78040).
         """
-        mock_get_commit.return_value = "abc1234"
         mock_get_build.return_value = Mock(nvr="microshift-bootc-4.21.0-1.el9")
         pipeline = self._make_pipeline(group="openshift-4.21", assembly="4.21.7")
         pipeline.assembly_type = AssemblyTypes.STANDARD
@@ -394,7 +392,7 @@ class TestBuildMicroShiftBootcPipeline(IsolatedAsyncioTestCase):
         try:
             variant = {"image_name": "microshift-bootc", "el_target": "el9"}
             with patch("asyncio.sleep", new_callable=AsyncMock):
-                await pipeline._rebase_and_build_bootc(variant)
+                await pipeline._rebase_and_build_bootc(variant, "abc1234")
 
             rebase_cmd = mock_cmd.call_args_list[0][0][0]
 
@@ -411,14 +409,12 @@ class TestBuildMicroShiftBootcPipeline(IsolatedAsyncioTestCase):
 
     @patch("pyartcd.pipelines.build_microshift_bootc.exectools.cmd_assert_async", new_callable=AsyncMock)
     @patch.object(BuildMicroShiftBootcPipeline, "get_latest_bootc_build", new_callable=AsyncMock)
-    @patch.object(BuildMicroShiftBootcPipeline, "_get_microshift_rpm_commit", new_callable=AsyncMock)
-    async def test_rebase_and_build_bootc_uses_rpm_commit(self, mock_get_commit, mock_get_build, mock_cmd):
+    async def test_rebase_and_build_bootc_uses_rpm_commit(self, mock_get_build, mock_cmd):
         """
         Test that _rebase_and_build_bootc passes the RPM commit to --lock-upstream
         instead of HEAD.
         """
         # given
-        mock_get_commit.return_value = "0d0943b"
         mock_get_build.return_value = Mock(nvr="microshift-bootc-4.21.0-1.el9")
         pipeline = BuildMicroShiftBootcPipeline(
             runtime=self.runtime,
@@ -438,7 +434,7 @@ class TestBuildMicroShiftBootcPipeline(IsolatedAsyncioTestCase):
             # when
             variant = {"image_name": "microshift-bootc", "el_target": "el9"}
             with patch("asyncio.sleep", new_callable=AsyncMock):
-                await pipeline._rebase_and_build_bootc(variant)
+                await pipeline._rebase_and_build_bootc(variant, "0d0943b")
 
             # then
             # Verify rebase command uses the RPM commit, not HEAD
@@ -459,14 +455,12 @@ class TestBuildMicroShiftBootcPipeline(IsolatedAsyncioTestCase):
 
     @patch("pyartcd.pipelines.build_microshift_bootc.exectools.cmd_assert_async", new_callable=AsyncMock)
     @patch.object(BuildMicroShiftBootcPipeline, "get_latest_bootc_build", new_callable=AsyncMock)
-    @patch.object(BuildMicroShiftBootcPipeline, "_get_microshift_rpm_commit", new_callable=AsyncMock)
-    async def test_rebase_and_build_bootc_el10_variant(self, mock_get_commit, mock_get_build, mock_cmd):
+    async def test_rebase_and_build_bootc_el10_variant(self, mock_get_build, mock_cmd):
         """
         Test that _rebase_and_build_bootc correctly handles the el10 variant,
         using the microshift-bootc-rhel10 image name in doozer commands.
         """
         # given
-        mock_get_commit.return_value = "abc1234"
         mock_get_build.return_value = Mock(nvr="microshift-bootc-rhel10-container-v4.22-1.el10")
         pipeline = self._make_pipeline(group="openshift-4.22", assembly="4.22.0")
         pipeline.assembly_type = AssemblyTypes.STANDARD
@@ -476,7 +470,7 @@ class TestBuildMicroShiftBootcPipeline(IsolatedAsyncioTestCase):
         try:
             variant = {"image_name": "microshift-bootc-rhel10", "el_target": "el10"}
             with patch("asyncio.sleep", new_callable=AsyncMock):
-                await pipeline._rebase_and_build_bootc(variant)
+                await pipeline._rebase_and_build_bootc(variant, "abc1234")
 
             # Verify rebase command uses the el10 image name
             rebase_cmd = mock_cmd.call_args_list[0][0][0]
