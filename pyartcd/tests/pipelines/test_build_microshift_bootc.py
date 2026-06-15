@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.model import Model
-from pyartcd.pipelines.build_microshift_bootc import BOOTC_VARIANTS, BuildMicroShiftBootcPipeline
+from pyartcd.pipelines.build_microshift_bootc import BuildMicroShiftBootcPipeline
 from pyartcd.runtime import Runtime
 from pyartcd.slack import SlackClient
 
@@ -524,10 +524,10 @@ class TestBuildMicroShiftBootcPipeline(IsolatedAsyncioTestCase):
             variants = await pipeline._get_bootc_variants()
 
         self.assertEqual(len(variants), 2)
-        self.assertEqual(variants[0]["image_name"], "microshift-bootc")
-        self.assertEqual(variants[0]["el_target"], "el9")
-        self.assertEqual(variants[1]["image_name"], "microshift-bootc-rhel10")
-        self.assertEqual(variants[1]["el_target"], "el10")
+        self.assertEqual(variants[0]["image_name"], "microshift-bootc-rhel10")
+        self.assertEqual(variants[0]["el_target"], "el10")
+        self.assertEqual(variants[1]["image_name"], "microshift-bootc")
+        self.assertEqual(variants[1]["el_target"], "el9")
 
     @patch("pyartcd.pipelines.build_microshift_bootc.exectools.cmd_gather_async", new_callable=AsyncMock)
     async def test_get_bootc_variants_falls_back_to_el9_only(self, mock_cmd_gather):

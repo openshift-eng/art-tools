@@ -158,6 +158,12 @@ class BuildMicroShiftBootcPipeline:
         """Get the assembly-specific group configuration"""
         return assembly_config_struct(Model(self.releases_config), self.assembly, "group", {})
 
+    def _get_base_variant(self) -> dict:
+        """
+        Return the base bootc variant (el9) from BOOTC_VARIANTS.
+        """
+        return next(v for v in BOOTC_VARIANTS if v["el_target"] == "el9")
+
     async def run(self):
         if 'XDG_RUNTIME_DIR' in os.environ:
             self._logger.info('Unsetting XDG_RUNTIME_DIR to prevent use of default registry auth')
@@ -218,20 +224,24 @@ class BuildMicroShiftBootcPipeline:
         variants = await self._get_bootc_variants()
         self._logger.info("Discovered bootc variants for group %s: %s", self.group, variants)
 
-        # Build each variant
+        # Build all variants in parallel
+        build_results = await asyncio.gather(
+            *(self._rebase_and_build_bootc(variant) for variant in variants),
+            return_exceptions=True,
+        )
         builds: dict[str, KonfluxBuildRecord] = {}
-        for variant in variants:
-            build = await self._rebase_and_build_bootc(variant)
-            if build:
-                builds[variant["image_name"]] = build
-                self._logger.info("Bootc image build for %s: %s", variant["image_name"], build.nvr)
+        for variant, result in zip(variants, build_results):
+            if isinstance(result, Exception):
+                self._logger.error("Failed to build %s: %s", variant["image_name"], result)
+            elif result:
+                builds[variant["image_name"]] = result
+                self._logger.info("Bootc image build for %s: %s", variant["image_name"], result.nvr)
 
         if not builds:
             raise ValueError(f"No bootc image builds produced for assembly {self.assembly}")
 
         # Sync and publish each build
-        for image_name, bootc_build in builds.items():
-            await self._sync_and_publish_build(bootc_build)
+        await asyncio.gather(*(self._sync_and_publish_build(build) for build in builds.values()))
 
         # Pin and ship (non-STREAM assemblies)
         if self.assembly_type != AssemblyTypes.STREAM:
@@ -262,7 +272,7 @@ class BuildMicroShiftBootcPipeline:
         Queries doozer to check which known variant image configs are defined. Returns only
         those variants whose image YAML exists in the current group.
         """
-        all_image_names = " ".join(v["image_name"] for v in BOOTC_VARIANTS)
+        variant_names = ",".join(v["image_name"] for v in BOOTC_VARIANTS)
         cmd = [
             "doozer",
             "--group",
@@ -270,13 +280,13 @@ class BuildMicroShiftBootcPipeline:
             "--assembly",
             "stream",
             "-i",
-            ",".join(v["image_name"] for v in BOOTC_VARIANTS),
+            variant_names,
             "config:print",
             "--key",
             "name",
             "--yaml",
         ]
-        rc, out, _ = await exectools.cmd_gather_async(cmd, env=self._doozer_env_vars)
+        rc, out, _ = await exectools.cmd_gather_async(cmd, check=False, env=self._doozer_env_vars)
 
         available_keys = set()
         if rc == 0 and out.strip():
@@ -288,14 +298,14 @@ class BuildMicroShiftBootcPipeline:
         if not available_keys:
             self._logger.warning(
                 "Could not query build-data for bootc variants (%s). Falling back to base variant only.",
-                all_image_names,
+                variant_names,
             )
-            return [BOOTC_VARIANTS[0]]
+            return [self._get_base_variant()]
 
         variants = [v for v in BOOTC_VARIANTS if v["image_name"] in available_keys]
         if not variants:
             self._logger.warning("No known bootc variants found in build-data. Using base variant.")
-            return [BOOTC_VARIANTS[0]]
+            return [self._get_base_variant()]
 
         return variants
 
