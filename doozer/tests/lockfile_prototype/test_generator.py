@@ -356,8 +356,9 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
             (dest_dir / "Dockerfile").write_text("FROM base\nRUN yum update -y && yum clean all\n")
             asyncio.run(generator.generate_lockfile(meta, dest_dir))
 
-        # Called for update-only stage + reinstall expansion
-        self.assertGreaterEqual(generator._container.get_installed_packages.call_count, 1)
+        # _get_base_image_packages is called exactly once (for _handle_update_only_stage)
+        # The reinstall block is skipped for update-only final stages
+        self.assertEqual(generator._container.get_installed_packages.call_count, 1)
         self.assertEqual(len(captured_configs), 1)
         # Update-only stage uses --image mode with base image pullspec
         self.assertIsNotNone(captured_pullspecs[0])
@@ -367,6 +368,9 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
             ["bash", "coreutils", "glibc"],
         )
         self.assertEqual(sorted(captured_configs[0].upgradePackages), ["bash", "coreutils", "glibc"])
+        # reinstallPackages must be empty: reinstall overrides upgrade in DNF
+        # and would pin the base image version, preventing security updates
+        self.assertEqual(captured_configs[0].reinstallPackages, [])
 
     def test_mixed_install_and_bare_update_uses_image_mode(self):
         """
