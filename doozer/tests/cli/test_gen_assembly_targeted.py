@@ -49,10 +49,18 @@ def _make_cli(**overrides):
 class TestAssemblyParamsValidation(TestCase):
     def test_non_kernel_nvr_rejected(self):
         """
-        Pydantic rejects NVR that doesn't start with 'kernel'.
+        Pydantic rejects NVR whose name is not exactly 'kernel'.
         """
         with self.assertRaises(ValidationError) as ctx:
             _make_params(kernel_nvrs=("httpd-2.4.0-1.el9",))
+        self.assertIn("does not look like a kernel package", str(ctx.exception))
+
+    def test_kernel_core_nvr_rejected(self):
+        """
+        Pydantic rejects kernel-core NVR — only base 'kernel' NVRs accepted.
+        """
+        with self.assertRaises(ValidationError) as ctx:
+            _make_params(kernel_nvrs=("kernel-core-5.14.0-284.28.1.el9_2",))
         self.assertIn("does not look like a kernel package", str(ctx.exception))
 
     def test_empty_kernel_nvrs_allowed_with_image_nvrs(self):
@@ -388,6 +396,7 @@ class TestBuildAssemblyDefinition(TestCase):
         assembly = result["releases"]["4.17.5"]["assembly"]
 
         self.assertNotIn("rpms", assembly["members"])
+        self.assertNotIn("dependencies", assembly["group"])
         self.assertEqual(len(assembly["members"]["images"]), 1)
         self.assertEqual(assembly["members"]["images"][0]["distgit_key"], "ose-installer")
         self.assertEqual(assembly["rhcos"], {})

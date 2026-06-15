@@ -86,10 +86,9 @@ class AssemblyParams(BaseModel, frozen=True):
     def _validate_kernel_nvr_names(cls, v: tuple[str, ...]) -> tuple[str, ...]:
         for nvr in v:
             parsed = parse_nvr(nvr)
-            if not parsed["name"].startswith("kernel"):
+            if parsed["name"] != "kernel":
                 raise ValueError(
-                    f"NVR {nvr} does not look like a kernel package. "
-                    f"Expected name starting with 'kernel', got '{parsed['name']}'"
+                    f"NVR {nvr} does not look like a kernel package. Expected name 'kernel', got '{parsed['name']}'"
                 )
         return v
 
@@ -593,7 +592,7 @@ class GenAssemblyTargetedCli:
                 sources = await calc_upgrade_sources_async(version, arch)
                 all_sources.update(sources)
             except Exception as e:
-                self.logger.warning("Failed to calculate upgrade sources for arch %s: %s", arch, e)
+                raise RuntimeError(f"Failed to calculate upgrade sources for arch {arch}: {e}") from e
 
         if all_sources:
             self.upgrades = ",".join(sorted(all_sources, key=functools.cmp_to_key(semver.compare)))
@@ -629,10 +628,12 @@ class GenAssemblyTargetedCli:
             "shipment!": {"advisories": [{"kind": "image"}]},
             "release_date": self.params.release_date or "",
             "upgrades": self.upgrades,
-            "dependencies": {
-                "rpms!": [{f"el{ki.el_ver}": ki.nvr, "why": why, "non_gc_tag": "hotfix"} for ki in self.kernel_info]
-            },
         }
+
+        if self.kernel_info:
+            group_config["dependencies"] = {
+                "rpms!": [{f"el{ki.el_ver}": ki.nvr, "why": why, "non_gc_tag": "hotfix"} for ki in self.kernel_info]
+            }
 
         issues_config = {}
         if self.params.bug_ids:
