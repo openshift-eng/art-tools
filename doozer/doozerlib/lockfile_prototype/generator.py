@@ -412,7 +412,8 @@ class RpmLockfilePrototypeGenerator:
                 if extra:
                     packages = list(packages) + extra
 
-            if not packages:
+            is_update_only = not packages
+            if is_update_only:
                 packages, upgrade_targets, image_pullspec = await self._handle_update_only_stage(
                     stage_num, image_pullspec, distgit_key
                 )
@@ -424,11 +425,15 @@ class RpmLockfilePrototypeGenerator:
                 )
 
             reinstall_pkgs: list[str] | None = None
-            if stage_num == final_stage_num:
+            if stage_num == final_stage_num and not is_update_only:
                 if image_pullspec:
                     # --image mode: pass base image packages as reinstallPackages
                     # so they appear in the lockfile at repo versions. base.reinstall()
                     # handles missing/renamed packages gracefully (warns, skips).
+                    # Skipped for update-only stages: _handle_update_only_stage already
+                    # populates packages and upgrade_targets with all base image packages,
+                    # so reinstall is redundant for coverage and would only pin them to
+                    # the base image version, preventing updates from landing.
                     base_pkgs = await self._get_base_image_packages(stage_num, image_pullspec, distgit_key)
                     if base_pkgs:
                         reinstall_pkgs = list(base_pkgs)
