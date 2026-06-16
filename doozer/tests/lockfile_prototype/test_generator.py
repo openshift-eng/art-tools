@@ -3,6 +3,7 @@ Tests for doozerlib.lockfile_prototype.generator (orchestration).
 """
 
 import asyncio
+import tempfile
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -184,6 +185,7 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
     def _make_generator(self) -> RpmLockfilePrototypeGenerator:
         return RpmLockfilePrototypeGenerator(
             repos=self._make_mock_repos(),
+            working_dir=Path(tempfile.mkdtemp()),
             container_helper=self._make_mock_container(),
             resolver=self._make_mock_resolver(),
         )
@@ -825,7 +827,7 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
         repos = MagicMock()
         repos.__getitem__ = lambda self_repos, key: repo_map[key]
 
-        generator = RpmLockfilePrototypeGenerator(repos=repos)
+        generator = RpmLockfilePrototypeGenerator(repos=repos, working_dir=Path(tempfile.mkdtemp()))
         result = generator._build_repo_list(enabled_repos={"rhel-9-rt-rpms"}, arches=["x86_64", "aarch64"])
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0].repoid, "rhel-9-for-$basearch-rt-rpms")
@@ -864,7 +866,7 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
         repos = MagicMock()
         repos.__getitem__ = lambda self_repos, key: repo_map[key]
 
-        generator = RpmLockfilePrototypeGenerator(repos=repos)
+        generator = RpmLockfilePrototypeGenerator(repos=repos, working_dir=Path(tempfile.mkdtemp()))
         result = generator._build_repo_list(enabled_repos={"rhel-9-golang-rpms"}, arches=["x86_64"])
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0].options["includepkgs"], "module-build-macros golang* goversioninfo")
@@ -881,7 +883,7 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
         repos = MagicMock()
         repos.__getitem__ = lambda self_repos, key: repo_map[key]
 
-        generator = RpmLockfilePrototypeGenerator(repos=repos)
+        generator = RpmLockfilePrototypeGenerator(repos=repos, working_dir=Path(tempfile.mkdtemp()))
         result = generator._build_repo_list(enabled_repos={"rhel-9-rt-rpms"}, arches=["x86_64"])
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0].options, {})
@@ -898,7 +900,7 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
         repos = MagicMock()
         repos.__getitem__ = lambda self_repos, key: repo_map[key]
 
-        generator = RpmLockfilePrototypeGenerator(repos=repos)
+        generator = RpmLockfilePrototypeGenerator(repos=repos, working_dir=Path(tempfile.mkdtemp()))
         result = generator._build_repo_list(enabled_repos={"rhel-9-baseos-rpms"}, arches=["x86_64", "aarch64"])
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0].repoid, "rhel-9-for-$basearch-baseos-rpms")
@@ -1139,7 +1141,7 @@ class TestIsBuilddepRequirement(unittest.TestCase):
 class TestResolveBuilddepPackages(unittest.TestCase):
     def _make_gen(self):
         repos = MagicMock()
-        return RpmLockfilePrototypeGenerator(repos=repos)
+        return RpmLockfilePrototypeGenerator(repos=repos, working_dir=Path(tempfile.mkdtemp()))
 
     def test_no_matching_srpm(self):
         gen = self._make_gen()

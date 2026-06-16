@@ -38,9 +38,12 @@ class RpmResolver:
     (common during multi-image rebases) skip redundant downloads.
     """
 
-    def __init__(self, logger: logging.Logger | None = None, cache_dir: str | None = None):
+    def __init__(self, working_dir: Path, logger: logging.Logger | None = None, cache_dir: str | None = None):
         self.logger = logger or logutil.get_logger(__name__)
-        self._cache_dir_owner = None if cache_dir else TemporaryDirectory(prefix="rpm-lockfile-cache-")
+        self._working_dir = str(working_dir)
+        self._cache_dir_owner = (
+            None if cache_dir else TemporaryDirectory(prefix="rpm-lockfile-cache-", dir=self._working_dir)
+        )
         self._cache_path = cache_dir or self._cache_dir_owner.name
 
     async def resolve(
@@ -62,7 +65,7 @@ class RpmResolver:
         Return Value(s):
             LockfileData: Resolved lockfile.
         """
-        with TemporaryDirectory() as tmpdir:
+        with TemporaryDirectory(dir=self._working_dir) as tmpdir:
             in_file = Path(tmpdir) / DEFAULT_RPM_INFILE_NAME
             out_file = Path(tmpdir) / DEFAULT_RPM_LOCKFILE_NAME
 
