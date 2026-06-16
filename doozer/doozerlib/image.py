@@ -857,6 +857,54 @@ class ImageMetadata(Metadata):
             return str(group_override).strip()
         return default
 
+    def _fetch_upstream_dockerfile_content(self) -> Optional[str]:
+        """
+        Fetch the Dockerfile content from upstream without cloning the entire repository.
+        Uses GitHub raw file API for faster access.
+
+        Returns:
+            Dockerfile content as string, or None if fetch fails
+        """
+        import urllib.request
+
+        import artcommonlib.util
+
+        source_config = self.config.content.source
+        if not source_config or not source_config.git:
+            return None
+
+        git_url = source_config.git.url
+        branch = source_config.git.branch.target
+        dockerfile_name = source_config.dockerfile or 'Dockerfile'
+
+        # Add content.source.path if specified
+        path_prefix = source_config.path or ''
+        if path_prefix:
+            dockerfile_path = f"{path_prefix}/{dockerfile_name}"
+        else:
+            dockerfile_path = dockerfile_name
+
+        # Convert git URL to raw GitHub URL
+        # e.g., https://github.com/openshift/oc/blob/master/Dockerfile.rhel
+        # Convert to: https://raw.githubusercontent.com/openshift/oc/master/Dockerfile.rhel
+        try:
+            https_url = artcommonlib.util.convert_remote_git_to_https(git_url)
+            if 'github.com' in https_url:
+                # Parse GitHub URL
+                # https://github.com/org/repo.git -> https://raw.githubusercontent.com/org/repo/branch/path
+                https_url = https_url.rstrip('.git')
+                repo_path = https_url.replace('https://github.com/', '')
+                raw_url = f"https://raw.githubusercontent.com/{repo_path}/{branch}/{dockerfile_path}"
+
+                self.logger.debug('[%s] Fetching Dockerfile from %s', self.distgit_key, raw_url)
+
+                # Fetch with timeout
+                response = urllib.request.urlopen(raw_url, timeout=10)
+                return response.read().decode('utf-8')
+        except Exception as e:
+            self.logger.debug('[%s] Failed to fetch Dockerfile via HTTP: %s', self.distgit_key, e)
+            return None
+
     def _validate_upstream_builder_stream(self) -> None:
         """
         When canonical_builders_from_upstream is enabled, validate that the upstream golang builder
@@ -875,44 +923,89 @@ class ImageMetadata(Metadata):
             )
             return
 
-        # Get the source resolution - this clones the source if not already cloned
-        try:
-            source_resolution = self.runtime.source_resolver.resolve_source(self)
-        except (IOError, Exception) as e:
-            # Source resolution can fail for various reasons (missing branch, network issues, etc.)
-            # Log warning and continue - the build will use default builder
-            error_msg = str(e)
+        # Try to fetch Dockerfile via HTTP first (fast path - no cloning needed)
+        dockerfile_content = self._fetch_upstream_dockerfile_content()
+        upstream_golang_version = None
 
-            # Check if the error is due to unsubstituted template variables
-            if '{MAJOR}' in error_msg or '{MINOR}' in error_msg:
+        if dockerfile_content:
+            # Parse Dockerfile without filesystem access
+            try:
+                from io import StringIO
+
+                from dockerfile_parse import DockerfileParser
+
+                dfp = DockerfileParser(fileobj=StringIO(dockerfile_content))
+                parent_images = dfp.parent_images
+
+                # Check builder images first
+                for pullspec in parent_images[:-1]:
+                    golang_version = extract_golang_version_from_pullspec(pullspec)
+                    if golang_version:
+                        self.logger.info(
+                            '[%s] Found upstream golang version %s.%s from builder (via HTTP): %s',
+                            self.distgit_key,
+                            golang_version[0],
+                            golang_version[1],
+                            pullspec,
+                        )
+                        upstream_golang_version = golang_version
+                        break
+
+                # If no builders have golang version, check the final base image
+                if not upstream_golang_version and parent_images:
+                    golang_version = extract_golang_version_from_pullspec(parent_images[-1])
+                    if golang_version:
+                        self.logger.info(
+                            '[%s] Found upstream golang version %s.%s from base image (via HTTP): %s',
+                            self.distgit_key,
+                            golang_version[0],
+                            golang_version[1],
+                            parent_images[-1],
+                        )
+                        upstream_golang_version = golang_version
+            except Exception as e:
+                self.logger.debug('[%s] Failed to parse Dockerfile via HTTP: %s', self.distgit_key, e)
+
+        # If HTTP fetch failed, fall back to cloning (slow path)
+        if not upstream_golang_version:
+            self.logger.debug('[%s] Falling back to git clone for Dockerfile access', self.distgit_key)
+            try:
+                source_resolution = self.runtime.source_resolver.resolve_source(self)
+            except (IOError, Exception) as e:
+                # Source resolution can fail for various reasons (missing branch, network issues, etc.)
+                # Log warning and continue - the build will use default builder
+                error_msg = str(e)
+
+                # Check if the error is due to unsubstituted template variables
+                if '{MAJOR}' in error_msg or '{MINOR}' in error_msg:
+                    self.logger.warning(
+                        '[%s] canonical_builders_from_upstream is enabled but source branch has unsubstituted '
+                        'template variables: %s. This indicates a metadata template substitution issue. '
+                        'Will use default builder from metadata config.',
+                        self.distgit_key,
+                        e,
+                    )
+                else:
+                    self.logger.warning(
+                        '[%s] canonical_builders_from_upstream is enabled but source could not be resolved: %s. '
+                        'Will use default builder from metadata config.',
+                        self.distgit_key,
+                        e,
+                    )
+                return
+
+            if not source_resolution:
                 self.logger.warning(
-                    '[%s] canonical_builders_from_upstream is enabled but source branch has unsubstituted '
-                    'template variables: %s. This indicates a metadata template substitution issue. '
-                    'Will use default builder from metadata config.',
+                    '[%s] canonical_builders_from_upstream is enabled but source could not be resolved.',
                     self.distgit_key,
-                    e,
                 )
-            else:
-                self.logger.warning(
-                    '[%s] canonical_builders_from_upstream is enabled but source could not be resolved: %s. '
-                    'Will use default builder from metadata config.',
-                    self.distgit_key,
-                    e,
-                )
-            return
+                return
 
-        if not source_resolution:
-            self.logger.warning(
-                '[%s] canonical_builders_from_upstream is enabled but source could not be resolved.',
-                self.distgit_key,
-            )
-            return
+            # Get the source directory
+            source_dir = SourceResolver.get_source_dir(source_resolution, self)
 
-        # Get the source directory
-        source_dir = SourceResolver.get_source_dir(source_resolution, self)
-
-        # Determine upstream's intended golang version from Dockerfile
-        upstream_golang_version = self._determine_upstream_golang_version(source_dir)
+            # Determine upstream's intended golang version from Dockerfile
+            upstream_golang_version = self._determine_upstream_golang_version(source_dir)
 
         if not upstream_golang_version:
             # No golang version found in upstream Dockerfile
