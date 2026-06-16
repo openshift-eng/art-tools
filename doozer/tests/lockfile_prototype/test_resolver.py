@@ -7,14 +7,76 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import yaml
+from doozerlib.lockfile_prototype.constants import (
+    DEFAULT_RPM_LOCKFILE_NAME,
+    RPM_LOCKFILE_CONTAINERFILE,
+    RPM_LOCKFILE_IMAGE,
+)
 from doozerlib.lockfile_prototype.models import (
     LockfileData,
     RpmsInConfig,
 )
 from doozerlib.lockfile_prototype.resolver import RpmResolver
+
+
+class TestEnsureImage(unittest.TestCase):
+    @patch("doozerlib.lockfile_prototype.resolver.cmd_gather_async")
+    def test_skips_build_when_image_exists(self, mock_gather):
+        """
+        When podman image exists returns 0, no build should happen.
+        """
+        call_log = []
+
+        async def mock_cmd(cmd, **kwargs):
+            call_log.append(cmd)
+            return (0, "", "")
+
+        mock_gather.side_effect = mock_cmd
+        resolver = RpmResolver()
+        asyncio.run(resolver._ensure_image())
+        self.assertEqual(len(call_log), 1)
+        self.assertEqual(call_log[0][:3], ["podman", "image", "exists"])
+
+    @patch("doozerlib.lockfile_prototype.resolver.cmd_gather_async")
+    def test_builds_when_image_missing(self, mock_gather):
+        """
+        When podman image exists returns non-zero, should build.
+        """
+        call_log = []
+
+        async def mock_cmd(cmd, **kwargs):
+            call_log.append(cmd)
+            if cmd[1] == "image":
+                return (1, "", "")
+            return (0, "", "")
+
+        mock_gather.side_effect = mock_cmd
+        resolver = RpmResolver()
+        asyncio.run(resolver._ensure_image())
+        self.assertEqual(len(call_log), 2)
+        self.assertEqual(call_log[1][:2], ["podman", "build"])
+        self.assertIn("-f", call_log[1])
+        self.assertIn(str(RPM_LOCKFILE_CONTAINERFILE), call_log[1])
+
+    @patch("doozerlib.lockfile_prototype.resolver.cmd_gather_async")
+    def test_raises_on_build_failure(self, mock_gather):
+        """
+        Build failure should raise RuntimeError.
+        """
+
+        async def mock_cmd(cmd, **kwargs):
+            if cmd[1] == "image":
+                return (1, "", "")
+            return (1, "", "STEP 2/7: RUN dnf install ... error")
+
+        mock_gather.side_effect = mock_cmd
+        resolver = RpmResolver()
+        with self.assertRaises(RuntimeError) as ctx:
+            asyncio.run(resolver._ensure_image())
+        self.assertIn("Failed to build", str(ctx.exception))
 
 
 class TestRpmResolver(unittest.TestCase):
@@ -38,19 +100,40 @@ class TestRpmResolver(unittest.TestCase):
         ],
     }
 
-    @patch("doozerlib.lockfile_prototype.resolver.cmd_gather_async")
-    def test_resolve_bare_mode(self, mock_gather):
+    def _mock_podman_run(self, cmd, expect_bare=False, expect_image=None, **kwargs):
         """
-        Without image_pullspec, should pass --bare to the subprocess.
+        Helper to create a mock for podman run that writes fake lockfile output.
+        Returns (rc, stdout, stderr).
+        """
+        self.assertEqual(cmd[0], "podman")
+        self.assertEqual(cmd[1], "run")
+        self.assertIn("--rm", cmd)
+
+        if expect_bare:
+            self.assertIn("--bare", cmd)
+            self.assertNotIn("--image", cmd)
+        if expect_image:
+            img_idx = cmd.index("--image") + 1
+            self.assertEqual(cmd[img_idx], expect_image)
+
+        for i, arg in enumerate(cmd):
+            if arg == "-v" and ":/work:" in cmd[i + 1]:
+                host_tmpdir = cmd[i + 1].split(":")[0]
+                break
+        host_outfile = os.path.join(host_tmpdir, DEFAULT_RPM_LOCKFILE_NAME)
+        with open(host_outfile, "w") as f:
+            yaml.safe_dump(self.FAKE_LOCKFILE_DATA, f)
+        return (0, "", "")
+
+    @patch("doozerlib.lockfile_prototype.resolver.RpmResolver._ensure_image", new_callable=AsyncMock)
+    @patch("doozerlib.lockfile_prototype.resolver.cmd_gather_async")
+    def test_resolve_bare_mode(self, mock_gather, mock_ensure):
+        """
+        Without image_pullspec, should pass --bare.
         """
 
         async def mock_cmd(cmd, **kwargs):
-            self.assertIn("--bare", cmd)
-            self.assertNotIn("--image", cmd)
-            outfile_idx = cmd.index("--outfile") + 1
-            with open(cmd[outfile_idx], "w") as f:
-                yaml.safe_dump(self.FAKE_LOCKFILE_DATA, f)
-            return (0, "", "")
+            return self._mock_podman_run(cmd, expect_bare=True)
 
         mock_gather.side_effect = mock_cmd
         resolver = RpmResolver()
@@ -63,20 +146,15 @@ class TestRpmResolver(unittest.TestCase):
         self.assertIsInstance(result, LockfileData)
         self.assertEqual(result.lockfileVersion, 1)
 
+    @patch("doozerlib.lockfile_prototype.resolver.RpmResolver._ensure_image", new_callable=AsyncMock)
     @patch("doozerlib.lockfile_prototype.resolver.cmd_gather_async")
-    def test_resolve_with_image(self, mock_gather):
+    def test_resolve_with_image(self, mock_gather, mock_ensure):
         """
-        With image_pullspec, should pass --image to the subprocess.
+        With image_pullspec, should pass --image.
         """
 
         async def mock_cmd(cmd, **kwargs):
-            self.assertIn("--image", cmd)
-            image_idx = cmd.index("--image") + 1
-            self.assertEqual(cmd[image_idx], "quay.io/test/img@sha256:abc")
-            outfile_idx = cmd.index("--outfile") + 1
-            with open(cmd[outfile_idx], "w") as f:
-                yaml.safe_dump(self.FAKE_LOCKFILE_DATA, f)
-            return (0, "", "")
+            return self._mock_podman_run(cmd, expect_image="quay.io/test/img@sha256:abc")
 
         mock_gather.side_effect = mock_cmd
         resolver = RpmResolver()
@@ -89,8 +167,9 @@ class TestRpmResolver(unittest.TestCase):
         self.assertIsInstance(result, LockfileData)
         self.assertEqual(result.lockfileVersion, 1)
 
+    @patch("doozerlib.lockfile_prototype.resolver.RpmResolver._ensure_image", new_callable=AsyncMock)
     @patch("doozerlib.lockfile_prototype.resolver.cmd_gather_async")
-    def test_resolve_failure(self, mock_gather):
+    def test_resolve_failure(self, mock_gather, mock_ensure):
         """
         Non-zero exit should raise RuntimeError.
         """
@@ -109,19 +188,17 @@ class TestRpmResolver(unittest.TestCase):
             asyncio.run(resolver.resolve(config))
         self.assertIn("rpm-lockfile-prototype failed", str(ctx.exception))
 
+    @patch("doozerlib.lockfile_prototype.resolver.RpmResolver._ensure_image", new_callable=AsyncMock)
     @patch("doozerlib.lockfile_prototype.resolver.cmd_gather_async")
-    def test_resolve_uses_system_python(self, mock_gather):
+    def test_resolve_uses_podman(self, mock_gather, mock_ensure):
         """
-        Should invoke /usr/bin/python3 -c to use system Python.
+        Should invoke podman run, not system python.
         """
 
         async def mock_cmd(cmd, **kwargs):
-            self.assertEqual(cmd[0], "/usr/bin/python3")
-            self.assertEqual(cmd[1], "-c")
-            outfile_idx = cmd.index("--outfile") + 1
-            with open(cmd[outfile_idx], "w") as f:
-                yaml.safe_dump(self.FAKE_LOCKFILE_DATA, f)
-            return (0, "", "")
+            self.assertEqual(cmd[0], "podman")
+            self.assertEqual(cmd[1], "run")
+            return self._mock_podman_run(cmd, expect_bare=True)
 
         mock_gather.side_effect = mock_cmd
         resolver = RpmResolver()
@@ -133,20 +210,17 @@ class TestRpmResolver(unittest.TestCase):
         asyncio.run(resolver.resolve(config))
         mock_gather.assert_called_once()
 
+    @patch("doozerlib.lockfile_prototype.resolver.RpmResolver._ensure_image", new_callable=AsyncMock)
     @patch("doozerlib.lockfile_prototype.resolver.cmd_gather_async")
-    def test_resolve_sets_dnf_cache_env(self, mock_gather):
+    def test_resolve_mounts_dnf_cache(self, mock_gather, mock_ensure):
         """
-        RPM_LOCKFILE_PROTOTYPE_DNF_CACHE should be set in the subprocess
-        env and point to the same directory across multiple resolve() calls.
+        Should mount DNF cache and set env var.
         """
-        captured_envs: list[dict] = []
+        captured_cmds = []
 
         async def mock_cmd(cmd, **kwargs):
-            captured_envs.append(dict(kwargs.get("env", {})))
-            outfile_idx = cmd.index("--outfile") + 1
-            with open(cmd[outfile_idx], "w") as f:
-                yaml.safe_dump(self.FAKE_LOCKFILE_DATA, f)
-            return (0, "", "")
+            captured_cmds.append(cmd)
+            return self._mock_podman_run(cmd, expect_bare=True)
 
         mock_gather.side_effect = mock_cmd
         resolver = RpmResolver()
@@ -156,13 +230,59 @@ class TestRpmResolver(unittest.TestCase):
             packages=["nfs-utils"],
         )
         asyncio.run(resolver.resolve(config))
-        asyncio.run(resolver.resolve(config))
+        cmd = captured_cmds[0]
+        dnf_cache_set = False
+        for i, arg in enumerate(cmd):
+            if arg == "-e" and i + 1 < len(cmd) and cmd[i + 1] == "RPM_LOCKFILE_PROTOTYPE_DNF_CACHE=/cache":
+                dnf_cache_set = True
+        self.assertTrue(dnf_cache_set)
 
-        self.assertEqual(len(captured_envs), 2)
-        cache_dir_1 = captured_envs[0]["RPM_LOCKFILE_PROTOTYPE_DNF_CACHE"]
-        cache_dir_2 = captured_envs[1]["RPM_LOCKFILE_PROTOTYPE_DNF_CACHE"]
-        self.assertEqual(cache_dir_1, cache_dir_2)
-        self.assertTrue(os.path.isdir(cache_dir_1))
+    @patch.dict(os.environ, {"REGISTRY_AUTH_FILE": "/run/containers/auth.json"})
+    @patch("doozerlib.lockfile_prototype.resolver.RpmResolver._ensure_image", new_callable=AsyncMock)
+    @patch("doozerlib.lockfile_prototype.resolver.cmd_gather_async")
+    def test_resolve_mounts_auth_file(self, mock_gather, mock_ensure):
+        """
+        When REGISTRY_AUTH_FILE is set, should mount it and set env var.
+        """
+        captured_cmds = []
+
+        async def mock_cmd(cmd, **kwargs):
+            captured_cmds.append(list(cmd))
+            return self._mock_podman_run(cmd, expect_bare=True)
+
+        mock_gather.side_effect = mock_cmd
+        resolver = RpmResolver()
+        config = RpmsInConfig(
+            arches=["x86_64"],
+            contentOrigin={"repos": []},
+            packages=[],
+        )
+        asyncio.run(resolver.resolve(config))
+        cmd = captured_cmds[0]
+        auth_mount = "/run/containers/auth.json:/auth/auth.json:ro,Z"
+        self.assertTrue(
+            any(arg == "-v" and cmd[i + 1] == auth_mount for i, arg in enumerate(cmd) if i + 1 < len(cmd)),
+            f"Expected auth file mount {auth_mount} in command",
+        )
+        auth_env_set = any(
+            arg == "-e" and i + 1 < len(cmd) and cmd[i + 1] == "REGISTRY_AUTH_FILE=/auth/auth.json"
+            for i, arg in enumerate(cmd)
+        )
+        self.assertTrue(auth_env_set)
+
+    def test_custom_image_parameter(self):
+        """
+        Image parameter should override default.
+        """
+        resolver = RpmResolver(image="quay.io/custom/rpm-lockfile:v1.0")
+        self.assertEqual(resolver._image, "quay.io/custom/rpm-lockfile:v1.0")
+
+    def test_default_image(self):
+        """
+        Default image should match constant.
+        """
+        resolver = RpmResolver()
+        self.assertEqual(resolver._image, RPM_LOCKFILE_IMAGE)
 
 
 class TestParseMissingPackages(unittest.TestCase):
@@ -304,9 +424,10 @@ class TestResolveRpmdbCorruptionRetry(unittest.TestCase):
 
     CORRUPTION_STDERR = "error: sqlite failure: database disk image is malformed\nOSError: failed loading RPMDB\n"
 
+    @patch("doozerlib.lockfile_prototype.resolver.RpmResolver._ensure_image", new_callable=AsyncMock)
     @patch("doozerlib.lockfile_prototype.resolver.RpmResolver._clear_rpmdb_cache")
     @patch("doozerlib.lockfile_prototype.resolver.cmd_gather_async")
-    def test_retries_on_rpmdb_corruption(self, mock_gather, mock_clear):
+    def test_retries_on_rpmdb_corruption(self, mock_gather, mock_clear, mock_ensure):
         """
         First call fails with corruption, cache cleared, second call succeeds.
         """
@@ -317,8 +438,12 @@ class TestResolveRpmdbCorruptionRetry(unittest.TestCase):
             call_count += 1
             if call_count == 1:
                 return (1, "", self.CORRUPTION_STDERR)
-            outfile_idx = cmd.index("--outfile") + 1
-            with open(cmd[outfile_idx], "w") as f:
+            for i, arg in enumerate(cmd):
+                if arg == "-v" and ":/work:" in cmd[i + 1]:
+                    host_tmpdir = cmd[i + 1].split(":")[0]
+                    break
+            host_outfile = os.path.join(host_tmpdir, DEFAULT_RPM_LOCKFILE_NAME)
+            with open(host_outfile, "w") as f:
                 yaml.safe_dump(self.FAKE_LOCKFILE_DATA, f)
             return (0, "", "")
 
@@ -336,9 +461,10 @@ class TestResolveRpmdbCorruptionRetry(unittest.TestCase):
         self.assertEqual(call_count, 2)
         mock_clear.assert_called_once()
 
+    @patch("doozerlib.lockfile_prototype.resolver.RpmResolver._ensure_image", new_callable=AsyncMock)
     @patch("doozerlib.lockfile_prototype.resolver.RpmResolver._clear_rpmdb_cache")
     @patch("doozerlib.lockfile_prototype.resolver.cmd_gather_async")
-    def test_raises_after_retry_fails(self, mock_gather, mock_clear):
+    def test_raises_after_retry_fails(self, mock_gather, mock_clear, mock_ensure):
         """
         Both calls fail with corruption — should raise RuntimeError.
         """
@@ -359,9 +485,10 @@ class TestResolveRpmdbCorruptionRetry(unittest.TestCase):
             asyncio.run(resolver.resolve(config, image_pullspec="registry.example.com/repo@sha256:abc123"))
         self.assertIn("rpm-lockfile-prototype failed", str(ctx.exception))
 
+    @patch("doozerlib.lockfile_prototype.resolver.RpmResolver._ensure_image", new_callable=AsyncMock)
     @patch("doozerlib.lockfile_prototype.resolver.RpmResolver._clear_rpmdb_cache")
     @patch("doozerlib.lockfile_prototype.resolver.cmd_gather_async")
-    def test_no_retry_without_image(self, mock_gather, mock_clear):
+    def test_no_retry_without_image(self, mock_gather, mock_clear, mock_ensure):
         """
         Bare mode (no image_pullspec) should not attempt cache clear.
         """
@@ -381,9 +508,10 @@ class TestResolveRpmdbCorruptionRetry(unittest.TestCase):
             asyncio.run(resolver.resolve(config))
         mock_clear.assert_not_called()
 
+    @patch("doozerlib.lockfile_prototype.resolver.RpmResolver._ensure_image", new_callable=AsyncMock)
     @patch("doozerlib.lockfile_prototype.resolver.RpmResolver._clear_rpmdb_cache")
     @patch("doozerlib.lockfile_prototype.resolver.cmd_gather_async")
-    def test_no_retry_on_other_errors(self, mock_gather, mock_clear):
+    def test_no_retry_on_other_errors(self, mock_gather, mock_clear, mock_ensure):
         """
         Non-corruption errors should raise immediately without retry.
         """

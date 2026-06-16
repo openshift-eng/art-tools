@@ -1,13 +1,14 @@
 """
-RPM resolution via rpm-lockfile-prototype subprocess.
+RPM resolution via rpm-lockfile-prototype container.
 
-Invokes the rpm-lockfile-prototype tool through system Python so
-that python3-dnf (a system package built for the system Python) is
-available. The venv Python may be a different minor version where
-dnf cannot be imported.
+Invokes the rpm-lockfile-prototype tool inside a podman container
+so that python3-dnf and all system dependencies are self-contained.
+The container image is built on demand from the bundled Containerfile
+if not already present locally.
 """
 
 import logging
+import os
 import re
 import shutil
 from pathlib import Path
@@ -18,30 +19,100 @@ from artcommonlib import logutil
 from artcommonlib.exectools import cmd_gather_async
 
 from doozerlib.lockfile_prototype.constants import (
+    CONTAINER_RPMDB_CACHE_PATH,
     DEFAULT_RPM_INFILE_NAME,
     DEFAULT_RPM_LOCKFILE_NAME,
-    RPM_LOCKFILE_ENTRY_POINT,
+    RPM_LOCKFILE_CONTAINERFILE,
+    RPM_LOCKFILE_IMAGE,
     RPMDB_CACHE_ERROR_PATTERNS,
     RPMDB_CACHE_PATH,
-    SYSTEM_PYTHON,
 )
 from doozerlib.lockfile_prototype.models import LockfileData, RpmsInConfig
-from doozerlib.lockfile_prototype.utils import build_env
 
 
 class RpmResolver:
     """
-    Invokes rpm-lockfile-prototype via system Python subprocess.
+    Invokes rpm-lockfile-prototype via podman container.
 
     Maintains a persistent DNF repodata cache directory across
     resolve() calls so that repeated runs against the same repos
     (common during multi-image rebases) skip redundant downloads.
+    Builds the container image from the bundled Containerfile on
+    first use if not already present.
     """
 
-    def __init__(self, logger: logging.Logger | None = None, cache_dir: str | None = None):
+    def __init__(self, logger: logging.Logger | None = None, cache_dir: str | None = None, image: str | None = None):
         self.logger = logger or logutil.get_logger(__name__)
         self._cache_dir_owner = None if cache_dir else TemporaryDirectory(prefix="rpm-lockfile-cache-")
         self._cache_path = cache_dir or self._cache_dir_owner.name
+        self._image = image or RPM_LOCKFILE_IMAGE
+
+    async def _ensure_image(self) -> None:
+        """
+        Build the container image from the bundled Containerfile
+        if it does not already exist locally.
+        """
+        rc, _, _ = await cmd_gather_async(["podman", "image", "exists", self._image], check=False)
+        if rc == 0:
+            return
+        self.logger.info("Building rpm-lockfile-prototype container image: %s", self._image)
+        rc, _, stderr = await cmd_gather_async(
+            ["podman", "build", "-t", self._image, "-f", str(RPM_LOCKFILE_CONTAINERFILE), "."],
+            check=False,
+        )
+        if rc != 0:
+            raise RuntimeError(f"Failed to build {self._image}: {stderr}")
+
+    def _build_podman_cmd(
+        self,
+        tmpdir: str,
+        image_pullspec: str | None,
+    ) -> list[str]:
+        """
+        Build the podman run command with volume mounts and env vars.
+
+        Arg(s):
+            tmpdir (str): Host temp directory with rpms.in.yaml.
+            image_pullspec (str | None): Base image for rpmdb context.
+        Return Value(s):
+            list[str]: Complete podman command.
+        """
+        cmd = ["podman", "run", "--rm"]
+
+        # Work directory: rpms.in.yaml input and rpms.lock.yaml output
+        cmd.extend(["-v", f"{tmpdir}:/work:Z"])
+
+        # DNF repodata cache
+        cmd.extend(["-v", f"{self._cache_path}:/cache:Z"])
+        cmd.extend(["-e", "RPM_LOCKFILE_PROTOTYPE_DNF_CACHE=/cache"])
+
+        # RPMDB cache: host path → container /root/.cache/...
+        RPMDB_CACHE_PATH.mkdir(parents=True, exist_ok=True)
+        cmd.extend(["-v", f"{RPMDB_CACHE_PATH}:{CONTAINER_RPMDB_CACHE_PATH}:Z"])
+
+        # Mount host entitlement certs for accessing protected repos.
+        # Use :ro without :Z — SELinux won't allow relabeling system dirs.
+        for host_path in ("/etc/pki/entitlement", "/etc/rhsm/ca", "/etc/pki/rpm-gpg"):
+            if Path(host_path).is_dir():
+                cmd.extend(["-v", f"{host_path}:{host_path}:ro"])
+
+        # Registry auth
+        auth_file = os.environ.get("QUAY_AUTH_FILE") or os.environ.get("REGISTRY_AUTH_FILE")
+        if auth_file:
+            cmd.extend(["-v", f"{auth_file}:/auth/auth.json:ro,Z"])
+            cmd.extend(["-e", "REGISTRY_AUTH_FILE=/auth/auth.json"])
+
+        # Image name
+        cmd.append(self._image)
+
+        # Tool arguments
+        if image_pullspec:
+            cmd.extend(["--image", image_pullspec])
+        else:
+            cmd.append("--bare")
+        cmd.extend(["--outfile", "/work/" + DEFAULT_RPM_LOCKFILE_NAME, "/work/" + DEFAULT_RPM_INFILE_NAME])
+
+        return cmd
 
     async def resolve(
         self,
@@ -49,8 +120,8 @@ class RpmResolver:
         image_pullspec: str | None = None,
     ) -> LockfileData:
         """
-        Resolve RPM packages by running rpm-lockfile-prototype via
-        system Python as a subprocess.
+        Resolve RPM packages by running rpm-lockfile-prototype in a
+        podman container.
 
         On RPMDB corruption errors, clears the cached RPMDB for the
         image and retries once before raising.
@@ -62,29 +133,23 @@ class RpmResolver:
         Return Value(s):
             LockfileData: Resolved lockfile.
         """
+        await self._ensure_image()
+
         with TemporaryDirectory() as tmpdir:
             in_file = Path(tmpdir) / DEFAULT_RPM_INFILE_NAME
             out_file = Path(tmpdir) / DEFAULT_RPM_LOCKFILE_NAME
 
             in_file.write_text(yaml.safe_dump(config.model_dump(exclude_none=True), sort_keys=False))
 
-            cmd = [SYSTEM_PYTHON, "-c", RPM_LOCKFILE_ENTRY_POINT]
-            if image_pullspec:
-                cmd.extend(["--image", image_pullspec])
-            else:
-                cmd.append("--bare")
-            cmd.extend(["--outfile", str(out_file), str(in_file)])
-
-            env = build_env()
-            env["RPM_LOCKFILE_PROTOTYPE_DNF_CACHE"] = self._cache_path
-            rc, _, stderr = await cmd_gather_async(cmd, check=False, env=env)
+            cmd = self._build_podman_cmd(tmpdir, image_pullspec)
+            rc, _, stderr = await cmd_gather_async(cmd, check=False)
 
             if rc != 0:
                 if image_pullspec and self._is_rpmdb_corrupt(stderr):
                     cleared = self._clear_rpmdb_cache(image_pullspec)
                     if cleared:
                         self.logger.info("Retrying rpm-lockfile-prototype after clearing corrupt RPMDB cache")
-                        retry_rc, _, retry_stderr = await cmd_gather_async(cmd, check=False, env=env)
+                        retry_rc, _, retry_stderr = await cmd_gather_async(cmd, check=False)
                         if retry_rc == 0:
                             return LockfileData.model_validate(yaml.safe_load(out_file.read_text()))
                         self.logger.warning("Retry also failed (exit code %d): %s", retry_rc, retry_stderr)
