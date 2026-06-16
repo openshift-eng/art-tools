@@ -2335,7 +2335,13 @@ class KonfluxRebaser:
 
                 # Compare el version
                 if release_util.isolate_el_version_in_release(image_tag) == el_version:
-                    # We found a match
+                    # We found a match - add comment to Dockerfile indicating upstream match was used
+                    dfp.add_lines_at(
+                        0,
+                        "",
+                        f"# ART matched upstream parent {original_parent} to stream {name}, canonical builder used",
+                        "",
+                    )
                     return image
 
         except (ValueError, ChildProcessError) as e:
