@@ -1936,26 +1936,6 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         )
         self.assertTrue(test_assembly_forced_metadata.should_trigger_base_image_release())
 
-    def test_base_image_release_quay_fallback_image_overrides_group(self):
-        from artcommonlib.model import Model
-
-        runtime = MagicMock()
-        runtime.logger = logging.getLogger('test_runtime')
-        runtime.group_config = Model({'base_image_release': Model({'quay_fallback': False})})
-        img_on = Model({'name': 't', 'base_image_release': Model({'quay_fallback': True})})
-        meta_on = ImageMetadata(runtime, Model({'key': 't', 'data': img_on, 'filename': 't.yaml'}))
-        self.assertTrue(meta_on.is_base_image_release_quay_fallback_enabled())
-
-        img_inherit = Model({'name': 't2'})
-        meta_inherit = ImageMetadata(runtime, Model({'key': 't2', 'data': img_inherit, 'filename': 't2.yaml'}))
-        self.assertFalse(meta_inherit.is_base_image_release_quay_fallback_enabled())
-
-        runtime_default = MagicMock()
-        runtime_default.logger = logging.getLogger('test_runtime')
-        runtime_default.group_config = Model({})
-        meta_default = ImageMetadata(runtime_default, Model({'key': 't2', 'data': img_inherit, 'filename': 't2.yaml'}))
-        self.assertTrue(meta_default.is_base_image_release_quay_fallback_enabled())
-
 
 class TestExtractBuilderInfoFromPullspec(unittest.TestCase):
     """

@@ -1439,25 +1439,6 @@ class ImageMetadata(Metadata):
         self.logger.info(f"Base image release enabled set from {source} {base_image_release_enabled}")
         return base_image_release_enabled
 
-    def is_base_image_release_quay_fallback_enabled(self) -> bool:
-        """
-        When False and ``should_trigger_base_image_release()`` applies, late parent resolve
-        must not fall back to Konflux ``image_pullspec`` if ``registry.redhat.io`` art-images-base
-        is unreachable (rebase fails instead).
-
-        Image ``base_image_release.quay_fallback`` overrides group; default True
-        (same pattern as ``konflux.cachi2.lockfile.enabled``).
-        """
-        base_image_release_quay_fallback_config_override = self.config.base_image_release.quay_fallback
-        if base_image_release_quay_fallback_config_override not in [Missing, None]:
-            return bool(base_image_release_quay_fallback_config_override)
-        else:
-            base_image_release_quay_fallback_group_override = self.runtime.group_config.base_image_release.quay_fallback
-            if base_image_release_quay_fallback_group_override not in [Missing, None]:
-                return bool(base_image_release_quay_fallback_group_override)
-
-        return True
-
     def get_required_artifacts(self) -> list:
         """
         Get list of required artifacts from image config.
