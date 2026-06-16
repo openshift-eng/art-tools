@@ -1855,6 +1855,33 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         golang_snap_off_metadata = ImageMetadata(runtime, golang_snap_off_data)
         self.assertFalse(golang_snap_off_metadata.should_trigger_base_image_release())
 
+        # enabled_override=True overrides enabled=false for base image
+        self.assertTrue(base_snap_off_metadata.should_trigger_base_image_release(enabled_override=True))
+
+        # enabled_override=True overrides enabled=false for golang builder
+        self.assertTrue(golang_snap_off_metadata.should_trigger_base_image_release(enabled_override=True))
+
+        # enabled_override=True does NOT override non-base/non-golang (step 3 still blocks)
+        self.assertFalse(regular_metadata.should_trigger_base_image_release(enabled_override=True))
+
+        # enabled_override=True does NOT bypass test assembly
+        self.assertFalse(
+            ImageMetadata(test_assembly_runtime, base_snap_off_data).should_trigger_base_image_release(
+                enabled_override=True
+            )
+        )
+
+        # enabled_override=True does NOT bypass OKD
+        okd_runtime = MagicMock()
+        okd_runtime.logger = logging.getLogger('test_runtime')
+        okd_runtime.variant = BuildVariant.OKD
+        okd_runtime.assembly = 'stream'
+        okd_runtime.product = 'ocp'
+        okd_runtime.group_config = Model({})
+        self.assertFalse(
+            ImageMetadata(okd_runtime, base_snap_off_data).should_trigger_base_image_release(enabled_override=True)
+        )
+
         # Force=true overrides enabled=false
         force_enabled_off = Model(
             {'name': 'test-regular', 'base_image_release': Model({'enabled': False, 'force': True})}

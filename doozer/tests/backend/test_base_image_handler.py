@@ -187,6 +187,49 @@ class TestBaseImageHandler(IsolatedAsyncioTestCase):
     @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
     @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
     @patch("doozerlib.backend.base_image_handler.resolve_konflux_kubeconfig_by_product")
+    async def test_snapshot_release_enabled_override_overrides_enabled_false(
+        self, mock_kubeconfig, mock_namespace, mock_konflux_client_init
+    ):
+        mock_namespace.return_value = "ocp-art-tenant"
+        mock_kubeconfig.return_value = "/path/to/kubeconfig"
+        mock_konflux_client_init.return_value = AsyncMock()
+
+        disabled_base_model = Model(
+            {
+                "name": "test-base",
+                "base_only": True,
+                "base_image_release": {"enabled": False},
+                "distgit": {"component": "ose-test-base-container"},
+            }
+        )
+        disabled_data = Model({"key": "test-base", "data": disabled_base_model, "filename": "test-base.yaml"})
+        disabled_metadata = ImageMetadata(self.runtime, disabled_data)
+        disabled_metadata.distgit_key = "test-base"
+
+        handler = BaseImageHandler(self.runtime, dry_run=True)
+        self.runtime.image_map = {"test-base": disabled_metadata}
+
+        result_without_enabled_override = await handler.snapshot_release(self.default_input)
+        self.assertIsNone(result_without_enabled_override)
+
+        with patch.object(handler, "_snapshot_from_component", new=AsyncMock(return_value="test-snapshot")):
+            with patch.object(
+                handler,
+                "_create_release_from_snapshot",
+                new=AsyncMock(return_value=("test-release", "https://konflux.example/releases/test-release")),
+            ):
+                with patch.object(handler, "_wait_for_release_completion", return_value=True):
+                    result_with_enabled_override = await handler.snapshot_release(
+                        self.default_input, enabled_override=True
+                    )
+
+        self.assertIsNotNone(result_with_enabled_override)
+        self.assertIsInstance(result_with_enabled_override, BaseImageReleaseResult)
+        self.assertEqual(result_with_enabled_override.release_name, "test-release")
+
+    @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_kubeconfig_by_product")
     async def test_create_release_from_snapshot_sets_release_annotations(
         self, mock_kubeconfig, mock_namespace, mock_konflux_client_init
     ):

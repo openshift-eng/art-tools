@@ -14,12 +14,12 @@ from doozerlib.exceptions import DoozerFatalError
 from doozerlib.image import ImageMetadata
 
 
-def _invoke_release_to_base_repo_inner(runtime, nvr: str):
+def _invoke_release_to_base_repo_inner(runtime, nvr: str, enabled_override: bool = False):
     """Call the bare async handler (avoid Click/pass_runtime context in unit tests)."""
     fn = release_to_base_repo.callback
     while hasattr(fn, '__wrapped__'):
         fn = fn.__wrapped__
-    return asyncio.run(fn(runtime, nvr))
+    return asyncio.run(fn(runtime, nvr, enabled_override))
 
 
 class TestImagesCli(unittest.TestCase):
@@ -179,7 +179,7 @@ class TestReleaseToBaseRepo(unittest.TestCase):
 
         with patch("doozerlib.cli.images.BaseImageHandler") as bh_cls:
 
-            async def snap_release(inp):
+            async def snap_release(inp, enabled_override=False):
                 self.assertFalse(inp.is_golang_builder)
                 self.assertEqual(inp.distgit_key, source.name)
                 self.assertEqual(inp.container_image, source.image_pullspec)
@@ -246,7 +246,7 @@ class TestReleaseToBaseRepo(unittest.TestCase):
 
         with patch("doozerlib.cli.images.BaseImageHandler") as bh_cls:
 
-            async def snap_release(inp):
+            async def snap_release(inp, enabled_override=False):
                 self.assertTrue(inp.is_golang_builder)
                 return release_out
 
@@ -255,6 +255,128 @@ class TestReleaseToBaseRepo(unittest.TestCase):
             _invoke_release_to_base_repo_inner(runtime, nvr)
 
         kb.add_builds.assert_awaited_once()
+
+    def test_enabled_override_flag_passed_to_snapshot_release(self):
+        runtime = self._runtime_with_base_image()
+        nvr = "ose-base-container-v4.22-1.el9"
+        source = KonfluxBuildRecord(
+            name="openshift-enterprise-base-rhel9",
+            group=runtime.group,
+            nvr=nvr,
+            outcome=KonfluxBuildOutcome.SUCCESS,
+            engine=Engine.KONFLUX,
+            image_pullspec="quay.io/base@sha256:abc",
+            rebase_repo_url="https://git.example/r.git",
+            rebase_commitish="deadbeef",
+        )
+
+        kb = MagicMock()
+        kb.get_build_record_by_nvr = AsyncMock(return_value=source)
+        kb.bind = MagicMock()
+        kb.add_builds = AsyncMock()
+        runtime.konflux_db = kb
+        runtime.initialize = MagicMock()
+
+        release_out = BaseImageReleaseResult(
+            release_name="r1",
+            snapshot_name="s1",
+            nvr=nvr,
+            release_pipeline="https://pipeline",
+            released_pullspec="registry.example/img:tag",
+        )
+
+        with patch("doozerlib.cli.images.BaseImageHandler") as bh_cls:
+            received_enabled_override = []
+
+            async def snap_release(inp, enabled_override=False):
+                received_enabled_override.append(enabled_override)
+                return release_out
+
+            bh_cls.return_value.snapshot_release = snap_release
+
+            _invoke_release_to_base_repo_inner(runtime, nvr, enabled_override=True)
+
+        self.assertEqual(received_enabled_override, [True])
+
+    def _konflux_db_for_source(self, runtime, source):
+        kb = MagicMock()
+        kb.get_build_record_by_nvr = AsyncMock(return_value=source)
+        kb.bind = MagicMock()
+        kb.add_builds = AsyncMock()
+        runtime.konflux_db = kb
+        runtime.initialize = MagicMock()
+        return kb
+
+    def test_raises_when_base_image_release_disabled_without_override(self):
+        runtime = self._runtime_with_base_image()
+        base_md = runtime.image_map["openshift-enterprise-base-rhel9"]
+        base_md.config.base_image_release.enabled = False
+
+        nvr = "ose-base-container-v4.22-1.el9"
+        source = KonfluxBuildRecord(
+            name="openshift-enterprise-base-rhel9",
+            group=runtime.group,
+            nvr=nvr,
+            outcome=KonfluxBuildOutcome.SUCCESS,
+            engine=Engine.KONFLUX,
+            image_pullspec="quay.io/base@sha256:abc",
+            rebase_repo_url="https://git.example/r.git",
+            rebase_commitish="deadbeef",
+        )
+        self._konflux_db_for_source(runtime, source)
+
+        with patch("doozerlib.cli.images.BaseImageHandler") as bh_cls:
+            with self.assertRaises(DoozerFatalError) as ctx:
+                _invoke_release_to_base_repo_inner(runtime, nvr)
+            self.assertIn("base_image_release.enabled is false", str(ctx.exception))
+            self.assertIn("--enabled-override", str(ctx.exception))
+            bh_cls.assert_not_called()
+
+    def test_raises_on_test_assembly_even_with_enabled_override(self):
+        runtime = self._runtime_with_base_image()
+        runtime.assembly = "test"
+        nvr = "ose-base-container-v4.22-1.el9"
+        source = KonfluxBuildRecord(
+            name="openshift-enterprise-base-rhel9",
+            group=runtime.group,
+            nvr=nvr,
+            outcome=KonfluxBuildOutcome.SUCCESS,
+            engine=Engine.KONFLUX,
+            image_pullspec="quay.io/base@sha256:abc",
+            rebase_repo_url="https://git.example/r.git",
+            rebase_commitish="deadbeef",
+        )
+        self._konflux_db_for_source(runtime, source)
+
+        with patch("doozerlib.cli.images.BaseImageHandler") as bh_cls:
+            with self.assertRaises(DoozerFatalError) as ctx:
+                _invoke_release_to_base_repo_inner(runtime, nvr, enabled_override=True)
+            self.assertIn("test assembly is excluded", str(ctx.exception))
+            bh_cls.assert_not_called()
+
+    def test_raises_when_snapshot_release_returns_none(self):
+        runtime = self._runtime_with_base_image()
+        nvr = "ose-base-container-v4.22-1.el9"
+        source = KonfluxBuildRecord(
+            name="openshift-enterprise-base-rhel9",
+            group=runtime.group,
+            nvr=nvr,
+            outcome=KonfluxBuildOutcome.SUCCESS,
+            engine=Engine.KONFLUX,
+            image_pullspec="quay.io/base@sha256:abc",
+            rebase_repo_url="https://git.example/r.git",
+            rebase_commitish="deadbeef",
+        )
+        self._konflux_db_for_source(runtime, source)
+
+        with patch("doozerlib.cli.images.BaseImageHandler") as bh_cls:
+            bh_cls.return_value.snapshot_release = AsyncMock(return_value=None)
+
+            with self.assertRaises(DoozerFatalError) as ctx:
+                _invoke_release_to_base_repo_inner(runtime, nvr)
+
+            self.assertIn("snapshot-release did not complete", str(ctx.exception))
+            self.assertIn(nvr, str(ctx.exception))
 
 
 if __name__ == '__main__':
