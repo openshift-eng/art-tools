@@ -1412,6 +1412,11 @@ class ImageMetadata(Metadata):
         if self.runtime.variant is BuildVariant.OKD:
             return False
 
+        base_image_release_override = getattr(self.runtime, "base_image_release_override", None)
+        if base_image_release_override is not None:
+            self.logger.info(f"Base image release override from CLI: {base_image_release_override}")
+            return base_image_release_override
+
         base_image_release_force_override = self.config.base_image_release.force
         if base_image_release_force_override not in [Missing, None] and bool(base_image_release_force_override):
             self.logger.info("Base image release force enabled from metadata config True")
