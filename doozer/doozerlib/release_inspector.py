@@ -9,7 +9,7 @@ from typing import Tuple
 from artcommonlib import exectools
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome
 from artcommonlib.model import Model
-from artcommonlib.oc_image_info import oc_image_info__cached_async
+from artcommonlib.oc_image_info import oc_image_info__cached_async__lru
 
 from doozerlib.build_info import BrewBuildRecordInspector, BuildRecordInspector, KonfluxBuildRecordInspector
 from doozerlib.runtime import Runtime
@@ -84,7 +84,7 @@ async def extract_nvr_from_pullspec(
     if arch:
         options.append(f"--filter-by-os={arch}")
     try:
-        stdout = await oc_image_info__cached_async(pullspec, *options, registry_config=registry_config)
+        stdout = await oc_image_info__cached_async__lru(pullspec, *options, registry_config=registry_config)
     except ChildProcessError as e:
         raise IOError(f"Failed to get image info for {pullspec}: {e}") from e
 

@@ -23,7 +23,7 @@ from artcommonlib.konflux.konflux_build_record import (
     KonfluxBuildRecord,
 )
 from artcommonlib.model import Missing
-from artcommonlib.oc_image_info import oc_image_info__cached_async
+from artcommonlib.oc_image_info import oc_image_info__cached_async__lru
 from artcommonlib.release_util import SoftwareLifecyclePhase, isolate_el_version_in_release, split_el_suffix_in_release
 from artcommonlib.rpm_utils import compare_nvr, parse_nvr
 from artcommonlib.util import fetch_slsa_attestation, get_konflux_data
@@ -1216,7 +1216,7 @@ class KonfluxImageBuilder:
                 # Use oc image info with optional auth file to get image labels
                 # Use --filter-by-os to handle manifest list images
                 try:
-                    stdout = await oc_image_info__cached_async(
+                    stdout = await oc_image_info__cached_async__lru(
                         inspect_pullspec,
                         '--filter-by-os=amd64',
                         registry_config=registry_auth_file if registry_auth_file else None,
