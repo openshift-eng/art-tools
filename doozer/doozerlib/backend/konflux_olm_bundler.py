@@ -423,6 +423,7 @@ class KonfluxOlmBundleRebaser:
         # versioned internal name (e.g. ose-csi-livenessprobe-4.18-rhel9) while having them
         # replaced with the preferred unversioned delivery repo name (e.g. ose-csi-livenessprobe-rhel9).
         _delivery_override_map: Dict[str, str] = {}
+        _delivery_namespace_map: Dict[str, str] = {}
         _data_dir = metadata.runtime.data_dir
         for _yml_path in glob.glob(f"{_data_dir}/images/*.yml") + glob.glob(f"{_data_dir}/images/*.yaml"):
             try:
@@ -431,15 +432,17 @@ class KonfluxOlmBundleRebaser:
                 if not isinstance(_img_data, dict):
                     continue
                 _delivery = _img_data.get('delivery', {}) or {}
+                _repo_names = _delivery.get('delivery_repo_names') or []
+                _img_short = str(_img_data.get('name', '')).rsplit('/', 1)[-1]
+                if _repo_names and '/' in str(_repo_names[0]):
+                    _delivery_namespace_map[_img_short] = str(_repo_names[0]).rsplit('/', 1)[0]
                 if not _delivery.get('delivery_repo_name_override'):
                     continue
-                _repo_names = _delivery.get('delivery_repo_names') or []
                 if len(_repo_names) != 1:
                     raise IOError(
                         f"delivery_repo_name_override is set in {_yml_path} but delivery_repo_names has "
                         f"{len(_repo_names)} entries (expected exactly 1)"
                     )
-                _img_short = str(_img_data.get('name', '')).rsplit('/', 1)[-1]
                 _override_short = str(_repo_names[0]).rsplit('/', 1)[-1]
                 _delivery_override_map[_img_short] = _override_short
             except (yaml.YAMLError, OSError) as e:
@@ -459,7 +462,11 @@ class KonfluxOlmBundleRebaser:
             if not metadata.runtime.group.startswith("openshift-"):
                 new_namespace = namespace
             else:
-                new_namespace = 'openshift4' if namespace == csv_namespace else namespace
+                new_namespace = (
+                    _delivery_namespace_map.get(image_short_name, 'openshift4')
+                    if namespace == csv_namespace
+                    else namespace
+                )
             # If delivery_repo_name_override is set for this image, use the overridden short name
             # so the final pullspec uses the preferred delivery repo name (e.g. without a version tag).
             delivery_image_short_name = _delivery_override_map.get(image_short_name, image_short_name)
