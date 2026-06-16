@@ -3,8 +3,10 @@ import hashlib
 import json
 import pathlib
 import re
+import urllib.request
 from collections import OrderedDict
 from copy import copy
+from io import StringIO
 from multiprocessing import Event
 from typing import Any, Dict, List, Optional, Set, Tuple, cast
 
@@ -865,10 +867,6 @@ class ImageMetadata(Metadata):
         Returns:
             Dockerfile content as string, or None if fetch fails
         """
-        import urllib.request
-
-        import artcommonlib.util
-
         source_config = self.config.content.source
         if not source_config or not source_config.git:
             return None
@@ -888,7 +886,7 @@ class ImageMetadata(Metadata):
         # e.g., https://github.com/openshift/oc/blob/master/Dockerfile.rhel
         # Convert to: https://raw.githubusercontent.com/openshift/oc/master/Dockerfile.rhel
         try:
-            https_url = artcommonlib.util.convert_remote_git_to_https(git_url)
+            https_url = artlib_util.convert_remote_git_to_https(git_url)
             if 'github.com' in https_url:
                 # Parse GitHub URL
                 # https://github.com/org/repo.git -> https://raw.githubusercontent.com/org/repo/branch/path
@@ -930,10 +928,6 @@ class ImageMetadata(Metadata):
         if dockerfile_content:
             # Parse Dockerfile without filesystem access
             try:
-                from io import StringIO
-
-                from dockerfile_parse import DockerfileParser
-
                 dfp = DockerfileParser(fileobj=StringIO(dockerfile_content))
                 parent_images = dfp.parent_images
 
