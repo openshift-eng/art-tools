@@ -223,8 +223,9 @@ class RHCOSBuildFinder:
             list: rpm list for rhel build
         """
         if self.layered:
-            reg_conf_arg = f" --registry-config={self.registry_config}" if self.registry_config else ""
-            image_info_str, _ = exectools.cmd_assert(f"oc image info -o json {pullspec}{reg_conf_arg}", retries=3)
+            from artcommonlib.oc_image_info import oc_image_info__cached__lru
+
+            image_info_str = oc_image_info__cached__lru(pullspec, registry_config=self.registry_config)
             image_info = Model(json.loads(image_info_str))
             build_id = image_info.config.config.Labels.get("org.opencontainers.image.version")
             if not build_id:
