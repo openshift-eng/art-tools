@@ -198,18 +198,7 @@
         "enabled?": {
           "$ref": "#/properties/base_image_release/properties/enabled"
         },
-        "enabled-": {},
-        "quay_fallback": {
-          "description": "When false, late parent resolve fails if registry.redhat.io art-images-base is unreachable instead of falling back to Konflux image_pullspec. Default true. Image overrides group.",
-          "type": "boolean"
-        },
-        "quay_fallback!": {
-          "$ref": "#/properties/base_image_release/properties/quay_fallback"
-        },
-        "quay_fallback?": {
-          "$ref": "#/properties/base_image_release/properties/quay_fallback"
-        },
-        "quay_fallback-": {}
+        "enabled-": {}
       },
       "additionalProperties": false
     },

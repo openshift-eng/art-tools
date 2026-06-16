@@ -358,18 +358,7 @@
         "enabled?": {
           "$ref": "#/properties/base_image_release/properties/enabled"
         },
-        "enabled-": {},
-        "quay_fallback": {
-          "description": "When false, late parent resolve fails if art-images-base is unreachable instead of Konflux fallback. Default true.",
-          "type": "boolean"
-        },
-        "quay_fallback!": {
-          "$ref": "#/properties/base_image_release/properties/quay_fallback"
-        },
-        "quay_fallback?": {
-          "$ref": "#/properties/base_image_release/properties/quay_fallback"
-        },
-        "quay_fallback-": {}
+        "enabled-": {}
       },
       "additionalProperties": false
     },
