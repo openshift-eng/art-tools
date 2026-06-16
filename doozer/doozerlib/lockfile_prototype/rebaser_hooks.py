@@ -26,6 +26,7 @@ async def generate_lockfile(
     dest_dir: Path,
     repos,
     base_dir: Path,
+    working_dir: Path,
     downstream_parents: list[str] | None = None,
     parent_members: list | None = None,
     shared_dnf_cache: TemporaryDirectory | None = None,
@@ -42,6 +43,7 @@ async def generate_lockfile(
         dest_dir (Path): Build directory containing the Dockerfile.
         repos: Runtime Repos object for repository configuration.
         base_dir (Path): Base working directory for locating parent image sources.
+        working_dir (Path): Base directory for temp files (avoids filling /tmp).
         downstream_parents (list[str] | None): Parent image pullspecs per stage.
         parent_members (list | None): Parent ImageMetadata objects.
         shared_dnf_cache (TemporaryDirectory | None): Shared cache dir across images.
@@ -52,10 +54,10 @@ async def generate_lockfile(
     _logger = logger or logging.getLogger(__name__)
 
     if shared_dnf_cache is None:
-        shared_dnf_cache = TemporaryDirectory(prefix="rpm-lockfile-cache-")
+        shared_dnf_cache = TemporaryDirectory(prefix="rpm-lockfile-cache-", dir=str(working_dir))
 
-    resolver = RpmResolver(logger=_logger, cache_dir=shared_dnf_cache.name)
-    generator = RpmLockfilePrototypeGenerator(repos, resolver=resolver)
+    resolver = RpmResolver(working_dir=working_dir, logger=_logger, cache_dir=shared_dnf_cache.name)
+    generator = RpmLockfilePrototypeGenerator(repos, working_dir=working_dir, resolver=resolver)
 
     fallback: dict[int, list[str]] = {}
     parent_dirs: dict[int, Path] = {}

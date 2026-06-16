@@ -1024,6 +1024,7 @@ class KonfluxRebaser:
             base_dir=self._base_dir,
             downstream_parents=downstream_parents,
             parent_members=parent_members,
+            working_dir=Path(self._runtime.working_dir),
             shared_dnf_cache=self._shared_dnf_cache,
             logger=self._logger,
         )

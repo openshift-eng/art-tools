@@ -53,7 +53,7 @@ class TestRpmResolver(unittest.TestCase):
             return (0, "", "")
 
         mock_gather.side_effect = mock_cmd
-        resolver = RpmResolver()
+        resolver = RpmResolver(working_dir=Path(tempfile.mkdtemp()))
         config = RpmsInConfig(
             arches=["x86_64"],
             contentOrigin={"repos": []},
@@ -79,7 +79,7 @@ class TestRpmResolver(unittest.TestCase):
             return (0, "", "")
 
         mock_gather.side_effect = mock_cmd
-        resolver = RpmResolver()
+        resolver = RpmResolver(working_dir=Path(tempfile.mkdtemp()))
         config = RpmsInConfig(
             arches=["x86_64"],
             contentOrigin={"repos": []},
@@ -99,7 +99,7 @@ class TestRpmResolver(unittest.TestCase):
             return (1, "", "DNF dependency resolution failed")
 
         mock_gather.side_effect = mock_fail
-        resolver = RpmResolver()
+        resolver = RpmResolver(working_dir=Path(tempfile.mkdtemp()))
         config = RpmsInConfig(
             arches=["x86_64"],
             contentOrigin={"repos": []},
@@ -124,7 +124,7 @@ class TestRpmResolver(unittest.TestCase):
             return (0, "", "")
 
         mock_gather.side_effect = mock_cmd
-        resolver = RpmResolver()
+        resolver = RpmResolver(working_dir=Path(tempfile.mkdtemp()))
         config = RpmsInConfig(
             arches=["x86_64"],
             contentOrigin={"repos": []},
@@ -149,7 +149,7 @@ class TestRpmResolver(unittest.TestCase):
             return (0, "", "")
 
         mock_gather.side_effect = mock_cmd
-        resolver = RpmResolver()
+        resolver = RpmResolver(working_dir=Path(tempfile.mkdtemp()))
         config = RpmsInConfig(
             arches=["x86_64"],
             contentOrigin={"repos": []},
@@ -229,7 +229,7 @@ class TestIsRpmdbCorrupt(unittest.TestCase):
 
 class TestClearRpmdbCache(unittest.TestCase):
     def setUp(self):
-        self.resolver = RpmResolver()
+        self.resolver = RpmResolver(working_dir=Path(tempfile.mkdtemp()))
 
     def test_clears_cache_for_digest(self):
         """
@@ -325,7 +325,7 @@ class TestResolveRpmdbCorruptionRetry(unittest.TestCase):
         mock_gather.side_effect = mock_cmd
         mock_clear.return_value = True
 
-        resolver = RpmResolver()
+        resolver = RpmResolver(working_dir=Path(tempfile.mkdtemp()))
         config = RpmsInConfig(
             arches=["x86_64"],
             contentOrigin={"repos": []},
@@ -349,7 +349,7 @@ class TestResolveRpmdbCorruptionRetry(unittest.TestCase):
         mock_gather.side_effect = mock_fail
         mock_clear.return_value = True
 
-        resolver = RpmResolver()
+        resolver = RpmResolver(working_dir=Path(tempfile.mkdtemp()))
         config = RpmsInConfig(
             arches=["x86_64"],
             contentOrigin={"repos": []},
@@ -371,7 +371,7 @@ class TestResolveRpmdbCorruptionRetry(unittest.TestCase):
 
         mock_gather.side_effect = mock_fail
 
-        resolver = RpmResolver()
+        resolver = RpmResolver(working_dir=Path(tempfile.mkdtemp()))
         config = RpmsInConfig(
             arches=["x86_64"],
             contentOrigin={"repos": []},
@@ -393,7 +393,7 @@ class TestResolveRpmdbCorruptionRetry(unittest.TestCase):
 
         mock_gather.side_effect = mock_fail
 
-        resolver = RpmResolver()
+        resolver = RpmResolver(working_dir=Path(tempfile.mkdtemp()))
         config = RpmsInConfig(
             arches=["x86_64"],
             contentOrigin={"repos": []},

@@ -98,6 +98,7 @@ class RpmLockfilePrototypeGenerator:
     def __init__(
         self,
         repos: Repos,
+        working_dir: Path,
         logger: logging.Logger | None = None,
         container_helper: ContainerImageHelper | None = None,
         resolver: RpmResolver | None = None,
@@ -108,7 +109,7 @@ class RpmLockfilePrototypeGenerator:
         self.parent_source_dirs: dict[int, Path] = {}
         self.logger = logger or logutil.get_logger(__name__)
         self._container = container_helper or ContainerImageHelper(logger=self.logger)
-        self._resolver = resolver or RpmResolver(logger=self.logger)
+        self._resolver = resolver or RpmResolver(working_dir=working_dir, logger=self.logger)
 
     async def generate_lockfile(
         self,
