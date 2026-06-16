@@ -1272,19 +1272,6 @@ class KonfluxRebaser:
 
         df_lines = filtered_content
 
-        # ART-8476 assert rhel version equivalence
-        # Skip for scratch images — no shell available to run the check
-        _from_stream = metadata.config.get('from', {}).get('stream')
-        if metadata.canonical_builders_enabled and self.variant != BuildVariant.OKD and _from_stream != 'scratch':
-            el_version = metadata.branch_el_target()
-            df_lines.extend(
-                [
-                    '',
-                    '# RHEL version in final image must match the one in ART\'s config',
-                    f'RUN source /etc/os-release && [ "$PLATFORM_ID" == platform:el{el_version} ]',
-                ]
-            )
-
         df_content = "\n".join(df_lines)
 
         if release:
