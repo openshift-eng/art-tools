@@ -6,13 +6,14 @@ import unittest
 from unittest import IsolatedAsyncioTestCase, mock
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from artcommonlib import exectools
 from artcommonlib.constants import GOLANG_BUILDER_IMAGE_NAME
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome
 from artcommonlib.model import Missing, Model
 from artcommonlib.variants import BuildVariant
 from doozerlib import build_info, image
-from doozerlib.image import ImageMetadata, extract_builder_info_from_pullspec
+from doozerlib.image import ImageMetadata, extract_golang_version_from_pullspec
 from doozerlib.repodata import Repodata, Rpm
 from doozerlib.repos import Repos
 from flexmock import flexmock
@@ -705,6 +706,9 @@ class TestImageMetadata(unittest.TestCase):
     @patch('doozerlib.image.SourceResolver')
     @patch('builtins.open', create=True)
     @patch('pathlib.Path.joinpath')
+    @pytest.mark.skip(
+        reason="Removed: _apply_alternative_upstream_config replaced with _validate_upstream_builder_stream"
+    )
     def test_apply_alternative_upstream_config_matching_rhel_version(
         self, mock_joinpath, mock_open, mock_source_resolver
     ):
@@ -764,6 +768,9 @@ RUN echo "test"
 
     @patch('doozerlib.image.SourceResolver')
     @patch('builtins.open', create=True)
+    @pytest.mark.skip(
+        reason="Removed: _apply_alternative_upstream_config replaced with _validate_upstream_builder_stream"
+    )
     @patch('pathlib.Path.joinpath')
     def test_apply_alternative_upstream_config_no_match(self, mock_joinpath, mock_open, mock_source_resolver):
         """Test that IOError is raised when upstream RHEL version doesn't match ART nor any alternative_upstream"""
@@ -816,6 +823,9 @@ RUN echo "test"
         self.assertIn('Upstream uses el8 but ART uses el9', str(context.exception))
         self.assertIn('no matching alternative_upstream', str(context.exception))
 
+    @pytest.mark.skip(
+        reason="Removed: _apply_alternative_upstream_config replaced with _validate_upstream_builder_stream"
+    )
     def test_apply_alternative_upstream_config_no_source(self):
         """Test that IOError is raised when image has no source"""
         metadata = self._create_image_metadata('openshift/test_no_source')
@@ -835,6 +845,9 @@ RUN echo "test"
     @patch('doozerlib.image.SourceResolver')
     @patch('builtins.open', create=True)
     @patch('pathlib.Path.joinpath')
+    @pytest.mark.skip(
+        reason="Removed: _apply_alternative_upstream_config replaced with _validate_upstream_builder_stream"
+    )
     def test_apply_alternative_upstream_config_no_alternative_config(
         self, mock_joinpath, mock_open, mock_source_resolver
     ):
@@ -895,6 +908,7 @@ RUN echo "test"
     @patch('builtins.open', create=True)
     @patch('pathlib.Path.joinpath')
     @patch('doozerlib.image.util.oc_image_info_for_arch', return_value={'config': {'config': {'Labels': {}}}})
+    @pytest.mark.skip(reason="Removed: RHEL version detection replaced with golang version validation")
     def test_determine_upstream_rhel_version_ubi_pattern(
         self, mock_oc_image_info, mock_joinpath, mock_open, mock_source_resolver
     ):
@@ -952,6 +966,7 @@ RUN echo "test"
     @patch('builtins.open', create=True)
     @patch('pathlib.Path.joinpath')
     @patch('doozerlib.image.util.oc_image_info_for_arch', return_value={'config': {'config': {'Labels': {}}}})
+    @pytest.mark.skip(reason="Removed: RHEL version detection replaced with golang version validation")
     def test_determine_upstream_rhel_version_fallback_to_builder(
         self, mock_oc_image_info, mock_joinpath, mock_open, mock_source_resolver
     ):
@@ -994,6 +1009,7 @@ RUN echo "test"
     @patch('builtins.open', create=True)
     @patch('pathlib.Path.joinpath')
     @patch('doozerlib.image.util.oc_image_info_for_arch', return_value={'config': {'config': {'Labels': {}}}})
+    @pytest.mark.skip(reason="Removed: RHEL version detection replaced with golang version validation")
     def test_determine_upstream_rhel_version_skips_compat_builder(
         self, mock_oc_image_info, mock_joinpath, mock_open, mock_source_resolver
     ):
@@ -1038,6 +1054,7 @@ RUN echo "test"
     @patch('builtins.open', create=True)
     @patch('pathlib.Path.joinpath')
     @patch('doozerlib.image.util.oc_image_info_for_arch', return_value={'config': {'config': {'Labels': {}}}})
+    @pytest.mark.skip(reason="Removed: RHEL version detection replaced with golang version validation")
     def test_determine_upstream_rhel_version_compat_builder_before_primary(
         self, mock_oc_image_info, mock_joinpath, mock_open, mock_source_resolver
     ):
@@ -1082,6 +1099,9 @@ RUN echo "test"
     @patch('builtins.open', create=True)
     @patch('pathlib.Path.joinpath')
     @patch('doozerlib.image.util.oc_image_info_for_arch', side_effect=Exception('image not accessible'))
+    @pytest.mark.skip(
+        reason="Removed: _apply_alternative_upstream_config replaced with _validate_upstream_builder_stream"
+    )
     def test_apply_alternative_upstream_config_undetermined_rhel_version(
         self, mock_oc_image_info, mock_joinpath, mock_open, mock_source_resolver
     ):
@@ -1937,51 +1957,54 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         self.assertTrue(test_assembly_forced_metadata.should_trigger_base_image_release())
 
 
-class TestExtractBuilderInfoFromPullspec(unittest.TestCase):
+class TestExtractGolangVersionFromPullspec(unittest.TestCase):
     """
-    Test class for extract_builder_info_from_pullspec function
+    Test class for extract_golang_version_from_pullspec function
     """
 
-    def test_extract_builder_info_with_digest(self):
+    def test_extract_golang_version_with_digest(self):
         """
         Test that pullspecs with SHA digests are parsed correctly.
         The digest portion should be stripped before parsing the tag.
         """
-        # Clear cache to avoid interference
-
         pullspec_with_digest = (
             "registry.ci.openshift.org/ocp/builder:rhel-9-golang-1.24-openshift-4.21"
             "@sha256:143123d85045df426c5bbafc6863659880ebe276eb02c77ee868b88d08dbd05d"
         )
 
-        rhel_version, golang_version = extract_builder_info_from_pullspec(pullspec_with_digest)
+        golang_version = extract_golang_version_from_pullspec(pullspec_with_digest)
 
-        self.assertEqual(rhel_version, 9)
         self.assertEqual(golang_version, (1, 24))
 
-    def test_extract_builder_info_without_digest(self):
+    def test_extract_golang_version_without_digest(self):
         """
         Test that pullspecs without SHA digests still work correctly.
         """
-
         pullspec_without_digest = "registry.ci.openshift.org/ocp/builder:rhel-9-golang-1.24-openshift-4.21"
 
-        rhel_version, golang_version = extract_builder_info_from_pullspec(pullspec_without_digest)
+        golang_version = extract_golang_version_from_pullspec(pullspec_without_digest)
 
-        self.assertEqual(rhel_version, 9)
         self.assertEqual(golang_version, (1, 24))
 
-    def test_extract_builder_info_rhel8_with_digest(self):
+    def test_extract_golang_version_rhel8(self):
         """
         Test RHEL 8 builder with digest.
         """
-
         pullspec = (
             "registry.ci.openshift.org/ocp/builder:rhel-8-golang-1.21-openshift-4.18"
             "@sha256:abcd1234567890abcdef1234567890abcdef1234567890abcdef1234567890ab"
         )
 
-        rhel_version, golang_version = extract_builder_info_from_pullspec(pullspec)
+        golang_version = extract_golang_version_from_pullspec(pullspec)
 
-        self.assertEqual(rhel_version, 8)
         self.assertEqual(golang_version, (1, 21))
+
+    def test_extract_golang_version_no_golang_tag(self):
+        """
+        Test pullspec without golang version in tag returns None.
+        """
+        pullspec = "registry.ci.openshift.org/ocp/builder:base-rhel9"
+
+        golang_version = extract_golang_version_from_pullspec(pullspec)
+
+        self.assertIsNone(golang_version)
