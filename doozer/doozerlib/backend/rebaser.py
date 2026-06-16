@@ -562,9 +562,7 @@ class KonfluxRebaser:
                     rh_pullspec = util.rh_art_images_base_pullspec(build.nvr)
                     if await self._registry_pullspec_exists(rh_pullspec):
                         return rh_pullspec, build.embargoed
-                    raise IOError(
-                        f"Late-resolved parent {member}: art-images-base tag unreachable at {rh_pullspec}"
-                    )
+                    raise IOError(f"Late-resolved parent {member}: art-images-base tag unreachable at {rh_pullspec}")
                 return build.image_pullspec, build.embargoed
 
             return original_parent, False
