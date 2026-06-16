@@ -21,6 +21,10 @@ from doozerlib.runtime import Runtime
 
 logger = logutil.get_logger(__name__)
 
+# Cache for extracted RHCOS metadata to avoid repeated oc image extract operations
+# Key: (pullspec, meta_type), Value: extracted JSON dict
+_rhcos_build_meta_cache: Dict[Tuple[str, str], Dict] = {}
+
 
 class RHCOSNotFound(Exception):
     pass
@@ -172,8 +176,20 @@ class RHCOSBuildFinder:
 
     def rhcos_build_meta_layered(self, pullspec: str, meta_type: str = "meta") -> Dict:
         """
-        This is a helper function to retrieve meta.json from a layered RHCOS build
+        This is a helper function to retrieve meta.json from a layered RHCOS build.
+        Results are cached in-memory by (pullspec, meta_type) to avoid expensive
+        oc image extract operations for the same image.
         """
+        # Check cache first
+        cache_key = (pullspec, meta_type)
+        if cache_key in _rhcos_build_meta_cache:
+            logger.warning(f"RHCOS metadata cache HIT for {pullspec} (meta_type={meta_type})")
+            return _rhcos_build_meta_cache[cache_key]
+
+        logger.warning(
+            f"RHCOS metadata cache MISS for {pullspec} (meta_type={meta_type}, cache_size={len(_rhcos_build_meta_cache)})"
+        )
+
         reg_conf_arg = f" --registry-config={self.registry_config}" if self.registry_config else ""
         if meta_type == "commitmeta":
             with tempfile.TemporaryDirectory() as temp_dir:
@@ -183,7 +199,7 @@ class RHCOSBuildFinder:
                 )
                 with open(os.path.join(temp_dir, "meta.json"), 'r') as f:
                     meta_data = json.load(f)
-            return {"rpmostree.rpmdb.pkglist": meta_data["rpmdb.pkglist"]}
+            result = {"rpmostree.rpmdb.pkglist": meta_data["rpmdb.pkglist"]}
         elif meta_type == "meta":
             with tempfile.TemporaryDirectory() as temp_dir:
                 stdout, _ = exectools.cmd_assert(
@@ -192,7 +208,13 @@ class RHCOSBuildFinder:
                 )
                 with open(os.path.join(temp_dir, "extensions.json"), 'r') as f:
                     extensions_data = json.load(f)
-            return {"extensions": {"manifest": extensions_data}}
+            result = {"extensions": {"manifest": extensions_data}}
+        else:
+            raise ValueError(f"Unknown meta_type: {meta_type}")
+
+        # Cache the result
+        _rhcos_build_meta_cache[cache_key] = result
+        return result
 
     def _rhcos_build_meta(self, build_id: str, arch: str = None, meta_type: str = "meta") -> Dict:
         """
