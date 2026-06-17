@@ -877,6 +877,7 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
         rt.name = "rhel-9-rt-rpms"
         rt.baseurl.return_value = "https://example.com/e4s/rhel9/9.8/x86_64/rt/os/"
         rt.content_set.return_value = "rhel-9-for-x86_64-rt-rpms"
+        rt.cs_optional = False
         rt._data.conf.get.side_effect = lambda key, default=None: default if key == "extra_options" else default
 
         repo_map = {"rhel-9-rt-rpms": rt}
@@ -905,6 +906,70 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0].repoid, "rhel-9-for-$basearch-baseos-rpms")
         self.assertEqual(result[0].baseurl, "https://example.com/baseos/$basearch/os/")
+
+    def test_build_repo_list_optional_repo_gets_skip_if_unavailable(self):
+        openstack = MagicMock()
+        openstack.name = "openstack-16-for-rhel-8-rpms"
+        openstack.baseurl.side_effect = lambda repotype="unsigned", arch="x86_64": {
+            "x86_64": "https://example.com/layered/rhel8/x86_64/openstack/16.2/os/",
+            "ppc64le": "https://example.com/layered/rhel8/ppc64le/openstack/16.2/os/",
+            "aarch64": "https://example.com/layered/rhel8/x86_64/openstack/16.2/os/",
+            "s390x": "https://example.com/layered/rhel8/x86_64/openstack/16.2/os/",
+        }[arch]
+        openstack.content_set.return_value = "openstack-16.2-for-rhel-8-x86_64-rpms"
+        openstack.cs_optional = True
+        openstack._data.conf.get.side_effect = lambda key, default=None: default if key == "extra_options" else default
+
+        repo_map = {"openstack-16-for-rhel-8-rpms": openstack}
+        repos = MagicMock()
+        repos.__getitem__ = lambda self_repos, key: repo_map[key]
+
+        generator = RpmLockfilePrototypeGenerator(repos=repos, working_dir=Path(tempfile.mkdtemp()))
+        result = generator._build_repo_list(
+            enabled_repos={"openstack-16-for-rhel-8-rpms"},
+            arches=["x86_64", "aarch64", "ppc64le", "s390x"],
+        )
+        self.assertEqual(len(result), 1)
+        self.assertTrue(result[0].options.get("skip_if_unavailable"))
+
+    def test_build_repo_list_non_optional_repo_no_skip_if_unavailable(self):
+        baseos = MagicMock()
+        baseos.name = "rhel-9-baseos-rpms"
+        baseos.baseurl.side_effect = lambda repotype="unsigned", arch="x86_64": (
+            f"https://example.com/baseos/{arch}/os/"
+        )
+        baseos.content_set.return_value = "rhel-9-for-x86_64-baseos-rpms"
+        baseos.cs_optional = False
+        baseos._data.conf.get.side_effect = lambda key, default=None: default if key == "extra_options" else default
+
+        repo_map = {"rhel-9-baseos-rpms": baseos}
+        repos = MagicMock()
+        repos.__getitem__ = lambda self_repos, key: repo_map[key]
+
+        generator = RpmLockfilePrototypeGenerator(repos=repos, working_dir=Path(tempfile.mkdtemp()))
+        result = generator._build_repo_list(enabled_repos={"rhel-9-baseos-rpms"}, arches=["x86_64", "aarch64"])
+        self.assertEqual(len(result), 1)
+        self.assertNotIn("skip_if_unavailable", result[0].options)
+
+    def test_build_repo_list_optional_preserves_existing_extra_options(self):
+        repo = MagicMock()
+        repo.name = "optional-repo"
+        repo.baseurl.return_value = "https://example.com/repo/x86_64/os/"
+        repo.content_set.return_value = "optional-for-x86_64-rpms"
+        repo.cs_optional = True
+        repo._data.conf.get.side_effect = lambda key, default=None: (
+            {"module_hotfixes": 1} if key == "extra_options" else default
+        )
+
+        repo_map = {"optional-repo": repo}
+        repos = MagicMock()
+        repos.__getitem__ = lambda self_repos, key: repo_map[key]
+
+        generator = RpmLockfilePrototypeGenerator(repos=repos, working_dir=Path(tempfile.mkdtemp()))
+        result = generator._build_repo_list(enabled_repos={"optional-repo"}, arches=["x86_64"])
+        self.assertEqual(len(result), 1)
+        self.assertTrue(result[0].options.get("skip_if_unavailable"))
+        self.assertEqual(result[0].options["module_hotfixes"], 1)
 
 
 class TestDetermineStagePullspec(unittest.IsolatedAsyncioTestCase):

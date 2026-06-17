@@ -994,5 +994,7 @@ class RpmLockfilePrototypeGenerator:
 
             repoid = self._get_repoid_for_content_set(repo, repo_name, first_arch)
             extra_options = dict(repo._data.conf.get("extra_options", {}))
+            if repo.cs_optional:
+                extra_options.setdefault("skip_if_unavailable", True)
             repo_list.append(RepoEntry(repoid=repoid, baseurl=baseurl_template, options=extra_options))
         return repo_list
