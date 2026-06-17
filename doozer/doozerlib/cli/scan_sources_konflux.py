@@ -1027,6 +1027,10 @@ class ConfigScanSources:
                 # Member builder changes are already being propagated to descendants: skip
                 continue
 
+            if builder.stream == 'scratch':
+                # 'FROM scratch' has no parent image to check for updates
+                continue
+
             # Resolve builder build NVR
             if builder.image:
                 builder_image_name = builder.image
