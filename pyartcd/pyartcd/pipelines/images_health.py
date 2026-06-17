@@ -625,60 +625,83 @@ class ImagesHealthPipeline:
         """
         Send a summary message to the public channel with a link to the dashboard.
         Instead of posting detailed failure lists (which can overflow Jira API limits),
-        we now only post a summary and direct users to the art-build-failures dashboard.
+        we now only post a summary grouped by version and direct users to the art-build-failures dashboard.
         """
         self.slack_client.bind_channel(self.public_channel)
 
-        # Group build concerns by image name
-        image_build_failures = {}
+        # Group build concerns by version
+        version_build_failures = {}
         for concern in self.report:
             if concern['code'] in (ConcernCode.NEVER_BUILT.value, ConcernCode.LATEST_BUILD_SUCCEEDED.value):
                 continue
-            image_name = concern['image_name']
-            image_build_failures.setdefault(image_name, []).append(concern)
+            group = concern['group']
+            version_build_failures.setdefault(group, []).append(concern)
 
-        # Group EC failures by image name across all versions
-        image_ec_failures = self._group_failures_by_image(self.ec_failures)
+        # EC, release, and rebase failures are already organized by version in self.*_failures dicts
+        # They use version keys like "4.18", so we need to convert to group format "openshift-4.18"
 
-        # Group release failures by image name across all versions
-        image_release_failures = self._group_failures_by_image(self.release_failures)
+        # Check if any failures exist
+        has_failures = (
+            bool(version_build_failures)
+            or bool(self.ec_failures)
+            or bool(self.release_failures)
+            or bool(self.rebase_failures)
+        )
 
-        # Group rebase failures by image name across all versions
-        image_rebase_failures = self._group_failures_by_image(self.rebase_failures)
-
-        if (
-            not image_build_failures
-            and not image_ec_failures
-            and not image_release_failures
-            and not image_rebase_failures
-        ):
+        if not has_failures:
             await self.slack_client.say(':white_check_mark: All images are healthy for all monitored releases')
             return
 
-        summary_parts = []
-        if image_build_failures:
-            n = len(image_build_failures)
-            summary_parts.append(f'{n} image{"s" if n > 1 else ""} with build failures')
-        if image_ec_failures:
-            n = len(image_ec_failures)
-            summary_parts.append(f'{n} image{"s" if n > 1 else ""} with EC verification failures')
-        if image_release_failures:
-            n = len(image_release_failures)
-            summary_parts.append(f'{n} image{"s" if n > 1 else ""} with release to authz failures')
-        if image_rebase_failures:
-            n = len(image_rebase_failures)
-            summary_parts.append(f'{n} image{"s" if n > 1 else ""} with rebase failures')
+        # Collect all groups that have any kind of failure
+        all_groups = set()
+        all_groups.update(version_build_failures.keys())
+        all_groups.update(f'openshift-{v}' for v in self.ec_failures.keys())
+        all_groups.update(f'openshift-{v}' for v in self.release_failures.keys())
+        all_groups.update(f'openshift-{v}' for v in self.rebase_failures.keys())
 
-        issues = '\n- '.join(summary_parts)
+        # Build message grouped by version
+        message_parts = [':alert: There are some issues to look into for OpenShift builds:\n']
+
+        for group in sorted(all_groups):
+            version = group.replace('openshift-', '')
+            group_summary = []
+
+            # Build failures for this group
+            build_fails = version_build_failures.get(group, [])
+            if build_fails:
+                n = len(build_fails)
+                group_summary.append(f'{n} image{"s" if n > 1 else ""} with build failures')
+
+            # EC failures for this group
+            ec_fails = self.ec_failures.get(version, {})
+            if ec_fails:
+                n = len(ec_fails)
+                group_summary.append(f'{n} image{"s" if n > 1 else ""} with EC verification failures')
+
+            # Release failures for this group
+            release_fails = self.release_failures.get(version, {})
+            if release_fails:
+                n = len(release_fails)
+                group_summary.append(f'{n} image{"s" if n > 1 else ""} with release to authz failures')
+
+            # Rebase failures for this group
+            rebase_fails = self.rebase_failures.get(version, {})
+            if rebase_fails:
+                n = len(rebase_fails)
+                group_summary.append(f'{n} image{"s" if n > 1 else ""} with rebase failures')
+
+            if group_summary:
+                message_parts.append(f'\n*{group}*:')
+                for item in group_summary:
+                    message_parts.append(f'- {item}')
 
         # Link to art-build-failures dashboard
         dashboard_url = ART_BUILD_FAILURES_URL
-
-        message = (
-            f':alert: There are some issues to look into for Openshift builds:\n- {issues}\n\n'
-            f'For detailed information, please check the {self.url_text(dashboard_url, "ART Build Failures Dashboard")}'
+        message_parts.append(
+            f'\nFor detailed information, please check the {self.url_text(dashboard_url, "ART Build Failures Dashboard")}'
         )
 
+        message = '\n'.join(message_parts)
         await self.slack_client.say(message, link_build_url=False, unfurl_links=False, unfurl_media=False)
 
     @staticmethod
