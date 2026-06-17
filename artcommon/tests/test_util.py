@@ -1198,10 +1198,10 @@ class TestGetInflight(unittest.TestCase):
 
     @patch('artcommonlib.util.get_assembly_release_date')
     def test_returns_none_for_minor_zero(self, mock_get_date):
-        """When minor version is 0, there is no Y-1 group to query."""
+        """When minor version is 0 and no prior major is defined, there is no Y-1 group to query."""
         mock_get_date.return_value = '2026-May-25'
 
-        result = get_inflight('rc.0', 'openshift-5.0', date='2026-05-25')
+        result = get_inflight('rc.0', 'openshift-3.0', date='2026-05-25')
 
         self.assertIsNone(result)
 
