@@ -409,6 +409,18 @@
               "$ref": "#/properties/konflux/properties/cachi2/properties/gomod_version_patch"
             },
             "gomod_version_patch-": {},
+            "prefetch_mode": {
+              "description": "Mode for the prefetch-dependencies task (e.g. 'strict', 'permissive')",
+              "type": "string",
+              "enum": ["strict", "permissive"]
+            },
+            "prefetch_mode!": {
+              "$ref": "#/properties/konflux/properties/cachi2/properties/prefetch_mode"
+            },
+            "prefetch_mode?": {
+              "$ref": "#/properties/konflux/properties/cachi2/properties/prefetch_mode"
+            },
+            "prefetch_mode-": {},
             "lockfile": {
               "type": "object",
               "properties": {
@@ -615,6 +627,14 @@
                 "enabled!": {"$ref": "#/properties/okd/properties/konflux/properties/cachi2/properties/enabled"},
                 "enabled?": {"$ref": "#/properties/okd/properties/konflux/properties/cachi2/properties/enabled"},
                 "enabled-": {},
+                "prefetch_mode": {
+                  "description": "Mode for the prefetch-dependencies task (e.g. 'strict', 'permissive')",
+                  "type": "string",
+                  "enum": ["strict", "permissive"]
+                },
+                "prefetch_mode!": {"$ref": "#/properties/okd/properties/konflux/properties/cachi2/properties/prefetch_mode"},
+                "prefetch_mode?": {"$ref": "#/properties/okd/properties/konflux/properties/cachi2/properties/prefetch_mode"},
+                "prefetch_mode-": {},
                 "lockfile": {
                   "type": "object",
                   "properties": {
