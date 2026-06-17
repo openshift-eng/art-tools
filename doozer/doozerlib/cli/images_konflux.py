@@ -306,6 +306,13 @@ class KonfluxBuildCli:
         else:
             group = runtime.group
 
+        if runtime.assembly == "test":
+            ec_policy = constants.KONFLUX_TEST_EC_POLICY_CONFIGURATION
+            prega_ec_policy = constants.KONFLUX_TEST_PREGA_EC_POLICY_CONFIGURATION
+        else:
+            ec_policy = constants.KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION
+            prega_ec_policy = constants.KONFLUX_PREGA_EC_POLICY_CONFIGURATION
+
         config = KonfluxImageBuilderConfig(
             base_dir=Path(runtime.working_dir, constants.WORKING_SUBDIR_KONFLUX_BUILD_SOURCES),
             group_name=group,
@@ -319,6 +326,8 @@ class KonfluxBuildCli:
             dry_run=self.dry_run,
             plr_template=self.plr_template,
             build_priority=self.build_priority,
+            ec_policy_configuration=ec_policy,
+            prega_ec_policy_configuration=prega_ec_policy,
             skip_ec_verify=self.skip_ec_verify,
         )
         builder = KonfluxImageBuilder(config=config, record_logger=runtime.record_logger)

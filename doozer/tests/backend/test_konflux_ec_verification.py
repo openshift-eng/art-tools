@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome
 from artcommonlib.variants import BuildVariant
+from doozerlib import constants
 from doozerlib.backend.konflux_client import ECVerificationResult
 from doozerlib.backend.konflux_image_builder import (
     KonfluxImageBuilder,
@@ -292,3 +293,55 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
 
         # Verify that all retries were attempted (exception path allows retries)
         self.assertEqual(builder._start_build.call_count, 3)
+
+    async def test_ec_uses_default_policy_for_release_phase(self, mock_kc_init):
+        """Default (non-test) assembly with release lifecycle uses the default stage policy."""
+        config = _make_config(group_name="openshift-4.18")
+        metadata = _make_metadata(for_release=True)
+        metadata.runtime.group_config.software_lifecycle.phase = "release"
+
+        verify_ec = await self._run_build_and_get_ec_calls(config, metadata, mock_kc_init)
+        verify_ec.assert_called_once()
+        call_kwargs = verify_ec.call_args
+        self.assertEqual(call_kwargs.kwargs["ec_policy"], constants.KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION)
+
+    async def test_ec_uses_prega_policy_for_pre_release_phase(self, mock_kc_init):
+        """Pre-release lifecycle phase uses the prega policy from config."""
+        config = _make_config(group_name="openshift-4.18")
+        metadata = _make_metadata(for_release=True)
+        metadata.runtime.group_config.software_lifecycle.phase = "pre-release"
+
+        verify_ec = await self._run_build_and_get_ec_calls(config, metadata, mock_kc_init)
+        verify_ec.assert_called_once()
+        call_kwargs = verify_ec.call_args
+        self.assertEqual(call_kwargs.kwargs["ec_policy"], constants.KONFLUX_PREGA_EC_POLICY_CONFIGURATION)
+
+    async def test_ec_uses_test_policy_from_config(self, mock_kc_init):
+        """Test assembly builds use the test-specific EC policy passed via config."""
+        config = _make_config(
+            group_name="openshift-4.18",
+            ec_policy_configuration=constants.KONFLUX_TEST_EC_POLICY_CONFIGURATION,
+            prega_ec_policy_configuration=constants.KONFLUX_TEST_PREGA_EC_POLICY_CONFIGURATION,
+        )
+        metadata = _make_metadata(for_release=True)
+        metadata.runtime.group_config.software_lifecycle.phase = "release"
+
+        verify_ec = await self._run_build_and_get_ec_calls(config, metadata, mock_kc_init)
+        verify_ec.assert_called_once()
+        call_kwargs = verify_ec.call_args
+        self.assertEqual(call_kwargs.kwargs["ec_policy"], constants.KONFLUX_TEST_EC_POLICY_CONFIGURATION)
+
+    async def test_ec_uses_test_prega_policy_for_pre_release(self, mock_kc_init):
+        """Test assembly builds with pre-release lifecycle use the test prega policy from config."""
+        config = _make_config(
+            group_name="openshift-4.18",
+            ec_policy_configuration=constants.KONFLUX_TEST_EC_POLICY_CONFIGURATION,
+            prega_ec_policy_configuration=constants.KONFLUX_TEST_PREGA_EC_POLICY_CONFIGURATION,
+        )
+        metadata = _make_metadata(for_release=True)
+        metadata.runtime.group_config.software_lifecycle.phase = "pre-release"
+
+        verify_ec = await self._run_build_and_get_ec_calls(config, metadata, mock_kc_init)
+        verify_ec.assert_called_once()
+        call_kwargs = verify_ec.call_args
+        self.assertEqual(call_kwargs.kwargs["ec_policy"], constants.KONFLUX_TEST_PREGA_EC_POLICY_CONFIGURATION)
