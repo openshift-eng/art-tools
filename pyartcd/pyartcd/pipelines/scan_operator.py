@@ -191,18 +191,29 @@ class ScanOperatorPipeline:
             self.logger.info(f'  Bundle for {operator.nvr} exists: {bundle.nvr}')
             return bundle
 
-        # Check for pending bundle (avoid duplicate triggers)
-        pending = await self.bundle_db.get_latest_build(
-            name=bundle_name,
-            group=self.group,
-            outcome=KonfluxBuildOutcome.PENDING,
-            assembly=self.assembly,
+        # Query for the most recent non-SUCCESS record (PENDING or any failure).
+        # If the latest is PENDING, a build is in progress. If it's a failure, trigger a rebuild.
+        # Order by ingestion_time rather than start_time: PENDING records use datetime.now() as
+        # start_time while terminal records use the PipelineRun's actual startTime from Tekton,
+        # which can be slightly earlier. ingestion_time always reflects when the record was written
+        # to the DB, so the terminal record is correctly ordered after the PENDING record.
+        async for record in self.bundle_db.search_builds_by_fields(
+            where={
+                'name': bundle_name,
+                'group': self.group,
+                'outcome': [o for o in KonfluxBuildOutcome if not o.is_success()],
+                'assembly': self.assembly,
+            },
             extra_patterns={'operator_nvr': operator.nvr},
-        )
-
-        if pending:
-            self.logger.info(f'  Bundle build for {operator.nvr} in progress: {pending.nvr}')
-            return pending
+            limit=1,
+            order_by='ingestion_time',
+            sorting='DESC',
+        ):
+            if record.outcome.is_failure():
+                self.logger.info(f'  Bundle build for {operator.nvr} failed ({record.outcome.value}): {record.nvr}')
+                return None
+            self.logger.info(f'  Bundle build for {operator.nvr} in progress: {record.nvr}')
+            return record
 
         self.logger.info(f'  Bundle MISSING for {operator.nvr}')
         return None
@@ -229,19 +240,24 @@ class ScanOperatorPipeline:
             self.logger.info(f'  FBC build for {operator.nvr} exists: {fbc.nvr}')
             return fbc
 
-        # Check for pending FBC containing this specific bundle
+        # Query for the most recent non-SUCCESS record (PENDING or any failure).
+        # If the latest is PENDING, a build is in progress. If it's a failure, trigger a rebuild.
+        # Order by ingestion_time: see comment in check_bundle_exists for rationale.
         async for fbc in self.fbc_db.search_builds_by_fields(
             where={
                 'name': fbc_name,
                 'group': self.group,
-                'outcome': KonfluxBuildOutcome.PENDING,
+                'outcome': [o for o in KonfluxBuildOutcome if not o.is_success()],
                 'assembly': self.assembly,
             },
             array_contains={'bundle_nvrs': bundle.nvr},
             limit=1,
-            order_by='start_time',
+            order_by='ingestion_time',
             sorting='DESC',
         ):
+            if fbc.outcome.is_failure():
+                self.logger.info(f'  FBC build for {operator.nvr} failed ({fbc.outcome.value}): {fbc.nvr}')
+                return None
             self.logger.info(f'  FBC build for {operator.nvr} in progress: {fbc.nvr}')
             return fbc
 
