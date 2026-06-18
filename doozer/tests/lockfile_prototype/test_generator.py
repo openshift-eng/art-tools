@@ -526,6 +526,47 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
         # No upgrade targets — dnf update handled at build time
         self.assertEqual(captured_configs[0].upgradePackages, [])
 
+    def test_mixed_install_and_bare_update_skips_reinstall(self):
+        """
+        When a stage has both explicit installs and a bare update
+        (e.g. microdnf update -y && microdnf install -y openssl),
+        reinstallPackages must be empty. Otherwise reinstall pins base
+        image versions and overrides upgrade semantics, preventing the
+        update from picking up latest RPMs — causing a perpetual
+        rebuild loop when scan-sources detects outdated packages.
+        """
+        meta = self._make_mock_image_meta()
+        meta.config.konflux.cachi2.lockfile.get.return_value = None
+        generator = self._make_generator()
+        generator.downstream_parents = ["quay.io/test/base@sha256:abc123"]
+        generator._container.get_installed_packages = AsyncMock(return_value=["audit", "bash", "glibc"])
+
+        captured_configs: list[RpmsInConfig] = []
+
+        async def capture_resolve(config, image_pullspec=None):
+            captured_configs.append(config)
+            return FAKE_LOCKFILE_DATA.model_copy(deep=True)
+
+        generator._resolver.resolve = AsyncMock(side_effect=capture_resolve)
+
+        with TemporaryDirectory() as tmpdir:
+            dest_dir = Path(tmpdir)
+            (dest_dir / "Dockerfile").write_text(
+                "FROM base\nRUN microdnf update -y && microdnf install -y openssl && microdnf clean all\n"
+            )
+            asyncio.run(generator.generate_lockfile(meta, dest_dir))
+
+        self.assertEqual(len(captured_configs), 1)
+        # reinstallPackages must be empty: bare update means we want
+        # upgrade semantics, and reinstall would pin old versions
+        self.assertEqual(captured_configs[0].reinstallPackages, [])
+        # Explicit install package must be present
+        pkg_names = [p if isinstance(p, str) else p.name for p in captured_configs[0].packages]
+        self.assertIn("openssl", pkg_names)
+        # Base image packages must appear as upgrade targets so
+        # dnf update picks up latest versions from repos
+        self.assertEqual(sorted(captured_configs[0].upgradePackages), ["audit", "bash", "glibc"])
+
     def test_reinstall_packages_also_passed_as_upgrade_targets(self):
         """
         Base image packages passed as reinstallPackages must also appear

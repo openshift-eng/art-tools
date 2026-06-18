@@ -28,7 +28,7 @@ def strip_bare_updates(df_content: str) -> str:
         str: Transformed Dockerfile text with bare updates removed.
     """
     bare_update_re = re.compile(
-        r"\b(?:dnf|yum)\s+(?:-y\s+)?(?:update|upgrade)(?:\s+-y)?\s*(?:\\\n\s*&&\s*|&&\s*|;\s*|\n|(?=$))",
+        r"\b(?:microdnf|dnf|yum)\s+(?:-y\s+)?(?:update|upgrade)(?:\s+-y)?\s*(?:\\\n\s*&&\s*|&&\s*|;\s*|\n|(?=$))",
     )
     return bare_update_re.sub("", df_content)
 
