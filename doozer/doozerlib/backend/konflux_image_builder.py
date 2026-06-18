@@ -95,6 +95,7 @@ class KonfluxImageBuilderConfig:
     dry_run: bool = False
     build_priority: Optional[str] = None
     ec_policy_configuration: str = constants.KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION
+    prega_ec_policy_configuration: str = constants.KONFLUX_PREGA_EC_POLICY_CONFIGURATION
     skip_ec_verify: bool = False
 
 
@@ -324,7 +325,7 @@ class KonfluxImageBuilder:
                         lifecycle_phase is not Missing
                         and SoftwareLifecyclePhase.from_name(lifecycle_phase) == SoftwareLifecyclePhase.PRE_RELEASE
                     ):
-                        ec_policy = constants.KONFLUX_PREGA_EC_POLICY_CONFIGURATION
+                        ec_policy = self._config.prega_ec_policy_configuration
                     else:
                         ec_policy = self._config.ec_policy_configuration
 

@@ -1943,6 +1943,7 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         )
         self.assertFalse(okd_forced_metadata.should_trigger_base_image_release())
 
+        # Force=true does NOT bypass test assembly block (test assembly is unconditional skip)
         test_assembly_forced_runtime = MagicMock()
         test_assembly_forced_runtime.logger = logging.getLogger('test_runtime')
         test_assembly_forced_runtime.variant = BuildVariant.OCP
@@ -1954,7 +1955,7 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
             test_assembly_forced_runtime,
             Model({'key': 'test-assembly-forced', 'data': test_assembly_forced, 'filename': 'taf.yaml'}),
         )
-        self.assertTrue(test_assembly_forced_metadata.should_trigger_base_image_release())
+        self.assertFalse(test_assembly_forced_metadata.should_trigger_base_image_release())
 
 
 class TestExtractGolangVersionFromPullspec(unittest.TestCase):
