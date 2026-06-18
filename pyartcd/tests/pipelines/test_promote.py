@@ -734,6 +734,8 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         pipeline.wait_for_stable.assert_any_await("4.10.99", "aarch64", "4-stable-arm64")
         pipeline.send_image_list_email.assert_awaited_once_with("4.10.99", 2, ANY)
         sign_artifacts.assert_awaited_once_with("4.10.99", "ocp", ANY, [])
+        for arch in ["x86_64", "s390x", "ppc64le", "aarch64"]:
+            start_rhcos_sync.assert_any_call(f"4.10.99-{arch}", dry_run=False, sign_only=True)
 
     @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
     @patch("pyartcd.pipelines.promote.PromotePipeline.tag_release", return_value=None)
