@@ -7,7 +7,7 @@ from urllib.parse import quote
 import click
 from artcommonlib import exectools
 from doozerlib.cli.images_health import DELTA_DAYS, LIMIT_BUILD_RESULTS, ConcernCode
-from doozerlib.constants import ART_BUILD_HISTORY_URL
+from doozerlib.constants import ART_BUILD_FAILURES_URL, ART_BUILD_HISTORY_URL
 
 from pyartcd import util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -277,63 +277,65 @@ class ImagesHealthPipeline:
         """
         Send a summary message to #art-okd-release channel with a link to the dashboard.
         Instead of posting detailed failure lists (which can overflow Jira API limits),
-        we now only post a summary and direct users to the art-build-failures dashboard.
+        we now only post a summary grouped by version and direct users to the art-build-failures dashboard.
         """
         self.slack_client.bind_channel('#art-okd-release')
 
-        # Group concerns by image name
-        image_concerns = {}
+        # Group build concerns by OKD group
+        version_build_failures = {}
         for concern in self.report:
-            if (
-                concern['code'] == ConcernCode.NEVER_BUILT.value
-                or concern['code'] == ConcernCode.LATEST_BUILD_SUCCEEDED.value
-            ):
+            if concern['code'] in (ConcernCode.NEVER_BUILT.value, ConcernCode.LATEST_BUILD_SUCCEEDED.value):
                 # We don't report NEVER_BUILT concerns to art-okd-release. Latest built succeeded is not a concern.
                 continue
-            image_name = concern['image_name']
-            image_concerns.setdefault(image_name, []).append(concern)
+            group = concern['group']
+            # Transform openshift-X.Y to okd-X.Y
+            okd_group = group.replace('openshift-', 'okd-')
+            version_build_failures.setdefault(okd_group, []).append(concern)
 
-        # Group rebase failures by image name across all versions
-        image_rebase_failures = {}
-        for version, failures in self.rebase_failures.items():
-            for image_name, failure_info in failures.items():
-                if image_name not in image_rebase_failures:
-                    image_rebase_failures[image_name] = []
-                image_rebase_failures[image_name].append(
-                    {
-                        'version': version,
-                        'failure_count': failure_info.get('failure_count', 0),
-                        'jenkins_url': failure_info.get('jenkins_url', ''),
-                    }
-                )
+        # Rebase failures are already keyed by version in self.rebase_failures
+        # Need to collect all groups that have any kind of failure
 
         # If no concerns and no rebase failures, report all healthy
-        if not image_concerns and not image_rebase_failures:
+        if not version_build_failures and not self.rebase_failures:
             await self.slack_client.say(':white_check_mark: All OKD images are healthy for all monitored releases')
             return
 
-        # Build summary message
-        summary_parts = []
-        if image_concerns:
-            n_build_issues = len(image_concerns)
-            summary_parts.append(f'{n_build_issues} image{"s" if n_build_issues > 1 else ""} with build issues')
-        if image_rebase_failures:
-            n_rebase_issues = len(image_rebase_failures)
-            summary_parts.append(f'{n_rebase_issues} image{"s" if n_rebase_issues > 1 else ""} with rebase failures')
+        # Collect all groups that have any kind of failure
+        all_groups = set()
+        all_groups.update(version_build_failures.keys())
+        all_groups.update(f'okd-{v}' for v in self.rebase_failures.keys())
 
-        issues = '\n- '.join(summary_parts)
+        # Build message grouped by version
+        message_parts = [':alert: There are some issues to look into for OKD builds:\n']
 
-        # Build dashboard URL showing OKD failures
-        start_date = (datetime.now(timezone.utc) - timedelta(days=DELTA_DAYS)).strftime('%Y-%m-%d')
-        end_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
-        # Filter dashboard to show only OKD groups (okd-*)
-        dashboard_url = f'{ART_BUILD_HISTORY_URL}/?dateRange={start_date}+to+{end_date}&outcome=Failure&engine=konflux'
+        for okd_group in sorted(all_groups):
+            version = okd_group.replace('okd-', '')
+            group_summary = []
 
-        message = (
-            f':alert: There are some issues to look into for OKD builds:\n- {issues}\n\n'
-            f'For detailed information, please check the {self.url_text(dashboard_url, "ART Build Failures Dashboard")}'
+            # Build failures for this group
+            build_fails = version_build_failures.get(okd_group, [])
+            if build_fails:
+                n = len(build_fails)
+                group_summary.append(f'{n} image{"s" if n > 1 else ""} with build failures')
+
+            # Rebase failures for this group
+            rebase_fails = self.rebase_failures.get(version, {})
+            if rebase_fails:
+                n = len(rebase_fails)
+                group_summary.append(f'{n} image{"s" if n > 1 else ""} with rebase failures')
+
+            if group_summary:
+                message_parts.append(f'\n*{okd_group}*:')
+                for item in group_summary:
+                    message_parts.append(f'- {item}')
+
+        # Link to art-build-failures dashboard
+        dashboard_url = ART_BUILD_FAILURES_URL
+        message_parts.append(
+            f'\nFor detailed information, please check the {self.url_text(dashboard_url, "ART Build Failures Dashboard")}'
         )
 
+        message = '\n'.join(message_parts)
         await self.slack_client.say(message, link_build_url=False, unfurl_links=False, unfurl_media=False)
 
     def get_message_for_release(self, concern: dict):
