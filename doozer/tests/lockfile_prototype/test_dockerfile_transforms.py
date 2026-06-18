@@ -23,6 +23,24 @@ class TestStripBareUpdates(unittest.TestCase):
         self.assertNotIn("dnf update -y", result)
         self.assertIn("dnf clean all", result)
 
+    def test_strips_bare_microdnf_update(self):
+        content = (
+            "RUN . /cachi2/cachi2.env &&     "
+            "echo 'skip_missing_names_on_install=0' >> /etc/yum.conf  "
+            "&& microdnf update -y   "
+            "&& microdnf clean all\n"
+        )
+        result = strip_bare_updates(content)
+        self.assertNotIn("microdnf update -y", result)
+        self.assertIn("microdnf clean all", result)
+        self.assertIn("cachi2.env", result)
+
+    def test_strips_microdnf_flag_before_action(self):
+        content = "RUN microdnf -y update && microdnf clean all\n"
+        result = strip_bare_updates(content)
+        self.assertNotIn("microdnf -y update", result)
+        self.assertIn("microdnf clean all", result)
+
     def test_strips_bare_dnf_upgrade(self):
         content = "RUN dnf upgrade -y && dnf clean all\n"
         result = strip_bare_updates(content)

@@ -974,9 +974,10 @@ class KonfluxRebaser:
             ):
                 from doozerlib.lockfile_prototype.rebaser_hooks import apply_dockerfile_transforms
 
+                lockfile_has_packages = bool(getattr(metadata, "lockfile_packages", None))
                 apply_dockerfile_transforms(
                     dest_dir,
-                    strip_updates=not downstream_parents,
+                    strip_updates=not downstream_parents or not lockfile_has_packages,
                     logger=self._logger,
                 )
 

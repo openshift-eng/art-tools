@@ -425,8 +425,18 @@ class RpmLockfilePrototypeGenerator:
                     stage_num, analysis.stages[stage_num], distgit_key
                 )
 
+            has_bare_update = stage_info.has_update and not stage_info.update_targets
+            if has_bare_update and not is_update_only and image_pullspec:
+                base_pkgs = await self._get_base_image_packages(stage_num, image_pullspec, distgit_key)
+                if base_pkgs:
+                    upgrade_targets = list(base_pkgs)
+                    self.logger.info(
+                        f"{distgit_key}: stage {stage_num}: {len(upgrade_targets)} base image "
+                        "packages added as upgrade targets for bare update"
+                    )
+
             reinstall_pkgs: list[str] | None = None
-            if stage_num == final_stage_num and not is_update_only:
+            if stage_num == final_stage_num and not is_update_only and not has_bare_update:
                 if image_pullspec:
                     # --image mode: pass base image packages as reinstallPackages
                     # so they appear in the lockfile at repo versions. base.reinstall()
@@ -435,6 +445,9 @@ class RpmLockfilePrototypeGenerator:
                     # populates packages and upgrade_targets with all base image packages,
                     # so reinstall is redundant for coverage and would only pin them to
                     # the base image version, preventing updates from landing.
+                    # Also skipped when the stage has a bare update (e.g. microdnf update -y):
+                    # reinstall would pin base image versions and override upgrade semantics,
+                    # preventing the update from picking up latest RPMs from repos.
                     base_pkgs = await self._get_base_image_packages(stage_num, image_pullspec, distgit_key)
                     if base_pkgs:
                         reinstall_pkgs = list(base_pkgs)
