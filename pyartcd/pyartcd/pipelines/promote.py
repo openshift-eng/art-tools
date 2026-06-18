@@ -598,8 +598,9 @@ class PromotePipeline:
                         await self.sign_artifacts(release_name, client_type, release_infos, message_digests)
 
                 # publish rhcos on mirror via rhcos_sync job
-                # only if release is EC, RC, or a GA release (.0)
-                # job will not mirror & overwrite if destination already exists (sync already happened)
+                # EC, RC, GA(.0): full sync (mirror + sign)
+                # z-stream: sign RHCOS containers only (no mirror sync needed)
+                # full sync will not mirror & overwrite if destination already exists (sync already happened)
                 # if that is desired, run rhcos_sync with FORCE=true
                 is_ga = assembly_type == AssemblyTypes.STANDARD and self.assembly.endswith(".0")
                 if assembly_type in (AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE) or is_ga:
@@ -608,9 +609,15 @@ class PromotePipeline:
                             continue
 
                         # '4.19.0-ec.0-aarch64' from 'quay.io/openshift-release-dev/ocp-release:4.19.0-ec.0-aarch64'
-                        # Since rhocs_sync does not take the quay URL as prefix
+                        # Since rhcos_sync does not take the quay URL as prefix
                         short_name = pullspec.split(":")[-1]
                         jenkins.start_rhcos_sync(short_name, dry_run=self.runtime.dry_run)
+                elif assembly_type == AssemblyTypes.STANDARD:
+                    for arch, pullspec in pullspecs.items():
+                        if arch == "multi":
+                            continue
+                        short_name = pullspec.split(":")[-1]
+                        jenkins.start_rhcos_sync(short_name, dry_run=self.runtime.dry_run, sign_only=True)
 
         except Exception as err:
             self._logger.exception(err)

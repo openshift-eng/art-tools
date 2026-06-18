@@ -761,12 +761,13 @@ def start_build_microshift_bootc(
     )
 
 
-def start_rhcos_sync(release_tag_or_pullspec: str, dry_run: bool, **kwargs) -> Optional[str]:
+def start_rhcos_sync(release_tag_or_pullspec: str, dry_run: bool, sign_only: bool = False, **kwargs) -> Optional[str]:
     return start_build(
         job=Jobs.RHCOS_SYNC,
         params={
             'RELEASE_TAG': release_tag_or_pullspec,
             'DRY_RUN': dry_run,
+            'SIGN_ONLY': sign_only,
         },
         **kwargs,
     )

@@ -582,8 +582,10 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
     @patch("pyartcd.pipelines.promote.PromotePipeline.send_promote_complete_email")
     @patch("pyartcd.pipelines.promote.PromotePipeline.create_cincinnati_prs")
     @patch("pyartcd.pipelines.promote.PromotePipeline.verify_payload")
+    @patch("pyartcd.pipelines.promote.jenkins.start_rhcos_sync")
     async def test_run_with_standard_assembly(
         self,
+        start_rhcos_sync: Mock,
         verify_payload: AsyncMock,
         create_cincinnati_prs: AsyncMock,
         send_promote_complete_email: Mock,
