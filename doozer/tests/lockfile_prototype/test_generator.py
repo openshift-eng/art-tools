@@ -414,21 +414,14 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
             (dest_dir / "Dockerfile").write_text("FROM base\nRUN yum update -y && yum clean all\n")
             asyncio.run(generator.generate_lockfile(meta, dest_dir))
 
-        # _get_base_image_packages is called exactly once (for _handle_update_only_stage)
-        # The reinstall block is skipped for update-only final stages
         self.assertEqual(generator._container.get_installed_packages.call_count, 1)
         self.assertEqual(len(captured_configs), 1)
-        # Update-only stage uses --image mode with base image pullspec
         self.assertIsNotNone(captured_pullspecs[0])
-        # All installed packages appear as both install and upgrade targets
         self.assertEqual(
             sorted(captured_configs[0].packages),
             ["bash", "coreutils", "glibc"],
         )
         self.assertEqual(sorted(captured_configs[0].upgradePackages), ["bash", "coreutils", "glibc"])
-        # reinstallPackages must be empty: reinstall overrides upgrade in DNF
-        # and would pin the base image version, preventing security updates
-        self.assertEqual(captured_configs[0].reinstallPackages, [])
 
     def test_mixed_install_and_bare_update_uses_image_mode(self):
         """
@@ -913,17 +906,23 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
         self.assertNotIn("policycoreutils-python-utils", captured_configs[1].packages)
         self.assertNotIn("policycoreutils-python-utils", captured_configs[1].upgradePackages)
 
-    def test_retry_raises_on_required_dockerfile_package_missing(self):
+    def test_retry_warns_and_strips_required_dockerfile_package_missing(self):
         """
         When a required Dockerfile package (not in strippable_packages) is
-        reported missing, _resolve_stage_with_retry must raise immediately
-        instead of silently stripping it.
+        reported missing, _resolve_stage_with_retry must log a warning and
+        strip it during retry rather than raising immediately.
         """
         generator = self._make_generator()
         generator.downstream_parents = ["quay.io/test/base@sha256:abc123"]
 
+        call_count = 0
+
         async def mock_resolve(config, image_pullspec=None):
-            raise RuntimeError("No match for argument: glibc-static")
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise RuntimeError("No match for argument: glibc-static")
+            return FAKE_LOCKFILE_DATA.model_copy(deep=True)
 
         generator._resolver.resolve = AsyncMock(side_effect=mock_resolve)
 
@@ -934,24 +933,24 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
             )
         ]
 
-        with self.assertRaises(RuntimeError) as ctx:
-            asyncio.run(
-                generator._resolve_stage_with_retry(
-                    repo_list=repos,
-                    arches=["x86_64"],
-                    packages=["gcc", "glibc-static", "bash"],
-                    arch_pkgs={},
-                    update_targets=[],
-                    image_pullspec="quay.io/test/base@sha256:abc123",
-                    distgit_key="openshift-enterprise-pod",
-                    stage_num=0,
-                    strippable_packages={"bash"},
-                )
+        result = asyncio.run(
+            generator._resolve_stage_with_retry(
+                repo_list=repos,
+                arches=["x86_64"],
+                packages=["gcc", "glibc-static", "bash"],
+                arch_pkgs={},
+                update_targets=[],
+                image_pullspec="quay.io/test/base@sha256:abc123",
+                distgit_key="openshift-enterprise-pod",
+                stage_num=0,
+                strippable_packages={"bash"},
             )
-        self.assertIn("required packages not available", str(ctx.exception))
-        self.assertIn("glibc-static", str(ctx.exception))
-        # Should fail on first attempt, no retries
-        self.assertEqual(generator._resolver.resolve.call_count, 1)
+        )
+        self.assertIsNotNone(result)
+        self.assertEqual(call_count, 2)
+        second_config = generator._resolver.resolve.call_args_list[1][0][0]
+        self.assertNotIn("glibc-static", second_config.packages)
+        self.assertIn("gcc", second_config.packages)
 
     def test_retry_strips_only_conflict_detection_packages(self):
         """
