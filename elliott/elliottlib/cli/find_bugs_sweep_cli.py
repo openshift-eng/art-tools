@@ -560,6 +560,11 @@ def categorize_bugs_by_type(
         if permissive:
             logger.warning(f"{message} Ignoring them.")
             issues.append(message)
+            print('\n\n test')
+            for t in fake_trackers:
+                print(t.id)
+                runtime.get_bug_tracker(t.bug_class).add_fake_tracker_comment(t, major_version, minor_version)
+            print('\n\n')
         else:
             raise ElliottFatalError(f"{message} Please fix.")
 
@@ -587,6 +592,10 @@ def categorize_bugs_by_type(
         if permissive:
             logger.warning(f"{message} Ignoring them.")
             issues.append(message)
+            print('\n\n test')
+            for t in invalid_summary_trackers:
+                runtime.get_bug_tracker(t.bug_class).add_invalid_summary_comment(t, major_version, minor_version)
+            print('\n\n')
         else:
             raise ElliottFatalError(f"{message} Please fix.")
 
