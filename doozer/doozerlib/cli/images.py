@@ -1494,6 +1494,8 @@ def query_rpm_version(runtime, repo_type):
 async def release_to_base_repo(runtime, nvr):
     """Latest SUCCESS Konflux image row → snapshot/release, then INSERT follow-up with ``release_pipeline`` / ``released_pullspec``.
 
+    Raises DoozerFatalError (non-zero exit) if ``released_pullspec`` is empty after release.
+
     Golang builder is inferred from image metadata when present; otherwise from the openshift-golang-builder name in the NVR.
     """
     logger = logutil.get_logger(__name__)
