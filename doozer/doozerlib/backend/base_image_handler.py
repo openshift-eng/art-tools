@@ -97,6 +97,29 @@ class BaseImageHandler:
     def _scoped_logger(self, entity: str):
         return logutil.EntityLoggingAdapter(self.runtime.logger, extra={'entity': entity})
 
+    def _get_snapshot_url(self, snapshot_name: str) -> str:
+        """
+        Construct the Konflux UI URL for a snapshot.
+
+        Args:
+            snapshot_name: The name of the snapshot resource.
+
+        Returns:
+            The Konflux UI URL for the snapshot.
+        """
+        # Build a minimal resource dict to pass to resource_url()
+        resource_dict = {
+            'kind': 'Snapshot',
+            'metadata': {
+                'name': snapshot_name,
+                'namespace': self.namespace,
+                'labels': {
+                    'appstudio.openshift.io/application': self.base_image_application,
+                },
+            },
+        }
+        return self.konflux_client.resource_url(resource_dict)
+
     async def snapshot_release(self, snapshot_input: BaseImageSnapshotInput) -> Optional[BaseImageReleaseResult]:
         """
         Run snapshot→release for exactly one base-image component.
@@ -136,8 +159,18 @@ class BaseImageHandler:
 
         result = await self._create_release_from_snapshot(snapshot_name, snapshot_input)
         if not result:
-            self.logger.error(f"Failed to create release (snapshot={snapshot_name})")
-            return None
+            # Release creation failed, but we have the snapshot - return partial result with snapshot URL for tracking
+            snapshot_url = self._get_snapshot_url(snapshot_name)
+            self.logger.error(
+                f"Failed to create release (snapshot={snapshot_name}), returning partial result with snapshot URL"
+            )
+            return BaseImageReleaseResult(
+                release_name='',
+                snapshot_name=snapshot_name,
+                nvr=snapshot_input.nvr,
+                release_pipeline=snapshot_url,  # Use snapshot URL as fallback when release wasn't created
+                released_pullspec='',  # No pullspec on failure
+            )
 
         release_name, release_url = result
 
