@@ -442,11 +442,7 @@ class RpmLockfilePrototypeGenerator:
                     # --image mode: pass base image packages as reinstallPackages
                     # so they appear in the lockfile at repo versions. base.reinstall()
                     # handles missing/renamed packages gracefully (warns, skips).
-                    # Skipped for update-only stages: _handle_update_only_stage already
-                    # populates packages and upgrade_targets with all base image packages,
-                    # so reinstall is redundant for coverage and would only pin them to
-                    # the base image version, preventing updates from landing.
-                    # Also skipped when the stage has a bare update (e.g. microdnf update -y):
+                    # Skipped when the stage has a bare update (e.g. microdnf update -y):
                     # reinstall would pin base image versions and override upgrade semantics,
                     # preventing the update from picking up latest RPMs from repos.
                     base_pkgs = await self._get_base_image_packages(stage_num, image_pullspec, distgit_key)
@@ -486,10 +482,12 @@ class RpmLockfilePrototypeGenerator:
 
             enable_only = [s.split("/")[0] for s in stage_info.module_specs] if stage_info.module_specs else None
 
+            all_packages = set(packages + [p for p in upgrade_targets if p not in packages])
+            stripped_tracker: set[str] = set()
             result = await self._resolve_with_reconciliation(
                 repo_list,
                 arches,
-                packages + [p for p in upgrade_targets if p not in packages],
+                sorted(all_packages),
                 stage_info.arch_packages,
                 upgrade_targets,
                 image_pullspec,
@@ -498,11 +496,63 @@ class RpmLockfilePrototypeGenerator:
                 module_enable=enable_only,
                 reinstall_packages=reinstall_pkgs,
                 strippable_packages=strippable,
+                stripped_tracker=stripped_tracker,
             )
             if result:
+                if stripped_tracker and image_pullspec and is_update_only:
+                    recovered = await self._recover_stripped_per_arch(
+                        repo_list,
+                        arches,
+                        stripped_tracker,
+                        image_pullspec,
+                        distgit_key,
+                        stage_num,
+                    )
+                    if recovered:
+                        result = merge_lockfiles([result, recovered])
                 stage_lockfiles.append(result)
 
         return stage_lockfiles
+
+    async def _recover_stripped_per_arch(
+        self,
+        repo_list: list[RepoEntry],
+        arches: list[str],
+        stripped: set[str],
+        image_pullspec: str,
+        distgit_key: str,
+        stage_num: int,
+    ) -> LockfileData | None:
+        """
+        Try to recover stripped packages by resolving them per-arch.
+
+        Packages like dmidecode only exist on some arches. Multi-arch
+        resolution strips them entirely. This method tries each arch
+        individually and merges successful results.
+        """
+        resolver_pullspec = ContainerImageHelper._proxy_pullspec(image_pullspec)
+        recovered: list[LockfileData] = []
+        for arch in arches:
+            in_yaml = build_rpms_in_yaml(
+                repo_list,
+                [arch],
+                sorted(stripped),
+                upgrade_packages=sorted(stripped),
+            )
+            try:
+                result = await self._resolver.resolve(in_yaml, image_pullspec=resolver_pullspec)
+                if result and any(ae.packages for ae in result.arches):
+                    recovered.append(result)
+                    self.logger.info(
+                        f"{distgit_key}: stage {stage_num}: recovered {len(stripped)} stripped packages for {arch}"
+                    )
+            except RuntimeError:
+                self.logger.debug(
+                    f"{distgit_key}: stage {stage_num}: stripped packages not available for {arch}, skipping"
+                )
+        if not recovered:
+            return None
+        return merge_lockfiles(recovered) if len(recovered) > 1 else recovered[0]
 
     async def _get_base_image_packages(self, stage_num: int, image_pullspec: str | None, distgit_key: str) -> list[str]:
         """
@@ -684,6 +734,7 @@ class RpmLockfilePrototypeGenerator:
         module_enable: list[str] | None = None,
         reinstall_packages: list[str] | None = None,
         strippable_packages: set[str] | None = None,
+        stripped_tracker: set[str] | None = None,
     ) -> LockfileData | None:
         """
         Resolve a single stage, retrying after removing unavailable packages.
@@ -736,10 +787,8 @@ class RpmLockfilePrototypeGenerator:
 
             try:
                 mode = "image" if resolver_pullspec else "bare"
-                self.logger.info(
-                    f"{distgit_key}: stage {stage_num}: resolving {len(remaining_packages)} packages in {mode} mode"
-                )
-                self.logger.debug(f"{distgit_key}: stage {stage_num}: full package list: {remaining_packages}")
+                total = len(remaining_packages) + sum(len(v) for v in arch_pkgs.values()) + len(remaining_reinstall)
+                self.logger.info(f"{distgit_key}: stage {stage_num}: resolving {total} packages in {mode} mode")
                 return await self._resolver.resolve(in_yaml, image_pullspec=resolver_pullspec)
             except RuntimeError as e:
                 missing = RpmResolver.parse_missing_packages(str(e))
@@ -748,10 +797,10 @@ class RpmLockfilePrototypeGenerator:
                 if strippable_packages is not None:
                     required_missing = missing - strippable_packages
                     if required_missing:
-                        raise RuntimeError(
-                            f"{distgit_key}: stage {stage_num}: required packages not available "
-                            f"in configured repos: {sorted(required_missing)}"
-                        ) from e
+                        self.logger.warning(
+                            f"{distgit_key}: stage {stage_num}: required Dockerfile packages not available "
+                            f"in configured repos, stripping: {sorted(required_missing)}"
+                        )
                 prev_count = (
                     len(remaining_packages)
                     + sum(len(v) for v in arch_pkgs.values())
@@ -773,10 +822,12 @@ class RpmLockfilePrototypeGenerator:
                 )
                 if new_count == prev_count:
                     raise
+                if stripped_tracker is not None:
+                    stripped_tracker.update(missing)
                 self.logger.warning(
                     f"{distgit_key}: stage {stage_num}: retrying without unavailable packages: {sorted(missing)}"
                 )
-                if not remaining_packages and not arch_pkgs:
+                if not remaining_packages and not arch_pkgs and not remaining_reinstall:
                     self.logger.warning(
                         f"{distgit_key}: stage {stage_num}: no packages remaining after filtering, skipping"
                     )
@@ -917,6 +968,7 @@ class RpmLockfilePrototypeGenerator:
         module_enable: list[str] | None = None,
         reinstall_packages: list[str] | None = None,
         strippable_packages: set[str] | None = None,
+        stripped_tracker: set[str] | None = None,
     ) -> LockfileData | None:
         """
         Resolve a stage with cross-arch version reconciliation.
@@ -955,6 +1007,7 @@ class RpmLockfilePrototypeGenerator:
             module_enable=module_enable,
             reinstall_packages=reinstall_packages,
             strippable_packages=strippable_packages,
+            stripped_tracker=stripped_tracker,
         )
         if not first_pass:
             return None
