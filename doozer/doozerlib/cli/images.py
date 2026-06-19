@@ -1530,18 +1530,23 @@ async def release_to_base_repo(runtime, nvr):
     handler = BaseImageHandler(runtime, dry_run=False)
     result = await handler.snapshot_release(snapshot_input)
 
-    if result:
-        logger.info(
-            "Done: release=%s snapshot=%s release_pipeline=%s",
-            result.release_name,
-            result.snapshot_name,
-            result.release_pipeline,
-        )
-        followup = copy.deepcopy(source_row)
-        followup.release_pipeline = result.release_pipeline
-        followup.released_pullspec = result.released_pullspec
-        followup.record_id = KonfluxBuildRecord.generate_record_id()
-        await runtime.konflux_db.add_builds([followup])
-        return
+    if not result:
+        raise DoozerFatalError("snapshot_release returned no result")
 
-    raise DoozerFatalError("snapshot_release returned no result")
+    if not result.released_pullspec:
+        msg = f"Base image release did not complete successfully for {image_nvr}"
+        if result.release_pipeline:
+            msg += f" (release_pipeline={result.release_pipeline})"
+        raise DoozerFatalError(msg)
+
+    logger.info(
+        "Done: release=%s snapshot=%s release_pipeline=%s",
+        result.release_name,
+        result.snapshot_name,
+        result.release_pipeline,
+    )
+    followup = copy.deepcopy(source_row)
+    followup.release_pipeline = result.release_pipeline
+    followup.released_pullspec = result.released_pullspec
+    followup.record_id = KonfluxBuildRecord.generate_record_id()
+    await runtime.konflux_db.add_builds([followup])
