@@ -256,6 +256,46 @@ class TestReleaseToBaseRepo(unittest.TestCase):
 
         kb.add_builds.assert_awaited_once()
 
+    def test_release_to_base_repo_raises_when_released_pullspec_empty(self):
+        """Release failure (empty pullspec) must fail CLI — matches konflux_image_builder semantics."""
+        runtime = self._runtime_with_base_image()
+        nvr = "ose-base-container-v4.22-1.el9"
+        source = KonfluxBuildRecord(
+            name="openshift-enterprise-base-rhel9",
+            group=runtime.group,
+            nvr=nvr,
+            outcome=KonfluxBuildOutcome.SUCCESS,
+            engine=Engine.KONFLUX,
+            image_pullspec="quay.io/base@sha256:abc",
+            rebase_repo_url="https://git.example/r.git",
+            rebase_commitish="deadbeef",
+        )
+
+        kb = MagicMock()
+        kb.get_build_record_by_nvr = AsyncMock(return_value=source)
+        kb.bind = MagicMock()
+        kb.add_builds = AsyncMock()
+        runtime.konflux_db = kb
+        runtime.initialize = MagicMock()
+
+        failed_out = BaseImageReleaseResult(
+            release_name="r-failed",
+            snapshot_name="s1",
+            nvr=nvr,
+            release_pipeline="https://konflux.example/releases/r-failed",
+            released_pullspec="",
+        )
+
+        with patch("doozerlib.cli.images.BaseImageHandler") as bh_cls:
+            bh_cls.return_value.snapshot_release = AsyncMock(return_value=failed_out)
+
+            with self.assertRaises(DoozerFatalError) as ctx:
+                _invoke_release_to_base_repo_inner(runtime, nvr)
+
+        self.assertIn("did not complete successfully", str(ctx.exception))
+        self.assertIn("https://konflux.example/releases/r-failed", str(ctx.exception))
+        kb.add_builds.assert_not_awaited()
+
 
 if __name__ == '__main__':
     unittest.main()
