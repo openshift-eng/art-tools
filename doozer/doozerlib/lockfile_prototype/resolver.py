@@ -24,6 +24,7 @@ from doozerlib.lockfile_prototype.constants import (
     RPMDB_CACHE_ERROR_PATTERNS,
     RPMDB_CACHE_PATH,
     SYSTEM_PYTHON,
+    VALID_PKG_NAME,
 )
 from doozerlib.lockfile_prototype.models import LockfileData, RpmsInConfig
 from doozerlib.lockfile_prototype.utils import build_env
@@ -80,6 +81,7 @@ class RpmResolver:
 
             env = build_env()
             env["RPM_LOCKFILE_PROTOTYPE_DNF_CACHE"] = self._cache_path
+            env["TMPDIR"] = self._working_dir
             rc, _, stderr = await cmd_gather_async(cmd, check=False, env=env)
 
             if rc != 0:
@@ -164,4 +166,4 @@ class RpmResolver:
             m = re.search(r"No match for argument:\s*(\S+)", line.strip())
             if m:
                 missing.add(m.group(1).strip().rstrip(":"))
-        return missing
+        return {p for p in missing if VALID_PKG_NAME.match(p)}
