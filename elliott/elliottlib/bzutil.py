@@ -55,6 +55,12 @@ def get_jira_bz_bug_ids(bug_ids):
 class Bug:
     def __init__(self, bug_obj):
         self.bug = bug_obj
+        self.invalid_bug = {
+            "comment": {
+                "bug_properties": [],
+                "missing_components": []
+            }
+        }
 
     def __str__(self):
         return str(self.id)
@@ -264,7 +270,6 @@ class BugzillaBug(Bug):
         return None
 
     def is_tracker_bug(self):
-        self.invalid_bug.comment.missing_components = []
         has_keywords = set(constants.TRACKER_BUG_KEYWORDS).issubset(set(self.keywords))
         if not has_keywords:
             self.invalid_bug.missing_components.append(f"- This bugs lacks the required keywords: ${set(constants.TRACKER_BUG_KEYWORDS)}")
@@ -279,7 +284,6 @@ class BugzillaBug(Bug):
         if 'WeaknessTracking' in self.keywords:
             # See e.g. https://bugzilla.redhat.com/show_bug.cgi?id=2092289. This bug is not a CVE tracker
             return False
-        self.invalid_bug.comment.bug_properties = []
         has_cve_in_summary = bool(re.search(r'CVE-\d+-\d+', self.summary))
         if has_cve_in_summary:
             self.invalid_bug.comment.bug_properties.append("- Has CVE identifier in summary")
@@ -336,7 +340,6 @@ class JIRABug(Bug):
             return None
 
     def is_tracker_bug(self):
-        self.invalid_bug.comment.missing_components = []
         if self.is_type_vulnerability():
             return True
         has_keywords = set(constants.TRACKER_BUG_KEYWORDS).issubset(set(self.keywords))
@@ -362,7 +365,6 @@ class JIRABug(Bug):
             # Context in this thread: https://redhat-internal.slack.com/archives/C04SCM5AYE4/p1685524912511489?thread_ts=1685489306.568039&cid=C04SCM5AYE4
             # This is likely not the end state, but at least for the time being.
             return False
-        self.invalid_bug.comment.bug_properties = []
         has_cve_in_summary = bool(re.search(r'CVE-\d+-\d+', self.summary))
         if has_cve_in_summary:
             self.invalid_bug.comment.bug_properties.append("- Has CVE identifier in summary")
