@@ -8,6 +8,14 @@ from pyartcd import jenkins
 
 
 class TestJenkinsStartBuild(unittest.TestCase):
+    def setUp(self):
+        jenkins.current_build_url = None
+        jenkins.current_job_name = None
+
+    def tearDown(self):
+        jenkins.current_build_url = None
+        jenkins.current_job_name = None
+
     @mock.patch("pyartcd.jenkins.init_jenkins")
     @mock.patch("pyartcd.jenkins.jenkins_client")
     def test_start_build_dont_block(self, mock_client, mock_init_jenkins):
