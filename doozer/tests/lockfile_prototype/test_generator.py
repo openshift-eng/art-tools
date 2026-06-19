@@ -290,12 +290,13 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
         self.assertEqual(captured_pullspecs[0], "quay.io/test/builder@sha256:abc123")
         self.assertIsNone(captured_pullspecs[1])
 
-    def test_builder_stage_skips_reinstall_when_final_stage_has_no_installs(self):
+    def test_builder_stage_reinstalls_dockerfile_packages_and_adds_conflict_detection(self):
         """
         Multi-stage Dockerfile where only the builder stage installs
-        packages (e.g. thanos). reinstallPackages should NOT be added
-        to the builder stage — only the actual final Dockerfile stage
-        should get reinstallPackages.
+        packages (e.g. prometheus-promu). reinstallPackages should contain
+        the Dockerfile packages so they appear in the lockfile even when
+        already installed on some architectures. upgradePackages must NOT
+        include them (they may not be installed in the base image).
         """
         meta = self._make_mock_image_meta()
         meta.config.konflux.cachi2.lockfile.get.return_value = None
@@ -326,10 +327,65 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
             asyncio.run(generator.generate_lockfile(meta, dest_dir))
 
         self.assertEqual(len(captured_configs), 1)
-        # Builder stage should NOT have reinstallPackages
-        self.assertEqual(captured_configs[0].reinstallPackages, [])
-        # get_installed_packages should NOT be called for non-final stage
-        generator._container.get_installed_packages.assert_not_called()
+        # reinstallPackages should contain the Dockerfile packages
+        self.assertEqual(captured_configs[0].reinstallPackages, ["prometheus-promu"])
+        # Dockerfile packages must NOT be in upgradePackages (they may
+        # not be installed in the base image — upgrade would fail)
+        self.assertNotIn("prometheus-promu", captured_configs[0].upgradePackages or [])
+        # Base image packages should be queried for conflict detection
+        generator._container.get_installed_packages.assert_called_once()
+        # Base image packages should be in the install list
+        pkg_names = [p if isinstance(p, str) else p.name for p in captured_configs[0].packages]
+        for pkg in ["bash", "gcc", "golang", "glibc"]:
+            self.assertIn(pkg, pkg_names)
+
+    def test_builder_stage_conflict_detection_includes_base_deps(self):
+        """
+        Multi-stage Dockerfile like openshift-enterprise-pod where the
+        builder stage installs gcc and the builder's base image has
+        gcc-c++ pre-installed. The lockfile should include gcc-c++ in
+        the install list for conflict detection, and reinstallPackages
+        should contain only the Dockerfile packages.
+        """
+        meta = self._make_mock_image_meta()
+        meta.config.konflux.cachi2.lockfile.get.return_value = None
+        generator = self._make_generator()
+        generator.downstream_parents = [
+            "quay.io/test/golang-builder@sha256:abc123",
+            "quay.io/test/base@sha256:def456",
+        ]
+        generator._container.get_installed_packages = AsyncMock(
+            return_value=["gcc", "gcc-c++", "glibc", "glibc-static", "libgcc"]
+        )
+
+        captured_configs: list[RpmsInConfig] = []
+
+        async def capture_resolve(config, image_pullspec=None):
+            captured_configs.append(config)
+            return FAKE_LOCKFILE_DATA.model_copy(deep=True)
+
+        generator._resolver.resolve = AsyncMock(side_effect=capture_resolve)
+
+        with TemporaryDirectory() as tmpdir:
+            dest_dir = Path(tmpdir)
+            (dest_dir / "Dockerfile").write_text(
+                "FROM golang-builder AS builder\n"
+                "RUN dnf install -y gcc glibc-static\n"
+                "\n"
+                "FROM base-rhel9\n"
+                "COPY --from=builder /bin/pause /usr/bin/pod\n"
+            )
+            asyncio.run(generator.generate_lockfile(meta, dest_dir))
+
+        self.assertEqual(len(captured_configs), 1)
+        # reinstallPackages should contain only the Dockerfile packages
+        self.assertEqual(sorted(captured_configs[0].reinstallPackages), ["gcc", "glibc-static"])
+        pkg_names = [p if isinstance(p, str) else p.name for p in captured_configs[0].packages]
+        # gcc-c++ from the base image should be in the install list
+        self.assertIn("gcc-c++", pkg_names)
+        # Already-listed packages should not be duplicated
+        self.assertEqual(pkg_names.count("gcc"), 1)
+        self.assertEqual(pkg_names.count("glibc-static"), 1)
 
     def test_update_only_queries_base_image(self):
         """
@@ -602,11 +658,11 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
         # Dockerfile install packages are NOT in reinstall or upgrade
         self.assertNotIn("curl", reinstall)
 
-    def test_reinstall_retry_removes_unavailable_packages(self):
+    def test_reinstall_retry_skips_retries_when_all_optional(self):
         """
-        When a reinstall/upgrade package fails resolution (e.g. package
-        not found in repos at all), the retry loop must remove it from
-        reinstallPackages and upgradePackages before retrying.
+        When a reinstall/upgrade package fails and all remaining reinstall
+        packages are optional (strippable), the retry loop should exit
+        early and fall back to resolving without reinstall packages.
         """
         meta = self._make_mock_image_meta()
         meta.config.konflux.cachi2.lockfile.get.return_value = None
@@ -630,15 +686,14 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
             (dest_dir / "Dockerfile").write_text("FROM base\nRUN dnf install -y curl\n")
             asyncio.run(generator.generate_lockfile(meta, dest_dir))
 
-        # Should have retried successfully
+        # First attempt fails, then early exit + fallback = 2 calls total
         self.assertEqual(call_count, 2)
-        # Second call should not have "nonexistent-pkg" in reinstall or upgrade
-        second_config = generator._resolver.resolve.call_args_list[1][0][0]
-        self.assertNotIn("nonexistent-pkg", second_config.reinstallPackages)
-        self.assertNotIn("nonexistent-pkg", second_config.upgradePackages)
-        # "glibc" should still be present
-        self.assertIn("glibc", second_config.reinstallPackages)
-        self.assertIn("glibc", second_config.upgradePackages)
+        # Fallback should drop all optional reinstall packages
+        fallback_config = generator._resolver.resolve.call_args_list[1][0][0]
+        self.assertEqual(fallback_config.reinstallPackages, [])
+        # Dockerfile package must still be in the install list
+        pkg_names = [p if isinstance(p, str) else p.name for p in fallback_config.packages]
+        self.assertIn("curl", pkg_names)
 
     def test_fallback_packages_used_when_image_unreachable(self):
         """
@@ -857,6 +912,248 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
         self.assertEqual(call_count, 2)
         self.assertNotIn("policycoreutils-python-utils", captured_configs[1].packages)
         self.assertNotIn("policycoreutils-python-utils", captured_configs[1].upgradePackages)
+
+    def test_retry_raises_on_required_dockerfile_package_missing(self):
+        """
+        When a required Dockerfile package (not in strippable_packages) is
+        reported missing, _resolve_stage_with_retry must raise immediately
+        instead of silently stripping it.
+        """
+        generator = self._make_generator()
+        generator.downstream_parents = ["quay.io/test/base@sha256:abc123"]
+
+        async def mock_resolve(config, image_pullspec=None):
+            raise RuntimeError("No match for argument: glibc-static")
+
+        generator._resolver.resolve = AsyncMock(side_effect=mock_resolve)
+
+        repos = [
+            RepoEntry(
+                repoid="rhel-9-baseos-rpms",
+                baseurl="https://example.com/baseos/$basearch/os/",
+            )
+        ]
+
+        with self.assertRaises(RuntimeError) as ctx:
+            asyncio.run(
+                generator._resolve_stage_with_retry(
+                    repo_list=repos,
+                    arches=["x86_64"],
+                    packages=["gcc", "glibc-static", "bash"],
+                    arch_pkgs={},
+                    update_targets=[],
+                    image_pullspec="quay.io/test/base@sha256:abc123",
+                    distgit_key="openshift-enterprise-pod",
+                    stage_num=0,
+                    strippable_packages={"bash"},
+                )
+            )
+        self.assertIn("required packages not available", str(ctx.exception))
+        self.assertIn("glibc-static", str(ctx.exception))
+        # Should fail on first attempt, no retries
+        self.assertEqual(generator._resolver.resolve.call_count, 1)
+
+    def test_retry_strips_only_conflict_detection_packages(self):
+        """
+        When strippable_packages is set, only those packages are removed
+        during retries. Original Dockerfile packages are preserved.
+        """
+        generator = self._make_generator()
+        generator.downstream_parents = ["quay.io/test/base@sha256:abc123"]
+
+        call_count = 0
+
+        async def mock_resolve(config, image_pullspec=None):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise RuntimeError("No match for argument: libfoo-dev")
+            return FAKE_LOCKFILE_DATA.model_copy(deep=True)
+
+        generator._resolver.resolve = AsyncMock(side_effect=mock_resolve)
+
+        repos = [
+            RepoEntry(
+                repoid="rhel-9-baseos-rpms",
+                baseurl="https://example.com/baseos/$basearch/os/",
+            )
+        ]
+
+        result = asyncio.run(
+            generator._resolve_stage_with_retry(
+                repo_list=repos,
+                arches=["x86_64"],
+                packages=["gcc", "glibc-static", "libfoo-dev"],
+                arch_pkgs={},
+                update_targets=[],
+                image_pullspec="quay.io/test/base@sha256:abc123",
+                distgit_key="test-image",
+                stage_num=0,
+                strippable_packages={"libfoo-dev", "libbar"},
+            )
+        )
+
+        self.assertIsNotNone(result)
+        self.assertEqual(call_count, 2)
+        second_config = generator._resolver.resolve.call_args_list[1][0][0]
+        # Strippable package removed
+        self.assertNotIn("libfoo-dev", second_config.packages)
+        # Required packages preserved
+        self.assertIn("gcc", second_config.packages)
+        self.assertIn("glibc-static", second_config.packages)
+
+    def test_fallback_keeps_required_packages_in_reinstall(self):
+        """
+        When retry exhaustion fallback fires, required Dockerfile packages
+        that overlap with reinstallPackages must be preserved in reinstall.
+        Otherwise packages pre-installed in the base image disappear from
+        the lockfile (dnf says 'already installed', skips them).
+        """
+        generator = self._make_generator()
+        generator.downstream_parents = ["quay.io/test/base@sha256:abc123"]
+
+        failing_pkgs = [f"base-pkg-{i}" for i in range(5)]
+        call_count = 0
+
+        async def mock_resolve(config, image_pullspec=None):
+            nonlocal call_count
+            call_count += 1
+            if call_count <= 5:
+                raise RuntimeError(f"No match for argument: {failing_pkgs[call_count - 1]}")
+            return FAKE_LOCKFILE_DATA.model_copy(deep=True)
+
+        generator._resolver.resolve = AsyncMock(side_effect=mock_resolve)
+
+        repos = [
+            RepoEntry(
+                repoid="rhel-9-baseos-rpms",
+                baseurl="https://example.com/baseos/$basearch/os/",
+            )
+        ]
+
+        # Dockerfile packages: git, gzip, util-linux
+        # Base image packages (reinstall + strippable): git, gzip, + 5 failing base pkgs
+        # "git" and "gzip" are in both — they must stay in reinstall after fallback
+        all_packages = ["git", "gzip", "util-linux"] + failing_pkgs
+        reinstall = ["git", "gzip"] + failing_pkgs
+        strippable = set(failing_pkgs)
+
+        result = asyncio.run(
+            generator._resolve_stage_with_retry(
+                repo_list=repos,
+                arches=["x86_64", "aarch64"],
+                packages=all_packages,
+                arch_pkgs={},
+                update_targets=[],
+                image_pullspec="quay.io/test/base@sha256:abc123",
+                distgit_key="openshift-enterprise-tests",
+                stage_num=1,
+                reinstall_packages=reinstall,
+                strippable_packages=strippable,
+            )
+        )
+
+        self.assertIsNotNone(result)
+        # 5 retries (one failing pkg each) + 1 fallback = 6 calls
+        self.assertEqual(call_count, 6)
+        final_config = generator._resolver.resolve.call_args_list[5][0][0]
+        # Required Dockerfile packages must remain in reinstallPackages
+        self.assertIn("git", final_config.reinstallPackages)
+        self.assertIn("gzip", final_config.reinstallPackages)
+        # Strippable packages must be gone
+        for pkg in failing_pkgs:
+            self.assertNotIn(pkg, final_config.reinstallPackages)
+
+    def test_upgrade_targets_not_strippable_in_final_stage(self):
+        """
+        Dockerfile update targets (e.g. 'yum update -y python3-six') that
+        are also base image packages must not be strippable. Otherwise the
+        retry fallback drops them from reinstall and they disappear from
+        the lockfile on arches where the update has no newer version.
+        """
+        generator = self._make_generator()
+        generator.downstream_parents = ["quay.io/test/base@sha256:abc123"]
+
+        failing_pkgs = [f"base-pkg-{i}" for i in range(5)]
+        call_count = 0
+
+        async def mock_resolve(config, image_pullspec=None):
+            nonlocal call_count
+            call_count += 1
+            if call_count <= 5:
+                raise RuntimeError(f"No match for argument: {failing_pkgs[call_count - 1]}")
+            return FAKE_LOCKFILE_DATA.model_copy(deep=True)
+
+        generator._resolver.resolve = AsyncMock(side_effect=mock_resolve)
+
+        repos = [
+            RepoEntry(
+                repoid="rhel-9-baseos-rpms",
+                baseurl="https://example.com/baseos/$basearch/os/",
+            )
+        ]
+
+        # python3-six is a Dockerfile update target AND a base image package.
+        # It must NOT be strippable — it must survive the fallback in reinstall.
+        result = asyncio.run(
+            generator._resolve_stage_with_retry(
+                repo_list=repos,
+                arches=["x86_64", "aarch64"],
+                packages=["git", "python3-six"] + failing_pkgs,
+                arch_pkgs={},
+                update_targets=["python3-six"],
+                image_pullspec="quay.io/test/base@sha256:abc123",
+                distgit_key="openshift-enterprise-tests",
+                stage_num=1,
+                reinstall_packages=["git", "python3-six"] + failing_pkgs,
+                strippable_packages=set(failing_pkgs),
+            )
+        )
+
+        self.assertIsNotNone(result)
+        self.assertEqual(call_count, 6)
+        final_config = generator._resolver.resolve.call_args_list[5][0][0]
+        # python3-six must stay in reinstallPackages (not strippable)
+        self.assertIn("python3-six", final_config.reinstallPackages)
+        self.assertIn("git", final_config.reinstallPackages)
+        for pkg in failing_pkgs:
+            self.assertNotIn(pkg, final_config.reinstallPackages)
+
+    def test_builder_stage_strips_unavailable_packages_silently(self):
+        """
+        End-to-end: builder stage where glibc-static (Dockerfile package)
+        is not in repos. Builder stages use strippable=None (all packages
+        strippable) so unavailable packages are silently stripped rather
+        than raising.
+        """
+        meta = self._make_mock_image_meta()
+        meta.config.konflux.cachi2.lockfile.get.return_value = None
+        generator = self._make_generator()
+        generator.downstream_parents = [
+            "quay.io/test/golang-builder@sha256:abc123",
+            "quay.io/test/base@sha256:def456",
+        ]
+        generator._container.get_installed_packages = AsyncMock(return_value=["gcc", "gcc-c++", "glibc", "libgcc"])
+
+        async def mock_resolve(config, image_pullspec=None):
+            pkg_names = [p if isinstance(p, str) else p.name for p in config.packages]
+            if "glibc-static" in pkg_names:
+                raise RuntimeError("No match for argument: glibc-static")
+            return FAKE_LOCKFILE_DATA.model_copy(deep=True)
+
+        generator._resolver.resolve = AsyncMock(side_effect=mock_resolve)
+
+        with TemporaryDirectory() as tmpdir:
+            dest_dir = Path(tmpdir)
+            (dest_dir / "Dockerfile").write_text(
+                "FROM golang-builder AS builder\n"
+                "RUN dnf install -y gcc glibc-static\n"
+                "\n"
+                "FROM base-rhel9\n"
+                "COPY --from=builder /bin/pause /usr/bin/pod\n"
+            )
+            asyncio.run(generator.generate_lockfile(meta, dest_dir))
+            self.assertTrue((dest_dir / "rpms.lock.yaml").exists())
 
     def test_build_repo_list_keeps_literal_url_for_single_arch_repo(self):
         rt = MagicMock()
@@ -1219,6 +1516,45 @@ class TestCrossArchReconciliation(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(result, mismatched)
         self.assertEqual(gen._resolve_stage_with_retry.await_count, 2)
+
+    async def test_reconciliation_removes_mismatched_from_update_targets(self):
+        """
+        When a mismatched package is an update target (e.g. python3-six
+        from 'yum update -y python3-six'), the re-resolution must remove
+        it from update_targets so the upgrade doesn't override the
+        version pin.
+        """
+        gen = self._make_generator()
+        mismatched = self._make_lockfile(
+            {
+                "x86_64": [("python3-six", "1.12.0-2.el8ost", "https://x86/six.rpm")],
+                "aarch64": [("python3-six", "1.11.0-8.el8", "https://arm/six.rpm")],
+            }
+        )
+        reconciled = self._make_lockfile(
+            {
+                "x86_64": [("python3-six", "1.11.0-8.el8", "https://x86/six-old.rpm")],
+                "aarch64": [("python3-six", "1.11.0-8.el8", "https://arm/six.rpm")],
+            }
+        )
+        gen._resolve_stage_with_retry = AsyncMock(side_effect=[mismatched, reconciled])
+
+        result = await gen._resolve_with_reconciliation(
+            [],
+            ["x86_64", "aarch64"],
+            ["git", "python3-six"],
+            {},
+            ["python3-six"],
+            "quay.io/test/base@sha256:abc123",
+            "openshift-enterprise-tests",
+            1,
+        )
+        self.assertEqual(result, reconciled)
+        second_call = gen._resolve_stage_with_retry.call_args_list[1]
+        second_update_targets = second_call[0][4]
+        self.assertNotIn("python3-six", second_update_targets)
+        second_packages = second_call[0][2]
+        self.assertTrue(any("python3-six-1.11.0-8.el8" in p for p in second_packages))
 
 
 class TestIsBuilddepRequirement(unittest.TestCase):

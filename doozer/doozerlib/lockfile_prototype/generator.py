@@ -436,6 +436,7 @@ class RpmLockfilePrototypeGenerator:
                     )
 
             reinstall_pkgs: list[str] | None = None
+            strippable: set[str] | None = None
             if stage_num == final_stage_num and not is_update_only and not has_bare_update:
                 if image_pullspec:
                     # --image mode: pass base image packages as reinstallPackages
@@ -451,6 +452,7 @@ class RpmLockfilePrototypeGenerator:
                     base_pkgs = await self._get_base_image_packages(stage_num, image_pullspec, distgit_key)
                     if base_pkgs:
                         reinstall_pkgs = list(base_pkgs)
+                        strippable = set(base_pkgs) - set(packages) - set(upgrade_targets)
                         self.logger.info(
                             f"{distgit_key}: stage {stage_num}: {len(reinstall_pkgs)} base image "
                             "packages will be reinstalled into lockfile"
@@ -463,7 +465,24 @@ class RpmLockfilePrototypeGenerator:
                     if base_pkgs:
                         extra = [p for p in base_pkgs if p not in packages]
                         if extra:
+                            strippable = set(extra)
                             packages = packages + extra
+            elif stage_num != final_stage_num and not is_update_only:
+                # Non-final stage (builder): reinstall the Dockerfile packages
+                # so they appear in the lockfile even when already installed
+                # on some architectures, and add base image packages to the
+                # install list for conflict detection.
+                if image_pullspec:
+                    reinstall_pkgs = list(packages)
+                base_pkgs = await self._get_base_image_packages(stage_num, image_pullspec, distgit_key)
+                if base_pkgs:
+                    extra = [p for p in base_pkgs if p not in packages]
+                    if extra:
+                        packages = packages + extra
+                        self.logger.info(
+                            f"{distgit_key}: stage {stage_num}: {len(extra)} base image "
+                            "packages added to install list for conflict detection"
+                        )
 
             enable_only = [s.split("/")[0] for s in stage_info.module_specs] if stage_info.module_specs else None
 
@@ -478,6 +497,7 @@ class RpmLockfilePrototypeGenerator:
                 stage_num,
                 module_enable=enable_only,
                 reinstall_packages=reinstall_pkgs,
+                strippable_packages=strippable,
             )
             if result:
                 stage_lockfiles.append(result)
@@ -663,9 +683,17 @@ class RpmLockfilePrototypeGenerator:
         stage_num: int,
         module_enable: list[str] | None = None,
         reinstall_packages: list[str] | None = None,
+        strippable_packages: set[str] | None = None,
     ) -> LockfileData | None:
         """
         Resolve a single stage, retrying after removing unavailable packages.
+
+        Arg(s):
+            strippable_packages (set[str] | None): Packages that may be
+                silently removed during retries (e.g. base image packages
+                added for conflict detection). If a missing package is NOT
+                in this set, it is a required Dockerfile package and the
+                error is raised immediately.
 
         Return Value(s):
             LockfileData | None: Lockfile data, or None if all packages filtered out.
@@ -679,15 +707,23 @@ class RpmLockfilePrototypeGenerator:
         # use the no-auth registry proxy instead.
         resolver_pullspec = ContainerImageHelper._proxy_pullspec(image_pullspec) if image_pullspec else None
 
-        # When reinstall_packages is set, also pass them as upgrade targets.
-        # base.reinstall() raises PackagesNotAvailableError when the installed
-        # version isn't in the configured repos — but rpm-lockfile-prototype
-        # swallows that error when the package is also in upgradePackages
-        # (the upgrade provides a replacement version).
+        # When reinstall_packages comes from the base image (final stage),
+        # also pass them as upgrade targets. base.reinstall() raises
+        # PackagesNotAvailableError when the installed version isn't in
+        # the configured repos — but rpm-lockfile-prototype swallows that
+        # error when the package is also in upgradePackages (the upgrade
+        # provides a replacement version).
+        # For builder stages (strippable_packages is None), reinstall
+        # packages are Dockerfile packages that may not be installed in
+        # the base image — adding them to upgradePackages would cause
+        # PackagesNotInstalledError.
         remaining_reinstall = list(reinstall_packages) if reinstall_packages else []
+        promote_reinstall_to_upgrade = strippable_packages is not None
+        retries_exhausted = False
 
-        for attempt in range(MAX_RESOLUTION_RETRIES):
-            effective_upgrade = list(set(remaining_update_targets + remaining_reinstall)) if image_pullspec else None
+        for _attempt in range(MAX_RESOLUTION_RETRIES):
+            upgrade_extras = remaining_reinstall if promote_reinstall_to_upgrade else []
+            effective_upgrade = list(set(remaining_update_targets + upgrade_extras)) if image_pullspec else None
             in_yaml = build_rpms_in_yaml(
                 repo_list,
                 arches,
@@ -699,11 +735,23 @@ class RpmLockfilePrototypeGenerator:
             )
 
             try:
+                mode = "image" if resolver_pullspec else "bare"
+                self.logger.info(
+                    f"{distgit_key}: stage {stage_num}: resolving {len(remaining_packages)} packages in {mode} mode"
+                )
+                self.logger.debug(f"{distgit_key}: stage {stage_num}: full package list: {remaining_packages}")
                 return await self._resolver.resolve(in_yaml, image_pullspec=resolver_pullspec)
             except RuntimeError as e:
                 missing = RpmResolver.parse_missing_packages(str(e))
                 if not missing:
                     raise
+                if strippable_packages is not None:
+                    required_missing = missing - strippable_packages
+                    if required_missing:
+                        raise RuntimeError(
+                            f"{distgit_key}: stage {stage_num}: required packages not available "
+                            f"in configured repos: {sorted(required_missing)}"
+                        ) from e
                 prev_count = (
                     len(remaining_packages)
                     + sum(len(v) for v in arch_pkgs.values())
@@ -733,7 +781,44 @@ class RpmLockfilePrototypeGenerator:
                         f"{distgit_key}: stage {stage_num}: no packages remaining after filtering, skipping"
                     )
                     return None
-        raise RuntimeError(f"{distgit_key}: stage {stage_num}: exceeded {MAX_RESOLUTION_RETRIES} resolution retries")
+                if strippable_packages is not None:
+                    required_reinstall = [p for p in remaining_reinstall if p not in strippable_packages]
+                    if not required_reinstall and remaining_reinstall:
+                        self.logger.info(
+                            f"{distgit_key}: stage {stage_num}: all {len(remaining_reinstall)} "
+                            "remaining reinstall packages are optional, skipping retries"
+                        )
+                        break
+        else:
+            retries_exhausted = True
+        if strippable_packages is not None:
+            required_pkgs = set(remaining_packages) - strippable_packages
+            dropped = [p for p in remaining_reinstall if p not in required_pkgs]
+            remaining_reinstall = [p for p in remaining_reinstall if p in required_pkgs]
+            if retries_exhausted:
+                self.logger.warning(
+                    f"{distgit_key}: stage {stage_num}: exceeded {MAX_RESOLUTION_RETRIES} retries, "
+                    f"dropped {len(dropped)} optional reinstall packages, "
+                    f"keeping {len(remaining_reinstall)} required"
+                )
+        else:
+            self.logger.warning(
+                f"{distgit_key}: stage {stage_num}: exceeded {MAX_RESOLUTION_RETRIES} retries, "
+                "continuing without reinstall packages"
+            )
+            remaining_reinstall.clear()
+        fallback_upgrade_extras = remaining_reinstall if promote_reinstall_to_upgrade else []
+        effective_upgrade = list(set(remaining_update_targets + fallback_upgrade_extras)) if image_pullspec else None
+        in_yaml = build_rpms_in_yaml(
+            repo_list,
+            arches,
+            remaining_packages,
+            arch_specific_packages=arch_pkgs,
+            reinstall_packages=remaining_reinstall if image_pullspec else None,
+            upgrade_packages=effective_upgrade,
+            module_enable=module_enable,
+        )
+        return await self._resolver.resolve(in_yaml, image_pullspec=resolver_pullspec)
 
     def _assemble_lockfile(self, stage_lockfiles: list[LockfileData], image_meta: ImageMetadata) -> LockfileData:
         """
@@ -831,6 +916,7 @@ class RpmLockfilePrototypeGenerator:
         stage_num: int,
         module_enable: list[str] | None = None,
         reinstall_packages: list[str] | None = None,
+        strippable_packages: set[str] | None = None,
     ) -> LockfileData | None:
         """
         Resolve a stage with cross-arch version reconciliation.
@@ -851,6 +937,8 @@ class RpmLockfilePrototypeGenerator:
             module_enable (list[str] | None): Module streams to enable.
             reinstall_packages (list[str] | None): Base image packages to
                 reinstall from repos into the lockfile.
+            strippable_packages (set[str] | None): Packages that may be
+                silently removed during retries (conflict detection packages).
         Return Value(s):
             LockfileData | None: Resolved lockfile with consistent
                 versions, or None if no packages remain.
@@ -866,6 +954,7 @@ class RpmLockfilePrototypeGenerator:
             stage_num,
             module_enable=module_enable,
             reinstall_packages=reinstall_packages,
+            strippable_packages=strippable_packages,
         )
         if not first_pass:
             return None
@@ -885,6 +974,11 @@ class RpmLockfilePrototypeGenerator:
         )
 
         pinned_packages = list(packages) + version_pins
+        pinned_names = set(mismatches.keys())
+        pinned_update_targets = [t for t in update_targets if t not in pinned_names]
+        pinned_reinstall = (
+            [p for p in reinstall_packages if p not in pinned_names] if reinstall_packages else reinstall_packages
+        )
 
         try:
             second_pass = await self._resolve_stage_with_retry(
@@ -892,12 +986,13 @@ class RpmLockfilePrototypeGenerator:
                 arches,
                 pinned_packages,
                 arch_pkgs,
-                update_targets,
+                pinned_update_targets,
                 image_pullspec,
                 distgit_key,
                 stage_num,
                 module_enable=module_enable,
-                reinstall_packages=reinstall_packages,
+                reinstall_packages=pinned_reinstall,
+                strippable_packages=strippable_packages,
             )
         except RuntimeError:
             self.logger.warning(
