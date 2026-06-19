@@ -164,13 +164,11 @@ class ScanOperatorPipeline:
         """Check one operator for missing bundle/FBC builds."""
         bundle = await self.check_bundle_exists(operator)
 
-        if bundle is None:
-            # No bundle - trigger build
+        if bundle is None or bundle.outcome.is_failure():
             self.operators_without_bundles.append(operator)
         elif bundle.outcome == KonfluxBuildOutcome.SUCCESS:
-            # Bundle completed - check FBC
             fbc = await self.check_fbc_exists(operator, bundle)
-            if fbc is None:
+            if fbc is None or fbc.outcome.is_failure():
                 self.operators_without_fbcs.append(operator)
         # If bundle.outcome == PENDING, do nothing (auto-triggers when complete)
 
@@ -191,7 +189,7 @@ class ScanOperatorPipeline:
             self.logger.info(f'  Bundle for {operator.nvr} exists: {bundle.nvr}')
             return bundle
 
-        # Check for pending bundle (avoid duplicate triggers)
+        # Check for the most recent PENDING build
         pending = await self.bundle_db.get_latest_build(
             name=bundle_name,
             group=self.group,
@@ -201,6 +199,16 @@ class ScanOperatorPipeline:
         )
 
         if pending:
+            # Check if a failure record with the same NVR exists
+            async for failed_build in self.bundle_db.search_builds_by_fields(
+                where={'nvr': pending.nvr, 'outcome': [o for o in KonfluxBuildOutcome if o.is_failure()]},
+                limit=1,
+            ):
+                self.logger.info(
+                    f'  Bundle build for {operator.nvr} failed ({failed_build.outcome.value}): {failed_build.nvr}'
+                )
+                return failed_build
+
             self.logger.info(f'  Bundle build for {operator.nvr} in progress: {pending.nvr}')
             return pending
 
@@ -229,7 +237,7 @@ class ScanOperatorPipeline:
             self.logger.info(f'  FBC build for {operator.nvr} exists: {fbc.nvr}')
             return fbc
 
-        # Check for pending FBC containing this specific bundle
+        # Check for the most recent PENDING build
         async for fbc in self.fbc_db.search_builds_by_fields(
             where={
                 'name': fbc_name,
@@ -242,6 +250,16 @@ class ScanOperatorPipeline:
             order_by='start_time',
             sorting='DESC',
         ):
+            # Check if a failure record with the same NVR exists
+            async for failed_build in self.fbc_db.search_builds_by_fields(
+                where={'nvr': fbc.nvr, 'outcome': [o for o in KonfluxBuildOutcome if o.is_failure()]},
+                limit=1,
+            ):
+                self.logger.info(
+                    f'  FBC build for {operator.nvr} failed ({failed_build.outcome.value}): {failed_build.nvr}'
+                )
+                return failed_build
+
             self.logger.info(f'  FBC build for {operator.nvr} in progress: {fbc.nvr}')
             return fbc
 
