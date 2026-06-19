@@ -292,6 +292,37 @@ class TestBaseImageHandler(IsolatedAsyncioTestCase):
     @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
     @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
     @patch("doozerlib.backend.base_image_handler.resolve_konflux_kubeconfig_by_product")
+    async def test_snapshot_release_creation_failure_returns_snapshot_url(
+        self, mock_kubeconfig, mock_namespace, mock_konflux_client_init
+    ):
+        """Test that when release creation fails, snapshot URL is returned for tracking."""
+        mock_namespace.return_value = "ocp-art-tenant"
+        mock_kubeconfig.return_value = "/path/to/kubeconfig"
+
+        # Create a mock konflux client that will be used to build snapshot URL
+        mock_client = AsyncMock()
+        mock_client.resource_url = MagicMock(return_value="https://konflux.example/snapshots/test-snapshot")
+        mock_konflux_client_init.return_value = mock_client
+
+        handler = BaseImageHandler(self.runtime, dry_run=False)
+        self.runtime.image_map = {"test-base": self.metadata}
+
+        with patch.object(handler, "_snapshot_from_component", new=AsyncMock(return_value="test-snapshot")):
+            # Release creation fails and returns None
+            with patch.object(handler, "_create_release_from_snapshot", new=AsyncMock(return_value=None)):
+                result = await handler.snapshot_release(self.default_input)
+
+        # Should return a partial result with snapshot URL as release_pipeline fallback
+        self.assertIsNotNone(result)
+        self.assertIsInstance(result, BaseImageReleaseResult)
+        self.assertEqual(result.release_name, "")  # Empty since release wasn't created
+        self.assertEqual(result.snapshot_name, "test-snapshot")
+        self.assertEqual(result.release_pipeline, "https://konflux.example/snapshots/test-snapshot")
+        self.assertEqual(result.released_pullspec, "")  # Empty on failure
+
+    @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_kubeconfig_by_product")
     async def test_create_release_from_snapshot_rhmtc_uses_product_plan_and_application(
         self, mock_kubeconfig, mock_namespace, mock_konflux_client_init
     ):
