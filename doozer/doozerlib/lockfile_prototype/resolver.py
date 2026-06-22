@@ -150,8 +150,9 @@ class RpmResolver:
         """
         Parse missing package names from rpm-lockfile-prototype error output.
 
-        Handles both the CLI format ("missing packages: X, Y") and the
-        DNF format ("No match for argument: X").
+        Handles the CLI format ("missing packages: X, Y"), DNF install/upgrade
+        errors ("No match for argument: X"), and DNF reinstall errors
+        ("no package matched: X").
 
         Arg(s):
             error_text (str): Error message from rpm-lockfile-prototype.
@@ -164,6 +165,9 @@ class RpmResolver:
             if m:
                 missing.update(pkg.strip() for pkg in m.group(1).split(","))
             m = re.search(r"No match for argument:\s*(\S+)", line.strip())
+            if m:
+                missing.add(m.group(1).strip().rstrip(":"))
+            m = re.search(r"no package matched:\s*(\S+)", line.strip())
             if m:
                 missing.add(m.group(1).strip().rstrip(":"))
         return {p for p in missing if VALID_PKG_NAME.match(p)}
