@@ -210,6 +210,16 @@ class TestParseMissingPackages(unittest.TestCase):
         missing = RpmResolver.parse_missing_packages(error)
         self.assertEqual(missing, {"git"})
 
+    def test_glob_pattern_in_missing_packages(self):
+        """
+        DNF glob patterns like *-server-ose* can appear in missing packages
+        errors. VALID_PKG_NAME must accept wildcards so the retry loop can
+        strip them.
+        """
+        error = "missing packages: *-server-ose*"
+        missing = RpmResolver.parse_missing_packages(error)
+        self.assertEqual(missing, {"*-server-ose*"})
+
     def test_no_match(self):
         error = "Some other error message\n"
         missing = RpmResolver.parse_missing_packages(error)
