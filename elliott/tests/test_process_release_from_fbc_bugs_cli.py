@@ -146,8 +146,8 @@ class TestProcessReleaseFromFbcBugs(unittest.IsolatedAsyncioTestCase):
     @patch(PATCH_GET_KONFLUX_COMPONENT)
     @patch(PATCH_GET_DELIVERY_REPO)
     @patch(PATCH_CREATE_TRACKER)
-    async def test_cve_without_cve_label_skipped(self, mock_create_tracker, mock_get_delivery, mock_get_konflux):
-        """A Vulnerability JIRA without a CVE label should be skipped for CVE association but still listed."""
+    async def test_cve_without_cve_label_raises(self, mock_create_tracker, mock_get_delivery, mock_get_konflux):
+        """A Vulnerability JIRA without a CVE label should raise RuntimeError."""
         bug = self._make_jira_bug(
             "OADP-9999",
             is_vulnerability=True,
@@ -158,22 +158,19 @@ class TestProcessReleaseFromFbcBugs(unittest.IsolatedAsyncioTestCase):
         mock_tracker.get_bug.return_value = bug
         mock_create_tracker.return_value = mock_tracker
 
-        result = await process_bugs(self.mock_runtime, ["OADP-9999"])
+        with self.assertRaises(RuntimeError) as ctx:
+            await process_bugs(self.mock_runtime, ["OADP-9999"])
 
-        self.assertEqual(result.type, "RHBA")
-        self.assertIsNone(result.cves)
-        fixed_ids = [i.id for i in result.issues.fixed]
-        self.assertIn("OADP-9999", fixed_ids)
-        mock_get_delivery.assert_not_called()
-        mock_get_konflux.assert_not_called()
+        self.assertIn("OADP-9999", str(ctx.exception))
+        self.assertIn("no CVE label", str(ctx.exception))
 
     @patch(PATCH_GET_KONFLUX_COMPONENT)
     @patch(PATCH_GET_DELIVERY_REPO)
     @patch(PATCH_CREATE_TRACKER)
-    async def test_cve_without_pscomponent_label_skipped(
+    async def test_cve_without_pscomponent_label_raises(
         self, mock_create_tracker, mock_get_delivery, mock_get_konflux
     ):
-        """A Vulnerability with CVE label but no pscomponent label should skip CVE association."""
+        """A Vulnerability with CVE label but no pscomponent label should raise RuntimeError."""
         bug = self._make_jira_bug(
             "OADP-8888",
             is_vulnerability=True,
@@ -184,18 +181,17 @@ class TestProcessReleaseFromFbcBugs(unittest.IsolatedAsyncioTestCase):
         mock_tracker.get_bug.return_value = bug
         mock_create_tracker.return_value = mock_tracker
 
-        result = await process_bugs(self.mock_runtime, ["OADP-8888"])
+        with self.assertRaises(RuntimeError) as ctx:
+            await process_bugs(self.mock_runtime, ["OADP-8888"])
 
-        self.assertEqual(result.type, "RHBA")
-        self.assertIsNone(result.cves)
-        mock_get_delivery.assert_not_called()
-        mock_get_konflux.assert_not_called()
+        self.assertIn("OADP-8888", str(ctx.exception))
+        self.assertIn("no pscomponent label", str(ctx.exception))
 
     @patch(PATCH_GET_KONFLUX_COMPONENT)
     @patch(PATCH_GET_DELIVERY_REPO)
     @patch(PATCH_CREATE_TRACKER)
-    async def test_unmapped_delivery_repo_skipped(self, mock_create_tracker, mock_get_delivery, mock_get_konflux):
-        """When pscomponent can't be found in delivery_repo_names, CVE association is skipped."""
+    async def test_unmapped_delivery_repo_raises(self, mock_create_tracker, mock_get_delivery, mock_get_konflux):
+        """When pscomponent can't be found in delivery_repo_names, should raise RuntimeError."""
         mock_get_delivery.return_value = None
 
         bug = self._make_jira_bug(
@@ -208,20 +204,17 @@ class TestProcessReleaseFromFbcBugs(unittest.IsolatedAsyncioTestCase):
         mock_tracker.get_bug.return_value = bug
         mock_create_tracker.return_value = mock_tracker
 
-        result = await process_bugs(self.mock_runtime, ["OADP-7777"])
+        with self.assertRaises(RuntimeError) as ctx:
+            await process_bugs(self.mock_runtime, ["OADP-7777"])
 
-        self.assertEqual(result.type, "RHBA")
-        self.assertIsNone(result.cves)
-        fixed_ids = [i.id for i in result.issues.fixed]
-        self.assertIn("OADP-7777", fixed_ids)
-        mock_get_delivery.assert_called_once_with(self.mock_runtime, "unknown/unknown-container")
-        mock_get_konflux.assert_not_called()
+        self.assertIn("OADP-7777", str(ctx.exception))
+        self.assertIn("unknown/unknown-container", str(ctx.exception))
 
     @patch(PATCH_GET_KONFLUX_COMPONENT)
     @patch(PATCH_GET_DELIVERY_REPO)
     @patch(PATCH_CREATE_TRACKER)
-    async def test_unmapped_konflux_component_skipped(self, mock_create_tracker, mock_get_delivery, mock_get_konflux):
-        """When distgit component can't be mapped to a Konflux component, CVE association is skipped."""
+    async def test_unmapped_konflux_component_raises(self, mock_create_tracker, mock_get_delivery, mock_get_konflux):
+        """When distgit component can't be mapped to a Konflux component, should raise RuntimeError."""
         mock_get_delivery.return_value = "some-container"
         mock_get_konflux.return_value = None
 
@@ -235,14 +228,41 @@ class TestProcessReleaseFromFbcBugs(unittest.IsolatedAsyncioTestCase):
         mock_tracker.get_bug.return_value = bug
         mock_create_tracker.return_value = mock_tracker
 
-        result = await process_bugs(self.mock_runtime, ["OADP-7777"])
+        with self.assertRaises(RuntimeError) as ctx:
+            await process_bugs(self.mock_runtime, ["OADP-7777"])
 
-        self.assertEqual(result.type, "RHBA")
-        self.assertIsNone(result.cves)
-        fixed_ids = [i.id for i in result.issues.fixed]
-        self.assertIn("OADP-7777", fixed_ids)
-        mock_get_delivery.assert_called_once_with(self.mock_runtime, "oadp/some-rhel9")
-        mock_get_konflux.assert_called_once_with(self.mock_runtime, "some-container")
+        self.assertIn("OADP-7777", str(ctx.exception))
+        self.assertIn("some-container", str(ctx.exception))
+
+    @patch(PATCH_GET_KONFLUX_COMPONENT)
+    @patch(PATCH_GET_DELIVERY_REPO)
+    @patch(PATCH_CREATE_TRACKER)
+    async def test_multiple_mapping_errors_all_reported(self, mock_create_tracker, mock_get_delivery, mock_get_konflux):
+        """All CVE mapping errors should be collected and reported in a single RuntimeError."""
+        mock_get_delivery.return_value = None
+
+        bug1 = self._make_jira_bug(
+            "OADP-1111",
+            is_vulnerability=True,
+            labels=["CVE-2025-00001", "pscomponent:unknown/repo-a"],
+        )
+        bug2 = self._make_jira_bug(
+            "OADP-2222",
+            is_vulnerability=True,
+            labels=["CVE-2025-00002", "pscomponent:unknown/repo-b"],
+        )
+
+        mock_tracker = Mock()
+        mock_tracker.get_bug.side_effect = lambda k: {"OADP-1111": bug1, "OADP-2222": bug2}[k]
+        mock_create_tracker.return_value = mock_tracker
+
+        with self.assertRaises(RuntimeError) as ctx:
+            await process_bugs(self.mock_runtime, ["OADP-1111", "OADP-2222"])
+
+        error_msg = str(ctx.exception)
+        self.assertIn("2 CVE(s)", error_msg)
+        self.assertIn("OADP-1111", error_msg)
+        self.assertIn("OADP-2222", error_msg)
 
     @patch(PATCH_GET_KONFLUX_COMPONENT)
     @patch(PATCH_GET_DELIVERY_REPO)
