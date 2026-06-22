@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, Mock, patch
 
 from artcommonlib.jira_config import JIRA_DOMAIN_NAME
 from elliottlib.cli.process_release_from_fbc_bugs_cli import (
+    GOLANG_BUILDER_DELIVERY_REPO,
     _extract_cve_id_from_labels,
     _extract_flaw_bug_ids_from_labels,
     _extract_pscomponent_from_labels,
@@ -12,6 +13,7 @@ from elliottlib.cli.process_release_from_fbc_bugs_cli import (
 PATCH_CREATE_TRACKER = "elliottlib.cli.process_release_from_fbc_bugs_cli._create_jira_tracker"
 PATCH_GET_DELIVERY_REPO = "elliottlib.cli.process_release_from_fbc_bugs_cli.get_component_by_delivery_repo"
 PATCH_GET_KONFLUX_COMPONENT = "elliottlib.cli.process_release_from_fbc_bugs_cli.get_konflux_component_by_component"
+PATCH_GET_BUILDER_COMPONENTS = "elliottlib.cli.process_release_from_fbc_bugs_cli._get_golang_builder_components"
 
 
 class TestLabelExtraction(unittest.TestCase):
@@ -261,6 +263,113 @@ class TestProcessReleaseFromFbcBugs(unittest.IsolatedAsyncioTestCase):
         self.assertIn("2 CVE(s)", error_msg)
         self.assertIn("OADP-1111", error_msg)
         self.assertIn("OADP-2222", error_msg)
+
+    @patch(PATCH_GET_BUILDER_COMPONENTS)
+    @patch(PATCH_GET_KONFLUX_COMPONENT)
+    @patch(PATCH_GET_DELIVERY_REPO)
+    @patch(PATCH_CREATE_TRACKER)
+    async def test_golang_builder_cve_fans_out(
+        self, mock_create_tracker, mock_get_delivery, mock_get_konflux, mock_get_builder
+    ):
+        """A golang builder CVE should fan out to all components using the builder."""
+        mock_get_delivery.return_value = None
+        mock_get_builder.return_value = ["oadp-1-4-oadp-operator", "oadp-1-4-oadp-velero"]
+
+        bug = self._make_jira_bug(
+            "OADP-7902",
+            is_vulnerability=True,
+            labels=[
+                "CVE-2026-32281",
+                f"pscomponent:{GOLANG_BUILDER_DELIVERY_REPO}",
+                "flaw:bz#2456333",
+            ],
+        )
+
+        mock_tracker = Mock()
+        mock_tracker.get_bug.return_value = bug
+        mock_create_tracker.return_value = mock_tracker
+
+        result = await process_bugs(self.mock_runtime, ["OADP-7902"])
+
+        self.assertEqual(result.type, "RHSA")
+        self.assertEqual(len(result.cves), 2)
+        cve_components = {c.component for c in result.cves}
+        self.assertEqual(cve_components, {"oadp-1-4-oadp-operator", "oadp-1-4-oadp-velero"})
+        for cve in result.cves:
+            self.assertEqual(cve.key, "CVE-2026-32281")
+
+        flaw_ids = {i.id for i in result.issues.fixed if i.source == "bugzilla.redhat.com"}
+        self.assertIn("2456333", flaw_ids)
+
+    @patch(PATCH_GET_BUILDER_COMPONENTS)
+    @patch(PATCH_GET_KONFLUX_COMPONENT)
+    @patch(PATCH_GET_DELIVERY_REPO)
+    @patch(PATCH_CREATE_TRACKER)
+    async def test_golang_builder_cve_no_consumers_raises(
+        self, mock_create_tracker, mock_get_delivery, mock_get_konflux, mock_get_builder
+    ):
+        """A golang builder CVE with no builder-consuming components should raise RuntimeError."""
+        mock_get_delivery.return_value = None
+        mock_get_builder.return_value = []
+
+        bug = self._make_jira_bug(
+            "OADP-7902",
+            is_vulnerability=True,
+            labels=["CVE-2026-32281", f"pscomponent:{GOLANG_BUILDER_DELIVERY_REPO}"],
+        )
+
+        mock_tracker = Mock()
+        mock_tracker.get_bug.return_value = bug
+        mock_create_tracker.return_value = mock_tracker
+
+        with self.assertRaises(RuntimeError) as ctx:
+            await process_bugs(self.mock_runtime, ["OADP-7902"])
+
+        self.assertIn("OADP-7902", str(ctx.exception))
+        self.assertIn("no components use the builder", str(ctx.exception))
+
+    @patch(PATCH_GET_BUILDER_COMPONENTS)
+    @patch(PATCH_GET_KONFLUX_COMPONENT)
+    @patch(PATCH_GET_DELIVERY_REPO)
+    @patch(PATCH_CREATE_TRACKER)
+    async def test_golang_builder_cve_mixed_with_regular(
+        self, mock_create_tracker, mock_get_delivery, mock_get_konflux, mock_get_builder
+    ):
+        """A golang builder CVE and a regular CVE should both produce associations."""
+        mock_get_delivery.side_effect = lambda _rt, repo: {
+            "oadp/oadp-velero-rhel9": "oadp-velero-container",
+        }.get(repo)
+        mock_get_konflux.side_effect = lambda _rt, comp: {
+            "oadp-velero-container": "oadp-1-4-oadp-velero",
+        }.get(comp)
+        mock_get_builder.return_value = ["oadp-1-4-oadp-operator", "oadp-1-4-oadp-velero"]
+
+        builder_bug = self._make_jira_bug(
+            "OADP-7902",
+            is_vulnerability=True,
+            labels=["CVE-2026-32281", f"pscomponent:{GOLANG_BUILDER_DELIVERY_REPO}", "flaw:bz#2456333"],
+        )
+        regular_cve = self._make_jira_bug(
+            "OADP-7792",
+            is_vulnerability=True,
+            labels=["CVE-2026-32280", "pscomponent:oadp/oadp-velero-rhel9", "flaw:bz#2456339"],
+        )
+
+        mock_tracker = Mock()
+        mock_tracker.get_bug.side_effect = lambda k: {"OADP-7902": builder_bug, "OADP-7792": regular_cve}[k]
+        mock_create_tracker.return_value = mock_tracker
+
+        result = await process_bugs(self.mock_runtime, ["OADP-7902", "OADP-7792"])
+
+        self.assertEqual(result.type, "RHSA")
+        self.assertEqual(len(result.cves), 3)
+
+        builder_cves = [c for c in result.cves if c.key == "CVE-2026-32281"]
+        self.assertEqual(len(builder_cves), 2)
+
+        regular_cves = [c for c in result.cves if c.key == "CVE-2026-32280"]
+        self.assertEqual(len(regular_cves), 1)
+        self.assertEqual(regular_cves[0].component, "oadp-1-4-oadp-velero")
 
     @patch(PATCH_GET_KONFLUX_COMPONENT)
     @patch(PATCH_GET_DELIVERY_REPO)

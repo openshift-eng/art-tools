@@ -6,9 +6,10 @@ from typing import List, Optional
 import click
 from artcommonlib.jira_config import JIRA_SERVER_URL
 from artcommonlib.util import new_roundtrip_yaml_handler
+from doozerlib.util import konflux_application_name, konflux_image_component_name
 
 from elliottlib.bzutil import JIRABugTracker
-from elliottlib.cli.attach_cve_flaws_cli import get_konflux_component_by_component
+from elliottlib.cli.attach_cve_flaws_cli import _image_uses_builder, get_konflux_component_by_component
 from elliottlib.cli.common import cli, click_coroutine
 from elliottlib.runtime import Runtime
 from elliottlib.shipment_model import CveAssociation, ReleaseNotes
@@ -17,6 +18,8 @@ from elliottlib.util import get_component_by_delivery_repo
 
 YAML = new_roundtrip_yaml_handler()
 logger = logging.getLogger(__name__)
+
+GOLANG_BUILDER_DELIVERY_REPO = "openshift4/openshift-golang-builder"
 
 
 def _create_jira_tracker() -> JIRABugTracker:
@@ -53,6 +56,16 @@ def _extract_pscomponent_from_labels(labels: List[str]) -> Optional[str]:
         if label.startswith('pscomponent:'):
             return label[len('pscomponent:') :]
     return None
+
+
+def _get_golang_builder_components(runtime) -> list[str]:
+    """Find all Konflux component names in the group that use the golang builder."""
+    application = konflux_application_name(runtime.group)
+    components = []
+    for image_meta in runtime.image_metas():
+        if _image_uses_builder(image_meta, logger):
+            components.append(konflux_image_component_name(application, image_meta.distgit_key))
+    return sorted(components)
 
 
 async def process_bugs(runtime: Runtime, jira_ids: List[str]) -> ReleaseNotes:
@@ -109,9 +122,34 @@ async def process_bugs(runtime: Runtime, jira_ids: List[str]) -> ReleaseNotes:
 
         distgit_component = get_component_by_delivery_repo(runtime, pscomponent)
         if not distgit_component:
-            msg = f"JIRA {jira_id} (CVE {cve_id}): pscomponent '{pscomponent}' not found in delivery_repo_names"
-            logger.error(msg)
-            cve_mapping_errors.append(msg)
+            if pscomponent == GOLANG_BUILDER_DELIVERY_REPO:
+                builder_components = _get_golang_builder_components(runtime)
+                if not builder_components:
+                    msg = f"JIRA {jira_id} (CVE {cve_id}): golang builder CVE but no components use the builder"
+                    logger.error(msg)
+                    cve_mapping_errors.append(msg)
+                    continue
+                logger.info(
+                    "JIRA %s: CVE %s is a golang builder CVE, fanning out to %d components: %s",
+                    jira_id,
+                    cve_id,
+                    len(builder_components),
+                    builder_components,
+                )
+                for comp in builder_components:
+                    cve_associations.append(CveAssociation(key=cve_id, component=comp))
+            else:
+                msg = f"JIRA {jira_id} (CVE {cve_id}): pscomponent '{pscomponent}' not found in delivery_repo_names"
+                logger.error(msg)
+                cve_mapping_errors.append(msg)
+                continue
+
+            bug_flaw_ids = _extract_flaw_bug_ids_from_labels(labels)
+            if bug_flaw_ids:
+                logger.info("JIRA %s: found flaw bug IDs %s", jira_id, bug_flaw_ids)
+                flaw_bug_ids.extend(bug_flaw_ids)
+            else:
+                logger.warning("JIRA %s (CVE %s) has no flaw:bz# labels", jira_id, cve_id)
             continue
 
         konflux_component = get_konflux_component_by_component(runtime, distgit_component)
