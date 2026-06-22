@@ -28,7 +28,7 @@ from pyartcd.util import (
     reset_fail_counter,
 )
 
-OKD_ARCHES = ['x86_64']
+OKD_ARCHES = ['x86_64', 'aarch64']
 
 
 class BuildPlan:
