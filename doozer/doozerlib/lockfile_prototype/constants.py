@@ -34,7 +34,7 @@ ARCH_KEYWORDS = ARCH_SUBSHELL_KEYWORDS + tuple(form for name in ARCH_VAR_NAMES f
 # RPM pseudo-packages that appear in rpmdb but are not installable via DNF
 RPM_PSEUDO_PACKAGES = frozenset({"gpg-pubkey"})
 
-VALID_PKG_NAME = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._+\-]*$")
+VALID_PKG_NAME = re.compile(r"^[a-zA-Z0-9*][a-zA-Z0-9._+\-*]*$")
 
 
 # rpm-lockfile-prototype stores extracted RPMDBs here. There is no env var
