@@ -200,6 +200,16 @@ class TestParseMissingPackages(unittest.TestCase):
         missing = RpmResolver.parse_missing_packages(error)
         self.assertEqual(missing, {"policycoreutils-python-utils"})
 
+    def test_reinstall_not_available_format(self):
+        """
+        DNF PackagesNotAvailableError from base.reinstall() outputs
+        "no package matched: <pkg>" when the installed version is not
+        in the configured repos.
+        """
+        error = "dnf.exceptions.PackagesNotAvailableError: no package matched: git"
+        missing = RpmResolver.parse_missing_packages(error)
+        self.assertEqual(missing, {"git"})
+
     def test_no_match(self):
         error = "Some other error message\n"
         missing = RpmResolver.parse_missing_packages(error)
