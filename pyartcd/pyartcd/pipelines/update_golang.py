@@ -1074,12 +1074,12 @@ class UpdateGolangPipeline:
                 "name please correct it."
             )
 
-        major, minor = group_config['vars']['MAJOR'], group_config['vars']['MINOR']
-        content_repo_url_suffix = self.get_content_repo_url_suffix(el_v, major, minor)
+        ocp_major, ocp_minor = self.ocp_version.split('.')
+        content_repo_url_suffix = self.get_content_repo_url_suffix(el_v, ocp_major, ocp_minor)
         err = False
         for arch, template_url in group_config['repos'][golang_repo]['conf']['baseurl'].items():
             expected_suffix = f'{content_repo_url_suffix}/{arch}/os/'
-            actual_url = template_url.format(MAJOR=major, MINOR=minor)
+            actual_url = template_url.format(MAJOR=ocp_major, MINOR=ocp_minor)
             if not actual_url.endswith(expected_suffix):
                 err = True
                 _LOGGER.error(f"{expected_suffix} not found in URL {actual_url}")
