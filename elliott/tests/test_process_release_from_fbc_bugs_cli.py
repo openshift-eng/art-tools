@@ -167,9 +167,7 @@ class TestProcessReleaseFromFbcBugs(unittest.IsolatedAsyncioTestCase):
     @patch(PATCH_GET_KONFLUX_COMPONENT)
     @patch(PATCH_GET_DELIVERY_REPO)
     @patch(PATCH_CREATE_TRACKER)
-    async def test_cve_without_pscomponent_label_raises(
-        self, mock_create_tracker, mock_get_delivery, mock_get_konflux
-    ):
+    async def test_cve_without_pscomponent_label_raises(self, mock_create_tracker, mock_get_delivery, mock_get_konflux):
         """A Vulnerability with CVE label but no pscomponent label should raise RuntimeError."""
         bug = self._make_jira_bug(
             "OADP-8888",

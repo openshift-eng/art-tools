@@ -109,10 +109,7 @@ async def process_bugs(runtime: Runtime, jira_ids: List[str]) -> ReleaseNotes:
 
         distgit_component = get_component_by_delivery_repo(runtime, pscomponent)
         if not distgit_component:
-            msg = (
-                f"JIRA {jira_id} (CVE {cve_id}): pscomponent '{pscomponent}' "
-                f"not found in delivery_repo_names"
-            )
+            msg = f"JIRA {jira_id} (CVE {cve_id}): pscomponent '{pscomponent}' not found in delivery_repo_names"
             logger.error(msg)
             cve_mapping_errors.append(msg)
             continue
