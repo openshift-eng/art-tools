@@ -74,6 +74,7 @@ async def process_bugs(runtime: Runtime, jira_ids: List[str]) -> ReleaseNotes:
     cve_associations: list[CveAssociation] = []
     flaw_bug_ids: list[int] = []
     all_jira_ids: list[str] = []
+    cve_mapping_errors: list[str] = []
 
     for jira_id in jira_ids:
         jira_id = jira_id.strip()
@@ -94,32 +95,33 @@ async def process_bugs(runtime: Runtime, jira_ids: List[str]) -> ReleaseNotes:
 
         cve_id = _extract_cve_id_from_labels(labels)
         if not cve_id:
-            logger.warning("JIRA %s is Vulnerability but has no CVE label, skipping CVE association", jira_id)
+            msg = f"JIRA {jira_id} is Vulnerability but has no CVE label"
+            logger.error(msg)
+            cve_mapping_errors.append(msg)
             continue
 
         pscomponent = _extract_pscomponent_from_labels(labels)
         if not pscomponent:
-            logger.warning("JIRA %s (CVE %s) has no pscomponent label, skipping CVE association", jira_id, cve_id)
+            msg = f"JIRA {jira_id} (CVE {cve_id}) has no pscomponent label"
+            logger.error(msg)
+            cve_mapping_errors.append(msg)
             continue
 
         distgit_component = get_component_by_delivery_repo(runtime, pscomponent)
         if not distgit_component:
-            logger.warning(
-                "JIRA %s (CVE %s): pscomponent '%s' not found in delivery_repo_names, skipping",
-                jira_id,
-                cve_id,
-                pscomponent,
-            )
+            msg = f"JIRA {jira_id} (CVE {cve_id}): pscomponent '{pscomponent}' not found in delivery_repo_names"
+            logger.error(msg)
+            cve_mapping_errors.append(msg)
             continue
 
         konflux_component = get_konflux_component_by_component(runtime, distgit_component)
         if not konflux_component:
-            logger.warning(
-                "JIRA %s (CVE %s): distgit component '%s' could not be mapped to a Konflux component, skipping",
-                jira_id,
-                cve_id,
-                distgit_component,
+            msg = (
+                f"JIRA {jira_id} (CVE {cve_id}): distgit component '{distgit_component}' "
+                f"could not be mapped to a Konflux component"
             )
+            logger.error(msg)
+            cve_mapping_errors.append(msg)
             continue
 
         logger.info(
@@ -138,6 +140,12 @@ async def process_bugs(runtime: Runtime, jira_ids: List[str]) -> ReleaseNotes:
             flaw_bug_ids.extend(bug_flaw_ids)
         else:
             logger.warning("JIRA %s (CVE %s) has no flaw:bz# labels", jira_id, cve_id)
+
+    if cve_mapping_errors:
+        raise RuntimeError(
+            f"Failed to map {len(cve_mapping_errors)} CVE(s) to components:\n"
+            + "\n".join(f"  - {e}" for e in cve_mapping_errors)
+        )
 
     advisory_type = "RHSA" if cve_associations else "RHBA"
     logger.info("Advisory type determined: %s (CVEs found: %d)", advisory_type, len(cve_associations))
