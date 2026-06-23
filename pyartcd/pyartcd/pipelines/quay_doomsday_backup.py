@@ -99,13 +99,14 @@ class QuayDoomsdaySync:
             self.runtime.logger.info("[DRY RUN] Would have messaged Slack")
 
         # Synchronize individual arches sequentially to help with quay returning 502
-        results = []
+        failed_arches = []
         for arch in self.arches:
-            results.append(await self.sync_arch(arch))
+            if not await self.sync_arch(arch):
+                failed_arches.append(arch)
 
         # Report the results to Slack
         if not self.runtime.dry_run:
-            if all(results):
+            if not failed_arches:
                 await self.slack_client._client.reactions_add(
                     channel=slack_channel_id, timestamp=main_message_ts, name="done_it_is"
                 )
@@ -113,6 +114,9 @@ class QuayDoomsdaySync:
                 await self.slack_client.say_in_thread(":x: Failed to sync some arches", broadcast=True)
         else:
             self.runtime.logger.info("[DRY RUN] Would have messaged Slack")
+
+        if failed_arches:
+            raise RuntimeError(f"Failed to sync arches for {self.version}: {', '.join(failed_arches)}")
 
 
 @cli.command(
