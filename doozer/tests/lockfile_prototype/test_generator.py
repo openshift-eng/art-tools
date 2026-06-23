@@ -688,6 +688,40 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
         pkg_names = [p if isinstance(p, str) else p.name for p in fallback_config.packages]
         self.assertIn("curl", pkg_names)
 
+    def test_fallback_sets_upgrades_dropped_flag(self):
+        """
+        When the retry loop exhausts retries and the fallback clears
+        upgrade targets, generator.upgrades_dropped must be True so
+        the rebaser strips dnf update from the Dockerfile.
+        """
+        meta = self._make_mock_image_meta()
+        meta.config.konflux.cachi2.lockfile.get.return_value = None
+        generator = self._make_generator()
+        generator.downstream_parents = ["quay.io/test/base@sha256:abc123"]
+        generator._container.get_installed_packages = AsyncMock(return_value=["bad-pkg", "glibc"])
+
+        call_count = 0
+
+        async def mock_resolve(config, image_pullspec=None):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise RuntimeError("No match for argument: bad-pkg")
+            return FAKE_LOCKFILE_DATA.model_copy(deep=True)
+
+        generator._resolver.resolve = AsyncMock(side_effect=mock_resolve)
+
+        self.assertFalse(generator.upgrades_dropped)
+
+        with TemporaryDirectory() as tmpdir:
+            dest_dir = Path(tmpdir)
+            (dest_dir / "Dockerfile").write_text("FROM base\nRUN dnf install -y curl\n")
+            asyncio.run(generator.generate_lockfile(meta, dest_dir))
+
+        self.assertTrue(generator.upgrades_dropped)
+        fallback_config = generator._resolver.resolve.call_args_list[-1][0][0]
+        self.assertEqual(fallback_config.upgradePackages, [])
+
     def test_fallback_packages_used_when_image_unreachable(self):
         """
         When base image is unreachable but fallback_installed has data

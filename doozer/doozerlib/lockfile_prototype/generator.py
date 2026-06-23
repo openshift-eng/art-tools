@@ -108,6 +108,7 @@ class RpmLockfilePrototypeGenerator:
         self.fallback_installed: dict[int, list[str]] = {}
         self.parent_source_dirs: dict[int, Path] = {}
         self.logger = logger or logutil.get_logger(__name__)
+        self.upgrades_dropped = False
         self._container = container_helper or ContainerImageHelper(logger=self.logger)
         self._resolver = resolver or RpmResolver(working_dir=working_dir, logger=self.logger)
 
@@ -721,6 +722,65 @@ class RpmLockfilePrototypeGenerator:
             self.logger.info(f"{distgit_key}: resolved {len(resolved)} builddep packages: {sorted(resolved)}")
         return sorted(resolved)
 
+    def _build_resolve_config(
+        self,
+        repo_list: list[RepoEntry],
+        arches: list[str],
+        packages: list[str],
+        arch_pkgs: dict[str, list[str]],
+        update_targets: list[str],
+        reinstall: list[str],
+        promote_reinstall_to_upgrade: bool,
+        image_pullspec: str | None,
+        module_enable: list[str] | None,
+    ) -> RpmsInConfig:
+        """
+        Build the rpms.in.yaml config for a resolve attempt.
+        """
+        upgrade_extras = reinstall if promote_reinstall_to_upgrade else []
+        effective_upgrade = list(set(update_targets + upgrade_extras)) if image_pullspec else None
+        return build_rpms_in_yaml(
+            repo_list,
+            arches,
+            packages,
+            arch_specific_packages=arch_pkgs,
+            reinstall_packages=reinstall if image_pullspec else None,
+            upgrade_packages=effective_upgrade,
+            module_enable=module_enable,
+        )
+
+    @staticmethod
+    def _strip_missing_packages(
+        missing: set[str],
+        remaining_packages: list[str],
+        remaining_update_targets: list[str],
+        remaining_reinstall: list[str],
+        arch_pkgs: dict[str, list[str]],
+    ) -> int:
+        """
+        Remove missing packages from all lists. Returns count of packages removed.
+        """
+        prev_count = (
+            len(remaining_packages)
+            + sum(len(v) for v in arch_pkgs.values())
+            + len(remaining_update_targets)
+            + len(remaining_reinstall)
+        )
+        remaining_packages[:] = [p for p in remaining_packages if p not in missing]
+        remaining_update_targets[:] = [p for p in remaining_update_targets if p not in missing]
+        remaining_reinstall[:] = [p for p in remaining_reinstall if p not in missing]
+        for arch in list(arch_pkgs.keys()):
+            arch_pkgs[arch] = [p for p in arch_pkgs[arch] if p not in missing]
+            if not arch_pkgs[arch]:
+                del arch_pkgs[arch]
+        new_count = (
+            len(remaining_packages)
+            + sum(len(v) for v in arch_pkgs.values())
+            + len(remaining_update_targets)
+            + len(remaining_reinstall)
+        )
+        return prev_count - new_count
+
     async def _resolve_stage_with_retry(
         self,
         repo_list: list[RepoEntry],
@@ -773,16 +833,16 @@ class RpmLockfilePrototypeGenerator:
         retries_exhausted = False
 
         for _attempt in range(MAX_RESOLUTION_RETRIES):
-            upgrade_extras = remaining_reinstall if promote_reinstall_to_upgrade else []
-            effective_upgrade = list(set(remaining_update_targets + upgrade_extras)) if image_pullspec else None
-            in_yaml = build_rpms_in_yaml(
+            in_yaml = self._build_resolve_config(
                 repo_list,
                 arches,
                 remaining_packages,
-                arch_specific_packages=arch_pkgs,
-                reinstall_packages=remaining_reinstall if image_pullspec else None,
-                upgrade_packages=effective_upgrade,
-                module_enable=module_enable,
+                arch_pkgs,
+                remaining_update_targets,
+                remaining_reinstall,
+                promote_reinstall_to_upgrade,
+                image_pullspec,
+                module_enable,
             )
 
             try:
@@ -801,26 +861,14 @@ class RpmLockfilePrototypeGenerator:
                             f"{distgit_key}: stage {stage_num}: required Dockerfile packages not available "
                             f"in configured repos, stripping: {sorted(required_missing)}"
                         )
-                prev_count = (
-                    len(remaining_packages)
-                    + sum(len(v) for v in arch_pkgs.values())
-                    + len(remaining_update_targets)
-                    + len(remaining_reinstall)
+                removed = self._strip_missing_packages(
+                    missing,
+                    remaining_packages,
+                    remaining_update_targets,
+                    remaining_reinstall,
+                    arch_pkgs,
                 )
-                remaining_packages = [p for p in remaining_packages if p not in missing]
-                remaining_update_targets = [p for p in remaining_update_targets if p not in missing]
-                remaining_reinstall = [p for p in remaining_reinstall if p not in missing]
-                for arch in list(arch_pkgs.keys()):
-                    arch_pkgs[arch] = [p for p in arch_pkgs[arch] if p not in missing]
-                    if not arch_pkgs[arch]:
-                        del arch_pkgs[arch]
-                new_count = (
-                    len(remaining_packages)
-                    + sum(len(v) for v in arch_pkgs.values())
-                    + len(remaining_update_targets)
-                    + len(remaining_reinstall)
-                )
-                if new_count == prev_count:
+                if not removed:
                     raise
                 if stripped_tracker is not None:
                     stripped_tracker.update(missing)
@@ -858,16 +906,22 @@ class RpmLockfilePrototypeGenerator:
                 "continuing without reinstall packages"
             )
             remaining_reinstall.clear()
-        fallback_upgrade_extras = remaining_reinstall if promote_reinstall_to_upgrade else []
-        effective_upgrade = list(set(remaining_update_targets + fallback_upgrade_extras)) if image_pullspec else None
-        in_yaml = build_rpms_in_yaml(
+        # Clear all upgrade targets for the fallback — the retry loop
+        # already validated the install packages; upgrade targets that
+        # reference packages not in the base image's rpmdb would cause
+        # PackagesNotInstalledError from DNF.
+        remaining_update_targets.clear()
+        self.upgrades_dropped = True
+        in_yaml = self._build_resolve_config(
             repo_list,
             arches,
             remaining_packages,
-            arch_specific_packages=arch_pkgs,
-            reinstall_packages=remaining_reinstall if image_pullspec else None,
-            upgrade_packages=effective_upgrade,
-            module_enable=module_enable,
+            arch_pkgs,
+            remaining_update_targets,
+            remaining_reinstall,
+            promote_reinstall_to_upgrade,
+            image_pullspec,
+            module_enable,
         )
         return await self._resolver.resolve(in_yaml, image_pullspec=resolver_pullspec)
 
