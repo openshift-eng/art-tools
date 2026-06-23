@@ -20,6 +20,8 @@ YAML = new_roundtrip_yaml_handler()
 logger = logging.getLogger(__name__)
 
 GOLANG_BUILDER_DELIVERY_REPO = "openshift4/openshift-golang-builder"
+GOLANG_BUILDER_COMPONENT = "openshift-golang-builder-container"
+GOLANG_BUILDER_PSCOMPONENTS = {GOLANG_BUILDER_DELIVERY_REPO, GOLANG_BUILDER_COMPONENT}
 
 
 def _create_jira_tracker() -> JIRABugTracker:
@@ -122,7 +124,7 @@ async def process_bugs(runtime: Runtime, jira_ids: List[str]) -> ReleaseNotes:
 
         distgit_component = get_component_by_delivery_repo(runtime, pscomponent)
         if not distgit_component:
-            if pscomponent == GOLANG_BUILDER_DELIVERY_REPO:
+            if pscomponent in GOLANG_BUILDER_PSCOMPONENTS:
                 builder_components = _get_golang_builder_components(runtime)
                 if not builder_components:
                     msg = f"JIRA {jira_id} (CVE {cve_id}): golang builder CVE but no components use the builder"
