@@ -202,12 +202,20 @@ class AssemblyInspector:
                 build_dict = external_rpms.get(entry["tag"], {}).get(package_name)
                 if not build_dict:
                     continue
+                installed_rpm = installed_packages.get(package_name)
+                if installed_rpm and installed_rpm["nvr"] != build_dict["nvr"]:
+                    if not self._is_installed_rpm_in_tag(installed_rpm, entry["tag"]):
+                        self.runtime.logger.info(
+                            "Installed rpm %s in RHCOS %s (%s) is not tagged in %s; skipping check_external_packages complaint",
+                            installed_rpm["nvr"],
+                            rhcos_build.build_id,
+                            rhcos_build.brew_arch,
+                            entry["tag"],
+                        )
+                        continue
                 if entry["condition"] == "match":
                     desired_packages[package_name] = build_dict["nvr"]
                 elif entry["condition"] == "greater_equal":
-                    # installed_rpm = installed_packages.get(package_name)
-                    # desired_packages[package_name] = build_dict["nvr"] if not installed_rpm or compare_nvr(build_dict, installed_rpm) > 0 else installed_rpm["nvr"]
-                    installed_rpm = installed_packages.get(package_name)
                     if not installed_rpm or compare_nvr(build_dict, installed_rpm) >= 0:
                         desired_packages[package_name] = build_dict["nvr"]
                     else:
@@ -422,10 +430,19 @@ class AssemblyInspector:
                 build_dict = external_rpms.get(entry["tag"], {}).get(package_name)
                 if not build_dict:
                     continue
+                installed_rpm = installed_packages.get(package_name)
+                if installed_rpm and installed_rpm["nvr"] != build_dict["nvr"]:
+                    if not self._is_installed_rpm_in_tag(installed_rpm, entry["tag"]):
+                        image_meta.logger.info(
+                            "Installed rpm %s in image %s is not tagged in %s; skipping check_external_packages complaint",
+                            installed_rpm["nvr"],
+                            dgk,
+                            entry["tag"],
+                        )
+                        continue
                 if entry["condition"] == "match":
                     desired_packages[package_name] = build_dict["nvr"]
                 elif entry["condition"] == "greater_equal":
-                    installed_rpm = installed_packages.get(package_name)
                     if not installed_rpm or compare_nvr(build_dict, installed_rpm) >= 0:
                         desired_packages[package_name] = build_dict["nvr"]
                     else:
@@ -568,6 +585,19 @@ class AssemblyInspector:
             self._rpm_build_cache[el_ver] = assembly_rpm_dicts
 
         return self._rpm_build_cache[el_ver]
+
+    def _is_installed_rpm_in_tag(self, installed_rpm: Optional[Dict], tag: str) -> bool:
+        """Check if an installed RPM build is tagged in the given Brew tag.
+        :param installed_rpm: installed package build dict (must have 'id' key), or None
+        :param tag: Brew tag name to check
+        :return: True if the installed RPM is tagged in the given tag
+        """
+        if not installed_rpm:
+            return False
+        tag_names = {
+            t["name"] for t in self.brew_session.listTags(brew.KojiWrapperOpts(caching=True), build=installed_rpm["id"])
+        }
+        return tag in tag_names
 
     def get_external_rpm_build_dicts(self):
         """Get external rpm build dicts from rhaos candidate Brew tags.
