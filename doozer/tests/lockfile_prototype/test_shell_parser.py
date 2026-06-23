@@ -133,11 +133,40 @@ class TestExtractPackagesFromRunCommands(unittest.TestCase):
             "yum -y install pciutils hwdata kmod $ARCH_DEP_PKGS"
         ]
         common, arch = extract_packages_from_run_commands(run_values)
-        self.assertIn("mstflint", common)
+        self.assertNotIn("mstflint", common)
         self.assertIn("pciutils", common)
         self.assertIn("hwdata", common)
         self.assertIn("kmod", common)
+        for a in ("x86_64", "aarch64", "ppc64le"):
+            self.assertIn("mstflint", arch.get(a, []))
+        self.assertNotIn("s390x", arch)
+
+    def test_subshell_arch_conditional_var_eq(self):
+        run_values = [
+            'SPECIAL=$(if [ "$(uname -m)" == "x86_64" ]; then echo -n intel-pkg ; fi) && '
+            "yum -y install base-pkg $SPECIAL"
+        ]
+        common, arch = extract_packages_from_run_commands(run_values)
+        self.assertNotIn("intel-pkg", common)
+        self.assertIn("base-pkg", common)
+        self.assertEqual(arch, {"x86_64": ["intel-pkg"]})
+
+    def test_subshell_no_arch_condition(self):
+        run_values = ['EXTRA=$(echo extra-pkg) && yum -y install base-pkg $EXTRA']
+        common, arch = extract_packages_from_run_commands(run_values)
+        self.assertIn("extra-pkg", common)
+        self.assertIn("base-pkg", common)
         self.assertEqual(arch, {})
+
+    def test_subshell_arch_conditional_var_go_arch(self):
+        run_values = [
+            'SPECIAL=$(if [ "$(go env GOARCH)" == "amd64" ]; then echo -n x86-only ; fi) && '
+            "yum -y install common-pkg $SPECIAL"
+        ]
+        common, arch = extract_packages_from_run_commands(run_values)
+        self.assertNotIn("x86-only", common)
+        self.assertIn("common-pkg", common)
+        self.assertEqual(arch, {"x86_64": ["x86-only"]})
 
     def test_if_else_var_with_nested_resolution(self):
         run_values = [

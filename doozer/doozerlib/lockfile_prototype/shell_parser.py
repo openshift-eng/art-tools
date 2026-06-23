@@ -11,7 +11,7 @@ import logging
 import re
 
 import bashlex
-from artcommonlib.arch_util import brew_arch_for_go_arch
+from artcommonlib.arch_util import BREW_ARCHES, brew_arch_for_go_arch
 from pydantic import BaseModel, Field
 
 from doozerlib.lockfile_prototype.constants import ARCH_KEYWORDS
@@ -338,7 +338,16 @@ def _process_assignments(
         if has_cmdsub:
             extracted = _extract_subshell_packages(var_value)
             if extracted:
-                ctx.shell_vars[var_name] = extracted
+                target_arches = _extract_subshell_arch_condition(var_value)
+                if target_arches:
+                    per_arch = ctx.arch_shell_vars.setdefault(var_name, {})
+                    for arch in target_arches:
+                        if arch in per_arch:
+                            per_arch[arch] = f"{per_arch[arch]} {extracted}"
+                        else:
+                            per_arch[arch] = extracted
+                else:
+                    ctx.shell_vars[var_name] = extracted
         elif arch_context:
             per_arch = ctx.arch_shell_vars.setdefault(var_name, {})
             for arch in arch_context:
@@ -526,6 +535,40 @@ def _process_command_node(
         arch_resolved_tokens = _resolve_arch_specific_tokens(pkg_words, raw_args, all_vars, ctx)
 
     _classify_package_tokens(resolved_tokens, arch_resolved_tokens, action, ctx, arch_context)
+
+
+def _extract_subshell_arch_condition(subshell_body: str) -> list[str] | None:
+    """
+    Detect architecture conditions inside a subshell body and return
+    the list of arches where the subshell produces output.
+
+    Arg(s):
+        subshell_body (str): Text inside a $(...) subshell, e.g.
+            'if [ "$(uname -m)" != "s390x" ]; then echo -n mstflint; fi'
+    Return Value(s):
+        list[str] | None: Target arches (Brew names), or None if no
+            arch condition detected or pattern is ambiguous.
+    """
+    if not _has_arch_test(subshell_body):
+        return None
+
+    neq_arches = ARCH_NEQ_VALUE_RE.findall(subshell_body)
+    eq_arches = ARCH_VALUE_RE.findall(subshell_body)
+
+    if neq_arches and eq_arches:
+        return None
+
+    if neq_arches:
+        excluded = set(_normalize_arch_names(neq_arches))
+        target = sorted(set(BREW_ARCHES) - excluded)
+        return target if target else None
+
+    if eq_arches:
+        if len(eq_arches) > 1:
+            return None
+        return _normalize_arch_names(eq_arches)
+
+    return None
 
 
 def _extract_subshell_packages(subshell_body: str) -> str:
