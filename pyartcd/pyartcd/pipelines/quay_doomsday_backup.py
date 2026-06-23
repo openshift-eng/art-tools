@@ -116,9 +116,7 @@ class QuayDoomsdaySync:
             self.runtime.logger.info("[DRY RUN] Would have messaged Slack")
 
         if failed_arches:
-            raise RuntimeError(
-                f"Failed to sync arches for {self.version}: {', '.join(failed_arches)}"
-            )
+            raise RuntimeError(f"Failed to sync arches for {self.version}: {', '.join(failed_arches)}")
 
 
 @cli.command(
