@@ -629,11 +629,12 @@ class ConfigScanSources:
             stage = 'external image checks'
             await self.scan_external_image_changes(image_meta)
 
+            # Check for changes in image arches
+            stage = 'arch checks'
+            await self.scan_arch_changes(image_meta)
+
             # For OCP variant, perform additional checks that don't apply to OKD
             if self.variant != BuildVariant.OKD:
-                # Check for changes in image arches (skip for OKD - arch changes don't trigger OKD rebuilds)
-                stage = 'arch checks'
-                await self.scan_arch_changes(image_meta)
                 # Check for changes in the network mode (skip for OKD - it always uses open network)
                 stage = 'network mode checks'
                 await self.scan_network_mode_changes(image_meta)
