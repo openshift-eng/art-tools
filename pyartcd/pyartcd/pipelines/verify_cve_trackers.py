@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -12,14 +13,13 @@ from artcommonlib.assembly import assembly_resolved
 from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.gitlab import GitLabClient
 from artcommonlib.model import Missing, Model
-from artcommonlib.util import new_roundtrip_yaml_handler
 from elliottlib.errata import get_bug_ids, get_raw_erratum
 
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.constants import OCP_BUILD_DATA_URL
 from pyartcd.runtime import Runtime
 
-yaml = new_roundtrip_yaml_handler()
+LOGGER = logging.getLogger(__name__)
 
 ADVISORY_CVE_KINDS = ("rpm", "rhcos")
 SKIPPED_ADVISORY_IMPETUSES = frozenset({"microshift"})
@@ -105,7 +105,7 @@ def get_jira_issues_from_shipment_mr(
         try:
             file_content = project.files.get(file_path=file_path, ref=mr.source_branch)
             content = file_content.decode().decode("utf-8")
-            data = yaml.load(content)
+            data = pyyaml.safe_load(content)
             jira_issues.update(get_jira_issues_from_shipment_data(data))
 
             file_group, file_assembly = parse_shipment_metadata_from_data(data)
@@ -120,6 +120,12 @@ def get_jira_issues_from_shipment_mr(
         except ValueError:
             raise
         except Exception:
+            LOGGER.warning(
+                "Failed to process shipment file %s in MR %s",
+                file_path,
+                mr_url,
+                exc_info=True,
+            )
             continue
 
     if group is None or assembly is None:
@@ -259,7 +265,10 @@ class VerifyCveTrackersPipeline:
             shipment_mr_url=shipment_mr_url,
         )
 
-        rhsa_jira_issues = get_rhsa_jira_issues(assembly_group.get("advisories", {}))
+        rhsa_jira_issues = await asyncio.to_thread(
+            get_rhsa_jira_issues,
+            assembly_group.get("advisories", {}),
+        )
         self.logger.info("Found %s Jira issues on RHSA advisories", len(rhsa_jira_issues))
 
         elliott_output = await self._load_elliott_output(build_system="brew", permissive=True)
@@ -269,8 +278,9 @@ class VerifyCveTrackersPipeline:
             rhsa_jira_issues,
         )
 
-        shipment_jira_issues, shipment_files, (mr_group, mr_assembly) = get_jira_issues_from_shipment_mr(
-            shipment_mr_url
+        shipment_jira_issues, shipment_files, (mr_group, mr_assembly) = await asyncio.to_thread(
+            get_jira_issues_from_shipment_mr,
+            shipment_mr_url,
         )
         result.shipment_files = shipment_files
 
