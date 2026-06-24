@@ -49,6 +49,7 @@ from pyartcd.pipelines import (
     tag_rpms,
     tarball_sources,
     update_golang,
+    verify_cve_trackers,
 )
 from pyartcd.pipelines.scheduled import (
     schedule_build_sync_multi,
