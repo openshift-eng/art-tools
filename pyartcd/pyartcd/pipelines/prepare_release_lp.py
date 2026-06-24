@@ -273,6 +273,7 @@ class PrepareReleaseLPPipeline:
             "metadata": out.get("olm_builds", []),
             "olm_builds_not_found": out.get("olm_builds_not_found", []),
             "olm_operator_nvrs": out.get("olm_operator_nvrs", []),
+            "olm_builds_detail": out.get("olm_builds_detail", {}),
         }
         self._logger.info(
             "Found %d existing bundle NVRs; %d operators still need bundles",
@@ -325,6 +326,37 @@ class PrepareReleaseLPPipeline:
                 skipped = sorted(set(missing_operator_nvrs) - set(scoped))
                 self._logger.info("Skipping %d operator(s) not pinned in assembly: %s", len(skipped), skipped)
             missing_operator_nvrs = scoped
+
+        # Detect stale bundles whose operands no longer match the assembly pins.
+        # When an operand image is swapped in the assembly, existing bundles
+        # still reference the old image and must be rebuilt.
+        builds_detail = existing.get("olm_builds_detail", {})
+        if operand_nvrs and existing_bundle_nvrs and builds_detail:
+            pinned_by_name = {parse_nvr(nvr)['name']: nvr for nvr in operand_nvrs}
+            stale_bundles = []
+            for bundle_nvr in existing_bundle_nvrs:
+                detail = builds_detail.get(bundle_nvr, {})
+                for bop_nvr in detail.get('operand_nvrs', []):
+                    bop_name = parse_nvr(bop_nvr)['name']
+                    if bop_name in pinned_by_name and pinned_by_name[bop_name] != bop_nvr:
+                        self._logger.info(
+                            "Bundle %s is stale: references %s but assembly pins %s",
+                            bundle_nvr,
+                            bop_nvr,
+                            pinned_by_name[bop_name],
+                        )
+                        stale_bundles.append(bundle_nvr)
+                        operator_nvr = detail.get('operator_nvr')
+                        if operator_nvr and operator_nvr not in missing_operator_nvrs:
+                            missing_operator_nvrs.append(operator_nvr)
+                        break
+            if stale_bundles:
+                existing_bundle_nvrs = [nvr for nvr in existing_bundle_nvrs if nvr not in stale_bundles]
+                self._logger.info(
+                    "Removed %d stale bundle(s); %d operator(s) need fresh bundles",
+                    len(stale_bundles),
+                    len(missing_operator_nvrs),
+                )
 
         if existing_bundle_nvrs:
             self._logger.info(

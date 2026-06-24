@@ -982,5 +982,8 @@ async def find_builds_konflux_all_types(runtime: Runtime, include_shipped: bool 
         'olm_builds': sorted([b.nvr for b in olm_records]),
         'olm_builds_not_found': sorted([b.nvr for b in olm_records_not_found]),
         'olm_operator_nvrs': sorted([b.nvr for b in operator_builds]),
+        'olm_builds_detail': {
+            b.nvr: {'operator_nvr': b.operator_nvr, 'operand_nvrs': b.operand_nvrs or []} for b in olm_records
+        },
     }
     return builds_tuple

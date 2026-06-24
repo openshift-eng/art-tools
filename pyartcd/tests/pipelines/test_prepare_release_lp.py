@@ -347,6 +347,80 @@ class TestPrepareReleaseLPBundleScoping(unittest.TestCase):
         self.assertEqual(bundle_nvrs, ["existing-bundle-1"])
         self.assertEqual(operator_nvrs, [])
 
+    @patch.object(PrepareReleaseLPPipeline, '_find_existing_bundles', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.prepare_release_lp.exectools.cmd_gather_async', new_callable=AsyncMock)
+    def test_stale_bundle_triggers_rebuild(self, mock_cmd, mock_find):
+        """Bundles referencing old operand images must be rebuilt when the assembly pins a new version."""
+        mock_find.return_value = {
+            "metadata": [
+                "loki-rhel9-operator-metadata-container-6.0.15-1.assembly.stream.el9-1",
+            ],
+            "olm_builds_not_found": [],
+            "olm_operator_nvrs": [
+                "loki-rhel9-operator-container-6.0.15-1.assembly.stream.el9",
+            ],
+            "olm_builds_detail": {
+                "loki-rhel9-operator-metadata-container-6.0.15-1.assembly.stream.el9-1": {
+                    "operator_nvr": "loki-rhel9-operator-container-6.0.15-1.assembly.stream.el9",
+                    "operand_nvrs": [
+                        "logging-loki-rhel9-container-6.0.15-OLD.assembly.stream.el9",
+                    ],
+                },
+            },
+        }
+        mock_cmd.return_value = (
+            0,
+            json.dumps({"nvrs": ["loki-rhel9-operator-metadata-container-6.0.15-2"], "errors": []}),
+            "",
+        )
+
+        pipeline = self._make_pipeline()
+        operand_nvrs = [
+            "loki-rhel9-operator-container-6.0.15-1.assembly.stream.el9",
+            "logging-loki-rhel9-container-6.0.15-NEW.assembly.stream.el9",
+        ]
+        bundle_nvrs, operator_nvrs = asyncio.run(pipeline._trigger_bundle_build(operand_nvrs))
+
+        # The stale bundle should have been removed and a rebuild triggered
+        mock_cmd.assert_called_once()
+        cmd = mock_cmd.call_args[0][0]
+        self.assertIn("loki-rhel9-operator-container-6.0.15-1.assembly.stream.el9", cmd)
+        self.assertIn("loki-rhel9-operator-metadata-container-6.0.15-2", bundle_nvrs)
+        # The old stale bundle should not be in the result
+        self.assertNotIn("loki-rhel9-operator-metadata-container-6.0.15-1.assembly.stream.el9-1", bundle_nvrs)
+
+    @patch.object(PrepareReleaseLPPipeline, '_find_existing_bundles', new_callable=AsyncMock)
+    def test_matching_operands_reuses_bundle(self, mock_find):
+        """Bundles whose operands match the assembly pins should be reused."""
+        mock_find.return_value = {
+            "metadata": [
+                "loki-rhel9-operator-metadata-container-6.0.15-1.assembly.stream.el9-1",
+            ],
+            "olm_builds_not_found": [],
+            "olm_operator_nvrs": [
+                "loki-rhel9-operator-container-6.0.15-1.assembly.stream.el9",
+            ],
+            "olm_builds_detail": {
+                "loki-rhel9-operator-metadata-container-6.0.15-1.assembly.stream.el9-1": {
+                    "operator_nvr": "loki-rhel9-operator-container-6.0.15-1.assembly.stream.el9",
+                    "operand_nvrs": [
+                        "logging-loki-rhel9-container-6.0.15-SAME.assembly.stream.el9",
+                    ],
+                },
+            },
+        }
+
+        pipeline = self._make_pipeline()
+        operand_nvrs = [
+            "loki-rhel9-operator-container-6.0.15-1.assembly.stream.el9",
+            "logging-loki-rhel9-container-6.0.15-SAME.assembly.stream.el9",
+        ]
+        bundle_nvrs, operator_nvrs = asyncio.run(pipeline._trigger_bundle_build(operand_nvrs))
+
+        # The bundle should be reused since operands match
+        self.assertEqual(bundle_nvrs, ["loki-rhel9-operator-metadata-container-6.0.15-1.assembly.stream.el9-1"])
+        self.assertEqual(operator_nvrs, ["loki-rhel9-operator-container-6.0.15-1.assembly.stream.el9"])
+
 
 class TestPrepareReleaseLPRun(unittest.TestCase):
     """Integration-level tests for the run() method with mocked externals."""
