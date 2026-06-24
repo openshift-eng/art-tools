@@ -584,6 +584,17 @@ class TestBuilddepParsing(unittest.TestCase):
         _, _, _, _, builddep, _ = analyze_run_commands(run_values)
         self.assertEqual(builddep, ["mypackage.spec"])
 
+    def test_build_dep_hyphenated(self):
+        run_values = ["dnf build-dep tuned.spec -y"]
+        _, _, _, _, builddep, _ = analyze_run_commands(run_values)
+        self.assertEqual(builddep, ["tuned.spec"])
+
+    def test_build_dep_hyphenated_with_install(self):
+        run_values = ["dnf install -y gcc rpm-build && cd assets/tuned/daemon && dnf build-dep tuned.spec -y"]
+        common, _, _, _, builddep, _ = analyze_run_commands(run_values)
+        self.assertIn("gcc", common)
+        self.assertEqual(builddep, ["tuned.spec"])
+
 
 class TestModuleParsing(unittest.TestCase):
     def test_module_install(self):
@@ -611,3 +622,25 @@ class TestModuleParsing(unittest.TestCase):
         run_values = ["dnf module enable -y nodejs"]
         _, _, _, _, _, modules = analyze_run_commands(run_values)
         self.assertEqual(modules, [])
+
+    def test_variable_package_manager(self):
+        run_values = ["${DNF} install -y openssh-clients"]
+        pkgs, _, _, _, _, _ = analyze_run_commands(run_values, env_vars={"DNF": "microdnf"})
+        self.assertEqual(pkgs, ["openssh-clients"])
+
+    def test_variable_package_manager_in_conditional(self):
+        run_values = [
+            "if ! rpm -q openssh-clients; then ${DNF} install -y openssh-clients "
+            "&& ${DNF} clean all && rm -rf /var/cache/dnf/*; fi"
+        ]
+        pkgs, _, _, _, _, _ = analyze_run_commands(run_values, env_vars={"DNF": "microdnf"})
+        self.assertEqual(pkgs, ["openssh-clients"])
+
+    def test_variable_package_manager_multiple_commands(self):
+        run_values = [
+            "if ! rpm -q openssh-clients; then ${DNF} install -y openssh-clients && ${DNF} clean all; fi",
+            "if ! rpm -q libvirt-libs; then ${DNF} install -y libvirt-libs && ${DNF} clean all; fi",
+            "if ! command -v tar; then ${DNF} install -y tar && ${DNF} clean all; fi",
+        ]
+        pkgs, _, _, _, _, _ = analyze_run_commands(run_values, env_vars={"DNF": "microdnf"})
+        self.assertEqual(pkgs, ["libvirt-libs", "openssh-clients", "tar"])

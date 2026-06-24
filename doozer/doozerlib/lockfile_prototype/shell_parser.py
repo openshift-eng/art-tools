@@ -382,7 +382,7 @@ def _detect_pkg_action(word_values: list[str], ctx: _WalkContext) -> tuple[str |
         if wl in ("update", "upgrade"):
             ctx.has_update = True
             return "update", idx
-        if wl == "builddep":
+        if wl in ("builddep", "build-dep"):
             return "builddep", idx
         if wl == "module":
             for sub_idx, sub_w in enumerate(word_values[idx + 1 :], idx + 1):
@@ -511,7 +511,10 @@ def _process_command_node(
         return
 
     word_values = [w.word for w in words]
-    action, action_idx = _detect_pkg_action(word_values, ctx)
+    all_vars = {**ctx.variables, **ctx.shell_vars}
+    resolved_first = resolve_bash_expansion(word_values[0], all_vars) if word_values else ""
+    resolved_word_values = [resolved_first] + word_values[1:] if word_values else word_values
+    action, action_idx = _detect_pkg_action(resolved_word_values, ctx)
     if not action:
         return
 
