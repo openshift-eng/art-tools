@@ -143,6 +143,15 @@ def plashet_config_for_major_minor(major, minor):
             "embargoed_tags": [],
             "include_previous_packages": [],
         },
+        "rhel-10-golang-rpms": {
+            "slug": "golang-el10",
+            "tag": f"rhaos-{major}.{minor}-rhel-10-override",
+            "product_version": f"OSE-{major}.{minor}-RHEL-10",
+            "include_embargoed": False,
+            "embargoed_tags": [],
+            "include_previous_packages": [],
+            "include_packages": ["golang", "goversioninfo"],
+        },
         "rhel-9-golang-rpms": {
             "slug": "golang-el9",
             "tag": f"rhaos-{major}.{minor}-rhel-9-override",
