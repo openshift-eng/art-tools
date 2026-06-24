@@ -47,6 +47,7 @@ RPMDB_CACHE_PATH = Path.home() / ".cache" / "rpm-lockfile-prototype" / "rpmdbs"
 RPMDB_CACHE_ERROR_PATTERNS = [
     "database disk image is malformed",
     "failed loading RPMDB",
+    "No such file or directory",
 ]
 
 

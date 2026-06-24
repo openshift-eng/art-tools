@@ -86,13 +86,12 @@ class RpmResolver:
 
             if rc != 0:
                 if image_pullspec and self._is_rpmdb_corrupt(stderr):
-                    cleared = self._clear_rpmdb_cache(image_pullspec)
-                    if cleared:
-                        self.logger.info("Retrying rpm-lockfile-prototype after clearing corrupt RPMDB cache")
-                        retry_rc, _, retry_stderr = await cmd_gather_async(cmd, check=False, env=env)
-                        if retry_rc == 0:
-                            return LockfileData.model_validate(yaml.safe_load(out_file.read_text()))
-                        self.logger.warning("Retry also failed (exit code %d): %s", retry_rc, retry_stderr)
+                    self._clear_rpmdb_cache(image_pullspec)
+                    self.logger.info("Retrying rpm-lockfile-prototype after RPMDB cache error")
+                    retry_rc, _, retry_stderr = await cmd_gather_async(cmd, check=False, env=env)
+                    if retry_rc == 0:
+                        return LockfileData.model_validate(yaml.safe_load(out_file.read_text()))
+                    self.logger.warning("Retry also failed (exit code %d): %s", retry_rc, retry_stderr)
 
                 raise RuntimeError(f"rpm-lockfile-prototype failed (exit code {rc}): {stderr}")
 
