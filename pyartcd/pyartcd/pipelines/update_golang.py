@@ -334,7 +334,7 @@ class UpdateGolangPipeline:
         el_nvr_map_for_images = {el_v: nvr for el_v, nvr in el_nvr_map.items() if el_v != 10}
         if el_nvr_map.keys() - el_nvr_map_for_images.keys():
             _LOGGER.info("RHEL 10 NVRs will only be used for build root tagging, not for golang-builder images")
-        self._slack_client.dry_run = True
+        self._slack_client.bind_channel(self.ocp_version)
         running_in_jenkins = os.environ.get('BUILD_ID', False)
         if running_in_jenkins:
             title_update = f" {self.ocp_version} - {go_version} - el{list(el_nvr_map.keys())} - {self.build_system}"
@@ -1075,7 +1075,7 @@ class UpdateGolangPipeline:
             )
 
         ocp_major, ocp_minor = self.ocp_version.split('.')
-        content_repo_url_suffix = self.get_content_repo_url_suffix(el_v, ocp_major, ocp_minor)
+        content_repo_url_suffix = self.get_content_repo_url_suffix(el_v)
         err = False
         for arch, template_url in group_config['repos'][golang_repo]['conf']['baseurl'].items():
             expected_suffix = f'{content_repo_url_suffix}/{arch}/os/'
@@ -1091,8 +1091,8 @@ class UpdateGolangPipeline:
 
         _LOGGER.info(f"Builder branch {branch} has the expected content set urls")
 
-    def get_content_repo_url_suffix(self, el_v, major, minor):
-        return f'/pub/RHOCP/plashets/{major}.{minor}/stream/golang-el{el_v}/latest'
+    def get_content_repo_url_suffix(self, el_v):
+        return f'/pub/RHOCP/plashets/{self.ocp_version}/stream/golang-el{el_v}/latest'
 
     def get_module_tag(self, nvr, el_v) -> str:
         tags = [t['name'] for t in self.koji_session.listTags(build=nvr)]

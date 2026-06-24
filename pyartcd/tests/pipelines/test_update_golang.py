@@ -787,7 +787,7 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
             tag_builds=True,
         )
 
-        suffix = pipeline.get_content_repo_url_suffix(8, 4, 16)
+        suffix = pipeline.get_content_repo_url_suffix(8)
         self.assertEqual(suffix, "/pub/RHOCP/plashets/4.16/stream/golang-el8/latest")
 
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
