@@ -511,24 +511,27 @@ class SyncCIImagesPipeline:
             f"--build-system {self.BUILD_SYSTEM} "
             f"--registry-config {auth_file}"
         )
-        if self.only_stream:
-            doozer_opts += f" --only-streams {self.only_stream}"
         return doozer_opts
+
+    @property
+    def _stream_arg(self) -> str:
+        """Return the --stream subcommand arg if only_stream is set, empty string otherwise."""
+        return f"--stream {self.only_stream}" if self.only_stream else ""
 
     async def _generate_and_apply_buildconfigs(self, doozer_opts: str) -> None:
         """Generate BuildConfigs and apply them to CI cluster."""
         self._logger.info(f"{self.version}: Generating BuildConfigs")
         apply_flag = "" if self.runtime.dry_run else "--apply"
         await self._run_doozer_command(
-            doozer_opts, "images:streams gen-buildconfigs", f"-o {self._working_dir}/buildconfigs.yaml {apply_flag}"
+            doozer_opts,
+            "images:streams gen-buildconfigs",
+            f"{self._stream_arg} -o {self._working_dir}/buildconfigs.yaml {apply_flag}",
         )
 
     async def _mirror_images_to_ci(self, doozer_opts: str, auth_file: str) -> None:
         """Mirror builder and base images to CI registries."""
         self._logger.info(f"{self.version}: Mirroring images")
-        # Pass --registry-auth at command level to work around doozer bug where
-        # global --registry-config doesn't get passed to oc image mirror commands
-        mirror_args = f"--registry-auth {auth_file} "
+        mirror_args = f"{self._stream_arg} --registry-auth {auth_file} "
         if self.update_images_only_when_missing:
             mirror_args += "--only-if-missing "
         if self.runtime.dry_run:
@@ -538,8 +541,7 @@ class SyncCIImagesPipeline:
     async def _trigger_ci_builds(self, doozer_opts: str, auth_file: str) -> None:
         """Start CI builds for updated images."""
         self._logger.info(f"{self.version}: Starting builds")
-        # Pass --registry-auth for image info and mirror operations in pre-build steps
-        start_builds_args = f"--registry-auth {auth_file} "
+        start_builds_args = f"{self._stream_arg} --registry-auth {auth_file} "
         if self.runtime.dry_run:
             start_builds_args += "--dry-run"
         await self._run_doozer_command(doozer_opts, "images:streams start-builds", start_builds_args.strip())
@@ -553,7 +555,9 @@ class SyncCIImagesPipeline:
     async def _verify_upstream_consistency(self, doozer_opts: str, auth_file: str) -> None:
         """Verify CI imagestreams match expected state."""
         self._logger.info(f"{self.version}: Checking upstream consistency")
-        await self._run_doozer_command(doozer_opts, "images:streams check-upstream", f"--registry-auth {auth_file}")
+        await self._run_doozer_command(
+            doozer_opts, "images:streams check-upstream", f"{self._stream_arg} --registry-auth {auth_file}"
+        )
 
     async def _open_reconciliation_prs(self, doozer_opts: str) -> int:
         """Open PRs to reconcile BuildConfig drift."""
