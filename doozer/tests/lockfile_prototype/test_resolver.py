@@ -239,6 +239,15 @@ class TestIsRpmdbCorrupt(unittest.TestCase):
         stderr = "OSError: failed loading RPMDB\n"
         self.assertTrue(RpmResolver._is_rpmdb_corrupt(stderr))
 
+    def test_detects_no_such_file(self):
+        stderr = (
+            "shutil.Error: [('/home/jenkins/.cache/rpm-lockfile-prototype/rpmdbs/ppc64le/"
+            "sha256:abc123/var/lib/rpm/rpmdb.sqlite', '/tmp/xyz/var/lib/rpm/rpmdb.sqlite', "
+            "\"[Errno 2] No such file or directory: '/home/jenkins/.cache/rpm-lockfile-prototype/"
+            "rpmdbs/ppc64le/sha256:abc123/var/lib/rpm/rpmdb.sqlite'\")]"
+        )
+        self.assertTrue(RpmResolver._is_rpmdb_corrupt(stderr))
+
     def test_no_false_positive(self):
         stderr = "No match for argument: foo\n"
         self.assertFalse(RpmResolver._is_rpmdb_corrupt(stderr))
@@ -344,6 +353,44 @@ class TestResolveRpmdbCorruptionRetry(unittest.TestCase):
 
         mock_gather.side_effect = mock_cmd
         mock_clear.return_value = True
+
+        resolver = RpmResolver(working_dir=Path(tempfile.mkdtemp()))
+        config = RpmsInConfig(
+            arches=["x86_64"],
+            contentOrigin={"repos": []},
+            packages=[],
+        )
+        result = asyncio.run(resolver.resolve(config, image_pullspec="registry.example.com/repo@sha256:abc123"))
+        self.assertIsInstance(result, LockfileData)
+        self.assertEqual(call_count, 2)
+        mock_clear.assert_called_once()
+
+    @patch("doozerlib.lockfile_prototype.resolver.RpmResolver._clear_rpmdb_cache")
+    @patch("doozerlib.lockfile_prototype.resolver.cmd_gather_async")
+    def test_retries_when_cache_already_gone(self, mock_gather, mock_clear):
+        """
+        Cache deleted by another process (_clear returns False) — should still retry.
+        """
+        cache_race_stderr = (
+            "shutil.Error: [('/home/jenkins/.cache/rpm-lockfile-prototype/rpmdbs/ppc64le/"
+            "sha256:abc123/var/lib/rpm/rpmdb.sqlite', '/tmp/xyz/var/lib/rpm/rpmdb.sqlite', "
+            "\"[Errno 2] No such file or directory: '/home/jenkins/.cache/rpm-lockfile-prototype/"
+            "rpmdbs/ppc64le/sha256:abc123/var/lib/rpm/rpmdb.sqlite'\")]"
+        )
+        call_count = 0
+
+        async def mock_cmd(cmd, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return (1, "", cache_race_stderr)
+            outfile_idx = cmd.index("--outfile") + 1
+            with open(cmd[outfile_idx], "w") as f:
+                yaml.safe_dump(self.FAKE_LOCKFILE_DATA, f)
+            return (0, "", "")
+
+        mock_gather.side_effect = mock_cmd
+        mock_clear.return_value = False
 
         resolver = RpmResolver(working_dir=Path(tempfile.mkdtemp()))
         config = RpmsInConfig(
