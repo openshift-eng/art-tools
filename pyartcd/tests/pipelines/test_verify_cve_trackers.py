@@ -1,4 +1,3 @@
-import json
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -194,30 +193,37 @@ class TestVerifyCveTrackersPipeline(unittest.IsolatedAsyncioTestCase):
             data_path="https://github.com/openshift-eng/ocp-build-data",
         )
 
-        with patch(
-            "pyartcd.pipelines.verify_cve_trackers.load_assembly_group",
-            new_callable=AsyncMock,
-            return_value={
-                "advisories": {"rpm": 12345},
-                "shipment": {"url": "https://gitlab.cee.redhat.com/hybrid-platforms/art/ocp-shipment-data/-/merge_requests/1"},
-            },
-        ), patch(
-            "pyartcd.pipelines.verify_cve_trackers.get_rhsa_jira_issues",
-            return_value={"OCPBUGS-11111"},
-        ), patch(
-            "pyartcd.pipelines.verify_cve_trackers.get_jira_issues_from_shipment_mr",
-            return_value=(
-                {"OCPBUGS-11111", "OCPBUGS-22222"},
-                ["image.yaml", "extras.yaml"],
-                ("openshift-4.20", "4.20.1"),
+        with (
+            patch(
+                "pyartcd.pipelines.verify_cve_trackers.load_assembly_group",
+                new_callable=AsyncMock,
+                return_value={
+                    "advisories": {"rpm": 12345},
+                    "shipment": {
+                        "url": "https://gitlab.cee.redhat.com/hybrid-platforms/art/ocp-shipment-data/-/merge_requests/1"
+                    },
+                },
             ),
-        ), patch.object(
-            pipeline,
-            "_load_elliott_output",
-            side_effect=[
-                {"rpm": ["OCPBUGS-11111"]},
-                {"image": ["OCPBUGS-11111", "OCPBUGS-22222"]},
-            ],
+            patch(
+                "pyartcd.pipelines.verify_cve_trackers.get_rhsa_jira_issues",
+                return_value={"OCPBUGS-11111"},
+            ),
+            patch(
+                "pyartcd.pipelines.verify_cve_trackers.get_jira_issues_from_shipment_mr",
+                return_value=(
+                    {"OCPBUGS-11111", "OCPBUGS-22222"},
+                    ["image.yaml", "extras.yaml"],
+                    ("openshift-4.20", "4.20.1"),
+                ),
+            ),
+            patch.object(
+                pipeline,
+                "_load_elliott_output",
+                side_effect=[
+                    {"rpm": ["OCPBUGS-11111"]},
+                    {"image": ["OCPBUGS-11111", "OCPBUGS-22222"]},
+                ],
+            ),
         ):
             result = await pipeline.run()
 

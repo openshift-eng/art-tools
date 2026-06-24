@@ -75,7 +75,9 @@ def parse_shipment_metadata_from_data(data: dict) -> tuple[str, str]:
     return group, assembly
 
 
-def get_jira_issues_from_shipment_mr(mr_url: str, gitlab_token: Optional[str] = None) -> tuple[set[str], list[str], tuple[str, str]]:
+def get_jira_issues_from_shipment_mr(
+    mr_url: str, gitlab_token: Optional[str] = None
+) -> tuple[set[str], list[str], tuple[str, str]]:
     token = gitlab_token or os.getenv("GITLAB_TOKEN")
     if not token:
         raise ValueError("GITLAB_TOKEN environment variable is required to read shipment MR")

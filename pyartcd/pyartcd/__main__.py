@@ -116,6 +116,7 @@ __all__ = [
     "schedule_scan_operator",
     "schedule_scan_plashet_rpms",
     "schedule_sync_ci_images",
+    "verify_cve_trackers",
 ]
 
 
