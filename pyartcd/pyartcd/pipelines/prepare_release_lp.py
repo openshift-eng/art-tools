@@ -657,7 +657,7 @@ class PrepareReleaseLPPipeline:
         if data_path is None:
             data_path = self.build_data_repo_url
         try:
-            data_path = data_path.rstrip(".git")
+            data_path = data_path.removesuffix(".git")
             parts = data_path.rstrip("/").split("/")
             user, repo_name = parts[-2], parts[-1]
             github_client = get_github_client_for_org(user)
