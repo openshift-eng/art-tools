@@ -469,17 +469,24 @@ class RpmLockfilePrototypeGenerator:
                 # so they appear in the lockfile even when already installed
                 # on some architectures, and add base image packages to the
                 # install list for conflict detection.
-                if image_pullspec:
-                    reinstall_pkgs = list(packages)
-                base_pkgs = await self._get_base_image_packages(stage_num, image_pullspec, distgit_key)
-                if base_pkgs:
-                    extra = [p for p in base_pkgs if p not in packages]
-                    if extra:
-                        packages = packages + extra
-                        self.logger.info(
-                            f"{distgit_key}: stage {stage_num}: {len(extra)} base image "
-                            "packages added to install list for conflict detection"
-                        )
+                #
+                # When the builder image RHEL version differs from the repos
+                # (e.g. el8 builder with el9 repos), skip --image mode and
+                # base image packages — cross-RHEL depsolve is unsolvable.
+                if self._has_rhel_version_mismatch(stage_num, repo_list, distgit_key):
+                    image_pullspec = None
+                else:
+                    if image_pullspec:
+                        reinstall_pkgs = list(packages)
+                    base_pkgs = await self._get_base_image_packages(stage_num, image_pullspec, distgit_key)
+                    if base_pkgs:
+                        extra = [p for p in base_pkgs if p not in packages]
+                        if extra:
+                            packages = packages + extra
+                            self.logger.info(
+                                f"{distgit_key}: stage {stage_num}: {len(extra)} base image "
+                                "packages added to install list for conflict detection"
+                            )
 
             enable_only = [s.split("/")[0] for s in stage_info.module_specs] if stage_info.module_specs else None
 
@@ -600,6 +607,80 @@ class RpmLockfilePrototypeGenerator:
             else:
                 image_pullspec = resolved
         return image_pullspec
+
+    @staticmethod
+    def _extract_rhel_version_from_pullspec(pullspec: str) -> int | None:
+        """
+        Extract RHEL major version from an image pullspec tag.
+
+        Handles two tag formats:
+        - rhel-8-golang-..., ubi-9-minimal, etc.
+        - NVR-style: openshift-golang-builder-container-v1.25.9-...el8
+
+        Arg(s):
+            pullspec (str): Image pullspec with tag or digest.
+        Return Value(s):
+            int | None: RHEL major version (e.g. 8, 9), or None if
+                not detectable.
+        """
+        if ":" not in pullspec:
+            return None
+        tag = pullspec.split("@")[0].split(":")[-1]
+        m = re.search(r"(?:rhel|ubi|centos|scos)-?(\d+)", tag)
+        if m:
+            return int(m.group(1))
+        m = re.search(r"\.el(\d+)", tag)
+        if m:
+            return int(m.group(1))
+        return None
+
+    @staticmethod
+    def _extract_rhel_version_from_repos(repo_list: list[RepoEntry]) -> int | None:
+        """
+        Extract RHEL major version from repo content set IDs.
+
+        Arg(s):
+            repo_list (list[RepoEntry]): Repository entries with repoid
+                fields like "rhel-9-for-x86_64-baseos-e4s-rpms__9_DOT_6".
+        Return Value(s):
+            int | None: RHEL major version, or None if not detectable.
+        """
+        for repo in repo_list:
+            m = re.search(r"rhel-(\d+)", repo.repoid)
+            if m:
+                return int(m.group(1))
+        return None
+
+    def _has_rhel_version_mismatch(self, stage_num: int, repo_list: list[RepoEntry], distgit_key: str) -> bool:
+        """
+        Check whether a builder stage's RHEL version differs from the
+        repos' RHEL version. Returns False when either version cannot
+        be determined (fail-open).
+
+        Arg(s):
+            stage_num (int): Dockerfile stage number.
+            repo_list (list[RepoEntry]): Repository entries.
+            distgit_key (str): Image identifier for logging.
+        Return Value(s):
+            bool: True if a RHEL version mismatch is detected.
+        """
+        if stage_num >= len(self.downstream_parents):
+            return False
+        pullspec = self.downstream_parents[stage_num]
+        if not pullspec or "/" not in pullspec:
+            return False
+        builder_rhel = self._extract_rhel_version_from_pullspec(pullspec)
+        repo_rhel = self._extract_rhel_version_from_repos(repo_list)
+        if builder_rhel is None or repo_rhel is None:
+            return False
+        if builder_rhel != repo_rhel:
+            self.logger.warning(
+                f"{distgit_key}: stage {stage_num}: RHEL version mismatch — "
+                f"builder image is el{builder_rhel} but repos are el{repo_rhel}; "
+                f"skipping base image packages and --image mode for this stage"
+            )
+            return True
+        return False
 
     async def _handle_update_only_stage(
         self, stage_num: int, image_pullspec: str | None, distgit_key: str
