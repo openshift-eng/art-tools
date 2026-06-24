@@ -762,6 +762,14 @@ class RpmLockfilePrototypeGenerator:
         resolved: set[str] = set()
 
         for pattern in builddep_patterns:
+            if pattern.endswith(".spec"):
+                self.logger.warning(
+                    f"{distgit_key}: builddep target '{pattern}' is a spec file — "
+                    "only SRPMs are supported for BuildRequires extraction; "
+                    "spec files cannot be parsed reliably due to macro resolution"
+                )
+                continue
+
             srpm_pattern = pattern if pattern.endswith(".src.rpm") else f"{pattern}.src.rpm"
             matching_srpms = [
                 f
@@ -770,17 +778,8 @@ class RpmLockfilePrototypeGenerator:
             ]
 
             if not matching_srpms:
-                matching_specs = [
-                    f
-                    for f in dest_dir.iterdir()
-                    if f.is_file() and f.name.endswith(".spec") and fnmatch.fnmatch(f.name, pattern)
-                ]
-                if matching_specs:
-                    matching_srpms = matching_specs
-
-            if not matching_srpms:
                 self.logger.warning(
-                    f"{distgit_key}: no SRPM or spec file matching '{pattern}' found in {dest_dir}, "
+                    f"{distgit_key}: no SRPM matching '{pattern}' found in {dest_dir}, "
                     "builddep packages will not be included in lockfile"
                 )
                 continue

@@ -382,7 +382,7 @@ def _detect_pkg_action(word_values: list[str], ctx: _WalkContext) -> tuple[str |
         if wl in ("update", "upgrade"):
             ctx.has_update = True
             return "update", idx
-        if wl == "builddep":
+        if wl in ("builddep", "build-dep"):
             return "builddep", idx
         if wl == "module":
             for sub_idx, sub_w in enumerate(word_values[idx + 1 :], idx + 1):

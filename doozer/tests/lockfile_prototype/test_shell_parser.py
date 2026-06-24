@@ -584,6 +584,17 @@ class TestBuilddepParsing(unittest.TestCase):
         _, _, _, _, builddep, _ = analyze_run_commands(run_values)
         self.assertEqual(builddep, ["mypackage.spec"])
 
+    def test_build_dep_hyphenated(self):
+        run_values = ["dnf build-dep tuned.spec -y"]
+        _, _, _, _, builddep, _ = analyze_run_commands(run_values)
+        self.assertEqual(builddep, ["tuned.spec"])
+
+    def test_build_dep_hyphenated_with_install(self):
+        run_values = ["dnf install -y gcc rpm-build && cd assets/tuned/daemon && dnf build-dep tuned.spec -y"]
+        common, _, _, _, builddep, _ = analyze_run_commands(run_values)
+        self.assertIn("gcc", common)
+        self.assertEqual(builddep, ["tuned.spec"])
+
 
 class TestModuleParsing(unittest.TestCase):
     def test_module_install(self):

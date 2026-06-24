@@ -1644,25 +1644,13 @@ class TestResolveBuilddepPackages(unittest.TestCase):
 
             self.assertEqual(result, ["gcc", "make", "openssl-devel"])
 
-    def test_matching_spec_file(self):
+    def test_spec_file_skipped_with_warning(self):
         gen = self._make_gen()
         with TemporaryDirectory() as tmpdir:
-            spec_path = Path(tmpdir) / "pkcs11-helper.spec"
+            spec_path = Path(tmpdir) / "tuned.spec"
             spec_path.touch()
-
-            async def mock_gather(cmd, check=True, env=None):
-                return 0, "gcc\nmake\n", ""
-
-            import doozerlib.lockfile_prototype.generator as gen_mod
-
-            original = gen_mod.cmd_gather_async
-            gen_mod.cmd_gather_async = mock_gather
-            try:
-                result = asyncio.run(gen._resolve_builddep_packages(["pkcs11-helper*"], Path(tmpdir), "test-img"))
-            finally:
-                gen_mod.cmd_gather_async = original
-
-            self.assertEqual(result, ["gcc", "make"])
+            result = asyncio.run(gen._resolve_builddep_packages(["tuned.spec"], Path(tmpdir), "test-img"))
+            self.assertEqual(result, [])
 
 
 class TestExtractRhelVersionFromPullspec(unittest.TestCase):
