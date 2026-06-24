@@ -929,3 +929,162 @@ class TestScanExternalImageChanges(TestScanSourcesKonflux):
         with patch.object(self.scanner, '_fetch_art_yaml_from_rebase', new_callable=AsyncMock) as mock_fetch:
             await self.scanner.scan_external_image_changes(self.image_meta)
             mock_fetch.assert_not_called()
+
+
+class TestOkdImageFiltering(TestScanSourcesKonflux):
+    """Tests for OKD image filtering including base_only images (ART-21083 Gap 2)."""
+
+    def _make_okd_scanner(self):
+        """Create a scanner with OKD variant."""
+        scanner = ConfigScanSources(
+            runtime=self.runtime,
+            ci_kubeconfig=self.ci_kubeconfig,
+            session=self.session,
+            as_yaml=False,
+            rebase_priv=False,
+            dry_run=False,
+            variant='okd',
+        )
+        return scanner
+
+    def _make_image_meta(self, for_payload=False, base_only=False, enabled=True, okd_mode=Missing):
+        """Create a mock ImageMetadata with configurable attributes."""
+        meta = MagicMock(spec=ImageMetadata)
+        meta.enabled = enabled
+        meta.mode = 'enabled' if enabled else 'disabled'
+        meta.config = MagicMock()
+        meta.config.for_payload = for_payload
+        meta.config.base_only = base_only
+        if okd_mode is Missing:
+            meta.config.okd = Missing
+        else:
+            meta.config.okd = MagicMock()
+            meta.config.okd.mode = okd_mode
+        return meta
+
+    def test_okd_includes_payload_images(self):
+        """OKD scan includes images with for_payload=true."""
+        scanner = self._make_okd_scanner()
+        meta = self._make_image_meta(for_payload=True)
+        self.assertTrue(scanner._is_image_enabled(meta))
+
+    def test_okd_includes_base_only_images(self):
+        """OKD scan includes base_only images (needed for dependency chain)."""
+        scanner = self._make_okd_scanner()
+        meta = self._make_image_meta(base_only=True)
+        self.assertTrue(scanner._is_image_enabled(meta))
+
+    def test_okd_excludes_non_payload_non_base_images(self):
+        """OKD scan excludes images that are neither payload nor base_only."""
+        scanner = self._make_okd_scanner()
+        meta = self._make_image_meta(for_payload=False, base_only=False)
+        self.assertFalse(scanner._is_image_enabled(meta))
+
+    def test_okd_scan_set_includes_base_only(self):
+        """_is_image_enabled_for_scan includes base_only for OKD."""
+        scanner = self._make_okd_scanner()
+        meta = self._make_image_meta(base_only=True)
+        self.assertTrue(scanner._is_image_enabled_for_scan(meta))
+
+    def test_ocp_ignores_base_only_flag(self):
+        """OCP variant returns image_meta.enabled regardless of base_only — behavior unchanged."""
+        meta = self._make_image_meta(base_only=True, for_payload=False)
+        # Default scanner is OCP variant — base_only/for_payload are irrelevant; enabled=True wins
+        self.assertTrue(self.scanner._is_image_enabled(meta))
+
+    def test_okd_includes_image_with_both_payload_and_base_only(self):
+        """Image with both for_payload=True and base_only=True is included (OR semantics)."""
+        scanner = self._make_okd_scanner()
+        meta = self._make_image_meta(for_payload=True, base_only=True)
+        self.assertTrue(scanner._is_image_enabled(meta))
+
+    def test_okd_excludes_disabled_non_okd_image(self):
+        """OKD scan excludes disabled images without okd.mode: enabled."""
+        scanner = self._make_okd_scanner()
+        meta = self._make_image_meta(for_payload=True, enabled=False)
+        self.assertFalse(scanner._is_image_enabled(meta))
+
+    def test_okd_includes_disabled_with_okd_mode_enabled(self):
+        """OKD scan includes disabled images that have okd.mode: enabled + for_payload."""
+        scanner = self._make_okd_scanner()
+        meta = self._make_image_meta(for_payload=True, enabled=False, okd_mode='enabled')
+        self.assertTrue(scanner._is_image_enabled(meta))
+
+
+class TestOkdArchChanges(TestScanSourcesKonflux):
+    """Tests for OKD arch-change detection (ART-21083 Gap 1)."""
+
+    def _make_okd_scanner_with_arches(self, arches):
+        """Create an OKD scanner with specific arches set on the runtime."""
+        self.runtime.arches = arches
+        self.runtime.build_system = 'konflux'
+        scanner = ConfigScanSources(
+            runtime=self.runtime,
+            ci_kubeconfig=self.ci_kubeconfig,
+            session=self.session,
+            as_yaml=False,
+            rebase_priv=False,
+            dry_run=False,
+            variant='okd',
+        )
+        return scanner
+
+    async def test_arch_expansion_triggers_rebuild(self):
+        """Image built for x86_64 only should trigger rebuild when OKD targets x86_64+aarch64."""
+        scanner = self._make_okd_scanner_with_arches(['x86_64', 'aarch64'])
+
+        meta = MagicMock(spec=ImageMetadata)
+        meta.distgit_key = 'enterprise-base'
+        meta.qualified_key = 'image:enterprise-base'
+        meta.get_arches.return_value = ['x86_64', 'aarch64']
+
+        build_record = MagicMock(spec=KonfluxBuildRecord)
+        build_record.arches = ['x86_64']
+        build_record.nvr = 'enterprise-base-9-1.0'
+        scanner.latest_image_build_records_map = {'enterprise-base': build_record}
+        scanner.changing_image_names = set()
+
+        await scanner.scan_arch_changes(meta)
+
+        self.assertIn('enterprise-base', scanner.changing_image_names)
+        self.assertEqual(scanner.assessment_code['image:enterprise-base+True'], RebuildHintCode.ARCHES_CHANGE)
+
+    async def test_matching_arches_no_rebuild(self):
+        """Image built for x86_64+aarch64 should NOT trigger when OKD targets the same."""
+        scanner = self._make_okd_scanner_with_arches(['x86_64', 'aarch64'])
+
+        meta = MagicMock(spec=ImageMetadata)
+        meta.distgit_key = 'enterprise-base'
+        meta.get_arches.return_value = ['x86_64', 'aarch64']
+
+        build_record = MagicMock(spec=KonfluxBuildRecord)
+        build_record.arches = ['x86_64', 'aarch64']
+        build_record.nvr = 'enterprise-base-9-1.0'
+        scanner.latest_image_build_records_map = {'enterprise-base': build_record}
+        scanner.changing_image_names = set()
+
+        await scanner.scan_arch_changes(meta)
+
+        self.assertNotIn('enterprise-base', scanner.changing_image_names)
+        self.assertEqual(scanner.assessment_code, {})
+
+    async def test_okd_two_arch_target_does_not_loop_on_four_arch_build(self):
+        """OKD scanner targeting 2 arches should NOT flag a 2-arch build even though OCP group has 4."""
+        scanner = self._make_okd_scanner_with_arches(['x86_64', 'aarch64'])
+
+        meta = MagicMock(spec=ImageMetadata)
+        meta.distgit_key = 'enterprise-base'
+        # get_arches() is constrained by runtime.arches (CLI --arches override),
+        # so it returns 2 OKD arches, not 4 OCP group arches
+        meta.get_arches.return_value = ['x86_64', 'aarch64']
+
+        build_record = MagicMock(spec=KonfluxBuildRecord)
+        build_record.arches = ['x86_64', 'aarch64']
+        build_record.nvr = 'enterprise-base-9-1.0'
+        scanner.latest_image_build_records_map = {'enterprise-base': build_record}
+        scanner.changing_image_names = set()
+
+        await scanner.scan_arch_changes(meta)
+
+        self.assertNotIn('enterprise-base', scanner.changing_image_names)
+        self.assertEqual(scanner.assessment_code, {})

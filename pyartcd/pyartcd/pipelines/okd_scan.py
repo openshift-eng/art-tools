@@ -32,6 +32,7 @@ from artcommonlib import exectools
 from pyartcd import constants, jenkins, locks
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import Lock
+from pyartcd.pipelines.okd import OKD_ARCHES
 from pyartcd.runtime import Runtime
 
 
@@ -79,6 +80,7 @@ class OkdScanPipeline:
             f'--assembly={self.assembly}',
             '--build-system=konflux',
             '--variant=okd',
+            f'--arches={",".join(OKD_ARCHES)}',
         ]
 
     async def run(self):
