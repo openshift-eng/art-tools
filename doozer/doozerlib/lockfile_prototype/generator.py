@@ -954,13 +954,24 @@ class RpmLockfilePrototypeGenerator:
                             f"{distgit_key}: stage {stage_num}: required Dockerfile packages not available "
                             f"in configured repos, stripping: {sorted(required_missing)}"
                         )
-                removed = self._strip_missing_packages(
-                    missing,
-                    remaining_packages,
-                    remaining_update_targets,
-                    remaining_reinstall,
-                    arch_pkgs,
-                )
+                reinstall_only = missing & set(remaining_reinstall)
+                fully_missing = missing - reinstall_only
+                removed = 0
+                if reinstall_only:
+                    remaining_reinstall[:] = [p for p in remaining_reinstall if p not in reinstall_only]
+                    removed += len(reinstall_only)
+                    self.logger.info(
+                        f"{distgit_key}: stage {stage_num}: stripped from reinstall only "
+                        f"(keeping in install/upgrade): {sorted(reinstall_only)}"
+                    )
+                if fully_missing:
+                    removed += self._strip_missing_packages(
+                        fully_missing,
+                        remaining_packages,
+                        remaining_update_targets,
+                        remaining_reinstall,
+                        arch_pkgs,
+                    )
                 if not removed:
                     raise
                 if stripped_tracker is not None:
