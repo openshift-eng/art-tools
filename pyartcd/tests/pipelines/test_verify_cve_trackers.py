@@ -331,23 +331,29 @@ shipment:
         # get_bug_ids should only be called once (for second advisory)
         self.assertEqual(mock_get_bug_ids.call_count, 1)
 
+    @patch("pyartcd.pipelines.verify_cve_trackers.get_bug_ids")
     @patch("pyartcd.pipelines.verify_cve_trackers.get_raw_erratum")
-    def test_get_rhsa_jira_issues_with_null_advisory(self, mock_get_raw_erratum):
+    def test_get_rhsa_jira_issues_with_null_advisory(self, mock_get_raw_erratum, mock_get_bug_ids):
         advisories = {"rpm": None, "image": 12346}
         mock_get_raw_erratum.return_value = {"errata": {"type": "RHSA", "status": "QE"}}
+        mock_get_bug_ids.return_value = {"jira": ["OCPBUGS-1"], "bugzilla": []}
 
         get_rhsa_jira_issues(advisories)
         # None advisory should be skipped
         self.assertEqual(mock_get_raw_erratum.call_count, 1)
+        self.assertEqual(mock_get_bug_ids.call_count, 1)
 
+    @patch("pyartcd.pipelines.verify_cve_trackers.get_bug_ids")
     @patch("pyartcd.pipelines.verify_cve_trackers.get_raw_erratum")
-    def test_get_rhsa_jira_issues_with_negative_advisory(self, mock_get_raw_erratum):
+    def test_get_rhsa_jira_issues_with_negative_advisory(self, mock_get_raw_erratum, mock_get_bug_ids):
         advisories = {"rpm": -1, "image": 12346}
         mock_get_raw_erratum.return_value = {"errata": {"type": "RHSA", "status": "QE"}}
+        mock_get_bug_ids.return_value = {"jira": ["OCPBUGS-1"], "bugzilla": []}
 
         get_rhsa_jira_issues(advisories)
         # Negative advisory should be skipped
         self.assertEqual(mock_get_raw_erratum.call_count, 1)
+        self.assertEqual(mock_get_bug_ids.call_count, 1)
 
     @patch("pyartcd.pipelines.verify_cve_trackers.get_bug_ids")
     @patch("pyartcd.pipelines.verify_cve_trackers.get_raw_erratum")
