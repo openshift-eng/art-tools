@@ -13,6 +13,7 @@ import yaml
 from doozerlib.lockfile_prototype.container_utils import ContainerImageHelper
 from doozerlib.lockfile_prototype.generator import (
     RpmLockfilePrototypeGenerator,
+    _is_local_rpm,
     build_rpms_in_yaml,
 )
 from doozerlib.lockfile_prototype.models import (
@@ -107,6 +108,36 @@ class TestBuildRpmsInYaml(unittest.TestCase):
         self.assertEqual(repo_dict["includepkgs"], "golang*")
         self.assertEqual(repo_dict["module_hotfixes"], 1)
         self.assertNotIn("options", repo_dict)
+
+
+class TestIsLocalRpm(unittest.TestCase):
+    def test_explicit_rpm_file(self):
+        self.assertTrue(_is_local_rpm("foo.rpm"))
+        self.assertTrue(_is_local_rpm("/tmp/bar-1.0.x86_64.rpm"))
+
+    def test_path_glob(self):
+        self.assertTrue(_is_local_rpm("/path/to/*.rpm"))
+        self.assertTrue(_is_local_rpm("/opt/rpms/*"))
+
+    def test_normal_packages(self):
+        self.assertFalse(_is_local_rpm("nfs-utils"))
+        self.assertFalse(_is_local_rpm("golang-*1.23*"))
+        self.assertFalse(_is_local_rpm("python3-six"))
+
+    def test_build_rpms_in_yaml_filters_local_rpms(self):
+        """
+        Local RPM file tokens extracted by the parser must be filtered
+        out before reaching rpm-lockfile-prototype.
+        """
+        repos = [RepoEntry(repoid="baseos", baseurl="https://example.com/$basearch/")]
+        result = build_rpms_in_yaml(
+            repos=repos,
+            arches=["x86_64"],
+            packages=["nfs-utils", "/tmp/extras/*.rpm", "jq", "local.rpm"],
+            arch_specific_packages={"x86_64": ["librtas", "/opt/rpms/*"]},
+        )
+        pkg_names = [p if isinstance(p, str) else p.name for p in result.packages]
+        self.assertEqual(pkg_names, ["nfs-utils", "jq", "librtas"])
 
 
 FAKE_LOCKFILE_DATA = LockfileData(
@@ -1100,6 +1131,66 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
         # Strippable packages must be gone
         for pkg in failing_pkgs:
             self.assertNotIn(pkg, final_config.reinstallPackages)
+
+    def test_fallback_disables_reinstall_to_upgrade_promotion(self):
+        """
+        When the retry loop exhausts and the fallback fires, reinstall
+        packages must NOT be promoted to upgradePackages. Otherwise
+        base.upgrade() raises PackagesNotInstalledError for packages
+        that are in reinstall but not installed on all arches.
+        """
+        generator = self._make_generator()
+        generator.downstream_parents = ["quay.io/test/base@sha256:abc123"]
+
+        failing_pkgs = [f"base-pkg-{i}" for i in range(5)]
+        call_count = 0
+
+        async def mock_resolve(config, image_pullspec=None):
+            nonlocal call_count
+            call_count += 1
+            if call_count <= 5:
+                raise RuntimeError(f"No match for argument: {failing_pkgs[call_count - 1]}")
+            return FAKE_LOCKFILE_DATA.model_copy(deep=True)
+
+        generator._resolver.resolve = AsyncMock(side_effect=mock_resolve)
+
+        repos = [
+            RepoEntry(
+                repoid="rhel-9-baseos-rpms",
+                baseurl="https://example.com/baseos/$basearch/os/",
+            )
+        ]
+
+        # util-linux is a Dockerfile package AND a base image package.
+        # It must stay in reinstallPackages (graceful skip if missing)
+        # but NOT appear in upgradePackages (throws if not installed).
+        all_packages = ["util-linux", "curl"] + failing_pkgs
+        reinstall = ["util-linux", "curl"] + failing_pkgs
+        strippable = set(failing_pkgs)
+
+        result = asyncio.run(
+            generator._resolve_stage_with_retry(
+                repo_list=repos,
+                arches=["x86_64", "aarch64"],
+                packages=all_packages,
+                arch_pkgs={},
+                update_targets=[],
+                image_pullspec="quay.io/test/base@sha256:abc123",
+                distgit_key="ose-vmware-vsphere-csi-driver",
+                stage_num=0,
+                reinstall_packages=reinstall,
+                strippable_packages=strippable,
+            )
+        )
+
+        self.assertIsNotNone(result)
+        self.assertEqual(call_count, 6)
+        fallback_config = generator._resolver.resolve.call_args_list[5][0][0]
+        # Required packages must stay in reinstallPackages
+        self.assertIn("util-linux", fallback_config.reinstallPackages)
+        self.assertIn("curl", fallback_config.reinstallPackages)
+        # upgradePackages must be empty — promotion disabled in fallback
+        self.assertEqual(fallback_config.upgradePackages, [])
 
     def test_upgrade_targets_not_strippable_in_final_stage(self):
         """
