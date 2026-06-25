@@ -438,7 +438,20 @@ class RpmLockfilePrototypeGenerator:
 
             reinstall_pkgs: list[str] | None = None
             strippable: set[str] | None = None
-            if stage_num == final_stage_num and not is_update_only and not has_bare_update:
+            if stage_num == final_stage_num and not is_update_only and has_bare_update:
+                if image_pullspec and packages:
+                    # Bare update + explicit installs in final stage: reinstall
+                    # the Dockerfile packages so they appear in the lockfile
+                    # even when already installed in the base image. Base image
+                    # packages use upgrade semantics via upgrade_targets (set
+                    # above), so we intentionally do NOT reinstall them here.
+                    reinstall_pkgs = list(packages)
+                    strippable = set()
+                    self.logger.info(
+                        f"{distgit_key}: stage {stage_num}: {len(reinstall_pkgs)} Dockerfile "
+                        "packages will be reinstalled into lockfile (bare update stage)"
+                    )
+            elif stage_num == final_stage_num and not is_update_only and not has_bare_update:
                 if image_pullspec:
                     # --image mode: pass base image packages as reinstallPackages
                     # so they appear in the lockfile at repo versions. base.reinstall()
