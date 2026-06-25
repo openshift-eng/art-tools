@@ -541,12 +541,13 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
         self.assertIn("libreswan", pkg_names)
         self.assertIn("openssl", pkg_names)
 
-    def test_bare_update_keeps_image_mode_without_upgrade_targets(self):
+    def test_bare_update_keeps_image_mode_reinstalls_dockerfile_packages(self):
         """
         Bare yum/dnf update with --image mode should NOT expand base
         image packages as upgrade targets (many are virtual provides or
-        renamed and cause resolution failures). Instead, dnf update is
-        kept in the Dockerfile and runs at build time with cachi2 RPMs.
+        renamed and cause resolution failures). Dockerfile install
+        packages must be reinstalled so they appear in the lockfile, and
+        also promoted to upgradePackages as a fallback if reinstall fails.
         """
         meta = self._make_mock_image_meta()
         meta.config.konflux.cachi2.lockfile.get.return_value = None
@@ -572,17 +573,20 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
         self.assertEqual(len(captured_configs), 1)
         # --image mode preserved
         self.assertIsNotNone(captured_pullspecs[0])
-        # No upgrade targets — dnf update handled at build time
-        self.assertEqual(captured_configs[0].upgradePackages, [])
+        # Dockerfile packages reinstalled so they appear in lockfile
+        self.assertEqual(captured_configs[0].reinstallPackages, ["libreswan"])
+        # Dockerfile packages promoted to upgrade as reinstall fallback
+        self.assertEqual(captured_configs[0].upgradePackages, ["libreswan"])
 
-    def test_mixed_install_and_bare_update_skips_reinstall(self):
+    def test_mixed_install_and_bare_update_reinstalls_dockerfile_packages(self):
         """
         When a stage has both explicit installs and a bare update
         (e.g. microdnf update -y && microdnf install -y openssl),
-        reinstallPackages must be empty. Otherwise reinstall pins base
-        image versions and overrides upgrade semantics, preventing the
-        update from picking up latest RPMs — causing a perpetual
-        rebuild loop when scan-sources detects outdated packages.
+        Dockerfile install packages must appear in reinstallPackages
+        so they end up in the lockfile even when already installed in
+        the base image. Base image packages must NOT be reinstalled —
+        they use upgrade semantics via upgradePackages to pick up
+        latest versions without pinning.
         """
         meta = self._make_mock_image_meta()
         meta.config.konflux.cachi2.lockfile.get.return_value = None
@@ -606,15 +610,15 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
             asyncio.run(generator.generate_lockfile(meta, dest_dir))
 
         self.assertEqual(len(captured_configs), 1)
-        # reinstallPackages must be empty: bare update means we want
-        # upgrade semantics, and reinstall would pin old versions
-        self.assertEqual(captured_configs[0].reinstallPackages, [])
-        # Explicit install package must be present
+        # Dockerfile install packages must be reinstalled so they appear
+        # in the lockfile even when already installed in the base image
+        self.assertEqual(captured_configs[0].reinstallPackages, ["openssl"])
+        # Explicit install package must be present in packages list
         pkg_names = [p if isinstance(p, str) else p.name for p in captured_configs[0].packages]
         self.assertIn("openssl", pkg_names)
         # Base image packages must appear as upgrade targets so
         # dnf update picks up latest versions from repos
-        self.assertEqual(sorted(captured_configs[0].upgradePackages), ["audit", "bash", "glibc"])
+        self.assertEqual(sorted(captured_configs[0].upgradePackages), ["audit", "bash", "glibc", "openssl"])
 
     def test_reinstall_packages_also_passed_as_upgrade_targets(self):
         """
