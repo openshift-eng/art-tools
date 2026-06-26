@@ -53,6 +53,7 @@ class SyncCIImagesPipeline:
         data_path: str = "",
         data_gitref: str = "",
         only_stream: str = "",
+        images: str = "",
         add_labels: str = "",
         assembly: str = "stream",
         skip_prs: bool = False,
@@ -69,6 +70,7 @@ class SyncCIImagesPipeline:
             data_path: ocp-build-data fork URL (default: official repo)
             data_gitref: ocp-build-data git branch/tag/sha (default: use version branch)
             only_stream: Specific stream from streams.yml.
+            images: Comma-separated distgit keys of images with ci_alignment.upstream_image.
             add_labels: Space-delimited labels to add to PRs
             assembly: Assembly name (default: "stream")
             skip_prs: Skip opening reconciliation PRs
@@ -82,6 +84,7 @@ class SyncCIImagesPipeline:
         self.data_path = data_path or OCP_BUILD_DATA_URL
         self.data_gitref = data_gitref
         self.only_stream = only_stream
+        self.images = [i.strip() for i in images.split(',') if i.strip()] if images else []
         self.add_labels = add_labels
         self.assembly = assembly
         self.skip_prs = skip_prs
@@ -106,9 +109,9 @@ class SyncCIImagesPipeline:
         if not re.match(r'^\d+\.\d+$', self.version):
             raise ValueError(f"Invalid FOR_RELEASE format: {self.version}. Expected format: X.Y (e.g., 4.17)")
 
-        # Auto-set SKIP_PRS if ONLY_STREAM is set.
-        if self.only_stream and not self.skip_prs:
-            self._logger.info("Setting SKIP_PRS to true because ONLY_STREAM is set")
+        # Auto-set SKIP_PRS if ONLY_STREAM or IMAGES is set.
+        if (self.only_stream or self.images) and not self.skip_prs:
+            self._logger.info("Setting SKIP_PRS to true because ONLY_STREAM or IMAGES is set")
             self.skip_prs = True
 
         # Validate assembly format (alphanumeric, dash, dot, underscore)
@@ -511,24 +514,37 @@ class SyncCIImagesPipeline:
             f"--build-system {self.BUILD_SYSTEM} "
             f"--registry-config {auth_file}"
         )
-        if self.only_stream:
-            doozer_opts += f" --only-streams {self.only_stream}"
         return doozer_opts
+
+    @property
+    def _stream_arg(self) -> str:
+        """Return the --stream subcommand arg if only_stream is set, empty string otherwise."""
+        return f"--stream {self.only_stream}" if self.only_stream else ""
+
+    @property
+    def _image_args(self) -> str:
+        """Return --image args for each image distgit key, empty string if none."""
+        return " ".join(f"--image {img}" for img in self.images) if self.images else ""
+
+    @property
+    def _filter_args(self) -> str:
+        """Return combined --stream and --image subcommand args."""
+        return f"{self._stream_arg} {self._image_args}".strip()
 
     async def _generate_and_apply_buildconfigs(self, doozer_opts: str) -> None:
         """Generate BuildConfigs and apply them to CI cluster."""
         self._logger.info(f"{self.version}: Generating BuildConfigs")
         apply_flag = "" if self.runtime.dry_run else "--apply"
         await self._run_doozer_command(
-            doozer_opts, "images:streams gen-buildconfigs", f"-o {self._working_dir}/buildconfigs.yaml {apply_flag}"
+            doozer_opts,
+            "images:streams gen-buildconfigs",
+            f"{self._filter_args} -o {self._working_dir}/buildconfigs.yaml {apply_flag}",
         )
 
     async def _mirror_images_to_ci(self, doozer_opts: str, auth_file: str) -> None:
         """Mirror builder and base images to CI registries."""
         self._logger.info(f"{self.version}: Mirroring images")
-        # Pass --registry-auth at command level to work around doozer bug where
-        # global --registry-config doesn't get passed to oc image mirror commands
-        mirror_args = f"--registry-auth {auth_file} "
+        mirror_args = f"{self._filter_args} --registry-auth {auth_file} "
         if self.update_images_only_when_missing:
             mirror_args += "--only-if-missing "
         if self.runtime.dry_run:
@@ -538,8 +554,7 @@ class SyncCIImagesPipeline:
     async def _trigger_ci_builds(self, doozer_opts: str, auth_file: str) -> None:
         """Start CI builds for updated images."""
         self._logger.info(f"{self.version}: Starting builds")
-        # Pass --registry-auth for image info and mirror operations in pre-build steps
-        start_builds_args = f"--registry-auth {auth_file} "
+        start_builds_args = f"{self._filter_args} --registry-auth {auth_file} "
         if self.runtime.dry_run:
             start_builds_args += "--dry-run"
         await self._run_doozer_command(doozer_opts, "images:streams start-builds", start_builds_args.strip())
@@ -553,7 +568,9 @@ class SyncCIImagesPipeline:
     async def _verify_upstream_consistency(self, doozer_opts: str, auth_file: str) -> None:
         """Verify CI imagestreams match expected state."""
         self._logger.info(f"{self.version}: Checking upstream consistency")
-        await self._run_doozer_command(doozer_opts, "images:streams check-upstream", f"--registry-auth {auth_file}")
+        await self._run_doozer_command(
+            doozer_opts, "images:streams check-upstream", f"{self._filter_args} --registry-auth {auth_file}"
+        )
 
     async def _open_reconciliation_prs(self, doozer_opts: str) -> int:
         """Open PRs to reconcile BuildConfig drift."""
@@ -692,6 +709,12 @@ class SyncCIImagesPipeline:
     help='Process only specific stream from streams.yml. Automatically sets SKIP_PRS=true.',
 )
 @click.option(
+    '--images',
+    default='',
+    help='Comma-separated distgit keys to sync (e.g. ci-openshift-base.rhel10). '
+    'Each must have ci_alignment.upstream_image set. Automatically sets SKIP_PRS=true.',
+)
+@click.option(
     '--add-labels', default='', help='Space-delimited labels to add to reconciliation PRs (e.g., "backport candidate")'
 )
 @click.option('--assembly', default='stream', help='Assembly name to use for doozer operations (default: "stream")')
@@ -718,6 +741,7 @@ async def sync_ci_images_cli(
     data_path: str,
     data_gitref: str,
     only_stream: str,
+    images: str,
     add_labels: str,
     assembly: str,
     skip_prs: bool,
@@ -747,6 +771,7 @@ async def sync_ci_images_cli(
         data_path=data_path,
         data_gitref=data_gitref,
         only_stream=only_stream,
+        images=images,
         add_labels=add_labels,
         assembly=assembly,
         skip_prs=skip_prs,
