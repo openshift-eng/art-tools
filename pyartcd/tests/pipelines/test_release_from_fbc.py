@@ -1448,7 +1448,7 @@ class TestResolveSingleImageKey(unittest.TestCase):
     def test_single_extra_nvr_returns_component(self):
         pipeline = self._make_pipeline(extra_image_nvrs=["oadp-velero-container-1.4.5-1.el9"])
         result = pipeline._resolve_single_image_key()
-        self.assertEqual(result, "oadp-velero-container")
+        self.assertEqual(result, "oadp-velero")
 
     def test_multiple_extra_nvrs_returns_none(self):
         pipeline = self._make_pipeline(extra_image_nvrs=["foo-container-1.0-1.el9", "bar-container-2.0-1.el9"])
@@ -1503,7 +1503,7 @@ class TestLoadMrApproversFromImageConfig(unittest.TestCase):
 
     @patch("pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async")
     def test_valid_dict_returned(self, mock_cmd):
-        mock_cmd.return_value = (0, "QE:\n- user1\n- user2\n", "")
+        mock_cmd.return_value = (0, "images:\n  my-operator:\n    QE:\n    - user1\n    - user2\nrpms: {}\n", "")
         pipeline = self._make_pipeline()
         result = asyncio.run(pipeline._load_mr_approvers_from_image_config("my-operator"))
         self.assertEqual(result, {"QE": ["user1", "user2"]})
@@ -1512,24 +1512,25 @@ class TestLoadMrApproversFromImageConfig(unittest.TestCase):
         self.assertIn("-i", cmd_args)
         self.assertIn("my-operator", cmd_args)
         self.assertIn("mr_approvers", cmd_args)
+        self.assertIn("--yaml", cmd_args)
 
     @patch("pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async")
     def test_non_dict_returns_empty(self, mock_cmd):
-        mock_cmd.return_value = (0, "- user1\n- user2\n", "")
+        mock_cmd.return_value = (0, "images:\n  my-operator:\n  - user1\n  - user2\nrpms: {}\n", "")
         pipeline = self._make_pipeline()
         result = asyncio.run(pipeline._load_mr_approvers_from_image_config("my-operator"))
         self.assertEqual(result, {})
 
     @patch("pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async")
     def test_none_output_returns_empty(self, mock_cmd):
-        mock_cmd.return_value = (0, "None", "")
+        mock_cmd.return_value = (0, "images:\n  my-operator: null\nrpms: {}\n", "")
         pipeline = self._make_pipeline()
         result = asyncio.run(pipeline._load_mr_approvers_from_image_config("my-operator"))
         self.assertEqual(result, {})
 
     @patch("pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async")
     def test_null_output_returns_empty(self, mock_cmd):
-        mock_cmd.return_value = (0, "null", "")
+        mock_cmd.return_value = (0, "images:\n  my-operator: null\nrpms: {}\n", "")
         pipeline = self._make_pipeline()
         result = asyncio.run(pipeline._load_mr_approvers_from_image_config("my-operator"))
         self.assertEqual(result, {})
@@ -1542,8 +1543,8 @@ class TestLoadMrApproversFromImageConfig(unittest.TestCase):
         self.assertEqual(result, {})
 
     @patch("pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async")
-    def test_dashes_only_returns_empty(self, mock_cmd):
-        mock_cmd.return_value = (0, "---", "")
+    def test_empty_dict_returns_empty(self, mock_cmd):
+        mock_cmd.return_value = (0, "images:\n  my-operator: {}\nrpms: {}\n", "")
         pipeline = self._make_pipeline()
         result = asyncio.run(pipeline._load_mr_approvers_from_image_config("my-operator"))
         self.assertEqual(result, {})
@@ -1585,7 +1586,11 @@ class TestCreateShipmentMrImageConfigApprovers(unittest.TestCase):
         """When image config has mr_approvers, group.yml is not consulted."""
         # First call: _load_mr_approvers_from_image_config (returns valid config)
         # Second call would be group config but should not happen
-        mock_cmd.return_value = (0, "Release:\n- release_user\n", "")
+        mock_cmd.return_value = (
+            0,
+            "images:\n  cluster-logging-operator:\n    Release:\n    - release_user\nrpms: {}\n",
+            "",
+        )
 
         pipeline = self._make_pipeline(dry_run=False)
         pipeline._fbc_operator_keys = ["cluster-logging-operator"]
@@ -1616,7 +1621,7 @@ class TestCreateShipmentMrImageConfigApprovers(unittest.TestCase):
         async def mock_gather(cmd):
             call_count[0] += 1
             if "config:print" in cmd:
-                return (0, "None", "")
+                return (0, "images:\n  cluster-logging-operator: null\nrpms: {}\n", "")
             elif "config:read-group" in cmd:
                 return (0, "QE:\n- group_user\n", "")
             return (0, "", "")

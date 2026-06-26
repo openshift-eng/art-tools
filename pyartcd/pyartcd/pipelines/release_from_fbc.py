@@ -488,20 +488,20 @@ class ReleaseFromFbcPipeline:
                 'config:print',
                 '--key',
                 'mr_approvers',
+                '--yaml',
             ]
             _, output, _ = await exectools.cmd_gather_async(cmd)
             output = output.strip()
-            if output and output not in ('None', 'null', '---'):
-                parsed = stdlib_yaml.safe_load(output)
-                if not isinstance(parsed, dict):
-                    self.logger.warning(
-                        "mr_approvers in image config '%s' is not a dict (got %s), ignoring",
-                        doozer_key,
-                        type(parsed).__name__,
-                    )
-                    return {}
-                self.logger.info(f"Loaded mr_approvers from image config '{doozer_key}': {parsed}")
-                return parsed
+            if not output:
+                return {}
+            parsed = stdlib_yaml.safe_load(output)
+            if not isinstance(parsed, dict):
+                return {}
+            mr_approvers = parsed.get('images', {}).get(doozer_key)
+            if not isinstance(mr_approvers, dict) or not mr_approvers:
+                return {}
+            self.logger.info(f"Loaded mr_approvers from image config '{doozer_key}': {mr_approvers}")
+            return mr_approvers
         except Exception as e:
             self.logger.warning(f"Failed to load mr_approvers from image config '{doozer_key}': {e}")
         return {}
