@@ -456,6 +456,8 @@ class ReleaseFromFbcPipeline:
             if len(self.extra_image_nvrs) == 1:
                 nvr_dict = parse_nvr(self.extra_image_nvrs[0])
                 component = nvr_dict['name']
+                if component.endswith('-container'):
+                    component = component[:-len('-container')]
                 self.logger.info(f"Single extra NVR component: {component}")
                 return component
             else:
