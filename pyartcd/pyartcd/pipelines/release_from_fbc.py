@@ -103,6 +103,7 @@ class ReleaseFromFbcPipeline:
         # Setup working directories
         self.working_dir = self.runtime.working_dir.absolute()
         self.elliott_working_dir = self.working_dir / "elliott-working"
+        self.doozer_working_dir = self.working_dir / "doozer-working"
         self._shipment_data_repo_dir = self.working_dir / "shipment-data-push"
 
         # Shipment repository configuration
@@ -349,6 +350,8 @@ class ReleaseFromFbcPipeline:
         self.working_dir.mkdir(parents=True, exist_ok=True)
         if self.elliott_working_dir.exists():
             shutil.rmtree(self.elliott_working_dir, ignore_errors=True)
+        if self.doozer_working_dir.exists():
+            shutil.rmtree(self.doozer_working_dir, ignore_errors=True)
         if self.create_mr and self._shipment_data_repo_dir.exists():
             shutil.rmtree(self._shipment_data_repo_dir, ignore_errors=True)
 
@@ -457,7 +460,7 @@ class ReleaseFromFbcPipeline:
                 nvr_dict = parse_nvr(self.extra_image_nvrs[0])
                 component = nvr_dict['name']
                 if component.endswith('-container'):
-                    component = component[:-len('-container')]
+                    component = component[: -len('-container')]
                 self.logger.info(f"Single extra NVR component: {component}")
                 return component
             else:
@@ -476,7 +479,16 @@ class ReleaseFromFbcPipeline:
         e.g. {"QE": ["user1", "user2"]}. Returns empty dict if not configured.
         """
         try:
-            cmd = ['doozer', f'--group={self.group}', '-i', doozer_key, 'config:print', '--key', 'mr_approvers']
+            cmd = [
+                'doozer',
+                f'--group={self.group}',
+                f'--working-dir={self.doozer_working_dir}',
+                '-i',
+                doozer_key,
+                'config:print',
+                '--key',
+                'mr_approvers',
+            ]
             _, output, _ = await exectools.cmd_gather_async(cmd)
             output = output.strip()
             if output and output not in ('None', 'null', '---'):
