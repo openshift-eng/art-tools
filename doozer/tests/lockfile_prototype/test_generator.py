@@ -139,6 +139,22 @@ class TestIsLocalRpm(unittest.TestCase):
         pkg_names = [p if isinstance(p, str) else p.name for p in result.packages]
         self.assertEqual(pkg_names, ["nfs-utils", "jq", "librtas"])
 
+    def test_build_rpms_in_yaml_filters_local_rpms_from_reinstall_and_upgrade(self):
+        """
+        Local RPM tokens must also be filtered from reinstallPackages and
+        upgradePackages, not just from packages and arch_specific_packages.
+        """
+        repos = [RepoEntry(repoid="baseos", baseurl="https://example.com/$basearch/")]
+        result = build_rpms_in_yaml(
+            repos=repos,
+            arches=["x86_64"],
+            packages=["curl"],
+            reinstall_packages=["curl", "/tmp/extras/foo.rpm", "glibc"],
+            upgrade_packages=["bash", "/opt/rpms/*", "openssl"],
+        )
+        self.assertEqual(result.reinstallPackages, ["curl", "glibc"])
+        self.assertEqual(result.upgradePackages, ["bash", "openssl"])
+
 
 FAKE_LOCKFILE_DATA = LockfileData(
     lockfileVersion=1,

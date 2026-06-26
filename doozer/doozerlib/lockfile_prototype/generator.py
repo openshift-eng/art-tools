@@ -87,6 +87,10 @@ def build_rpms_in_yaml(
         arch_specific_packages = {
             arch: [p for p in pkgs if not _is_local_rpm(p)] for arch, pkgs in arch_specific_packages.items()
         }
+    if reinstall_packages:
+        reinstall_packages = [p for p in reinstall_packages if not _is_local_rpm(p)]
+    if upgrade_packages:
+        upgrade_packages = [p for p in upgrade_packages if not _is_local_rpm(p)]
 
     package_entries: list[str | ArchSpecificPackage] = list(packages)
     if arch_specific_packages:

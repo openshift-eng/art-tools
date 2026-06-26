@@ -469,3 +469,34 @@ class TestResolveRpmdbCorruptionRetry(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             asyncio.run(resolver.resolve(config, image_pullspec="registry.example.com/repo@sha256:abc123"))
         mock_clear.assert_not_called()
+
+    @patch("doozerlib.lockfile_prototype.resolver.RpmResolver._clear_rpmdb_cache")
+    @patch("doozerlib.lockfile_prototype.resolver.cmd_gather_async")
+    def test_retry_raises_retry_error_not_original(self, mock_gather, mock_clear):
+        """
+        When cache corruption triggers a retry and the retry fails with a
+        different error, the raised RuntimeError must contain the retry
+        stderr so the outer retry loop can parse it.
+        """
+        retry_stderr = "dnf.exceptions.PackagesNotInstalledError: No match for argument: nfs-utils: nfs-utils"
+        call_count = 0
+
+        async def mock_cmd(cmd, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return (1, "", self.CORRUPTION_STDERR)
+            return (1, "", retry_stderr)
+
+        mock_gather.side_effect = mock_cmd
+        mock_clear.return_value = True
+
+        resolver = RpmResolver(working_dir=Path(tempfile.mkdtemp()))
+        config = RpmsInConfig(
+            arches=["x86_64"],
+            contentOrigin={"repos": []},
+            packages=[],
+        )
+        with self.assertRaises(RuntimeError) as ctx:
+            asyncio.run(resolver.resolve(config, image_pullspec="registry.example.com/repo@sha256:abc123"))
+        self.assertIn("nfs-utils", str(ctx.exception))
