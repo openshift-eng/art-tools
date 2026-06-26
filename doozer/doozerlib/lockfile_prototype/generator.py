@@ -45,6 +45,18 @@ from doozerlib.lockfile_prototype.utils import format_version_pin, pick_minimum_
 from doozerlib.repos import Repos
 
 
+def _is_local_rpm(token: str) -> bool:
+    """
+    Return True if token is a local RPM file path or glob that can't
+    be resolved via lockfile repos (e.g. ``/path/*.rpm``, ``foo.rpm``).
+    """
+    if token.endswith(".rpm"):
+        return True
+    if "/" in token and "*" in token:
+        return True
+    return False
+
+
 def build_rpms_in_yaml(
     repos: list[RepoEntry],
     arches: list[str],
@@ -70,6 +82,12 @@ def build_rpms_in_yaml(
     Return Value(s):
         RpmsInConfig: Config ready for YAML serialization.
     """
+    packages = [p for p in packages if not _is_local_rpm(p)]
+    if arch_specific_packages:
+        arch_specific_packages = {
+            arch: [p for p in pkgs if not _is_local_rpm(p)] for arch, pkgs in arch_specific_packages.items()
+        }
+
     package_entries: list[str | ArchSpecificPackage] = list(packages)
     if arch_specific_packages:
         for arch, arch_pkgs in arch_specific_packages.items():
@@ -1010,11 +1028,11 @@ class RpmLockfilePrototypeGenerator:
                 "continuing without reinstall packages"
             )
             remaining_reinstall.clear()
-        # Clear all upgrade targets for the fallback — the retry loop
-        # already validated the install packages; upgrade targets that
-        # reference packages not in the base image's rpmdb would cause
-        # PackagesNotInstalledError from DNF.
+        # Clear all upgrade targets and disable reinstall→upgrade promotion
+        # for the fallback — upgrade targets that reference packages not in
+        # the base image's rpmdb cause PackagesNotInstalledError from DNF.
         remaining_update_targets.clear()
+        promote_reinstall_to_upgrade = False
         self.upgrades_dropped = True
         in_yaml = self._build_resolve_config(
             repo_list,
