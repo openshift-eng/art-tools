@@ -678,17 +678,27 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
         mock_render.assert_called_once_with("test-image-pullspec", migrate_level="none", auth=ANY)
 
     def test_categorize_catalog_blobs(self):
+        deprecation_blob = {
+            "schema": "olm.deprecations",
+            "package": "test-package",
+            "entries": [
+                {"reference": {"schema": "olm.bundle", "name": "test-bundle.v1.0.0"}, "message": "deprecated"},
+            ],
+        }
         catalog_blobs = [
             {"schema": "olm.package", "name": "test-package"},
             {"schema": "olm.channel", "name": "test-channel", "package": "test-package"},
             {"schema": "olm.bundle", "name": "test-bundle", "package": "test-package"},
+            deprecation_blob,
             {"schema": "olm.package", "name": "test-package2"},
             {"schema": "olm.channel", "name": "test-channel2", "package": "test-package2"},
             {"schema": "olm.bundle", "name": "test-bundle2", "package": "test-package2"},
         ]
         actual = self.rebaser._catagorize_catalog_blobs(catalog_blobs)
         self.assertEqual(actual.keys(), {"test-package", "test-package2"})
-        self.assertEqual(actual["test-package"].keys(), {"olm.package", "olm.channel", "olm.bundle"})
+        self.assertEqual(
+            actual["test-package"].keys(), {"olm.package", "olm.channel", "olm.bundle", "olm.deprecations"}
+        )
         self.assertEqual(
             actual["test-package"]["olm.package"]["test-package"], {"schema": "olm.package", "name": "test-package"}
         )
@@ -700,6 +710,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
             actual["test-package"]["olm.bundle"]["test-bundle"],
             {"schema": "olm.bundle", "name": "test-bundle", "package": "test-package"},
         )
+        self.assertEqual(actual["test-package"]["olm.deprecations"]["test-package"], deprecation_blob)
         self.assertEqual(actual["test-package2"].keys(), {"olm.package", "olm.channel", "olm.bundle"})
         self.assertEqual(
             actual["test-package2"]["olm.package"]["test-package2"], {"schema": "olm.package", "name": "test-package2"}
