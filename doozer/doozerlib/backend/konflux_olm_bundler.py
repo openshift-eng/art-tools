@@ -196,67 +196,28 @@ class KonfluxOlmBundleRebaser:
         channel_name = str(channel['name'])
         csv_name = str(channel['currentCSV'])
 
-        # Copy the operator's manifests to the bundle directory
-        bundle_manifests_dir.mkdir(parents=True, exist_ok=True)
-        # Iterate through all bundle manifests files, replacing any image reference tag by its
-        # corresponding SHA.
-        # That is used to allow disconnected installs, where a cluster can't reach external registries
-        # in order to translate image tags into something "pullable"
-        all_found_operands: Dict[
-            str, Tuple[str, str, str]
-        ] = {}  # map of image name to (old_pullspec, new_pullspec, nvr)
-        for src in operator_bundle_dir.iterdir():
-            if src.name == "image-references":
-                continue  # skip image-references file
-            logger.info(f"Processing {src}...")
-            # Read the file content and replace image references
-            async with aiofiles.open(src, 'r') as f:
-                content = await f.read()
-            content, found_images = await self._replace_image_references(
-                str(csv_config['registry']), content, operator_build.engine, metadata
-            )
-            for _, (old_pullspec, new_pullspec, operand_nvr) in found_images.items():
-                logger.info(f"Replaced image reference {old_pullspec} ({operand_nvr}) by {new_pullspec}")
-            all_found_operands.update(found_images)
-            # Write the content to the dest bundle directory
-            dest = bundle_manifests_dir / src.name
-            async with aiofiles.open(dest, 'w') as f:
-                if "clusterserviceversion.yaml" in src.name:
-                    csv = yaml.safe_load(content)
-                    csv['metadata']['annotations']['operators.openshift.io/valid-subscription'] = csv_config[
-                        'valid-subscription-label'
-                    ]
-                    if found_images:
-                        csv["spec"]["relatedImages"] = [
-                            {"name": name, "image": new_pullspec} for name, (_, new_pullspec, _) in found_images.items()
-                        ]
-                    content = yaml.safe_dump(csv)
-                await f.write(content)
-
         # Read image references from the operator's image-references file
-        image_references = {}
+        image_references: dict[str, dict] = {}
         refs_path = operator_bundle_dir / "image-references"
         if not metadata.runtime.group.startswith("openshift-"):
             refs_path = operator_manifests_dir / "../image-references"
         if refs_path.exists():
-            async with aiofiles.open(refs_path, 'r') as f:
+            async with aiofiles.open(refs_path, "r") as f:
                 image_refs = yaml.safe_load(await f.read())
-            for entry in image_refs.get('spec', {}).get('tags', []):
+            for entry in image_refs.get("spec", {}).get("tags", []):
                 image_references[entry["name"]] = entry
 
         # Validate that containerImage annotation in CSV matches an entry in image-references
-        # This catches cases where the upstream CSV has an outdated tag that doesn't match image-references
-        csv_files = list(operator_bundle_dir.glob('*.clusterserviceversion.yaml'))
+        csv_files = list(operator_bundle_dir.glob("*.clusterserviceversion.yaml"))
         if csv_files:
             csv_file = csv_files[0]
-            async with aiofiles.open(csv_file, 'r') as f:
+            async with aiofiles.open(csv_file, "r") as f:
                 csv_content = await f.read()
             csv_data = yaml.safe_load(csv_content)
-            container_image = csv_data.get('metadata', {}).get('annotations', {}).get('containerImage')
+            container_image = csv_data.get("metadata", {}).get("annotations", {}).get("containerImage")
 
             if container_image and image_references:
-                # Check if containerImage matches any spec from image-references
-                specs_from_refs = {ref['from']['name'] for ref in image_references.values()}
+                specs_from_refs = {ref["from"]["name"] for ref in image_references.values()}
                 if container_image not in specs_from_refs:
                     logger.warning(
                         f"CSV containerImage annotation '{container_image}' does not match any entry in image-references file. "
@@ -264,6 +225,68 @@ class KonfluxOlmBundleRebaser:
                         f"Expected one of: {specs_from_refs}. "
                         f"Please update the upstream CSV to use the correct tag from image-references."
                     )
+
+        # For Konflux engine on layered products (non-OCP), resolve operand NVRs
+        # from DB instead of relying on predicted tags from operator rebase.
+        # OCP operators still use the legacy tag-based resolution until this
+        # is validated with layered products first.
+        is_layered = not metadata.runtime.group.startswith("openshift-")
+        resolved_operands: dict[str, tuple[str, str, str]] = {}
+        delivery_override_map: dict[str, str] = {}
+        if operator_build.engine is Engine.KONFLUX and image_references and is_layered:
+            delivery_override_map, _ = self._build_delivery_maps(metadata)
+            resolved_operands = await self._resolve_operands_from_db(metadata, image_references)
+
+        # Copy the operator's manifests to the bundle directory, replacing image
+        # reference tags by their corresponding SHA for disconnected installs
+        bundle_manifests_dir.mkdir(parents=True, exist_ok=True)
+        all_found_operands: Dict[
+            str, Tuple[str, str, str]
+        ] = {}  # map of image name to (old_pullspec, new_pullspec, nvr)
+        for src in operator_bundle_dir.iterdir():
+            if src.name == "image-references":
+                continue
+            logger.info(f"Processing {src}...")
+            async with aiofiles.open(src, "r") as f:
+                content = await f.read()
+
+            if operator_build.engine is Engine.KONFLUX and resolved_operands:
+                # The CSV content has predicted tags from operator rebase (e.g.
+                # registry/ns/image:4.18.0-release). Use regex to find them,
+                # then replace with DB-resolved SHA pullspecs.
+                pullspec_by_delivery = {name: new_ps for name, (_, new_ps, _) in resolved_operands.items()}
+                pattern = KonfluxOlmBundleRebaser._get_image_reference_pattern(str(csv_config["registry"]))
+                for match in pattern.finditer(content):
+                    old_pullspec = match.group(0)
+                    _, img_short = match.group(1).rsplit("/", maxsplit=1)
+                    delivery_name = delivery_override_map.get(img_short, img_short)
+                    if delivery_name in pullspec_by_delivery:
+                        content = content.replace(old_pullspec, pullspec_by_delivery[delivery_name])
+                found_images = dict(resolved_operands)
+                found_images.update(self._find_external_digest_images(content, found_images))
+            else:
+                # Brew engine: use tag-based regex resolution (legacy path)
+                content, found_images = await self._replace_image_references(
+                    str(csv_config["registry"]), content, operator_build.engine, metadata
+                )
+
+            for _, (old_pullspec, new_pullspec, operand_nvr) in found_images.items():
+                logger.info(f"Replaced image reference {old_pullspec} ({operand_nvr}) by {new_pullspec}")
+            all_found_operands.update(found_images)
+
+            dest = bundle_manifests_dir / src.name
+            async with aiofiles.open(dest, "w") as f:
+                if "clusterserviceversion.yaml" in src.name:
+                    csv = yaml.safe_load(content)
+                    csv["metadata"]["annotations"]["operators.openshift.io/valid-subscription"] = csv_config[
+                        "valid-subscription-label"
+                    ]
+                    if found_images:
+                        csv["spec"]["relatedImages"] = [
+                            {"name": name, "image": new_pullspec} for name, (_, new_pullspec, _) in found_images.items()
+                        ]
+                    content = yaml.safe_dump(csv)
+                await f.write(content)
 
         # Warn if the number of images found in the bundle doesn't match the image-references file
         if len(all_found_operands) != len(image_references):
@@ -346,6 +369,82 @@ class KonfluxOlmBundleRebaser:
         async with aiofiles.open(oit_dir / 'olm_bundle_info.yaml', 'w') as f:
             await f.write(content)
 
+    def _build_delivery_maps(
+        self,
+        metadata: ImageMetadata,
+    ) -> tuple[dict[str, str], dict[str, str]]:
+        """
+        Build delivery override and namespace maps from ocp-build-data image YAMLs.
+
+        Arg(s):
+            metadata: ImageMetadata providing runtime.data_dir.
+        Return Value(s):
+            tuple: (delivery_override_map, delivery_namespace_map)
+                override_map: {versioned_short_name: unversioned_delivery_short_name}
+                namespace_map: {image_short_name: delivery_namespace}
+        """
+        delivery_override_map: dict[str, str] = {}
+        delivery_namespace_map: dict[str, str] = {}
+        data_dir = metadata.runtime.data_dir
+        for yml_path in glob.glob(f"{data_dir}/images/*.yml") + glob.glob(f"{data_dir}/images/*.yaml"):
+            try:
+                with open(yml_path) as yf:
+                    img_data = yaml.safe_load(yf)
+                if not isinstance(img_data, dict):
+                    continue
+                delivery = img_data.get("delivery", {}) or {}
+                repo_names = delivery.get("delivery_repo_names") or []
+                img_short = str(img_data.get("name", "")).rsplit("/", 1)[-1]
+                if repo_names and "/" in str(repo_names[0]):
+                    delivery_namespace_map[img_short] = str(repo_names[0]).rsplit("/", 1)[0]
+                if not delivery.get("delivery_repo_name_override"):
+                    continue
+                if len(repo_names) != 1:
+                    raise ValueError(
+                        f"delivery_repo_name_override is set in {yml_path} but delivery_repo_names has "
+                        f"{len(repo_names)} entries (expected exactly 1)"
+                    )
+                override_short = str(repo_names[0]).rsplit("/", 1)[-1]
+                delivery_override_map[img_short] = override_short
+            except (yaml.YAMLError, OSError) as e:
+                self._logger.debug("Failed to parse image YAML %s: %s", yml_path, e)
+        return delivery_override_map, delivery_namespace_map
+
+    def _build_delivery_pullspec(
+        self,
+        image_short_name: str,
+        image_sha: str,
+        original_namespace: str,
+        metadata: ImageMetadata,
+        delivery_override_map: dict[str, str],
+        delivery_namespace_map: dict[str, str],
+    ) -> tuple[str, str]:
+        """
+        Build the final delivery pullspec for an operand image.
+
+        Arg(s):
+            image_short_name: Short name of the image (e.g. "ose-csi-driver-4.18-rhel9").
+            image_sha: SHA digest (e.g. "sha256:abc123...").
+            original_namespace: Namespace from the original pullspec.
+            metadata: ImageMetadata for group context.
+            delivery_override_map: Versioned-to-unversioned name overrides.
+            delivery_namespace_map: Image-to-namespace overrides.
+        Return Value(s):
+            tuple: (delivery_short_name, new_pullspec)
+        """
+        csv_namespace = self._group_config.get("csv_namespace", "openshift")
+        if not metadata.runtime.group.startswith("openshift-"):
+            new_namespace = original_namespace
+        else:
+            new_namespace = (
+                delivery_namespace_map.get(image_short_name, "openshift4")
+                if original_namespace == csv_namespace
+                else original_namespace
+            )
+        delivery_short_name = delivery_override_map.get(image_short_name, image_short_name)
+        new_pullspec = f"registry.redhat.io/{new_namespace}/{delivery_short_name}@{image_sha}"
+        return delivery_short_name, new_pullspec
+
     @lru_cache
     @staticmethod
     def _get_image_reference_pattern(registry: str):
@@ -366,139 +465,211 @@ class KonfluxOlmBundleRebaser:
         pattern = r'([a-zA-Z0-9][-a-zA-Z0-9.]*(?::[0-9]+)?/[^@\s]+)@(sha256:[a-fA-F0-9]{64})'
         return re.compile(pattern)
 
+    async def _resolve_operands_from_db(
+        self,
+        metadata: ImageMetadata,
+        image_references: dict[str, dict],
+    ) -> dict[str, tuple[str, str, str]]:
+        """
+        Resolve ART-built operand images from Konflux DB instead of relying
+        on predicted v-r tags baked into the operator CSV at rebase time.
+
+        At bundle rebase time, all image builds are guaranteed complete
+        (pipeline enforces: image rebase -> image build -> sync -> bundle rebase).
+        So we query the DB for actual builds rather than trusting predicted tags.
+
+        Arg(s):
+            metadata: ImageMetadata of the operator whose bundle is being rebased.
+            image_references: Parsed image-references entries {name: {from: {name: spec}}}.
+        Return Value(s):
+            dict: {delivery_image_short_name: (old_pullspec, new_pullspec, nvr)}
+        """
+        logger = self._logger.getChild(f"[{metadata.distgit_key}]")
+        csv_namespace = self._group_config.get("csv_namespace", "openshift")
+        delivery_override_map, delivery_namespace_map = self._build_delivery_maps(metadata)
+
+        # Phase 1: Query DB for latest builds and collect oc image info coroutines
+        operand_entries: list[tuple[str, str, str]] = []  # (name, spec, build_pullspec)
+        image_info_coros = []
+
+        for name, ref_entry in image_references.items():
+            spec = ref_entry["from"]["name"]
+
+            distgit_key = metadata.runtime.name_in_bundle_map.get(name)
+            if not distgit_key:
+                raise ValueError(f"Unable to find {name} in name_in_bundle_map for {metadata.distgit_key}")
+
+            meta = metadata.runtime.image_map.get(distgit_key)
+            if not meta:
+                meta = metadata.runtime.late_resolve_image(distgit_key, required=False)
+                if meta is None:
+                    from doozerlib.exceptions import DoozerFatalError
+
+                    raise DoozerFatalError(
+                        f"Attempted to load image {distgit_key} but it has mode disabled; "
+                        f"{metadata.distgit_key} references it in image-references"
+                    )
+
+            el_target = f"el{meta.branch_el_target()}"
+            # Call get_latest_konflux_build directly — this method inherently
+            # requires Konflux DB results regardless of runtime.build_system
+            build = await meta.get_latest_konflux_build(
+                el_target=el_target,
+                exclude_large_columns=True,
+            )
+            if not build:
+                raise ValueError(f"Could not find latest Konflux build for {meta.distgit_key}")
+
+            build_pullspec = f"{self.image_repo}:{meta.image_name_short}-{build.version}-{build.release}"
+            logger.info(f"Resolved {name} -> {build.nvr} (pullspec: {build_pullspec})")
+
+            operand_entries.append((name, spec, build_pullspec))
+            image_info_coros.append(
+                util.oc_image_info_for_arch_async(
+                    build_pullspec,
+                    registry_config=os.getenv("QUAY_AUTH_FILE"),
+                )
+            )
+
+        # Phase 2: Fetch all image infos concurrently
+        image_infos = await asyncio.gather(*image_info_coros)
+
+        resolved: dict[str, tuple[str, str, str]] = {}
+        for (name, spec, _build_pullspec), image_info in zip(operand_entries, image_infos):
+            image_labels = image_info["config"]["config"]["Labels"]
+            image_nvr = f"{image_labels['com.redhat.component']}-{image_labels['version']}-{image_labels['release']}"
+
+            image_sha = (
+                image_info["contentDigest"]
+                if self._group_config.operator_image_ref_mode == "by-arch"
+                else image_info["listDigest"]
+            )
+
+            # Parse the original spec to get namespace and short name
+            # spec format: registry/namespace/image_short:tag
+            parts = spec.rsplit("/", 1)
+            if len(parts) == 2:
+                original_namespace = parts[0].split("/", 1)[-1] if "/" in parts[0] else parts[0]
+                image_short_name = parts[1].split(":")[0].split("@")[0]
+            else:
+                original_namespace = csv_namespace
+                image_short_name = spec.split(":")[0].split("@")[0]
+
+            delivery_short_name, new_pullspec = self._build_delivery_pullspec(
+                image_short_name,
+                image_sha,
+                original_namespace,
+                metadata,
+                delivery_override_map,
+                delivery_namespace_map,
+            )
+            resolved[delivery_short_name] = (spec, new_pullspec, image_nvr)
+
+        return resolved
+
     async def _replace_image_references(self, old_registry: str, content: str, engine: Engine, metadata):
         """
         Replace image references in the content by their corresponding SHA.
-        Returns the content with the replacements and a map of found images in format of {image_name: (old_pullspec, new_pullspec, nvr)}
 
-        This function handles two types of image references:
-        1. ART-built images matching the registry pattern (e.g., registry.redhat.io/openshift/image:tag)
-           - These are resolved via Konflux/Brew to get the SHA digest
-        2. Digest-pinned images (e.g., registry.redhat.io/rhel9/postgresql-15@sha256:...)
-           - These are already pinned and are included in found_images without modification
+        Legacy path used by Brew engine. For Konflux, _resolve_operands_from_db
+        is used instead.
+
+        Arg(s):
+            old_registry: Registry prefix to match (e.g. "registry.redhat.io").
+            content: File content to process.
+            engine: Build engine (KONFLUX or BREW).
+            metadata: ImageMetadata for the operator.
+        Return Value(s):
+            tuple: (new_content, found_images) where found_images is
+                {image_name: (old_pullspec, new_pullspec, nvr)}
         """
         new_content = content
         found_images: Dict[str, Tuple[str, str, str]] = {}
 
         # Step 1: Find and process ART-built images matching the registry pattern
         pattern = KonfluxOlmBundleRebaser._get_image_reference_pattern(old_registry)
-        matches = pattern.finditer(content)
-        art_references = {}  # map of image pullspec to (namespace, image_short_name, image_tag)
-        image_info_tasks = []
-        for match in matches:
+        art_references = {}
+        image_info_coros = []
+        for match in pattern.finditer(content):
             pullspec = match.group(0)
             namespace, image_short_name = match.group(1).rsplit('/', maxsplit=1)
             image_tag = match.group(2)
             art_references[pullspec] = (namespace, image_short_name, image_tag)
 
-        # Get image infos for ART-built images
         for pullspec, (namespace, image_short_name, image_tag) in art_references.items():
             if engine is Engine.KONFLUX:
                 build_pullspec = f"{self.image_repo}:{image_short_name}-{image_tag}"
-                image_info_tasks.append(
-                    asyncio.create_task(
-                        util.oc_image_info_for_arch_async(
-                            build_pullspec,
-                            registry_config=os.getenv("QUAY_AUTH_FILE"),
-                        )
+                image_info_coros.append(
+                    util.oc_image_info_for_arch_async(
+                        build_pullspec,
+                        registry_config=os.getenv("QUAY_AUTH_FILE"),
                     )
                 )
             elif engine is Engine.BREW:
                 build_pullspec = (
                     f"{constants.REGISTRY_PROXY_BASE_URL}/rh-osbs/{namespace}-{image_short_name}:{image_tag}"
                 )
-                image_info_tasks.append(
-                    asyncio.create_task(
-                        util.oc_image_info_for_arch_async(
-                            build_pullspec,
-                        )
+                image_info_coros.append(
+                    util.oc_image_info_for_arch_async(
+                        build_pullspec,
                     )
                 )
-        image_infos = await asyncio.gather(*image_info_tasks)
+        image_infos = await asyncio.gather(*image_info_coros)
 
-        # Replace ART-built image references in the content
-        csv_namespace = self._group_config.get('csv_namespace', 'openshift')
-        # Build a map of image short name -> delivery override short name for images that have
-        # delivery_repo_name_override set. This allows operators to reference images using a
-        # versioned internal name (e.g. ose-csi-livenessprobe-4.18-rhel9) while having them
-        # replaced with the preferred unversioned delivery repo name (e.g. ose-csi-livenessprobe-rhel9).
-        _delivery_override_map: Dict[str, str] = {}
-        _delivery_namespace_map: Dict[str, str] = {}
-        _data_dir = metadata.runtime.data_dir
-        for _yml_path in glob.glob(f"{_data_dir}/images/*.yml") + glob.glob(f"{_data_dir}/images/*.yaml"):
-            try:
-                with open(_yml_path) as _yf:
-                    _img_data = yaml.safe_load(_yf)
-                if not isinstance(_img_data, dict):
-                    continue
-                _delivery = _img_data.get('delivery', {}) or {}
-                _repo_names = _delivery.get('delivery_repo_names') or []
-                _img_short = str(_img_data.get('name', '')).rsplit('/', 1)[-1]
-                if _repo_names and '/' in str(_repo_names[0]):
-                    _delivery_namespace_map[_img_short] = str(_repo_names[0]).rsplit('/', 1)[0]
-                if not _delivery.get('delivery_repo_name_override'):
-                    continue
-                if len(_repo_names) != 1:
-                    raise IOError(
-                        f"delivery_repo_name_override is set in {_yml_path} but delivery_repo_names has "
-                        f"{len(_repo_names)} entries (expected exactly 1)"
-                    )
-                _override_short = str(_repo_names[0]).rsplit('/', 1)[-1]
-                _delivery_override_map[_img_short] = _override_short
-            except (yaml.YAMLError, OSError) as e:
-                self._logger.debug("Failed to parse image YAML %s: %s", _yml_path, e)
+        delivery_override_map, delivery_namespace_map = self._build_delivery_maps(metadata)
         for pullspec, image_info in zip(art_references, image_infos):
             image_labels = image_info['config']['config']['Labels']
-            image_version = image_labels['version']
-            image_release = image_labels['release']
-            image_component_name = image_labels['com.redhat.component']
-            image_nvr = f"{image_component_name}-{image_version}-{image_release}"
-            namespace, image_short_name, image_tag = art_references[pullspec]
+            image_nvr = "{}-{}-{}".format(
+                image_labels['com.redhat.component'],
+                image_labels['version'],
+                image_labels['release'],
+            )
+            namespace, image_short_name, _image_tag = art_references[pullspec]
             image_sha = (
                 image_info['contentDigest']
                 if self._group_config.operator_image_ref_mode == 'by-arch'
                 else image_info['listDigest']
             )
-            if not metadata.runtime.group.startswith("openshift-"):
-                new_namespace = namespace
-            else:
-                new_namespace = (
-                    _delivery_namespace_map.get(image_short_name, 'openshift4')
-                    if namespace == csv_namespace
-                    else namespace
-                )
-            # If delivery_repo_name_override is set for this image, use the overridden short name
-            # so the final pullspec uses the preferred delivery repo name (e.g. without a version tag).
-            delivery_image_short_name = _delivery_override_map.get(image_short_name, image_short_name)
-            new_pullspec = '{}/{}@{}'.format(
-                'registry.redhat.io',  # hardcoded until appregistry is dead
-                f'{new_namespace}/{delivery_image_short_name}',
+            delivery_short_name, new_pullspec = self._build_delivery_pullspec(
+                image_short_name,
                 image_sha,
+                namespace,
+                metadata,
+                delivery_override_map,
+                delivery_namespace_map,
             )
             new_content = new_content.replace(pullspec, new_pullspec)
-            found_images[delivery_image_short_name] = (pullspec, new_pullspec, image_nvr)
+            found_images[delivery_short_name] = (pullspec, new_pullspec, image_nvr)
 
-        # Step 2: Find digest-pinned images that are already resolved (e.g., external images)
-        # These don't need resolution but should be included in found_images for relatedImages
-        digest_pattern = KonfluxOlmBundleRebaser._get_digest_image_pattern()
-        for match in digest_pattern.finditer(new_content):
-            image_path = match.group(1)  # e.g., registry.redhat.io/rhel9/postgresql-15
-            digest = match.group(2)  # e.g., sha256:abc123...
-            pullspec = f"{image_path}@{digest}"
-
-            # Extract image short name from the path
-            image_short_name = image_path.rsplit('/', 1)[-1]
-
-            # Skip if this image was already processed as an ART-built image
-            if image_short_name in found_images:
-                continue
-
-            # Add to found_images with pullspec as both old and new (no change needed)
-            # Use "external" as NVR since we don't have version info for external images
-            found_images[image_short_name] = (pullspec, pullspec, "external")
-            self._logger.debug(f"Found digest-pinned external image: {pullspec}")
+        # Step 2: Find digest-pinned images (external, already resolved)
+        found_images.update(self._find_external_digest_images(new_content, found_images))
 
         return new_content, found_images
+
+    @staticmethod
+    def _find_external_digest_images(
+        content: str,
+        already_resolved: dict[str, tuple[str, str, str]],
+    ) -> dict[str, tuple[str, str, str]]:
+        """
+        Scan content for digest-pinned external images not already in already_resolved.
+
+        Arg(s):
+            content: File content to scan.
+            already_resolved: Images already resolved (to skip).
+        Return Value(s):
+            dict: {image_short_name: (pullspec, pullspec, "external")}
+        """
+        found: dict[str, tuple[str, str, str]] = {}
+        digest_pattern = KonfluxOlmBundleRebaser._get_digest_image_pattern()
+        for match in digest_pattern.finditer(content):
+            image_path = match.group(1)
+            digest = match.group(2)
+            pullspec = f"{image_path}@{digest}"
+            image_short_name = image_path.rsplit("/", 1)[-1]
+            if image_short_name not in already_resolved and image_short_name not in found:
+                found[image_short_name] = (pullspec, pullspec, "external")
+        return found
 
     @cached_property
     def _operator_index_mode(self):
