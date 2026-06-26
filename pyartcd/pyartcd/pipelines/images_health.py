@@ -624,8 +624,7 @@ class ImagesHealthPipeline:
     async def notify_public_channel(self):
         """
         Send a summary message to the public channel with a link to the dashboard.
-        Instead of posting detailed failure lists (which can overflow Jira API limits),
-        we now only post a summary grouped by version and direct users to the art-build-failures dashboard.
+        Each group's detailed report is sent as a thread response to keep the main channel clean.
         """
         self.slack_client.bind_channel(self.public_channel)
 
@@ -659,9 +658,17 @@ class ImagesHealthPipeline:
         all_groups.update(f'openshift-{v}' for v in self.release_failures.keys())
         all_groups.update(f'openshift-{v}' for v in self.rebase_failures.keys())
 
-        # Build message grouped by version
-        message_parts = [':alert: There are some issues to look into for OpenShift builds:\n']
+        # Send the main alert message with just the dashboard link
+        dashboard_url = ART_BUILD_FAILURES_URL
+        summary_message = (
+            f':alert: There are some issues to look into for OpenShift builds.\n\n'
+            f'For detailed information, please check the {self.url_text(dashboard_url, "ART Build Failures Dashboard")}'
+        )
+        response = await self.slack_client.say(
+            summary_message, link_build_url=False, unfurl_links=False, unfurl_media=False
+        )
 
+        # Send each group's summary as a thread response
         for group in sorted(all_groups):
             version = group.replace('openshift-', '')
             group_summary = []
@@ -690,19 +697,19 @@ class ImagesHealthPipeline:
                 n = len(rebase_fails)
                 group_summary.append(f'{n} image{"s" if n > 1 else ""} with rebase failures')
 
+            # Send the group summary as a thread response
             if group_summary:
-                message_parts.append(f'\n*{group}*:')
+                group_message = f'*{group}*:\n'
                 for item in group_summary:
-                    message_parts.append(f'- {item}')
+                    group_message += f'- {item}\n'
 
-        # Link to art-build-failures dashboard
-        dashboard_url = ART_BUILD_FAILURES_URL
-        message_parts.append(
-            f'\nFor detailed information, please check the {self.url_text(dashboard_url, "ART Build Failures Dashboard")}'
-        )
-
-        message = '\n'.join(message_parts)
-        await self.slack_client.say(message, link_build_url=False, unfurl_links=False, unfurl_media=False)
+                await self.slack_client.say(
+                    group_message.rstrip(),
+                    thread_ts=response['ts'],
+                    link_build_url=False,
+                    unfurl_links=False,
+                    unfurl_media=False,
+                )
 
     @staticmethod
     def _group_failures_by_image(failures_by_version: dict) -> dict[str, list[dict]]:
