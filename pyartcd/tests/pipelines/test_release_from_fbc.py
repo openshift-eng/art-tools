@@ -1436,23 +1436,42 @@ class TestResolveSingleImageKey(unittest.TestCase):
     def test_single_fbc_operator_returns_key(self):
         pipeline = self._make_pipeline(fbc_pullspecs=["quay.io/test/fbc:latest"])
         pipeline._fbc_operator_keys = ["cluster-logging-operator"]
-        result = pipeline._resolve_single_image_key()
+        result = asyncio.run(pipeline._resolve_single_image_key())
         self.assertEqual(result, "cluster-logging-operator")
 
     def test_multiple_fbc_operators_returns_none(self):
         pipeline = self._make_pipeline(fbc_pullspecs=["quay.io/a:v1", "quay.io/b:v2"])
         pipeline._fbc_operator_keys = ["operator-a", "operator-b"]
-        result = pipeline._resolve_single_image_key()
+        result = asyncio.run(pipeline._resolve_single_image_key())
         self.assertIsNone(result)
 
-    def test_single_extra_nvr_returns_component(self):
+    @patch("pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async")
+    def test_single_extra_nvr_resolves_via_doozer(self, mock_cmd):
+        """Single extra NVR resolves component to doozer key via images:print."""
+        mock_cmd.return_value = (0, "oadp-velero-container: oadp-velero\n", "")
         pipeline = self._make_pipeline(extra_image_nvrs=["oadp-velero-container-1.4.5-1.el9"])
-        result = pipeline._resolve_single_image_key()
+        result = asyncio.run(pipeline._resolve_single_image_key())
         self.assertEqual(result, "oadp-velero")
+
+    @patch("pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async")
+    def test_single_extra_nvr_no_container_suffix(self, mock_cmd):
+        """Extra NVR without -container suffix is resolved via doozer lookup."""
+        mock_cmd.return_value = (0, "my-custom-build: my-custom-image\n", "")
+        pipeline = self._make_pipeline(extra_image_nvrs=["my-custom-build-1.0.0-1.el9"])
+        result = asyncio.run(pipeline._resolve_single_image_key())
+        self.assertEqual(result, "my-custom-image")
+
+    @patch("pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async")
+    def test_single_extra_nvr_unresolvable_returns_none(self, mock_cmd):
+        """When doozer cannot resolve the component, returns None for group fallback."""
+        mock_cmd.return_value = (0, "other-component: other-image\n", "")
+        pipeline = self._make_pipeline(extra_image_nvrs=["unknown-component-1.0.0-1.el9"])
+        result = asyncio.run(pipeline._resolve_single_image_key())
+        self.assertIsNone(result)
 
     def test_multiple_extra_nvrs_returns_none(self):
         pipeline = self._make_pipeline(extra_image_nvrs=["foo-container-1.0-1.el9", "bar-container-2.0-1.el9"])
-        result = pipeline._resolve_single_image_key()
+        result = asyncio.run(pipeline._resolve_single_image_key())
         self.assertIsNone(result)
 
     def test_both_fbc_and_extras_returns_none(self):
@@ -1461,24 +1480,24 @@ class TestResolveSingleImageKey(unittest.TestCase):
             extra_image_nvrs=["foo-container-1.0-1.el9"],
         )
         pipeline._fbc_operator_keys = ["my-operator"]
-        result = pipeline._resolve_single_image_key()
+        result = asyncio.run(pipeline._resolve_single_image_key())
         self.assertIsNone(result)
 
     def test_unknown_fbc_keys_filtered_out(self):
         pipeline = self._make_pipeline(fbc_pullspecs=["quay.io/test/fbc:latest"])
         pipeline._fbc_operator_keys = ["UNKNOWN-12345678", "cluster-logging-operator"]
-        result = pipeline._resolve_single_image_key()
+        result = asyncio.run(pipeline._resolve_single_image_key())
         self.assertEqual(result, "cluster-logging-operator")
 
     def test_only_unknown_fbc_keys_returns_none(self):
         pipeline = self._make_pipeline(fbc_pullspecs=["quay.io/test/fbc:latest"])
         pipeline._fbc_operator_keys = ["UNKNOWN-12345678"]
-        result = pipeline._resolve_single_image_key()
+        result = asyncio.run(pipeline._resolve_single_image_key())
         self.assertIsNone(result)
 
     def test_no_fbc_no_extras_returns_none(self):
         pipeline = self._make_pipeline()
-        result = pipeline._resolve_single_image_key()
+        result = asyncio.run(pipeline._resolve_single_image_key())
         self.assertIsNone(result)
 
 
@@ -1529,8 +1548,9 @@ class TestLoadMrApproversFromImageConfig(unittest.TestCase):
         self.assertEqual(result, {})
 
     @patch("pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async")
-    def test_null_output_returns_empty(self, mock_cmd):
-        mock_cmd.return_value = (0, "images:\n  my-operator: null\nrpms: {}\n", "")
+    def test_missing_key_in_envelope_returns_empty(self, mock_cmd):
+        """When the requested doozer key is absent from the images envelope, returns empty."""
+        mock_cmd.return_value = (0, "images:\n  other-operator:\n    QE:\n    - user1\nrpms: {}\n", "")
         pipeline = self._make_pipeline()
         result = asyncio.run(pipeline._load_mr_approvers_from_image_config("my-operator"))
         self.assertEqual(result, {})
@@ -1678,6 +1698,45 @@ class TestCreateShipmentMrImageConfigApprovers(unittest.TestCase):
         mock_gitlab.set_mr_approval_rules.assert_awaited_once_with(
             "https://gitlab.example.com/org/repo/-/merge_requests/12",
             {"QE": ["group_user"]},
+        )
+
+    @patch("pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async")
+    def test_extras_only_resolves_image_config_approvers(self, mock_cmd):
+        """When only extra NVRs are provided, resolves doozer key and uses image config approvers."""
+
+        async def mock_gather(cmd):
+            if "images:print" in cmd:
+                return (0, "oadp-velero-container: oadp-velero\n", "")
+            elif "config:print" in cmd:
+                return (0, "images:\n  oadp-velero:\n    QE:\n    - image_user\nrpms: {}\n", "")
+            elif "config:read-group" in cmd:
+                return (0, "QE:\n- group_user\n", "")
+            return (0, "", "")
+
+        mock_cmd.side_effect = mock_gather
+
+        pipeline = self._make_pipeline(
+            dry_run=False,
+            fbc_pullspecs=[],
+            extra_image_nvrs=["oadp-velero-container-1.4.5-1.el9"],
+        )
+        pipeline.update_shipment_data = AsyncMock(return_value=True)
+
+        mock_source_project = MagicMock()
+        mock_mr = MagicMock()
+        mock_mr.web_url = "https://gitlab.example.com/org/repo/-/merge_requests/13"
+        mock_source_project.mergerequests.create.return_value = mock_mr
+        pipeline._get_gitlab_project = MagicMock(return_value=mock_source_project)
+
+        mock_gitlab = MagicMock()
+        mock_gitlab.set_mr_approval_rules = AsyncMock()
+        pipeline.__dict__["_gitlab"] = mock_gitlab
+
+        asyncio.run(pipeline.create_shipment_mr({}, env="prod"))
+
+        mock_gitlab.set_mr_approval_rules.assert_awaited_once_with(
+            "https://gitlab.example.com/org/repo/-/merge_requests/13",
+            {"QE": ["image_user"]},
         )
 
 

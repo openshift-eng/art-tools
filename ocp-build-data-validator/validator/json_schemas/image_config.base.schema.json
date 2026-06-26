@@ -777,9 +777,11 @@
     "mr_approvers": {
       "description": "GitLab merge request approval rules mapping group names to lists of usernames",
       "type": "object",
+      "propertyNames": { "minLength": 1 },
       "additionalProperties": {
         "type": "array",
-        "items": {"type": "string"}
+        "minItems": 1,
+        "items": { "type": "string", "minLength": 1 }
       }
     },
     "mr_approvers!": {

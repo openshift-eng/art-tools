@@ -116,7 +116,7 @@ class ReleaseFromFbcPipeline:
         self.product = None
 
         # FBC operator doozer keys - populated during validate_fbc_related_images()
-        self._fbc_operator_keys: List[str] = []
+        self._fbc_operator_keys: list[str] = []
 
         # Set default shipment_path if not provided, using same logic as elliott
         self.shipment_path_was_defaulted = not shipment_path
@@ -407,7 +407,13 @@ class ReleaseFromFbcPipeline:
         e.g. {"QE": ["user1", "user2"]}. Returns empty dict if not configured.
         """
         try:
-            cmd = ['doozer', f'--group={self.group}', 'config:read-group', 'mr_approvers']
+            cmd = [
+                'doozer',
+                f'--group={self.group}',
+                f'--working-dir={self.doozer_working_dir}',
+                'config:read-group',
+                'mr_approvers',
+            ]
             _, output, _ = await exectools.cmd_gather_async(cmd)
             output = output.strip()
             if output and output not in ('None', 'null'):
@@ -420,19 +426,45 @@ class ReleaseFromFbcPipeline:
             self.logger.warning(f"Failed to load mr_approvers from group config: {e}")
         return {}
 
-    def _resolve_single_image_key(self) -> Optional[str]:
+    async def _resolve_doozer_key_from_component(self, component: str) -> Optional[str]:
+        """Resolve a Brew/Konflux component name to its doozer image key.
+
+        Uses `doozer images:print` with --short to query the authoritative
+        component-to-key mapping from ocp-build-data.
+        """
+        try:
+            cmd = [
+                'doozer',
+                f'--group={self.group}',
+                f'--working-dir={self.doozer_working_dir}',
+                '--load-disabled',
+                'images:print',
+                '--show-non-release',
+                '--short',
+                '{component}: {name}',
+            ]
+            _, output, _ = await exectools.cmd_gather_async(cmd)
+            for line in output.strip().splitlines():
+                parts = line.split(': ', 1)
+                if len(parts) == 2 and parts[0].strip() == component:
+                    return parts[1].strip()
+        except Exception as e:
+            self.logger.warning("Failed to resolve doozer key for component '%s': %s", component, e)
+        return None
+
+    async def _resolve_single_image_key(self) -> Optional[str]:
         """
         Determine the single unambiguous image config doozer key to query for mr_approvers.
 
         Returns the doozer key if exactly one image/operator can be identified, or None
-        if the situation is ambiguous. Ambiguous cases are logged as errors but do not
+        if the situation is ambiguous. Ambiguous cases are logged as warnings but do not
         block the pipeline.
         """
         has_fbc = bool(self._fbc_operator_keys)
         has_extras = bool(self.extra_image_nvrs)
 
         if has_fbc and has_extras:
-            self.logger.error(
+            self.logger.warning(
                 "Cannot resolve single image config for approvers: both FBC_PULLSPECS and "
                 "EXTRA_IMAGE_NVRS are provided. Falling back to group config."
             )
@@ -444,12 +476,12 @@ class ReleaseFromFbcPipeline:
             if len(valid_keys) == 1:
                 return valid_keys[0]
             elif len(valid_keys) == 0:
-                self.logger.error(
+                self.logger.warning(
                     "Cannot resolve single image config for approvers: no valid operator doozer keys "
                     "found from FBC images. Falling back to group config."
                 )
             else:
-                self.logger.error(
+                self.logger.warning(
                     "Cannot resolve single image config for approvers: multiple FBC operators found "
                     f"({valid_keys}). Falling back to group config."
                 )
@@ -457,14 +489,17 @@ class ReleaseFromFbcPipeline:
 
         if has_extras:
             if len(self.extra_image_nvrs) == 1:
-                nvr_dict = parse_nvr(self.extra_image_nvrs[0])
-                component = nvr_dict['name']
-                if component.endswith('-container'):
-                    component = component[: -len('-container')]
-                self.logger.info(f"Single extra NVR component: {component}")
-                return component
+                component = parse_nvr(self.extra_image_nvrs[0])['name']
+                key = await self._resolve_doozer_key_from_component(component)
+                if key:
+                    self.logger.info("Resolved doozer key '%s' from component '%s'", key, component)
+                    return key
+                self.logger.warning(
+                    "Could not resolve doozer key for component '%s', falling back to group config.", component
+                )
+                return None
             else:
-                self.logger.error(
+                self.logger.warning(
                     "Cannot resolve single image config for approvers: multiple EXTRA_IMAGE_NVRS "
                     f"provided ({len(self.extra_image_nvrs)}). Falling back to group config."
                 )
@@ -497,7 +532,14 @@ class ReleaseFromFbcPipeline:
             parsed = stdlib_yaml.safe_load(output)
             if not isinstance(parsed, dict):
                 return {}
-            mr_approvers = parsed.get('images', {}).get(doozer_key)
+            images = parsed.get('images')
+            if not isinstance(images, dict):
+                self.logger.debug(
+                    "Unexpected doozer config:print --yaml structure for '%s': missing 'images' key in envelope",
+                    doozer_key,
+                )
+                return {}
+            mr_approvers = images.get(doozer_key)
             if not isinstance(mr_approvers, dict) or not mr_approvers:
                 return {}
             self.logger.info(f"Loaded mr_approvers from image config '{doozer_key}': {mr_approvers}")
@@ -869,7 +911,7 @@ class ReleaseFromFbcPipeline:
 
         # Configure approval rules: try image config first, fall back to group.yml
         approvers_config: dict[str, list[str]] = {}
-        image_key = self._resolve_single_image_key()
+        image_key = await self._resolve_single_image_key()
         if image_key:
             approvers_config = await self._load_mr_approvers_from_image_config(image_key)
         if not approvers_config:
