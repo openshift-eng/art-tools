@@ -953,6 +953,7 @@ class KonfluxClient:
         ec_pipeline_url: str = constants.KONFLUX_EC_PIPELINE_GIT_URL,
         ec_pipeline_revision: str = constants.KONFLUX_EC_PIPELINE_REVISION,
         ec_pipeline_path: str = constants.KONFLUX_EC_PIPELINE_PATH,
+        effective_time: Optional[str] = None,
     ) -> dict:
         """Create a PipelineRun manifest for enterprise-contract verification.
 
@@ -1002,6 +1003,7 @@ class KonfluxClient:
                     {"name": "POLICY_CONFIGURATION", "value": policy_configuration},
                     {"name": "SINGLE_COMPONENT", "value": "true"},
                     {"name": "SNAPSHOT", "value": snapshot_json},
+                    *([{"name": "EFFECTIVE_TIME", "value": effective_time}] if effective_time else []),
                 ],
                 "taskRunTemplate": {
                     "serviceAccountName": f"build-pipeline-{component_name}",
@@ -1022,6 +1024,7 @@ class KonfluxClient:
         commit_sha: str,
         its_name: str,
         policy_configuration: str,
+        effective_time: Optional[str] = None,
     ) -> PipelineRunInfo:
         """Start an enterprise-contract verification PipelineRun.
 
@@ -1067,6 +1070,7 @@ class KonfluxClient:
             its_name=its_name,
             policy_configuration=policy_configuration,
             watch_labels=watch_labels,
+            effective_time=effective_time,
         )
 
         if self.dry_run:
@@ -1090,6 +1094,7 @@ class KonfluxClient:
         commit_sha: str,
         ec_policy: str,
         logger: logging.Logger,
+        effective_time: Optional[str] = None,
     ) -> ECVerificationResult:
         """Run enterprise-contract verification for a built image.
 
@@ -1123,6 +1128,7 @@ class KonfluxClient:
                 commit_sha=commit_sha,
                 its_name=its_name,
                 policy_configuration=ec_policy,
+                effective_time=effective_time,
             )
             ec_plr_name = ec_plr_info.name
 

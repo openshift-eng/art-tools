@@ -620,6 +620,7 @@ class KonfluxOlmBundleBuilder:
         assembly_type: Optional[AssemblyTypes] = None,
         record_logger: Optional[RecordLogger] = None,
         logger: logging.Logger = _LOGGER,
+        effective_time: Optional[str] = None,
     ) -> None:
         self.base_dir = base_dir
         self.group = group
@@ -636,6 +637,7 @@ class KonfluxOlmBundleBuilder:
         self.dry_run = dry_run
         self.skip_ec_verify = skip_ec_verify
         self.assembly_type = assembly_type
+        self.effective_time = effective_time
         self._record_logger = record_logger
         self._logger = logger
         self._konflux_client = KonfluxClient.from_kubeconfig(
@@ -815,6 +817,7 @@ class KonfluxOlmBundleBuilder:
                             commit_sha=bundle_build_repo.commit_hash,
                             ec_policy=ec_policy,
                             logger=logger,
+                            effective_time=self.effective_time,
                         )
                         ec_pipeline_url = ec_result.ec_pipeline_url
                         if ec_result.ec_failed:
