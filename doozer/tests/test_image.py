@@ -281,7 +281,10 @@ class TestImageMetadata(unittest.TestCase):
 
         metadata.runtime.group_config.konflux.cachi2.lockfile.enabled = True
 
-        with patch.object(ImageMetadata, "is_cachi2_enabled", return_value=True):
+        with (
+            patch.object(ImageMetadata, "is_cachi2_enabled", return_value=True),
+            patch.object(ImageMetadata, "get_konflux_network_mode", return_value="hermetic"),
+        ):
             result = metadata.is_lockfile_generation_enabled()
         self.assertFalse(result)
 
@@ -315,7 +318,10 @@ class TestImageMetadata(unittest.TestCase):
 
         metadata.runtime.group_config.konflux.cachi2.lockfile.enabled = False
 
-        with patch.object(ImageMetadata, "is_cachi2_enabled", return_value=True):
+        with (
+            patch.object(ImageMetadata, "is_cachi2_enabled", return_value=True),
+            patch.object(ImageMetadata, "get_konflux_network_mode", return_value="hermetic"),
+        ):
             result = metadata.is_lockfile_generation_enabled()
         self.assertFalse(result)
 
@@ -348,7 +354,10 @@ class TestImageMetadata(unittest.TestCase):
 
         metadata.runtime.group_config.konflux.cachi2.lockfile.enabled = True
 
-        with patch.object(ImageMetadata, "is_cachi2_enabled", return_value=False):
+        with (
+            patch.object(ImageMetadata, "is_cachi2_enabled", return_value=False),
+            patch.object(ImageMetadata, "get_konflux_network_mode", return_value="hermetic"),
+        ):
             result = metadata.is_lockfile_generation_enabled()
         self.assertFalse(result)
 
@@ -363,7 +372,10 @@ class TestImageMetadata(unittest.TestCase):
 
         metadata.runtime.group_config.konflux.cachi2.lockfile.enabled = Missing
 
-        with patch.object(ImageMetadata, "is_cachi2_enabled", return_value=Missing):
+        with (
+            patch.object(ImageMetadata, "is_cachi2_enabled", return_value=Missing),
+            patch.object(ImageMetadata, "get_konflux_network_mode", return_value="hermetic"),
+        ):
             result = metadata.is_lockfile_generation_enabled()
         self.assertFalse(result)
 

@@ -21,6 +21,27 @@ CONFIG_MODES = [
 
 CONFIG_MODE_DEFAULT = CONFIG_MODES[0]
 
+VALID_NETWORK_MODES = ["hermetic", "internal-only", "open"]
+
+
+def resolve_network_mode(
+    cli_override: str | None = None,
+    image_config_network_mode: str | None = None,
+    group_config_network_mode: str | None = None,
+) -> str:
+    """Resolve the effective Konflux network mode from multiple config sources.
+
+    Precedence: cli_override > image_config > group_config > "open"
+    """
+    if cli_override:
+        network_mode = cli_override
+    else:
+        network_mode = image_config_network_mode or group_config_network_mode or "open"
+
+    if network_mode not in VALID_NETWORK_MODES:
+        raise ValueError(f"Invalid network mode: {network_mode}. Valid modes: {VALID_NETWORK_MODES}")
+    return network_mode
+
 
 class MetadataBase(object):
     def __init__(self, meta_type, runtime, data_obj):
@@ -617,18 +638,9 @@ class MetadataBase(object):
 
     def get_konflux_network_mode(self) -> str:
         runtime_override = getattr(self.runtime, "network_mode_override", None)
-        if runtime_override:
-            return runtime_override
-
         group_config_network_mode = self.runtime.group_config.konflux.get("network_mode")
         image_config_network_mode = self.config.konflux.get("network_mode")
-
-        network_mode = image_config_network_mode or group_config_network_mode or "open"
-
-        valid_network_modes = ["hermetic", "internal-only", "open"]
-        if network_mode not in valid_network_modes:
-            raise ValueError(f"Invalid network mode; {network_mode}. Valid modes: {valid_network_modes}")
-        return network_mode
+        return resolve_network_mode(runtime_override, image_config_network_mode, group_config_network_mode)
 
     @property
     def bridge_bug_mirroring_enabled(self) -> bool:

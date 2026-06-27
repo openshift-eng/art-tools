@@ -19,6 +19,7 @@ from artcommonlib.constants import (
 from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.konflux.konflux_db import KonfluxDb
+from artcommonlib.metadata import resolve_network_mode
 from artcommonlib.release_util import isolate_el_version_in_release
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import new_roundtrip_yaml_handler
@@ -573,6 +574,11 @@ class UpdateGolangPipeline:
         """
         _LOGGER.info(f"Checking if {GOLANG_BUILDER_IMAGE_NAME} builds exist in Konflux for given golang builds")
 
+        el_hermetic_map: dict[int, bool] = {}
+        for el_v in el_nvr_map:
+            network_mode = self._get_effective_network_mode(el_v, go_version)
+            el_hermetic_map[el_v] = network_mode == "hermetic"
+
         builder_records: dict[int, KonfluxBuildRecord] = {}
         extra_patterns = {'nvr': f"{GOLANG_BUILDER_CVE_COMPONENT}-v{go_version}"}
         build_records = await asyncio.gather(
@@ -585,6 +591,7 @@ class UpdateGolangPipeline:
                             "artifact_type": str(ArtifactType.IMAGE),
                             "outcome": str(KonfluxBuildOutcome.SUCCESS),
                             "engine": str(Engine.KONFLUX),
+                            "hermetic": el_hermetic_map[el_v],
                         },
                         extra_patterns=extra_patterns,
                         limit=1,
@@ -971,6 +978,38 @@ class UpdateGolangPipeline:
         if self.data_gitref:
             group += f'@{self.data_gitref}'
         return group, image_key
+
+    def _get_effective_network_mode(self, el_v: int, go_version: str) -> str:
+        if self.network_mode:
+            return self.network_mode
+
+        if self.use_new_golang_branch:
+            branch = self.GOLANG_DATA_BRANCH
+            image_key = self.get_golang_image_key(el_v, go_version)
+        else:
+            branch = self.get_golang_branch(el_v, go_version)
+            image_key = GOLANG_BUILDER_IMAGE_NAME
+
+        ref = self.data_gitref if self.data_gitref else branch
+        repo = self._get_upstream_ocp_build_data_repo()
+
+        try:
+            image_config = self._load_yaml_from_repo(repo, f"images/{image_key}.yml", ref)
+        except Exception as e:
+            _LOGGER.warning(f"Failed to load image config for {image_key}: {e}")
+            image_config = {}
+        image_config_network_mode = (image_config.get("konflux") or {}).get("network_mode")
+
+        try:
+            group_config = self._load_yaml_from_repo(repo, "group.yml", ref)
+        except Exception as e:
+            _LOGGER.warning(f"Failed to load group config from {ref}: {e}")
+            group_config = {}
+        group_config_network_mode = (group_config.get("konflux") or {}).get("network_mode")
+
+        network_mode = resolve_network_mode(None, image_config_network_mode, group_config_network_mode)
+        _LOGGER.info(f"Effective network mode for el{el_v} golang-builder: {network_mode}")
+        return network_mode
 
     def verify_golang_builder_repo(self, el_v, go_version):
         if self.use_new_golang_branch:
