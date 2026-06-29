@@ -6,10 +6,9 @@ from typing import List, Optional
 import click
 from artcommonlib.jira_config import JIRA_SERVER_URL
 from artcommonlib.util import new_roundtrip_yaml_handler
-from doozerlib.util import konflux_application_name, konflux_image_component_name
 
 from elliottlib.bzutil import JIRABugTracker
-from elliottlib.cli.attach_cve_flaws_cli import _image_uses_builder, get_konflux_component_by_component
+from elliottlib.cli.attach_cve_flaws_cli import get_konflux_component_by_component
 from elliottlib.cli.common import cli, click_coroutine
 from elliottlib.runtime import Runtime
 from elliottlib.shipment_model import CveAssociation, ReleaseNotes
@@ -18,10 +17,6 @@ from elliottlib.util import get_component_by_delivery_repo
 
 YAML = new_roundtrip_yaml_handler()
 logger = logging.getLogger(__name__)
-
-GOLANG_BUILDER_DELIVERY_REPO = "openshift4/openshift-golang-builder"
-GOLANG_BUILDER_COMPONENT = "openshift-golang-builder-container"
-GOLANG_BUILDER_PSCOMPONENTS = {GOLANG_BUILDER_DELIVERY_REPO, GOLANG_BUILDER_COMPONENT}
 
 
 def _create_jira_tracker() -> JIRABugTracker:
@@ -60,16 +55,6 @@ def _extract_pscomponent_from_labels(labels: List[str]) -> Optional[str]:
     return None
 
 
-def _get_golang_builder_components(runtime) -> list[str]:
-    """Find all Konflux component names in the group that use the golang builder."""
-    application = konflux_application_name(runtime.group)
-    components = []
-    for image_meta in runtime.image_metas():
-        if _image_uses_builder(image_meta, logger):
-            components.append(konflux_image_component_name(application, image_meta.distgit_key))
-    return sorted(components)
-
-
 async def process_bugs(runtime: Runtime, jira_ids: List[str]) -> ReleaseNotes:
     """Process a list of JIRA IDs and produce a ReleaseNotes object.
 
@@ -89,7 +74,6 @@ async def process_bugs(runtime: Runtime, jira_ids: List[str]) -> ReleaseNotes:
     cve_associations: list[CveAssociation] = []
     flaw_bug_ids: list[int] = []
     all_jira_ids: list[str] = []
-    cve_mapping_errors: list[str] = []
 
     for jira_id in jira_ids:
         jira_id = jira_id.strip()
@@ -110,58 +94,32 @@ async def process_bugs(runtime: Runtime, jira_ids: List[str]) -> ReleaseNotes:
 
         cve_id = _extract_cve_id_from_labels(labels)
         if not cve_id:
-            msg = f"JIRA {jira_id} is Vulnerability but has no CVE label"
-            logger.error(msg)
-            cve_mapping_errors.append(msg)
+            logger.warning("JIRA %s is Vulnerability but has no CVE label, skipping CVE association", jira_id)
             continue
 
         pscomponent = _extract_pscomponent_from_labels(labels)
         if not pscomponent:
-            msg = f"JIRA {jira_id} (CVE {cve_id}) has no pscomponent label"
-            logger.error(msg)
-            cve_mapping_errors.append(msg)
+            logger.warning("JIRA %s (CVE %s) has no pscomponent label, skipping CVE association", jira_id, cve_id)
             continue
 
         distgit_component = get_component_by_delivery_repo(runtime, pscomponent)
         if not distgit_component:
-            if pscomponent in GOLANG_BUILDER_PSCOMPONENTS:
-                builder_components = _get_golang_builder_components(runtime)
-                if not builder_components:
-                    msg = f"JIRA {jira_id} (CVE {cve_id}): golang builder CVE but no components use the builder"
-                    logger.error(msg)
-                    cve_mapping_errors.append(msg)
-                    continue
-                logger.info(
-                    "JIRA %s: CVE %s is a golang builder CVE, fanning out to %d components: %s",
-                    jira_id,
-                    cve_id,
-                    len(builder_components),
-                    builder_components,
-                )
-                for comp in builder_components:
-                    cve_associations.append(CveAssociation(key=cve_id, component=comp))
-            else:
-                msg = f"JIRA {jira_id} (CVE {cve_id}): pscomponent '{pscomponent}' not found in delivery_repo_names"
-                logger.error(msg)
-                cve_mapping_errors.append(msg)
-                continue
-
-            bug_flaw_ids = _extract_flaw_bug_ids_from_labels(labels)
-            if bug_flaw_ids:
-                logger.info("JIRA %s: found flaw bug IDs %s", jira_id, bug_flaw_ids)
-                flaw_bug_ids.extend(bug_flaw_ids)
-            else:
-                logger.warning("JIRA %s (CVE %s) has no flaw:bz# labels", jira_id, cve_id)
+            logger.warning(
+                "JIRA %s (CVE %s): pscomponent '%s' not found in delivery_repo_names, skipping",
+                jira_id,
+                cve_id,
+                pscomponent,
+            )
             continue
 
         konflux_component = get_konflux_component_by_component(runtime, distgit_component)
         if not konflux_component:
-            msg = (
-                f"JIRA {jira_id} (CVE {cve_id}): distgit component '{distgit_component}' "
-                f"could not be mapped to a Konflux component"
+            logger.warning(
+                "JIRA %s (CVE %s): distgit component '%s' could not be mapped to a Konflux component, skipping",
+                jira_id,
+                cve_id,
+                distgit_component,
             )
-            logger.error(msg)
-            cve_mapping_errors.append(msg)
             continue
 
         logger.info(
@@ -180,12 +138,6 @@ async def process_bugs(runtime: Runtime, jira_ids: List[str]) -> ReleaseNotes:
             flaw_bug_ids.extend(bug_flaw_ids)
         else:
             logger.warning("JIRA %s (CVE %s) has no flaw:bz# labels", jira_id, cve_id)
-
-    if cve_mapping_errors:
-        raise RuntimeError(
-            f"Failed to map {len(cve_mapping_errors)} CVE(s) to components:\n"
-            + "\n".join(f"  - {e}" for e in cve_mapping_errors)
-        )
 
     advisory_type = "RHSA" if cve_associations else "RHBA"
     logger.info("Advisory type determined: %s (CVEs found: %d)", advisory_type, len(cve_associations))

@@ -124,66 +124,6 @@ class TestSyncCIImagesPipeline:
 
         assert pipeline.skip_prs is True
 
-    def test_validate_auto_sets_skip_prs_for_images(self, mock_runtime):
-        """Test SKIP_PRS automatically set to true when IMAGES specified."""
-        pipeline = SyncCIImagesPipeline(
-            mock_runtime,
-            for_release="4.17",
-            images="ci-openshift-base.rhel10",
-            skip_prs=False,
-        )
-        assert pipeline.skip_prs is True
-
-    def test_images_parsed_as_list(self, mock_runtime):
-        """Test comma-separated IMAGES string is parsed into a list."""
-        pipeline = SyncCIImagesPipeline(
-            mock_runtime,
-            for_release="4.17",
-            images="ci-openshift-base.rhel10,ci-openshift-base.rhel9",
-        )
-        assert pipeline.images == ["ci-openshift-base.rhel10", "ci-openshift-base.rhel9"]
-
-    def test_images_empty_string_yields_empty_list(self, mock_runtime):
-        """Test empty IMAGES string yields empty list."""
-        pipeline = SyncCIImagesPipeline(mock_runtime, for_release="4.17", images="")
-        assert pipeline.images == []
-
-    def test_images_whitespace_handling(self, mock_runtime):
-        """Test IMAGES strips whitespace around entries."""
-        pipeline = SyncCIImagesPipeline(
-            mock_runtime,
-            for_release="4.17",
-            images=" ci-openshift-base.rhel10 , ci-openshift-base.rhel9 ",
-        )
-        assert pipeline.images == ["ci-openshift-base.rhel10", "ci-openshift-base.rhel9"]
-
-    def test_filter_args_with_stream_only(self, mock_runtime):
-        """Test _filter_args returns only --stream when no images."""
-        pipeline = SyncCIImagesPipeline(mock_runtime, for_release="4.17", only_stream="rhel10")
-        assert pipeline._filter_args == "--stream rhel10"
-
-    def test_filter_args_with_images_only(self, mock_runtime):
-        """Test _filter_args returns only --image args when no stream."""
-        pipeline = SyncCIImagesPipeline(mock_runtime, for_release="4.17", images="ci-openshift-base.rhel10")
-        assert pipeline._filter_args == "--image ci-openshift-base.rhel10"
-
-    def test_filter_args_with_both(self, mock_runtime):
-        """Test _filter_args returns both --stream and --image args."""
-        pipeline = SyncCIImagesPipeline(
-            mock_runtime,
-            for_release="4.17",
-            only_stream="rhel10",
-            images="ci-openshift-base.rhel10,ci-openshift-base.rhel9",
-        )
-        assert (
-            pipeline._filter_args == "--stream rhel10 --image ci-openshift-base.rhel10 --image ci-openshift-base.rhel9"
-        )
-
-    def test_filter_args_empty_when_neither(self, mock_runtime):
-        """Test _filter_args returns empty string when neither stream nor images."""
-        pipeline = SyncCIImagesPipeline(mock_runtime, for_release="4.17")
-        assert pipeline._filter_args == ""
-
     def test_init_with_custom_data_path(self, mock_runtime):
         """Test initialization with custom data path and gitref."""
         pipeline = SyncCIImagesPipeline(

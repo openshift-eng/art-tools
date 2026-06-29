@@ -509,7 +509,7 @@ class BuildMicroShiftBootcPipeline:
             self._logger.info("Skipping plashet sync for %s", microshift_plashet_name)
             return
 
-        result = jenkins.start_build_plashets(
+        jenkins.start_build_plashets(
             group=self.group,
             release=default_release_suffix(),
             assembly=self.assembly,
@@ -519,11 +519,6 @@ class BuildMicroShiftBootcPipeline:
             dry_run=self.runtime.dry_run,
             block_until_complete=True,
         )
-        if result != "SUCCESS":
-            raise RuntimeError(
-                f"build-plashets job for {microshift_plashet_name} failed with result: {result}. "
-                f"Plashet must be built successfully before proceeding with the bootc image build."
-            )
 
     async def _get_microshift_rpm_commit(self) -> str:
         """

@@ -79,27 +79,4 @@ class TestAssemblyInspector(IsolatedAsyncioTestCase):
         issues = ai.check_installed_rpms_in_image("foo", build_inspector, None)
         self.assertEqual(issues, [])
 
-    def test_is_installed_rpm_in_tag(self):
-        rt = MagicMock(mode="both", group_config=Model({}))
-        brew_session = MagicMock()
-        ai = AssemblyInspector(rt, brew_session)
-
-        # None installed_rpm returns False
-        self.assertFalse(ai._is_installed_rpm_in_tag(None, "my-candidate-tag"))
-
-        # Installed RPM is tagged in the candidate tag
-        brew_session.listTags.return_value = [
-            {"name": "my-candidate-tag"},
-            {"name": "other-tag"},
-        ]
-        installed_rpm = {"id": 100, "nvr": "cri-o-1.28.0-1.el9"}
-        self.assertTrue(ai._is_installed_rpm_in_tag(installed_rpm, "my-candidate-tag"))
-
-        # Installed RPM is NOT tagged in the candidate tag
-        brew_session.listTags.return_value = [
-            {"name": "rhel-9.2.0-z"},
-            {"name": "RHSA-2026:13971-released"},
-        ]
-        self.assertFalse(ai._is_installed_rpm_in_tag(installed_rpm, "my-candidate-tag"))
-
     pass

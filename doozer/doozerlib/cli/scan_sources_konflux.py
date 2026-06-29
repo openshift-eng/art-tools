@@ -24,7 +24,7 @@ from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
 from artcommonlib.release_util import isolate_timestamp_in_release
 from artcommonlib.rhcos import get_latest_layered_rhcos_build, get_primary_container_name
-from artcommonlib.rpm_utils import parse_nvr, to_nevra
+from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import deep_merge, fetch_slsa_attestation, uses_konflux_imagestream_override
 from artcommonlib.variants import BuildVariant
 from async_lru import alru_cache
@@ -629,12 +629,11 @@ class ConfigScanSources:
             stage = 'external image checks'
             await self.scan_external_image_changes(image_meta)
 
-            # Check for changes in image arches
-            stage = 'arch checks'
-            await self.scan_arch_changes(image_meta)
-
             # For OCP variant, perform additional checks that don't apply to OKD
             if self.variant != BuildVariant.OKD:
+                # Check for changes in image arches (skip for OKD - arch changes don't trigger OKD rebuilds)
+                stage = 'arch checks'
+                await self.scan_arch_changes(image_meta)
                 # Check for changes in the network mode (skip for OKD - it always uses open network)
                 stage = 'network mode checks'
                 await self.scan_network_mode_changes(image_meta)
@@ -1277,10 +1276,6 @@ class ConfigScanSources:
         # Check for changes in non-ART RPMs
         build_record_inspector = KonfluxBuildRecordInspector(self.runtime, build_record)
         non_latest_rpms = await build_record_inspector.find_non_latest_rpms(self.package_rpm_finder)
-
-        if non_latest_rpms:
-            non_latest_rpms = await self._filter_parent_inherited_rpms(image_meta, non_latest_rpms)
-
         rebuild_hints = [
             f"Outdated RPM {installed_rpm} installed in {build_record.nvr} ({arch}) when {latest_rpm} was available in repo {repo}"
             for arch, non_latest in non_latest_rpms.items()
@@ -1292,51 +1287,6 @@ class ConfigScanSources:
             )
         else:
             self.logger.info('No package changes detected for %s', build_record.nvr)
-
-    async def _filter_parent_inherited_rpms(
-        self,
-        image_meta: ImageMetadata,
-        non_latest_rpms: dict[str, list[tuple[str, str, str]]],
-    ) -> dict[str, list[tuple[str, str, str]]]:
-        """
-        Filter out outdated RPMs inherited from the parent image.
-
-        If an outdated RPM is at the same version as in the parent image,
-        rebuilding this image cannot fix it — the parent must be updated
-        first. Suppressing these prevents pointless rebuild loops.
-        """
-        parent_key = image_meta.config["from"].member
-        if not parent_key:
-            return non_latest_rpms
-
-        parent_build = self.latest_image_build_records_map.get(parent_key)
-        if not parent_build:
-            return non_latest_rpms
-
-        parent_rpms = self.package_rpm_finder.get_brew_rpms_from_build_record(parent_build)
-        parent_nevras = {to_nevra(rpm) for rpm in parent_rpms}
-
-        filtered = {}
-        suppressed = 0
-        for arch, rpm_list in non_latest_rpms.items():
-            kept = []
-            for installed_rpm, latest_rpm, repo in rpm_list:
-                if installed_rpm in parent_nevras:
-                    suppressed += 1
-                else:
-                    kept.append((installed_rpm, latest_rpm, repo))
-            if kept:
-                filtered[arch] = kept
-
-        if suppressed:
-            self.logger.info(
-                "%s: suppressed %d outdated RPMs inherited from parent %s",
-                image_meta.distgit_key,
-                suppressed,
-                parent_key,
-            )
-
-        return filtered
 
     @skip_check_if_changing
     async def scan_extra_packages(self, image_meta: ImageMetadata):

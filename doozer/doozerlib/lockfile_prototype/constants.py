@@ -35,7 +35,7 @@ ARCH_KEYWORDS = ARCH_SUBSHELL_KEYWORDS + tuple(form for name in ARCH_VAR_NAMES f
 # RPM pseudo-packages that appear in rpmdb but are not installable via DNF
 RPM_PSEUDO_PACKAGES = frozenset({"gpg-pubkey"})
 
-VALID_PKG_NAME = re.compile(r"^[a-zA-Z0-9*][a-zA-Z0-9._+\-*]*$")
+VALID_PKG_NAME = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._+\-]*$")
 
 
 # rpm-lockfile-prototype stores extracted RPMDBs under
@@ -53,7 +53,6 @@ JENKINS_CACHE_DIR = Path("/mnt/jenkins-workspace/rpm-lockfile-cache")
 RPMDB_CACHE_ERROR_PATTERNS = [
     "database disk image is malformed",
     "failed loading RPMDB",
-    "No such file or directory",
 ]
 
 

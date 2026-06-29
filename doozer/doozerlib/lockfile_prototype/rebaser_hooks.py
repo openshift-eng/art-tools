@@ -93,8 +93,6 @@ async def generate_lockfile(
                     pkg_names.add(name)
         metadata.lockfile_packages = sorted(pkg_names)
 
-    metadata.lockfile_upgrades_dropped = generator.upgrades_dropped
-
     return shared_dnf_cache
 
 
