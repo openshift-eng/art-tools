@@ -96,8 +96,8 @@ class KonfluxImageBuilderConfig:
     skip_tasks: tuple[str, ...] = ()
     dry_run: bool = False
     build_priority: Optional[str] = None
-    ec_policy_configuration: str = constants.KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION
-    prega_ec_policy_configuration: str = constants.KONFLUX_PREGA_EC_POLICY_CONFIGURATION
+    ec_policy_configuration: Optional[str] = None
+    prega_ec_policy_configuration: Optional[str] = None
     skip_ec_verify: bool = False
 
 
@@ -287,9 +287,7 @@ class KonfluxImageBuilder:
                         record["image_tag"] = image_tag
 
                         # Validate SLSA attestation and source image signature
-                        # Skip for non-OCP groups (e.g., OKD) as they may not have attestations/signatures
-                        is_ocp_group = self._config.group_name.startswith("openshift-")
-                        if is_ocp_group:
+                        if metadata.runtime.variant is not BuildVariant.OKD:
                             try:
                                 # use image_digest here to be precise, image_pullspec can collide in case of golang-builder images
                                 await self._validate_build_attestation_and_signature(
@@ -300,24 +298,16 @@ class KonfluxImageBuilder:
                                     f"Failed to get SLA attestation / source signature from konflux for image {definitive_image_pullspec}, marking build as {KonfluxBuildOutcome.BUILD_ERROR}. Error: {e}"
                                 )
                                 outcome = KonfluxBuildOutcome.BUILD_ERROR
-                        else:
-                            logger.info(
-                                "Skipping SLSA attestation validation for %s: non-OCP group '%s'",
-                                metadata.distgit_key,
-                                self._config.group_name,
-                            )
                     elif not self._config.dry_run:
                         # This should never happen in real builds - only expected in dry-run mode
                         raise IOError("PipelineRun succeeded but IMAGE_URL or IMAGE_DIGEST missing from results")
 
                 # Run enterprise-contract (EC) verification after a successful build
-                # TODO: Expand EC verification to layered products
                 # TODO: Expose EC failure links (ITS/PLR URLs) via Slack notification or dashboard column
-                is_ocp_group = self._config.group_name.startswith("openshift-")
                 should_run_ec = (
                     outcome is KonfluxBuildOutcome.SUCCESS
                     and metadata.runtime.variant is not BuildVariant.OKD
-                    and is_ocp_group
+                    and self._config.ec_policy_configuration is not None
                     and not self._config.skip_ec_verify
                     and metadata.for_release
                     and image_pullspec  # EC requires actual build results
@@ -368,9 +358,9 @@ class KonfluxImageBuilder:
                         logger.info(
                             "Skipping EC verification for %s: --skip-ec-verify flag is set", metadata.distgit_key
                         )
-                    elif not is_ocp_group:
+                    elif self._config.ec_policy_configuration is None:
                         logger.info(
-                            "Skipping EC verification for %s: non-OCP group '%s'",
+                            "Skipping EC verification for %s: no EC policy configured for group '%s'",
                             metadata.distgit_key,
                             self._config.group_name,
                         )

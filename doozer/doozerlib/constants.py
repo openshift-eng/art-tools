@@ -65,8 +65,6 @@ ART_BUILD_HISTORY_URL = 'https://art-build-history-art-build-history.apps.artc20
 ART_BUILD_FAILURES_URL = 'https://art-build-failures-art-build-failures.apps.artc2023.pc3z.p1.openshiftapps.com'
 
 # Enterprise Contract (EC) verification pipeline constants
-# TODO: Expand EC verification to layered products (logging, oadp, mta, rhmtc, quay, cert-manager, etc.)
-# Currently scoped to OCP only.
 KONFLUX_EC_PIPELINE_GIT_URL = "https://github.com/konflux-ci/build-definitions"
 KONFLUX_EC_PIPELINE_REVISION = "main"
 KONFLUX_EC_PIPELINE_PATH = "pipelines/enterprise-contract.yaml"
@@ -80,6 +78,31 @@ KONFLUX_PREGA_EC_POLICY_CONFIGURATION = "ocp-art-tenant/conforma-build-ec-stage"
 # https://gitlab.cee.redhat.com/releng/konflux-release-data/-/merge_requests/19219
 KONFLUX_TEST_EC_POLICY_CONFIGURATION = "ocp-art-tenant/conforma-build-stage-test"
 KONFLUX_TEST_PREGA_EC_POLICY_CONFIGURATION = "ocp-art-tenant/conforma-build-ec-stage-test"
+
+# Product-to-EC-policy mappings for build-time ITS verification.
+# Maps product name -> "namespace/policy-name" for each assembly type.
+PRODUCT_EC_POLICY_MAP = {
+    "logging": "art-logging-tenant/conforma-build-stage",
+    "mta": "art-mta-tenant/conforma-build-stage",
+    "oadp": "art-oadp-tenant/conforma-build-stage",
+    "ocp": "ocp-art-tenant/conforma-build-stage",
+    "openshift-logging": "art-logging-tenant/conforma-build-stage",
+    "rhmtc": "art-mtc-tenant/conforma-build-stage",
+}
+
+PRODUCT_TEST_EC_POLICY_MAP = {
+    "logging": "art-logging-tenant/conforma-build-stage-test",
+    "mta": "art-mta-tenant/conforma-build-stage-test",
+    "oadp": "art-oadp-tenant/conforma-build-stage-test",
+    "ocp": "ocp-art-tenant/conforma-build-stage-test",
+    "openshift-logging": "art-logging-tenant/conforma-build-stage-test",
+    "rhmtc": "art-mtc-tenant/conforma-build-stage-test",
+}
+
+PRODUCT_PREGA_EC_POLICY_MAP = {
+    "ocp": "ocp-art-tenant/conforma-build-ec-stage",
+}
+
 # Base image release EC policies (ReleasePlanAdmission policy name suffix). Selection is by
 # software_lifecycle.phase in resolve_konflux_base_image_release_targets — ART-19498.
 # Prod: registry-ocp-art-base-prod | Pre-release: registry-ocp-art-base-ec-prod

@@ -306,12 +306,13 @@ class KonfluxBuildCli:
         else:
             group = runtime.group
 
+        product = runtime.product
         if runtime.assembly == "test":
-            ec_policy = constants.KONFLUX_TEST_EC_POLICY_CONFIGURATION
-            prega_ec_policy = constants.KONFLUX_TEST_PREGA_EC_POLICY_CONFIGURATION
+            ec_policy = constants.PRODUCT_TEST_EC_POLICY_MAP.get(product)
+            prega_ec_policy = constants.PRODUCT_PREGA_EC_POLICY_MAP.get(product, ec_policy)
         else:
-            ec_policy = constants.KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION
-            prega_ec_policy = constants.KONFLUX_PREGA_EC_POLICY_CONFIGURATION
+            ec_policy = constants.PRODUCT_EC_POLICY_MAP.get(product)
+            prega_ec_policy = constants.PRODUCT_PREGA_EC_POLICY_MAP.get(product, ec_policy)
 
         config = KonfluxImageBuilderConfig(
             base_dir=Path(runtime.working_dir, constants.WORKING_SUBDIR_KONFLUX_BUILD_SOURCES),
