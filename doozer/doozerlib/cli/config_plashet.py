@@ -34,7 +34,7 @@ from doozerlib.util import mkdirs, strip_epoch, to_nvre
 
 ERRATA_API_URL = "https://errata.engineering.redhat.com/api/v1/"
 
-KNOWN_SIGNING_KEYS = ('fd431d51', 'release4,release2,ima')
+KNOWN_SIGNING_KEYS = ('fd431d51', '00da75f2', 'release4,release2,ima')
 
 logger: logging.Logger = None
 
