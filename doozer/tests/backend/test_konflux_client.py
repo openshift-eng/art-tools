@@ -905,10 +905,7 @@ class TestSkipTasks(IsolatedAsyncioTestCase):
                     "taskRunTemplate": {"serviceAccountName": "default"},
                     "pipelineSpec": {
                         "tasks": [
-                            {
-                                "name": "clone-repository",
-                                "params": [{"name": "refspec", "value": ""}, {"name": "fetchTags", "value": "false"}],
-                            },
+                            {"name": "clone-repository", "params": [{"name": "refspec", "value": ""}]},
                             {"name": "build-images", "params": [{"name": "SBOM_TYPE", "value": ""}]},
                             {"name": "clair-scan", "params": []},
                             {"name": "sast-snyk-check", "params": []},

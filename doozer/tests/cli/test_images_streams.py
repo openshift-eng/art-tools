@@ -278,70 +278,6 @@ def test_get_upstreaming_entries_with_final_user(mock_runtime, mock_image_meta):
     assert result['ose-test'].final_user == '1001'
 
 
-# Tests for --image filtering in _get_upstreaming_entries
-
-
-def test_get_upstreaming_entries_image_names_only(mock_runtime, mock_image_meta):
-    """Test filtering by image_names skips streams and only processes specified images."""
-    mock_image_meta.distgit_key = 'ci-openshift-base.rhel10'
-    mock_image_meta.pull_url.return_value = 'brew-registry.example.com/ci-openshift-base:latest'
-    mock_runtime.image_map = {'ci-openshift-base.rhel10': mock_image_meta}
-
-    result = images_streams._get_upstreaming_entries(mock_runtime, image_names=['ci-openshift-base.rhel10'])
-
-    assert len(result) == 1
-    assert 'ci-openshift-base.rhel10' in result
-    mock_runtime.ordered_image_metas.assert_not_called()
-    mock_runtime.get_stream_names.assert_not_called()
-
-
-def test_get_upstreaming_entries_image_not_found(mock_runtime):
-    """Test error when specified image_name is not in the group."""
-    mock_runtime.image_map = {}
-
-    with pytest.raises(IOError, match='Image nonexistent not found in group metadata'):
-        images_streams._get_upstreaming_entries(mock_runtime, image_names=['nonexistent'])
-
-
-def test_get_upstreaming_entries_image_not_eligible(mocker, mock_runtime):
-    """Test error when image lacks ci_alignment.upstream_image."""
-    ineligible_meta = mocker.MagicMock()
-    ineligible_meta.config.content.source.ci_alignment.upstream_image = Missing
-    mock_runtime.image_map = {'ose-cli': ineligible_meta}
-
-    with pytest.raises(IOError, match='not eligible for CI sync'):
-        images_streams._get_upstreaming_entries(mock_runtime, image_names=['ose-cli'])
-
-
-def test_get_upstreaming_entries_stream_and_image_union(mocker, mock_runtime, mock_image_meta):
-    """Test that providing both stream_names and image_names returns the union."""
-    mock_runtime.streams = {
-        'golang': Model({'upstream_image': 'registry.ci.openshift.org/ocp/4.17:golang'}),
-    }
-    mock_image_meta.distgit_key = 'ci-openshift-base.rhel10'
-    mock_image_meta.pull_url.return_value = 'brew-registry.example.com/ci-openshift-base:latest'
-    mock_runtime.image_map = {'ci-openshift-base.rhel10': mock_image_meta}
-
-    result = images_streams._get_upstreaming_entries(
-        mock_runtime, stream_names=['golang'], image_names=['ci-openshift-base.rhel10']
-    )
-
-    assert len(result) == 2
-    assert 'golang' in result
-    assert 'ci-openshift-base.rhel10' in result
-
-
-def test_get_upstreaming_entries_image_build_not_found_skips(mocker, mock_runtime, mock_image_meta):
-    """Test that an image with no build is gracefully skipped."""
-    mock_image_meta.distgit_key = 'ci-openshift-base.rhel10'
-    mock_image_meta.pull_url.side_effect = IOError('No build found')
-    mock_runtime.image_map = {'ci-openshift-base.rhel10': mock_image_meta}
-
-    result = images_streams._get_upstreaming_entries(mock_runtime, image_names=['ci-openshift-base.rhel10'])
-
-    assert result == {}
-
-
 # Tests for images:streams gen-buildconfigs command
 
 
@@ -359,7 +295,7 @@ def test_gen_buildconfigs_uses_get_upstreaming_entries():
     source = inspect.getsource(callback)
 
     # Verify it calls _get_upstreaming_entries
-    assert '_get_upstreaming_entries(runtime, streams' in source
+    assert '_get_upstreaming_entries(runtime, streams)' in source
 
     # Verify it uses the configuration fields from entries
     assert 'config.transform' in source

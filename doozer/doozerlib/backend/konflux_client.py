@@ -1324,9 +1324,8 @@ class KonfluxClient:
                     _modify_param(
                         task["params"],
                         "refspec",
-                        f"{commit_sha}:refs/remotes/origin/{target_branch}",
+                        f"{commit_sha}:refs/remotes/origin/{target_branch} refs/tags/*:refs/tags/*",
                     )
-                    _modify_param(task["params"], "fetchTags", "true")
                     if build_params.enable_symlink_check is not None:
                         _modify_param(task["params"], "enableSymlinkCheck", build_params.enable_symlink_check)
                 case "sast-snyk-check":

@@ -200,26 +200,6 @@ class TestParseMissingPackages(unittest.TestCase):
         missing = RpmResolver.parse_missing_packages(error)
         self.assertEqual(missing, {"policycoreutils-python-utils"})
 
-    def test_reinstall_not_available_format(self):
-        """
-        DNF PackagesNotAvailableError from base.reinstall() outputs
-        "no package matched: <pkg>" when the installed version is not
-        in the configured repos.
-        """
-        error = "dnf.exceptions.PackagesNotAvailableError: no package matched: git"
-        missing = RpmResolver.parse_missing_packages(error)
-        self.assertEqual(missing, {"git"})
-
-    def test_glob_pattern_in_missing_packages(self):
-        """
-        DNF glob patterns like *-server-ose* can appear in missing packages
-        errors. VALID_PKG_NAME must accept wildcards so the retry loop can
-        strip them.
-        """
-        error = "missing packages: *-server-ose*"
-        missing = RpmResolver.parse_missing_packages(error)
-        self.assertEqual(missing, {"*-server-ose*"})
-
     def test_no_match(self):
         error = "Some other error message\n"
         missing = RpmResolver.parse_missing_packages(error)
@@ -237,15 +217,6 @@ class TestIsRpmdbCorrupt(unittest.TestCase):
 
     def test_detects_failed_loading_rpmdb(self):
         stderr = "OSError: failed loading RPMDB\n"
-        self.assertTrue(RpmResolver._is_rpmdb_corrupt(stderr))
-
-    def test_detects_no_such_file(self):
-        stderr = (
-            "shutil.Error: [('/home/jenkins/.cache/rpm-lockfile-prototype/rpmdbs/ppc64le/"
-            "sha256:abc123/var/lib/rpm/rpmdb.sqlite', '/tmp/xyz/var/lib/rpm/rpmdb.sqlite', "
-            "\"[Errno 2] No such file or directory: '/home/jenkins/.cache/rpm-lockfile-prototype/"
-            "rpmdbs/ppc64le/sha256:abc123/var/lib/rpm/rpmdb.sqlite'\")]"
-        )
         self.assertTrue(RpmResolver._is_rpmdb_corrupt(stderr))
 
     def test_no_false_positive(self):
@@ -367,44 +338,6 @@ class TestResolveRpmdbCorruptionRetry(unittest.TestCase):
 
     @patch("doozerlib.lockfile_prototype.resolver.RpmResolver._clear_rpmdb_cache")
     @patch("doozerlib.lockfile_prototype.resolver.cmd_gather_async")
-    def test_retries_when_cache_already_gone(self, mock_gather, mock_clear):
-        """
-        Cache deleted by another process (_clear returns False) — should still retry.
-        """
-        cache_race_stderr = (
-            "shutil.Error: [('/home/jenkins/.cache/rpm-lockfile-prototype/rpmdbs/ppc64le/"
-            "sha256:abc123/var/lib/rpm/rpmdb.sqlite', '/tmp/xyz/var/lib/rpm/rpmdb.sqlite', "
-            "\"[Errno 2] No such file or directory: '/home/jenkins/.cache/rpm-lockfile-prototype/"
-            "rpmdbs/ppc64le/sha256:abc123/var/lib/rpm/rpmdb.sqlite'\")]"
-        )
-        call_count = 0
-
-        async def mock_cmd(cmd, **kwargs):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return (1, "", cache_race_stderr)
-            outfile_idx = cmd.index("--outfile") + 1
-            with open(cmd[outfile_idx], "w") as f:
-                yaml.safe_dump(self.FAKE_LOCKFILE_DATA, f)
-            return (0, "", "")
-
-        mock_gather.side_effect = mock_cmd
-        mock_clear.return_value = False
-
-        resolver = RpmResolver(working_dir=Path(tempfile.mkdtemp()))
-        config = RpmsInConfig(
-            arches=["x86_64"],
-            contentOrigin={"repos": []},
-            packages=[],
-        )
-        result = asyncio.run(resolver.resolve(config, image_pullspec="registry.example.com/repo@sha256:abc123"))
-        self.assertIsInstance(result, LockfileData)
-        self.assertEqual(call_count, 2)
-        mock_clear.assert_called_once()
-
-    @patch("doozerlib.lockfile_prototype.resolver.RpmResolver._clear_rpmdb_cache")
-    @patch("doozerlib.lockfile_prototype.resolver.cmd_gather_async")
     def test_raises_after_retry_fails(self, mock_gather, mock_clear):
         """
         Both calls fail with corruption — should raise RuntimeError.
@@ -469,34 +402,3 @@ class TestResolveRpmdbCorruptionRetry(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             asyncio.run(resolver.resolve(config, image_pullspec="registry.example.com/repo@sha256:abc123"))
         mock_clear.assert_not_called()
-
-    @patch("doozerlib.lockfile_prototype.resolver.RpmResolver._clear_rpmdb_cache")
-    @patch("doozerlib.lockfile_prototype.resolver.cmd_gather_async")
-    def test_retry_raises_retry_error_not_original(self, mock_gather, mock_clear):
-        """
-        When cache corruption triggers a retry and the retry fails with a
-        different error, the raised RuntimeError must contain the retry
-        stderr so the outer retry loop can parse it.
-        """
-        retry_stderr = "dnf.exceptions.PackagesNotInstalledError: No match for argument: nfs-utils: nfs-utils"
-        call_count = 0
-
-        async def mock_cmd(cmd, **kwargs):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return (1, "", self.CORRUPTION_STDERR)
-            return (1, "", retry_stderr)
-
-        mock_gather.side_effect = mock_cmd
-        mock_clear.return_value = True
-
-        resolver = RpmResolver(working_dir=Path(tempfile.mkdtemp()))
-        config = RpmsInConfig(
-            arches=["x86_64"],
-            contentOrigin={"repos": []},
-            packages=[],
-        )
-        with self.assertRaises(RuntimeError) as ctx:
-            asyncio.run(resolver.resolve(config, image_pullspec="registry.example.com/repo@sha256:abc123"))
-        self.assertIn("nfs-utils", str(ctx.exception))

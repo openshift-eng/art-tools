@@ -45,18 +45,6 @@ from doozerlib.lockfile_prototype.utils import format_version_pin, pick_minimum_
 from doozerlib.repos import Repos
 
 
-def _is_local_rpm(token: str) -> bool:
-    """
-    Return True if token is a local RPM file path or glob that can't
-    be resolved via lockfile repos (e.g. ``/path/*.rpm``, ``foo.rpm``).
-    """
-    if token.endswith(".rpm"):
-        return True
-    if "/" in token and "*" in token:
-        return True
-    return False
-
-
 def build_rpms_in_yaml(
     repos: list[RepoEntry],
     arches: list[str],
@@ -82,16 +70,6 @@ def build_rpms_in_yaml(
     Return Value(s):
         RpmsInConfig: Config ready for YAML serialization.
     """
-    packages = [p for p in packages if not _is_local_rpm(p)]
-    if arch_specific_packages:
-        arch_specific_packages = {
-            arch: [p for p in pkgs if not _is_local_rpm(p)] for arch, pkgs in arch_specific_packages.items()
-        }
-    if reinstall_packages:
-        reinstall_packages = [p for p in reinstall_packages if not _is_local_rpm(p)]
-    if upgrade_packages:
-        upgrade_packages = [p for p in upgrade_packages if not _is_local_rpm(p)]
-
     package_entries: list[str | ArchSpecificPackage] = list(packages)
     if arch_specific_packages:
         for arch, arch_pkgs in arch_specific_packages.items():
@@ -130,7 +108,6 @@ class RpmLockfilePrototypeGenerator:
         self.fallback_installed: dict[int, list[str]] = {}
         self.parent_source_dirs: dict[int, Path] = {}
         self.logger = logger or logutil.get_logger(__name__)
-        self.upgrades_dropped = False
         self._container = container_helper or ContainerImageHelper(logger=self.logger)
         self._resolver = resolver or RpmResolver(working_dir=working_dir, logger=self.logger)
 
@@ -460,20 +437,7 @@ class RpmLockfilePrototypeGenerator:
 
             reinstall_pkgs: list[str] | None = None
             strippable: set[str] | None = None
-            if stage_num == final_stage_num and not is_update_only and has_bare_update:
-                if image_pullspec and packages:
-                    # Bare update + explicit installs in final stage: reinstall
-                    # the Dockerfile packages so they appear in the lockfile
-                    # even when already installed in the base image. Base image
-                    # packages use upgrade semantics via upgrade_targets (set
-                    # above), so we intentionally do NOT reinstall them here.
-                    reinstall_pkgs = list(packages)
-                    strippable = set()
-                    self.logger.info(
-                        f"{distgit_key}: stage {stage_num}: {len(reinstall_pkgs)} Dockerfile "
-                        "packages will be reinstalled into lockfile (bare update stage)"
-                    )
-            elif stage_num == final_stage_num and not is_update_only and not has_bare_update:
+            if stage_num == final_stage_num and not is_update_only and not has_bare_update:
                 if image_pullspec:
                     # --image mode: pass base image packages as reinstallPackages
                     # so they appear in the lockfile at repo versions. base.reinstall()
@@ -504,24 +468,17 @@ class RpmLockfilePrototypeGenerator:
                 # so they appear in the lockfile even when already installed
                 # on some architectures, and add base image packages to the
                 # install list for conflict detection.
-                #
-                # When the builder image RHEL version differs from the repos
-                # (e.g. el8 builder with el9 repos), skip --image mode and
-                # base image packages — cross-RHEL depsolve is unsolvable.
-                if self._has_rhel_version_mismatch(stage_num, repo_list, distgit_key):
-                    image_pullspec = None
-                else:
-                    if image_pullspec:
-                        reinstall_pkgs = list(packages)
-                    base_pkgs = await self._get_base_image_packages(stage_num, image_pullspec, distgit_key)
-                    if base_pkgs:
-                        extra = [p for p in base_pkgs if p not in packages]
-                        if extra:
-                            packages = packages + extra
-                            self.logger.info(
-                                f"{distgit_key}: stage {stage_num}: {len(extra)} base image "
-                                "packages added to install list for conflict detection"
-                            )
+                if image_pullspec:
+                    reinstall_pkgs = list(packages)
+                base_pkgs = await self._get_base_image_packages(stage_num, image_pullspec, distgit_key)
+                if base_pkgs:
+                    extra = [p for p in base_pkgs if p not in packages]
+                    if extra:
+                        packages = packages + extra
+                        self.logger.info(
+                            f"{distgit_key}: stage {stage_num}: {len(extra)} base image "
+                            "packages added to install list for conflict detection"
+                        )
 
             enable_only = [s.split("/")[0] for s in stage_info.module_specs] if stage_info.module_specs else None
 
@@ -643,80 +600,6 @@ class RpmLockfilePrototypeGenerator:
                 image_pullspec = resolved
         return image_pullspec
 
-    @staticmethod
-    def _extract_rhel_version_from_pullspec(pullspec: str) -> int | None:
-        """
-        Extract RHEL major version from an image pullspec tag.
-
-        Handles two tag formats:
-        - rhel-8-golang-..., ubi-9-minimal, etc.
-        - NVR-style: openshift-golang-builder-container-v1.25.9-...el8
-
-        Arg(s):
-            pullspec (str): Image pullspec with tag or digest.
-        Return Value(s):
-            int | None: RHEL major version (e.g. 8, 9), or None if
-                not detectable.
-        """
-        if ":" not in pullspec:
-            return None
-        tag = pullspec.split("@")[0].split(":")[-1]
-        m = re.search(r"(?:rhel|ubi|centos|scos)-?(\d+)", tag)
-        if m:
-            return int(m.group(1))
-        m = re.search(r"\.el(\d+)", tag)
-        if m:
-            return int(m.group(1))
-        return None
-
-    @staticmethod
-    def _extract_rhel_version_from_repos(repo_list: list[RepoEntry]) -> int | None:
-        """
-        Extract RHEL major version from repo content set IDs.
-
-        Arg(s):
-            repo_list (list[RepoEntry]): Repository entries with repoid
-                fields like "rhel-9-for-x86_64-baseos-e4s-rpms__9_DOT_6".
-        Return Value(s):
-            int | None: RHEL major version, or None if not detectable.
-        """
-        for repo in repo_list:
-            m = re.search(r"rhel-(\d+)", repo.repoid)
-            if m:
-                return int(m.group(1))
-        return None
-
-    def _has_rhel_version_mismatch(self, stage_num: int, repo_list: list[RepoEntry], distgit_key: str) -> bool:
-        """
-        Check whether a builder stage's RHEL version differs from the
-        repos' RHEL version. Returns False when either version cannot
-        be determined (fail-open).
-
-        Arg(s):
-            stage_num (int): Dockerfile stage number.
-            repo_list (list[RepoEntry]): Repository entries.
-            distgit_key (str): Image identifier for logging.
-        Return Value(s):
-            bool: True if a RHEL version mismatch is detected.
-        """
-        if stage_num >= len(self.downstream_parents):
-            return False
-        pullspec = self.downstream_parents[stage_num]
-        if not pullspec or "/" not in pullspec:
-            return False
-        builder_rhel = self._extract_rhel_version_from_pullspec(pullspec)
-        repo_rhel = self._extract_rhel_version_from_repos(repo_list)
-        if builder_rhel is None or repo_rhel is None:
-            return False
-        if builder_rhel != repo_rhel:
-            self.logger.warning(
-                f"{distgit_key}: stage {stage_num}: RHEL version mismatch — "
-                f"builder image is el{builder_rhel} but repos are el{repo_rhel}; "
-                f"skipping base image packages and --image mode for this stage"
-            )
-            return True
-        return False
-
     async def _handle_update_only_stage(
         self, stage_num: int, image_pullspec: str | None, distgit_key: str
     ) -> tuple[list[str], list[str], str | None]:
@@ -797,14 +680,6 @@ class RpmLockfilePrototypeGenerator:
         resolved: set[str] = set()
 
         for pattern in builddep_patterns:
-            if pattern.endswith(".spec"):
-                self.logger.warning(
-                    f"{distgit_key}: builddep target '{pattern}' is a spec file — "
-                    "only SRPMs are supported for BuildRequires extraction; "
-                    "spec files cannot be parsed reliably due to macro resolution"
-                )
-                continue
-
             srpm_pattern = pattern if pattern.endswith(".src.rpm") else f"{pattern}.src.rpm"
             matching_srpms = [
                 f
@@ -813,8 +688,17 @@ class RpmLockfilePrototypeGenerator:
             ]
 
             if not matching_srpms:
+                matching_specs = [
+                    f
+                    for f in dest_dir.iterdir()
+                    if f.is_file() and f.name.endswith(".spec") and fnmatch.fnmatch(f.name, pattern)
+                ]
+                if matching_specs:
+                    matching_srpms = matching_specs
+
+            if not matching_srpms:
                 self.logger.warning(
-                    f"{distgit_key}: no SRPM matching '{pattern}' found in {dest_dir}, "
+                    f"{distgit_key}: no SRPM or spec file matching '{pattern}' found in {dest_dir}, "
                     "builddep packages will not be included in lockfile"
                 )
                 continue
@@ -836,65 +720,6 @@ class RpmLockfilePrototypeGenerator:
         if resolved:
             self.logger.info(f"{distgit_key}: resolved {len(resolved)} builddep packages: {sorted(resolved)}")
         return sorted(resolved)
-
-    def _build_resolve_config(
-        self,
-        repo_list: list[RepoEntry],
-        arches: list[str],
-        packages: list[str],
-        arch_pkgs: dict[str, list[str]],
-        update_targets: list[str],
-        reinstall: list[str],
-        promote_reinstall_to_upgrade: bool,
-        image_pullspec: str | None,
-        module_enable: list[str] | None,
-    ) -> RpmsInConfig:
-        """
-        Build the rpms.in.yaml config for a resolve attempt.
-        """
-        upgrade_extras = reinstall if promote_reinstall_to_upgrade else []
-        effective_upgrade = list(set(update_targets + upgrade_extras)) if image_pullspec else None
-        return build_rpms_in_yaml(
-            repo_list,
-            arches,
-            packages,
-            arch_specific_packages=arch_pkgs,
-            reinstall_packages=reinstall if image_pullspec else None,
-            upgrade_packages=effective_upgrade,
-            module_enable=module_enable,
-        )
-
-    @staticmethod
-    def _strip_missing_packages(
-        missing: set[str],
-        remaining_packages: list[str],
-        remaining_update_targets: list[str],
-        remaining_reinstall: list[str],
-        arch_pkgs: dict[str, list[str]],
-    ) -> int:
-        """
-        Remove missing packages from all lists. Returns count of packages removed.
-        """
-        prev_count = (
-            len(remaining_packages)
-            + sum(len(v) for v in arch_pkgs.values())
-            + len(remaining_update_targets)
-            + len(remaining_reinstall)
-        )
-        remaining_packages[:] = [p for p in remaining_packages if p not in missing]
-        remaining_update_targets[:] = [p for p in remaining_update_targets if p not in missing]
-        remaining_reinstall[:] = [p for p in remaining_reinstall if p not in missing]
-        for arch in list(arch_pkgs.keys()):
-            arch_pkgs[arch] = [p for p in arch_pkgs[arch] if p not in missing]
-            if not arch_pkgs[arch]:
-                del arch_pkgs[arch]
-        new_count = (
-            len(remaining_packages)
-            + sum(len(v) for v in arch_pkgs.values())
-            + len(remaining_update_targets)
-            + len(remaining_reinstall)
-        )
-        return prev_count - new_count
 
     async def _resolve_stage_with_retry(
         self,
@@ -948,16 +773,16 @@ class RpmLockfilePrototypeGenerator:
         retries_exhausted = False
 
         for _attempt in range(MAX_RESOLUTION_RETRIES):
-            in_yaml = self._build_resolve_config(
+            upgrade_extras = remaining_reinstall if promote_reinstall_to_upgrade else []
+            effective_upgrade = list(set(remaining_update_targets + upgrade_extras)) if image_pullspec else None
+            in_yaml = build_rpms_in_yaml(
                 repo_list,
                 arches,
                 remaining_packages,
-                arch_pkgs,
-                remaining_update_targets,
-                remaining_reinstall,
-                promote_reinstall_to_upgrade,
-                image_pullspec,
-                module_enable,
+                arch_specific_packages=arch_pkgs,
+                reinstall_packages=remaining_reinstall if image_pullspec else None,
+                upgrade_packages=effective_upgrade,
+                module_enable=module_enable,
             )
 
             try:
@@ -976,25 +801,26 @@ class RpmLockfilePrototypeGenerator:
                             f"{distgit_key}: stage {stage_num}: required Dockerfile packages not available "
                             f"in configured repos, stripping: {sorted(required_missing)}"
                         )
-                reinstall_only = missing & set(remaining_reinstall)
-                fully_missing = missing - reinstall_only
-                removed = 0
-                if reinstall_only:
-                    remaining_reinstall[:] = [p for p in remaining_reinstall if p not in reinstall_only]
-                    removed += len(reinstall_only)
-                    self.logger.info(
-                        f"{distgit_key}: stage {stage_num}: stripped from reinstall only "
-                        f"(keeping in install/upgrade): {sorted(reinstall_only)}"
-                    )
-                if fully_missing:
-                    removed += self._strip_missing_packages(
-                        fully_missing,
-                        remaining_packages,
-                        remaining_update_targets,
-                        remaining_reinstall,
-                        arch_pkgs,
-                    )
-                if not removed:
+                prev_count = (
+                    len(remaining_packages)
+                    + sum(len(v) for v in arch_pkgs.values())
+                    + len(remaining_update_targets)
+                    + len(remaining_reinstall)
+                )
+                remaining_packages = [p for p in remaining_packages if p not in missing]
+                remaining_update_targets = [p for p in remaining_update_targets if p not in missing]
+                remaining_reinstall = [p for p in remaining_reinstall if p not in missing]
+                for arch in list(arch_pkgs.keys()):
+                    arch_pkgs[arch] = [p for p in arch_pkgs[arch] if p not in missing]
+                    if not arch_pkgs[arch]:
+                        del arch_pkgs[arch]
+                new_count = (
+                    len(remaining_packages)
+                    + sum(len(v) for v in arch_pkgs.values())
+                    + len(remaining_update_targets)
+                    + len(remaining_reinstall)
+                )
+                if new_count == prev_count:
                     raise
                 if stripped_tracker is not None:
                     stripped_tracker.update(missing)
@@ -1032,22 +858,16 @@ class RpmLockfilePrototypeGenerator:
                 "continuing without reinstall packages"
             )
             remaining_reinstall.clear()
-        # Clear all upgrade targets and disable reinstall→upgrade promotion
-        # for the fallback — upgrade targets that reference packages not in
-        # the base image's rpmdb cause PackagesNotInstalledError from DNF.
-        remaining_update_targets.clear()
-        promote_reinstall_to_upgrade = False
-        self.upgrades_dropped = True
-        in_yaml = self._build_resolve_config(
+        fallback_upgrade_extras = remaining_reinstall if promote_reinstall_to_upgrade else []
+        effective_upgrade = list(set(remaining_update_targets + fallback_upgrade_extras)) if image_pullspec else None
+        in_yaml = build_rpms_in_yaml(
             repo_list,
             arches,
             remaining_packages,
-            arch_pkgs,
-            remaining_update_targets,
-            remaining_reinstall,
-            promote_reinstall_to_upgrade,
-            image_pullspec,
-            module_enable,
+            arch_specific_packages=arch_pkgs,
+            reinstall_packages=remaining_reinstall if image_pullspec else None,
+            upgrade_packages=effective_upgrade,
+            module_enable=module_enable,
         )
         return await self._resolver.resolve(in_yaml, image_pullspec=resolver_pullspec)
 
