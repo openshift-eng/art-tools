@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome
+from artcommonlib.variants import BuildVariant
 from doozerlib.backend.konflux_image_builder import (
     KonfluxImageBuilder,
     KonfluxImageBuilderConfig,
@@ -27,6 +28,7 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         self.mock_konflux_client_factory.return_value = self.mock_konflux_client
         self.mock_konflux_client.resource_url.return_value = "https://example.com/pipelinerun"
 
+        from doozerlib import constants as doozer_constants
         self.builder = KonfluxImageBuilder(
             KonfluxImageBuilderConfig(
                 base_dir=Path(self.temp_dir.name),
@@ -34,6 +36,8 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
                 namespace="test-namespace",
                 plr_template="test-template",
                 build_priority="5",
+                ec_policy_configuration=doozer_constants.KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION,
+                prega_ec_policy_configuration=doozer_constants.KONFLUX_PREGA_EC_POLICY_CONFIGURATION,
             )
         )
 
@@ -115,9 +119,8 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
 
         mock_validate.assert_awaited_once_with("quay.io/test/image@sha256:testdigest", "test-image")
 
-    async def test_build_skips_slsa_validation_for_non_ocp_groups(self):
-        """Test that SLSA attestation validation is skipped for non-OCP groups like OKD."""
-        # Create a builder with an OKD group name
+    async def test_build_skips_slsa_validation_for_okd_variant(self):
+        """Test that SLSA attestation validation is skipped for OKD variant."""
         okd_builder = KonfluxImageBuilder(
             KonfluxImageBuilderConfig(
                 base_dir=Path(self.temp_dir.name),
@@ -129,6 +132,7 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         )
 
         metadata = self._metadata()
+        metadata.runtime.variant = BuildVariant.OKD
         dest_dir = okd_builder._config.base_dir.joinpath(metadata.qualified_key)
         dest_dir.mkdir(parents=True)
 
