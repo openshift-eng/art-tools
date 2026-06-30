@@ -14,13 +14,14 @@ from pyartcd.util import has_layered_rhcos
 
 
 class Ocp4ScanPipeline:
-    def __init__(self, runtime, version, data_path, assembly, data_gitref, image_list):
+    def __init__(self, runtime, version, data_path, assembly, data_gitref, image_list, skip_rpms):
         self.runtime = runtime
         self.version = version
         self.data_path = data_path
         self.assembly = assembly
         self.data_gitref = data_gitref
         self.image_list = image_list
+        self.skip_rpms = skip_rpms
 
         self.logger = logging.getLogger(__name__)
         self._doozer_working = self.runtime.working_dir / "doozer_working"
@@ -104,6 +105,8 @@ class Ocp4ScanPipeline:
                 '--rebase-priv',
             ]
         )
+        if self.skip_rpms:
+            cmd.append('--skip-rpms')
         if self.runtime.dry_run:
             cmd.append('--dry-run')
 
@@ -322,9 +325,12 @@ class Ocp4ScanPipeline:
 )
 @click.option('--data-gitref', required=False, default='', help='Doozer data path git [branch / tag / sha] to use')
 @click.option('--image-list', required=False, help='Comma/space-separated list to of images to scan, empty to scan all')
+@click.option('--skip-rpms', is_flag=True, default=False, help='Skip RPM checks and only scan images')
 @pass_runtime
 @click_coroutine
-async def ocp4_scan(runtime: Runtime, version: str, assembly: str, data_path: str, data_gitref, image_list: str):
+async def ocp4_scan(
+    runtime: Runtime, version: str, assembly: str, data_path: str, data_gitref, image_list: str, skip_rpms: bool
+):
     # KUBECONFIG env var must be defined in order to scan sources
     if not os.getenv('KUBECONFIG'):
         raise RuntimeError('Environment variable KUBECONFIG must be defined')
@@ -338,6 +344,7 @@ async def ocp4_scan(runtime: Runtime, version: str, assembly: str, data_path: st
         data_path=data_path,
         data_gitref=data_gitref,
         image_list=image_list,
+        skip_rpms=skip_rpms,
     )
 
     if runtime.dry_run:
