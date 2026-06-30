@@ -649,7 +649,7 @@ class FbcRebaseAndBuildCli:
         operator_meta: ImageMetadata,
         bundle_build: KonfluxBundleBuildRecord,
         git_auth_secret: Optional[str] = None,
-    ) -> str:
+    ) -> Tuple[str, str]:
         """Rebase and build FBC for the given operator and bundle build.
 
         :param rebaser: FBC rebaser instance
@@ -657,13 +657,13 @@ class FbcRebaseAndBuildCli:
         :param operator_meta: Operator metadata
         :param bundle_build: Bundle build record
         :param git_auth_secret: Name of the transient git-auth Secret for PipelineRuns
-        :return: NVR of the FBC build
+        :return: Tuple of (NVR, pullspec) of the FBC build
         """
         existing_fbc_build = await self._check_existing_fbc_build(operator_meta, bundle_build)
         if existing_fbc_build:
             self._logger.info(f"Found existing FBC build: {existing_fbc_build.nvr}")
             if not self.force:
-                return existing_fbc_build.nvr
+                return existing_fbc_build.nvr, existing_fbc_build.image_pullspec or ""
             self._logger.info("Force flag is set, rebuilding FBC")
 
         if self.reset_to_prod:
@@ -673,8 +673,16 @@ class FbcRebaseAndBuildCli:
         self._logger.info(f"Rebasing fbc for {operator_meta.name}...")
         nvr = await rebaser.rebase(operator_meta, bundle_build, self.version, self.release)
         self._logger.info(f"Building fbc for {operator_meta.name}...")
-        await builder.build(operator_meta, operator_nvr=bundle_build.operator_nvr, git_auth_secret=git_auth_secret)
-        return nvr
+        _, pipelinerun_dict = await builder.build(
+            operator_meta, operator_nvr=bundle_build.operator_nvr, git_auth_secret=git_auth_secret
+        )
+        results = pipelinerun_dict.get('status', {}).get('results', [])
+        image_url = next((r['value'] for r in results if r['name'] == 'IMAGE_URL'), None)
+        image_digest = next((r['value'] for r in results if r['name'] == 'IMAGE_DIGEST'), None)
+        pullspec = f"{image_url.rsplit(':', 1)[0]}@{image_digest}" if image_url and image_digest else ""
+        if not pullspec:
+            LOGGER.warning("Could not extract pullspec from pipelinerun results for %s", nvr)
+        return nvr, pullspec
 
     async def run(self):
         """Rebase and build fbc fragments for given operator NVRs or all latest operator NVRs for the group and assembly"""
@@ -705,7 +713,7 @@ class FbcRebaseAndBuildCli:
         assert runtime.source_resolver is not None, "source_resolver is not initialized. Doozer bug?"
         assert runtime.group_config is not None, "group_config is not initialized. Doozer bug?"
 
-        self._logger.info(f"Processing {len(dgk_operator_builds)} operator(s): {list(dgk_operator_builds.keys())}")
+        self._logger.info(f"Processing {len(dgk_bundle_builds)} operator(s): {list(dgk_bundle_builds.keys())}")
 
         # Set up rebase and build components once
         if self.major_minor:
@@ -786,6 +794,7 @@ class FbcRebaseAndBuildCli:
         try:
             results = await asyncio.gather(*tasks, return_exceptions=True)
             successful_nvrs = []
+            successful_pullspecs = []
             failed_tasks = []
             errors = []
 
@@ -804,7 +813,9 @@ class FbcRebaseAndBuildCli:
                     errors.append(error_details)
                     LOGGER.error(f"{error_msg}; {stack_trace}")
                 else:
-                    successful_nvrs.append(result)
+                    nvr, pullspec = result
+                    successful_nvrs.append(nvr)
+                    successful_pullspecs.append(pullspec)
         finally:
             refresh_task.cancel()
             try:
@@ -824,6 +835,7 @@ class FbcRebaseAndBuildCli:
         if self.output == 'json':
             output_data = {
                 "nvrs": successful_nvrs,
+                "pullspecs": successful_pullspecs,
                 "errors": errors,
                 "failed_count": len(failed_tasks),
                 "success_count": len(successful_nvrs),
