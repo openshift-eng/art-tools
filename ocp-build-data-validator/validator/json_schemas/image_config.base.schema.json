@@ -774,6 +774,23 @@
       "$ref": "#/properties/okd"
     },
     "okd-": {},
+    "mr_approvers": {
+      "description": "GitLab merge request approval rules mapping group names to lists of usernames",
+      "type": "object",
+      "propertyNames": { "minLength": 1 },
+      "additionalProperties": {
+        "type": "array",
+        "minItems": 1,
+        "items": { "type": "string", "minLength": 1 }
+      }
+    },
+    "mr_approvers!": {
+      "$ref": "#/properties/mr_approvers"
+    },
+    "mr_approvers?": {
+      "$ref": "#/properties/mr_approvers"
+    },
+    "mr_approvers-": {},
     "no_oit_comments": {
       "description": "Deprecated. Only used in 3.11 and 4.6",
       "type": "boolean"

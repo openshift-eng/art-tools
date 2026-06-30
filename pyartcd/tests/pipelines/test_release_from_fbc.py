@@ -1413,5 +1413,332 @@ class TestOcpOptionalMode(unittest.TestCase):
         pipeline._set_shipment_mr_dependency.assert_not_awaited()
 
 
+class TestResolveSingleImageKey(unittest.TestCase):
+    """Tests for _resolve_single_image_key."""
+
+    def _make_pipeline(self, fbc_pullspecs=None, extra_image_nvrs=None):
+        runtime = MagicMock()
+        runtime.dry_run = False
+        runtime.working_dir = MagicMock()
+        runtime.working_dir.absolute.return_value = MagicMock()
+        runtime.config = {}
+
+        pipeline = ReleaseFromFbcPipeline(
+            runtime=runtime,
+            group="logging-6.5",
+            assembly="6.5.1",
+            fbc_pullspecs=fbc_pullspecs or [],
+            extra_image_nvrs=extra_image_nvrs,
+            create_mr=False,
+        )
+        return pipeline
+
+    def test_single_fbc_operator_returns_key(self):
+        pipeline = self._make_pipeline(fbc_pullspecs=["quay.io/test/fbc:latest"])
+        pipeline._fbc_operator_keys = ["cluster-logging-operator"]
+        result = asyncio.run(pipeline._resolve_single_image_key())
+        self.assertEqual(result, "cluster-logging-operator")
+
+    def test_multiple_fbc_operators_returns_none(self):
+        pipeline = self._make_pipeline(fbc_pullspecs=["quay.io/a:v1", "quay.io/b:v2"])
+        pipeline._fbc_operator_keys = ["operator-a", "operator-b"]
+        result = asyncio.run(pipeline._resolve_single_image_key())
+        self.assertIsNone(result)
+
+    @patch("pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async")
+    def test_single_extra_nvr_resolves_via_doozer(self, mock_cmd):
+        """Single extra NVR resolves component to doozer key via images:print."""
+        mock_cmd.return_value = (0, "oadp-velero-container: oadp-velero\n", "")
+        pipeline = self._make_pipeline(extra_image_nvrs=["oadp-velero-container-1.4.5-1.el9"])
+        result = asyncio.run(pipeline._resolve_single_image_key())
+        self.assertEqual(result, "oadp-velero")
+
+    @patch("pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async")
+    def test_single_extra_nvr_no_container_suffix(self, mock_cmd):
+        """Extra NVR without -container suffix is resolved via doozer lookup."""
+        mock_cmd.return_value = (0, "my-custom-build: my-custom-image\n", "")
+        pipeline = self._make_pipeline(extra_image_nvrs=["my-custom-build-1.0.0-1.el9"])
+        result = asyncio.run(pipeline._resolve_single_image_key())
+        self.assertEqual(result, "my-custom-image")
+
+    @patch("pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async")
+    def test_single_extra_nvr_unresolvable_returns_none(self, mock_cmd):
+        """When doozer cannot resolve the component, returns None for group fallback."""
+        mock_cmd.return_value = (0, "other-component: other-image\n", "")
+        pipeline = self._make_pipeline(extra_image_nvrs=["unknown-component-1.0.0-1.el9"])
+        result = asyncio.run(pipeline._resolve_single_image_key())
+        self.assertIsNone(result)
+
+    def test_multiple_extra_nvrs_returns_none(self):
+        pipeline = self._make_pipeline(extra_image_nvrs=["foo-container-1.0-1.el9", "bar-container-2.0-1.el9"])
+        result = asyncio.run(pipeline._resolve_single_image_key())
+        self.assertIsNone(result)
+
+    def test_both_fbc_and_extras_returns_none(self):
+        pipeline = self._make_pipeline(
+            fbc_pullspecs=["quay.io/test/fbc:latest"],
+            extra_image_nvrs=["foo-container-1.0-1.el9"],
+        )
+        pipeline._fbc_operator_keys = ["my-operator"]
+        result = asyncio.run(pipeline._resolve_single_image_key())
+        self.assertIsNone(result)
+
+    def test_unknown_fbc_keys_filtered_out(self):
+        pipeline = self._make_pipeline(fbc_pullspecs=["quay.io/test/fbc:latest"])
+        pipeline._fbc_operator_keys = ["UNKNOWN-12345678", "cluster-logging-operator"]
+        result = asyncio.run(pipeline._resolve_single_image_key())
+        self.assertEqual(result, "cluster-logging-operator")
+
+    def test_only_unknown_fbc_keys_returns_none(self):
+        pipeline = self._make_pipeline(fbc_pullspecs=["quay.io/test/fbc:latest"])
+        pipeline._fbc_operator_keys = ["UNKNOWN-12345678"]
+        result = asyncio.run(pipeline._resolve_single_image_key())
+        self.assertIsNone(result)
+
+    def test_no_fbc_no_extras_returns_none(self):
+        pipeline = self._make_pipeline()
+        result = asyncio.run(pipeline._resolve_single_image_key())
+        self.assertIsNone(result)
+
+
+class TestLoadMrApproversFromImageConfig(unittest.TestCase):
+    """Tests for _load_mr_approvers_from_image_config."""
+
+    def _make_pipeline(self):
+        runtime = MagicMock()
+        runtime.dry_run = False
+        runtime.working_dir = MagicMock()
+        runtime.working_dir.absolute.return_value = MagicMock()
+        runtime.config = {}
+
+        pipeline = ReleaseFromFbcPipeline(
+            runtime=runtime,
+            group="logging-6.5",
+            assembly="6.5.1",
+            fbc_pullspecs=["quay.io/test/fbc:latest"],
+            create_mr=False,
+        )
+        return pipeline
+
+    @patch("pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async")
+    def test_valid_dict_returned(self, mock_cmd):
+        mock_cmd.return_value = (0, "images:\n  my-operator:\n    QE:\n    - user1\n    - user2\nrpms: {}\n", "")
+        pipeline = self._make_pipeline()
+        result = asyncio.run(pipeline._load_mr_approvers_from_image_config("my-operator"))
+        self.assertEqual(result, {"QE": ["user1", "user2"]})
+        mock_cmd.assert_called_once()
+        cmd_args = mock_cmd.call_args[0][0]
+        self.assertIn("-i", cmd_args)
+        self.assertIn("my-operator", cmd_args)
+        self.assertIn("mr_approvers", cmd_args)
+        self.assertIn("--yaml", cmd_args)
+
+    @patch("pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async")
+    def test_non_dict_returns_empty(self, mock_cmd):
+        mock_cmd.return_value = (0, "images:\n  my-operator:\n  - user1\n  - user2\nrpms: {}\n", "")
+        pipeline = self._make_pipeline()
+        result = asyncio.run(pipeline._load_mr_approvers_from_image_config("my-operator"))
+        self.assertEqual(result, {})
+
+    @patch("pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async")
+    def test_none_output_returns_empty(self, mock_cmd):
+        mock_cmd.return_value = (0, "images:\n  my-operator: null\nrpms: {}\n", "")
+        pipeline = self._make_pipeline()
+        result = asyncio.run(pipeline._load_mr_approvers_from_image_config("my-operator"))
+        self.assertEqual(result, {})
+
+    @patch("pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async")
+    def test_missing_key_in_envelope_returns_empty(self, mock_cmd):
+        """When the requested doozer key is absent from the images envelope, returns empty."""
+        mock_cmd.return_value = (0, "images:\n  other-operator:\n    QE:\n    - user1\nrpms: {}\n", "")
+        pipeline = self._make_pipeline()
+        result = asyncio.run(pipeline._load_mr_approvers_from_image_config("my-operator"))
+        self.assertEqual(result, {})
+
+    @patch("pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async")
+    def test_empty_output_returns_empty(self, mock_cmd):
+        mock_cmd.return_value = (0, "  \n", "")
+        pipeline = self._make_pipeline()
+        result = asyncio.run(pipeline._load_mr_approvers_from_image_config("my-operator"))
+        self.assertEqual(result, {})
+
+    @patch("pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async")
+    def test_empty_dict_returns_empty(self, mock_cmd):
+        mock_cmd.return_value = (0, "images:\n  my-operator: {}\nrpms: {}\n", "")
+        pipeline = self._make_pipeline()
+        result = asyncio.run(pipeline._load_mr_approvers_from_image_config("my-operator"))
+        self.assertEqual(result, {})
+
+    @patch("pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async")
+    def test_exception_returns_empty(self, mock_cmd):
+        mock_cmd.side_effect = RuntimeError("doozer failed")
+        pipeline = self._make_pipeline()
+        result = asyncio.run(pipeline._load_mr_approvers_from_image_config("my-operator"))
+        self.assertEqual(result, {})
+
+
+class TestCreateShipmentMrImageConfigApprovers(unittest.TestCase):
+    """Tests for image-config-first approver resolution in create_shipment_mr."""
+
+    def _make_pipeline(self, dry_run=False, fbc_pullspecs=None, extra_image_nvrs=None):
+        runtime = MagicMock()
+        runtime.dry_run = dry_run
+        runtime.working_dir = MagicMock()
+        runtime.working_dir.absolute.return_value = MagicMock()
+        runtime.config = {"gitlab_url": "https://gitlab.example.com"}
+
+        pipeline = ReleaseFromFbcPipeline(
+            runtime=runtime,
+            group="logging-6.5",
+            assembly="6.5.1",
+            fbc_pullspecs=fbc_pullspecs or ["quay.io/test/fbc:latest"],
+            extra_image_nvrs=extra_image_nvrs,
+            create_mr=True,
+        )
+        pipeline.product = "logging"
+        pipeline.shipment_data_repo = AsyncMock()
+        pipeline.shipment_data_repo_push_url = "https://gitlab.example.com/user/ocp-shipment-data.git"
+        pipeline.shipment_data_repo_pull_url = "https://gitlab.example.com/org/ocp-shipment-data.git"
+        return pipeline
+
+    @patch("pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async")
+    def test_image_config_approvers_override_group(self, mock_cmd):
+        """When image config has mr_approvers, group.yml is not consulted."""
+        # First call: _load_mr_approvers_from_image_config (returns valid config)
+        # Second call would be group config but should not happen
+        mock_cmd.return_value = (
+            0,
+            "images:\n  cluster-logging-operator:\n    Release:\n    - release_user\nrpms: {}\n",
+            "",
+        )
+
+        pipeline = self._make_pipeline(dry_run=False)
+        pipeline._fbc_operator_keys = ["cluster-logging-operator"]
+        pipeline.update_shipment_data = AsyncMock(return_value=True)
+
+        mock_source_project = MagicMock()
+        mock_mr = MagicMock()
+        mock_mr.web_url = "https://gitlab.example.com/org/repo/-/merge_requests/10"
+        mock_source_project.mergerequests.create.return_value = mock_mr
+        pipeline._get_gitlab_project = MagicMock(return_value=mock_source_project)
+
+        mock_gitlab = MagicMock()
+        mock_gitlab.set_mr_approval_rules = AsyncMock()
+        pipeline.__dict__["_gitlab"] = mock_gitlab
+
+        asyncio.run(pipeline.create_shipment_mr({}, env="prod"))
+
+        mock_gitlab.set_mr_approval_rules.assert_awaited_once_with(
+            "https://gitlab.example.com/org/repo/-/merge_requests/10",
+            {"Release": ["release_user"]},
+        )
+
+    @patch("pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async")
+    def test_falls_back_to_group_when_image_config_empty(self, mock_cmd):
+        """When image config has no mr_approvers, falls back to group.yml."""
+        call_count = [0]
+
+        async def mock_gather(cmd):
+            call_count[0] += 1
+            if "config:print" in cmd:
+                return (0, "images:\n  cluster-logging-operator: null\nrpms: {}\n", "")
+            elif "config:read-group" in cmd:
+                return (0, "QE:\n- group_user\n", "")
+            return (0, "", "")
+
+        mock_cmd.side_effect = mock_gather
+
+        pipeline = self._make_pipeline(dry_run=False)
+        pipeline._fbc_operator_keys = ["cluster-logging-operator"]
+        pipeline.update_shipment_data = AsyncMock(return_value=True)
+
+        mock_source_project = MagicMock()
+        mock_mr = MagicMock()
+        mock_mr.web_url = "https://gitlab.example.com/org/repo/-/merge_requests/11"
+        mock_source_project.mergerequests.create.return_value = mock_mr
+        pipeline._get_gitlab_project = MagicMock(return_value=mock_source_project)
+
+        mock_gitlab = MagicMock()
+        mock_gitlab.set_mr_approval_rules = AsyncMock()
+        pipeline.__dict__["_gitlab"] = mock_gitlab
+
+        asyncio.run(pipeline.create_shipment_mr({}, env="prod"))
+
+        mock_gitlab.set_mr_approval_rules.assert_awaited_once_with(
+            "https://gitlab.example.com/org/repo/-/merge_requests/11",
+            {"QE": ["group_user"]},
+        )
+
+    @patch("pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async")
+    def test_ambiguous_falls_back_to_group(self, mock_cmd):
+        """When both fbc_pullspecs and extra_image_nvrs are present, falls back to group."""
+        mock_cmd.return_value = (0, "QE:\n- group_user\n", "")
+
+        pipeline = self._make_pipeline(
+            dry_run=False,
+            fbc_pullspecs=["quay.io/test/fbc:latest"],
+            extra_image_nvrs=["foo-container-1.0-1.el9"],
+        )
+        pipeline._fbc_operator_keys = ["my-operator"]
+        pipeline.update_shipment_data = AsyncMock(return_value=True)
+
+        mock_source_project = MagicMock()
+        mock_mr = MagicMock()
+        mock_mr.web_url = "https://gitlab.example.com/org/repo/-/merge_requests/12"
+        mock_source_project.mergerequests.create.return_value = mock_mr
+        pipeline._get_gitlab_project = MagicMock(return_value=mock_source_project)
+
+        mock_gitlab = MagicMock()
+        mock_gitlab.set_mr_approval_rules = AsyncMock()
+        pipeline.__dict__["_gitlab"] = mock_gitlab
+
+        asyncio.run(pipeline.create_shipment_mr({}, env="prod"))
+
+        # Should use group config since it's ambiguous
+        mock_gitlab.set_mr_approval_rules.assert_awaited_once_with(
+            "https://gitlab.example.com/org/repo/-/merge_requests/12",
+            {"QE": ["group_user"]},
+        )
+
+    @patch("pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async")
+    def test_extras_only_resolves_image_config_approvers(self, mock_cmd):
+        """When only extra NVRs are provided, resolves doozer key and uses image config approvers."""
+
+        async def mock_gather(cmd):
+            if "images:print" in cmd:
+                return (0, "oadp-velero-container: oadp-velero\n", "")
+            elif "config:print" in cmd:
+                return (0, "images:\n  oadp-velero:\n    QE:\n    - image_user\nrpms: {}\n", "")
+            elif "config:read-group" in cmd:
+                return (0, "QE:\n- group_user\n", "")
+            return (0, "", "")
+
+        mock_cmd.side_effect = mock_gather
+
+        pipeline = self._make_pipeline(
+            dry_run=False,
+            fbc_pullspecs=[],
+            extra_image_nvrs=["oadp-velero-container-1.4.5-1.el9"],
+        )
+        pipeline.update_shipment_data = AsyncMock(return_value=True)
+
+        mock_source_project = MagicMock()
+        mock_mr = MagicMock()
+        mock_mr.web_url = "https://gitlab.example.com/org/repo/-/merge_requests/13"
+        mock_source_project.mergerequests.create.return_value = mock_mr
+        pipeline._get_gitlab_project = MagicMock(return_value=mock_source_project)
+
+        mock_gitlab = MagicMock()
+        mock_gitlab.set_mr_approval_rules = AsyncMock()
+        pipeline.__dict__["_gitlab"] = mock_gitlab
+
+        asyncio.run(pipeline.create_shipment_mr({}, env="prod"))
+
+        mock_gitlab.set_mr_approval_rules.assert_awaited_once_with(
+            "https://gitlab.example.com/org/repo/-/merge_requests/13",
+            {"QE": ["image_user"]},
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
