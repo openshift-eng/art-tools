@@ -13,7 +13,6 @@ import yaml
 from doozerlib.lockfile_prototype.container_utils import ContainerImageHelper
 from doozerlib.lockfile_prototype.generator import (
     RpmLockfilePrototypeGenerator,
-    _is_local_rpm,
     build_rpms_in_yaml,
 )
 from doozerlib.lockfile_prototype.models import (
@@ -108,52 +107,6 @@ class TestBuildRpmsInYaml(unittest.TestCase):
         self.assertEqual(repo_dict["includepkgs"], "golang*")
         self.assertEqual(repo_dict["module_hotfixes"], 1)
         self.assertNotIn("options", repo_dict)
-
-
-class TestIsLocalRpm(unittest.TestCase):
-    def test_explicit_rpm_file(self):
-        self.assertTrue(_is_local_rpm("foo.rpm"))
-        self.assertTrue(_is_local_rpm("/tmp/bar-1.0.x86_64.rpm"))
-
-    def test_path_glob(self):
-        self.assertTrue(_is_local_rpm("/path/to/*.rpm"))
-        self.assertTrue(_is_local_rpm("/opt/rpms/*"))
-
-    def test_normal_packages(self):
-        self.assertFalse(_is_local_rpm("nfs-utils"))
-        self.assertFalse(_is_local_rpm("golang-*1.23*"))
-        self.assertFalse(_is_local_rpm("python3-six"))
-
-    def test_build_rpms_in_yaml_filters_local_rpms(self):
-        """
-        Local RPM file tokens extracted by the parser must be filtered
-        out before reaching rpm-lockfile-prototype.
-        """
-        repos = [RepoEntry(repoid="baseos", baseurl="https://example.com/$basearch/")]
-        result = build_rpms_in_yaml(
-            repos=repos,
-            arches=["x86_64"],
-            packages=["nfs-utils", "/tmp/extras/*.rpm", "jq", "local.rpm"],
-            arch_specific_packages={"x86_64": ["librtas", "/opt/rpms/*"]},
-        )
-        pkg_names = [p if isinstance(p, str) else p.name for p in result.packages]
-        self.assertEqual(pkg_names, ["nfs-utils", "jq", "librtas"])
-
-    def test_build_rpms_in_yaml_filters_local_rpms_from_reinstall_and_upgrade(self):
-        """
-        Local RPM tokens must also be filtered from reinstallPackages and
-        upgradePackages, not just from packages and arch_specific_packages.
-        """
-        repos = [RepoEntry(repoid="baseos", baseurl="https://example.com/$basearch/")]
-        result = build_rpms_in_yaml(
-            repos=repos,
-            arches=["x86_64"],
-            packages=["curl"],
-            reinstall_packages=["curl", "/tmp/extras/foo.rpm", "glibc"],
-            upgrade_packages=["bash", "/opt/rpms/*", "openssl"],
-        )
-        self.assertEqual(result.reinstallPackages, ["curl", "glibc"])
-        self.assertEqual(result.upgradePackages, ["bash", "openssl"])
 
 
 FAKE_LOCKFILE_DATA = LockfileData(
@@ -588,13 +541,12 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
         self.assertIn("libreswan", pkg_names)
         self.assertIn("openssl", pkg_names)
 
-    def test_bare_update_keeps_image_mode_reinstalls_dockerfile_packages(self):
+    def test_bare_update_keeps_image_mode_without_upgrade_targets(self):
         """
         Bare yum/dnf update with --image mode should NOT expand base
         image packages as upgrade targets (many are virtual provides or
-        renamed and cause resolution failures). Dockerfile install
-        packages must be reinstalled so they appear in the lockfile, and
-        also promoted to upgradePackages as a fallback if reinstall fails.
+        renamed and cause resolution failures). Instead, dnf update is
+        kept in the Dockerfile and runs at build time with cachi2 RPMs.
         """
         meta = self._make_mock_image_meta()
         meta.config.konflux.cachi2.lockfile.get.return_value = None
@@ -620,20 +572,17 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
         self.assertEqual(len(captured_configs), 1)
         # --image mode preserved
         self.assertIsNotNone(captured_pullspecs[0])
-        # Dockerfile packages reinstalled so they appear in lockfile
-        self.assertEqual(captured_configs[0].reinstallPackages, ["libreswan"])
-        # Dockerfile packages promoted to upgrade as reinstall fallback
-        self.assertEqual(captured_configs[0].upgradePackages, ["libreswan"])
+        # No upgrade targets — dnf update handled at build time
+        self.assertEqual(captured_configs[0].upgradePackages, [])
 
-    def test_mixed_install_and_bare_update_reinstalls_dockerfile_packages(self):
+    def test_mixed_install_and_bare_update_skips_reinstall(self):
         """
         When a stage has both explicit installs and a bare update
         (e.g. microdnf update -y && microdnf install -y openssl),
-        Dockerfile install packages must appear in reinstallPackages
-        so they end up in the lockfile even when already installed in
-        the base image. Base image packages must NOT be reinstalled —
-        they use upgrade semantics via upgradePackages to pick up
-        latest versions without pinning.
+        reinstallPackages must be empty. Otherwise reinstall pins base
+        image versions and overrides upgrade semantics, preventing the
+        update from picking up latest RPMs — causing a perpetual
+        rebuild loop when scan-sources detects outdated packages.
         """
         meta = self._make_mock_image_meta()
         meta.config.konflux.cachi2.lockfile.get.return_value = None
@@ -657,15 +606,15 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
             asyncio.run(generator.generate_lockfile(meta, dest_dir))
 
         self.assertEqual(len(captured_configs), 1)
-        # Dockerfile install packages must be reinstalled so they appear
-        # in the lockfile even when already installed in the base image
-        self.assertEqual(captured_configs[0].reinstallPackages, ["openssl"])
-        # Explicit install package must be present in packages list
+        # reinstallPackages must be empty: bare update means we want
+        # upgrade semantics, and reinstall would pin old versions
+        self.assertEqual(captured_configs[0].reinstallPackages, [])
+        # Explicit install package must be present
         pkg_names = [p if isinstance(p, str) else p.name for p in captured_configs[0].packages]
         self.assertIn("openssl", pkg_names)
         # Base image packages must appear as upgrade targets so
         # dnf update picks up latest versions from repos
-        self.assertEqual(sorted(captured_configs[0].upgradePackages), ["audit", "bash", "glibc", "openssl"])
+        self.assertEqual(sorted(captured_configs[0].upgradePackages), ["audit", "bash", "glibc"])
 
     def test_reinstall_packages_also_passed_as_upgrade_targets(self):
         """
@@ -738,40 +687,6 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
         # Dockerfile package must still be in the install list
         pkg_names = [p if isinstance(p, str) else p.name for p in fallback_config.packages]
         self.assertIn("curl", pkg_names)
-
-    def test_fallback_sets_upgrades_dropped_flag(self):
-        """
-        When the retry loop exhausts retries and the fallback clears
-        upgrade targets, generator.upgrades_dropped must be True so
-        the rebaser strips dnf update from the Dockerfile.
-        """
-        meta = self._make_mock_image_meta()
-        meta.config.konflux.cachi2.lockfile.get.return_value = None
-        generator = self._make_generator()
-        generator.downstream_parents = ["quay.io/test/base@sha256:abc123"]
-        generator._container.get_installed_packages = AsyncMock(return_value=["bad-pkg", "glibc"])
-
-        call_count = 0
-
-        async def mock_resolve(config, image_pullspec=None):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                raise RuntimeError("No match for argument: bad-pkg")
-            return FAKE_LOCKFILE_DATA.model_copy(deep=True)
-
-        generator._resolver.resolve = AsyncMock(side_effect=mock_resolve)
-
-        self.assertFalse(generator.upgrades_dropped)
-
-        with TemporaryDirectory() as tmpdir:
-            dest_dir = Path(tmpdir)
-            (dest_dir / "Dockerfile").write_text("FROM base\nRUN dnf install -y curl\n")
-            asyncio.run(generator.generate_lockfile(meta, dest_dir))
-
-        self.assertTrue(generator.upgrades_dropped)
-        fallback_config = generator._resolver.resolve.call_args_list[-1][0][0]
-        self.assertEqual(fallback_config.upgradePackages, [])
 
     def test_fallback_packages_used_when_image_unreachable(self):
         """
@@ -1147,66 +1062,6 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
         # Strippable packages must be gone
         for pkg in failing_pkgs:
             self.assertNotIn(pkg, final_config.reinstallPackages)
-
-    def test_fallback_disables_reinstall_to_upgrade_promotion(self):
-        """
-        When the retry loop exhausts and the fallback fires, reinstall
-        packages must NOT be promoted to upgradePackages. Otherwise
-        base.upgrade() raises PackagesNotInstalledError for packages
-        that are in reinstall but not installed on all arches.
-        """
-        generator = self._make_generator()
-        generator.downstream_parents = ["quay.io/test/base@sha256:abc123"]
-
-        failing_pkgs = [f"base-pkg-{i}" for i in range(5)]
-        call_count = 0
-
-        async def mock_resolve(config, image_pullspec=None):
-            nonlocal call_count
-            call_count += 1
-            if call_count <= 5:
-                raise RuntimeError(f"No match for argument: {failing_pkgs[call_count - 1]}")
-            return FAKE_LOCKFILE_DATA.model_copy(deep=True)
-
-        generator._resolver.resolve = AsyncMock(side_effect=mock_resolve)
-
-        repos = [
-            RepoEntry(
-                repoid="rhel-9-baseos-rpms",
-                baseurl="https://example.com/baseos/$basearch/os/",
-            )
-        ]
-
-        # util-linux is a Dockerfile package AND a base image package.
-        # It must stay in reinstallPackages (graceful skip if missing)
-        # but NOT appear in upgradePackages (throws if not installed).
-        all_packages = ["util-linux", "curl"] + failing_pkgs
-        reinstall = ["util-linux", "curl"] + failing_pkgs
-        strippable = set(failing_pkgs)
-
-        result = asyncio.run(
-            generator._resolve_stage_with_retry(
-                repo_list=repos,
-                arches=["x86_64", "aarch64"],
-                packages=all_packages,
-                arch_pkgs={},
-                update_targets=[],
-                image_pullspec="quay.io/test/base@sha256:abc123",
-                distgit_key="ose-vmware-vsphere-csi-driver",
-                stage_num=0,
-                reinstall_packages=reinstall,
-                strippable_packages=strippable,
-            )
-        )
-
-        self.assertIsNotNone(result)
-        self.assertEqual(call_count, 6)
-        fallback_config = generator._resolver.resolve.call_args_list[5][0][0]
-        # Required packages must stay in reinstallPackages
-        self.assertIn("util-linux", fallback_config.reinstallPackages)
-        self.assertIn("curl", fallback_config.reinstallPackages)
-        # upgradePackages must be empty — promotion disabled in fallback
-        self.assertEqual(fallback_config.upgradePackages, [])
 
     def test_upgrade_targets_not_strippable_in_final_stage(self):
         """
@@ -1755,212 +1610,22 @@ class TestResolveBuilddepPackages(unittest.TestCase):
 
             self.assertEqual(result, ["gcc", "make", "openssl-devel"])
 
-    def test_spec_file_skipped_with_warning(self):
+    def test_matching_spec_file(self):
         gen = self._make_gen()
         with TemporaryDirectory() as tmpdir:
-            spec_path = Path(tmpdir) / "tuned.spec"
+            spec_path = Path(tmpdir) / "pkcs11-helper.spec"
             spec_path.touch()
-            result = asyncio.run(gen._resolve_builddep_packages(["tuned.spec"], Path(tmpdir), "test-img"))
-            self.assertEqual(result, [])
 
+            async def mock_gather(cmd, check=True, env=None):
+                return 0, "gcc\nmake\n", ""
 
-class TestExtractRhelVersionFromPullspec(unittest.TestCase):
-    def test_rhel_8_golang_tag(self):
-        ps = "registry.ci.openshift.org/ocp/builder:rhel-8-golang-1.25-openshift-4.21"
-        self.assertEqual(RpmLockfilePrototypeGenerator._extract_rhel_version_from_pullspec(ps), 8)
+            import doozerlib.lockfile_prototype.generator as gen_mod
 
-    def test_rhel_9_golang_tag(self):
-        ps = "registry.ci.openshift.org/ocp/builder:rhel-9-golang-1.25"
-        self.assertEqual(RpmLockfilePrototypeGenerator._extract_rhel_version_from_pullspec(ps), 9)
+            original = gen_mod.cmd_gather_async
+            gen_mod.cmd_gather_async = mock_gather
+            try:
+                result = asyncio.run(gen._resolve_builddep_packages(["pkcs11-helper*"], Path(tmpdir), "test-img"))
+            finally:
+                gen_mod.cmd_gather_async = original
 
-    def test_ubi_9_in_path_not_tag_returns_none(self):
-        ps = "registry.access.redhat.com/ubi9/ubi-minimal:latest"
-        self.assertIsNone(RpmLockfilePrototypeGenerator._extract_rhel_version_from_pullspec(ps))
-
-    def test_ubi_9_in_tag(self):
-        ps = "registry.access.redhat.com/ubi9/ubi-minimal:ubi-9-minimal"
-        self.assertEqual(RpmLockfilePrototypeGenerator._extract_rhel_version_from_pullspec(ps), 9)
-
-    def test_nvr_el8_tag(self):
-        ps = "registry.redhat.io/openshift/art-images-base:openshift-golang-builder-container-v1.25.9-202605121249.p2.g2aa6a05.el8"
-        self.assertEqual(RpmLockfilePrototypeGenerator._extract_rhel_version_from_pullspec(ps), 8)
-
-    def test_nvr_el9_tag(self):
-        ps = "registry.redhat.io/openshift/art-images-base:openshift-golang-builder-container-v1.25.9-202605121249.p2.g2aa6a05.el9"
-        self.assertEqual(RpmLockfilePrototypeGenerator._extract_rhel_version_from_pullspec(ps), 9)
-
-    def test_digest_only_returns_none(self):
-        ps = "quay.io/test/builder@sha256:abc123def456"
-        self.assertIsNone(RpmLockfilePrototypeGenerator._extract_rhel_version_from_pullspec(ps))
-
-    def test_no_colon_returns_none(self):
-        self.assertIsNone(RpmLockfilePrototypeGenerator._extract_rhel_version_from_pullspec("builder_stage"))
-
-    def test_unrecognized_tag_returns_none(self):
-        ps = "quay.io/test/builder:latest"
-        self.assertIsNone(RpmLockfilePrototypeGenerator._extract_rhel_version_from_pullspec(ps))
-
-
-class TestExtractRhelVersionFromRepos(unittest.TestCase):
-    def test_rhel9_baseos_content_set(self):
-        repos = [
-            RepoEntry(repoid="rhel-9-for-x86_64-baseos-e4s-rpms__9_DOT_6", baseurl="https://example.com/baseos/"),
-        ]
-        self.assertEqual(RpmLockfilePrototypeGenerator._extract_rhel_version_from_repos(repos), 9)
-
-    def test_rhel8_content_set(self):
-        repos = [
-            RepoEntry(repoid="rhel-8-for-x86_64-baseos-rpms", baseurl="https://example.com/baseos/"),
-        ]
-        self.assertEqual(RpmLockfilePrototypeGenerator._extract_rhel_version_from_repos(repos), 8)
-
-    def test_no_rhel_in_repoid_returns_none(self):
-        repos = [
-            RepoEntry(repoid="custom-repo-rpms", baseurl="https://example.com/custom/"),
-        ]
-        self.assertIsNone(RpmLockfilePrototypeGenerator._extract_rhel_version_from_repos(repos))
-
-    def test_empty_repos_returns_none(self):
-        self.assertIsNone(RpmLockfilePrototypeGenerator._extract_rhel_version_from_repos([]))
-
-    def test_first_rhel_repo_wins(self):
-        repos = [
-            RepoEntry(repoid="custom-repo", baseurl="https://example.com/custom/"),
-            RepoEntry(repoid="rhel-9-for-x86_64-appstream-rpms", baseurl="https://example.com/appstream/"),
-        ]
-        self.assertEqual(RpmLockfilePrototypeGenerator._extract_rhel_version_from_repos(repos), 9)
-
-
-class TestHasRhelVersionMismatch(unittest.TestCase):
-    def _make_generator(self) -> RpmLockfilePrototypeGenerator:
-        repos = MagicMock()
-        return RpmLockfilePrototypeGenerator(
-            repos=repos,
-            working_dir=Path(tempfile.mkdtemp()),
-            container_helper=MagicMock(spec=ContainerImageHelper),
-            resolver=MagicMock(spec=RpmResolver),
-        )
-
-    def test_el8_builder_el9_repos_is_mismatch(self):
-        gen = self._make_generator()
-        gen.downstream_parents = [
-            "registry.redhat.io/openshift/art-images-base:openshift-golang-builder-container-v1.25.9.el8",
-            "quay.io/test/base:rhel-9",
-        ]
-        repos = [RepoEntry(repoid="rhel-9-for-x86_64-baseos-rpms", baseurl="https://example.com/")]
-        self.assertTrue(gen._has_rhel_version_mismatch(0, repos, "test-img"))
-
-    def test_el9_builder_el9_repos_no_mismatch(self):
-        gen = self._make_generator()
-        gen.downstream_parents = [
-            "registry.ci.openshift.org/ocp/builder:rhel-9-golang-1.25",
-        ]
-        repos = [RepoEntry(repoid="rhel-9-for-x86_64-baseos-rpms", baseurl="https://example.com/")]
-        self.assertFalse(gen._has_rhel_version_mismatch(0, repos, "test-img"))
-
-    def test_undetectable_builder_returns_false(self):
-        gen = self._make_generator()
-        gen.downstream_parents = [
-            "quay.io/test/builder@sha256:abc123",
-        ]
-        repos = [RepoEntry(repoid="rhel-9-for-x86_64-baseos-rpms", baseurl="https://example.com/")]
-        self.assertFalse(gen._has_rhel_version_mismatch(0, repos, "test-img"))
-
-    def test_undetectable_repos_returns_false(self):
-        gen = self._make_generator()
-        gen.downstream_parents = [
-            "registry.ci.openshift.org/ocp/builder:rhel-8-golang-1.25",
-        ]
-        repos = [RepoEntry(repoid="custom-repo", baseurl="https://example.com/")]
-        self.assertFalse(gen._has_rhel_version_mismatch(0, repos, "test-img"))
-
-    def test_stage_alias_returns_false(self):
-        gen = self._make_generator()
-        gen.downstream_parents = ["builder_stage"]
-        repos = [RepoEntry(repoid="rhel-9-for-x86_64-baseos-rpms", baseurl="https://example.com/")]
-        self.assertFalse(gen._has_rhel_version_mismatch(0, repos, "test-img"))
-
-    def test_out_of_range_stage_returns_false(self):
-        gen = self._make_generator()
-        gen.downstream_parents = []
-        repos = [RepoEntry(repoid="rhel-9-for-x86_64-baseos-rpms", baseurl="https://example.com/")]
-        self.assertFalse(gen._has_rhel_version_mismatch(5, repos, "test-img"))
-
-
-class TestRhelMismatchEndToEnd(unittest.TestCase):
-    """
-    End-to-end: builder stage with el8 pullspec + el9 repos should skip
-    base image packages and resolve only Dockerfile packages in bare mode.
-    """
-
-    def _make_mock_repos(self) -> MagicMock:
-        repos = MagicMock()
-        baseos = MagicMock()
-        baseos.name = "rhel-9-baseos-rpms"
-        baseos.baseurl.return_value = "https://example.com/baseos/x86_64/os/"
-        baseos.content_set.return_value = "rhel-9-for-x86_64-baseos-rpms"
-        baseos.cs_optional = False
-        baseos._data.conf.get.return_value = {}
-        repo_map = {"rhel-9-baseos-rpms": baseos}
-        repos.__getitem__ = lambda self_repos, key: repo_map[key]
-        return repos
-
-    def _make_mock_image_meta(self) -> MagicMock:
-        meta = MagicMock()
-        meta.distgit_key = "hive"
-        meta.get_arches.return_value = ["x86_64"]
-        meta.get_enabled_repos.return_value = {"rhel-9-baseos-rpms"}
-        meta.is_lockfile_generation_enabled.return_value = True
-        lockfile_config = MagicMock()
-        lockfile_config.get.return_value = None
-        meta.config.konflux.cachi2.lockfile = lockfile_config
-        return meta
-
-    def test_el8_builder_skips_base_image_packages(self):
-        container = MagicMock(spec=ContainerImageHelper)
-        container.resolve_to_digest = AsyncMock(side_effect=lambda p: p.split(":")[0] + "@sha256:abc123")
-        container.get_installed_packages = AsyncMock(return_value=["gcc", "glibc", "readline"])
-        container.read_file_from_image = AsyncMock(return_value="")
-
-        resolver = MagicMock(spec=RpmResolver)
-        resolver.resolve = AsyncMock(return_value=FAKE_LOCKFILE_DATA.model_copy(deep=True))
-
-        generator = RpmLockfilePrototypeGenerator(
-            repos=self._make_mock_repos(),
-            working_dir=Path(tempfile.mkdtemp()),
-            container_helper=container,
-            resolver=resolver,
-        )
-        generator.downstream_parents = [
-            "registry.redhat.io/openshift/art-images-base:golang-builder-v1.25.el8",
-            "quay.io/test/base:rhel-9-base",
-        ]
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            dest_dir = Path(tmpdir)
-            (dest_dir / "Dockerfile").write_text(
-                "FROM golang-builder AS builder_el8\n"
-                "RUN dnf install -y subscription-manager\n"
-                "\n"
-                "FROM base-rhel9\n"
-                "COPY --from=builder_el8 /bin/app /usr/bin/app\n"
-            )
-            asyncio.run(generator.generate_lockfile(self._make_mock_image_meta(), dest_dir))
-
-            # Resolver should have been called for stage 0 in bare mode
-            # (image_pullspec=None) because of RHEL mismatch
-            calls = resolver.resolve.call_args_list
-            stage0_call = calls[0]
-            self.assertIsNone(
-                stage0_call.kwargs.get("image_pullspec"),
-                "Stage 0 should use bare mode (image_pullspec=None) due to RHEL mismatch",
-            )
-
-            # Base image packages should NOT have been added to the install
-            # list — only the Dockerfile package should be present
-            config = stage0_call.args[0]
-            pkg_names = [p if isinstance(p, str) else p.name for p in config.packages]
-            self.assertIn("subscription-manager", pkg_names)
-            self.assertNotIn("gcc", pkg_names, "Base image packages should not be in install list")
-            self.assertNotIn("glibc", pkg_names, "Base image packages should not be in install list")
-            self.assertNotIn("readline", pkg_names, "Base image packages should not be in install list")
+            self.assertEqual(result, ["gcc", "make"])

@@ -86,14 +86,13 @@ class RpmResolver:
 
             if rc != 0:
                 if image_pullspec and self._is_rpmdb_corrupt(stderr):
-                    self._clear_rpmdb_cache(image_pullspec)
-                    self.logger.info("Retrying rpm-lockfile-prototype after RPMDB cache error")
-                    rc, _, stderr = await cmd_gather_async(cmd, check=False, env=env)
-                    if rc == 0:
-                        return LockfileData.model_validate(yaml.safe_load(out_file.read_text()))
-                    error_summary = stderr.strip().rsplit("\n", 1)[-1]
-                    self.logger.warning("Retry also failed (exit code %d): %s", rc, error_summary)
-                    self.logger.debug("Full retry stderr:\n%s", stderr)
+                    cleared = self._clear_rpmdb_cache(image_pullspec)
+                    if cleared:
+                        self.logger.info("Retrying rpm-lockfile-prototype after clearing corrupt RPMDB cache")
+                        retry_rc, _, retry_stderr = await cmd_gather_async(cmd, check=False, env=env)
+                        if retry_rc == 0:
+                            return LockfileData.model_validate(yaml.safe_load(out_file.read_text()))
+                        self.logger.warning("Retry also failed (exit code %d): %s", retry_rc, retry_stderr)
 
                 raise RuntimeError(f"rpm-lockfile-prototype failed (exit code {rc}): {stderr}")
 
@@ -151,9 +150,8 @@ class RpmResolver:
         """
         Parse missing package names from rpm-lockfile-prototype error output.
 
-        Handles the CLI format ("missing packages: X, Y"), DNF install/upgrade
-        errors ("No match for argument: X"), and DNF reinstall errors
-        ("no package matched: X").
+        Handles both the CLI format ("missing packages: X, Y") and the
+        DNF format ("No match for argument: X").
 
         Arg(s):
             error_text (str): Error message from rpm-lockfile-prototype.
@@ -166,9 +164,6 @@ class RpmResolver:
             if m:
                 missing.update(pkg.strip() for pkg in m.group(1).split(","))
             m = re.search(r"No match for argument:\s*(\S+)", line.strip())
-            if m:
-                missing.add(m.group(1).strip().rstrip(":"))
-            m = re.search(r"no package matched:\s*(\S+)", line.strip())
             if m:
                 missing.add(m.group(1).strip().rstrip(":"))
         return {p for p in missing if VALID_PKG_NAME.match(p)}

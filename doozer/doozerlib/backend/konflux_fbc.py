@@ -1574,8 +1574,7 @@ class KonfluxFbcRebaser:
                     raise IOError(f"Found unsupported schema: {schema}")
             if not package_name:
                 raise IOError(f"Couldn't determine package name for unknown schema: {schema}")
-            blob_key = package_name if schema == "olm.deprecations" else blob["name"]
-            categorized_blobs.setdefault(package_name, {}).setdefault(schema, {})[blob_key] = blob
+            categorized_blobs.setdefault(package_name, {}).setdefault(schema, {})[blob["name"]] = blob
         return categorized_blobs
 
 

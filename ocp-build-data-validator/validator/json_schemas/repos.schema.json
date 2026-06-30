@@ -47,7 +47,6 @@
                             "type": "boolean"
                         }
                     },
-                    "required": ["enabled"],
                     "additionalProperties": false
                 },
                 "reposync!": {

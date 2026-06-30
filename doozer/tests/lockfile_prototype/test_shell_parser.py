@@ -133,40 +133,11 @@ class TestExtractPackagesFromRunCommands(unittest.TestCase):
             "yum -y install pciutils hwdata kmod $ARCH_DEP_PKGS"
         ]
         common, arch = extract_packages_from_run_commands(run_values)
-        self.assertNotIn("mstflint", common)
+        self.assertIn("mstflint", common)
         self.assertIn("pciutils", common)
         self.assertIn("hwdata", common)
         self.assertIn("kmod", common)
-        for a in ("x86_64", "aarch64", "ppc64le"):
-            self.assertIn("mstflint", arch.get(a, []))
-        self.assertNotIn("s390x", arch)
-
-    def test_subshell_arch_conditional_var_eq(self):
-        run_values = [
-            'SPECIAL=$(if [ "$(uname -m)" == "x86_64" ]; then echo -n intel-pkg ; fi) && '
-            "yum -y install base-pkg $SPECIAL"
-        ]
-        common, arch = extract_packages_from_run_commands(run_values)
-        self.assertNotIn("intel-pkg", common)
-        self.assertIn("base-pkg", common)
-        self.assertEqual(arch, {"x86_64": ["intel-pkg"]})
-
-    def test_subshell_no_arch_condition(self):
-        run_values = ['EXTRA=$(echo extra-pkg) && yum -y install base-pkg $EXTRA']
-        common, arch = extract_packages_from_run_commands(run_values)
-        self.assertIn("extra-pkg", common)
-        self.assertIn("base-pkg", common)
         self.assertEqual(arch, {})
-
-    def test_subshell_arch_conditional_var_go_arch(self):
-        run_values = [
-            'SPECIAL=$(if [ "$(go env GOARCH)" == "amd64" ]; then echo -n x86-only ; fi) && '
-            "yum -y install common-pkg $SPECIAL"
-        ]
-        common, arch = extract_packages_from_run_commands(run_values)
-        self.assertNotIn("x86-only", common)
-        self.assertIn("common-pkg", common)
-        self.assertEqual(arch, {"x86_64": ["x86-only"]})
 
     def test_if_else_var_with_nested_resolution(self):
         run_values = [
@@ -584,17 +555,6 @@ class TestBuilddepParsing(unittest.TestCase):
         _, _, _, _, builddep, _ = analyze_run_commands(run_values)
         self.assertEqual(builddep, ["mypackage.spec"])
 
-    def test_build_dep_hyphenated(self):
-        run_values = ["dnf build-dep tuned.spec -y"]
-        _, _, _, _, builddep, _ = analyze_run_commands(run_values)
-        self.assertEqual(builddep, ["tuned.spec"])
-
-    def test_build_dep_hyphenated_with_install(self):
-        run_values = ["dnf install -y gcc rpm-build && cd assets/tuned/daemon && dnf build-dep tuned.spec -y"]
-        common, _, _, _, builddep, _ = analyze_run_commands(run_values)
-        self.assertIn("gcc", common)
-        self.assertEqual(builddep, ["tuned.spec"])
-
 
 class TestModuleParsing(unittest.TestCase):
     def test_module_install(self):
@@ -622,25 +582,3 @@ class TestModuleParsing(unittest.TestCase):
         run_values = ["dnf module enable -y nodejs"]
         _, _, _, _, _, modules = analyze_run_commands(run_values)
         self.assertEqual(modules, [])
-
-    def test_variable_package_manager(self):
-        run_values = ["${DNF} install -y openssh-clients"]
-        pkgs, _, _, _, _, _ = analyze_run_commands(run_values, env_vars={"DNF": "microdnf"})
-        self.assertEqual(pkgs, ["openssh-clients"])
-
-    def test_variable_package_manager_in_conditional(self):
-        run_values = [
-            "if ! rpm -q openssh-clients; then ${DNF} install -y openssh-clients "
-            "&& ${DNF} clean all && rm -rf /var/cache/dnf/*; fi"
-        ]
-        pkgs, _, _, _, _, _ = analyze_run_commands(run_values, env_vars={"DNF": "microdnf"})
-        self.assertEqual(pkgs, ["openssh-clients"])
-
-    def test_variable_package_manager_multiple_commands(self):
-        run_values = [
-            "if ! rpm -q openssh-clients; then ${DNF} install -y openssh-clients && ${DNF} clean all; fi",
-            "if ! rpm -q libvirt-libs; then ${DNF} install -y libvirt-libs && ${DNF} clean all; fi",
-            "if ! command -v tar; then ${DNF} install -y tar && ${DNF} clean all; fi",
-        ]
-        pkgs, _, _, _, _, _ = analyze_run_commands(run_values, env_vars={"DNF": "microdnf"})
-        self.assertEqual(pkgs, ["libvirt-libs", "openssh-clients", "tar"])

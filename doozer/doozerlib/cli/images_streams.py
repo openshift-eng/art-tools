@@ -125,14 +125,6 @@ def images_streams():
     help='If specified, only these stream names will be mirrored.',
 )
 @click.option(
-    '--image',
-    'images',
-    metavar='IMAGE_NAME',
-    default=[],
-    multiple=True,
-    help='If specified, only these image distgit keys will be mirrored (must have ci_alignment.upstream_image).',
-)
-@click.option(
     '--only-if-missing',
     default=False,
     is_flag=True,
@@ -153,7 +145,6 @@ def images_streams():
 def images_streams_mirror(
     runtime,
     streams: Tuple[str, ...],
-    images: Tuple[str, ...],
     only_if_missing: bool,
     live_test_mode: bool,
     force: bool,
@@ -172,7 +163,7 @@ def images_streams_mirror(
     elif runtime.registry_config_dir is not None:
         registry_config_file = get_docker_config_json(runtime.registry_config_dir)
 
-    def mirror_image(cmd_start: str, upstream_dest: str, source_digest: Optional[str] = None):
+    def mirror_image(cmd_start: str, upstream_dest: str):
         if upstream_dest.startswith('registry.ci.openshift.org/'):
             # Images targeting CI imagestreams must be mirrored to quay.io/openshift/ci (QCI) first,
             # then imagestreams updated to reference the QCI image by digest.
@@ -206,12 +197,8 @@ def images_streams_mirror(
                             f'Failed to mirror {upstream_entry_name}: {stderr}', (rc, stdout, stderr)
                         )
 
-                # Use source digest when available (oc image mirror preserves manifest digests).
-                # Falling back to get_image_digest for tag-based sources where digest isn't known.
-                if source_digest:
-                    qci_digest = source_digest
-                else:
-                    qci_digest = get_image_digest(floating_qci_dest, registry_config_file)
+                # Get digest of the newly mirrored image (handles manifest lists)
+                qci_digest = get_image_digest(floating_qci_dest, registry_config_file)
 
                 if qci_digest:
                     # Mirror to GC-prevention tag: art__<digest>
@@ -280,7 +267,7 @@ def images_streams_mirror(
                             f'Failed to mirror {upstream_entry_name}: {stderr}', (rc, stdout, stderr)
                         )
 
-    upstreaming_entries = _get_upstreaming_entries(runtime, streams, image_names=images)
+    upstreaming_entries = _get_upstreaming_entries(runtime, streams)
 
     for upstream_entry_name, config in upstreaming_entries.items():
         if config.mirror is True or force:
@@ -357,13 +344,9 @@ def images_streams_mirror(
             if registry_config_file is not None:
                 cmd += f" --registry-config={registry_config_file}"
 
-            # Extract digest from source pullspec when available (e.g. Konflux @sha256: refs).
-            # oc image mirror preserves manifest bytes, so source digest == destination digest.
-            src_digest = src_image_pullspec.split('@')[1] if '@' in src_image_pullspec else None
-
             # Mirror to main destination only if not in only-if-missing mode OR destination doesn't exist
             if not only_if_missing or not destinations_to_check.get(upstream_dest, False):
-                mirror_image(cmd, upstream_dest, source_digest=src_digest)
+                mirror_image(cmd, upstream_dest)
 
             # mirror arm64 builder and base images for CI
             if mirror_arm:
@@ -372,7 +355,6 @@ def images_streams_mirror(
                 if registry_config_file is not None:
                     arm_cmd += f" --registry-config={registry_config_file}"
                 # Mirror ARM64 only if not in only-if-missing mode OR destination doesn't exist
-                # ARM64 filter produces a single-arch image, not the original manifest list, so don't pass source_digest
                 if not only_if_missing or not destinations_to_check.get(f'{upstream_dest}-arm64', False):
                     mirror_image(arm_cmd, f'{upstream_dest}-arm64')
 
@@ -404,19 +386,11 @@ def images_streams_mirror(
     multiple=True,
     help='If specified, only check these streams',
 )
-@click.option(
-    '--image',
-    'images',
-    metavar='IMAGE_NAME',
-    default=[],
-    multiple=True,
-    help='If specified, only check these image distgit keys (must have ci_alignment.upstream_image).',
-)
 @click.option('--live-test-mode', default=False, is_flag=True, help='Scan for live-test mode buildconfigs')
 @click.option('--dry-run', default=False, is_flag=True, help='Do not actually mirror or update imagestreams')
 @option_registry_auth
 @pass_runtime
-def images_streams_check_upstream(runtime, streams, images, live_test_mode, dry_run, registry_auth: Optional[str]):
+def images_streams_check_upstream(runtime, streams, live_test_mode, dry_run, registry_auth: Optional[str]):
     runtime.initialize(clone_distgits=False, clone_source=False, prevent_cloning=True)
 
     # Determine which registry config to use
@@ -432,7 +406,9 @@ def images_streams_check_upstream(runtime, streams, images, live_test_mode, dry_
     istags_status = []
     qci_status = []
 
-    upstreaming_entries = _get_upstreaming_entries(runtime, streams, image_names=images)
+    if not streams:
+        streams = runtime.get_stream_names()
+    upstreaming_entries = _get_upstreaming_entries(runtime, streams)
 
     for upstream_entry_name, config in upstreaming_entries.items():
         upstream_dest = config.upstream_image
@@ -606,8 +582,8 @@ def images_streams_check_upstream(runtime, streams, images, live_test_mode, dry_
         print()
 
 
-def get_eligible_buildconfigs(runtime, streams, live_test_mode, images=()):
-    upstreaming_entries = _get_upstreaming_entries(runtime, streams, image_names=images)
+def get_eligible_buildconfigs(runtime, streams, live_test_mode):
+    upstreaming_entries = _get_upstreaming_entries(runtime, streams)
     buildconfig_names = []
     for upstream_entry_name, config in upstreaming_entries.items():
         transform = config.transform
@@ -638,14 +614,6 @@ def get_eligible_buildconfigs(runtime, streams, live_test_mode, images=()):
     help='If specified, only these stream names will be processed.',
 )
 @click.option(
-    '--image',
-    'images',
-    metavar='IMAGE_NAME',
-    default=[],
-    multiple=True,
-    help='If specified, only these image distgit keys will be processed (must have ci_alignment.upstream_image).',
-)
-@click.option(
     '--as',
     'as_user',
     metavar='CLUSTER_USERNAME',
@@ -657,9 +625,7 @@ def get_eligible_buildconfigs(runtime, streams, live_test_mode, images=()):
 @click.option('--dry-run', default=False, is_flag=True, help='Do not build anything, but only print build operations.')
 @option_registry_auth
 @pass_runtime
-def images_streams_start_buildconfigs(
-    runtime, streams, images, as_user, live_test_mode, dry_run, registry_auth: Optional[str]
-):
+def images_streams_start_buildconfigs(runtime, streams, as_user, live_test_mode, dry_run, registry_auth: Optional[str]):
     runtime.initialize(clone_distgits=False, clone_source=False, prevent_cloning=True)
 
     # Determine which registry config to use
@@ -684,7 +650,7 @@ def images_streams_start_buildconfigs(
         return
 
     buildconfigs = json.loads(bc_stdout).get('items', [])
-    eligible_bc_names = get_eligible_buildconfigs(runtime, streams, live_test_mode, images=images)
+    eligible_bc_names = get_eligible_buildconfigs(runtime, streams, live_test_mode)
 
     # Track triggered builds for post-build preservation
     triggered_builds = []
@@ -1077,67 +1043,52 @@ def images_streams_start_buildconfigs(
         print('\n=== Post-Build Preservation Complete ===')
 
 
-def _get_upstreaming_entry_for_image(runtime, image_meta):
-    """
-    Build an upstreaming entry from an image meta's ci_alignment config.
-    Returns the entry Model, or None if the image should be skipped (e.g. no build yet).
-    """
-    upstream_entry = Model(dict_to_model=image_meta.config.content.source.ci_alignment.primitive())
-
-    try:
-        upstream_entry['image'] = image_meta.pull_url()
-    except IOError as e:
-        runtime.logger.warning(f'Skipping {image_meta.distgit_key} for CI alignment: {e}')
-        return None
-
-    if upstream_entry.final_user is Missing:
-        upstream_entry.final_user = image_meta.config.final_stage_user
-    return upstream_entry
-
-
-def _get_upstreaming_entries(runtime, stream_names=None, image_names=None):
+def _get_upstreaming_entries(runtime, stream_names=None):
     """
     Looks through streams.yml entries and each image metadata for upstream
     transform information.
     :param runtime: doozer runtime
     :param stream_names: A list of streams to look for in streams.yml. If None or empty, all will be searched.
-    :param image_names: A list of image distgit keys to include. Each must have ci_alignment.upstream_image set.
     :return: Returns a map[name] => { transform: '...', upstream_image.... } where name is a stream name or distgit key.
     """
 
-    fetch_all_image_metas = False
-    if not stream_names and not image_names:
+    fetch_image_metas = False
+    if not stream_names:
+        # If not specified, use all.
         stream_names = runtime.get_stream_names()
-        fetch_all_image_metas = True
+        fetch_image_metas = True
 
     upstreaming_entries = {}
+    streams_config = runtime.streams
+    for stream in stream_names:
+        config = streams_config[stream]
+        if config is Missing:
+            raise IOError(f'Did not find stream {stream} in streams.yml for this group')
+        if config.upstream_image is not Missing:
+            upstreaming_entries[stream] = streams_config[stream]
 
-    if stream_names:
-        streams_config = runtime.streams
-        for stream in stream_names:
-            config = streams_config[stream]
-            if config is Missing:
-                raise IOError(f'Did not find stream {stream} in streams.yml for this group')
-            if config.upstream_image is not Missing:
-                upstreaming_entries[stream] = streams_config[stream]
+    if fetch_image_metas:
+        # Some images also have their own upstream information. This allows them to
+        # be mirrored out into upstream, optionally transformed, and made available as builder images for
+        # other images without being in streams.yml.
 
-    if fetch_all_image_metas:
         for image_meta in runtime.ordered_image_metas():
             if image_meta.config.content.source.ci_alignment.upstream_image is not Missing:
-                entry = _get_upstreaming_entry_for_image(runtime, image_meta)
-                if entry is not None:
-                    upstreaming_entries[image_meta.distgit_key] = entry
+                upstream_entry = Model(
+                    dict_to_model=image_meta.config.content.source.ci_alignment.primitive()
+                )  # Make a copy
 
-    elif image_names:
-        for name in image_names:
-            meta = runtime.image_map.get(name)
-            if not meta:
-                raise IOError(f'Image {name} not found in group metadata')
-            if meta.config.content.source.ci_alignment.upstream_image is Missing:
-                raise IOError(f'Image {name} does not have ci_alignment.upstream_image set; not eligible for CI sync')
-            entry = _get_upstreaming_entry_for_image(runtime, meta)
-            if entry is not None:
-                upstreaming_entries[name] = entry
+                # Use pull_url() which handles both Brew and Konflux build systems
+                try:
+                    upstream_entry['image'] = image_meta.pull_url()
+                except IOError as e:
+                    # Skip images that don't have builds yet (e.g., new images in Konflux)
+                    runtime.logger.warning(f'Skipping {image_meta.distgit_key} for CI alignment: {e}')
+                    continue
+
+                if upstream_entry.final_user is Missing:
+                    upstream_entry.final_user = image_meta.config.final_stage_user
+                upstreaming_entries[image_meta.distgit_key] = upstream_entry
 
     return upstreaming_entries
 
@@ -1154,14 +1105,6 @@ def _get_upstreaming_entries(runtime, stream_names=None, image_names=None):
     help='If specified, only these stream names will be processed.',
 )
 @click.option(
-    '--image',
-    'images',
-    metavar='IMAGE_NAME',
-    default=[],
-    multiple=True,
-    help='If specified, only these image distgit keys will be processed (must have ci_alignment.upstream_image).',
-)
-@click.option(
     '-o',
     '--output',
     metavar='FILENAME',
@@ -1174,7 +1117,7 @@ def _get_upstreaming_entries(runtime, stream_names=None, image_names=None):
 @click.option('--apply', default=False, is_flag=True, help='Apply the output if any buildconfigs are generated')
 @click.option('--live-test-mode', default=False, is_flag=True, help='Generate live-test mode buildconfigs')
 @pass_runtime
-def images_streams_gen_buildconfigs(runtime, streams, images, output, as_user, apply, live_test_mode):
+def images_streams_gen_buildconfigs(runtime, streams, output, as_user, apply, live_test_mode):
     """
     ART has a mandate to make "ART equivalent" images available usptream for CI workloads. This enables
     CI to compile with the same golang version ART is using and use identical UBI8 images, etc. To accomplish
@@ -1217,7 +1160,7 @@ def images_streams_gen_buildconfigs(runtime, streams, images, output, as_user, a
 
     buildconfig_definitions = []
 
-    upstreaming_entries = _get_upstreaming_entries(runtime, streams, image_names=images)
+    upstreaming_entries = _get_upstreaming_entries(runtime, streams)
 
     for upstream_entry_name, config in upstreaming_entries.items():
         transform = config.transform

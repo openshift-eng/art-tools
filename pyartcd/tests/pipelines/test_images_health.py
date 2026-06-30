@@ -79,33 +79,17 @@ class TestNotifyPublicChannel(IsolatedAsyncioTestCase):
                 "failing-image", "openshift-4.20", ConcernCode.LATEST_ATTEMPT_FAILED.value, latest_success_idx=3
             ),
         ]
-        mock_slack_client.say.return_value = {"ts": "thread-123"}
+        mock_slack_client.say.return_value = {"ts": ""}
 
         await pipeline.notify_public_channel()
 
-        # Should post a summary message + one thread response per group (2 groups)
+        # Now only posts a single summary message with dashboard link
         calls = mock_slack_client.say.call_args_list
-        self.assertEqual(len(calls), 3)  # 1 summary + 2 groups
-
-        # Check main summary message only has alert and dashboard link
-        summary_args = calls[0][0][0]
-        self.assertIn(":alert:", summary_args)
-        self.assertIn("ART Build Failures Dashboard", summary_args)
-        # Group names should NOT be in the main message
-        self.assertNotIn("openshift-4.20:", summary_args)
-        self.assertNotIn("openshift-4.21:", summary_args)
-
-        # Check thread responses contain group summaries
-        thread_1 = calls[1][0][0]
-        thread_2 = calls[2][0][0]
-
-        # One should be 4.20, the other 4.21
-        self.assertTrue("openshift-4.20" in thread_1 or "openshift-4.20" in thread_2)
-        self.assertTrue("openshift-4.21" in thread_1 or "openshift-4.21" in thread_2)
-        self.assertTrue("build failures" in thread_1 or "build failures" in thread_2)
-
-        self.assertEqual(calls[1][1]['thread_ts'], "thread-123")
-        self.assertEqual(calls[2][1]['thread_ts'], "thread-123")
+        self.assertEqual(len(calls), 1)
+        first_call_args = calls[0][0][0]
+        self.assertIn(":alert:", first_call_args)
+        self.assertIn("build failures", first_call_args)
+        self.assertIn("ART Build Failures Dashboard", first_call_args)
 
     async def test_with_mixed_failure_types(self):
         mock_slack_client = self.mock_runtime.new_slack_client.return_value
@@ -122,29 +106,19 @@ class TestNotifyPublicChannel(IsolatedAsyncioTestCase):
         pipeline.rebase_failures = {
             '4.22': {'rebase-fail-image': {'failure_count': 1, 'jenkins_url': 'http://j/3', 'build_system': 'konflux'}},
         }
-        mock_slack_client.say.return_value = {"ts": "thread-456"}
+        mock_slack_client.say.return_value = {"ts": ""}
 
         await pipeline.notify_public_channel()
 
-        # Should post a summary message + one thread response for openshift-4.22
+        # Now only posts a single summary message with dashboard link
         calls = mock_slack_client.say.call_args_list
-        self.assertEqual(len(calls), 2)  # 1 summary + 1 group
-
-        # Check main summary message only has alert and dashboard link
+        self.assertEqual(len(calls), 1)
         summary = calls[0][0][0]
-        self.assertIn(":alert:", summary)
+        self.assertIn("build failures", summary)
+        self.assertIn("EC verification failures", summary)
+        self.assertIn("release to authz failures", summary)
+        self.assertIn("rebase failures", summary)
         self.assertIn("ART Build Failures Dashboard", summary)
-        # Group details should NOT be in the main message
-        self.assertNotIn("openshift-4.22:", summary)
-
-        # Check thread response contains group summary
-        thread_message = calls[1][0][0]
-        self.assertIn("openshift-4.22", thread_message)
-        self.assertIn("build failures", thread_message)
-        self.assertIn("EC verification failures", thread_message)
-        self.assertIn("release to authz failures", thread_message)
-        self.assertIn("rebase failures", thread_message)
-        self.assertEqual(calls[1][1]['thread_ts'], "thread-456")
 
     async def test_binds_to_configured_channel(self):
         mock_slack_client = self.mock_runtime.new_slack_client.return_value
@@ -173,27 +147,17 @@ class TestNotifyPublicChannel(IsolatedAsyncioTestCase):
         pipeline.ec_failures = {
             '4.22': {'image-a': {'failure_count': 5, 'jenkins_url': '', 'pipeline_url': 'http://ec/1'}},
         }
-        mock_slack_client.say.return_value = {"ts": "thread-789"}
+        mock_slack_client.say.return_value = {"ts": ""}
 
         await pipeline.notify_public_channel()
 
-        # Should post a summary message + one thread response for openshift-4.22
+        # Now only posts a single summary message with dashboard link
         calls = mock_slack_client.say.call_args_list
-        self.assertEqual(len(calls), 2)  # 1 summary + 1 group
-
-        # Check main summary message only has alert and dashboard link
+        self.assertEqual(len(calls), 1)
         summary = calls[0][0][0]
-        self.assertIn(":alert:", summary)
+        self.assertIn("EC verification failures", summary)
+        self.assertNotIn("build failures", summary)
         self.assertIn("ART Build Failures Dashboard", summary)
-        # Group details should NOT be in the main message
-        self.assertNotIn("openshift-4.22:", summary)
-
-        # Check thread response
-        thread_message = calls[1][0][0]
-        self.assertIn("openshift-4.22", thread_message)
-        self.assertIn("EC verification failures", thread_message)
-        self.assertNotIn("build failures", thread_message)
-        self.assertEqual(calls[1][1]['thread_ts'], "thread-789")
 
 
 class TestNotifyReleaseChannel(IsolatedAsyncioTestCase):
