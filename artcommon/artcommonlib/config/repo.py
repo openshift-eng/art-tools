@@ -51,6 +51,10 @@ class RepoSync(BaseModel):
     latest_only: bool = True
 
 
+class ScanSources(BaseModel):
+    ignorable: bool = False
+
+
 class Repo(BaseModel):
     name: str
     disabled: bool = False
@@ -59,6 +63,7 @@ class Repo(BaseModel):
     conf: dict | None = None
     content_set: ContentSet | None = None
     reposync: RepoSync = RepoSync()
+    scan_sources: ScanSources | None = None
 
     def construct_download_url(
         self,
