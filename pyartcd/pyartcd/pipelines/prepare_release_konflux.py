@@ -28,6 +28,7 @@ from artcommonlib.assembly import (
     assembly_targeted_fixes_only,
 )
 from artcommonlib.constants import (
+    KONFLUX_RELEASE_DATA_RPA_BASE_URL,
     REGISTRY_QUAY_OCP_RELEASE_DEV,
     SHIPMENT_DATA_URL_TEMPLATE,
 )
@@ -46,6 +47,7 @@ from doozerlib.cli.release_gen_payload import (
     default_imagestream_namespace_base_name,
     payload_imagestream_namespace_and_name,
 )
+from elliottlib.cli.konflux_release_cli import validate_snapshot_against_rpa
 from elliottlib.errata import push_cdn_stage
 from elliottlib.errata_async import AsyncErrataAPI
 from elliottlib.shipment_model import Issue, ReleaseNotes, ShipmentConfig, Snapshot, SnapshotSpec, Tools
@@ -663,6 +665,12 @@ class PrepareReleaseKonfluxPipeline:
         # prepare snapshot from the found builds
         for kind, shipment in shipments_by_kind.items():
             shipment.shipment.snapshot = await self.get_snapshot(kind_to_builds[kind])
+
+        # Validate snapshot components against RPA before finalizing
+        for kind, shipment in shipments_by_kind.items():
+            if shipment.shipment.snapshot and shipment.shipment.snapshot.spec.components:
+                component_names = [c.name for c in shipment.shipment.snapshot.spec.components]
+                await validate_snapshot_against_rpa(self.group, env, kind, component_names)
 
         # Update shipment MR with found builds
         await self.update_shipment_mr(shipments_by_kind, env, shipment_url)
@@ -1727,7 +1735,7 @@ class PrepareReleaseKonfluxPipeline:
         version_major = release_version[0]
         version_minor = release_version[1]
         policy_filename = f"ocp-art-advisory-stage-{version_major}-{version_minor}.yaml"
-        policy_url = f"https://gitlab.cee.redhat.com/releng/konflux-release-data/-/raw/main/config/kflux-ocp-p01.7ayg.p1/product/ReleasePlanAdmission/ocp-art/{policy_filename}"
+        policy_url = f"{KONFLUX_RELEASE_DATA_RPA_BASE_URL}/{policy_filename}"
 
         try:
             # Fetch the policy file

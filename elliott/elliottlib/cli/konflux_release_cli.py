@@ -1,9 +1,13 @@
+import os
+import re
 import sys
 from dataclasses import dataclass
-from typing import Optional
+from typing import List, Optional, Set
 
+import aiohttp
 import click
 from artcommonlib import logutil
+from artcommonlib.constants import KONFLUX_RELEASE_DATA_RPA_BASE_URL
 from artcommonlib.util import (
     get_utc_now_formatted_str,
     new_roundtrip_yaml_handler,
@@ -27,6 +31,67 @@ from elliottlib.shipment_model import Shipment, ShipmentConfig, ShipmentEnv
 yaml = new_roundtrip_yaml_handler()
 
 LOGGER = logutil.get_logger(__name__)
+
+
+async def fetch_rpa(rpa_name: str) -> dict:
+    url = f"{KONFLUX_RELEASE_DATA_RPA_BASE_URL}/{rpa_name}.yaml"
+    headers = {}
+    gitlab_token = os.environ.get("GITLAB_TOKEN")
+    if gitlab_token:
+        headers["Private-Token"] = gitlab_token
+
+    timeout = aiohttp.ClientTimeout(total=30, sock_read=10)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with session.get(url, headers=headers) as response:
+            if response.status != 200:
+                error_msg = f"Failed to fetch RPA from {url}: HTTP {response.status}"
+                if response.status == 403:
+                    error_msg += ". 403 Forbidden may indicate missing GITLAB_TOKEN environment variable."
+                raise ValueError(error_msg)
+            content = await response.text()
+
+    rpa_data = yaml.load(content)
+    if not rpa_data:
+        raise ValueError(f"RPA file {rpa_name}.yaml is empty or invalid")
+    return rpa_data
+
+
+async def validate_snapshot_against_rpa(group: str, env: str, kind: str, snapshot_components: List[str]) -> None:
+    match = re.match(r"openshift-(\d+)\.(\d+)", group)
+    if not match:
+        return
+    major, minor = match.group(1), match.group(2)
+
+    if kind == "fbc":
+        rpa_name = f"ocp-art-fbc-{env}-{major}-{minor}"
+    else:
+        rpa_name = f"ocp-art-advisory-{env}-{major}-{minor}"
+
+    LOGGER.info("Fetching RPA %s to validate snapshot components...", rpa_name)
+    rpa_data = await fetch_rpa(rpa_name)
+
+    allowed_names: Set[str] = set()
+    if kind == "fbc":
+        allowed_packages = rpa_data.get("spec", {}).get("data", {}).get("fbc", {}).get("allowedPackages", [])
+        allowed_names = set(allowed_packages)
+    else:
+        components = rpa_data.get("spec", {}).get("data", {}).get("mapping", {}).get("components", [])
+        for comp in components:
+            if isinstance(comp, dict) and "name" in comp:
+                allowed_names.add(comp["name"])
+
+    if not allowed_names:
+        raise ValueError(f"RPA {rpa_name} has no components/allowedPackages defined")
+
+    snapshot_names = set(snapshot_components)
+    missing = snapshot_names - allowed_names
+    if missing:
+        raise ValueError(
+            f"The following snapshot components are not listed in RPA {rpa_name} "
+            f"and would be silently filtered out during release: {sorted(missing)}"
+        )
+
+    LOGGER.info("All %d snapshot components validated against RPA %s", len(snapshot_names), rpa_name)
 
 
 @dataclass
@@ -146,6 +211,12 @@ class CreateReleaseCli:
                 f"{env_config.model_dump()}. If you want to proceed, either remove the release metadata from the shipment config or use the --force flag."
             )
             return None
+
+        # Validate snapshot components against RPA before creating anything
+        if self.runtime.group.startswith("openshift-") and config.shipment.snapshot:
+            LOGGER.info("Validating snapshot components against RPA...")
+            component_names = [c.name for c in config.shipment.snapshot.spec.components]
+            await validate_snapshot_against_rpa(self.runtime.group, self.release_env, self.kind, component_names)
 
         # Create snapshot first using the spec from shipment config
         LOGGER.info("Creating snapshot from shipment config...")
@@ -389,3 +460,60 @@ async def new_release_cli(
     release = await pipeline.run()
     if release:
         yaml.dump(release.to_dict(), sys.stdout)
+
+
+@konflux_release_cli.command(
+    "validate-rpa",
+    short_help="Validate that snapshot components are listed in the ReleasePlanAdmission",
+)
+@click.option(
+    '--config',
+    metavar='CONFIG_PATH',
+    required=True,
+    help='Path of the shipment config file. The path should be from the root of the given shipment-data repo.',
+)
+@click.option(
+    '--env',
+    metavar='RELEASE_ENV',
+    required=True,
+    type=click.Choice(["stage", "prod"]),
+    help='Release environment to validate against',
+)
+@click.option(
+    '--kind',
+    metavar='KIND',
+    required=True,
+    help='The kind of release (e.g. "image", "metadata", "fbc")',
+)
+@click.pass_obj
+@click_coroutine
+async def validate_rpa_cli(runtime: Runtime, config, env, kind):
+    """
+    Validate that all snapshot components in a shipment config are present in the
+    ReleasePlanAdmission (RPA) for the given environment and kind.
+
+    Components not listed in the RPA are silently filtered out during release,
+    which can cause builds to be missed without any error.
+
+    \b
+    $ elliott -g openshift-4.18 --assembly 4.18.2 --shipment-path \\
+        "https://gitlab.cee.redhat.com/hybrid-platforms/art/ocp-shipment-data@branch" \\
+        release validate-rpa --config shipment/ocp/openshift-4.18/openshift-4-18/4.18.2.yml \\
+        --env prod --kind image
+    """
+    runtime.initialize(build_system='konflux', with_shipment=True)
+
+    LOGGER.info("Loading %s...", config)
+    config_raw = runtime.shipment_gitdata.load_yaml_file(config)
+    if not config_raw:
+        raise ValueError(f"Error loading shipment config from {runtime.shipment_gitdata.data_path}/{config}")
+
+    shipment_config = ShipmentConfig.model_validate(config_raw)
+    if not (shipment_config.shipment.snapshot and shipment_config.shipment.snapshot.spec.components):
+        raise ValueError("Shipment config has no snapshot components to validate")
+
+    component_names = [c.name for c in shipment_config.shipment.snapshot.spec.components]
+    LOGGER.info("Validating %d components against RPA for %s/%s...", len(component_names), env, kind)
+
+    await validate_snapshot_against_rpa(runtime.group, env, kind, component_names)
+    LOGGER.info("Validation passed: all components are present in the RPA")

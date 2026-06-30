@@ -502,6 +502,7 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
     @patch.object(PrepareReleaseKonfluxPipeline, 'update_shipment_mr', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'create_shipment_mr', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'find_bugs', new_callable=AsyncMock)
+    @patch("pyartcd.pipelines.prepare_release_konflux.validate_snapshot_against_rpa", new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'find_or_build_fbc_builds', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'find_or_build_bundle_builds', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'find_builds_all', new_callable=AsyncMock)
@@ -514,6 +515,7 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         mock_find_builds_all,
         mock_find_or_build_bundle_builds,
         mock_find_or_build_fbc_builds,
+        mock_validate_rpa,
         mock_find_bugs,
         mock_create_shipment_mr,
         mock_update_shipment_mr,
