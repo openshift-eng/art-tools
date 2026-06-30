@@ -56,16 +56,25 @@ async def fetch_rpa(rpa_name: str) -> dict:
     return rpa_data
 
 
+SUPPORTED_RPA_KINDS = {
+    "image": "ocp-art-advisory",
+    "metadata": "ocp-art-advisory",
+    "extras": "ocp-art-advisory",
+    "fbc": "ocp-art-fbc",
+}
+
+
 async def validate_snapshot_against_rpa(group: str, env: str, kind: str, snapshot_components: List[str]) -> None:
-    match = re.match(r"openshift-(\d+)\.(\d+)", group)
+    match = re.fullmatch(r"openshift-(\d+)\.(\d+)", group)
     if not match:
         return
     major, minor = match.group(1), match.group(2)
 
-    if kind == "fbc":
-        rpa_name = f"ocp-art-fbc-{env}-{major}-{minor}"
-    else:
-        rpa_name = f"ocp-art-advisory-{env}-{major}-{minor}"
+    if kind not in SUPPORTED_RPA_KINDS:
+        raise ValueError(
+            f"Unsupported release kind for RPA validation: {kind!r}. Supported: {sorted(SUPPORTED_RPA_KINDS)}"
+        )
+    rpa_name = f"{SUPPORTED_RPA_KINDS[kind]}-{env}-{major}-{minor}"
 
     LOGGER.info("Fetching RPA %s to validate snapshot components...", rpa_name)
     rpa_data = await fetch_rpa(rpa_name)
@@ -483,7 +492,8 @@ async def new_release_cli(
     '--kind',
     metavar='KIND',
     required=True,
-    help='The kind of release (e.g. "image", "metadata", "fbc")',
+    type=click.Choice(["image", "metadata", "extras", "fbc"]),
+    help='The kind of release',
 )
 @click.pass_obj
 @click_coroutine

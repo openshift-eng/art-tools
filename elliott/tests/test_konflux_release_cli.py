@@ -704,6 +704,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
         mock_fetch_rpa.return_value = rpa_data
 
         await validate_snapshot_against_rpa("openshift-4.18", "prod", "image", ["test-rpm", "test-container"])
+        mock_fetch_rpa.assert_awaited_once_with("ocp-art-advisory-prod-4-18")
 
     @patch("elliottlib.cli.konflux_release_cli.fetch_rpa", new_callable=AsyncMock)
     async def test_validate_rpa_missing_components(self, mock_fetch_rpa):
@@ -715,6 +716,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
 
         self.assertIn("missing-component", str(ctx.exception))
         self.assertIn("silently filtered out", str(ctx.exception))
+        mock_fetch_rpa.assert_awaited_once_with("ocp-art-advisory-prod-4-18")
 
     @patch("elliottlib.cli.konflux_release_cli.fetch_rpa", new_callable=AsyncMock)
     async def test_validate_rpa_fbc_success(self, mock_fetch_rpa):
@@ -722,6 +724,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
         mock_fetch_rpa.return_value = rpa_data
 
         await validate_snapshot_against_rpa("openshift-4.18", "prod", "fbc", ["sriov-network-operator"])
+        mock_fetch_rpa.assert_awaited_once_with("ocp-art-fbc-prod-4-18")
 
     @patch("elliottlib.cli.konflux_release_cli.fetch_rpa", new_callable=AsyncMock)
     async def test_validate_rpa_fbc_missing_packages(self, mock_fetch_rpa):
@@ -734,6 +737,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
             )
 
         self.assertIn("unknown-operator", str(ctx.exception))
+        mock_fetch_rpa.assert_awaited_once_with("ocp-art-fbc-prod-4-18")
 
     @patch("elliottlib.cli.konflux_release_cli.fetch_rpa", new_callable=AsyncMock)
     async def test_validate_rpa_fetch_failure(self, mock_fetch_rpa):
@@ -743,6 +747,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
             await validate_snapshot_against_rpa("openshift-4.18", "prod", "image", ["comp1"])
 
         self.assertIn("HTTP 404", str(ctx.exception))
+        mock_fetch_rpa.assert_awaited_once_with("ocp-art-advisory-prod-4-18")
 
     @patch("elliottlib.cli.konflux_release_cli.fetch_rpa", new_callable=AsyncMock)
     async def test_validate_rpa_skipped_for_non_openshift(self, mock_fetch_rpa):
