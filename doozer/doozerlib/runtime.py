@@ -25,7 +25,7 @@ from artcommonlib.assembly import (
 )
 from artcommonlib.config import BuildDataLoader
 from artcommonlib.config.plashet import PlashetConfig
-from artcommonlib.config.repo import ContentSet, Repo, RepoList, RepoSync
+from artcommonlib.config.repo import ContentSet, Repo, RepoList, RepoSync, ScanSources
 from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
 from artcommonlib.runtime import GroupRuntime
@@ -356,7 +356,7 @@ class Runtime(GroupRuntime):
             new_repos = []
 
             for repo_name, repo_data in old_repos.items():
-                # Parse content_set and reposync if present
+                # Parse content_set, reposync, and scan_sources if present
                 content_set = None
                 if 'content_set' in repo_data:
                     content_set = ContentSet.model_validate(repo_data['content_set'])
@@ -364,6 +364,10 @@ class Runtime(GroupRuntime):
                 reposync = RepoSync()
                 if 'reposync' in repo_data:
                     reposync = RepoSync.model_validate(repo_data['reposync'])
+
+                scan_sources = None
+                if 'scan_sources' in repo_data:
+                    scan_sources = ScanSources.model_validate(repo_data['scan_sources'])
 
                 # Create Repo object using constructor
                 repo = Repo(
@@ -373,6 +377,7 @@ class Runtime(GroupRuntime):
                     conf=repo_data.get('conf'),
                     content_set=content_set,
                     reposync=reposync,
+                    scan_sources=scan_sources,
                 )
                 new_repos.append(repo)
 
