@@ -60,7 +60,6 @@ SUPPORTED_RPA_KINDS = {
     "image": "ocp-art-advisory",
     "metadata": "ocp-art-advisory",
     "extras": "ocp-art-advisory",
-    "fbc": "ocp-art-fbc",
 }
 
 
@@ -69,6 +68,11 @@ async def validate_snapshot_against_rpa(group: str, env: str, kind: str, snapsho
     if not match:
         return
     major, minor = match.group(1), match.group(2)
+
+    # FBC allowedPackages use OLM package names which don't match Konflux component names
+    if kind == "fbc":
+        LOGGER.info("Skipping RPA validation for FBC releases (different naming scheme)")
+        return
 
     if kind not in SUPPORTED_RPA_KINDS:
         raise ValueError(
@@ -80,14 +84,10 @@ async def validate_snapshot_against_rpa(group: str, env: str, kind: str, snapsho
     rpa_data = await fetch_rpa(rpa_name)
 
     allowed_names: Set[str] = set()
-    if kind == "fbc":
-        allowed_packages = rpa_data.get("spec", {}).get("data", {}).get("fbc", {}).get("allowedPackages", [])
-        allowed_names = set(allowed_packages)
-    else:
-        components = rpa_data.get("spec", {}).get("data", {}).get("mapping", {}).get("components", [])
-        for comp in components:
-            if isinstance(comp, dict) and "name" in comp:
-                allowed_names.add(comp["name"])
+    components = rpa_data.get("spec", {}).get("data", {}).get("mapping", {}).get("components", [])
+    for comp in components:
+        if isinstance(comp, dict) and "name" in comp:
+            allowed_names.add(comp["name"])
 
     if not allowed_names:
         raise ValueError(f"RPA {rpa_name} has no components/allowedPackages defined")
@@ -492,7 +492,7 @@ async def new_release_cli(
     '--kind',
     metavar='KIND',
     required=True,
-    type=click.Choice(["image", "metadata", "extras", "fbc"]),
+    type=click.Choice(["image", "metadata", "extras"]),
     help='The kind of release',
 )
 @click.pass_obj

@@ -719,25 +719,9 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
         mock_fetch_rpa.assert_awaited_once_with("ocp-art-advisory-prod-4-18")
 
     @patch("elliottlib.cli.konflux_release_cli.fetch_rpa", new_callable=AsyncMock)
-    async def test_validate_rpa_fbc_success(self, mock_fetch_rpa):
-        rpa_data = {"spec": {"data": {"fbc": {"allowedPackages": ["sriov-network-operator", "metallb-operator"]}}}}
-        mock_fetch_rpa.return_value = rpa_data
-
-        await validate_snapshot_against_rpa("openshift-4.18", "prod", "fbc", ["sriov-network-operator"])
-        mock_fetch_rpa.assert_awaited_once_with("ocp-art-fbc-prod-4-18")
-
-    @patch("elliottlib.cli.konflux_release_cli.fetch_rpa", new_callable=AsyncMock)
-    async def test_validate_rpa_fbc_missing_packages(self, mock_fetch_rpa):
-        rpa_data = {"spec": {"data": {"fbc": {"allowedPackages": ["sriov-network-operator"]}}}}
-        mock_fetch_rpa.return_value = rpa_data
-
-        with self.assertRaises(ValueError) as ctx:
-            await validate_snapshot_against_rpa(
-                "openshift-4.18", "prod", "fbc", ["sriov-network-operator", "unknown-operator"]
-            )
-
-        self.assertIn("unknown-operator", str(ctx.exception))
-        mock_fetch_rpa.assert_awaited_once_with("ocp-art-fbc-prod-4-18")
+    async def test_validate_rpa_fbc_skipped(self, mock_fetch_rpa):
+        await validate_snapshot_against_rpa("openshift-4.18", "prod", "fbc", ["fbc-ose-4-18-sriov-network-operator"])
+        mock_fetch_rpa.assert_not_called()
 
     @patch("elliottlib.cli.konflux_release_cli.fetch_rpa", new_callable=AsyncMock)
     async def test_validate_rpa_fetch_failure(self, mock_fetch_rpa):
