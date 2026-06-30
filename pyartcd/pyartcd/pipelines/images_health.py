@@ -668,8 +668,22 @@ class ImagesHealthPipeline:
             summary_message, link_build_url=False, unfurl_links=False, unfurl_media=False
         )
 
-        # Send each group's summary as a thread response
-        for group in sorted(all_groups):
+        # Send each group's summary as a thread response, sorted by version (newest first)
+        def sort_key(group_name):
+            """
+            Extract version for sorting. Converts 'openshift-4.22' to (4, 22) tuple
+            for proper numeric sorting, with highest versions first.
+            """
+            version = group_name.replace('openshift-', '')
+            try:
+                parts = version.split('.')
+                # Return tuple of integers, negated for descending order
+                return tuple(-int(p) for p in parts)
+            except (ValueError, AttributeError):
+                # Fallback for malformed versions
+                return (0,)
+
+        for group in sorted(all_groups, key=sort_key):
             version = group.replace('openshift-', '')
             group_summary = []
 

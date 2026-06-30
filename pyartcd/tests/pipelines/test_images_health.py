@@ -155,6 +155,32 @@ class TestNotifyPublicChannel(IsolatedAsyncioTestCase):
 
         mock_slack_client.bind_channel.assert_called_once_with("#my-custom-channel")
 
+    async def test_groups_sorted_by_version_descending(self):
+        """
+        Verify that releases are ordered from newest to oldest (e.g., 5.0, 4.23, 4.22).
+        """
+        mock_slack_client = self.mock_runtime.new_slack_client.return_value
+        pipeline = _make_pipeline(self.mock_runtime, public_channel="#forum-ocp-art")
+        pipeline.report = [
+            _make_concern("img-1", "openshift-4.22", ConcernCode.FAILING_AT_LEAST_FOR.value),
+            _make_concern("img-2", "openshift-5.0", ConcernCode.FAILING_AT_LEAST_FOR.value),
+            _make_concern("img-3", "openshift-4.23", ConcernCode.FAILING_AT_LEAST_FOR.value),
+        ]
+        mock_slack_client.say.return_value = {"ts": "thread-999"}
+
+        await pipeline.notify_public_channel()
+
+        calls = mock_slack_client.say.call_args_list
+        self.assertEqual(len(calls), 4)  # 1 summary + 3 groups
+
+        # Extract group names from thread messages (skipping the summary)
+        thread_messages = [calls[i][0][0] for i in range(1, 4)]
+
+        # Verify order: should be 5.0, 4.23, 4.22
+        self.assertIn("openshift-5.0", thread_messages[0])
+        self.assertIn("openshift-4.23", thread_messages[1])
+        self.assertIn("openshift-4.22", thread_messages[2])
+
     async def test_empty_report(self):
         mock_slack_client = self.mock_runtime.new_slack_client.return_value
         pipeline = _make_pipeline(self.mock_runtime, public_channel="#forum-ocp-art")
