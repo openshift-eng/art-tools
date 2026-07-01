@@ -174,6 +174,31 @@ class TestUtil(IsolatedAsyncioTestCase):
         res = await util.is_build_permitted(version='4.15')
         self.assertTrue(res)
 
+    @patch("pyartcd.util.exectools.cmd_gather_async", new_callable=AsyncMock)
+    async def test_is_okd_version_enabled(self, cmd_gather_async: AsyncMock):
+        cmd_gather_async.return_value = (0, 'True\n', '')
+
+        base_cmd = ['doozer', '--variant=okd', '--group=openshift-4.21']
+        self.assertTrue(await util.is_okd_version_enabled(base_cmd))
+        cmd_gather_async.assert_awaited_once()
+        cmd = cmd_gather_async.await_args.args[0]
+        self.assertIn('--variant=okd', cmd)
+        self.assertEqual(cmd[-3:], ['config:read-group', 'enabled', '--default=False'])
+
+        cmd_gather_async.return_value = (0, 'False\n', '')
+        self.assertFalse(await util.is_okd_version_enabled(base_cmd))
+
+    @patch("pyartcd.util.exectools.cmd_gather_async", new_callable=AsyncMock)
+    async def test_get_okd_enabled_versions(self, cmd_gather_async: AsyncMock):
+        cmd_gather_async.side_effect = [(0, 'True\n', ''), (0, 'False\n', '')]
+
+        enabled = await util.get_okd_enabled_versions(
+            working_dir='/tmp/wd',
+            candidates=['4.21', '4.23'],
+        )
+        self.assertEqual(enabled, ['4.21'])
+        self.assertEqual(cmd_gather_async.await_count, 2)
+
     @patch("pyartcd.util.load_group_config")
     async def test_get_signing_mode(self, load_group_config_mock: AsyncMock):
         group_config = {'software_lifecycle': {'phase': 'release'}}

@@ -6,7 +6,7 @@ Unit tests for okd_scan pipeline.
 
 import os
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import yaml
 from pyartcd.pipelines.okd_scan import OkdScanPipeline
@@ -28,9 +28,10 @@ class TestOkdScanPipeline(unittest.IsolatedAsyncioTestCase):
         self.runtime.working_dir.__truediv__ = lambda self, x: MagicMock()
 
     @patch.dict(os.environ, {'KUBECONFIG': '/path/to/kubeconfig'})
+    @patch('pyartcd.pipelines.okd_scan.util.is_okd_version_enabled', new_callable=AsyncMock, return_value=True)
     @patch('pyartcd.pipelines.okd_scan.jenkins')
     @patch('pyartcd.pipelines.okd_scan.exectools.cmd_gather_async')
-    async def test_no_changes_detected(self, mock_cmd_gather, mock_jenkins):
+    async def test_no_changes_detected(self, mock_cmd_gather, mock_jenkins, _mock_is_enabled):
         """
         Test pipeline when no changes are detected.
         """
@@ -53,10 +54,10 @@ class TestOkdScanPipeline(unittest.IsolatedAsyncioTestCase):
         mock_jenkins.start_okd.assert_not_called()
 
     @patch.dict(os.environ, {'KUBECONFIG': '/path/to/kubeconfig'})
-    @patch('pyartcd.pipelines.okd_scan.constants.OKD_ENABLED_VERSIONS', ['4.21', '4.22'])
+    @patch('pyartcd.pipelines.okd_scan.util.is_okd_version_enabled', new_callable=AsyncMock, return_value=True)
     @patch('pyartcd.pipelines.okd_scan.jenkins')
     @patch('pyartcd.pipelines.okd_scan.exectools.cmd_gather_async')
-    async def test_valid_rebuild_reason_triggers_build(self, mock_cmd_gather, mock_jenkins):
+    async def test_valid_rebuild_reason_triggers_build(self, mock_cmd_gather, mock_jenkins, _mock_is_enabled):
         """
         Test that images with valid rebuild reasons trigger OKD builds.
         """
@@ -91,10 +92,10 @@ class TestOkdScanPipeline(unittest.IsolatedAsyncioTestCase):
         )
 
     @patch.dict(os.environ, {'KUBECONFIG': '/path/to/kubeconfig'})
-    @patch('pyartcd.pipelines.okd_scan.constants.OKD_ENABLED_VERSIONS', ['4.21', '4.22'])
+    @patch('pyartcd.pipelines.okd_scan.util.is_okd_version_enabled', new_callable=AsyncMock, return_value=True)
     @patch('pyartcd.pipelines.okd_scan.jenkins')
     @patch('pyartcd.pipelines.okd_scan.exectools.cmd_gather_async')
-    async def test_all_changed_images_trigger_build(self, mock_cmd_gather, mock_jenkins):
+    async def test_all_changed_images_trigger_build(self, mock_cmd_gather, mock_jenkins, _mock_is_enabled):
         """
         Test that all changed images from scan-sources trigger builds.
         Since we use --variant=okd, doozer only reports valid OKD rebuild reasons.
@@ -124,16 +125,16 @@ class TestOkdScanPipeline(unittest.IsolatedAsyncioTestCase):
         )
 
     @patch.dict(os.environ, {'KUBECONFIG': '/path/to/kubeconfig'})
-    @patch('pyartcd.pipelines.okd_scan.constants.OKD_ENABLED_VERSIONS', ['4.22'])
+    @patch('pyartcd.pipelines.okd_scan.util.is_okd_version_enabled', new_callable=AsyncMock, return_value=False)
     @patch('pyartcd.pipelines.okd_scan.jenkins')
     @patch('pyartcd.pipelines.okd_scan.exectools.cmd_gather_async')
-    async def test_version_not_enabled_skips_build(self, mock_cmd_gather, mock_jenkins):
+    async def test_version_not_enabled_skips_build(self, mock_cmd_gather, mock_jenkins, mock_is_enabled):
         """
-        Test that pipeline exits early for versions not in OKD_ENABLED_VERSIONS.
+        Test that pipeline exits early when group.yml okd.enabled is false or missing.
         """
         pipeline = OkdScanPipeline(
             runtime=self.runtime,
-            version='4.21',  # Not in enabled versions
+            version='4.23',
             data_path='https://github.com/openshift-eng/ocp-build-data',
             assembly='stream',
             data_gitref='',
@@ -142,15 +143,16 @@ class TestOkdScanPipeline(unittest.IsolatedAsyncioTestCase):
 
         await pipeline.run()
 
+        mock_is_enabled.assert_awaited_once()
         # Should exit early without scanning or triggering builds
         mock_cmd_gather.assert_not_called()
         mock_jenkins.start_okd.assert_not_called()
 
     @patch.dict(os.environ, {'KUBECONFIG': '/path/to/kubeconfig'})
-    @patch('pyartcd.pipelines.okd_scan.constants.OKD_ENABLED_VERSIONS', ['4.21'])
+    @patch('pyartcd.pipelines.okd_scan.util.is_okd_version_enabled', new_callable=AsyncMock, return_value=True)
     @patch('pyartcd.pipelines.okd_scan.jenkins')
     @patch('pyartcd.pipelines.okd_scan.exectools.cmd_gather_async')
-    async def test_multiple_changed_images(self, mock_cmd_gather, mock_jenkins):
+    async def test_multiple_changed_images(self, mock_cmd_gather, mock_jenkins, _mock_is_enabled):
         """
         Test that multiple changed images all trigger a build.
         With --variant=okd, all reported changes are valid OKD rebuild reasons.
@@ -188,10 +190,10 @@ class TestOkdScanPipeline(unittest.IsolatedAsyncioTestCase):
         )
 
     @patch.dict(os.environ, {'KUBECONFIG': '/path/to/kubeconfig'})
-    @patch('pyartcd.pipelines.okd_scan.constants.OKD_ENABLED_VERSIONS', ['4.21'])
+    @patch('pyartcd.pipelines.okd_scan.util.is_okd_version_enabled', new_callable=AsyncMock, return_value=True)
     @patch('pyartcd.pipelines.okd_scan.jenkins')
     @patch('pyartcd.pipelines.okd_scan.exectools.cmd_gather_async')
-    async def test_scan_uses_variant_okd(self, mock_cmd_gather, mock_jenkins):
+    async def test_scan_uses_variant_okd(self, mock_cmd_gather, mock_jenkins, _mock_is_enabled):
         """
         Test that the pipeline calls doozer scan-sources with --variant=okd.
         This ensures filtering happens in doozer, not in Python.

@@ -61,9 +61,6 @@ class TestGroupSchema(unittest.TestCase):
         self.assertIn("must be 'openshift-5.0'", group_schema.validate("group.yml", invalid_data))
 
     def test_validate_with_templated_group_name_and_valid_bridge_release(self):
-        # Real group.yml files always use an unresolved "{MAJOR}.{MINOR}" template for
-        # `name`, substituted at runtime by doozer/elliott. The validator must resolve
-        # it using `vars` before comparing against `bridge_release.basis_group`.
         valid_data = {
             "name": "openshift-{MAJOR}.{MINOR}",
             "vars": {"MAJOR": 4, "MINOR": 23},
@@ -84,3 +81,24 @@ class TestGroupSchema(unittest.TestCase):
             },
         }
         self.assertIn("must be 'openshift-5.0'", group_schema.validate("group.yml", invalid_data))
+
+    def test_validate_with_okd_enabled_flag(self):
+        valid_data = {
+            "name": "openshift-4.21",
+            "vars": {"MAJOR": 4, "MINOR": 21},
+            "okd": {
+                "enabled": True,
+                "konflux": {"build_priority": 8},
+            },
+        }
+        self.assertEqual("", group_schema.validate("group.yml", valid_data))
+
+    def test_validate_with_invalid_okd_enabled_flag(self):
+        invalid_data = {
+            "name": "openshift-4.21",
+            "vars": {"MAJOR": 4, "MINOR": 21},
+            "okd": {
+                "enabled": "yes",
+            },
+        }
+        self.assertIn("'yes' is not of type 'boolean'", group_schema.validate("group.yml", invalid_data))
