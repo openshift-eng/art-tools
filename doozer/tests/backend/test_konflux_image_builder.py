@@ -1280,3 +1280,242 @@ class TestKonfluxImageBuilderGolangComponent(unittest.TestCase):
         expected = "golang-builder-v1.25-rhel8"  # .el8 override takes precedence
         result = konflux_golang_builder_component_name(nvr)
         self.assertEqual(result, expected)
+
+
+class TestGetInstalledPackages(unittest.IsolatedAsyncioTestCase):
+    """Tests for KonfluxImageBuilder.get_installed_packages() SBOM parsing."""
+
+    def _make_spdx_sbom(self, packages):
+        """Build a minimal SPDX-2.3 SBOM with the given package dicts."""
+        return {
+            "spdxVersion": "SPDX-2.3",
+            "packages": packages,
+        }
+
+    def _make_rpm_package(self, purl_string, name="pkg"):
+        """Build a minimal SPDX package entry with a PURL external ref."""
+        return {
+            "SPDXID": f"SPDXRef-{name}",
+            "name": name,
+            "externalRefs": [
+                {
+                    "referenceCategory": "PACKAGE_MANAGER",
+                    "referenceLocator": purl_string,
+                    "referenceType": "purl",
+                }
+            ],
+        }
+
+    async def test_old_format_with_upstream(self):
+        """Mobster <1.2.1: PURLs include upstream qualifier -> source_rpms derived from upstream."""
+        sbom = self._make_spdx_sbom(
+            [
+                self._make_rpm_package(
+                    "pkg:rpm/redhat/acl@2.3.1-4.el9?arch=x86_64&upstream=acl-2.3.1-4.el9.src.rpm&distro=rhel-9.8",
+                    name="acl",
+                ),
+                self._make_rpm_package(
+                    "pkg:rpm/redhat/libacl@2.3.1-4.el9?arch=x86_64&upstream=acl-2.3.1-4.el9.src.rpm&distro=rhel-9.8",
+                    name="libacl",
+                ),
+            ]
+        )
+
+        with patch("doozerlib.backend.konflux_image_builder.exectools.cmd_gather_async") as mock_cmd:
+            import json
+
+            mock_cmd.return_value = (0, json.dumps(sbom), "")
+            package_nvrs, source_rpms = await KonfluxImageBuilder.get_installed_packages(
+                "quay.io/test/image@sha256:abc", ["x86_64"]
+            )
+
+        self.assertEqual(package_nvrs, {"acl-2.3.1-4.el9", "libacl-2.3.1-4.el9"})
+        self.assertEqual(source_rpms, {"acl-2.3.1-4.el9"})
+
+    async def test_new_format_without_upstream(self):
+        """Mobster >=1.2.1: PURLs lack upstream -> binary NVR used as fallback for source_rpms."""
+        sbom = self._make_spdx_sbom(
+            [
+                self._make_rpm_package(
+                    "pkg:rpm/redhat/acl@2.3.1-4.el9?arch=x86_64&checksum=sha256:150d7232&repository_id=rhel-9-baseos",
+                    name="acl",
+                ),
+                self._make_rpm_package(
+                    "pkg:rpm/redhat/bash@5.1.8-9.el9?arch=x86_64&checksum=sha256:d3adf8b0&repository_id=rhel-9-baseos",
+                    name="bash",
+                ),
+            ]
+        )
+
+        with patch("doozerlib.backend.konflux_image_builder.exectools.cmd_gather_async") as mock_cmd:
+            import json
+
+            mock_cmd.return_value = (0, json.dumps(sbom), "")
+            package_nvrs, source_rpms = await KonfluxImageBuilder.get_installed_packages(
+                "quay.io/test/image@sha256:abc", ["x86_64"]
+            )
+
+        self.assertEqual(package_nvrs, {"acl-2.3.1-4.el9", "bash-5.1.8-9.el9"})
+        self.assertEqual(source_rpms, {"acl-2.3.1-4.el9", "bash-5.1.8-9.el9"})
+
+    async def test_mixed_format(self):
+        """Some PURLs have upstream (old), some don't (new) -> both paths work."""
+        sbom = self._make_spdx_sbom(
+            [
+                self._make_rpm_package(
+                    "pkg:rpm/redhat/acl@2.3.1-4.el9?arch=x86_64&upstream=acl-2.3.1-4.el9.src.rpm&distro=rhel-9.8",
+                    name="acl",
+                ),
+                self._make_rpm_package(
+                    "pkg:rpm/redhat/bash@5.1.8-9.el9?arch=x86_64&checksum=sha256:d3adf8b0&repository_id=rhel-9-baseos",
+                    name="bash",
+                ),
+            ]
+        )
+
+        with patch("doozerlib.backend.konflux_image_builder.exectools.cmd_gather_async") as mock_cmd:
+            import json
+
+            mock_cmd.return_value = (0, json.dumps(sbom), "")
+            package_nvrs, source_rpms = await KonfluxImageBuilder.get_installed_packages(
+                "quay.io/test/image@sha256:abc", ["x86_64"]
+            )
+
+        self.assertEqual(package_nvrs, {"acl-2.3.1-4.el9", "bash-5.1.8-9.el9"})
+        self.assertEqual(source_rpms, {"acl-2.3.1-4.el9", "bash-5.1.8-9.el9"})
+
+    async def test_gpg_pubkey_filtered_out(self):
+        """gpg-pubkey pseudo-packages should be skipped."""
+        sbom = self._make_spdx_sbom(
+            [
+                self._make_rpm_package(
+                    "pkg:rpm/redhat/gpg-pubkey@5a6340b3-6229229e?distro=rhel-9.8",
+                    name="gpg-pubkey",
+                ),
+                self._make_rpm_package(
+                    "pkg:rpm/redhat/acl@2.3.1-4.el9?arch=x86_64&checksum=sha256:150d7232&repository_id=rhel-9-baseos",
+                    name="acl",
+                ),
+            ]
+        )
+
+        with patch("doozerlib.backend.konflux_image_builder.exectools.cmd_gather_async") as mock_cmd:
+            import json
+
+            mock_cmd.return_value = (0, json.dumps(sbom), "")
+            package_nvrs, source_rpms = await KonfluxImageBuilder.get_installed_packages(
+                "quay.io/test/image@sha256:abc", ["x86_64"]
+            )
+
+        self.assertEqual(package_nvrs, {"acl-2.3.1-4.el9"})
+        self.assertNotIn("gpg-pubkey-5a6340b3-6229229e", package_nvrs)
+
+    async def test_src_arch_filtered_out(self):
+        """Source RPM entries (arch=src) should be skipped."""
+        sbom = self._make_spdx_sbom(
+            [
+                self._make_rpm_package(
+                    "pkg:rpm/redhat/acl@2.3.1-4.el9?arch=src",
+                    name="acl",
+                ),
+                self._make_rpm_package(
+                    "pkg:rpm/redhat/bash@5.1.8-9.el9?arch=x86_64&checksum=sha256:abc&repository_id=rhel-9-baseos",
+                    name="bash",
+                ),
+            ]
+        )
+
+        with patch("doozerlib.backend.konflux_image_builder.exectools.cmd_gather_async") as mock_cmd:
+            import json
+
+            mock_cmd.return_value = (0, json.dumps(sbom), "")
+            package_nvrs, source_rpms = await KonfluxImageBuilder.get_installed_packages(
+                "quay.io/test/image@sha256:abc", ["x86_64"]
+            )
+
+        self.assertEqual(package_nvrs, {"bash-5.1.8-9.el9"})
+        self.assertNotIn("acl-2.3.1-4.el9", package_nvrs)
+
+    async def test_empty_sbom_raises_error(self):
+        """An SBOM with no RPMs should raise ChildProcessError."""
+        sbom = self._make_spdx_sbom(
+            [
+                self._make_rpm_package(
+                    "pkg:npm/%40npmcli/agent@2.2.2",
+                    name="@npmcli/agent",
+                ),
+            ]
+        )
+
+        with patch("doozerlib.backend.konflux_image_builder.exectools.cmd_gather_async") as mock_cmd:
+            import json
+
+            mock_cmd.return_value = (0, json.dumps(sbom), "")
+            with self.assertRaises(ChildProcessError):
+                await KonfluxImageBuilder.get_installed_packages("quay.io/test/image@sha256:abc", ["x86_64"])
+
+    async def test_non_rpm_packages_ignored(self):
+        """Non-RPM packages (npm, oci) are ignored."""
+        sbom = self._make_spdx_sbom(
+            [
+                self._make_rpm_package(
+                    "pkg:npm/%40npmcli/agent@2.2.2",
+                    name="@npmcli/agent",
+                ),
+                self._make_rpm_package(
+                    "pkg:oci/art-images@sha256:abc?repository_url=quay.io/test",
+                    name="art-images",
+                ),
+                self._make_rpm_package(
+                    "pkg:rpm/redhat/bash@5.1.8-9.el9?arch=x86_64&checksum=sha256:abc&repository_id=baseos",
+                    name="bash",
+                ),
+            ]
+        )
+
+        with patch("doozerlib.backend.konflux_image_builder.exectools.cmd_gather_async") as mock_cmd:
+            import json
+
+            mock_cmd.return_value = (0, json.dumps(sbom), "")
+            package_nvrs, source_rpms = await KonfluxImageBuilder.get_installed_packages(
+                "quay.io/test/image@sha256:abc", ["x86_64"]
+            )
+
+        self.assertEqual(package_nvrs, {"bash-5.1.8-9.el9"})
+
+    async def test_multiple_arches(self):
+        """Results are merged across arches."""
+        sbom_amd64 = self._make_spdx_sbom(
+            [
+                self._make_rpm_package(
+                    "pkg:rpm/redhat/acl@2.3.1-4.el9?arch=x86_64&checksum=sha256:aaa&repository_id=baseos",
+                    name="acl",
+                ),
+            ]
+        )
+        sbom_arm64 = self._make_spdx_sbom(
+            [
+                self._make_rpm_package(
+                    "pkg:rpm/redhat/acl@2.3.1-4.el9?arch=aarch64&checksum=sha256:bbb&repository_id=baseos",
+                    name="acl",
+                ),
+                self._make_rpm_package(
+                    "pkg:rpm/redhat/bash@5.1.8-9.el9?arch=aarch64&checksum=sha256:ccc&repository_id=baseos",
+                    name="bash",
+                ),
+            ]
+        )
+
+        import json
+
+        async def mock_cmd(cmd, env=None):
+            if "amd64" in " ".join(cmd):
+                return (0, json.dumps(sbom_amd64), "")
+            return (0, json.dumps(sbom_arm64), "")
+
+        with patch("doozerlib.backend.konflux_image_builder.exectools.cmd_gather_async", side_effect=mock_cmd):
+            package_nvrs, source_rpms = await KonfluxImageBuilder.get_installed_packages(
+                "quay.io/test/image@sha256:abc", ["x86_64", "aarch64"]
+            )
+
+        self.assertEqual(package_nvrs, {"acl-2.3.1-4.el9", "bash-5.1.8-9.el9"})
