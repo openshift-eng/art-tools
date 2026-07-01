@@ -1374,9 +1374,7 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
     def test_build_repo_list_templatizes_multi_arch_url(self):
         baseos = MagicMock()
         baseos.name = "rhel-9-baseos-rpms"
-        baseos.baseurl.side_effect = lambda repotype="unsigned", arch="x86_64": (
-            f"https://example.com/baseos/{arch}/os/"
-        )
+        baseos.baseurl.side_effect = lambda repotype="unsigned", arch="x86_64": f"https://example.com/baseos/{arch}/os/"
         baseos.content_set.return_value = "rhel-9-for-x86_64-baseos-rpms"
 
         repo_map = {"rhel-9-baseos-rpms": baseos}
