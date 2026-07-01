@@ -29,6 +29,8 @@ def _make_config(**overrides) -> KonfluxImageBuilderConfig:
         dry_run=True,
         build_priority="5",
         skip_ec_verify=False,
+        ec_policy_configuration=constants.KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION,
+        prega_ec_policy_configuration=constants.KONFLUX_PREGA_EC_POLICY_CONFIGURATION,
     )
     defaults.update(overrides)
     return KonfluxImageBuilderConfig(**defaults)
@@ -177,9 +179,9 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
         verify_ec = await self._run_build_and_get_ec_calls(config, metadata, mock_kc_init)
         verify_ec.assert_not_called()
 
-    async def test_ec_skipped_for_non_ocp_group(self, mock_kc_init):
-        """EC verification should be skipped for non-OCP groups (e.g. logging)."""
-        config = _make_config(group_name="logging-6.2")
+    async def test_ec_skipped_when_no_policy_configured(self, mock_kc_init):
+        """EC verification should be skipped when no EC policy is configured for the product."""
+        config = _make_config(group_name="logging-6.2", ec_policy_configuration=None, prega_ec_policy_configuration=None)
         metadata = _make_metadata(for_release=True)
 
         verify_ec = await self._run_build_and_get_ec_calls(config, metadata, mock_kc_init)
