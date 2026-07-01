@@ -594,6 +594,7 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
                 additional_tags=additional_tags,
                 skip_checks=self.skip_checks,
                 hermetic=True,
+                fetch_tags=False,
                 artifact_type="operatorbundle",
                 build_priority="3",
             ),

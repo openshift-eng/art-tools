@@ -65,6 +65,7 @@ class ImageBuildParams:
     build_priority: Optional[str] = None
     additional_tags: list[str] = field(default_factory=list)
     vm_override: Optional[dict] = None
+    fetch_tags: Optional[bool] = None
     skip_checks: bool = False
     skip_fips_check: bool = False
     skip_tasks: Sequence[str] = ()
@@ -1326,7 +1327,8 @@ class KonfluxClient:
                         "refspec",
                         f"{commit_sha}:refs/remotes/origin/{target_branch}",
                     )
-                    _modify_param(task["params"], "fetchTags", "true")
+                    fetch_tags = "true" if (build_params is None or build_params.fetch_tags is not False) else "false"
+                    _modify_param(task["params"], "fetchTags", fetch_tags)
                     if build_params.enable_symlink_check is not None:
                         _modify_param(task["params"], "enableSymlinkCheck", build_params.enable_symlink_check)
                 case "sast-snyk-check":

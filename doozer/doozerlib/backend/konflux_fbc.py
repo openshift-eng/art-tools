@@ -650,6 +650,7 @@ class KonfluxFbcFragmentMerger:
             build_params=ImageBuildParams(
                 hermetic=True,
                 dockerfile="catalog.Dockerfile",
+                fetch_tags=False,
                 skip_checks=self.skip_checks,
                 skip_fips_check=self.skip_fips_check,
                 skip_tasks=merged_skip_tasks,
@@ -2016,6 +2017,7 @@ class KonfluxFbcBuilder:
                 skip_checks=self.skip_checks,
                 skip_tasks=merged_skip_tasks,
                 hermetic=True,
+                fetch_tags=False,
                 dockerfile="catalog.Dockerfile",
                 build_priority=FBC_BUILD_PRIORITY,
             ),

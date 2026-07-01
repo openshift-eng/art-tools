@@ -688,6 +688,70 @@ class TestNewPipelinerunEnableSymlinkCheck(IsolatedAsyncioTestCase):
         self.assertNotIn("enableSymlinkCheck", task_param_names)
 
 
+class TestNewPipelinerunFetchTags(IsolatedAsyncioTestCase):
+    """Tests for fetch_tags in _new_pipelinerun_for_image_build."""
+
+    @patch("doozerlib.backend.konflux_client.KonfluxClient._get_pipelinerun_template")
+    async def test_fetch_tags_default_is_true(self, mock_get_template):
+        """Test that fetchTags defaults to 'true' when fetch_tags is None."""
+        client = _make_mock_client(mock_get_template)
+
+        result = await client._new_pipelinerun_for_image_build(
+            **_COMMON_KWARGS,
+            build_params=ImageBuildParams(fetch_tags=None),
+        )
+
+        tasks = result["spec"]["pipelineSpec"]["tasks"]
+        clone_task = next(t for t in tasks if t["name"] == "clone-repository")
+        task_param_dict = {p["name"]: p["value"] for p in clone_task["params"]}
+        self.assertEqual(task_param_dict["fetchTags"], "true")
+
+    @patch("doozerlib.backend.konflux_client.KonfluxClient._get_pipelinerun_template")
+    async def test_fetch_tags_true(self, mock_get_template):
+        """Test that fetchTags is 'true' when fetch_tags=True."""
+        client = _make_mock_client(mock_get_template)
+
+        result = await client._new_pipelinerun_for_image_build(
+            **_COMMON_KWARGS,
+            build_params=ImageBuildParams(fetch_tags=True),
+        )
+
+        tasks = result["spec"]["pipelineSpec"]["tasks"]
+        clone_task = next(t for t in tasks if t["name"] == "clone-repository")
+        task_param_dict = {p["name"]: p["value"] for p in clone_task["params"]}
+        self.assertEqual(task_param_dict["fetchTags"], "true")
+
+    @patch("doozerlib.backend.konflux_client.KonfluxClient._get_pipelinerun_template")
+    async def test_fetch_tags_false(self, mock_get_template):
+        """Test that fetchTags is 'false' when fetch_tags=False."""
+        client = _make_mock_client(mock_get_template)
+
+        result = await client._new_pipelinerun_for_image_build(
+            **_COMMON_KWARGS,
+            build_params=ImageBuildParams(fetch_tags=False),
+        )
+
+        tasks = result["spec"]["pipelineSpec"]["tasks"]
+        clone_task = next(t for t in tasks if t["name"] == "clone-repository")
+        task_param_dict = {p["name"]: p["value"] for p in clone_task["params"]}
+        self.assertEqual(task_param_dict["fetchTags"], "false")
+
+    @patch("doozerlib.backend.konflux_client.KonfluxClient._get_pipelinerun_template")
+    async def test_fetch_tags_no_build_params_defaults_to_true(self, mock_get_template):
+        """Test that fetchTags is 'true' when build_params is None."""
+        client = _make_mock_client(mock_get_template)
+
+        result = await client._new_pipelinerun_for_image_build(
+            **_COMMON_KWARGS,
+            build_params=None,
+        )
+
+        tasks = result["spec"]["pipelineSpec"]["tasks"]
+        clone_task = next(t for t in tasks if t["name"] == "clone-repository")
+        task_param_dict = {p["name"]: p["value"] for p in clone_task["params"]}
+        self.assertEqual(task_param_dict["fetchTags"], "true")
+
+
 class TestNewPipelinerunAdditionalSecret(IsolatedAsyncioTestCase):
     """Tests for additional_secret in _new_pipelinerun_for_image_build."""
 
