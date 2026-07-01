@@ -613,6 +613,16 @@
           "$ref": "#/properties/okd/properties/branch"
         },
         "branch-": {},
+        "enabled": {
+          "type": "boolean"
+        },
+        "enabled!": {
+          "$ref": "#/properties/okd/properties/enabled"
+        },
+        "enabled?": {
+          "$ref": "#/properties/okd/properties/enabled"
+        },
+        "enabled-": {},
         "konflux": {
           "type": "object",
           "properties": {

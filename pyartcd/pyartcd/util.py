@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import os
@@ -16,6 +17,7 @@ import yaml
 from artcommonlib import exectools, redis
 from artcommonlib.arch_util import go_suffix_for_arch
 from artcommonlib.assembly import assembly_type
+from artcommonlib.constants import ACTIVE_OCP_VERSIONS
 from artcommonlib.exectools import limit_concurrency
 from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.model import Missing, Model
@@ -110,6 +112,75 @@ async def load_group_config(
     if not isinstance(group_config, dict):
         raise ValueError("ocp-build-data contains invalid group config.")
     return group_config
+
+
+def okd_doozer_base_command(
+    version: str,
+    assembly: str,
+    data_path: str,
+    data_gitref: str,
+    working_dir: Union[str, Path],
+) -> list[str]:
+    group_param = f'openshift-{version}'
+    if data_gitref:
+        group_param += f'@{data_gitref}'
+    return [
+        'doozer',
+        f'--working-dir={working_dir}',
+        f'--data-path={data_path}',
+        f'--group={group_param}',
+        f'--assembly={assembly}',
+        '--build-system=konflux',
+        '--variant=okd',
+    ]
+
+
+async def is_okd_version_enabled(doozer_base_command: list[str]) -> bool:
+    """
+    Check whether OKD is enabled for a version via merged group config.
+
+    The doozer command must include --variant=okd so Runtime merges group.yml okd:
+    into the group config (okd.enabled becomes top-level enabled), matching OKD builds.
+
+    Arg(s):
+        doozer_base_command (list[str]): Base doozer invocation for the target version.
+    Return Value(s):
+        bool: True when merged group config has enabled=true.
+    """
+    cmd = [*doozer_base_command, 'config:read-group', 'enabled', '--default=False']
+    _, out, _ = await exectools.cmd_gather_async(cmd, stderr=None)
+    return out.strip() == 'True'
+
+
+async def get_okd_enabled_versions(
+    assembly: str = 'stream',
+    data_path: str = constants.OCP_BUILD_DATA_URL,
+    data_gitref: str = '',
+    working_dir: Union[str, Path] = '.',
+    candidates: Optional[List[str]] = None,
+) -> List[str]:
+    """
+    Return OCP versions with okd.enabled in merged group config.
+
+    Probes each candidate via doozer --variant=okd (same gate as okd-scan).
+    """
+    versions_to_check = candidates if candidates is not None else ACTIVE_OCP_VERSIONS
+    enabled_versions: List[str] = []
+
+    async def check_version(version: str) -> Optional[str]:
+        base_cmd = okd_doozer_base_command(version, assembly, data_path, data_gitref, working_dir)
+        if await is_okd_version_enabled(base_cmd):
+            return version
+        logger.info(
+            'Version %s is not enabled for OKD (set okd.enabled: true in group.yml on openshift-%s)',
+            version,
+            version,
+        )
+        return None
+
+    results = await asyncio.gather(*[check_version(version) for version in versions_to_check])
+    enabled_versions.extend(v for v in results if v)
+    return enabled_versions
 
 
 async def load_releases_config(group: str, data_path: str = constants.OCP_BUILD_DATA_URL) -> Optional[Dict]:
