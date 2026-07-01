@@ -49,6 +49,7 @@ from pyartcd.pipelines import (
     tag_rpms,
     tarball_sources,
     update_golang,
+    verify_cve_trackers,
 )
 from pyartcd.pipelines.scheduled import (
     schedule_build_sync_multi,
@@ -115,6 +116,7 @@ __all__ = [
     "schedule_scan_operator",
     "schedule_scan_plashet_rpms",
     "schedule_sync_ci_images",
+    "verify_cve_trackers",
 ]
 
 
