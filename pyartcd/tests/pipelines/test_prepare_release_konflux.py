@@ -502,6 +502,7 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
     @patch.object(PrepareReleaseKonfluxPipeline, 'update_shipment_mr', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'create_shipment_mr', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'find_bugs', new_callable=AsyncMock)
+    @patch("pyartcd.pipelines.prepare_release_konflux.validate_snapshot_against_rpa", new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'find_or_build_fbc_builds', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'find_or_build_bundle_builds', new_callable=AsyncMock)
     @patch.object(PrepareReleaseKonfluxPipeline, 'find_builds_all', new_callable=AsyncMock)
@@ -514,6 +515,7 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         mock_find_builds_all,
         mock_find_or_build_bundle_builds,
         mock_find_or_build_fbc_builds,
+        mock_validate_rpa,
         mock_find_bugs,
         mock_create_shipment_mr,
         mock_update_shipment_mr,
@@ -804,6 +806,9 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         mock_get_snapshot.assert_any_call(['extras-bundle-nvr'])
         mock_get_snapshot.assert_any_call(['fbc-nvr'])
         self.assertEqual(mock_get_snapshot.call_count, 4)
+
+        # Verify RPA validation was called for each shipment kind
+        self.assertTrue(mock_validate_rpa.await_count > 0, "validate_snapshot_against_rpa should have been called")
 
         # copy and modify mocks to what is expected after init and build finding, i.e., at create shipment MR time
         mock_shipment_image_create = copy.deepcopy(mock_shipment_image)
