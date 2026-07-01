@@ -149,6 +149,27 @@ class BrewImageInspector(ImageInspector):
                 meta.distgit_key,
             )
             return []
+
+        # Filter out ignorable repos (ART-14091)
+        # Ignorable repos (e.g., baseos, appstream) don't trigger rebuilds to avoid mass rebuilds
+        non_ignorable_repos = []
+        for repo_name in enabled_repos:
+            repo = group_repos[repo_name]
+            # Check if repo has scan_sources.ignorable set to true
+            if repo._data.get('scan_sources', {}).get('ignorable', False):
+                logger.info(f'Ignoring repo {repo_name} for RPM change detection (marked as ignorable)')
+            else:
+                non_ignorable_repos.append(repo_name)
+
+        if not non_ignorable_repos:
+            logger.info(
+                "All enabled repos for %s are marked as ignorable; skipping RPM change detection",
+                meta.distgit_key,
+            )
+            return []
+
+        enabled_repos = non_ignorable_repos
+
         logger.info(
             "Fetching repodatas for enabled repos %s", ", ".join(f"{repo_name}-{arch}" for repo_name in enabled_repos)
         )
@@ -751,6 +772,26 @@ class KonfluxBuildRecordInspector(BuildRecordInspector):
                 meta.distgit_key,
             )
             return {}
+
+        # Filter out ignorable repos (ART-14091)
+        # Ignorable repos (e.g., baseos, appstream) don't trigger rebuilds to avoid mass rebuilds
+        non_ignorable_repos = []
+        for repo_name in enabled_repos:
+            repo = group_repos[repo_name]
+            # Check if repo has scan_sources.ignorable set to true
+            if repo._data.get('scan_sources', {}).get('ignorable', False):
+                logger.info(f'Ignoring repo {repo_name} for RPM change detection (marked as ignorable)')
+            else:
+                non_ignorable_repos.append(repo_name)
+
+        if not non_ignorable_repos:
+            logger.info(
+                "All enabled repos for %s are marked as ignorable; skipping RPM change detection",
+                meta.distgit_key,
+            )
+            return {}
+
+        enabled_repos = non_ignorable_repos
 
         for arch in self._build_record.arches:
             repodatas = await asyncio.gather(
