@@ -866,47 +866,48 @@ class KonfluxImageBuilder:
             source_rpms = set()
             package_nvrs = set()
 
-            # we request konflux to generate sbom in spdx schema: https://spdx.dev/
-            # https://github.com/openshift-eng/art-tools/blob/fb172e73df248b1dbc09c3666b5229b4db705427/doozer/doozerlib/backend/konflux_client.py#L473
             for x in sbom_contents["packages"]:
                 purl_string = next(
                     (ref["referenceLocator"] for ref in x["externalRefs"] if ref["referenceType"] == "purl"), ""
                 )
 
-                # sbom uses purl or package-url convention https://github.com/package-url/purl-spec
-                # example: pkg:rpm/rhel/coreutils-single@8.32-35.el9?arch=x86_64&upstream=coreutils-8.32-35.el9.src.rpm&distro=rhel-9.4
                 # https://github.com/package-url/packageurl-python does not support purl schemes other than "pkg"
-                # so filter them out
-                if purl_string.startswith("pkg:"):
-                    try:
-                        purl = PackageURL.from_string(purl_string)
-                        # right now, we only care about rpms
-                        if purl.type == "rpm":
-                            # Only process packages actually installed in the image.
-                            # Skip packages that are only available in repository metadata.
-                            # Installed packages have the "upstream" qualifier, which points to the source RPM.
-                            # Packages without "upstream" (only having checksum/repository_id) are just
-                            # available in repository metadata. This prevents spurious entries like
-                            # kernel-rt-427.116.1 appearing when only kernel-rt-427.117.1 is actually installed.
-                            source_rpm = purl.qualifiers.get("upstream", None)
-                            if source_rpm:
-                                # get the installed package (name + version)
-                                if purl.name and purl.version:
-                                    package_nvrs.add(f"{purl.name}-{purl.version}")
+                if not purl_string.startswith("pkg:"):
+                    continue
+                try:
+                    purl = PackageURL.from_string(purl_string)
+                except Exception as e:
+                    LOGGER.warning(f"Failed to parse purl: {purl_string} {e}")
+                    continue
 
-                                # get the source rpm
-                                source_rpms.add(source_rpm.removesuffix(".src.rpm"))
-                    except Exception as e:
-                        LOGGER.warning(f"Failed to parse purl: {purl_string} {e}")
-                        continue
-            if not source_rpms:
+                if purl.type != "rpm":
+                    continue
+
+                arch_qual = purl.qualifiers.get("arch")
+                if not arch_qual or arch_qual == "src" or purl.name == "gpg-pubkey":
+                    continue
+
+                if purl.name and purl.version:
+                    package_nvrs.add(f"{purl.name}-{purl.version}")
+
+                # Old format (Mobster <1.2.1): upstream qualifier points to source RPM
+                # e.g. pkg:rpm/redhat/acl@2.3.1-4.el9?arch=x86_64&upstream=acl-2.3.1-4.el9.src.rpm&distro=rhel-9.8
+                # New format (Mobster >=1.2.1): upstream is stripped; only checksum+repository_id remain
+                # e.g. pkg:rpm/redhat/acl@2.3.1-4.el9?arch=x86_64&checksum=sha256:...&repository_id=...
+                source_rpm = purl.qualifiers.get("upstream")
+                if source_rpm:
+                    source_rpms.add(source_rpm.removesuffix(".src.rpm"))
+                elif purl.name and purl.version:
+                    source_rpms.add(f"{purl.name}-{purl.version}")
+
+            if not package_nvrs:
                 LOGGER.warning("No rpms found in sbom for arch %s. Please investigate", arch)
             return package_nvrs, source_rpms
 
         results = await asyncio.gather(*(_get_for_arch(arch) for arch in arches))
         for arch, result in zip(arches, results):
             package_nvrs, source_rpms = result
-            if not source_rpms:
+            if not package_nvrs:
                 raise ChildProcessError(f"Could not get rpms from SBOM for arch {arch}")
 
         all_package_nvrs = set()
