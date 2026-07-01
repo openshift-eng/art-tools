@@ -255,7 +255,10 @@ class PromotePipeline:
         logger.info("Release name: %s", release_name)
 
         self._slack_client.bind_channel(release_name)
-        await self._slack_client.say_in_thread(f"Promoting release `{release_name}`")
+        await self._slack_client.say_in_thread(
+            f"Promoting release `{release_name}`"
+            f"{self._slack_client.get_triggered_by_mention()}"
+        )
 
         justifications = []
         try:

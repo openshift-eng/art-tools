@@ -20,6 +20,7 @@ class SlackClient:
         build_id: Optional[str],
         build_url: Optional[str],
         dry_run: bool = False,
+        triggered_by_email: Optional[str] = None,
     ) -> None:
         self.token = token
         self.channel = self.DEFAULT_CHANNEL
@@ -31,6 +32,33 @@ class SlackClient:
         self.icon_emoji = ":robot_face:"
         self._thread_ts = None
         self._client = AsyncWebClient(token=token)
+        self._triggered_by_slack_id: Optional[str] = None
+        if triggered_by_email and token:
+            self._triggered_by_slack_id = self._resolve_slack_user_id(triggered_by_email)
+
+    def _resolve_slack_user_id(self, email: str) -> Optional[str]:
+        """Resolve an email address to a Slack user ID using the users.lookupByEmail API.
+        Returns None if the lookup fails (e.g. user not found, API error).
+        """
+        try:
+            # Use the synchronous WebClient for this one-off lookup at init time
+            from slack_sdk import WebClient
+            sync_client = WebClient(token=self.token)
+            response = sync_client.users_lookupByEmail(email=email)
+            user_id = response["user"]["id"]
+            _LOGGER.info("Resolved email %s to Slack user ID %s", email, user_id)
+            return user_id
+        except Exception as e:
+            _LOGGER.warning("Failed to resolve Slack user ID for email %s: %s", email, e)
+            return None
+
+    def get_triggered_by_mention(self) -> str:
+        """Return a Slack mention string for the user who triggered the job.
+        Returns an empty string if no user could be resolved.
+        """
+        if self._triggered_by_slack_id:
+            return f" (triggered by <@{self._triggered_by_slack_id}>)"
+        return ""
 
     def bind_channel(self, channel_or_release: Optional[str]):
         """Bind this SlackClient to a specified Slack channel. Future messages will be sent to that channel.

@@ -1828,7 +1828,10 @@ async def prepare_release(
 
     slack_client = runtime.new_slack_client()
     slack_client.bind_channel(group)
-    await slack_client.say_in_thread(f":construction: prepare-release-konflux for {assembly} :construction:")
+    await slack_client.say_in_thread(
+        f":construction: prepare-release-konflux for {assembly} :construction:"
+        f"{slack_client.get_triggered_by_mention()}"
+    )
 
     try:
         # start pipeline
