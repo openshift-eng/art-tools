@@ -1,0 +1,26 @@
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  labels:
+    build: rpm-lockfile-prototype
+  name: rpm-lockfile-prototype
+spec:
+  source:
+    dockerfile: art-cluster/pipelines/data/project/art-cd/image/Containerfile.rpm_lockfile_prototype
+    git:
+      ref: main
+      uri: https://github.com/openshift-eng/art-tools
+    type: Git
+  strategy:
+    dockerStrategy:
+      dockerfilePath: art-cluster/pipelines/data/project/art-cd/image/Containerfile.rpm_lockfile_prototype
+      pullSecret:
+        name: art-bot-docker-config
+    type: Docker
+  output:
+    to:
+      kind: ImageStreamTag
+      name: rpm-lockfile-prototype:v0.23.0
+  successfulBuildsHistoryLimit: 10
+  failedBuildsHistoryLimit: 5
+  runPolicy: Serial
