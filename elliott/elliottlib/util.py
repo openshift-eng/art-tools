@@ -488,7 +488,7 @@ def get_golang_container_nvrs_brew(nvrs: List[Tuple[str, str, str]], logger, exa
             logger.error(f'Error parsing {build}')
             raise
         name = nvr[0]
-        if name == 'openshift-golang-builder-container' or 'go-toolset' in name:
+        if name == constants.GOLANG_BUILDER_COMPONENT or 'go-toolset' in name:
             go_version = get_parent_golang_from_brew(nvr)
             if not go_version:
                 raise ValueError(f'Could not find go version for golang builder {nvr}')
@@ -591,7 +591,7 @@ def get_golang_container_nvrs_for_konflux_record(
             # NVRs never contain '/', so we can distinguish them from pullspecs.
             if '/' not in p:
                 # This is an NVR - look for golang builder (e.g. openshift-golang-builder-container-v1.24.4-...)
-                if p.startswith(f'{constants.GOLANG_BUILDER_CVE_COMPONENT}-'):
+                if p.startswith(f'{constants.GOLANG_BUILDER_COMPONENT}-'):
                     go_version = p
                     break
             else:
@@ -601,9 +601,7 @@ def get_golang_container_nvrs_for_konflux_record(
                     go_version = spec.replace(':', '-container-')
                     break
                 elif spec.startswith('art-images:golang-builder-'):
-                    go_version = spec.replace(
-                        'art-images:golang-builder-', f'{constants.GOLANG_BUILDER_CVE_COMPONENT}-'
-                    )
+                    go_version = spec.replace('art-images:golang-builder-', f'{constants.GOLANG_BUILDER_COMPONENT}-')
                     break
 
         if not go_version:

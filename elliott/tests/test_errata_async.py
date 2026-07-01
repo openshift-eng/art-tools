@@ -162,7 +162,7 @@ class TestAsyncErrataUtils(IsolatedAsyncioTestCase):
         expected_cve_components = {
             "CVE-2099-1": {"a", "b"},
             "CVE-2099-2": {"c"},
-            "CVE-2099-3": {constants.GOLANG_BUILDER_CVE_COMPONENT},
+            "CVE-2099-3": {constants.GOLANG_BUILDER_OCP4_DELIVERY_REPO},
         }
         attached_builds = ["a-1.0.0-1.el8", "a-1.0.0-1.el9", "b-1.0.0-1.el9", "c-1.0.0-1.el8", "d-1.0.0-1.el8"]
         builder_el8 = 'openshift-golang-builder-container-v1.18.0-202204191948.sha1patch.el8.g4d4caca'
@@ -190,7 +190,7 @@ class TestAsyncErrataUtils(IsolatedAsyncioTestCase):
         cve_components = {
             "CVE-2099-1": {"a", "b"},
             "CVE-2099-2": {"c"},
-            "CVE-2099-3": {constants.GOLANG_BUILDER_CVE_COMPONENT},
+            "CVE-2099-3": {constants.GOLANG_BUILDER_OCP4_DELIVERY_REPO},
         }
         attached_builds = ["a-1.0.0-1.el8", "a-1.0.0-1.el7", "b-1.0.0-1.el8", "c-1.0.0-1.el8", "d-1.0.0-1.el8"]
         populate_golang_cve.return_value = {
