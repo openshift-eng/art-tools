@@ -1303,13 +1303,11 @@ class KonfluxClient:
                 case "build-images":
                     has_build_images_task = True
                     task["timeout"] = "12h"
-                    _modify_param(task["params"], "SBOM_TYPE", "spdx")
                     if build_params.additional_secret:
                         _modify_param(task["params"], "ADDITIONAL_SECRET", build_params.additional_secret)
                     if build_params.privileged_nested is not None:
                         _modify_param(task["params"], "PRIVILEGED_NESTED", str(build_params.privileged_nested).lower())
                 case "prefetch-dependencies":
-                    _modify_param(task["params"], "sbom-type", "spdx")
                     if build_params.prefetch_mode:
                         _modify_param(task["params"], "mode", build_params.prefetch_mode)
                     if verbose_prefetch_enabled:
