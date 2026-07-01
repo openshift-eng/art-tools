@@ -65,6 +65,8 @@ SUPPORTED_RPA_KINDS = {
 
 async def validate_snapshot_against_rpa(group: str, env: str, kind: str, snapshot_components: List[str]) -> None:
     match = re.fullmatch(r"openshift-(\d+)\.(\d+)", group)
+    if group.startswith("openshift-") and not match:
+        raise ValueError(f"Unrecognized openshift group format, refusing to skip RPA validation: {group!r}")
     if not match:
         return
     major, minor = match.group(1), match.group(2)
