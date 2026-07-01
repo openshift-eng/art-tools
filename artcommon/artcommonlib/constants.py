@@ -82,6 +82,9 @@ KONFLUX_DEFAULT_BUILD_PRIORITY = 5
 GOLANG_BUILDER_IMAGE_NAME = 'openshift-golang-builder'
 # Golang rpm package name
 GOLANG_RPM_PACKAGE_NAME = 'golang'
+# Label and env var for injecting exact golang NVR into builder images
+GOLANG_NVR_LABEL = 'io.openshift.build.golang-nvr'
+GOLANG_NVR_ENV = '__doozer_golang_nvr'
 
 # Product-based mappings for Konflux tenant namespaces and kubeconfigs
 PRODUCT_NAMESPACE_MAP = {

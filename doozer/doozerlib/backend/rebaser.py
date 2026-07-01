@@ -20,6 +20,7 @@ import semver
 import yaml
 from artcommonlib import exectools, release_util
 from artcommonlib.build_visibility import BuildVisibility, get_visibility_suffix, is_release_embargoed
+from artcommonlib.constants import GOLANG_NVR_ENV, GOLANG_NVR_LABEL
 from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildRecord
 from artcommonlib.model import ListModel, Missing, Model
 from artcommonlib.telemetry import start_as_current_span_async
@@ -1304,6 +1305,10 @@ class KonfluxRebaser:
         if metadata.config.envs:
             # Allow environment variables to be specified in the ART image metadata
             metadata_envs.update(metadata.config.envs.primitive())
+
+        golang_nvr = self.extra_labels.get(GOLANG_NVR_LABEL)
+        if golang_nvr:
+            metadata_envs[GOLANG_NVR_ENV] = golang_nvr
 
         if self._runtime.group_config.build_profiles.enable_go_cover is True:
             # This must be implemented by the ART golang wrappers
