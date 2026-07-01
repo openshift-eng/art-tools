@@ -220,6 +220,58 @@ class TestOkdScanPipeline(unittest.IsolatedAsyncioTestCase):
         cmd = cmd_calls[0][0][0]  # First positional argument of first call
         self.assertIn('--variant=okd', cmd)
 
+    @patch.dict(os.environ, {'KUBECONFIG': '/path/to/kubeconfig'})
+    @patch('pyartcd.pipelines.okd_scan.constants.OKD_ENABLED_VERSIONS', ['4.21'])
+    @patch('pyartcd.pipelines.okd_scan.jenkins')
+    @patch('pyartcd.pipelines.okd_scan.exectools.cmd_gather_async')
+    async def test_scan_passes_okd_arches(self, mock_cmd_gather, mock_jenkins):
+        """
+        Test that okd-scan passes --arches with OKD_ARCHES to doozer.
+        This ensures arch-change detection uses OKD target arches, not OCP group arches.
+        """
+        from pyartcd.pipelines.okd import OKD_ARCHES
+
+        self.runtime.dry_run = False
+
+        scan_output = yaml.dump({'images': []})
+        mock_cmd_gather.return_value = (0, scan_output, '')
+
+        pipeline = OkdScanPipeline(
+            runtime=self.runtime,
+            version='4.21',
+            data_path='https://github.com/openshift-eng/ocp-build-data',
+            assembly='stream',
+            data_gitref='',
+            image_list='',
+        )
+
+        await pipeline.run()
+
+        cmd_calls = mock_cmd_gather.call_args_list
+        self.assertEqual(len(cmd_calls), 1)
+        cmd = cmd_calls[0][0][0]
+        expected_arches_arg = f'--arches={",".join(OKD_ARCHES)}'
+        self.assertIn(expected_arches_arg, cmd)
+
+    def test_okd_scan_uses_same_arches_as_okd_build(self):
+        """
+        Verify OKD_ARCHES is the single source of truth for both okd and okd-scan.
+        """
+        from pyartcd.pipelines.okd import OKD_ARCHES
+
+        pipeline = OkdScanPipeline(
+            runtime=self.runtime,
+            version='4.21',
+            data_path='https://github.com/openshift-eng/ocp-build-data',
+            assembly='stream',
+            data_gitref='',
+            image_list='',
+        )
+
+        arches_in_cmd = [arg for arg in pipeline.doozer_base_command if arg.startswith('--arches=')]
+        self.assertEqual(len(arches_in_cmd), 1)
+        self.assertEqual(arches_in_cmd[0], f'--arches={",".join(OKD_ARCHES)}')
+
 
 if __name__ == '__main__':
     unittest.main()
