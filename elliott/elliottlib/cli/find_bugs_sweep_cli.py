@@ -1,5 +1,6 @@
 import json
 import sys
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Set
 
@@ -109,6 +110,15 @@ def filter_art_managed_jira_trackers(
         logger.info("Filtered %s non-ART-managed image tracker bugs: %s", len(non_art_trackers), non_art_trackers)
 
     return non_trackers + art_trackers
+
+
+@dataclass(frozen=True)
+class BugValidiationResult:
+    ok: bool
+    reason: str
+
+    def __bool__(self) -> bool:
+        return self.ok
 
 
 @common.cli.command("find-bugs:sweep", short_help="Sweep qualified bugs into advisories")
@@ -525,12 +535,16 @@ def categorize_bugs_by_type(
 
     # Categorize into tracker and non-tracker bugs
     # while also collecting fake trackers
+    fake_tracker_results = {}  # Store validation results for fake trackers
     for b in bugs:
-        if b.is_tracker_bug():
+        tracker_result = b.is_tracker_bug()
+        if tracker_result:
             tracker_bugs.add(b)
         else:
-            if b.is_invalid_tracker_bug():
+            invalid_result = b.is_invalid_tracker_bug()
+            if invalid_result:
                 fake_trackers.add(b)
+                fake_tracker_results[b.id] = invalid_result
             else:
                 non_tracker_bugs.add(b)
 
@@ -560,6 +574,12 @@ def categorize_bugs_by_type(
         if permissive:
             logger.warning(f"{message} Ignoring them.")
             issues.append(message)
+            for t in fake_trackers:
+                print(t.id)
+                # Add comment with the validation result reason
+                validation_result = fake_tracker_results.get(t.id)
+                if validation_result:
+                    runtime.get_bug_tracker(t.bug_class).add_fake_tracker_comment(t.id, validation_result.reason)
         else:
             raise ElliottFatalError(f"{message} Please fix.")
 
@@ -587,6 +607,8 @@ def categorize_bugs_by_type(
         if permissive:
             logger.warning(f"{message} Ignoring them.")
             issues.append(message)
+            for t in invalid_summary_trackers:
+                runtime.get_bug_tracker(t.bug_class).add_invalid_summary_comment(t, major_version, minor_version)
         else:
             raise ElliottFatalError(f"{message} Please fix.")
 

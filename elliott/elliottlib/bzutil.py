@@ -139,6 +139,10 @@ class Bug:
         raise NotImplementedError
 
     @property
+    def bug_class(self) -> str:
+        raise NotImplementedError
+
+    @property
     def cve_id(self):
         if not (self.is_tracker_bug() or self.is_flaw_bug()):
             return None
@@ -240,6 +244,10 @@ class BugzillaBug(Bug):
         return self.bug.blocks
 
     @property
+    def bug_class(self):
+        return 'bugzilla'
+
+    @property
     def whiteboard_component(self):
         """Get whiteboard component value of a bug.
 
@@ -256,19 +264,44 @@ class BugzillaBug(Bug):
         return None
 
     def is_tracker_bug(self):
+        from elliottlib.cli.find_bugs_sweep_cli import BugValidiationResult
+
         has_keywords = set(constants.TRACKER_BUG_KEYWORDS).issubset(set(self.keywords))
         has_whiteboard_component = bool(self.whiteboard_component)
-        return has_keywords and has_whiteboard_component
+
+        if not (has_keywords and has_whiteboard_component):
+            missing = []
+            if not has_keywords:
+                missing.append(f"- This bug lacks the required keywords: {set(constants.TRACKER_BUG_KEYWORDS)}")
+            if not has_whiteboard_component:
+                missing.append("- Missing Whiteboard component")
+            return BugValidiationResult(ok=False, reason="\n".join(missing))
+
+        return BugValidiationResult(ok=True, reason="")
 
     def is_invalid_tracker_bug(self):
-        if self.is_tracker_bug():
-            return False
+        from elliottlib.cli.find_bugs_sweep_cli import BugValidiationResult
+
+        tracker_result = self.is_tracker_bug()
+        if tracker_result.ok:
+            return BugValidiationResult(ok=False, reason="")
+
         if 'WeaknessTracking' in self.keywords:
             # See e.g. https://bugzilla.redhat.com/show_bug.cgi?id=2092289. This bug is not a CVE tracker
-            return False
+            return BugValidiationResult(ok=False, reason="")
+
         has_cve_in_summary = bool(re.search(r'CVE-\d+-\d+', self.summary))
         has_keywords = set(constants.TRACKER_BUG_KEYWORDS).issubset(set(self.keywords))
-        return has_keywords or has_cve_in_summary
+
+        if not (has_keywords or has_cve_in_summary):
+            return BugValidiationResult(ok=False, reason="")
+
+        properties = []
+        if has_cve_in_summary:
+            properties.append("- Has CVE identifier in summary so this is registered as a bug")
+        properties.append(tracker_result.reason)
+
+        return BugValidiationResult(ok=True, reason="\n".join(properties))
 
     def all_advisory_ids(self):
         return ErrataBug(self.id).all_advisory_ids
@@ -318,29 +351,56 @@ class JIRABug(Bug):
             return None
 
     def is_tracker_bug(self):
+        from elliottlib.cli.find_bugs_sweep_cli import BugValidiationResult
+
         if self.is_type_vulnerability():
-            return True
+            return BugValidiationResult(ok=True, reason="")
+
         has_keywords = set(constants.TRACKER_BUG_KEYWORDS).issubset(set(self.keywords))
         has_whiteboard_component = bool(self.whiteboard_component)
         has_linked_flaw = bool(self.corresponding_flaw_bug_ids)
-        return has_keywords and has_whiteboard_component and has_linked_flaw
+
+        if not (has_keywords and has_whiteboard_component and has_linked_flaw):
+            missing = []
+            if not has_keywords:
+                missing.append(f"- This bug lacks the required keywords: {set(constants.TRACKER_BUG_KEYWORDS)}")
+            if not has_whiteboard_component:
+                missing.append("- Missing Whiteboard component")
+            if not has_linked_flaw:
+                missing.append("- Missing flaw bug links")
+            return BugValidiationResult(ok=False, reason="\n".join(missing))
+
+        return BugValidiationResult(ok=True, reason="")
 
     def is_invalid_tracker_bug(self):
-        if self.is_tracker_bug():
-            return False
+        from elliottlib.cli.find_bugs_sweep_cli import BugValidiationResult
+
+        tracker_result = self.is_tracker_bug()
+        if tracker_result.ok:
+            return BugValidiationResult(ok=False, reason="")
+
         if 'WeaknessTracking' in self.keywords:
             # See e.g. https://issues.redhat.com/browse/OCPBUGS-5804. This is not to be regarded a tracking bug.
-            return False
+            return BugValidiationResult(ok=False, reason="")
         if 'art:cloned-kernel-bug' in self.keywords:
             # Bugs for advance-shipped kernel builds should not be regarded as a tracker. They might look like one,
             # but they are not invalid.
             # Context in this thread: https://redhat-internal.slack.com/archives/C04SCM5AYE4/p1685524912511489?thread_ts=1685489306.568039&cid=C04SCM5AYE4
             # This is likely not the end state, but at least for the time being.
-            return False
+            return BugValidiationResult(ok=False, reason="")
+
         has_cve_in_summary = bool(re.search(r'CVE-\d+-\d+', self.summary))
         has_keywords = set(constants.TRACKER_BUG_KEYWORDS).issubset(set(self.keywords))
         has_linked_flaw = bool(self.corresponding_flaw_bug_ids)
-        return has_keywords or has_cve_in_summary or has_linked_flaw
+
+        if not (has_keywords or has_cve_in_summary or has_linked_flaw):
+            return BugValidiationResult(ok=False, reason="")
+
+        properties = []
+        if has_cve_in_summary:
+            properties.append("- Has CVE identifier in summary so this is registered as a bug")
+        properties.append(tracker_result.reason)
+        return BugValidiationResult(ok=True, reason="\n".join(properties))
 
     @property
     def summary(self):
@@ -419,6 +479,10 @@ class JIRABug(Bug):
     @property
     def product(self):
         return self.bug.fields.project.key
+
+    @property
+    def bug_class(self):
+        return 'jira'
 
     @property
     def cve_id(self):
@@ -596,6 +660,89 @@ class BugTracker:
 
     def add_comment(self, bugid, comment: str, private: bool, noop=False):
         raise NotImplementedError
+
+    def get_comments(self, bugid):
+        """Get all comments for a bug. Must be implemented by subclasses."""
+        raise NotImplementedError
+
+    def add_invalid_summary_comment(
+        self, bug: Bug, major_version: int, minor_version: int, private: bool = False, noop=False
+    ):
+        """Add a comment to a bug explaining that it has an invalid summary format.
+
+        :param bugid: The bug ID to comment on
+        :param bug_summary: The current bug summary
+        :param major_version: Expected major version (e.g., 4)
+        :param minor_version: Expected minor version (e.g., 17)
+        :param private: Whether the comment should be private
+        :param noop: If True, only log what would be done
+        :return: True if comment was added, False if skipped
+        """
+        marker = "[ART-AUTOMATION: invalid-summary]"
+        comment = f"""This tracker bug has an invalid summary format.
+
+        Expected: Summary should start or end with one of:
+        - [openshift-{major_version}.{minor_version}]
+        - [openshift-{major_version}.{minor_version}.z]
+        - [openshift-{major_version}.{minor_version}.0]
+
+        Current summary: {bug.summary}
+
+        Please update the bug summary to include the correct target version tag.
+
+        ----
+        {marker}
+        """
+        return self.add_comment_once(bug.id, comment, marker, private, noop)
+
+    def add_fake_tracker_comment(self, bugid: str, validation_reason: str, private: bool = False, noop=False):
+        """Add a comment to a bug explaining that it looks like a CVE tracker but is not valid.
+
+        :param bugid: The bug ID to comment on
+        :param validation_reason: The validation evaluation explaining why this bug is not a valid tracker
+        :param private: Whether the comment should be private
+        :param noop: If True, only log what would be done
+        :return: True if comment was added, False if skipped
+        """
+        marker = "[ART-AUTOMATION: fake-tracker]"
+
+        comment = f"""This bug looks like a CVE tracker bug, but it is not properly configured as one.
+
+Bug evaluation:
+{validation_reason if validation_reason else "This bug has tracker-like properties but is missing required tracker bug attributes."}
+
+Please either:
+1. Complete the tracker bug setup with all required fields, OR
+2. Remove the CVE/SecurityTracking indicators if this is not meant to be a tracker bug
+
+----
+{marker}
+"""
+        return self.add_comment_once(bugid, comment, marker, private, noop)
+
+    def add_comment_once(self, bugid, comment: str, marker: str, private: bool = False, noop=False):
+        """Add a comment to a bug only if a comment with the given marker doesn't already exist.
+
+        :param bugid: The bug ID to comment on
+        :param comment: The comment text (should include the marker)
+        :param marker: A unique marker to check for (e.g., "<!-- ART-AUTOMATION: invalid-summary -->")
+        :param private: Whether the comment should be private
+        :param noop: If True, only log what would be done
+        :return: True if comment was added, False if skipped
+        """
+        # Check if we've already commented
+        try:
+            existing_comments = self.get_comments(bugid)
+            for existing_comment in existing_comments:
+                if marker in existing_comment:
+                    logger.info(f"Skipping comment on {bugid} - marker '{marker}' already exists")
+                    return False
+        except Exception as e:
+            logger.warning(f"Failed to check existing comments on {bugid}: {e}. Proceeding with comment.")
+
+        # Add the comment
+        self.add_comment(bugid, comment, private=private, noop=noop)
+        return True
 
     def create_bug(self, bug_title, bug_description, target_status, keywords: List, noop=False):
         raise NotImplementedError
@@ -989,6 +1136,20 @@ class JIRABugTracker(BugTracker):
         else:
             self._client.add_comment(bugid, comment)
 
+    def get_comments(self, bugid: str) -> List[str]:
+        """Get all comment bodies for a JIRA bug.
+
+        :param bugid: The JIRA bug ID
+        :return: List of comment body strings
+        """
+        try:
+            issue = self._client.issue(bugid)
+            comments = issue.fields.comment.comments
+            return [comment.body for comment in comments]
+        except Exception as e:
+            logger.warning(f"Failed to fetch comments for {bugid}: {e}")
+            return []
+
     def _query(
         self,
         bugids: Optional[List] = None,
@@ -1319,7 +1480,25 @@ class BugzillaBugTracker(BugTracker):
         return self._client.update_bugs([bugid], self._client.build_update(status=target_status))
 
     def add_comment(self, bugid, comment: str, private, noop=False):
+        if noop:
+            logger.info(f"Would have added a private={private} comment to {bugid}: {comment}")
+            return
         self._client.update_bugs([bugid], self._client.build_update(comment=comment, comment_private=private))
+
+    def get_comments(self, bugid) -> List[str]:
+        """Get all comment bodies for a Bugzilla bug.
+
+        :param bugid: The Bugzilla bug ID
+        :return: List of comment body strings
+        """
+        try:
+            comments = self._client.getcomments(bugid)
+            # comments is a dict with bug id as key, value is another dict with 'comments' list
+            comment_list = comments.get(str(bugid), {}).get('comments', [])
+            return [comment.get('text', '') for comment in comment_list]
+        except Exception as e:
+            logger.warning(f"Failed to fetch comments for {bugid}: {e}")
+            return []
 
     def filter_bugs_by_cutoff_event(
         self, bugs: Iterable, desired_statuses: Iterable[str], sweep_cutoff_timestamp: float, verbose=False
