@@ -268,6 +268,7 @@ class KonfluxBuildCli:
         build_priority: Optional[str],
         skip_ec_verify: bool = False,
         skip_tasks: tuple[str, ...] = (),
+        effective_time: Optional[str] = None,
     ):
         self.runtime = runtime
         self.konflux_kubeconfig = konflux_kubeconfig
@@ -281,6 +282,7 @@ class KonfluxBuildCli:
         self.plr_template = plr_template
         self.build_priority = build_priority
         self.skip_ec_verify = skip_ec_verify
+        self.effective_time = effective_time
 
         validate_build_priority(self.build_priority)
 
@@ -329,6 +331,7 @@ class KonfluxBuildCli:
             ec_policy_configuration=ec_policy,
             prega_ec_policy_configuration=prega_ec_policy,
             skip_ec_verify=self.skip_ec_verify,
+            effective_time=self.effective_time,
         )
         builder = KonfluxImageBuilder(config=config, record_logger=runtime.record_logger)
 
@@ -421,6 +424,12 @@ class KonfluxBuildCli:
     is_flag=True,
     help='Skip enterprise-contract verification after builds.',
 )
+@click.option(
+    '--effective-time',
+    default=None,
+    type=str,
+    help='Run EC policy checks at a future time. Expects RFC3339 format, e.g. "2026-07-10T00:00:00Z". Defaults to "now".',
+)
 @pass_runtime
 @click_coroutine
 async def images_konflux_build(
@@ -436,6 +445,7 @@ async def images_konflux_build(
     build_priority: Optional[str],
     network_mode: Optional[str],
     skip_ec_verify: bool,
+    effective_time: Optional[str],
 ):
     if network_mode:
         runtime.network_mode_override = network_mode
@@ -453,6 +463,7 @@ async def images_konflux_build(
         plr_template=plr_template,
         build_priority=build_priority,
         skip_ec_verify=skip_ec_verify,
+        effective_time=effective_time,
     )
     await cli.run()
 
@@ -473,6 +484,7 @@ class KonfluxBundleCli:
         plr_template: str,
         output: str,
         skip_tasks: tuple[str, ...] = (),
+        effective_time: Optional[str] = None,
     ):
         self.runtime = runtime
         self.operator_nvrs = list(operator_nvrs)
@@ -487,6 +499,7 @@ class KonfluxBundleCli:
         self.release = release
         self.output = output
         self.plr_template = plr_template
+        self.effective_time = effective_time
         self._db_for_bundles = KonfluxDb()
         self._db_for_bundles.bind(KonfluxBundleBuildRecord)
 
@@ -638,6 +651,7 @@ class KonfluxBundleCli:
             dry_run=self.dry_run,
             assembly_type=runtime.assembly_type,
             record_logger=runtime.record_logger,
+            effective_time=self.effective_time,
         )
 
         # Mint a per-invocation GitHub App token for git-clone auth
@@ -759,6 +773,12 @@ class KonfluxBundleCli:
     default='json',
     help='Output format for the build records.',
 )
+@click.option(
+    '--effective-time',
+    default=None,
+    type=str,
+    help='Run EC policy checks at a future time. Expects RFC3339 format, e.g. "2026-07-10T00:00:00Z". Defaults to "now".',
+)
 @pass_runtime
 @click_coroutine
 async def images_konflux_bundle(
@@ -775,6 +795,7 @@ async def images_konflux_bundle(
     release: Optional[str],
     plr_template: str,
     output: str,
+    effective_time: Optional[str],
 ):
     cli = KonfluxBundleCli(
         runtime=runtime,
@@ -790,5 +811,6 @@ async def images_konflux_bundle(
         release=release,
         plr_template=plr_template,
         output=output,
+        effective_time=effective_time,
     )
     await cli.run()

@@ -4,6 +4,7 @@ import logging
 import os
 import shutil
 import tempfile
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Optional, Tuple
@@ -470,6 +471,10 @@ class KonfluxOcpPipeline:
         if self.skip_ec_verify:
             LOGGER.info('Skipping EC verification as requested')
             cmd.append('--skip-ec-verify')
+
+        effective_time = (datetime.now(timezone.utc) + timedelta(days=14)).strftime("%Y-%m-%dT00:00:00Z")
+        LOGGER.info(f"Using EC effective time: {effective_time}")
+        cmd.extend(['--effective-time', effective_time])
 
         await exectools.cmd_assert_async(cmd)
 

@@ -97,6 +97,7 @@ class KonfluxImageBuilderConfig:
     ec_policy_configuration: str = constants.KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION
     prega_ec_policy_configuration: str = constants.KONFLUX_PREGA_EC_POLICY_CONFIGURATION
     skip_ec_verify: bool = False
+    effective_time: Optional[str] = None
 
 
 class KonfluxImageBuilder:
@@ -342,6 +343,7 @@ class KonfluxImageBuilder:
                         commit_sha=build_repo.commit_hash,
                         ec_policy=ec_policy,
                         logger=logger,
+                        effective_time=self._config.effective_time,
                     )
                     if ec_result.ec_failed:
                         ec_pipeline_url = ec_result.ec_pipeline_url
