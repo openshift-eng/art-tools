@@ -25,6 +25,7 @@ class TestOcp4ScanKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             assembly='stream',
             data_gitref='',
             image_list='',
+            skip_rpms=False,
         )
 
     @patch.dict(os.environ, {'KUBECONFIG': '/path/to/kubeconfig'})
@@ -150,6 +151,7 @@ class TestBridgeBugMirroring(unittest.IsolatedAsyncioTestCase):
             assembly="stream",
             data_gitref="",
             image_list="",
+            skip_rpms=False,
         )
 
     async def test_run_invokes_bridge_bug_mirroring(self):

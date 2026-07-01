@@ -59,3 +59,24 @@ class TestGroupSchema(unittest.TestCase):
             },
         }
         self.assertIn("must be 'openshift-5.0'", group_schema.validate("group.yml", invalid_data))
+
+    def test_validate_with_okd_enabled_flag(self):
+        valid_data = {
+            "name": "openshift-4.21",
+            "vars": {"MAJOR": 4, "MINOR": 21},
+            "okd": {
+                "enabled": True,
+                "konflux": {"build_priority": 8},
+            },
+        }
+        self.assertEqual("", group_schema.validate("group.yml", valid_data))
+
+    def test_validate_with_invalid_okd_enabled_flag(self):
+        invalid_data = {
+            "name": "openshift-4.21",
+            "vars": {"MAJOR": 4, "MINOR": 21},
+            "okd": {
+                "enabled": "yes",
+            },
+        }
+        self.assertIn("'yes' is not of type 'boolean'", group_schema.validate("group.yml", invalid_data))

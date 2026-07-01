@@ -29,7 +29,7 @@ import click
 import yaml
 from artcommonlib import exectools
 
-from pyartcd import constants, jenkins, locks
+from pyartcd import constants, jenkins, locks, util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import Lock
 from pyartcd.runtime import Runtime
@@ -88,12 +88,14 @@ class OkdScanPipeline:
         # If we get here, lock could be acquired
         self.skipped = False
 
-        # Early exit if version not enabled for OKD
-        if self.version not in constants.OKD_ENABLED_VERSIONS:
+        self._check_params()
+
+        # Early exit if version not enabled for OKD in build-data
+        if not await util.is_okd_version_enabled(self.doozer_base_command):
             self.logger.info(
-                'Version %s is not enabled for OKD (enabled versions: %s). Skipping scan.',
+                'Version %s is not enabled for OKD (set okd.enabled: true in group.yml on openshift-%s). Skipping scan.',
                 self.version,
-                constants.OKD_ENABLED_VERSIONS,
+                self.version,
             )
             return
 
@@ -102,8 +104,6 @@ class OkdScanPipeline:
         if self.data_gitref:
             scan_info += f'@{self.data_gitref}'
         self.logger.info(scan_info)
-
-        self._check_params()
 
         # Scan for changes
         await self._scan_sources()
