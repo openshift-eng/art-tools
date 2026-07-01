@@ -1587,6 +1587,17 @@
           "$ref": "#/properties/konflux/properties/enable_symlink_check"
         },
         "enable_symlink_check-": {},
+        "clone_git_tags": {
+          "description": "Whether the clone-repository task fetches git tags. Defaults to true if not specified.",
+          "type": "boolean"
+        },
+        "clone_git_tags!": {
+          "$ref": "#/properties/konflux/properties/clone_git_tags"
+        },
+        "clone_git_tags?": {
+          "$ref": "#/properties/konflux/properties/clone_git_tags"
+        },
+        "clone_git_tags-": {},
         "build_step_resources": {
           "description": "Kubernetes resource requests/limits for the build step (e.g. memory, ephemeral-storage)",
           "type": "object",

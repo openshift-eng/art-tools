@@ -926,6 +926,7 @@ class KonfluxOlmBundleBuilder:
                 skip_checks=skip_checks,
                 skip_tasks=skip_tasks,
                 hermetic=True,
+                fetch_tags=False,
                 artifact_type="operatorbundle",
                 build_priority=BUNDLE_BUILD_PRIORITY,
             ),
