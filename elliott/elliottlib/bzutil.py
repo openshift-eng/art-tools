@@ -9,6 +9,7 @@ import os
 import re
 import urllib.parse
 import xmlrpc.client
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import cached_property
 from time import sleep
@@ -38,6 +39,17 @@ from elliottlib.util import (
 )
 
 logger = logutil.get_logger(__name__)
+
+
+@dataclass(frozen=True)
+class BugValidiationResult:
+    """Result of bug validation with ok status and reason for failure."""
+
+    ok: bool
+    reason: str
+
+    def __bool__(self) -> bool:
+        return self.ok
 
 
 # This is easier to patch in unit tests
@@ -264,8 +276,6 @@ class BugzillaBug(Bug):
         return None
 
     def is_tracker_bug(self):
-        from elliottlib.cli.find_bugs_sweep_cli import BugValidiationResult
-
         has_keywords = set(constants.TRACKER_BUG_KEYWORDS).issubset(set(self.keywords))
         has_whiteboard_component = bool(self.whiteboard_component)
 
@@ -280,8 +290,6 @@ class BugzillaBug(Bug):
         return BugValidiationResult(ok=True, reason="")
 
     def is_invalid_tracker_bug(self):
-        from elliottlib.cli.find_bugs_sweep_cli import BugValidiationResult
-
         tracker_result = self.is_tracker_bug()
         if tracker_result.ok:
             return BugValidiationResult(ok=False, reason="")
@@ -351,8 +359,6 @@ class JIRABug(Bug):
             return None
 
     def is_tracker_bug(self):
-        from elliottlib.cli.find_bugs_sweep_cli import BugValidiationResult
-
         if self.is_type_vulnerability():
             return BugValidiationResult(ok=True, reason="")
 
@@ -373,8 +379,6 @@ class JIRABug(Bug):
         return BugValidiationResult(ok=True, reason="")
 
     def is_invalid_tracker_bug(self):
-        from elliottlib.cli.find_bugs_sweep_cli import BugValidiationResult
-
         tracker_result = self.is_tracker_bug()
         if tracker_result.ok:
             return BugValidiationResult(ok=False, reason="")
@@ -668,16 +672,7 @@ class BugTracker:
     def add_invalid_summary_comment(
         self, bug: Bug, major_version: int, minor_version: int, private: bool = False, noop=False
     ):
-        """Add a comment to a bug explaining that it has an invalid summary format.
-
-        :param bugid: The bug ID to comment on
-        :param bug_summary: The current bug summary
-        :param major_version: Expected major version (e.g., 4)
-        :param minor_version: Expected minor version (e.g., 17)
-        :param private: Whether the comment should be private
-        :param noop: If True, only log what would be done
-        :return: True if comment was added, False if skipped
-        """
+        """Add comment explaining tracker has invalid summary format."""
         marker = "[ART-AUTOMATION: invalid-summary]"
         comment = f"""This tracker bug has an invalid summary format.
 
@@ -688,32 +683,19 @@ class BugTracker:
 
         Current summary: {bug.summary}
 
-        Please update the bug summary to include the correct target version tag.
-
         ----
         {marker}
         """
         return self.add_comment_once(bug.id, comment, marker, private, noop)
 
     def add_fake_tracker_comment(self, bugid: str, validation_reason: str, private: bool = False, noop=False):
-        """Add a comment to a bug explaining that it looks like a CVE tracker but is not valid.
-
-        :param bugid: The bug ID to comment on
-        :param validation_reason: The validation evaluation explaining why this bug is not a valid tracker
-        :param private: Whether the comment should be private
-        :param noop: If True, only log what would be done
-        :return: True if comment was added, False if skipped
-        """
+        """Add comment explaining bug looks like CVE tracker but is invalid."""
         marker = "[ART-AUTOMATION: fake-tracker]"
+        comment = f"""This bug looks like a CVE tracker but is not properly configured.
 
-        comment = f"""This bug looks like a CVE tracker bug, but it is not properly configured as one.
+{validation_reason or "Missing required tracker attributes."}
 
-Bug evaluation:
-{validation_reason if validation_reason else "This bug has tracker-like properties but is missing required tracker bug attributes."}
-
-Please either:
-1. Complete the tracker bug setup with all required fields, OR
-2. Remove the CVE/SecurityTracking indicators if this is not meant to be a tracker bug
+Please complete tracker setup or remove CVE/SecurityTracking indicators.
 
 ----
 {marker}
@@ -721,15 +703,7 @@ Please either:
         return self.add_comment_once(bugid, comment, marker, private, noop)
 
     def add_comment_once(self, bugid, comment: str, marker: str, private: bool = False, noop=False):
-        """Add a comment to a bug only if a comment with the given marker doesn't already exist.
-
-        :param bugid: The bug ID to comment on
-        :param comment: The comment text (should include the marker)
-        :param marker: A unique marker to check for (e.g., "<!-- ART-AUTOMATION: invalid-summary -->")
-        :param private: Whether the comment should be private
-        :param noop: If True, only log what would be done
-        :return: True if comment was added, False if skipped
-        """
+        """Add a comment to a bug only if a comment with the given marker doesn't already exist."""
         # Check if we've already commented
         try:
             existing_comments = self.get_comments(bugid)
@@ -1137,18 +1111,10 @@ class JIRABugTracker(BugTracker):
             self._client.add_comment(bugid, comment)
 
     def get_comments(self, bugid: str) -> List[str]:
-        """Get all comment bodies for a JIRA bug.
-
-        :param bugid: The JIRA bug ID
-        :return: List of comment body strings
-        """
-        try:
-            issue = self._client.issue(bugid)
-            comments = issue.fields.comment.comments
-            return [comment.body for comment in comments]
-        except Exception as e:
-            logger.warning(f"Failed to fetch comments for {bugid}: {e}")
-            return []
+        """Get all comment bodies for a JIRA bug."""
+        issue = self._client.issue(bugid)
+        comments = issue.fields.comment.comments
+        return [comment.body for comment in comments]
 
     def _query(
         self,
@@ -1486,19 +1452,8 @@ class BugzillaBugTracker(BugTracker):
         self._client.update_bugs([bugid], self._client.build_update(comment=comment, comment_private=private))
 
     def get_comments(self, bugid) -> List[str]:
-        """Get all comment bodies for a Bugzilla bug.
-
-        :param bugid: The Bugzilla bug ID
-        :return: List of comment body strings
-        """
-        try:
-            comments = self._client.getcomments(bugid)
-            # comments is a dict with bug id as key, value is another dict with 'comments' list
-            comment_list = comments.get(str(bugid), {}).get('comments', [])
-            return [comment.get('text', '') for comment in comment_list]
-        except Exception as e:
-            logger.warning(f"Failed to fetch comments for {bugid}: {e}")
-            return []
+        """Get all comment bodies for a Bugzilla bug."""
+        raise NotImplementedError("Bugzilla comment operations not implemented")
 
     def filter_bugs_by_cutoff_event(
         self, bugs: Iterable, desired_statuses: Iterable[str], sweep_cutoff_timestamp: float, verbose=False
