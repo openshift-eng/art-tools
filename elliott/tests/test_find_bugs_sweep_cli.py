@@ -6,10 +6,9 @@ import elliottlib.cli.find_bugs_sweep_cli as sweep_cli
 from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
 from click.testing import CliRunner
 from elliottlib import constants, errata
-from elliottlib.bzutil import JIRABugTracker
+from elliottlib.bzutil import BugValidiationResult, JIRABugTracker
 from elliottlib.cli.common import Runtime, cli
 from elliottlib.cli.find_bugs_sweep_cli import (
-    BugValidiationResult,
     FindBugsMode,
     categorize_bugs_by_type,
     extras_bugs,

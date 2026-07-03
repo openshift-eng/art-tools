@@ -1,6 +1,5 @@
 import json
 import sys
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Set
 
@@ -112,15 +111,6 @@ def filter_art_managed_jira_trackers(
     return non_trackers + art_trackers
 
 
-@dataclass(frozen=True)
-class BugValidiationResult:
-    ok: bool
-    reason: str
-
-    def __bool__(self) -> bool:
-        return self.ok
-
-
 @common.cli.command("find-bugs:sweep", short_help="Sweep qualified bugs into advisories")
 @click.option("--add", "-a", 'advisory_id', type=int, metavar='ADVISORY', help="Add found bugs to ADVISORY")
 @common.use_default_advisory_option
@@ -172,6 +162,7 @@ class BugValidiationResult:
     help="Ignore bugs that are determined to be invalid and continue",
 )
 @click.option("--noop", "--dry-run", is_flag=True, default=False, help="Don't change anything")
+@click.option("--comment-on-invalid-bugs", is_flag=True, default=False, help="Add comments to invalid bugs")
 @click.pass_obj
 @click_coroutine
 async def find_bugs_sweep_cli(
@@ -188,6 +179,7 @@ async def find_bugs_sweep_cli(
     advance_release,
     permissive,
     noop,
+    comment_on_invalid_bugs,
 ):
     """Find OCP bugs and (optional) add them to ADVISORY.
 
@@ -241,6 +233,7 @@ async def find_bugs_sweep_cli(
         permissive=permissive,
         bug_tracker=runtime.get_bug_tracker('jira'),
         operator_bundle_advisory=operator_bundle_advisory,
+        comment_on_invalid_bugs=comment_on_invalid_bugs,
     )
 
     if not bugs:
@@ -372,6 +365,7 @@ async def find_and_attach_bugs(
     permissive,
     bug_tracker,
     operator_bundle_advisory,
+    comment_on_invalid_bugs: bool = False,
 ):
     statuses = sorted(find_bugs_obj.status)
     tr = bug_tracker.target_release()
@@ -395,6 +389,7 @@ async def find_and_attach_bugs(
         minor_version=minor_version,
         operator_bundle_advisory=operator_bundle_advisory,
         permissive=permissive,
+        comment_on_invalid_bugs=comment_on_invalid_bugs,
     )
     for kind, kind_bugs in bugs_by_type.items():
         logger.info(f'{kind} bugs: {[b.id for b in kind_bugs]}')
@@ -494,6 +489,7 @@ def categorize_bugs_by_type(
     operator_bundle_advisory: Optional[str] = "metadata",
     permissive: bool = False,
     exclude_trackers: bool = False,
+    comment_on_invalid_bugs: bool = False,
 ) -> tuple[Dict[str, type_bug_set], List[str]]:
     """Categorize bugs into different types of advisories
     :param bugs: List of Bug objects to categorize
@@ -503,6 +499,7 @@ def categorize_bugs_by_type(
     :param operator_bundle_advisory: Type of advisory for operator bundles, defaults to "metadata"
     :param permissive: If True, ignore invalid bugs instead of raising an error
     :param exclude_trackers: If True, exclude tracker bugs from the categorization
+    :param comment_on_invalid_bugs: If True, add comments to invalid bugs
     :return: (bugs_by_type, issues) where bugs_by_type is a dict of {advisory_kind: bug_ids} and issues is a list of problems found
     """
 
@@ -579,7 +576,9 @@ def categorize_bugs_by_type(
                 # Add comment with the validation result reason
                 validation_result = fake_tracker_results.get(t.id)
                 if validation_result:
-                    runtime.get_bug_tracker(t.bug_class).add_fake_tracker_comment(t.id, validation_result.reason)
+                    runtime.get_bug_tracker(t.bug_class).add_fake_tracker_comment(
+                        t.id, validation_result.reason, noop=not comment_on_invalid_bugs
+                    )
         else:
             raise ElliottFatalError(f"{message} Please fix.")
 
@@ -608,7 +607,9 @@ def categorize_bugs_by_type(
             logger.warning(f"{message} Ignoring them.")
             issues.append(message)
             for t in invalid_summary_trackers:
-                runtime.get_bug_tracker(t.bug_class).add_invalid_summary_comment(t, major_version, minor_version)
+                runtime.get_bug_tracker(t.bug_class).add_invalid_summary_comment(
+                    t, major_version, minor_version, noop=not comment_on_invalid_bugs
+                )
         else:
             raise ElliottFatalError(f"{message} Please fix.")
 
