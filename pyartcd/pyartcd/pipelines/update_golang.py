@@ -26,7 +26,7 @@ from artcommonlib.util import new_roundtrip_yaml_handler
 from doozerlib.cli.config_plashet import KNOWN_SIGNING_KEYS
 from doozerlib.constants import ART_IMAGES_BASE_APPLICATION
 from elliottlib import util as elliottutil
-from elliottlib.constants import GOLANG_BUILDER_CVE_COMPONENT
+from elliottlib.constants import GOLANG_BUILDER_COMPONENT, GOLANG_BUILDER_OCP4_DELIVERY_REPO
 
 from pyartcd import constants, jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -487,7 +487,7 @@ class UpdateGolangPipeline:
             ocp_version=self.ocp_version,
             cves=self.cves,
             nvrs=self.go_nvrs if self.cves else None,
-            components=[GOLANG_BUILDER_CVE_COMPONENT],
+            components=[GOLANG_BUILDER_OCP4_DELIVERY_REPO],
             force_update_tracker=self.force_update_tracker,
             dry_run=self.dry_run,
         )
@@ -615,7 +615,7 @@ class UpdateGolangPipeline:
             _LOGGER.info("Plashet build complete for %s", group)
 
     def get_existing_builders_brew(self, el_nvr_map, go_version):
-        component = GOLANG_BUILDER_CVE_COMPONENT
+        component = GOLANG_BUILDER_COMPONENT
         _LOGGER.info(f"Checking if {component} builds exist in Brew for given golang builds")
         package_info = self.koji_session.getPackage(component)
         if not package_info:
@@ -657,7 +657,7 @@ class UpdateGolangPipeline:
         _LOGGER.info(f"Checking if {GOLANG_BUILDER_IMAGE_NAME} builds exist in Konflux for given golang builds")
 
         builder_records: dict[int, KonfluxBuildRecord] = {}
-        extra_patterns = {'nvr': f"{GOLANG_BUILDER_CVE_COMPONENT}-v{go_version}"}
+        extra_patterns = {'nvr': f"{GOLANG_BUILDER_COMPONENT}-v{go_version}"}
         build_records = await asyncio.gather(
             *(
                 anext(
@@ -707,8 +707,8 @@ class UpdateGolangPipeline:
         parsed_nvr = parse_nvr(builder_nvr)
         component_name = parsed_nvr["name"]
         if component_name == GOLANG_BUILDER_IMAGE_NAME:
-            component_name = GOLANG_BUILDER_CVE_COMPONENT
-        elif component_name != GOLANG_BUILDER_CVE_COMPONENT:
+            component_name = GOLANG_BUILDER_COMPONENT
+        elif component_name != GOLANG_BUILDER_COMPONENT:
             raise ValueError(f"Expected a golang builder image NVR, got: {builder_nvr}")
         published_nvr = f'{component_name}-{parsed_nvr["version"]}-{parsed_nvr["release"]}'
         return f'{PUBLISHED_GOLANG_BUILDER_REPO}:{published_nvr}'

@@ -35,6 +35,7 @@ from elliottlib.util import (
     chunk,
     get_component_by_delivery_repo,
     isolate_timestamp_in_release,
+    normalize_component_by_ocp_delivery_repo,
 )
 
 logger = logutil.get_logger(__name__)
@@ -1730,6 +1731,7 @@ def get_cve_unfixed_components(runtime, cve_alias: str) -> Dict:
                     logger.warning(
                         f"Could not find component name for {pkg_name}! is it an art component? is the delivery repo defined?"
                     )
+                    unfixed_components.append(pkg_name)
                 else:
                     unfixed_components.append(comp_name)
             else:
@@ -1751,7 +1753,8 @@ def is_first_fix_for_tracker(runtime, flaw_bug: BugzillaBug, tracker_bug: JIRABu
         )
     alias = flaw_bug.alias[0]
     unfixed_components = get_cve_unfixed_components(runtime, alias)
-    first_fix = tracker_bug.whiteboard_component in unfixed_components
+    tracker_component = normalize_component_by_ocp_delivery_repo(runtime, tracker_bug.whiteboard_component)
+    first_fix = tracker_component in unfixed_components
     logger.info(
         f"Flaw bug {flaw_bug.id} is {'first-fix' if first_fix else 'second-fix'} for tracker bug {tracker_bug.id}"
     )
@@ -1781,7 +1784,8 @@ def is_first_fix_any(runtime, flaw_bug: BugzillaBug, tracker_bugs: Iterable[JIRA
     # and if not then second-fix close operation should be performed on them
     # but for now we will just return True if any of the trackers is a first fix
     for tracker_bug in tracker_bugs:
-        if tracker_bug.whiteboard_component in unfixed_components:
+        tracker_component = normalize_component_by_ocp_delivery_repo(runtime, tracker_bug.whiteboard_component)
+        if tracker_component in unfixed_components:
             logger.info(
                 f"Flaw bug {flaw_bug.id} is a first-fix for tracker bug {tracker_bug.id}. Other associated trackers of the flaw bug will not be checked."
             )

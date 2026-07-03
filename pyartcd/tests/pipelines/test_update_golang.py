@@ -225,7 +225,7 @@ class TestMoveGolangBugs(IsolatedAsyncioTestCase):
             ocp_version="4.16",
             cves=["CVE-2024-1234", "CVE-2024-5678"],
             nvrs=["golang-1.20.12-2.el8"],
-            components=["openshift-golang-builder-container"],
+            components=["openshift4/openshift-golang-builder"],
             force_update_tracker=False,
             dry_run=False,
         )
@@ -246,7 +246,7 @@ class TestMoveGolangBugs(IsolatedAsyncioTestCase):
             "--fixed-in-nvr",
             "golang-1.20.12-2.el8",
             "--component",
-            "openshift-golang-builder-container",
+            "openshift4/openshift-golang-builder",
         ]
         mock_cmd_assert.assert_called_once_with(expected_cmd, log_stdout=True)
 

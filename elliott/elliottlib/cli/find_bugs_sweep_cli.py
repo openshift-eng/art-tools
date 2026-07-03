@@ -97,7 +97,7 @@ def filter_art_managed_jira_trackers(
             continue
 
         if (
-            normalized_component == constants.GOLANG_BUILDER_CVE_COMPONENT
+            constants.is_golang_builder_component(normalized_component)
             or normalized_component in art_managed_image_components
         ):
             art_trackers.append(bug)
@@ -612,7 +612,8 @@ def categorize_bugs_by_type(
         if kind == 'image':
             # golang builder is a special tracker component
             # which applies to all our golang images
-            exception_packages.append(constants.GOLANG_BUILDER_CVE_COMPONENT)
+            exception_packages.append(constants.GOLANG_BUILDER_OCP4_DELIVERY_REPO)
+            exception_packages.append(constants.GOLANG_BUILDER_COMPONENT)
 
         for bug in tracker_bugs:
             package_name = bug.whiteboard_component
