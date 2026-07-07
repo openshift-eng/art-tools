@@ -212,6 +212,10 @@ async def find_bugs_sweep_cli(
     """
     operator_bundle_advisory = "advance" if advance_release else "metadata"
 
+    if permissive and comment_on_invalid_bugs:
+        logger.warning("--comment-on-invalid-bugs is ignored when --permissive is set")
+        comment_on_invalid_bugs = False
+
     count_advisory_attach_flags = sum(map(bool, [advisory_id, default_advisory_type, into_default_advisories]))
     if count_advisory_attach_flags > 1:
         raise click.BadParameter("Use only one of --use-default-advisory, --add, or --into-default-advisories")
@@ -571,16 +575,14 @@ def categorize_bugs_by_type(
         if permissive:
             logger.warning(f"{message} Ignoring them.")
             issues.append(message)
+        else:
             for t in fake_trackers:
-                print(t.id)
                 # Add comment with the validation result reason
                 validation_result = fake_tracker_results.get(t.id)
                 if validation_result:
                     runtime.get_bug_tracker(t.bug_class).add_fake_tracker_comment(
                         t.id, validation_result.reason, noop=not comment_on_invalid_bugs
                     )
-        else:
-            raise ElliottFatalError(f"{message} Please fix.")
 
     if exclude_trackers:
         logger.info("Excluding tracker bugs because --exclude-trackers is set")
@@ -606,12 +608,11 @@ def categorize_bugs_by_type(
         if permissive:
             logger.warning(f"{message} Ignoring them.")
             issues.append(message)
+        else:
             for t in invalid_summary_trackers:
                 runtime.get_bug_tracker(t.bug_class).add_invalid_summary_comment(
                     t, major_version, minor_version, noop=not comment_on_invalid_bugs
                 )
-        else:
-            raise ElliottFatalError(f"{message} Please fix.")
 
         tracker_bugs -= invalid_summary_trackers
 
