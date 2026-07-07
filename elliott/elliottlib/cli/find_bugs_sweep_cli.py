@@ -20,7 +20,6 @@ from elliottlib import Runtime, bzutil, constants, errata
 from elliottlib.bzutil import Bug, BugTracker, JIRABug
 from elliottlib.cli import common
 from elliottlib.cli.common import click_coroutine
-from elliottlib.exceptions import ElliottFatalError
 from elliottlib.shipment_utils import get_bug_ids_from_open_shipment_mrs, get_builds_from_mr
 from elliottlib.util import chunk, normalize_component_by_ocp_delivery_repo
 
@@ -580,9 +579,12 @@ def categorize_bugs_by_type(
                 # Add comment with the validation result reason
                 validation_result = fake_tracker_results.get(t.id)
                 if validation_result:
-                    runtime.get_bug_tracker(t.bug_class).add_fake_tracker_comment(
-                        t.id, validation_result.reason, noop=not comment_on_invalid_bugs
-                    )
+                    try:
+                        runtime.get_bug_tracker(t.bug_class).add_fake_tracker_comment(
+                            t.id, validation_result.reason, noop=not comment_on_invalid_bugs
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to create comment for bug {t.id}: {e}")
 
     if exclude_trackers:
         logger.info("Excluding tracker bugs because --exclude-trackers is set")
@@ -610,9 +612,12 @@ def categorize_bugs_by_type(
             issues.append(message)
         else:
             for t in invalid_summary_trackers:
-                runtime.get_bug_tracker(t.bug_class).add_invalid_summary_comment(
-                    t, major_version, minor_version, noop=not comment_on_invalid_bugs
-                )
+                try:
+                    runtime.get_bug_tracker(t.bug_class).add_invalid_summary_comment(
+                        t, major_version, minor_version, noop=not comment_on_invalid_bugs
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to create comment for bug {t.id}: {e}")
 
         tracker_bugs -= invalid_summary_trackers
 
