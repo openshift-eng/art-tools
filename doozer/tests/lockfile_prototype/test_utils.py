@@ -10,6 +10,7 @@ from doozerlib.lockfile_prototype.utils import (
     compare_evr,
     format_version_pin,
     parse_evr,
+    pick_maximum_evr,
     pick_minimum_evr,
 )
 
@@ -78,6 +79,19 @@ class TestPickMinimumEvr(unittest.TestCase):
     def test_with_epoch(self):
         evrs = ["1:2.0-3.el9", "0.9-1.el9"]
         self.assertEqual(pick_minimum_evr(evrs), "0.9-1.el9")
+
+
+class TestPickMaximumEvr(unittest.TestCase):
+    def test_single(self):
+        self.assertEqual(pick_maximum_evr(["0.4.1-5.el9"]), "0.4.1-5.el9")
+
+    def test_picks_newest(self):
+        evrs = ["0.4.1-7.el9_8", "0.4.1-5.el9", "0.4.1-6.el9"]
+        self.assertEqual(pick_maximum_evr(evrs), "0.4.1-7.el9_8")
+
+    def test_with_epoch(self):
+        evrs = ["1:2.0-3.el9", "0.9-1.el9"]
+        self.assertEqual(pick_maximum_evr(evrs), "1:2.0-3.el9")
 
 
 class TestFormatVersionPin(unittest.TestCase):

@@ -1797,7 +1797,7 @@ class TestCrossArchReconciliation(unittest.IsolatedAsyncioTestCase):
         }
         gen = self._make_generator()
         pins = gen._compute_version_pins(mismatches)
-        self.assertEqual(sorted(pins), ["curl-7.76-1.el9", "libeconf-0.4.1-5.el9"])
+        self.assertEqual(sorted(pins), ["curl-7.76-2.el9", "libeconf-0.4.1-7.el9_8"])
 
     async def test_reconciliation_skips_when_consistent(self):
         gen = self._make_generator()
@@ -1852,7 +1852,7 @@ class TestCrossArchReconciliation(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(gen._resolve_stage_with_retry.await_count, 2)
 
         second_call_packages = gen._resolve_stage_with_retry.call_args_list[1][0][2]
-        self.assertIn("libeconf-0.4.1-5.el9", second_call_packages)
+        self.assertIn("libeconf-0.4.1-7.el9_8", second_call_packages)
 
     async def test_reconciliation_falls_back_on_error(self):
         gen = self._make_generator()
@@ -1937,7 +1937,7 @@ class TestCrossArchReconciliation(unittest.IsolatedAsyncioTestCase):
         second_update_targets = second_call[0][4]
         self.assertNotIn("python3-six", second_update_targets)
         second_packages = second_call[0][2]
-        self.assertTrue(any("python3-six-1.11.0-8.el8" in p for p in second_packages))
+        self.assertTrue(any("python3-six-1.12.0-2.el8ost" in p for p in second_packages))
 
 
 class TestIsBuilddepRequirement(unittest.TestCase):

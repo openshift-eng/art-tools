@@ -41,7 +41,7 @@ from doozerlib.lockfile_prototype.models import (
 )
 from doozerlib.lockfile_prototype.resolver import RpmResolver
 from doozerlib.lockfile_prototype.shell_parser import resolve_bash_expansion
-from doozerlib.lockfile_prototype.utils import format_version_pin, pick_minimum_evr
+from doozerlib.lockfile_prototype.utils import format_version_pin, pick_maximum_evr
 from doozerlib.repos import Repos
 
 
@@ -1200,18 +1200,26 @@ class RpmLockfilePrototypeGenerator:
     def _compute_version_pins(mismatches: dict[str, dict[str, str]]) -> list[str]:
         """
         Compute version-pinned DNF package specs from cross-arch mismatches.
-        Picks the minimum (oldest) version for each package.
+        Picks the maximum (newest) version for each package.
+
+        Pinning to the newest version (rather than the oldest) avoids
+        creating unsatisfiable dependencies on arches whose newer
+        transitive requirements (e.g. an arch-conditional Dockerfile
+        package pulling in a newer libxml2/libstdc++/etc.) demand it. The
+        newest version observed across arches is, by definition, already
+        available in the repos for at least one arch, and RHEL repos
+        typically carry the same latest package build for all arches.
 
         Arg(s):
             mismatches (dict[str, dict[str, str]]): From _detect_cross_arch_mismatches.
         Return Value(s):
             list[str]: Version-pinned package specs for DNF
-                (e.g., ["libeconf-0.4.1-5.el9"]).
+                (e.g., ["libeconf-0.4.1-7.el9_8"]).
         """
         pins: list[str] = []
         for name, arch_evrs in sorted(mismatches.items()):
-            min_evr = pick_minimum_evr(list(arch_evrs.values()))
-            pins.append(format_version_pin(name, min_evr))
+            max_evr = pick_maximum_evr(list(arch_evrs.values()))
+            pins.append(format_version_pin(name, max_evr))
         return pins
 
     async def _resolve_with_reconciliation(

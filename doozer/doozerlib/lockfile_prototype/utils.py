@@ -66,6 +66,22 @@ def pick_minimum_evr(evrs: list[str]) -> str:
     return result
 
 
+def pick_maximum_evr(evrs: list[str]) -> str:
+    """
+    Return the newest EVR from a list using RPM version comparison.
+
+    Arg(s):
+        evrs (list[str]): EVR strings to compare.
+    Return Value(s):
+        str: The maximum (newest) EVR.
+    """
+    result = evrs[0]
+    for evr in evrs[1:]:
+        if compare_evr(evr, result) > 0:
+            result = evr
+    return result
+
+
 def format_version_pin(name: str, evr: str) -> str:
     """
     Format a version-pinned DNF package spec from name and EVR.
