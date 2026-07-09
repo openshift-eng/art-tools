@@ -217,16 +217,18 @@ async def build_plashets(
     data_gitref: str = '',
     copy_links: bool = False,
     dry_run: bool = False,
+    version: str | None = None,
 ) -> dict:
     """
     Unless no RPMs have changed, create multiple yum repos (one for each arch) of RPMs
     based on -candidate tags. Based on release state, those repos can be signed
     (release state) or unsigned (pre-release state)
 
-    :param group: e.g. openshift-4.14
+    :param group: e.g. openshift-4.14 or golang
     :param release: e.g. 202304181947.p?
     :param assembly: e.g. assembly name, defaults to 'stream'
     :param repos: (optional) limit the repos to build to this list. If empty, build all repos. e.g. ['rhel-8-server-ose-rpms']
+    :param version: (optional) OCP version for resolving MAJOR/MINOR vars in golang groups (e.g. '4.18'). Required for golang groups.
     :param doozer_working: Doozer working dir
     :param data_path: ocp-build-data fork to use
     :param data_gitref: Doozer data path git [branch / tag / sha] to use
@@ -250,11 +252,22 @@ async def build_plashets(
     """
 
     # major, minor = stream.split('.')  # e.g. ('4', '14') from '4.14'
+    extra_vars = []
     revision = release.replace('.p?', '')  # e.g. '202304181947' from '202304181947.p?'
+
+    # For golang groups, use version parameter to inject MAJOR/MINOR vars
+    is_golang_group = group.startswith('golang')
+    if is_golang_group and version:
+        major, minor = version.split('.')
+        extra_vars = [f"MAJOR=${major}", f"MINOR={minor}"]
 
     # Load group config
     group_config = await util.load_group_config(
-        group=group, assembly=assembly, doozer_data_path=data_path, doozer_data_gitref=data_gitref
+        group=group,
+        assembly=assembly,
+        doozer_data_path=data_path,
+        doozer_data_gitref=data_gitref,
+        extra_vars=extra_vars,
     )
 
     # Check if assemblies are enabled for current group
@@ -371,6 +384,7 @@ async def build_plashets(
             data_path=data_path,
             dry_run=dry_run,
             doozer_working=doozer_working,
+            version=version,
         )
 
         logger.info('Plashet repo for %s created: %s', repo.name, local_path)
@@ -419,6 +433,7 @@ async def build_plashet_from_tags(
     data_path: str = constants.OCP_BUILD_DATA_URL,
     doozer_working: str = 'doozer-working',
     dry_run: bool = False,
+    version: str | None = None,
 ):
     """
     Builds Plashet repo with "from-tags"
@@ -432,16 +447,28 @@ async def build_plashet_from_tags(
         f'--data-path={data_path}',
         "--working-dir",
         doozer_working,
-        "--group",
-        group_param,
-        "--assembly",
-        assembly,
-        "config:plashet",
-        "--base-dir",
-        str(base_dir),
-        "--name",
-        name,
     ]
+
+    # Add MAJOR/MINOR vars for golang groups when version is provided
+    # This is used by golang update pipeline to inject version for monobranch groups
+    is_golang_group = group_param.startswith('golang')  # Handle group@gitref format
+    if is_golang_group and version:
+        major, minor = version.split('.')
+        cmd.extend(['--var', f'MAJOR={major}', '--var', f'MINOR={minor}'])
+
+    cmd.extend(
+        [
+            "--group",
+            group_param,
+            "--assembly",
+            assembly,
+            "config:plashet",
+            "--base-dir",
+            str(base_dir),
+            "--name",
+            name,
+        ]
+    )
     if repo_subdir:
         cmd.extend(["--repo-subdir", repo_subdir])
     for arch in arches:

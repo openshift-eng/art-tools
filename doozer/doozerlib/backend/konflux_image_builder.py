@@ -278,32 +278,37 @@ class KonfluxImageBuilder:
                     image_pullspec = next((r['value'] for r in results if r['name'] == 'IMAGE_URL'), None)
                     image_digest = next((r['value'] for r in results if r['name'] == 'IMAGE_DIGEST'), None)
 
-                    definitive_image_pullspec = f"{image_pullspec.split(':')[0]}@{image_digest}"
-                    record["image_pullspec"] = definitive_image_pullspec
+                    # In dry-run mode, the simulated PipelineRun has no results, so skip operations requiring them
+                    if image_pullspec and image_digest:
+                        definitive_image_pullspec = f"{image_pullspec.split(':')[0]}@{image_digest}"
+                        record["image_pullspec"] = definitive_image_pullspec
 
-                    image_tag = image_pullspec.split(':')[-1]
-                    record["image_tag"] = image_tag
+                        image_tag = image_pullspec.split(':')[-1]
+                        record["image_tag"] = image_tag
 
-                    # Validate SLSA attestation and source image signature
-                    # Skip for non-OCP groups (e.g., OKD) as they may not have attestations/signatures
-                    is_ocp_group = self._config.group_name.startswith("openshift-")
-                    if is_ocp_group:
-                        try:
-                            # use image_digest here to be precise, image_pullspec can collide in case of golang-builder images
-                            await self._validate_build_attestation_and_signature(
-                                definitive_image_pullspec, metadata.distgit_key
+                        # Validate SLSA attestation and source image signature
+                        # Skip for non-OCP groups (e.g., OKD) as they may not have attestations/signatures
+                        is_ocp_group = self._config.group_name.startswith("openshift-")
+                        if is_ocp_group:
+                            try:
+                                # use image_digest here to be precise, image_pullspec can collide in case of golang-builder images
+                                await self._validate_build_attestation_and_signature(
+                                    definitive_image_pullspec, metadata.distgit_key
+                                )
+                            except Exception as e:
+                                logger.error(
+                                    f"Failed to get SLA attestation / source signature from konflux for image {definitive_image_pullspec}, marking build as {KonfluxBuildOutcome.BUILD_ERROR}. Error: {e}"
+                                )
+                                outcome = KonfluxBuildOutcome.BUILD_ERROR
+                        else:
+                            logger.info(
+                                "Skipping SLSA attestation validation for %s: non-OCP group '%s'",
+                                metadata.distgit_key,
+                                self._config.group_name,
                             )
-                        except Exception as e:
-                            logger.error(
-                                f"Failed to get SLA attestation / source signature from konflux for image {definitive_image_pullspec}, marking build as {KonfluxBuildOutcome.BUILD_ERROR}. Error: {e}"
-                            )
-                            outcome = KonfluxBuildOutcome.BUILD_ERROR
-                    else:
-                        logger.info(
-                            "Skipping SLSA attestation validation for %s: non-OCP group '%s'",
-                            metadata.distgit_key,
-                            self._config.group_name,
-                        )
+                    elif not self._config.dry_run:
+                        # This should never happen in real builds - only expected in dry-run mode
+                        raise IOError(f"PipelineRun succeeded but IMAGE_URL or IMAGE_DIGEST missing from results")
 
                 # Run enterprise-contract (EC) verification after a successful build
                 # TODO: Expand EC verification to layered products
@@ -315,6 +320,8 @@ class KonfluxImageBuilder:
                     and is_ocp_group
                     and not self._config.skip_ec_verify
                     and metadata.for_release
+                    and image_pullspec  # EC requires actual build results
+                    and image_digest
                 )
                 if should_run_ec:
                     app_name = util.konflux_application_name(self._config.group_name)
@@ -380,7 +387,12 @@ class KonfluxImageBuilder:
                     # One completion record per attempt. Base images trigger snapshot→release (digest pullspec)
                     # before persisting SUCCESS or FAILURE so Jenkins/batch workflows can query SUCCESS rows.
                     release_result: Optional[BaseImageReleaseResult] = None
-                    if outcome is KonfluxBuildOutcome.SUCCESS and metadata.should_trigger_base_image_release():
+                    if (
+                        outcome is KonfluxBuildOutcome.SUCCESS
+                        and metadata.should_trigger_base_image_release()
+                        and image_pullspec
+                        and image_digest
+                    ):
                         release_result = await self._trigger_base_image_release(
                             metadata, nvr, definitive_image_pullspec, build_repo
                         )

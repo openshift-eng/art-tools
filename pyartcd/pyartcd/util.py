@@ -82,6 +82,7 @@ async def load_group_config(
     env=None,
     doozer_data_path: str = constants.OCP_BUILD_DATA_URL,
     doozer_data_gitref: str = '',
+    extra_vars: List = [],
 ) -> Dict:
     if doozer_data_gitref:
         group += f'@{doozer_data_gitref}'
@@ -89,6 +90,7 @@ async def load_group_config(
         "doozer",
         f"--data-path={doozer_data_path}",
         "--group",
+        *[param for extra_var in extra_vars for param in ['--var', extra_var]],
         group,
         "--assembly",
         assembly,

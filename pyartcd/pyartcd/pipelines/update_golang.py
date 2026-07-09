@@ -608,19 +608,21 @@ class UpdateGolangPipeline:
         _LOGGER.info("Building golang plashets for go %s, RHEL versions: %s", go_v, list(el_versions))
 
         for el_v in el_versions:
-            group = f"rhel-{el_v}-golang-{go_v}"
+            group = self.GOLANG_DATA_BRANCH
             repo_name = f"rhel-{el_v}-golang-rpms"
             _LOGGER.info("Triggering plashet build for group=%s, repo=%s", group, repo_name)
             await self._slack_client.say_in_thread(f"Building golang plashet: group={group}, repo={repo_name}")
-            if self.dry_run:
-                _LOGGER.info("[DRY RUN] Would have triggered build-plashets for %s", group)
-                continue
+
+            # Pass OCP version as VERSION param so build-plashets can resolve MAJOR/MINOR vars
+            # The monobranch golang group.yml uses {MAJOR}/{MINOR} placeholders that need to be resolved
             result = jenkins.start_build_plashets(
                 group=group,
                 release=default_release_suffix(),
                 assembly="stream",
                 repos=[repo_name],
+                version=self.ocp_version,
                 block_until_complete=True,
+                dry_run=self.dry_run,
             )
             if result != "SUCCESS":
                 raise RuntimeError(f"Plashet build for {group} failed with result: {result}")

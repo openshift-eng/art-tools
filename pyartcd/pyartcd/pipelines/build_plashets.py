@@ -22,7 +22,16 @@ class RpmMirror:
 
 class BuildPlashetsPipeline:
     def __init__(
-        self, runtime: Runtime, group, release, assembly, repos=None, data_path='', data_gitref='', copy_links=False
+        self,
+        runtime: Runtime,
+        group,
+        release,
+        assembly,
+        repos=None,
+        data_path='',
+        data_gitref='',
+        copy_links=False,
+        version=None,
     ):
         self.runtime = runtime
         self.group = group
@@ -32,6 +41,7 @@ class BuildPlashetsPipeline:
         self.data_path = data_path
         self.data_gitref = data_gitref
         self.copy_links = copy_links
+        self.version = version
 
         self.slack_client = runtime.new_slack_client()
 
@@ -72,6 +82,7 @@ class BuildPlashetsPipeline:
                 data_gitref=self.data_gitref,
                 copy_links=self.copy_links,
                 dry_run=self.runtime.dry_run,
+                version=self.version,
             )
             self.runtime.logger.info('Built plashets: %s', json.dumps(plashets_built, indent=4))
 
@@ -143,6 +154,12 @@ class BuildPlashetsPipeline:
 )
 @click.option('--data-gitref', required=False, default='', help='Doozer data path git [branch / tag / sha] to use')
 @click.option('--copy-links', is_flag=True, default=False, help='Call rsync with --copy-links instead of --links')
+@click.option(
+    '--version',
+    required=False,
+    default='',
+    help='OCP version for resolving MAJOR/MINOR vars in golang groups (e.g. 4.18). Required for golang groups, ignored for other groups.',
+)
 @pass_runtime
 @click_coroutine
 async def build_plashets_cli(
@@ -154,11 +171,26 @@ async def build_plashets_cli(
     data_path: str,
     data_gitref: str,
     copy_links: bool,
+    version: str,
 ):
     # Auto-generate release timestamp if not provided
     if not release:
         release = util.default_release_suffix()
         runtime.logger.info(f'Auto-generated release timestamp: {release}')
+
+    # Validate version parameter for golang groups
+    is_golang_group = group.startswith('golang')
+    if is_golang_group and not version:
+        raise click.BadParameter(
+            f"Version parameter is required for golang groups (group: {group}). "
+            "Please provide --version (e.g., --version 4.18)"
+        )
+
+    if not is_golang_group and version:
+        runtime.logger.warning(
+            f"Version parameter '{version}' will be ignored for non-golang group '{group}'. "
+            "Version is only used for golang groups."
+        )
 
     pipeline = BuildPlashetsPipeline(
         runtime=runtime,
@@ -169,6 +201,7 @@ async def build_plashets_cli(
         data_path=data_path,
         data_gitref=data_gitref,
         copy_links=copy_links,
+        version=version or None,
     )
 
     lock = Lock.PLASHET
