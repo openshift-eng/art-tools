@@ -146,28 +146,26 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
                     },
                 },
             },
-            'listDigest': 'sha256:abc123',
-            'contentDigest': 'sha256:abc123',
+            'listDigest': 'sha256:listdigest123',
+            'contentDigest': 'sha256:contentdigest456',
         }
         mock_oc_image_info.return_value = mock_image_info
 
         # Mock group_config with MAJOR=4
         self.rebaser._group_config.get.side_effect = lambda key, default=None: {
             'csv_namespace': 'namespace',
-            'operator_image_ref_mode': 'manifest-list'
         }.get(key, default)
         self.rebaser._group_config.vars = {'MAJOR': 4}
+        self.rebaser._group_config.operator_image_ref_mode = 'manifest-list'  # Uses listDigest
 
         metadata = MagicMock()
         metadata.runtime.group = "openshift-4.19"
         metadata.runtime.data_dir = "/tmp/nonexistent"
 
-        new_content, _ = await self.rebaser._replace_image_references(
-            old_registry, content, Engine.KONFLUX, metadata
-        )
+        new_content, _ = await self.rebaser._replace_image_references(old_registry, content, Engine.KONFLUX, metadata)
 
-        # Should use openshift4 namespace
-        self.assertIn('registry.redhat.io/openshift4/image@sha256:abc123', new_content)
+        # Should use openshift4 namespace and listDigest (manifest-list mode)
+        self.assertIn('registry.redhat.io/openshift4/image@sha256:listdigest123', new_content)
 
     @patch("doozerlib.util.oc_image_info_for_arch_async")
     async def test_replace_image_references_ocp5_namespace(self, mock_oc_image_info):
@@ -184,28 +182,26 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
                     },
                 },
             },
-            'listDigest': 'sha256:def456',
-            'contentDigest': 'sha256:def456',
+            'listDigest': 'sha256:listdigest789',
+            'contentDigest': 'sha256:contentdigestabc',
         }
         mock_oc_image_info.return_value = mock_image_info
 
         # Mock group_config with MAJOR=5
         self.rebaser._group_config.get.side_effect = lambda key, default=None: {
             'csv_namespace': 'namespace',
-            'operator_image_ref_mode': 'manifest-list'
         }.get(key, default)
         self.rebaser._group_config.vars = {'MAJOR': 5}
+        self.rebaser._group_config.operator_image_ref_mode = 'by-arch'  # Uses contentDigest
 
         metadata = MagicMock()
         metadata.runtime.group = "openshift-5.0"
         metadata.runtime.data_dir = "/tmp/nonexistent"
 
-        new_content, _ = await self.rebaser._replace_image_references(
-            old_registry, content, Engine.KONFLUX, metadata
-        )
+        new_content, _ = await self.rebaser._replace_image_references(old_registry, content, Engine.KONFLUX, metadata)
 
-        # Should use openshift5 namespace
-        self.assertIn('registry.redhat.io/openshift5/image@sha256:def456', new_content)
+        # Should use openshift5 namespace and contentDigest (by-arch mode)
+        self.assertIn('registry.redhat.io/openshift5/image@sha256:contentdigestabc', new_content)
 
     def test_operator_index_mode(self):
         # Test when operator_index_mode is 'pre-release'
