@@ -1053,7 +1053,7 @@ class RpmLockfilePrototypeGenerator:
         # reachable via upgrade, since they're excluded from reinstall
         # above) with no way to appear in the lockfile at all.
         promote_reinstall_to_upgrade = False
-        self.upgrades_dropped = True
+        self.upgrades_dropped = not remaining_update_targets
 
         return await self._resolve_fallback(
             repo_list,

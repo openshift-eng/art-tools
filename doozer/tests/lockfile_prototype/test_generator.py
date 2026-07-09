@@ -754,7 +754,10 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
             )
             asyncio.run(generator.generate_lockfile(meta, dest_dir))
 
-        self.assertTrue(generator.upgrades_dropped)
+        # Upgrade targets survived (python3-setuptools is still there),
+        # so upgrades_dropped must be False — the rebaser must keep the
+        # dnf update command so the resolved upgrade RPMs are applied.
+        self.assertFalse(generator.upgrades_dropped)
         # Fallback should have been reached (5 main-loop retries exhausted).
         # Some later calls are _recover_stripped_per_arch attempts for the
         # noise packages (unrelated to this assertion), so check across all
@@ -876,6 +879,40 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
         # fail since it's genuinely unavailable everywhere).
         fallback_config = generator._resolver.resolve.call_args_list[1][0][0]
         self.assertEqual(fallback_config.upgradePackages, [])
+
+    def test_fallback_keeps_upgrades_when_targets_remain(self):
+        """
+        When the retry loop exhausts but upgrade targets survive the
+        stripping, upgrades_dropped must be False so the rebaser keeps
+        the dnf update command and the resolved upgrade RPMs are applied
+        at build time.
+        """
+        meta = self._make_mock_image_meta()
+        meta.config.konflux.cachi2.lockfile.get.return_value = None
+        generator = self._make_generator()
+        generator.downstream_parents = ["quay.io/test/base@sha256:abc123"]
+        # 5 bad packages exhaust the retry loop, 1 good upgrade target survives
+        failing_pkgs = [f"bad-{i}" for i in range(5)]
+        generator._container.get_installed_packages = AsyncMock(return_value=["glibc"] + failing_pkgs)
+
+        async def mock_resolve(config, image_pullspec=None):
+            pkg_names = [p if isinstance(p, str) else p.name for p in (config.packages or [])]
+            pkg_names += config.reinstallPackages or []
+            pkg_names += config.upgradePackages or []
+            for pkg in failing_pkgs:
+                if pkg in pkg_names:
+                    raise RuntimeError(f"No match for argument: {pkg}")
+            return FAKE_LOCKFILE_DATA.model_copy(deep=True)
+
+        generator._resolver.resolve = AsyncMock(side_effect=mock_resolve)
+
+        with TemporaryDirectory() as tmpdir:
+            dest_dir = Path(tmpdir)
+            (dest_dir / "Dockerfile").write_text("FROM base\nRUN dnf upgrade -y && dnf install -y curl\n")
+            asyncio.run(generator.generate_lockfile(meta, dest_dir))
+
+        # glibc upgrade target survived → upgrades not dropped
+        self.assertFalse(generator.upgrades_dropped)
 
     def test_fallback_packages_used_when_image_unreachable(self):
         """
