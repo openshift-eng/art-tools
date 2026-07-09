@@ -1939,6 +1939,136 @@ class TestCrossArchReconciliation(unittest.IsolatedAsyncioTestCase):
         second_packages = second_call[0][2]
         self.assertTrue(any("python3-six-1.11.0-8.el8" in p for p in second_packages))
 
+    def test_detect_partial_arch_upgrades_basic(self):
+        """
+        Upgrade target present on 1 of 4 arches is flagged as partial.
+        """
+        lockfile = self._make_lockfile(
+            {
+                "x86_64": [("libsemanage", "3.6-2.1.el9_4", "https://x86/libsemanage.rpm")],
+                "aarch64": [],
+                "ppc64le": [],
+                "s390x": [],
+            }
+        )
+        result = RpmLockfilePrototypeGenerator._detect_partial_arch_upgrades(
+            lockfile,
+            ["x86_64", "aarch64", "ppc64le", "s390x"],
+            ["libsemanage"],
+            set(),
+        )
+        self.assertEqual(result, {"libsemanage"})
+
+    def test_detect_partial_arch_upgrades_ignores_stripped(self):
+        """
+        Package already in stripped_tracker should not be flagged.
+        """
+        lockfile = self._make_lockfile(
+            {
+                "x86_64": [("dmidecode", "3.3-4.el9", "https://x86/dmidecode.rpm")],
+                "aarch64": [],
+            }
+        )
+        result = RpmLockfilePrototypeGenerator._detect_partial_arch_upgrades(
+            lockfile,
+            ["x86_64", "aarch64"],
+            ["dmidecode"],
+            {"dmidecode"},
+        )
+        self.assertEqual(result, set())
+
+    def test_detect_partial_arch_upgrades_all_arches_present(self):
+        """
+        Upgrade target present on all arches should not be flagged.
+        """
+        lockfile = self._make_lockfile(
+            {
+                "x86_64": [("curl", "7.76-2.el9", "https://x86/curl.rpm")],
+                "aarch64": [("curl", "7.76-2.el9", "https://arm/curl.rpm")],
+            }
+        )
+        result = RpmLockfilePrototypeGenerator._detect_partial_arch_upgrades(
+            lockfile,
+            ["x86_64", "aarch64"],
+            ["curl"],
+            set(),
+        )
+        self.assertEqual(result, set())
+
+    def test_detect_partial_arch_upgrades_no_update_targets(self):
+        """
+        Empty update_targets produces empty result.
+        """
+        lockfile = self._make_lockfile(
+            {
+                "x86_64": [("curl", "7.76-2.el9", "https://x86/curl.rpm")],
+                "aarch64": [],
+            }
+        )
+        result = RpmLockfilePrototypeGenerator._detect_partial_arch_upgrades(
+            lockfile,
+            ["x86_64", "aarch64"],
+            [],
+            set(),
+        )
+        self.assertEqual(result, set())
+
+    def test_detect_partial_arch_upgrades_non_upgrade_target_ignored(self):
+        """
+        Package present on only some arches but NOT an upgrade target
+        should not be flagged.
+        """
+        lockfile = self._make_lockfile(
+            {
+                "x86_64": [("custom-pkg", "1.0-1.el9", "https://x86/custom.rpm")],
+                "aarch64": [],
+            }
+        )
+        result = RpmLockfilePrototypeGenerator._detect_partial_arch_upgrades(
+            lockfile,
+            ["x86_64", "aarch64"],
+            ["other-pkg"],
+            set(),
+        )
+        self.assertEqual(result, set())
+
+    async def test_reconciliation_strips_partial_arch_upgrades(self):
+        """
+        When first pass has a partial-arch upgrade target, it should
+        be stripped before mismatch detection, preventing the package
+        from appearing in the final lockfile.
+        """
+        gen = self._make_generator()
+        first_pass = self._make_lockfile(
+            {
+                "x86_64": [
+                    ("curl", "7.76-1.el9", "https://x86/curl.rpm"),
+                    ("libsemanage", "3.6-2.1.el9_4", "https://x86/libsemanage.rpm"),
+                ],
+                "aarch64": [
+                    ("curl", "7.76-1.el9", "https://arm/curl.rpm"),
+                ],
+            }
+        )
+        gen._resolve_stage_with_retry = AsyncMock(return_value=first_pass)
+
+        result = await gen._resolve_with_reconciliation(
+            [],
+            ["x86_64", "aarch64"],
+            ["curl"],
+            {},
+            ["libsemanage"],
+            "quay.io/test/base@sha256:abc123",
+            "test-image",
+            0,
+        )
+        x86_names = {p.name for p in result.arches[0].packages}
+        arm_names = {p.name for p in result.arches[1].packages}
+        self.assertNotIn("libsemanage", x86_names)
+        self.assertIn("curl", x86_names)
+        self.assertIn("curl", arm_names)
+        gen.logger.warning.assert_called()
+
 
 class TestIsBuilddepRequirement(unittest.TestCase):
     def test_accepts_package_name(self):
