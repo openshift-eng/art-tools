@@ -730,7 +730,7 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
         # installed; the other 5 are pure base image noise that will each
         # fail resolution in turn, exhausting the main retry loop.
         failing_pkgs = [f"base-noise-{i}" for i in range(5)]
-        generator._container.get_installed_packages = AsyncMock(return_value=["python3-setuptools"] + failing_pkgs)
+        generator._container.get_installed_packages = AsyncMock(return_value=["python3-setuptools", *failing_pkgs])
 
         call_count = 0
 
@@ -893,7 +893,7 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
         generator.downstream_parents = ["quay.io/test/base@sha256:abc123"]
         # 5 bad packages exhaust the retry loop, 1 good upgrade target survives
         failing_pkgs = [f"bad-{i}" for i in range(5)]
-        generator._container.get_installed_packages = AsyncMock(return_value=["glibc"] + failing_pkgs)
+        generator._container.get_installed_packages = AsyncMock(return_value=["glibc", *failing_pkgs])
 
         async def mock_resolve(config, image_pullspec=None):
             pkg_names = [p if isinstance(p, str) else p.name for p in (config.packages or [])]
@@ -1259,8 +1259,8 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
         # Dockerfile packages: git, gzip, util-linux
         # Base image packages (reinstall + strippable): git, gzip, + 5 failing base pkgs
         # "git" and "gzip" are in both — they must stay in reinstall after fallback
-        all_packages = ["git", "gzip", "util-linux"] + failing_pkgs
-        reinstall = ["git", "gzip"] + failing_pkgs
+        all_packages = ["git", "gzip", "util-linux", *failing_pkgs]
+        reinstall = ["git", "gzip", *failing_pkgs]
         strippable = set(failing_pkgs)
 
         result = asyncio.run(
@@ -1321,8 +1321,8 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
         # util-linux is a Dockerfile package AND a base image package.
         # It must stay in reinstallPackages (graceful skip if missing)
         # but NOT appear in upgradePackages (throws if not installed).
-        all_packages = ["util-linux", "curl"] + failing_pkgs
-        reinstall = ["util-linux", "curl"] + failing_pkgs
+        all_packages = ["util-linux", "curl", *failing_pkgs]
+        reinstall = ["util-linux", "curl", *failing_pkgs]
         strippable = set(failing_pkgs)
 
         result = asyncio.run(
@@ -1384,13 +1384,13 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
             generator._resolve_stage_with_retry(
                 repo_list=repos,
                 arches=["x86_64", "aarch64"],
-                packages=["git", "python3-six"] + failing_pkgs,
+                packages=["git", "python3-six", *failing_pkgs],
                 arch_pkgs={},
                 update_targets=["python3-six"],
                 image_pullspec="quay.io/test/base@sha256:abc123",
                 distgit_key="openshift-enterprise-tests",
                 stage_num=1,
-                reinstall_packages=["git", "python3-six"] + failing_pkgs,
+                reinstall_packages=["git", "python3-six", *failing_pkgs],
                 strippable_packages=set(failing_pkgs),
             )
         )
@@ -1439,7 +1439,7 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
             generator._resolve_stage_with_retry(
                 repo_list=repos,
                 arches=["x86_64", "aarch64"],
-                packages=["git", "dmidecode"] + failing_pkgs,
+                packages=["git", "dmidecode", *failing_pkgs],
                 arch_pkgs={},
                 update_targets=[],
                 image_pullspec="quay.io/test/base@sha256:abc123",

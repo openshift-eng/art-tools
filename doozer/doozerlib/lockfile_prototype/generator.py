@@ -1356,7 +1356,8 @@ class RpmLockfilePrototypeGenerator:
 
         pinned_packages = list(packages) + version_pins
         pinned_names = set(mismatches.keys())
-        pinned_update_targets = [t for t in update_targets if t not in pinned_names]
+        excluded = pinned_names | partial_arch
+        pinned_update_targets = [t for t in update_targets if t not in excluded]
         pinned_reinstall = (
             [p for p in reinstall_packages if p not in pinned_names] if reinstall_packages else reinstall_packages
         )
@@ -1393,6 +1394,8 @@ class RpmLockfilePrototypeGenerator:
             )
             return first_pass
 
+        if partial_arch:
+            self._strip_packages_from_lockfile(second_pass, partial_arch)
         self.logger.info(f"{distgit_key}: stage {stage_num}: cross-arch versions reconciled successfully")
         return second_pass
 
