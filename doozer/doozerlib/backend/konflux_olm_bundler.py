@@ -462,8 +462,11 @@ class KonfluxOlmBundleRebaser:
             if not metadata.runtime.group.startswith("openshift-"):
                 new_namespace = namespace
             else:
+                # Derive default delivery namespace from MAJOR version (openshift5 for OCP 5.x, openshift4 for older)
+                major = int(self._group_config.vars.get('MAJOR', 4))
+                default_delivery_namespace = f'openshift{major}' if major >= 5 else 'openshift4'
                 new_namespace = (
-                    _delivery_namespace_map.get(image_short_name, 'openshift4')
+                    _delivery_namespace_map.get(image_short_name, default_delivery_namespace)
                     if namespace == csv_namespace
                     else namespace
                 )
