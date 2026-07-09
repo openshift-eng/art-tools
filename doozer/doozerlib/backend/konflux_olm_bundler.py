@@ -418,6 +418,16 @@ class KonfluxOlmBundleRebaser:
 
         # Replace ART-built image references in the content
         csv_namespace = self._group_config.get('csv_namespace', 'openshift')
+        # Derive default delivery namespace from MAJOR version (openshift5 for OCP 5.x, openshift4 for older)
+        try:
+            major = int(self._group_config.vars.get('MAJOR', 4))
+        except (ValueError, TypeError) as e:
+            # MAJOR should always be a valid integer in group.yml; if not, this is a config error
+            raise ValueError(
+                f"Invalid MAJOR version in group config for {metadata.runtime.group}: "
+                f"{self._group_config.vars.get('MAJOR')}"
+            ) from e
+        default_delivery_namespace = f'openshift{major}' if major >= 5 else 'openshift4'
         # Build a map of image short name -> delivery override short name for images that have
         # delivery_repo_name_override set. This allows operators to reference images using a
         # versioned internal name (e.g. ose-csi-livenessprobe-4.18-rhel9) while having them
@@ -462,9 +472,6 @@ class KonfluxOlmBundleRebaser:
             if not metadata.runtime.group.startswith("openshift-"):
                 new_namespace = namespace
             else:
-                # Derive default delivery namespace from MAJOR version (openshift5 for OCP 5.x, openshift4 for older)
-                major = int(self._group_config.vars.get('MAJOR', 4))
-                default_delivery_namespace = f'openshift{major}' if major >= 5 else 'openshift4'
                 new_namespace = (
                     _delivery_namespace_map.get(image_short_name, default_delivery_namespace)
                     if namespace == csv_namespace
