@@ -32,7 +32,7 @@ async def check_build_sync(ocp_version: str) -> CheckResult:
     try:
         try:
             await asyncio.to_thread(jenkins.init_jenkins)
-        except Exception:
+        except KeyError:
             return CheckResult(name="build_sync", status=Status.GREEN, summary="Skipped (no Jenkins credentials) ⏭️")
 
         data = await asyncio.to_thread(_query_jenkins_build_sync)

@@ -41,9 +41,17 @@ async def release_readiness(
         artcd release-readiness --group openshift-4.20 --group openshift-4.21 --output-file report.json
     """
 
-    reports = await asyncio.gather(*[ReleaseReadinessPipeline(runtime, group, build_system).run() for group in groups])
+    results = await asyncio.gather(
+        *[ReleaseReadinessPipeline(runtime, group, build_system).run() for group in groups],
+        return_exceptions=True,
+    )
 
-    report_by_group = {report.group: report.model_dump(mode="json") for report in reports}
+    report_by_group = {}
+    for group, result in zip(groups, results):
+        if isinstance(result, Exception):
+            _LOGGER.error("Failed to check readiness for %s: %s", group, result)
+            continue
+        report_by_group[result.group] = result.model_dump(mode="json")
     with open(output_file, "w") as f:
         json.dump(report_by_group, f, indent=2, ensure_ascii=False)
     _LOGGER.info("JSON report written to %s", output_file)

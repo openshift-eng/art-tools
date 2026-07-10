@@ -45,14 +45,18 @@ async def check_blocker_bugs(group: str, doozer_working: str) -> CheckResult:
     try:
         _, stdout, _ = await exectools.cmd_gather_async(cmd)
         bugs = json.loads(stdout) if stdout.strip() else []
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as e:
         match = re.search(r"Found ([0-9]+) bugs", str(stdout))
-        count = int(match[1]) if match else 0
-        if count > 0:
+        count = int(match[1]) if match else None
+        if count and count > 0:
             return CheckResult(
                 name="blocker_bugs", status=Status.RED, summary=f"{count} blocker bug(s) (details unavailable) ❌"
             )
-        bugs = []
+        if count == 0:
+            bugs = []
+        else:
+            _LOGGER.warning("Could not parse blocker bugs output for %s: %s", group, e)
+            return error_result("blocker_bugs", Status.YELLOW, "Could not parse blocker bugs output", e)
     except Exception as e:
         _LOGGER.warning("Error checking blocker bugs for %s: %s", group, e)
         return error_result("blocker_bugs", Status.YELLOW, "Could not check blocker bugs", e)
