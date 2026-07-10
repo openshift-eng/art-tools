@@ -35,6 +35,9 @@ async def check_bundle_fbc_coverage(group: str, build_system: str, doozer_workin
 
     _LOGGER.info("Checking bundle/FBC coverage for %s", group)
 
+    if build_system != "konflux":
+        return CheckResult(name="bundle_fbc_coverage", status=Status.GREEN, summary="Skipped (Brew build system) ⏭️")
+
     try:
         operator_names = await _load_operator_names(group, build_system, doozer_working)
         if not operator_names:

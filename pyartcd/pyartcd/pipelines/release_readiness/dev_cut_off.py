@@ -5,6 +5,7 @@ Determines the next z-stream assembly name from releases.yml, then looks up
 its dev cut-off date from the PP schedule API.
 """
 
+import asyncio
 import logging
 import re
 from datetime import date, datetime
@@ -38,7 +39,7 @@ async def get_next_dev_cut_off(group: str, ocp_version: str) -> str | None:
         if not next_assembly:
             return None
 
-        cut_date = await _get_dev_cut_off_from_pp(next_assembly, ocp_version)
+        cut_date = await asyncio.to_thread(_get_dev_cut_off_from_pp, next_assembly, ocp_version)
         if not cut_date:
             return f"{next_assembly} — dev cut off not found in PP"
 
@@ -75,7 +76,7 @@ async def _get_next_assembly_name(group: str, ocp_version: str) -> str | None:
     reraise=True,
     before_sleep=lambda rs: _LOGGER.warning("PP request failed, retrying (attempt %d)...", rs.attempt_number),
 )
-async def _get_dev_cut_off_from_pp(assembly_name: str, ocp_version: str) -> date | None:
+def _get_dev_cut_off_from_pp(assembly_name: str, ocp_version: str) -> date | None:
     """
     Query Product Pages for the dev cut off date of a specific assembly.
     Retries the entire flow (auth + queries) on transient failures.
@@ -105,10 +106,11 @@ async def _get_dev_cut_off_from_pp(assembly_name: str, ocp_version: str) -> date
     resp = session.get(f"{PP_BASE_URL}/api/v7/schedules/{schedule_id}/tasks", timeout=30)
     resp.raise_for_status()
 
+    assembly_pattern = re.compile(rf"(?<!\d){re.escape(assembly_name)}(?!\d)")
     for task in resp.json():
         if "dev" not in task.get("flags", []):
             continue
-        if assembly_name not in task.get("name", ""):
+        if not assembly_pattern.search(task.get("name", "")):
             continue
         date_str = task.get("date_finish")
         if date_str:

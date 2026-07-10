@@ -35,15 +35,15 @@ class ReleaseReadinessPipeline:
         group: str,
         build_system: str,
     ):
+        major, minor = isolate_major_minor_in_group(group)
+
         self.runtime = runtime
         self.group = group
         self.build_system = build_system
-        self._doozer_working = str(runtime.working_dir / f"doozer_working-{group}")
-
-        major, minor = isolate_major_minor_in_group(group)
         self._ocp_version = f"{major}.{minor}"
         self._major = major
         self._minor = minor
+        self._doozer_working = str(runtime.working_dir / f"doozer_working-{self._ocp_version}")
 
     async def run(self) -> ReadinessReport:
         """

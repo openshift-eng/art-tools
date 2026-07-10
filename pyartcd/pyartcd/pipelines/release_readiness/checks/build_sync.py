@@ -2,6 +2,7 @@
 Build-sync check — queries Jenkins for the latest build-sync-konflux job status.
 """
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 
@@ -30,11 +31,11 @@ async def check_build_sync(ocp_version: str) -> CheckResult:
 
     try:
         try:
-            jenkins.init_jenkins()
+            await asyncio.to_thread(jenkins.init_jenkins)
         except Exception:
             return CheckResult(name="build_sync", status=Status.GREEN, summary="Skipped (no Jenkins credentials) ⏭️")
 
-        data = _query_jenkins_build_sync()
+        data = await asyncio.to_thread(_query_jenkins_build_sync)
         if data is None:
             return CheckResult(name="build_sync", status=Status.GREEN, summary="Could not query Jenkins ⚠️")
 
