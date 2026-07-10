@@ -42,7 +42,7 @@ from doozerlib.cli.release_gen_payload import (
     default_imagestream_namespace_base_name,
     payload_imagestream_namespace_and_name,
 )
-from elliottlib.errata import get_errata_live_id
+from elliottlib.errata import get_builds, get_errata_live_id
 from elliottlib.shipment_model import ShipmentConfig
 from elliottlib.shipment_utils import (
     get_shipment_config_from_mr,
@@ -319,6 +319,24 @@ class PromotePipeline:
                 logger.info("No blocker bugs found.")
 
             if assembly_type == AssemblyTypes.STANDARD:
+                # Check if the RPM advisory is empty and drop it if so, before attempting QE state change
+                rpm_advisory = impetus_advisories.get("rpm", 0)
+                if rpm_advisory and rpm_advisory > 0:
+                    try:
+                        dropped = await self._check_and_drop_empty_rpm_advisory(rpm_advisory)
+                        if dropped:
+                            logger.info("Dropped empty RPM advisory %s. Skipping QE state change for it.", rpm_advisory)
+                            await self._slack_client.say_in_thread(
+                                f"RPM advisory {rpm_advisory} has no builds attached and has been dropped."
+                            )
+                            impetus_advisories["rpm"] = -1
+                    except Exception as ex:
+                        logger.warn("Error checking/dropping RPM advisory %s: %s", rpm_advisory, ex)
+                        await self._slack_client.say_in_thread(
+                            f"Error checking RPM advisory {rpm_advisory} for builds: {ex}. "
+                            "Will still attempt to move it to QE."
+                        )
+
                 # Attempt to move all advisories to QE
                 tasks_with_args = []
                 for impetus, advisory in impetus_advisories.items():
@@ -1386,6 +1404,68 @@ class PromotePipeline:
             cmd.append("--dry-run")
         async with self._elliott_lock:
             await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars, stdout=sys.stderr)
+
+    async def _check_and_drop_empty_rpm_advisory(self, advisory: int) -> bool:
+        """Check if an RPM advisory has no builds attached, and if so, drop it.
+
+        This prevents the promote pipeline from failing when trying to move an
+        empty RPM advisory to QE state. If the advisory has no builds, it runs
+        ``elliott repair-bugs`` and ``elliott advisory-drop`` to clean it up.
+
+        :param advisory: The advisory number to check.
+        :return: True if the advisory was dropped (had no builds), False otherwise.
+        """
+        logger = self._logger
+        logger.info("Checking if RPM advisory %s has builds attached...", advisory)
+
+        builds = await exectools.to_thread(get_builds, advisory)
+        # get_builds returns a dict keyed by product version name, where each value
+        # is a dict with a "builds" key containing a list of build dicts.
+        # Example: {"RHEL-8-OSE-4.10": {"builds": [{"nvr-1.0-1.el8": {...}}]}}
+        # An advisory with no builds returns an empty dict or product versions with empty build lists.
+        has_builds = any(
+            pv_data.get("builds", [])
+            for pv_data in builds.values()
+        ) if builds else False
+
+        if has_builds:
+            logger.info("RPM advisory %s has builds attached, proceeding normally.", advisory)
+            return False
+
+        logger.warning("RPM advisory %s has no builds attached. Dropping advisory...", advisory)
+
+        if self.runtime.dry_run:
+            logger.warning("[DRY RUN] Would drop empty RPM advisory %s", advisory)
+            return True
+
+        # repair-bugs: move bugs back and close placeholders
+        repair_cmd = [
+            'elliott',
+            '--group', self.group,
+            'repair-bugs',
+            '--advisory', str(advisory),
+            '--auto',
+            '--comment',
+            'This bug will be dropped from current advisory because the advisory has no builds and will be dropped.',
+            '--close-placeholder',
+            '--from', 'RELEASE_PENDING',
+            '--to', 'VERIFIED',
+        ]
+        async with self._elliott_lock:
+            await exectools.cmd_assert_async(repair_cmd, env=self._elliott_env_vars)
+
+        # drop the advisory
+        drop_cmd = [
+            'elliott',
+            '--group', self.group,
+            'advisory-drop',
+            str(advisory),
+        ]
+        async with self._elliott_lock:
+            await exectools.cmd_assert_async(drop_cmd, env=self._elliott_env_vars)
+
+        logger.info("Successfully dropped empty RPM advisory %s", advisory)
+        return True
 
     async def check_blocker_bugs(self):
         # Note: --assembly option should always be "stream". We are checking blocker bugs for this release branch regardless of the sweep cutoff timestamp.

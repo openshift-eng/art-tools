@@ -632,6 +632,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         )
         pipeline.check_blocker_bugs = AsyncMock()
         pipeline.change_advisory_state_qe = AsyncMock()
+        pipeline._check_and_drop_empty_rpm_advisory = AsyncMock(return_value=False)
         pipeline.get_advisory_info = AsyncMock(
             return_value={
                 "id": 2,
@@ -654,6 +655,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             group='openshift-4.10', data_path='https://example.com/ocp-build-data.git'
         )
         pipeline.check_blocker_bugs.assert_awaited_once_with()
+        pipeline._check_and_drop_empty_rpm_advisory.assert_awaited_once_with(1)
         for advisory in [1, 2, 3, 4]:
             pipeline.change_advisory_state_qe.assert_any_await(advisory)
         pipeline.get_advisory_info.assert_awaited_once_with(2)
@@ -2257,3 +2259,280 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             call_args = cmd_gather_async.call_args[0][0]
             self.assertIn("find-bugs:blocker", call_args)
             self.assertNotIn("--exclude-bugs", call_args)
+
+    @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
+    @patch("pyartcd.pipelines.promote.get_builds")
+    @patch("pyartcd.pipelines.promote.exectools.cmd_assert_async")
+    async def test_check_and_drop_empty_rpm_advisory_with_builds(self, cmd_assert_async: AsyncMock, mock_get_builds: Mock, _):
+        """Test that _check_and_drop_empty_rpm_advisory returns False when advisory has builds."""
+        runtime = MagicMock(
+            config={
+                "build_config": {
+                    "ocp_build_data_url": "https://example.com/ocp-build-data.git",
+                },
+                "jira": {"url": JIRA_SERVER_URL},
+            },
+            dry_run=False,
+            logger=MagicMock(),
+            new_slack_client=MagicMock(return_value=AsyncMock()),
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            runtime.working_dir = Path(temp_dir)
+            pipeline = PromotePipeline(runtime, group="openshift-4.10", assembly="4.10.99", signing_env="prod")
+
+            # Mock get_builds to return builds (Errata API structure)
+            mock_get_builds.return_value = {
+                "RHEL-8-OSE-4.10": {
+                    "builds": [
+                        {"some-nvr-1.0-1.el8": {}}
+                    ]
+                }
+            }
+
+            result = await pipeline._check_and_drop_empty_rpm_advisory(12345)
+
+            self.assertFalse(result)
+            cmd_assert_async.assert_not_called()
+
+    @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
+    @patch("pyartcd.pipelines.promote.get_builds")
+    @patch("pyartcd.pipelines.promote.exectools.cmd_assert_async")
+    async def test_check_and_drop_empty_rpm_advisory_no_builds(self, cmd_assert_async: AsyncMock, mock_get_builds: Mock, _):
+        """Test that _check_and_drop_empty_rpm_advisory drops the advisory when it has no builds."""
+        runtime = MagicMock(
+            config={
+                "build_config": {
+                    "ocp_build_data_url": "https://example.com/ocp-build-data.git",
+                },
+                "jira": {"url": JIRA_SERVER_URL},
+            },
+            dry_run=False,
+            logger=MagicMock(),
+            new_slack_client=MagicMock(return_value=AsyncMock()),
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            runtime.working_dir = Path(temp_dir)
+            pipeline = PromotePipeline(runtime, group="openshift-4.10", assembly="4.10.99", signing_env="prod")
+
+            # Mock get_builds to return empty structure (no builds)
+            mock_get_builds.return_value = {}
+
+            result = await pipeline._check_and_drop_empty_rpm_advisory(12345)
+
+            self.assertTrue(result)
+            # Should have called repair-bugs and advisory-drop
+            self.assertEqual(cmd_assert_async.await_count, 2)
+            # Verify repair-bugs command
+            repair_call_args = cmd_assert_async.call_args_list[0][0][0]
+            self.assertIn("repair-bugs", repair_call_args)
+            self.assertIn("--advisory", repair_call_args)
+            self.assertIn("12345", repair_call_args)
+            # Verify advisory-drop command
+            drop_call_args = cmd_assert_async.call_args_list[1][0][0]
+            self.assertIn("advisory-drop", drop_call_args)
+            self.assertIn("12345", drop_call_args)
+
+    @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
+    @patch("pyartcd.pipelines.promote.get_builds")
+    @patch("pyartcd.pipelines.promote.exectools.cmd_assert_async")
+    async def test_check_and_drop_empty_rpm_advisory_dry_run(self, cmd_assert_async: AsyncMock, mock_get_builds: Mock, _):
+        """Test that _check_and_drop_empty_rpm_advisory does not run commands in dry-run mode."""
+        runtime = MagicMock(
+            config={
+                "build_config": {
+                    "ocp_build_data_url": "https://example.com/ocp-build-data.git",
+                },
+                "jira": {"url": JIRA_SERVER_URL},
+            },
+            dry_run=True,
+            logger=MagicMock(),
+            new_slack_client=MagicMock(return_value=AsyncMock()),
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            runtime.working_dir = Path(temp_dir)
+            pipeline = PromotePipeline(runtime, group="openshift-4.10", assembly="4.10.99", signing_env="prod",
+                                       skip_signing=True, skip_sigstore=True)
+
+            # Mock get_builds to return empty structure (no builds)
+            mock_get_builds.return_value = {}
+
+            result = await pipeline._check_and_drop_empty_rpm_advisory(12345)
+
+            self.assertTrue(result)
+            # Should NOT have called repair-bugs or advisory-drop in dry run
+            cmd_assert_async.assert_not_called()
+
+    @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
+    @patch("pyartcd.pipelines.promote.get_builds")
+    @patch("pyartcd.pipelines.promote.exectools.cmd_assert_async")
+    async def test_check_and_drop_empty_rpm_advisory_empty_product_versions(self, cmd_assert_async: AsyncMock, mock_get_builds: Mock, _):
+        """Test that advisory with product versions but no builds is treated as empty."""
+        runtime = MagicMock(
+            config={
+                "build_config": {
+                    "ocp_build_data_url": "https://example.com/ocp-build-data.git",
+                },
+                "jira": {"url": JIRA_SERVER_URL},
+            },
+            dry_run=False,
+            logger=MagicMock(),
+            new_slack_client=MagicMock(return_value=AsyncMock()),
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            runtime.working_dir = Path(temp_dir)
+            pipeline = PromotePipeline(runtime, group="openshift-4.10", assembly="4.10.99", signing_env="prod")
+
+            # Mock get_builds to return product versions with empty build lists
+            mock_get_builds.return_value = {
+                "RHEL-8-OSE-4.10": {
+                    "builds": []
+                }
+            }
+
+            result = await pipeline._check_and_drop_empty_rpm_advisory(12345)
+
+            self.assertTrue(result)
+            # Should have called repair-bugs and advisory-drop
+            self.assertEqual(cmd_assert_async.await_count, 2)
+
+    @patch("pyartcd.pipelines.promote.RegistryConfig")
+    @patch("pyartcd.locks.run_with_lock", new_callable=MagicMock)
+    @patch("pyartcd.pipelines.promote.PromotePipeline.sign_artifacts")
+    @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
+    @patch("pyartcd.jenkins.start_cincinnati_prs")
+    @patch("pyartcd.pipelines.promote.PromotePipeline.build_release_image", return_value=None)
+    @patch(
+        "pyartcd.pipelines.promote.get_release_image_info",
+        side_effect=lambda pullspec, raise_if_not_found=False, registry_config=None: {
+            "image": pullspec,
+            "digest": f"fake:deadbeef-{pullspec}",
+            "metadata": {
+                "version": "4.10.99",
+            },
+            "references": {
+                "spec": {
+                    "tags": [
+                        {
+                            "name": "machine-os-content",
+                            "annotations": {"io.openshift.build.versions": "machine-os=00.00.212301010000-0"},
+                        },
+                    ],
+                },
+                "metadata": {
+                    "annotations": {
+                        "release.openshift.io/from-release": 'registry.ci.openshift.org/ocp/release:nightly'
+                    }
+                },
+            },
+        }
+        if raise_if_not_found
+        else None,
+    )
+    @patch(
+        "pyartcd.pipelines.promote.util.load_releases_config",
+        return_value={
+            "releases": {"4.10.99": {"assembly": {"type": "standard"}}},
+        },
+    )
+    @patch(
+        "pyartcd.pipelines.promote.util.load_group_config",
+        return_value=Model(
+            {
+                "upgrades": "4.10.98,4.9.99",
+                "advisories": {"rpm": 1, "image": 2, "extras": 3, "metadata": 4},
+                "description": "whatever",
+                "arches": ["x86_64", "s390x", "ppc64le", "aarch64"],
+            }
+        ),
+    )
+    @patch("pyartcd.pipelines.promote.PromotePipeline.get_image_stream")
+    @patch("pyartcd.pipelines.promote.PromotePipeline.send_promote_complete_email")
+    @patch("pyartcd.pipelines.promote.PromotePipeline.create_cincinnati_prs")
+    @patch("pyartcd.pipelines.promote.PromotePipeline.verify_payload")
+    @patch("pyartcd.pipelines.promote.jenkins.start_rhcos_sync")
+    async def test_run_drops_empty_rpm_advisory(
+        self,
+        start_rhcos_sync: Mock,
+        verify_payload: AsyncMock,
+        create_cincinnati_prs: AsyncMock,
+        send_promote_complete_email: Mock,
+        get_image_stream: AsyncMock,
+        load_group_config: AsyncMock,
+        load_releases_config: AsyncMock,
+        get_release_image_info: AsyncMock,
+        build_release_image: AsyncMock,
+        start_cincinnati_prs: Mock,
+        from_url: Mock,
+        sign_artifacts: AsyncMock,
+        run_with_lock: AsyncMock,
+        mock_registry_config: MagicMock,
+    ):
+        """Test that an empty RPM advisory is dropped and skipped during QE state change."""
+
+        def fake_run_with_lock(*args, **kwargs):
+            async def inner():
+                return await kwargs["coro"]
+
+            return inner()
+
+        run_with_lock.side_effect = fake_run_with_lock
+        runtime = MagicMock(
+            config={
+                "build_config": {
+                    "ocp_build_data_url": "https://example.com/ocp-build-data.git",
+                },
+                "jira": {
+                    "url": JIRA_SERVER_URL,
+                },
+            },
+            working_dir=Path("/path/to/working"),
+            dry_run=False,
+        )
+        runtime.new_slack_client.return_value = AsyncMock()
+        runtime.new_slack_client.return_value.say.return_value = {'message': {'ts': ''}}
+        runtime.new_slack_client.return_value.bind_channel = MagicMock()
+        pipeline = await PromotePipeline.create(
+            runtime,
+            group="openshift-4.10",
+            assembly="4.10.99",
+            skip_mirror_binaries=True,
+            signing_env="prod",
+            skip_sigstore=True,
+        )
+        pipeline.check_blocker_bugs = AsyncMock()
+        pipeline.change_advisory_state_qe = AsyncMock()
+        # Mock _check_and_drop_empty_rpm_advisory to return True (advisory was dropped)
+        pipeline._check_and_drop_empty_rpm_advisory = AsyncMock(return_value=True)
+        pipeline.get_advisory_info = AsyncMock(
+            return_value={
+                "id": 2,
+                "errata_id": 2222,
+                "fulladvisory": "RHBA-2099:2222-02",
+                "status": "QE",
+            }
+        )
+        pipeline.verify_attached_bugs = AsyncMock(return_value=None)
+        pipeline.get_image_stream_tag = AsyncMock(return_value=None)
+        pipeline.tag_release = AsyncMock(return_value=None)
+        pipeline.wait_for_stable = AsyncMock(return_value=None)
+        pipeline.send_image_list_email = AsyncMock()
+        pipeline.is_accepted = AsyncMock(return_value=False)
+        pipeline.ocp_doomsday_backup = AsyncMock(return_value=None)
+        get_image_stream.return_value = {"status": {"tags": []}}
+        await pipeline.run()
+
+        # RPM advisory check was called with the original RPM advisory number
+        pipeline._check_and_drop_empty_rpm_advisory.assert_awaited_once_with(1)
+
+        # change_advisory_state_qe should NOT have been called with the RPM advisory (1)
+        # because it was dropped (set to -1), but should still be called for others
+        qe_call_advisories = [call.args[0] for call in pipeline.change_advisory_state_qe.call_args_list]
+        self.assertNotIn(1, qe_call_advisories)
+        # image, extras, metadata advisories should still be moved to QE
+        for advisory in [2, 3, 4]:
+            pipeline.change_advisory_state_qe.assert_any_await(advisory)
+
+        # Slack notification about the dropped advisory
+        pipeline._slack_client.say_in_thread.assert_any_call(
+            "RPM advisory 1 has no builds attached and has been dropped."
+        )
