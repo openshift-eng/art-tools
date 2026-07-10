@@ -42,7 +42,7 @@ from doozerlib.cli.release_gen_payload import (
     default_imagestream_namespace_base_name,
     payload_imagestream_namespace_and_name,
 )
-from elliottlib.errata import get_errata_live_id
+from elliottlib.errata import get_builds, get_errata_live_id
 from elliottlib.shipment_model import ShipmentConfig
 from elliottlib.shipment_utils import (
     get_shipment_config_from_mr,
@@ -75,6 +75,7 @@ from pyartcd.oc import (
     get_release_image_info_from_pullspec,
     get_release_image_pullspec,
 )
+from pyartcd.pipelines.advisory_drop import drop_advisory
 from pyartcd.runtime import GroupRuntime, Runtime
 from pyartcd.signatory import AsyncSignatory, SigstoreSignatory
 
@@ -319,6 +320,10 @@ class PromotePipeline:
                 logger.info("No blocker bugs found.")
 
             if assembly_type == AssemblyTypes.STANDARD:
+                # Check for empty advisories (no builds attached) and drop them
+                # before attempting to move to QE, which would fail for empty advisories.
+                await self._drop_empty_advisories(impetus_advisories)
+
                 # Attempt to move all advisories to QE
                 tasks_with_args = []
                 for impetus, advisory in impetus_advisories.items():
@@ -1386,6 +1391,76 @@ class PromotePipeline:
             cmd.append("--dry-run")
         async with self._elliott_lock:
             await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars, stdout=sys.stderr)
+
+    async def _drop_empty_advisories(self, impetus_advisories: Dict[str, int]):
+        """Check advisories that may legitimately have no builds and drop them.
+
+        RPM and RHCOS advisories can end up empty in z-stream releases when
+        there are no RPM or RHCOS changes.  Attempting to move an empty
+        advisory to QE would fail, so we proactively detect and drop them.
+
+        Dropped advisories are removed from *impetus_advisories* so they
+        are skipped by the QE loop and not leaked into downstream
+        notifications or repository updates.
+        """
+        logger = self._logger
+        # Only rpm and rhcos advisories can legitimately be empty
+        droppable_impetuses = ("rpm", "rhcos")
+
+        for impetus in droppable_impetuses:
+            advisory = impetus_advisories.get(impetus, 0)
+            if not advisory or advisory <= 0:
+                continue
+
+            try:
+                dropped = await self._check_and_drop_empty_advisory(impetus, advisory)
+                if dropped:
+                    del impetus_advisories[impetus]
+            except Exception:
+                logger.exception("Failed to check/drop %s advisory %s; will still attempt QE move", impetus, advisory)
+                try:
+                    await self._slack_client.say_in_thread(
+                        f"Failed to check/drop {impetus} advisory {advisory} for empty builds. "
+                        "Will still attempt to move it to QE."
+                    )
+                except Exception:
+                    logger.exception("Failed to send Slack notification for %s advisory %s", impetus, advisory)
+
+    @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(30))
+    async def _check_and_drop_empty_advisory(self, impetus: str, advisory: int) -> bool:
+        """Check whether *advisory* has any builds attached; if not, drop it.
+
+        :param impetus: Advisory impetus name (e.g. ``rpm``, ``rhcos``).
+        :param advisory: Advisory number.
+        :return: ``True`` if the advisory was dropped, ``False`` otherwise.
+        """
+        logger = self._logger
+        logger.info("Checking if %s advisory %s has builds attached...", impetus, advisory)
+
+        builds = await to_thread(get_builds, advisory)
+        has_builds = any(pv_data.get("builds") for pv_data in builds.values()) if builds else False
+
+        if has_builds:
+            logger.info("%s advisory %s has builds attached, proceeding normally.", impetus, advisory)
+            return False
+
+        logger.warning("%s advisory %s has no builds attached — dropping.", impetus, advisory)
+        try:
+            await self._slack_client.say_in_thread(
+                f"{impetus.upper()} advisory {advisory} has no builds attached and will be dropped."
+            )
+        except Exception:
+            logger.exception("Failed to send Slack notification for %s advisory %s", impetus, advisory)
+
+        async with self._elliott_lock:
+            await drop_advisory(
+                group=self.group,
+                advisory=advisory,
+                env=self._elliott_env_vars,
+                dry_run=self.runtime.dry_run,
+            )
+
+        return True
 
     async def check_blocker_bugs(self):
         # Note: --assembly option should always be "stream". We are checking blocker bugs for this release branch regardless of the sweep cutoff timestamp.
