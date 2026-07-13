@@ -1202,10 +1202,15 @@ class KonfluxFbcRebaser:
             # FIXME: We try to mimic how `skips` field is updated by the old ET centric process.
             # We should verify if this is correct.
             skips = None
-            bundle_with_skips = next(
-                (it for it in channel['entries'] if it.get('skips')), None
-            )  # Find which bundle has the skips field
-            if bundle_with_skips is not None:
+
+            # Detect whether existing entries form a replaces-based update graph
+            # (e.g. ACM). These graphs are deliberately managed — preserve them
+            # as-is and do NOT migrate skips onto the new head entry.
+            has_replaces_graph = any(e.get('replaces') for e in channel['entries'])
+
+            if has_replaces_graph:
+                logger.info("Channel has replaces-based update graph; preserving existing entries")
+            elif (bundle_with_skips := next((it for it in channel['entries'] if it.get('skips')), None)) is not None:
                 # the channel already has skips like
                 # ------------
                 # entries:
@@ -1285,11 +1290,14 @@ class KonfluxFbcRebaser:
                     # Calculate replaces based on current head before appending
                     replaces = None
                     if not self.group.startswith('openshift-'):
-                        # Find the current head - the entry that is not replaced by any other entry
-                        bundle_with_replaces = [it for it in channel['entries']]
-                        replaced_names = {it.get('replaces') for it in bundle_with_replaces if it.get('replaces')}
+                        # Find the current head - the entry not superseded
+                        # (not replaced or skipped) by any other entry
+                        all_entries = list(channel['entries'])
+                        superseded_names = {it.get('replaces') for it in all_entries if it.get('replaces')}
+                        for it in all_entries:
+                            superseded_names.update(it.get('skips', []))
                         current_head = next(
-                            (it for it in bundle_with_replaces if it['name'] not in replaced_names), None
+                            (it for it in all_entries if it['name'] not in superseded_names), None
                         )
                         if current_head:
                             # The new bundle should replace the current head

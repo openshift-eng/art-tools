@@ -1942,7 +1942,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
     @patch("pathlib.Path.open")
     @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._fetch_olm_bundle_image_info", new_callable=AsyncMock)
     @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._fetch_olm_bundle_blob", new_callable=AsyncMock)
-    async def test_rebase_dir_branching_skips_graph(
+    async def test_rebase_dir_replaces_graph_preserves_entries(
         self,
         mock_fetch_olm_bundle_blob,
         mock_fetch_olm_bundle_image_info,
@@ -1955,7 +1955,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
         mock_path_unlink: Mock,
         mock_generate_dockerfile: AsyncMock,
     ):
-        """Multiple entries with independent skips (branching graph like ACM) are all collected."""
+        """Replaces-based graphs (like ACM) are preserved — no skip migration, correct head."""
         rebaser = KonfluxFbcRebaser(
             base_dir=self.base_dir,
             group="acm-2.16",
@@ -2022,8 +2022,196 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
             },
         )
 
-        # Branching upgrade graph: v2.15.3 skips v2.14.5, v2.16.0 skips v2.15.3.
-        # Both entries independently have skips — doozer must collect from ALL of them.
+        # ACM-style replaces-based graph matching the real production index.
+        # Existing entries have deliberate replaces/skips that must be preserved.
+        org_catalog_blobs = [
+            {"schema": "olm.package", "name": "advanced-cluster-management", "defaultChannel": "release-2.16"},
+            {
+                "schema": "olm.channel",
+                "name": "release-2.16",
+                "package": "advanced-cluster-management",
+                "entries": [
+                    {
+                        "name": "advanced-cluster-management.v2.16.0",
+                        "skipRange": ">=2.15.0 <2.16.0",
+                    },
+                    {
+                        "name": "advanced-cluster-management.v2.16.1",
+                        "replaces": "advanced-cluster-management.v2.16.0",
+                        "skipRange": ">=2.15.0 <2.16.1",
+                    },
+                    {
+                        "name": "advanced-cluster-management.v2.16.2",
+                        "replaces": "advanced-cluster-management.v2.16.0",
+                        "skips": ["advanced-cluster-management.v2.16.1"],
+                        "skipRange": ">=2.15.0 <2.16.2",
+                    },
+                ],
+            },
+            {
+                "schema": "olm.bundle",
+                "name": "advanced-cluster-management.v2.16.0",
+                "package": "advanced-cluster-management",
+                "properties": [],
+                "relatedImages": [],
+            },
+            {
+                "schema": "olm.bundle",
+                "name": "advanced-cluster-management.v2.16.1",
+                "package": "advanced-cluster-management",
+                "properties": [],
+                "relatedImages": [],
+            },
+            {
+                "schema": "olm.bundle",
+                "name": "advanced-cluster-management.v2.16.2",
+                "package": "advanced-cluster-management",
+                "properties": [],
+                "relatedImages": [],
+            },
+        ]
+
+        org_catalog_file = StringIO()
+        yaml.dump_all(org_catalog_blobs, org_catalog_file)
+        org_catalog_file.seek(0)
+        result_catalog_file = StringIO()
+        images_mirror_set_file = StringIO()
+        mock_open.return_value.__enter__.side_effect = [org_catalog_file, result_catalog_file, images_mirror_set_file]
+
+        mock_get_referenced_images.return_value = []
+        mock_load_csv_from_bundle.return_value = {
+            "metadata": {
+                "name": "multiclusterhub-operator",
+                "annotations": {"olm.skipRange": ">=2.15.0 <2.16.3"},
+            },
+            "spec": {"icon": []},
+        }
+
+        mock_dfp = MockDockerfileParser.return_value
+        mock_dfp.envs = {}
+        mock_dfp.labels = {}
+
+        mock_generate_dockerfile.return_value = None
+
+        await rebaser._rebase_dir(metadata, build_repo, bundle_build, "2.16.3", "1", logger)
+
+        result_catalog_file.seek(0)
+        result_catalog_blobs = list(yaml.load_all(result_catalog_file))
+        result_catalog_blobs = rebaser._catagorize_catalog_blobs(result_catalog_blobs)
+
+        entries = result_catalog_blobs["advanced-cluster-management"]["olm.channel"]["release-2.16"]["entries"]
+
+        # Existing entries must be preserved exactly as they were
+        v2_16_0 = next(e for e in entries if e["name"] == "advanced-cluster-management.v2.16.0")
+        self.assertNotIn("replaces", v2_16_0)
+        self.assertNotIn("skips", v2_16_0)
+
+        v2_16_1 = next(e for e in entries if e["name"] == "advanced-cluster-management.v2.16.1")
+        self.assertEqual(v2_16_1["replaces"], "advanced-cluster-management.v2.16.0")
+        self.assertNotIn("skips", v2_16_1)
+
+        v2_16_2 = next(e for e in entries if e["name"] == "advanced-cluster-management.v2.16.2")
+        self.assertEqual(v2_16_2["replaces"], "advanced-cluster-management.v2.16.0")
+        self.assertEqual(v2_16_2["skips"], ["advanced-cluster-management.v2.16.1"])
+
+        # New entry replaces the true head (v2.16.2) and has no accumulated skips
+        new_entry = next(e for e in entries if e["name"] == "advanced-cluster-management.v2.16.3")
+        self.assertEqual(new_entry["replaces"], "advanced-cluster-management.v2.16.2")
+        self.assertEqual(new_entry["skipRange"], ">=2.15.0 <2.16.3")
+        self.assertNotIn("skips", new_entry)
+
+    @patch("doozerlib.opm.generate_dockerfile")
+    @patch("pathlib.Path.unlink")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._load_csv_from_bundle")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._get_referenced_images")
+    @patch("doozerlib.backend.konflux_fbc.DockerfileParser")
+    @patch("pathlib.Path.mkdir")
+    @patch("pathlib.Path.is_file", return_value=True)
+    @patch("pathlib.Path.open")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._fetch_olm_bundle_image_info", new_callable=AsyncMock)
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._fetch_olm_bundle_blob", new_callable=AsyncMock)
+    async def test_rebase_dir_branching_skips_no_replaces(
+        self,
+        mock_fetch_olm_bundle_blob,
+        mock_fetch_olm_bundle_image_info,
+        mock_open,
+        mock_is_file,
+        mock_mkdir,
+        MockDockerfileParser,
+        mock_get_referenced_images,
+        mock_load_csv_from_bundle: AsyncMock,
+        mock_path_unlink: Mock,
+        mock_generate_dockerfile: AsyncMock,
+    ):
+        """Branching skips without replaces still accumulate skips onto new head (backward compat)."""
+        rebaser = KonfluxFbcRebaser(
+            base_dir=self.base_dir,
+            group="acm-2.16",
+            assembly=self.assembly,
+            version="2.16.3",
+            release="1",
+            commit_message="test",
+            push=False,
+            fbc_repo="https://example.com/fbc.git",
+            upcycle=False,
+        )
+
+        metadata = MagicMock(spec=ImageMetadata)
+        metadata.distgit_key = "multiclusterhub-operator"
+        metadata.runtime = MagicMock()
+        metadata.runtime.group_config = MagicMock()
+        metadata.runtime.group_config.vars = MagicMock()
+        metadata.runtime.group_config.vars.MAJOR = "2"
+        metadata.runtime.group_config.vars.MINOR = "16"
+        metadata.runtime.group_config.vars.FBC_DISABLE_CHANNEL_SKIPS = False
+        metadata.runtime.konflux_db = MagicMock()
+        metadata.config = MagicMock()
+        metadata.config.delivery = MagicMock()
+        metadata.config.delivery.delivery_repo_names = ["acm-hub-repo"]
+        metadata.get_olm_bundle_delivery_repo_name.return_value = "acm-hub-repo"
+
+        build_repo = MagicMock()
+        build_repo.local_dir = self.base_dir
+        bundle_build = MagicMock(
+            spec=KonfluxBundleBuildRecord,
+            nvr="multiclusterhub-operator-bundle-2.16.3-1",
+            operator_nvr="multiclusterhub-operator-2.16.3-1",
+            operand_nvrs=[],
+            image_pullspec="example.com/acm-bundle@sha256:abc",
+            image_tag="abc123",
+            source_repo="https://example.com/multiclusterhub-operator.git",
+            commitish="abc123def",
+        )
+        logger = MagicMock()
+
+        mock_fetch_olm_bundle_image_info.return_value = {
+            "config": {
+                "config": {
+                    "Labels": {
+                        "name": "multiclusterhub-operator",
+                        "operators.operatorframework.io.bundle.channels.v1": "release-2.16",
+                        "operators.operatorframework.io.bundle.channel.default.v1": "release-2.16",
+                        "operators.operatorframework.io.bundle.package.v1": "advanced-cluster-management",
+                        "operators.operatorframework.io.bundle.manifests.v1": "manifests/",
+                    },
+                },
+            },
+        }
+
+        mock_fetch_olm_bundle_blob.return_value = (
+            "advanced-cluster-management.v2.16.3",
+            "advanced-cluster-management",
+            {
+                "schema": "olm.bundle",
+                "name": "advanced-cluster-management.v2.16.3",
+                "package": "advanced-cluster-management",
+                "properties": [],
+                "relatedImages": [{"name": "", "image": "example.com/acm-bundle@sha256:abc"}],
+            },
+        )
+
+        # Branching graph WITHOUT replaces — skip migration should still collect
+        # skips from all entries and accumulate them onto the new head.
         org_catalog_blobs = [
             {"schema": "olm.package", "name": "advanced-cluster-management", "defaultChannel": "release-2.16"},
             {
@@ -2097,7 +2285,6 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
 
         entries = result_catalog_blobs["advanced-cluster-management"]["olm.channel"]["release-2.16"]["entries"]
 
-        # The new entry must skip ALL previous versions (union of all skip chains)
         new_entry = next(e for e in entries if e["name"] == "advanced-cluster-management.v2.16.3")
         self.assertIn("skips", new_entry)
         self.assertEqual(
@@ -2111,16 +2298,15 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
             ),
         )
 
-        # Previous entries must have their skips removed (new head owns the skip chain)
+        # Previous entries must have their skips removed (migrated to the new head)
         for entry in entries:
             if entry["name"] != "advanced-cluster-management.v2.16.3":
                 self.assertNotIn(
                     "skips",
                     entry,
-                    f"Entry {entry['name']} should not retain skips after new head is added",
+                    f"Entry {entry['name']} should not retain skips after migration",
                 )
 
-        # replaces is set to the first unreplaced entry (existing behavior for non-openshift groups)
         self.assertIn("replaces", new_entry)
 
 
