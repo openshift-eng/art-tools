@@ -104,6 +104,7 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
         mock_oc_image_info.return_value = mock_image_info
         # operator_image_ref_mode defaults to 'manifest-list' (uses listDigest)
         self.rebaser._group_config.get.return_value = 'namespace'
+        self.rebaser._group_config.vars = {'MAJOR': 4}
         metadata = MagicMock()
         metadata.runtime.group = "openshift-4.19"
         new_content, found_images = await self.rebaser._replace_image_references(
