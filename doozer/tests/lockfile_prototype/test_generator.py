@@ -716,14 +716,118 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
         # Base image packages as upgrade targets
         self.assertIn("python3-setuptools", main_config.upgradePackages)
         self.assertIn("bash", main_config.upgradePackages)
-        # Pass 2: pin pass for python3-setuptools (base-image overlap
-        # not in FAKE_LOCKFILE_DATA output). git is NOT a pin candidate
-        # because it's not in the base image.
-        self.assertEqual(len(captured_configs), 2)
-        pin_config = captured_configs[1]
-        self.assertIn("python3-setuptools", pin_config.reinstallPackages)
-        self.assertNotIn("git", pin_config.reinstallPackages)
-        self.assertFalse(pin_config.upgradePackages)
+        # Pass 2: per-arch pin passes for python3-setuptools (base-image
+        # overlap not in FAKE_LOCKFILE_DATA output). git is NOT a pin
+        # candidate because it's not in the base image. With per-arch
+        # resolution, one pin call per arch that's missing the package.
+        pin_configs = [c for c in captured_configs[1:] if c.reinstallPackages]
+        self.assertTrue(pin_configs, "at least one pin pass should have fired")
+        for pin_config in pin_configs:
+            self.assertIn("python3-setuptools", pin_config.reinstallPackages)
+            self.assertNotIn("git", pin_config.reinstallPackages)
+            self.assertFalse(pin_config.upgradePackages)
+
+    def test_two_pass_pin_per_arch_when_pass1_partial(self):
+        """
+        When pass 1 resolves an overlap package on only one arch (e.g.
+        x86_64 but not ppc64le), pass 2 must still pin it on the
+        missing arch. Regression test: the old code unioned locked
+        names across all arches, so a package present on any arch was
+        considered locked everywhere.
+        """
+        meta = self._make_mock_image_meta()
+        meta.config.konflux.cachi2.lockfile.get.return_value = None
+        generator = self._make_generator()
+        generator.downstream_parents = ["quay.io/test/base@sha256:abc123"]
+        generator._container.get_installed_packages = AsyncMock(return_value=["bash", "glibc", "python3-setuptools"])
+
+        # Pass 1 result has python3-setuptools on x86_64 only — not ppc64le
+        pass1_result = LockfileData(
+            lockfileVersion=1,
+            lockfileVendor="redhat",
+            arches=[
+                ArchResult(
+                    arch="x86_64",
+                    packages=[
+                        PackageEntry(
+                            url="https://example.com/python3-setuptools-53.0.0-12.el9.noarch.rpm",
+                            repoid="rhel-9-appstream-rpms",
+                            name="python3-setuptools",
+                            evr="53.0.0-12.el9",
+                        ),
+                        PackageEntry(
+                            url="https://example.com/git-2.43.0-1.el9.x86_64.rpm",
+                            repoid="rhel-9-appstream-rpms",
+                            name="git",
+                            evr="2.43.0-1.el9",
+                        ),
+                    ],
+                    source=[],
+                    module_metadata=[],
+                ),
+                ArchResult(
+                    arch="ppc64le",
+                    packages=[
+                        PackageEntry(
+                            url="https://example.com/git-2.43.0-1.el9.ppc64le.rpm",
+                            repoid="rhel-9-appstream-rpms",
+                            name="git",
+                            evr="2.43.0-1.el9",
+                        ),
+                    ],
+                    source=[],
+                    module_metadata=[],
+                ),
+            ],
+        )
+
+        pin_result = LockfileData(
+            lockfileVersion=1,
+            lockfileVendor="redhat",
+            arches=[
+                ArchResult(
+                    arch="ppc64le",
+                    packages=[
+                        PackageEntry(
+                            url="https://example.com/python3-setuptools-53.0.0-12.el9.noarch.rpm",
+                            repoid="rhel-9-appstream-rpms",
+                            name="python3-setuptools",
+                            evr="53.0.0-12.el9",
+                        ),
+                    ],
+                    source=[],
+                    module_metadata=[],
+                ),
+            ],
+        )
+
+        captured_configs: list[RpmsInConfig] = []
+
+        async def mock_resolve(config, image_pullspec=None):
+            captured_configs.append(config)
+            if config.reinstallPackages:
+                return pin_result.model_copy(deep=True)
+            return pass1_result.model_copy(deep=True)
+
+        generator._resolver.resolve = AsyncMock(side_effect=mock_resolve)
+
+        with TemporaryDirectory() as tmpdir:
+            dest_dir = Path(tmpdir)
+            (dest_dir / "Dockerfile").write_text(
+                "FROM base\nRUN dnf upgrade -y && dnf install -y python3-setuptools git\n"
+            )
+            asyncio.run(generator.generate_lockfile(meta, dest_dir))
+
+        # Pass 1: upgrade pass
+        self.assertGreaterEqual(len(captured_configs), 1)
+        self.assertFalse(captured_configs[0].reinstallPackages)
+
+        # Pass 2: pin pass should target only ppc64le (x86_64 already has it)
+        pin_configs = [c for c in captured_configs if c.reinstallPackages]
+        self.assertTrue(pin_configs, "pin pass should have fired")
+        self.assertEqual(len(pin_configs), 1, "only one arch should need pinning")
+        self.assertEqual(pin_configs[0].arches, ["ppc64le"], "pin pass should only target arch missing the package")
+        self.assertIn("python3-setuptools", pin_configs[0].reinstallPackages)
 
     def test_base_image_overlap_package_survives_retry_exhaustion_fallback(self):
         """
@@ -848,19 +952,21 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
 
         with TemporaryDirectory() as tmpdir:
             dest_dir = Path(tmpdir)
-            (dest_dir / "Dockerfile").write_text(
-                "FROM base\nRUN dnf update -y && dnf install -y ca-certificates\n"
-            )
+            (dest_dir / "Dockerfile").write_text("FROM base\nRUN dnf update -y && dnf install -y ca-certificates\n")
             asyncio.run(generator.generate_lockfile(meta, dest_dir))
 
-        # Should have been 2 resolver calls: main upgrade pass + gap-fill
-        self.assertEqual(call_count, 2)
+        # 1 upgrade pass + 1 per-arch pin call for each arch missing
+        # ca-certificates (both x86_64 and ppc64le are missing it)
+        self.assertGreaterEqual(call_count, 2)
         all_configs = [c.args[0] for c in generator._resolver.resolve.call_args_list]
         # First call: main upgrade pass (upgradePackages set)
         self.assertTrue(all_configs[0].upgradePackages)
-        # Second call: gap-fill reinstall (no upgradePackages)
-        self.assertFalse(all_configs[1].upgradePackages)
-        self.assertIn("ca-certificates", all_configs[1].reinstallPackages)
+        # Remaining calls: per-arch gap-fill reinstalls (no upgradePackages)
+        pin_configs = [c for c in all_configs[1:] if c.reinstallPackages]
+        self.assertTrue(pin_configs, "at least one pin pass should have fired")
+        for pc in pin_configs:
+            self.assertFalse(pc.upgradePackages)
+            self.assertIn("ca-certificates", pc.reinstallPackages)
 
     def test_reinstall_packages_also_passed_as_upgrade_targets(self):
         """

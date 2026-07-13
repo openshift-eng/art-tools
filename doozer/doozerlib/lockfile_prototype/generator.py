@@ -674,48 +674,55 @@ class RpmLockfilePrototypeGenerator:
             LockfileData | None: The merged result, or None if both
                 passes produced nothing.
         """
-        locked_names: set[str] = set()
-        if result:
-            for arch_entry in result.arches:
-                for pkg in arch_entry.packages:
-                    locked_names.add(pkg.name)
+        locked_by_arch: dict[str, set[str]] = (
+            {entry.arch: {pkg.name for pkg in entry.packages} for entry in result.arches} if result else {}
+        )
 
-        missing = sorted(p for p in pin_candidates if p not in locked_names)
-        if not missing:
+        missing_by_arch: dict[str, list[str]] = {
+            arch: sorted(p for p in pin_candidates if p not in locked_by_arch.get(arch, set())) for arch in arches
+        }
+        missing_by_arch = {arch: missing for arch, missing in missing_by_arch.items() if missing}
+        if not missing_by_arch:
             return result
 
-        self.logger.info(
-            f"{distgit_key}: stage {stage_num}: pinning {len(missing)} Dockerfile "
-            f"packages not captured by upgrade pass: {missing}"
-        )
         resolver_pullspec = ContainerImageHelper._proxy_pullspec(image_pullspec)
-        in_yaml = build_rpms_in_yaml(
-            repo_list,
-            arches,
-            missing,
-            reinstall_packages=missing,
-            module_enable=module_enable,
-        )
-        try:
-            pin_result = await self._resolver.resolve(in_yaml, image_pullspec=resolver_pullspec)
-        except RuntimeError as e:
-            self.logger.warning(
-                f"{distgit_key}: stage {stage_num}: pin pass failed, "
-                f"some Dockerfile packages may be unlocked: {e}"
+        pin_results: list[LockfileData] = []
+
+        for arch, missing in missing_by_arch.items():
+            self.logger.info(
+                f"{distgit_key}: stage {stage_num}: pinning {len(missing)} Dockerfile "
+                f"packages not captured by upgrade pass on {arch}: {missing}"
             )
+            in_yaml = build_rpms_in_yaml(
+                repo_list,
+                [arch],
+                missing,
+                reinstall_packages=missing,
+                module_enable=module_enable,
+            )
+            try:
+                pin_result = await self._resolver.resolve(in_yaml, image_pullspec=resolver_pullspec)
+            except RuntimeError as e:
+                self.logger.warning(
+                    f"{distgit_key}: stage {stage_num}: pin pass failed on {arch}, "
+                    f"some Dockerfile packages may be unlocked: {e}"
+                )
+                continue
+
+            if pin_result and any(ae.packages for ae in pin_result.arches):
+                pinned = {pkg.name for ae in pin_result.arches for pkg in ae.packages}
+                self.logger.info(
+                    f"{distgit_key}: stage {stage_num}: pin pass locked "
+                    f"{len(pinned)} packages on {arch}: {sorted(pinned)}"
+                )
+                pin_results.append(pin_result)
+
+        if not pin_results:
             return result
 
-        if pin_result and any(ae.packages for ae in pin_result.arches):
-            pinned = {pkg.name for ae in pin_result.arches for pkg in ae.packages}
-            self.logger.info(
-                f"{distgit_key}: stage {stage_num}: pin pass locked "
-                f"{len(pinned)} packages: {sorted(pinned)}"
-            )
-            if result:
-                return merge_lockfiles([result, pin_result])
-            return pin_result
-
-        return result
+        to_merge = [result] if result else []
+        to_merge.extend(pin_results)
+        return merge_lockfiles(to_merge)
 
     async def _get_base_image_packages(self, stage_num: int, image_pullspec: str | None, distgit_key: str) -> list[str]:
         """
