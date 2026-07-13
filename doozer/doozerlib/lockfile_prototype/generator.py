@@ -459,24 +459,34 @@ class RpmLockfilePrototypeGenerator:
                     )
 
             reinstall_pkgs: list[str] | None = None
+            pin_candidates: list[str] = []
             strippable: set[str] | None = None
             dockerfile_pkgs: set[str] | None = None
             if stage_num == final_stage_num and not is_update_only and has_bare_update:
                 if image_pullspec and packages:
-                    # Bare update + explicit installs in final stage: reinstall
-                    # the Dockerfile packages so they appear in the lockfile
-                    # even when already installed in the base image. Base image
-                    # packages use upgrade semantics via upgrade_targets (set
-                    # above), so we intentionally do NOT reinstall them here —
-                    # a Dockerfile package that's also a base image package
-                    # would otherwise get reinstalled at its currently-installed
-                    # EVR, which can win over the separate upgrade request and
-                    # silently keep an old version instead of upgrading.
-                    reinstall_pkgs = [p for p in packages if p not in base_pkgs]
-                    strippable = set()
+                    # Two-pass resolution for bare update + explicit installs.
+                    #
+                    # Pass 1 (this block): resolve with upgradePackages only,
+                    # NO reinstallPackages. Captures newly-installed Dockerfile
+                    # packages and base image packages with upgrades available.
+                    #
+                    # Pass 2 (after resolution): targeted reinstall for
+                    # Dockerfile packages that overlap with the base image but
+                    # produced no output in pass 1 (already installed at repo-
+                    # latest, so neither install nor upgrade captured them).
+                    #
+                    # Keeping reinstall and upgrade in the same DNF transaction
+                    # is unreliable: reinstall pins the installed EVR which can
+                    # win over an upgrade request for the same package, silently
+                    # keeping an old version. Separating them eliminates the
+                    # conflict entirely.
+                    pin_candidates = [p for p in packages if p in base_pkgs]
+                    strippable = set(upgrade_targets) - set(packages)
+                    dockerfile_pkgs = set(packages)
                     self.logger.info(
-                        f"{distgit_key}: stage {stage_num}: {len(reinstall_pkgs)} Dockerfile "
-                        "packages will be reinstalled into lockfile (bare update stage)"
+                        f"{distgit_key}: stage {stage_num}: bare update with "
+                        f"{len(packages)} Dockerfile packages ({len(pin_candidates)} "
+                        "overlap with base image, will use two-pass resolution)"
                     )
             elif stage_num == final_stage_num and not is_update_only and not has_bare_update:
                 if image_pullspec:
@@ -566,6 +576,23 @@ class RpmLockfilePrototypeGenerator:
                     )
                     if recovered:
                         result = merge_lockfiles([result, recovered])
+
+            # Pass 2 of two-pass resolution: pin Dockerfile packages that
+            # overlap with the base image but weren't captured by the
+            # upgrade pass (already installed at repo-latest version).
+            if pin_candidates and image_pullspec:
+                result = await self._pin_missing_dockerfile_packages(
+                    result,
+                    pin_candidates,
+                    repo_list,
+                    arches,
+                    image_pullspec,
+                    distgit_key,
+                    stage_num,
+                    enable_only,
+                )
+
+            if result:
                 stage_lockfiles.append(result)
 
         return stage_lockfiles
@@ -609,6 +636,86 @@ class RpmLockfilePrototypeGenerator:
         if not recovered:
             return None
         return merge_lockfiles(recovered) if len(recovered) > 1 else recovered[0]
+
+    async def _pin_missing_dockerfile_packages(
+        self,
+        result: LockfileData | None,
+        pin_candidates: list[str],
+        repo_list: list[RepoEntry],
+        arches: list[str],
+        image_pullspec: str,
+        distgit_key: str,
+        stage_num: int,
+        module_enable: list[str] | None,
+    ) -> LockfileData | None:
+        """
+        Pass 2 of two-pass bare-update resolution: pin Dockerfile
+        packages that overlap with the base image but weren't captured
+        by the upgrade pass.
+
+        These packages are already installed at the repo-latest version,
+        so neither install (already present) nor upgrade (nothing newer)
+        produced a lockfile entry. A targeted reinstall-only call pins
+        them at their installed version. No upgrade/reinstall EVR
+        conflict is possible because upgradePackages is not set here.
+
+        Arg(s):
+            result (LockfileData | None): Pass 1 result (may be None
+                if resolution produced nothing).
+            pin_candidates (list[str]): Dockerfile packages that overlap
+                with the base image and may need pinning.
+            repo_list (list[RepoEntry]): Repository entries.
+            arches (list[str]): Target architectures.
+            image_pullspec (str): Base image pullspec.
+            distgit_key (str): Image identifier for logging.
+            stage_num (int): Dockerfile stage number.
+            module_enable (list[str] | None): Module streams to enable.
+        Return Value(s):
+            LockfileData | None: The merged result, or None if both
+                passes produced nothing.
+        """
+        locked_names: set[str] = set()
+        if result:
+            for arch_entry in result.arches:
+                for pkg in arch_entry.packages:
+                    locked_names.add(pkg.name)
+
+        missing = sorted(p for p in pin_candidates if p not in locked_names)
+        if not missing:
+            return result
+
+        self.logger.info(
+            f"{distgit_key}: stage {stage_num}: pinning {len(missing)} Dockerfile "
+            f"packages not captured by upgrade pass: {missing}"
+        )
+        resolver_pullspec = ContainerImageHelper._proxy_pullspec(image_pullspec)
+        in_yaml = build_rpms_in_yaml(
+            repo_list,
+            arches,
+            missing,
+            reinstall_packages=missing,
+            module_enable=module_enable,
+        )
+        try:
+            pin_result = await self._resolver.resolve(in_yaml, image_pullspec=resolver_pullspec)
+        except RuntimeError as e:
+            self.logger.warning(
+                f"{distgit_key}: stage {stage_num}: pin pass failed, "
+                f"some Dockerfile packages may be unlocked: {e}"
+            )
+            return result
+
+        if pin_result and any(ae.packages for ae in pin_result.arches):
+            pinned = {pkg.name for ae in pin_result.arches for pkg in ae.packages}
+            self.logger.info(
+                f"{distgit_key}: stage {stage_num}: pin pass locked "
+                f"{len(pinned)} packages: {sorted(pinned)}"
+            )
+            if result:
+                return merge_lockfiles([result, pin_result])
+            return pin_result
+
+        return result
 
     async def _get_base_image_packages(self, stage_num: int, image_pullspec: str | None, distgit_key: str) -> list[str]:
         """

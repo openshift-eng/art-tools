@@ -588,13 +588,16 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
         self.assertIn("libreswan", pkg_names)
         self.assertIn("openssl", pkg_names)
 
-    def test_bare_update_keeps_image_mode_reinstalls_dockerfile_packages(self):
+    def test_bare_update_keeps_image_mode_no_reinstall_in_upgrade_pass(self):
         """
-        Bare yum/dnf update with --image mode should NOT expand base
-        image packages as upgrade targets (many are virtual provides or
-        renamed and cause resolution failures). Dockerfile install
-        packages must be reinstalled so they appear in the lockfile, and
-        also promoted to upgradePackages as a fallback if reinstall fails.
+        Bare yum/dnf update with --image mode uses two-pass resolution:
+        the main pass resolves with upgradePackages only (no reinstall),
+        and a follow-up pin pass reinstalls Dockerfile packages that
+        overlap with the base image but had no upgrade available.
+
+        When no base image packages are available (empty list from
+        container query), the main pass just installs the Dockerfile
+        packages normally — no reinstall, no upgrade targets.
         """
         meta = self._make_mock_image_meta()
         meta.config.konflux.cachi2.lockfile.get.return_value = None
@@ -620,20 +623,20 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
         self.assertEqual(len(captured_configs), 1)
         # --image mode preserved
         self.assertIsNotNone(captured_pullspecs[0])
-        # Dockerfile packages reinstalled so they appear in lockfile
-        self.assertEqual(captured_configs[0].reinstallPackages, ["libreswan"])
-        # Dockerfile packages promoted to upgrade as reinstall fallback
-        self.assertEqual(captured_configs[0].upgradePackages, ["libreswan"])
+        # No reinstall in two-pass design — libreswan is installed via packages
+        self.assertFalse(captured_configs[0].reinstallPackages)
+        pkg_names = [p if isinstance(p, str) else p.name for p in captured_configs[0].packages]
+        self.assertIn("libreswan", pkg_names)
+        # No upgrade targets (base image query returned empty)
+        self.assertFalse(captured_configs[0].upgradePackages)
 
-    def test_mixed_install_and_bare_update_reinstalls_dockerfile_packages(self):
+    def test_mixed_install_and_bare_update_two_pass_resolution(self):
         """
         When a stage has both explicit installs and a bare update
         (e.g. microdnf update -y && microdnf install -y openssl),
-        Dockerfile install packages must appear in reinstallPackages
-        so they end up in the lockfile even when already installed in
-        the base image. Base image packages must NOT be reinstalled —
-        they use upgrade semantics via upgradePackages to pick up
-        latest versions without pinning.
+        the main pass resolves with upgradePackages only (no reinstall).
+        Dockerfile packages not in the base image are installed normally
+        via the packages list. Base image packages use upgrade semantics.
         """
         meta = self._make_mock_image_meta()
         meta.config.konflux.cachi2.lockfile.get.return_value = None
@@ -657,26 +660,28 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
             asyncio.run(generator.generate_lockfile(meta, dest_dir))
 
         self.assertEqual(len(captured_configs), 1)
-        # Dockerfile install packages must be reinstalled so they appear
-        # in the lockfile even when already installed in the base image
-        self.assertEqual(captured_configs[0].reinstallPackages, ["openssl"])
-        # Explicit install package must be present in packages list
-        pkg_names = [p if isinstance(p, str) else p.name for p in captured_configs[0].packages]
+        # No reinstall in two-pass design
+        self.assertFalse(captured_configs[0].reinstallPackages)
+        # All packages (Dockerfile + base image) in packages list
+        pkg_names = sorted(p if isinstance(p, str) else p.name for p in captured_configs[0].packages)
         self.assertIn("openssl", pkg_names)
-        # Base image packages must appear as upgrade targets so
-        # dnf update picks up latest versions from repos
-        self.assertEqual(sorted(captured_configs[0].upgradePackages), ["audit", "bash", "glibc", "openssl"])
+        self.assertIn("audit", pkg_names)
+        # Only base image packages as upgrade targets (openssl is not
+        # in the base image, so it's installed via packages, not upgraded)
+        self.assertEqual(sorted(captured_configs[0].upgradePackages), ["audit", "bash", "glibc"])
 
-    def test_dockerfile_package_already_in_base_image_not_reinstalled(self):
+    def test_two_pass_no_reinstall_in_upgrade_pass_pin_pass_for_overlap(self):
         """
-        A Dockerfile package that's also already installed in the base
-        image (e.g. python3-setuptools, part of both the explicit install
-        list and the base image's package set) must NOT be reinstalled —
-        only upgraded. Reinstalling it can trivially match the
-        currently-installed EVR and win over the separate upgrade
-        request, silently keeping an old version (e.g. a non-modular
-        build from the base repos) instead of picking up the newer one
-        the upgrade would have found.
+        Two-pass resolution for bare update + explicit installs:
+
+        Pass 1 (upgrade): no reinstallPackages at all. Dockerfile
+        packages are installed via packages, base image packages are
+        upgraded via upgradePackages. This avoids the reinstall-vs-
+        upgrade EVR conflict.
+
+        Pass 2 (pin): Dockerfile packages that overlap with the base
+        image and weren't captured by pass 1 (no upgrade available)
+        are reinstalled to pin their installed version.
         """
         meta = self._make_mock_image_meta()
         meta.config.konflux.cachi2.lockfile.get.return_value = None
@@ -700,18 +705,25 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
             )
             asyncio.run(generator.generate_lockfile(meta, dest_dir))
 
-        self.assertEqual(len(captured_configs), 1)
-        # python3-setuptools must NOT be reinstalled — it's a base image
-        # package and must go through upgrade semantics only
-        self.assertNotIn("python3-setuptools", captured_configs[0].reinstallPackages)
-        # git is purely a Dockerfile package (not in the base image) and
-        # must still be reinstalled as before
-        self.assertIn("git", captured_configs[0].reinstallPackages)
-        # python3-setuptools must still be present as an upgrade target
-        self.assertIn("python3-setuptools", captured_configs[0].upgradePackages)
-        # And still present in the plain install list
-        pkg_names = [p if isinstance(p, str) else p.name for p in captured_configs[0].packages]
+        # Pass 1: upgrade pass — no reinstallPackages at all
+        self.assertGreaterEqual(len(captured_configs), 1)
+        main_config = captured_configs[0]
+        self.assertFalse(main_config.reinstallPackages)
+        # Both Dockerfile and base image packages in the install list
+        pkg_names = [p if isinstance(p, str) else p.name for p in main_config.packages]
         self.assertIn("python3-setuptools", pkg_names)
+        self.assertIn("git", pkg_names)
+        # Base image packages as upgrade targets
+        self.assertIn("python3-setuptools", main_config.upgradePackages)
+        self.assertIn("bash", main_config.upgradePackages)
+        # Pass 2: pin pass for python3-setuptools (base-image overlap
+        # not in FAKE_LOCKFILE_DATA output). git is NOT a pin candidate
+        # because it's not in the base image.
+        self.assertEqual(len(captured_configs), 2)
+        pin_config = captured_configs[1]
+        self.assertIn("python3-setuptools", pin_config.reinstallPackages)
+        self.assertNotIn("git", pin_config.reinstallPackages)
+        self.assertFalse(pin_config.upgradePackages)
 
     def test_base_image_overlap_package_survives_retry_exhaustion_fallback(self):
         """
@@ -759,14 +771,96 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
         # Some later calls are _recover_stripped_per_arch attempts for the
         # noise packages (unrelated to this assertion), so check across all
         # calls rather than assuming a fixed index: python3-setuptools must
-        # have been offered as an upgrade target at some point post-fallback,
-        # never as a reinstall target.
+        # have been offered as an upgrade target at some point post-fallback.
         all_configs = [c.args[0] for c in generator._resolver.resolve.call_args_list]
         self.assertTrue(
             any("python3-setuptools" in (c.upgradePackages or []) for c in all_configs),
             "python3-setuptools should appear in upgradePackages in at least one resolve call",
         )
-        self.assertTrue(all("python3-setuptools" not in (c.reinstallPackages or []) for c in all_configs))
+        # No reinstallPackages in any upgrade pass call
+        main_configs = [c for c in all_configs if c.upgradePackages]
+        self.assertTrue(
+            all(not (c.reinstallPackages or []) for c in main_configs),
+            "no reinstallPackages should be set during upgrade pass",
+        )
+        # Pin pass should have fired for python3-setuptools since it's
+        # a base-image overlap package not in the resolver output
+        # (FAKE_LOCKFILE_DATA only has nfs-utils).
+        pin_configs = [c for c in all_configs if not c.upgradePackages]
+        self.assertTrue(
+            any("python3-setuptools" in (c.reinstallPackages or []) for c in pin_configs),
+            "python3-setuptools should be reinstalled in pin pass",
+        )
+
+    def test_all_dockerfile_packages_in_base_image_pin_pass_prevents_empty(self):
+        """
+        When ALL Dockerfile install packages are also base image packages
+        and no upgrades are available, the upgrade pass produces an empty
+        lockfile. The pin pass must reinstall them so the lockfile is not
+        empty (reproduces the ibm-vpc-node-label-updater scenario).
+        """
+        meta = self._make_mock_image_meta()
+        meta.config.konflux.cachi2.lockfile.get.return_value = None
+        generator = self._make_generator()
+        generator.downstream_parents = ["quay.io/test/base@sha256:abc123"]
+        # All Dockerfile packages are already in the base image
+        generator._container.get_installed_packages = AsyncMock(
+            return_value=["bash", "glibc", "ca-certificates", "openssl"]
+        )
+
+        # Simulate "no upgrades available": resolver returns empty lockfile
+        # on the main pass, and populated on the gap-fill pass.
+        empty_lockfile = LockfileData(
+            lockfileVersion=1,
+            lockfileVendor="redhat",
+            arches=[ArchResult(arch="x86_64", packages=[], source=[], module_metadata=[])],
+        )
+        gap_lockfile = LockfileData(
+            lockfileVersion=1,
+            lockfileVendor="redhat",
+            arches=[
+                ArchResult(
+                    arch="x86_64",
+                    packages=[
+                        PackageEntry(
+                            url="https://example.com/ca-certificates-2025.2.80.noarch.rpm",
+                            repoid="rhel-8-baseos-rpms",
+                            name="ca-certificates",
+                            evr="2025.2.80-80.1.el8_6",
+                        )
+                    ],
+                    source=[],
+                    module_metadata=[],
+                )
+            ],
+        )
+
+        call_count = 0
+
+        async def mock_resolve(config, image_pullspec=None):
+            nonlocal call_count
+            call_count += 1
+            if config.upgradePackages:
+                return empty_lockfile.model_copy(deep=True)
+            return gap_lockfile.model_copy(deep=True)
+
+        generator._resolver.resolve = AsyncMock(side_effect=mock_resolve)
+
+        with TemporaryDirectory() as tmpdir:
+            dest_dir = Path(tmpdir)
+            (dest_dir / "Dockerfile").write_text(
+                "FROM base\nRUN dnf update -y && dnf install -y ca-certificates\n"
+            )
+            asyncio.run(generator.generate_lockfile(meta, dest_dir))
+
+        # Should have been 2 resolver calls: main upgrade pass + gap-fill
+        self.assertEqual(call_count, 2)
+        all_configs = [c.args[0] for c in generator._resolver.resolve.call_args_list]
+        # First call: main upgrade pass (upgradePackages set)
+        self.assertTrue(all_configs[0].upgradePackages)
+        # Second call: gap-fill reinstall (no upgradePackages)
+        self.assertFalse(all_configs[1].upgradePackages)
+        self.assertIn("ca-certificates", all_configs[1].reinstallPackages)
 
     def test_reinstall_packages_also_passed_as_upgrade_targets(self):
         """
