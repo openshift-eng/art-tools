@@ -10,6 +10,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 import yaml
+from doozerlib.lockfile_prototype.constants import (
+    DEFAULT_RPM_LOCKFILE_NAME,
+    RPM_LOCKFILE_IMAGE,
+)
 from doozerlib.lockfile_prototype.models import (
     LockfileData,
     RpmsInConfig,
@@ -38,19 +42,39 @@ class TestRpmResolver(unittest.TestCase):
         ],
     }
 
+    def _mock_podman_run(self, cmd, expect_bare=False, expect_image=None, **kwargs):
+        """
+        Helper to create a mock for podman run that writes fake lockfile output.
+        Returns (rc, stdout, stderr).
+        """
+        self.assertEqual(cmd[0], "podman")
+        self.assertEqual(cmd[1], "run")
+        self.assertIn("--rm", cmd)
+
+        if expect_bare:
+            self.assertIn("--bare", cmd)
+            self.assertNotIn("--image", cmd)
+        if expect_image:
+            img_idx = cmd.index("--image") + 1
+            self.assertEqual(cmd[img_idx], expect_image)
+
+        for i, arg in enumerate(cmd):
+            if arg == "-v" and ":/work:" in cmd[i + 1]:
+                host_tmpdir = cmd[i + 1].split(":")[0]
+                break
+        host_outfile = os.path.join(host_tmpdir, DEFAULT_RPM_LOCKFILE_NAME)
+        with open(host_outfile, "w") as f:
+            yaml.safe_dump(self.FAKE_LOCKFILE_DATA, f)
+        return (0, "", "")
+
     @patch("doozerlib.lockfile_prototype.resolver.cmd_gather_async")
     def test_resolve_bare_mode(self, mock_gather):
         """
-        Without image_pullspec, should pass --bare to the subprocess.
+        Without image_pullspec, should pass --bare.
         """
 
         async def mock_cmd(cmd, **kwargs):
-            self.assertIn("--bare", cmd)
-            self.assertNotIn("--image", cmd)
-            outfile_idx = cmd.index("--outfile") + 1
-            with open(cmd[outfile_idx], "w") as f:
-                yaml.safe_dump(self.FAKE_LOCKFILE_DATA, f)
-            return (0, "", "")
+            return self._mock_podman_run(cmd, expect_bare=True)
 
         mock_gather.side_effect = mock_cmd
         resolver = RpmResolver(working_dir=Path(tempfile.mkdtemp()))
@@ -66,17 +90,11 @@ class TestRpmResolver(unittest.TestCase):
     @patch("doozerlib.lockfile_prototype.resolver.cmd_gather_async")
     def test_resolve_with_image(self, mock_gather):
         """
-        With image_pullspec, should pass --image to the subprocess.
+        With image_pullspec, should pass --image.
         """
 
         async def mock_cmd(cmd, **kwargs):
-            self.assertIn("--image", cmd)
-            image_idx = cmd.index("--image") + 1
-            self.assertEqual(cmd[image_idx], "quay.io/test/img@sha256:abc")
-            outfile_idx = cmd.index("--outfile") + 1
-            with open(cmd[outfile_idx], "w") as f:
-                yaml.safe_dump(self.FAKE_LOCKFILE_DATA, f)
-            return (0, "", "")
+            return self._mock_podman_run(cmd, expect_image="quay.io/test/img@sha256:abc")
 
         mock_gather.side_effect = mock_cmd
         resolver = RpmResolver(working_dir=Path(tempfile.mkdtemp()))
@@ -110,18 +128,15 @@ class TestRpmResolver(unittest.TestCase):
         self.assertIn("rpm-lockfile-prototype failed", str(ctx.exception))
 
     @patch("doozerlib.lockfile_prototype.resolver.cmd_gather_async")
-    def test_resolve_uses_system_python(self, mock_gather):
+    def test_resolve_uses_podman(self, mock_gather):
         """
-        Should invoke /usr/bin/python3 -c to use system Python.
+        Should invoke podman run, not system python.
         """
 
         async def mock_cmd(cmd, **kwargs):
-            self.assertEqual(cmd[0], "/usr/bin/python3")
-            self.assertEqual(cmd[1], "-c")
-            outfile_idx = cmd.index("--outfile") + 1
-            with open(cmd[outfile_idx], "w") as f:
-                yaml.safe_dump(self.FAKE_LOCKFILE_DATA, f)
-            return (0, "", "")
+            self.assertEqual(cmd[0], "podman")
+            self.assertEqual(cmd[1], "run")
+            return self._mock_podman_run(cmd, expect_bare=True)
 
         mock_gather.side_effect = mock_cmd
         resolver = RpmResolver(working_dir=Path(tempfile.mkdtemp()))
@@ -134,19 +149,15 @@ class TestRpmResolver(unittest.TestCase):
         mock_gather.assert_called_once()
 
     @patch("doozerlib.lockfile_prototype.resolver.cmd_gather_async")
-    def test_resolve_sets_dnf_cache_env(self, mock_gather):
+    def test_resolve_mounts_dnf_cache(self, mock_gather):
         """
-        RPM_LOCKFILE_PROTOTYPE_DNF_CACHE should be set in the subprocess
-        env and point to the same directory across multiple resolve() calls.
+        Should mount DNF cache and set env var.
         """
-        captured_envs: list[dict] = []
+        captured_cmds = []
 
         async def mock_cmd(cmd, **kwargs):
-            captured_envs.append(dict(kwargs.get("env", {})))
-            outfile_idx = cmd.index("--outfile") + 1
-            with open(cmd[outfile_idx], "w") as f:
-                yaml.safe_dump(self.FAKE_LOCKFILE_DATA, f)
-            return (0, "", "")
+            captured_cmds.append(cmd)
+            return self._mock_podman_run(cmd, expect_bare=True)
 
         mock_gather.side_effect = mock_cmd
         resolver = RpmResolver(working_dir=Path(tempfile.mkdtemp()))
@@ -156,73 +167,83 @@ class TestRpmResolver(unittest.TestCase):
             packages=["nfs-utils"],
         )
         asyncio.run(resolver.resolve(config))
-        asyncio.run(resolver.resolve(config))
+        cmd = captured_cmds[0]
+        dnf_cache_set = False
+        for i, arg in enumerate(cmd):
+            if arg == "-e" and i + 1 < len(cmd) and cmd[i + 1] == "RPM_LOCKFILE_PROTOTYPE_DNF_CACHE=/cache":
+                dnf_cache_set = True
+        self.assertTrue(dnf_cache_set)
 
-        self.assertEqual(len(captured_envs), 2)
-        cache_dir_1 = captured_envs[0]["RPM_LOCKFILE_PROTOTYPE_DNF_CACHE"]
-        cache_dir_2 = captured_envs[1]["RPM_LOCKFILE_PROTOTYPE_DNF_CACHE"]
-        self.assertEqual(cache_dir_1, cache_dir_2)
-        self.assertTrue(os.path.isdir(cache_dir_1))
-
+    @patch.dict(os.environ, {"REGISTRY_AUTH_FILE": "/run/containers/auth.json"})
     @patch("doozerlib.lockfile_prototype.resolver.cmd_gather_async")
-    def test_sets_xdg_cache_home_in_jenkins(self, mock_gather):
+    def test_resolve_mounts_auth_file(self, mock_gather):
         """
-        When JENKINS_HOME is set, XDG_CACHE_HOME should point to the
+        When REGISTRY_AUTH_FILE is set, should mount it and set env var.
+        """
+        captured_cmds = []
+
+        async def mock_cmd(cmd, **kwargs):
+            captured_cmds.append(list(cmd))
+            return self._mock_podman_run(cmd, expect_bare=True)
+
+        mock_gather.side_effect = mock_cmd
+        resolver = RpmResolver()
+        config = RpmsInConfig(
+            arches=["x86_64"],
+            contentOrigin={"repos": []},
+            packages=[],
+        )
+        asyncio.run(resolver.resolve(config))
+        cmd = captured_cmds[0]
+        auth_mount = "/run/containers/auth.json:/auth/auth.json:ro,z"
+        self.assertTrue(
+            any(arg == "-v" and cmd[i + 1] == auth_mount for i, arg in enumerate(cmd) if i + 1 < len(cmd)),
+            f"Expected auth file mount {auth_mount} in command",
+        )
+        auth_env_set = any(
+            arg == "-e" and i + 1 < len(cmd) and cmd[i + 1] == "REGISTRY_AUTH_FILE=/auth/auth.json"
+            for i, arg in enumerate(cmd)
+        )
+        self.assertTrue(auth_env_set)
+
+    def test_custom_image_parameter(self):
+        """
+        Image parameter should override default.
+        """
+        resolver = RpmResolver(image="quay.io/custom/rpm-lockfile:v1.0")
+        self.assertEqual(resolver._image, "quay.io/custom/rpm-lockfile:v1.0")
+
+    def test_default_image(self):
+        """
+        Default image should match constant.
+        """
+        resolver = RpmResolver()
+        self.assertEqual(resolver._image, RPM_LOCKFILE_IMAGE)
+
+    def test_rpmdb_cache_path_in_jenkins(self):
+        """
+        When JENKINS_HOME is set, _rpmdb_cache_path should use the
         persistent Jenkins cache directory.
         """
-        captured_envs: list[dict] = []
-
-        async def mock_cmd(cmd, **kwargs):
-            captured_envs.append(dict(kwargs.get("env", {})))
-            outfile_idx = cmd.index("--outfile") + 1
-            with open(cmd[outfile_idx], "w") as f:
-                yaml.safe_dump(self.FAKE_LOCKFILE_DATA, f)
-            return (0, "", "")
-
-        mock_gather.side_effect = mock_cmd
         with patch.dict(os.environ, {"JENKINS_HOME": "/var/jenkins"}):
             resolver = RpmResolver(working_dir=Path(tempfile.mkdtemp()))
-            config = RpmsInConfig(
-                arches=["x86_64"],
-                contentOrigin={"repos": []},
-                packages=["nfs-utils"],
-            )
-            asyncio.run(resolver.resolve(config))
+        self.assertEqual(
+            str(resolver._rpmdb_cache_path),
+            "/mnt/jenkins-workspace/rpm-lockfile-cache/rpm-lockfile-prototype/rpmdbs",
+        )
 
-        self.assertEqual(len(captured_envs), 1)
-        xdg = captured_envs[0]["XDG_CACHE_HOME"]
-        self.assertEqual(xdg, "/mnt/jenkins-workspace/rpm-lockfile-cache")
-
-    @patch("doozerlib.lockfile_prototype.resolver.cmd_gather_async")
-    def test_no_xdg_cache_home_outside_jenkins(self, mock_gather):
+    def test_rpmdb_cache_path_outside_jenkins(self):
         """
-        When JENKINS_HOME is not set, XDG_CACHE_HOME should not be
-        overridden in the subprocess env.
+        When JENKINS_HOME is not set, _rpmdb_cache_path should fall
+        back to ~/.cache.
         """
-        captured_envs: list[dict] = []
-
-        async def mock_cmd(cmd, **kwargs):
-            captured_envs.append(dict(kwargs.get("env", {})))
-            outfile_idx = cmd.index("--outfile") + 1
-            with open(cmd[outfile_idx], "w") as f:
-                yaml.safe_dump(self.FAKE_LOCKFILE_DATA, f)
-            return (0, "", "")
-
-        mock_gather.side_effect = mock_cmd
-        with patch.dict(os.environ, {}, clear=False):
-            env = os.environ.copy()
-            env.pop("JENKINS_HOME", None)
-            with patch.dict(os.environ, env, clear=True):
-                resolver = RpmResolver(working_dir=Path(tempfile.mkdtemp()))
-                config = RpmsInConfig(
-                    arches=["x86_64"],
-                    contentOrigin={"repos": []},
-                    packages=["nfs-utils"],
-                )
-                asyncio.run(resolver.resolve(config))
-
-        self.assertEqual(len(captured_envs), 1)
-        self.assertNotIn("XDG_CACHE_HOME", captured_envs[0])
+        env = os.environ.copy()
+        env.pop("JENKINS_HOME", None)
+        env.pop("XDG_CACHE_HOME", None)
+        with patch.dict(os.environ, env, clear=True):
+            resolver = RpmResolver(working_dir=Path(tempfile.mkdtemp()))
+        expected = Path.home() / ".cache" / "rpm-lockfile-prototype" / "rpmdbs"
+        self.assertEqual(resolver._rpmdb_cache_path, expected)
 
 
 class TestParseMissingPackages(unittest.TestCase):
@@ -406,8 +427,12 @@ class TestResolveRpmdbCorruptionRetry(unittest.TestCase):
             call_count += 1
             if call_count == 1:
                 return (1, "", self.CORRUPTION_STDERR)
-            outfile_idx = cmd.index("--outfile") + 1
-            with open(cmd[outfile_idx], "w") as f:
+            for i, arg in enumerate(cmd):
+                if arg == "-v" and ":/work:" in cmd[i + 1]:
+                    host_tmpdir = cmd[i + 1].split(":")[0]
+                    break
+            host_outfile = os.path.join(host_tmpdir, DEFAULT_RPM_LOCKFILE_NAME)
+            with open(host_outfile, "w") as f:
                 yaml.safe_dump(self.FAKE_LOCKFILE_DATA, f)
             return (0, "", "")
 
@@ -444,8 +469,12 @@ class TestResolveRpmdbCorruptionRetry(unittest.TestCase):
             call_count += 1
             if call_count == 1:
                 return (1, "", cache_race_stderr)
-            outfile_idx = cmd.index("--outfile") + 1
-            with open(cmd[outfile_idx], "w") as f:
+            for i, arg in enumerate(cmd):
+                if arg == "-v" and ":/work:" in cmd[i + 1]:
+                    host_tmpdir = cmd[i + 1].split(":")[0]
+                    break
+            host_outfile = os.path.join(host_tmpdir, DEFAULT_RPM_LOCKFILE_NAME)
+            with open(host_outfile, "w") as f:
                 yaml.safe_dump(self.FAKE_LOCKFILE_DATA, f)
             return (0, "", "")
 
