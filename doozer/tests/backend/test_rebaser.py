@@ -1254,14 +1254,15 @@ class TestResolveVendorSymlinks(TestCase):
         self.assertFalse(resolved.is_symlink())
         self.assertEqual(resolved.read_text(), "package real")
 
-    def test_skips_broken_symlinks(self):
+    def test_prunes_broken_symlinks(self):
         vendor = self.dest_dir / "vendor" / "k8s.io"
         vendor.mkdir(parents=True)
         (vendor / "missing").symlink_to("/nonexistent/path")
 
         asyncio.run(self.rebaser._resolve_vendor_symlinks(self.dest_dir))
 
-        self.assertTrue((vendor / "missing").is_symlink())
+        self.assertFalse((vendor / "missing").exists())
+        self.assertFalse((vendor / "missing").is_symlink())
         self.rebaser._logger.warning.assert_called_once()
 
     def test_resolves_multiple_symlinks(self):
@@ -1324,6 +1325,140 @@ class TestResolveVendorSymlinks(TestCase):
         mode = resolved.stat().st_mode
         exec_bits = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
         self.assertEqual(mode & exec_bits, 0, "Executable bits should be stripped")
+
+
+class TestCleanupSymlinks(TestCase):
+    def setUp(self):
+        self.directory = TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.dest_dir = Path(self.directory.name) / "dest"
+        self.dest_dir.mkdir()
+
+        self.external_dir = Path(self.directory.name) / "external"
+        self.external_dir.mkdir()
+
+        self.rebaser = KonfluxRebaser.__new__(KonfluxRebaser)
+        self.rebaser._logger = MagicMock()
+
+    def test_no_symlinks(self):
+        (self.dest_dir / "file.go").write_text("package main")
+        asyncio.run(self.rebaser._cleanup_symlinks(self.dest_dir))
+        self.assertTrue((self.dest_dir / "file.go").exists())
+        self.rebaser._logger.info.assert_not_called()
+
+    def test_prunes_dangling_symlink(self):
+        link = self.dest_dir / "broken"
+        link.symlink_to("/nonexistent/target")
+
+        asyncio.run(self.rebaser._cleanup_symlinks(self.dest_dir))
+
+        self.assertFalse(link.exists())
+        self.assertFalse(link.is_symlink())
+        self.rebaser._logger.info.assert_called()
+
+    def test_keeps_valid_internal_symlink(self):
+        real = self.dest_dir / "real.go"
+        real.write_text("package main")
+        link = self.dest_dir / "alias.go"
+        link.symlink_to(real)
+
+        asyncio.run(self.rebaser._cleanup_symlinks(self.dest_dir))
+
+        self.assertTrue(link.is_symlink())
+        self.assertEqual(link.read_text(), "package main")
+
+    def test_prunes_nested_dangling_symlink(self):
+        subdir = self.dest_dir / "pkg" / "util"
+        subdir.mkdir(parents=True)
+        link = subdir / "missing"
+        link.symlink_to("/nonexistent")
+
+        asyncio.run(self.rebaser._cleanup_symlinks(self.dest_dir))
+
+        self.assertFalse(link.exists())
+        self.assertFalse(link.is_symlink())
+
+    def test_excludes_vendor_directory(self):
+        vendor = self.dest_dir / "vendor" / "example.com"
+        vendor.mkdir(parents=True)
+        vendor_link = vendor / "broken"
+        vendor_link.symlink_to("/nonexistent")
+
+        non_vendor_link = self.dest_dir / "broken"
+        non_vendor_link.symlink_to("/nonexistent")
+
+        asyncio.run(self.rebaser._cleanup_symlinks(self.dest_dir, exclude={"vendor"}))
+
+        self.assertTrue(vendor_link.is_symlink(), "vendor/ symlinks should be left alone")
+        self.assertFalse(non_vendor_link.is_symlink(), "non-vendor symlinks should be pruned")
+
+    def test_prunes_multiple_dangling(self):
+        for name in ["a", "b", "c"]:
+            (self.dest_dir / name).symlink_to(f"/nonexistent/{name}")
+
+        asyncio.run(self.rebaser._cleanup_symlinks(self.dest_dir))
+
+        for name in ["a", "b", "c"]:
+            self.assertFalse((self.dest_dir / name).is_symlink())
+
+    def test_prunes_symlink_loop(self):
+        link_a = self.dest_dir / "loop_a"
+        link_b = self.dest_dir / "loop_b"
+        link_a.symlink_to(link_b)
+        link_b.symlink_to(link_a)
+
+        asyncio.run(self.rebaser._cleanup_symlinks(self.dest_dir))
+
+        self.assertFalse(link_a.is_symlink())
+        self.assertFalse(link_b.is_symlink())
+
+    def test_resolves_external_file_symlink(self):
+        external_file = self.external_dir / "Dockerfile.openshift"
+        external_file.write_text("FROM ubi9")
+        link = self.dest_dir / "openshift" / "Dockerfile.openshift"
+        link.parent.mkdir(parents=True)
+        link.symlink_to(external_file)
+
+        asyncio.run(self.rebaser._cleanup_symlinks(self.dest_dir))
+
+        self.assertFalse(link.is_symlink())
+        self.assertTrue(link.is_file())
+        self.assertEqual(link.read_text(), "FROM ubi9")
+
+    def test_resolves_external_dir_symlink(self):
+        ext_pkg = self.external_dir / "pkg"
+        ext_pkg.mkdir()
+        (ext_pkg / "main.go").write_text("package pkg")
+
+        link = self.dest_dir / "ext_pkg"
+        link.symlink_to(ext_pkg)
+
+        asyncio.run(self.rebaser._cleanup_symlinks(self.dest_dir))
+
+        self.assertFalse(link.is_symlink())
+        self.assertTrue(link.is_dir())
+        self.assertEqual((link / "main.go").read_text(), "package pkg")
+
+    def test_prunes_dangling_external(self):
+        link = self.dest_dir / "broken"
+        link.symlink_to(self.external_dir / "nonexistent")
+
+        asyncio.run(self.rebaser._cleanup_symlinks(self.dest_dir))
+
+        self.assertFalse(link.is_symlink(), "dangling external symlinks should be pruned")
+
+    def test_excludes_vendor_for_external(self):
+        external_file = self.external_dir / "module.go"
+        external_file.write_text("package mod")
+
+        vendor = self.dest_dir / "vendor" / "example.com"
+        vendor.mkdir(parents=True)
+        vendor_link = vendor / "module.go"
+        vendor_link.symlink_to(external_file)
+
+        asyncio.run(self.rebaser._cleanup_symlinks(self.dest_dir, exclude={"vendor"}))
+
+        self.assertTrue(vendor_link.is_symlink(), "vendor/ symlinks should be left alone")
 
 
 class TestCpeVersionExtraction(TestCase):

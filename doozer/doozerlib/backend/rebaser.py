@@ -637,6 +637,62 @@ class KonfluxRebaser:
         cmd = 'rsync -av {} {}/ {}/'.format(exclude, src, dest)
         await exectools.cmd_assert_async(cmd, suppress_output=True)
 
+    async def _cleanup_symlinks(self, dest_dir: Path, exclude: set[str] | None = None):
+        """
+        Single-pass cleanup of problematic symlinks in the destination tree.
+        Dangling symlinks (including loops) are removed. Symlinks whose targets
+        resolve outside dest_dir are replaced with copies of the target.
+        Konflux git-clone rejects both cases.
+
+        Arg(s):
+            dest_dir (Path): Root directory to walk.
+            exclude (set[str] | None): Top-level directory names to skip (e.g. {"vendor"}).
+        """
+        exclude = exclude or set()
+        resolved_dest = dest_dir.resolve()
+        pruned = 0
+        resolved = 0
+
+        for entry in dest_dir.rglob("*"):
+            if not entry.is_symlink():
+                continue
+            # Check exclusion before resolve() to avoid errors on symlink loops
+            try:
+                relative = entry.relative_to(dest_dir)
+            except ValueError:
+                continue
+            if relative.parts and relative.parts[0] in exclude:
+                continue
+
+            try:
+                target = entry.resolve()
+                target_exists = target.exists()
+            except (OSError, RuntimeError):
+                target_exists = False
+
+            if not target_exists:
+                self._logger.info("Pruning dangling symlink %s -> %s", entry, os.readlink(entry))
+                entry.unlink()
+                pruned += 1
+                continue
+
+            # Target exists but points outside dest_dir — replace with a copy
+            try:
+                target.relative_to(resolved_dest)
+            except ValueError:
+                self._logger.info("Resolving external symlink %s -> %s", entry, os.readlink(entry))
+                entry.unlink()
+                if target.is_dir():
+                    await exectools.to_thread(shutil.copytree, str(target), str(entry))
+                else:
+                    await exectools.to_thread(shutil.copy2, str(target), str(entry))
+                resolved += 1
+
+        if pruned:
+            self._logger.info("Pruned %d dangling symlink(s)", pruned)
+        if resolved:
+            self._logger.info("Resolved %d external symlink(s)", resolved)
+
     async def _resolve_vendor_symlinks(self, dest_dir: Path):
         """
         Replace symlinks in vendor/ with copies of their target directories.
@@ -661,7 +717,8 @@ class KonfluxRebaser:
         for link in symlinks:
             target = link.resolve()
             if not target.exists():
-                self._logger.warning("Vendor symlink %s points to non-existent target %s, skipping", link, target)
+                self._logger.warning("Pruning dangling vendor symlink %s -> %s", link, os.readlink(link))
+                link.unlink()
                 continue
 
             link.unlink()
@@ -801,6 +858,11 @@ class KonfluxRebaser:
         containerfile = dest_dir.joinpath('Containerfile')
         if containerfile.is_file():
             containerfile.unlink()
+
+        # Clean up dangling and external symlinks outside vendor/ (vendor/ handled separately above).
+        # Must run after Dockerfile.* cleanup since removing e.g. Dockerfile.ocp can leave
+        # symlinks like openshift/Dockerfile.openshift -> ../Dockerfile.ocp dangling.
+        await self._cleanup_symlinks(dest_dir, exclude={"vendor"})
 
         owners = []
         if metadata.config.owners is not Missing and isinstance(metadata.config.owners, list):
