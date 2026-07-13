@@ -427,7 +427,7 @@ class KonfluxOlmBundleRebaser:
                 f"Invalid MAJOR version in group config for {metadata.runtime.group}: "
                 f"{self._group_config.vars.get('MAJOR')}"
             ) from e
-        default_delivery_namespace = f'openshift{major}' if major >= 5 else 'openshift4'
+        default_delivery_namespace = f'openshift{major}'
         # Build a map of image short name -> delivery override short name for images that have
         # delivery_repo_name_override set. This allows operators to reference images using a
         # versioned internal name (e.g. ose-csi-livenessprobe-4.18-rhel9) while having them
