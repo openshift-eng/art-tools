@@ -1265,6 +1265,17 @@ class TestResolveVendorSymlinks(TestCase):
         self.assertFalse((vendor / "missing").is_symlink())
         self.rebaser._logger.warning.assert_called_once()
 
+    def test_prunes_symlink_loop(self):
+        vendor = self.dest_dir / "vendor" / "k8s.io"
+        vendor.mkdir(parents=True)
+        (vendor / "loop_a").symlink_to(vendor / "loop_b")
+        (vendor / "loop_b").symlink_to(vendor / "loop_a")
+
+        asyncio.run(self.rebaser._resolve_vendor_symlinks(self.dest_dir))
+
+        self.assertFalse((vendor / "loop_a").is_symlink())
+        self.assertFalse((vendor / "loop_b").is_symlink())
+
     def test_resolves_multiple_symlinks(self):
         staging_base = self.dest_dir / "staging" / "src" / "k8s.io"
 

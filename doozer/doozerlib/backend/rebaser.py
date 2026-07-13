@@ -715,8 +715,12 @@ class KonfluxRebaser:
 
         self._logger.info("Resolving %d symlink(s) in vendor/ directory", len(symlinks))
         for link in symlinks:
-            target = link.resolve()
-            if not target.exists():
+            try:
+                target = link.resolve()
+                target_exists = target.exists()
+            except (OSError, RuntimeError):
+                target_exists = False
+            if not target_exists:
                 self._logger.warning("Pruning dangling vendor symlink %s -> %s", link, os.readlink(link))
                 link.unlink()
                 continue
