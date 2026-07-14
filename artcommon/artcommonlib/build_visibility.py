@@ -48,6 +48,17 @@ def is_release_embargoed(release: str, build_system: str, default=True) -> bool:
     return default
 
 
+def is_nvr_embargoed(nvr: str, build_system: str = 'konflux') -> bool:
+    """
+    Determine embargo status directly from an NVR string, by inspecting its release field.
+    E.g. 'foo-1.0-1.p3' -> True (konflux, private), 'foo-1.0-1.p2' -> False (konflux, public)
+    """
+    from artcommonlib.rpm_utils import parse_nvr
+
+    release = parse_nvr(nvr)['release']
+    return is_release_embargoed(release, build_system)
+
+
 def get_visibility_suffix(build_system: str, visibility: BuildVisibility) -> str:
     """
     Get the p? flag based on the visibility status and the build system. E.g.:
