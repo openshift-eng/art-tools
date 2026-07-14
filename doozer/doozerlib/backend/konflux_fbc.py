@@ -1296,9 +1296,7 @@ class KonfluxFbcRebaser:
                         superseded_names = {it.get('replaces') for it in all_entries if it.get('replaces')}
                         for it in all_entries:
                             superseded_names.update(it.get('skips', []))
-                        current_head = next(
-                            (it for it in all_entries if it['name'] not in superseded_names), None
-                        )
+                        current_head = next((it for it in all_entries if it['name'] not in superseded_names), None)
                         if current_head:
                             # The new bundle should replace the current head
                             replaces = current_head['name']
