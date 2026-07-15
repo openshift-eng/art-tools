@@ -150,7 +150,8 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
                     'Labels': {
                         'com.redhat.component': 'test-component',
                         'version': '1.0',
-                        'release': '1',
+                        # Public (non-embargoed) Konflux release.
+                        'release': '1.p2',
                     },
                 },
             },
@@ -186,7 +187,8 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
                     'Labels': {
                         'com.redhat.component': 'test-component',
                         'version': '1.0',
-                        'release': '1',
+                        # Public (non-embargoed) Konflux release.
+                        'release': '1.p2',
                     },
                 },
             },
