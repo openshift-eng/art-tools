@@ -6,7 +6,7 @@ import elliottlib.cli.find_bugs_sweep_cli as sweep_cli
 from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
 from click.testing import CliRunner
 from elliottlib import constants, errata
-from elliottlib.bzutil import BugValidiationResult, JIRABugTracker
+from elliottlib.bzutil import BugValidationResult, JIRABugTracker
 from elliottlib.cli.common import Runtime, cli
 from elliottlib.cli.find_bugs_sweep_cli import (
     FindBugsMode,
@@ -690,8 +690,8 @@ class TestCategorizeBugsByType(unittest.TestCase):
         bugs = [
             flexmock(
                 id='OCPBUGS-5',
-                is_tracker_bug=lambda: BugValidiationResult(ok=True, reason=''),
-                is_invalid_tracker_bug=lambda: BugValidiationResult(ok=False, reason=''),
+                is_tracker_bug=lambda: BugValidationResult(ok=True, reason=''),
+                is_invalid_tracker_bug=lambda: BugValidationResult(ok=False, reason=''),
                 has_valid_target_version_in_summary=lambda *_: False,
                 make_summary_with_target_version=lambda *_: 'fixed summary',
                 whiteboard_component='foo',
@@ -713,8 +713,8 @@ class TestCategorizeBugsByType(unittest.TestCase):
             # valid tracker
             flexmock(
                 id='OCPBUGS-2',
-                is_tracker_bug=lambda: BugValidiationResult(ok=True, reason=''),
-                is_invalid_tracker_bug=lambda: BugValidiationResult(ok=False, reason=''),
+                is_tracker_bug=lambda: BugValidationResult(ok=True, reason=''),
+                is_invalid_tracker_bug=lambda: BugValidationResult(ok=False, reason=''),
                 has_valid_target_version_in_summary=lambda *_: True,
                 whiteboard_component='buzz',
                 component='',
@@ -723,8 +723,8 @@ class TestCategorizeBugsByType(unittest.TestCase):
             # bad summary tracker
             flexmock(
                 id='OCPBUGS-4',
-                is_tracker_bug=lambda: BugValidiationResult(ok=True, reason=''),
-                is_invalid_tracker_bug=lambda: BugValidiationResult(ok=False, reason=''),
+                is_tracker_bug=lambda: BugValidationResult(ok=True, reason=''),
+                is_invalid_tracker_bug=lambda: BugValidationResult(ok=False, reason=''),
                 has_valid_target_version_in_summary=lambda *_: False,
                 make_summary_with_target_version=lambda *_: 'fixed summary',
                 whiteboard_component='foo',
@@ -734,8 +734,8 @@ class TestCategorizeBugsByType(unittest.TestCase):
             # invalid tracker
             flexmock(
                 id='OCPBUGS-5',
-                is_tracker_bug=lambda: BugValidiationResult(ok=False, reason=''),
-                is_invalid_tracker_bug=lambda: BugValidiationResult(ok=True, reason='- Has CVE identifier in summary'),
+                is_tracker_bug=lambda: BugValidationResult(ok=False, reason=''),
+                is_invalid_tracker_bug=lambda: BugValidationResult(ok=True, reason='- Has CVE identifier in summary'),
                 component='',
                 bug_class='jira',
             ),
