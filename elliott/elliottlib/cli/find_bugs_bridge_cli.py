@@ -96,6 +96,7 @@ class FindBugsBridgeCli:
         if not target_releases:
             raise ValueError(f"No Jira target release configured for {self.runtime.group}")
         self.target_release = target_releases[0]
+        self._validate_target_release(target_releases)
 
         self._build_target_image_maps()
         candidates = self._get_candidate_bugs()
@@ -127,6 +128,23 @@ class FindBugsBridgeCli:
             self.updated_mirror_count,
             skipped,
         )
+
+    def _validate_target_release(self, target_releases: List[str]) -> None:
+        """Fail fast if the configured target release doesn't exist in the target Jira project.
+
+        Args:
+            target_releases: Target-version values configured for the target group's Jira tracker.
+
+        Raises:
+            ValueError: If none of `target_releases` exist as a Version in the target Jira project.
+        """
+        assert self.target_tracker is not None
+        available_versions = self.target_tracker._get_available_target_versions()
+        if available_versions and not any(tr in available_versions for tr in target_releases):
+            raise ValueError(
+                f"None of the configured target releases {target_releases} exist in JIRA project "
+                f"{self.target_tracker.project}; ask a Jira admin to create the version before running bridge-mirror"
+            )
 
     @staticmethod
     def _load_bridge_config(runtime: Runtime) -> BridgeBugMirroringConfig:

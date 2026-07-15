@@ -344,6 +344,7 @@ class TestFindBugsBridgeCli(IsolatedAsyncioTestCase):
         self.cli.source_tracker = MagicMock()
         self.cli.target_tracker = MagicMock()
         self.cli.target_tracker.target_release.return_value = ["4.23.z"]
+        self.cli.target_tracker._get_available_target_versions.return_value = ["4.23.z"]
         self.cli.runtime.get_bug_tracker = MagicMock(return_value=self.cli.target_tracker)
         self.cli.source_runtime.get_bug_tracker = MagicMock(return_value=self.cli.source_tracker)
         self.cli._build_source_runtime = MagicMock(return_value=self.cli.source_runtime)
