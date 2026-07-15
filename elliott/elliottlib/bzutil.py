@@ -42,7 +42,7 @@ logger = logutil.get_logger(__name__)
 
 
 @dataclass(frozen=True)
-class BugValidiationResult:
+class BugValidationResult:
     """Result of bug validation with ok status and reason for failure."""
 
     ok: bool
@@ -285,31 +285,31 @@ class BugzillaBug(Bug):
                 missing.append(f"- This bug lacks the required keywords: {set(constants.TRACKER_BUG_KEYWORDS)}")
             if not has_whiteboard_component:
                 missing.append("- Missing Whiteboard component")
-            return BugValidiationResult(ok=False, reason="\n".join(missing))
+            return BugValidationResult(ok=False, reason="\n".join(missing))
 
-        return BugValidiationResult(ok=True, reason="")
+        return BugValidationResult(ok=True, reason="")
 
     def is_invalid_tracker_bug(self):
         tracker_result = self.is_tracker_bug()
         if tracker_result.ok:
-            return BugValidiationResult(ok=False, reason="")
+            return BugValidationResult(ok=False, reason="")
 
         if 'WeaknessTracking' in self.keywords:
             # See e.g. https://bugzilla.redhat.com/show_bug.cgi?id=2092289. This bug is not a CVE tracker
-            return BugValidiationResult(ok=False, reason="")
+            return BugValidationResult(ok=False, reason="")
 
         has_cve_in_summary = bool(re.search(r'CVE-\d+-\d+', self.summary))
         has_keywords = set(constants.TRACKER_BUG_KEYWORDS).issubset(set(self.keywords))
 
         if not (has_keywords or has_cve_in_summary):
-            return BugValidiationResult(ok=False, reason="")
+            return BugValidationResult(ok=False, reason="")
 
         properties = []
         if has_cve_in_summary:
             properties.append("- Has CVE identifier in summary so this is registered as a bug")
         properties.append(tracker_result.reason)
 
-        return BugValidiationResult(ok=True, reason="\n".join(properties))
+        return BugValidationResult(ok=True, reason="\n".join(properties))
 
     def all_advisory_ids(self):
         return ErrataBug(self.id).all_advisory_ids
@@ -360,7 +360,7 @@ class JIRABug(Bug):
 
     def is_tracker_bug(self):
         if self.is_type_vulnerability():
-            return BugValidiationResult(ok=True, reason="")
+            return BugValidationResult(ok=True, reason="")
 
         has_keywords = set(constants.TRACKER_BUG_KEYWORDS).issubset(set(self.keywords))
         has_whiteboard_component = bool(self.whiteboard_component)
@@ -374,37 +374,37 @@ class JIRABug(Bug):
                 missing.append("- Missing Whiteboard component")
             if not has_linked_flaw:
                 missing.append("- Missing flaw bug links")
-            return BugValidiationResult(ok=False, reason="\n".join(missing))
+            return BugValidationResult(ok=False, reason="\n".join(missing))
 
-        return BugValidiationResult(ok=True, reason="")
+        return BugValidationResult(ok=True, reason="")
 
     def is_invalid_tracker_bug(self):
         tracker_result = self.is_tracker_bug()
         if tracker_result.ok:
-            return BugValidiationResult(ok=False, reason="")
+            return BugValidationResult(ok=False, reason="")
 
         if 'WeaknessTracking' in self.keywords:
             # See e.g. https://issues.redhat.com/browse/OCPBUGS-5804. This is not to be regarded a tracking bug.
-            return BugValidiationResult(ok=False, reason="")
+            return BugValidationResult(ok=False, reason="")
         if 'art:cloned-kernel-bug' in self.keywords:
             # Bugs for advance-shipped kernel builds should not be regarded as a tracker. They might look like one,
             # but they are not invalid.
             # Context in this thread: https://redhat-internal.slack.com/archives/C04SCM5AYE4/p1685524912511489?thread_ts=1685489306.568039&cid=C04SCM5AYE4
             # This is likely not the end state, but at least for the time being.
-            return BugValidiationResult(ok=False, reason="")
+            return BugValidationResult(ok=False, reason="")
 
         has_cve_in_summary = bool(re.search(r'CVE-\d+-\d+', self.summary))
         has_keywords = set(constants.TRACKER_BUG_KEYWORDS).issubset(set(self.keywords))
         has_linked_flaw = bool(self.corresponding_flaw_bug_ids)
 
         if not (has_keywords or has_cve_in_summary or has_linked_flaw):
-            return BugValidiationResult(ok=False, reason="")
+            return BugValidationResult(ok=False, reason="")
 
         properties = []
         if has_cve_in_summary:
             properties.append("- Has CVE identifier in summary so this is registered as a bug")
         properties.append(tracker_result.reason)
-        return BugValidiationResult(ok=True, reason="\n".join(properties))
+        return BugValidationResult(ok=True, reason="\n".join(properties))
 
     @property
     def summary(self):
