@@ -316,12 +316,12 @@ class FindBugsBridgeCli:
             return True
 
         fields = self._build_issue_fields(source_bug, image_meta)
+        issue = self.target_tracker.create_issue(fields, noop=self.noop)
         if self.noop:
             LOGGER.info("[DRY RUN] Would create bridge mirror for %s", source_bug.id)
             self.created_mirror_count += 1
             return True
 
-        issue = self.target_tracker.create_issue(fields)
         self._ensure_issue_links(issue.id, source_bug.id)
         LOGGER.info("Created bridge mirror %s for %s", issue.id, source_bug.id)
         self.created_mirror_count += 1
