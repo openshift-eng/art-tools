@@ -133,9 +133,6 @@ class FindBugsBridgeCli:
     def _resolve_target_releases(self, target_releases: List[str]) -> List[str]:
         """Filter configured target releases down to those that exist in the target Jira project.
 
-        Runs once per invocation (rather than per bug) so a misconfigured target release fails
-        fast, before any candidate bugs are processed.
-
         Args:
             target_releases: Target-version values configured for the target group's Jira tracker.
 
