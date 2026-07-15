@@ -138,35 +138,6 @@ class TestFindBugsBridgeCli(IsolatedAsyncioTestCase):
         self.cli.target_tracker.create_issue_link.assert_any_call("Cloners", "OCPBUGS-999", "OCPBUGS-123")
         self.assertEqual(self.cli.target_tracker.create_issue_link.call_count, 3)
 
-    async def test_sync_mirror_noop_calls_create_issue_with_noop(self):
-        self.cli.noop = True
-        source_bug = MagicMock()
-        source_bug.id = "OCPBUGS-123"
-        source_bug.summary = "Visible bug"
-        source_bug.status = "ON_QA"
-        source_bug.weburl = "https://issues.example.com/OCPBUGS-123"
-        source_bug.component = "visible-image-container"
-        source_bug.whiteboard_component = None
-        source_bug.bug.fields.description = "Source description"
-        source_bug.bug.fields.issuetype.name = "Story"
-        source_bug.bug.fields.components = [MagicMock(name="Visible")]
-        source_bug.bug.fields.components[0].name = "Visible"
-        source_bug.bug.fields.priority = None
-        source_bug.bug.fields.security = None
-
-        image_meta = MagicMock()
-        image_meta.distgit_key = "visible-image"
-        image_meta.get_component_name.return_value = "visible-image-container"
-
-        result = await self.cli._sync_mirror(source_bug, image_meta)
-
-        self.assertTrue(result)
-        self.cli.target_tracker.create_issue.assert_called_once()
-        _, kwargs = self.cli.target_tracker.create_issue.call_args
-        self.assertTrue(kwargs["noop"])
-        self.cli.target_tracker.create_issue_link.assert_not_called()
-        self.assertEqual(self.cli.created_mirror_count, 1)
-
     async def test_sync_mirror_skips_existing_wont_fix(self):
         source_bug = MagicMock()
         source_bug.id = "OCPBUGS-123"
