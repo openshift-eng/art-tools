@@ -195,6 +195,38 @@ class TestTransformReinstallCommands(unittest.TestCase):
         self.assertIn("microdnf -y install openssl", result)
         self.assertIn("microdnf clean all", result)
 
+    def test_does_not_cross_newline(self):
+        """
+        Reinstall at end of RUN must not consume the next Dockerfile
+        instruction across an unescaped newline.
+        """
+        content = "RUN dnf -y reinstall tzdata\nCOPY foo bar\n"
+        result = transform_reinstall_commands(content)
+        self.assertEqual(
+            result,
+            "RUN (dnf -y reinstall tzdata || true)\nCOPY foo bar\n",
+        )
+
+    def test_multiline_continuation(self):
+        """
+        Backslash-newline continuation is collapsed into a single line.
+        """
+        content = "RUN dnf -y reinstall tzdata \\\n    && dnf clean all\n"
+        result = transform_reinstall_commands(content)
+        self.assertEqual(
+            result,
+            "RUN (dnf -y reinstall tzdata || true) && dnf clean all\n",
+        )
+
+    def test_existing_or_fallback_unchanged(self):
+        """
+        If the reinstall already has an || fallback, leave it unchanged
+        to avoid making the original fallback unreachable.
+        """
+        content = "RUN dnf -y reinstall tzdata || echo failed && dnf clean all\n"
+        result = transform_reinstall_commands(content)
+        self.assertEqual(result, content)
+
 
 class TestFixRpmVerifyCommands(unittest.TestCase):
     def test_transforms_variable_package_list(self):

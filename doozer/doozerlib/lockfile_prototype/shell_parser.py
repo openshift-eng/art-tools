@@ -2,7 +2,8 @@
 Shell command parsing for RPM lockfile generation.
 
 Provides bashlex-based AST walking to extract package names from
-yum/dnf install and update commands in RUN bodies and shell scripts.
+yum/dnf install, update, and reinstall commands in RUN bodies and
+shell scripts.
 Handles variable assignments, arch-conditional blocks, subshell
 expansions, and bash-to-POSIX preprocessing.
 """
@@ -366,7 +367,7 @@ def _process_assignments(
 
 def _detect_pkg_action(word_values: list[str], ctx: _WalkContext) -> tuple[str | None, int]:
     """
-    Detect install/update/upgrade action in a dnf/yum command.
+    Detect install/update/upgrade/reinstall action in a dnf/yum command.
 
     Return Value(s):
         tuple[str | None, int]: (action, action_index) or (None, -1).

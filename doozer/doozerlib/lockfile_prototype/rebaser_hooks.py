@@ -104,12 +104,12 @@ def apply_dockerfile_transforms(
     logger: logging.Logger | None = None,
 ) -> None:
     """
-    Strip Dockerfile commands that fail in hermetic builds.
+    Transform Dockerfile commands for hermetic builds.
 
     Applied after lockfile generation so update targets are already
     resolved into the lockfile. Removes bare yum/dnf update commands
-    and reinstall commands (redundant when the base image already has
-    the pinned version).
+    and wraps reinstall commands in fail-safe ``(cmd || true)`` so
+    they degrade gracefully when the installed NEVRA is unavailable.
 
     Arg(s):
         dest_dir (Path): Build directory containing the Dockerfile.

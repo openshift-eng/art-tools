@@ -76,13 +76,18 @@ def transform_reinstall_commands(df_content: str) -> str:
         str: Transformed Dockerfile text with reinstall commands wrapped.
     """
     reinstall_re = re.compile(
-        r"(\b(?:microdnf|dnf|yum)\s+(?:-\w+\s+)*reinstall\b[^&|;\\]*(?:\\\n[^&|;\\]*)*)"
+        r"(\b(?:microdnf|dnf|yum)\s+(?:-\w+\s+)*reinstall\b[^&|;\\\n]*(?:\\\n[^&|;\\\n]*)*)"
         r"(\s*&&\s*|\s*;\s*)?",
     )
 
     def _wrap(m: re.Match) -> str:
         cmd = m.group(1).rstrip()
+        if cmd.endswith("\\"):
+            cmd = cmd[:-1].rstrip()
         sep = m.group(2)
+        rest = m.string[m.end() :]
+        if not sep and rest.lstrip().startswith("||"):
+            return m.group(0)
         if sep:
             return f"({cmd} || true) {sep.lstrip()}"
         return f"({cmd} || true)"
