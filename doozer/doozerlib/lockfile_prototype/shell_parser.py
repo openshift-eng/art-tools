@@ -382,6 +382,8 @@ def _detect_pkg_action(word_values: list[str], ctx: _WalkContext) -> tuple[str |
         if wl in ("update", "upgrade"):
             ctx.has_update = True
             return "update", idx
+        if wl == "reinstall":
+            return "reinstall", idx
         if wl in ("builddep", "build-dep"):
             return "builddep", idx
         if wl == "module":

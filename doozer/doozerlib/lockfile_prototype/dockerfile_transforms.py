@@ -58,29 +58,36 @@ def strip_bare_updates_from_scripts(
                 logger.debug(f"Stripped bare updates from {script.relative_to(dest_dir)}")
 
 
-def strip_reinstall_commands(df_content: str) -> str:
+def transform_reinstall_commands(df_content: str) -> str:
     """
-    Remove microdnf/dnf/yum reinstall commands from a Dockerfile.
+    Make microdnf/dnf/yum reinstall commands fail-safe for hermetic builds.
 
-    In hermetic builds the base image packages are already at the exact
-    pinned version, so reinstalling them is redundant. The reinstall also
-    fails because the installed NEVRA is not available in the lockfile
-    repos (e.g. ``microdnf -y reinstall tzdata`` fails with
-    "Installed package tzdata-... not available").
-
-    Strips ``reinstall`` subcommands (with their package arguments) from
-    chained commands while preserving the rest of the chain.
+    In hermetic builds the installed NEVRA may not be available in the
+    lockfile repos, so ``reinstall`` can fail with "Installed package
+    not available". Rather than stripping the command entirely (which
+    drops semantically important re-extractions like ``reinstall
+    tzdata``), wrap each reinstall invocation in ``(cmd || true)`` so
+    it succeeds when the NEVRA matches and degrades gracefully when it
+    does not.
 
     Arg(s):
         df_content (str): Raw Dockerfile text.
     Return Value(s):
-        str: Transformed Dockerfile text with reinstall commands removed.
+        str: Transformed Dockerfile text with reinstall commands wrapped.
     """
     reinstall_re = re.compile(
-        r"\b(?:microdnf|dnf|yum)\s+(?:-\w+\s+)*reinstall\b[^&|;\\]*(?:\\\n[^&|;\\]*)*"
-        r"(?:\s*&&\s*|\s*;\s*)?",
+        r"(\b(?:microdnf|dnf|yum)\s+(?:-\w+\s+)*reinstall\b[^&|;\\]*(?:\\\n[^&|;\\]*)*)"
+        r"(\s*&&\s*|\s*;\s*)?",
     )
-    return reinstall_re.sub("", df_content)
+
+    def _wrap(m: re.Match) -> str:
+        cmd = m.group(1).rstrip()
+        sep = m.group(2)
+        if sep:
+            return f"({cmd} || true) {sep.lstrip()}"
+        return f"({cmd} || true)"
+
+    return reinstall_re.sub(_wrap, df_content)
 
 
 def fix_rpm_verify_commands(df_content: str) -> str:

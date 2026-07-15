@@ -113,6 +113,23 @@ class TestExtractPackagesFromRunCommands(unittest.TestCase):
         self.assertEqual(common, ["make"])
         self.assertEqual(arch, {"x86_64": ["kernel-rt-devel", "kernel-rt-modules"]})
 
+    def test_reinstall_packages_parsed(self):
+        run_values = ["dnf -y reinstall tzdata && dnf clean all"]
+        common, arch = extract_packages_from_run_commands(run_values)
+        self.assertIn("tzdata", common)
+
+    def test_reinstall_multiple_packages_parsed(self):
+        run_values = ["microdnf -y reinstall tzdata glibc && microdnf clean all"]
+        common, arch = extract_packages_from_run_commands(run_values)
+        self.assertIn("tzdata", common)
+        self.assertIn("glibc", common)
+
+    def test_reinstall_mixed_with_install(self):
+        run_values = ["microdnf -y install openssl && microdnf -y reinstall tzdata && microdnf clean all"]
+        common, arch = extract_packages_from_run_commands(run_values)
+        self.assertIn("openssl", common)
+        self.assertIn("tzdata", common)
+
     def test_fallback_install_after_or(self):
         run_values = ["dnf -y install gcc-${GCC_VERSION} gcc-c++-${GCC_VERSION} || dnf -y install gcc gcc-c++"]
         common, arch = extract_packages_from_run_commands(run_values)

@@ -6,7 +6,7 @@ from doozerlib.lockfile_prototype.dockerfile_transforms import (
     fix_rpm_verify_commands,
     strip_bare_updates,
     strip_bare_updates_from_scripts,
-    strip_reinstall_commands,
+    transform_reinstall_commands,
 )
 
 
@@ -145,40 +145,39 @@ class TestStripBareUpdatesFromScripts(unittest.TestCase):
             self.assertEqual(mtime_before, mtime_after)
 
 
-class TestStripReinstallCommands(unittest.TestCase):
-    def test_strips_microdnf_reinstall(self):
+class TestTransformReinstallCommands(unittest.TestCase):
+    def test_wraps_microdnf_reinstall(self):
         content = "RUN microdnf -y install openssl && microdnf -y reinstall tzdata && microdnf clean all\n"
-        result = strip_reinstall_commands(content)
-        self.assertNotIn("reinstall", result)
+        result = transform_reinstall_commands(content)
+        self.assertIn("(microdnf -y reinstall tzdata || true)", result)
         self.assertIn("microdnf -y install openssl", result)
         self.assertIn("microdnf clean all", result)
 
-    def test_strips_dnf_reinstall(self):
+    def test_wraps_dnf_reinstall(self):
         content = "RUN dnf -y reinstall tzdata && dnf clean all\n"
-        result = strip_reinstall_commands(content)
-        self.assertNotIn("reinstall", result)
-        self.assertIn("dnf clean all", result)
+        result = transform_reinstall_commands(content)
+        self.assertIn("(dnf -y reinstall tzdata || true) && dnf clean all", result)
 
-    def test_strips_yum_reinstall(self):
+    def test_wraps_yum_reinstall(self):
         content = "RUN yum reinstall -y glibc && yum clean all\n"
-        result = strip_reinstall_commands(content)
-        self.assertNotIn("reinstall", result)
+        result = transform_reinstall_commands(content)
+        self.assertIn("(yum reinstall -y glibc || true)", result)
         self.assertIn("yum clean all", result)
 
-    def test_strips_reinstall_multiple_packages(self):
+    def test_wraps_reinstall_multiple_packages(self):
         content = "RUN microdnf -y reinstall tzdata glibc && microdnf clean all\n"
-        result = strip_reinstall_commands(content)
-        self.assertNotIn("reinstall", result)
+        result = transform_reinstall_commands(content)
+        self.assertIn("(microdnf -y reinstall tzdata glibc || true)", result)
         self.assertIn("microdnf clean all", result)
 
     def test_preserves_install_commands(self):
         content = "RUN microdnf -y install openssl && microdnf clean all\n"
-        result = strip_reinstall_commands(content)
+        result = transform_reinstall_commands(content)
         self.assertEqual(result, content)
 
     def test_no_reinstall_unchanged(self):
         content = "FROM base\nRUN yum install -y wget\n"
-        result = strip_reinstall_commands(content)
+        result = transform_reinstall_commands(content)
         self.assertEqual(result, content)
 
     def test_real_world_oadp_pattern(self):
@@ -191,8 +190,8 @@ class TestStripReinstallCommands(unittest.TestCase):
             "microdnf -y reinstall tzdata && "
             "microdnf clean all\n"
         )
-        result = strip_reinstall_commands(content)
-        self.assertNotIn("reinstall", result)
+        result = transform_reinstall_commands(content)
+        self.assertIn("(microdnf -y reinstall tzdata || true)", result)
         self.assertIn("microdnf -y install openssl", result)
         self.assertIn("microdnf clean all", result)
 
