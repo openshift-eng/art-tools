@@ -563,7 +563,7 @@ class TestExtraImageNvrsValidation(unittest.TestCase):
 
     def test_fbc_nvr_in_extra_image_nvrs_raises(self):
         """run() should raise RuntimeError when extra_image_nvrs contains an FBC build."""
-        pipeline = self._make_pipeline(extra_image_nvrs=["oadp-operator-fbc-1.5.3-1.el9"])
+        pipeline = self._make_pipeline(extra_image_nvrs=["oadp-operator-fbc-1.5.3-1.el9.p2"])
         pipeline.check_env_vars = MagicMock()
         pipeline.setup_working_dir = MagicMock()
         pipeline._load_product_from_group_config = AsyncMock(return_value="oadp")
@@ -586,6 +586,61 @@ class TestExtraImageNvrsValidation(unittest.TestCase):
             asyncio.run(pipeline.run())
         except RuntimeError as e:
             self.assertNotIn("FBC builds", str(e))
+
+
+class TestEmbargoedNvrDefensiveCheck(unittest.TestCase):
+    """run() must refuse to release if any embargoed (private-fix) NVR is found, whether it came
+    from an FBC pullspec or from a manual --extra-image-nvrs override."""
+
+    def _make_pipeline(self, extra_image_nvrs=None, fbc_pullspecs=None):
+        runtime = MagicMock()
+        runtime.config = {}
+        runtime.dry_run = False
+        runtime.working_dir = MagicMock()
+        runtime.working_dir.absolute.return_value = MagicMock()
+        pipeline = ReleaseFromFbcPipeline(
+            runtime=runtime,
+            group="oadp-1.5",
+            assembly="1.5.3",
+            fbc_pullspecs=fbc_pullspecs or [],
+            extra_image_nvrs=extra_image_nvrs,
+        )
+        pipeline.check_env_vars = MagicMock()
+        pipeline.setup_working_dir = MagicMock()
+        pipeline._load_product_from_group_config = AsyncMock(return_value="oadp")
+        return pipeline
+
+    def test_embargoed_fbc_nvr_raises(self):
+        """An embargoed NVR extracted from an FBC pullspec must fail the release."""
+        pipeline = self._make_pipeline(fbc_pullspecs=["quay.io/example/fbc:v1"])
+        pipeline.validate_fbc_related_images = AsyncMock(return_value=[])
+        pipeline.extract_fbc_nvr = MagicMock(return_value="oadp-operator-fbc-1.5.3-1.p3")
+
+        with self.assertRaises(RuntimeError) as ctx:
+            asyncio.run(pipeline.run())
+        self.assertIn("embargoed", str(ctx.exception))
+        self.assertIn("oadp-operator-fbc-1.5.3-1.p3", str(ctx.exception))
+
+    def test_embargoed_extra_image_nvr_raises(self):
+        """An embargoed NVR passed via --extra-image-nvrs must fail the release."""
+        pipeline = self._make_pipeline(extra_image_nvrs=["oadp-velero-container-1.5.3-1.p3"])
+
+        with self.assertRaises(RuntimeError) as ctx:
+            asyncio.run(pipeline.run())
+        self.assertIn("embargoed", str(ctx.exception))
+        self.assertIn("oadp-velero-container-1.5.3-1.p3", str(ctx.exception))
+
+    def test_non_embargoed_nvrs_do_not_raise_embargo_error(self):
+        """Public (non-embargoed) NVRs should not trigger the embargo defensive check."""
+        pipeline = self._make_pipeline(extra_image_nvrs=["oadp-velero-container-1.5.3-1.p2"])
+        pipeline.create_snapshot = AsyncMock(return_value=MagicMock())
+        pipeline.create_shipment_config = MagicMock(return_value=MagicMock())
+        pipeline.write_shipment_files_locally = AsyncMock()
+
+        try:
+            asyncio.run(pipeline.run())
+        except RuntimeError as e:
+            self.assertNotIn("embargoed", str(e))
 
 
 class TestSetShipmentMrReady(unittest.TestCase):
@@ -1228,7 +1283,7 @@ class TestOcpOptionalMode(unittest.TestCase):
     def test_extra_image_nvrs_merged_into_extras_key(self):
         """In OCP optional mode, extra_image_nvrs should merge into 'extras', not 'image'."""
         pipeline = self._make_pipeline(ocp_optional=True)
-        pipeline.extra_image_nvrs = ["extra-operator-container-v4.22.0-1.el9"]
+        pipeline.extra_image_nvrs = ["extra-operator-container-v4.22.0-1.el9.p2"]
         pipeline.fbc_pullspecs = []
         pipeline.check_env_vars = MagicMock()
         pipeline.setup_working_dir = MagicMock()
@@ -1241,7 +1296,7 @@ class TestOcpOptionalMode(unittest.TestCase):
         asyncio.run(pipeline.run())
 
         snapshot_call_args = pipeline.create_snapshot.call_args[0][0]
-        self.assertIn("extra-operator-container-v4.22.0-1.el9", snapshot_call_args)
+        self.assertIn("extra-operator-container-v4.22.0-1.el9.p2", snapshot_call_args)
 
         config_call_args = pipeline.create_shipment_config.call_args
         self.assertEqual(config_call_args[0][0], "extras")
@@ -1364,7 +1419,7 @@ class TestOcpOptionalMode(unittest.TestCase):
         pipeline = self._make_pipeline(ocp_optional=True)
         pipeline.create_mr = True
         pipeline.fbc_pullspecs = []
-        pipeline.extra_image_nvrs = ["extra-op-container-v4.22.0-1.el9"]
+        pipeline.extra_image_nvrs = ["extra-op-container-v4.22.0-1.el9.p2"]
         pipeline.check_env_vars = MagicMock()
         pipeline.setup_working_dir = MagicMock()
         pipeline.setup_shipment_repo = AsyncMock()
@@ -1393,7 +1448,7 @@ class TestOcpOptionalMode(unittest.TestCase):
         pipeline.product = "oadp"
         pipeline.create_mr = True
         pipeline.fbc_pullspecs = []
-        pipeline.extra_image_nvrs = ["oadp-container-v1.5.0-1.el9"]
+        pipeline.extra_image_nvrs = ["oadp-container-v1.5.0-1.el9.p2"]
         pipeline.check_env_vars = MagicMock()
         pipeline.setup_working_dir = MagicMock()
         pipeline.setup_shipment_repo = AsyncMock()
