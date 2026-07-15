@@ -56,12 +56,28 @@ class TestBuildVisibility(TestCase):
         self.assertFalse(is_nvr_embargoed('foo-1.2.3-1.p0', 'brew'))
         self.assertTrue(is_nvr_embargoed('foo-1.2.3-1.p1', 'brew'))
 
-        # No p? flag found: treat as embargoed
+        # No p? flag found anywhere in the NVR: treat as embargoed
         self.assertTrue(is_nvr_embargoed('foo-1.2.3-1'))
 
-        # Malformed NVR (no name/version/release separators): propagates ValueError from parse_nvr
-        with self.assertRaises(ValueError):
-            is_nvr_embargoed('not_an_nvr')
+        # Malformed NVR (no name/version/release separators): no p? flag found, so also
+        # defaults to embargoed. is_nvr_embargoed() searches the whole string for a p-flag
+        # pattern rather than parsing name/version/release, so it never raises here.
+        self.assertTrue(is_nvr_embargoed('not_an_nvr'))
+
+        # Bundle ("metadata-container") style NVRs embed the referenced operator's p-flag in
+        # the *version* segment (bundle_version = f'{operator_version}.{operator_release}'),
+        # not in the release segment, which is just a trivial build counter. Searching the
+        # whole NVR must still find it.
+        self.assertFalse(
+            is_nvr_embargoed(
+                'openshift-migration-operator-metadata-container-1.8.16.202607131859.p2.gafc12a7.assembly.stream.el8-1'
+            )
+        )
+        self.assertTrue(
+            is_nvr_embargoed(
+                'openshift-migration-operator-metadata-container-1.8.16.202607131859.p3.gafc12a7.assembly.stream.el8-1'
+            )
+        )
 
     def test_get_visibility_suffix(self):
         self.assertEqual(get_visibility_suffix('brew', BuildVisibility.PUBLIC), 'p0')

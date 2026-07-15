@@ -610,16 +610,31 @@ class TestEmbargoedNvrDefensiveCheck(unittest.TestCase):
         pipeline._load_product_from_group_config = AsyncMock(return_value="oadp")
         return pipeline
 
-    def test_embargoed_fbc_nvr_raises(self):
-        """An embargoed NVR extracted from an FBC pullspec must fail the release."""
+    def test_embargoed_fbc_nvr_alone_does_not_raise(self):
+        """The FBC (catalog) image's own NVR is excluded from the embargo check: it's just a
+        catalog wrapper and, by construction, never carries a p-flag at all (see
+        build_fbc.py, which tags it with a bare timestamp). An embargoed-looking fbc_nvr alone
+        (no embargoed related/extra image NVRs) must not raise the embargo defensive check."""
         pipeline = self._make_pipeline(fbc_pullspecs=["quay.io/example/fbc:v1"])
         pipeline.validate_fbc_related_images = AsyncMock(return_value=[])
         pipeline.extract_fbc_nvr = MagicMock(return_value="oadp-operator-fbc-1.5.3-1.p3")
+        pipeline.create_snapshot = AsyncMock(return_value=MagicMock())
+        pipeline.create_shipment_config = MagicMock(return_value=MagicMock())
+        pipeline.write_shipment_files_locally = AsyncMock()
+
+        asyncio.run(pipeline.run())
+
+    def test_embargoed_related_nvr_raises(self):
+        """An embargoed NVR among the FBC's related images (the actual bundle/operand images
+        referenced inside the catalog) must fail the release."""
+        pipeline = self._make_pipeline(fbc_pullspecs=["quay.io/example/fbc:v1"])
+        pipeline.validate_fbc_related_images = AsyncMock(return_value=["oadp-velero-container-1.5.3-1.p3"])
+        pipeline.extract_fbc_nvr = MagicMock(return_value="oadp-operator-fbc-1.5.3-20260715120000")
 
         with self.assertRaises(RuntimeError) as ctx:
             asyncio.run(pipeline.run())
         self.assertIn("embargoed", str(ctx.exception))
-        self.assertIn("oadp-operator-fbc-1.5.3-1.p3", str(ctx.exception))
+        self.assertIn("oadp-velero-container-1.5.3-1.p3", str(ctx.exception))
 
     def test_embargoed_extra_image_nvr_raises(self):
         """An embargoed NVR passed via --extra-image-nvrs must fail the release."""
@@ -631,16 +646,15 @@ class TestEmbargoedNvrDefensiveCheck(unittest.TestCase):
         self.assertIn("oadp-velero-container-1.5.3-1.p3", str(ctx.exception))
 
     def test_non_embargoed_nvrs_do_not_raise_embargo_error(self):
-        """Public (non-embargoed) NVRs should not trigger the embargo defensive check."""
+        """Public (non-embargoed) NVRs should not trigger the embargo defensive check. The
+        mocked workflow should complete normally, so require the run to fully succeed rather
+        than suppressing any RuntimeError (which would mask unrelated regressions)."""
         pipeline = self._make_pipeline(extra_image_nvrs=["oadp-velero-container-1.5.3-1.p2"])
         pipeline.create_snapshot = AsyncMock(return_value=MagicMock())
         pipeline.create_shipment_config = MagicMock(return_value=MagicMock())
         pipeline.write_shipment_files_locally = AsyncMock()
 
-        try:
-            asyncio.run(pipeline.run())
-        except RuntimeError as e:
-            self.assertNotIn("embargoed", str(e))
+        asyncio.run(pipeline.run())
 
 
 class TestSetShipmentMrReady(unittest.TestCase):
