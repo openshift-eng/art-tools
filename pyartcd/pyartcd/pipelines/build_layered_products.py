@@ -1,6 +1,5 @@
 import logging
 import os
-import sys
 import traceback
 from pathlib import Path
 from typing import List, Optional
@@ -8,7 +7,6 @@ from typing import List, Optional
 import click
 import yaml
 from artcommonlib import exectools
-from artcommonlib.build_visibility import is_nvr_embargoed
 from artcommonlib.constants import PRODUCT_KUBECONFIG_MAP
 from artcommonlib.util import resolve_konflux_kubeconfig_by_product, resolve_konflux_namespace_by_product
 from doozerlib.constants import KONFLUX_DEFAULT_IMAGE_REPO
@@ -55,9 +53,6 @@ class BuildLayeredProductsPipeline:
         self.network_mode = network_mode
         self.plr_template = plr_template
         self._logger = logger or runtime.logger
-        # Operator NVRs that were dropped from the bundle build trigger because they are embargoed.
-        # The caller uses this to mark the Jenkins job UNSTABLE instead of a plain SUCCESS.
-        self.embargoed_operators_skipped: List[str] = []
 
         if self.image_build_strategy == BuildStrategy.ALL and self.image_list:
             raise ValueError("image_list must be empty when image_build_strategy is 'all'")
@@ -97,23 +92,6 @@ class BuildLayeredProductsPipeline:
             for record in records:
                 if record['has_olm_bundle'] == '1' and record['status'] == '0' and record.get('nvrs', None):
                     operator_nvrs.append(record['nvrs'].split(',')[0])
-
-            # Embargoed operators should not have a public bundle built for them. Drop them from
-            # the trigger; the previous public bundle remains the latest until a public rebuild
-            # happens. The caller marks the Jenkins job UNSTABLE when this list is non-empty.
-            non_embargoed_nvrs = []
-            for nvr in operator_nvrs:
-                if is_nvr_embargoed(nvr):
-                    self._logger.warning(
-                        'Operator NVR %s is embargoed; skipping bundle build trigger for it. '
-                        'The previous public bundle will remain the latest until a public rebuild.',
-                        nvr,
-                    )
-                    self.embargoed_operators_skipped.append(nvr)
-                else:
-                    non_embargoed_nvrs.append(nvr)
-            operator_nvrs = non_embargoed_nvrs
-
             if operator_nvrs:
                 # Automatically propagate parameters if set in environment
                 propagate_params = jenkins.get_propagatable_params()
@@ -161,16 +139,6 @@ class BuildLayeredProductsPipeline:
         image_repo = group_config.get('konflux', {}).get('image_repo') or KONFLUX_DEFAULT_IMAGE_REPO
         await self._rebase_and_build(product, image_repo)
         self.trigger_bundle_build()
-
-        if self.embargoed_operators_skipped:
-            self._logger.warning(
-                'Job completed, but skipped triggering bundle build for %d embargoed operator NVR(s): %s',
-                len(self.embargoed_operators_skipped),
-                ', '.join(self.embargoed_operators_skipped),
-            )
-            # Exit with code 2 to mark Jenkins job as UNSTABLE
-            # The Jenkinsfile should catch this exit code and set currentBuild.result = 'UNSTABLE'
-            sys.exit(2)
 
     def _group_param(self) -> str:
         if self.data_gitref:

@@ -5,7 +5,6 @@ from artcommonlib.build_visibility import (
     get_all_visibility_suffixes,
     get_build_system,
     get_visibility_suffix,
-    is_nvr_embargoed,
     is_release_embargoed,
     isolate_pflag_in_release,
 )
@@ -42,26 +41,6 @@ class TestBuildVisibility(TestCase):
         # Wrong build system: KeyError is raised
         with self.assertRaises(KeyError):
             is_release_embargoed('v4.17.0-202503120643.p0', 'wrong')
-
-    def test_is_nvr_embargoed(self):
-        # Konflux (default build_system)
-        self.assertFalse(is_nvr_embargoed('foo-1.2.3-1.p2'))
-        self.assertTrue(is_nvr_embargoed('foo-1.2.3-1.p3'))
-
-        # Explicit konflux build_system
-        self.assertFalse(is_nvr_embargoed('foo-1.2.3-1.p2', 'konflux'))
-        self.assertTrue(is_nvr_embargoed('foo-1.2.3-1.p3', 'konflux'))
-
-        # Brew build_system
-        self.assertFalse(is_nvr_embargoed('foo-1.2.3-1.p0', 'brew'))
-        self.assertTrue(is_nvr_embargoed('foo-1.2.3-1.p1', 'brew'))
-
-        # No p? flag found: treat as embargoed
-        self.assertTrue(is_nvr_embargoed('foo-1.2.3-1'))
-
-        # Malformed NVR (no name/version/release separators): propagates ValueError from parse_nvr
-        with self.assertRaises(ValueError):
-            is_nvr_embargoed('not_an_nvr')
 
     def test_get_visibility_suffix(self):
         self.assertEqual(get_visibility_suffix('brew', BuildVisibility.PUBLIC), 'p0')
