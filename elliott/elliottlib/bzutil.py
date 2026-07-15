@@ -968,25 +968,6 @@ class JIRABugTracker(BugTracker):
         if target_releases is None:
             target_releases = self.target_release()
         if target_releases and self.field_target_version not in fields:
-            available_versions = self._get_available_target_versions()
-            if not available_versions:
-                logger.warning(
-                    f"Could not fetch available target versions for project {self.project}. "
-                    f"Proceeding with configured target releases: {target_releases}"
-                )
-            else:
-                invalid_target_releases = [tr for tr in target_releases if tr not in available_versions]
-                if invalid_target_releases:
-                    logger.warning(
-                        f"Target versions {invalid_target_releases} do not exist in JIRA project {self.project}. "
-                        f"They will be excluded when creating the issue."
-                    )
-                target_releases = [tr for tr in target_releases if tr in available_versions]
-                if not target_releases:
-                    raise ValueError(
-                        f"None of the configured target versions {invalid_target_releases} exist in JIRA project "
-                        f"{self.project}; cannot create issue"
-                    )
             fields[self.field_target_version] = [{'name': target_release} for target_release in target_releases]
         if noop:
             logger.info(f"Would have created JIRA Issue with status={target_status} and fields={fields}")

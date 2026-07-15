@@ -199,48 +199,6 @@ class TestJIRABugTracker(unittest.TestCase):
         self.assertIsInstance(bug, JIRABug)
         self.assertEqual(bug.id, "OCPBUGS-1")
 
-    def test_create_issue_filters_invalid_target_releases(self):
-        config = {
-            "project": "OCPBUGS",
-            "server": JIRA_SERVER_URL,
-            "target_release": ["4.23.z", "4.23.0"],
-        }
-        mock_issue = flexmock(key="OCPBUGS-1")
-        mock_jira_client = flexmock()
-        mock_jira_client.should_receive("create_issue").with_args(
-            fields={
-                "summary": "Bridge bug",
-                "project": {"key": "OCPBUGS"},
-                JIRABugTracker.field_target_version: [{"name": "4.23.0"}],
-            }
-        ).and_return(mock_issue)
-
-        flexmock(JIRABugTracker).should_receive("login").and_return(mock_jira_client)
-        flexmock(JIRABugTracker).should_receive("_init_fields")
-
-        tracker = JIRABugTracker(config)
-        flexmock(tracker).should_receive("_get_available_target_versions").and_return(["4.23.0"])
-        bug = tracker.create_issue({"summary": "Bridge bug"})
-
-        self.assertEqual(bug.id, "OCPBUGS-1")
-
-    def test_create_issue_raises_when_no_valid_target_releases(self):
-        config = {
-            "project": "OCPBUGS",
-            "server": JIRA_SERVER_URL,
-            "target_release": ["4.23.z"],
-        }
-        mock_jira_client = flexmock()
-
-        flexmock(JIRABugTracker).should_receive("login").and_return(mock_jira_client)
-        flexmock(JIRABugTracker).should_receive("_init_fields")
-
-        tracker = JIRABugTracker(config)
-        flexmock(tracker).should_receive("_get_available_target_versions").and_return(["4.22.0"])
-
-        with self.assertRaises(ValueError):
-            tracker.create_issue({"summary": "Bridge bug"})
-
     def test_security_filtering_in_query(self):
         """Test that security filtering is included in JQL query when enabled"""
         # Create a minimal tracker for testing
