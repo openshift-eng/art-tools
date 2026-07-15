@@ -86,4 +86,9 @@ KONFLUX_TEST_PREGA_EC_POLICY_CONFIGURATION = "ocp-art-tenant/conforma-build-ec-s
 KONFLUX_BASE_IMAGE_EC_POLICY_CONFIGURATION = "rhtap-releng-tenant/registry-ocp-art-base-prod"
 KONFLUX_BASE_IMAGE_PREGA_EC_POLICY_CONFIGURATION = "rhtap-releng-tenant/registry-ocp-art-base-ec-prod"
 
+# Release-time EC policies for conforma verification (used by scheduled build-conforma-verify)
+KONFLUX_RELEASE_EC_POLICY_CONFIGURATION = "rhtap-releng-tenant/registry-ocp-art-stage"
+KONFLUX_RELEASE_PREGA_EC_POLICY_CONFIGURATION = "rhtap-releng-tenant/registry-ocp-art-ec-stage"
+KONFLUX_RELEASE_FBC_EC_POLICY_CONFIGURATION = "rhtap-releng-tenant/fbc-ocp-art-stage"
+
 ART_IMAGES_BASE_APPLICATION = "art-images-base"

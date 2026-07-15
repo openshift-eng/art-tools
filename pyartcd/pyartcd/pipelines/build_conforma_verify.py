@@ -11,12 +11,14 @@ from artcommonlib import exectools, logutil
 from artcommonlib.constants import KONFLUX_DEFAULT_NAMESPACE
 from artcommonlib.konflux.konflux_build_record import (
     Engine,
+    KonfluxBuildOutcome,
     KonfluxBuildRecord,
     KonfluxBundleBuildRecord,
     KonfluxFbcBuildRecord,
     KonfluxRecord,
 )
 from artcommonlib.konflux.konflux_db import KonfluxDb
+from artcommonlib.util import oc_image_info_async
 from doozerlib.backend.konflux_client import KonfluxClient, get_common_runtime_watcher_labels
 from doozerlib.backend.pipelinerun_utils import PipelineRunInfo
 from doozerlib.constants import (
@@ -29,6 +31,7 @@ from doozerlib.constants import (
 from pyartcd import constants
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.runtime import Runtime
+from pyartcd.slack import SlackClient
 
 LOGGER = logutil.get_logger(__name__)
 
@@ -45,8 +48,13 @@ class BuildConformaVerifyPipeline:
         data_path: Optional[str] = None,
         data_gitref: Optional[str] = None,
         ec_policy: Optional[str] = None,
+        fbc_ec_policy: Optional[str] = None,
+        effective_time: Optional[str] = None,
         include_bundles: bool = False,
         include_fbcs: bool = False,
+        include_corresponding_bundles: bool = False,
+        include_corresponding_fbcs: bool = False,
+        slack_client: Optional[SlackClient] = None,
     ):
         self.runtime = runtime
         self.version = version
@@ -55,8 +63,13 @@ class BuildConformaVerifyPipeline:
         self.data_path = data_path or constants.OCP_BUILD_DATA_URL
         self.data_gitref = data_gitref
         self.ec_policy = ec_policy
+        self.fbc_ec_policy = fbc_ec_policy
+        self.effective_time = effective_time or "now"
         self.include_bundles = include_bundles
         self.include_fbcs = include_fbcs
+        self.include_corresponding_bundles = include_corresponding_bundles
+        self.include_corresponding_fbcs = include_corresponding_fbcs
+        self.slack_client = slack_client
         self.dry_run = runtime.dry_run
         self.logger = LOGGER
 
@@ -80,8 +93,26 @@ class BuildConformaVerifyPipeline:
             f'--data-path={self.data_path}',
         ]
 
+    @property
+    def _doozer_base_command(self) -> list[str]:
+        group_param = f'--group={self.group}'
+        if self.data_gitref:
+            group_param += f'@{self.data_gitref}'
+
+        return [
+            'doozer',
+            group_param,
+            f'--assembly={self.assembly}',
+            f'--working-dir={self.working_dir}',
+            f'--data-path={self.data_path}',
+        ]
+
     async def run(self):
         any_failed = False
+        image_failed = 0
+        bundle_failed = 0
+        fbc_failed = 0
+        all_violations: dict[str, list[dict]] = {}
 
         nvrs = self.builds
         if not nvrs:
@@ -97,8 +128,26 @@ class BuildConformaVerifyPipeline:
             nvr_record_map = await self._lookup_build_records(nvrs)
             records = list(nvr_record_map.values())
             self.logger.info("Running EC verification for %d image builds...", len(records))
-            if not await self._verify_records(records, build_type="image"):
+            passed, violations = await self._verify_records(records, build_type="image")
+            if not passed:
                 any_failed = True
+                image_failed = len(violations)
+                all_violations.update(violations)
+
+        bundle_records_list: list[KonfluxRecord] = []
+        fbc_records_list: list[KonfluxRecord] = []
+
+        if nvrs and (self.include_corresponding_bundles or self.include_corresponding_fbcs):
+            self.logger.info("Finding corresponding operator bundles and FBCs...")
+            corresponding_bundles, corresponding_fbcs = await self._find_corresponding_builds(
+                nvr_record_map, lookup_fbcs=self.include_corresponding_fbcs
+            )
+            if self.include_corresponding_bundles and corresponding_bundles:
+                self.logger.info("Found %d corresponding bundle builds", len(corresponding_bundles))
+                bundle_records_list.extend(corresponding_bundles)
+            if self.include_corresponding_fbcs and corresponding_fbcs:
+                self.logger.info("Found %d corresponding FBC builds", len(corresponding_fbcs))
+                fbc_records_list.extend(corresponding_fbcs)
 
         if self.include_bundles:
             self.logger.info(
@@ -106,21 +155,47 @@ class BuildConformaVerifyPipeline:
             )
             bundle_records = await self._find_latest_bundles()
             if bundle_records:
-                self.logger.info("Running EC verification for %d bundle builds...", len(bundle_records))
-                if not await self._verify_records(bundle_records, build_type="bundle"):
-                    any_failed = True
-            else:
-                self.logger.warning("No bundle builds found for verification")
+                existing_nvrs = {r.nvr for r in bundle_records_list}
+                for r in bundle_records:
+                    if r.nvr not in existing_nvrs:
+                        bundle_records_list.append(r)
 
         if self.include_fbcs:
             self.logger.info("Fetching latest FBC builds for group '%s', assembly '%s'...", self.group, self.assembly)
             fbc_records = await self._find_latest_fbcs()
             if fbc_records:
-                self.logger.info("Running EC verification for %d FBC builds...", len(fbc_records))
-                if not await self._verify_records(fbc_records, build_type="fbc"):
-                    any_failed = True
-            else:
-                self.logger.warning("No FBC builds found for verification")
+                existing_nvrs = {r.nvr for r in fbc_records_list}
+                for r in fbc_records:
+                    if r.nvr not in existing_nvrs:
+                        fbc_records_list.append(r)
+
+        if bundle_records_list:
+            self.logger.info("Running EC verification for %d bundle builds...", len(bundle_records_list))
+            passed, violations = await self._verify_records(bundle_records_list, build_type="bundle")
+            if not passed:
+                any_failed = True
+                bundle_failed = len(violations)
+                all_violations.update(violations)
+        elif self.include_bundles or self.include_corresponding_bundles:
+            self.logger.warning("No bundle builds found for verification")
+
+        if fbc_records_list:
+            self.logger.info("Running EC verification for %d FBC builds...", len(fbc_records_list))
+            passed, violations = await self._verify_records(fbc_records_list, build_type="fbc")
+            if not passed:
+                any_failed = True
+                fbc_failed = len(violations)
+                all_violations.update(violations)
+        elif self.include_fbcs or self.include_corresponding_fbcs:
+            self.logger.warning("No FBC builds found for verification")
+
+        await self._report_to_slack(
+            any_failed=any_failed,
+            image_failed=image_failed,
+            bundle_failed=bundle_failed,
+            fbc_failed=fbc_failed,
+            all_violations=all_violations,
+        )
 
         if any_failed:
             sys.exit(1)
@@ -185,13 +260,85 @@ class BuildConformaVerifyPipeline:
                 records_by_name[record.name] = record
         return list(records_by_name.values())
 
-    async def _verify_records(self, records: list[KonfluxRecord], build_type: str = "image") -> bool:
+    async def _find_operator_names(self) -> set[str]:
+        cmd = self._doozer_base_command + ['olm-bundle:list-olm-operators', '--output-format', 'distgit-key']
+        _, out, _ = await exectools.cmd_gather_async(cmd, stderr=None)
+        return set(out.strip().split('\n')) if out.strip() else set()
+
+    async def _find_corresponding_builds(
+        self, nvr_record_map: dict[str, KonfluxRecord], lookup_fbcs: bool = True
+    ) -> tuple[list[KonfluxRecord], list[KonfluxRecord]]:
+        """Find corresponding bundle and FBC builds for operator images.
+
+        Returns (bundle_records, fbc_records). Set lookup_fbcs=False to skip FBC queries.
+        """
+        operator_names = await self._find_operator_names()
+        if not operator_names:
+            self.logger.warning("No operator names found")
+            return [], []
+
+        self.logger.info("Found %d operator names, cross-referencing with image NVRs...", len(operator_names))
+
+        bundle_db = KonfluxDb()
+        bundle_db.bind(KonfluxBundleBuildRecord)
+
+        operator_nvrs = []
+        for nvr, record in nvr_record_map.items():
+            if record.name in operator_names:
+                operator_nvrs.append((record.name, nvr))
+
+        self.logger.info("Found %d operator image builds to look up", len(operator_nvrs))
+
+        bundle_records: list[KonfluxRecord] = []
+        for operator_name, nvr in operator_nvrs:
+            bundle_name = f'{operator_name}-bundle'
+            bundle = await bundle_db.get_latest_build(
+                name=bundle_name,
+                group=self.group,
+                outcome=KonfluxBuildOutcome.SUCCESS,
+                assembly=self.assembly,
+                extra_patterns={'operator_nvr': nvr},
+            )
+            if bundle:
+                self.logger.info("  Found bundle for %s: %s", nvr, bundle.nvr)
+                bundle_records.append(bundle)
+            else:
+                self.logger.warning("  No bundle found for operator %s (%s)", operator_name, nvr)
+
+        fbc_records: list[KonfluxRecord] = []
+        if lookup_fbcs and bundle_records:
+            fbc_db = KonfluxDb()
+            fbc_db.bind(KonfluxFbcBuildRecord)
+            for bundle in bundle_records:
+                operator_name = bundle.name.removesuffix('-bundle')
+                fbc_name = f'{operator_name}-fbc'
+                async for fbc in fbc_db.search_builds_by_fields(
+                    where={
+                        'name': fbc_name,
+                        'group': self.group,
+                        'outcome': KonfluxBuildOutcome.SUCCESS,
+                        'assembly': self.assembly,
+                    },
+                    array_contains={'bundle_nvrs': bundle.nvr},
+                    limit=1,
+                    order_by='start_time',
+                    sorting='DESC',
+                ):
+                    self.logger.info("  Found FBC for %s: %s", bundle.nvr, fbc.nvr)
+                    fbc_records.append(fbc)
+                    break
+                else:
+                    self.logger.warning("  No FBC found for bundle %s", bundle.nvr)
+
+        return bundle_records, fbc_records
+
+    async def _verify_records(
+        self, records: list[KonfluxRecord], build_type: str = "image"
+    ) -> tuple[bool, dict[str, list[dict]]]:
         """Run EC verification on a list of build records.
 
-        Returns True if all records passed, False if any failed.
+        Returns (passed, violations_by_component).
         """
-        from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome
-
         kubeconfig = os.getenv("KONFLUX_SA_KUBECONFIG")
         konflux_client = KonfluxClient.from_kubeconfig(
             default_namespace=KONFLUX_DEFAULT_NAMESPACE,
@@ -200,7 +347,11 @@ class BuildConformaVerifyPipeline:
             dry_run=self.dry_run,
         )
 
-        ec_policy = self.ec_policy or KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION
+        if build_type == "fbc":
+            ec_policy = self.fbc_ec_policy or self.ec_policy or KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION
+        else:
+            ec_policy = self.ec_policy or KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION
+
         application_name = records[0].get_konflux_application_name()
 
         components = [
@@ -242,7 +393,7 @@ class BuildConformaVerifyPipeline:
                     "[%s] [DRY RUN] Would have created EC PipelineRun for batch %d", build_type, batch_idx
                 )
             self.logger.info("[%s] All %d components passed EC verification (dry run)", build_type, len(components))
-            return True
+            return True, {}
 
         batch_plrs: list[tuple[int, list[dict], str]] = []
         for batch_idx, batch in enumerate(batches, start=1):
@@ -290,6 +441,7 @@ class BuildConformaVerifyPipeline:
                         {"name": "POLICY_CONFIGURATION", "value": ec_policy},
                         {"name": "SINGLE_COMPONENT", "value": "false"},
                         {"name": "SNAPSHOT", "value": snapshot_json},
+                        {"name": "EFFECTIVE_TIME", "value": self.effective_time},
                     ],
                     "taskRunTemplate": {
                         "serviceAccountName": f"build-pipeline-{batch[0]['name']}",
@@ -318,7 +470,7 @@ class BuildConformaVerifyPipeline:
                 outcome = KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition(condition)
                 if outcome is not KonfluxBuildOutcome.SUCCESS:
                     self.logger.error("[%s] Batch %d FAILED. PLR: %s", build_type, batch_idx, plr_url)
-                    violations = self._extract_violations_from_plr(plr_info, batch, konflux_client)
+                    violations = await self._extract_violations_from_plr(plr_info, batch, konflux_client)
                     return {"batch": batch_idx, "plr_url": plr_url, "passed": False, "violations": violations}
                 self.logger.info("[%s] Batch %d PASSED. PLR: %s", build_type, batch_idx, plr_url)
                 return {"batch": batch_idx, "plr_url": plr_url, "passed": True, "count": len(batch)}
@@ -345,23 +497,33 @@ class BuildConformaVerifyPipeline:
         if failed_batches:
             all_violations = self._aggregate_violations(failed_batches)
             self._log_violation_summary(all_violations, failed_batches)
-            return False
+            return False, all_violations
 
         self.logger.info("[%s] All %d components passed EC verification", build_type, len(components))
-        return True
+        return True, {}
 
-    def _extract_violations_from_plr(
+    async def _extract_violations_from_plr(
         self, plr_info: PipelineRunInfo, batch: list[dict], konflux_client: KonfluxClient
     ) -> list[dict]:
         """Parse violation details from the verify pod logs of a failed PipelineRun.
 
         Returns a list of dicts with keys: component_name, image_ref, rule, title, reason
         """
+        registry_config = os.environ.get('QUAY_AUTH_FILE')
         digest_to_name = {}
         for comp in batch:
             image_ref = comp.get("containerImage", "")
             digest = image_ref.split("@")[-1] if "@" in image_ref else image_ref
             digest_to_name[digest] = comp["name"]
+            try:
+                arch_infos = await oc_image_info_async(image_ref, '--show-multiarch', registry_config=registry_config)
+                if isinstance(arch_infos, list):
+                    for arch_info in arch_infos:
+                        arch_digest = arch_info.get("digest", "")
+                        if arch_digest:
+                            digest_to_name[arch_digest] = comp["name"]
+            except Exception:
+                self.logger.warning("Failed to resolve per-arch digests for %s", comp["name"], exc_info=True)
 
         log_text = self._get_verify_pod_log(plr_info, konflux_client)
         if not log_text:
@@ -496,6 +658,53 @@ class BuildConformaVerifyPipeline:
         for fb in failed_batches:
             self.logger.error("  Batch %d: %s", fb["batch"], fb["plr_url"])
 
+    async def _report_to_slack(
+        self,
+        any_failed: bool,
+        image_failed: int,
+        bundle_failed: int,
+        fbc_failed: int,
+        all_violations: Optional[dict[str, list[dict]]] = None,
+    ):
+        if not self.slack_client:
+            return
+
+        if not any_failed:
+            message = (
+                f":white_check_mark: build-conforma-verify in {self.version} "
+                f"(assembly=`{self.assembly}`) passed (effective_time=`{self.effective_time}`)"
+            )
+        else:
+            failed_parts = []
+            if image_failed:
+                failed_parts.append(f"{image_failed} image(s)")
+            if bundle_failed:
+                failed_parts.append(f"{bundle_failed} bundle(s)")
+            if fbc_failed:
+                failed_parts.append(f"{fbc_failed} FBC(s)")
+            if failed_parts:
+                detail = f"failed for: {', '.join(failed_parts)}"
+            else:
+                detail = "failed (no violation details available)"
+            message = (
+                f":warning: build-conforma-verify in {self.version} "
+                f"(assembly=`{self.assembly}`) {detail} "
+                f"(effective_time=`{self.effective_time}`)"
+            )
+
+        await self.slack_client.say_in_thread(message)
+
+        if any_failed and all_violations:
+            unique_rules: dict[str, str] = {}
+            for violations in all_violations.values():
+                for v in violations:
+                    if v["rule"] not in unique_rules:
+                        unique_rules[v["rule"]] = v.get("title", "")
+            lines = [f"Unique rules violated ({len(unique_rules)}):"]
+            for rule, title in sorted(unique_rules.items()):
+                lines.append(f"- `{rule}` — {title}" if title else f"- `{rule}`")
+            await self.slack_client.say_in_thread("\n".join(lines))
+
 
 @cli.command("build-conforma-verify", short_help="Run Conforma (EC) verification on OCP builds")
 @click.option("--version", required=True, help="OCP version (e.g. 4.18)")
@@ -508,8 +717,36 @@ class BuildConformaVerifyPipeline:
     default=None,
     help="EnterpriseContractPolicy CR reference (namespace/name). Defaults to ocp-art-tenant/conforma-build-stage",
 )
+@click.option(
+    "--fbc-ec-policy",
+    default=None,
+    help="EnterpriseContractPolicy CR reference for FBC builds (namespace/name). Falls back to --ec-policy if unset",
+)
+@click.option(
+    "--effective-time",
+    default=None,
+    help="RFC 3339 timestamp for EC policy effective_on evaluation (e.g. 2026-08-05T00:00:00Z). Defaults to 'now'",
+)
 @click.option("--include-bundles", is_flag=True, default=False, help="Also verify latest OLM bundle builds")
 @click.option("--include-fbcs", is_flag=True, default=False, help="Also verify latest FBC builds")
+@click.option(
+    "--include-corresponding-bundles",
+    is_flag=True,
+    default=False,
+    help="For each operator build in --builds, find and verify its corresponding bundle build",
+)
+@click.option(
+    "--include-corresponding-fbcs",
+    is_flag=True,
+    default=False,
+    help="For each operator build in --builds, find and verify its corresponding FBC build",
+)
+@click.option(
+    "--report-to-slack",
+    is_flag=True,
+    default=False,
+    help="Post results to #art-release Slack channel",
+)
 @pass_runtime
 @click_coroutine
 async def build_conforma_verify(
@@ -520,10 +757,23 @@ async def build_conforma_verify(
     data_gitref: Optional[str],
     builds: str,
     ec_policy: Optional[str],
+    fbc_ec_policy: Optional[str],
+    effective_time: Optional[str],
     include_bundles: bool,
     include_fbcs: bool,
+    include_corresponding_bundles: bool,
+    include_corresponding_fbcs: bool,
+    report_to_slack: bool,
 ):
     builds_list = [b.strip() for b in builds.split(",") if b.strip()] if builds else []
+
+    slack_client = None
+    if report_to_slack:
+        slack_token = os.environ.get("SLACK_BOT_TOKEN")
+        if not slack_token:
+            raise RuntimeError("SLACK_BOT_TOKEN is required with --report-to-slack")
+        slack_client = runtime.new_slack_client(token=slack_token)
+        slack_client.bind_channel("#art-cluster-monitoring")
 
     pipeline = BuildConformaVerifyPipeline(
         runtime=runtime,
@@ -533,7 +783,12 @@ async def build_conforma_verify(
         data_path=data_path,
         data_gitref=data_gitref,
         ec_policy=ec_policy,
+        fbc_ec_policy=fbc_ec_policy,
+        effective_time=effective_time,
         include_bundles=include_bundles,
         include_fbcs=include_fbcs,
+        include_corresponding_bundles=include_corresponding_bundles,
+        include_corresponding_fbcs=include_corresponding_fbcs,
+        slack_client=slack_client,
     )
     await pipeline.run()
