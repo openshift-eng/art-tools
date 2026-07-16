@@ -416,8 +416,8 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
         self.pipeline.skip_bundle_build = False
         self._write_image_build_record_log(
             [
-                ('oadp-operator', 'oadp-operator-container-v1.4.9-1.p2'),
-                ('oadp-operator', 'oadp-operator-container-v1.4.9-2.p3'),
+                ('oadp-operator', 'oadp-operator-container-v1.4.9-202607151200.p2.g172d0b2.assembly.stream.el9'),
+                ('oadp-operator', 'oadp-operator-container-v1.4.9-202607151201.p3.g8a1f3c4.assembly.stream.el9'),
             ]
         )
 
@@ -426,9 +426,12 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
         mock_start_bundle.assert_called_once()
         self.assertEqual(
             mock_start_bundle.call_args.kwargs['operator_nvrs'],
-            ['oadp-operator-container-v1.4.9-1.p2'],
+            ['oadp-operator-container-v1.4.9-202607151200.p2.g172d0b2.assembly.stream.el9'],
         )
-        self.assertEqual(self.pipeline.embargoed_operators_skipped, ['oadp-operator-container-v1.4.9-2.p3'])
+        self.assertEqual(
+            self.pipeline.embargoed_operators_skipped,
+            ['oadp-operator-container-v1.4.9-202607151201.p3.g8a1f3c4.assembly.stream.el9'],
+        )
 
     @patch('pyartcd.pipelines.build_layered_products.jenkins.start_olm_bundle_konflux')
     @patch('pyartcd.pipelines.build_layered_products.jenkins.get_propagatable_params', return_value={})
@@ -437,14 +440,17 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
         self.pipeline.skip_bundle_build = False
         self._write_image_build_record_log(
             [
-                ('oadp-operator', 'oadp-operator-container-v1.4.9-1.p3'),
+                ('oadp-operator', 'oadp-operator-container-v1.4.9-202607151200.p3.g172d0b2.assembly.stream.el9'),
             ]
         )
 
         self.pipeline.trigger_bundle_build()
 
         mock_start_bundle.assert_not_called()
-        self.assertEqual(self.pipeline.embargoed_operators_skipped, ['oadp-operator-container-v1.4.9-1.p3'])
+        self.assertEqual(
+            self.pipeline.embargoed_operators_skipped,
+            ['oadp-operator-container-v1.4.9-202607151200.p3.g172d0b2.assembly.stream.el9'],
+        )
 
     @patch('pyartcd.pipelines.build_layered_products.jenkins.start_olm_bundle_konflux')
     @patch('pyartcd.pipelines.build_layered_products.jenkins.get_propagatable_params', return_value={})
@@ -453,7 +459,7 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
         self.pipeline.skip_bundle_build = False
         self._write_image_build_record_log(
             [
-                ('oadp-operator', 'oadp-operator-container-v1.4.9-1.p2'),
+                ('oadp-operator', 'oadp-operator-container-v1.4.9-202607151200.p2.g172d0b2.assembly.stream.el9'),
             ]
         )
 
@@ -462,7 +468,7 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
         mock_start_bundle.assert_called_once()
         self.assertEqual(
             mock_start_bundle.call_args.kwargs['operator_nvrs'],
-            ['oadp-operator-container-v1.4.9-1.p2'],
+            ['oadp-operator-container-v1.4.9-202607151200.p2.g172d0b2.assembly.stream.el9'],
         )
         self.assertEqual(self.pipeline.embargoed_operators_skipped, [])
 
@@ -480,7 +486,9 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
         ):
 
             def fake_trigger():
-                self.pipeline.embargoed_operators_skipped.append('oadp-operator-container-v1.4.9-1.p3')
+                self.pipeline.embargoed_operators_skipped.append(
+                    'oadp-operator-container-v1.4.9-202607151200.p3.g172d0b2.assembly.stream.el9'
+                )
 
             mock_trigger.side_effect = fake_trigger
 

@@ -612,12 +612,14 @@ class TestEmbargoedNvrDefensiveCheck(unittest.TestCase):
 
     def test_embargoed_fbc_nvr_alone_does_not_raise(self):
         """The FBC (catalog) image's own NVR is excluded from the embargo check: it's just a
-        catalog wrapper and, by construction, never carries a p-flag at all (see
-        build_fbc.py, which tags it with a bare timestamp). An embargoed-looking fbc_nvr alone
-        (no embargoed related/extra image NVRs) must not raise the embargo defensive check."""
+        catalog wrapper and, by construction, never carries a p-flag at all (see build_fbc.py,
+        which tags it with a bare timestamp, e.g.
+        'openshift-migration-operator-fbc-1.8.16-20260715174111.ocp4.19'). Since is_nvr_embargoed()
+        defaults to treating an NVR with no p-flag as embargoed, checking the FBC's own NVR would
+        make this defensive check fail unconditionally on every run - confirm it's excluded."""
         pipeline = self._make_pipeline(fbc_pullspecs=["quay.io/example/fbc:v1"])
         pipeline.validate_fbc_related_images = AsyncMock(return_value=[])
-        pipeline.extract_fbc_nvr = MagicMock(return_value="oadp-operator-fbc-1.5.3-1.p3")
+        pipeline.extract_fbc_nvr = MagicMock(return_value="oadp-operator-fbc-1.5.3-20260715174111.ocp4.19")
         pipeline.create_snapshot = AsyncMock(return_value=MagicMock())
         pipeline.create_shipment_config = MagicMock(return_value=MagicMock())
         pipeline.write_shipment_files_locally = AsyncMock()
@@ -627,29 +629,33 @@ class TestEmbargoedNvrDefensiveCheck(unittest.TestCase):
     def test_embargoed_related_nvr_raises(self):
         """An embargoed NVR among the FBC's related images (the actual bundle/operand images
         referenced inside the catalog) must fail the release."""
+        embargoed_nvr = "oadp-velero-container-1.5.3-202607151200.p3.g172d0b2.assembly.stream.el9"
         pipeline = self._make_pipeline(fbc_pullspecs=["quay.io/example/fbc:v1"])
-        pipeline.validate_fbc_related_images = AsyncMock(return_value=["oadp-velero-container-1.5.3-1.p3"])
-        pipeline.extract_fbc_nvr = MagicMock(return_value="oadp-operator-fbc-1.5.3-20260715120000")
+        pipeline.validate_fbc_related_images = AsyncMock(return_value=[embargoed_nvr])
+        pipeline.extract_fbc_nvr = MagicMock(return_value="oadp-operator-fbc-1.5.3-20260715174111.ocp4.19")
 
         with self.assertRaises(RuntimeError) as ctx:
             asyncio.run(pipeline.run())
         self.assertIn("embargoed", str(ctx.exception))
-        self.assertIn("oadp-velero-container-1.5.3-1.p3", str(ctx.exception))
+        self.assertIn(embargoed_nvr, str(ctx.exception))
 
     def test_embargoed_extra_image_nvr_raises(self):
         """An embargoed NVR passed via --extra-image-nvrs must fail the release."""
-        pipeline = self._make_pipeline(extra_image_nvrs=["oadp-velero-container-1.5.3-1.p3"])
+        embargoed_nvr = "oadp-velero-container-1.5.3-202607151200.p3.g172d0b2.assembly.stream.el9"
+        pipeline = self._make_pipeline(extra_image_nvrs=[embargoed_nvr])
 
         with self.assertRaises(RuntimeError) as ctx:
             asyncio.run(pipeline.run())
         self.assertIn("embargoed", str(ctx.exception))
-        self.assertIn("oadp-velero-container-1.5.3-1.p3", str(ctx.exception))
+        self.assertIn(embargoed_nvr, str(ctx.exception))
 
     def test_non_embargoed_nvrs_do_not_raise_embargo_error(self):
         """Public (non-embargoed) NVRs should not trigger the embargo defensive check. The
         mocked workflow should complete normally, so require the run to fully succeed rather
         than suppressing any RuntimeError (which would mask unrelated regressions)."""
-        pipeline = self._make_pipeline(extra_image_nvrs=["oadp-velero-container-1.5.3-1.p2"])
+        pipeline = self._make_pipeline(
+            extra_image_nvrs=["oadp-velero-container-1.5.3-202607151200.p2.g172d0b2.assembly.stream.el9"]
+        )
         pipeline.create_snapshot = AsyncMock(return_value=MagicMock())
         pipeline.create_shipment_config = MagicMock(return_value=MagicMock())
         pipeline.write_shipment_files_locally = AsyncMock()
