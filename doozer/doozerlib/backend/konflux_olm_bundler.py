@@ -374,6 +374,29 @@ class KonfluxOlmBundleRebaser:
         pattern = r'([a-zA-Z0-9][-a-zA-Z0-9.]*(?::[0-9]+)?/[^@\s]+)@(sha256:[a-fA-F0-9]{64})'
         return re.compile(pattern)
 
+    @staticmethod
+    def _build_component_to_meta_map(runtime) -> Dict[str, "ImageMetadata"]:
+        """
+        Build a map of component name (as it appears in the com.redhat.component label / NVR) to
+        the ART ImageMetadata that builds it, covering every image declared in the group -- not
+        just the images actually loaded for this invocation.
+
+        `doozer beta:images:konflux:bundle <operator-nvr>` restricts `runtime.images` to just the
+        given operator(s) (see KonfluxBundleCli.get_operator_builds()), so `runtime.image_metas()`
+        alone would miss an embargoed operand image that belongs to a different (unloaded) image
+        in the same group, e.g. a dependent image referenced by the operator's CSV. Fall back to
+        `Runtime.late_resolve_image()`, which can resolve any image declared in the group's
+        `images/` directory on demand without adding it to `image_map` or triggering dependents.
+        """
+        component_to_meta = {im.get_component_name(): im for im in runtime.image_metas()}
+        for distgit_key in set(runtime.image_name_map.values()):
+            if distgit_key in runtime.image_map:
+                continue  # already covered by runtime.image_metas() above
+            other_meta = runtime.late_resolve_image(distgit_key, add=False, required=False)
+            if other_meta is not None:
+                component_to_meta.setdefault(other_meta.get_component_name(), other_meta)
+        return component_to_meta
+
     async def _replace_image_references(self, old_registry: str, content: str, engine: Engine, metadata):
         """
         Replace image references in the content by their corresponding SHA.
@@ -494,7 +517,7 @@ class KonfluxOlmBundleRebaser:
                 ) from e
             if operand_is_embargoed:
                 if _component_to_meta is None:
-                    _component_to_meta = {im.get_component_name(): im for im in metadata.runtime.image_metas()}
+                    _component_to_meta = self._build_component_to_meta_map(metadata.runtime)
                 operand_meta = _component_to_meta.get(image_component_name)
                 if operand_meta is None:
                     raise KonfluxOlmBundleRebaseError(

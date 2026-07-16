@@ -1027,6 +1027,13 @@ class TestReplaceImageReferencesEmbargo(IsolatedAsyncioTestCase):
         metadata.runtime.group = 'openshift-4.18'
         metadata.runtime.data_dir = '/tmp/nonexistent-data-dir'
         metadata.runtime.image_metas.return_value = image_metas or []
+        # By default, simulate a fully-loaded runtime where image_metas() already covers every
+        # image in the group, so the late_resolve_image() fallback in
+        # _build_component_to_meta_map() has nothing extra to find. Tests that specifically
+        # exercise that fallback (e.g. because `doozer beta:images:konflux:bundle <nvr>` restricts
+        # image_metas() to just the given operator) override these explicitly.
+        metadata.runtime.image_map = {im.distgit_key: im for im in (image_metas or [])}
+        metadata.runtime.image_name_map = {}
         return metadata
 
     @staticmethod
@@ -1136,6 +1143,75 @@ class TestReplaceImageReferencesEmbargo(IsolatedAsyncioTestCase):
         ):
             with self.assertRaises(KonfluxOlmBundleRebaseError):
                 await self.rebaser._replace_image_references('registry.redhat.io', content, Engine.KONFLUX, metadata)
+
+    async def test_embargoed_operand_not_in_restricted_image_metas_is_found_via_late_resolve(self):
+        """Reproduces a real production failure: `doozer beta:images:konflux:bundle <operator-nvr>`
+        restricts runtime.image_metas() to just the given operator (see
+        KonfluxBundleCli.get_operator_builds()), so an embargoed operand belonging to a different,
+        unloaded image in the same group (e.g. a dependent image referenced by the operator's CSV)
+        is invisible to image_metas() alone. _build_component_to_meta_map() must fall back to
+        Runtime.late_resolve_image() to find it rather than failing with "no ART image metadata
+        could be found"."""
+        content = 'image: registry.redhat.io/openshift4/log-file-metric-exporter-rhel9:v1.0'
+        # Only the operator itself is loaded into image_metas(); the operand ("dependent" image)
+        # is not, mirroring the restricted `--images`-style loading done for bundle builds.
+        metadata = self._make_metadata(image_metas=[])
+        metadata.runtime.image_name_map = {
+            'openshift-logging/log-file-metric-exporter-rhel9': 'log-file-metric-exporter',
+            'log-file-metric-exporter-rhel9': 'log-file-metric-exporter',
+        }
+        metadata.runtime.image_map = {}  # not loaded for this invocation
+
+        public_build = MagicMock()
+        public_build.nvr = 'log-file-metric-exporter-container-6.6.1-202607160200.p2.g3c1201f.assembly.test.el9'
+        public_build.image_pullspec = 'quay.io/example/repo@sha256:public-build-digest'
+
+        operand_meta = MagicMock()
+        operand_meta.distgit_key = 'log-file-metric-exporter'
+        operand_meta.get_component_name.return_value = 'log-file-metric-exporter-container'
+        operand_meta.branch_el_target.return_value = 9
+        operand_meta.get_latest_konflux_build = AsyncMock(return_value=public_build)
+        metadata.runtime.late_resolve_image = MagicMock(return_value=operand_meta)
+
+        embargoed_info = self._image_info(
+            'log-file-metric-exporter-container',
+            '6.6.1',
+            '202607160122.p3.g3c1201f.assembly.test.el9',
+            'embargoed',
+        )
+        public_info = self._image_info(
+            'log-file-metric-exporter-container',
+            '6.6.1',
+            '202607160200.p2.g3c1201f.assembly.test.el9',
+            'public-sub',
+        )
+
+        async def fake_oc_image_info(pullspec, registry_config=None):
+            if pullspec == public_build.image_pullspec:
+                return public_info
+            return embargoed_info
+
+        with patch(
+            'doozerlib.backend.konflux_olm_bundler.util.oc_image_info_for_arch_async',
+            side_effect=fake_oc_image_info,
+        ):
+            new_content, found_images = await self.rebaser._replace_image_references(
+                'registry.redhat.io', content, Engine.KONFLUX, metadata
+            )
+
+        metadata.runtime.late_resolve_image.assert_called_once_with(
+            'log-file-metric-exporter', add=False, required=False
+        )
+        operand_meta.get_latest_konflux_build.assert_awaited_once_with(
+            default=None, el_target=9, embargoed=False, exclude_large_columns=True
+        )
+        self.assertIn(
+            'registry.redhat.io/openshift4/log-file-metric-exporter-rhel9@sha256:public-sub-list', new_content
+        )
+        self.assertEqual(
+            found_images['log-file-metric-exporter-rhel9'][2],
+            public_build.nvr,
+        )
 
     async def test_embargoed_operand_with_unknown_component_raises(self):
         """When an embargoed operand's component can't be mapped to any ART ImageMetadata, fail clearly."""
