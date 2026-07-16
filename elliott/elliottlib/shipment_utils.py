@@ -27,9 +27,9 @@ def get_shipment_configs_from_mr(
     Arg(s):
         mr_url (str): URL of the merge request.
         kinds (Tuple[str, ...]): Possible advisory kinds to fetch shipment configs for.
-        group (str | None): When provided, only files whose path contains this group
-            as a directory segment are parsed. Skips non-matching files entirely,
-            avoiding parse errors on unrelated products.
+        group (str | None): When provided, only files whose path has this group
+            at position 2 (shipment/{product}/{group}/...) are parsed. Skips
+            non-matching files entirely, avoiding parse errors on unrelated products.
 
     Return Value(s):
         Dict[str, ShipmentConfig]: Dict of {kind: ShipmentConfig}.
@@ -49,7 +49,8 @@ def get_shipment_configs_from_mr(
         if not file_path or not file_path.endswith(('.yaml', '.yml')):
             continue
 
-        if group and group not in file_path.split('/'):
+        path_parts = file_path.split('/')
+        if group and (len(path_parts) < 4 or path_parts[0] != "shipment" or path_parts[2] != group):
             continue
 
         filename = file_path.split('/')[-1]

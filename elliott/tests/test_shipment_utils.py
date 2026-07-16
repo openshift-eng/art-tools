@@ -411,6 +411,33 @@ shipment:
 
     @patch("artcommonlib.gitlab.gitlab.Gitlab")
     @patch.dict(os.environ, {"GITLAB_TOKEN": "test-token"})
+    def test_group_filter_checks_position_not_any_segment(self, mock_gitlab_class):
+        """Group appearing in a later path segment (not position 2) should not match."""
+        mock_gitlab = mock_gitlab_class.return_value
+        mock_project = Mock()
+        mock_source_project = Mock()
+        mock_gitlab.projects.get.side_effect = [mock_project, mock_source_project]
+
+        mock_mr = Mock()
+        mock_mr.source_project_id = "source-project-id"
+        mock_mr.source_branch = "test-branch"
+        mock_project.mergerequests.get.return_value = mock_mr
+
+        mock_diff_info = Mock()
+        mock_diff_info.id = "diff-id"
+        mock_mr.diffs.list.return_value = [mock_diff_info]
+        mock_diff = Mock()
+        mock_mr.diffs.get.return_value = mock_diff
+        mock_diff.diffs = [
+            {"new_path": "shipment/openshift/other-group/openshift-4.18/prod/image.yaml", "old_path": None},
+        ]
+
+        result = shipment_utils.get_shipment_configs_from_mr(self.test_mr_url, ("image",), group="openshift-4.18")
+        self.assertEqual(result, {})
+        mock_source_project.files.get.assert_not_called()
+
+    @patch("artcommonlib.gitlab.gitlab.Gitlab")
+    @patch.dict(os.environ, {"GITLAB_TOKEN": "test-token"})
     def test_no_group_filter_parses_all_files(self, mock_gitlab_class):
         """Without group filter, all matching YAML files are parsed (existing behavior)."""
         mock_gitlab = mock_gitlab_class.return_value
