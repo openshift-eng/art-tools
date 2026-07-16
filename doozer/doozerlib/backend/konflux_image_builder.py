@@ -308,7 +308,7 @@ class KonfluxImageBuilder:
                             )
                     elif not self._config.dry_run:
                         # This should never happen in real builds - only expected in dry-run mode
-                        raise IOError(f"PipelineRun succeeded but IMAGE_URL or IMAGE_DIGEST missing from results")
+                        raise IOError("PipelineRun succeeded but IMAGE_URL or IMAGE_DIGEST missing from results")
 
                 # Run enterprise-contract (EC) verification after a successful build
                 # TODO: Expand EC verification to layered products
