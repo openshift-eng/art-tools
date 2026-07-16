@@ -415,21 +415,13 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
         self.assertEqual(pipeline.data_path, "/custom/data/path")
         self.assertEqual(pipeline.data_gitref, "my-branch")
 
-    def test_get_golang_branch(self):
-        """Test get_golang_branch static method"""
-        branch = UpdateGolangPipeline.get_golang_branch(8, "1.20.12")
-        self.assertEqual(branch, "rhel-8-golang-1.20")
-
-        branch = UpdateGolangPipeline.get_golang_branch(9, "1.21.5")
-        self.assertEqual(branch, "rhel-9-golang-1.21")
-
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     def test_get_doozer_var_args(self, mock_konflux_db):
-        """Test _get_doozer_var_args returns --var args when use_new_golang_branch is set"""
+        """Test _get_doozer_var_args always returns --var args for MAJOR/MINOR"""
         pipeline = self._make_pipeline()
-        self.assertEqual(pipeline._get_doozer_var_args(), [])
+        # Now always returns vars regardless of use_new_golang_branch flag
+        self.assertEqual(pipeline._get_doozer_var_args(), ['--var', 'MAJOR=4', '--var', 'MINOR=16'])
 
-        pipeline.use_new_golang_branch = True
         pipeline.ocp_version = "5.0"
         self.assertEqual(pipeline._get_doozer_var_args(), ['--var', 'MAJOR=5', '--var', 'MINOR=0'])
 
@@ -1279,8 +1271,11 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
         mock_cmd_assert.assert_called_once()
         cmd = mock_cmd_assert.call_args[0][0]
         self.assertIn("doozer", cmd)
+        self.assertIn("--var", cmd)
+        self.assertIn("MAJOR=4", cmd)
+        self.assertIn("MINOR=16", cmd)
         self.assertIn("--group", cmd)
-        self.assertIn("rhel-8-golang-1.20", cmd)
+        self.assertIn("golang", cmd)  # Now uses monobranch
         self.assertIn("images:rebase", cmd)
         self.assertIn("--version", cmd)
         self.assertIn("v1.20.12", cmd)
@@ -1531,7 +1526,7 @@ class TestShouldSignGolangRpm(unittest.TestCase):
         result = pipeline.should_sign_golang_rpm(9, "1.22.9")
 
         self.assertTrue(result)
-        mock_repo.get_contents.assert_called_with("group.yml", ref="rhel-9-golang-1.22")
+        mock_repo.get_contents.assert_called_with("group.yml", ref="golang")
 
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
@@ -1553,6 +1548,7 @@ class TestShouldSignGolangRpm(unittest.TestCase):
         result = pipeline.should_sign_golang_rpm(9, "1.25.3")
 
         self.assertFalse(result)
+        mock_repo.get_contents.assert_called_with("group.yml", ref="golang")
 
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
