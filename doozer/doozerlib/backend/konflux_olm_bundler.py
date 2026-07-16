@@ -483,7 +483,16 @@ class KonfluxOlmBundleRebaser:
             # embargoed (private-fix) operand image. If the resolved operand build is embargoed,
             # substitute it with the latest public (non-embargoed) build of that same component.
             # If no public build exists, fail the rebase rather than shipping embargoed content.
-            if engine is Engine.KONFLUX and is_nvr_embargoed(image_nvr):
+            try:
+                operand_is_embargoed = engine is Engine.KONFLUX and is_nvr_embargoed(image_nvr)
+            except ValueError as e:
+                # is_nvr_embargoed() raises when the NVR's embargo status is ambiguous (e.g. it
+                # matches more than one visibility suffix). Don't guess; fail the rebase.
+                raise KonfluxOlmBundleRebaseError(
+                    f"Unable to determine embargo status for operand image {image_nvr} referenced "
+                    f"by operator {metadata.distgit_key}: {e}"
+                ) from e
+            if operand_is_embargoed:
                 if _component_to_meta is None:
                     _component_to_meta = {im.get_component_name(): im for im in metadata.runtime.image_metas()}
                 operand_meta = _component_to_meta.get(image_component_name)

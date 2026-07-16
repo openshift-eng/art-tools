@@ -1228,7 +1228,13 @@ class ReleaseFromFbcPipeline:
         # The FBC image is just a catalog wrapper; its own NVR is never embargo-relevant and,
         # by construction (see build_fbc.py), never carries a p-flag at all - so including it
         # here would make this check fail unconditionally on every run.
-        embargoed_nvrs = [nvr for nvr in related_nvrs + self.extra_image_nvrs if is_nvr_embargoed(nvr)]
+        try:
+            embargoed_nvrs = [nvr for nvr in related_nvrs + self.extra_image_nvrs if is_nvr_embargoed(nvr)]
+        except ValueError as e:
+            # is_nvr_embargoed() raises when an NVR's embargo status is ambiguous (e.g. it
+            # matches more than one visibility suffix). Treat that the same as finding an
+            # embargoed NVR: refuse to guess and fail the release.
+            raise RuntimeError(f"Refusing to create a release: unable to determine embargo status: {e}") from e
         if embargoed_nvrs:
             raise RuntimeError(
                 f"Refusing to create a release referencing embargoed (private-fix) NVR(s): "

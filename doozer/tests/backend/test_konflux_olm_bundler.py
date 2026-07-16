@@ -1154,6 +1154,29 @@ class TestReplaceImageReferencesEmbargo(IsolatedAsyncioTestCase):
             with self.assertRaises(KonfluxOlmBundleRebaseError):
                 await self.rebaser._replace_image_references('registry.redhat.io', content, Engine.KONFLUX, metadata)
 
+    async def test_operand_with_ambiguous_embargo_status_raises(self):
+        """When an operand's NVR matches more than one visibility suffix (ambiguous embargo
+        status), the rebase fails clearly rather than guessing which suffix applies."""
+        content = 'image: registry.redhat.io/openshift4/my-ambiguous-operand-rhel9:v1.0'
+        metadata = self._make_metadata()
+
+        # Synthetic/defensive case: version and release combine into an NVR carrying two
+        # visibility suffixes (real ART NVRs never carry more than one).
+        ambiguous_info = self._image_info(
+            'my-ambiguous-operand-container',
+            '1.0.202607151200.p2.g172d0b2.assembly.stream.el9',
+            '1.p3',
+            'ambiguous',
+        )
+
+        with patch(
+            'doozerlib.backend.konflux_olm_bundler.util.oc_image_info_for_arch_async',
+            new_callable=AsyncMock,
+            return_value=ambiguous_info,
+        ):
+            with self.assertRaises(KonfluxOlmBundleRebaseError):
+                await self.rebaser._replace_image_references('registry.redhat.io', content, Engine.KONFLUX, metadata)
+
     async def test_brew_engine_does_not_check_embargo(self):
         """Embargo substitution is only applied for Konflux-engine operands; Brew engine is unaffected."""
         content = 'image: registry.redhat.io/openshift4/my-embargoed-operand-rhel9:v1.0'

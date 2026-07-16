@@ -2,6 +2,7 @@ from unittest import TestCase
 
 from artcommonlib.build_visibility import (
     BuildVisibility,
+    find_all_pflags_in_release,
     get_all_visibility_suffixes,
     get_build_system,
     get_visibility_suffix,
@@ -79,6 +80,17 @@ class TestBuildVisibility(TestCase):
             )
         )
 
+        # Two distinct visibility-suffix matches in the same NVR: ambiguous, so refuse to
+        # guess which one applies and raise rather than silently trusting whichever comes first.
+        with self.assertRaises(ValueError):
+            is_nvr_embargoed('foo-1.0.p2.gabc123-1.p3')
+
+        # Even two matches of the *same* suffix are still treated as ambiguous: an NVR is
+        # never expected to carry a p-flag twice, so seeing it twice signals something
+        # unexpected about the NVR's shape that's worth investigating rather than papering over.
+        with self.assertRaises(ValueError):
+            is_nvr_embargoed('foo-1.0.p2.gabc123-1.p2')
+
     def test_get_visibility_suffix(self):
         self.assertEqual(get_visibility_suffix('brew', BuildVisibility.PUBLIC), 'p0')
         self.assertEqual(get_visibility_suffix('brew', BuildVisibility.PRIVATE), 'p1')
@@ -107,3 +119,9 @@ class TestBuildVisibility(TestCase):
         self.assertEqual(isolate_pflag_in_release('1.2.3-y.p4.p'), None)
         self.assertEqual(isolate_pflag_in_release('1.2.3-y.p.p?'), 'p?')
         self.assertEqual(isolate_pflag_in_release('1.2.3-y.p?.p4'), 'p?')
+
+    def test_find_all_pflags_in_release(self):
+        self.assertEqual(find_all_pflags_in_release('1.2.3-y.p.p1'), ['p1'])
+        self.assertEqual(find_all_pflags_in_release('1.2.3-y.p4.p'), [])
+        self.assertEqual(find_all_pflags_in_release('foo-1.0.p2.gabc123-1.p3'), ['p2', 'p3'])
+        self.assertEqual(find_all_pflags_in_release('foo-1.0.p2.gabc123-1.p2'), ['p2', 'p2'])

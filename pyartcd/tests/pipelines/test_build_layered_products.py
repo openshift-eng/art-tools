@@ -435,6 +435,31 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
 
     @patch('pyartcd.pipelines.build_layered_products.jenkins.start_olm_bundle_konflux')
     @patch('pyartcd.pipelines.build_layered_products.jenkins.get_propagatable_params', return_value={})
+    def test_trigger_bundle_build_ambiguous_nvr_skips_and_warns(self, mock_get_params, mock_start_bundle):
+        """An NVR whose embargo status is ambiguous (matches more than one visibility suffix)
+        is treated like an embargoed NVR: skip its bundle trigger and record it as skipped,
+        rather than letting the ValueError bubble up and get silently swallowed by the
+        broader except-Exception handler around this method."""
+        self.pipeline.skip_bundle_build = False
+        ambiguous_nvr = 'oadp-operator-container-v1.4.9.202607151200.p2.g172d0b2.assembly.stream.el9.p3'
+        self._write_image_build_record_log(
+            [
+                ('oadp-operator', ambiguous_nvr),
+                ('oadp-operator', 'oadp-operator-container-v1.4.9-202607151201.p2.g8a1f3c4.assembly.stream.el9'),
+            ]
+        )
+
+        self.pipeline.trigger_bundle_build()
+
+        mock_start_bundle.assert_called_once()
+        self.assertEqual(
+            mock_start_bundle.call_args.kwargs['operator_nvrs'],
+            ['oadp-operator-container-v1.4.9-202607151201.p2.g8a1f3c4.assembly.stream.el9'],
+        )
+        self.assertEqual(self.pipeline.embargoed_operators_skipped, [ambiguous_nvr])
+
+    @patch('pyartcd.pipelines.build_layered_products.jenkins.start_olm_bundle_konflux')
+    @patch('pyartcd.pipelines.build_layered_products.jenkins.get_propagatable_params', return_value={})
     def test_trigger_bundle_build_all_embargoed_skips_trigger(self, mock_get_params, mock_start_bundle):
         """When every operator NVR is embargoed, the bundle build trigger is never called."""
         self.pipeline.skip_bundle_build = False

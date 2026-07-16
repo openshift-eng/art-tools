@@ -103,7 +103,19 @@ class BuildLayeredProductsPipeline:
             # happens. The caller marks the Jenkins job UNSTABLE when this list is non-empty.
             non_embargoed_nvrs = []
             for nvr in operator_nvrs:
-                if is_nvr_embargoed(nvr):
+                try:
+                    embargoed = is_nvr_embargoed(nvr)
+                except ValueError:
+                    # is_nvr_embargoed() raises when the NVR's embargo status is ambiguous
+                    # (e.g. it matches more than one visibility suffix). Treat that the same
+                    # as embargoed: don't guess, just skip the bundle trigger and warn.
+                    self._logger.exception(
+                        'Unable to determine visibility for operator NVR %s; skipping bundle build trigger for it.',
+                        nvr,
+                    )
+                    self.embargoed_operators_skipped.append(nvr)
+                    continue
+                if embargoed:
                     self._logger.warning(
                         'Operator NVR %s is embargoed; skipping bundle build trigger for it. '
                         'The previous public bundle will remain the latest until a public rebuild.',

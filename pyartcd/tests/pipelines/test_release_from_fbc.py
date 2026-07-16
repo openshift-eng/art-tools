@@ -639,6 +639,18 @@ class TestEmbargoedNvrDefensiveCheck(unittest.TestCase):
         self.assertIn("embargoed", str(ctx.exception))
         self.assertIn(embargoed_nvr, str(ctx.exception))
 
+    def test_ambiguous_nvr_raises(self):
+        """An NVR whose embargo status is ambiguous (matches more than one visibility suffix)
+        must fail the release rather than have is_nvr_embargoed() guess which one applies."""
+        ambiguous_nvr = "oadp-velero-container-1.5.3.202607151200.p2.g172d0b2.assembly.stream.el9.p3"
+        pipeline = self._make_pipeline(fbc_pullspecs=["quay.io/example/fbc:v1"])
+        pipeline.validate_fbc_related_images = AsyncMock(return_value=[ambiguous_nvr])
+        pipeline.extract_fbc_nvr = MagicMock(return_value="oadp-operator-fbc-1.5.3-20260715174111.ocp4.19")
+
+        with self.assertRaises(RuntimeError) as ctx:
+            asyncio.run(pipeline.run())
+        self.assertIn("embargo status", str(ctx.exception))
+
     def test_embargoed_extra_image_nvr_raises(self):
         """An embargoed NVR passed via --extra-image-nvrs must fail the release."""
         embargoed_nvr = "oadp-velero-container-1.5.3-202607151200.p3.g172d0b2.assembly.stream.el9"
