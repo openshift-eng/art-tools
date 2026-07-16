@@ -3,6 +3,7 @@ import sys
 import click
 from artcommonlib import logutil
 from artcommonlib.assembly import AssemblyTypes
+from artcommonlib.constants import SHIPMENT_CONFIG_KINDS
 from artcommonlib.gitdata import SafeFormatter
 from doozerlib.backend.konflux_fbc import KonfluxFbcBuilder
 from doozerlib.util import konflux_application_name
@@ -108,7 +109,7 @@ class InitShipmentCli:
 @click.argument(
     "kind",
     metavar="<KIND>",
-    type=click.Choice(["image", "extras", "metadata", "microshift-bootc", "fbc"]),
+    type=click.Choice(SHIPMENT_CONFIG_KINDS),
 )
 @click.pass_obj
 @click_coroutine

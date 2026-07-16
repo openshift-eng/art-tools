@@ -57,6 +57,7 @@ FBCS_TABLE_ID = 'fbcs'
 TASKRUN_TABLE_ID = 'taskruns'
 
 SHIPMENT_DATA_URL_TEMPLATE = "https://gitlab.cee.redhat.com/hybrid-platforms/art/ocp-shipment-data"
+SHIPMENT_CONFIG_KINDS = ("image", "extras", "metadata", "fbc", "microshift-bootc")
 
 # Redis related vars
 REDIS_HOST = 'master.redis.gwprhd.use1.cache.amazonaws.com'

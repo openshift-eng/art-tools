@@ -295,6 +295,151 @@ shipment:
         self.assertEqual(set(result.keys()), expected_kinds)
 
 
+class TestGroupFiltering(unittest.TestCase):
+    """Test cases for group-based filtering in get_shipment_configs_from_mr"""
+
+    def setUp(self):
+        self.test_mr_url = "https://gitlab.com/test-project/-/merge_requests/123"
+        self.sample_yaml_content = """
+shipment:
+  metadata:
+    product: "openshift"
+    application: "openshift"
+    group: "openshift-4.18"
+    assembly: "4.18.40"
+    fbc: false
+  environments:
+    stage:
+      releasePlan: "stage-plan"
+    prod:
+      releasePlan: "prod-plan"
+  data:
+    releaseNotes:
+      type: "RHBA"
+      synopsis: "Test synopsis"
+      topic: "Test topic"
+      description: "Test description"
+      solution: "Test solution"
+      cves: []
+"""
+
+    @patch("artcommonlib.gitlab.gitlab.Gitlab")
+    @patch.dict(os.environ, {"GITLAB_TOKEN": "test-token"})
+    def test_group_filter_includes_matching_files(self, mock_gitlab_class):
+        """Files under the matching group directory are parsed."""
+        mock_gitlab = mock_gitlab_class.return_value
+        mock_project = Mock()
+        mock_source_project = Mock()
+        mock_gitlab.projects.get.side_effect = [mock_project, mock_source_project]
+
+        mock_mr = Mock()
+        mock_mr.source_project_id = "source-project-id"
+        mock_mr.source_branch = "test-branch"
+        mock_project.mergerequests.get.return_value = mock_mr
+
+        mock_diff_info = Mock()
+        mock_diff_info.id = "diff-id"
+        mock_mr.diffs.list.return_value = [mock_diff_info]
+        mock_diff = Mock()
+        mock_mr.diffs.get.return_value = mock_diff
+        mock_diff.diffs = [
+            {"new_path": "shipment/openshift/openshift-4.18/openshift/prod/image.yaml", "old_path": None},
+        ]
+
+        mock_file_content = Mock()
+        mock_file_content.decode.return_value.decode.return_value = self.sample_yaml_content
+        mock_source_project.files.get.return_value = mock_file_content
+
+        result = shipment_utils.get_shipment_configs_from_mr(self.test_mr_url, ("image",), group="openshift-4.18")
+        self.assertEqual(len(result), 1)
+        self.assertIn("image", result)
+
+    @patch("artcommonlib.gitlab.gitlab.Gitlab")
+    @patch.dict(os.environ, {"GITLAB_TOKEN": "test-token"})
+    def test_group_filter_excludes_non_matching_files(self, mock_gitlab_class):
+        """Files under a different group directory are skipped entirely."""
+        mock_gitlab = mock_gitlab_class.return_value
+        mock_project = Mock()
+        mock_source_project = Mock()
+        mock_gitlab.projects.get.side_effect = [mock_project, mock_source_project]
+
+        mock_mr = Mock()
+        mock_mr.source_project_id = "source-project-id"
+        mock_mr.source_branch = "test-branch"
+        mock_project.mergerequests.get.return_value = mock_mr
+
+        mock_diff_info = Mock()
+        mock_diff_info.id = "diff-id"
+        mock_mr.diffs.list.return_value = [mock_diff_info]
+        mock_diff = Mock()
+        mock_mr.diffs.get.return_value = mock_diff
+        mock_diff.diffs = [
+            {"new_path": "shipment/oadp/oadp-1.5/oadp/prod/fbc.yaml", "old_path": None},
+            {"new_path": "shipment/oadp/oadp-1.5/oadp/prod/fbc-extra.yaml", "old_path": None},
+        ]
+
+        result = shipment_utils.get_shipment_configs_from_mr(self.test_mr_url, ("fbc",), group="openshift-4.18")
+        self.assertEqual(result, {})
+        mock_source_project.files.get.assert_not_called()
+
+    @patch("artcommonlib.gitlab.gitlab.Gitlab")
+    @patch.dict(os.environ, {"GITLAB_TOKEN": "test-token"})
+    def test_group_filter_avoids_substring_match(self, mock_gitlab_class):
+        """Group filter uses exact path segment matching, not substring."""
+        mock_gitlab = mock_gitlab_class.return_value
+        mock_project = Mock()
+        mock_source_project = Mock()
+        mock_gitlab.projects.get.side_effect = [mock_project, mock_source_project]
+
+        mock_mr = Mock()
+        mock_mr.source_project_id = "source-project-id"
+        mock_mr.source_branch = "test-branch"
+        mock_project.mergerequests.get.return_value = mock_mr
+
+        mock_diff_info = Mock()
+        mock_diff_info.id = "diff-id"
+        mock_mr.diffs.list.return_value = [mock_diff_info]
+        mock_diff = Mock()
+        mock_mr.diffs.get.return_value = mock_diff
+        mock_diff.diffs = [
+            {"new_path": "shipment/openshift/openshift-4.18/openshift/prod/image.yaml", "old_path": None},
+        ]
+
+        result = shipment_utils.get_shipment_configs_from_mr(self.test_mr_url, ("image",), group="openshift-4.1")
+        self.assertEqual(result, {})
+        mock_source_project.files.get.assert_not_called()
+
+    @patch("artcommonlib.gitlab.gitlab.Gitlab")
+    @patch.dict(os.environ, {"GITLAB_TOKEN": "test-token"})
+    def test_no_group_filter_parses_all_files(self, mock_gitlab_class):
+        """Without group filter, all matching YAML files are parsed (existing behavior)."""
+        mock_gitlab = mock_gitlab_class.return_value
+        mock_project = Mock()
+        mock_source_project = Mock()
+        mock_gitlab.projects.get.side_effect = [mock_project, mock_source_project]
+
+        mock_mr = Mock()
+        mock_mr.source_project_id = "source-project-id"
+        mock_mr.source_branch = "test-branch"
+        mock_project.mergerequests.get.return_value = mock_mr
+
+        mock_diff_info = Mock()
+        mock_diff_info.id = "diff-id"
+        mock_mr.diffs.list.return_value = [mock_diff_info]
+        mock_diff = Mock()
+        mock_mr.diffs.get.return_value = mock_diff
+        mock_diff.diffs = [
+            {"new_path": "shipment/oadp/oadp-1.5/oadp/prod/image.yaml", "old_path": None},
+        ]
+
+        mock_file_content = Mock()
+        mock_file_content.decode.return_value.decode.return_value = self.sample_yaml_content
+        mock_source_project.files.get.return_value = mock_file_content
+
+        result = shipment_utils.get_shipment_configs_from_mr(self.test_mr_url, ("image",))
+        self.assertEqual(len(result), 1)
+
+
 @patch.dict(os.environ, {"GITLAB_TOKEN": "fake-token"})
 class TestGetBugIdsFromOpenShipmentMrs(unittest.TestCase):
     """Test cases for get_bug_ids_from_open_shipment_mrs"""
@@ -565,6 +710,23 @@ class TestGetBugIdsFromOpenShipmentMrs(unittest.TestCase):
 
         result = self._call(releases_config=self._make_releases_config("4.18.39", mr_url))
         self.assertEqual(result, {"OCPBUGS-1000"})
+
+    @patch("elliottlib.shipment_utils.get_shipment_configs_from_mr")
+    @patch("elliottlib.shipment_utils.GitLabClient")
+    def test_passes_group_to_get_shipment_configs(self, mock_gitlab_cls, mock_get_configs):
+        """get_shipment_configs_from_mr should be called with group kwarg for pre-filtering."""
+        mock_client = Mock()
+        mock_gitlab_cls.from_url.return_value = mock_client
+
+        mr_url = "https://gitlab.example.com/project/-/merge_requests/1"
+        mock_mr = Mock()
+        mock_mr.web_url = mr_url
+        mock_client.list_merge_requests.return_value = [mock_mr]
+
+        mock_get_configs.return_value = {}
+
+        self._call(group="openshift-4.18")
+        mock_get_configs.assert_called_once_with(mr_url, group="openshift-4.18")
 
 
 if __name__ == '__main__':

@@ -3,6 +3,7 @@ from typing import Dict, Iterable, List, Tuple
 from urllib.parse import urlparse
 
 from artcommonlib.assembly import assembly_config_struct
+from artcommonlib.constants import SHIPMENT_CONFIG_KINDS
 from artcommonlib.gitlab import GitLabClient
 from artcommonlib.jira_config import JIRA_DOMAIN_NAME
 from artcommonlib.model import Model
@@ -16,12 +17,22 @@ yaml = new_roundtrip_yaml_handler()
 
 
 def get_shipment_configs_from_mr(
-    mr_url: str, kinds: Tuple[str, ...] = ("image", "extras", "metadata", "fbc", "microshift-bootc")
+    mr_url: str,
+    kinds: Tuple[str, ...] = SHIPMENT_CONFIG_KINDS,
+    group: str | None = None,
 ) -> Dict[str, ShipmentConfig]:
-    """Fetch shipment configs from a merge request URL.
-    :param mr_url: URL of the merge request
-    :param kinds: List of all possible advisory kinds to fetch shipment configs for
-    :return: Dict of {kind: ShipmentConfig}
+    """
+    Fetch shipment configs from a merge request URL.
+
+    Arg(s):
+        mr_url (str): URL of the merge request.
+        kinds (Tuple[str, ...]): Possible advisory kinds to fetch shipment configs for.
+        group (str | None): When provided, only files whose path contains this group
+            as a directory segment are parsed. Skips non-matching files entirely,
+            avoiding parse errors on unrelated products.
+
+    Return Value(s):
+        Dict[str, ShipmentConfig]: Dict of {kind: ShipmentConfig}.
     """
 
     shipment_configs: Dict[str, ShipmentConfig] = {}
@@ -36,6 +47,9 @@ def get_shipment_configs_from_mr(
     for file_diff in diff.diffs:
         file_path = file_diff.get('new_path') or file_diff.get('old_path')
         if not file_path or not file_path.endswith(('.yaml', '.yml')):
+            continue
+
+        if group and group not in file_path.split('/'):
             continue
 
         filename = file_path.split('/')[-1]
@@ -138,7 +152,7 @@ def get_bug_ids_from_open_shipment_mrs(
     bug_ids: set[str] = set()
     for mr in open_mrs:
         try:
-            shipment_configs = get_shipment_configs_from_mr(mr.web_url)
+            shipment_configs = get_shipment_configs_from_mr(mr.web_url, group=group)
         except (ValueError, TypeError, KeyError):
             logger.warning("Failed to parse shipment configs from MR %s, skipping", mr.web_url, exc_info=True)
             continue
