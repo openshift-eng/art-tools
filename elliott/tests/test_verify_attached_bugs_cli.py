@@ -3,7 +3,7 @@ from unittest.mock import patch
 
 import elliottlib.cli.verify_attached_bugs_cli as verify_attached_bugs_cli
 from click.testing import CliRunner
-from elliottlib.bzutil import BugzillaBugTracker, JIRABugTracker
+from elliottlib.bzutil import BugValidationResult, BugzillaBugTracker, JIRABugTracker
 from elliottlib.cli.common import Runtime, cli
 from elliottlib.cli.verify_attached_bugs_cli import BugValidator
 from elliottlib.errata_async import AsyncErrataAPI
@@ -43,8 +43,8 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
                 depends_on=['OCPBUGS-4'],
                 status='ON_QA',
                 is_ocp_bug=lambda: True,
-                is_tracker_bug=lambda: False,
-                is_invalid_tracker_bug=lambda: False,
+                is_tracker_bug=lambda *args: BugValidationResult(ok=False, reason="Not Bug Tracker"),
+                weburl="https://issues.redhat.com/browse/PLACEHOLDER",
             ),
             flexmock(
                 id="OCPBUGS-2",
@@ -52,8 +52,8 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
                 depends_on=['OCPBUGS-3'],
                 status='ON_QA',
                 is_ocp_bug=lambda: True,
-                is_tracker_bug=lambda: False,
-                is_invalid_tracker_bug=lambda: False,
+                is_tracker_bug=lambda *args: BugValidationResult(ok=False, reason="Not Bug Tracker"),
+                weburl="https://issues.redhat.com/browse/PLACEHOLDER",
             ),
         ]
 
@@ -61,6 +61,9 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
         flexmock(BugzillaBugTracker).should_receive("search").and_return([])
 
         result = runner.invoke(cli, ['-g', 'openshift-4.6', '--assembly=4.6.6', 'verify-bugs'])
+        if result.exit_code != 0:
+            print(f"Output: {result.output}")
+            print(f"Exception: {result.exception}")
         self.assertEqual(result.exit_code, 0)
 
     @patch('elliottlib.cli.verify_attached_bugs_cli.is_release_next_week', return_value=True)
@@ -84,8 +87,8 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
                 depends_on=['OCPBUGS-4'],
                 status='ON_QA',
                 is_ocp_bug=lambda: True,
-                is_tracker_bug=lambda: False,
-                is_invalid_tracker_bug=lambda: False,
+                is_tracker_bug=lambda *args: BugValidationResult(ok=False, reason="Not Bug Tracker"),
+                weburl="https://issues.redhat.com/browse/PLACEHOLDER",
             ),
             flexmock(
                 id="OCPBUGS-2",
@@ -93,8 +96,8 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
                 depends_on=['OCPBUGS-3'],
                 status='ON_QA',
                 is_ocp_bug=lambda: True,
-                is_tracker_bug=lambda: False,
-                is_invalid_tracker_bug=lambda: False,
+                is_tracker_bug=lambda *args: BugValidationResult(ok=False, reason="Not Bug Tracker"),
+                weburl="https://issues.redhat.com/browse/PLACEHOLDER",
             ),
         ]
         depend_on_bugs = [
@@ -103,16 +106,16 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
                 target_release=['4.7.z'],
                 status='MODIFIED',
                 is_ocp_bug=lambda: True,
-                is_tracker_bug=lambda: False,
-                is_invalid_tracker_bug=lambda: False,
+                is_tracker_bug=lambda *args: BugValidationResult(ok=False, reason="Not Bug Tracker"),
+                weburl="https://issues.redhat.com/browse/PLACEHOLDER",
             ),
             flexmock(
                 id="OCPBUGS-4",
                 target_release=['4.7.z'],
                 status='Release Pending',
                 is_ocp_bug=lambda: True,
-                is_tracker_bug=lambda: False,
-                is_invalid_tracker_bug=lambda: False,
+                is_tracker_bug=lambda *args: BugValidationResult(ok=False, reason="Not Bug Tracker"),
+                weburl="https://issues.redhat.com/browse/PLACEHOLDER",
             ),
         ]
         blocking_bugs_map = {
@@ -158,8 +161,8 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
                 depends_on=['OCPBUGS-4'],
                 status='ON_QA',
                 is_ocp_bug=lambda: True,
-                is_tracker_bug=lambda: False,
-                is_invalid_tracker_bug=lambda: False,
+                is_tracker_bug=lambda *args: BugValidationResult(ok=False, reason="Not Bug Tracker"),
+                weburl="https://issues.redhat.com/browse/PLACEHOLDER",
                 is_flaw_bug=lambda: False,
             ),
             flexmock(
@@ -168,8 +171,8 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
                 depends_on=['OCPBUGS-3'],
                 status='ON_QA',
                 is_ocp_bug=lambda: True,
-                is_tracker_bug=lambda: False,
-                is_invalid_tracker_bug=lambda: False,
+                is_tracker_bug=lambda *args: BugValidationResult(ok=False, reason="Not Bug Tracker"),
+                weburl="https://issues.redhat.com/browse/PLACEHOLDER",
                 is_flaw_bug=lambda: False,
             ),
         ]
@@ -179,16 +182,16 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
                 target_release=['4.7.z'],
                 status='MODIFIED',
                 is_ocp_bug=lambda: True,
-                is_tracker_bug=lambda: False,
-                is_invalid_tracker_bug=lambda: False,
+                is_tracker_bug=lambda *args: BugValidationResult(ok=False, reason="Not Bug Tracker"),
+                weburl="https://issues.redhat.com/browse/PLACEHOLDER",
             ),
             flexmock(
                 id="OCPBUGS-4",
                 target_release=['4.7.z'],
                 status='Release Pending',
                 is_ocp_bug=lambda: True,
-                is_tracker_bug=lambda: False,
-                is_invalid_tracker_bug=lambda: False,
+                is_tracker_bug=lambda *args: BugValidationResult(ok=False, reason="Not Bug Tracker"),
+                weburl="https://issues.redhat.com/browse/PLACEHOLDER",
             ),
         ]
         blocking_bugs_map = {
