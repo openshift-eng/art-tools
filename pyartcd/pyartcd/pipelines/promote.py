@@ -1426,9 +1426,13 @@ class PromotePipeline:
                 except Exception:
                     logger.exception("Failed to send Slack notification for %s advisory %s", impetus, advisory)
 
-    @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(30))
     async def _check_and_drop_empty_advisory(self, impetus: str, advisory: int) -> bool:
         """Check whether *advisory* has any builds attached; if not, drop it.
+
+        The build lookup is retried (transient errata API failures), but the
+        ``drop_advisory`` side-effect is deliberately kept outside the retry
+        boundary so that ``repair-bugs`` is never re-run after it has already
+        succeeded.
 
         :param impetus: Advisory impetus name (e.g. ``rpm``, ``rhcos``).
         :param advisory: Advisory number.
@@ -1437,8 +1441,7 @@ class PromotePipeline:
         logger = self._logger
         logger.info("Checking if %s advisory %s has builds attached...", impetus, advisory)
 
-        builds = await to_thread(get_builds, advisory)
-        has_builds = any(pv_data.get("builds") for pv_data in builds.values()) if builds else False
+        has_builds = await self._get_advisory_has_builds(advisory)
 
         if has_builds:
             logger.info("%s advisory %s has builds attached, proceeding normally.", impetus, advisory)
@@ -1461,6 +1464,16 @@ class PromotePipeline:
             )
 
         return True
+
+    @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(30))
+    async def _get_advisory_has_builds(self, advisory: int) -> bool:
+        """Return whether *advisory* has any builds attached.
+
+        Retries up to 3 times with a 30 s wait for transient errata API
+        failures.
+        """
+        builds = await to_thread(get_builds, advisory)
+        return any(pv_data.get("builds") for pv_data in builds.values()) if builds else False
 
     async def check_blocker_bugs(self):
         # Note: --assembly option should always be "stream". We are checking blocker bugs for this release branch regardless of the sweep cutoff timestamp.
