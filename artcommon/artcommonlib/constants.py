@@ -118,6 +118,9 @@ PRODUCT_BASE_IMAGE_KONFLUX_RELEASE_MAP = {
     "openshift-logging": ("logging-images-base-silent", "logging-images-base"),
     "acm": ("acm-images-base-silent", "acm-images-base"),
     "multicluster-engine": ("acm-images-base-silent", "acm-images-base"),
+    "external-secrets": ("oap-eso-images-base-silent", "oap-images-base"),
+    "cert-manager": ("oap-cm-images-base-silent", "oap-images-base"),
+    "zero-trust": ("oap-zt-images-base-silent", "oap-images-base"),
 }
 
 # Pre-release lifecycle (software_lifecycle.phase) — registry-ocp-art-base-ec-prod via ART-19498.
