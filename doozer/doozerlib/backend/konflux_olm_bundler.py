@@ -469,7 +469,7 @@ class KonfluxOlmBundleRebaser:
             ) from e
         default_delivery_namespace = f"openshift{major}"
         if not metadata.runtime.group.startswith("openshift-"):
-            new_namespace = original_namespace
+            new_namespace = delivery_namespace_map.get(image_short_name, original_namespace)
         else:
             new_namespace = (
                 delivery_namespace_map.get(image_short_name, default_delivery_namespace)
@@ -616,15 +616,17 @@ class KonfluxOlmBundleRebaser:
                 else image_info["listDigest"]
             )
 
-            # Parse the original spec to get namespace and short name
-            # spec format: registry/namespace/image_short:tag
-            parts = spec.rsplit("/", 1)
-            if len(parts) == 2:
-                original_namespace = parts[0].split("/", 1)[-1] if "/" in parts[0] else parts[0]
-                image_short_name = parts[1].split(":")[0].split("@")[0]
+            # Derive namespace and image name from the operand's delivery
+            # config in ocp-build-data rather than from the upstream spec in
+            # image-references (which may point to an unrelated upstream
+            # registry, e.g. quay.io/konveyor/* for OADP).
+            repo_names = meta.config.get("delivery", {}).get("delivery_repo_names") or []
+            if repo_names and "/" in str(repo_names[0]):
+                original_namespace = str(repo_names[0]).rsplit("/", 1)[0]
+                image_short_name = str(repo_names[0]).rsplit("/", 1)[-1]
             else:
+                image_short_name = meta.image_name_short
                 original_namespace = csv_namespace
-                image_short_name = spec.split(":")[0].split("@")[0]
 
             delivery_short_name, new_pullspec = self._build_delivery_pullspec(
                 image_short_name,

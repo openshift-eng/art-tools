@@ -850,6 +850,84 @@ spec:
         _, new_pullspec, _ = resolved["ose-csi-driver-rhel9"]
         self.assertIn("ose-csi-driver-rhel9", new_pullspec)
 
+    @patch("doozerlib.util.oc_image_info_for_arch_async")
+    async def test_resolve_operands_from_db_layered_upstream_registry(self, mock_oc_image_info):
+        """
+        Verify that for a layered product (e.g. OADP) whose image-references
+        point to an upstream registry (quay.io/konveyor/*), the delivery
+        pullspec uses the namespace and image name from ocp-build-data
+        delivery_repo_names, not the upstream spec.
+
+        Regression test: without the fix, the result would be
+        registry.redhat.io/konveyor/velero@sha256:... instead of the correct
+        registry.redhat.io/oadp/oadp-velero-rhel9@sha256:...
+        """
+        metadata = MagicMock()
+        metadata.distgit_key = "oadp-operator"
+        metadata.runtime.group = "oadp-1.5"
+        metadata.runtime.data_dir = "/tmp/test-oadp-data"
+
+        operand_meta = MagicMock()
+        operand_meta.image_name_short = "oadp-velero-rhel9"
+        operand_meta.distgit_key = "oadp-velero"
+        operand_meta.branch_el_target.return_value = 9
+        operand_meta.config = Model(
+            {
+                "delivery": {
+                    "delivery_repo_names": ["oadp/oadp-velero-rhel9"],
+                },
+            }
+        )
+
+        mock_build = MagicMock()
+        mock_build.version = "1.5.8"
+        mock_build.release = "202507160000.p0.g1234567.assembly.stream.el9"
+        mock_build.nvr = "oadp-velero-container-1.5.8-202507160000.p0.g1234567.assembly.stream.el9"
+        operand_meta.get_latest_konflux_build = AsyncMock(return_value=mock_build)
+
+        metadata.runtime.name_in_bundle_map = {"oadp-velero-rhel9": "oadp-velero"}
+        metadata.runtime.image_map = {"oadp-velero": operand_meta}
+
+        image_references = {
+            "oadp-velero-rhel9": {
+                "name": "oadp-velero-rhel9",
+                "from": {"name": "quay.io/konveyor/velero:oadp-1.5"},
+            },
+        }
+
+        mock_oc_image_info.return_value = {
+            "config": {
+                "config": {
+                    "Labels": {
+                        "com.redhat.component": "oadp-velero-container",
+                        "version": "1.5.8",
+                        "release": "202507160000.p0.g1234567.assembly.stream.el9",
+                    }
+                }
+            },
+            "listDigest": "sha256:oadpvelerodigest111",
+            "contentDigest": "sha256:oadpvelerocontentdigest222",
+        }
+        self.rebaser._group_config.get.return_value = "oadp"
+        self.rebaser._group_config.operator_image_ref_mode = "manifest-list"
+        self.rebaser._group_config.vars = {"MAJOR": 4}
+
+        delivery_namespace_map = {"oadp-velero-rhel9": "oadp"}
+        resolved, rebased_name_map = await self.rebaser._resolve_operands_from_db(
+            metadata,
+            image_references,
+            {},
+            delivery_namespace_map,
+        )
+
+        self.assertIn("oadp-velero-rhel9", resolved)
+        old_spec, new_pullspec, nvr = resolved["oadp-velero-rhel9"]
+        self.assertEqual(old_spec, "quay.io/konveyor/velero:oadp-1.5")
+        self.assertEqual(new_pullspec, "registry.redhat.io/oadp/oadp-velero-rhel9@sha256:oadpvelerodigest111")
+        self.assertNotIn("konveyor", new_pullspec)
+        self.assertEqual(nvr, "oadp-velero-container-1.5.8-202507160000.p0.g1234567.assembly.stream.el9")
+        self.assertEqual(rebased_name_map["oadp-velero-rhel9"], "oadp-velero-rhel9")
+
     @patch("pathlib.Path.iterdir")
     @patch("pathlib.Path.exists", autospec=True)
     @patch("pathlib.Path.glob")
