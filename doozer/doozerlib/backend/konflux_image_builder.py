@@ -600,7 +600,7 @@ class KonfluxImageBuilder:
                 "path": lockfile_path,
             }
 
-            golang_pattern = re.compile(r'^golang-|^rhel-\d+-golang-\d+\.\d+')
+            golang_pattern = re.compile(r'^golang$|^golang-|^rhel-\d+-golang-\d+\.\d+')
             if group.startswith("openshift-") or golang_pattern.match(group):
                 # For groups like oadp, mta, logging we should always use signed repos
                 # For golang groups (golang-* and rhel-X-golang-Y.Z), always exclude gpg check regardless of lifecycle phase
