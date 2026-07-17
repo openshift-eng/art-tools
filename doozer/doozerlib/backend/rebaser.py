@@ -1935,6 +1935,17 @@ class KonfluxRebaser:
         if web_url != "https://github.com/openshift/os":
             return
 
+        # Convert HTTPS URL to SSH for push operations
+        # Format: https://github.com/org/repo -> git@github.com:org/repo.git
+        if web_url.startswith("https://github.com/"):
+            repo_path = web_url[len("https://github.com/") :]
+            if not repo_path.endswith(".git"):
+                repo_path += ".git"
+            ssh_url = f"git@github.com:{repo_path}"
+        else:
+            self._logger.warning(f"Unexpected web URL format: {web_url}, using as-is")
+            ssh_url = web_url
+
         # Check if .repo files were modified in the last commit (the rebase commit)
         # This is an optimization to avoid cloning the public repo if nothing changed
         local_dir = str(build_repo.local_dir)
@@ -1955,7 +1966,7 @@ class KonfluxRebaser:
             # We'll do a shallow ls-remote to avoid cloning
             branch_name = self._get_public_repo_branch_name(metadata)
             rc, stdout, _ = await git_helper.gather_git_async(
-                ["ls-remote", "--heads", web_url, branch_name], check=False, github_url=web_url
+                ["ls-remote", "--heads", ssh_url, branch_name], check=False, github_url=ssh_url
             )
 
             if stdout.strip():
@@ -1982,9 +1993,9 @@ class KonfluxRebaser:
             upstream_dir = Path(temp_dir) / "upstream"
 
             try:
-                git_helper.git_clone(web_url, str(upstream_dir))
+                git_helper.git_clone(ssh_url, str(upstream_dir))
             except Exception as e:
-                self._logger.error(f"Failed to clone public upstream repo {web_url}: {e}")
+                self._logger.error(f"Failed to clone public upstream repo {ssh_url}: {e}")
                 raise
 
             # Create or checkout the branch
