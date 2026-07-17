@@ -253,11 +253,9 @@ class KonfluxOlmBundleRebaser:
         # is validated with layered products first.
         is_layered = not metadata.runtime.group.startswith("openshift-")
         resolved_operands: dict[str, tuple[str, str, str]] = {}
-        rebased_name_map: dict[str, str] = {}
-        delivery_override_map: dict[str, str] = {}
         if operator_build.engine is Engine.KONFLUX and image_references and is_layered:
             delivery_override_map, delivery_namespace_map = self._build_delivery_maps(metadata)
-            resolved_operands, rebased_name_map = await self._resolve_operands_from_db(
+            resolved_operands = await self._resolve_operands_from_db(
                 metadata, image_references, delivery_override_map, delivery_namespace_map
             )
 
@@ -275,20 +273,15 @@ class KonfluxOlmBundleRebaser:
                 content = await f.read()
 
             if operator_build.engine is Engine.KONFLUX and resolved_operands:
-                # The CSV content has predicted tags from operator rebase (e.g.
-                # registry/ns/image:4.18.0-release). Use regex to find them,
-                # then replace with DB-resolved SHA pullspecs.
-                pullspec_by_delivery = {name: new_ps for name, (_, new_ps, _) in resolved_operands.items()}
-                pattern = KonfluxOlmBundleRebaser._get_image_reference_pattern(str(csv_config["registry"]))
+                # Replace operand references using upstream specs from image-references.
+                # For layered products, operator rebase no longer writes predicted tags
+                # (ART-18061), so the CSV retains original upstream specs. We replace
+                # them directly with DB-resolved SHA pullspecs.
                 found_images: dict[str, tuple[str, str, str]] = {}
-                for match in pattern.finditer(content):
-                    old_pullspec = match.group(0)
-                    _, img_short = match.group(1).rsplit("/", maxsplit=1)
-                    delivery_name = rebased_name_map.get(img_short) or delivery_override_map.get(img_short, img_short)
-                    if delivery_name in pullspec_by_delivery:
-                        _, new_pullspec, operand_nvr = resolved_operands[delivery_name]
-                        content = content.replace(old_pullspec, new_pullspec)
-                        found_images[delivery_name] = (old_pullspec, new_pullspec, operand_nvr)
+                for delivery_name, (upstream_spec, new_pullspec, operand_nvr) in resolved_operands.items():
+                    if upstream_spec in content:
+                        content = content.replace(upstream_spec, new_pullspec)
+                        found_images[delivery_name] = (upstream_spec, new_pullspec, operand_nvr)
                 found_images.update(self._find_external_digest_images(content, found_images))
             else:
                 # Brew engine: use tag-based regex resolution (legacy path)
@@ -529,7 +522,7 @@ class KonfluxOlmBundleRebaser:
         image_references: dict[str, dict],
         delivery_override_map: dict[str, str],
         delivery_namespace_map: dict[str, str],
-    ) -> tuple[dict[str, tuple[str, str, str]], dict[str, str]]:
+    ) -> dict[str, tuple[str, str, str]]:
         """
         Resolve ART-built operand images from Konflux DB instead of relying
         on predicted v-r tags baked into the operator CSV at rebase time.
@@ -538,16 +531,16 @@ class KonfluxOlmBundleRebaser:
         (pipeline enforces: image rebase -> image build -> sync -> bundle rebase).
         So we query the DB for actual builds rather than trusting predicted tags.
 
+        Embargoed operand builds are automatically substituted with the latest
+        public build, since operator bundles must never ship embargoed content.
+
         Arg(s):
             metadata: ImageMetadata of the operator whose bundle is being rebased.
             image_references: Parsed image-references entries {name: {from: {name: spec}}}.
             delivery_override_map: Versioned-to-unversioned name overrides.
             delivery_namespace_map: Image-to-namespace overrides.
         Return Value(s):
-            tuple: (resolved, rebased_name_map) where
-                resolved: {delivery_image_short_name: (old_pullspec, new_pullspec, nvr)}
-                rebased_name_map: {image_name_short: delivery_short_name} mapping
-                    the rebased name used in CSV to the delivery key in resolved
+            dict: {delivery_image_short_name: (upstream_spec, new_pullspec, nvr)}
         """
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
         csv_namespace = self._group_config.get("csv_namespace", "openshift")
@@ -581,7 +574,7 @@ class KonfluxOlmBundleRebaser:
                 )
             )
 
-        # Phase 1b: Fetch all builds concurrently
+        # Phase 1b: Fetch all builds concurrently, then check embargo status
         builds = await asyncio.gather(*build_coros)
 
         operand_entries: list[tuple[str, str, str, ImageMetadata]] = []
@@ -589,6 +582,36 @@ class KonfluxOlmBundleRebaser:
         for (name, spec, meta), build in zip(entries_meta, builds, strict=True):
             if not build:
                 raise ValueError(f"Could not find latest Konflux build for {meta.distgit_key}")
+
+            # Operator bundles must never reference embargoed operand images.
+            # If the latest build is embargoed, substitute with the latest public build.
+            try:
+                embargoed = is_nvr_embargoed(build.nvr)
+            except ValueError as e:
+                raise KonfluxOlmBundleRebaseError(
+                    f"Unable to determine embargo status for operand {build.nvr} referenced "
+                    f"by operator {metadata.distgit_key}: {e}"
+                ) from e
+            if embargoed:
+                public_build = await meta.get_latest_konflux_build(
+                    default=None,
+                    el_target=f"el{meta.branch_el_target()}",
+                    embargoed=False,
+                    exclude_large_columns=True,
+                )
+                if not public_build:
+                    raise KonfluxOlmBundleRebaseError(
+                        f"Operand {build.nvr} referenced by operator {metadata.distgit_key} is "
+                        f"embargoed, and no public (non-embargoed) build of '{meta.distgit_key}' "
+                        f"is available to substitute. Cannot safely rebase this operator bundle."
+                    )
+                logger.warning(
+                    "Operand %s referenced by operator %s is embargoed; substituting with public build %s",
+                    build.nvr,
+                    metadata.distgit_key,
+                    public_build.nvr,
+                )
+                build = public_build
 
             build_pullspec = f"{self.image_repo}:{meta.image_name_short}-{build.version}-{build.release}"
             logger.info(f"Resolved {name} -> {build.nvr} (pullspec: {build_pullspec})")
@@ -605,7 +628,6 @@ class KonfluxOlmBundleRebaser:
         image_infos = await asyncio.gather(*image_info_coros)
 
         resolved: dict[str, tuple[str, str, str]] = {}
-        rebased_name_map: dict[str, str] = {}
         for (_name, spec, _build_pullspec, meta), image_info in zip(operand_entries, image_infos, strict=True):
             image_labels = image_info["config"]["config"]["Labels"]
             image_nvr = f"{image_labels['com.redhat.component']}-{image_labels['version']}-{image_labels['release']}"
@@ -637,9 +659,8 @@ class KonfluxOlmBundleRebaser:
                 delivery_namespace_map,
             )
             resolved[delivery_short_name] = (spec, new_pullspec, image_nvr)
-            rebased_name_map[meta.image_name_short] = delivery_short_name
 
-        return resolved, rebased_name_map
+        return resolved
 
     async def _replace_image_references(self, old_registry: str, content: str, engine: Engine, metadata):
         """

@@ -3035,10 +3035,13 @@ class KonfluxRebaser:
         # Get external image names to skip in internal image replacement
         external_image_names = self._get_external_image_names(dest_dir, csv_config)
 
-        # Replace internal ART-built image references
-        await self._replace_internal_image_refs(
-            metadata, csv_file, image_refs, registry, image_map, external_image_names
-        )
+        # Replace internal ART-built image references with predicted v-r tags.
+        # For layered products, skip this — operand NVRs are resolved from Konflux DB
+        # at bundle rebase time instead (ART-18061).
+        if self._runtime.group.startswith("openshift-"):
+            await self._replace_internal_image_refs(
+                metadata, csv_file, image_refs, registry, image_map, external_image_names
+            )
 
         # Apply art.yaml search-and-replace updates and get parsed art.yaml data.
         # The returned art_yaml_data is passed to _replace_external_image_refs to avoid
