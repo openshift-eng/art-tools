@@ -102,12 +102,16 @@ class BuildPlashetsPipeline:
         Otherwise, return False
         """
 
-        # pass group instead of version to get_freeze_automation
+        extra_vars = []
+        if self.group.startswith('golang') and self.version:
+            major, minor = self.version.split('.')
+            extra_vars = [f"MAJOR={major}", f"MINOR={minor}"]
         automation_freeze_state: str = await get_freeze_automation(
             group=self.group,
             doozer_data_path=self.data_path,
             doozer_working=self.runtime.doozer_working,
             doozer_data_gitref=self.data_gitref,
+            extra_vars=extra_vars,
         )
         self.runtime.logger.info('Automation freeze state for %s: %s', self.group, automation_freeze_state)
 
