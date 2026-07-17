@@ -795,7 +795,7 @@ def start_build_plashets(
         'COPY_LINKS': copy_links,
         'DRY_RUN': dry_run,
         'VERSION': version,
-        'ART_TOOLS_COMMIT': "kopero2000@cleanup-logic-for-seperate-golang-versions",
+        'ART_TOOLS_COMMIT': "kopero2000@plashet-build-mono-golang-support",
     }
 
     return start_build(
