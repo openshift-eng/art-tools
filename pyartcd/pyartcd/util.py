@@ -89,8 +89,8 @@ async def load_group_config(
     cmd = [
         "doozer",
         f"--data-path={doozer_data_path}",
-        "--group",
         *[param for extra_var in extra_vars for param in ['--var', extra_var]],
+        "--group",
         group,
         "--assembly",
         assembly,

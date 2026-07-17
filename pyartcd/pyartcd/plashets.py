@@ -259,7 +259,7 @@ async def build_plashets(
     is_golang_group = group.startswith('golang')
     if is_golang_group and version:
         major, minor = version.split('.')
-        extra_vars = [f"MAJOR=${major}", f"MINOR={minor}"]
+        extra_vars = [f"MAJOR={major}", f"MINOR={minor}"]
 
     # Load group config
     group_config = await util.load_group_config(
