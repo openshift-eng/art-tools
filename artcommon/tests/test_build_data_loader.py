@@ -65,3 +65,39 @@ class TestBuildDataLoader(TestCase):
                 self.assertEqual(group_config["plashet"]["base_dir"], "4.21/$runtime_assembly/$slug")
                 self.assertEqual(group_config["plashet"]["plashet_dir"], "$yyyy-$MM/$revision")
                 self.assertTrue(group_config["plashet"]["create_symlinks"])
+
+    def test_load_group_config_exposes_effective_vars(self):
+        from tempfile import TemporaryDirectory
+
+        with TemporaryDirectory() as temp_dir:
+            data_dir = Path(temp_dir)
+            (data_dir / "group.yml").write_text(
+                "\n".join(
+                    [
+                        "name: golang",
+                        "vars:",
+                        "  MAJOR: major",
+                        "  MINOR: minor",
+                        "branch: rhaos-{MAJOR}.{MINOR}-rhel-9",
+                        "",
+                    ]
+                )
+            )
+
+            loader = BuildDataLoader(
+                data_path=str(data_dir),
+                clone_dir=str(data_dir),
+                commitish="golang",
+                build_system="brew",
+                gitdata=_StubGitData(data_dir),
+            )
+
+            group_config = loader.load_group_config(
+                assembly=None,
+                releases_config=None,
+                additional_vars={"MAJOR": 5, "MINOR": 0},
+            )
+
+            self.assertEqual(group_config["branch"], "rhaos-5.0-rhel-9")
+            self.assertEqual(group_config["vars"]["MAJOR"], 5)
+            self.assertEqual(group_config["vars"]["MINOR"], 0)
