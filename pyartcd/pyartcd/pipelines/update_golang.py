@@ -623,6 +623,8 @@ class UpdateGolangPipeline:
                 version=self.ocp_version,
                 block_until_complete=True,
                 dry_run=self.dry_run,
+                data_path=self.data_path,
+                data_gitref=self.data_gitref
             )
             if result != "SUCCESS":
                 raise RuntimeError(f"Plashet build for {group} failed with result: {result}")
