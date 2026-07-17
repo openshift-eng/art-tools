@@ -2006,11 +2006,14 @@ class KonfluxRebaser:
                 self._logger.info(f"Adding SSH remote for push: {ssh_url}")
                 exectools.cmd_assert(["git", "remote", "add", "push_remote", ssh_url])
 
-                # Try to checkout existing branch or create new one
+                # Try to checkout existing branch or create orphan branch
                 rc, _, _ = exectools.cmd_gather(["git", "checkout", branch_name])
                 if rc != 0:
-                    # Branch doesn't exist, create it
-                    exectools.cmd_assert(["git", "checkout", "-b", branch_name])
+                    # Branch doesn't exist, create it as orphan (no parent commits)
+                    self._logger.info(f"Creating orphan branch {branch_name}")
+                    exectools.cmd_assert(["git", "checkout", "--orphan", branch_name])
+                    # Remove all files from the index (orphan branch starts with staged files from HEAD)
+                    exectools.cmd_assert(["git", "rm", "-rf", "."])
 
                 # Copy .repo files from build repo to upstream repo root
                 repo_files = ["art-signed.repo", "art-unsigned.repo"]
