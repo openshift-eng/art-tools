@@ -1989,17 +1989,23 @@ class KonfluxRebaser:
         branch_name = self._get_public_repo_branch_name(metadata)
 
         # Clone the PUBLIC upstream repository to a temporary directory
+        # Note: git_clone will convert SSH to HTTPS by default (by design)
         with TemporaryDirectory() as temp_dir:
             upstream_dir = Path(temp_dir) / "upstream"
 
             try:
-                git_helper.git_clone(ssh_url, str(upstream_dir))
+                # Clone using HTTPS (git_clone converts SSH to HTTPS automatically)
+                git_helper.git_clone(web_url, str(upstream_dir))
             except Exception as e:
-                self._logger.error(f"Failed to clone public upstream repo {ssh_url}: {e}")
+                self._logger.error(f"Failed to clone public upstream repo {web_url}: {e}")
                 raise
 
             # Create or checkout the branch
             with exectools.Dir(str(upstream_dir)):
+                # Add SSH remote for pushing (we don't want to push to openshift/ via HTTPS)
+                self._logger.info(f"Adding SSH remote for push: {ssh_url}")
+                exectools.cmd_assert(["git", "remote", "add", "push_remote", ssh_url])
+
                 # Try to checkout existing branch or create new one
                 rc, _, _ = exectools.cmd_gather(["git", "checkout", branch_name])
                 if rc != 0:
@@ -2027,8 +2033,9 @@ class KonfluxRebaser:
                 rc, _, _ = exectools.cmd_gather(["git", "commit", "-m", commit_message])
 
                 if rc == 0:
-                    # Changes were committed, push to upstream
-                    exectools.cmd_assert(["git", "push", "origin", branch_name], retries=3)
+                    # Changes were committed, push to SSH remote
+                    self._logger.info(f"Pushing to SSH remote: {ssh_url}")
+                    exectools.cmd_assert(["git", "push", "push_remote", branch_name], retries=3)
                     self._logger.info(f"Successfully pushed .repo files to {branch_name}")
                 else:
                     self._logger.info(f"No changes to .repo files for {branch_name}")
