@@ -132,8 +132,18 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
                 "ART_CLUSTER_ART_CD_PIPELINE_KUBECONFIG": "/path/to/kube/config",
             }
         )
+        # GroupRuntime.create() calls util.load_group_config via pyartcd.runtime,
+        # which is a different reference than pyartcd.pipelines.promote.util.
+        # Patch it here so PromotePipeline.create() doesn't hit real ocp-build-data.
+        self._runtime_load_group_config_patcher = patch(
+            "pyartcd.runtime.util.load_group_config",
+            new_callable=AsyncMock,
+            return_value={},
+        )
+        self._runtime_load_group_config_patcher.start()
 
     def tearDown(self) -> None:
+        self._runtime_load_group_config_patcher.stop()
         for key, value in self._saved_env.items():
             if value is None:
                 os.environ.pop(key, None)
@@ -467,6 +477,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             runtime, group="openshift-4.10", assembly="4.10.99", signing_env="prod", skip_sigstore=True
         )
         pipeline.check_blocker_bugs = AsyncMock()
+        pipeline._drop_empty_advisories = AsyncMock()
         pipeline.change_advisory_state_qe = AsyncMock()
         pipeline.get_advisory_info = AsyncMock(
             return_value={
@@ -518,6 +529,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             runtime, group="openshift-4.10", assembly="4.10.99", signing_env="prod", skip_sigstore=True
         )
         pipeline.check_blocker_bugs = AsyncMock()
+        pipeline._drop_empty_advisories = AsyncMock()
         pipeline.change_advisory_state_qe = AsyncMock()
         pipeline.get_advisory_info = AsyncMock(
             return_value={"id": 2, "errata_id": 2222, "fulladvisory": "RHBA-2099:2222-02", "status": "NEW_FILES"}
@@ -636,6 +648,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             skip_sigstore=True,
         )
         pipeline.check_blocker_bugs = AsyncMock()
+        pipeline._drop_empty_advisories = AsyncMock()
         pipeline.change_advisory_state_qe = AsyncMock()
         pipeline.get_advisory_info = AsyncMock(
             return_value={
@@ -2226,6 +2239,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             runtime, group="openshift-4.10", assembly="4.10.99", signing_env="prod", skip_sigstore=True
         )
         pipeline.check_blocker_bugs = AsyncMock()
+        pipeline._drop_empty_advisories = AsyncMock()
         pipeline.change_advisory_state_qe = AsyncMock()
         pipeline.get_advisory_info = AsyncMock(return_value={"id": 2, "errata_id": 2, "status": "QE"})
 
