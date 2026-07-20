@@ -630,9 +630,8 @@ class BugValidator:
         logger.info("Checking for invalid tracker bugs")
         # complain about invalid tracker bugs
         for bug in bugs:
-            bug_validation_result = bug.is_tracker_bug()
-            if not bug_validation_result and bug_validation_result.reason != "Not Bug Tracker":
-                self._complain(f"Bug <{bug.weburl}|{bug.id}> is an invalid tracker bug. Please fix. Reason: {bug_validation_result.reason}")
+            if bug.is_invalid_tracker_bug():
+                self._complain(f"Bug <{bug.weburl}|{bug.id}> is an invalid tracker bug. Please fix")
 
     def _complain(self, problem: str):
         self.problems.append(problem)
