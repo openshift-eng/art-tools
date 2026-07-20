@@ -1389,7 +1389,7 @@ class TestGetInstalledPackages(unittest.IsolatedAsyncioTestCase):
         sbom = self._make_spdx_sbom(
             [
                 self._make_rpm_package(
-                    "pkg:rpm/redhat/gpg-pubkey@5a6340b3-6229229e?distro=rhel-9.8",
+                    "pkg:rpm/redhat/gpg-pubkey@5a6340b3-6229229e?arch=noarch&distro=rhel-9.8",
                     name="gpg-pubkey",
                 ),
                 self._make_rpm_package(
@@ -1541,7 +1541,6 @@ class TestResolveSourcePackageNvrs(unittest.TestCase):
 
         def make_multicall(*args, **kwargs):
             ctx = MagicMock()
-            idx = call_count[0]
             call_count[0] += 1
 
             def make_getBuild(nvr):

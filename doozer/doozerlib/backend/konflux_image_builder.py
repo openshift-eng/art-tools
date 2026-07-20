@@ -888,7 +888,7 @@ class KonfluxImageBuilder:
                     continue
                 try:
                     purl = PackageURL.from_string(purl_string)
-                except Exception as e:
+                except ValueError as e:
                     LOGGER.warning(f"Failed to parse purl: {purl_string} {e}")
                     continue
 
@@ -989,9 +989,7 @@ class KonfluxImageBuilder:
                 unique_build_ids = list(set(nvr_to_build_id.values()))
                 with session.multicall(strict=True) as multicall:
                     build_tasks = [multicall.getBuild(bid) for bid in unique_build_ids]
-                bid_to_build = {
-                    bid: task.result for bid, task in zip(unique_build_ids, build_tasks) if task.result
-                }
+                bid_to_build = {bid: task.result for bid, task in zip(unique_build_ids, build_tasks) if task.result}
 
                 for nvr, bid in nvr_to_build_id.items():
                     build = bid_to_build.get(bid)
@@ -1126,7 +1124,9 @@ class KonfluxImageBuilder:
                 package_nvrs, source_rpms = await self.get_installed_packages(
                     definitive_image_pullspec, building_arches, self._config.registry_auth_file
                 )
-                source_rpms = self._resolve_source_package_nvrs(source_rpms, metadata.runtime)
+                source_rpms = await exectools.to_thread(
+                    self._resolve_source_package_nvrs, source_rpms, metadata.runtime
+                )
 
             build_record_params.update(
                 {
