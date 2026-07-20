@@ -608,23 +608,26 @@ class UpdateGolangPipeline:
         _LOGGER.info("Building golang plashets for go %s, RHEL versions: %s", go_v, list(el_versions))
 
         for el_v in el_versions:
-            group = self.GOLANG_DATA_BRANCH
+            if self.use_new_golang_branch:
+                group = self.GOLANG_DATA_BRANCH
+                version = self.ocp_version
+            else:
+                group = self.get_golang_branch(el_v, go_version)
+                version = None
             repo_name = f"rhel-{el_v}-golang-rpms"
             _LOGGER.info("Triggering plashet build for group=%s, repo=%s", group, repo_name)
             await self._slack_client.say_in_thread(f"Building golang plashet: group={group}, repo={repo_name}")
 
-            # Pass OCP version as VERSION param so build-plashets can resolve MAJOR/MINOR vars
-            # The monobranch golang group.yml uses {MAJOR}/{MINOR} placeholders that need to be resolved
             result = jenkins.start_build_plashets(
                 group=group,
                 release=default_release_suffix(),
                 assembly="stream",
                 repos=[repo_name],
-                version=self.ocp_version,
+                version=version,
                 block_until_complete=True,
                 dry_run=self.dry_run,
                 data_path=self.data_path,
-                data_gitref=self.data_gitref
+                data_gitref=self.data_gitref,
             )
             if result != "SUCCESS":
                 raise RuntimeError(f"Plashet build for {group} failed with result: {result}")
@@ -1173,10 +1176,11 @@ class UpdateGolangPipeline:
     help='Override network mode for Konflux builds. Takes precedence over image and group config settings.',
 )
 @click.option(
-    '--use-new-golang-branch',
-    is_flag=True,
-    default=False,
-    help='Use the unified "golang" branch layout in ocp-build-data instead of per-variant branches (e.g. rhel-9-golang-1.26).',
+    '--use-new-golang-branch/--no-use-new-golang-branch',
+    default=True,
+    help='Use the unified "golang" branch layout in ocp-build-data (default). '
+    'Falls back to per-variant branches (e.g. rhel-9-golang-1.26) automatically on failure. '
+    'Use --no-use-new-golang-branch to force per-variant branches.',
 )
 @click.option(
     '--major-bump',
@@ -1221,23 +1225,33 @@ async def update_golang(
     if network_mode and build_system == 'brew':
         raise click.BadParameter('--network-mode only applies when --build-system is "konflux" or "both".')
 
-    await UpdateGolangPipeline(
-        runtime,
-        ocp_version,
-        cves_list,
-        force_update_tracker,
-        go_nvrs,
-        art_jira,
-        tag_builds,
-        scratch,
-        force_image_build,
-        build_system,
-        kubeconfig,
-        data_path,
-        data_gitref,
-        skip_pr,
-        external_golang_rpms,
-        network_mode,
-        use_new_golang_branch,
-        major_bump,
-    ).run()
+    pipeline_kwargs = dict(
+        ocp_version=ocp_version,
+        cves=cves_list,
+        force_update_tracker=force_update_tracker,
+        go_nvrs=go_nvrs,
+        art_jira=art_jira,
+        tag_builds=tag_builds,
+        scratch=scratch,
+        force_image_build=force_image_build,
+        build_system=build_system,
+        kubeconfig=kubeconfig,
+        data_path=data_path,
+        data_gitref=data_gitref,
+        skip_pr=skip_pr,
+        external_golang_rpms=external_golang_rpms,
+        network_mode=network_mode,
+        major_bump=major_bump,
+    )
+
+    try:
+        await UpdateGolangPipeline(
+            runtime, use_new_golang_branch=use_new_golang_branch, **pipeline_kwargs,
+        ).run()
+    except Exception as e:
+        if not use_new_golang_branch:
+            raise
+        _LOGGER.warning("Golang build with monobranch failed, falling back to separated branches: %s", e)
+        await UpdateGolangPipeline(
+            runtime, use_new_golang_branch=False, **pipeline_kwargs,
+        ).run()
