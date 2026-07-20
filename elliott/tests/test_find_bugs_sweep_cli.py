@@ -50,25 +50,25 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
         non_payload_image.get_component_name.return_value = "non-payload-container"
         runtime.image_metas.return_value = [payload_image, non_payload_image]
 
-        non_tracker = flexmock(id="OCPBUGS-0", is_tracker_bug=lambda *args: BugValidationResult(ok=False, reason="Not Bug Tracker"))
+        non_tracker = flexmock(id="OCPBUGS-0", is_tracker_bug=lambda: False)
         payload_tracker = flexmock(
-            id="OCPBUGS-1", is_tracker_bug=lambda *args: BugValidationResult(ok=True, reason=""), whiteboard_component="payload-container"
+            id="OCPBUGS-1", is_tracker_bug=lambda: True, whiteboard_component="payload-container"
         )
         non_payload_tracker = flexmock(
-            id="OCPBUGS-2", is_tracker_bug=lambda *args: BugValidationResult(ok=True, reason=""), whiteboard_component="non-payload-container"
+            id="OCPBUGS-2", is_tracker_bug=lambda: True, whiteboard_component="non-payload-container"
         )
         filtered_image_tracker = flexmock(
-            id="OCPBUGS-7", is_tracker_bug=lambda *args: BugValidationResult(ok=True, reason=""), whiteboard_component="unmanaged-container"
+            id="OCPBUGS-7", is_tracker_bug=lambda: True, whiteboard_component="unmanaged-container"
         )
-        rpm_tracker = flexmock(id="OCPBUGS-3", is_tracker_bug=lambda *args: BugValidationResult(ok=True, reason=""), whiteboard_component="openshift-clients")
-        rhcos_tracker = flexmock(id="OCPBUGS-4", is_tracker_bug=lambda *args: BugValidationResult(ok=True, reason=""), whiteboard_component="rhcos")
+        rpm_tracker = flexmock(id="OCPBUGS-3", is_tracker_bug=lambda: True, whiteboard_component="openshift-clients")
+        rhcos_tracker = flexmock(id="OCPBUGS-4", is_tracker_bug=lambda: True, whiteboard_component="rhcos")
         builder_tracker = flexmock(
             id="OCPBUGS-5",
-            is_tracker_bug=lambda *args: BugValidationResult(ok=True, reason=""),
+            is_tracker_bug=lambda: True,
             whiteboard_component=constants.GOLANG_BUILDER_CVE_COMPONENT,
         )
         delivery_repo_tracker = flexmock(
-            id="OCPBUGS-6", is_tracker_bug=lambda *args: BugValidationResult(ok=True, reason=""), whiteboard_component="openshift5/payload-image-rhel9"
+            id="OCPBUGS-6", is_tracker_bug=lambda: True, whiteboard_component="openshift5/payload-image-rhel9"
         )
 
         with patch.object(
@@ -100,7 +100,7 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
         image_meta = MagicMock()
         image_meta.get_component_name.return_value = "payload-container"
         runtime.image_metas.return_value = [image_meta]
-        bug = flexmock(id="OCPBUGS-1", is_tracker_bug=lambda *args: BugValidationResult(ok=True, reason=""), whiteboard_component=None)
+        bug = flexmock(id="OCPBUGS-1", is_tracker_bug=lambda: True, whiteboard_component=None)
 
         with self.assertRaisesRegex(ValueError, "doesn't have a valid whiteboard component"):
             sweep_cli.filter_art_managed_jira_trackers(runtime, [bug])
@@ -113,7 +113,7 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
 
         tracker = flexmock(
             id="OCPBUGS-8",
-            is_tracker_bug=lambda *args: BugValidationResult(ok=True, reason=""),
+            is_tracker_bug=lambda: True,
             whiteboard_component="openshift5/unmapped-image-rhel9",
         )
 
@@ -322,7 +322,8 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
         bugs = [
             flexmock(
                 id='BZ1',
-                is_tracker_bug=lambda *args: BugValidationResult(ok=False, reason="Not Bug Tracker"),
+                is_tracker_bug=lambda: False,
+                is_invalid_tracker_bug=lambda: False,
                 component='whatever',
                 sub_component='whatever',
             )
@@ -463,25 +464,29 @@ class TestCategorizeBugsByType(unittest.TestCase):
             # extras bug
             flexmock(
                 id='OCPBUGS-0',
-                is_tracker_bug=lambda *args: BugValidationResult(ok=False, reason="Not Bug Tracker"),
+                is_tracker_bug=lambda: False,
+                is_invalid_tracker_bug=lambda: False,
                 component='',
             ),
             # image bug
             flexmock(
                 id='OCPBUGS-1',
-                is_tracker_bug=lambda *args: BugValidationResult(ok=False, reason="Not Bug Tracker"),
+                is_tracker_bug=lambda: False,
+                is_invalid_tracker_bug=lambda: False,
                 component='',
             ),
             # image bug
             flexmock(
                 id='OCPBUGS-2',
-                is_tracker_bug=lambda *args: BugValidationResult(ok=False, reason="Not Bug Tracker"),
+                is_tracker_bug=lambda: False,
+                is_invalid_tracker_bug=lambda: False,
                 component='',
             ),
             # microshift bug
             flexmock(
                 id='OCPBUGS-3',
-                is_tracker_bug=lambda *args: BugValidationResult(ok=False, reason="Not Bug Tracker"),
+                is_tracker_bug=lambda: False,
+                is_invalid_tracker_bug=lambda: False,
                 component='MicroShift',
             ),
         ]
@@ -512,7 +517,8 @@ class TestCategorizeBugsByType(unittest.TestCase):
             # valid tracker
             flexmock(
                 id='OCPBUGS-0',
-                is_tracker_bug=lambda *args: BugValidationResult(ok=True, reason=""),
+                is_tracker_bug=lambda: True,
+                is_invalid_tracker_bug=lambda: False,
                 has_valid_target_version_in_summary=lambda *_: True,
                 whiteboard_component='foo',
                 component='',
@@ -521,7 +527,8 @@ class TestCategorizeBugsByType(unittest.TestCase):
             # valid tracker
             flexmock(
                 id='OCPBUGS-1',
-                is_tracker_bug=lambda *args: BugValidationResult(ok=True, reason=""),
+                is_tracker_bug=lambda: True,
+                is_invalid_tracker_bug=lambda: False,
                 has_valid_target_version_in_summary=lambda *_: True,
                 whiteboard_component='bar',
                 component='',
@@ -530,7 +537,8 @@ class TestCategorizeBugsByType(unittest.TestCase):
             # valid tracker
             flexmock(
                 id='OCPBUGS-2',
-                is_tracker_bug=lambda *args: BugValidationResult(ok=True, reason=""),
+                is_tracker_bug=lambda: True,
+                is_invalid_tracker_bug=lambda: False,
                 has_valid_target_version_in_summary=lambda *_: True,
                 whiteboard_component='buzz',
                 component='',
@@ -539,14 +547,16 @@ class TestCategorizeBugsByType(unittest.TestCase):
             # valid extras non-tracker bug
             flexmock(
                 id='OCPBUGS-3',
-                is_tracker_bug=lambda *args: BugValidationResult(ok=False, reason="Not Bug Tracker"),
+                is_tracker_bug=lambda: False,
+                is_invalid_tracker_bug=lambda: False,
                 component='',
                 summary='',
             ),
             # valid microshift non-tracker bug
             flexmock(
                 id='OCPBUGS-4',
-                is_tracker_bug=lambda *args: BugValidationResult(ok=False, reason="Not Bug Tracker"),
+                is_tracker_bug=lambda: False,
+                is_invalid_tracker_bug=lambda: False,
                 component='MicroShift',
                 summary='',
             ),
@@ -578,7 +588,8 @@ class TestCategorizeBugsByType(unittest.TestCase):
             # valid extras tracker
             flexmock(
                 id='OCPBUGS-0',
-                is_tracker_bug=lambda *args: BugValidationResult(ok=True, reason=""),
+                is_tracker_bug=lambda: True,
+                is_invalid_tracker_bug=lambda: False,
                 has_valid_target_version_in_summary=lambda *_: True,
                 whiteboard_component='foo',
                 component='',
@@ -587,7 +598,8 @@ class TestCategorizeBugsByType(unittest.TestCase):
             # valid rpm tracker
             flexmock(
                 id='OCPBUGS-1',
-                is_tracker_bug=lambda *args: BugValidationResult(ok=True, reason=""),
+                is_tracker_bug=lambda: True,
+                is_invalid_tracker_bug=lambda: False,
                 has_valid_target_version_in_summary=lambda *_: True,
                 whiteboard_component='bar',
                 component='',
@@ -596,7 +608,8 @@ class TestCategorizeBugsByType(unittest.TestCase):
             # valid image tracker
             flexmock(
                 id='OCPBUGS-2',
-                is_tracker_bug=lambda *args: BugValidationResult(ok=True, reason=""),
+                is_tracker_bug=lambda: True,
+                is_invalid_tracker_bug=lambda: False,
                 has_valid_target_version_in_summary=lambda *_: True,
                 whiteboard_component='buzz',
                 component='',
@@ -605,14 +618,16 @@ class TestCategorizeBugsByType(unittest.TestCase):
             # valid extras non-tracker bug
             flexmock(
                 id='OCPBUGS-3',
-                is_tracker_bug=lambda *args: BugValidationResult(ok=False, reason="Not Bug Tracker"),
+                is_tracker_bug=lambda: False,
+                is_invalid_tracker_bug=lambda: False,
                 component='',
                 summary='',
             ),
             # valid microshift non-tracker bug
             flexmock(
                 id='OCPBUGS-4',
-                is_tracker_bug=lambda *args: BugValidationResult(ok=False, reason="Not Bug Tracker"),
+                is_tracker_bug=lambda: False,
+                is_invalid_tracker_bug=lambda: False,
                 component='MicroShift',
                 summary='',
             ),
@@ -647,77 +662,59 @@ class TestCategorizeBugsByType(unittest.TestCase):
             self.assertEqual(expected[kind], set(b.id for b in bugs_by_kind[kind]))
 
     def test_raise_fake_trackers(self):
-        """Test that fake trackers are handled correctly in non-permissive mode"""
         bugs = [
             flexmock(
                 id='OCPBUGS-5',
-                is_tracker_bug=lambda *args: BugValidationResult(ok=False, reason="- Has CVE identifier"),
+                is_tracker_bug=lambda: False,
+                is_invalid_tracker_bug=lambda: True,
                 component='',
-                bug_class='jira',
             ),
             flexmock(
                 id='OCPBUGS-6',
-                is_tracker_bug=lambda *args: BugValidationResult(ok=False, reason="Not Bug Tracker"),
+                is_tracker_bug=lambda: False,
+                is_invalid_tracker_bug=lambda: False,
                 component='',
             ),
         ]
-        flexmock(sweep_cli).should_receive("extras_bugs").and_return(set())
-
-        # Mock bug tracker for adding comments
-        mock_bug_tracker = MagicMock()
-        self.runtime.get_bug_tracker = MagicMock(return_value=mock_bug_tracker)
-
-        bugs_by_kind, issues = categorize_bugs_by_type(
-            runtime=self.runtime,
-            bugs=bugs,
-            builds_by_advisory_kind=None,
-            major_version=self.major_version,
-            minor_version=self.minor_version,
-            comment_on_invalid_bugs=True,  # Enable commenting
-        )
-
-        # Verify comment was attempted for the fake tracker
-        mock_bug_tracker.add_fake_tracker_comment.assert_called_once_with(
-            'OCPBUGS-5', '- Has CVE identifier', noop=False
-        )
+        flexmock(sweep_cli).should_receive("extras_bugs").and_return({bugs[0]})
+        with self.assertRaisesRegex(ElliottFatalError, 'look like CVE trackers'):
+            categorize_bugs_by_type(
+                runtime=self.runtime,
+                bugs=bugs,
+                builds_by_advisory_kind=None,
+                major_version=self.major_version,
+                minor_version=self.minor_version,
+            )
 
     def test_raise_tracker_bad_summary(self):
-        """Test that trackers with invalid summary are handled correctly in non-permissive mode"""
         bugs = [
             flexmock(
                 id='OCPBUGS-5',
-                is_tracker_bug=lambda *args: BugValidationResult(ok=False, reason='This tracker bug has an invalid summary format.'),
+                is_tracker_bug=lambda: BugValidationResult(ok=True, reason=''),
+                is_invalid_tracker_bug=lambda: BugValidationResult(ok=False, reason=''),
+                has_valid_target_version_in_summary=lambda *_: False,
+                make_summary_with_target_version=lambda *_: 'fixed summary',
                 whiteboard_component='foo',
                 component='',
-                bug_class='jira',
             )
         ]
-        flexmock(sweep_cli).should_receive("extras_bugs").and_return(set())
-
-        # Mock bug tracker for adding comments
-        mock_bug_tracker = MagicMock()
-        self.runtime.get_bug_tracker = MagicMock(return_value=mock_bug_tracker)
-
-        bugs_by_kind, issues = categorize_bugs_by_type(
-            runtime=self.runtime,
-            bugs=bugs,
-            builds_by_advisory_kind=None,
-            major_version=self.major_version,
-            minor_version=self.minor_version,
-            comment_on_invalid_bugs=True,  # Enable commenting
-        )
-
-        # Verify comment was attempted for the invalid summary tracker
-        mock_bug_tracker.add_fake_tracker_comment.assert_called_once_with(
-            'OCPBUGS-5', 'This tracker bug has an invalid summary format.', noop=False
-        )
+        flexmock(sweep_cli).should_receive("extras_bugs").and_return({bugs[0]})
+        with self.assertRaisesRegex(ElliottFatalError, 'invalid summary'):
+            categorize_bugs_by_type(
+                runtime=self.runtime,
+                bugs=bugs,
+                builds_by_advisory_kind=None,
+                major_version=self.major_version,
+                minor_version=self.minor_version,
+            )
 
     def test_ignore_bad_trackers(self):
         bugs = [
             # valid tracker
             flexmock(
                 id='OCPBUGS-2',
-                is_tracker_bug=lambda *args: BugValidationResult(ok=True, reason=''),
+                is_tracker_bug=lambda: BugValidationResult(ok=True, reason=''),
+                is_invalid_tracker_bug=lambda: BugValidationResult(ok=False, reason=''),
                 has_valid_target_version_in_summary=lambda *_: True,
                 whiteboard_component='buzz',
                 component='',
@@ -726,15 +723,19 @@ class TestCategorizeBugsByType(unittest.TestCase):
             # bad summary tracker
             flexmock(
                 id='OCPBUGS-4',
-                is_tracker_bug=lambda *args: BugValidationResult(ok=False, reason='This tracker bug has an invalid summary format.'),
+                is_tracker_bug=lambda: BugValidationResult(ok=True, reason=''),
+                is_invalid_tracker_bug=lambda: BugValidationResult(ok=False, reason=''),
+                has_valid_target_version_in_summary=lambda *_: False,
+                make_summary_with_target_version=lambda *_: 'fixed summary',
                 whiteboard_component='foo',
                 component='',
                 bug_class='jira',
             ),
-            # invalid/fake tracker
+            # invalid tracker
             flexmock(
                 id='OCPBUGS-5',
-                is_tracker_bug=lambda *args: BugValidationResult(ok=False, reason='- Has CVE identifier in summary'),
+                is_tracker_bug=lambda: BugValidationResult(ok=False, reason=''),
+                is_invalid_tracker_bug=lambda: BugValidationResult(ok=True, reason='- Has CVE identifier in summary'),
                 component='',
                 bug_class='jira',
             ),
@@ -774,8 +775,8 @@ class TestCategorizeBugsByType(unittest.TestCase):
         self.assertEqual(
             issues,
             [
-                'This tracker bug has an invalid summary format.',
-                '- Has CVE identifier in summary',
+                "Bug(s) ['OCPBUGS-5'] look like CVE trackers, but really are not.",
+                "Tracker Bug(s) ['OCPBUGS-4'] have invalid summary.",
             ],
         )
 

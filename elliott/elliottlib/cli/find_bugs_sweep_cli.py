@@ -537,23 +537,16 @@ def categorize_bugs_by_type(
     # while also collecting fake trackers
     fake_tracker_results = {}  # Store validation results for fake trackers
     for b in bugs:
-        tracker_result = b.is_tracker_bug(major_version, minor_version)
+        tracker_result = b.is_tracker_bug()
         if tracker_result:
             tracker_bugs.add(b)
         else:
-            if tracker_result.reason == "Not Bug Tracker":
-                non_tracker_bugs.add(b)
+            invalid_result = b.is_invalid_tracker_bug()
+            if invalid_result:
+                fake_trackers.add(b)
+                fake_tracker_results[b.id] = invalid_result
             else:
-                if permissive:
-                    logger.warning(f"{tracker_result.reason} Ignoring them.")
-                    issues.append(tracker_result.reason)
-                else:
-                    try:
-                        runtime.get_bug_tracker(b.bug_class).add_fake_tracker_comment(
-                            b.id, tracker_result.reason, noop=not comment_on_invalid_bugs
-                        )
-                    except Exception as e:
-                        logger.error(f"Failed to create comment for bug {b.id}: {e}")
+                non_tracker_bugs.add(b)
 
     # Categorize non-tracker bugs into different types
     # extras bugs go to extras advisory
@@ -574,6 +567,25 @@ def categorize_bugs_by_type(
     # remaining non-tracker bugs go to image advisory
     bugs_by_type["image"] = non_tracker_bugs
 
+    # Complain about fake trackers
+    if fake_trackers:
+        sorted_ids = sorted([t.id for t in fake_trackers])
+        message = f"Bug(s) {sorted_ids} look like CVE trackers, but really are not."
+        if permissive:
+            logger.warning(f"{message} Ignoring them.")
+            issues.append(message)
+        else:
+            for t in fake_trackers:
+                # Add comment with the validation result reason
+                validation_result = fake_tracker_results.get(t.id)
+                if validation_result:
+                    try:
+                        runtime.get_bug_tracker(t.bug_class).add_fake_tracker_comment(
+                            t.id, validation_result.reason, noop=not comment_on_invalid_bugs
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to create comment for bug {t.id}: {e}")
+
     if exclude_trackers:
         logger.info("Excluding tracker bugs because --exclude-trackers is set")
         tracker_bugs = set()
@@ -584,6 +596,30 @@ def categorize_bugs_by_type(
 
     # Process tracker bugs
     logger.info(f"Tracker Bugs found: {len(tracker_bugs)}")
+
+    # Validate tracker bugs' summary suffixes
+    invalid_summary_trackers: type_bug_set = set()
+    for b in tracker_bugs:
+        logger.info(f'Tracker bug, component: {(b.id, b.whiteboard_component)}')
+        if not b.has_valid_target_version_in_summary(major_version, minor_version):
+            invalid_summary_trackers.add(b)
+
+    if invalid_summary_trackers:
+        sorted_ids = sorted([t.id for t in invalid_summary_trackers])
+        message = f"Tracker Bug(s) {sorted_ids} have invalid summary."
+        if permissive:
+            logger.warning(f"{message} Ignoring them.")
+            issues.append(message)
+        else:
+            for t in invalid_summary_trackers:
+                try:
+                    runtime.get_bug_tracker(t.bug_class).add_invalid_summary_comment(
+                        t, major_version, minor_version, noop=not comment_on_invalid_bugs
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to create comment for bug {t.id}: {e}")
+
+        tracker_bugs -= invalid_summary_trackers
 
     # If advisories are not provided, we cannot categorize tracker bugs
     if not builds_by_advisory_kind:

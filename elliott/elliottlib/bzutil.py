@@ -96,7 +96,7 @@ class Bug:
     def all_advisory_ids(self):
         raise NotImplementedError
 
-    def is_tracker_bug(self, major_version=None, minor_version=None):
+    def is_tracker_bug(self):
         raise NotImplementedError
 
     def is_invalid_tracker_bug(self):
@@ -136,13 +136,8 @@ class Bug:
         ]
         for tag in accepted_tags:
             if self.summary.endswith(tag) or self.summary.startswith(tag):
-                return BugValidationResult(ok=True, reason="")
-        newline = "\n"
-        invalid_comment= f"""This tracker bug has an invalid summary format.
-Expected: Summary should start or end with one of:
-        {"-" + newline.join(f"-{tag}" for tag in accepted_tags)}
-"""
-        return BugValidationResult(ok=False, reason=invalid_comment)
+                return True
+        return False
 
     def is_ocp_bug(self):
         raise NotImplementedError
@@ -280,28 +275,41 @@ class BugzillaBug(Bug):
             return component_name
         return None
 
-    def is_tracker_bug(self, major_version=None, minor_version=None):
+    def is_tracker_bug(self):
         has_keywords = set(constants.TRACKER_BUG_KEYWORDS).issubset(set(self.keywords))
         has_whiteboard_component = bool(self.whiteboard_component)
-        has_cve_in_summary = bool(re.search(r'CVE-\d+-\d+', self.summary))
 
         if not (has_keywords and has_whiteboard_component):
-            invalid_comment = []
-            if not has_cve_in_summary:
-                invalid_comment.append("- Has CVE identifier in summary so this is registered as a bug")
+            missing = []
             if not has_keywords:
-                invalid_comment.append(f"- This bug lacks the required keywords: {set(constants.TRACKER_BUG_KEYWORDS)}")
+                missing.append(f"- This bug lacks the required keywords: {set(constants.TRACKER_BUG_KEYWORDS)}")
             if not has_whiteboard_component:
-                invalid_comment.append("- Missing Whiteboard component")
-
-            if (not (has_keywords or has_cve_in_summary)) or ('WeaknessTracking' in self.keywords):
-                return BugValidationResult(ok=False, reason="Not Bug Tracker")
-            return BugValidationResult(ok=False, reason="\n".join(invalid_comment))
-
-        if major_version and minor_version:
-            return self.has_valid_target_version_in_summary(major_version, minor_version)
+                missing.append("- Missing Whiteboard component")
+            return BugValidationResult(ok=False, reason="\n".join(missing))
 
         return BugValidationResult(ok=True, reason="")
+
+    def is_invalid_tracker_bug(self):
+        tracker_result = self.is_tracker_bug()
+        if tracker_result.ok:
+            return BugValidationResult(ok=False, reason="")
+
+        if 'WeaknessTracking' in self.keywords:
+            # See e.g. https://bugzilla.redhat.com/show_bug.cgi?id=2092289. This bug is not a CVE tracker
+            return BugValidationResult(ok=False, reason="")
+
+        has_cve_in_summary = bool(re.search(r'CVE-\d+-\d+', self.summary))
+        has_keywords = set(constants.TRACKER_BUG_KEYWORDS).issubset(set(self.keywords))
+
+        if not (has_keywords or has_cve_in_summary):
+            return BugValidationResult(ok=False, reason="")
+
+        properties = []
+        if has_cve_in_summary:
+            properties.append("- Has CVE identifier in summary so this is registered as a bug")
+        properties.append(tracker_result.reason)
+
+        return BugValidationResult(ok=True, reason="\n".join(properties))
 
     def all_advisory_ids(self):
         return ErrataBug(self.id).all_advisory_ids
@@ -350,35 +358,53 @@ class JIRABug(Bug):
         except AttributeError:
             return None
 
-    def is_tracker_bug(self, major_version=None, minor_version=None):
+    def is_tracker_bug(self):
         if self.is_type_vulnerability():
             return BugValidationResult(ok=True, reason="")
 
         has_keywords = set(constants.TRACKER_BUG_KEYWORDS).issubset(set(self.keywords))
         has_whiteboard_component = bool(self.whiteboard_component)
         has_linked_flaw = bool(self.corresponding_flaw_bug_ids)
-        has_cve_in_summary = bool(re.search(r'CVE-\d+-\d+', self.summary))
 
         if not (has_keywords and has_whiteboard_component and has_linked_flaw):
-            invalid_comment = []
-            if not has_cve_in_summary:
-                invalid_comment.append("- Has CVE identifier in summary so this is registered as a bug")
+            missing = []
             if not has_keywords:
-                invalid_comment.append(f"- This bug lacks the required keywords: {set(constants.TRACKER_BUG_KEYWORDS)}")
+                missing.append(f"- This bug lacks the required keywords: {set(constants.TRACKER_BUG_KEYWORDS)}")
             if not has_whiteboard_component:
-                invalid_comment.append("- Missing Whiteboard component")
+                missing.append("- Missing Whiteboard component")
             if not has_linked_flaw:
-                invalid_comment.append("- Missing flaw bug links")
-            if  not (has_keywords or has_cve_in_summary or has_linked_flaw) or \
-                'WeaknessTracking' in self.keywords or \
-                'art:cloned-kernel-bug' in self.keywords:
-
-                return BugValidationResult(ok=False, reason="Not Bug Tracker")
-            return BugValidationResult(ok=False, reason="\n".join(invalid_comment))
-        if major_version and minor_version:
-            return self.has_valid_target_version_in_summary(major_version, minor_version)
+                missing.append("- Missing flaw bug links")
+            return BugValidationResult(ok=False, reason="\n".join(missing))
 
         return BugValidationResult(ok=True, reason="")
+
+    def is_invalid_tracker_bug(self):
+        tracker_result = self.is_tracker_bug()
+        if tracker_result.ok:
+            return BugValidationResult(ok=False, reason="")
+
+        if 'WeaknessTracking' in self.keywords:
+            # See e.g. https://issues.redhat.com/browse/OCPBUGS-5804. This is not to be regarded a tracking bug.
+            return BugValidationResult(ok=False, reason="")
+        if 'art:cloned-kernel-bug' in self.keywords:
+            # Bugs for advance-shipped kernel builds should not be regarded as a tracker. They might look like one,
+            # but they are not invalid.
+            # Context in this thread: https://redhat-internal.slack.com/archives/C04SCM5AYE4/p1685524912511489?thread_ts=1685489306.568039&cid=C04SCM5AYE4
+            # This is likely not the end state, but at least for the time being.
+            return BugValidationResult(ok=False, reason="")
+
+        has_cve_in_summary = bool(re.search(r'CVE-\d+-\d+', self.summary))
+        has_keywords = set(constants.TRACKER_BUG_KEYWORDS).issubset(set(self.keywords))
+        has_linked_flaw = bool(self.corresponding_flaw_bug_ids)
+
+        if not (has_keywords or has_cve_in_summary or has_linked_flaw):
+            return BugValidationResult(ok=False, reason="")
+
+        properties = []
+        if has_cve_in_summary:
+            properties.append("- Has CVE identifier in summary so this is registered as a bug")
+        properties.append(tracker_result.reason)
+        return BugValidationResult(ok=True, reason="\n".join(properties))
 
     @property
     def summary(self):
@@ -643,18 +669,37 @@ class BugTracker:
         """Get all comments for a bug. Must be implemented by subclasses."""
         raise NotImplementedError
 
+    def add_invalid_summary_comment(
+        self, bug: Bug, major_version: int, minor_version: int, private: bool = False, noop=False
+    ):
+        """Add comment explaining tracker has invalid summary format."""
+        marker = "[ART-AUTOMATION: invalid-summary]"
+        comment = f"""This tracker bug has an invalid summary format.
+
+        Expected: Summary should start or end with one of:
+        - [openshift-{major_version}.{minor_version}]
+        - [openshift-{major_version}.{minor_version}.z]
+        - [openshift-{major_version}.{minor_version}.0]
+
+        Current summary: {bug.summary}
+
+        ----
+        {marker}
+        """
+        return self.add_comment_once(bug.id, comment, marker, private, noop)
+
     def add_fake_tracker_comment(self, bugid: str, validation_reason: str, private: bool = False, noop=False):
         """Add comment explaining bug looks like CVE tracker but is invalid."""
         marker = "[ART-AUTOMATION: fake-tracker]"
         comment = f"""This bug looks like a CVE tracker but is not properly configured.
 
-        {validation_reason or "Missing required tracker attributes."}
+{validation_reason or "Missing required tracker attributes."}
 
-        Please complete tracker setup or remove CVE/SecurityTracking indicators.
+Please complete tracker setup or remove CVE/SecurityTracking indicators.
 
-        ----
-        {marker}
-        """
+----
+{marker}
+"""
         return self.add_comment_once(bugid, comment, marker, private, noop)
 
     def add_comment_once(self, bugid, comment: str, marker: str, private: bool = False, noop=False):

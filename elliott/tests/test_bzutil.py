@@ -28,10 +28,7 @@ class TestBug(unittest.TestCase):
 
     def test_is_invalid_tracker_bug(self):
         bug_true = flexmock(id=1, summary="CVE-2022-0001", keywords=[], whiteboard_component=None)
-        result = BugzillaBug(bug_true).is_tracker_bug()
-        self.assertFalse(result.ok)
-        self.assertIn("required keywords", result.reason)
-        self.assertIn("Missing Whiteboard component", result.reason)
+        self.assertTrue(BugzillaBug(bug_true).is_invalid_tracker_bug())
 
     @parameterized.expand(
         [
@@ -73,7 +70,7 @@ class TestBug(unittest.TestCase):
         major, minor = version
         bug = JIRABug(flexmock(fields=flexmock(summary=summary)))
         result = bug.has_valid_target_version_in_summary(major, minor)
-        self.assertEqual(result.ok, expected)
+        self.assertEqual(result, expected)
 
 
 class TestBugTracker(unittest.TestCase):
@@ -639,7 +636,6 @@ class TestJIRABug(unittest.TestCase):
             fields=flexmock(
                 labels=constants.TRACKER_BUG_KEYWORDS + ["somethingelse", "pscomponent:my-image", "flaw:bz#123"],
                 issuetype=flexmock(name="Bug"),
-                summary="CVE-2024-1234 Some bug",
             ),
         )
         actual = JIRABug(bug).is_tracker_bug()
@@ -651,7 +647,6 @@ class TestJIRABug(unittest.TestCase):
             fields=flexmock(
                 labels=["somethingelse", "pscomponent:my-image", "flaw:bz#123"],
                 issuetype=flexmock(name="Bug"),
-                summary="CVE-2024-1234 Some bug",
             ),
         )
         actual = JIRABug(bug).is_tracker_bug()
@@ -663,7 +658,6 @@ class TestJIRABug(unittest.TestCase):
             fields=flexmock(
                 labels=constants.TRACKER_BUG_KEYWORDS + ["somethingelse", "flaw:bz#123"],
                 issuetype=flexmock(name="Bug"),
-                summary="CVE-2024-1234 Some bug",
             ),
         )
         actual = JIRABug(bug).is_tracker_bug()
@@ -675,7 +669,6 @@ class TestJIRABug(unittest.TestCase):
             fields=flexmock(
                 labels=constants.TRACKER_BUG_KEYWORDS + ["somethingelse", "pscomponent:my-image"],
                 issuetype=flexmock(name="Bug"),
-                summary="CVE-2024-1234 Some bug",
             ),
         )
         actual = JIRABug(bug).is_tracker_bug()
@@ -730,7 +723,6 @@ class TestJIRABug(unittest.TestCase):
                     fields=flexmock(
                         labels=[f"pscomponent: {expected}"],
                         issuetype=flexmock(name="Bug"),
-                summary="CVE-2024-1234 Some bug",
                     ),
                 )
             )
@@ -746,7 +738,6 @@ class TestJIRABug(unittest.TestCase):
                 fields=flexmock(
                     labels=["pscomponent:openshift-golang-builder-container/openshift-golang-builder-container"],
                     issuetype=flexmock(name="Bug"),
-                summary="CVE-2024-1234 Some bug",
                 ),
             )
         )
@@ -759,7 +750,6 @@ class TestJIRABug(unittest.TestCase):
                 fields=flexmock(
                     labels=["pscomponent:openshift4/ose-cli"],
                     issuetype=flexmock(name="Bug"),
-                summary="CVE-2024-1234 Some bug",
                 ),
             )
         )
@@ -772,7 +762,6 @@ class TestJIRABug(unittest.TestCase):
                 fields=flexmock(
                     labels=["pscomponent:openshift-golang-builder-container"],
                     issuetype=flexmock(name="Bug"),
-                summary="CVE-2024-1234 Some bug",
                 ),
             )
         )
@@ -785,13 +774,12 @@ class TestBugzillaBug(unittest.TestCase):
             id="1",
             keywords=constants.TRACKER_BUG_KEYWORDS,
             whiteboard_component="my-image",
-            summary="CVE-2024-1234 Some bug",
         )
         actual = BugzillaBug(bug).is_tracker_bug()
         self.assertTrue(actual)
 
     def test_is_tracker_bug_fail(self):
-        bug = flexmock(id="1", keywords=["SomeOtherKeyword"], whiteboard_component="my-image", summary="Some bug")
+        bug = flexmock(id="1", keywords=["SomeOtherKeyword"], whiteboard_component="my-image")
         actual = BugzillaBug(bug).is_tracker_bug()
         self.assertFalse(actual)
 
