@@ -642,7 +642,7 @@ class TestEmbargoedNvrDefensiveCheck(unittest.TestCase):
     def test_ambiguous_nvr_raises(self):
         """An NVR whose embargo status is ambiguous (matches more than one visibility suffix)
         must fail the release rather than have is_nvr_embargoed() guess which one applies."""
-        ambiguous_nvr = "oadp-velero-container-1.5.3.202607151200.p2.g172d0b2.assembly.stream.el9.p3"
+        ambiguous_nvr = "oadp-velero-container-1.5.3-202607151200.p2.g172d0b2.assembly.stream.el9.p3"
         pipeline = self._make_pipeline(fbc_pullspecs=["quay.io/example/fbc:v1"])
         pipeline.validate_fbc_related_images = AsyncMock(return_value=[ambiguous_nvr])
         pipeline.extract_fbc_nvr = MagicMock(return_value="oadp-operator-fbc-1.5.3-20260715174111.ocp4.19")
@@ -668,6 +668,20 @@ class TestEmbargoedNvrDefensiveCheck(unittest.TestCase):
         pipeline = self._make_pipeline(
             extra_image_nvrs=["oadp-velero-container-1.5.3-202607151200.p2.g172d0b2.assembly.stream.el9"]
         )
+        pipeline.create_snapshot = AsyncMock(return_value=MagicMock())
+        pipeline.create_shipment_config = MagicMock(return_value=MagicMock())
+        pipeline.write_shipment_files_locally = AsyncMock()
+
+        asyncio.run(pipeline.run())
+
+    def test_external_nvrs_skipped_from_embargo_check(self):
+        """External image NVRs (from the prod registry, e.g. postgresql) don't carry p-flags.
+        They must be excluded from the embargo check — is_nvr_embargoed() defaults to True
+        for NVRs without p-flags, which would incorrectly block the release."""
+        external_nvr = "postgresql-15-container-15.14-1.1733837256"
+        pipeline = self._make_pipeline(fbc_pullspecs=["quay.io/example/fbc:v1"])
+        pipeline.validate_fbc_related_images = AsyncMock(return_value=[external_nvr])
+        pipeline.extract_fbc_nvr = MagicMock(return_value="oadp-operator-fbc-1.5.3-20260715174111.ocp4.19")
         pipeline.create_snapshot = AsyncMock(return_value=MagicMock())
         pipeline.create_shipment_config = MagicMock(return_value=MagicMock())
         pipeline.write_shipment_files_locally = AsyncMock()
