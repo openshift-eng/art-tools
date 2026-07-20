@@ -209,6 +209,11 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
                 "get_installed_packages",
                 new=AsyncMock(return_value=({"pkg-1.0-1"}, {"srcpkg-1.0-1"})),
             ) as mock_get_installed_packages,
+            patch.object(
+                self.builder,
+                "_resolve_source_package_nvrs",
+                return_value={"srcpkg-1.0-1"},
+            ),
             patch("doozerlib.backend.konflux_image_builder.bigquery.BigQueryClient") as mock_bigquery_client,
         ):
             mock_dockerfile = MagicMock()
@@ -270,6 +275,11 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
                 "get_installed_packages",
                 new=AsyncMock(return_value=({"pkg-1.0-1"}, {"srcpkg-1.0-1"})),
             ) as mock_get_installed_packages,
+            patch.object(
+                self.builder,
+                "_resolve_source_package_nvrs",
+                return_value={"srcpkg-1.0-1"},
+            ),
             patch("doozerlib.backend.konflux_image_builder.bigquery.BigQueryClient") as mock_bigquery_client,
         ):
             mock_dockerfile = MagicMock()
@@ -339,6 +349,11 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
                 "get_installed_packages",
                 new=AsyncMock(return_value=({"pkg-1.0-1"}, {"srcpkg-1.0-1"})),
             ) as mock_get_installed_packages,
+            patch.object(
+                self.builder,
+                "_resolve_source_package_nvrs",
+                return_value={"srcpkg-1.0-1"},
+            ),
             patch("doozerlib.backend.konflux_image_builder.bigquery.BigQueryClient") as mock_bigquery_client,
         ):
             mock_dockerfile = MagicMock()
@@ -404,6 +419,11 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
                 "get_installed_packages",
                 new=AsyncMock(return_value=({"pkg-1.0-1"}, {"srcpkg-1.0-1"})),
             ),
+            patch.object(
+                self.builder,
+                "_resolve_source_package_nvrs",
+                return_value={"srcpkg-1.0-1"},
+            ),
             patch("doozerlib.backend.konflux_image_builder.bigquery.BigQueryClient") as mock_bigquery_client,
         ):
             mock_dockerfile = MagicMock()
@@ -466,6 +486,11 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
                 self.builder,
                 "get_installed_packages",
                 new=AsyncMock(return_value=({"pkg-1.0-1"}, {"srcpkg-1.0-1"})),
+            ),
+            patch.object(
+                self.builder,
+                "_resolve_source_package_nvrs",
+                return_value={"srcpkg-1.0-1"},
             ),
             patch("doozerlib.backend.konflux_image_builder.bigquery.BigQueryClient") as mock_bigquery_client,
         ):
@@ -595,6 +620,11 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
                 "get_installed_packages",
                 new=AsyncMock(return_value=({"pkg-1.0-1"}, {"srcpkg-1.0-1"})),
             ) as mock_get_installed_packages,
+            patch.object(
+                self.builder,
+                "_resolve_source_package_nvrs",
+                return_value={"srcpkg-1.0-1"},
+            ),
             patch("doozerlib.backend.konflux_image_builder.bigquery.BigQueryClient") as mock_bigquery_client,
         ):
             mock_dockerfile = MagicMock()
@@ -659,6 +689,11 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
                 self.builder,
                 "get_installed_packages",
                 new=AsyncMock(return_value=({"pkg-1.0-1"}, {"srcpkg-1.0-1"})),
+            ),
+            patch.object(
+                self.builder,
+                "_resolve_source_package_nvrs",
+                return_value={"srcpkg-1.0-1"},
             ),
             patch("doozerlib.backend.konflux_image_builder.bigquery.BigQueryClient") as mock_bigquery_client,
         ):
