@@ -930,6 +930,80 @@ class KonfluxImageBuilder:
 
         return all_package_nvrs, all_source_rpms
 
+    @staticmethod
+    def _resolve_source_package_nvrs(source_rpms: set, runtime) -> set:
+        """
+        Resolve binary RPM NVRs to their source package NVRs via Brew.
+
+        When Mobster >=1.2.1 SBOMs lack the 'upstream' qualifier, the SBOM parser
+        falls back to using binary RPM names (e.g. kernel-core) as source package
+        names. These don't match actual Brew build NVRs (e.g. kernel). This method
+        resolves them by querying Koji: getBuild to identify valid builds, then
+        getRPM for those that aren't, to find the actual source package build.
+        """
+        if not source_rpms:
+            return source_rpms
+
+        with runtime.shared_koji_client_session() as session:
+            nvrs = sorted(source_rpms)
+
+            with session.multicall(strict=True) as multicall:
+                build_tasks = [multicall.getBuild(nvr) for nvr in nvrs]
+
+            resolved = set()
+            unresolved_nvrs = []
+            for nvr, task in zip(nvrs, build_tasks):
+                if task.result:
+                    resolved.add(nvr)
+                else:
+                    unresolved_nvrs.append(nvr)
+
+            if not unresolved_nvrs:
+                return resolved
+
+            # Binary NVRs need RPM lookup to find their source package build.
+            # getRPM needs NVRA, so try x86_64 first (most common), then noarch.
+            with session.multicall(strict=True) as multicall:
+                rpm_tasks = [multicall.getRPM(f"{nvr}.x86_64") for nvr in unresolved_nvrs]
+
+            still_unresolved = []
+            nvr_to_build_id: dict[str, int] = {}
+            for nvr, task in zip(unresolved_nvrs, rpm_tasks):
+                if task.result and task.result.get("build_id"):
+                    nvr_to_build_id[nvr] = task.result["build_id"]
+                else:
+                    still_unresolved.append(nvr)
+
+            # Retry unresolved with noarch
+            if still_unresolved:
+                with session.multicall(strict=True) as multicall:
+                    rpm_tasks = [multicall.getRPM(f"{nvr}.noarch") for nvr in still_unresolved]
+                for nvr, task in zip(still_unresolved, rpm_tasks):
+                    if task.result and task.result.get("build_id"):
+                        nvr_to_build_id[nvr] = task.result["build_id"]
+                    else:
+                        LOGGER.warning("Could not resolve source package for binary RPM NVR %s", nvr)
+                        resolved.add(nvr)
+
+            if nvr_to_build_id:
+                unique_build_ids = list(set(nvr_to_build_id.values()))
+                with session.multicall(strict=True) as multicall:
+                    build_tasks = [multicall.getBuild(bid) for bid in unique_build_ids]
+                bid_to_build = {
+                    bid: task.result for bid, task in zip(unique_build_ids, build_tasks) if task.result
+                }
+
+                for nvr, bid in nvr_to_build_id.items():
+                    build = bid_to_build.get(bid)
+                    if build:
+                        source_nvr = f"{build['name']}-{build['version']}-{build['release']}"
+                        resolved.add(source_nvr)
+                    else:
+                        LOGGER.warning("Could not find Brew build for build_id %s (from %s)", bid, nvr)
+                        resolved.add(nvr)
+
+            return resolved
+
     async def update_konflux_db(
         self,
         metadata,
@@ -1052,6 +1126,7 @@ class KonfluxImageBuilder:
                 package_nvrs, source_rpms = await self.get_installed_packages(
                     definitive_image_pullspec, building_arches, self._config.registry_auth_file
                 )
+                source_rpms = self._resolve_source_package_nvrs(source_rpms, metadata.runtime)
 
             build_record_params.update(
                 {
