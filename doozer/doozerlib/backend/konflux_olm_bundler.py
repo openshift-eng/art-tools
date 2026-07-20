@@ -4,6 +4,7 @@ import logging
 import os
 import re
 import shutil
+import string
 from datetime import datetime, timezone
 from functools import cached_property, lru_cache
 from pathlib import Path
@@ -38,6 +39,44 @@ _LOGGER = logging.getLogger(__name__)
 
 
 BUNDLE_BUILD_PRIORITY = "3"
+
+# Characters that can appear inside a pullspec (registry/repo:tag or registry/repo@sha256:...)
+_PULLSPEC_CHARS = frozenset(string.ascii_letters + string.digits + "/:@._-")
+
+
+def _replace_pullspec(content: str, old_spec: str, new_spec: str) -> str:
+    """
+    Replace all occurrences of old_spec with new_spec in content, but only
+    when old_spec appears as a complete pullspec token — i.e. it is not a
+    substring of a longer pullspec.
+
+    Arg(s):
+        content (str): Text content (e.g. a CSV YAML file).
+        old_spec (str): Upstream pullspec to find.
+        new_spec (str): SHA-based pullspec to substitute.
+    Return Value(s):
+        str: Content with boundary-safe replacements applied.
+    """
+    if not isinstance(old_spec, str) or not old_spec:
+        raise ValueError("old_spec must be a non-empty string")
+    result = []
+    start = 0
+    while True:
+        idx = content.find(old_spec, start)
+        if idx == -1:
+            result.append(content[start:])
+            break
+        end = idx + len(old_spec)
+        before_ok = idx == 0 or content[idx - 1] not in _PULLSPEC_CHARS
+        after_ok = end == len(content) or content[end] not in _PULLSPEC_CHARS
+        if before_ok and after_ok:
+            result.append(content[start:idx])
+            result.append(new_spec)
+            start = end
+        else:
+            result.append(content[start:end])
+            start = end
+    return "".join(result)
 
 
 class KonfluxOlmBundleRebaseError(Exception):
@@ -279,8 +318,9 @@ class KonfluxOlmBundleRebaser:
                 # them directly with DB-resolved SHA pullspecs.
                 found_images: dict[str, tuple[str, str, str]] = {}
                 for delivery_name, (upstream_spec, new_pullspec, operand_nvr) in resolved_operands.items():
-                    if upstream_spec in content:
-                        content = content.replace(upstream_spec, new_pullspec)
+                    replaced_content = _replace_pullspec(content, upstream_spec, new_pullspec)
+                    if replaced_content != content:
+                        content = replaced_content
                         found_images[delivery_name] = (upstream_spec, new_pullspec, operand_nvr)
                 found_images.update(self._find_external_digest_images(content, found_images))
             else:

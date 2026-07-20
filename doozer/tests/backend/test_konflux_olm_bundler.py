@@ -15,6 +15,7 @@ from doozerlib.backend.konflux_olm_bundler import (
     KonfluxOlmBundleBuilder,
     KonfluxOlmBundleRebaseError,
     KonfluxOlmBundleRebaser,
+    _replace_pullspec,
 )
 from doozerlib.backend.pipelinerun_utils import PipelineRunInfo
 
@@ -1956,3 +1957,51 @@ class TestReplaceImageReferencesEmbargo(IsolatedAsyncioTestCase):
         self.assertIn('registry.redhat.io/openshift4/my-embargoed-operand-rhel9@sha256:embargoed-list', new_content)
         # The lazy component-metadata map should never be built for the Brew engine.
         metadata.runtime.image_metas.assert_not_called()
+
+
+class TestReplacePullspec(IsolatedAsyncioTestCase):
+    """
+    Tests for the _replace_pullspec boundary-aware replacement helper.
+    """
+
+    def test_basic_replacement(self):
+        content = "image: registry.redhat.io/foo/bar:v1.0\n"
+        result = _replace_pullspec(
+            content, "registry.redhat.io/foo/bar:v1.0", "registry.redhat.io/foo/bar@sha256:abc123"
+        )
+        self.assertEqual(result, "image: registry.redhat.io/foo/bar@sha256:abc123\n")
+
+    def test_no_match(self):
+        content = "image: registry.redhat.io/foo/other:v2.0\n"
+        result = _replace_pullspec(
+            content, "registry.redhat.io/foo/bar:v1.0", "registry.redhat.io/foo/bar@sha256:abc123"
+        )
+        self.assertEqual(result, content)
+
+    def test_overlapping_tags_not_corrupted(self):
+        """
+        Replacing 'image:v1.0' must NOT corrupt 'image:v1.0.1' — the shorter
+        spec is a substring of the longer one.
+        """
+        content = "image: registry.redhat.io/foo/bar:v1.0.1\nimage: registry.redhat.io/foo/bar:v1.0\n"
+        result = _replace_pullspec(
+            content, "registry.redhat.io/foo/bar:v1.0", "registry.redhat.io/foo/bar@sha256:short"
+        )
+        self.assertIn("registry.redhat.io/foo/bar:v1.0.1", result, "longer tag must be preserved")
+        self.assertIn("registry.redhat.io/foo/bar@sha256:short", result, "exact match must be replaced")
+        self.assertNotIn("registry.redhat.io/foo/bar@sha256:short.1", result, "must not create corrupted pullspec")
+
+    def test_multiple_occurrences(self):
+        content = "a: registry.redhat.io/foo:v1\nb: registry.redhat.io/foo:v1\n"
+        result = _replace_pullspec(content, "registry.redhat.io/foo:v1", "registry.redhat.io/foo@sha256:xyz")
+        self.assertEqual(result.count("registry.redhat.io/foo@sha256:xyz"), 2)
+
+    def test_quoted_yaml_value(self):
+        content = 'image: "registry.redhat.io/foo/bar:v1.0"\n'
+        result = _replace_pullspec(content, "registry.redhat.io/foo/bar:v1.0", "registry.redhat.io/foo/bar@sha256:abc")
+        self.assertEqual(result, 'image: "registry.redhat.io/foo/bar@sha256:abc"\n')
+
+    def test_spec_at_start_and_end(self):
+        content = "registry.redhat.io/foo:v1"
+        result = _replace_pullspec(content, "registry.redhat.io/foo:v1", "registry.redhat.io/foo@sha256:abc")
+        self.assertEqual(result, "registry.redhat.io/foo@sha256:abc")
