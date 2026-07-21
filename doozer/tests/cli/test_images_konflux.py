@@ -2,7 +2,11 @@ import json
 import unittest
 from unittest import mock
 
-from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord
+from artcommonlib.konflux.konflux_build_record import (
+    KonfluxBuildOutcome,
+    KonfluxBuildRecord,
+    KonfluxBundleBuildRecord,
+)
 from artcommonlib.model import Model
 from doozerlib.cli.images_konflux import KonfluxBundleCli, KonfluxRebaseCli
 from doozerlib.exceptions import DoozerFatalError, ParentRebaseFailedError
@@ -50,6 +54,49 @@ class TestKonfluxBundleCli(unittest.IsolatedAsyncioTestCase):
         build.name = name
         build.nvr = nvr
         return build
+
+    async def test_get_bundle_build_by_nvr_searches_without_assembly_filter(self):
+        existing_build = mock.Mock(spec=KonfluxBundleBuildRecord)
+
+        async def search_builds_by_fields(**_kwargs):
+            yield existing_build
+
+        self.mock_bundle_db.search_builds_by_fields = mock.Mock(side_effect=search_builds_by_fields)
+
+        result = await self.bundle_cli._get_bundle_build_by_nvr("test-operator-bundle-1.0.0-1")
+
+        self.assertIs(result, existing_build)
+        self.mock_bundle_db.search_builds_by_fields.assert_called_once_with(
+            where={
+                "nvr": "test-operator-bundle-1.0.0-1",
+                "outcome": str(KonfluxBuildOutcome.SUCCESS),
+            },
+            limit=1,
+        )
+
+    async def test_rebase_and_build_rejects_duplicate_nvr_from_another_assembly(self):
+        operator_build = self._create_operator_build("test-operator", "test-operator-1.0.0-1.assembly.stream")
+        image_meta = mock.Mock()
+        rebaser = mock.AsyncMock()
+        rebaser.rebase.return_value = "test-operator-bundle-1.0.0-1"
+        builder = mock.AsyncMock()
+
+        existing_build = mock.Mock(spec=KonfluxBundleBuildRecord)
+        existing_build.assembly = "stream"
+        existing_build.image_pullspec = "quay.io/example/bundle@sha256:existing"
+
+        self.bundle_cli._get_bundle_build_for = mock.AsyncMock(return_value=None)
+        self.bundle_cli._get_bundle_build_by_nvr = mock.AsyncMock(return_value=existing_build)
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "Successful bundle NVR test-operator-bundle-1.0.0-1 already exists in DB",
+        ):
+            await self.bundle_cli._rebase_and_build(rebaser, builder, image_meta, operator_build)
+
+        rebaser.rebase.assert_awaited_once_with(image_meta, operator_build, "1")
+        self.bundle_cli._get_bundle_build_by_nvr.assert_awaited_once_with("test-operator-bundle-1.0.0-1")
+        builder.build.assert_not_awaited()
 
     @mock.patch("doozerlib.cli.images_konflux.sys.exit", side_effect=SystemExit(1))
     @mock.patch("doozerlib.cli.images_konflux.click.echo")
