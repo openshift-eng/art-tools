@@ -417,9 +417,9 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
 
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     def test_get_doozer_var_args(self, mock_konflux_db):
-        """Test _get_doozer_var_args always returns --var args for MAJOR/MINOR"""
+        """Test _get_doozer_var_args returns --var args when use_new_golang_branch is True"""
         pipeline = self._make_pipeline()
-        # Now always returns vars regardless of use_new_golang_branch flag
+        pipeline.use_new_golang_branch = True
         self.assertEqual(pipeline._get_doozer_var_args(), ['--var', 'MAJOR=4', '--var', 'MINOR=16'])
 
         pipeline.ocp_version = "5.0"
@@ -1264,6 +1264,7 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
             go_nvrs=["golang-1.20.12-2.el8"],
             art_jira="ART-1234",
             tag_builds=True,
+            use_new_golang_branch=True,
         )
 
         await pipeline._rebase_brew(8, "1.20.12", "golang-1.20.12-2.el8")
@@ -1275,7 +1276,7 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
         self.assertIn("MAJOR=4", cmd)
         self.assertIn("MINOR=16", cmd)
         self.assertIn("--group", cmd)
-        self.assertIn("golang", cmd)  # Now uses monobranch
+        self.assertIn("golang", cmd)
         self.assertIn("images:rebase", cmd)
         self.assertIn("--version", cmd)
         self.assertIn("v1.20.12", cmd)
@@ -1521,6 +1522,7 @@ class TestShouldSignGolangRpm(unittest.TestCase):
             go_nvrs=["golang-1.22.9-1.el9"],
             art_jira="ART-1234",
             tag_builds=True,
+            use_new_golang_branch=True,
         )
 
         result = pipeline.should_sign_golang_rpm(9, "1.22.9")
@@ -1543,6 +1545,7 @@ class TestShouldSignGolangRpm(unittest.TestCase):
             go_nvrs=["golang-1.25.3-1.el9"],
             art_jira="ART-1234",
             tag_builds=True,
+            use_new_golang_branch=True,
         )
 
         result = pipeline.should_sign_golang_rpm(9, "1.25.3")

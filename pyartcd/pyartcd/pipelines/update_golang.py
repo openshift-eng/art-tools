@@ -597,7 +597,10 @@ class UpdateGolangPipeline:
         """Check sign_golang_rpm in the golang branch group.yml.
         Defaults to False so that RHEL-shipped golang is never accidentally signed by us.
         """
-        default_branch = self.get_golang_branch(el_v, go_version)
+        if self.use_new_golang_branch:
+            default_branch = self.GOLANG_DATA_BRANCH
+        else:
+            default_branch = self.get_golang_branch(el_v, go_version)
         repo, branch = self._get_ocp_build_data_repo_and_branch(default_branch)
         content = repo.get_contents("group.yml", ref=branch)
         group_config = yaml.load(content.decoded_content)
