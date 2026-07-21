@@ -82,7 +82,7 @@ async def load_group_config(
     env=None,
     doozer_data_path: str = constants.OCP_BUILD_DATA_URL,
     doozer_data_gitref: str = '',
-    extra_vars: List = [],
+    extra_vars: List = None,
 ) -> Dict:
     if doozer_data_gitref:
         group += f'@{doozer_data_gitref}'
@@ -289,7 +289,7 @@ async def get_freeze_automation(
     doozer_data_path: str = constants.OCP_BUILD_DATA_URL,
     doozer_working: str = '',
     doozer_data_gitref: str = '',
-    extra_vars: list = [],
+    extra_vars: list = None,
 ) -> str:
     """
     Returns freeze_automation flag for a specific group

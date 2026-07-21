@@ -45,7 +45,7 @@ class Jobs(Enum):
     MICROSHIFT_SYNC = 'aos-cd-builds/build%2Fmicroshift_sync'
     CINCINNATI_PRS = 'aos-cd-builds/build%2Fcincinnati-prs'
     RHCOS_SYNC = 'aos-cd-builds/build%2Frhcos_sync'
-    BUILD_PLASHETS = 'hack/bvizi/build%2Fbuild-plashets'
+    BUILD_PLASHETS = 'aos-cd-jobs/build%2Fbuild-plashets'
     BUILD_FBC = 'aos-cd-builds/build%2Fbuild-fbc'
     LAYERED_PRODUCTS = 'aos-cd-builds/build%2Flayered-products'
     LAYERED_PRODUCTS_SCAN = 'aos-cd-builds/build%2Flayered-products-scan'
@@ -795,7 +795,6 @@ def start_build_plashets(
         'COPY_LINKS': copy_links,
         'DRY_RUN': dry_run,
         'VERSION': version,
-        'ART_TOOLS_COMMIT': "kopero2000@plashet-build-mono-golang-support",
     }
 
     return start_build(
