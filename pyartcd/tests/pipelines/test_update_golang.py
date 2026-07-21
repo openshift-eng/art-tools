@@ -1509,7 +1509,8 @@ class TestShouldSignGolangRpm(unittest.TestCase):
 
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
-    def test_returns_true_when_config_set(self, mock_get_github_client, mock_konflux_db):
+    def test_monobranch_image_override_takes_precedence(self, mock_get_github_client, mock_konflux_db):
+        """Image config sign_golang_rpm=true overrides group.yml default"""
         mock_repo = Mock()
         mock_repo.get_contents.return_value = Mock(decoded_content=b"sign_golang_rpm: true\n")
         mock_get_github_client.return_value.get_repo.return_value = mock_repo
@@ -1528,13 +1529,48 @@ class TestShouldSignGolangRpm(unittest.TestCase):
         result = pipeline.should_sign_golang_rpm(9, "1.22.9")
 
         self.assertTrue(result)
-        mock_repo.get_contents.assert_called_with("group.yml", ref="golang")
+        mock_repo.get_contents.assert_called_once_with(
+            "images/openshift-golang-builder-1-22.rhel9.yml", ref="golang"
+        )
 
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
-    def test_returns_false_when_config_not_set(self, mock_get_github_client, mock_konflux_db):
+    def test_monobranch_falls_back_to_group_yml(self, mock_get_github_client, mock_konflux_db):
+        """When image config has no sign_golang_rpm, falls back to group.yml"""
         mock_repo = Mock()
-        mock_repo.get_contents.return_value = Mock(decoded_content=b"name: rhel-9-golang-1.25\n")
+        image_content = Mock(decoded_content=b"name: openshift-golang-builder\n")
+        group_content = Mock(decoded_content=b"sign_golang_rpm: true\n")
+        mock_repo.get_contents.side_effect = [image_content, group_content]
+        mock_get_github_client.return_value.get_repo.return_value = mock_repo
+
+        pipeline = UpdateGolangPipeline(
+            runtime=Mock(dry_run=False, working_dir=Path("/tmp/working")),
+            ocp_version="4.18",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.22.9-1.el9"],
+            art_jira="ART-1234",
+            tag_builds=True,
+            use_new_golang_branch=True,
+        )
+
+        result = pipeline.should_sign_golang_rpm(9, "1.22.9")
+
+        self.assertTrue(result)
+        self.assertEqual(mock_repo.get_contents.call_count, 2)
+        mock_repo.get_contents.assert_any_call(
+            "images/openshift-golang-builder-1-22.rhel9.yml", ref="golang"
+        )
+        mock_repo.get_contents.assert_any_call("group.yml", ref="golang")
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
+    def test_monobranch_defaults_false_when_neither_set(self, mock_get_github_client, mock_konflux_db):
+        """When neither image config nor group.yml has sign_golang_rpm, defaults to False"""
+        mock_repo = Mock()
+        image_content = Mock(decoded_content=b"name: openshift-golang-builder\n")
+        group_content = Mock(decoded_content=b"name: golang\n")
+        mock_repo.get_contents.side_effect = [image_content, group_content]
         mock_get_github_client.return_value.get_repo.return_value = mock_repo
 
         pipeline = UpdateGolangPipeline(
@@ -1551,7 +1587,29 @@ class TestShouldSignGolangRpm(unittest.TestCase):
         result = pipeline.should_sign_golang_rpm(9, "1.25.3")
 
         self.assertFalse(result)
-        mock_repo.get_contents.assert_called_with("group.yml", ref="golang")
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
+    def test_separated_branch_reads_group_yml(self, mock_get_github_client, mock_konflux_db):
+        mock_repo = Mock()
+        mock_repo.get_contents.return_value = Mock(decoded_content=b"sign_golang_rpm: true\n")
+        mock_get_github_client.return_value.get_repo.return_value = mock_repo
+
+        pipeline = UpdateGolangPipeline(
+            runtime=Mock(dry_run=False, working_dir=Path("/tmp/working")),
+            ocp_version="4.18",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.22.9-1.el9"],
+            art_jira="ART-1234",
+            tag_builds=True,
+            use_new_golang_branch=False,
+        )
+
+        result = pipeline.should_sign_golang_rpm(9, "1.22.9")
+
+        self.assertTrue(result)
+        mock_repo.get_contents.assert_called_with("group.yml", ref="rhel-9-golang-1.22")
 
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")

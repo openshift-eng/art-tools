@@ -594,11 +594,20 @@ class UpdateGolangPipeline:
         return False
 
     def should_sign_golang_rpm(self, el_v, go_version) -> bool:
-        """Check sign_golang_rpm in the golang branch group.yml.
+        """Check sign_golang_rpm config for a specific golang version.
+        With monobranch: reads the per-image metadata (e.g. images/openshift-golang-builder-1-22.rhel9.yml)
+        since multiple golang versions share the same group.yml.
+        With separated branches: reads group.yml from the per-version branch.
         Defaults to False so that RHEL-shipped golang is never accidentally signed by us.
         """
         if self.use_new_golang_branch:
             default_branch = self.GOLANG_DATA_BRANCH
+            repo, branch = self._get_ocp_build_data_repo_and_branch(default_branch)
+            image_key = self.get_golang_image_key(el_v, go_version)
+            content = repo.get_contents(f"images/{image_key}.yml", ref=branch)
+            image_config = yaml.load(content.decoded_content)
+            if image_config.get('sign_golang_rpm') is not None:
+                return image_config.get('sign_golang_rpm', False)
         else:
             default_branch = self.get_golang_branch(el_v, go_version)
         repo, branch = self._get_ocp_build_data_repo_and_branch(default_branch)
