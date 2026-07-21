@@ -1529,9 +1529,7 @@ class TestShouldSignGolangRpm(unittest.TestCase):
         result = pipeline.should_sign_golang_rpm(9, "1.22.9")
 
         self.assertTrue(result)
-        mock_repo.get_contents.assert_called_once_with(
-            "images/openshift-golang-builder-1-22.rhel9.yml", ref="golang"
-        )
+        mock_repo.get_contents.assert_called_once_with("images/openshift-golang-builder-1-22.rhel9.yml", ref="golang")
 
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
@@ -1558,9 +1556,7 @@ class TestShouldSignGolangRpm(unittest.TestCase):
 
         self.assertTrue(result)
         self.assertEqual(mock_repo.get_contents.call_count, 2)
-        mock_repo.get_contents.assert_any_call(
-            "images/openshift-golang-builder-1-22.rhel9.yml", ref="golang"
-        )
+        mock_repo.get_contents.assert_any_call("images/openshift-golang-builder-1-22.rhel9.yml", ref="golang")
         mock_repo.get_contents.assert_any_call("group.yml", ref="golang")
 
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
