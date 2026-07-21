@@ -179,6 +179,20 @@ class KonfluxImageBuilder:
             uuid_tag, component_name, version, release = self._parse_dockerfile(metadata.distgit_key, df_path)
             nvr = f"{component_name}-{version}-{release}"
 
+            # get_latest_build() is assembly-aware and, for assemblies with a basis event,
+            # intentionally resolves to the stream build at the basis event. That behavior is
+            # useful for selecting assembly content, but it can miss an exact NVR that was
+            # already built for the current or another assembly. Check exact NVR existence
+            # without assembly or group scoping before applying the ordering check below.
+            existing_build = await self._get_successful_image_build_by_nvr(metadata, nvr)
+            if existing_build is not None:
+                raise ValueError(
+                    f"Successful image NVR {nvr} already exists in DB! "
+                    f"Existing build assembly: {existing_build.assembly}; "
+                    f"pullspec: {existing_build.image_pullspec}. "
+                    "To rebuild, please do another rebase to get a newer NVR"
+                )
+
             # Sanity check to ensure we're not rebuilding an existing or older NVR
             latest_build = await metadata.get_latest_build(
                 engine=Engine.KONFLUX.value,
@@ -469,6 +483,28 @@ class KonfluxImageBuilder:
                 self._record_logger.add_record(key, **record)
             metadata.build_event.set()
         return pipelinerun_name, pipelinerun_info.to_dict()
+
+    @staticmethod
+    async def _get_successful_image_build_by_nvr(metadata: ImageMetadata, nvr: str) -> Optional[KonfluxBuildRecord]:
+        """Find a successful Konflux image build by exact NVR, regardless of assembly or group."""
+        where = {
+            "nvr": nvr,
+            "outcome": KonfluxBuildOutcome.SUCCESS,
+            "artifact_type": ArtifactType.IMAGE,
+            "engine": Engine.KONFLUX,
+        }
+        build = await anext(
+            metadata.runtime.konflux_db.search_builds_by_fields(
+                where=where,
+                limit=1,
+                exclude_columns=["installed_rpms", "installed_packages"],
+            ),
+            None,
+        )
+        if build is None:
+            return None
+        assert isinstance(build, KonfluxBuildRecord)
+        return build
 
     def _parse_dockerfile(self, distgit_key: str, df_path: Path):
         """Parse the Dockerfile and return the UUID tag, component name, version, and release.

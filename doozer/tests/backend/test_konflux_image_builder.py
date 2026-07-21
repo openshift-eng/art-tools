@@ -3,7 +3,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome
+from artcommonlib.konflux.konflux_build_record import (
+    ArtifactType,
+    Engine,
+    KonfluxBuildOutcome,
+    KonfluxBuildRecord,
+)
 from doozerlib.backend.konflux_image_builder import (
     KonfluxImageBuilder,
     KonfluxImageBuilderConfig,
@@ -48,6 +53,12 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         metadata.runtime = MagicMock()
         metadata.runtime.assembly = "test-assembly"
         metadata.runtime.konflux_db = MagicMock()
+
+        async def search_builds_by_fields(**_kwargs):
+            if False:
+                yield
+
+        metadata.runtime.konflux_db.search_builds_by_fields = MagicMock(side_effect=search_builds_by_fields)
         metadata.runtime.group_config.software_lifecycle.phase = "release"
         metadata.config.konflux.get.return_value = False
         metadata.for_release = True
@@ -59,6 +70,69 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         metadata.should_trigger_base_image_release.return_value = False
         metadata.is_golang_builder = MagicMock(return_value=False)
         return metadata
+
+    async def test_get_successful_image_build_by_nvr_is_not_assembly_scoped(self):
+        metadata = self._metadata()
+        existing_build = MagicMock(spec=KonfluxBuildRecord)
+
+        async def search_builds_by_fields(**_kwargs):
+            yield existing_build
+
+        metadata.runtime.konflux_db.search_builds_by_fields = MagicMock(side_effect=search_builds_by_fields)
+
+        result = await self.builder._get_successful_image_build_by_nvr(metadata, "test-component-1.0-1.assembly.test")
+
+        self.assertIs(result, existing_build)
+        metadata.runtime.konflux_db.search_builds_by_fields.assert_called_once_with(
+            where={
+                "nvr": "test-component-1.0-1.assembly.test",
+                "outcome": KonfluxBuildOutcome.SUCCESS,
+                "artifact_type": ArtifactType.IMAGE,
+                "engine": Engine.KONFLUX,
+            },
+            limit=1,
+            exclude_columns=["installed_rpms", "installed_packages"],
+        )
+
+    async def test_build_rejects_exact_nvr_before_assembly_scoped_latest_check(self):
+        metadata = self._metadata()
+        metadata.runtime.assembly = "4.17.1"
+        metadata.runtime.assembly_basis_event = "2026-07-01T00:00:00Z"
+        dest_dir = self.builder._config.base_dir.joinpath(metadata.qualified_key)
+        dest_dir.mkdir(parents=True)
+
+        existing_build = MagicMock(spec=KonfluxBuildRecord)
+        existing_build.assembly = "4.17.1"
+        existing_build.image_pullspec = "quay.io/example/image@sha256:existing"
+        build_repo = MagicMock()
+        start_build = AsyncMock()
+
+        with (
+            patch(
+                "doozerlib.backend.konflux_image_builder.BuildRepo.from_local_dir",
+                new=AsyncMock(return_value=build_repo),
+            ),
+            patch.object(
+                self.builder,
+                "_parse_dockerfile",
+                return_value=("test-uuid", "test-component", "1.0", "1.assembly.4.17.1"),
+            ),
+            patch.object(
+                self.builder,
+                "_get_successful_image_build_by_nvr",
+                new=AsyncMock(return_value=existing_build),
+            ) as exact_nvr_lookup,
+            patch.object(self.builder, "_start_build", new=start_build),
+        ):
+            with self.assertRaisesRegex(
+                ValueError,
+                "Successful image NVR test-component-1.0-1.assembly.4.17.1 already exists in DB",
+            ):
+                await self.builder.build(metadata)
+
+        exact_nvr_lookup.assert_awaited_once_with(metadata, "test-component-1.0-1.assembly.4.17.1")
+        metadata.get_latest_build.assert_not_awaited()
+        start_build.assert_not_awaited()
 
     async def test_build_uses_definitive_pullspec_for_attestation_validation(self):
         metadata = self._metadata()

@@ -81,7 +81,13 @@ def _make_metadata(distgit_key="test-image", for_release=True, is_base_image=Fal
     metadata.runtime.assembly = "stream"
     metadata.runtime.variant = variant if variant is not None else BuildVariant.OCP
     metadata.runtime.group_config.software_lifecycle.phase = "release"
-    metadata.runtime.konflux_db = None
+    metadata.runtime.konflux_db = MagicMock()
+
+    async def search_builds_by_fields(**_kwargs):
+        if False:
+            yield
+
+    metadata.runtime.konflux_db.search_builds_by_fields = MagicMock(side_effect=search_builds_by_fields)
     return metadata
 
 
