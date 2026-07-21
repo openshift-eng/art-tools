@@ -215,6 +215,14 @@ class UpdateGolangPipeline:
         self._doozer_env_vars = os.environ.copy()
         self._branch_content = None
 
+        # Deprecation warning for separate golang branches
+        if not use_new_golang_branch:
+            _LOGGER.warning(
+                "Using unique golang version branches is deprecated. "
+                "Will use golang mono branch instead. "
+                "See: https://github.com/openshift-eng/ocp-build-data/tree/golang"
+            )
+
         # Get kubeconfig from environment variable if not provided
         if not kubeconfig:
             kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
@@ -597,7 +605,7 @@ class UpdateGolangPipeline:
         """Check sign_golang_rpm in the golang branch group.yml.
         Defaults to False so that RHEL-shipped golang is never accidentally signed by us.
         """
-        default_branch = self.get_golang_branch(el_v, go_version)
+        default_branch = self.GOLANG_DATA_BRANCH
         repo, branch = self._get_ocp_build_data_repo_and_branch(default_branch)
         content = repo.get_contents("group.yml", ref=branch)
         group_config = yaml.load(content.decoded_content)
@@ -1039,39 +1047,24 @@ class UpdateGolangPipeline:
     GOLANG_DATA_BRANCH = 'golang'
 
     @staticmethod
-    def get_golang_branch(el_v, go_version):
-        major_go, minor_go, _ = go_version.split('.')
-        go_v = f"{major_go}.{minor_go}"
-        return f'rhel-{el_v}-golang-{go_v}'
-
-    @staticmethod
     def get_golang_image_key(el_v, go_version):
         major_go, minor_go, _ = go_version.split('.')
         go_v = f"{major_go}-{minor_go}"
         return f'{GOLANG_BUILDER_IMAGE_NAME}-{go_v}.rhel{el_v}'
 
     def _get_doozer_var_args(self) -> list[str]:
-        if not self.use_new_golang_branch:
-            return []
         ocp_major, ocp_minor = self.ocp_version.split('.')
         return ['--var', f'MAJOR={ocp_major}', '--var', f'MINOR={ocp_minor}']
 
     def _get_doozer_group_and_image(self, el_v, go_version):
-        if self.use_new_golang_branch:
-            group = self.GOLANG_DATA_BRANCH
-            image_key = self.get_golang_image_key(el_v, go_version)
-        else:
-            group = self.get_golang_branch(el_v, go_version)
-            image_key = GOLANG_BUILDER_IMAGE_NAME
+        group = self.GOLANG_DATA_BRANCH
+        image_key = self.get_golang_image_key(el_v, go_version)
         if self.data_gitref:
             group += f'@{self.data_gitref}'
         return group, image_key
 
     def verify_golang_builder_repo(self, el_v, go_version):
-        if self.use_new_golang_branch:
-            default_branch = self.GOLANG_DATA_BRANCH
-        else:
-            default_branch = self.get_golang_branch(el_v, go_version)
+        default_branch = self.GOLANG_DATA_BRANCH
         filename = 'group.yml'
 
         repo, branch = self._get_ocp_build_data_repo_and_branch(default_branch)
@@ -1172,7 +1165,7 @@ class UpdateGolangPipeline:
     '--use-new-golang-branch',
     is_flag=True,
     default=False,
-    help='Use the unified "golang" branch layout in ocp-build-data instead of per-variant branches (e.g. rhel-9-golang-1.26).',
+    help='[DEPRECATED] This flag is now ignored. The pipeline always uses the unified "golang" monobranch layout.',
 )
 @click.option(
     '--major-bump',
