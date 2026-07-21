@@ -1685,15 +1685,12 @@ class TestIsRpmSigned(unittest.TestCase):
 class TestBuildGolangPlashets(IsolatedAsyncioTestCase):
     """Test the _build_golang_plashets method"""
 
-    @patch("pyartcd.pipelines.update_golang.jenkins")
-    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
-    async def test_triggers_jenkins_for_each_el_version(self, mock_konflux_db, mock_jenkins):
+    def _make_pipeline(self, use_new_golang_branch=False, dry_run=False):
         mock_slack = Mock()
         mock_slack.say_in_thread = AsyncMock()
-        mock_runtime = Mock(dry_run=False, working_dir=Path("/tmp/working"))
+        mock_runtime = Mock(dry_run=dry_run, working_dir=Path("/tmp/working"))
         mock_runtime.new_slack_client.return_value = mock_slack
-
-        pipeline = UpdateGolangPipeline(
+        return UpdateGolangPipeline(
             runtime=mock_runtime,
             ocp_version="4.18",
             cves=None,
@@ -1701,14 +1698,19 @@ class TestBuildGolangPlashets(IsolatedAsyncioTestCase):
             go_nvrs=["golang-1.22.9-1.el9"],
             art_jira="ART-1234",
             tag_builds=True,
+            use_new_golang_branch=use_new_golang_branch,
         )
+
+    @patch("pyartcd.pipelines.update_golang.jenkins")
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    async def test_monobranch_triggers_jenkins_for_each_el_version(self, mock_konflux_db, mock_jenkins):
+        pipeline = self._make_pipeline(use_new_golang_branch=True)
         mock_jenkins.start_build_plashets.return_value = "SUCCESS"
 
         await pipeline._build_golang_plashets("1.22.9", [8, 9])
 
         self.assertEqual(mock_jenkins.start_build_plashets.call_count, 2)
         calls = mock_jenkins.start_build_plashets.call_args_list
-        # Both calls now use the 'golang' monobranch
         self.assertEqual(calls[0].kwargs["group"], "golang")
         self.assertEqual(calls[0].kwargs["repos"], ["rhel-8-golang-rpms"])
         self.assertEqual(calls[0].kwargs["version"], "4.18")
@@ -1718,21 +1720,25 @@ class TestBuildGolangPlashets(IsolatedAsyncioTestCase):
 
     @patch("pyartcd.pipelines.update_golang.jenkins")
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
-    async def test_raises_on_jenkins_failure(self, mock_konflux_db, mock_jenkins):
-        mock_slack = Mock()
-        mock_slack.say_in_thread = AsyncMock()
-        mock_runtime = Mock(dry_run=False, working_dir=Path("/tmp/working"))
-        mock_runtime.new_slack_client.return_value = mock_slack
+    async def test_separated_branch_triggers_jenkins_per_el_and_go_version(self, mock_konflux_db, mock_jenkins):
+        pipeline = self._make_pipeline(use_new_golang_branch=False)
+        mock_jenkins.start_build_plashets.return_value = "SUCCESS"
 
-        pipeline = UpdateGolangPipeline(
-            runtime=mock_runtime,
-            ocp_version="4.18",
-            cves=None,
-            force_update_tracker=False,
-            go_nvrs=["golang-1.22.9-1.el9"],
-            art_jira="ART-1234",
-            tag_builds=True,
-        )
+        await pipeline._build_golang_plashets("1.22.9", [8, 9])
+
+        self.assertEqual(mock_jenkins.start_build_plashets.call_count, 2)
+        calls = mock_jenkins.start_build_plashets.call_args_list
+        self.assertEqual(calls[0].kwargs["group"], "rhel-8-golang-1.22")
+        self.assertEqual(calls[0].kwargs["repos"], ["rhel-8-golang-rpms"])
+        self.assertIsNone(calls[0].kwargs["version"])
+        self.assertEqual(calls[1].kwargs["group"], "rhel-9-golang-1.22")
+        self.assertEqual(calls[1].kwargs["repos"], ["rhel-9-golang-rpms"])
+        self.assertIsNone(calls[1].kwargs["version"])
+
+    @patch("pyartcd.pipelines.update_golang.jenkins")
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    async def test_raises_on_jenkins_failure(self, mock_konflux_db, mock_jenkins):
+        pipeline = self._make_pipeline(use_new_golang_branch=True)
         mock_jenkins.start_build_plashets.return_value = "FAILURE"
 
         with self.assertRaisesRegex(RuntimeError, "failed with result: FAILURE"):
@@ -1740,13 +1746,23 @@ class TestBuildGolangPlashets(IsolatedAsyncioTestCase):
 
     @patch("pyartcd.pipelines.update_golang.jenkins")
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
-    async def test_dry_run_skips_jenkins(self, mock_konflux_db, mock_jenkins):
-        mock_slack = Mock()
-        mock_slack.say_in_thread = AsyncMock()
-        mock_runtime = Mock(dry_run=True, working_dir=Path("/tmp/working"))
-        mock_runtime.new_slack_client.return_value = mock_slack
+    async def test_dry_run_passes_dry_run_flag(self, mock_konflux_db, mock_jenkins):
+        pipeline = self._make_pipeline(use_new_golang_branch=True, dry_run=True)
+        mock_jenkins.start_build_plashets.return_value = "SUCCESS"
 
-        pipeline = UpdateGolangPipeline(
+        await pipeline._build_golang_plashets("1.22.9", [9])
+
+        mock_jenkins.start_build_plashets.assert_called_once()
+        self.assertTrue(mock_jenkins.start_build_plashets.call_args.kwargs["dry_run"])
+
+
+class TestMonobranchDispatch(IsolatedAsyncioTestCase):
+    """Test that branch-dependent methods dispatch correctly based on use_new_golang_branch"""
+
+    def _make_pipeline(self, use_new_golang_branch):
+        mock_runtime = Mock(dry_run=False, working_dir=Path("/tmp/working"))
+        mock_runtime.new_slack_client.return_value = Mock()
+        return UpdateGolangPipeline(
             runtime=mock_runtime,
             ocp_version="4.18",
             cves=None,
@@ -1754,11 +1770,30 @@ class TestBuildGolangPlashets(IsolatedAsyncioTestCase):
             go_nvrs=["golang-1.22.9-1.el9"],
             art_jira="ART-1234",
             tag_builds=True,
+            use_new_golang_branch=use_new_golang_branch,
         )
 
-        await pipeline._build_golang_plashets("1.22.9", [9])
+    def test_doozer_group_uses_monobranch_when_flag_is_true(self):
+        pipeline = self._make_pipeline(use_new_golang_branch=True)
+        group, image_key = pipeline._get_doozer_group_and_image(9, "1.22.9")
+        self.assertEqual(group, "golang")
+        self.assertEqual(image_key, "openshift-golang-builder-1-22.rhel9")
 
-        mock_jenkins.start_build_plashets.assert_not_called()
+    def test_doozer_group_uses_separated_branch_when_flag_is_false(self):
+        pipeline = self._make_pipeline(use_new_golang_branch=False)
+        group, image_key = pipeline._get_doozer_group_and_image(9, "1.22.9")
+        self.assertEqual(group, "rhel-9-golang-1.22")
+        self.assertEqual(image_key, "openshift-golang-builder")
+
+    def test_doozer_var_args_with_monobranch(self):
+        pipeline = self._make_pipeline(use_new_golang_branch=True)
+        args = pipeline._get_doozer_var_args()
+        self.assertEqual(args, ['--var', 'MAJOR=4', '--var', 'MINOR=18'])
+
+    def test_doozer_var_args_with_separated_branch(self):
+        pipeline = self._make_pipeline(use_new_golang_branch=False)
+        args = pipeline._get_doozer_var_args()
+        self.assertEqual(args, [])
 
 
 if __name__ == "__main__":
