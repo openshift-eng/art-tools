@@ -309,7 +309,7 @@ class KonfluxBuildCli:
         product = runtime.product
         if runtime.assembly == "test":
             ec_policy = constants.PRODUCT_TEST_EC_POLICY_MAP.get(product)
-            prega_ec_policy = constants.PRODUCT_PREGA_EC_POLICY_MAP.get(product, ec_policy)
+            prega_ec_policy = constants.PRODUCT_TEST_PREGA_EC_POLICY_MAP.get(product, ec_policy)
         else:
             ec_policy = constants.PRODUCT_EC_POLICY_MAP.get(product)
             prega_ec_policy = constants.PRODUCT_PREGA_EC_POLICY_MAP.get(product, ec_policy)

@@ -103,6 +103,10 @@ PRODUCT_PREGA_EC_POLICY_MAP = {
     "ocp": "ocp-art-tenant/conforma-build-ec-stage",
 }
 
+PRODUCT_TEST_PREGA_EC_POLICY_MAP = {
+    "ocp": "ocp-art-tenant/conforma-build-ec-stage-test",
+}
+
 # Base image release EC policies (ReleasePlanAdmission policy name suffix). Selection is by
 # software_lifecycle.phase in resolve_konflux_base_image_release_targets — ART-19498.
 # Prod: registry-ocp-art-base-prod | Pre-release: registry-ocp-art-base-ec-prod
