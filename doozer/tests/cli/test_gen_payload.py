@@ -1372,3 +1372,56 @@ manifests:
 
         gpcli.detect_rpm_image_sibling_mismatch(ai)
         self.assertEqual(len(gpcli.assembly_issues), 0)
+
+    def test_detect_rpm_image_sibling_mismatch_skips_non_payload(self):
+        """
+        Non-payload images should be excluded from sibling comparison.
+        """
+        gpcli = rgp_cli.GenPayloadCli(runtime=MagicMock(assembly="stream"))
+
+        img = self._make_sibling_inspector(
+            "git@github.com:openshift-priv/kubernetes.git",
+            "aaa1234abcdef",
+            "openshift-enterprise-hyperkube",
+            is_payload=False,
+        )
+        ai = MagicMock(AssemblyInspector)
+        ai.get_group_release_images.return_value = {"openshift-enterprise-hyperkube": img}
+
+        rpm_meta = self._make_rpm_meta("git@github.com:openshift-priv/kubernetes.git", "openshift")
+        gpcli.runtime.rpm_metas.return_value = [rpm_meta]
+        ai.get_group_rpm_build_dicts.return_value = {
+            "openshift": {
+                "nvr": "openshift-4.20.0-202605061218.p2.gbbb5678.assembly.stream.el9",
+                "release": "202605061218.p2.gbbb5678.assembly.stream.el9",
+            }
+        }
+
+        gpcli.detect_rpm_image_sibling_mismatch(ai)
+        self.assertEqual(len(gpcli.assembly_issues), 0)
+
+    def test_detect_rpm_image_sibling_mismatch_multiple_images_same_repo(self):
+        """
+        When multiple payload images share the same repo, RPM should be compared
+        against all of them. A mismatch with any sibling should be flagged.
+        """
+        gpcli = rgp_cli.GenPayloadCli(runtime=MagicMock(assembly="stream"))
+
+        img_a = self._make_sibling_inspector("git@github.com:openshift-priv/kubernetes.git", "aaa1234abcdef", "image-a")
+        img_b = self._make_sibling_inspector("git@github.com:openshift-priv/kubernetes.git", "bbb5678abcdef", "image-b")
+        ai = MagicMock(AssemblyInspector)
+        ai.get_group_release_images.return_value = {"image-a": img_a, "image-b": img_b}
+
+        # RPM matches image-a but not image-b
+        rpm_meta = self._make_rpm_meta("git@github.com:openshift-priv/kubernetes.git", "openshift")
+        gpcli.runtime.rpm_metas.return_value = [rpm_meta]
+        ai.get_group_rpm_build_dicts.return_value = {
+            "openshift": {
+                "nvr": "openshift-4.20.0-202604241817.p2.gaaa1234.assembly.stream.el9",
+                "release": "202604241817.p2.gaaa1234.assembly.stream.el9",
+            }
+        }
+
+        gpcli.detect_rpm_image_sibling_mismatch(ai)
+        self.assertEqual(len(gpcli.assembly_issues), 1)
+        self.assertIn("image-b", gpcli.assembly_issues[0].msg)

@@ -917,10 +917,11 @@ class GenPayloadCli:
         span = trace.get_current_span()
         self.logger.debug("Checking for RPM/image sibling source mismatches...")
 
-        # Build a map of normalized source URL -> (distgit_key, source_commit) from payload images
-        image_source_commits: Dict[str, Tuple[str, str]] = {}
+        # Build a map of normalized source URL -> list of (distgit_key, source_commit) from payload images.
+        # Multiple images can share the same upstream repo, so we store all of them.
+        image_source_commits: Dict[str, List[Tuple[str, str]]] = {}
         for img in assembly_inspector.get_group_release_images().values():
-            if not img:
+            if not img or not img.get_image_meta().is_payload:
                 continue
             raw_source = img.get_image_meta().raw_config.content.source
             source_url = raw_source.git.url
@@ -928,7 +929,9 @@ class GenPayloadCli:
             if not source_url or not source_commit:
                 continue
             normalized_url = convert_remote_git_to_https(source_url)
-            image_source_commits[normalized_url] = (img.get_image_meta().distgit_key, source_commit)
+            image_source_commits.setdefault(normalized_url, []).append(
+                (img.get_image_meta().distgit_key, source_commit)
+            )
 
         # Check each RPM's source against the image map
         issues = []
@@ -939,27 +942,31 @@ class GenPayloadCli:
                 continue
             normalized_rpm_url = convert_remote_git_to_https(rpm_source_url)
 
-            image_entry = image_source_commits.get(normalized_rpm_url)
-            if not image_entry:
+            image_entries = image_source_commits.get(normalized_rpm_url)
+            if not image_entries:
                 continue
 
-            image_dgk, image_commit = image_entry
-
             # Get the RPM build and extract its source commit from the NVR
+            rpm_commit = None
+            rpm_nvr = None
             for el_ver in rpm_meta.determine_rhel_targets():
                 rpm_build = assembly_inspector.get_group_rpm_build_dicts(el_ver).get(rpm_meta.distgit_key)
                 if not rpm_build:
                     continue
                 rpm_commit = isolate_git_commit_in_release(rpm_build["release"])
-                if not rpm_commit:
-                    continue
+                rpm_nvr = rpm_build["nvr"]
+                if rpm_commit:
+                    break
 
-                # Short-prefix comparison: NVR embeds a 7-char prefix
+            if not rpm_commit:
+                continue
+
+            # Compare against every sibling image from the same repo
+            for image_dgk, image_commit in image_entries:
                 min_len = min(len(rpm_commit), len(image_commit))
                 if rpm_commit[:min_len] == image_commit[:min_len]:
                     continue
 
-                rpm_nvr = rpm_build["nvr"]
                 issue = AssemblyIssue(
                     f"RPM {rpm_nvr} (commit {rpm_commit}) and image {image_dgk} "
                     f"(commit {image_commit[:7]}) are built from the same upstream repo "
@@ -970,8 +977,6 @@ class GenPayloadCli:
                     code=AssemblyIssueCode.MISMATCHED_RPM_IMAGE_SIBLINGS,
                 )
                 issues.append(issue)
-                # Only need to flag once per RPM, not per el_ver
-                break
 
         self.assembly_issues.extend(issues)
         span.set_attribute("doozer.result.rpm_image_sibling_issues", list(map(lambda it: it.to_dict(), issues)))
