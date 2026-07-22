@@ -128,6 +128,7 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
             rgp_cli.GenPayloadCli(runtime=MagicMock(assembly="stream", build_system="brew")),
             collect_assembly_build_ids=MagicMock(return_value={1, 2, 3}),
             detect_mismatched_siblings=None,
+            detect_rpm_image_sibling_mismatch=None,
             detect_non_latest_rpms=None,
             detect_inconsistent_images=Mock(),
             detect_installed_rpms_issues=None,
@@ -1252,3 +1253,122 @@ manifests:
         self.assertEqual('false', new_tag_annotations['release.openshift.io/rewrite'])
         self.assertEqual(os.getenv('BUILD_URL', ''), new_tag_annotations['release.openshift.io/build-url'])
         self.assertIn('release.openshift.io/runtime-brew-event', new_tag_annotations)
+
+    def _make_rpm_meta(self, source_url, distgit_key, el_targets=None):
+        """
+        Helper to build a mock RPMMetadata for RPM/image sibling tests.
+        """
+        if el_targets is None:
+            el_targets = [9]
+        raw_config = Model(dict(content=dict(source=dict(git=dict(url=source_url)))))
+        meta = MagicMock()
+        meta.raw_config = raw_config
+        meta.distgit_key = distgit_key
+        meta.determine_rhel_targets.return_value = el_targets
+        return meta
+
+    def test_detect_rpm_image_sibling_mismatch_flags_different_commits(self):
+        """
+        RPM and image from the same repo at different commits should be flagged.
+        """
+        gpcli = rgp_cli.GenPayloadCli(runtime=MagicMock(assembly="stream"))
+
+        img = self._make_sibling_inspector(
+            "git@github.com:openshift-priv/kubernetes.git", "aaa1234abcdef", "openshift-enterprise-hyperkube"
+        )
+        ai = MagicMock(AssemblyInspector)
+        ai.get_group_release_images.return_value = {"openshift-enterprise-hyperkube": img}
+
+        rpm_meta = self._make_rpm_meta("git@github.com:openshift-priv/kubernetes.git", "openshift")
+        gpcli.runtime.rpm_metas.return_value = [rpm_meta]
+        ai.get_group_rpm_build_dicts.return_value = {
+            "openshift": {
+                "nvr": "openshift-4.20.0-202605061218.p2.gbbb5678.assembly.stream.el9",
+                "release": "202605061218.p2.gbbb5678.assembly.stream.el9",
+            }
+        }
+
+        gpcli.detect_rpm_image_sibling_mismatch(ai)
+        self.assertEqual(len(gpcli.assembly_issues), 1)
+        self.assertEqual(gpcli.assembly_issues[0].code, AssemblyIssueCode.MISMATCHED_RPM_IMAGE_SIBLINGS)
+        self.assertEqual(gpcli.assembly_issues[0].component, "openshift")
+
+    def test_detect_rpm_image_sibling_mismatch_no_issue_same_commit(self):
+        """
+        RPM and image from the same repo at the same commit should not be flagged.
+        """
+        gpcli = rgp_cli.GenPayloadCli(runtime=MagicMock(assembly="stream"))
+
+        img = self._make_sibling_inspector(
+            "git@github.com:openshift-priv/kubernetes.git", "aaa1234abcdef", "openshift-enterprise-hyperkube"
+        )
+        ai = MagicMock(AssemblyInspector)
+        ai.get_group_release_images.return_value = {"openshift-enterprise-hyperkube": img}
+
+        rpm_meta = self._make_rpm_meta("git@github.com:openshift-priv/kubernetes.git", "openshift")
+        gpcli.runtime.rpm_metas.return_value = [rpm_meta]
+        ai.get_group_rpm_build_dicts.return_value = {
+            "openshift": {
+                "nvr": "openshift-4.20.0-202604241817.p2.gaaa1234.assembly.stream.el9",
+                "release": "202604241817.p2.gaaa1234.assembly.stream.el9",
+            }
+        }
+
+        gpcli.detect_rpm_image_sibling_mismatch(ai)
+        self.assertEqual(len(gpcli.assembly_issues), 0)
+
+    def test_detect_rpm_image_sibling_mismatch_different_repos_no_issue(self):
+        """
+        RPM and image from different repos should not be compared.
+        """
+        gpcli = rgp_cli.GenPayloadCli(runtime=MagicMock(assembly="stream"))
+
+        img = self._make_sibling_inspector(
+            "git@github.com:openshift-priv/kubernetes.git", "aaa1234abcdef", "openshift-enterprise-hyperkube"
+        )
+        ai = MagicMock(AssemblyInspector)
+        ai.get_group_release_images.return_value = {"openshift-enterprise-hyperkube": img}
+
+        rpm_meta = self._make_rpm_meta("git@github.com:openshift-priv/other-repo.git", "other-rpm")
+        gpcli.runtime.rpm_metas.return_value = [rpm_meta]
+
+        gpcli.detect_rpm_image_sibling_mismatch(ai)
+        self.assertEqual(len(gpcli.assembly_issues), 0)
+
+    def test_detect_rpm_image_sibling_mismatch_no_rpm_build(self):
+        """
+        RPM with no build available should be skipped without error.
+        """
+        gpcli = rgp_cli.GenPayloadCli(runtime=MagicMock(assembly="stream"))
+
+        img = self._make_sibling_inspector(
+            "git@github.com:openshift-priv/kubernetes.git", "aaa1234abcdef", "openshift-enterprise-hyperkube"
+        )
+        ai = MagicMock(AssemblyInspector)
+        ai.get_group_release_images.return_value = {"openshift-enterprise-hyperkube": img}
+
+        rpm_meta = self._make_rpm_meta("git@github.com:openshift-priv/kubernetes.git", "openshift")
+        gpcli.runtime.rpm_metas.return_value = [rpm_meta]
+        ai.get_group_rpm_build_dicts.return_value = {"openshift": None}
+
+        gpcli.detect_rpm_image_sibling_mismatch(ai)
+        self.assertEqual(len(gpcli.assembly_issues), 0)
+
+    def test_detect_rpm_image_sibling_mismatch_no_commit_in_release(self):
+        """
+        RPM whose release field has no extractable commit should be skipped.
+        """
+        gpcli = rgp_cli.GenPayloadCli(runtime=MagicMock(assembly="stream"))
+
+        img = self._make_sibling_inspector(
+            "git@github.com:openshift-priv/kubernetes.git", "aaa1234abcdef", "openshift-enterprise-hyperkube"
+        )
+        ai = MagicMock(AssemblyInspector)
+        ai.get_group_release_images.return_value = {"openshift-enterprise-hyperkube": img}
+
+        rpm_meta = self._make_rpm_meta("git@github.com:openshift-priv/kubernetes.git", "openshift")
+        gpcli.runtime.rpm_metas.return_value = [rpm_meta]
+        ai.get_group_rpm_build_dicts.return_value = {"openshift": {"nvr": "openshift-4.20.0-1.el9", "release": "1.el9"}}
+
+        gpcli.detect_rpm_image_sibling_mismatch(ai)
+        self.assertEqual(len(gpcli.assembly_issues), 0)

@@ -56,6 +56,7 @@ from doozerlib.util import (
     extract_version_fields,
     find_manifest_list_sha,
     get_nightly_pullspec,
+    isolate_git_commit_in_release,
     isolate_nightly_name_components,
     what_is_in_master,
 )
@@ -829,6 +830,7 @@ class GenPayloadCli:
         self.logger.info("Checking assembly content for inconsistencies.")
         span.add_event("Checking assembly content for inconsistencies")
         self.detect_mismatched_siblings(assembly_inspector)
+        self.detect_rpm_image_sibling_mismatch(assembly_inspector)
 
         if self.runtime.build_system == 'brew':
             with rt.shared_build_status_detector() as bsd:
@@ -903,6 +905,76 @@ class GenPayloadCli:
 
         self.assembly_issues.extend(issues)
         span.set_attribute("doozer.result.issues", list(map(lambda it: it.to_dict(), issues)))
+
+    @TRACER.start_as_current_span("GenPayloadCli.detect_rpm_image_sibling_mismatch")
+    def detect_rpm_image_sibling_mismatch(self, assembly_inspector: AssemblyInspector):
+        """
+        Detect when an RPM and a container image are built from the same upstream
+        repo but at different source commits. This catches version skew like kubelet
+        (from the openshift RPM) running v1.33.11 while kube-apiserver (from the
+        hyperkube image) is at v1.33.10.
+        """
+        span = trace.get_current_span()
+        self.logger.debug("Checking for RPM/image sibling source mismatches...")
+
+        # Build a map of normalized source URL -> (distgit_key, source_commit) from payload images
+        image_source_commits: Dict[str, Tuple[str, str]] = {}
+        for img in assembly_inspector.get_group_release_images().values():
+            if not img:
+                continue
+            raw_source = img.get_image_meta().raw_config.content.source
+            source_url = raw_source.git.url
+            source_commit = img.get_source_git_commit()
+            if not source_url or not source_commit:
+                continue
+            normalized_url = convert_remote_git_to_https(source_url)
+            image_source_commits[normalized_url] = (img.get_image_meta().distgit_key, source_commit)
+
+        # Check each RPM's source against the image map
+        issues = []
+        rt = self.runtime
+        for rpm_meta in rt.rpm_metas():
+            rpm_source_url = rpm_meta.raw_config.content.source.git.url
+            if not rpm_source_url:
+                continue
+            normalized_rpm_url = convert_remote_git_to_https(rpm_source_url)
+
+            image_entry = image_source_commits.get(normalized_rpm_url)
+            if not image_entry:
+                continue
+
+            image_dgk, image_commit = image_entry
+
+            # Get the RPM build and extract its source commit from the NVR
+            for el_ver in rpm_meta.determine_rhel_targets():
+                rpm_build = assembly_inspector.get_group_rpm_build_dicts(el_ver).get(rpm_meta.distgit_key)
+                if not rpm_build:
+                    continue
+                rpm_commit = isolate_git_commit_in_release(rpm_build["release"])
+                if not rpm_commit:
+                    continue
+
+                # Short-prefix comparison: NVR embeds a 7-char prefix
+                min_len = min(len(rpm_commit), len(image_commit))
+                if rpm_commit[:min_len] == image_commit[:min_len]:
+                    continue
+
+                rpm_nvr = rpm_build["nvr"]
+                issue = AssemblyIssue(
+                    f"RPM {rpm_nvr} (commit {rpm_commit}) and image {image_dgk} "
+                    f"(commit {image_commit[:7]}) are built from the same upstream repo "
+                    f"({normalized_rpm_url}) but at different source commits. "
+                    f"This causes version skew between RPM binaries on nodes and "
+                    f"image binaries in the payload.",
+                    component=rpm_meta.distgit_key,
+                    code=AssemblyIssueCode.MISMATCHED_RPM_IMAGE_SIBLINGS,
+                )
+                issues.append(issue)
+                # Only need to flag once per RPM, not per el_ver
+                break
+
+        self.assembly_issues.extend(issues)
+        span.set_attribute("doozer.result.rpm_image_sibling_issues", list(map(lambda it: it.to_dict(), issues)))
 
     @staticmethod
     def generate_id_tags_list(assembly_inspector: AssemblyInspector) -> List[Tuple[int, str]]:
