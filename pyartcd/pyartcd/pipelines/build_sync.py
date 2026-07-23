@@ -388,9 +388,9 @@ class BuildSyncPipeline:
 
         if not arch_suffix:
             # Tag the image into the imagestream for private CI from openshift-priv.
-            self.logger.info('Tagging ocp-private/%s-priv:%s with %s', self.version, tag, tag_pullspec)
+            self.logger.info('Tagging ocp-priv/%s-priv:%s with %s', self.version, tag, tag_pullspec)
             cmd = (
-                f'oc --kubeconfig {os.environ["KUBECONFIG"]} -n ocp-private '
+                f'oc --kubeconfig {os.environ["KUBECONFIG"]} -n ocp-priv '
                 f'tag {tag_pullspec} {self.version}-priv:{tag} --import-mode=PreserveOriginal'
             )
 
