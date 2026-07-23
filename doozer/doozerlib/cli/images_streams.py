@@ -1467,6 +1467,8 @@ def resolve_upstream_from(runtime, image_entry):
             # tag name without the ose- prefix.
             image_name = remove_prefix(image_name, 'ose-')
             # e.g. quay-proxy.ci.registry.openshift.org/ocp/4.6:base
+            # TODO: temporary workaround for a registry.ci.openshift.org migration;
+            # revisit switching this back once the migration is complete.
             return f'quay-proxy.ci.registry.openshift.org/ocp/{major}.{minor}:{image_name}'
 
     if image_entry.image:
