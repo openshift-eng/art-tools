@@ -397,7 +397,13 @@ class BuildSyncPipeline:
             if self.runtime.dry_run:
                 self.logger.info('Would have executed: "%s"', cmd)
             else:
-                await exectools.cmd_gather_async(cmd)
+                try:
+                    await exectools.cmd_gather_async(cmd)
+                except ChildProcessError:
+                    # Concurrent oc tag calls may race to create the imagestream;
+                    # retry once so the second attempt tags into the now-existing imagestream.
+                    self.logger.warning('Retrying ocp-priv tag for %s-priv:%s after initial failure', self.version, tag)
+                    await exectools.cmd_gather_async(cmd)
 
     @start_as_current_span_async(TRACER, "build-sync.populate-ci-imagestreams")
     async def _populate_ci_imagestreams(self):
@@ -432,6 +438,7 @@ class BuildSyncPipeline:
             await asyncio.gather(*tasks)
 
         except (ChildProcessError, KeyError) as e:
+            self.logger.error('Unable to mirror CoreOS images to CI for %s: %s', self.version, e)
             await self.slack_client.say(f'Unable to mirror CoreOS images to CI for {self.version}: {e}')
 
     @start_as_current_span_async(TRACER, "build-sync.update-nightly-imagestreams")
