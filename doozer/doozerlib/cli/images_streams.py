@@ -172,7 +172,7 @@ def images_streams_mirror(
     elif runtime.registry_config_dir is not None:
         registry_config_file = get_docker_config_json(runtime.registry_config_dir)
 
-    def mirror_image(cmd_start: str, upstream_dest: str, source_digest: Optional[str] = None):
+    def mirror_image(cmd_start: str, upstream_dest: str):
         if upstream_dest.startswith('registry.ci.openshift.org/'):
             # Images targeting CI imagestreams must be mirrored to quay.io/openshift/ci (QCI) first,
             # then imagestreams updated to reference the QCI image by digest.
@@ -206,12 +206,10 @@ def images_streams_mirror(
                             f'Failed to mirror {upstream_entry_name}: {stderr}', (rc, stdout, stderr)
                         )
 
-                # Use source digest when available (oc image mirror preserves manifest digests).
-                # Falling back to get_image_digest for tag-based sources where digest isn't known.
-                if source_digest:
-                    qci_digest = source_digest
-                else:
-                    qci_digest = get_image_digest(floating_qci_dest, registry_config_file)
+                # Always query the actual digest at QCI after mirroring.
+                # oc image mirror may convert manifest formats (OCI↔Docker v2s2),
+                # which changes the digest, so the source digest cannot be trusted.
+                qci_digest = get_image_digest(floating_qci_dest, registry_config_file)
 
                 if qci_digest:
                     # Mirror to GC-prevention tag: art__<digest>
@@ -357,13 +355,9 @@ def images_streams_mirror(
             if registry_config_file is not None:
                 cmd += f" --registry-config={registry_config_file}"
 
-            # Extract digest from source pullspec when available (e.g. Konflux @sha256: refs).
-            # oc image mirror preserves manifest bytes, so source digest == destination digest.
-            src_digest = src_image_pullspec.split('@')[1] if '@' in src_image_pullspec else None
-
             # Mirror to main destination only if not in only-if-missing mode OR destination doesn't exist
             if not only_if_missing or not destinations_to_check.get(upstream_dest, False):
-                mirror_image(cmd, upstream_dest, source_digest=src_digest)
+                mirror_image(cmd, upstream_dest)
 
             # mirror arm64 builder and base images for CI
             if mirror_arm:
@@ -372,7 +366,6 @@ def images_streams_mirror(
                 if registry_config_file is not None:
                     arm_cmd += f" --registry-config={registry_config_file}"
                 # Mirror ARM64 only if not in only-if-missing mode OR destination doesn't exist
-                # ARM64 filter produces a single-arch image, not the original manifest list, so don't pass source_digest
                 if not only_if_missing or not destinations_to_check.get(f'{upstream_dest}-arm64', False):
                     mirror_image(arm_cmd, f'{upstream_dest}-arm64')
 
