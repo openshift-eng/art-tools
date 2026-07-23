@@ -1189,7 +1189,7 @@ class UpdateGolangPipeline:
 )
 @click.option(
     '--use-new-golang-branch/--no-use-new-golang-branch',
-    default=True,
+    default=False,
     help='Use the unified "golang" branch layout in ocp-build-data instead of per-variant branches (e.g. rhel-9-golang-1.26).',
 )
 @click.option(
