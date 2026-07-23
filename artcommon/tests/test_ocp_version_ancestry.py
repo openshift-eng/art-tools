@@ -462,23 +462,34 @@ class TestGetCincinnatiChannels(unittest.TestCase):
 class TestGetReleaseControllerVersionsAsync(unittest.IsolatedAsyncioTestCase):
     """Test the get_release_controller_versions_async function"""
 
+    def _make_response(self, data):
+        """Helper to create a mock HTTP response."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = data
+        mock_response.raise_for_status = MagicMock()
+        return mock_response
+
+    def _make_stream_responses(self, stable_tags, dev_preview_tags):
+        """Helper to create side_effect for stable + dev-preview calls."""
+        stable_resp = self._make_response({"name": "4-stable", "tags": stable_tags})
+        dev_preview_resp = self._make_response({"name": "4-dev-preview", "tags": dev_preview_tags})
+        return [stable_resp, dev_preview_resp]
+
     async def test_filters_by_major_minor(self):
         """Only versions matching requested major.minor are returned"""
-        mock_response = MagicMock()
-        mock_response.json.return_value = {
-            "name": "4-stable",
-            "tags": [
+        responses = self._make_stream_responses(
+            stable_tags=[
                 {"name": "4.18.3", "phase": "Accepted"},
                 {"name": "4.18.2", "phase": "Accepted"},
                 {"name": "4.18.1", "phase": "Accepted"},
                 {"name": "4.17.5", "phase": "Accepted"},
                 {"name": "4.17.4", "phase": "Accepted"},
             ],
-        }
-        mock_response.raise_for_status = MagicMock()
+            dev_preview_tags=[],
+        )
 
         with patch("httpx.AsyncClient") as mock_client:
-            mock_client.return_value.__aenter__.return_value.get = AsyncMock(return_value=mock_response)
+            mock_client.return_value.__aenter__.return_value.get = AsyncMock(side_effect=responses)
 
             result = await get_release_controller_versions_async(4, 18, "amd64")
 
@@ -497,54 +508,53 @@ class TestGetReleaseControllerVersionsAsync(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, [])
 
     async def test_default_url_uses_go_arch(self):
-        """Default URL should be constructed from go_arch"""
-        mock_response = MagicMock()
-        mock_response.json.return_value = {"name": "4-stable", "tags": []}
-        mock_response.raise_for_status = MagicMock()
+        """Default URL should be constructed from go_arch, querying both streams"""
+        responses = self._make_stream_responses(stable_tags=[], dev_preview_tags=[])
 
         with patch("httpx.AsyncClient") as mock_client:
-            mock_get = AsyncMock(return_value=mock_response)
+            mock_get = AsyncMock(side_effect=responses)
             mock_client.return_value.__aenter__.return_value.get = mock_get
 
             await get_release_controller_versions_async(4, 18, "arm64")
 
-            called_url = mock_get.call_args[0][0]
+            calls = mock_get.call_args_list
+            self.assertEqual(len(calls), 2)
             self.assertEqual(
-                called_url, "https://arm64.ocp.releases.ci.openshift.org/api/v1/releasestream/4-stable/tags"
+                calls[0][0][0], "https://arm64.ocp.releases.ci.openshift.org/api/v1/releasestream/4-stable/tags"
+            )
+            self.assertEqual(
+                calls[1][0][0], "https://arm64.ocp.releases.ci.openshift.org/api/v1/releasestream/4-dev-preview/tags"
             )
 
     async def test_custom_url(self):
-        """Custom release_controller_url should be used"""
-        mock_response = MagicMock()
-        mock_response.json.return_value = {"name": "4-stable", "tags": []}
-        mock_response.raise_for_status = MagicMock()
+        """Custom release_controller_url should be used for both streams"""
+        responses = self._make_stream_responses(stable_tags=[], dev_preview_tags=[])
 
         with patch("httpx.AsyncClient") as mock_client:
-            mock_get = AsyncMock(return_value=mock_response)
+            mock_get = AsyncMock(side_effect=responses)
             mock_client.return_value.__aenter__.return_value.get = mock_get
 
             await get_release_controller_versions_async(
                 4, 18, "amd64", release_controller_url="https://custom.example.com"
             )
 
-            called_url = mock_get.call_args[0][0]
-            self.assertEqual(called_url, "https://custom.example.com/api/v1/releasestream/4-stable/tags")
+            calls = mock_get.call_args_list
+            self.assertEqual(calls[0][0][0], "https://custom.example.com/api/v1/releasestream/4-stable/tags")
+            self.assertEqual(calls[1][0][0], "https://custom.example.com/api/v1/releasestream/4-dev-preview/tags")
 
     async def test_skips_invalid_semver_tags(self):
         """Tags with invalid semver names should be silently skipped"""
-        mock_response = MagicMock()
-        mock_response.json.return_value = {
-            "name": "4-stable",
-            "tags": [
+        responses = self._make_stream_responses(
+            stable_tags=[
                 {"name": "4.18.1", "phase": "Accepted"},
                 {"name": "4.18.latest", "phase": "Accepted"},  # not valid semver (no patch number)
                 {"name": "4.18.0", "phase": "Accepted"},
             ],
-        }
-        mock_response.raise_for_status = MagicMock()
+            dev_preview_tags=[],
+        )
 
         with patch("httpx.AsyncClient") as mock_client:
-            mock_client.return_value.__aenter__.return_value.get = AsyncMock(return_value=mock_response)
+            mock_client.return_value.__aenter__.return_value.get = AsyncMock(side_effect=responses)
 
             result = await get_release_controller_versions_async(4, 18, "amd64")
 
@@ -552,23 +562,91 @@ class TestGetReleaseControllerVersionsAsync(unittest.IsolatedAsyncioTestCase):
 
     async def test_sorted_descending(self):
         """Results should be sorted in descending semver order"""
-        mock_response = MagicMock()
-        mock_response.json.return_value = {
-            "name": "4-stable",
-            "tags": [
+        responses = self._make_stream_responses(
+            stable_tags=[
                 {"name": "4.18.0", "phase": "Accepted"},
                 {"name": "4.18.2", "phase": "Accepted"},
                 {"name": "4.18.1", "phase": "Accepted"},
             ],
-        }
-        mock_response.raise_for_status = MagicMock()
+            dev_preview_tags=[],
+        )
 
         with patch("httpx.AsyncClient") as mock_client:
-            mock_client.return_value.__aenter__.return_value.get = AsyncMock(return_value=mock_response)
+            mock_client.return_value.__aenter__.return_value.get = AsyncMock(side_effect=responses)
 
             result = await get_release_controller_versions_async(4, 18, "amd64")
 
         self.assertEqual(result, ['4.18.2', '4.18.1', '4.18.0'])
+
+    async def test_null_tags_returns_empty(self):
+        """When the release controller returns {"tags": null}, should return [] instead of crashing"""
+        responses = [
+            self._make_response({"name": "5-stable", "tags": None}),
+            self._make_response({"name": "5-dev-preview", "tags": None}),
+        ]
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.get = AsyncMock(side_effect=responses)
+
+            result = await get_release_controller_versions_async(5, 0, "amd64")
+
+        self.assertEqual(result, [])
+
+    async def test_dev_preview_versions_included(self):
+        """EC releases from dev-preview stream should be included in results"""
+        responses = [
+            # stable stream has no 5.0 versions
+            self._make_response({"name": "5-stable", "tags": []}),
+            # dev-preview has EC releases
+            self._make_response(
+                {
+                    "name": "5-dev-preview",
+                    "tags": [
+                        {"name": "5.0.0-ec.5", "phase": "Accepted"},
+                        {"name": "5.0.0-ec.4", "phase": "Accepted"},
+                        {"name": "5.0.0-ec.3", "phase": "Accepted"},
+                        {"name": "4.22.0-ec.2", "phase": "Accepted"},  # different minor, should be filtered
+                    ],
+                }
+            ),
+        ]
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.get = AsyncMock(side_effect=responses)
+
+            result = await get_release_controller_versions_async(5, 0, "amd64")
+
+        self.assertEqual(result, ['5.0.0-ec.5', '5.0.0-ec.4', '5.0.0-ec.3'])
+
+    async def test_union_of_stable_and_dev_preview(self):
+        """Versions from both stable and dev-preview should be unioned and deduplicated"""
+        responses = [
+            self._make_response(
+                {
+                    "name": "5-stable",
+                    "tags": [
+                        {"name": "5.0.1", "phase": "Accepted"},
+                        {"name": "5.0.0", "phase": "Accepted"},
+                    ],
+                }
+            ),
+            self._make_response(
+                {
+                    "name": "5-dev-preview",
+                    "tags": [
+                        {"name": "5.0.0-ec.3", "phase": "Accepted"},
+                        {"name": "5.0.0", "phase": "Accepted"},  # duplicate with stable
+                    ],
+                }
+            ),
+        ]
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.get = AsyncMock(side_effect=responses)
+
+            result = await get_release_controller_versions_async(5, 0, "amd64")
+
+        self.assertEqual(result, ['5.0.1', '5.0.0', '5.0.0-ec.3'])
 
 
 class TestCalcUpgradeSourcesAsync(unittest.IsolatedAsyncioTestCase):

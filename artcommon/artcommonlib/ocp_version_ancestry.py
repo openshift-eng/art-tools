@@ -349,6 +349,46 @@ def _version_in_range(version: str, v_min: str, v_max: Optional[str]) -> bool:
     return v_info.major == min_info.major and v_info.minor == min_info.minor
 
 
+async def _fetch_release_controller_tags(
+    url: str,
+    major: int,
+    minor: int,
+    timeout: float,
+) -> list[str]:
+    """
+    Fetch tags from a single release controller stream URL and filter to major.minor.
+
+    :param url: Full URL to the release controller tags endpoint
+    :param major: Major version to filter for
+    :param minor: Minor version to filter for
+    :param timeout: HTTP request timeout in seconds
+    :return: List of matching version strings (unsorted)
+    """
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, timeout=timeout)
+            response.raise_for_status()
+    except httpx.HTTPError as e:
+        logger.warning('Failed to query release controller at %s: %s', url, e)
+        return []
+
+    data = response.json()
+    tags = data.get('tags') or []
+
+    version_pattern = re.compile(rf'^{major}\.{minor}\.')
+    versions = []
+    for tag in tags:
+        name = tag.get('name', '')
+        if version_pattern.match(name):
+            try:
+                semver.VersionInfo.parse(name)
+                versions.append(name)
+            except ValueError:
+                continue
+
+    return versions
+
+
 async def get_release_controller_versions_async(
     major: int,
     minor: int,
@@ -357,11 +397,15 @@ async def get_release_controller_versions_async(
     timeout: float = 30.0,
 ) -> list[str]:
     """
-    Query the release controller's stable stream to get all promoted versions for a major.minor.
+    Query the release controller's stable and dev-preview streams to get all promoted versions
+    for a major.minor.
 
-    The release controller tracks all versions that have been promoted to the 4-stable stream,
-    regardless of whether their cincinnati-graph-data PR has merged. This supplements Cincinnati
-    data to avoid missing recently-promoted z-streams.
+    The release controller tracks all versions that have been promoted, regardless of whether
+    their cincinnati-graph-data PR has merged. This supplements Cincinnati data to avoid missing
+    recently-promoted z-streams.
+
+    Both {major}-stable and {major}-dev-preview streams are queried because EC releases
+    (e.g., 5.0.0-ec.5) are promoted to dev-preview, not stable.
 
     :param major: Major version (e.g., 4 or 5)
     :param minor: Minor version (e.g., 18)
@@ -375,34 +419,15 @@ async def get_release_controller_versions_async(
         release_controller_url = f'https://{go_arch}.ocp.releases.ci.openshift.org'
 
     base_url = release_controller_url.rstrip('/')
-    url = f'{base_url}/api/v1/releasestream/{major}-stable/tags'
 
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(url, timeout=timeout)
-            response.raise_for_status()
-    except httpx.HTTPError as e:
-        logger.warning('Failed to query release controller at %s: %s', url, e)
-        return []
+    streams = [f'{major}-stable', f'{major}-dev-preview']
+    all_versions: set[str] = set()
+    for stream in streams:
+        url = f'{base_url}/api/v1/releasestream/{stream}/tags'
+        versions = await _fetch_release_controller_tags(url, major, minor, timeout)
+        all_versions.update(versions)
 
-    data = response.json()
-    tags = data.get('tags', [])
-
-    # Filter tags to only those matching the requested major.minor.
-    # Tag names are version strings like "4.18.3" or "4.18.0-rc.0".
-    version_pattern = re.compile(rf'^{major}\.{minor}\.')
-    versions = []
-    for tag in tags:
-        name = tag.get('name', '')
-        if version_pattern.match(name):
-            # Validate it's a proper semver string before including
-            try:
-                semver.VersionInfo.parse(name)
-                versions.append(name)
-            except ValueError:
-                continue
-
-    return sort_semver(versions)
+    return sort_semver(list(all_versions))
 
 
 async def calc_upgrade_sources_async(
