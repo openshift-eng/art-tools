@@ -560,10 +560,12 @@ class SyncCIImagesPipeline:
         await self._run_doozer_command(doozer_opts, "images:streams start-builds", start_builds_args.strip())
 
     async def _wait_for_builds(self) -> None:
-        """Wait for CI builds to complete."""
-        if not self.skip_waits and not self.runtime.dry_run:
-            self._logger.info(f"{self.version}: Waiting {self.WAIT_TIME_MINUTES} minutes for builds")
-            await asyncio.sleep(self.WAIT_TIME_MINUTES * 60)
+        """Wait for CI builds to complete.
+
+        Note: start-builds now polls for build completion, so builds are
+        already finished by the time we reach here. This method is kept
+        as a no-op hook in case a short settling delay is ever needed.
+        """
 
     async def _verify_upstream_consistency(self, doozer_opts: str, auth_file: str) -> None:
         """Verify CI imagestreams match expected state."""
