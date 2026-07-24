@@ -206,10 +206,17 @@ def images_streams_mirror(
                             f'Failed to mirror {upstream_entry_name}: {stderr}', (rc, stdout, stderr)
                         )
 
-                # Always query the actual digest at QCI after mirroring.
-                # oc image mirror may convert manifest formats (OCI↔Docker v2s2),
-                # which changes the digest, so the source digest cannot be trusted.
-                qci_digest = get_image_digest(floating_qci_dest, registry_config_file)
+                # Determine the digest at QCI after mirroring.
+                # For manifest lists (--keep-manifest-list) with a digest-pinned source,
+                # the manifest list digest is preserved at the destination since the
+                # content is mirrored as-is. Use the source digest directly because
+                # `oc image info` cannot resolve manifest list tags.
+                qci_digest = None
+                if '--keep-manifest-list' in cmd_start and '@sha256:' in cmd_start:
+                    qci_digest = cmd_start.split('@sha256:', 1)[1].split()[0]
+                    qci_digest = f'sha256:{qci_digest}'
+                else:
+                    qci_digest = get_image_digest(floating_qci_dest, registry_config_file)
 
                 if qci_digest:
                     # Mirror to GC-prevention tag: art__<digest>
