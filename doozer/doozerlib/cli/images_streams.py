@@ -975,24 +975,28 @@ def images_streams_start_buildconfigs(
 
                 print(f'  Waiting for build {build_name}...')
 
-                # Wait for the specific build to complete or fail
-                # Use remaining time from overall timeout
-                wait_cmd = f"oc -n ci wait --for=jsonpath='{{.status.phase}}'=Complete --for=jsonpath='{{.status.phase}}'=Failed --timeout={int(remaining)}s build/{build_name}"
-                if as_user:
-                    wait_cmd += f' --as {as_user}'
+                # Poll for build completion (Complete or Failed).
+                # We cannot use `oc wait` with two --for=jsonpath conditions because
+                # multiple --for flags are ANDed, making Complete AND Failed impossible.
+                poll_interval = 15
+                phase = ''
+                while True:
+                    elapsed_wait = time.time() - overall_start_time
+                    if elapsed_wait >= overall_timeout:
+                        runtime.logger.warning(f'Overall timeout exceeded while waiting for {build_name}')
+                        break
 
-                rc, stdout, stderr = exectools.cmd_gather(wait_cmd)
-                if rc != 0:
-                    runtime.logger.warning(f'Build {build_name} did not complete: {stderr}')
-                    continue
+                    check_phase_cmd = f'oc -n ci get build/{build_name} -o jsonpath={{.status.phase}}'
+                    if as_user:
+                        check_phase_cmd += f' --as {as_user}'
 
-                # Check if build succeeded or failed
-                check_phase_cmd = f'oc -n ci get build/{build_name} -o jsonpath={{.status.phase}}'
-                if as_user:
-                    check_phase_cmd += f' --as {as_user}'
+                    rc_phase, phase_stdout, _ = exectools.cmd_gather(check_phase_cmd)
+                    if rc_phase == 0:
+                        phase = phase_stdout.strip()
+                        if phase in ('Complete', 'Failed', 'Cancelled', 'Error'):
+                            break
 
-                phase_stdout, _ = exectools.cmd_assert(check_phase_cmd, retries=1)
-                phase = phase_stdout.strip()
+                    time.sleep(poll_interval)
 
                 if phase != 'Complete':
                     runtime.logger.warning(
