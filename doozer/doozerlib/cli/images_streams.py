@@ -231,7 +231,10 @@ def images_streams_mirror(
                         gc_mirror_cmd += f' --registry-config={registry_config_file}'
                     exectools.cmd_assert(gc_mirror_cmd, retries=3, realtime=True)
 
-                    # Update imagestream to reference QCI by digest via quay-proxy
+                    # Update imagestream to reference QCI by digest via quay-proxy.
+                    # Do NOT set reference=True; without it the image controller
+                    # imports the manifest into the integrated registry so that
+                    # oc image info / pulls against registry.ci work correctly.
                     istag_patch = {
                         'tag': {
                             'name': dest_tag,
@@ -239,7 +242,6 @@ def images_streams_mirror(
                                 'kind': 'DockerImage',
                                 'name': f'quay-proxy.ci.openshift.org/openshift/ci@{qci_digest}',
                             },
-                            'reference': True,
                             'referencePolicy': {'type': 'Source'},
                             'importPolicy': {'importMode': 'PreserveOriginal'},
                         }
@@ -545,7 +547,6 @@ def images_streams_check_upstream(runtime, streams, images, live_test_mode, dry_
                                             'kind': 'DockerImage',
                                             'name': f'quay-proxy.ci.openshift.org/openshift/ci@{current_digest}',
                                         },
-                                        'reference': True,
                                         'referencePolicy': {'type': 'Source'},
                                         'importPolicy': {'importMode': 'PreserveOriginal'},
                                     }
@@ -791,7 +792,6 @@ def images_streams_start_buildconfigs(
                                 'kind': 'DockerImage',
                                 'name': f'quay-proxy.ci.openshift.org/openshift/ci@{current_digest}',
                             },
-                            'reference': True,
                             'referencePolicy': {'type': 'Source'},
                             'importPolicy': {'importMode': 'PreserveOriginal'},
                         }
@@ -884,7 +884,6 @@ def images_streams_start_buildconfigs(
                                                 'kind': 'DockerImage',
                                                 'name': f'quay-proxy.ci.openshift.org/openshift/ci@{bootstrap_digest}',
                                             },
-                                            'reference': True,
                                             'referencePolicy': {'type': 'Source'},
                                             'importPolicy': {'importMode': 'PreserveOriginal'},
                                         }
@@ -1044,7 +1043,6 @@ def images_streams_start_buildconfigs(
                                     'kind': 'DockerImage',
                                     'name': f'quay-proxy.ci.openshift.org/openshift/ci@{new_digest}',
                                 },
-                                'reference': True,
                                 'referencePolicy': {'type': 'Source'},
                                 'importPolicy': {'importMode': 'PreserveOriginal'},
                             }
