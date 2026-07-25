@@ -17,7 +17,7 @@ ENV PATH="/usr/local/bin:$PATH"
 
 # Install necessary packages and Python libraries
 RUN dnf -y install python3.11 python3.11-pip python3.11-wheel python3.11-devel gcc krb5-devel wget tar gzip git krb5-workstation \
-    brewkoji rhpkg podman python3-rpm \
+    brewkoji rhpkg podman skopeo python3-rpm python3-pip python3-dnf jq \
     && uv pip install --system --upgrade setuptools \
     && dnf clean all
 
@@ -35,6 +35,11 @@ RUN wget -O "awscliv2.zip" "https://awscli.amazonaws.com/awscli-exe-linux-x86_64
 # Install tkn client
 RUN curl -LO https://github.com/tektoncd/cli/releases/download/v0.37.0/tkn_0.37.0_Linux_x86_64.tar.gz &&  \
     tar xvzf tkn_0.37.0_Linux_x86_64.tar.gz -C /usr/local/bin/ tkn
+
+# Install yq
+ARG YQ_VERSION=v4.44.6
+RUN wget -qO /usr/local/bin/yq "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64" \
+    && chmod +x /usr/local/bin/yq
 
 # Install opm (Operator Package Manager) for FBC builds
 ARG OPM_VERSION=v1.47.0
