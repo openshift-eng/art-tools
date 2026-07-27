@@ -50,6 +50,7 @@ class Jobs(Enum):
     LAYERED_PRODUCTS = 'aos-cd-builds/build%2Flayered-products'
     LAYERED_PRODUCTS_SCAN = 'aos-cd-builds/build%2Flayered-products-scan'
     SCAN_PLASHET_RPMS = 'scanning/scanning%2Fplashet-rpms'
+    BUILD_CONFORMA_VERIFY = 'aos-cd-builds/build%2Fbuild-conforma-verify'
     SCAN_OPERATOR = 'aos-cd-builds/build%2Fscan-operator'
     SYNC_CI_IMAGES = 'aos-cd-builds/build%2Fsync-ci-images'
 
@@ -886,6 +887,39 @@ def start_scan_operator(version: str, **kwargs) -> Optional[str]:
 
     return start_build(
         job=Jobs.SCAN_OPERATOR,
+        params=params,
+        **kwargs,
+    )
+
+
+def start_build_conforma_verify(
+    build_version: str,
+    assembly: str = 'stream',
+    ec_policy: str = '',
+    fbc_ec_policy: str = '',
+    effective_time: str = '',
+    include_bundles: bool = False,
+    include_fbcs: bool = False,
+    include_corresponding_bundles: bool = False,
+    include_corresponding_fbcs: bool = False,
+    report_to_slack: bool = False,
+    **kwargs,
+) -> Optional[str]:
+    params = {
+        'BUILD_VERSION': build_version,
+        'ASSEMBLY': assembly,
+        'EC_POLICY': ec_policy,
+        'EC_POLICY_FBC': fbc_ec_policy,
+        'EFFECTIVE_TIME': effective_time,
+        'INCLUDE_BUNDLES': include_bundles,
+        'INCLUDE_FBCS': include_fbcs,
+        'INCLUDE_CORRESPONDING_BUNDLES': include_corresponding_bundles,
+        'INCLUDE_CORRESPONDING_FBCS': include_corresponding_fbcs,
+        'REPORT_TO_SLACK': report_to_slack,
+    }
+
+    return start_build(
+        job=Jobs.BUILD_CONFORMA_VERIFY,
         params=params,
         **kwargs,
     )
