@@ -559,12 +559,6 @@ class SyncCIImagesPipeline:
             start_builds_args += "--dry-run"
         await self._run_doozer_command(doozer_opts, "images:streams start-builds", start_builds_args.strip())
 
-    async def _wait_for_builds(self) -> None:
-        """Wait for CI builds to complete."""
-        if not self.skip_waits and not self.runtime.dry_run:
-            self._logger.info(f"{self.version}: Waiting {self.WAIT_TIME_MINUTES} minutes for builds")
-            await asyncio.sleep(self.WAIT_TIME_MINUTES * 60)
-
     async def _verify_upstream_consistency(self, doozer_opts: str, auth_file: str) -> None:
         """Verify CI imagestreams match expected state."""
         self._logger.info(f"{self.version}: Checking upstream consistency")
@@ -667,7 +661,6 @@ class SyncCIImagesPipeline:
                 await self._generate_and_apply_buildconfigs(doozer_opts)
                 await self._mirror_images_to_ci(doozer_opts, auth_file)
                 await self._trigger_ci_builds(doozer_opts, auth_file)
-                await self._wait_for_builds()
                 await self._verify_upstream_consistency(doozer_opts, auth_file)
 
                 rc = await self._open_reconciliation_prs(doozer_opts)

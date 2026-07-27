@@ -206,10 +206,17 @@ def images_streams_mirror(
                             f'Failed to mirror {upstream_entry_name}: {stderr}', (rc, stdout, stderr)
                         )
 
-                # Always query the actual digest at QCI after mirroring.
-                # oc image mirror may convert manifest formats (OCI↔Docker v2s2),
-                # which changes the digest, so the source digest cannot be trusted.
-                qci_digest = get_image_digest(floating_qci_dest, registry_config_file)
+                # Determine the digest at QCI after mirroring.
+                # For manifest lists (--keep-manifest-list) with a digest-pinned source,
+                # the manifest list digest is preserved at the destination since the
+                # content is mirrored as-is. Use the source digest directly because
+                # `oc image info` cannot resolve manifest list tags.
+                qci_digest = None
+                if '--keep-manifest-list' in cmd_start and '@sha256:' in cmd_start:
+                    qci_digest = cmd_start.split('@sha256:', 1)[1].split()[0]
+                    qci_digest = f'sha256:{qci_digest}'
+                else:
+                    qci_digest = get_image_digest(floating_qci_dest, registry_config_file)
 
                 if qci_digest:
                     # Mirror to GC-prevention tag: art__<digest>
@@ -224,7 +231,10 @@ def images_streams_mirror(
                         gc_mirror_cmd += f' --registry-config={registry_config_file}'
                     exectools.cmd_assert(gc_mirror_cmd, retries=3, realtime=True)
 
-                    # Update imagestream to reference QCI by digest via quay-proxy
+                    # Update imagestream to reference QCI by digest via quay-proxy.
+                    # Do NOT set reference=True; without it the image controller
+                    # imports the manifest into the integrated registry so that
+                    # oc image info / pulls against registry.ci work correctly.
                     istag_patch = {
                         'tag': {
                             'name': dest_tag,
@@ -232,7 +242,6 @@ def images_streams_mirror(
                                 'kind': 'DockerImage',
                                 'name': f'quay-proxy.ci.openshift.org/openshift/ci@{qci_digest}',
                             },
-                            'reference': True,
                             'referencePolicy': {'type': 'Source'},
                             'importPolicy': {'importMode': 'PreserveOriginal'},
                         }
@@ -538,7 +547,6 @@ def images_streams_check_upstream(runtime, streams, images, live_test_mode, dry_
                                             'kind': 'DockerImage',
                                             'name': f'quay-proxy.ci.openshift.org/openshift/ci@{current_digest}',
                                         },
-                                        'reference': True,
                                         'referencePolicy': {'type': 'Source'},
                                         'importPolicy': {'importMode': 'PreserveOriginal'},
                                     }
@@ -784,7 +792,6 @@ def images_streams_start_buildconfigs(
                                 'kind': 'DockerImage',
                                 'name': f'quay-proxy.ci.openshift.org/openshift/ci@{current_digest}',
                             },
-                            'reference': True,
                             'referencePolicy': {'type': 'Source'},
                             'importPolicy': {'importMode': 'PreserveOriginal'},
                         }
@@ -877,7 +884,6 @@ def images_streams_start_buildconfigs(
                                                 'kind': 'DockerImage',
                                                 'name': f'quay-proxy.ci.openshift.org/openshift/ci@{bootstrap_digest}',
                                             },
-                                            'reference': True,
                                             'referencePolicy': {'type': 'Source'},
                                             'importPolicy': {'importMode': 'PreserveOriginal'},
                                         }
@@ -975,24 +981,28 @@ def images_streams_start_buildconfigs(
 
                 print(f'  Waiting for build {build_name}...')
 
-                # Wait for the specific build to complete or fail
-                # Use remaining time from overall timeout
-                wait_cmd = f"oc -n ci wait --for=jsonpath='{{.status.phase}}'=Complete --for=jsonpath='{{.status.phase}}'=Failed --timeout={int(remaining)}s build/{build_name}"
-                if as_user:
-                    wait_cmd += f' --as {as_user}'
+                # Poll for build completion (Complete or Failed).
+                # We cannot use `oc wait` with two --for=jsonpath conditions because
+                # multiple --for flags are ANDed, making Complete AND Failed impossible.
+                poll_interval = 15
+                phase = ''
+                while True:
+                    elapsed_wait = time.time() - overall_start_time
+                    if elapsed_wait >= overall_timeout:
+                        runtime.logger.warning(f'Overall timeout exceeded while waiting for {build_name}')
+                        break
 
-                rc, stdout, stderr = exectools.cmd_gather(wait_cmd)
-                if rc != 0:
-                    runtime.logger.warning(f'Build {build_name} did not complete: {stderr}')
-                    continue
+                    check_phase_cmd = f'oc -n ci get build/{build_name} -o jsonpath={{.status.phase}}'
+                    if as_user:
+                        check_phase_cmd += f' --as {as_user}'
 
-                # Check if build succeeded or failed
-                check_phase_cmd = f'oc -n ci get build/{build_name} -o jsonpath={{.status.phase}}'
-                if as_user:
-                    check_phase_cmd += f' --as {as_user}'
+                    rc_phase, phase_stdout, _ = exectools.cmd_gather(check_phase_cmd)
+                    if rc_phase == 0:
+                        phase = phase_stdout.strip()
+                        if phase in ('Complete', 'Failed', 'Cancelled', 'Error'):
+                            break
 
-                phase_stdout, _ = exectools.cmd_assert(check_phase_cmd, retries=1)
-                phase = phase_stdout.strip()
+                    time.sleep(poll_interval)
 
                 if phase != 'Complete':
                     runtime.logger.warning(
@@ -1033,7 +1043,6 @@ def images_streams_start_buildconfigs(
                                     'kind': 'DockerImage',
                                     'name': f'quay-proxy.ci.openshift.org/openshift/ci@{new_digest}',
                                 },
-                                'reference': True,
                                 'referencePolicy': {'type': 'Source'},
                                 'importPolicy': {'importMode': 'PreserveOriginal'},
                             }
