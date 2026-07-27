@@ -294,8 +294,13 @@ class KonfluxOlmBundleRebaser:
         resolved_operands: dict[str, tuple[str, str, str]] = {}
         if operator_build.engine is Engine.KONFLUX and image_references and is_layered:
             delivery_override_map, delivery_namespace_map = self._build_delivery_maps(metadata)
+            external_image_names = self._get_external_image_names(operator_manifests_dir)
             resolved_operands = await self._resolve_operands_from_db(
-                metadata, image_references, delivery_override_map, delivery_namespace_map
+                metadata,
+                image_references,
+                delivery_override_map,
+                delivery_namespace_map,
+                external_image_names,
             )
 
         # Copy the operator's manifests to the bundle directory, replacing image
@@ -576,6 +581,7 @@ class KonfluxOlmBundleRebaser:
         image_references: dict[str, dict],
         delivery_override_map: dict[str, str],
         delivery_namespace_map: dict[str, str],
+        external_image_names: set[str] = frozenset(),
     ) -> dict[str, tuple[str, str, str]]:
         """
         Resolve ART-built operand images from Konflux DB instead of relying
@@ -608,13 +614,14 @@ class KonfluxOlmBundleRebaser:
 
             distgit_key = metadata.runtime.name_in_bundle_map.get(name)
             if not distgit_key:
-                logger.info(
-                    "Skipping %s (not in name_in_bundle_map for %s) -- likely an external image "
-                    "handled by _find_external_digest_images",
-                    name,
-                    metadata.distgit_key,
-                )
-                continue
+                if name in external_image_names:
+                    logger.info(
+                        "Skipping external image %s (defined in art.yaml external-images for %s)",
+                        name,
+                        metadata.distgit_key,
+                    )
+                    continue
+                raise ValueError(f"Unable to find {name} in name_in_bundle_map for {metadata.distgit_key}")
 
             meta = metadata.runtime.image_map.get(distgit_key)
             if not meta:
@@ -870,6 +877,32 @@ class KonfluxOlmBundleRebaser:
             if image_short_name not in already_resolved and image_short_name not in found:
                 found[image_short_name] = (pullspec, pullspec, "external")
         return found
+
+    @staticmethod
+    def _get_external_image_names(operator_manifests_dir: Path) -> set[str]:
+        """Get the set of image names defined in external-images config from art.yaml.
+
+        These images are not ART-built and will be handled separately by
+        _find_external_digest_images.
+
+        Args:
+            operator_manifests_dir: Path to the operator's manifests directory.
+
+        Returns:
+            Set of image names defined in external-images config, or empty set if none.
+        """
+        art_yaml_path = operator_manifests_dir / 'art.yaml'
+        if not art_yaml_path.is_file():
+            return set()
+        try:
+            with open(art_yaml_path, 'r', encoding='utf-8') as f:
+                art_yaml_data = yaml.safe_load(f.read())
+        except Exception:
+            return set()
+        external_images = art_yaml_data.get('external-images', [])
+        if not external_images:
+            return set()
+        return {ext_img.get('name') for ext_img in external_images if ext_img.get('name')}
 
     @cached_property
     def _operator_index_mode(self):

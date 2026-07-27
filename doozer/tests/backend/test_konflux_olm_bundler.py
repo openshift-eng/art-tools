@@ -704,8 +704,8 @@ spec:
 
     async def test_resolve_operands_from_db_skips_external_images(self):
         """
-        Verify that image-references entries not in name_in_bundle_map (external
-        images like postgresql) are gracefully skipped instead of raising an error.
+        Verify that image-references entries not in name_in_bundle_map are
+        gracefully skipped when they are declared as external in art.yaml.
         """
         metadata = MagicMock()
         metadata.distgit_key = "mta-operator"
@@ -720,8 +720,32 @@ spec:
             },
         }
 
-        resolved = await self.rebaser._resolve_operands_from_db(metadata, image_references, {}, {})
+        resolved = await self.rebaser._resolve_operands_from_db(
+            metadata, image_references, {}, {}, external_image_names={"postgresql"}
+        )
         self.assertEqual(resolved, {})
+
+    async def test_resolve_operands_from_db_unknown_image(self):
+        """
+        Verify ValueError when image-references has an image not in
+        name_in_bundle_map and not declared external in art.yaml.
+        """
+        metadata = MagicMock()
+        metadata.distgit_key = "test-operator"
+        metadata.runtime.group = "openshift-4.18"
+        metadata.runtime.data_dir = "/nonexistent/data/dir"
+        metadata.runtime.name_in_bundle_map = {}
+
+        image_references = {
+            "unknown-image": {
+                "name": "unknown-image",
+                "from": {"name": "registry.example.com/openshift/unknown:v4.18"},
+            },
+        }
+
+        with self.assertRaises(ValueError) as ctx:
+            await self.rebaser._resolve_operands_from_db(metadata, image_references, {}, {}, external_image_names=set())
+        self.assertIn("Unable to find unknown-image in name_in_bundle_map", str(ctx.exception))
 
     @patch("doozerlib.backend.konflux_olm_bundler.is_nvr_embargoed", return_value=False)
     @patch("doozerlib.util.oc_image_info_for_arch_async")
@@ -778,7 +802,9 @@ spec:
         self.rebaser._group_config.operator_image_ref_mode = "manifest-list"
         self.rebaser._group_config.vars = {"MAJOR": 8}
 
-        resolved = await self.rebaser._resolve_operands_from_db(metadata, image_references, {}, {})
+        resolved = await self.rebaser._resolve_operands_from_db(
+            metadata, image_references, {}, {}, external_image_names={"postgresql"}
+        )
 
         # mta-ui should be resolved, postgresql should be skipped
         self.assertIn("mta-ui-rhel9", resolved)
