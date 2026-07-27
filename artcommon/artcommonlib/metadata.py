@@ -47,6 +47,8 @@ class MetadataBase(object):
         self.config = assembly_metadata_config(
             runtime.get_releases_config(), runtime.assembly, meta_type, self.distgit_key, self.raw_config
         )
+        if self.config.distgit.name is not Missing:
+            self.name = str(self.config.distgit.name)
         self.namespace, self._component_name = self.extract_component_info(meta_type, self.name, self.config)
         self.mode = self.config.get('mode', CONFIG_MODE_DEFAULT).lower()
         if self.mode not in CONFIG_MODES:
