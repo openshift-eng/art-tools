@@ -960,6 +960,11 @@ def push_cdn_stage(advisory_id):
     return response.json()
 
 
+def get_cdn_push_status(advisory_id: int) -> list[dict]:
+    """Get push job statuses for an advisory."""
+    return ErrataConnector()._get(f'/api/v1/erratum/{advisory_id}/push').json()
+
+
 def is_advisory_editable(advisory_id: int) -> bool:
     erratum = get_raw_erratum(advisory_id)['errata']
     advisory_type_key = list(erratum.keys())[0]
