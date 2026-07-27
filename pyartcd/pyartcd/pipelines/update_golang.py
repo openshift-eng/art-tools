@@ -728,6 +728,9 @@ class UpdateGolangPipeline:
                 _LOGGER,
                 exact=True,
             )
+            if not go_nvr_map:
+                _LOGGER.warning("Could not determine installed Golang RPM for %s", build_record.nvr)
+                continue
             actual_go_nvr, _ = next(iter(go_nvr_map.items()))
             expected_go_nvr = el_nvr_map[el_v]
             if actual_go_nvr != expected_go_nvr:

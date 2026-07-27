@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import Mock
 
 from elliottlib import brew, util
 from elliottlib.bzutil import Bug
@@ -125,6 +126,29 @@ class TestUtil(unittest.TestCase):
         expected = {go_version: {nvrs[0]}}
         actual = util.get_golang_container_nvrs(nvrs, None)
         self.assertEqual(expected, actual)
+
+    def test_get_golang_container_nvrs_for_monobranch_builder_record(self):
+        build = flexmock(
+            name='openshift-golang-builder-1-26.rhel8',
+            nvr='openshift-golang-builder-container-v1.26.5-202607272002.p2.g5a9ab9d.el8',
+            installed_packages=['golang-1.26.5-1.module+el8.10.0+24506+6809f2d9'],
+            parent_images=[],
+        )
+
+        actual = util.get_golang_container_nvrs_for_konflux_record([build], Mock(), exact=True)
+
+        self.assertEqual(
+            actual,
+            {
+                'golang-1.26.5-1.module+el8.10.0+24506+6809f2d9': {
+                    (
+                        'openshift-golang-builder-container',
+                        'v1.26.5',
+                        '202607272002.p2.g5a9ab9d.el8',
+                    )
+                }
+            },
+        )
 
     def test_get_golang_rpm_nvrs_skips_non_golang_rpms(self):
         golang_nvr = ('openshift', '4.19.0', '202506111249.p0.gd2acdd5.assembly.stream.el8')

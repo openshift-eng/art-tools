@@ -565,7 +565,7 @@ def get_golang_container_nvrs_for_konflux_record(
         # because we need to look at included golang rpms instead of parent images.
         # Unlike `get_golang_container_nvrs_brew`, we don't accept 'go-toolset*' containers
         # because they don't exist in KonfluxDB.
-        if build.name == GOLANG_BUILDER_IMAGE_NAME:
+        if nvr_dict['name'] == constants.GOLANG_BUILDER_CVE_COMPONENT:
             go_package = next(
                 (
                     pkg_nvr

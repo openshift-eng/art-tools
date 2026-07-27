@@ -1268,7 +1268,8 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
         )
 
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
-    async def test_get_existing_builders_konflux_monobranch_names(self, mock_konflux_db_class):
+    @patch("pyartcd.pipelines.update_golang.elliottutil.get_golang_container_nvrs_for_konflux_record")
+    async def test_get_existing_builders_konflux_monobranch_names(self, mock_get_golang_nvrs, mock_konflux_db_class):
         """Test Konflux builder lookup uses versioned metadata keys for the Golang monobranch."""
         mock_runtime = Mock(
             dry_run=False,
@@ -1278,6 +1279,11 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
 
         mock_db_instance = Mock()
         mock_konflux_db_class.return_value = mock_db_instance
+        mock_build_record = Mock(
+            spec=KonfluxBuildRecord,
+            nvr="openshift-golang-builder-container-v1.26.5-202607272002.p2.g5a9ab9d.el8",
+        )
+        mock_get_golang_nvrs.return_value = {}
 
         pipeline = UpdateGolangPipeline(
             runtime=mock_runtime,
@@ -1292,8 +1298,7 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
         )
 
         async def mock_search_builds(*_args, **_kwargs):
-            for build_record in ():
-                yield build_record
+            yield mock_build_record
 
         mock_db_instance.search_builds_by_fields = Mock(side_effect=mock_search_builds)
 
@@ -1303,6 +1308,7 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(builder_records, {})
+        self.assertEqual(mock_get_golang_nvrs.call_count, 2)
         self.assertEqual(
             [call.kwargs["where"]["name"] for call in mock_db_instance.search_builds_by_fields.call_args_list],
             [
