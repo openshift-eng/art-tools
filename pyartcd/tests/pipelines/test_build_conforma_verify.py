@@ -219,22 +219,40 @@ class TestSlackReporting(unittest.TestCase):
 
         violations = {
             "ose-cluster-api": [
-                {"rule": "step_image_registries.allowed", "title": "Permitted registry",
-                 "image_ref": "quay.io/test@sha256:abc", "reason": "bad image"},
-                {"rule": "cve_results_found.cve_results", "title": "CVE scan results found",
-                 "image_ref": "quay.io/test@sha256:abc", "reason": "no scan"},
+                {
+                    "rule": "step_image_registries.allowed",
+                    "title": "Permitted registry",
+                    "image_ref": "quay.io/test@sha256:abc",
+                    "reason": "bad image",
+                },
+                {
+                    "rule": "cve_results_found.cve_results",
+                    "title": "CVE scan results found",
+                    "image_ref": "quay.io/test@sha256:abc",
+                    "reason": "no scan",
+                },
             ],
             "ose-mco": [
-                {"rule": "step_image_registries.allowed", "title": "Permitted registry",
-                 "image_ref": "quay.io/test@sha256:def", "reason": "bad image"},
+                {
+                    "rule": "step_image_registries.allowed",
+                    "title": "Permitted registry",
+                    "image_ref": "quay.io/test@sha256:def",
+                    "reason": "bad image",
+                },
             ],
         }
 
         import asyncio
 
-        asyncio.run(p._report_to_slack(
-            any_failed=True, image_failed=2, bundle_failed=0, fbc_failed=0, all_violations=violations,
-        ))
+        asyncio.run(
+            p._report_to_slack(
+                any_failed=True,
+                image_failed=2,
+                bundle_failed=0,
+                fbc_failed=0,
+                all_violations=violations,
+            )
+        )
 
         self.assertEqual(slack.say_in_thread.call_count, 2)
         rules_msg = slack.say_in_thread.call_args_list[1][0][0]
