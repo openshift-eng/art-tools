@@ -1,3 +1,4 @@
+import asyncio
 import os
 import tempfile
 import unittest
@@ -17,6 +18,7 @@ from pyartcd.pipelines.update_golang import (
     is_latest_and_available,
     move_golang_bugs,
 )
+from tenacity import wait_none
 
 
 class TestExtractAndValidateGolangNvrs(unittest.TestCase):
@@ -1023,6 +1025,61 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
         self.assertTrue(result)
         self.assertEqual(mock_is_available.call_count, 3)
         self.assertEqual(pipeline.request_repo.call_count, 2)
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    @patch(
+        "artcommonlib.exectools.cmd_assert_async",
+        new_callable=AsyncMock,
+        side_effect=[ChildProcessError("connection timed out"), ChildProcessError("connection timed out"), 0],
+    )
+    async def test_request_repo_retries_command_failures(self, mock_cmd_assert, mock_konflux_db):
+        mock_runtime = Mock(dry_run=False, working_dir=Path("/tmp/working"))
+        mock_runtime.new_slack_client.return_value = Mock()
+        pipeline = UpdateGolangPipeline(
+            runtime=mock_runtime,
+            ocp_version="4.16",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.20.12-2.el8"],
+            art_jira="ART-1234",
+            tag_builds=True,
+        )
+        original_wait = UpdateGolangPipeline.request_repo.retry.wait
+        UpdateGolangPipeline.request_repo.retry.wait = wait_none()
+        self.addCleanup(setattr, UpdateGolangPipeline.request_repo.retry, "wait", original_wait)
+
+        await pipeline.request_repo(8, "golang-1.20.12-2.el8")
+
+        self.assertEqual(mock_cmd_assert.call_count, 3)
+        mock_cmd_assert.assert_called_with(
+            "brew wait-repo rhaos-4.16-rhel-8-build --build=golang-1.20.12-2.el8 --request --verbose",
+            log_stdout=True,
+            timeout=3600,
+        )
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    @patch(
+        "artcommonlib.exectools.cmd_assert_async",
+        new_callable=AsyncMock,
+        side_effect=asyncio.TimeoutError,
+    )
+    async def test_request_repo_does_not_retry_python_timeout(self, mock_cmd_assert, mock_konflux_db):
+        mock_runtime = Mock(dry_run=False, working_dir=Path("/tmp/working"))
+        mock_runtime.new_slack_client.return_value = Mock()
+        pipeline = UpdateGolangPipeline(
+            runtime=mock_runtime,
+            ocp_version="4.16",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.20.12-2.el8"],
+            art_jira="ART-1234",
+            tag_builds=True,
+        )
+
+        with self.assertRaises(asyncio.TimeoutError):
+            await pipeline.request_repo(8, "golang-1.20.12-2.el8")
+
+        mock_cmd_assert.assert_awaited_once()
 
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     async def test_tag_build_dry_run(self, mock_konflux_db):

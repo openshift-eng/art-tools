@@ -28,6 +28,7 @@ from doozerlib.cli.config_plashet import KNOWN_SIGNING_KEYS
 from doozerlib.constants import ART_IMAGES_BASE_APPLICATION
 from elliottlib import util as elliottutil
 from elliottlib.constants import GOLANG_BUILDER_CVE_COMPONENT
+from tenacity import before_sleep_log, retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from pyartcd import constants, jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -527,6 +528,13 @@ class UpdateGolangPipeline:
         _LOGGER.warning("build not available after 5 hours")
         return False
 
+    @retry(
+        retry=retry_if_exception_type(ChildProcessError),
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=30, min=30, max=60),
+        before_sleep=before_sleep_log(_LOGGER, logging.WARNING),
+        reraise=True,
+    )
     async def request_repo(self, el_v, nvr):
         build_tag = f'rhaos-{self.ocp_version}-rhel-{el_v}-build'
         # --request triggers a repo regen (like regen-repo) and waits for it to complete.
