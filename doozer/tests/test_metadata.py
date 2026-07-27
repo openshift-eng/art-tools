@@ -53,6 +53,30 @@ class TestMetadata(TestCase):
             url, "http://distgit.example.com/cgit/containers/foo/plain/some_path/some_file.txt?h=some-branch&id=abcdefg"
         )
 
+    def test_distgit_name_override(self):
+        data_obj = MagicMock(
+            key="openshift-golang-builder-1-26.rhel8",
+            filename="openshift-golang-builder-1-26.rhel8.yml",
+            data={
+                "name": "openshift/golang-builder",
+                "distgit": {"name": "openshift-golang-builder"},
+            },
+        )
+        runtime = MagicMock(assembly=None, assembly_basis_event=None, user=None)
+        runtime.group_config = Model({"urls": {"pkgs_host": "pkgs.devel.redhat.com"}})
+
+        meta = Metadata("image", runtime, data_obj)
+
+        self.assertEqual(meta.distgit_key, "openshift-golang-builder-1-26.rhel8")
+        self.assertEqual(meta.name, "openshift-golang-builder")
+        self.assertEqual(meta.qualified_key, "containers/openshift-golang-builder-1-26.rhel8")
+        self.assertEqual(meta.qualified_name, "containers/openshift-golang-builder")
+        self.assertEqual(meta.get_component_name(), "openshift-golang-builder-container")
+        self.assertEqual(
+            meta.distgit_remote_url(),
+            "ssh://pkgs.devel.redhat.com/containers/openshift-golang-builder",
+        )
+
     def test_is_rpm_exempt(self):
         data_obj = MagicMock(key="foo", filename="foo.yml", data={"name": "foo"})
         runtime = MagicMock()
