@@ -702,26 +702,91 @@ spec:
         _, new_pullspec, _ = resolved["ose-operand"]
         self.assertIn("sha256:content222", new_pullspec)
 
-    async def test_resolve_operands_from_db_unknown_image(self):
+    async def test_resolve_operands_from_db_skips_external_images(self):
         """
-        Verify ValueError when image-references has an image not in name_in_bundle_map.
+        Verify that image-references entries not in name_in_bundle_map (external
+        images like postgresql) are gracefully skipped instead of raising an error.
         """
         metadata = MagicMock()
-        metadata.distgit_key = "test-operator"
-        metadata.runtime.group = "openshift-4.18"
+        metadata.distgit_key = "mta-operator"
+        metadata.runtime.group = "mta-8.1"
         metadata.runtime.data_dir = "/nonexistent/data/dir"
         metadata.runtime.name_in_bundle_map = {}
 
         image_references = {
-            "unknown-image": {
-                "name": "unknown-image",
-                "from": {"name": "registry.example.com/openshift/unknown:v4.18"},
+            "postgresql": {
+                "name": "postgresql",
+                "from": {"name": "registry.redhat.io/rhel9/postgresql-15:latest"},
             },
         }
 
-        with self.assertRaises(ValueError) as ctx:
-            await self.rebaser._resolve_operands_from_db(metadata, image_references, {}, {})
-        self.assertIn("Unable to find unknown-image in name_in_bundle_map", str(ctx.exception))
+        resolved = await self.rebaser._resolve_operands_from_db(metadata, image_references, {}, {})
+        self.assertEqual(resolved, {})
+
+    @patch("doozerlib.backend.konflux_olm_bundler.is_nvr_embargoed", return_value=False)
+    @patch("doozerlib.util.oc_image_info_for_arch_async")
+    async def test_resolve_operands_from_db_mixed_internal_and_external(self, mock_oc_image_info, _mock_is_embargoed):
+        """
+        Verify that _resolve_operands_from_db resolves known ART-built operands
+        and skips external images not in name_in_bundle_map.
+        """
+        metadata = MagicMock()
+        metadata.distgit_key = "mta-operator"
+        metadata.runtime.group = "mta-8.1"
+        metadata.runtime.data_dir = "/tmp/test-data-dir"
+
+        operand_meta = MagicMock()
+        operand_meta.image_name_short = "mta-ui-rhel9"
+        operand_meta.distgit_key = "mta-ui"
+        operand_meta.branch_el_target.return_value = 9
+        operand_meta.config = {"delivery": {"delivery_repo_names": ["mta/mta-ui-rhel9"]}}
+
+        mock_build = MagicMock()
+        mock_build.version = "8.1.3"
+        mock_build.release = "202607170000.p0.gabcdef0.assembly.stream.el9"
+        mock_build.nvr = "mta-ui-container-8.1.3-202607170000.p0.gabcdef0.assembly.stream.el9"
+        operand_meta.get_latest_konflux_build = AsyncMock(return_value=mock_build)
+
+        metadata.runtime.name_in_bundle_map = {"mta-ui": "mta-ui"}
+        metadata.runtime.image_map = {"mta-ui": operand_meta}
+
+        image_references = {
+            "mta-ui": {
+                "name": "mta-ui",
+                "from": {"name": "quay.io/konveyor/mta-ui:latest"},
+            },
+            "postgresql": {
+                "name": "postgresql",
+                "from": {"name": "registry.redhat.io/rhel9/postgresql-15:latest"},
+            },
+        }
+
+        mock_oc_image_info.return_value = {
+            "config": {
+                "config": {
+                    "Labels": {
+                        "com.redhat.component": "mta-ui-container",
+                        "version": "8.1.3",
+                        "release": "202607170000.p0.gabcdef0.assembly.stream.el9",
+                    }
+                }
+            },
+            "listDigest": "sha256:aaa111bbb222",
+            "contentDigest": "sha256:ccc333ddd444",
+        }
+        self.rebaser._group_config.get.return_value = "mta"
+        self.rebaser._group_config.operator_image_ref_mode = "manifest-list"
+        self.rebaser._group_config.vars = {"MAJOR": 8}
+
+        resolved = await self.rebaser._resolve_operands_from_db(metadata, image_references, {}, {})
+
+        # mta-ui should be resolved, postgresql should be skipped
+        self.assertIn("mta-ui-rhel9", resolved)
+        self.assertNotIn("postgresql", resolved)
+        # Verify mta-ui was resolved correctly
+        _, new_pullspec, nvr = resolved["mta-ui-rhel9"]
+        self.assertIn("sha256:aaa111bbb222", new_pullspec)
+        self.assertEqual(nvr, "mta-ui-container-8.1.3-202607170000.p0.gabcdef0.assembly.stream.el9")
 
     async def test_resolve_operands_from_db_disabled_image(self):
         """

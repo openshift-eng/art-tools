@@ -608,7 +608,13 @@ class KonfluxOlmBundleRebaser:
 
             distgit_key = metadata.runtime.name_in_bundle_map.get(name)
             if not distgit_key:
-                raise ValueError(f"Unable to find {name} in name_in_bundle_map for {metadata.distgit_key}")
+                logger.info(
+                    "Skipping %s (not in name_in_bundle_map for %s) -- likely an external image "
+                    "handled by _find_external_digest_images",
+                    name,
+                    metadata.distgit_key,
+                )
+                continue
 
             meta = metadata.runtime.image_map.get(distgit_key)
             if not meta:
