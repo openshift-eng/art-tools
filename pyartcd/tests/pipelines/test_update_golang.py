@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import click
 import koji
+from artcommonlib.constants import GOLANG_BUILDER_IMAGE_NAME
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord
 from pyartcd.pipelines.update_golang import (
     UpdateGolangPipeline,
@@ -1261,6 +1262,54 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
         mock_get_golang_nvrs.assert_called_once()
         self.assertEqual(mock_get_golang_nvrs.call_args.args[0], [mock_build_record])
         self.assertEqual(mock_get_golang_nvrs.call_args.kwargs, {"exact": True})
+        self.assertEqual(
+            mock_db_instance.search_builds_by_fields.call_args.kwargs["where"]["name"],
+            GOLANG_BUILDER_IMAGE_NAME,
+        )
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    async def test_get_existing_builders_konflux_monobranch_names(self, mock_konflux_db_class):
+        """Test Konflux builder lookup uses versioned metadata keys for the Golang monobranch."""
+        mock_runtime = Mock(
+            dry_run=False,
+            working_dir=Path("/tmp/working"),
+        )
+        mock_runtime.new_slack_client.return_value = Mock()
+
+        mock_db_instance = Mock()
+        mock_konflux_db_class.return_value = mock_db_instance
+
+        pipeline = UpdateGolangPipeline(
+            runtime=mock_runtime,
+            ocp_version="5.0",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.26.5-1.el8", "golang-1.26.5-1.el9"],
+            art_jira="ART-1234",
+            tag_builds=True,
+            build_system="konflux",
+            use_new_golang_branch=True,
+        )
+
+        async def mock_search_builds(*_args, **_kwargs):
+            for build_record in ():
+                yield build_record
+
+        mock_db_instance.search_builds_by_fields = Mock(side_effect=mock_search_builds)
+
+        builder_records = await pipeline.get_existing_builders_konflux(
+            {8: "golang-1.26.5-1.el8", 9: "golang-1.26.5-1.el9"},
+            "1.26.5",
+        )
+
+        self.assertEqual(builder_records, {})
+        self.assertEqual(
+            [call.kwargs["where"]["name"] for call in mock_db_instance.search_builds_by_fields.call_args_list],
+            [
+                "openshift-golang-builder-1-26.rhel8",
+                "openshift-golang-builder-1-26.rhel9",
+            ],
+        )
 
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     @patch("pyartcd.pipelines.update_golang.elliottutil.get_golang_container_nvrs_for_konflux_record")

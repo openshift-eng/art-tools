@@ -702,7 +702,7 @@ class UpdateGolangPipeline:
                 anext(
                     self.konflux_db.search_builds_by_fields(
                         where={
-                            "name": GOLANG_BUILDER_IMAGE_NAME,
+                            "name": self._get_doozer_group_and_image(el_v, go_version)[1],
                             "el_target": f'el{el_v}',
                             "artifact_type": str(ArtifactType.IMAGE),
                             "outcome": str(KonfluxBuildOutcome.SUCCESS),
