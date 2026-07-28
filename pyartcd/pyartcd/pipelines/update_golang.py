@@ -331,6 +331,7 @@ class UpdateGolangPipeline:
         branch, allowed_major_minors, build_major_minor = self.validate_go_version_matches_group_vars(go_version)
         if self.tag_builds:
             self.validate_tag_builds_go_latest(branch, allowed_major_minors, build_major_minor)
+        process_rpm_builds = self.major_bump or build_major_minor == allowed_major_minors["GO_LATEST"]
 
         # el10 is only supported for build roots (RPM tagging), not for golang-builder images yet
         el_nvr_map_for_images = {el_v: nvr for el_v, nvr in el_nvr_map.items() if el_v != 10}
@@ -357,7 +358,7 @@ class UpdateGolangPipeline:
             await self._slack_client.say_in_thread(
                 ":warning: Using golang RPMs from external repos. Skipping tagging and availability checks."
             )
-        else:
+        elif process_rpm_builds:
             # Process golang RPM builds (always from Brew)
             cannot_proceed = not all(
                 await asyncio.gather(*[self.process_build(el_v, nvr) for el_v, nvr in el_nvr_map.items()])
@@ -372,6 +373,16 @@ class UpdateGolangPipeline:
 
             # Build plashets for golang RPMs before building images
             await self._build_golang_plashets(go_version, el_nvr_map_for_images.keys())
+        else:
+            matching_vars = sorted(
+                var_name for var_name, major_minor in allowed_major_minors.items() if major_minor == build_major_minor
+            )
+            _LOGGER.info(
+                "Skipping RPM tagging, buildroot availability checks, and plashet builds for non-GO_LATEST "
+                "golang %s (%s). Existing builder images will be reused.",
+                build_major_minor,
+                ", ".join(matching_vars),
+            )
 
         # Check if openshift-golang-builder image builds exist for the provided compiler builds
         # Only for RHEL versions that support golang-builder images (excludes el10 for now)
@@ -392,6 +403,18 @@ class UpdateGolangPipeline:
         )
 
         if brew_missing or konflux_missing:
+            if not process_rpm_builds and not self.external_golang_rpms:
+                missing = []
+                if brew_missing:
+                    missing.append(f'Brew: {sorted(brew_missing)}')
+                if konflux_missing:
+                    missing.append(f'Konflux: {sorted(konflux_missing)}')
+                raise ValueError(
+                    "Cannot build missing non-GO_LATEST golang builder image(s) without "
+                    f"--external-golang-rpms ({', '.join(missing)}). "
+                    "Build them from the owning GO_LATEST release first, or enable external Golang RPMs."
+                )
+
             if not self.external_golang_rpms:
                 for el_v in el_nvr_map_for_images.keys():
                     self.verify_golang_builder_repo(el_v, go_version)
@@ -695,14 +718,18 @@ class UpdateGolangPipeline:
         """
         _LOGGER.info(f"Checking if {GOLANG_BUILDER_IMAGE_NAME} builds exist in Konflux for given golang builds")
 
-        builder_records: dict[int, KonfluxBuildRecord] = {}
         extra_patterns = {'nvr': f"{GOLANG_BUILDER_CVE_COMPONENT}-v{go_version}"}
-        build_records = await asyncio.gather(
-            *(
-                anext(
+        builder_names_by_el = {
+            el_v: (self.get_golang_image_key(el_v, go_version), GOLANG_BUILDER_IMAGE_NAME) for el_v in el_nvr_map
+        }
+
+        async def find_builder(el_v: int) -> KonfluxBuildRecord | None:
+            expected_go_nvr = el_nvr_map[el_v]
+            for builder_name in builder_names_by_el[el_v]:
+                build_record = await anext(
                     self.konflux_db.search_builds_by_fields(
                         where={
-                            "name": self._get_doozer_group_and_image(el_v, go_version)[1],
+                            "name": builder_name,
                             "el_target": f'el{el_v}',
                             "artifact_type": str(ArtifactType.IMAGE),
                             "outcome": str(KonfluxBuildOutcome.SUCCESS),
@@ -713,36 +740,37 @@ class UpdateGolangPipeline:
                     ),
                     None,
                 )
-                for el_v in el_nvr_map
-            )
-        )
-        found_records = {
-            el_v: cast(KonfluxBuildRecord, build_record)
-            for el_v, build_record in zip(el_nvr_map, build_records)
-            if build_record
-        }
-
-        for el_v, build_record in found_records.items():
-            go_nvr_map = elliottutil.get_golang_container_nvrs_for_konflux_record(
-                [build_record],
-                _LOGGER,
-                exact=True,
-            )
-            if not go_nvr_map:
-                _LOGGER.warning("Could not determine installed Golang RPM for %s", build_record.nvr)
-                continue
-            actual_go_nvr, _ = next(iter(go_nvr_map.items()))
-            expected_go_nvr = el_nvr_map[el_v]
-            if actual_go_nvr != expected_go_nvr:
-                _LOGGER.warning(
-                    f"Installed golang rpm in {build_record.nvr} is different from the expected one: {actual_go_nvr} != {expected_go_nvr}"
+                if not build_record:
+                    continue
+                build_record = cast(KonfluxBuildRecord, build_record)
+                go_nvr_map = elliottutil.get_golang_container_nvrs_for_konflux_record(
+                    [build_record],
+                    _LOGGER,
+                    exact=True,
                 )
-            else:
+                if not go_nvr_map:
+                    _LOGGER.warning("Could not determine installed Golang RPM for %s", build_record.nvr)
+                    continue
+                actual_go_nvr, _ = next(iter(go_nvr_map.items()))
+                if actual_go_nvr != expected_go_nvr:
+                    _LOGGER.warning(
+                        "Installed golang rpm in %s is different from the expected one: %s != %s",
+                        build_record.nvr,
+                        actual_go_nvr,
+                        expected_go_nvr,
+                    )
+                    continue
                 _LOGGER.info(
-                    f"Found existing builder image in Konflux: {build_record.nvr} built with {expected_go_nvr}"
+                    "Found existing builder image in Konflux: %s built with %s (record name: %s)",
+                    build_record.nvr,
+                    expected_go_nvr,
+                    builder_name,
                 )
-                builder_records[el_v] = build_record
-        return builder_records
+                return build_record
+            return None
+
+        build_records = await asyncio.gather(*(find_builder(el_v) for el_v in el_nvr_map))
+        return {el_v: build_record for el_v, build_record in zip(el_nvr_map, build_records) if build_record is not None}
 
     def _get_builder_pullspec(self, builder_nvr: str):
         """Generate the published pullspec used in streams.yml for Konflux-built builders."""
@@ -783,15 +811,17 @@ class UpdateGolangPipeline:
         streams_content = branch_content["streams"]
         group_content = branch_content["group"]
 
-        go_latest_var, go_previous_var = "GO_LATEST", "GO_PREVIOUS"
+        go_latest_var, go_extra_var, go_previous_var = "GO_LATEST", "GO_EXTRA", "GO_PREVIOUS"
         go_latest = group_content['vars'].get(go_latest_var)
         if not go_latest:
             raise ValueError(
                 f"{go_latest_var} variable not found in group.yml, please make sure it is defined before running the pipeline"
             )
+        go_extra = group_content['vars'].get(go_extra_var)
         go_previous = group_content['vars'].get(go_previous_var)
         build_major_minor = extract_major_minor(go_version, "golang build version")
         latest_major_minor = extract_major_minor(go_latest, f"group.yml {go_latest_var}")
+        extra_major_minor = extract_major_minor(go_extra, f"group.yml {go_extra_var}") if go_extra else None
         previous_major_minor = extract_major_minor(go_previous, f"group.yml {go_previous_var}") if go_previous else None
         build_major_minor_tuple = tuple(map(int, build_major_minor.split(".")))
         latest_major_minor_tuple = tuple(map(int, latest_major_minor.split(".")))
@@ -800,6 +830,7 @@ class UpdateGolangPipeline:
         # but we do not need to replace/update them
         # we will just look for the literal value
         go_latest_var_template = "{" + go_latest_var + "}"
+        go_extra_var_template = "{" + go_extra_var + "}"
         go_previous_var_template = "{" + go_previous_var + "}"
 
         def latest_go_stream_name(el_v):
@@ -807,6 +838,12 @@ class UpdateGolangPipeline:
 
         def previous_go_stream_name(el_v):
             return f'rhel-{el_v}-golang-{go_previous_var_template}'
+
+        def extra_go_stream_names(el_v):
+            return (
+                f'rhel-{el_v}-golang-{go_extra_var_template}',
+                f'rhel-{el_v}-golang-{extra_major_minor}',
+            )
 
         update_streams = update_group = False
 
@@ -846,6 +883,26 @@ class UpdateGolangPipeline:
 
                 for _, info in streams_content.items():
                     if info['image'] == previous_go:
+                        info['image'] = pullspec
+                        update_streams = True
+        # This is to bump minor golang for GO_EXTRA
+        elif extra_major_minor and build_major_minor == extra_major_minor:
+            for el_v, pullspec in builder_pullspecs.items():
+                stream_names = extra_go_stream_names(el_v)
+                _LOGGER.info("Looking for golang streams %s in streams.yml", ", ".join(stream_names))
+                extra_go_stream = None
+                for stream_name in stream_names:
+                    extra_go_stream = get_stream(stream_name)
+                    if extra_go_stream:
+                        break
+                if not extra_go_stream:
+                    raise ValueError(
+                        f"Could not find a golang stream for {go_extra_var}={extra_major_minor} and RHEL {el_v}"
+                    )
+                extra_go = extra_go_stream['image']
+
+                for _, info in streams_content.items():
+                    if info['image'] == extra_go:
                         info['image'] = pullspec
                         update_streams = True
         # This is to bump major golang for GO_LATEST and update GO_PREVIOUS to current GO_LATEST
