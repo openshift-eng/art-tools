@@ -403,6 +403,18 @@ class UpdateGolangPipeline:
         )
 
         if brew_missing or konflux_missing:
+            if not process_rpm_builds and not self.external_golang_rpms:
+                missing = []
+                if brew_missing:
+                    missing.append(f'Brew: {sorted(brew_missing)}')
+                if konflux_missing:
+                    missing.append(f'Konflux: {sorted(konflux_missing)}')
+                raise ValueError(
+                    "Cannot build missing non-GO_LATEST golang builder image(s) without "
+                    f"--external-golang-rpms ({', '.join(missing)}). "
+                    "Build them from the owning GO_LATEST release first, or enable external Golang RPMs."
+                )
+
             if not self.external_golang_rpms:
                 for el_v in el_nvr_map_for_images.keys():
                     self.verify_golang_builder_repo(el_v, go_version)
@@ -706,14 +718,18 @@ class UpdateGolangPipeline:
         """
         _LOGGER.info(f"Checking if {GOLANG_BUILDER_IMAGE_NAME} builds exist in Konflux for given golang builds")
 
-        builder_records: dict[int, KonfluxBuildRecord] = {}
         extra_patterns = {'nvr': f"{GOLANG_BUILDER_CVE_COMPONENT}-v{go_version}"}
-        build_records = await asyncio.gather(
-            *(
-                anext(
+        builder_names_by_el = {
+            el_v: (self.get_golang_image_key(el_v, go_version), GOLANG_BUILDER_IMAGE_NAME) for el_v in el_nvr_map
+        }
+
+        async def find_builder(el_v: int) -> KonfluxBuildRecord | None:
+            expected_go_nvr = el_nvr_map[el_v]
+            for builder_name in builder_names_by_el[el_v]:
+                build_record = await anext(
                     self.konflux_db.search_builds_by_fields(
                         where={
-                            "name": self._get_doozer_group_and_image(el_v, go_version)[1],
+                            "name": builder_name,
                             "el_target": f'el{el_v}',
                             "artifact_type": str(ArtifactType.IMAGE),
                             "outcome": str(KonfluxBuildOutcome.SUCCESS),
@@ -724,36 +740,37 @@ class UpdateGolangPipeline:
                     ),
                     None,
                 )
-                for el_v in el_nvr_map
-            )
-        )
-        found_records = {
-            el_v: cast(KonfluxBuildRecord, build_record)
-            for el_v, build_record in zip(el_nvr_map, build_records)
-            if build_record
-        }
-
-        for el_v, build_record in found_records.items():
-            go_nvr_map = elliottutil.get_golang_container_nvrs_for_konflux_record(
-                [build_record],
-                _LOGGER,
-                exact=True,
-            )
-            if not go_nvr_map:
-                _LOGGER.warning("Could not determine installed Golang RPM for %s", build_record.nvr)
-                continue
-            actual_go_nvr, _ = next(iter(go_nvr_map.items()))
-            expected_go_nvr = el_nvr_map[el_v]
-            if actual_go_nvr != expected_go_nvr:
-                _LOGGER.warning(
-                    f"Installed golang rpm in {build_record.nvr} is different from the expected one: {actual_go_nvr} != {expected_go_nvr}"
+                if not build_record:
+                    continue
+                build_record = cast(KonfluxBuildRecord, build_record)
+                go_nvr_map = elliottutil.get_golang_container_nvrs_for_konflux_record(
+                    [build_record],
+                    _LOGGER,
+                    exact=True,
                 )
-            else:
+                if not go_nvr_map:
+                    _LOGGER.warning("Could not determine installed Golang RPM for %s", build_record.nvr)
+                    continue
+                actual_go_nvr, _ = next(iter(go_nvr_map.items()))
+                if actual_go_nvr != expected_go_nvr:
+                    _LOGGER.warning(
+                        "Installed golang rpm in %s is different from the expected one: %s != %s",
+                        build_record.nvr,
+                        actual_go_nvr,
+                        expected_go_nvr,
+                    )
+                    continue
                 _LOGGER.info(
-                    f"Found existing builder image in Konflux: {build_record.nvr} built with {expected_go_nvr}"
+                    "Found existing builder image in Konflux: %s built with %s (record name: %s)",
+                    build_record.nvr,
+                    expected_go_nvr,
+                    builder_name,
                 )
-                builder_records[el_v] = build_record
-        return builder_records
+                return build_record
+            return None
+
+        build_records = await asyncio.gather(*(find_builder(el_v) for el_v in el_nvr_map))
+        return {el_v: build_record for el_v, build_record in zip(el_nvr_map, build_records) if build_record is not None}
 
     def _get_builder_pullspec(self, builder_nvr: str):
         """Generate the published pullspec used in streams.yml for Konflux-built builders."""
