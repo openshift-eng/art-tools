@@ -17,11 +17,11 @@ from artcommonlib import exectools
 from artcommonlib.build_visibility import get_build_system
 from artcommonlib.constants import GOLANG_BUILDER_IMAGE_NAME, GOLANG_RPM_PACKAGE_NAME
 from artcommonlib.format_util import green_prefix, green_print, red_prefix
-from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.logutil import get_logger
 from artcommonlib.oc_image_info import oc_image_info__cached_async
-from artcommonlib.util import extract_related_images_from_fbc, is_ocp_delivery_repo
+from artcommonlib.util import extract_group_from_nvr, extract_related_images_from_fbc, is_ocp_delivery_repo
 from errata_tool import Erratum
 
 from elliottlib import brew, constants
@@ -34,6 +34,7 @@ now = datetime.datetime.now()
 YMD = '%Y-%b-%d'
 LOGGER = get_logger(__name__)
 _executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+GOLANG_MONOBRANCH_GROUP = 'golang'
 
 
 def exit_unauthenticated():
@@ -535,14 +536,52 @@ def get_golang_container_nvrs_konflux(
 
     logger.info(f'Getting build records for {len(nvrs)} nvrs from KonfluxDB')
 
-    # Need installed_packages column for golang builder image detection
+    # Need installed_packages column for golang builder image detection.
+    # Golang builder records can belong to either a legacy per-variant group
+    # (e.g. rhel-8-golang-1.26) or the unified golang group.
     all_build_objs = _executor.submit(
-        lambda: asyncio.run(konflux_db.get_build_records_by_nvrs(['{}-{}-{}'.format(*n) for n in nvrs]))
+        lambda: asyncio.run(_get_konflux_build_records_for_golang(konflux_db, nvrs))
     ).result()
 
     return get_golang_container_nvrs_for_konflux_record(
         cast(list[KonfluxBuildRecord], all_build_objs), logger, exact=exact
     )
+
+
+async def _get_konflux_build_records_for_golang(
+    konflux_db: KonfluxDb,
+    nvrs: List[Tuple[str, str, str]],
+) -> list[KonfluxBuildRecord]:
+    async def get_build_record(nvr_tuple: Tuple[str, str, str]) -> KonfluxBuildRecord:
+        nvr = '{}-{}-{}'.format(*nvr_tuple)
+        if nvr_tuple[0] != constants.GOLANG_BUILDER_CVE_COMPONENT:
+            return cast(KonfluxBuildRecord, await konflux_db.get_build_record_by_nvr(nvr))
+
+        legacy_group = extract_group_from_nvr(nvr)
+        groups = list(dict.fromkeys(group for group in (legacy_group, GOLANG_MONOBRANCH_GROUP) if group))
+        build_record = await anext(
+            konflux_db.search_builds_by_fields(
+                where={
+                    'nvr': nvr,
+                    'group': groups,
+                    'outcome': str(KonfluxBuildOutcome.SUCCESS),
+                },
+                limit=1,
+            ),
+            None,
+        )
+        if not build_record:
+            raise IOError(f"Golang builder build record not found for nvr={nvr}, groups={groups}")
+        return cast(KonfluxBuildRecord, build_record)
+
+    records = await asyncio.gather(*(get_build_record(nvr) for nvr in nvrs), return_exceptions=True)
+    errors = [
+        ('{}-{}-{}'.format(*nvr), record) for nvr, record in zip(nvrs, records) if isinstance(record, BaseException)
+    ]
+    if errors:
+        error_strings = [f"NVR {nvr}: {exc}" for nvr, exc in errors]
+        raise IOError(f"Failed to fetch NVRs from Konflux DB: {'; '.join(error_strings)}", errors)
+    return cast(list[KonfluxBuildRecord], records)
 
 
 def get_golang_container_nvrs_for_konflux_record(

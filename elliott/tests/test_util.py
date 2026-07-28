@@ -1,8 +1,9 @@
 import unittest
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 from elliottlib import brew, util
 from elliottlib.bzutil import Bug
+from elliottlib.constants import GOLANG_BUILDER_CVE_COMPONENT
 from flexmock import flexmock
 
 
@@ -168,6 +169,67 @@ class TestUtil(unittest.TestCase):
         self.assertEqual(result['1.23.6-2.module+el8.11.0+22775+e8b271ec'], {golang_nvr})
         for nvrs in result.values():
             self.assertNotIn(non_golang_nvr, nvrs)
+
+
+class TestKonfluxGolangBuildRecordLookup(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.builder_nvr = (
+            GOLANG_BUILDER_CVE_COMPONENT,
+            'v1.26.5',
+            '202607272002.p2.g5a9ab9d.el8',
+        )
+
+    async def test_supports_legacy_and_monobranch_groups(self):
+        for record_group in ('rhel-8-golang-1.26', 'golang'):
+            with self.subTest(record_group=record_group):
+                build_record = Mock(group=record_group)
+                konflux_db = Mock()
+
+                async def search_builds_by_fields(**_kwargs):
+                    yield build_record
+
+                konflux_db.search_builds_by_fields = Mock(side_effect=search_builds_by_fields)
+
+                records = await util._get_konflux_build_records_for_golang(konflux_db, [self.builder_nvr])
+
+                self.assertEqual(records, [build_record])
+                konflux_db.search_builds_by_fields.assert_called_once_with(
+                    where={
+                        'nvr': 'openshift-golang-builder-container-v1.26.5-202607272002.p2.g5a9ab9d.el8',
+                        'group': ['rhel-8-golang-1.26', 'golang'],
+                        'outcome': 'success',
+                    },
+                    limit=1,
+                )
+
+    async def test_errors_when_builder_is_missing_from_both_groups(self):
+        konflux_db = Mock()
+
+        async def search_builds_by_fields(**_kwargs):
+            if False:
+                yield
+
+        konflux_db.search_builds_by_fields = Mock(side_effect=search_builds_by_fields)
+
+        with self.assertRaisesRegex(
+            IOError,
+            r"groups=\['rhel-8-golang-1\.26', 'golang'\]",
+        ):
+            await util._get_konflux_build_records_for_golang(konflux_db, [self.builder_nvr])
+
+    async def test_non_builder_uses_standard_nvr_lookup(self):
+        nvr = ('ose-cli-container', 'v5.0.0', '202607272002.p2.g1234567.el9')
+        build_record = Mock()
+        konflux_db = Mock()
+        konflux_db.get_build_record_by_nvr = AsyncMock(return_value=build_record)
+
+        records = await util._get_konflux_build_records_for_golang(konflux_db, [nvr])
+
+        self.assertEqual(records, [build_record])
+        konflux_db.get_build_record_by_nvr.assert_awaited_once_with(
+            'ose-cli-container-v5.0.0-202607272002.p2.g1234567.el9'
+        )
+        konflux_db.search_builds_by_fields.assert_not_called()
 
 
 if __name__ == '__main__':
