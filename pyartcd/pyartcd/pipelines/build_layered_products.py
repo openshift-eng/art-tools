@@ -40,6 +40,7 @@ class BuildLayeredProductsPipeline:
         data_gitref: Optional[str] = None,
         network_mode: Optional[str] = None,
         plr_template: Optional[str] = None,
+        skip_ec_verify: bool = False,
         logger: Optional[logging.Logger] = None,
     ):
         self.runtime = runtime
@@ -54,6 +55,7 @@ class BuildLayeredProductsPipeline:
         self.data_gitref = data_gitref
         self.network_mode = network_mode
         self.plr_template = plr_template
+        self.skip_ec_verify = skip_ec_verify
         self._logger = logger or runtime.logger
         # Operator NVRs that were dropped from the bundle build trigger because they are embargoed.
         # The caller uses this to mark the Jenkins job UNSTABLE instead of a plain SUCCESS.
@@ -357,6 +359,8 @@ class BuildLayeredProductsPipeline:
             build_cmd.extend(['--plr-template', plr_template_url])
         if self.network_mode:
             build_cmd.extend(['--network-mode', self.network_mode])
+        if self.skip_ec_verify:
+            build_cmd.append('--skip-ec-verify')
         if self.runtime.dry_run:
             build_cmd.append("--dry-run")
 
@@ -423,6 +427,9 @@ class BuildLayeredProductsPipeline:
     type=click.Choice(['hermetic', 'internal-only', 'open']),
     help='Override network mode for Konflux builds. Takes precedence over image and group config settings.',
 )
+@click.option(
+    "--skip-ec-verify", is_flag=True, default=False, help="Skip Enterprise Contract verification for built images"
+)
 @click.option("--ignore-locks", is_flag=True, default=False, help="(For testing) Do not wait for locks")
 @click.option(
     '--plr-template',
@@ -445,6 +452,7 @@ async def build_layered_products(
     kubeconfig: Optional[str],
     data_gitref: Optional[str],
     network_mode: Optional[str],
+    skip_ec_verify: bool,
     ignore_locks: bool,
     plr_template: str,
 ):
@@ -464,6 +472,7 @@ async def build_layered_products(
             data_gitref=data_gitref,
             network_mode=network_mode,
             plr_template=plr_template,
+            skip_ec_verify=skip_ec_verify,
         )
 
         lock_identifier = jenkins.get_build_path_or_random()
