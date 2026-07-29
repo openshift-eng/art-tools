@@ -676,6 +676,23 @@ class TestBridgeOCPVersions(unittest.TestCase):
 # Use product-based resolvers: resolve_konflux_kubeconfig_by_product() and resolve_konflux_namespace_by_product()
 
 
+class TestProductBasedResolution(unittest.TestCase):
+    """Test product-based configuration resolution"""
+
+    @patch.dict("os.environ", {"KONFLUX_SA_KUBECONFIG": "/path/to/kubeconfig"})
+    def test_product_kubeconfig_resolution(self):
+        # Test that both oc-mirror and oc-mirror-2.0 resolve to the same KONFLUX_SA_KUBECONFIG path
+        self.assertEqual(util.resolve_konflux_kubeconfig_by_product("oc-mirror"), "/path/to/kubeconfig")
+        self.assertEqual(util.resolve_konflux_kubeconfig_by_product("oc-mirror-2.0"), "/path/to/kubeconfig")
+
+        # Test that ocp also resolves to KONFLUX_SA_KUBECONFIG path
+        self.assertEqual(util.resolve_konflux_kubeconfig_by_product("ocp"), "/path/to/kubeconfig")
+
+    def test_product_kubeconfig_resolution_precedence(self):
+        # Explicitly provided kubeconfig should take precedence
+        self.assertEqual(util.resolve_konflux_kubeconfig_by_product("oc-mirror-2.0", "/custom/path"), "/custom/path")
+
+
 class TestExtractRelatedImagesFromFBC(unittest.TestCase):
     """Tests for extract_related_images_from_fbc function with artifact fallback logic"""
 
