@@ -166,7 +166,8 @@ async def check_catalog(digest: str) -> bool:
 
     url = f"{CATALOG_API_URL}?filter=docker_image_digest=={digest}"
     try:
-        async with aiohttp.ClientSession() as session:
+        timeout = aiohttp.ClientTimeout(total=15)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.get(url) as resp:
                 if resp.status != 200:
                     LOGGER.warning("Red Hat Catalog API returned status %s", resp.status)
@@ -216,7 +217,7 @@ async def verify_image_consistency(payload_url: str, shipment_mr_url: str) -> Ve
 
     pullspec_list = list(all_pullspecs)
     fetched = await asyncio.gather(*(fetch_image_identifiers(ps) for ps in pullspec_list))
-    identifiers: dict[str, ImageIdentifiers] = dict(zip(pullspec_list, fetched))
+    identifiers: dict[str, ImageIdentifiers] = dict(zip(pullspec_list, fetched, strict=True))
 
     shipment_identifiers = [identifiers[ps] for _, ps in shipment_components if ps in identifiers]
 
