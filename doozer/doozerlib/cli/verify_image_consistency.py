@@ -110,7 +110,10 @@ def fetch_shipment_components(mr_url: str) -> tuple[list[tuple[str, str]], str]:
     match = re.search(r"Shipment for (\d+\.\d+\.\d+(?:-\S+)?)", title, re.IGNORECASE)
     version = match.group(1) if match else ""
 
-    diff_info = mr.diffs.list(all=True)[0]
+    diff_versions = mr.diffs.list(all=True)
+    if not diff_versions:
+        raise RuntimeError(f"No diff versions found for MR {mr_url}")
+    diff_info = diff_versions[0]
     diff = mr.diffs.get(diff_info.id)
 
     components: list[tuple[str, str]] = []
@@ -161,7 +164,7 @@ async def check_catalog(digest: str) -> bool:
     if not digest:
         return False
 
-    url = f"{CATALOG_API_URL}?filter=image_id=={digest}"
+    url = f"{CATALOG_API_URL}?filter=docker_image_digest=={digest}"
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as resp:
@@ -176,11 +179,10 @@ async def check_catalog(digest: str) -> bool:
 
 
 async def verify_image_consistency(payload_url: str, shipment_mr_url: str) -> VerifyImageConsistencyResult:
-    payload_images_task = fetch_payload_images(payload_url)
-    shipment_task = asyncio.to_thread(fetch_shipment_components, shipment_mr_url)
-
-    payload_images, payload_version = await payload_images_task
-    shipment_components, shipment_version = await shipment_task
+    (payload_images, payload_version), (shipment_components, shipment_version) = await asyncio.gather(
+        fetch_payload_images(payload_url),
+        asyncio.to_thread(fetch_shipment_components, shipment_mr_url),
+    )
 
     result = VerifyImageConsistencyResult(
         payload_url=payload_url,
@@ -212,10 +214,9 @@ async def verify_image_consistency(payload_url: str, shipment_mr_url: str) -> Ve
     for _, pullspec in shipment_components:
         all_pullspecs.add(pullspec)
 
-    identifiers_tasks = {ps: fetch_image_identifiers(ps) for ps in all_pullspecs}
-    identifiers: dict[str, ImageIdentifiers] = {}
-    for ps, task in identifiers_tasks.items():
-        identifiers[ps] = await task
+    pullspec_list = list(all_pullspecs)
+    fetched = await asyncio.gather(*(fetch_image_identifiers(ps) for ps in pullspec_list))
+    identifiers: dict[str, ImageIdentifiers] = dict(zip(pullspec_list, fetched))
 
     shipment_identifiers = [identifiers[ps] for _, ps in shipment_components if ps in identifiers]
 
