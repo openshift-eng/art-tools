@@ -1,13 +1,12 @@
 import asyncio
 import json
 import logging
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Optional
 
 import click
-import yaml as pyyaml
+import yaml
 from artcommonlib.assembly import assembly_resolved
 from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.gitlab import GitLabClient
@@ -75,21 +74,17 @@ def parse_shipment_metadata_from_data(data: dict) -> tuple[str, str]:
 
 def get_jira_issues_from_shipment_mr(
     mr_url: str,
-    gitlab_token: Optional[str] = None,
 ) -> tuple[set[str], list[str], tuple[str, str]]:
-    token = gitlab_token or os.getenv("GITLAB_TOKEN")
-    if not token:
-        raise ValueError("GITLAB_TOKEN environment variable is required to read shipment MR")
+    gl = GitLabClient.from_url(mr_url)
+    mr = gl.get_mr_from_url(mr_url)
+    source_project = gl.get_project(mr.source_project_id)
 
-    client = GitLabClient.from_url(mr_url, gitlab_token=token)
-    project_path, _ = GitLabClient._parse_mr_url(mr_url)
-    mr = client.get_mr_from_url(mr_url)
-    project = client.get_project(project_path)
-    changes = mr.changes()
+    diff_info = mr.diffs.list(all=True)[0]
+    diff = mr.diffs.get(diff_info.id)
     yaml_files = [
-        change["new_path"]
-        for change in changes.get("changes", [])
-        if change.get("new_path", "").lower().endswith(".yaml")
+        file_diff.get("new_path") or file_diff.get("old_path")
+        for file_diff in diff.diffs
+        if (file_diff.get("new_path") or file_diff.get("old_path", "")).lower().endswith((".yaml", ".yml"))
     ]
 
     if not yaml_files:
@@ -102,9 +97,9 @@ def get_jira_issues_from_shipment_mr(
 
     for file_path in yaml_files:
         try:
-            file_content = project.files.get(file_path=file_path, ref=mr.source_branch)
+            file_content = source_project.files.get(file_path, mr.source_branch)
             content = file_content.decode().decode("utf-8")
-            data = pyyaml.safe_load(content)
+            data = yaml.safe_load(content)
             jira_issues.update(get_jira_issues_from_shipment_data(data))
 
             file_group, file_assembly = parse_shipment_metadata_from_data(data)
@@ -153,7 +148,7 @@ def _load_releases_yaml_sync(group: str, data_path: str) -> Optional[dict]:
         releases_path = Path(data_path) / "releases.yml"
         if not releases_path.is_file():
             return None
-        return pyyaml.safe_load(releases_path.read_text(encoding="utf-8"))
+        return yaml.safe_load(releases_path.read_text(encoding="utf-8"))
 
     parts = data_path.rstrip("/").removesuffix(".git").split("/")
     if len(parts) < 2:
@@ -161,7 +156,7 @@ def _load_releases_yaml_sync(group: str, data_path: str) -> Optional[dict]:
     owner, repo_name = parts[-2], parts[-1]
     repo = get_github_client_for_org(owner).get_repo(f"{owner}/{repo_name}")
     content = repo.get_contents("releases.yml", ref=group)
-    return pyyaml.safe_load(content.decoded_content)
+    return yaml.safe_load(content.decoded_content)
 
 
 async def _load_releases_yaml(group: str, data_path: str) -> Optional[dict]:
