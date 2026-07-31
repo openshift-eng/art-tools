@@ -12,7 +12,7 @@ from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.gitlab import GitLabClient
 from artcommonlib.model import Missing, Model
 
-from elliottlib.cli.common import cli, click_coroutine
+from elliottlib.cli.common import cli, click_coroutine, pass_runtime
 from elliottlib.errata import get_bug_ids, get_raw_erratum
 
 LOGGER = logging.getLogger(__name__)
@@ -321,25 +321,6 @@ def render_result(result: VerifyCveTrackersResult, output: str) -> str:
 
 @cli.command("verify-cve-trackers", short_help="Verify CVE tracker bugs are covered in advisories and shipment MR")
 @click.option(
-    "-g",
-    "--group",
-    metavar="GROUP",
-    required=True,
-    help="The group of components, e.g. openshift-4.20",
-)
-@click.option(
-    "--assembly",
-    metavar="ASSEMBLY",
-    required=True,
-    help="Assembly name, e.g. 4.20.1",
-)
-@click.option(
-    "--data-path",
-    required=False,
-    default=OCP_BUILD_DATA_URL,
-    help="ocp-build-data fork to use",
-)
-@click.option(
     "--advisory-trackers-file",
     required=True,
     type=click.Path(exists=True),
@@ -359,21 +340,26 @@ def render_result(result: VerifyCveTrackersResult, output: str) -> str:
     show_default=True,
     help="Output format.",
 )
+@pass_runtime
 @click_coroutine
 async def verify_cve_trackers_cli(
-    group: str,
-    assembly: str,
-    data_path: str,
+    runtime,
     advisory_trackers_file: str,
     shipment_trackers_file: str,
     output: str,
 ):
     """Verify CVE tracker bugs are covered in RHSA advisories and shipment MR.
 
+    Requires --group and --assembly global options.
+
     Expects JSON output from `elliott find-bugs --cve-only` as input files:
     one for Brew builds (advisory trackers) and one for Konflux builds
     (shipment trackers). These are typically produced by the artcd
     ert-verification pipeline.
+
+    Example:
+        elliott -g openshift-4.18 --assembly 4.18.51 verify-cve-trackers \\
+            --advisory-trackers-file brew.json --shipment-trackers-file konflux.json
     """
     with open(advisory_trackers_file) as f:
         advisory_trackers = json.load(f)
@@ -381,9 +367,9 @@ async def verify_cve_trackers_cli(
         shipment_trackers = json.load(f)
 
     result = await verify_cve_trackers(
-        group=group,
-        assembly=assembly,
-        data_path=data_path,
+        group=runtime.group,
+        assembly=runtime.assembly,
+        data_path=runtime.data_path,
         advisory_trackers=advisory_trackers,
         shipment_trackers=shipment_trackers,
     )
