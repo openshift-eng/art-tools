@@ -90,7 +90,7 @@ GOLANG_NVR_ENV = '__doozer_golang_nvr'
 # Product-based mappings for Konflux tenant namespaces and kubeconfigs
 PRODUCT_NAMESPACE_MAP = {
     "acm": "art-acm-tenant",
-    "mce": "art-acm-tenant",
+    "multicluster-engine": "art-acm-tenant",
     "cert-manager": "art-oap-tenant",
     "external-secrets": "art-oap-tenant",
     "installer-ove-ui": "art-installer-agent-tenant",
@@ -117,7 +117,7 @@ PRODUCT_BASE_IMAGE_KONFLUX_RELEASE_MAP = {
     "logging": ("logging-images-base-silent", "logging-images-base"),
     "openshift-logging": ("logging-images-base-silent", "logging-images-base"),
     "acm": ("acm-images-base-silent", "acm-images-base"),
-    "mce": ("acm-images-base-silent", "acm-images-base"),
+    "multicluster-engine": ("acm-images-base-silent", "acm-images-base"),
 }
 
 # Pre-release lifecycle (software_lifecycle.phase) — registry-ocp-art-base-ec-prod via ART-19498.
@@ -127,7 +127,7 @@ PRODUCT_BASE_IMAGE_KONFLUX_EC_RELEASE_MAP = {
 
 PRODUCT_KUBECONFIG_MAP = {
     "acm": "ACM_KONFLUX_SA_KUBECONFIG",
-    "mce": "ACM_KONFLUX_SA_KUBECONFIG",
+    "multicluster-engine": "ACM_KONFLUX_SA_KUBECONFIG",
     "cert-manager": "OAP_KONFLUX_SA_KUBECONFIG",
     "external-secrets": "OAP_KONFLUX_SA_KUBECONFIG",
     "installer-ove-ui": "ASSISTED_INSTALLER_SA_KUBECONFIG",
