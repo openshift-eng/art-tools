@@ -694,6 +694,18 @@
       "$ref": "#/properties/name"
     },
     "name-": {},
+    "bundle_name_override": {
+      "description": "Override the default OLM bundle short name (normally '{distgit_key}-bundle'). Affects the Dockerfile name label, Konflux component name, and DB record name.",
+      "type": "string",
+      "minLength": 1
+    },
+    "bundle_name_override!": {
+      "$ref": "#/properties/bundle_name_override"
+    },
+    "bundle_name_override?": {
+      "$ref": "#/properties/bundle_name_override"
+    },
+    "bundle_name_override-": {},
     "odcs": {
       "description": "Configuration for an alternative, unused method for making rpms available to builds",
       "type": "object",

@@ -26,9 +26,9 @@ LOGGER = logutil.get_logger(__name__)
 @cli.command('olm-bundle:list-olm-operators', short_help='List all images that are OLM operators')
 @click.option(
     '--output-format',
-    type=click.Choice(['component', 'distgit-key'], case_sensitive=False),
+    type=click.Choice(['component', 'distgit-key', 'bundle-name'], case_sensitive=False),
     default='component',
-    help='Output format: component name (default) or distgit key',
+    help='Output format: component name (default), distgit key, or bundle short name',
 )
 @pass_runtime
 def list_olm_operators(runtime: Runtime, output_format: str):
@@ -37,10 +37,13 @@ def list_olm_operators(runtime: Runtime, output_format: str):
 
     By default, outputs component names (e.g., ose-ptp-operator-container).
     Use --output-format=distgit-key to output distgit keys (e.g., ptp-operator).
+    Use --output-format=bundle-name to output tab-separated "{distgit_key}\t{bundle_short_name}"
+    pairs, which honors any `bundle_name_override` config (e.g., "ptp-operator\tptp-operator-bundle").
 
     Examples:
     $ doozer --group openshift-4.5 olm-bundle:list-olm-operators
     $ doozer --group openshift-4.5 olm-bundle:list-olm-operators --output-format=distgit-key
+    $ doozer --group openshift-4.5 olm-bundle:list-olm-operators --output-format=bundle-name
     """
     runtime.initialize(clone_distgits=False, clone_source=False, prevent_cloning=True)
 
@@ -48,6 +51,8 @@ def list_olm_operators(runtime: Runtime, output_format: str):
         if image.enabled and image.config['update-csv'] is not Missing:
             if output_format == 'distgit-key':
                 print(image.distgit_key)
+            elif output_format == 'bundle-name':
+                print(f"{image.distgit_key}\t{image.get_olm_bundle_short_name()}")
             else:
                 print(image.get_component_name())
 

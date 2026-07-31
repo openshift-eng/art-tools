@@ -260,10 +260,20 @@ class BuildConformaVerifyPipeline:
                 records_by_name[record.name] = record
         return list(records_by_name.values())
 
-    async def _find_operator_names(self) -> set[str]:
-        cmd = self._doozer_base_command + ['olm-bundle:list-olm-operators', '--output-format', 'distgit-key']
+    async def _find_operator_bundle_names(self) -> dict[str, str]:
+        """Returns a mapping of operator distgit_key -> bundle short name.
+
+        Uses doozer's "bundle-name" output format, which honors any per-image
+        `bundle_name_override` config rather than assuming '{operator_name}-bundle'.
+        """
+        cmd = self._doozer_base_command + ['olm-bundle:list-olm-operators', '--output-format', 'bundle-name']
         _, out, _ = await exectools.cmd_gather_async(cmd, stderr=None)
-        return set(out.strip().split('\n')) if out.strip() else set()
+        bundle_names_by_operator: dict[str, str] = {}
+        for line in out.strip().split('\n') if out.strip() else []:
+            distgit_key, _, bundle_name = line.partition('\t')
+            if distgit_key and bundle_name:
+                bundle_names_by_operator[distgit_key] = bundle_name
+        return bundle_names_by_operator
 
     async def _find_corresponding_builds(
         self, nvr_record_map: dict[str, KonfluxRecord], lookup_fbcs: bool = True
@@ -272,26 +282,30 @@ class BuildConformaVerifyPipeline:
 
         Returns (bundle_records, fbc_records). Set lookup_fbcs=False to skip FBC queries.
         """
-        operator_names = await self._find_operator_names()
-        if not operator_names:
+        bundle_names_by_operator = await self._find_operator_bundle_names()
+        if not bundle_names_by_operator:
             self.logger.warning("No operator names found")
             return [], []
 
-        self.logger.info("Found %d operator names, cross-referencing with image NVRs...", len(operator_names))
+        self.logger.info("Found %d operator names, cross-referencing with image NVRs...", len(bundle_names_by_operator))
 
         bundle_db = KonfluxDb()
         bundle_db.bind(KonfluxBundleBuildRecord)
 
         operator_nvrs = []
         for nvr, record in nvr_record_map.items():
-            if record.name in operator_names:
+            if record.name in bundle_names_by_operator:
                 operator_nvrs.append((record.name, nvr))
 
         self.logger.info("Found %d operator image builds to look up", len(operator_nvrs))
 
         bundle_records: list[KonfluxRecord] = []
+        # Bundle nvr -> operator distgit_key, so the FBC lookup below doesn't need to
+        # reverse-derive the operator name from the bundle name (which breaks under
+        # bundle_name_override).
+        operator_name_by_bundle_nvr: dict[str, str] = {}
         for operator_name, nvr in operator_nvrs:
-            bundle_name = f'{operator_name}-bundle'
+            bundle_name = bundle_names_by_operator[operator_name]
             bundle = await bundle_db.get_latest_build(
                 name=bundle_name,
                 group=self.group,
@@ -302,6 +316,7 @@ class BuildConformaVerifyPipeline:
             if bundle:
                 self.logger.info("  Found bundle for %s: %s", nvr, bundle.nvr)
                 bundle_records.append(bundle)
+                operator_name_by_bundle_nvr[bundle.nvr] = operator_name
             else:
                 self.logger.warning("  No bundle found for operator %s (%s)", operator_name, nvr)
 
@@ -310,7 +325,7 @@ class BuildConformaVerifyPipeline:
             fbc_db = KonfluxDb()
             fbc_db.bind(KonfluxFbcBuildRecord)
             for bundle in bundle_records:
-                operator_name = bundle.name.removesuffix('-bundle')
+                operator_name = operator_name_by_bundle_nvr[bundle.nvr]
                 fbc_name = f'{operator_name}-fbc'
                 async for fbc in fbc_db.search_builds_by_fields(
                     where={

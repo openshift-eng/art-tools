@@ -2570,6 +2570,36 @@ class TestKonfluxFbcRebaserAssemblyMethods(unittest.IsolatedAsyncioTestCase):
         result = self.rebaser._find_component_in_shipment(shipment, "nfd-operator")
         self.assertIsNone(result)
 
+    def test_find_component_in_shipment_uses_bundle_name_override(self):
+        """A bundle_name_override should be tried before the default '{name}-bundle' pattern."""
+        shipment = MagicMock()
+
+        default_component = MagicMock()
+        default_component.name = "nfd-operator-bundle"
+        overridden_component = MagicMock()
+        overridden_component.name = "custom-bundle-name"
+
+        shipment.shipment.snapshot.spec.components = [default_component, overridden_component]
+
+        result = self.rebaser._find_component_in_shipment(
+            shipment, "nfd-operator", bundle_name_override="custom-bundle-name"
+        )
+        self.assertEqual(result, overridden_component)
+
+    def test_find_component_in_shipment_falls_back_when_override_not_found(self):
+        """If the overridden bundle name isn't in the shipment, fall back to the default pattern."""
+        shipment = MagicMock()
+
+        default_component = MagicMock()
+        default_component.name = "nfd-operator-bundle"
+
+        shipment.shipment.snapshot.spec.components = [default_component]
+
+        result = self.rebaser._find_component_in_shipment(
+            shipment, "nfd-operator", bundle_name_override="custom-bundle-name"
+        )
+        self.assertEqual(result, default_component)
+
     @patch("doozerlib.backend.konflux_fbc._fetch_csv_from_git", new_callable=AsyncMock)
     async def test_extract_csv_info_from_bundle_success(self, mock_fetch_csv):
         """Test extracting CSV info from a bundle component."""
