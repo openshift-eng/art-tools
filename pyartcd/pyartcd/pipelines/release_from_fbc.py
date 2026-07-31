@@ -1216,6 +1216,19 @@ class ReleaseFromFbcPipeline:
         if not all_nvrs and not self.extra_image_nvrs:
             raise RuntimeError("No NVRs extracted from FBC images and no extra image NVRs provided")
 
+        # Categorize NVRs first to separate external image references before the embargo check.
+        # External images (from the prod registry, e.g. postgresql) don't carry p-flags and
+        # would be incorrectly flagged as embargoed by is_nvr_embargoed() which defaults to True.
+        empty_categorized: Dict[str, List[str]]
+        if self.ocp_optional:
+            empty_categorized = {"extras": [], "fbc": [], "external": []}
+        else:
+            empty_categorized = {"image": [], "fbc": [], "external": []}
+        categorized_nvrs = self.categorize_nvrs(all_nvrs) if all_nvrs else empty_categorized
+
+        # The key for the primary non-FBC image shipment depends on mode
+        image_key = "extras" if self.ocp_optional else "image"
+
         # Defensive check: bundle rebases (and the operator-level filter in
         # build_layered_products.py) should already guarantee that the bundle/operand images
         # referenced by an FBC are never embargoed. If an embargoed NVR reaches this point
@@ -1223,13 +1236,12 @@ class ReleaseFromFbcPipeline:
         # override - that signals a serious upstream bug (or misuse of --extra-image-nvrs), so
         # fail the release rather than silently dropping it.
         #
-        # Note: this deliberately checks related_nvrs (the actual bundle/operand images
-        # referenced inside the FBC catalog), not fbc_nvrs (the FBC/catalog image's own NVR).
-        # The FBC image is just a catalog wrapper; its own NVR is never embargo-relevant and,
-        # by construction (see build_fbc.py), never carries a p-flag at all - so including it
-        # here would make this check fail unconditionally on every run.
+        # Note: this only checks non-external NVRs from the current group. External images
+        # (from the prod registry) and FBC catalog NVRs don't carry p-flags and are excluded.
         try:
-            embargoed_nvrs = [nvr for nvr in related_nvrs + self.extra_image_nvrs if is_nvr_embargoed(nvr)]
+            embargoed_nvrs = [
+                nvr for nvr in categorized_nvrs.get(image_key, []) + self.extra_image_nvrs if is_nvr_embargoed(nvr)
+            ]
         except ValueError as e:
             # is_nvr_embargoed() raises when an NVR's embargo status is ambiguous (e.g. it
             # matches more than one visibility suffix). Treat that the same as finding an
@@ -1241,17 +1253,6 @@ class ReleaseFromFbcPipeline:
                 f"{embargoed_nvrs}. This should never happen for FBC-derived NVRs and likely "
                 f"indicates an upstream bug, or an embargoed NVR was passed via --extra-image-nvrs."
             )
-
-        # Categorize the extracted NVRs
-        empty_categorized: Dict[str, List[str]]
-        if self.ocp_optional:
-            empty_categorized = {"extras": [], "fbc": [], "external": []}
-        else:
-            empty_categorized = {"image": [], "fbc": [], "external": []}
-        categorized_nvrs = self.categorize_nvrs(all_nvrs) if all_nvrs else empty_categorized
-
-        # The key for the primary non-FBC image shipment depends on mode
-        image_key = "extras" if self.ocp_optional else "image"
 
         # Merge extra image NVRs into the primary image category
         if self.extra_image_nvrs:
