@@ -9,6 +9,7 @@ import aiohttp
 import click
 import yaml
 from artcommonlib import exectools
+from artcommonlib.assembly import assembly_config_struct
 from artcommonlib.gitlab import GitLabClient
 from artcommonlib.oc_image_info import oc_image_info__cached_async
 
@@ -23,6 +24,7 @@ SKIPPED_IMAGES_PATTERNS = [
 ]
 
 CATALOG_API_URL = "https://catalog.redhat.com/api/containers/v1/images"
+RELEASE_IMAGE_REPO = "quay.io/openshift-release-dev/ocp-release"
 
 
 @dataclass
@@ -294,13 +296,26 @@ def render_result(result: VerifyImageConsistencyResult, output: str) -> str:
     return "\n".join(lines)
 
 
+def resolve_shipment_mr_url(runtime) -> str:
+    releases_config = runtime.get_releases_config()
+    assembly_group_config = assembly_config_struct(releases_config, runtime.assembly, "group", {})
+    shipment = assembly_group_config.get("shipment", {})
+    url = shipment.get("url")
+    if not url:
+        raise RuntimeError(
+            f"No shipment URL found in assembly '{runtime.assembly}' group config. "
+            f"Ensure releases.yml has releases.{runtime.assembly}.assembly.group.shipment.url set."
+        )
+    return url
+
+
 @cli.command("verify-image-consistency", short_help="Verify payload images match shipment MR components")
 @click.option(
-    "--payload-url",
-    required=True,
-    help="Release payload pullspec, e.g. quay.io/openshift-release-dev/ocp-release:4.20.1-x86_64",
+    "--arch",
+    default="x86_64",
+    show_default=True,
+    help="Architecture for the release payload.",
 )
-@click.option("--shipment-mr-url", required=True, help="Shipment GitLab MR URL")
 @click.option(
     "-o",
     "--output",
@@ -311,15 +326,21 @@ def render_result(result: VerifyImageConsistencyResult, output: str) -> str:
 )
 @pass_runtime
 @click_coroutine
-async def verify_image_consistency_cli(runtime, payload_url, shipment_mr_url, output):
+async def verify_image_consistency_cli(runtime, arch, output):
     """Verify that every image in the release payload is present in the
     shipment MR or has already been released in the Red Hat catalog.
 
-    Compares payload images (from oc adm release info) against shipment
-    components (from the GitLab MR YAML files). RHCOS images are skipped.
-    Images are matched by digest, list digest, or VCS reference.
+    Requires --group and --assembly global options. Resolves the shipment
+    MR URL from the assembly config and constructs the payload pullspec.
+
+    Example:
+        doozer --group openshift-4.18 --assembly 4.18.51 verify-image-consistency
     """
-    runtime.initialize(no_group=True)
+    runtime.initialize(config_only=True)
+    shipment_mr_url = resolve_shipment_mr_url(runtime)
+    payload_url = f"{RELEASE_IMAGE_REPO}:{runtime.assembly}-{arch}"
+    LOGGER.info("Resolved shipment MR URL: %s", shipment_mr_url)
+    LOGGER.info("Constructed payload URL: %s", payload_url)
     result = await verify_image_consistency(payload_url=payload_url, shipment_mr_url=shipment_mr_url)
     click.echo(render_result(result, output))
     if not result.passed:
