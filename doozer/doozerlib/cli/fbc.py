@@ -573,7 +573,8 @@ class FbcRebaseAndBuildCli:
         :param strict: Whether to fail if bundle build is not found
         :return: Bundle build record.
         """
-        bundle_name = f"{operator_build.name}-bundle"
+        operator_meta = self.runtime.image_map.get(operator_build.name)
+        bundle_name = operator_meta.get_olm_bundle_short_name() if operator_meta else f"{operator_build.name}-bundle"
         LOGGER.info("Fetching bundle build for %s from Konflux DB...", operator_build.nvr)
         where = {
             "name": bundle_name,

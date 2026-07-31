@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from typing import List, Optional, Set
+from typing import Dict, List, Optional, Set
 
 import click
 from artcommonlib import exectools, redis
@@ -55,6 +55,10 @@ class ScanOperatorPipeline:
         # Track operators needing builds
         self.operators_without_bundles = []
         self.operators_without_fbcs = []
+
+        # Populated by load_operator_names(): distgit_key -> bundle short name
+        # (honors any per-image `bundle_name_override` config)
+        self.bundle_names_by_operator: Dict[str, str] = {}
 
         # Build doozer base command for metadata loading
         group_param = f'{self.group}'
@@ -131,14 +135,23 @@ class ScanOperatorPipeline:
         """Load operator image names from ocp-build-data using doozer.
 
         Returns distgit keys (metadata names) like 'dpu-operator', not component names.
+
+        As a side effect, populates `self.bundle_names_by_operator` with each
+        operator's bundle short name (honoring any `bundle_name_override` config),
+        for use by `get_bundle_name()`.
         """
-        # Use doozer to list operator distgit keys)
-        cmd = self.doozer_base_command + ['olm-bundle:list-olm-operators', '--output-format', 'distgit-key']
+        # Use doozer to list operator distgit keys along with their bundle short names
+        # (tab-separated "{distgit_key}\t{bundle_short_name}" pairs).
+        cmd = self.doozer_base_command + ['olm-bundle:list-olm-operators', '--output-format', 'bundle-name']
 
         _, out, _ = await exectools.cmd_gather_async(cmd, stderr=None)
-        operator_names = set(out.strip().split('\n')) if out.strip() else set()
+        self.bundle_names_by_operator = {}
+        for line in out.strip().split('\n') if out.strip() else []:
+            distgit_key, _, bundle_name = line.partition('\t')
+            if distgit_key and bundle_name:
+                self.bundle_names_by_operator[distgit_key] = bundle_name
 
-        return operator_names
+        return set(self.bundle_names_by_operator.keys())
 
     async def get_latest_operator_builds(self, operator_names: Set[str]) -> List[KonfluxBuildRecord]:
         """Get the latest successful build for each operator."""
@@ -301,9 +314,12 @@ class ScanOperatorPipeline:
 
     def get_bundle_name(self, operator_name: str) -> str:
         """Get bundle name from operator name.
-        Bundle names append -bundle suffix (e.g., 'dpu-operator-bundle').
+
+        Uses the bundle short name resolved by `load_operator_names()`, which honors
+        any `bundle_name_override` config. Falls back to the default '{operator_name}-bundle'
+        pattern if the operator wasn't found in that mapping (e.g., in tests).
         """
-        return f'{operator_name}-bundle'
+        return self.bundle_names_by_operator.get(operator_name, f'{operator_name}-bundle')
 
     def get_fbc_name(self, operator_name: str) -> str:
         """Get FBC name from operator name.

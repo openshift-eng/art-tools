@@ -67,6 +67,9 @@ class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
         self.runtime.konflux_db = mock.AsyncMock()
         self.runtime.konflux_db.bind = mock.Mock()  # Mock the bind method
         self.runtime.record_logger = mock.Mock()
+        # Default to an empty map so get_bundle_build_for() falls back to the default
+        # "{name}-bundle" naming for tests that don't care about metadata lookups.
+        self.runtime.image_map = {}
 
         # Mock KonfluxDb class to return mock instances
         self.mock_db_for_bundles = mock.AsyncMock()
@@ -276,8 +279,18 @@ class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
         self.runtime.konflux_db.get_build_records_by_nvrs.return_value = [operator_build1, operator_build2]
         self.runtime.images = ["test-operator-1", "test-operator-2"]
         self.runtime.image_map = {
-            "test-operator-1": mock.Mock(is_olm_operator=True, distgit_key="test-operator-1", name="test-operator-1"),
-            "test-operator-2": mock.Mock(is_olm_operator=True, distgit_key="test-operator-2", name="test-operator-2"),
+            "test-operator-1": mock.Mock(
+                is_olm_operator=True,
+                distgit_key="test-operator-1",
+                name="test-operator-1",
+                **{"get_olm_bundle_short_name.return_value": "test-operator-1-bundle"},
+            ),
+            "test-operator-2": mock.Mock(
+                is_olm_operator=True,
+                distgit_key="test-operator-2",
+                name="test-operator-2",
+                **{"get_olm_bundle_short_name.return_value": "test-operator-2-bundle"},
+            ),
         }
 
         async def mock_bundle_search(*args, **kwargs):
@@ -365,6 +378,29 @@ class TestFbcRebaseAndBuildCli(unittest.IsolatedAsyncioTestCase):
         result = await self.fbc_cli.get_bundle_build_for(operator_build, strict=False)
 
         self.assertIsNone(result)
+
+    async def test_get_bundle_build_for_uses_bundle_name_override(self):
+        """The lookup should use the operator's overridden bundle short name, not '{name}-bundle'."""
+        operator_build = self._create_mock_operator_build("test-operator", "test-operator-1.0.0-1")
+        bundle_build = self._create_mock_bundle_build(
+            "custom-bundle-name", "custom-bundle-name-1.0.0-1", "test-operator-1.0.0-1"
+        )
+        self.runtime.image_map = {
+            "test-operator": mock.Mock(**{"get_olm_bundle_short_name.return_value": "custom-bundle-name"}),
+        }
+
+        seen_where = {}
+
+        async def mock_bundle_search(*args, **kwargs):
+            seen_where.update(kwargs.get('where', {}))
+            yield bundle_build
+
+        self.mock_db_for_bundles.search_builds_by_fields = mock_bundle_search
+
+        result = await self.fbc_cli.get_bundle_build_for(operator_build)
+
+        self.assertEqual(result, bundle_build)
+        self.assertEqual(seen_where.get('name'), 'custom-bundle-name')
 
     @mock.patch("doozerlib.cli.fbc.KonfluxFbcRebaser.get_fbc_name")
     async def test_check_existing_fbc_build_found(self, mock_get_fbc_name):

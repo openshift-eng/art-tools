@@ -197,11 +197,17 @@ class ImageMetadata(Metadata):
     def get_olm_bundle_short_name(self):
         """Returns the short name of the OLM bundle for this OLM operator.
 
+        If the top-level `bundle_name_override` config field is set, it is used
+        instead of the default `{distgit_key}-bundle` derivation.
+
         :return: The short name of the OLM bundle for this OLM operator.
         :raises IOError: If the image is not an OLM operator.
         """
         if not self.is_olm_operator:
             raise IOError(f"[{self.distgit_key}] No update-csv config found in the image's metadata")
+        override = self.config.bundle_name_override
+        if override is not Missing and override:
+            return str(override)
         return f"{self.distgit_key}-bundle"
 
     def get_olm_bundle_image_name(self):

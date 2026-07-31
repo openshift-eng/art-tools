@@ -1208,6 +1208,40 @@ RUN echo "test"
             with self.assertRaises(IOError):
                 metadata.get_olm_bundle_delivery_repo_name()
 
+    def test_get_olm_bundle_short_name_no_override(self):
+        metadata = self._create_image_metadata('openshift/test')
+        mock_config = MagicMock()
+        mock_config.bundle_name_override = Missing
+        metadata.config = mock_config
+        with patch.object(type(metadata), 'is_olm_operator', new_callable=lambda: property(lambda self: True)):
+            result = metadata.get_olm_bundle_short_name()
+        self.assertEqual(result, 'my-distgit-bundle')
+
+    def test_get_olm_bundle_short_name_with_override(self):
+        metadata = self._create_image_metadata('openshift/test')
+        mock_config = MagicMock()
+        mock_config.bundle_name_override = 'acm-operator-bundle'
+        metadata.config = mock_config
+        with patch.object(type(metadata), 'is_olm_operator', new_callable=lambda: property(lambda self: True)):
+            result = metadata.get_olm_bundle_short_name()
+        self.assertEqual(result, 'acm-operator-bundle')
+
+    def test_get_olm_bundle_short_name_not_olm_operator_raises(self):
+        metadata = self._create_image_metadata('openshift/test')
+        with patch.object(type(metadata), 'is_olm_operator', new_callable=lambda: property(lambda self: False)):
+            with self.assertRaises(IOError):
+                metadata.get_olm_bundle_short_name()
+
+    def test_get_olm_bundle_image_name_with_override(self):
+        metadata = self._create_image_metadata('openshift/test')
+        mock_config = MagicMock()
+        mock_config.bundle_name_override = 'acm-operator-bundle'
+        metadata.config = mock_config
+        metadata.runtime.group_config.product = 'rhacm2'
+        with patch.object(type(metadata), 'is_olm_operator', new_callable=lambda: property(lambda self: True)):
+            result = metadata.get_olm_bundle_image_name()
+        self.assertEqual(result, 'rhacm2/acm-operator-bundle')
+
 
 class TestImageInspector(IsolatedAsyncioTestCase):
     @mock.patch("doozerlib.repos.Repo.get_repodata_threadsafe")

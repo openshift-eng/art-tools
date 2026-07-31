@@ -548,6 +548,12 @@ class OLMBundle(object):
 
     @property
     def bundle_name(self):
+        try:
+            config = self.runtime.image_map[self.operator_name].config
+        except (AttributeError, KeyError):
+            config = None
+        if config is not None and 'bundle_name_override' in config and config['bundle_name_override']:
+            return config['bundle_name_override']
         return '{}-bundle'.format(self.operator_name)
 
     @property

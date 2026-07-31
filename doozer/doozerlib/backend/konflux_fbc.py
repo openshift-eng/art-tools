@@ -861,6 +861,7 @@ class KonfluxFbcRebaser:
         self,
         shipment,
         operator_name: str,
+        bundle_name_override: Optional[str] = None,
     ):
         """
         Find a component matching the operator name in a shipment snapshot.
@@ -868,6 +869,9 @@ class KonfluxFbcRebaser:
         Args:
             shipment: The shipment config object
             operator_name: The operator distgit key to search for
+            bundle_name_override: If the operator's bundle short name was overridden
+                (config.bundle_name_override), this is that overridden name. Tried
+                before the default "{operator_name}-bundle" pattern.
 
         Returns:
             The matching component if found, None otherwise
@@ -876,9 +880,14 @@ class KonfluxFbcRebaser:
             return None
 
         # Bundle components typically follow pattern: {operator_name}-bundle
-        expected_names = (
-            f"{operator_name}-bundle",
-            operator_name,
+        expected_names = tuple(
+            name
+            for name in (
+                bundle_name_override,
+                f"{operator_name}-bundle",
+                operator_name,
+            )
+            if name
         )
         for expected_name in expected_names:
             component = next(
@@ -999,7 +1008,12 @@ class KonfluxFbcRebaser:
             self._logger.info("Fetching metadata shipment config from %s", shipment_url)
             metadata_shipment = get_shipment_config_from_mr(shipment_url, "metadata")
             operator_name = metadata.distgit_key
-            bundle_component = self._find_component_in_shipment(metadata_shipment, operator_name)
+            bundle_name_override = metadata.config.bundle_name_override
+            bundle_component = self._find_component_in_shipment(
+                metadata_shipment,
+                operator_name,
+                bundle_name_override=str(bundle_name_override) if bundle_name_override else None,
+            )
             if not bundle_component:
                 self._logger.info("Bundle component for %s not found in assembly %s", operator_name, assembly)
                 return None
