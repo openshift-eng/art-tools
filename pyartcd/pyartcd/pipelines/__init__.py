@@ -5,6 +5,7 @@ Pipeline modules for pyartcd.
 from . import (
     advisory_drop,
     art_notify,
+    binary_release_konflux,
     brew_scan_osh,
     build_fbc,
     build_layered_products,
@@ -53,6 +54,7 @@ from . import (
 __all__ = [
     'advisory_drop',
     'art_notify',
+    'binary_release_konflux',
     'brew_scan_osh',
     'build_fbc',
     'build_merged_fbc',
