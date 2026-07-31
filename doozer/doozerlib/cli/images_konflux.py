@@ -556,6 +556,18 @@ class KonfluxBundleCli:
         assert isinstance(bundle_build, KonfluxBundleBuildRecord)
         return bundle_build
 
+    async def _get_bundle_build_by_nvr(self, nvr: str) -> Optional[KonfluxBundleBuildRecord]:
+        """Find a successful bundle build by its exact NVR, regardless of assembly."""
+        where = {
+            "nvr": nvr,
+            "outcome": str(KonfluxBuildOutcome.SUCCESS),
+        }
+        bundle_build = await anext(self._db_for_bundles.search_builds_by_fields(where=where, limit=1), None)
+        if bundle_build is None:
+            return None
+        assert isinstance(bundle_build, KonfluxBundleBuildRecord)
+        return bundle_build
+
     async def _rebase_and_build(
         self,
         rebaser: KonfluxOlmBundleRebaser,
@@ -585,6 +597,21 @@ class KonfluxBundleCli:
 
         logger.info("Rebasing OLM bundle...")
         nvr = await rebaser.rebase(image_meta, operator_build, input_release)
+
+        # The assembly-scoped lookup above determines whether this assembly already has a
+        # bundle for the operator. The resulting NVR, however, is derived from the operator's
+        # labels and can collide with a bundle recorded under another assembly. Check the exact
+        # NVR globally before starting a PipelineRun so a cross-assembly invocation cannot
+        # create two successful builds with the same NVR.
+        existing_build = await self._get_bundle_build_by_nvr(nvr)
+        if existing_build is not None:
+            raise ValueError(
+                f"Successful bundle NVR {nvr} already exists in DB! "
+                f"Existing build assembly: {existing_build.assembly}; "
+                f"pullspec: {existing_build.image_pullspec}. "
+                "To rebuild, use a different bundle release."
+            )
+
         logger.info("Building OLM bundle...")
         await builder.build(image_meta, git_auth_secret=git_auth_secret)
         logger.info("Bundle build complete")
