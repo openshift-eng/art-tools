@@ -216,7 +216,13 @@ async def verify_image_consistency(payload_url: str, shipment_mr_url: str) -> Ve
         all_pullspecs.add(pullspec)
 
     pullspec_list = list(all_pullspecs)
-    fetched = await asyncio.gather(*(fetch_image_identifiers(ps) for ps in pullspec_list))
+    semaphore = asyncio.Semaphore(50)
+
+    async def _throttled_fetch(ps: str) -> ImageIdentifiers:
+        async with semaphore:
+            return await fetch_image_identifiers(ps)
+
+    fetched = await asyncio.gather(*(_throttled_fetch(ps) for ps in pullspec_list))
     identifiers: dict[str, ImageIdentifiers] = dict(zip(pullspec_list, fetched, strict=True))
 
     shipment_identifiers = [identifiers[ps] for _, ps in shipment_components if ps in identifiers]
