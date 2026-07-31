@@ -118,6 +118,18 @@ class TestBinaryReleaseKonfluxPipeline(unittest.TestCase):
         self.assertEqual(config.shipment.environments.stage.releasePlan, "n/a")
         self.assertEqual(config.shipment.environments.prod.releasePlan, "n/a")
 
+    def test_create_shipment_config_raises_when_create_mr_and_no_release_plan(self):
+        """When create_mr=True and releasePlan can't be resolved, raise ValueError."""
+        pipeline = self._make_pipeline()
+        pipeline.create_mr = True
+        snapshot = _make_snapshot()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pipeline.shipment_data_repo._directory = Path(tmpdir)
+
+            with self.assertRaises(ValueError):
+                pipeline.create_shipment_config(snapshot)
+
     def test_create_shipment_config_uses_snapshot_application(self):
         """metadata.application is derived directly from the snapshot's application."""
         pipeline = self._make_pipeline()
@@ -192,8 +204,8 @@ class TestCreateSnapshot(unittest.TestCase):
         result = asyncio.run(pipeline.create_snapshot([]))
         self.assertIsNone(result)
 
-    @patch("pyartcd.pipelines.binary_release_konflux.exectools.cmd_assert")
-    def test_creates_snapshot_from_elliott_output(self, mock_cmd_assert):
+    @patch("pyartcd.pipelines.binary_release_konflux.exectools.cmd_gather_async")
+    def test_creates_snapshot_from_elliott_output(self, mock_cmd_gather_async):
         pipeline = self._make_pipeline()
         yaml_output = (
             "spec:\n"
@@ -206,7 +218,7 @@ class TestCreateSnapshot(unittest.TestCase):
             "        url: https://github.com/test/repo\n"
             "        revision: abc123\n"
         )
-        mock_cmd_assert.return_value = (yaml_output, "")
+        mock_cmd_gather_async.return_value = (0, yaml_output, "")
 
         builds = ["oc-mirror-container-2.0-202607291654.p2.g90b54b1.assembly.stream.el9"]
         result = asyncio.run(pipeline.create_snapshot(builds))
@@ -215,7 +227,7 @@ class TestCreateSnapshot(unittest.TestCase):
         self.assertEqual(result.spec.application, "oc-mirror-2-0")
         self.assertEqual(result.nvrs, builds)
 
-        call_args = mock_cmd_assert.call_args[0][0]
+        call_args = mock_cmd_gather_async.call_args[0][0]
         self.assertIn("snapshot", call_args)
         self.assertIn("new", call_args)
 

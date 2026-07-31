@@ -257,7 +257,7 @@ class BinaryReleaseKonfluxPipeline:
 
         try:
             self.logger.info(f"Running elliott snapshot command: {' '.join(snapshot_cmd)}")
-            stdout, _ = exectools.cmd_assert(snapshot_cmd)
+            _, stdout, _ = await exectools.cmd_gather_async(snapshot_cmd)
         except Exception as e:
             self.logger.exception(f"Failed to create snapshot: {e}")
             raise
@@ -298,18 +298,20 @@ class BinaryReleaseKonfluxPipeline:
 
         stage_rpa = "n/a"
         prod_rpa = "n/a"
-        try:
-            config_path = self.shipment_data_repo._directory / "config.yaml"
-            if config_path.exists():
-                with open(config_path, 'r') as f:
-                    shipment_config = stdlib_yaml.safe_load(f) or {}
-                app_env_config = shipment_config.get("applications", {}).get(application, {}).get("environments", {})
-                stage_rpa = app_env_config.get("stage", {}).get("releasePlan", "n/a")
-                prod_rpa = app_env_config.get("prod", {}).get("releasePlan", "n/a")
-        except Exception as e:
-            self.logger.warning(f"Failed to read shipment config, using defaults: {e}")
+        config_path = self.shipment_data_repo._directory / "config.yaml"
+        if config_path.exists():
+            with open(config_path, 'r') as f:
+                shipment_config = stdlib_yaml.safe_load(f) or {}
+            app_env_config = shipment_config.get("applications", {}).get(application, {}).get("environments", {})
+            stage_rpa = app_env_config.get("stage", {}).get("releasePlan", "n/a")
+            prod_rpa = app_env_config.get("prod", {}).get("releasePlan", "n/a")
 
         if stage_rpa == "n/a" or prod_rpa == "n/a":
+            if self.create_mr:
+                raise ValueError(
+                    f"stage/prod releasePlan is not registered for application '{application}' in {config_path}. "
+                    "Cannot create a shipment MR with unresolved ReleasePlans."
+                )
             self.logger.warning(
                 f"Could not resolve stage/prod releasePlan for application '{application}' from config.yaml. "
                 "Please ensure it is registered there before merging the resulting MR."
@@ -484,15 +486,10 @@ class BinaryReleaseKonfluxPipeline:
         if not self.create_mr:
             await self.write_shipment_file_locally(shipment_config, "prod", timestamp)
         else:
-            try:
-                mr_url = await self.create_shipment_mr(shipment_config)
-                if mr_url:
-                    self.logger.info(f"Created shipment MR: {mr_url}")
-                    await self.set_shipment_mr_ready()
-            except Exception as e:
-                self.logger.exception(f"Failed to create MR: {e}")
-                if not self.dry_run:
-                    self.logger.info("Continuing with local files only")
+            mr_url = await self.create_shipment_mr(shipment_config)
+            if mr_url:
+                self.logger.info(f"Created shipment MR: {mr_url}")
+                await self.set_shipment_mr_ready()
 
         completion_msg = f"Binary release workflow completed for {self.product} {self.assembly}."
         if self.shipment_mr_url:
