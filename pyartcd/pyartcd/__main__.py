@@ -4,6 +4,7 @@ from pyartcd.cli import cli
 from pyartcd.pipelines import (
     advisory_drop,
     art_notify,
+    binary_release_konflux,
     brew_scan_osh,
     build_conforma_verify,
     build_fbc,
@@ -63,6 +64,7 @@ from pyartcd.pipelines.scheduled import (
 __all__ = [
     "advisory_drop",
     "art_notify",
+    "binary_release_konflux",
     "brew_scan_osh",
     "build_conforma_verify",
     "build_fbc",
