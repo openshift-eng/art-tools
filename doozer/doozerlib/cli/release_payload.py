@@ -32,6 +32,10 @@ LOGGER = logging.getLogger(__name__)
 IMAGE_REFERENCES_FILENAME = "image-references"
 RELEASE_MANIFESTS_SUBDIR = "release-manifests"
 
+# All release payload builds, across every group, share a single Konflux Application.
+# Each group gets its own Component underneath it (see get_component_name()).
+KONFLUX_RELEASE_PAYLOAD_APPLICATION_NAME = "release-payloads"
+
 
 class ReleasePayloadRebaseAndBuildCli:
     """Implements ART-21775: generate release payload manifests, push them to
@@ -85,19 +89,22 @@ class ReleasePayloadRebaseAndBuildCli:
         self._logger = LOGGER
 
     @staticmethod
-    def get_application_name(group: str) -> str:
-        """Konflux Application name for a group's release payload builds."""
-        return f"release-payload-{group}".replace(".", "-").replace("_", "-")
+    def get_application_name() -> str:
+        """Konflux Application name shared by release payload builds for every group.
+
+        e.g. `release-payloads`.
+        """
+        return KONFLUX_RELEASE_PAYLOAD_APPLICATION_NAME
 
     @staticmethod
     def get_component_name(group: str) -> str:
         """Konflux Component name for a group's release payload builds.
 
-        There is a single Component per group (Konflux builds all architectures as one
-        multi-arch manifest list from a single PipelineRun), so this is the same as the
-        Application name.
+        There is a single Component per group underneath the shared `release-payloads`
+        Application (Konflux builds all architectures as one multi-arch manifest list from
+        a single PipelineRun per group/assembly), e.g. `release-payload-openshift-4-21`.
         """
-        return ReleasePayloadRebaseAndBuildCli.get_application_name(group)
+        return f"release-payload-{group}".replace(".", "-").replace("_", "-")
 
     def _resolve_imagestream(self) -> Tuple[str, str]:
         """Derive the (namespace, name) of the build-sync imagestream to source manifests from.
@@ -214,7 +221,7 @@ class ReleasePayloadRebaseAndBuildCli:
             context=self.konflux_context,
             dry_run=self.dry_run,
         )
-        app_name = self.get_application_name(runtime.group)
+        app_name = self.get_application_name()
         component_name = self.get_component_name(runtime.group)
         self._logger.info("Using Konflux application %s, component %s", app_name, component_name)
         await konflux_client.ensure_application(name=app_name, display_name=app_name)

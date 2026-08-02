@@ -54,17 +54,17 @@ def _make_cli(runtime, **overrides) -> ReleasePayloadRebaseAndBuildCli:
 
 
 class TestReleasePayloadRebaseAndBuildCliNaming(unittest.TestCase):
-    def test_get_application_name(self):
+    def test_get_application_name_is_shared_across_groups(self):
+        self.assertEqual(ReleasePayloadRebaseAndBuildCli.get_application_name(), "release-payloads")
+
+    def test_get_component_name_is_group_specific(self):
         self.assertEqual(
-            ReleasePayloadRebaseAndBuildCli.get_application_name("openshift-4.21"),
+            ReleasePayloadRebaseAndBuildCli.get_component_name("openshift-4.21"),
             "release-payload-openshift-4-21",
         )
-
-    def test_get_component_name_matches_application_name(self):
-        group = "openshift-4.21"
         self.assertEqual(
-            ReleasePayloadRebaseAndBuildCli.get_component_name(group),
-            ReleasePayloadRebaseAndBuildCli.get_application_name(group),
+            ReleasePayloadRebaseAndBuildCli.get_component_name("openshift-5.0"),
+            "release-payload-openshift-5-0",
         )
 
 
