@@ -681,6 +681,26 @@ class SigstoreSignatory:
                     self._logger.info(f"found sig file at {url}")
                     return True
 
+    async def has_cosign_signature(self, pullspec: str) -> bool:
+        """Check whether a pullspec already has a cosign signature stored in the registry.
+
+        Runs `cosign download signature` once (no retries -- this is a quick existence check).
+        Returns True if a signature is present, False if not or on any error.
+        No signing keys are required; this is a read-only registry operation.
+        """
+        cmd = ["cosign", "download", "signature", pullspec]
+        self._logger.debug("Checking for cosign signature: %s", pullspec)
+        rc, stdout, stderr = await exectools.cmd_gather_async(cmd, check=False, env=self.ENV)
+        if rc != 0:
+            self._logger.debug("No cosign signature found for %s (rc=%d): %s", pullspec, rc, stderr.strip())
+            return False
+        has_sig = bool(stdout.strip())
+        if has_sig:
+            self._logger.debug("Found cosign signature for %s", pullspec)
+        else:
+            self._logger.debug("No cosign signature found for %s (empty output)", pullspec)
+        return has_sig
+
     @retry(wait=wait_random_exponential(), stop=stop_after_attempt(5), reraise=True)
     async def _retrying_cosign(self, cmd: List[str]) -> str:
         """Execute cosign with retry on failure."""
