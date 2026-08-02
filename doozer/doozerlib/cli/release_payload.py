@@ -235,8 +235,12 @@ class ReleasePayloadRebaseAndBuildCli:
         )
 
         output_image = f"{self.image_repo}:{self.version}-{self.release}"
+        # The Component (and its branch) is shared by every assembly of the group, so fold the
+        # assembly into the generateName prefix -- otherwise builds for different assemblies are
+        # indistinguishable in the Konflux UI's PipelineRun list.
+        assembly_slug = str(runtime.assembly).replace(".", "-").replace("_", "-").lower()
         pipelinerun_info = await konflux_client.start_pipeline_run_for_image_build(
-            generate_name=f"{component_name}-",
+            generate_name=f"{component_name}-{assembly_slug}-",
             namespace=self.konflux_namespace,
             application_name=app_name,
             component_name=component_name,

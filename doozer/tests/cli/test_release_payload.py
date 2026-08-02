@@ -257,6 +257,7 @@ class TestBuild(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.runtime = mock.Mock(spec=Runtime)
         self.runtime.group = "openshift-4.21"
+        self.runtime.assembly = "4.21.1"
         self.cli = _make_cli(self.runtime)
 
         self.build_repo = mock.Mock()
@@ -301,6 +302,7 @@ class TestBuild(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kwargs["git_url"], self.build_repo.https_url)
         self.assertEqual(kwargs["commit_sha"], self.build_repo.commit_hash)
         self.assertEqual(kwargs["output_image"], f"{self.cli.image_repo}:{self.cli.version}-{self.cli.release}")
+        self.assertEqual(kwargs["generate_name"], "release-payload-openshift-4-21-4-21-1-")
 
         self.assertEqual(result["outcome"], str(KonfluxBuildOutcome.SUCCESS))
         self.assertEqual(result["output_image"], f"{self.cli.image_repo}:{self.cli.version}-{self.cli.release}")
