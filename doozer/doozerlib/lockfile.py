@@ -784,6 +784,180 @@ class RPMLockfileGenerator:
         if mismatches:
             self.logger.warning("RPM version set mismatches: %s", "; ".join(mismatches))
 
+    def _align_cross_arch_versions(
+        self, rpms_info_by_arch: dict[str, list[RpmInfo]], repo_names: set[str]
+    ) -> dict[str, list[RpmInfo]]:
+        """Align RPM latest versions across architectures to a common version.
+
+        When independent per-arch resolution picks different "latest" versions
+        (e.g. x86_64 gets v2 while aarch64 still has v1), this method
+        downgrades each arch to the lowest of the per-arch latest EVRs —
+        i.e. the version that the least-updated arch resolved.
+
+        Pinned (NVR-specific) entries are never touched — only the "latest" pick
+        per package name is considered for alignment.
+
+        Args:
+            rpms_info_by_arch: Mapping of arch → resolved RPM list (as returned
+                by :meth:`RpmInfoCollector.fetch_rpms_info`).
+            repo_names: Repository names used during resolution, needed to scan
+                ``loaded_repos`` for alternative versions.
+
+        Returns:
+            A new dict with the same structure, where mismatched latest versions
+            have been replaced by the shared target version, when that version
+            is available in the loaded repos for the affected arch.
+        """
+        # Step 1: For each arch, identify the latest RpmInfo per package name.
+        # A package may appear multiple times (pinned + latest); the "latest" is
+        # the entry with the highest EVR for that name.
+        arch_latest: dict[str, dict[str, RpmInfo]] = {}  # arch -> {pkg_name -> latest RpmInfo}
+        for arch, rpm_list in rpms_info_by_arch.items():
+            packages: dict[str, list[RpmInfo]] = {}
+            for rpm in rpm_list:
+                packages.setdefault(rpm.name, []).append(rpm)
+            latest_map: dict[str, RpmInfo] = {}
+            for pkg_name, pkg_rpms in packages.items():
+                latest = max(pkg_rpms)
+                latest_map[pkg_name] = latest
+            arch_latest[arch] = latest_map
+
+        # Step 2: Find packages present on 2+ arches with mismatched latest EVRs.
+        all_pkg_names: set[str] = set()
+        for latest_map in arch_latest.values():
+            all_pkg_names.update(latest_map.keys())
+
+        mismatched_packages: dict[str, dict[str, RpmInfo]] = {}  # pkg_name -> {arch -> latest RpmInfo}
+        for pkg_name in all_pkg_names:
+            arches_with_pkg = {
+                arch: latest_map[pkg_name] for arch, latest_map in arch_latest.items() if pkg_name in latest_map
+            }
+            if len(arches_with_pkg) < 2:
+                continue
+            evrs = {rpm.evr for rpm in arches_with_pkg.values()}
+            if len(evrs) > 1:
+                mismatched_packages[pkg_name] = arches_with_pkg
+
+        if not mismatched_packages:
+            return rpms_info_by_arch
+
+        # Step 3: For each mismatched package, determine the common target EVR.
+        # The target is the minimum of the per-arch latest EVRs — i.e. the
+        # highest version that the "least updated" arch has.
+        target_evrs: dict[str, str] = {}  # pkg_name -> target evr
+        for pkg_name, arches_map in mismatched_packages.items():
+            target_rpm = min(arches_map.values())
+            target_evrs[pkg_name] = target_rpm.evr
+
+        # Step 4: For each mismatched package, collect candidate replacements
+        # across ALL affected arches *before* applying any.  If any single
+        # arch cannot resolve the target EVR, the whole package is skipped so
+        # we never end up with a partial downgrade that leaves arches still
+        # mismatched.
+        replacement_rpms: dict[str, dict[str, RpmInfo]] = {}  # arch -> {pkg_name -> replacement RpmInfo}
+        for pkg_name, target_evr in target_evrs.items():
+            affected_arches = {
+                arch: latest for arch, latest in mismatched_packages[pkg_name].items() if latest.evr != target_evr
+            }
+            if not affected_arches:
+                continue
+
+            # Try to find the target EVR in loaded repos for every affected arch.
+            candidates: dict[str, RpmInfo] = {}  # arch -> replacement RpmInfo
+            missing_arches: list[str] = []
+            for arch, current_latest in affected_arches.items():
+                found = self._find_rpm_by_evr_in_repos(pkg_name, target_evr, arch, repo_names)
+                if found is not None:
+                    candidates[arch] = found
+                else:
+                    missing_arches.append(arch)
+
+            if missing_arches:
+                self.logger.warning(
+                    "Cross-arch alignment: cannot find %s %s for arch(es) %s in loaded repos; "
+                    "skipping alignment for this package",
+                    pkg_name,
+                    target_evr,
+                    ", ".join(sorted(missing_arches)),
+                )
+                continue
+
+            # All affected arches can resolve — apply.
+            for arch, replacement in candidates.items():
+                replacement_rpms.setdefault(arch, {})[pkg_name] = replacement
+                self.logger.info(
+                    "Cross-arch alignment: %s on %s downgraded from %s to %s",
+                    pkg_name,
+                    arch,
+                    affected_arches[arch].evr,
+                    target_evr,
+                )
+
+        if not replacement_rpms:
+            return rpms_info_by_arch
+
+        # Step 5: Rebuild the per-arch RPM lists, swapping the latest entry for
+        # aligned packages while preserving pinned/other entries.
+        aligned: dict[str, list[RpmInfo]] = {}
+        for arch, rpm_list in rpms_info_by_arch.items():
+            arch_replacements = replacement_rpms.get(arch, {})
+            if not arch_replacements:
+                aligned[arch] = rpm_list
+                continue
+
+            new_list: list[RpmInfo] = []
+            for rpm in rpm_list:
+                if rpm.name in arch_replacements:
+                    old_latest = arch_latest[arch][rpm.name]
+                    if rpm.evr == old_latest.evr:
+                        # This is the entry being replaced — swap it
+                        new_list.append(arch_replacements[rpm.name])
+                        continue
+                new_list.append(rpm)
+
+            # Deduplicate by (name, evr): a pinned entry could already
+            # hold the target EVR, creating a duplicate when the latest
+            # is replaced.  Keep the first occurrence (i.e. the pinned one).
+            deduped: dict[tuple[str, str], RpmInfo] = {}
+            for rpm in new_list:
+                deduped.setdefault((rpm.name, rpm.evr), rpm)
+            aligned[arch] = sorted(deduped.values())
+
+        return aligned
+
+    def _find_rpm_by_evr_in_repos(
+        self, pkg_name: str, target_evr: str, arch: str, repo_names: set[str]
+    ) -> Optional[RpmInfo]:
+        """Search loaded repos for an RPM matching the given name, EVR, and arch.
+
+        Iterates through repositories in the canonical order to find a specific
+        version of a package.  Returns the first match, or ``None``.
+        """
+        for repo_name in sort_repos_for_lockfile_resolution(repo_names):
+            repodata = self.builder.loaded_repos.get(f'{repo_name}-{arch}')
+            if repodata is None:
+                continue
+
+            repo = self.builder.repos._repos.get(repo_name)
+            if repo is None:
+                continue
+
+            content_set_id = repo.content_set(arch)
+            if content_set_id is None:
+                content_set_id = f'{repo_name}-{arch}'
+            baseurl = repo.baseurl(repotype="unsigned", arch=arch)
+
+            for rpm in repodata.primary_rpms:
+                if rpm.name != pkg_name:
+                    continue
+                if rpm.arch != arch and rpm.arch != 'noarch':
+                    continue
+                candidate = RpmInfo.from_rpm(rpm, repoid=content_set_id, baseurl=baseurl)
+                if candidate.evr == target_evr:
+                    return candidate
+
+        return None
+
     async def should_generate_lockfile(
         self, image_meta: ImageMetadata, dest_dir: Path, filename: str = DEFAULT_RPM_LOCKFILE_NAME
     ) -> tuple[bool, set[str]]:
@@ -920,6 +1094,9 @@ class RPMLockfileGenerator:
 
         # Validate cross-architecture version set consistency (warn on mismatch)
         self._validate_cross_arch_version_sets(rpms_info_by_arch)
+
+        # Align mismatched latest versions to the highest common version
+        rpms_info_by_arch = self._align_cross_arch_versions(rpms_info_by_arch, enabled_repos)
 
         if image_meta.is_cross_arch_enabled():
             self.logger.info("Cross-architecture lockfile inclusion enabled")
