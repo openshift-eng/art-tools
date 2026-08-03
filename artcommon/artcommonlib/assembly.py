@@ -78,6 +78,12 @@ class AssemblyIssueCode(Enum):
     # build was non-hermetic.
     MISMATCHED_NETWORK_MODE = 12
 
+    # An RPM and a container image are built from the same upstream repo
+    # but at different source commits, causing version skew between
+    # the RPM binaries (e.g. kubelet) and the image binaries
+    # (e.g. kube-apiserver from hyperkube).
+    MISMATCHED_RPM_IMAGE_SIBLINGS = 13
+
 
 class AssemblyIssue:
     """
