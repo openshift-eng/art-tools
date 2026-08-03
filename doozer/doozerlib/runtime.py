@@ -29,7 +29,7 @@ from artcommonlib.config.repo import ContentSet, Repo, RepoList, RepoSync
 from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
 from artcommonlib.runtime import GroupRuntime
-from artcommonlib.util import isolate_el_version_in_brew_tag
+from artcommonlib.util import isolate_el_version_in_brew_tag, isolate_major_minor_in_group
 from artcommonlib.variants import BuildVariant
 from jira import JIRA
 from semver import Version
@@ -612,10 +612,13 @@ class Runtime(GroupRuntime):
             self.streams = assembly_streams_config(self.get_releases_config(), self.assembly, org_stream_model)
 
         strict_mode = True
+        major, minor = isolate_major_minor_in_group(self.group)
+        is_openshift_group = major is not None and minor is not None
         if (
             self.assembly_type == AssemblyTypes.STREAM
             or not self.assembly
             or self.assembly in ['stream', 'test', 'microshift']
+            or not is_openshift_group
         ):
             strict_mode = False
 
