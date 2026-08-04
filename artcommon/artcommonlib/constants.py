@@ -31,6 +31,7 @@ ACTIVE_OCP_VERSIONS = [
     "4.22",
     "4.23",
     "5.0",
+    "5.1",
 ]
 
 # Last standard (non-bridge) minor for each OCP major release, used when crossing
