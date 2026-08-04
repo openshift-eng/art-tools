@@ -100,3 +100,57 @@ class TestGetReport(IsolatedAsyncioTestCase):
         mock_cmd.assert_not_called()
         self.assertEqual(len(pipeline.report), 0)
         self.assertIn('4.21', pipeline.scanned_versions)
+
+    @patch("pyartcd.pipelines.okd_images_health.util.is_okd_version_enabled", new_callable=AsyncMock)
+    async def test_filters_disabled_versions(self, mock_is_enabled):
+        """Requested versions without okd.enabled in build-data are skipped."""
+        mock_is_enabled.side_effect = [True, False]
+
+        pipeline = self._make_pipeline(versions="4.21,4.23")
+        pipeline.get_report = AsyncMock()
+        pipeline.get_rebase_failures = AsyncMock()
+
+        await pipeline.run()
+
+        self.assertEqual(pipeline.versions, ['4.21'])
+        self.assertEqual(mock_is_enabled.await_count, 2)
+        pipeline.get_report.assert_awaited_once_with('4.21')
+
+    @patch("pyartcd.pipelines.okd_images_health.util.is_okd_version_enabled", new_callable=AsyncMock)
+    async def test_discovers_enabled_versions_when_not_provided(self, mock_is_enabled):
+        """When --versions is omitted, probe ACTIVE_OCP_VERSIONS and keep okd.enabled versions."""
+
+        async def enabled_for_cmd(cmd):
+            return any(arg == '--group=openshift-4.21' for arg in cmd)
+
+        mock_is_enabled.side_effect = enabled_for_cmd
+
+        pipeline = self._make_pipeline(versions="")
+        pipeline.get_report = AsyncMock()
+        pipeline.get_rebase_failures = AsyncMock()
+
+        with patch(
+            'pyartcd.pipelines.okd_images_health.ACTIVE_OCP_VERSIONS',
+            ['4.21', '4.23'],
+        ):
+            await pipeline.run()
+
+        self.assertEqual(pipeline.versions, ['4.21'])
+        self.assertEqual(mock_is_enabled.await_count, 2)
+        pipeline.get_report.assert_awaited_once_with('4.21')
+
+    @patch(
+        "pyartcd.pipelines.okd_images_health.util.is_okd_version_enabled", new_callable=AsyncMock, return_value=False
+    )
+    async def test_skips_when_no_enabled_versions(self, _mock_is_enabled):
+        pipeline = self._make_pipeline(versions="4.23")
+        pipeline.get_report = AsyncMock()
+        pipeline.get_rebase_failures = AsyncMock()
+        pipeline.notify_release_channel = AsyncMock()
+        pipeline.notify_okd_channel = AsyncMock()
+
+        await pipeline.run()
+
+        self.assertEqual(pipeline.versions, [])
+        pipeline.get_report.assert_not_called()
+        pipeline.notify_okd_channel.assert_not_called()

@@ -6,12 +6,13 @@ from urllib.parse import quote
 
 import click
 from artcommonlib import exectools
+from artcommonlib.constants import ACTIVE_OCP_VERSIONS
 from doozerlib.cli.images_health import DELTA_DAYS, LIMIT_BUILD_RESULTS, ConcernCode
 from doozerlib.constants import ART_BUILD_FAILURES_URL, ART_BUILD_HISTORY_URL
 
 from pyartcd import util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
-from pyartcd.constants import OCP_BUILD_DATA_URL, OKD_ENABLED_VERSIONS
+from pyartcd.constants import OCP_BUILD_DATA_URL
 from pyartcd.runtime import Runtime
 
 OKD_GROUP_TEMPLATE = "okd-{}"
@@ -30,7 +31,7 @@ class ImagesHealthPipeline:
         assembly: str,
     ):
         self.runtime = runtime
-        self.versions = versions.split(',') if versions else OKD_ENABLED_VERSIONS
+        self._versions_param = versions
         self.doozer_working = self.runtime.working_dir / "doozer_working"
         self.send_to_release_channel = send_to_release_channel
         self.send_to_okd_channel = send_to_okd_channel
@@ -44,7 +45,46 @@ class ImagesHealthPipeline:
         self.scanned_versions = []
         self.rebase_failures = {}  # version -> {image: {failure_count, url}}
 
+    def _doozer_base_command(self, version: str) -> list[str]:
+        group_param = f'openshift-{version}'
+        if self.data_gitref:
+            group_param += f'@{self.data_gitref}'
+        return [
+            'doozer',
+            f'--working-dir={self.doozer_working}-{version}',
+            f'--data-path={self.data_path}',
+            f'--group={group_param}',
+            f'--assembly={self.assembly}',
+            '--build-system=konflux',
+            '--variant=okd',
+        ]
+
+    async def _resolve_versions(self) -> list[str]:
+        if self._versions_param:
+            candidates = [v.strip() for v in self._versions_param.split(',') if v.strip()]
+        else:
+            candidates = list(ACTIVE_OCP_VERSIONS)
+            self.runtime.logger.info(
+                'No --versions provided; probing ACTIVE_OCP_VERSIONS for okd.enabled in build-data'
+            )
+
+        enabled_versions = []
+        for version in candidates:
+            if await util.is_okd_version_enabled(self._doozer_base_command(version)):
+                enabled_versions.append(version)
+            else:
+                self.runtime.logger.info(
+                    'Version %s is not enabled for OKD (set okd.enabled: true in group.yml on openshift-%s). Skipping.',
+                    version,
+                    version,
+                )
+        return enabled_versions
+
     async def run(self):
+        self.versions = await self._resolve_versions()
+        if not self.versions:
+            self.runtime.logger.info('No OKD-enabled versions to monitor; skipping health report')
+            return
         await asyncio.gather(*(self.get_report(v) for v in self.versions))
         await asyncio.gather(*(self.get_rebase_failures(v) for v in self.versions))
         self.runtime.logger.info('Found %s concerns', len(self.report))
