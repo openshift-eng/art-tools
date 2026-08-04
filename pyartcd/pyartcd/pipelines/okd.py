@@ -303,7 +303,12 @@ class KonfluxOkdPipeline:
                     if image not in self.build_plan.images_excluded and image not in failed_images
                 ]
             case BuildStrategy.ONLY:
-                successful_images = [image for image in self.build_plan.images_included if image not in failed_images]
+                # Derive successful images from doozer's state.yaml (which records
+                # all images actually processed, including parents/dependents loaded
+                # by --latest-parent-version) rather than from the artcd-side IMAGE_LIST.
+                state = self.load_state_yaml()
+                rebase_state = state.get('images:okd:rebase', {}).get('images', {})
+                successful_images = [image for image in rebase_state if image not in failed_images]
             case _:
                 raise ValueError(
                     f"Unknown build strategy: {self.build_plan.image_build_strategy}. Valid strategies: {[s.value for s in BuildStrategy]}"
