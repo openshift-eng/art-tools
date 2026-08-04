@@ -75,6 +75,7 @@ from elliottlib.cli.verify_attached_bugs_cli import verify_attached_bugs_cli
 from elliottlib.cli.verify_attached_operators_cli import verify_attached_operators_cli
 from elliottlib.cli.verify_cvp_cli import verify_cvp_cli
 from elliottlib.cli.verify_payload import verify_payload
+from elliottlib.cli.verify_signatures_cli import verify_signatures_cli
 from elliottlib.exceptions import ElliottFatalError
 from elliottlib.util import pbar_header, progress_func
 
@@ -323,6 +324,7 @@ cli.add_command(shipment_cli)
 cli.add_command(watch_release_cli)
 cli.add_command(find_bugs_second_fix_cli)
 cli.add_command(process_release_from_fbc_bugs_cli)
+cli.add_command(verify_signatures_cli)
 
 # -----------------------------------------------------------------------------
 # CLI Entry point
