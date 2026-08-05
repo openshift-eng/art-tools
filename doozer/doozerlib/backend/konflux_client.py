@@ -838,6 +838,36 @@ class KonfluxClient:
         """
         return await self._get__caching(API_VERSION, KIND_COMPONENT, name, strict=strict)
 
+    @staticmethod
+    def _component_matches(
+        existing: resource.ResourceInstance,
+        application: str,
+        component_name: str,
+        image_repo: Optional[str],
+        source_url: Optional[str],
+        revision: Optional[str],
+    ) -> bool:
+        """Return True if the existing component already has the desired spec values.
+
+        Only spec fields are compared. Annotations are intentionally excluded because
+        Konflux controllers (e.g. the PaC controller) may extend annotation values with
+        extra metadata after creation, causing spurious mismatches and unnecessary replaces.
+        """
+        existing_dict = existing.to_dict()
+        spec = existing_dict.get("spec", {})
+        if spec.get("application") != application:
+            return False
+        if spec.get("componentName") != component_name:
+            return False
+        if image_repo and spec.get("containerImage") != image_repo:
+            return False
+        git = spec.get("source", {}).get("git", {})
+        if source_url and git.get("url") != source_url:
+            return False
+        if revision and git.get("revision") != revision:
+            return False
+        return True
+
     async def ensure_component(
         self,
         name: str,
@@ -847,6 +877,11 @@ class KonfluxClient:
         source_url: Optional[str],
         revision: Optional[str],
     ) -> resource.ResourceInstance:
+        existing = await self.get_component(name, strict=False)
+        if existing and self._component_matches(
+            existing, application, component_name, image_repo, source_url, revision
+        ):
+            return existing
         component = self._new_component(name, application, component_name, image_repo, source_url, revision)
         return await self._create_or_replace(component)
 

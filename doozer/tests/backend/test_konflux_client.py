@@ -1160,3 +1160,168 @@ class TestNewPipelinerunPrefetchMode(IsolatedAsyncioTestCase):
         task_param_names = {p["name"] for p in prefetch_task["params"]}
 
         self.assertNotIn("mode", task_param_names)
+
+
+def _make_existing_component(
+    application="test-app",
+    component_name="test-component",
+    image_repo="quay.io/test/image",
+    source_url="https://github.com/org/repo",
+    revision="main",
+    extra_annotations=None,
+):
+    """Build a mock ResourceInstance for an existing component."""
+    annotations = {}
+    if extra_annotations:
+        annotations.update(extra_annotations)
+    d = {
+        "metadata": {"name": "test-component", "annotations": annotations},
+        "spec": {
+            "application": application,
+            "componentName": component_name,
+            "containerImage": image_repo,
+            "source": {"git": {"url": source_url, "revision": revision}},
+        },
+    }
+    mock = MagicMock()
+    mock.to_dict.return_value = d
+    return mock
+
+
+class TestComponentMatches(TestCase):
+    def test_returns_true_for_matching_resource(self):
+        existing = _make_existing_component()
+        self.assertTrue(
+            KonfluxClient._component_matches(
+                existing,
+                application="test-app",
+                component_name="test-component",
+                image_repo="quay.io/test/image",
+                source_url="https://github.com/org/repo",
+                revision="main",
+            )
+        )
+
+    def test_returns_false_for_different_application(self):
+        existing = _make_existing_component(application="other-app")
+        self.assertFalse(
+            KonfluxClient._component_matches(
+                existing,
+                application="test-app",
+                component_name="test-component",
+                image_repo="quay.io/test/image",
+                source_url="https://github.com/org/repo",
+                revision="main",
+            )
+        )
+
+    def test_returns_true_even_with_extended_annotations(self):
+        # Konflux controllers may extend annotations (e.g. status with extra fields).
+        # Annotation differences must not cause a mismatch on spec-correct components.
+        existing = _make_existing_component(
+            extra_annotations={
+                "build.appstudio.openshift.io/status": '{"pac":{"state":"disabled"},"extra":"data"}',
+                "mintmaker.appstudio.redhat.com/disabled": "false",
+            }
+        )
+        self.assertTrue(
+            KonfluxClient._component_matches(
+                existing,
+                application="test-app",
+                component_name="test-component",
+                image_repo="quay.io/test/image",
+                source_url="https://github.com/org/repo",
+                revision="main",
+            )
+        )
+
+    def test_skips_optional_fields_when_none(self):
+        existing = _make_existing_component()
+        # image_repo, source_url, revision all None — should be ignored in comparison
+        self.assertTrue(
+            KonfluxClient._component_matches(
+                existing,
+                application="test-app",
+                component_name="test-component",
+                image_repo=None,
+                source_url=None,
+                revision=None,
+            )
+        )
+
+    def test_returns_false_for_different_revision(self):
+        existing = _make_existing_component(revision="old-sha")
+        self.assertFalse(
+            KonfluxClient._component_matches(
+                existing,
+                application="test-app",
+                component_name="test-component",
+                image_repo="quay.io/test/image",
+                source_url="https://github.com/org/repo",
+                revision="new-sha",
+            )
+        )
+
+
+class TestEnsureComponent(IsolatedAsyncioTestCase):
+    async def test_skips_update_when_component_matches(self):
+        client = MagicMock(spec=KonfluxClient)
+        existing = _make_existing_component()
+        client.get_component = AsyncMock(return_value=existing)
+        client._component_matches = KonfluxClient._component_matches
+        client._create_or_replace = AsyncMock()
+
+        result = await KonfluxClient.ensure_component(
+            client,
+            name="test-component",
+            application="test-app",
+            component_name="test-component",
+            image_repo="quay.io/test/image",
+            source_url="https://github.com/org/repo",
+            revision="main",
+        )
+
+        client._create_or_replace.assert_not_called()
+        self.assertIs(result, existing)
+
+    async def test_updates_when_component_differs(self):
+        client = MagicMock(spec=KonfluxClient)
+        existing = _make_existing_component(revision="old-sha")
+        client.get_component = AsyncMock(return_value=existing)
+        client._component_matches = KonfluxClient._component_matches
+        client._new_component = KonfluxClient._new_component
+        new_resource = MagicMock()
+        client._create_or_replace = AsyncMock(return_value=new_resource)
+
+        result = await KonfluxClient.ensure_component(
+            client,
+            name="test-component",
+            application="test-app",
+            component_name="test-component",
+            image_repo="quay.io/test/image",
+            source_url="https://github.com/org/repo",
+            revision="new-sha",
+        )
+
+        client._create_or_replace.assert_called_once()
+        self.assertIs(result, new_resource)
+
+    async def test_creates_when_component_not_found(self):
+        client = MagicMock(spec=KonfluxClient)
+        client.get_component = AsyncMock(return_value=None)
+        client._new_component = KonfluxClient._new_component
+        new_resource = MagicMock()
+        client._create_or_replace = AsyncMock(return_value=new_resource)
+
+        result = await KonfluxClient.ensure_component(
+            client,
+            name="test-component",
+            application="test-app",
+            component_name="test-component",
+            image_repo="quay.io/test/image",
+            source_url="https://github.com/org/repo",
+            revision="main",
+        )
+
+        client._create_or_replace.assert_called_once()
+        self.assertIs(result, new_resource)
