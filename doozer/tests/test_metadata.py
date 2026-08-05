@@ -910,3 +910,134 @@ class TestMetadata(TestCase):
 
         # Should return distgit.branch, not runtime.branch
         self.assertEqual(meta.branch(), "rhaos-5.0-rhel-9")
+
+    def test_get_arches_okd_with_image_override(self):
+        """Test that okd.arches override is used for OKD variant"""
+        data_obj = MagicMock(key="test-image", filename="test-image.yml", data={"name": "test-image"})
+        runtime = MagicMock()
+        runtime.variant = BuildVariant.OKD
+        runtime.arches = ['x86_64', 'aarch64', 's390x', 'ppc64le']  # Group-level arches
+        runtime.build_system = 'brew'
+
+        meta = Metadata("image", runtime, data_obj)
+        meta.logger = Mock()
+        meta.config = Model(
+            dict_to_model={
+                "arches": ['x86_64', 's390x'],  # Standard arches config
+                "okd": {
+                    "arches": ['x86_64', 'aarch64'],  # Image-specific OKD override
+                },
+            }
+        )
+
+        runtime.get_global_arches = Mock(return_value=['x86_64', 'aarch64', 's390x', 'ppc64le'])
+
+        # Should return intersection of okd.arches override with global arches
+        self.assertEqual(sorted(meta.get_arches()), ['aarch64', 'x86_64'])
+
+    def test_get_arches_okd_without_image_override(self):
+        """Test that standard arches config is used for OKD when no okd.arches override exists"""
+        data_obj = MagicMock(key="test-image", filename="test-image.yml", data={"name": "test-image"})
+        runtime = MagicMock()
+        runtime.variant = BuildVariant.OKD
+        runtime.arches = ['x86_64', 'aarch64', 's390x', 'ppc64le']
+        runtime.build_system = 'brew'
+
+        meta = Metadata("image", runtime, data_obj)
+        meta.logger = Mock()
+        meta.config = Model(
+            dict_to_model={
+                "arches": ['x86_64', 's390x'],  # Standard arches config
+            }
+        )
+
+        runtime.get_global_arches = Mock(return_value=['x86_64', 'aarch64', 's390x', 'ppc64le'])
+
+        # Should return intersection of standard arches with global arches
+        self.assertEqual(sorted(meta.get_arches()), ['s390x', 'x86_64'])
+
+    def test_get_arches_okd_with_missing_okd_arches(self):
+        """Test that standard arches is used when okd.arches is Missing"""
+        data_obj = MagicMock(key="test-image", filename="test-image.yml", data={"name": "test-image"})
+        runtime = MagicMock()
+        runtime.variant = BuildVariant.OKD
+        runtime.arches = ['x86_64', 'aarch64']
+        runtime.build_system = 'brew'
+
+        meta = Metadata("image", runtime, data_obj)
+        meta.logger = Mock()
+        meta.config = Model(
+            dict_to_model={
+                "arches": ['x86_64', 'aarch64'],
+            }
+        )
+
+        runtime.get_global_arches = Mock(return_value=['x86_64', 'aarch64', 's390x', 'ppc64le'])
+
+        # Should return intersection of standard arches with global arches
+        self.assertEqual(sorted(meta.get_arches()), ['aarch64', 'x86_64'])
+
+    def test_get_arches_okd_with_no_arches_config(self):
+        """Test that global arches is used when no arches config exists"""
+        data_obj = MagicMock(key="test-image", filename="test-image.yml", data={"name": "test-image"})
+        runtime = MagicMock()
+        runtime.variant = BuildVariant.OKD
+        runtime.arches = ['x86_64', 'aarch64']
+        runtime.build_system = 'brew'
+
+        meta = Metadata("image", runtime, data_obj)
+        meta.logger = Mock()
+        meta.config = Model(dict_to_model={})
+
+        runtime.get_global_arches = Mock(return_value=['x86_64', 'aarch64'])
+
+        # Should return global arches
+        self.assertEqual(sorted(meta.get_arches()), ['aarch64', 'x86_64'])
+
+    def test_get_arches_ocp_ignores_okd_arches(self):
+        """Test that OCP variant ignores okd.arches and uses standard arches config"""
+        data_obj = MagicMock(key="test-image", filename="test-image.yml", data={"name": "test-image"})
+        runtime = MagicMock()
+        runtime.variant = BuildVariant.OCP
+        runtime.arches = ['x86_64', 'aarch64', 's390x', 'ppc64le']
+        runtime.build_system = 'brew'
+
+        meta = Metadata("image", runtime, data_obj)
+        meta.logger = Mock()
+        meta.config = Model(
+            dict_to_model={
+                "arches": ['x86_64', 's390x'],  # Standard arches config
+                "okd": {
+                    "arches": ['x86_64', 'aarch64'],  # Should be ignored for OCP
+                },
+            }
+        )
+
+        runtime.get_global_arches = Mock(return_value=['x86_64', 'aarch64', 's390x', 'ppc64le'])
+
+        # Should return intersection of standard arches with global arches, ignoring okd.arches
+        self.assertEqual(sorted(meta.get_arches()), ['s390x', 'x86_64'])
+
+    def test_get_arches_okd_konflux(self):
+        """Test that OKD with Konflux uses okd.arches override with konflux global arches"""
+        data_obj = MagicMock(key="test-image", filename="test-image.yml", data={"name": "test-image"})
+        runtime = MagicMock()
+        runtime.variant = BuildVariant.OKD
+        runtime.arches = ['x86_64', 'aarch64']
+        runtime.build_system = 'konflux'
+
+        meta = Metadata("image", runtime, data_obj)
+        meta.logger = Mock()
+        meta.config = Model(
+            dict_to_model={
+                "arches": ['x86_64', 's390x'],  # Standard arches config
+                "okd": {
+                    "arches": ['x86_64', 'aarch64'],  # Image-specific OKD override
+                },
+            }
+        )
+
+        runtime.get_global_konflux_arches = Mock(return_value=['x86_64', 'aarch64'])
+
+        # Should return intersection of okd.arches with global konflux arches
+        self.assertEqual(sorted(meta.get_arches()), ['aarch64', 'x86_64'])

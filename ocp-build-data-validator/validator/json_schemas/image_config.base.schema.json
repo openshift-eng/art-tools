@@ -777,7 +777,24 @@
     "odcs-": {},
     "okd": {
       "description": "If present, this config is specific to OKD content overrides.",
-      "type": "object"
+      "type": "object",
+      "properties": {
+        "arches": {
+          "type": "array",
+          "description": "List of architectures to build for OKD variant. Overrides group-level okd.arches.",
+          "items": {
+            "$ref": "arch.schema.json"
+          }
+        },
+        "arches!": {
+          "$ref": "#/properties/okd/properties/arches"
+        },
+        "arches?": {
+          "$ref": "#/properties/okd/properties/arches"
+        },
+        "arches-": {}
+      },
+      "additionalProperties": true
     },
     "okd!": {
       "$ref": "#/properties/okd"

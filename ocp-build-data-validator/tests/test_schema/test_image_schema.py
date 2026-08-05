@@ -385,3 +385,52 @@ class TestImageSchema(unittest.TestCase):
             'enabled_repos': ['rhel-9-appstream-rpms', 'rhel-8-server-rpms'],
         }
         self.assertIsNone(image_schema.validate('filename', valid_data, images_dir=images_dir))
+
+    def test_validate_with_okd_arches(self):
+        """
+        Test validation of okd.arches in image metadata.
+        """
+        valid_data = {
+            'from': {},
+            'name': 'test-image',
+            'for_payload': True,
+            'delivery': {'delivery_repo_names': ['foo']},
+            'okd': {
+                'arches': ['x86_64', 'aarch64'],
+            },
+        }
+        self.assertIsNone(image_schema.validate('filename', valid_data))
+
+    def test_validate_with_invalid_okd_arches(self):
+        """
+        Test validation of invalid okd.arches (non-array type).
+        """
+        invalid_data = {
+            'from': {},
+            'name': 'test-image',
+            'for_payload': True,
+            'delivery': {'delivery_repo_names': ['foo']},
+            'okd': {
+                'arches': 'x86_64',  # Should be an array
+            },
+        }
+        error = image_schema.validate('filename', invalid_data)
+        self.assertIsNotNone(error)
+        self.assertIn("'x86_64' is not of type 'array'", error)
+
+    def test_validate_with_invalid_arch_in_okd_arches(self):
+        """
+        Test validation of invalid architecture name in okd.arches.
+        """
+        invalid_data = {
+            'from': {},
+            'name': 'test-image',
+            'for_payload': True,
+            'delivery': {'delivery_repo_names': ['foo']},
+            'okd': {
+                'arches': ['x86_64', 'invalid_arch'],
+            },
+        }
+        error = image_schema.validate('filename', invalid_data)
+        self.assertIsNotNone(error)
+        self.assertIn("'invalid_arch' is not one of", error)
