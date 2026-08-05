@@ -8,6 +8,7 @@ from doozerlib.constants import ART_IMAGES_BASE_APPLICATION
 from doozerlib.backend.golang_builder_shipment import (
     GOLANG_BUILDER_SHIPMENT_RELEASE_PLAN_MAP,
     GolangBuilderShipmentHandler,
+    basic_auth_url,
     derive_golang_group,
     resolve_env_from_runtime,
 )
@@ -51,7 +52,7 @@ class TestResolveEnvFromRuntime(unittest.TestCase):
 class TestBasicAuthUrl(unittest.TestCase):
     def test_injects_token(self):
         url = "https://gitlab.cee.redhat.com/hybrid-platforms/art/ocp-shipment-data.git"
-        result = GolangBuilderShipmentHandler.basic_auth_url(url, "mytoken")
+        result = basic_auth_url(url, "mytoken")
         self.assertIn("oauth2:mytoken@", result)
         self.assertIn("gitlab.cee.redhat.com", result)
         self.assertTrue(result.startswith("https://"))
@@ -60,12 +61,8 @@ class TestBasicAuthUrl(unittest.TestCase):
 class TestBuildShipmentConfig(unittest.TestCase):
     def _make_handler(self, env="prod"):
         runtime = Mock()
-        runtime.dry_run = False
-        runtime.product = "ocp"
-        runtime.group = "openshift-4.22"
-        runtime.config = {}
-        runtime.working_dir = Path("/tmp/test-working")
         runtime.logger = Mock()
+        runtime.group_config = Model({})
         handler = GolangBuilderShipmentHandler(
             runtime=runtime,
             ocp_version="4.22",
@@ -168,11 +165,8 @@ spec:
 class TestCreateShipmentMR(IsolatedAsyncioTestCase):
     def _make_handler(self, dry_run=False):
         runtime = Mock()
-        runtime.dry_run = dry_run
-        runtime.product = "ocp"
-        runtime.config = {}
-        runtime.working_dir = Path("/tmp/test-working")
         runtime.logger = Mock()
+        runtime.group_config = Model({})
         handler = GolangBuilderShipmentHandler(
             runtime=runtime,
             dry_run=dry_run,
@@ -214,6 +208,7 @@ class TestCreateShipmentMR(IsolatedAsyncioTestCase):
     @patch("doozerlib.backend.golang_builder_shipment.python_gitlab")
     async def test_creates_mr_with_correct_title(self, mock_gitlab):
         handler = self._make_handler(dry_run=False)
+        handler._gitlab_token = "test-token"
         config = self._make_config_mock()
 
         mock_project = MagicMock()
@@ -223,15 +218,14 @@ class TestCreateShipmentMR(IsolatedAsyncioTestCase):
         mock_gitlab.Gitlab.return_value.projects.get.return_value = mock_project
 
         with patch("pathlib.Path.mkdir"):
-            with patch.dict("os.environ", {"GITLAB_TOKEN": "test-token"}):
-                result = await handler._create_shipment_mr(
-                    config,
-                    golang_group="rhel-9-golang-1.25",
-                    env="prod",
-                    release_plan="ocp-art-golang-builder-prod-rhel9",
-                    nvrs=["some-nvr"],
-                    ocp_version="4.22",
-                )
+            result = await handler._create_shipment_mr(
+                config,
+                golang_group="rhel-9-golang-1.25",
+                env="prod",
+                release_plan="ocp-art-golang-builder-prod-rhel9",
+                nvrs=["some-nvr"],
+                ocp_version="4.22",
+            )
 
         self.assertEqual(result, mock_mr.web_url)
         create_args = mock_project.mergerequests.create.call_args[0][0]
@@ -243,9 +237,8 @@ class TestSetupReposNoToken(IsolatedAsyncioTestCase):
     @patch.dict("os.environ", {}, clear=True)
     async def test_missing_gitlab_token_raises(self):
         runtime = Mock()
-        runtime.config = {}
-        runtime.working_dir = Path("/tmp/test-working")
         runtime.logger = Mock()
+        runtime.group_config = Model({})
         handler = GolangBuilderShipmentHandler(runtime=runtime)
         with self.assertRaises(ValueError):
             await handler._setup_repos()
@@ -272,9 +265,8 @@ spec:
             "",
         )
         runtime = Mock()
-        runtime.config = {}
-        runtime.working_dir = Path("/tmp/test-working")
         runtime.logger = Mock()
+        runtime.group_config = Model({})
         handler = GolangBuilderShipmentHandler(runtime=runtime)
         await handler._create_snapshot_via_elliott(["some-nvr"], "rhel-9-golang-1.25")
         cmd_args = mock_cmd.call_args[0][0]
@@ -302,9 +294,8 @@ spec:
             "",
         )
         runtime = Mock()
-        runtime.config = {}
-        runtime.working_dir = Path("/tmp/test-working")
         runtime.logger = Mock()
+        runtime.group_config = Model({})
         handler = GolangBuilderShipmentHandler(runtime=runtime, art_jira="ART-20930", ocp_version="4.22")
         snapshot = await handler._create_snapshot_via_elliott(["some-nvr"], "rhel-9-golang-1.25")
 
@@ -314,9 +305,8 @@ spec:
 class TestCreateSnapshotErrors(IsolatedAsyncioTestCase):
     def _make_handler(self):
         runtime = Mock()
-        runtime.config = {}
-        runtime.working_dir = Path("/tmp/test-working")
         runtime.logger = Mock()
+        runtime.group_config = Model({})
         return GolangBuilderShipmentHandler(runtime=runtime)
 
     @patch("doozerlib.backend.golang_builder_shipment.exectools.cmd_gather_async")
@@ -353,10 +343,8 @@ class TestCreateSnapshotErrors(IsolatedAsyncioTestCase):
 class TestCommitPushFailure(IsolatedAsyncioTestCase):
     async def test_push_failure_raises(self):
         runtime = Mock()
-        runtime.config = {}
-        runtime.product = "ocp"
-        runtime.working_dir = Path("/tmp/test-working")
         runtime.logger = Mock()
+        runtime.group_config = Model({})
         handler = GolangBuilderShipmentHandler(
             runtime=runtime,
             ocp_version="4.22",
@@ -386,11 +374,9 @@ class TestCommitPushFailure(IsolatedAsyncioTestCase):
 class TestCreateShipmentFromNvrs(IsolatedAsyncioTestCase):
     async def test_create_shipment_from_nvrs_wires_steps(self):
         runtime = Mock()
-        runtime.config = {}
-        runtime.working_dir = Path("/tmp/test-working")
         runtime.logger = Mock()
+        runtime.group_config = Model({})
         handler = GolangBuilderShipmentHandler(runtime=runtime, ocp_version="4.22")
-        handler._setup_working_dir = Mock()
         handler._setup_repos = AsyncMock()
         handler._create_snapshot_via_elliott = AsyncMock(return_value=Mock(spec=["spec"]))
         handler._create_snapshot_via_elliott.return_value.spec.application = ART_IMAGES_BASE_APPLICATION
@@ -404,7 +390,6 @@ class TestCreateShipmentFromNvrs(IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(result, "https://gitlab.example.com/-/merge_requests/1")
-        handler._setup_working_dir.assert_called_once()
         handler._setup_repos.assert_called_once()
         handler._create_snapshot_via_elliott.assert_called_once()
         handler._create_shipment_mr.assert_called_once()
@@ -413,14 +398,10 @@ class TestCreateShipmentFromNvrs(IsolatedAsyncioTestCase):
 class TestCreateShipmentInline(IsolatedAsyncioTestCase):
     async def test_create_shipment_returns_none_on_failure(self):
         runtime = Mock()
-        runtime.config = {}
-        runtime.working_dir = Path("/tmp/test-working")
         runtime.logger = Mock()
         runtime.group_config = Model({})
-        runtime.product = "ocp"
-        runtime.group = "openshift-4.22"
         handler = GolangBuilderShipmentHandler(runtime=runtime, ocp_version="4.22")
-        handler._setup_working_dir = Mock(side_effect=RuntimeError("boom"))
+        handler._setup_repos = AsyncMock(side_effect=RuntimeError("boom"))
 
         result = await handler.create_shipment(
             nvr="openshift-golang-builder-container-v1.25.9-202605121249.p2.gdf787b0.el9",
@@ -434,9 +415,8 @@ class TestCreateShipmentInline(IsolatedAsyncioTestCase):
 class TestBuildInlineSnapshot(unittest.TestCase):
     def test_inline_snapshot_uses_component_name_and_application(self):
         runtime = Mock()
-        runtime.config = {}
-        runtime.working_dir = Path("/tmp/test-working")
         runtime.logger = Mock()
+        runtime.group_config = Model({})
         handler = GolangBuilderShipmentHandler(runtime=runtime)
         nvr = "openshift-golang-builder-container-v1.25.9-202605121249.p2.gdf787b0.el9"
         snapshot = handler._build_inline_snapshot(

@@ -128,10 +128,7 @@ class _CliRuntimeAdapter:
 
     def __init__(self, runtime: Runtime, golang_group: str):
         self.logger = runtime.logger
-        self.product = "ocp"
         self.group = golang_group
-        self.working_dir = runtime.working_dir.absolute()
-        self.config = runtime.config
         self.group_config = getattr(runtime, "group_config", None)
 
 

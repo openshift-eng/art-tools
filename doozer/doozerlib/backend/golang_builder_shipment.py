@@ -9,7 +9,6 @@ ocp-shipment-data. Inline builds use a single-component Snapshot; the CLI path m
 import logging
 import os
 import re
-import shutil
 import tempfile
 from datetime import datetime, timezone
 from io import StringIO
@@ -19,8 +18,8 @@ from urllib.parse import urlparse
 
 import gitlab as python_gitlab
 from artcommonlib import exectools
-from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
-from artcommonlib.release_util import SoftwareLifecyclePhase, isolate_el_version_in_release
+from artcommonlib.constants import REDHAT_GITLAB_URL, SHIPMENT_DATA_URL_TEMPLATE
+from artcommonlib.release_util import isolate_el_version_in_release
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import new_roundtrip_yaml_handler
 from doozerlib.backend.base_image_handler import _software_lifecycle_phase
@@ -43,6 +42,8 @@ from elliottlib.shipment_model import (
 from pyartcd.git import GitRepository
 
 yaml = new_roundtrip_yaml_handler()
+
+_PRODUCT = "ocp"
 
 GOLANG_BUILDER_SHIPMENT_RELEASE_PLAN_MAP = {
     "prod": "ocp-art-golang-builder-prod-rhel9",
@@ -67,17 +68,10 @@ def derive_golang_group(nvrs: List[str]) -> str:
     raise ValueError(f"Cannot derive golang group from NVRs: {nvrs}")
 
 
-def resolve_env_from_lifecycle_phase(phase_str: Optional[str]) -> str:
-    """Map software_lifecycle.phase string to shipment env (prod or ec)."""
-    if not phase_str:
-        return "prod"
-    try:
-        phase = SoftwareLifecyclePhase.from_name(phase_str)
-    except ValueError:
-        return "prod"
-    if phase == SoftwareLifecyclePhase.PRE_RELEASE:
-        return "ec"
-    return "prod"
+def basic_auth_url(url: str, token: str) -> str:
+    """Inject token into a GitLab URL for push authentication."""
+    parsed = urlparse(url)
+    return f"{parsed.scheme}://oauth2:{token}@{parsed.hostname}{parsed.path}"
 
 
 def resolve_env_from_runtime(runtime) -> str:
@@ -95,7 +89,7 @@ class GolangBuilderShipmentHandler:
         self,
         runtime,
         dry_run: bool = False,
-        gitlab_url: str = "https://gitlab.cee.redhat.com",
+        gitlab_url: str = REDHAT_GITLAB_URL,
         shipment_data_repo_pull_url: Optional[str] = None,
         shipment_data_repo_push_url: Optional[str] = None,
         art_jira: str = "",
@@ -106,25 +100,13 @@ class GolangBuilderShipmentHandler:
         self.art_jira = art_jira
         self.ocp_version = ocp_version
         self.logger = getattr(runtime, "logger", logging.getLogger(__name__))
-        self.product = getattr(runtime, "product", "ocp")
         self.gitlab_url = gitlab_url
-        self.working_dir = Path(runtime.working_dir).absolute()
-        self._shipment_data_repo_dir = self.working_dir / "shipment-data-push"
+        self._shipment_data_repo_dir = Path(tempfile.mkdtemp(prefix="golang-shipment-"))
 
-        config = getattr(runtime, "config", None) or {}
-        shipment_config = config.get("shipment_config", {}) if isinstance(config, dict) else {}
-
-        self.shipment_data_repo_pull_url = (
-            shipment_data_repo_pull_url
-            or shipment_config.get("shipment_data_url")
-            or SHIPMENT_DATA_URL_TEMPLATE
-        )
-        self.shipment_data_repo_push_url = (
-            shipment_data_repo_push_url
-            or shipment_config.get("shipment_data_push_url")
-            or SHIPMENT_DATA_URL_TEMPLATE
-        )
+        self.shipment_data_repo_pull_url = shipment_data_repo_pull_url or SHIPMENT_DATA_URL_TEMPLATE
+        self.shipment_data_repo_push_url = shipment_data_repo_push_url or SHIPMENT_DATA_URL_TEMPLATE
         self.shipment_data_repo = GitRepository(self._shipment_data_repo_dir, self.dry_run)
+        self._gitlab_token: Optional[str] = None
 
     @staticmethod
     def resolve_release_plan(env: str) -> str:
@@ -135,21 +117,6 @@ class GolangBuilderShipmentHandler:
                 f"Unknown env '{env}'. Must be one of: {list(GOLANG_BUILDER_SHIPMENT_RELEASE_PLAN_MAP.keys())}"
             )
         return plan
-
-    @staticmethod
-    def basic_auth_url(url: str, token: str) -> str:
-        """Inject token into a GitLab URL for push authentication."""
-        parsed = urlparse(url)
-        return f"{parsed.scheme}://oauth2:{token}@{parsed.hostname}{parsed.path}"
-
-    def _resolve_ocp_version(self) -> str:
-        if self.ocp_version:
-            return self.ocp_version
-        group = getattr(self.runtime, "group", "") or ""
-        m = re.search(r"openshift-(\d+\.\d+)", group)
-        if m:
-            return m.group(1)
-        return group or "unknown"
 
     async def create_shipment(
         self,
@@ -163,7 +130,7 @@ class GolangBuilderShipmentHandler:
             golang_group = derive_golang_group([nvr])
             env = resolve_env_from_runtime(self.runtime)
             release_plan = self.resolve_release_plan(env)
-            ocp_version = self._resolve_ocp_version()
+            ocp_version = self.ocp_version or golang_group
 
             self.logger.info(
                 "Starting golang builder shipment: nvr=%s golang_group=%s env=%s release_plan=%s",
@@ -173,7 +140,6 @@ class GolangBuilderShipmentHandler:
                 release_plan,
             )
 
-            self._setup_working_dir()
             await self._setup_repos()
 
             snapshot = self._build_inline_snapshot(
@@ -215,7 +181,7 @@ class GolangBuilderShipmentHandler:
         golang_group = golang_group or derive_golang_group(nvrs)
         env = env or resolve_env_from_runtime(self.runtime)
         release_plan = self.resolve_release_plan(env)
-        ocp_version = self._resolve_ocp_version()
+        ocp_version = self.ocp_version or golang_group
 
         self.logger.info(
             "Starting golang-builder-shipment: ocp_version=%s golang_group=%s env=%s release_plan=%s nvrs=%s",
@@ -226,7 +192,6 @@ class GolangBuilderShipmentHandler:
             nvrs,
         )
 
-        self._setup_working_dir()
         await self._setup_repos()
 
         snapshot = await self._create_snapshot_via_elliott(nvrs, golang_group)
@@ -249,18 +214,18 @@ class GolangBuilderShipmentHandler:
         self.logger.info("Shipment MR created: %s", mr_url)
         return mr_url
 
-    def _setup_working_dir(self) -> None:
-        self.working_dir.mkdir(parents=True, exist_ok=True)
-        if self._shipment_data_repo_dir.exists():
-            shutil.rmtree(self._shipment_data_repo_dir, ignore_errors=True)
-
     async def _setup_repos(self) -> None:
-        gitlab_token = os.getenv("GITLAB_TOKEN")
-        if not gitlab_token:
+        self._gitlab_token = os.getenv("GITLAB_TOKEN")
+        if not self._gitlab_token:
             raise ValueError("GITLAB_TOKEN environment variable is required")
 
+        if self._shipment_data_repo_dir.exists():
+            import shutil
+            shutil.rmtree(self._shipment_data_repo_dir, ignore_errors=True)
+        self._shipment_data_repo_dir.mkdir(parents=True, exist_ok=True)
+
         await self.shipment_data_repo.setup(
-            remote_url=self.basic_auth_url(self.shipment_data_repo_push_url, gitlab_token),
+            remote_url=basic_auth_url(self.shipment_data_repo_push_url, self._gitlab_token),
             upstream_remote_url=self.shipment_data_repo_pull_url,
         )
         await self.shipment_data_repo.fetch_switch_branch("main")
@@ -294,7 +259,7 @@ class GolangBuilderShipmentHandler:
         ocp_version: str,
     ) -> ShipmentConfig:
         metadata = Metadata(
-            product=self.product,
+            product=_PRODUCT,
             application=snapshot.spec.application,
             group=golang_group,
             assembly="stream",
@@ -394,7 +359,7 @@ class GolangBuilderShipmentHandler:
         await self.shipment_data_repo.create_branch(source_branch)
 
         application = shipment_config.shipment.metadata.application
-        relative_target_dir = Path("shipment") / self.product / golang_group / application / env
+        relative_target_dir = Path("shipment") / _PRODUCT / golang_group / application / env
         target_dir = self.shipment_data_repo._directory / relative_target_dir
         target_dir.mkdir(parents=True, exist_ok=True)
 
@@ -433,8 +398,7 @@ class GolangBuilderShipmentHandler:
             self.logger.info("[DRY-RUN] Would create MR: %s", mr_title)
             return f"{self.gitlab_url}/placeholder/-/merge_requests/placeholder"
 
-        gitlab_token = os.getenv("GITLAB_TOKEN")
-        gl = python_gitlab.Gitlab(self.gitlab_url, private_token=gitlab_token)
+        gl = python_gitlab.Gitlab(self.gitlab_url, private_token=self._gitlab_token)
 
         def _get_project(url):
             parsed = urlparse(url)

@@ -57,6 +57,7 @@ BUNDLES_TABLE_ID = 'bundles'
 FBCS_TABLE_ID = 'fbcs'
 TASKRUN_TABLE_ID = 'taskruns'
 
+REDHAT_GITLAB_URL = "https://gitlab.cee.redhat.com"
 SHIPMENT_DATA_URL_TEMPLATE = "https://gitlab.cee.redhat.com/hybrid-platforms/art/ocp-shipment-data"
 SHIPMENT_CONFIG_KINDS = ("image", "extras", "metadata", "fbc", "microshift-bootc")
 

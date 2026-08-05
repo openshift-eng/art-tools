@@ -31,6 +31,7 @@ from artcommonlib.variants import BuildVariant
 from dockerfile_parse import DockerfileParser
 from doozerlib import constants, util
 from doozerlib.backend.base_image_handler import BaseImageHandler, BaseImageReleaseResult, BaseImageSnapshotInput
+from doozerlib.backend.golang_builder_shipment import GolangBuilderShipmentHandler
 from doozerlib.backend.build_repo import BuildRepo
 from doozerlib.backend.konflux_client import ImageBuildParams, KonfluxClient
 from doozerlib.backend.pipelinerun_utils import PipelineRunInfo
@@ -435,8 +436,6 @@ class KonfluxImageBuilder:
                         and image_digest
                     ):
                         try:
-                            from doozerlib.backend.golang_builder_shipment import GolangBuilderShipmentHandler
-
                             shipment_handler = GolangBuilderShipmentHandler(
                                 metadata.runtime,
                                 dry_run=self._config.dry_run,
