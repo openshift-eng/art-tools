@@ -10,7 +10,6 @@ import sys
 import tarfile
 import traceback
 from collections import OrderedDict
-from datetime import datetime
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Set, Union
 from urllib.parse import quote, urlparse
@@ -43,10 +42,11 @@ from doozerlib.cli.release_gen_payload import (
     payload_imagestream_namespace_and_name,
 )
 from elliottlib.errata import get_builds, get_errata_live_id
-from elliottlib.shipment_model import ShipmentConfig
 from elliottlib.shipment_utils import (
+    get_full_advisory_id_from_shipment,
     get_shipment_config_from_mr,
     get_shipment_configs_from_mr,
+    patch_et_advisory_text,
 )
 from github import GithubException
 from ruamel.yaml import YAML
@@ -361,7 +361,7 @@ class PromotePipeline:
                 image_shipment = get_shipment_config_from_mr(shipment_url, "image")
                 if not image_shipment:
                     raise ValueError("Could not find image shipment config in merge request!")
-                full_advisory_id = self.get_full_advisory_id_from_shipment(image_shipment)
+                full_advisory_id = get_full_advisory_id_from_shipment(image_shipment)
                 logger.info("Constructed full advisory ID from shipment config: %s", full_advisory_id)
                 # TODO: ensure that shipment MR is open and is not in a draft state (and optionally stage push is successful)
             else:
@@ -479,6 +479,14 @@ class PromotePipeline:
                 except Exception as ex:
                     self._logger.warning("Failed to update shipment MR with payload SHAs: %s", ex)
                     await self._slack_client.say_in_thread(f"Failed to update shipment MR with payload SHAs: {ex}")
+
+                # Also patch classic ET advisories (rpm, rhcos) with arch SHA digests.
+                # IMAGE_ADVISORY/RPM_ADVISORY are handled by Phase 4 in prepare_release_konflux.
+                if impetus_advisories:
+                    try:
+                        await self.update_et_advisories_with_payload_shas(impetus_advisories, payload_shas)
+                    except Exception as ex:
+                        self._logger.warning("Failed to update ET advisories with payload SHAs: %s", ex)
             else:
                 self._logger.info("No shipment configuration found, skipping shipment MR update")
 
@@ -1544,22 +1552,6 @@ class PromotePipeline:
         live_id = advisory_info["fulladvisory"].rsplit("-", 1)[0]  # RHBA-2019:2681-02 => RHBA-2019:2681
         return live_id
 
-    @staticmethod
-    def get_full_advisory_id_from_shipment(shipment_config: ShipmentConfig) -> str:
-        """Get the full advisory ID from a shipment config, if it exists."""
-        live_id = shipment_config.shipment.data.releaseNotes.live_id
-        if not live_id:
-            raise ValueError("Could not find live ID in image shipment config!")
-
-        # construct full advisory id like RHBA-2025:13660
-        advisory_type = shipment_config.shipment.data.releaseNotes.type
-        year = datetime.now().strftime("%Y")
-
-        # Important: Pad liveID with 0 if it is less than 4 digits
-        live_id = f"{live_id:04}"
-
-        return f"{advisory_type.upper()}-{year}:{live_id}"
-
     def verify_advisory_status(self, advisory_info: Dict):
         if advisory_info["status"] not in {"QE", "REL_PREP", "PUSH_READY", "IN_PUSH", "SHIPPED_LIVE"}:
             raise VerificationError(f"Advisory {advisory_info['id']} should not be in {advisory_info['status']} state.")
@@ -2621,37 +2613,8 @@ class PromotePipeline:
 
                 self._logger.info("Prepared format variable: %s -> %s", arch, sha)
 
-        # Generate IMAGE_ADVISORY template key for all shipment types (get from image shipment data)
-        try:
-            image_shipment = shipments_by_kind.get("image")
-
-            if (
-                image_shipment
-                and hasattr(image_shipment.shipment.data.releaseNotes, 'type')
-                and hasattr(image_shipment.shipment.data.releaseNotes, 'live_id')
-                and image_shipment.shipment.data.releaseNotes.type
-                and image_shipment.shipment.data.releaseNotes.live_id
-            ):
-                image_advisory = self.get_full_advisory_id_from_shipment(image_shipment)
-                format_dict["IMAGE_ADVISORY"] = image_advisory
-                self._logger.info("Generated IMAGE_ADVISORY: %s", image_advisory)
-            else:
-                self._logger.warning("Cannot generate IMAGE_ADVISORY: missing image shipment or type/live_id data")
-        except Exception as ex:
-            self._logger.warning("Failed to generate IMAGE_ADVISORY: %s", ex)
-
-        # Generate RPM_ADVISORY template key for all shipment types
-        try:
-            rpm_advisory_id = await self._get_rpm_advisory_id()
-            if rpm_advisory_id:
-                format_dict["RPM_ADVISORY"] = rpm_advisory_id
-                self._logger.info("Generated RPM_ADVISORY: %s", rpm_advisory_id)
-            else:
-                # Don't replace RPM_ADVISORY placeholder if we can't generate it
-                self._logger.warning("Could not generate RPM_ADVISORY: no RPM advisory found in releases.yml")
-        except Exception as ex:
-            # Don't replace RPM_ADVISORY placeholder on error
-            self._logger.warning("Failed to generate RPM_ADVISORY: %s", ex)
+        # IMAGE_ADVISORY and RPM_ADVISORY are resolved by Phase 4 of prepare_release_konflux.
+        # Promote only handles arch SHA digest placeholders that are known post-promotion.
 
         # If no replacements are needed, skip this shipment
         if not format_dict:
@@ -2808,6 +2771,47 @@ class PromotePipeline:
         except Exception as ex:
             self._logger.error("Failed to update shipment MR with doc updates: %s", ex)
             raise
+
+    async def update_et_advisories_with_payload_shas(
+        self,
+        impetus_advisories: Dict[str, int],
+        payload_shas: Dict[str, str],
+    ) -> None:
+        """Patch classic ET advisory (rpm, rhcos) solution with arch payload SHA digests.
+
+        IMAGE_ADVISORY and RPM_ADVISORY placeholders are the responsibility of Phase 4 in
+        prepare_release_konflux, which runs before promote. This method only handles the
+        arch digest placeholders that are only known after payload promotion.
+
+        :param impetus_advisories: Dict of {impetus: advisory_num} from group config advisories.
+        :param payload_shas: Dict mapping architecture names to their SHA256 digests.
+        """
+        # "x864_DIGEST" (not "x86_64") matches the template variable name used in ET boilerplate.
+        arch_map = {
+            "x86_64": "x864_DIGEST",
+            "s390x": "s390x_DIGEST",
+            "ppc64le": "ppc64le_DIGEST",
+            "aarch64": "aarch64_DIGEST",
+        }
+        format_dict: Dict[str, str] = {arch_map[arch]: sha for arch, sha in payload_shas.items() if arch in arch_map}
+
+        if not format_dict:
+            self._logger.info("No arch SHA digests to substitute in ET advisories, skipping")
+            return
+
+        for impetus, advisory_num in impetus_advisories.items():
+            # microshift advisory is populated post-promote by a separate pipeline step.
+            if impetus == "microshift" or not advisory_num or advisory_num <= 0:
+                continue
+            self._patch_et_advisory_placeholders(advisory_num, format_dict)
+
+    def _patch_et_advisory_placeholders(self, advisory_num: int, format_dict: Dict[str, str]) -> None:
+        """Replace template placeholders in an ET advisory's description and solution fields.
+
+        :param advisory_num: The classic ET advisory's numeric id.
+        :param format_dict: Dict of placeholder name to replacement value.
+        """
+        patch_et_advisory_text(advisory_num, format_dict, dry_run=self.runtime.dry_run)
 
     async def _get_rpm_advisory_id(self) -> Optional[str]:
         """Get RPM advisory ID from releases.yml and query errata endpoint for advisory type.

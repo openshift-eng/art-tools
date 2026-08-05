@@ -1882,7 +1882,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
     @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
     @patch("pyartcd.pipelines.promote.PromotePipeline.check_blocker_bugs")
     @patch("pyartcd.pipelines.promote.get_shipment_config_from_mr")
-    @patch("pyartcd.pipelines.promote.datetime")
+    @patch("elliottlib.shipment_utils.datetime")
     @patch(
         "pyartcd.pipelines.promote.util.load_releases_config",
         return_value={
@@ -1996,6 +1996,65 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         # Ensure the legacy advisory info path was not used
         pipeline.get_advisory_info.assert_not_called()
 
+    @patch("elliottlib.shipment_utils.Erratum")
+    @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
+    async def test_update_et_advisories_with_payload_shas(self, _, mock_erratum_cls):
+        """ET advisories get solution patched with arch SHA digests; IMAGE/RPM advisory IDs left to Phase 4."""
+        runtime = MagicMock(
+            config={
+                "build_config": {"ocp_build_data_url": "https://example.com/ocp-build-data.git"},
+                "jira": {"url": JIRA_SERVER_URL},
+            },
+            working_dir=Path("/path/to/working"),
+            dry_run=False,
+        )
+        pipeline = PromotePipeline(runtime, group="openshift-4.22", assembly="4.22.1", signing_env="prod")
+        pipeline._logger = MagicMock()
+
+        rpm_advisory = MagicMock()
+        rpm_advisory.description = "See https://access.redhat.com/errata/{IMAGE_ADVISORY}"
+        rpm_advisory.solution = "The image digest is {x864_DIGEST}"
+        mock_erratum_cls.return_value = rpm_advisory
+
+        impetus_advisories = {"rpm": 999, "microshift": 111}
+        payload_shas = {"x86_64": "sha256:aabbcc", "s390x": "sha256:ddeeff"}
+
+        await pipeline.update_et_advisories_with_payload_shas(impetus_advisories, payload_shas)
+
+        # Only rpm advisory patched; microshift skipped
+        mock_erratum_cls.assert_called_once_with(errata_id=999)
+        rpm_advisory.update.assert_called_once()
+        call_kwargs = rpm_advisory.update.call_args[1]
+        # SHA digest substituted in solution; IMAGE_ADVISORY left untouched (Phase 4's responsibility)
+        self.assertIn("sha256:aabbcc", call_kwargs.get("solution", ""))
+        self.assertNotIn("description", call_kwargs)
+        rpm_advisory.commit.assert_called_once()
+
+    @patch("elliottlib.shipment_utils.Erratum")
+    @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
+    async def test_update_et_advisories_dry_run_skips_commit(self, _, mock_erratum_cls):
+        """In dry-run mode ET advisory is not committed."""
+        runtime = MagicMock(
+            config={
+                "build_config": {"ocp_build_data_url": "https://example.com/ocp-build-data.git"},
+                "jira": {"url": JIRA_SERVER_URL},
+            },
+            working_dir=Path("/path/to/working"),
+            dry_run=True,
+        )
+        pipeline = PromotePipeline(runtime, group="openshift-4.22", assembly="4.22.1", signing_env="prod")
+        pipeline._logger = MagicMock()
+
+        rpm_advisory = MagicMock()
+        rpm_advisory.description = "See {IMAGE_ADVISORY}"
+        rpm_advisory.solution = "digest is {x864_DIGEST}"
+        mock_erratum_cls.return_value = rpm_advisory
+
+        await pipeline.update_et_advisories_with_payload_shas({"rpm": 999}, {"x86_64": "sha256:aabbcc"})
+
+        rpm_advisory.update.assert_not_called()
+        rpm_advisory.commit.assert_not_called()
+
     @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
     def test_build_create_symlink(self, _):
         runtime = MagicMock(
@@ -2045,14 +2104,13 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
     async def test_update_shipment_with_payload_shas_no_image_shipment(
         self, mock_getenv: Mock, mock_gitlab_class: Mock, mock_get_shipment_configs: Mock, _
     ):
-        """Test when no image shipment is found in MR"""
+        """Promote patches only arch SHA digests in shipment MR; IMAGE/RPM advisory IDs are Phase 4's concern."""
         mock_getenv.side_effect = lambda key: {"GITLAB_TOKEN": "fake-token"}.get(key)
 
-        # Setup GitLab mocks to prevent real network calls
         mock_gitlab = MagicMock()
         mock_gitlab_class.return_value = mock_gitlab
 
-        # No image shipment in configs
+        # Only rpm shipment — no image shipment; promote should still proceed with SHA-only patching
         mock_get_shipment_configs.return_value = {"rpm": MagicMock()}
 
         runtime = MagicMock()
@@ -2061,18 +2119,16 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         runtime.logger = MagicMock()
 
         pipeline = PromotePipeline(runtime, group="openshift-4.19", assembly="4.19.0", signing_env="prod")
-        # Mock the RPM advisory generation to prevent doozer calls
-        pipeline._get_rpm_advisory = AsyncMock(return_value=None)
 
         payload_shas = {"x86_64": "sha256:abc123"}
         shipment_url = "https://gitlab.example.com/project/-/merge_requests/123"
 
         await pipeline.update_shipment_with_payload_shas(shipment_url, payload_shas)
 
-        # Should log warning about missing IMAGE_ADVISORY generation
-        runtime.logger.warning.assert_any_call(
-            "Cannot generate IMAGE_ADVISORY: missing image shipment or type/live_id data"
-        )
+        # IMAGE_ADVISORY/RPM_ADVISORY warnings should NOT appear — promote no longer handles them
+        for call in runtime.logger.warning.call_args_list:
+            self.assertNotIn("IMAGE_ADVISORY", str(call))
+            self.assertNotIn("RPM_ADVISORY", str(call))
 
     @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
     @patch("pyartcd.pipelines.promote.get_github_client_for_org")

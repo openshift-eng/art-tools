@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime
 from typing import Dict, Iterable, List, Tuple
 from urllib.parse import urlparse
 
@@ -8,12 +9,80 @@ from artcommonlib.gitlab import GitLabClient
 from artcommonlib.jira_config import JIRA_DOMAIN_NAME
 from artcommonlib.model import Model
 from artcommonlib.util import new_roundtrip_yaml_handler
+from errata_tool import Erratum
 
 from elliottlib.shipment_model import Issue, Issues, ReleaseNotes, ShipmentConfig
 
 logger = logging.getLogger(__name__)
 
 yaml = new_roundtrip_yaml_handler()
+
+
+def patch_et_advisory_text(
+    advisory_num: int,
+    format_dict: dict[str, str],
+    dry_run: bool = False,
+    validate_targets: tuple[str, ...] = (),
+) -> list[str]:
+    """
+    Load an Errata Tool advisory, substitute placeholders in description/solution, and commit.
+
+    Soft-fails on Erratum update/commit errors: logs a warning and returns without raising.
+    If the advisory cannot be loaded at all, validation is also skipped (the text is
+    unreadable) — callers that need guaranteed validation should treat an all-empty return
+    from a known-placeholder advisory as suspicious when ET errors are present.
+
+    Arg(s):
+        advisory_num (int): Numeric Errata Tool advisory ID.
+        format_dict (dict[str, str]): Mapping of placeholder name → replacement value, e.g.
+            ``{"IMAGE_ADVISORY": "RHBA-2025:13660"}``.  Only entries with non-empty values
+            should be included; the caller is responsible for filtering.
+        dry_run (bool): When True, log what would change but do not call update/commit.
+        validate_targets (tuple[str, ...]): Placeholder names to scan for in the advisory
+            text *before* substitution.  Any that appear in the text but have no corresponding
+            entry in ``format_dict`` are returned as human-readable strings so the caller can
+            raise or warn.  Pass ``()`` to skip validation (default).
+    Return Value(s):
+        list[str]: Descriptions of placeholders from ``validate_targets`` that were found in
+            the advisory text but could not be substituted (no value in ``format_dict``).
+            Empty when ``validate_targets`` is ``()`` or all targets were resolved.
+    """
+    unresolved: list[str] = []
+    try:
+        advisory = Erratum(errata_id=advisory_num)
+    except Exception as ex:
+        # If the advisory cannot be loaded at all, neither substitution nor placeholder
+        # validation is possible. Log and return empty — caller is responsible for deciding
+        # whether this is fatal.
+        logger.warning("Failed to load ET advisory %s: %s", advisory_num, ex)
+        return unresolved
+
+    updates = {}
+    for field in ("description", "solution"):
+        text = getattr(advisory, field, None)
+        if not text:
+            continue
+        new_text = text
+        for var_name, value in format_dict.items():
+            new_text = new_text.replace(f"{{{var_name}}}", value)
+        if new_text != text:
+            updates[field] = new_text
+        for target in validate_targets:
+            if f"{{{target}}}" in text and target not in format_dict:
+                unresolved.append(f"ET advisory {advisory_num} ({field}): {{{target}}}")
+
+    if not updates:
+        return unresolved
+    if dry_run:
+        logger.info("[DRY-RUN] Would patch ET advisory %s: %s", advisory_num, list(updates))
+        return unresolved
+    try:
+        advisory.update(**updates)
+        advisory.commit()
+        logger.info("Patched ET advisory %s: %s", advisory_num, list(updates))
+    except Exception as ex:
+        logger.warning("Failed to commit ET advisory %s: %s", advisory_num, ex)
+    return unresolved
 
 
 def get_shipment_configs_from_mr(
@@ -120,6 +189,24 @@ def set_jira_bug_ids(release_notes: ReleaseNotes, bug_ids: Iterable[str]):
         release_notes.issues = None
     else:
         release_notes.issues = Issues(fixed=fixed)
+
+
+def get_full_advisory_id_from_shipment(shipment_config: ShipmentConfig) -> str:
+    """
+    Build the full advisory display id from a shipment config's live ID, e.g. "RHBA-2025:13660".
+
+    Arg(s):
+        shipment_config (ShipmentConfig): Shipment config containing releaseNotes.type and
+            releaseNotes.live_id.
+    Return Value(s):
+        str: The formatted advisory id, e.g. "RHBA-2025:13660".
+    """
+    release_notes = shipment_config.shipment.data.releaseNotes
+    live_id = release_notes.live_id
+    if not live_id:
+        raise ValueError("Could not find live ID in image shipment config!")
+    year = datetime.now().strftime("%Y")
+    return f"{release_notes.type.upper()}-{year}:{live_id:04}"
 
 
 def get_bug_ids_from_open_shipment_mrs(
