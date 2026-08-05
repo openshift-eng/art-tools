@@ -222,13 +222,21 @@ class ConfigScanSources:
     async def run(self):
         # Try to rebase into openshift-priv to reduce upstream merge -> downstream build time
         if self.rebase_priv:
-            major, minor = self.runtime.get_major_minor_fields()
-            version = f'{major}.{minor}'
-            if not uses_konflux_imagestream_override(version):
-                self.logger.warning(
-                    'ocp4-scan for Konflux is not allowed to rebase into openshfit-priv version %s', version
-                )
+            if self.runtime.group.startswith("openshift-"):
+                # For OCP groups, only rebase when the version uses the Konflux imagestream override
+                # (i.e. versions that have fully migrated to Konflux, >= 4.12). Older OCP versions
+                # should not be rebased here.
+                major, minor = self.runtime.get_major_minor_fields()
+                version = f'{major}.{minor}'
+                if not uses_konflux_imagestream_override(version):
+                    self.logger.warning(
+                        'Konflux scan-sources is not allowed to rebase into openshift-priv for version %s', version
+                    )
+                else:
+                    self.rebase_into_priv()
             else:
+                # Non-OCP groups (layered products like oc-mirror-2.0, logging-6.6, etc.) always
+                # build via Konflux, so the imagestream override version check does not apply.
                 self.rebase_into_priv()
 
         # Skip RPM-related operations for OKD variant or when --skip-rpms is set
