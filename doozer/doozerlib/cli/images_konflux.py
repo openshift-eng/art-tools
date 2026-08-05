@@ -130,24 +130,34 @@ class KonfluxRebaseCli:
         results = await asyncio.gather(*tasks, return_exceptions=True)
         failed_images = []
         skipped_due_to_parent = []
+        images_state = {}
         for index, result in enumerate(results):
+            image_name = metas[index].distgit_key
             if isinstance(result, Exception):
-                image_name = metas[index].distgit_key
                 if isinstance(result, ParentRebaseFailedError):
                     skipped_due_to_parent.append(image_name)
+                    images_state[image_name] = {'status': 'skipped'}
                     LOGGER.warning(
                         "Skipping rebase for %s: parent rebase(s) failed: %s", image_name, result.failed_parents
                     )
                 else:
                     failed_images.append(image_name)
+                    images_state[image_name] = {'status': 'failure'}
                     LOGGER.error(f"Failed to rebase {image_name}: {result}")
                     LOGGER.error(f"Stack trace for {image_name}:")
                     LOGGER.error(''.join(traceback.format_exception(type(result), result, result.__traceback__)))
+            else:
+                images_state[image_name] = {'status': 'success'}
+
+        # Always write per-image state (for counter reset and diagnostics)
+        state_payload = {'images': images_state}
+        if failed_images:
+            state_payload['failed-images'] = failed_images
+        if skipped_due_to_parent:
+            state_payload['skipped-due-to-parent-rebase-failure'] = skipped_due_to_parent
+        runtime.state['images:konflux:rebase'] = state_payload
+
         if failed_images or skipped_due_to_parent:
-            payload = {'failed-images': failed_images}
-            if skipped_due_to_parent:
-                payload['skipped-due-to-parent-rebase-failure'] = skipped_due_to_parent
-            runtime.state['images:konflux:rebase'] = payload
             summary = failed_images + [f"{k} (parent failure)" for k in skipped_due_to_parent]
             raise DoozerFatalError(f"Failed to rebase images: {summary}")
         LOGGER.info("Rebase complete")

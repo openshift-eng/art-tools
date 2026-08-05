@@ -923,13 +923,20 @@ class TestKonfluxOcpPipelineRebaseFailures(unittest.IsolatedAsyncioTestCase):
         defaults.update(kwargs)
         return KonfluxOcpPipeline(**defaults)
 
-    def _write_rebase_state(self, failed, skipped):
-        state = {
-            'images:konflux:rebase': {
-                'failed-images': failed,
-                'skipped-due-to-parent-rebase-failure': skipped,
-            }
-        }
+    def _write_rebase_state(self, failed, skipped, successful=None):
+        images = {}
+        for img in failed or []:
+            images[img] = {'status': 'failure'}
+        for img in skipped or []:
+            images[img] = {'status': 'skipped'}
+        for img in successful or []:
+            images[img] = {'status': 'success'}
+        payload = {'images': images}
+        if failed:
+            payload['failed-images'] = failed
+        if skipped:
+            payload['skipped-due-to-parent-rebase-failure'] = skipped
+        state = {'images:konflux:rebase': payload}
         state_path = Path(self.runtime.doozer_working) / 'state.yaml'
         with state_path.open('w') as f:
             yaml.safe_dump(state, f)
@@ -965,6 +972,26 @@ class TestKonfluxOcpPipelineRebaseFailures(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(incr_names, {'parent-img'})
         self.assertNotIn('child-a', reset_names)
         self.assertNotIn('child-a', incr_names)
+
+    @patch('pyartcd.pipelines.ocp4_konflux.increment_fail_counter', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.ocp4_konflux.reset_fail_counter', new_callable=AsyncMock)
+    async def test_update_rebase_fail_counters_only_reads_state_yaml(self, mock_reset, mock_incr):
+        """ONLY strategy derives successful images from state.yaml per-image status."""
+        from pyartcd.pipelines.ocp4_konflux import BuildStrategy
+
+        # Write state with per-image status including a parent image not in image_list
+        self._write_rebase_state(['parent-img'], [], successful=['img-a', 'extra-parent'])
+
+        pipeline = self._make_pipeline(image_build_strategy='only', image_list='img-a')
+        pipeline.build_plan.image_build_strategy = BuildStrategy.ONLY
+
+        await pipeline.update_rebase_fail_counters(['parent-img'])
+
+        reset_names = {c.args[0].split(':')[-1] for c in mock_reset.call_args_list}
+        incr_names = {c.args[0].split(':')[-1] for c in mock_incr.call_args_list}
+        # Both img-a and extra-parent should be reset (read from state.yaml, not image_list)
+        self.assertEqual(reset_names, {'img-a', 'extra-parent'})
+        self.assertEqual(incr_names, {'parent-img'})
 
     @patch('pyartcd.pipelines.ocp4_konflux.exectools.cmd_assert_async')
     async def test_build_after_rebase_uses_exclude_for_failed_and_skipped(self, mock_cmd):
