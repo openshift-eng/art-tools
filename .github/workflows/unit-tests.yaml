@@ -48,5 +48,10 @@ jobs:
         run: make test
 
       - name: Run dependency audit
+        id: audit
         continue-on-error: true
         run: make audit
+
+      - name: Log audit warning
+        if: steps.audit.outcome == 'failure'
+        run: echo "::warning title=Audit Warning::Dependency audit found vulnerabilities - see audit output above"
