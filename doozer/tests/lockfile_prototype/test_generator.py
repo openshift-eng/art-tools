@@ -2159,6 +2159,44 @@ class TestCrossArchReconciliation(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("libeconf", second_call_packages)
         self.assertIn("curl", second_call_packages)
 
+    async def test_reconciliation_excludes_mismatched_from_arch_pkgs(self):
+        """
+        When arch_pkgs contains an unversioned name matching a mismatched
+        package, the second resolution must exclude it so DNF cannot override
+        the version pin via the per-arch package list.
+        """
+        gen = self._make_generator()
+        mismatched = self._make_lockfile(
+            {
+                "x86_64": [("libeconf", "0.4.1-7.el9_8", "https://x86/libeconf-7.rpm")],
+                "aarch64": [("libeconf", "0.4.1-5.el9", "https://arm/libeconf-5.rpm")],
+            }
+        )
+        reconciled = self._make_lockfile(
+            {
+                "x86_64": [("libeconf", "0.4.1-5.el9", "https://x86/libeconf-5.rpm")],
+                "aarch64": [("libeconf", "0.4.1-5.el9", "https://arm/libeconf-5.rpm")],
+            }
+        )
+        gen._resolve_stage_with_retry = AsyncMock(side_effect=[mismatched, reconciled])
+
+        result = await gen._resolve_with_reconciliation(
+            [],
+            ["x86_64", "aarch64"],
+            ["curl"],
+            {"x86_64": ["libeconf", "xz"], "aarch64": ["libeconf"]},
+            [],
+            None,
+            "test-image",
+            0,
+        )
+        self.assertEqual(result, reconciled)
+
+        second_call_arch_pkgs = gen._resolve_stage_with_retry.call_args_list[1][0][3]
+        self.assertNotIn("libeconf", second_call_arch_pkgs.get("x86_64", []))
+        self.assertNotIn("libeconf", second_call_arch_pkgs.get("aarch64", []))
+        self.assertIn("xz", second_call_arch_pkgs.get("x86_64", []))
+
     async def test_reconciliation_excludes_mismatched_from_update_targets(self):
         """
         Update targets matching mismatched packages must be excluded from the

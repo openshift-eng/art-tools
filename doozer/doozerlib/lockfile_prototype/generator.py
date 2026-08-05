@@ -1454,6 +1454,7 @@ class RpmLockfilePrototypeGenerator:
 
         mismatched_names = set(mismatches.keys())
         pinned_packages = [p for p in packages if p not in mismatched_names] + version_pins
+        pinned_arch_pkgs = {arch: [p for p in pkgs if p not in mismatched_names] for arch, pkgs in arch_pkgs.items()}
         pinned_update_targets = [p for p in update_targets if p not in mismatched_names]
         pinned_reinstall = (
             [p for p in reinstall_packages if p not in mismatched_names] if reinstall_packages else reinstall_packages
@@ -1464,7 +1465,7 @@ class RpmLockfilePrototypeGenerator:
                 repo_list,
                 arches,
                 pinned_packages,
-                arch_pkgs,
+                pinned_arch_pkgs,
                 pinned_update_targets,
                 image_pullspec,
                 distgit_key,
