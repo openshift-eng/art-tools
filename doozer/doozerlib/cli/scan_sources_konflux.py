@@ -127,7 +127,8 @@ class ConfigScanSources:
 
         For OKD variant:
         - Image is enabled if generally enabled OR has okd.mode: enabled
-        - Image must have for_payload: true (non-payload images are not built for OKD)
+        - Image must have for_payload: true OR base_only: true
+          (base_only images are required by the OKD build pipeline as parent dependencies)
 
         For OCP variant:
         - Image must be generally enabled (mode != 'disabled')
@@ -142,11 +143,14 @@ class ConfigScanSources:
             # For OKD, image is enabled if generally enabled OR has okd.mode: enabled
             if not self._is_okd_enabled(image_meta):
                 return False
-            # For OKD, also check for_payload - only payload images are built
+            # For OKD, include payload images AND base_only images (dependency chain)
             for_payload = image_meta.config.for_payload
             if for_payload is Missing:
                 for_payload = False
-            return for_payload
+            base_only = image_meta.config.base_only
+            if base_only is Missing:
+                base_only = False
+            return for_payload or base_only
         else:
             # For OCP, only process generally enabled images (not OKD-only images)
             return image_meta.enabled
@@ -159,8 +163,8 @@ class ConfigScanSources:
         - It's enabled (generally enabled OR okd.mode: enabled), OR
         - load_disabled is set (includes all images even if disabled)
 
-        For OKD variant, additionally filters out non-payload images (for_payload: false)
-        since OKD only builds images that are in the payload.
+        For OKD variant, _is_image_enabled already handles the payload/base_only filter,
+        so no additional filtering is needed here.
 
         This ensures OKD-only images (mode: disabled, okd.mode: enabled) are scanned
         so they can be built for OKD when they change.
@@ -170,15 +174,7 @@ class ConfigScanSources:
         Return Value(s):
             bool: True if image should be included, False otherwise.
         """
-        # Include if enabled (handles both general and OKD-enabled cases)
         if self._is_image_enabled(image_meta):
-            # For OKD variant, skip non-payload images
-            if self.variant == BuildVariant.OKD:
-                for_payload = image_meta.config.for_payload
-                if for_payload is Missing:
-                    for_payload = False
-                if not for_payload:
-                    return False
             return True
 
         # Include if disabled but load_disabled is set
