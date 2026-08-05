@@ -4,9 +4,12 @@
 Unit tests for the okd pipeline.
 """
 
+import tempfile
+from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import yaml
 from pyartcd.pipelines.ocp4_konflux import BuildStrategy
 from pyartcd.pipelines.okd import BuildPlan, KonfluxOkdPipeline
 
@@ -1027,3 +1030,60 @@ class TestDetectEmbargoedBuilds(IsolatedAsyncioTestCase):
 
         # then - should complete without error
         self.assertEqual(len(self.pipeline.embargoed_builds), 0)
+
+
+class TestRebaseFailCounters(IsolatedAsyncioTestCase):
+    """Tests for update_rebase_fail_counters reading per-image status from state.yaml."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.mock_runtime = MagicMock()
+        self.mock_runtime.dry_run = False
+        self.mock_runtime.doozer_working = str(Path(self.tmpdir) / 'doozer_working')
+        Path(self.mock_runtime.doozer_working).mkdir(parents=True)
+
+        mock_slack_client = MagicMock()
+        mock_slack_client.say = AsyncMock()
+        mock_slack_client.bind_channel = MagicMock()
+        self.mock_runtime.new_slack_client = MagicMock(return_value=mock_slack_client)
+
+        self.pipeline = KonfluxOkdPipeline(
+            runtime=self.mock_runtime,
+            image_build_strategy='only',
+            image_list='img-a',
+            assembly='stream',
+            data_path='https://github.com/openshift-eng/ocp-build-data',
+            data_gitref='',
+            version='4.20',
+            ignore_locks=False,
+            plr_template='',
+            lock_identifier='test-lock',
+            build_priority='10',
+            imagestream_namespace='origin',
+        )
+
+    def _write_state(self, images_state):
+        state = {'images:okd:rebase': {'images': images_state}}
+        state_path = Path(self.mock_runtime.doozer_working) / 'state.yaml'
+        with state_path.open('w') as f:
+            yaml.safe_dump(state, f)
+
+    @patch('pyartcd.pipelines.okd.increment_fail_counter', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.okd.reset_fail_counter', new_callable=AsyncMock)
+    async def test_only_strategy_resets_successful_images_from_state(self, mock_reset, mock_incr):
+        """ONLY strategy reads per-image status from state.yaml and resets only status=='success'."""
+        self._write_state(
+            {
+                'img-a': {'status': 'success', 'private_fix': False},
+                'extra-parent': {'status': 'success', 'private_fix': False},
+                'parent-img': {'status': 'failure', 'private_fix': False},
+            }
+        )
+        self.pipeline.build_plan.image_build_strategy = BuildStrategy.ONLY
+
+        await self.pipeline.update_rebase_fail_counters(['parent-img'])
+
+        reset_names = {c.args[0].split(':')[-1] for c in mock_reset.call_args_list}
+        incr_names = {c.args[0].split(':')[-1] for c in mock_incr.call_args_list}
+        self.assertEqual(reset_names, {'img-a', 'extra-parent'})
+        self.assertEqual(incr_names, {'parent-img'})

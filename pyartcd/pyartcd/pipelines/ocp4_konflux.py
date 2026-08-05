@@ -214,8 +214,15 @@ class KonfluxOcpPipeline:
                     and image not in skipped_set
                 ]
             case BuildStrategy.ONLY:
+                # Derive successful images from doozer's state.yaml per-image
+                # status (which records all images actually processed, including
+                # parents/dependents loaded by --latest-parent-version) rather
+                # than from the artcd-side IMAGE_LIST.
+                with open(f'{self.runtime.doozer_working}/state.yaml') as f:
+                    state = yaml.safe_load(f) or {}
+                rebase_state = state.get('images:konflux:rebase', {}).get('images', {})
                 successful_images = [
-                    image for image in self.image_list if image not in failed_set and image not in skipped_set
+                    image for image, image_state in rebase_state.items() if image_state.get('status') == 'success'
                 ]
             case _:
                 raise ValueError(
