@@ -138,6 +138,63 @@ class TestMinimalCrashIsolation(TestScanSourcesKonflux):
             good_meta, 'good', 'main', 'main', priv_url='https://example.com/org/good.git'
         )
 
+    def _make_scanner_for_rebase_test(self, group, rebase_priv=True, major_minor=None):
+        """Helper: create a ConfigScanSources with a group set and runtime.image_tree mocked."""
+        self.runtime.group = group
+        self.runtime.image_tree = {}
+        if major_minor:
+            self.runtime.get_major_minor_fields.return_value = major_minor
+        scanner = ConfigScanSources(
+            runtime=self.runtime,
+            ci_kubeconfig=self.ci_kubeconfig,
+            session=self.session,
+            as_yaml=False,
+            rebase_priv=rebase_priv,
+            dry_run=False,
+        )
+        scanner.all_metas = set()
+        scanner.all_image_metas = set()
+        scanner.all_rpm_metas = set()
+        return scanner
+
+    async def _run_with_rebase_mocked(self, scanner):
+        """Helper: run scanner with everything except the rebase-priv gate mocked out."""
+        with (
+            patch.object(scanner, 'rebase_into_priv') as mock_rebase,
+            patch.object(scanner, 'check_changing_rpms', new_callable=AsyncMock),
+            patch.object(scanner, 'get_current_task_bundle_shas', new_callable=AsyncMock, return_value={}),
+            patch.object(scanner, 'generate_dependency_tree', return_value={}),
+            patch.object(scanner, 'scan_images', new_callable=AsyncMock),
+            patch.object(scanner, 'detect_rhcos_status', new_callable=AsyncMock),
+            patch.object(scanner, 'generate_report'),
+        ):
+            await scanner.run()
+            return mock_rebase
+
+    async def test_run_rebase_priv_called_for_non_ocp_group(self):
+        """Non-OCP layered products should always rebase into openshift-priv, regardless of version."""
+        scanner = self._make_scanner_for_rebase_test('oc-mirror-2.0')
+        mock_rebase = await self._run_with_rebase_mocked(scanner)
+        mock_rebase.assert_called_once()
+
+    async def test_run_rebase_priv_called_for_ocp_4_20(self):
+        """OCP groups >= 4.12 should rebase into openshift-priv."""
+        scanner = self._make_scanner_for_rebase_test('openshift-4.20', major_minor=(4, 20))
+        mock_rebase = await self._run_with_rebase_mocked(scanner)
+        mock_rebase.assert_called_once()
+
+    async def test_run_rebase_priv_skipped_for_ocp_4_11(self):
+        """OCP groups < 4.12 should NOT rebase into openshift-priv."""
+        scanner = self._make_scanner_for_rebase_test('openshift-4.11', major_minor=(4, 11))
+        mock_rebase = await self._run_with_rebase_mocked(scanner)
+        mock_rebase.assert_not_called()
+
+    async def test_run_rebase_priv_called_for_oadp_group(self):
+        """OADP layered product groups should always rebase, just like oc-mirror."""
+        scanner = self._make_scanner_for_rebase_test('oadp-1.5')
+        mock_rebase = await self._run_with_rebase_mocked(scanner)
+        mock_rebase.assert_called_once()
+
 
 class TestScanTaskBundleChanges(TestScanSourcesKonflux):
     """Test the scan_task_bundle_changes method."""
