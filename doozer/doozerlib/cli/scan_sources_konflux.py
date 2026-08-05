@@ -235,7 +235,7 @@ class ConfigScanSources:
                 else:
                     self.rebase_into_priv()
             else:
-                # Non-OCP groups (layered products like oc-mirror-2.0, oadp-1.5, etc.) always
+                # Non-OCP groups (layered products like oc-mirror-2.0, logging-6.6, etc.) always
                 # build via Konflux, so the imagestream override version check does not apply.
                 self.rebase_into_priv()
 
