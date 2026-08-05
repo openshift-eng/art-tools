@@ -199,7 +199,7 @@ async def verify_signatures_cli(runtime, arches, check_dev_mirror, check_prod_mi
     Example:
         elliott --group openshift-4.18 --assembly 4.18.51 verify-signatures
     """
-    runtime.initialize(config_only=True)
+    runtime.initialize()
     if not check_dev_mirror and not check_prod_mirror:
         raise click.UsageError("At least one of --check-dev-mirror or --check-prod-mirror must be enabled.")
 
