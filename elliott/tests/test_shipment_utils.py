@@ -1,9 +1,19 @@
 import os
 import unittest
+from datetime import datetime
 from unittest.mock import Mock, patch
 
 from artcommonlib.model import Model
 from elliottlib import shipment_utils
+from elliottlib.shipment_model import (
+    Data,
+    Environments,
+    Metadata,
+    ReleaseNotes,
+    Shipment,
+    ShipmentConfig,
+    ShipmentEnv,
+)
 
 
 class TestShipmentUtils(unittest.TestCase):
@@ -754,6 +764,42 @@ class TestGetBugIdsFromOpenShipmentMrs(unittest.TestCase):
 
         self._call(group="openshift-4.18")
         mock_get_configs.assert_called_once_with(mr_url, group="openshift-4.18")
+
+
+def _make_shipment_config(kind: str, **release_notes_kwargs) -> ShipmentConfig:
+    """Build a minimal ShipmentConfig for a given kind, optionally with releaseNotes fields."""
+    data = None
+    if release_notes_kwargs:
+        data = Data(releaseNotes=ReleaseNotes(type="RHBA", **release_notes_kwargs))
+    return ShipmentConfig(
+        shipment=Shipment(
+            metadata=Metadata(
+                product="ocp",
+                application=f"app-{kind}",
+                group="openshift-4.18",
+                assembly="4.18.1",
+                fbc=(kind == "fbc"),
+            ),
+            environments=Environments(
+                stage=ShipmentEnv(releasePlan=f"rp-{kind}-stage"),
+                prod=ShipmentEnv(releasePlan=f"rp-{kind}-prod"),
+            ),
+            data=data,
+        )
+    )
+
+
+class TestGetFullAdvisoryIdFromShipment(unittest.TestCase):
+    def test_formats_type_year_and_padded_id(self):
+        year = datetime.now().strftime("%Y")
+        self.assertEqual(
+            shipment_utils.get_full_advisory_id_from_shipment(_make_shipment_config("image", live_id=42)),
+            f"RHBA-{year}:0042",
+        )
+        self.assertEqual(
+            shipment_utils.get_full_advisory_id_from_shipment(_make_shipment_config("image", live_id=13660)),
+            f"RHBA-{year}:13660",
+        )
 
 
 if __name__ == '__main__':

@@ -1076,6 +1076,205 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         # Verify that execute_command_with_logging was not called
         pipeline.execute_command_with_logging.assert_not_called()
 
+    async def test_resolve_advisory_placeholders_noop_when_nothing_resolvable(self):
+        """No rpm advisory and no shipment: nothing to resolve, no ET API calls."""
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+        )
+        pipeline.logger = Mock()
+
+        await pipeline.resolve_advisory_placeholders({}, None)
+
+    @patch("elliottlib.shipment_utils.Erratum")
+    @patch("pyartcd.pipelines.prepare_release_konflux.get_errata_live_id")
+    async def test_resolve_advisory_placeholders_patches_classic_advisories(self, mock_get_live_id, mock_erratum_cls):
+        """Classic rpm advisory gets IMAGE_ADVISORY placeholder resolved from image shipment live_id."""
+        from elliottlib.shipment_utils import get_full_advisory_id_from_shipment
+
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+        )
+        pipeline.logger = Mock()
+        pipeline.dry_run = False
+
+        mock_get_live_id.return_value = "RHBA-2026:16158"
+
+        image_shipment = ShipmentConfig(
+            shipment=Shipment(
+                metadata=Metadata(product="ocp", group=self.group, assembly=self.assembly, application="app-image"),
+                environments=Environments(
+                    stage=ShipmentEnv(releasePlan="rp-img-stage"),
+                    prod=ShipmentEnv(releasePlan="rp-img-prod"),
+                ),
+                data=Data(
+                    releaseNotes=ReleaseNotes(
+                        type="RHBA",
+                        live_id=16164,
+                    )
+                ),
+            )
+        )
+
+        rpm_advisory = Mock(description="See https://access.redhat.com/errata/{IMAGE_ADVISORY}", solution="")
+        mock_erratum_cls.return_value = rpm_advisory
+
+        impetus_advisories = {"rpm": 999}
+        shipment_data = ({"image": image_shipment}, "prod", "https://gitlab.example.com/x/-/merge_requests/1")
+
+        await pipeline.resolve_advisory_placeholders(impetus_advisories, shipment_data)
+
+        expected_image_advisory = get_full_advisory_id_from_shipment(image_shipment)
+
+        # classic rpm advisory patched with IMAGE_ADVISORY and committed
+        mock_erratum_cls.assert_called_once_with(errata_id=999)
+        rpm_advisory.update.assert_called_once_with(
+            description=f"See https://access.redhat.com/errata/{expected_image_advisory}"
+        )
+        rpm_advisory.commit.assert_called_once()
+
+    @patch("elliottlib.shipment_utils.Erratum")
+    @patch("pyartcd.pipelines.prepare_release_konflux.get_errata_live_id")
+    async def test_resolve_advisory_placeholders_commit_failure_soft_fails(self, mock_get_live_id, mock_erratum_cls):
+        """Erratum.commit() raising must not propagate — Phase 4 continues with a warning."""
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+        )
+        pipeline.logger = Mock()
+        pipeline.dry_run = False
+        pipeline.update_shipment_mr = AsyncMock()
+
+        mock_get_live_id.return_value = "RHBA-2026:16158"
+
+        image_shipment = ShipmentConfig(
+            shipment=Shipment(
+                metadata=Metadata(product="ocp", group=self.group, assembly=self.assembly, application="app-image"),
+                environments=Environments(
+                    stage=ShipmentEnv(releasePlan="rp-img-stage"),
+                    prod=ShipmentEnv(releasePlan="rp-img-prod"),
+                ),
+                data=Data(
+                    releaseNotes=ReleaseNotes(
+                        type="RHBA",
+                        live_id=16164,
+                    )
+                ),
+            )
+        )
+
+        rpm_advisory = Mock(description="See {IMAGE_ADVISORY}", solution="")
+        rpm_advisory.commit.side_effect = Exception("ET network error")
+        mock_erratum_cls.return_value = rpm_advisory
+
+        impetus_advisories = {"rpm": 999}
+        shipment_data = ({"image": image_shipment}, "prod", "https://gitlab.example.com/x/-/merge_requests/1")
+
+        # Must not raise; soft-fail is intentional for ET API errors.
+        await pipeline.resolve_advisory_placeholders(impetus_advisories, shipment_data)
+
+    @patch("elliottlib.shipment_utils.Erratum")
+    @patch("pyartcd.pipelines.prepare_release_konflux.get_errata_live_id")
+    async def test_resolve_advisory_placeholders_raises_when_placeholder_unresolvable(
+        self, mock_get_live_id, mock_erratum_cls
+    ):
+        """Raises ValueError if a target placeholder remains after Phase 4 substitution."""
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+        )
+        pipeline.logger = Mock()
+        pipeline.dry_run = False
+        pipeline.update_shipment_mr = AsyncMock()
+
+        # RPM live-ID lookup fails → rpm_advisory_id stays None
+        mock_get_live_id.side_effect = Exception("ET unavailable")
+
+        image_shipment = ShipmentConfig(
+            shipment=Shipment(
+                metadata=Metadata(product="ocp", group=self.group, assembly=self.assembly, application="app-image"),
+                environments=Environments(
+                    stage=ShipmentEnv(releasePlan="rp-img-stage"),
+                    prod=ShipmentEnv(releasePlan="rp-img-prod"),
+                ),
+                data=Data(
+                    releaseNotes=ReleaseNotes(
+                        type="RHBA",
+                        live_id=16164,
+                        description="See {IMAGE_ADVISORY} and {RPM_ADVISORY} for details.",
+                    )
+                ),
+            )
+        )
+
+        # Classic advisory has no placeholders in its text
+        rpm_advisory_mock = Mock(description="", solution="")
+        mock_erratum_cls.return_value = rpm_advisory_mock
+
+        impetus_advisories = {"rpm": 999}
+        shipment_data = ({"image": image_shipment}, "prod", "https://gitlab.example.com/x/-/merge_requests/1")
+
+        with self.assertRaises(ValueError) as ctx:
+            await pipeline.resolve_advisory_placeholders(impetus_advisories, shipment_data)
+
+        self.assertIn("RPM_ADVISORY", str(ctx.exception))
+        self.assertIn("not fully resolved", str(ctx.exception))
+
+    @patch("elliottlib.shipment_utils.Erratum")
+    @patch("pyartcd.pipelines.prepare_release_konflux.get_errata_live_id")
+    async def test_resolve_advisory_placeholders_raises_on_shipment_mr_push_failure(
+        self, mock_get_live_id, mock_erratum_cls
+    ):
+        """Raises if update_shipment_mr() fails — in-memory changes must not be silently orphaned."""
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+        )
+        pipeline.logger = Mock()
+        pipeline.dry_run = False
+        pipeline.update_shipment_mr = AsyncMock(side_effect=Exception("GitLab push failed"))
+
+        mock_get_live_id.return_value = "RHBA-2026:16158"
+
+        image_shipment = ShipmentConfig(
+            shipment=Shipment(
+                metadata=Metadata(product="ocp", group=self.group, assembly=self.assembly, application="app-image"),
+                environments=Environments(
+                    stage=ShipmentEnv(releasePlan="rp-img-stage"),
+                    prod=ShipmentEnv(releasePlan="rp-img-prod"),
+                ),
+                data=Data(
+                    releaseNotes=ReleaseNotes(
+                        type="RHBA",
+                        live_id=16164,
+                        description="See {IMAGE_ADVISORY}",
+                    )
+                ),
+            )
+        )
+
+        rpm_advisory_mock = Mock(description="See {IMAGE_ADVISORY}", solution="")
+        mock_erratum_cls.return_value = rpm_advisory_mock
+
+        impetus_advisories = {"rpm": 999}
+        shipment_data = ({"image": image_shipment}, "prod", "https://gitlab.example.com/x/-/merge_requests/1")
+
+        with self.assertRaises(Exception) as ctx:
+            await pipeline.resolve_advisory_placeholders(impetus_advisories, shipment_data)
+
+        self.assertIn("GitLab push failed", str(ctx.exception))
+
 
 class TestCheckBugConfigForGa(unittest.IsolatedAsyncioTestCase):
     def setUp(self):

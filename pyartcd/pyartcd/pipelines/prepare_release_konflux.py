@@ -49,10 +49,15 @@ from doozerlib.cli.release_gen_payload import (
     payload_imagestream_namespace_and_name,
 )
 from elliottlib.cli.konflux_release_cli import validate_snapshot_against_rpa
-from elliottlib.errata import push_cdn_stage
+from elliottlib.errata import get_errata_live_id, push_cdn_stage
 from elliottlib.errata_async import AsyncErrataAPI
 from elliottlib.shipment_model import Issue, ReleaseNotes, ShipmentConfig, Snapshot, SnapshotSpec, Tools
-from elliottlib.shipment_utils import get_shipment_configs_from_mr, set_jira_bug_ids
+from elliottlib.shipment_utils import (
+    get_full_advisory_id_from_shipment,
+    get_shipment_configs_from_mr,
+    patch_et_advisory_text,
+    set_jira_bug_ids,
+)
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 from pyartcd import constants
@@ -284,6 +289,10 @@ class PrepareReleaseKonfluxPipeline:
             await self.finalize_et_advisories(impetus_advisories)
             if shipment_data:
                 await self.finalize_shipment(shipment_data)
+
+            # Phase 4: Now that every advisory's live ID is known and no further CVE/reconcile
+            # renders will happen, resolve any remaining IMAGE_ADVISORY/RPM_ADVISORY placeholders.
+            await self.resolve_advisory_placeholders(impetus_advisories, shipment_data)
 
             await self.handle_jira_ticket()
         except Exception as ex:
@@ -691,6 +700,171 @@ class PrepareReleaseKonfluxPipeline:
 
             # Update shipment MR with found CVE flaws
             await self.update_shipment_mr(shipments_by_kind, env, shipment_url)
+
+    async def resolve_advisory_placeholders(self, impetus_advisories: dict, shipment_data: tuple | None):
+        """Final pass to resolve IMAGE_ADVISORY/RPM_ADVISORY placeholders.
+
+        Boilerplate templates reference these advisories before either one exists, so their
+        descriptions are created (and possibly re-rendered by attach-cve-flaws) with the literal
+        placeholder text. This runs last, once every advisory's live ID is known and no further
+        CVE/reconcile renders will happen. Patches both classic ET advisories (rpm, rhcos) via
+        the Errata Tool API and the Konflux shipment MR YAML. Arch SHA digest placeholders are
+        promote's responsibility and are not touched here.
+
+        :param impetus_advisories: Dict of {impetus: advisory_num} from create_et_advisories().
+        :param shipment_data: Tuple of (shipments_by_kind, env, shipment_url) from
+                 prepare_shipment_builds(), or None if no shipment config exists.
+        """
+        rpm_advisory_num = (impetus_advisories or {}).get("rpm")
+        rpm_advisory_id = None
+        if rpm_advisory_num and rpm_advisory_num > 0:
+            try:
+                rpm_advisory_id = get_errata_live_id(rpm_advisory_num)
+            except Exception as ex:
+                self.logger.warning("Failed to resolve RPM_ADVISORY placeholder: %s", ex)
+
+        image_advisory_id = None
+        if shipment_data:
+            shipments_by_kind, _, _ = shipment_data
+            image_shipment = (shipments_by_kind or {}).get("image")
+            if (
+                image_shipment
+                and image_shipment.shipment.data
+                and isinstance(image_shipment.shipment.data.releaseNotes.live_id, int)
+            ):
+                image_advisory_id = get_full_advisory_id_from_shipment(image_shipment)
+
+        if not rpm_advisory_id and not image_advisory_id:
+            return
+
+        format_dict = {
+            k: v for k, v in {"IMAGE_ADVISORY": image_advisory_id, "RPM_ADVISORY": rpm_advisory_id}.items() if v
+        }
+
+        # Patch classic ET advisories (rpm, rhcos); microshift is populated after promote.
+        et_unresolved: list[str] = []
+        for impetus, advisory_num in (impetus_advisories or {}).items():
+            if impetus == "microshift" or advisory_num <= 0:
+                continue
+            et_unresolved.extend(
+                self._resolve_classic_advisory_placeholders(
+                    advisory_num, image_advisory=image_advisory_id, rpm_advisory=rpm_advisory_id
+                )
+            )
+
+        # Patch the Konflux shipment MR YAML (description/solution on releaseNotes).
+        shipment_unresolved: list[str] = []
+        if shipment_data:
+            shipments_by_kind, env, shipment_url = shipment_data
+            await self._resolve_shipment_mr_placeholders(shipments_by_kind, env, shipment_url, format_dict)
+            shipment_unresolved = self._collect_unresolved_shipment_placeholders(shipments_by_kind)
+
+        # Raise if any Phase-4 placeholders remain (shift left: promote won't catch IMAGE/RPM advisory holes).
+        if not self.dry_run:
+            all_unresolved = et_unresolved + shipment_unresolved
+            if all_unresolved:
+                raise ValueError(
+                    "Advisory placeholders not fully resolved after Phase 4:\n"
+                    + "\n".join(f"  - {item}" for item in all_unresolved)
+                )
+
+    def _resolve_classic_advisory_placeholders(
+        self, advisory_num: int, image_advisory: str | None, rpm_advisory: str | None
+    ) -> list[str]:
+        """Replace any resolvable IMAGE_ADVISORY/RPM_ADVISORY placeholders in a classic
+        advisory's description/solution text, leaving everything else untouched.
+
+        Returns a list of human-readable strings describing placeholders that appeared in
+        the advisory text but could not be resolved (because the corresponding advisory ID
+        was None). Collected by the caller for post-resolution validation.
+
+        :param advisory_num: The classic advisory's numeric id.
+        :param image_advisory: The image advisory's full display id (e.g. "RHBA-2025:13660"),
+                 or None if not resolvable.
+        :param rpm_advisory: The rpm advisory's full display id, or None if not resolvable.
+        """
+        format_dict = {k: v for k, v in {"IMAGE_ADVISORY": image_advisory, "RPM_ADVISORY": rpm_advisory}.items() if v}
+        return patch_et_advisory_text(
+            advisory_num,
+            format_dict,
+            dry_run=self.dry_run,
+            validate_targets=("IMAGE_ADVISORY", "RPM_ADVISORY"),
+        )
+
+    async def _resolve_shipment_mr_placeholders(
+        self,
+        shipments_by_kind: dict,
+        env: str,
+        shipment_url: str,
+        format_dict: dict[str, str],
+    ) -> None:
+        """Replace IMAGE_ADVISORY/RPM_ADVISORY placeholders in shipment MR YAML description/solution fields.
+
+        Modifies the ShipmentConfig objects in-place and re-pushes via update_shipment_mr().
+        No-op if no shipment has matching placeholders or if shipment_url is absent.
+
+        :param shipments_by_kind: In-memory shipment configs keyed by advisory kind.
+        :param env: The environment (prod or stage).
+        :param shipment_url: The shipment MR URL used to locate and update the MR.
+        :param format_dict: Placeholder name → replacement value (IMAGE_ADVISORY, RPM_ADVISORY).
+        """
+        if not shipment_url or not format_dict:
+            return
+
+        modified: dict = {}
+        for kind, shipment in (shipments_by_kind or {}).items():
+            if kind == "fbc":
+                continue
+            rn = shipment.shipment.data.releaseNotes if (shipment.shipment.data) else None
+            if not rn:
+                continue
+            changed = False
+            for field in ("description", "solution"):
+                text = getattr(rn, field, None)
+                if not text:
+                    continue
+                new_text = text
+                for var_name, value in format_dict.items():
+                    new_text = new_text.replace(f"{{{var_name}}}", value)
+                if new_text != text:
+                    setattr(rn, field, new_text)
+                    changed = True
+            if changed:
+                modified[kind] = shipment
+
+        if not modified:
+            self.logger.info("No advisory ID placeholders found in shipment MR YAML, skipping")
+            return
+
+        try:
+            await self.update_shipment_mr(modified, env, shipment_url)
+            self.logger.info("Resolved advisory ID placeholders in shipment MR: %s", list(modified))
+        except Exception as ex:
+            self.logger.error("Failed to patch shipment MR with advisory ID placeholders: %s", ex)
+            raise
+
+    def _collect_unresolved_shipment_placeholders(self, shipments_by_kind: dict) -> list[str]:
+        """Scan in-memory shipment configs for remaining IMAGE_ADVISORY/RPM_ADVISORY placeholders.
+
+        Called after _resolve_shipment_mr_placeholders() has already made its in-place substitutions.
+        Any placeholder still present means the corresponding advisory ID was unavailable.
+
+        :param shipments_by_kind: In-memory shipment configs keyed by advisory kind.
+        :return: List of human-readable strings describing each unresolved placeholder location.
+        """
+        unresolved: list[str] = []
+        for kind, shipment in (shipments_by_kind or {}).items():
+            if kind == "fbc":
+                continue
+            rn = shipment.shipment.data.releaseNotes if shipment.shipment.data else None
+            if not rn:
+                continue
+            for field in ("description", "solution"):
+                text = getattr(rn, field, None) or ""
+                for target in ("IMAGE_ADVISORY", "RPM_ADVISORY"):
+                    if f"{{{target}}}" in text:
+                        unresolved.append(f"shipment {kind} (releaseNotes.{field}): {{{target}}}")
+        return unresolved
 
     async def verify_attached_operators(self, kind_to_builds: Dict[str, List[str]]):
         """
