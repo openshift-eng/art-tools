@@ -170,7 +170,8 @@ async def get_okd_enabled_versions(
     enabled_versions: List[str] = []
 
     async def check_version(version: str) -> Optional[str]:
-        base_cmd = okd_doozer_base_command(version, assembly, data_path, data_gitref, working_dir)
+        version_working_dir = Path(f'{working_dir}-{version}')
+        base_cmd = okd_doozer_base_command(version, assembly, data_path, data_gitref, version_working_dir)
         if await is_okd_version_enabled(base_cmd):
             return version
         logger.info(
