@@ -428,6 +428,31 @@ class KonfluxImageBuilder:
                             KonfluxBuildOutcome.SUCCESS if release_succeeded else KonfluxBuildOutcome.RELEASE_ERROR
                         )
 
+                    if (
+                        outcome is KonfluxBuildOutcome.SUCCESS
+                        and metadata.is_golang_builder()
+                        and image_pullspec
+                        and image_digest
+                    ):
+                        try:
+                            from doozerlib.backend.golang_builder_shipment import GolangBuilderShipmentHandler
+
+                            shipment_handler = GolangBuilderShipmentHandler(
+                                metadata.runtime,
+                                dry_run=self._config.dry_run,
+                            )
+                            mr_url = await shipment_handler.create_shipment(
+                                nvr=nvr,
+                                container_image=definitive_image_pullspec,
+                                rebase_repo_url=build_repo.https_url,
+                                rebase_commitish=build_repo.commit_hash,
+                            )
+                            if mr_url:
+                                logger.info("Golang builder shipment MR: %s", mr_url)
+                                record["shipment_mr"] = mr_url
+                        except Exception:
+                            logger.exception("Golang builder shipment MR creation failed (non-fatal)")
+
                     build_record = await self.update_konflux_db(
                         metadata,
                         build_repo,
