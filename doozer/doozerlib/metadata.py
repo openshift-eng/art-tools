@@ -14,8 +14,9 @@ from artcommonlib import exectools
 from artcommonlib.assembly import assembly_metadata_config
 from artcommonlib.brew import BuildStates
 from artcommonlib.metadata import MetadataBase
-from artcommonlib.model import Model
+from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
+from artcommonlib.variants import BuildVariant
 from defusedxml import ElementTree
 from dockerfile_parse import DockerfileParser
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
@@ -195,6 +196,8 @@ class Metadata(MetadataBase):
         """
         :return: Returns the list of architecture this image/rpm should build for. This is an intersection
         of config specific arches & globally enabled arches in group.yml
+
+        For OKD variant: if okd.arches is defined in metadata, it overrides the standard arches config.
         """
         global_arches = (
             self.runtime.get_global_konflux_arches()
@@ -202,8 +205,19 @@ class Metadata(MetadataBase):
             else self.runtime.get_global_arches()
         )
 
-        if self.config.arches:
-            ca = self.config.arches
+        # For OKD variant, check if okd.arches is configured (image-level override)
+        config_arches = None
+        if self.runtime.variant == BuildVariant.OKD:
+            if self.config.okd.arches is not Missing:
+                config_arches = self.config.okd.arches
+                self.logger.debug(f'Using OKD-specific arches override: {config_arches}')
+
+        # Fall back to standard arches config if no OKD override
+        if config_arches is None and self.config.arches:
+            config_arches = self.config.arches
+
+        if config_arches:
+            ca = config_arches
             intersection = list(set(global_arches) & set(ca))
             if len(intersection) != len(ca):
                 self.logger.info(

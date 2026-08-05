@@ -223,10 +223,10 @@ class TestOkdScanPipeline(unittest.IsolatedAsyncioTestCase):
         self.assertIn('--variant=okd', cmd)
 
     @patch.dict(os.environ, {'KUBECONFIG': '/path/to/kubeconfig'})
-    @patch('pyartcd.pipelines.okd_scan.constants.OKD_ENABLED_VERSIONS', ['4.21'])
+    @patch('pyartcd.pipelines.okd_scan.util.is_okd_version_enabled', new_callable=AsyncMock, return_value=True)
     @patch('pyartcd.pipelines.okd_scan.jenkins')
     @patch('pyartcd.pipelines.okd_scan.exectools.cmd_gather_async')
-    async def test_scan_passes_okd_arches(self, mock_cmd_gather, mock_jenkins):
+    async def test_scan_passes_okd_arches(self, mock_cmd_gather, mock_jenkins, _mock_is_enabled):
         """
         Test that okd-scan passes --arches with OKD_ARCHES to doozer.
         This ensures arch-change detection uses OKD target arches, not OCP group arches.
