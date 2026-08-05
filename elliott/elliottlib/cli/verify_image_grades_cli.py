@@ -326,7 +326,7 @@ async def verify_image_grades_cli(runtime, output):
     Example:
         elliott --group openshift-4.18 --assembly 4.18.51 verify-image-grades
     """
-    runtime.initialize(config_only=True)
+    runtime.initialize()
     shipment_mr_url = resolve_shipment_mr_url(runtime)
     LOGGER.info("Resolved shipment MR URL: %s", shipment_mr_url)
     result = await verify_image_grades(shipment_mr_url=shipment_mr_url)
