@@ -788,7 +788,7 @@ async def build_conforma_verify(
         if not slack_token:
             raise RuntimeError("SLACK_BOT_TOKEN is required with --report-to-slack")
         slack_client = runtime.new_slack_client(token=slack_token)
-        slack_client.bind_channel("#art-cluster-monitoring")
+        slack_client.bind_channel("#art-release")
 
     pipeline = BuildConformaVerifyPipeline(
         runtime=runtime,
