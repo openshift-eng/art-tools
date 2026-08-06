@@ -20,11 +20,13 @@ LOGGER = logging.getLogger(__name__)
 PYXIS_API_URL = "https://catalog.stage.redhat.com/api/containers/v1/images"
 PYXIS_PROXY = "http://squid.corp.redhat.com:3128"
 DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
-ADVISORY_ALLOWED_ORIGINS = {
-    "https://errata.devel.redhat.com",
-    "https://errata.stage.engineering.redhat.com",
-    "https://gitlab.cee.redhat.com/rhtap-release/advisories",
-    "https://gitlab.cee.redhat.com/releng/advisories",
+ADVISORY_ALLOWED_NETLOCS = {
+    urlparse(o).netloc
+    for o in (
+        "https://errata.devel.redhat.com",
+        "https://errata.stage.engineering.redhat.com",
+        "https://gitlab.cee.redhat.com",
+    )
 }
 
 
@@ -162,9 +164,9 @@ def fetch_shipment_components(mr_url: str) -> tuple[list[tuple[str, str]], str]:
                 LOGGER.debug("No advisory internal_url in %s, skipping", file_path)
                 continue
 
-            if not any(advisory_url.startswith(origin) for origin in ADVISORY_ALLOWED_ORIGINS):
-                parsed = urlparse(advisory_url)
-                raise RuntimeError(f"Advisory URL not allowed: {parsed.hostname}")
+            parsed = urlparse(advisory_url)
+            if parsed.netloc not in ADVISORY_ALLOWED_NETLOCS:
+                raise RuntimeError(f"Advisory URL not allowed: {parsed.netloc}")
 
             advisory_resp = requests.get(advisory_url, timeout=30, allow_redirects=False)
             advisory_resp.raise_for_status()
