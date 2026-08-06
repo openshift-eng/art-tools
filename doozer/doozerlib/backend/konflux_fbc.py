@@ -38,7 +38,7 @@ from doozerlib.image import ImageMetadata
 from doozerlib.record_logger import RecordLogger
 from elliottlib.shipment_utils import get_shipment_config_from_mr
 from semver import VersionInfo
-from tenacity import retry, stop_after_attempt, wait_fixed
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
 
 
 class AssemblyBundleCsvInfo(NamedTuple):
@@ -555,8 +555,17 @@ class KonfluxFbcFragmentMerger:
         if not fragments:
             raise ValueError("At least one fragment must be provided.")
 
-        async with httpx.AsyncClient(verify=truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)) as http_client:
+        async with httpx.AsyncClient(
+            verify=truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT),
+            timeout=httpx.Timeout(30.0),
+        ) as http_client:
 
+            @retry(
+                reraise=True,
+                stop=stop_after_attempt(3),
+                wait=wait_fixed(5),
+                retry=retry_if_exception_type(httpx.ConnectTimeout),
+            )
             async def _get_fragment_idms(fragment: str) -> list[dict]:
                 """
                 Fetch the ImageDigestMirrorSet for a given fragment.
