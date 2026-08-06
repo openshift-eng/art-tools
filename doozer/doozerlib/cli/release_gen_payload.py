@@ -2420,12 +2420,38 @@ class PayloadGenerator:
                 )
         return inconsistencies
 
+    RHCOS_DEFAULT_STREAM = "rhel-coreos"
+
+    @staticmethod
+    def normalize_rhcos_consistency_config(
+        payload_consistency_config: Dict[str, Any],
+    ) -> Dict[str, Dict[str, List[str]]]:
+        """
+        Normalizes rhcos.require_consistency into the stream-aware nested form:
+          {stream_name: {distgit_key: [pkg_name, ...]}}
+
+        Legacy flat form {distgit_key: [pkg_name, ...]} is treated as belonging
+        entirely to the "rhel-coreos" (RHEL9) stream.
+        """
+        if not payload_consistency_config:
+            return {}
+        values = list(payload_consistency_config.values())
+        all_lists = all(isinstance(v, list) for v in values)
+        all_dicts = all(isinstance(v, dict) for v in values)
+        if not (all_lists or all_dicts):
+            raise ValueError(
+                f"Unrecognized rhcos.require_consistency format — values must be uniformly "
+                f"lists (flat) or dicts (stream-keyed), got mixed: {payload_consistency_config!r}"
+            )
+        if all_lists:
+            return {PayloadGenerator.RHCOS_DEFAULT_STREAM: dict(payload_consistency_config)}
+        return dict(payload_consistency_config)
+
     def find_rhcos_payload_rpm_inconsistencies(
         self,
         primary_rhcos_build: RHCOSBuildInspector,
         payload_bri: Dict[str, BuildRecordInspector],
-        # payload tag -> [pkg_name1, ...]
-        payload_consistency_config: Dict[str, List[str]],
+        payload_consistency_config: Dict[str, Any],
         package_rpm_finder=None,
     ) -> List[AssemblyIssue]:
         """
@@ -2441,42 +2467,51 @@ class PayloadGenerator:
         :return: Returns a list of AssemblyIssue objects describing any inconsistencies found.
         """
         issues: List[AssemblyIssue] = []
+        logger = primary_rhcos_build.runtime.logger
 
-        # index by name the RPMs installed in the RHCOS build
-        rhcos_rpm_vrs: Dict[str, str] = {}  # name -> version-release
+        stream_requirements = self.normalize_rhcos_consistency_config(payload_consistency_config)
+
+        # Build per-stream RPM index. One RHCOSBuildInspector carries both RHEL9
+        # (rhel-coreos) and RHEL10 (rhel-coreos-10) RPMs tagged by repo_name.
+        rhcos_rpm_vrs_by_stream: Dict[str, Dict[str, str]] = {}
         for rpm in primary_rhcos_build.get_os_metadata_rpm_list():
             name, _, version, release, _, repo_name = rpm
-            if repo_name in COREOS_RHEL10_STREAMS:
-                # skip el10 rhcos kernels check
-                continue
-            rhcos_rpm_vrs[name] = f"{version}-{release}"
+            stream = "rhel-coreos-10" if repo_name in COREOS_RHEL10_STREAMS else self.RHCOS_DEFAULT_STREAM
+            rhcos_rpm_vrs_by_stream.setdefault(stream, {})[name] = f"{version}-{release}"
 
-        # check that each member consistency condition is met
-        primary_rhcos_build.runtime.logger.debug(f"Running payload consistency checks against {primary_rhcos_build}")
-        for payload_tag, consistent_pkgs in payload_consistency_config.items():
-            bbii = payload_bri.get(payload_tag)
-            if not bbii:
-                issues.append(
-                    AssemblyIssue(
-                        f"RHCOS consistency configuration specifies a payload tag '{payload_tag}' that does not exist",
-                        payload_tag,
-                        AssemblyIssueCode.IMPERMISSIBLE,
-                    )
+        logger.debug(f"Running payload consistency checks against {primary_rhcos_build}")
+        for stream_name, consistency_config in stream_requirements.items():
+            rhcos_rpm_vrs = rhcos_rpm_vrs_by_stream.get(stream_name)
+            if rhcos_rpm_vrs is None:
+                logger.debug(
+                    f"RHCOS build {primary_rhcos_build} has no '{stream_name}' RPM metadata; "
+                    f"skipping consistency checks for {list(consistency_config.keys())}"
                 )
                 continue
 
-            # check that each specified package in the member is consistent with the RHCOS build
-            for pkg in consistent_pkgs:
-                issues.append(
-                    self.validate_pkg_consistency_req(
-                        payload_tag,
-                        pkg,
-                        bbii,
-                        rhcos_rpm_vrs,
-                        str(primary_rhcos_build),
-                        package_rpm_finder or self.package_rpm_finder,
+            for distgit_key, consistent_pkgs in consistency_config.items():
+                bbii = payload_bri.get(distgit_key)
+                if not bbii:
+                    issues.append(
+                        AssemblyIssue(
+                            f"RHCOS consistency configuration specifies a payload component "
+                            f"'{distgit_key}' that does not exist",
+                            distgit_key,
+                            AssemblyIssueCode.IMPERMISSIBLE,
+                        )
                     )
-                )
+                    continue
+                for pkg in consistent_pkgs:
+                    issues.append(
+                        self.validate_pkg_consistency_req(
+                            distgit_key,
+                            pkg,
+                            bbii,
+                            rhcos_rpm_vrs,
+                            str(primary_rhcos_build),
+                            package_rpm_finder or self.package_rpm_finder,
+                        )
+                    )
 
         return [issue for issue in issues if issue]
 
