@@ -152,11 +152,19 @@ class ImagesHealthPipeline:
             )
 
         elif latest_success_idx == -1:
-            # No success record was found: add a concern
+            # No success record was found: distinguish between hitting the query limit (truly unknown
+            # how far back failures go) vs. knowing the exact count (fewer results than the limit)
+            if len(builds) == self.limit:
+                code = ConcernCode.FAILING_AT_LEAST_FOR.value
+                failure_count = None
+            else:
+                code = ConcernCode.LATEST_ATTEMPT_FAILED.value
+                failure_count = len(builds)
             self.add_concern(
                 Concern(
                     image_name=image_meta.distgit_key,
-                    code=ConcernCode.FAILING_AT_LEAST_FOR.value,
+                    code=code,
+                    latest_success_idx=failure_count,
                     latest_failed_job_url=builds[0].art_job_url,
                     latest_attempt_task_url=latest_attempt_task_url,
                     latest_failed_nvr=builds[0].nvr,
