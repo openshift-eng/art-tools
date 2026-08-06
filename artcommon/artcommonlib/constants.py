@@ -93,7 +93,7 @@ PRODUCT_NAMESPACE_MAP = {
     "acm": "art-acm-tenant",
     "multicluster-engine": "art-acm-tenant",
     "cert-manager": "art-oap-tenant",
-    "external-secrets": "art-oap-tenant",
+    "external-secrets-operator": "art-oap-tenant",
     "installer-ove-ui": "art-installer-agent-tenant",
     "logging": "art-logging-tenant",
     "mta": "art-mta-tenant",
@@ -104,7 +104,7 @@ PRODUCT_NAMESPACE_MAP = {
     "quay": "art-quay-tenant",
     "rhmtc": "art-mtc-tenant",
     "supplemental-tools": "ocp-art-tenant",
-    "zero-trust": "art-oap-tenant",
+    "zero-trust-workload-identity-manager": "art-oap-tenant",
 }
 
 # Konflux silent base-image workflow: ReleasePlan metadata.name and Application (Snapshot/Releases spec.application).
@@ -119,9 +119,9 @@ PRODUCT_BASE_IMAGE_KONFLUX_RELEASE_MAP = {
     "openshift-logging": ("logging-images-base-silent", "logging-images-base"),
     "acm": ("acm-images-base-silent", "acm-images-base"),
     "multicluster-engine": ("acm-images-base-silent", "acm-images-base"),
-    "external-secrets": ("oap-eso-images-base-silent", "oap-images-base"),
+    "external-secrets-operator": ("oap-eso-images-base-silent", "oap-images-base"),
     "cert-manager": ("oap-cm-images-base-silent", "oap-images-base"),
-    "zero-trust": ("oap-zt-images-base-silent", "oap-images-base"),
+    "zero-trust-workload-identity-manager": ("oap-zt-images-base-silent", "oap-images-base"),
 }
 
 # Pre-release lifecycle (software_lifecycle.phase) — registry-ocp-art-base-ec-prod via ART-19498.
@@ -133,7 +133,7 @@ PRODUCT_KUBECONFIG_MAP = {
     "acm": "ACM_KONFLUX_SA_KUBECONFIG",
     "multicluster-engine": "ACM_KONFLUX_SA_KUBECONFIG",
     "cert-manager": "OAP_KONFLUX_SA_KUBECONFIG",
-    "external-secrets": "OAP_KONFLUX_SA_KUBECONFIG",
+    "external-secrets-operator": "OAP_KONFLUX_SA_KUBECONFIG",
     "installer-ove-ui": "ASSISTED_INSTALLER_SA_KUBECONFIG",
     "logging": "LOGGING_KONFLUX_SA_KUBECONFIG",
     "mta": "MTA_KONFLUX_SA_KUBECONFIG",
@@ -145,7 +145,7 @@ PRODUCT_KUBECONFIG_MAP = {
     "quay": "QUAY_KONFLUX_SA_KUBECONFIG",
     "rhmtc": "MTC_KONFLUX_SA_KUBECONFIG",
     "supplemental-tools": "KONFLUX_SA_KUBECONFIG",
-    "zero-trust": "OAP_KONFLUX_SA_KUBECONFIG",
+    "zero-trust-workload-identity-manager": "OAP_KONFLUX_SA_KUBECONFIG",
 }
 
 # Default namespace for Konflux operations

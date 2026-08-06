@@ -553,10 +553,16 @@ def konflux_image_component_name(application_name: str, image_name: str) -> str:
     Konflux Component name for a container image (distgit member), given the Application slug.
 
     OpenShift forbids dots/underscores; component names must be RFC1123-ish (lowercase, length limits).
+    Names exceeding 63 characters are truncated with a short hash suffix to ensure uniqueness.
     """
     name = f"{application_name}-{image_name}".replace(".", "-").replace("_", "-")
     # 'openshift-4-18-ose-installer-terraform' -> 'ose-4-18-ose-installer-terraform'
     name = f"ose-{name[10:]}" if name.startswith("openshift-") else name
+    if len(name) > 63:
+        import hashlib
+
+        suffix = hashlib.sha256(name.encode()).hexdigest()[:8]
+        name = f"{name[:54]}-{suffix}"
     return name
 
 

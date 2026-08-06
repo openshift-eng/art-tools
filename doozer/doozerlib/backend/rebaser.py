@@ -51,8 +51,8 @@ CPE_PRODUCT_NAME_MAPPING = {
     'logging': 'logging',
     'openshift-logging': 'logging',
     'cert-manager': 'cert_manager',
-    'external-secrets': 'external_secrets_operator',
-    'zero-trust': 'zero_trust_workload_identity_manager',
+    'external-secrets-operator': 'external_secrets_operator',
+    'zero-trust-workload-identity-manager': 'zero_trust_workload_identity_manager',
 }
 
 LOGGER = logging.getLogger(__name__)
