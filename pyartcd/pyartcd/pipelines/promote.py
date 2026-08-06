@@ -2748,26 +2748,6 @@ class PromotePipeline:
                 f"Updated shipment MR with payload SHAs and advisories: {mr.web_url}"
             )
 
-            # Comment on the shipment MR to notify docs team about the updates
-            main_mr_comment = (
-                f"@hybrid-platforms/art/team-docs: Shipment files have been updated with"
-                f" payload SHAs and advisory references ({templates_replaced_total} templates replaced)."
-                f" Please review the updated release notes and approve this Shipment MR."
-            )
-
-            # Check if comment already exists to avoid duplicates
-            existing_notes = mr.notes.list(all=True)
-            comment_exists = any(main_mr_comment in note.body for note in existing_notes)
-
-            if not comment_exists:
-                try:
-                    mr.notes.create({'body': main_mr_comment})
-                    self._logger.info("Added comment to shipment MR notifying docs team")
-                except Exception as comment_ex:
-                    self._logger.warning("Failed to comment on shipment MR: %s", comment_ex)
-            else:
-                self._logger.info("Comment about template update MR already exists on main shipment MR")
-
         except Exception as ex:
             self._logger.error("Failed to update shipment MR with doc updates: %s", ex)
             raise

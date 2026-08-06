@@ -74,6 +74,7 @@ from elliottlib.cli.validate_rhsa import validate_rhsa_cli
 from elliottlib.cli.verify_attached_bugs_cli import verify_attached_bugs_cli
 from elliottlib.cli.verify_attached_operators_cli import verify_attached_operators_cli
 from elliottlib.cli.verify_cvp_cli import verify_cvp_cli
+from elliottlib.cli.verify_docs_approval import verify_docs_approval
 from elliottlib.cli.verify_image_grades_cli import verify_image_grades_cli
 from elliottlib.cli.verify_payload import verify_payload
 from elliottlib.cli.verify_signatures_cli import verify_signatures_cli
@@ -299,6 +300,7 @@ cli.add_command(verify_cvp_cli)
 cli.add_command(advisory_drop_cli)
 cli.add_command(verify_attached_operators_cli)
 cli.add_command(verify_payload)
+cli.add_command(verify_docs_approval)
 cli.add_command(verify_attached_bugs_cli)
 cli.add_command(attach_cve_flaws_cli)
 cli.add_command(create_textonly_cli)
