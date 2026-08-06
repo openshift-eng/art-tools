@@ -53,6 +53,42 @@ class TestCollectStageVars(unittest.TestCase):
         result = collect_stage_vars(entries)
         self.assertEqual(result, {"LANG": "en_US.UTF-8"})
 
+    def test_env_with_multiple_assignments(self):
+        entries = [
+            _make_entry(
+                "ENV",
+                '__doozer=update __doozer_golang_nvr=golang-1.23.10-16.el8 SUMMARY="Golang builder image"',
+            )
+        ]
+        result = collect_stage_vars(entries)
+        self.assertEqual(
+            result,
+            {
+                "__doozer": "update",
+                "__doozer_golang_nvr": "golang-1.23.10-16.el8",
+                "SUMMARY": "Golang builder image",
+            },
+        )
+
+    def test_env_with_escaped_space(self):
+        entries = [_make_entry("ENV", r"GREETING=hello\ world LANG=en_US.UTF-8")]
+        result = collect_stage_vars(entries)
+        self.assertEqual(result, {"GREETING": "hello world", "LANG": "en_US.UTF-8"})
+
+    def test_env_legacy_value_resembling_assignments(self):
+        entries = [_make_entry("ENV", "ONE TWO= THREE=world")]
+        result = collect_stage_vars(entries)
+        self.assertEqual(result, {"ONE": "TWO= THREE=world"})
+
+    def test_env_same_instruction_uses_previous_values(self):
+        entries = [
+            _make_entry("ENV", "abc=hello"),
+            _make_entry("ENV", "abc=bye def=$abc"),
+            _make_entry("ENV", "ghi=$abc"),
+        ]
+        result = collect_stage_vars(entries)
+        self.assertEqual(result, {"abc": "bye", "def": "hello", "ghi": "bye"})
+
     def test_env_references_arg(self):
         entries = [
             _make_entry("ARG", "GCC_VERSION=12"),
@@ -536,6 +572,18 @@ class TestAnalyzeDockerfileStages(unittest.TestCase):
             path = self._write_dockerfile(tmpdir, content)
             stages, _ = analyze_dockerfile_stages(path)
             self.assertEqual(stages[0].packages, ["httpd"])
+
+    def test_multi_env_exact_golang_nvr_resolution(self):
+        with TemporaryDirectory() as tmpdir:
+            content = (
+                "FROM base\n"
+                'ENV SUMMARY="Golang builder image" VERSION="1.23"\n'
+                "ENV __doozer=update __doozer_golang_nvr=golang-1.23.10-16.el8\n"
+                'RUN dnf install -y "$__doozer_golang_nvr"\n'
+            )
+            path = self._write_dockerfile(tmpdir, content)
+            stages, _ = analyze_dockerfile_stages(path)
+            self.assertEqual(stages[0].packages, ["golang-1.23.10-16.el8"])
 
     def test_no_update_no_install(self):
         with TemporaryDirectory() as tmpdir:
