@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
@@ -84,41 +85,51 @@ async def check_signature_on_mirror(sha: str, mirror_path: str) -> bool:
     return False
 
 
+async def _check_arch(arch, release_name, check_dev, check_prod) -> tuple[SignatureCheckResult | None, list[str]]:
+    errors = []
+    pullspec = f"{RELEASE_IMAGE_REPO}:{release_name}-{arch}"
+    LOGGER.info("Checking signatures for %s", pullspec)
+
+    try:
+        digest = await get_release_image_digest(pullspec)
+    except Exception as e:
+        errors.append(f"{arch}: failed to get digest for {pullspec}: {e}")
+        return None, errors
+
+    sha = digest.removeprefix("sha256:")
+    check = SignatureCheckResult(arch=arch, pullspec=pullspec, digest=digest)
+
+    if check_dev:
+        try:
+            check.dev_mirror = await check_signature_on_mirror(sha, DEV_MIRROR_PATH)
+        except Exception as e:
+            errors.append(f"{arch}: dev mirror check failed: {e}")
+        else:
+            status = "OK" if check.dev_mirror else "MISSING"
+            LOGGER.info("%s: dev mirror signature %s", arch, status)
+
+    if check_prod:
+        try:
+            check.prod_mirror = await check_signature_on_mirror(sha, PROD_MIRROR_PATH)
+        except Exception as e:
+            errors.append(f"{arch}: prod mirror check failed: {e}")
+        else:
+            status = "OK" if check.prod_mirror else "MISSING"
+            LOGGER.info("%s: prod mirror signature %s", arch, status)
+
+    return check, errors
+
+
 async def verify_release_signatures(release_name, arches, check_dev, check_prod) -> VerifySignaturesResult:
     result = VerifySignaturesResult(release_name=release_name)
 
-    for arch in arches:
-        pullspec = f"{RELEASE_IMAGE_REPO}:{release_name}-{arch}"
-        LOGGER.info("Checking signatures for %s", pullspec)
+    tasks = [_check_arch(arch, release_name, check_dev, check_prod) for arch in arches]
+    arch_results = await asyncio.gather(*tasks)
 
-        try:
-            digest = await get_release_image_digest(pullspec)
-        except Exception as e:
-            result.errors.append(f"{arch}: failed to get digest for {pullspec}: {e}")
-            continue
-
-        sha = digest.removeprefix("sha256:")
-        check = SignatureCheckResult(arch=arch, pullspec=pullspec, digest=digest)
-
-        if check_dev:
-            try:
-                check.dev_mirror = await check_signature_on_mirror(sha, DEV_MIRROR_PATH)
-            except Exception as e:
-                result.errors.append(f"{arch}: dev mirror check failed: {e}")
-            else:
-                status = "OK" if check.dev_mirror else "MISSING"
-                LOGGER.info("%s: dev mirror signature %s", arch, status)
-
-        if check_prod:
-            try:
-                check.prod_mirror = await check_signature_on_mirror(sha, PROD_MIRROR_PATH)
-            except Exception as e:
-                result.errors.append(f"{arch}: prod mirror check failed: {e}")
-            else:
-                status = "OK" if check.prod_mirror else "MISSING"
-                LOGGER.info("%s: prod mirror signature %s", arch, status)
-
-        result.arch_results.append(check)
+    for check, errors in arch_results:
+        result.errors.extend(errors)
+        if check:
+            result.arch_results.append(check)
 
     return result
 
