@@ -1242,6 +1242,69 @@ RUN echo "test"
             result = metadata.get_olm_bundle_image_name()
         self.assertEqual(result, 'rhacm2/acm-operator-bundle')
 
+    def test_get_konflux_component_name_no_override(self):
+        metadata = self._create_image_metadata('openshift/test')
+        mock_config = MagicMock()
+        mock_config.konflux.component.name_override = Missing
+        metadata.config = mock_config
+        result = metadata.get_konflux_component_name('openshift-4-18')
+        self.assertEqual(result, 'ose-4-18-my-distgit')
+
+    def test_get_konflux_component_name_with_override(self):
+        metadata = self._create_image_metadata('openshift/test')
+        mock_config = MagicMock()
+        mock_config.konflux.component.name_override = 'my-short-name'
+        metadata.config = mock_config
+        result = metadata.get_konflux_component_name('openshift-4-18')
+        self.assertEqual(result, 'my-short-name')
+
+    def test_get_konflux_component_name_exceeds_limit_raises(self):
+        metadata = self._create_image_metadata('openshift/test')
+        mock_config = MagicMock()
+        mock_config.konflux.component.name_override = Missing
+        metadata.config = mock_config
+        # Directly set distgit_key to a value that makes the generated name exceed 63 chars:
+        # 'zero-trust-1-1' (14) + '-' (1) + 'zero-trust-workload-identity-manager-op' (39) = 54 chars total
+        # But 'zero-trust-1-1' (14) + '-' (1) + 'zero-trust-workload-identity-manager-operator-x' (47) = 62 chars
+        # Use 'zero-trust-workload-identity-manager-operator-bundle' (52) -> 14+1+52 = 67 > 63
+        metadata.distgit_key = 'zero-trust-workload-identity-manager-operator-bundle'
+        with self.assertRaises(ValueError) as ctx:
+            metadata.get_konflux_component_name('zero-trust-1-1')
+        self.assertIn('63-char limit', str(ctx.exception))
+        self.assertIn('konflux.component.name_override', str(ctx.exception))
+
+    def test_get_konflux_bundle_component_name_no_override(self):
+        metadata = self._create_image_metadata('openshift/test')
+        mock_config = MagicMock()
+        mock_config.konflux.component.bundle_name_override = Missing
+        mock_config.bundle_name_override = Missing
+        metadata.config = mock_config
+        with patch.object(type(metadata), 'is_olm_operator', new_callable=lambda: property(lambda self: True)):
+            result = metadata.get_konflux_bundle_component_name('openshift-4-18')
+        self.assertEqual(result, 'ose-4-18-my-distgit-bundle')
+
+    def test_get_konflux_bundle_component_name_with_override(self):
+        metadata = self._create_image_metadata('openshift/test')
+        mock_config = MagicMock()
+        mock_config.konflux.component.bundle_name_override = 'my-short-bundle'
+        metadata.config = mock_config
+        with patch.object(type(metadata), 'is_olm_operator', new_callable=lambda: property(lambda self: True)):
+            result = metadata.get_konflux_bundle_component_name('openshift-4-18')
+        self.assertEqual(result, 'my-short-bundle')
+
+    def test_get_konflux_bundle_component_name_exceeds_limit_raises(self):
+        metadata = self._create_image_metadata('openshift/test')
+        mock_config = MagicMock()
+        mock_config.konflux.component.bundle_name_override = Missing
+        mock_config.bundle_name_override = Missing
+        metadata.config = mock_config
+        metadata.distgit_key = 'zero-trust-workload-identity-manager-operator'
+        with patch.object(type(metadata), 'is_olm_operator', new_callable=lambda: property(lambda self: True)):
+            with self.assertRaises(ValueError) as ctx:
+                metadata.get_konflux_bundle_component_name('zero-trust-1-1')
+        self.assertIn('63-char limit', str(ctx.exception))
+        self.assertIn('konflux.component.bundle_name_override', str(ctx.exception))
+
 
 class TestImageInspector(IsolatedAsyncioTestCase):
     @mock.patch("doozerlib.repos.Repo.get_repodata_threadsafe")

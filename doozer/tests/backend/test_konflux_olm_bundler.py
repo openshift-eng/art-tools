@@ -1537,6 +1537,7 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
         metadata = MagicMock()
         metadata.distgit_key = "test-distgit-key"
         metadata.get_olm_bundle_short_name.return_value = "test-bundle"
+        metadata.get_konflux_bundle_component_name.return_value = "test-group-test-bundle"
         metadata.runtime.group = "test-group"
         bundle_build_repo = MagicMock()
         bundle_build_repo.commit_hash = "test-commit-hash"

@@ -1661,6 +1661,48 @@
           "$ref": "#/properties/konflux/properties/workspace_storage"
         },
         "workspace_storage-": {},
+        "component": {
+          "description": "Overrides for Konflux Component resource names",
+          "type": "object",
+          "properties": {
+            "name_override": {
+              "description": "Override the Konflux Component resource name for regular image builds. Use when the auto-generated name exceeds the k8s 63-char limit.",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 63,
+              "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+            },
+            "name_override?": {
+              "$ref": "#/properties/konflux/properties/component/properties/name_override"
+            },
+            "name_override!": {
+              "$ref": "#/properties/konflux/properties/component/properties/name_override"
+            },
+            "name_override-": {},
+            "bundle_name_override": {
+              "description": "Override the Konflux Component resource name for OLM bundle builds. Use when the auto-generated name exceeds the k8s 63-char limit.",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 63,
+              "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+            },
+            "bundle_name_override?": {
+              "$ref": "#/properties/konflux/properties/component/properties/bundle_name_override"
+            },
+            "bundle_name_override!": {
+              "$ref": "#/properties/konflux/properties/component/properties/bundle_name_override"
+            },
+            "bundle_name_override-": {}
+          },
+          "additionalProperties": false
+        },
+        "component?": {
+          "$ref": "#/properties/konflux/properties/component"
+        },
+        "component!": {
+          "$ref": "#/properties/konflux/properties/component"
+        },
+        "component-": {},
         "content": {
           "$ref": "image_content.base.schema.json"
         }
