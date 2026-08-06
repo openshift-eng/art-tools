@@ -1,5 +1,5 @@
 {
-  "$comment": "Schema generated on 2026-08-06 14:23 UTC from elliottlib.shipment_model",
+  "$comment": "Schema generated on 2026-08-06 15:29 UTC from elliottlib.shipment_model",
   "$defs": {
     "ComponentSource": {
       "additionalProperties": false,
@@ -213,7 +213,7 @@
           "default": false,
           "title": "Fbc"
         },
-        "advisory": {
+        "advisory_required": {
           "anyOf": [
             {
               "type": "boolean"
@@ -223,7 +223,7 @@
             }
           ],
           "default": true,
-          "title": "Advisory"
+          "title": "Advisory Required"
         }
       },
       "required": [

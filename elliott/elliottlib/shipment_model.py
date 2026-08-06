@@ -20,7 +20,7 @@ class Metadata(StrictBaseModel):
     group: str  # associated build-data group for component metadata
     assembly: str  # associated build-data assembly
     fbc: Optional[bool] = False  # indicates if shipment is for an FBC release
-    advisory: Optional[bool] = True  # when False, shipment-ci skips advisory URL check (registry-push-only)
+    advisory_required: Optional[bool] = True  # when False, shipment-ci skips advisory URL check (registry-push-only)
 
 
 class GitSource(StrictBaseModel):
