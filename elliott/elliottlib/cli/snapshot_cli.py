@@ -22,6 +22,7 @@ from artcommonlib.util import (
     normalize_group_name_for_k8s,
     resolve_konflux_kubeconfig_by_product,
     resolve_konflux_namespace_by_product,
+    validate_k8s_dns_label,
 )
 from doozerlib.backend.konflux_client import API_VERSION, KIND_SNAPSHOT, KonfluxClient
 from doozerlib.backend.konflux_olm_bundler import KonfluxOlmBundleBuilder
@@ -198,7 +199,7 @@ class CreateSnapshotCli:
 
     async def new_snapshots(self, build_records: List[KonfluxRecord]) -> list[dict]:
         if self.custom_name:
-            snapshot_name = self.custom_name
+            snapshot_name = validate_k8s_dns_label(self.custom_name, "Custom snapshot name")
         else:
             group_name_safe = normalize_group_name_for_k8s(self.runtime.group)
             if not group_name_safe:
@@ -269,10 +270,12 @@ class CreateSnapshotCli:
         snapshot_objs: list[dict] = []
         for index, (application_name, components) in enumerate(sorted(app_components.items()), start=1):
             components = sorted(components, key=lambda c: c['name'])
+            resource_name = snapshot_name if self.custom_name else f"{snapshot_name}-{index}"
+            validate_k8s_dns_label(resource_name, "Snapshot name")
 
             # Prepare metadata with labels and optional annotations
             metadata = {
-                "name": snapshot_name if self.custom_name else f"{snapshot_name}-{index}",
+                "name": resource_name,
                 "namespace": self.konflux_config['namespace'],
                 "labels": {
                     "test.appstudio.openshift.io/type": "override",

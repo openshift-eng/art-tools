@@ -429,6 +429,24 @@ class TestBaseImageHandler(IsolatedAsyncioTestCase):
     @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
     @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
     @patch("doozerlib.backend.base_image_handler.resolve_konflux_kubeconfig_by_product")
+    async def test_release_rejects_invalid_snapshot_reference(
+        self, mock_kubeconfig, mock_namespace, mock_konflux_client_init
+    ):
+        mock_namespace.return_value = "ocp-art-tenant"
+        mock_kubeconfig.return_value = "/path/to/kubeconfig"
+        konflux_client = AsyncMock()
+        mock_konflux_client_init.return_value = konflux_client
+
+        handler = BaseImageHandler(self.runtime, dry_run=False)
+        result = await handler._create_release_from_snapshot("snapshot.v1", self.default_input)
+
+        self.assertIsNone(result)
+        konflux_client._get.assert_not_awaited()
+        konflux_client._create.assert_not_awaited()
+
+    @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_kubeconfig_by_product")
     async def test_create_release_from_snapshot_rhmtc_uses_product_plan_and_application(
         self, mock_kubeconfig, mock_namespace, mock_konflux_client_init
     ):

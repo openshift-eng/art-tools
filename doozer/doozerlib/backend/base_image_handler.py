@@ -7,7 +7,6 @@ CLI lives in ``doozerlib.cli.images`` (see ``images:release-to-base-repo``).
 
 import asyncio
 import os
-import re
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
@@ -16,9 +15,11 @@ from artcommonlib.model import Missing
 from artcommonlib.util import (
     get_utc_now_formatted_str,
     normalize_group_name_for_k8s,
+    normalize_k8s_dns_label,
     resolve_konflux_base_image_release_targets,
     resolve_konflux_kubeconfig_by_product,
     resolve_konflux_namespace_by_product,
+    validate_k8s_dns_label,
 )
 from doozerlib import util as doozer_util
 from doozerlib.backend.konflux_client import API_VERSION, KIND_RELEASE, KIND_RELEASE_PLAN, KIND_SNAPSHOT, KonfluxClient
@@ -30,13 +31,6 @@ def _truncate_for_k8s_name(name: str, max_len: int) -> str:
     if len(name) <= max_len:
         return name
     return name[:max_len].rstrip('-')
-
-
-def _normalize_for_k8s_name(name: str) -> str:
-    """Normalize *name* to the lowercase DNS-label syntax used by Kubernetes resource names."""
-    normalized = re.sub(r'[^a-z0-9-]', '-', name.lower())
-    normalized = re.sub(r'-+', '-', normalized)
-    return normalized.strip('-')
 
 
 def _software_lifecycle_phase(runtime) -> Optional[str]:
@@ -249,13 +243,15 @@ class BaseImageHandler:
                 raise ValueError(f"Group name '{self.runtime.group}' produces invalid normalized name for Kubernetes")
 
             timestamp = get_utc_now_formatted_str()
-            component_safe = _normalize_for_k8s_name(component["name"])
+            component_safe = normalize_k8s_dns_label(
+                component["name"], max_length=63 - len(group_safe) - len(timestamp) - 2
+            )
             if not component_safe:
                 raise ValueError(
                     f"Component name '{component['name']}' produces invalid normalized name for Kubernetes"
                 )
-            comp_name = _truncate_for_k8s_name(component_safe, 63 - len(group_safe) - len(timestamp) - 2)
-            snapshot_name = f"{group_safe}-{comp_name}-{timestamp}"
+            snapshot_name = f"{group_safe}-{component_safe}-{timestamp}"
+            validate_k8s_dns_label(snapshot_name, "Generated snapshot name")
 
             if self.dry_run:
                 self.logger.info(f"[DRY-RUN] Would create snapshot {snapshot_name}")
@@ -312,6 +308,8 @@ class BaseImageHandler:
             ``(release_name, release_console_url)`` or ``None`` on failure.
         """
         try:
+            validate_k8s_dns_label(snapshot_name, "Release snapshot reference")
+
             if not self.dry_run:
                 self.logger.info(f"Verifying release plan {self.base_image_release_plan} exists")
                 try:

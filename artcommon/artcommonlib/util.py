@@ -42,6 +42,9 @@ from tenacity import before_sleep_log, retry, retry_if_exception_type, stop_afte
 LOGGER = logging.getLogger(__name__)
 KONFLUX_LOGGER = logutil.get_logger(__name__)
 
+K8S_DNS_LABEL_MAX_LENGTH = 63
+K8S_DNS_LABEL_PATTERN = re.compile(r'^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?$')
+
 
 def extract_version_fields(version, at_least=0):
     """
@@ -1204,6 +1207,28 @@ def validate_build_priority(build_priority):
         raise
 
 
+def normalize_k8s_dns_label(name: str, max_length: int = K8S_DNS_LABEL_MAX_LENGTH) -> str:
+    """Normalize *name* to a Kubernetes DNS label within *max_length*."""
+    if not 1 <= max_length <= K8S_DNS_LABEL_MAX_LENGTH:
+        raise ValueError(f"max_length must be between 1 and {K8S_DNS_LABEL_MAX_LENGTH}, got {max_length}")
+    if not name:
+        return ""
+
+    normalized = re.sub(r'[^a-z0-9-]', '-', name.lower())
+    normalized = re.sub(r'-+', '-', normalized).strip('-')
+    return normalized[:max_length].rstrip('-')
+
+
+def validate_k8s_dns_label(name: str, field_name: str = "Name") -> str:
+    """Return *name* when it is a Kubernetes DNS label; otherwise raise ``ValueError``."""
+    if not isinstance(name, str) or len(name) > K8S_DNS_LABEL_MAX_LENGTH or not K8S_DNS_LABEL_PATTERN.fullmatch(name):
+        raise ValueError(
+            f"{field_name} {name!r} must be at most {K8S_DNS_LABEL_MAX_LENGTH} characters and match "
+            f"{K8S_DNS_LABEL_PATTERN.pattern!r}"
+        )
+    return name
+
+
 def normalize_group_name_for_k8s(group_name: str) -> str:
     """
     Normalize a group name to comply with Kubernetes DNS label rules.
@@ -1220,30 +1245,10 @@ def normalize_group_name_for_k8s(group_name: str) -> str:
     Returns:
         Normalized group name (e.g., "test-group-1-5")
     """
-    if not group_name:
-        return ""
-
-    # Convert to lowercase
-    normalized = group_name.lower()
-
-    # Replace dots and any non-alphanumeric characters (except '-') with '-'
-    normalized = re.sub(r'[^a-z0-9\-]', '-', normalized)
-
-    # Collapse consecutive '-' into a single '-'
-    normalized = re.sub(r'-+', '-', normalized)
-
-    # Trim leading/trailing non-alphanumeric characters (including '-')
-    normalized = re.sub(r'^[^a-z0-9]+|[^a-z0-9]+$', '', normalized)
-
     # Truncate to 63 characters if needed (leave room for timestamp suffix)
     # Reserve space for timestamp format like "-20251031141128-1" (18 chars)
     max_group_length = 63 - 18 - 1  # -1 for the connecting dash
-    if len(normalized) > max_group_length:
-        normalized = normalized[:max_group_length]
-        # Ensure we don't end with a dash after truncation
-        normalized = normalized.rstrip('-')
-
-    return normalized
+    return normalize_k8s_dns_label(group_name, max_length=max_group_length)
 
 
 def resolve_konflux_kubeconfig_by_product(product: str, provided_kubeconfig: Optional[str] = None) -> Optional[str]:
