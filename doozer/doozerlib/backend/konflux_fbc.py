@@ -439,7 +439,7 @@ class KonfluxFbcFragmentMerger:
 
         # Render the FBC fragments
         logger.info("Rendering FBC fragments...")
-        semaphore = asyncio.BoundedSemaphore(10)  # Limit concurrency to avoid overwhelming the registry
+        semaphore = asyncio.BoundedSemaphore(5)  # Limit concurrency to avoid OOM and overwhelming the registry
 
         async def _render_fragment(fragment: str):
             async with semaphore:
