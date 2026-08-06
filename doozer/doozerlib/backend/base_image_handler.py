@@ -7,6 +7,7 @@ CLI lives in ``doozerlib.cli.images`` (see ``images:release-to-base-repo``).
 
 import asyncio
 import os
+import re
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
@@ -29,6 +30,13 @@ def _truncate_for_k8s_name(name: str, max_len: int) -> str:
     if len(name) <= max_len:
         return name
     return name[:max_len].rstrip('-')
+
+
+def _normalize_for_k8s_name(name: str) -> str:
+    """Normalize *name* to the lowercase DNS-label syntax used by Kubernetes resource names."""
+    normalized = re.sub(r'[^a-z0-9-]', '-', name.lower())
+    normalized = re.sub(r'-+', '-', normalized)
+    return normalized.strip('-')
 
 
 def _software_lifecycle_phase(runtime) -> Optional[str]:
@@ -241,7 +249,12 @@ class BaseImageHandler:
                 raise ValueError(f"Group name '{self.runtime.group}' produces invalid normalized name for Kubernetes")
 
             timestamp = get_utc_now_formatted_str()
-            comp_name = _truncate_for_k8s_name(component["name"], 63 - len(group_safe) - len(timestamp) - 2)
+            component_safe = _normalize_for_k8s_name(component["name"])
+            if not component_safe:
+                raise ValueError(
+                    f"Component name '{component['name']}' produces invalid normalized name for Kubernetes"
+                )
+            comp_name = _truncate_for_k8s_name(component_safe, 63 - len(group_safe) - len(timestamp) - 2)
             snapshot_name = f"{group_safe}-{comp_name}-{timestamp}"
 
             if self.dry_run:
