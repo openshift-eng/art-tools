@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from functools import cached_property
 from io import StringIO
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 from urllib.parse import urlparse
 
 import click
@@ -16,6 +16,7 @@ from artcommonlib import exectools
 from artcommonlib.build_visibility import is_nvr_embargoed
 from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
 from artcommonlib.gitlab import GitLabClient
+from artcommonlib.release_util import isolate_el_version_in_release
 from artcommonlib.util import new_roundtrip_yaml_handler
 from elliottlib.shipment_model import (
     Environments,
@@ -229,6 +230,22 @@ class BinaryReleaseKonfluxPipeline:
             self.logger.warning(f"Failed to load mr_approvers from group config: {e}")
         return {}
 
+    @staticmethod
+    def _group_nvrs_by_rhel_version(nvrs: List[str]) -> Dict[str, List[str]]:
+        """Group NVRs by their RHEL version suffix (e.g. 'el8', 'el9').
+
+        NVRs without a detectable .el* suffix go under the 'default' key.
+        Returns an OrderedDict-like dict sorted by key for deterministic ordering.
+        """
+        groups: Dict[str, List[str]] = {}
+        for nvr in nvrs:
+            # The release field is the last hyphen-delimited segment of an NVR
+            release = nvr.rsplit('-', 1)[-1] if '-' in nvr else nvr
+            el_ver = isolate_el_version_in_release(release)
+            key = f"el{el_ver}" if el_ver is not None else "default"
+            groups.setdefault(key, []).append(nvr)
+        return dict(sorted(groups.items()))
+
     async def create_snapshot(self, builds: List[str]) -> Optional[Snapshot]:
         """
         Create a snapshot from a list of build NVRs using elliott.
@@ -273,11 +290,14 @@ class BinaryReleaseKonfluxPipeline:
             self.logger.debug(f"Raw output was: {stdout}")
             raise
 
-    def create_shipment_config(self, snapshot: Snapshot) -> ShipmentConfig:
+    def create_shipment_config(self, snapshot: Snapshot, rhel_suffix: Optional[str] = None) -> ShipmentConfig:
         """
         Create a shipment configuration (kind "image") for the given snapshot, reading
         the stage/prod releasePlan names for the snapshot's application from config.yaml
         in the shipment data repo.
+
+        When rhel_suffix is given (e.g. 'el8', 'el9'), the config.yaml lookup first tries
+        the key '{application}-{rhel_suffix}' and falls back to '{application}'.
         """
         if self.product is None:
             raise RuntimeError(
@@ -286,7 +306,7 @@ class BinaryReleaseKonfluxPipeline:
             )
 
         application = snapshot.spec.application
-        self.logger.info(f"Creating shipment config for application '{application}'...")
+        self.logger.info(f"Creating shipment config for application '{application}' (rhel_suffix={rhel_suffix!r})...")
 
         metadata = Metadata(
             product=self.product,
@@ -302,18 +322,25 @@ class BinaryReleaseKonfluxPipeline:
         if config_path.exists():
             with open(config_path, 'r') as f:
                 shipment_config = stdlib_yaml.safe_load(f) or {}
-            app_env_config = shipment_config.get("applications", {}).get(application, {}).get("environments", {})
+            applications = shipment_config.get("applications", {})
+            # Try RHEL-versioned key first (e.g. 'oc-mirror-2-0-el9'), then fall back to the
+            # plain application name for products that don't split by RHEL version.
+            lookup_key = f"{application}-{rhel_suffix}" if rhel_suffix else application
+            app_env_config = (applications.get(lookup_key) or applications.get(application) or {}).get(
+                "environments", {}
+            )
             stage_rpa = app_env_config.get("stage", {}).get("releasePlan", "n/a")
             prod_rpa = app_env_config.get("prod", {}).get("releasePlan", "n/a")
 
         if stage_rpa == "n/a" or prod_rpa == "n/a":
+            effective_key = f"{application}-{rhel_suffix}" if rhel_suffix else application
             if self.create_mr:
                 raise ValueError(
-                    f"stage/prod releasePlan is not registered for application '{application}' in {config_path}. "
+                    f"stage/prod releasePlan is not registered for '{effective_key}' in {config_path}. "
                     "Cannot create a shipment MR with unresolved ReleasePlans."
                 )
             self.logger.warning(
-                f"Could not resolve stage/prod releasePlan for application '{application}' from config.yaml. "
+                f"Could not resolve stage/prod releasePlan for '{effective_key}' from config.yaml. "
                 "Please ensure it is registered there before merging the resulting MR."
             )
 
@@ -325,9 +352,9 @@ class BinaryReleaseKonfluxPipeline:
 
         return ShipmentConfig(shipment=shipment)
 
-    async def create_shipment_mr(self, shipment_config: ShipmentConfig) -> str:
+    async def create_shipment_mr(self, shipments_by_kind: Dict[str, ShipmentConfig]) -> str:
         """
-        Create a new shipment MR with the given shipment config file.
+        Create a new shipment MR with the given shipment config files (one per kind).
         """
         if not self.create_mr:
             return ""
@@ -341,7 +368,7 @@ class BinaryReleaseKonfluxPipeline:
         await self.shipment_data_repo.create_branch(source_branch)
 
         commit_message = f"Add shipment configuration for {self.product} {self.assembly}"
-        updated = await self.update_shipment_data(shipment_config, "prod", commit_message, timestamp)
+        updated = await self.update_shipment_data(shipments_by_kind, "prod", commit_message, timestamp)
         if not updated:
             raise ValueError("Failed to update shipment data repo. Please investigate.")
 
@@ -405,27 +432,30 @@ class BinaryReleaseKonfluxPipeline:
                 self.logger.warning(f"Failed to trigger CI MR pipeline for branch {mr.source_branch}: {e}")
 
     async def update_shipment_data(
-        self, shipment_config: ShipmentConfig, env: str, commit_message: str, timestamp: str
+        self, shipments_by_kind: Dict[str, ShipmentConfig], env: str, commit_message: str, timestamp: str
     ) -> bool:
         """
-        Update shipment data repo with the given shipment config file.
+        Write all shipment config files and push in a single commit.
         """
         if not self.create_mr:
             return False
 
-        filepath = await self._write_shipment_file(shipment_config, env, timestamp)
-        self.logger.info("Updating shipment file: %s", filepath)
+        for advisory_kind, shipment_config in shipments_by_kind.items():
+            filepath = await self._write_shipment_file(advisory_kind, shipment_config, env, timestamp)
+            self.logger.info("Updating shipment file: %s", filepath)
 
         await self.shipment_data_repo.add_all()
         await self.shipment_data_repo.log_diff()
         return await self.shipment_data_repo.commit_push(commit_message, safe=True)
 
-    async def _write_shipment_file(self, shipment_config: ShipmentConfig, env: str, timestamp: str) -> str:
+    async def _write_shipment_file(
+        self, advisory_kind: str, shipment_config: ShipmentConfig, env: str, timestamp: str
+    ) -> str:
         """
         Write the shipment file to disk under the standard shipment path convention:
-        shipment/{product}/{group}/{application}/{env}/{assembly}.image.{timestamp}.yaml
+        shipment/{product}/{group}/{application}/{env}/{assembly}.{advisory_kind}.{timestamp}.yaml
         """
-        filename = f"{self.assembly}.image.{timestamp}.yaml"
+        filename = f"{self.assembly}.{advisory_kind}.{timestamp}.yaml"
 
         product = shipment_config.shipment.metadata.product
         group = shipment_config.shipment.metadata.group
@@ -442,12 +472,15 @@ class BinaryReleaseKonfluxPipeline:
 
         return str(filepath)
 
-    async def write_shipment_file_locally(self, shipment_config: ShipmentConfig, env: str, timestamp: str):
+    async def write_shipment_files_locally(
+        self, shipments_by_kind: Dict[str, ShipmentConfig], env: str, timestamp: str
+    ):
         """
-        Write the shipment file to the local repository without creating an MR.
+        Write shipment files to the local repository without creating an MR.
         """
-        filepath = await self._write_shipment_file(shipment_config, env, timestamp)
-        self.logger.info(f"Created shipment file: {filepath}")
+        for advisory_kind, shipment_config in shipments_by_kind.items():
+            filepath = await self._write_shipment_file(advisory_kind, shipment_config, env, timestamp)
+            self.logger.info(f"Created shipment file: {filepath}")
 
     async def run(self) -> None:
         """
@@ -476,22 +509,39 @@ class BinaryReleaseKonfluxPipeline:
                 f"Refusing to create a release referencing embargoed (private-fix) NVR(s): {embargoed_nvrs}"
             )
 
-        snapshot = await self.create_snapshot(self.nvrs)
-        if not snapshot:
-            raise RuntimeError("No snapshot could be created from the provided NVR(s)")
+        # Group NVRs by RHEL version so each version gets its own snapshot and releasePlan.
+        nvr_groups = self._group_nvrs_by_rhel_version(self.nvrs)
+        multi_rhel = len(nvr_groups) > 1
+        self.logger.info(
+            "NVR groups by RHEL version: %s",
+            {k: len(v) for k, v in nvr_groups.items()},
+        )
 
-        shipment_config = self.create_shipment_config(snapshot)
+        shipments_by_kind: Dict[str, ShipmentConfig] = {}
+        for rhel_suffix, group_nvrs in nvr_groups.items():
+            snapshot = await self.create_snapshot(group_nvrs)
+            if not snapshot:
+                raise RuntimeError(f"No snapshot could be created for {rhel_suffix} NVR(s)")
+
+            # Use a RHEL-qualified kind only when multiple versions are present, so that
+            # single-RHEL products continue to produce 'stream.image.<ts>.yaml' as before.
+            advisory_kind = f"image-{rhel_suffix}" if multi_rhel else "image"
+            rhel_suffix_for_lookup = rhel_suffix if multi_rhel else None
+            shipments_by_kind[advisory_kind] = self.create_shipment_config(snapshot, rhel_suffix=rhel_suffix_for_lookup)
 
         timestamp = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
         if not self.create_mr:
-            await self.write_shipment_file_locally(shipment_config, "prod", timestamp)
+            await self.write_shipment_files_locally(shipments_by_kind, "prod", timestamp)
         else:
-            mr_url = await self.create_shipment_mr(shipment_config)
+            mr_url = await self.create_shipment_mr(shipments_by_kind)
             if mr_url:
                 self.logger.info(f"Created shipment MR: {mr_url}")
                 await self.set_shipment_mr_ready()
 
-        completion_msg = f"Binary release workflow completed for {self.product} {self.assembly}."
+        completion_msg = (
+            f"Binary release workflow completed for {self.product} {self.assembly}. "
+            f"Created {len(shipments_by_kind)} shipment file(s) ({', '.join(shipments_by_kind.keys())})."
+        )
         if self.shipment_mr_url:
             completion_msg += f" MR: {self.shipment_mr_url}"
         self.logger.info(completion_msg)

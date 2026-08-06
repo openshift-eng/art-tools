@@ -25,6 +25,40 @@ def _make_snapshot(app="oc-mirror-2-0"):
     )
 
 
+class TestGroupNvrsByRhelVersion(unittest.TestCase):
+    def test_groups_el8_and_el9(self):
+        nvrs = [
+            "foo-container-1.0-1.assembly.stream.el8",
+            "foo-container-1.0-1.assembly.stream.el9",
+        ]
+        groups = BinaryReleaseKonfluxPipeline._group_nvrs_by_rhel_version(nvrs)
+        self.assertEqual(sorted(groups.keys()), ["el8", "el9"])
+        self.assertEqual(groups["el8"], ["foo-container-1.0-1.assembly.stream.el8"])
+        self.assertEqual(groups["el9"], ["foo-container-1.0-1.assembly.stream.el9"])
+
+    def test_single_rhel_version(self):
+        nvrs = [
+            "foo-container-1.0-1.assembly.stream.el9",
+            "bar-container-2.0-1.assembly.stream.el9",
+        ]
+        groups = BinaryReleaseKonfluxPipeline._group_nvrs_by_rhel_version(nvrs)
+        self.assertEqual(list(groups.keys()), ["el9"])
+        self.assertEqual(len(groups["el9"]), 2)
+
+    def test_no_rhel_suffix_falls_back_to_default(self):
+        nvrs = ["foo-container-1.0-1.assembly.stream"]
+        groups = BinaryReleaseKonfluxPipeline._group_nvrs_by_rhel_version(nvrs)
+        self.assertEqual(list(groups.keys()), ["default"])
+
+    def test_sorted_keys(self):
+        nvrs = [
+            "foo-container-1.0-1.el9",
+            "bar-container-1.0-1.el8",
+        ]
+        groups = BinaryReleaseKonfluxPipeline._group_nvrs_by_rhel_version(nvrs)
+        self.assertEqual(list(groups.keys()), ["el8", "el9"])
+
+
 class TestBinaryReleaseKonfluxPipeline(unittest.TestCase):
     def _make_pipeline(self, nvrs=None, create_mr=False, dry_run=False):
         runtime = MagicMock()
@@ -139,6 +173,79 @@ class TestBinaryReleaseKonfluxPipeline(unittest.TestCase):
 
         self.assertEqual(config.shipment.metadata.application, "some-other-app")
         self.assertEqual(config.shipment.snapshot.spec.application, "some-other-app")
+
+    def test_create_shipment_config_uses_rhel_suffixed_key(self):
+        """When rhel_suffix is given, config.yaml lookup uses '{app}-{rhel_suffix}'."""
+        pipeline = self._make_pipeline()
+        snapshot = _make_snapshot()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pipeline.shipment_data_repo._directory = Path(tmpdir)
+            config_path = Path(tmpdir) / "config.yaml"
+            config_path.write_text(
+                "applications:\n"
+                "  oc-mirror-2-0-el9:\n"
+                "    environments:\n"
+                "      stage:\n"
+                "        releasePlan: oc-mirror-cdn-el9-stage\n"
+                "      prod:\n"
+                "        releasePlan: oc-mirror-cdn-el9-prod\n"
+            )
+
+            config = pipeline.create_shipment_config(snapshot, rhel_suffix="el9")
+
+        self.assertEqual(config.shipment.environments.stage.releasePlan, "oc-mirror-cdn-el9-stage")
+        self.assertEqual(config.shipment.environments.prod.releasePlan, "oc-mirror-cdn-el9-prod")
+
+    def test_create_shipment_config_rhel_suffix_falls_back_to_plain_app_key(self):
+        """When the RHEL-versioned key is absent, fall back to the plain application key."""
+        pipeline = self._make_pipeline()
+        snapshot = _make_snapshot()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pipeline.shipment_data_repo._directory = Path(tmpdir)
+            config_path = Path(tmpdir) / "config.yaml"
+            # Only the plain key exists, no 'oc-mirror-2-0-el9'
+            config_path.write_text(
+                "applications:\n"
+                "  oc-mirror-2-0:\n"
+                "    environments:\n"
+                "      stage:\n"
+                "        releasePlan: oc-mirror-cdn-stage\n"
+                "      prod:\n"
+                "        releasePlan: oc-mirror-cdn-prod\n"
+            )
+
+            config = pipeline.create_shipment_config(snapshot, rhel_suffix="el9")
+
+        self.assertEqual(config.shipment.environments.stage.releasePlan, "oc-mirror-cdn-stage")
+        self.assertEqual(config.shipment.environments.prod.releasePlan, "oc-mirror-cdn-prod")
+
+    def test_write_shipment_file_default_kind_is_image(self):
+        """Without a custom kind the filename contains 'image'."""
+        pipeline = self._make_pipeline()
+        snapshot = _make_snapshot()
+        config = pipeline.create_shipment_config(snapshot)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pipeline.shipment_data_repo._directory = Path(tmpdir)
+            pipeline.shipment_data_repo.write_file = AsyncMock()
+            filepath = asyncio.run(pipeline._write_shipment_file("image", config, "prod", "20260804120000"))
+
+        self.assertIn(".image.", filepath)
+
+    def test_write_shipment_file_custom_kind_in_filename(self):
+        """Custom advisory_kind appears in the filename."""
+        pipeline = self._make_pipeline()
+        snapshot = _make_snapshot()
+        config = pipeline.create_shipment_config(snapshot)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pipeline.shipment_data_repo._directory = Path(tmpdir)
+            pipeline.shipment_data_repo.write_file = AsyncMock()
+            filepath = asyncio.run(pipeline._write_shipment_file("image-el8", config, "prod", "20260804120000"))
+
+        self.assertIn(".image-el8.", filepath)
 
 
 class TestLoadProductFromGroupConfig(unittest.TestCase):
@@ -267,7 +374,7 @@ class TestEmbargoedNvrDefensiveCheck(unittest.TestCase):
         pipeline = self._make_pipeline([nvr])
         pipeline.create_snapshot = AsyncMock(return_value=_make_snapshot())
         pipeline.create_shipment_config = MagicMock(return_value=MagicMock())
-        pipeline.write_shipment_file_locally = AsyncMock()
+        pipeline.write_shipment_files_locally = AsyncMock()
 
         asyncio.run(pipeline.run())
 
