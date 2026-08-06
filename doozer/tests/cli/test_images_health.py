@@ -1,9 +1,10 @@
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome
 from artcommonlib.model import Missing, Model
 from artcommonlib.variants import BuildVariant
-from doozerlib.cli.images_health import ImagesHealthPipeline
+from doozerlib.cli.images_health import LIMIT_BUILD_RESULTS, ConcernCode, ImagesHealthPipeline
 
 
 class TestImagesHealthOKDModeFiltering(unittest.IsolatedAsyncioTestCase):
@@ -224,3 +225,72 @@ class TestImagesHealthOKDModeFiltering(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(mock_get_concerns.call_count, 2)
             mock_get_concerns.assert_any_call(image1)
             mock_get_concerns.assert_any_call(image3)
+
+
+class TestGetConcernsFailureCodeSelection(unittest.TestCase):
+    """
+    Tests that get_concerns selects the correct ConcernCode when no successful build is found.
+
+    When fewer builds are returned than the query limit, the exact failure count is known
+    and LATEST_ATTEMPT_FAILED should be used. Only when results are truncated at the limit
+    is FAILING_AT_LEAST_FOR appropriate.
+    """
+
+    def _make_pipeline(self, limit=LIMIT_BUILD_RESULTS):
+        mock_runtime = MagicMock()
+        mock_runtime.group_config = MagicMock()
+        mock_runtime.group_config.name = "openshift-5.1"
+        mock_runtime.group = "openshift-5.1"
+        mock_runtime.konflux_db = MagicMock()
+        mock_runtime.konflux_db.bind = MagicMock()
+        pipeline = ImagesHealthPipeline(runtime=mock_runtime, limit=limit)
+        return pipeline
+
+    def _make_failed_build(self):
+        build = MagicMock()
+        build.outcome = KonfluxBuildOutcome.FAILURE
+        build.art_job_url = "http://example.com/job"
+        build.build_pipeline_url = "http://example.com/pipeline"
+        build.nvr = "test-container-v5.1.0-1.el9"
+        build.record_id = "abc123"
+        build.start_time = None
+        return build
+
+    def _make_image_meta(self, distgit_key="test-image"):
+        image_meta = MagicMock()
+        image_meta.distgit_key = distgit_key
+        image_meta.config = Model({"for_release": True})
+        return image_meta
+
+    def test_fewer_builds_than_limit_uses_latest_attempt_failed(self):
+        """
+        When only 5 builds exist and all fail, LATEST_ATTEMPT_FAILED should be used
+        with latest_success_idx=5, not FAILING_AT_LEAST_FOR with the misleading limit value.
+        """
+        pipeline = self._make_pipeline(limit=LIMIT_BUILD_RESULTS)
+        builds = [self._make_failed_build() for _ in range(5)]
+        pipeline.runtime.konflux_db.cache.get_builds_by_name = MagicMock(return_value=builds)
+        image_meta = self._make_image_meta()
+
+        pipeline.get_concerns(image_meta)
+
+        self.assertEqual(len(pipeline.concerns), 1)
+        concern = pipeline.concerns[0]
+        self.assertEqual(concern.code, ConcernCode.LATEST_ATTEMPT_FAILED.value)
+        self.assertEqual(concern.latest_success_idx, 5)
+
+    def test_builds_at_limit_all_failing_uses_failing_at_least_for(self):
+        """
+        When the query returns exactly LIMIT_BUILD_RESULTS failures and no success,
+        FAILING_AT_LEAST_FOR should be used because we don't know how far back failures go.
+        """
+        pipeline = self._make_pipeline(limit=LIMIT_BUILD_RESULTS)
+        builds = [self._make_failed_build() for _ in range(LIMIT_BUILD_RESULTS)]
+        pipeline.runtime.konflux_db.cache.get_builds_by_name = MagicMock(return_value=builds)
+        image_meta = self._make_image_meta()
+
+        pipeline.get_concerns(image_meta)
+
+        self.assertEqual(len(pipeline.concerns), 1)
+        concern = pipeline.concerns[0]
+        self.assertEqual(concern.code, ConcernCode.FAILING_AT_LEAST_FOR.value)
