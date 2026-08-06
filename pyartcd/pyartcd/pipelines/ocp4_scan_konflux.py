@@ -233,6 +233,7 @@ class Ocp4ScanPipeline:
             assembly='stream',
             image_list=changed_ocp_images,
             rpm_list=changed_rpm,
+            use_mass_rebuild_locks=True,
         )
 
     async def handle_rhcos_changes(self):

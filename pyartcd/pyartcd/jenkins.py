@@ -444,6 +444,7 @@ def start_ocp4_konflux(
     rpm_list: list = None,
     limit_arches: list = None,
     dry_run: bool = False,
+    use_mass_rebuild_locks: bool = False,
     **kwargs,
 ) -> Optional[str]:
     params = {
@@ -468,6 +469,9 @@ def start_ocp4_konflux(
     params['SKIP_PLASHETS'] = False
 
     params['DRY_RUN'] = dry_run
+
+    # Enable mass rebuild locks (24-hour cooldown)
+    params['USE_MASS_REBUILD_LOCKS'] = use_mass_rebuild_locks
 
     return start_build(
         job=Jobs.OCP4_KONFLUX,
