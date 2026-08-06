@@ -75,6 +75,22 @@ class TestCollectStageVars(unittest.TestCase):
         result = collect_stage_vars(entries)
         self.assertEqual(result, {"GREETING": "hello world", "LANG": "en_US.UTF-8"})
 
+    def test_env_with_escaped_variable_references(self):
+        entries = [
+            _make_entry("ENV", "VERSION=1.26"),
+            _make_entry("ENV", r"PACKAGE=\$VERSION BRACED=\${VERSION} EXPANDED=$VERSION"),
+        ]
+        result = collect_stage_vars(entries)
+        self.assertEqual(
+            result,
+            {
+                "VERSION": "1.26",
+                "PACKAGE": "$VERSION",
+                "BRACED": "${VERSION}",
+                "EXPANDED": "1.26",
+            },
+        )
+
     def test_env_legacy_value_resembling_assignments(self):
         entries = [_make_entry("ENV", "ONE TWO= THREE=world")]
         result = collect_stage_vars(entries)

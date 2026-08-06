@@ -22,6 +22,8 @@ from doozerlib.lockfile_prototype.shell_parser import (
     resolve_bash_expansion,
 )
 
+_ESCAPED_DOLLAR_SENTINEL = "\0"
+
 
 def _strip_quotes(value: str) -> str:
     if len(value) >= 2 and value[0] in ("\"", "'") and value[-1] == value[0]:
@@ -37,8 +39,12 @@ def _parse_env_assignments(value: str) -> list[tuple[str, str]]:
     and the legacy ``ENV key value`` form. ``shlex`` preserves spaces in
     quoted or escaped values while separating modern assignments.
     """
+    # ``shlex`` removes the backslash from ``\$``. Protect escaped dollar
+    # signs so that later environment expansion can distinguish them from
+    # variable references.
+    protected_value = value.strip().replace(r"\$", _ESCAPED_DOLLAR_SENTINEL)
     try:
-        tokens = shlex.split(value.strip())
+        tokens = shlex.split(protected_value)
     except ValueError:
         return []
 
@@ -97,7 +103,7 @@ def collect_stage_vars(entries: list[dict], inherited_vars: dict[str, str] | Non
             # become visible to subsequent instructions, not sibling entries.
             previous_variables = dict(variables)
             resolved_assignments = {
-                var_name: resolve_bash_expansion(raw_value, previous_variables)
+                var_name: resolve_bash_expansion(raw_value, previous_variables).replace(_ESCAPED_DOLLAR_SENTINEL, "$")
                 for var_name, raw_value in _parse_env_assignments(value)
             }
             variables.update(resolved_assignments)
