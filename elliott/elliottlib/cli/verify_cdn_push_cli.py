@@ -97,10 +97,14 @@ async def check_advisory_push(api: AsyncErrataAPI, advisory_id: int, impetus: st
         if do_push and (has_failed or no_jobs):
             reason = "failed jobs" if has_failed else "no push jobs found"
             LOGGER.info("Advisory %s (%s): %s, triggering CDN stage push", advisory_id, impetus, reason)
-            await api.push_cdn_stage(advisory_id)
-            result.push_triggered = True
-            raw_jobs = await api.get_push_jobs(advisory_id)
-            result.push_jobs = parse_push_jobs(raw_jobs)
+            push_response = await api.push_cdn_stage(advisory_id)
+            if push_response is None:
+                LOGGER.warning("Advisory %s (%s): push rejected (unmet dependencies)", advisory_id, impetus)
+                result.error = "push rejected due to unmet dependencies"
+            else:
+                result.push_triggered = True
+                raw_jobs = await api.get_push_jobs(advisory_id)
+                result.push_jobs = parse_push_jobs(raw_jobs)
         else:
             for j in result.push_jobs:
                 LOGGER.info("Advisory %s (%s): target %s status %s", advisory_id, impetus, j.target, j.status)
@@ -119,7 +123,11 @@ async def check_blocking_advisories(api: AsyncErrataAPI, advisory_id: int, do_pu
         blocking_ids = erratum_data.get("blocking_advisories", [])
     except Exception as e:
         LOGGER.warning("Failed to get blocking advisories for %s: %s", advisory_id, e)
-        return []
+        return [AdvisoryPushResult(
+            advisory_id=advisory_id,
+            impetus=f"blocking-lookup-{advisory_id}",
+            error=f"failed to check blocking advisories: {e}",
+        )]
 
     results = []
     for blocking_id in blocking_ids:

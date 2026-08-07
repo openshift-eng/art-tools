@@ -203,6 +203,15 @@ class TestCheckAdvisoryPush(IsolatedAsyncioTestCase):
         self.assertTrue(result.failed)
         self.assertIn("connection failed", result.error)
 
+    async def test_push_rejected_dependencies(self):
+        api = AsyncMock()
+        api.get_push_jobs.return_value = []
+        api.push_cdn_stage.return_value = None
+        result = await check_advisory_push(api, 12345, "rpm", do_push=True)
+        self.assertFalse(result.push_triggered)
+        self.assertTrue(result.failed)
+        self.assertIn("unmet dependencies", result.error)
+
 
 class TestVerifyCdnPush(IsolatedAsyncioTestCase):
     @patch("elliottlib.cli.verify_cdn_push_cli.AsyncErrataAPI")
@@ -247,6 +256,18 @@ class TestVerifyCdnPush(IsolatedAsyncioTestCase):
 
         result = await verify_cdn_push({"rpm": 111}, do_push=True)
         self.assertFalse(result.complete)
+
+    @patch("elliottlib.cli.verify_cdn_push_cli.AsyncErrataAPI")
+    async def test_blocking_lookup_failure(self, mock_api_cls):
+        api = AsyncMock()
+        mock_api_cls.return_value.__aenter__ = AsyncMock(return_value=api)
+        mock_api_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        api.get_advisory.side_effect = RuntimeError("connection failed")
+
+        result = await verify_cdn_push({"rpm": 111}, do_push=True)
+        self.assertFalse(result.complete)
+        self.assertTrue(result.failed)
 
 
 class TestRenderResult(TestCase):
