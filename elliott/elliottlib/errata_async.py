@@ -74,9 +74,11 @@ class AsyncErrataAPI:
         path = f"/api/v1/erratum/{int(advisory_id)}/push"
         return await self._make_request(aiohttp.hdrs.METH_GET, path)
 
-    async def push_cdn_stage(self, advisory_id: int) -> Optional[Dict]:
+    async def push_cdn_stage(self, advisory_id: int, targets: Optional[list] = None) -> Optional[Dict]:
         path = f"/api/v1/erratum/{int(advisory_id)}/push"
-        data = [{"target": "cdn_stage"}, {"target": "cdn_docker_stage"}]
+        if targets is None:
+            targets = ["cdn_stage"]
+        data = [{"target": t} for t in targets]
         try:
             return await self._make_request(aiohttp.hdrs.METH_POST, path, json=data)
         except ClientResponseError as e:
