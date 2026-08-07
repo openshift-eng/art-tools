@@ -67,13 +67,15 @@ def get_rpm_deliveries_config(runtime) -> list:
 
 def get_kernel_packages_and_tag(rpm_deliveries: list) -> tuple[set[str], str]:
     packages = set()
-    stop_ship_tag = ""
+    tags = set()
     for entry in rpm_deliveries:
         tag = entry.get("stop_ship_tag", "")
         if tag:
             packages.update(entry.get("packages", []))
-            stop_ship_tag = tag
-    return packages, stop_ship_tag
+            tags.add(tag)
+    if len(tags) > 1:
+        raise ValueError(f"Multiple different stop_ship_tag values in rpm_deliveries: {tags}")
+    return packages, tags.pop() if tags else ""
 
 
 def find_rhcos_nvrs(build_nvrs: set[str]) -> list[str]:
@@ -149,8 +151,8 @@ async def check_advisory_kernel_tag(
         result.kernel_builds = await asyncio.to_thread(_check)
 
         if not result.kernel_builds:
-            LOGGER.info("Advisory %s (%s): no kernel RPMs found in RHCOS builds", advisory_id, impetus)
-            result.skipped = True
+            result.error = "no kernel RPMs found in RHCOS builds"
+            LOGGER.error("Advisory %s (%s): %s", advisory_id, impetus, result.error)
             return result
 
         for kb in result.kernel_builds:
