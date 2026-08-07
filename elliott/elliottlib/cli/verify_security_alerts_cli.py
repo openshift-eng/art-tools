@@ -74,7 +74,13 @@ async def check_advisory_security_alerts(api: AsyncErrataAPI, advisory_id: int, 
 
         response = await api.refresh_security_alerts(advisory_id)
         alerts = response.get("alerts", {})
-        LOGGER.debug("Advisory %s (%s): security alerts response: %s", advisory_id, impetus, alerts)
+        LOGGER.debug(
+            "Advisory %s (%s): blocking=%s, alert_count=%d",
+            advisory_id,
+            impetus,
+            alerts.get("blocking", False),
+            len(alerts.get("alerts", [])),
+        )
         result.blocking = bool(alerts.get("blocking", False))
 
         if result.blocking:
@@ -146,6 +152,7 @@ def render_result(result: VerifySecurityAlertsResult, output: str) -> str:
     return "\n".join(lines)
 
 
+# microshift advisories are managed separately and don't go through ProdSec alert flow
 SKIPPED_IMPETUS = ("microshift",)
 
 
