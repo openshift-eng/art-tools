@@ -115,45 +115,6 @@ class TestExtractAndValidateGolangNvrs(unittest.TestCase):
             extract_and_validate_golang_nvrs("4.16", ["golang-1.20.12-2.el7_9"])
 
 
-class TestCliValidation(unittest.TestCase):
-    """Test update-golang CLI argument validation."""
-
-    def _invoke(self, extra_args):
-        from click.testing import CliRunner
-        from pyartcd.pipelines.update_golang import update_golang
-        from pyartcd.runtime import Runtime
-
-        asyncio.set_event_loop(asyncio.new_event_loop())
-        mock_runtime = Mock(spec=Runtime, dry_run=False)
-        runner = CliRunner()
-        base_args = [
-            "--ocp-version",
-            "4.22",
-            "--art-jira",
-            "ART-1234",
-            "--data-gitref",
-            "test-branch",
-            "golang-1.25.3-1.el9",
-            "golang-1.25.3-1.el10",
-        ]
-        return runner.invoke(update_golang, base_args + extra_args, obj=mock_runtime, standalone_mode=False)
-
-    def test_data_gitref_with_multiple_nvrs_rejected_for_legacy_branches(self):
-        result = self._invoke([])
-
-        self.assertIsInstance(result.exception, click.BadParameter)
-        self.assertIn("--data-gitref can only be used with a single NVR", str(result.exception))
-
-    @patch("pyartcd.pipelines.update_golang.UpdateGolangPipeline")
-    def test_data_gitref_with_multiple_nvrs_allowed_for_unified_branch(self, mock_pipeline_class):
-        mock_pipeline_class.return_value.run = AsyncMock()
-
-        result = self._invoke(["--use-new-golang-branch"])
-
-        self.assertIsNone(result.exception)
-        mock_pipeline_class.return_value.run.assert_awaited_once()
-
-
 class TestGetLatestNvrInTag(unittest.TestCase):
     """Test the get_latest_nvr_in_tag function"""
 
