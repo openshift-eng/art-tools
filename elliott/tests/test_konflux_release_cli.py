@@ -618,7 +618,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
 
         # Verify the assembly validation in run() also passes (None == None).
         # This exercises the guard at: elif meta.assembly != self.runtime.assembly
-        result = await cli.run()
+        await cli.run()
         # dry_run=True still creates resources — it just changes the log message
         self.assertEqual(self.konflux_client._create.call_count, 2)  # snapshot + release
 
