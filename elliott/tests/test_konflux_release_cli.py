@@ -591,15 +591,11 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
                     ),
                 ),
                 data=Data(
-                    releaseNotes=ReleaseNotes(
-                        type="RHBA", synopsis="s", topic="t", description="d", solution="s"
-                    )
+                    releaseNotes=ReleaseNotes(type="RHBA", synopsis="s", topic="t", description="d", solution="s")
                 ),
             ),
         )
-        self.runtime.shipment_gitdata.load_yaml_file.return_value = shipment_config.model_dump(
-            exclude_none=True
-        )
+        self.runtime.shipment_gitdata.load_yaml_file.return_value = shipment_config.model_dump(exclude_none=True)
         self.konflux_client._get_api.return_value = MagicMock()
         self.konflux_client._get.return_value = MagicMock()
 
