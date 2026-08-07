@@ -1,5 +1,7 @@
+import asyncio
+import os
 import unittest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from pyartcd.pipelines.build_conforma_verify import BuildConformaVerifyPipeline
 
@@ -108,7 +110,7 @@ def _make_pipeline(**kwargs):
     runtime.working_dir.__truediv__ = MagicMock(return_value=MagicMock())
     defaults = {
         "runtime": runtime,
-        "version": "4.18",
+        "group": "openshift-4.18",
         "assembly": "stream",
         "builds": None,
     }
@@ -140,9 +142,72 @@ class TestPipelineInit(unittest.TestCase):
         self.assertTrue(p.include_corresponding_fbcs)
         self.assertIs(p.slack_client, slack)
 
-    def test_group_set_from_version(self):
-        p = _make_pipeline(version="4.19")
+    def test_group_set_directly(self):
+        p = _make_pipeline(group="openshift-4.19")
         self.assertEqual(p.group, "openshift-4.19")
+
+    def test_group_set_layered(self):
+        p = _make_pipeline(group="logging-6.7")
+        self.assertEqual(p.group, "logging-6.7")
+
+    def test_group_is_not_rewritten(self):
+        p = _make_pipeline(group="oadp-1.5")
+        self.assertEqual(p.group, "oadp-1.5")
+
+
+class TestProductSettings(unittest.TestCase):
+    def test_lp_settings_use_product_and_selected_data(self):
+        p = _make_pipeline(
+            group="oadp-1.5",
+            data_path="https://example.test/ocp-build-data",
+            data_gitref="feature-branch",
+        )
+
+        with patch(
+            "pyartcd.pipelines.build_conforma_verify.util.load_group_config",
+            new=AsyncMock(return_value={"product": "oadp"}),
+        ) as load_group_config:
+            asyncio.run(p._resolve_layered_product_settings())
+
+        load_group_config.assert_awaited_once_with(
+            group="oadp-1.5",
+            assembly="stream",
+            doozer_data_path="https://example.test/ocp-build-data",
+            doozer_data_gitref="feature-branch",
+        )
+        self.assertEqual(p.namespace, "art-oadp-tenant")
+        self.assertEqual(p.kubeconfig_env_var, "OADP_KONFLUX_SA_KUBECONFIG")
+
+    def test_unknown_product_raises(self):
+        p = _make_pipeline(group="unknown-1.0")
+        with patch(
+            "pyartcd.pipelines.build_conforma_verify.util.load_group_config",
+            new=AsyncMock(return_value={"product": "unknown"}),
+        ):
+            with self.assertRaisesRegex(ValueError, "unknown-1.0.*unknown"):
+                asyncio.run(p._resolve_layered_product_settings())
+
+    def test_missing_lp_kubeconfig_raises_before_client_creation(self):
+        p = _make_pipeline(group="oadp-1.5")
+        p.namespace = "art-oadp-tenant"
+        p.kubeconfig_env_var = "OADP_KONFLUX_SA_KUBECONFIG"
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch("pyartcd.pipelines.build_conforma_verify.KonfluxClient.from_kubeconfig") as from_kubeconfig,
+        ):
+            with self.assertRaisesRegex(ValueError, "OADP_KONFLUX_SA_KUBECONFIG.*oadp-1.5"):
+                asyncio.run(p._verify_records([], build_type="image"))
+        from_kubeconfig.assert_not_called()
+
+    def test_missing_ocp_kubeconfig_raises_before_client_creation(self):
+        p = _make_pipeline(group="openshift-4.22")
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch("pyartcd.pipelines.build_conforma_verify.KonfluxClient.from_kubeconfig") as from_kubeconfig,
+        ):
+            with self.assertRaisesRegex(ValueError, "KONFLUX_SA_KUBECONFIG.*openshift-4.22"):
+                asyncio.run(p._verify_records([], build_type="image"))
+        from_kubeconfig.assert_not_called()
 
 
 class TestPolicySelection(unittest.TestCase):
@@ -193,7 +258,7 @@ class TestSlackReporting(unittest.TestCase):
     def test_failure_message(self):
         slack = MagicMock()
         slack.say_in_thread = AsyncMock()
-        p = _make_pipeline(slack_client=slack, effective_time="2026-08-05T00:00:00Z")
+        p = _make_pipeline(group="oadp-1.5", slack_client=slack, effective_time="2026-08-05T00:00:00Z")
 
         import asyncio
 
@@ -201,6 +266,7 @@ class TestSlackReporting(unittest.TestCase):
 
         msg = slack.say_in_thread.call_args_list[0][0][0]
         self.assertIn(":warning:", msg)
+        self.assertIn("oadp-1.5", msg)
         self.assertIn("assembly=`stream`", msg)
         self.assertIn("3 image(s)", msg)
         self.assertIn("1 bundle(s)", msg)

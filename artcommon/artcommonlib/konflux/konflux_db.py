@@ -1355,6 +1355,7 @@ class KonfluxDb:
 
         # Extract additional filters from where if provided
         assembly = where.get('assembly') if where else None
+        group = where.get('group') if where else None
         el_target = where.get('el_target') if where else None
         artifact_type = where.get('artifact_type') if where else None
         engine = where.get('engine') if where else None
@@ -1366,6 +1367,7 @@ class KonfluxDb:
                 nvr=nvr,
                 outcome=outcome,
                 assembly=assembly,
+                group=group,
                 el_target=el_target,
                 artifact_type=artifact_type,
                 engine=engine,

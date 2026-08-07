@@ -124,6 +124,40 @@ PRODUCT_BASE_IMAGE_KONFLUX_RELEASE_MAP = {
     "zero-trust-workload-identity-manager": ("oap-zt-images-base-silent", "oap-images-base"),
 }
 
+# Layered-product release-time EC policies for scheduled Conforma verification.
+# Image/bundle policies use the product stage policy; FBC policies follow the
+# product's release configuration. OCP lifecycle variants are intentionally excluded.
+LAYERED_PRODUCT_CONFORMA_STAGE_POLICY_MAP = {
+    "rhacm2": (
+        "rhtap-releng-tenant/registry-art-acm-stage",
+        "rhtap-releng-tenant/fbc-art-acm-stage",
+    ),
+    "multicluster-engine": (
+        "rhtap-releng-tenant/registry-art-acm-stage",
+        "rhtap-releng-tenant/fbc-art-acm-stage",
+    ),
+    "oadp": (
+        "rhtap-releng-tenant/registry-art-oadp-stage",
+        "rhtap-releng-tenant/fbc-art-oadp-stage",
+    ),
+    "mta": (
+        "rhtap-releng-tenant/registry-art-mta-stage",
+        "rhtap-releng-tenant/fbc-stage",
+    ),
+    "rhmtc": (
+        "rhtap-releng-tenant/registry-art-mtc-stage",
+        "rhtap-releng-tenant/fbc-stage",
+    ),
+    "openshift-logging": (
+        "rhtap-releng-tenant/registry-art-logging-stage",
+        "rhtap-releng-tenant/fbc-stage",
+    ),
+    "oc-mirror": (
+        "rhtap-releng-tenant/registry-standard",
+        None,
+    ),
+}
+
 # Pre-release lifecycle (software_lifecycle.phase) — registry-ocp-art-base-ec-prod via ART-19498.
 PRODUCT_BASE_IMAGE_KONFLUX_EC_RELEASE_MAP = {
     "ocp": ("ocp-art-images-base-silent-ec", "art-images-base"),

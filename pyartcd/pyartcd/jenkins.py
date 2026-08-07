@@ -905,10 +905,10 @@ def start_scan_operator(version: str, **kwargs) -> Optional[str]:
 
 
 def start_build_conforma_verify(
-    build_version: str,
+    group: str,
     assembly: str = 'stream',
     ec_policy: str = '',
-    fbc_ec_policy: str = '',
+    fbc_ec_policy: Optional[str] = '',
     effective_time: str = '',
     include_bundles: bool = False,
     include_fbcs: bool = False,
@@ -918,7 +918,7 @@ def start_build_conforma_verify(
     **kwargs,
 ) -> Optional[str]:
     params = {
-        'BUILD_VERSION': build_version,
+        'GROUP': group,
         'ASSEMBLY': assembly,
         'EC_POLICY': ec_policy,
         'EC_POLICY_FBC': fbc_ec_policy,
