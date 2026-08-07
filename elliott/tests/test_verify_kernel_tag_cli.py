@@ -265,8 +265,9 @@ class TestGetKernelRpmsFromRhcos(IsolatedAsyncioTestCase):
         mock_resp = MagicMock()
         mock_resp.raise_for_status.side_effect = HTTPError("404 Not Found")
         mock_get.return_value = mock_resp
-        with self.assertRaises(HTTPError):
+        with self.assertRaises(HTTPError) as cm:
             get_kernel_rpms_from_rhcos("rhcos-x86_64-fake-1", {"kernel"})
+        self.assertIn("404 Not Found", str(cm.exception))
 
 
 class TestCheckKernelTags(IsolatedAsyncioTestCase):
