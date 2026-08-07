@@ -41,6 +41,10 @@ yaml = new_roundtrip_yaml_handler()
 PUBLISHED_GOLANG_BUILDER_REPO = f"{REGISTRY_REDHAT_IO}/openshift/{ART_IMAGES_BASE_APPLICATION}"
 GOLANG_ASSEMBLIES = ("stream", "test")
 DEFAULT_GOLANG_ASSEMBLY = "stream"
+BREW_TEST_ASSEMBLY_UNSUPPORTED = (
+    "Brew builds for the test assembly are not supported because Brew floating tags are updated after every "
+    "successful build. Use --build-system konflux for test assembly builds."
+)
 
 
 def is_latest(ocp_version: str, el_v: int, nvr: str, koji_session) -> bool:
@@ -214,6 +218,9 @@ class UpdateGolangPipeline:
         self.major_bump = major_bump
         if assembly not in GOLANG_ASSEMBLIES:
             raise ValueError(f"Unsupported golang assembly {assembly!r}; expected one of {GOLANG_ASSEMBLIES}")
+        if assembly == "test" and build_system in ("brew", "both"):
+            _LOGGER.error(BREW_TEST_ASSEMBLY_UNSUPPORTED)
+            raise ValueError(BREW_TEST_ASSEMBLY_UNSUPPORTED)
         self.assembly = assembly
         self._slack_client = self.runtime.new_slack_client()
         self._doozer_working_dir = self.runtime.working_dir / "doozer-working"
@@ -1278,7 +1285,7 @@ class UpdateGolangPipeline:
     '--build-system',
     type=click.Choice(['brew', 'konflux', 'both'], case_sensitive=False),
     default='brew',
-    help='Build system to use for golang-builder images (brew, konflux, or both). Defaults to brew for backward compatibility.',
+    help='Build system to use for golang-builder images (brew, konflux, or both). Test assemblies require Konflux. Defaults to brew for backward compatibility.',
 )
 @click.option("--kubeconfig", required=False, help="Path to kubeconfig file to use for Konflux cluster connections")
 @click.option(
@@ -1351,6 +1358,9 @@ async def update_golang(
         raise ValueError('CVEs must be provided with --force-update-tracker')
     if network_mode and build_system == 'brew':
         raise click.BadParameter('--network-mode only applies when --build-system is "konflux" or "both".')
+    if assembly == "test" and build_system in ("brew", "both"):
+        _LOGGER.error(BREW_TEST_ASSEMBLY_UNSUPPORTED)
+        raise click.BadParameter(BREW_TEST_ASSEMBLY_UNSUPPORTED, param_hint='--build-system')
     pipeline = UpdateGolangPipeline(
         runtime,
         ocp_version,
