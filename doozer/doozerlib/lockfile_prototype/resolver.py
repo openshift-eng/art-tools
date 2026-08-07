@@ -66,10 +66,17 @@ class RpmResolver:
         self,
         config: RpmsInConfig,
         image_pullspec: str | None = None,
+        containerfile_path: str | None = None,
+        stage_num: int | None = None,
     ) -> LockfileData:
         """
         Resolve RPM packages by running rpm-lockfile-prototype via
         system Python as a subprocess.
+
+        When containerfile_path is set, the tool extracts packages from
+        the Dockerfile's RUN commands via packagesFromContainerfile.
+        This works alongside --image: the image controls the rpmdb while
+        packagesFromContainerfile controls package extraction.
 
         On RPMDB corruption errors, clears the cached RPMDB for the
         image and retries once before raising.
@@ -78,9 +85,19 @@ class RpmResolver:
             config (RpmsInConfig): Input configuration.
             image_pullspec (str | None): Base image for rpmdb context.
                 None means bare resolution.
+            containerfile_path (str | None): Absolute path to the
+                Dockerfile for automatic package extraction.
+            stage_num (int | None): 1-indexed stage number to extract
+                packages from (None = last stage).
         Return Value(s):
             LockfileData: Resolved lockfile.
         """
+        if containerfile_path:
+            pfc_spec: dict = {"file": containerfile_path}
+            if stage_num is not None:
+                pfc_spec["stageNum"] = stage_num
+            config.packagesFromContainerfile = pfc_spec
+
         with TemporaryDirectory(dir=self._working_dir) as tmpdir:
             in_file = Path(tmpdir) / DEFAULT_RPM_INFILE_NAME
             out_file = Path(tmpdir) / DEFAULT_RPM_LOCKFILE_NAME
@@ -188,4 +205,10 @@ class RpmResolver:
             m = re.search(r"no package matched:\s*(\S+)", line.strip())
             if m:
                 missing.add(m.group(1).strip().rstrip(":"))
-        return {p for p in missing if VALID_PKG_NAME.match(p)}
+        # Also keep local RPM path globs (e.g. /root/rpmbuild/RPMS/x86_64/pkg*)
+        # so the retry logic can add them to excludePackages. The upstream tool
+        # uses simple set subtraction to apply excludePackages, so the exact
+        # string extracted from the Containerfile will be excluded on retry.
+        return {
+            p for p in missing if VALID_PKG_NAME.match(p) or (p.startswith("/") and ("*" in p or p.endswith(".rpm")))
+        }

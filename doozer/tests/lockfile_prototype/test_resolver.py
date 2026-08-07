@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import yaml
+from doozerlib.lockfile_prototype.constants import RPM_LOCKFILE_ENTRY_POINT
 from doozerlib.lockfile_prototype.models import (
     LockfileData,
     RpmsInConfig,
@@ -134,6 +135,29 @@ class TestRpmResolver(unittest.TestCase):
         mock_gather.assert_called_once()
 
     @patch("doozerlib.lockfile_prototype.resolver.cmd_gather_async")
+    def test_resolve_uses_entry_point(self, mock_gather):
+        """
+        resolve() always invokes the tool via -c RPM_LOCKFILE_ENTRY_POINT.
+        """
+
+        async def mock_cmd(cmd, **kwargs):
+            self.assertEqual(cmd[2], RPM_LOCKFILE_ENTRY_POINT)
+            outfile_idx = cmd.index("--outfile") + 1
+            with open(cmd[outfile_idx], "w") as f:
+                yaml.safe_dump(self.FAKE_LOCKFILE_DATA, f)
+            return (0, "", "")
+
+        mock_gather.side_effect = mock_cmd
+        resolver = RpmResolver(working_dir=Path(tempfile.mkdtemp()))
+        config = RpmsInConfig(
+            arches=["x86_64"],
+            contentOrigin={"repos": []},
+            packages=[],
+        )
+        asyncio.run(resolver.resolve(config))
+        mock_gather.assert_called_once()
+
+    @patch("doozerlib.lockfile_prototype.resolver.cmd_gather_async")
     def test_resolve_sets_dnf_cache_env(self, mock_gather):
         """
         RPM_LOCKFILE_PROTOTYPE_DNF_CACHE should be set in the subprocess
@@ -225,6 +249,79 @@ class TestRpmResolver(unittest.TestCase):
         self.assertNotIn("XDG_CACHE_HOME", captured_envs[0])
 
 
+class TestPackagesFromContainerfile(unittest.TestCase):
+    FAKE_LOCKFILE_DATA = TestRpmResolver.FAKE_LOCKFILE_DATA
+
+    @patch("doozerlib.lockfile_prototype.resolver.cmd_gather_async")
+    def test_packages_from_containerfile_injected_into_config(self, mock_gather):
+        """
+        When containerfile_path and stage_num are provided, the config
+        written to rpms.in.yaml must include packagesFromContainerfile
+        with the file path and 1-indexed stageNum.
+        """
+        captured_configs: list[dict] = []
+
+        async def mock_cmd(cmd, **kwargs):
+            infile = cmd[-1]
+            with open(infile) as f:
+                captured_configs.append(yaml.safe_load(f))
+            outfile_idx = cmd.index("--outfile") + 1
+            with open(cmd[outfile_idx], "w") as f:
+                yaml.safe_dump(self.FAKE_LOCKFILE_DATA, f)
+            return (0, "", "")
+
+        mock_gather.side_effect = mock_cmd
+        resolver = RpmResolver(working_dir=Path(tempfile.mkdtemp()))
+        config = RpmsInConfig(
+            arches=["x86_64"],
+            contentOrigin={"repos": []},
+            packages=["extra-pkg"],
+        )
+        asyncio.run(
+            resolver.resolve(
+                config,
+                image_pullspec="quay.io/test/img@sha256:abc",
+                containerfile_path="/path/to/Dockerfile",
+                stage_num=2,
+            )
+        )
+
+        self.assertEqual(len(captured_configs), 1)
+        pfc = captured_configs[0].get("packagesFromContainerfile")
+        self.assertIsNotNone(pfc)
+        self.assertEqual(pfc["file"], "/path/to/Dockerfile")
+        self.assertEqual(pfc["stageNum"], 2)
+
+    @patch("doozerlib.lockfile_prototype.resolver.cmd_gather_async")
+    def test_no_packages_from_containerfile_when_not_set(self, mock_gather):
+        """
+        Without containerfile_path, packagesFromContainerfile should not
+        appear in the config.
+        """
+        captured_configs: list[dict] = []
+
+        async def mock_cmd(cmd, **kwargs):
+            infile = cmd[-1]
+            with open(infile) as f:
+                captured_configs.append(yaml.safe_load(f))
+            outfile_idx = cmd.index("--outfile") + 1
+            with open(cmd[outfile_idx], "w") as f:
+                yaml.safe_dump(self.FAKE_LOCKFILE_DATA, f)
+            return (0, "", "")
+
+        mock_gather.side_effect = mock_cmd
+        resolver = RpmResolver(working_dir=Path(tempfile.mkdtemp()))
+        config = RpmsInConfig(
+            arches=["x86_64"],
+            contentOrigin={"repos": []},
+            packages=["nfs-utils"],
+        )
+        asyncio.run(resolver.resolve(config))
+
+        self.assertEqual(len(captured_configs), 1)
+        self.assertIsNone(captured_configs[0].get("packagesFromContainerfile"))
+
+
 class TestParseMissingPackages(unittest.TestCase):
     def test_cli_format(self):
         error = "missing packages: dmidecode\n"
@@ -279,6 +376,25 @@ class TestParseMissingPackages(unittest.TestCase):
         error = "missing packages: *-server-ose*"
         missing = RpmResolver.parse_missing_packages(error)
         self.assertEqual(missing, {"*-server-ose*"})
+
+    def test_local_rpm_path_glob(self):
+        """
+        Local RPM path globs like /root/rpmbuild/RPMS/x86_64/pkcs11-helper*
+        must be returned so the retry loop can add them to excludePackages.
+        The upstream tool uses set subtraction to apply excludePackages, so
+        the exact extracted string will be excluded on retry.
+        """
+        error = "ERROR:dnf:No match for argument: /root/rpmbuild/RPMS/x86_64/pkcs11-helper*"
+        missing = RpmResolver.parse_missing_packages(error)
+        self.assertEqual(missing, {"/root/rpmbuild/RPMS/x86_64/pkcs11-helper*"})
+
+    def test_local_rpm_path_with_extension(self):
+        """
+        Local RPM paths ending in .rpm must also be returned.
+        """
+        error = "No match for argument: /root/rpmbuild/RPMS/x86_64/pkcs11-helper-2.3.el9.x86_64.rpm"
+        missing = RpmResolver.parse_missing_packages(error)
+        self.assertEqual(missing, {"/root/rpmbuild/RPMS/x86_64/pkcs11-helper-2.3.el9.x86_64.rpm"})
 
     def test_no_match(self):
         error = "Some other error message\n"

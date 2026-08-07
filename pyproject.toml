@@ -89,7 +89,7 @@ dependencies = [
 ]
 
 [tool.uv.sources]
-rpm-lockfile-prototype = { git = "https://github.com/konflux-ci/rpm-lockfile-prototype" }
+rpm-lockfile-prototype = { git = "https://github.com/konflux-ci/rpm-lockfile-prototype", tag = "v0.29.0" }
 
 [dependency-groups]
 dev = [

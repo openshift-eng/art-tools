@@ -13,6 +13,7 @@ import yaml
 from doozerlib.lockfile_prototype.container_utils import ContainerImageHelper
 from doozerlib.lockfile_prototype.generator import (
     RpmLockfilePrototypeGenerator,
+    _detect_stages_with_bare_updates,
     _is_local_rpm,
     build_rpms_in_yaml,
 )
@@ -290,14 +291,18 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
             asyncio.run(generator.generate_lockfile(meta, dest_dir))
             self.assertFalse((dest_dir / "rpms.lock.yaml").exists())
 
-    def test_generate_lockfile_writes_empty_when_no_packages(self):
+    def test_generate_lockfile_writes_empty_when_no_stages(self):
+        """
+        When the Dockerfile has no FROM instructions (total_stages == 0),
+        an empty lockfile is written.
+        """
         meta = self._make_mock_image_meta()
-        meta.config.konflux.cachi2.lockfile.get.return_value = []
         generator = self._make_generator()
 
         with TemporaryDirectory() as tmpdir:
             dest_dir = Path(tmpdir)
-            (dest_dir / "Dockerfile").write_text("FROM base\nRUN echo hello\n")
+            # Dockerfile with no FROM → total_stages == 0
+            (dest_dir / "Dockerfile").write_text("# No stages in this Dockerfile\n")
             asyncio.run(generator.generate_lockfile(meta, dest_dir))
             lockfile_path = dest_dir / "rpms.lock.yaml"
             self.assertTrue(lockfile_path.exists())
@@ -305,8 +310,13 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
                 data = yaml.safe_load(f)
             self.assertEqual(data["lockfileVersion"], 1)
             self.assertEqual(data["arches"], [])
+        generator._resolver.resolve.assert_not_called()
 
     def test_stage_alias_uses_bare_mode(self):
+        """
+        When a stage references an alias (no "/"), resolution must
+        use bare mode (image_pullspec=None).
+        """
         meta = self._make_mock_image_meta()
         generator = self._make_generator()
         generator.downstream_parents = [
@@ -316,7 +326,7 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
 
         captured_pullspecs: list[str | None] = []
 
-        async def capture_resolve(config, image_pullspec=None):
+        async def capture_resolve(config, image_pullspec=None, **kwargs):
             captured_pullspecs.append(image_pullspec)
             return FAKE_LOCKFILE_DATA.model_copy(deep=True)
 
@@ -337,190 +347,13 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
         self.assertEqual(captured_pullspecs[0], "quay.io/test/builder@sha256:abc123")
         self.assertIsNone(captured_pullspecs[1])
 
-    def test_builder_stage_reinstalls_dockerfile_packages_and_adds_conflict_detection(self):
-        """
-        Multi-stage Dockerfile where only the builder stage installs
-        packages (e.g. prometheus-promu). reinstallPackages should contain
-        the Dockerfile packages so they appear in the lockfile even when
-        already installed on some architectures. upgradePackages must NOT
-        include them (they may not be installed in the base image).
-        """
-        meta = self._make_mock_image_meta()
-        meta.config.konflux.cachi2.lockfile.get.return_value = None
-        generator = self._make_generator()
-        generator.downstream_parents = [
-            "quay.io/test/golang-builder@sha256:abc123",
-            "quay.io/test/base@sha256:def456",
-        ]
-        generator._container.get_installed_packages = AsyncMock(return_value=["bash", "gcc", "golang", "glibc"])
-
-        captured_configs: list[RpmsInConfig] = []
-
-        async def capture_resolve(config, image_pullspec=None):
-            captured_configs.append(config)
-            return FAKE_LOCKFILE_DATA.model_copy(deep=True)
-
-        generator._resolver.resolve = AsyncMock(side_effect=capture_resolve)
-
-        with TemporaryDirectory() as tmpdir:
-            dest_dir = Path(tmpdir)
-            (dest_dir / "Dockerfile").write_text(
-                "FROM golang-builder AS builder\n"
-                "RUN yum install -y prometheus-promu\n"
-                "\n"
-                "FROM base-rhel9\n"
-                "COPY --from=builder /bin/thanos /bin/thanos\n"
-            )
-            asyncio.run(generator.generate_lockfile(meta, dest_dir))
-
-        self.assertEqual(len(captured_configs), 1)
-        # reinstallPackages should contain the Dockerfile packages
-        self.assertEqual(captured_configs[0].reinstallPackages, ["prometheus-promu"])
-        # Dockerfile packages must NOT be in upgradePackages (they may
-        # not be installed in the base image — upgrade would fail)
-        self.assertNotIn("prometheus-promu", captured_configs[0].upgradePackages or [])
-        # Base image packages should be queried for conflict detection
-        generator._container.get_installed_packages.assert_called_once()
-        # Base image packages should be in the install list
-        pkg_names = [p if isinstance(p, str) else p.name for p in captured_configs[0].packages]
-        for pkg in ["bash", "gcc", "golang", "glibc"]:
-            self.assertIn(pkg, pkg_names)
-
-    def test_builder_stage_conflict_detection_includes_base_deps(self):
-        """
-        Multi-stage Dockerfile like openshift-enterprise-pod where the
-        builder stage installs gcc and the builder's base image has
-        gcc-c++ pre-installed. The lockfile should include gcc-c++ in
-        the install list for conflict detection, and reinstallPackages
-        should contain only the Dockerfile packages.
-        """
-        meta = self._make_mock_image_meta()
-        meta.config.konflux.cachi2.lockfile.get.return_value = None
-        generator = self._make_generator()
-        generator.downstream_parents = [
-            "quay.io/test/golang-builder@sha256:abc123",
-            "quay.io/test/base@sha256:def456",
-        ]
-        generator._container.get_installed_packages = AsyncMock(
-            return_value=["gcc", "gcc-c++", "glibc", "glibc-static", "libgcc"]
-        )
-
-        captured_configs: list[RpmsInConfig] = []
-
-        async def capture_resolve(config, image_pullspec=None):
-            captured_configs.append(config)
-            return FAKE_LOCKFILE_DATA.model_copy(deep=True)
-
-        generator._resolver.resolve = AsyncMock(side_effect=capture_resolve)
-
-        with TemporaryDirectory() as tmpdir:
-            dest_dir = Path(tmpdir)
-            (dest_dir / "Dockerfile").write_text(
-                "FROM golang-builder AS builder\n"
-                "RUN dnf install -y gcc glibc-static\n"
-                "\n"
-                "FROM base-rhel9\n"
-                "COPY --from=builder /bin/pause /usr/bin/pod\n"
-            )
-            asyncio.run(generator.generate_lockfile(meta, dest_dir))
-
-        self.assertEqual(len(captured_configs), 1)
-        # reinstallPackages should contain only the Dockerfile packages
-        self.assertEqual(sorted(captured_configs[0].reinstallPackages), ["gcc", "glibc-static"])
-        pkg_names = [p if isinstance(p, str) else p.name for p in captured_configs[0].packages]
-        # gcc-c++ from the base image should be in the install list
-        self.assertIn("gcc-c++", pkg_names)
-        # Already-listed packages should not be duplicated
-        self.assertEqual(pkg_names.count("gcc"), 1)
-        self.assertEqual(pkg_names.count("glibc-static"), 1)
-
-    def test_update_only_queries_base_image(self):
-        """
-        Update-only stages should pass installed packages as upgrade
-        targets so DNF uses upgrade semantics and respects dependency
-        constraints.
-        """
-        meta = self._make_mock_image_meta()
-        meta.config.konflux.cachi2.lockfile.get.return_value = None
-        generator = self._make_generator()
-        generator.downstream_parents = ["quay.io/test/base@sha256:abc123"]
-        generator._container.get_installed_packages = AsyncMock(return_value=["bash", "coreutils", "glibc"])
-
-        captured_configs: list[RpmsInConfig] = []
-        captured_pullspecs: list[str | None] = []
-
-        async def capture_resolve(config, image_pullspec=None):
-            captured_configs.append(config)
-            captured_pullspecs.append(image_pullspec)
-            return FAKE_LOCKFILE_DATA.model_copy(deep=True)
-
-        generator._resolver.resolve = AsyncMock(side_effect=capture_resolve)
-
-        with TemporaryDirectory() as tmpdir:
-            dest_dir = Path(tmpdir)
-            (dest_dir / "Dockerfile").write_text("FROM base\nRUN yum update -y && yum clean all\n")
-            asyncio.run(generator.generate_lockfile(meta, dest_dir))
-
-        self.assertEqual(generator._container.get_installed_packages.call_count, 1)
-        self.assertEqual(len(captured_configs), 1)
-        self.assertIsNotNone(captured_pullspecs[0])
-        self.assertEqual(
-            sorted(captured_configs[0].packages),
-            ["bash", "coreutils", "glibc"],
-        )
-        self.assertEqual(sorted(captured_configs[0].upgradePackages), ["bash", "coreutils", "glibc"])
-
-    def test_mixed_install_and_bare_update_uses_image_mode(self):
-        """
-        Stage with both yum install and bare yum update -y should resolve
-        in --image mode with upgradePackages=["*"] so base image packages
-        get upgraded to match build-time behavior.
-        """
-        meta = self._make_mock_image_meta()
-        meta.config.konflux.cachi2.lockfile.get.return_value = None
-        generator = self._make_generator()
-        generator.downstream_parents = ["quay.io/test/base@sha256:abc123"]
-
-        captured_configs: list[RpmsInConfig] = []
-        captured_pullspecs: list[str | None] = []
-
-        async def capture_resolve(config, image_pullspec=None):
-            captured_configs.append(config)
-            captured_pullspecs.append(image_pullspec)
-            return FAKE_LOCKFILE_DATA.model_copy(deep=True)
-
-        generator._resolver.resolve = AsyncMock(side_effect=capture_resolve)
-
-        with TemporaryDirectory() as tmpdir:
-            dest_dir = Path(tmpdir)
-            (dest_dir / "Dockerfile").write_text(
-                "FROM base\nRUN yum update -y && yum install -y aws-efs-utils && yum clean all\n"
-            )
-            asyncio.run(generator.generate_lockfile(meta, dest_dir))
-
-        self.assertEqual(len(captured_configs), 1)
-        # --image mode: pullspec is preserved
-        self.assertIsNotNone(captured_pullspecs[0])
-        # Explicit install packages in the packages list
-        pkg_names = [p if isinstance(p, str) else p.name for p in captured_configs[0].packages]
-        self.assertIn("aws-efs-utils", pkg_names)
-
-    def test_update_only_no_image_skips(self):
-        meta = self._make_mock_image_meta()
-        meta.config.konflux.cachi2.lockfile.get.return_value = None
-        generator = self._make_generator()
-        generator.downstream_parents = []
-
-        with TemporaryDirectory() as tmpdir:
-            dest_dir = Path(tmpdir)
-            (dest_dir / "Dockerfile").write_text("FROM base\nRUN yum update -y && yum clean all\n")
-            asyncio.run(generator.generate_lockfile(meta, dest_dir))
-
-        generator._resolver.resolve.assert_not_called()
-
     def test_resolve_cat_packages_from_base_image(self):
+        """
+        When $(cat /filepath) patterns appear in Dockerfile RUN commands,
+        the extra packages resolved from the base image are passed in
+        the packages field of rpms.in.yaml.
+        """
         meta = self._make_mock_image_meta()
-        meta.config.konflux.cachi2.lockfile.get.return_value = []
         generator = self._make_generator()
         generator.downstream_parents = ["quay.io/test/base@sha256:abc123"]
 
@@ -533,7 +366,7 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
 
         captured_configs: list[RpmsInConfig] = []
 
-        async def capture_resolve(config, image_pullspec=None):
+        async def capture_resolve(config, image_pullspec=None, **kwargs):
             captured_configs.append(config)
             return FAKE_LOCKFILE_DATA.model_copy(deep=True)
 
@@ -549,10 +382,54 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
         generator._container.read_file_from_image.assert_called_once()
         self.assertEqual(len(captured_configs), 1)
         pkg_names = [p if isinstance(p, str) else p.name for p in captured_configs[0].packages]
-        self.assertIn("openssl", pkg_names)
+        # Cat-resolved packages are passed as extra packages
         self.assertIn("openvswitch3.5-devel", pkg_names)
         self.assertIn("openvswitch3.5-ipsec", pkg_names)
         self.assertIn("ovn25.09-vtep", pkg_names)
+
+    def test_resolve_cat_packages_preserves_stage_indices(self):
+        """
+        When a Dockerfile has an empty first stage (no RUN commands),
+        $(cat ...) packages in a later stage must still resolve against
+        the correct parent. Previously, empty stages were skipped when
+        building stage_runs, shifting later stages to wrong indices.
+        """
+        meta = self._make_mock_image_meta()
+        generator = self._make_generator()
+        generator.downstream_parents = [
+            "quay.io/test/builder@sha256:aaa",
+            "quay.io/test/base@sha256:bbb",
+        ]
+
+        async def mock_read_file(pullspec, filepath):
+            if "bbb" in pullspec and filepath == "/more-pkgs":
+                return "extra-pkg"
+            return ""
+
+        generator._container.read_file_from_image = AsyncMock(side_effect=mock_read_file)
+
+        captured_configs: list[RpmsInConfig] = []
+
+        async def capture_resolve(config, image_pullspec=None, **kwargs):
+            captured_configs.append(config)
+            return FAKE_LOCKFILE_DATA.model_copy(deep=True)
+
+        generator._resolver.resolve = AsyncMock(side_effect=capture_resolve)
+
+        with TemporaryDirectory() as tmpdir:
+            dest_dir = Path(tmpdir)
+            (dest_dir / "Dockerfile").write_text(
+                "FROM builder AS build\nCOPY --from=src /app /app\n\nFROM base\nRUN dnf install -y $(cat /more-pkgs)\n"
+            )
+            asyncio.run(generator.generate_lockfile(meta, dest_dir))
+
+        # $(cat /more-pkgs) should resolve against stage 1 (base),
+        # not stage 0 (builder)
+        self.assertTrue(len(captured_configs) > 0)
+        all_pkg_names = []
+        for config in captured_configs:
+            all_pkg_names.extend(p if isinstance(p, str) else p.name for p in config.packages)
+        self.assertIn("extra-pkg", all_pkg_names)
 
     def test_final_stage_uses_image_mode_when_pullspec_available(self):
         """
@@ -561,15 +438,12 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
         lockfile versions match build-time behavior.
         """
         meta = self._make_mock_image_meta()
-        meta.config.konflux.cachi2.lockfile.get.return_value = None
         generator = self._make_generator()
         generator.downstream_parents = ["quay.io/test/base@sha256:abc123"]
 
-        captured_configs: list[RpmsInConfig] = []
         captured_pullspecs: list[str | None] = []
 
-        async def capture_resolve(config, image_pullspec=None):
-            captured_configs.append(config)
+        async def capture_resolve(config, image_pullspec=None, **kwargs):
             captured_pullspecs.append(image_pullspec)
             return FAKE_LOCKFILE_DATA.model_copy(deep=True)
 
@@ -580,615 +454,9 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
             (dest_dir / "Dockerfile").write_text("FROM base\nRUN dnf install -y libreswan openssl\n")
             asyncio.run(generator.generate_lockfile(meta, dest_dir))
 
-        self.assertEqual(len(captured_configs), 1)
+        self.assertEqual(len(captured_pullspecs), 1)
         # --image mode: pullspec is preserved (not forced to None)
         self.assertIsNotNone(captured_pullspecs[0])
-        # Only Dockerfile packages — base image packages come from rpmdb
-        pkg_names = sorted(p if isinstance(p, str) else p.name for p in captured_configs[0].packages)
-        self.assertIn("libreswan", pkg_names)
-        self.assertIn("openssl", pkg_names)
-
-    def test_bare_update_keeps_image_mode_no_reinstall_in_upgrade_pass(self):
-        """
-        Bare yum/dnf update with --image mode uses two-pass resolution:
-        the main pass resolves with upgradePackages only (no reinstall),
-        and a follow-up pin pass reinstalls Dockerfile packages that
-        overlap with the base image but had no upgrade available.
-
-        When no base image packages are available (empty list from
-        container query), the main pass just installs the Dockerfile
-        packages normally — no reinstall, no upgrade targets.
-        """
-        meta = self._make_mock_image_meta()
-        meta.config.konflux.cachi2.lockfile.get.return_value = None
-        generator = self._make_generator()
-
-        captured_configs: list[RpmsInConfig] = []
-        captured_pullspecs: list[str | None] = []
-
-        async def capture_resolve(config, image_pullspec=None):
-            captured_configs.append(config)
-            captured_pullspecs.append(image_pullspec)
-            return FAKE_LOCKFILE_DATA.model_copy(deep=True)
-
-        generator._resolver.resolve = AsyncMock(side_effect=capture_resolve)
-
-        with TemporaryDirectory() as tmpdir:
-            dest_dir = Path(tmpdir)
-            (dest_dir / "Dockerfile").write_text("FROM base\nRUN yum update -y && dnf install -y libreswan\n")
-            asyncio.run(
-                generator.generate_lockfile(meta, dest_dir, downstream_parents=["quay.io/test/base@sha256:abc123"])
-            )
-
-        self.assertEqual(len(captured_configs), 1)
-        # --image mode preserved
-        self.assertIsNotNone(captured_pullspecs[0])
-        # No reinstall in two-pass design — libreswan is installed via packages
-        self.assertFalse(captured_configs[0].reinstallPackages)
-        pkg_names = [p if isinstance(p, str) else p.name for p in captured_configs[0].packages]
-        self.assertIn("libreswan", pkg_names)
-        # No upgrade targets (base image query returned empty)
-        self.assertFalse(captured_configs[0].upgradePackages)
-
-    def test_mixed_install_and_bare_update_two_pass_resolution(self):
-        """
-        When a stage has both explicit installs and a bare update
-        (e.g. microdnf update -y && microdnf install -y openssl),
-        the main pass resolves with upgradePackages only (no reinstall).
-        Dockerfile packages not in the base image are installed normally
-        via the packages list. Base image packages use upgrade semantics.
-        """
-        meta = self._make_mock_image_meta()
-        meta.config.konflux.cachi2.lockfile.get.return_value = None
-        generator = self._make_generator()
-        generator.downstream_parents = ["quay.io/test/base@sha256:abc123"]
-        generator._container.get_installed_packages = AsyncMock(return_value=["audit", "bash", "glibc"])
-
-        captured_configs: list[RpmsInConfig] = []
-
-        async def capture_resolve(config, image_pullspec=None):
-            captured_configs.append(config)
-            return FAKE_LOCKFILE_DATA.model_copy(deep=True)
-
-        generator._resolver.resolve = AsyncMock(side_effect=capture_resolve)
-
-        with TemporaryDirectory() as tmpdir:
-            dest_dir = Path(tmpdir)
-            (dest_dir / "Dockerfile").write_text(
-                "FROM base\nRUN microdnf update -y && microdnf install -y openssl && microdnf clean all\n"
-            )
-            asyncio.run(generator.generate_lockfile(meta, dest_dir))
-
-        self.assertEqual(len(captured_configs), 1)
-        # No reinstall in two-pass design
-        self.assertFalse(captured_configs[0].reinstallPackages)
-        # All packages (Dockerfile + base image) in packages list
-        pkg_names = sorted(p if isinstance(p, str) else p.name for p in captured_configs[0].packages)
-        self.assertIn("openssl", pkg_names)
-        self.assertIn("audit", pkg_names)
-        # Only base image packages as upgrade targets (openssl is not
-        # in the base image, so it's installed via packages, not upgraded)
-        self.assertEqual(sorted(captured_configs[0].upgradePackages), ["audit", "bash", "glibc"])
-
-    def test_two_pass_no_reinstall_in_upgrade_pass_pin_pass_for_overlap(self):
-        """
-        Two-pass resolution for bare update + explicit installs:
-
-        Pass 1 (upgrade): no reinstallPackages at all. Dockerfile
-        packages are installed via packages, base image packages are
-        upgraded via upgradePackages. This avoids the reinstall-vs-
-        upgrade EVR conflict.
-
-        Pass 2 (pin): Dockerfile packages that overlap with the base
-        image and weren't captured by pass 1 (no upgrade available)
-        are reinstalled to pin their installed version.
-        """
-        meta = self._make_mock_image_meta()
-        meta.config.konflux.cachi2.lockfile.get.return_value = None
-        generator = self._make_generator()
-        generator.downstream_parents = ["quay.io/test/base@sha256:abc123"]
-        # python3-setuptools is already installed in the base image
-        generator._container.get_installed_packages = AsyncMock(return_value=["bash", "glibc", "python3-setuptools"])
-
-        captured_configs: list[RpmsInConfig] = []
-
-        async def capture_resolve(config, image_pullspec=None):
-            captured_configs.append(config)
-            return FAKE_LOCKFILE_DATA.model_copy(deep=True)
-
-        generator._resolver.resolve = AsyncMock(side_effect=capture_resolve)
-
-        with TemporaryDirectory() as tmpdir:
-            dest_dir = Path(tmpdir)
-            (dest_dir / "Dockerfile").write_text(
-                "FROM base\nRUN dnf upgrade -y && dnf install -y python3-setuptools git\n"
-            )
-            asyncio.run(generator.generate_lockfile(meta, dest_dir))
-
-        # Pass 1: upgrade pass — no reinstallPackages at all
-        self.assertGreaterEqual(len(captured_configs), 1)
-        main_config = captured_configs[0]
-        self.assertFalse(main_config.reinstallPackages)
-        # Both Dockerfile and base image packages in the install list
-        pkg_names = [p if isinstance(p, str) else p.name for p in main_config.packages]
-        self.assertIn("python3-setuptools", pkg_names)
-        self.assertIn("git", pkg_names)
-        # Base image packages as upgrade targets
-        self.assertIn("python3-setuptools", main_config.upgradePackages)
-        self.assertIn("bash", main_config.upgradePackages)
-        # Pass 2: per-arch pin passes for python3-setuptools (base-image
-        # overlap not in FAKE_LOCKFILE_DATA output). git is NOT a pin
-        # candidate because it's not in the base image. With per-arch
-        # resolution, one pin call per arch that's missing the package.
-        pin_configs = [c for c in captured_configs[1:] if c.reinstallPackages]
-        self.assertTrue(pin_configs, "at least one pin pass should have fired")
-        for pin_config in pin_configs:
-            self.assertIn("python3-setuptools", pin_config.reinstallPackages)
-            self.assertNotIn("git", pin_config.reinstallPackages)
-            self.assertFalse(pin_config.upgradePackages)
-
-    def test_two_pass_pin_per_arch_when_pass1_partial(self):
-        """
-        When pass 1 resolves an overlap package on only one arch (e.g.
-        x86_64 but not ppc64le), pass 2 must still pin it on the
-        missing arch. Regression test: the old code unioned locked
-        names across all arches, so a package present on any arch was
-        considered locked everywhere.
-        """
-        meta = self._make_mock_image_meta()
-        meta.config.konflux.cachi2.lockfile.get.return_value = None
-        generator = self._make_generator()
-        generator.downstream_parents = ["quay.io/test/base@sha256:abc123"]
-        generator._container.get_installed_packages = AsyncMock(return_value=["bash", "glibc", "python3-setuptools"])
-
-        # Pass 1 result has python3-setuptools on x86_64 only — not ppc64le
-        pass1_result = LockfileData(
-            lockfileVersion=1,
-            lockfileVendor="redhat",
-            arches=[
-                ArchResult(
-                    arch="x86_64",
-                    packages=[
-                        PackageEntry(
-                            url="https://example.com/python3-setuptools-53.0.0-12.el9.noarch.rpm",
-                            repoid="rhel-9-appstream-rpms",
-                            name="python3-setuptools",
-                            evr="53.0.0-12.el9",
-                        ),
-                        PackageEntry(
-                            url="https://example.com/git-2.43.0-1.el9.x86_64.rpm",
-                            repoid="rhel-9-appstream-rpms",
-                            name="git",
-                            evr="2.43.0-1.el9",
-                        ),
-                    ],
-                    source=[],
-                    module_metadata=[],
-                ),
-                ArchResult(
-                    arch="ppc64le",
-                    packages=[
-                        PackageEntry(
-                            url="https://example.com/git-2.43.0-1.el9.ppc64le.rpm",
-                            repoid="rhel-9-appstream-rpms",
-                            name="git",
-                            evr="2.43.0-1.el9",
-                        ),
-                    ],
-                    source=[],
-                    module_metadata=[],
-                ),
-            ],
-        )
-
-        pin_result = LockfileData(
-            lockfileVersion=1,
-            lockfileVendor="redhat",
-            arches=[
-                ArchResult(
-                    arch="ppc64le",
-                    packages=[
-                        PackageEntry(
-                            url="https://example.com/python3-setuptools-53.0.0-12.el9.noarch.rpm",
-                            repoid="rhel-9-appstream-rpms",
-                            name="python3-setuptools",
-                            evr="53.0.0-12.el9",
-                        ),
-                    ],
-                    source=[],
-                    module_metadata=[],
-                ),
-            ],
-        )
-
-        captured_configs: list[RpmsInConfig] = []
-
-        async def mock_resolve(config, image_pullspec=None):
-            captured_configs.append(config)
-            if config.reinstallPackages:
-                return pin_result.model_copy(deep=True)
-            return pass1_result.model_copy(deep=True)
-
-        generator._resolver.resolve = AsyncMock(side_effect=mock_resolve)
-
-        with TemporaryDirectory() as tmpdir:
-            dest_dir = Path(tmpdir)
-            (dest_dir / "Dockerfile").write_text(
-                "FROM base\nRUN dnf upgrade -y && dnf install -y python3-setuptools git\n"
-            )
-            asyncio.run(generator.generate_lockfile(meta, dest_dir))
-
-        # Pass 1: upgrade pass
-        self.assertGreaterEqual(len(captured_configs), 1)
-        self.assertFalse(captured_configs[0].reinstallPackages)
-
-        # Pass 2: pin pass should target only ppc64le (x86_64 already has it)
-        pin_configs = [c for c in captured_configs if c.reinstallPackages]
-        self.assertTrue(pin_configs, "pin pass should have fired")
-        self.assertEqual(len(pin_configs), 1, "only one arch should need pinning")
-        self.assertEqual(pin_configs[0].arches, ["ppc64le"], "pin pass should only target arch missing the package")
-        self.assertIn("python3-setuptools", pin_configs[0].reinstallPackages)
-
-    def test_base_image_overlap_package_survives_retry_exhaustion_fallback(self):
-        """
-        When the main retry loop exhausts (unrelated packages keep
-        failing) and falls back, a Dockerfile package that's also a base
-        image package (only reachable via upgrade semantics, since it's
-        excluded from reinstall) must still make it into the fallback's
-        upgradePackages — not get wiped out by a blanket upgrade-targets
-        clear before the fallback runs.
-        """
-        meta = self._make_mock_image_meta()
-        meta.config.konflux.cachi2.lockfile.get.return_value = None
-        generator = self._make_generator()
-        generator.downstream_parents = ["quay.io/test/base@sha256:abc123"]
-        # python3-setuptools is both a Dockerfile package and already
-        # installed; the other 5 are pure base image noise that will each
-        # fail resolution in turn, exhausting the main retry loop.
-        failing_pkgs = [f"base-noise-{i}" for i in range(5)]
-        generator._container.get_installed_packages = AsyncMock(return_value=["python3-setuptools", *failing_pkgs])
-
-        call_count = 0
-
-        async def mock_resolve(config, image_pullspec=None):
-            nonlocal call_count
-            call_count += 1
-            pkg_names = [p if isinstance(p, str) else p.name for p in (config.packages or [])]
-            pkg_names += config.reinstallPackages or []
-            pkg_names += config.upgradePackages or []
-            for pkg in failing_pkgs:
-                if pkg in pkg_names:
-                    raise RuntimeError(f"No match for argument: {pkg}")
-            return FAKE_LOCKFILE_DATA.model_copy(deep=True)
-
-        generator._resolver.resolve = AsyncMock(side_effect=mock_resolve)
-
-        with TemporaryDirectory() as tmpdir:
-            dest_dir = Path(tmpdir)
-            (dest_dir / "Dockerfile").write_text(
-                "FROM base\nRUN dnf upgrade -y && dnf install -y python3-setuptools git\n"
-            )
-            asyncio.run(generator.generate_lockfile(meta, dest_dir))
-
-        self.assertTrue(generator.upgrades_dropped)
-        # Fallback should have been reached (5 main-loop retries exhausted).
-        # Some later calls are _recover_stripped_per_arch attempts for the
-        # noise packages (unrelated to this assertion), so check across all
-        # calls rather than assuming a fixed index: python3-setuptools must
-        # have been offered as an upgrade target at some point post-fallback.
-        all_configs = [c.args[0] for c in generator._resolver.resolve.call_args_list]
-        self.assertTrue(
-            any("python3-setuptools" in (c.upgradePackages or []) for c in all_configs),
-            "python3-setuptools should appear in upgradePackages in at least one resolve call",
-        )
-        # No reinstallPackages in any upgrade pass call
-        main_configs = [c for c in all_configs if c.upgradePackages]
-        self.assertTrue(
-            all(not (c.reinstallPackages or []) for c in main_configs),
-            "no reinstallPackages should be set during upgrade pass",
-        )
-        # Pin pass should have fired for python3-setuptools since it's
-        # a base-image overlap package not in the resolver output
-        # (FAKE_LOCKFILE_DATA only has nfs-utils).
-        pin_configs = [c for c in all_configs if not c.upgradePackages]
-        self.assertTrue(
-            any("python3-setuptools" in (c.reinstallPackages or []) for c in pin_configs),
-            "python3-setuptools should be reinstalled in pin pass",
-        )
-
-    def test_all_dockerfile_packages_in_base_image_pin_pass_prevents_empty(self):
-        """
-        When ALL Dockerfile install packages are also base image packages
-        and no upgrades are available, the upgrade pass produces an empty
-        lockfile. The pin pass must reinstall them so the lockfile is not
-        empty (reproduces the ibm-vpc-node-label-updater scenario).
-        """
-        meta = self._make_mock_image_meta()
-        meta.config.konflux.cachi2.lockfile.get.return_value = None
-        generator = self._make_generator()
-        generator.downstream_parents = ["quay.io/test/base@sha256:abc123"]
-        # All Dockerfile packages are already in the base image
-        generator._container.get_installed_packages = AsyncMock(
-            return_value=["bash", "glibc", "ca-certificates", "openssl"]
-        )
-
-        # Simulate "no upgrades available": resolver returns empty lockfile
-        # on the main pass, and populated on the gap-fill pass.
-        empty_lockfile = LockfileData(
-            lockfileVersion=1,
-            lockfileVendor="redhat",
-            arches=[ArchResult(arch="x86_64", packages=[], source=[], module_metadata=[])],
-        )
-        gap_lockfile = LockfileData(
-            lockfileVersion=1,
-            lockfileVendor="redhat",
-            arches=[
-                ArchResult(
-                    arch="x86_64",
-                    packages=[
-                        PackageEntry(
-                            url="https://example.com/ca-certificates-2025.2.80.noarch.rpm",
-                            repoid="rhel-8-baseos-rpms",
-                            name="ca-certificates",
-                            evr="2025.2.80-80.1.el8_6",
-                        )
-                    ],
-                    source=[],
-                    module_metadata=[],
-                )
-            ],
-        )
-
-        call_count = 0
-
-        async def mock_resolve(config, image_pullspec=None):
-            nonlocal call_count
-            call_count += 1
-            if config.upgradePackages:
-                return empty_lockfile.model_copy(deep=True)
-            return gap_lockfile.model_copy(deep=True)
-
-        generator._resolver.resolve = AsyncMock(side_effect=mock_resolve)
-
-        with TemporaryDirectory() as tmpdir:
-            dest_dir = Path(tmpdir)
-            (dest_dir / "Dockerfile").write_text("FROM base\nRUN dnf update -y && dnf install -y ca-certificates\n")
-            asyncio.run(generator.generate_lockfile(meta, dest_dir))
-
-        # 1 upgrade pass + 1 per-arch pin call for each arch missing
-        # ca-certificates (both x86_64 and ppc64le are missing it)
-        self.assertGreaterEqual(call_count, 2)
-        all_configs = [c.args[0] for c in generator._resolver.resolve.call_args_list]
-        # First call: main upgrade pass (upgradePackages set)
-        self.assertTrue(all_configs[0].upgradePackages)
-        # Remaining calls: per-arch gap-fill reinstalls (no upgradePackages)
-        pin_configs = [c for c in all_configs[1:] if c.reinstallPackages]
-        self.assertTrue(pin_configs, "at least one pin pass should have fired")
-        for pc in pin_configs:
-            self.assertFalse(pc.upgradePackages)
-            self.assertIn("ca-certificates", pc.reinstallPackages)
-
-    def test_reinstall_packages_also_passed_as_upgrade_targets(self):
-        """
-        Base image packages passed as reinstallPackages must also appear
-        in upgradePackages so rpm-lockfile-prototype skips
-        PackagesNotAvailableError (installed version not in repos) instead
-        of crashing.
-        """
-        meta = self._make_mock_image_meta()
-        meta.config.konflux.cachi2.lockfile.get.return_value = None
-        generator = self._make_generator()
-        generator.downstream_parents = ["quay.io/test/base@sha256:abc123"]
-        generator._container.get_installed_packages = AsyncMock(return_value=["sed", "glibc", "libnghttp2"])
-
-        captured_configs: list[RpmsInConfig] = []
-
-        async def capture_resolve(config, image_pullspec=None):
-            captured_configs.append(config)
-            return FAKE_LOCKFILE_DATA.model_copy(deep=True)
-
-        generator._resolver.resolve = AsyncMock(side_effect=capture_resolve)
-
-        with TemporaryDirectory() as tmpdir:
-            dest_dir = Path(tmpdir)
-            (dest_dir / "Dockerfile").write_text("FROM base\nRUN dnf install -y curl\n")
-            asyncio.run(generator.generate_lockfile(meta, dest_dir))
-
-        self.assertEqual(len(captured_configs), 1)
-        reinstall = captured_configs[0].reinstallPackages
-        upgrade = captured_configs[0].upgradePackages
-        # All reinstall packages must also be in upgrade targets
-        for pkg in reinstall:
-            self.assertIn(pkg, upgrade)
-        # Dockerfile install packages are NOT in reinstall or upgrade
-        self.assertNotIn("curl", reinstall)
-
-    def test_reinstall_retry_skips_retries_when_all_optional(self):
-        """
-        When a reinstall/upgrade package fails and all remaining reinstall
-        packages are optional (strippable), the retry loop should exit
-        early and fall back to resolving without reinstall packages.
-        """
-        meta = self._make_mock_image_meta()
-        meta.config.konflux.cachi2.lockfile.get.return_value = None
-        generator = self._make_generator()
-        generator.downstream_parents = ["quay.io/test/base@sha256:abc123"]
-        generator._container.get_installed_packages = AsyncMock(return_value=["nonexistent-pkg", "glibc"])
-
-        async def mock_resolve(config, image_pullspec=None):
-            pkg_names = [p if isinstance(p, str) else p.name for p in (config.packages or [])]
-            pkg_names += config.reinstallPackages or []
-            pkg_names += config.upgradePackages or []
-            if "nonexistent-pkg" in pkg_names:
-                raise RuntimeError("No match for argument: nonexistent-pkg")
-            return FAKE_LOCKFILE_DATA.model_copy(deep=True)
-
-        generator._resolver.resolve = AsyncMock(side_effect=mock_resolve)
-
-        with TemporaryDirectory() as tmpdir:
-            dest_dir = Path(tmpdir)
-            (dest_dir / "Dockerfile").write_text("FROM base\nRUN dnf install -y curl\n")
-            asyncio.run(generator.generate_lockfile(meta, dest_dir))
-
-        # First attempt fails, early exit + fallback succeeds, then per-arch
-        # recovery is attempted for the stripped package (2 arches, both fail
-        # since nonexistent-pkg is genuinely unavailable everywhere) = 4 calls.
-        self.assertEqual(generator._resolver.resolve.call_count, 4)
-        # Fallback should drop all optional reinstall packages
-        fallback_config = generator._resolver.resolve.call_args_list[1][0][0]
-        self.assertEqual(fallback_config.reinstallPackages, [])
-        # Dockerfile package must still be in the install list
-        pkg_names = [p if isinstance(p, str) else p.name for p in fallback_config.packages]
-        self.assertIn("curl", pkg_names)
-
-    def test_fallback_sets_upgrades_dropped_flag(self):
-        """
-        When the retry loop exhausts retries and the fallback clears
-        upgrade targets, generator.upgrades_dropped must be True so
-        the rebaser strips dnf update from the Dockerfile.
-        """
-        meta = self._make_mock_image_meta()
-        meta.config.konflux.cachi2.lockfile.get.return_value = None
-        generator = self._make_generator()
-        generator.downstream_parents = ["quay.io/test/base@sha256:abc123"]
-        generator._container.get_installed_packages = AsyncMock(return_value=["bad-pkg", "glibc"])
-
-        async def mock_resolve(config, image_pullspec=None):
-            pkg_names = [p if isinstance(p, str) else p.name for p in (config.packages or [])]
-            pkg_names += config.reinstallPackages or []
-            pkg_names += config.upgradePackages or []
-            if "bad-pkg" in pkg_names:
-                raise RuntimeError("No match for argument: bad-pkg")
-            return FAKE_LOCKFILE_DATA.model_copy(deep=True)
-
-        generator._resolver.resolve = AsyncMock(side_effect=mock_resolve)
-
-        self.assertFalse(generator.upgrades_dropped)
-
-        with TemporaryDirectory() as tmpdir:
-            dest_dir = Path(tmpdir)
-            (dest_dir / "Dockerfile").write_text("FROM base\nRUN dnf install -y curl\n")
-            asyncio.run(generator.generate_lockfile(meta, dest_dir))
-
-        self.assertTrue(generator.upgrades_dropped)
-        # Index 1 is the fallback call (index 0 fails, indices 2+ are the
-        # per-arch recovery attempts for the stripped bad-pkg, which also
-        # fail since it's genuinely unavailable everywhere).
-        fallback_config = generator._resolver.resolve.call_args_list[1][0][0]
-        self.assertEqual(fallback_config.upgradePackages, [])
-
-    def test_reinstall_only_strips_do_not_exhaust_retries(self):
-        """
-        When packages fail resolution but are only in reinstallPackages
-        (not in the main install list), stripping them should not count
-        toward the retry limit. After MAX_REINSTALL_STRIP_RETRIES
-        consecutive reinstall-only failures, remaining reinstall packages
-        are bulk-dropped to avoid serial retries.
-        """
-        meta = self._make_mock_image_meta()
-        meta.config.konflux.cachi2.lockfile.get.return_value = None
-        generator = self._make_generator()
-        generator.downstream_parents = ["quay.io/test/base@sha256:abc123"]
-        generator._container.get_installed_packages = AsyncMock(return_value=["glibc"])
-
-        reinstall_failures = [f"reinstall-fail-{i}" for i in range(10)]
-
-        async def mock_resolve(config, image_pullspec=None):
-            for pkg in reinstall_failures:
-                if pkg in (config.reinstallPackages or []):
-                    raise RuntimeError(f"No match for argument: {pkg}")
-            return FAKE_LOCKFILE_DATA.model_copy(deep=True)
-
-        generator._resolver.resolve = AsyncMock(side_effect=mock_resolve)
-
-        with TemporaryDirectory() as tmpdir:
-            dest_dir = Path(tmpdir)
-            (dest_dir / "Dockerfile").write_text(
-                "FROM base\nRUN dnf install -y curl " + " ".join(reinstall_failures) + "\n"
-            )
-            asyncio.run(generator.generate_lockfile(meta, dest_dir))
-
-        # Should NOT have hit the fallback — reinstall-only strips
-        # don't count as real retries
-        self.assertFalse(generator.upgrades_dropped)
-
-    def test_reinstall_bulk_drop_limits_resolve_calls(self):
-        """
-        With many unavailable reinstall packages, bulk-drop after
-        MAX_REINSTALL_STRIP_RETRIES consecutive failures should keep
-        total resolve calls low instead of stripping one at a time.
-        """
-        meta = self._make_mock_image_meta()
-        meta.config.konflux.cachi2.lockfile.get.return_value = None
-        generator = self._make_generator()
-        generator.downstream_parents = ["quay.io/test/base@sha256:abc123"]
-        generator._container.get_installed_packages = AsyncMock(return_value=["glibc"])
-
-        reinstall_failures = [f"bad-pkg-{i}" for i in range(50)]
-
-        async def mock_resolve(config, image_pullspec=None):
-            for pkg in reinstall_failures:
-                if pkg in (config.reinstallPackages or []):
-                    raise RuntimeError(f"No match for argument: {pkg}")
-            return FAKE_LOCKFILE_DATA.model_copy(deep=True)
-
-        generator._resolver.resolve = AsyncMock(side_effect=mock_resolve)
-
-        with TemporaryDirectory() as tmpdir:
-            dest_dir = Path(tmpdir)
-            (dest_dir / "Dockerfile").write_text(
-                "FROM base\nRUN dnf install -y curl " + " ".join(reinstall_failures) + "\n"
-            )
-            asyncio.run(generator.generate_lockfile(meta, dest_dir))
-
-        self.assertFalse(generator.upgrades_dropped)
-        # 5 individual strip retries + 1 success after bulk-drop + per-arch
-        # recovery attempts. Without bulk-drop this would be 51+ calls.
-        self.assertLess(generator._resolver.resolve.call_count, 15)
-
-    def test_fallback_packages_used_when_image_unreachable(self):
-        """
-        When base image is unreachable but fallback_installed has data
-        from parent lockfile, conflict detection should use the fallback
-        packages instead of skipping.
-        """
-        meta = self._make_mock_image_meta()
-        meta.config.konflux.cachi2.lockfile.get.return_value = None
-        generator = self._make_generator()
-        generator.downstream_parents = ["registry.redhat.io/openshift/art-images-base:unreachable-tag"]
-        # Image not reachable: resolve_to_digest returns same pullspec (no digest)
-        generator._container.resolve_to_digest = AsyncMock(
-            return_value="registry.redhat.io/openshift/art-images-base:unreachable-tag"
-        )
-        # Provide fallback from parent lockfile
-
-        captured_configs: list[RpmsInConfig] = []
-
-        async def capture_resolve(config, image_pullspec=None):
-            captured_configs.append(config)
-            return FAKE_LOCKFILE_DATA.model_copy(deep=True)
-
-        generator._resolver.resolve = AsyncMock(side_effect=capture_resolve)
-
-        with TemporaryDirectory() as tmpdir:
-            dest_dir = Path(tmpdir)
-            (dest_dir / "Dockerfile").write_text("FROM base\nRUN dnf install -y libreswan\n")
-            asyncio.run(
-                generator.generate_lockfile(
-                    meta, dest_dir, fallback_installed={0: ["glibc", "gnutls", "crypto-policies"]}
-                )
-            )
-
-        self.assertEqual(len(captured_configs), 1)
-        # Fallback packages should be included for conflict detection
-        pkg_names = [p if isinstance(p, str) else p.name for p in captured_configs[0].packages]
-        self.assertIn("libreswan", pkg_names)
-        self.assertIn("glibc", pkg_names)
-        self.assertIn("gnutls", pkg_names)
-        self.assertIn("crypto-policies", pkg_names)
-        # get_installed_packages should NOT be called (image unreachable,
-        # fallback used instead)
-        generator._container.get_installed_packages.assert_not_called()
 
     def test_cat_file_resolved_from_parent_dockerfile_heredoc(self):
         """
@@ -1197,7 +465,6 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
         for RUN commands that generate the file via here-string + sed.
         """
         meta = self._make_mock_image_meta()
-        meta.config.konflux.cachi2.lockfile.get.return_value = None
         generator = self._make_generator()
         # Image unreachable
         generator._container.resolve_to_digest = AsyncMock(return_value="registry.redhat.io/base:unreachable-tag")
@@ -1205,7 +472,7 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
 
         captured_configs: list[RpmsInConfig] = []
 
-        async def capture_resolve(config, image_pullspec=None):
+        async def capture_resolve(config, image_pullspec=None, **kwargs):
             captured_configs.append(config)
             return FAKE_LOCKFILE_DATA.model_copy(deep=True)
 
@@ -1239,107 +506,26 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
 
         self.assertEqual(len(captured_configs), 1)
         pkg_names = [p if isinstance(p, str) else p.name for p in captured_configs[0].packages]
-        self.assertIn("openssl", pkg_names)
+        # Cat-resolved packages from parent source
         self.assertIn("openvswitch3.5-devel", pkg_names)
         self.assertIn("ovn25.09-vtep", pkg_names)
 
     def test_retry_on_missing_packages(self):
-        meta = self._make_mock_image_meta()
+        """
+        When the resolver reports a missing package in the extra packages
+        list, the retry loop strips it and retries.
+        """
         generator = self._make_generator()
         generator.downstream_parents = ["quay.io/test/base@sha256:abc123"]
 
-        async def mock_resolve(config, image_pullspec=None):
+        async def mock_resolve(config, image_pullspec=None, **kwargs):
             pkg_names = [p if isinstance(p, str) else p.name for p in (config.packages or [])]
-            pkg_names += config.upgradePackages or []
             if "dmidecode" in pkg_names:
                 raise RuntimeError("No match for argument: dmidecode")
             return FAKE_LOCKFILE_DATA.model_copy(deep=True)
 
         generator._resolver.resolve = AsyncMock(side_effect=mock_resolve)
 
-        with TemporaryDirectory() as tmpdir:
-            dest_dir = Path(tmpdir)
-            (dest_dir / "Dockerfile").write_text("FROM base\nRUN yum -y install nfs-utils dmidecode\n")
-            asyncio.run(generator.generate_lockfile(meta, dest_dir))
-
-            # 1 failing attempt + 1 successful retry + 2 per-arch recovery
-            # attempts for dmidecode (both fail, genuinely unavailable) = 4.
-            self.assertEqual(generator._resolver.resolve.call_count, 4)
-            self.assertTrue((dest_dir / "rpms.lock.yaml").exists())
-
-    def test_resolve_stage_with_retry_no_upgrade_packages_when_bare(self):
-        """
-        When image_pullspec is None (bare/final stage), upgrade_packages must
-        not be passed to build_rpms_in_yaml even if update_targets is non-empty.
-        Passing upgrade_packages with --bare causes dnf.exceptions.PackagesNotInstalledError
-        because the installed sack is empty.
-        """
-        generator = self._make_generator()
-        generator.downstream_parents = ["quay.io/test/base@sha256:abc123"]
-
-        captured_configs: list[RpmsInConfig] = []
-
-        async def capture_resolve(config, image_pullspec=None):
-            captured_configs.append(config)
-            return FAKE_LOCKFILE_DATA.model_copy(deep=True)
-
-        generator._resolver.resolve = AsyncMock(side_effect=capture_resolve)
-
-        repos = [
-            RepoEntry(
-                repoid="rhel-9-baseos-rpms",
-                baseurl="https://example.com/baseos/$basearch/os/",
-            )
-        ]
-        update_targets = ["bash", "glibc", "coreutils"]
-
-        asyncio.run(
-            generator._resolve_stage_with_retry(
-                repo_list=repos,
-                arches=["x86_64"],
-                packages=["nfs-utils"] + update_targets,
-                arch_pkgs={},
-                update_targets=update_targets,
-                image_pullspec=None,
-                distgit_key="test-image",
-                stage_num=0,
-            )
-        )
-
-        self.assertEqual(len(captured_configs), 1)
-        # upgrade_packages must be empty (not passed) when image_pullspec is None
-        self.assertEqual(
-            captured_configs[0].upgradePackages,
-            [],
-            "upgrade_packages must be None/empty when image_pullspec is None (bare mode)",
-        )
-
-    def test_retry_removes_missing_package_from_upgrade_targets(self):
-        """
-        When rpm-lockfile-prototype fails with PackagesNotInstalledError
-        for a package in upgradePackages, the retry loop must remove it
-        from both remaining_packages and remaining_update_targets.
-        """
-        generator = self._make_generator()
-        generator.downstream_parents = ["quay.io/test/base@sha256:abc123"]
-
-        captured_configs: list[RpmsInConfig] = []
-        call_count = 0
-
-        async def mock_resolve(config, image_pullspec=None):
-            nonlocal call_count
-            captured_configs.append(config)
-            call_count += 1
-            if call_count == 1:
-                raise RuntimeError(
-                    "dnf.exceptions.PackagesNotInstalledError: "
-                    "No match for argument: policycoreutils-python-utils: "
-                    "policycoreutils-python-utils"
-                )
-            return FAKE_LOCKFILE_DATA.model_copy(deep=True)
-
-        generator._resolver.resolve = AsyncMock(side_effect=mock_resolve)
-
         repos = [
             RepoEntry(
                 repoid="rhel-9-baseos-rpms",
@@ -1347,84 +533,34 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
             )
         ]
 
-        asyncio.run(
+        result = asyncio.run(
             generator._resolve_stage_with_retry(
                 repo_list=repos,
                 arches=["x86_64"],
-                packages=["nfs-utils", "policycoreutils-python-utils"],
-                arch_pkgs={},
-                update_targets=["policycoreutils-python-utils"],
+                packages=["nfs-utils", "dmidecode"],
                 image_pullspec="quay.io/test/base@sha256:abc123",
                 distgit_key="test-image",
                 stage_num=0,
             )
         )
 
-        self.assertEqual(call_count, 2)
-        self.assertNotIn("policycoreutils-python-utils", captured_configs[1].packages)
-        self.assertNotIn("policycoreutils-python-utils", captured_configs[1].upgradePackages)
-
-    def test_retry_warns_and_strips_required_dockerfile_package_missing(self):
-        """
-        When a required Dockerfile package (not in strippable_packages) is
-        reported missing, _resolve_stage_with_retry must log a warning and
-        strip it during retry rather than raising immediately.
-        """
-        generator = self._make_generator()
-        generator.downstream_parents = ["quay.io/test/base@sha256:abc123"]
-
-        call_count = 0
-
-        async def mock_resolve(config, image_pullspec=None):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                raise RuntimeError("No match for argument: glibc-static")
-            return FAKE_LOCKFILE_DATA.model_copy(deep=True)
-
-        generator._resolver.resolve = AsyncMock(side_effect=mock_resolve)
-
-        repos = [
-            RepoEntry(
-                repoid="rhel-9-baseos-rpms",
-                baseurl="https://example.com/baseos/$basearch/os/",
-            )
-        ]
-
-        result = asyncio.run(
-            generator._resolve_stage_with_retry(
-                repo_list=repos,
-                arches=["x86_64"],
-                packages=["gcc", "glibc-static", "bash"],
-                arch_pkgs={},
-                update_targets=[],
-                image_pullspec="quay.io/test/base@sha256:abc123",
-                distgit_key="openshift-enterprise-pod",
-                stage_num=0,
-                strippable_packages={"bash"},
-            )
-        )
+        # 1 failing attempt + 1 successful retry = 2
+        self.assertEqual(generator._resolver.resolve.call_count, 2)
         self.assertIsNotNone(result)
-        self.assertEqual(call_count, 2)
-        second_config = generator._resolver.resolve.call_args_list[1][0][0]
-        self.assertNotIn("glibc-static", second_config.packages)
-        self.assertIn("gcc", second_config.packages)
 
-    def test_retry_strips_only_conflict_detection_packages(self):
+    def test_exclude_packages_retry_on_containerfile_missing_packages(self):
         """
-        When strippable_packages is set, only those packages are removed
-        during retries. Original Dockerfile packages are preserved.
+        When packagesFromContainerfile fails due to unavailable packages
+        (e.g. OKD-only centos-release-* packages extracted from a
+        conditional RUN block), the retry adds them to excludePackages
+        so the upstream tool skips them instead of failing.
         """
         generator = self._make_generator()
         generator.downstream_parents = ["quay.io/test/base@sha256:abc123"]
 
-        call_count = 0
-
-        async def mock_resolve(config, image_pullspec=None):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                raise RuntimeError("No match for argument: libfoo-dev")
+        async def mock_resolve(config, image_pullspec=None, containerfile_path=None, **kwargs):
+            if containerfile_path and not config.excludePackages:
+                raise RuntimeError("No match for argument: centos-release-nfv-openvswitch")
             return FAKE_LOCKFILE_DATA.model_copy(deep=True)
 
         generator._resolver.resolve = AsyncMock(side_effect=mock_resolve)
@@ -1435,379 +571,31 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
                 baseurl="https://example.com/baseos/$basearch/os/",
             )
         ]
-
-        result = asyncio.run(
-            generator._resolve_stage_with_retry(
-                repo_list=repos,
-                arches=["x86_64"],
-                packages=["gcc", "glibc-static", "libfoo-dev"],
-                arch_pkgs={},
-                update_targets=[],
-                image_pullspec="quay.io/test/base@sha256:abc123",
-                distgit_key="test-image",
-                stage_num=0,
-                strippable_packages={"libfoo-dev", "libbar"},
-            )
-        )
-
-        self.assertIsNotNone(result)
-        self.assertEqual(call_count, 2)
-        second_config = generator._resolver.resolve.call_args_list[1][0][0]
-        # Strippable package removed
-        self.assertNotIn("libfoo-dev", second_config.packages)
-        # Required packages preserved
-        self.assertIn("gcc", second_config.packages)
-        self.assertIn("glibc-static", second_config.packages)
-
-    def test_fallback_keeps_required_packages_in_reinstall(self):
-        """
-        When retry exhaustion fallback fires, required Dockerfile packages
-        that overlap with reinstallPackages must be preserved in reinstall.
-        Otherwise packages pre-installed in the base image disappear from
-        the lockfile (dnf says 'already installed', skips them).
-        """
-        generator = self._make_generator()
-        generator.downstream_parents = ["quay.io/test/base@sha256:abc123"]
-
-        failing_pkgs = [f"base-pkg-{i}" for i in range(5)]
-        call_count = 0
-
-        async def mock_resolve(config, image_pullspec=None):
-            nonlocal call_count
-            call_count += 1
-            if call_count <= 5:
-                raise RuntimeError(f"No match for argument: {failing_pkgs[call_count - 1]}")
-            return FAKE_LOCKFILE_DATA.model_copy(deep=True)
-
-        generator._resolver.resolve = AsyncMock(side_effect=mock_resolve)
-
-        repos = [
-            RepoEntry(
-                repoid="rhel-9-baseos-rpms",
-                baseurl="https://example.com/baseos/$basearch/os/",
-            )
-        ]
-
-        # Dockerfile packages: git, gzip, util-linux + failing conflict-detection pkgs
-        # Reinstall: only git, gzip (required). Failing pkgs NOT in reinstall
-        # so they trigger fully_missing → real_retries → fallback fires.
-        # "git" and "gzip" must stay in reinstall after fallback.
-        all_packages = ["git", "gzip", "util-linux", *failing_pkgs]
-        reinstall = ["git", "gzip"]
-        strippable = set(failing_pkgs)
-
-        result = asyncio.run(
-            generator._resolve_stage_with_retry(
-                repo_list=repos,
-                arches=["x86_64", "aarch64"],
-                packages=all_packages,
-                arch_pkgs={},
-                update_targets=[],
-                image_pullspec="quay.io/test/base@sha256:abc123",
-                distgit_key="openshift-enterprise-tests",
-                stage_num=1,
-                reinstall_packages=reinstall,
-                strippable_packages=strippable,
-            )
-        )
-
-        self.assertIsNotNone(result)
-        # 5 fully_missing retries + 1 fallback = 6 calls
-        self.assertEqual(call_count, 6)
-        final_config = generator._resolver.resolve.call_args_list[5][0][0]
-        # Required Dockerfile packages must remain in reinstallPackages
-        self.assertIn("git", final_config.reinstallPackages)
-        self.assertIn("gzip", final_config.reinstallPackages)
-        # Strippable packages must be gone from install list
-        pkg_names = [p if isinstance(p, str) else p.name for p in final_config.packages]
-        for pkg in failing_pkgs:
-            self.assertNotIn(pkg, pkg_names)
-
-    def test_fallback_disables_reinstall_to_upgrade_promotion(self):
-        """
-        When the retry loop exhausts and the fallback fires, reinstall
-        packages must NOT be promoted to upgradePackages. Otherwise
-        base.upgrade() raises PackagesNotInstalledError for packages
-        that are in reinstall but not installed on all arches.
-        """
-        generator = self._make_generator()
-        generator.downstream_parents = ["quay.io/test/base@sha256:abc123"]
-
-        failing_pkgs = [f"base-pkg-{i}" for i in range(5)]
-        call_count = 0
-
-        async def mock_resolve(config, image_pullspec=None):
-            nonlocal call_count
-            call_count += 1
-            if call_count <= 5:
-                raise RuntimeError(f"No match for argument: {failing_pkgs[call_count - 1]}")
-            return FAKE_LOCKFILE_DATA.model_copy(deep=True)
-
-        generator._resolver.resolve = AsyncMock(side_effect=mock_resolve)
-
-        repos = [
-            RepoEntry(
-                repoid="rhel-9-baseos-rpms",
-                baseurl="https://example.com/baseos/$basearch/os/",
-            )
-        ]
-
-        # util-linux is a Dockerfile package AND a base image package.
-        # It must stay in reinstallPackages (graceful skip if missing)
-        # but NOT appear in upgradePackages (throws if not installed).
-        all_packages = ["util-linux", "curl", *failing_pkgs]
-        reinstall = ["util-linux", "curl"]
-        strippable = set()
-
-        result = asyncio.run(
-            generator._resolve_stage_with_retry(
-                repo_list=repos,
-                arches=["x86_64", "aarch64"],
-                packages=all_packages,
-                arch_pkgs={},
-                update_targets=[],
-                image_pullspec="quay.io/test/base@sha256:abc123",
-                distgit_key="ose-vmware-vsphere-csi-driver",
-                stage_num=0,
-                reinstall_packages=reinstall,
-                strippable_packages=strippable,
-            )
-        )
-
-        self.assertIsNotNone(result)
-        self.assertEqual(call_count, 6)
-        fallback_config = generator._resolver.resolve.call_args_list[5][0][0]
-        # Required packages must stay in reinstallPackages
-        self.assertIn("util-linux", fallback_config.reinstallPackages)
-        self.assertIn("curl", fallback_config.reinstallPackages)
-        # upgradePackages must be empty — promotion disabled in fallback
-        self.assertEqual(fallback_config.upgradePackages, [])
-
-    def test_upgrade_targets_not_strippable_in_final_stage(self):
-        """
-        Dockerfile update targets (e.g. 'yum update -y python3-six') that
-        are also base image packages must not be strippable. Otherwise the
-        retry fallback drops them from reinstall and they disappear from
-        the lockfile on arches where the update has no newer version.
-        """
-        generator = self._make_generator()
-        generator.downstream_parents = ["quay.io/test/base@sha256:abc123"]
-
-        failing_pkgs = [f"base-pkg-{i}" for i in range(5)]
-        call_count = 0
-
-        async def mock_resolve(config, image_pullspec=None):
-            nonlocal call_count
-            call_count += 1
-            if call_count <= 5:
-                raise RuntimeError(f"No match for argument: {failing_pkgs[call_count - 1]}")
-            return FAKE_LOCKFILE_DATA.model_copy(deep=True)
-
-        generator._resolver.resolve = AsyncMock(side_effect=mock_resolve)
-
-        repos = [
-            RepoEntry(
-                repoid="rhel-9-baseos-rpms",
-                baseurl="https://example.com/baseos/$basearch/os/",
-            )
-        ]
-
-        # python3-six is a Dockerfile update target AND a base image package.
-        # It must NOT be strippable — it must survive the fallback in reinstall.
-        # Failing pkgs are NOT in reinstall so they trigger fully_missing →
-        # real_retries → fallback fires.
-        result = asyncio.run(
-            generator._resolve_stage_with_retry(
-                repo_list=repos,
-                arches=["x86_64", "aarch64"],
-                packages=["git", "python3-six", *failing_pkgs],
-                arch_pkgs={},
-                update_targets=["python3-six"],
-                image_pullspec="quay.io/test/base@sha256:abc123",
-                distgit_key="openshift-enterprise-tests",
-                stage_num=1,
-                reinstall_packages=["git", "python3-six"],
-                strippable_packages=set(failing_pkgs),
-            )
-        )
-
-        self.assertIsNotNone(result)
-        self.assertEqual(call_count, 6)
-        final_config = generator._resolver.resolve.call_args_list[5][0][0]
-        # python3-six must stay in reinstallPackages (not strippable)
-        self.assertIn("python3-six", final_config.reinstallPackages)
-        self.assertIn("git", final_config.reinstallPackages)
-
-    def test_fallback_strips_newly_discovered_missing_package(self):
-        """
-        A package that only surfaces as missing once the retry loop is
-        already exhausted (e.g. dmidecode, only on x86_64) must still be
-        stripped by the fallback instead of crashing the whole resolve
-        with an unguarded RuntimeError.
-        """
-        generator = self._make_generator()
-        generator.downstream_parents = ["quay.io/test/base@sha256:abc123"]
-
-        failing_pkgs = [f"base-pkg-{i}" for i in range(5)]
-        call_count = 0
-
-        async def mock_resolve(config, image_pullspec=None):
-            nonlocal call_count
-            call_count += 1
-            if call_count <= 5:
-                raise RuntimeError(f"No match for argument: {failing_pkgs[call_count - 1]}")
-            if call_count == 6:
-                raise RuntimeError("No match for argument: dmidecode")
-            return FAKE_LOCKFILE_DATA.model_copy(deep=True)
-
-        generator._resolver.resolve = AsyncMock(side_effect=mock_resolve)
-
-        repos = [
-            RepoEntry(
-                repoid="rhel-9-baseos-rpms",
-                baseurl="https://example.com/baseos/$basearch/os/",
-            )
-        ]
-
-        result = asyncio.run(
-            generator._resolve_stage_with_retry(
-                repo_list=repos,
-                arches=["x86_64", "aarch64"],
-                packages=["git", "dmidecode", *failing_pkgs],
-                arch_pkgs={},
-                update_targets=[],
-                image_pullspec="quay.io/test/base@sha256:abc123",
-                distgit_key="ose-baremetal-installer",
-                stage_num=0,
-                strippable_packages=set(failing_pkgs),
-            )
-        )
-
-        self.assertIsNotNone(result)
-        # 5 main-loop retries + 1 fallback failure on dmidecode + 1 successful fallback retry
-        self.assertEqual(call_count, 7)
-        final_config = generator._resolver.resolve.call_args_list[6][0][0]
-        pkg_names = [p if isinstance(p, str) else p.name for p in final_config.packages]
-        self.assertNotIn("dmidecode", pkg_names)
-        self.assertIn("git", pkg_names)
-
-    def test_fallback_raises_after_exhausting_its_own_retries(self):
-        """
-        If the fallback itself keeps hitting new missing packages beyond
-        its retry budget, it must raise a clear RuntimeError rather than
-        looping forever or crashing with a raw parse failure.
-        """
-        generator = self._make_generator()
-        generator.downstream_parents = ["quay.io/test/base@sha256:abc123"]
-
-        # 5 distinct packages for the main loop, then 5 more distinct
-        # packages that only ever surface during the fallback loop.
-        main_failing = [f"base-pkg-{i}" for i in range(5)]
-        fallback_failing = [f"arch-only-pkg-{i}" for i in range(5)]
-        call_count = 0
-
-        async def mock_resolve(config, image_pullspec=None):
-            nonlocal call_count
-            call_count += 1
-            if call_count <= 5:
-                raise RuntimeError(f"No match for argument: {main_failing[call_count - 1]}")
-            raise RuntimeError(f"No match for argument: {fallback_failing[call_count - 6]}")
-
-        generator._resolver.resolve = AsyncMock(side_effect=mock_resolve)
-
-        repos = [
-            RepoEntry(
-                repoid="rhel-9-baseos-rpms",
-                baseurl="https://example.com/baseos/$basearch/os/",
-            )
-        ]
-
-        with self.assertRaises(RuntimeError) as ctx:
-            asyncio.run(
-                generator._resolve_stage_with_retry(
-                    repo_list=repos,
-                    arches=["x86_64", "aarch64"],
-                    packages=["git"] + main_failing + fallback_failing,
-                    arch_pkgs={},
-                    update_targets=[],
-                    image_pullspec="quay.io/test/base@sha256:abc123",
-                    distgit_key="ose-baremetal-installer",
-                    stage_num=0,
-                    strippable_packages=set(main_failing),
-                )
-            )
-
-        self.assertIn("exceeded", str(ctx.exception))
-        # 5 main-loop attempts + 5 fallback attempts, no more calls after that
-        self.assertEqual(call_count, 10)
-
-    def test_bare_update_final_stage_triggers_per_arch_recovery(self):
-        """
-        End-to-end: final stage with a bare 'dnf upgrade -y' plus an
-        explicit install (has_bare_update=True, is_update_only=False)
-        strips an arch-specific base image package (e.g. dmidecode).
-        Per-arch recovery must still be attempted for this stage shape,
-        not just for is_update_only stages.
-        """
-        meta = self._make_mock_image_meta()
-        generator = self._make_generator()
-        generator.downstream_parents = ["quay.io/test/base@sha256:abc123"]
-        generator._container.get_installed_packages = AsyncMock(return_value=["curl", "dmidecode"])
-        generator._recover_stripped_per_arch = AsyncMock(return_value=None)
-
-        async def mock_resolve(config, image_pullspec=None):
-            pkg_names = [p if isinstance(p, str) else p.name for p in (config.packages or [])]
-            pkg_names += config.upgradePackages or []
-            if "dmidecode" in pkg_names:
-                raise RuntimeError("No match for argument: dmidecode")
-            return FAKE_LOCKFILE_DATA.model_copy(deep=True)
-
-        generator._resolver.resolve = AsyncMock(side_effect=mock_resolve)
-
-        with TemporaryDirectory() as tmpdir:
-            dest_dir = Path(tmpdir)
-            (dest_dir / "Dockerfile").write_text("FROM base-rhel9\nRUN dnf upgrade -y && dnf install -y curl\n")
-            asyncio.run(generator.generate_lockfile(meta, dest_dir))
-
-        generator._recover_stripped_per_arch.assert_awaited_once()
-        stripped_arg = generator._recover_stripped_per_arch.call_args[0][2]
-        self.assertIn("dmidecode", stripped_arg)
-
-    def test_builder_stage_strips_unavailable_packages_silently(self):
-        """
-        End-to-end: builder stage where glibc-static (Dockerfile package)
-        is not in repos. Builder stages use strippable=None (all packages
-        strippable) so unavailable packages are silently stripped rather
-        than raising.
-        """
-        meta = self._make_mock_image_meta()
-        meta.config.konflux.cachi2.lockfile.get.return_value = None
-        generator = self._make_generator()
-        generator.downstream_parents = [
-            "quay.io/test/golang-builder@sha256:abc123",
-            "quay.io/test/base@sha256:def456",
-        ]
-        generator._container.get_installed_packages = AsyncMock(return_value=["gcc", "gcc-c++", "glibc", "libgcc"])
-
-        async def mock_resolve(config, image_pullspec=None):
-            pkg_names = [p if isinstance(p, str) else p.name for p in config.packages]
-            if "glibc-static" in pkg_names:
-                raise RuntimeError("No match for argument: glibc-static")
-            return FAKE_LOCKFILE_DATA.model_copy(deep=True)
-
-        generator._resolver.resolve = AsyncMock(side_effect=mock_resolve)
 
         with TemporaryDirectory() as tmpdir:
             dest_dir = Path(tmpdir)
             (dest_dir / "Dockerfile").write_text(
-                "FROM golang-builder AS builder\n"
-                "RUN dnf install -y gcc glibc-static\n"
-                "\n"
-                "FROM base-rhel9\n"
-                "COPY --from=builder /bin/pause /usr/bin/pod\n"
+                "FROM base\nRUN dnf install -y nfs-utils centos-release-nfv-openvswitch\n"
             )
-            asyncio.run(generator.generate_lockfile(meta, dest_dir))
-            self.assertTrue((dest_dir / "rpms.lock.yaml").exists())
+
+            result = asyncio.run(
+                generator._resolve_stage_with_retry(
+                    repo_list=repos,
+                    arches=["x86_64"],
+                    packages=[],
+                    image_pullspec="quay.io/test/base@sha256:abc123",
+                    distgit_key="test-image",
+                    stage_num=0,
+                    containerfile_path=str(dest_dir / "Dockerfile"),
+                )
+            )
+
+            self.assertIsNotNone(result)
+            # 1 failing attempt + 1 retry with excludePackages = 2
+            self.assertEqual(generator._resolver.resolve.call_count, 2)
+            # Second call must have the missing package in excludePackages
+            second_config = generator._resolver.resolve.call_args_list[1][0][0]
+            self.assertIn("centos-release-nfv-openvswitch", second_config.excludePackages)
 
     def test_build_repo_list_keeps_literal_url_for_single_arch_repo(self):
         rt = MagicMock()
@@ -2080,8 +868,6 @@ class TestCrossArchReconciliation(unittest.IsolatedAsyncioTestCase):
             [],
             ["x86_64", "aarch64"],
             ["curl"],
-            {},
-            [],
             None,
             "test-image",
             0,
@@ -2109,8 +895,6 @@ class TestCrossArchReconciliation(unittest.IsolatedAsyncioTestCase):
             [],
             ["x86_64", "aarch64"],
             ["curl"],
-            {},
-            [],
             None,
             "test-image",
             0,
@@ -2146,8 +930,6 @@ class TestCrossArchReconciliation(unittest.IsolatedAsyncioTestCase):
             [],
             ["x86_64", "aarch64"],
             ["curl", "libeconf"],
-            {},
-            [],
             None,
             "test-image",
             0,
@@ -2158,80 +940,6 @@ class TestCrossArchReconciliation(unittest.IsolatedAsyncioTestCase):
         self.assertIn("libeconf-0.4.1-5.el9", second_call_packages)
         self.assertNotIn("libeconf", second_call_packages)
         self.assertIn("curl", second_call_packages)
-
-    async def test_reconciliation_excludes_mismatched_from_arch_pkgs(self):
-        """
-        When arch_pkgs contains an unversioned name matching a mismatched
-        package, the second resolution must exclude it so DNF cannot override
-        the version pin via the per-arch package list.
-        """
-        gen = self._make_generator()
-        mismatched = self._make_lockfile(
-            {
-                "x86_64": [("libeconf", "0.4.1-7.el9_8", "https://x86/libeconf-7.rpm")],
-                "aarch64": [("libeconf", "0.4.1-5.el9", "https://arm/libeconf-5.rpm")],
-            }
-        )
-        reconciled = self._make_lockfile(
-            {
-                "x86_64": [("libeconf", "0.4.1-5.el9", "https://x86/libeconf-5.rpm")],
-                "aarch64": [("libeconf", "0.4.1-5.el9", "https://arm/libeconf-5.rpm")],
-            }
-        )
-        gen._resolve_stage_with_retry = AsyncMock(side_effect=[mismatched, reconciled])
-
-        result = await gen._resolve_with_reconciliation(
-            [],
-            ["x86_64", "aarch64"],
-            ["curl"],
-            {"x86_64": ["libeconf", "xz"], "aarch64": ["libeconf"]},
-            [],
-            None,
-            "test-image",
-            0,
-        )
-        self.assertEqual(result, reconciled)
-
-        second_call_arch_pkgs = gen._resolve_stage_with_retry.call_args_list[1][0][3]
-        self.assertNotIn("libeconf", second_call_arch_pkgs.get("x86_64", []))
-        self.assertNotIn("libeconf", second_call_arch_pkgs.get("aarch64", []))
-        self.assertIn("xz", second_call_arch_pkgs.get("x86_64", []))
-
-    async def test_reconciliation_excludes_mismatched_from_update_targets(self):
-        """
-        Update targets matching mismatched packages must be excluded from the
-        second resolution to prevent base.upgrade() from overriding pins.
-        """
-        gen = self._make_generator()
-        mismatched = self._make_lockfile(
-            {
-                "x86_64": [("libeconf", "0.4.1-7.el9_8", "https://x86/libeconf-7.rpm")],
-                "aarch64": [("libeconf", "0.4.1-5.el9", "https://arm/libeconf-5.rpm")],
-            }
-        )
-        reconciled = self._make_lockfile(
-            {
-                "x86_64": [("libeconf", "0.4.1-5.el9", "https://x86/libeconf-5.rpm")],
-                "aarch64": [("libeconf", "0.4.1-5.el9", "https://arm/libeconf-5.rpm")],
-            }
-        )
-        gen._resolve_stage_with_retry = AsyncMock(side_effect=[mismatched, reconciled])
-
-        result = await gen._resolve_with_reconciliation(
-            [],
-            ["x86_64", "aarch64"],
-            ["curl", "libeconf"],
-            {},
-            ["libeconf", "curl"],
-            None,
-            "test-image",
-            0,
-        )
-        self.assertEqual(result, reconciled)
-
-        second_call_update_targets = gen._resolve_stage_with_retry.call_args_list[1][0][4]
-        self.assertNotIn("libeconf", second_call_update_targets)
-        self.assertIn("curl", second_call_update_targets)
 
     async def test_reconciliation_raises_on_resolution_error(self):
         gen = self._make_generator()
@@ -2248,8 +956,6 @@ class TestCrossArchReconciliation(unittest.IsolatedAsyncioTestCase):
                 [],
                 ["x86_64", "aarch64"],
                 ["curl"],
-                {},
-                [],
                 None,
                 "test-image",
                 0,
@@ -2273,8 +979,6 @@ class TestCrossArchReconciliation(unittest.IsolatedAsyncioTestCase):
                 [],
                 ["x86_64", "aarch64"],
                 ["curl"],
-                {},
-                [],
                 None,
                 "test-image",
                 0,
@@ -2282,108 +986,6 @@ class TestCrossArchReconciliation(unittest.IsolatedAsyncioTestCase):
         self.assertIn("reconciliation failed", str(ctx.exception))
         self.assertIn("libeconf", str(ctx.exception))
         self.assertEqual(gen._resolve_stage_with_retry.await_count, 2)
-
-    async def test_reconciliation_removes_mismatched_from_update_targets(self):
-        """
-        When a mismatched package is an update target (e.g. python3-six
-        from 'yum update -y python3-six'), the re-resolution must remove
-        it from update_targets so the upgrade doesn't override the
-        version pin.
-        """
-        gen = self._make_generator()
-        mismatched = self._make_lockfile(
-            {
-                "x86_64": [("python3-six", "1.12.0-2.el8ost", "https://x86/six.rpm")],
-                "aarch64": [("python3-six", "1.11.0-8.el8", "https://arm/six.rpm")],
-            }
-        )
-        reconciled = self._make_lockfile(
-            {
-                "x86_64": [("python3-six", "1.11.0-8.el8", "https://x86/six-old.rpm")],
-                "aarch64": [("python3-six", "1.11.0-8.el8", "https://arm/six.rpm")],
-            }
-        )
-        gen._resolve_stage_with_retry = AsyncMock(side_effect=[mismatched, reconciled])
-
-        result = await gen._resolve_with_reconciliation(
-            [],
-            ["x86_64", "aarch64"],
-            ["git", "python3-six"],
-            {},
-            ["python3-six"],
-            "quay.io/test/base@sha256:abc123",
-            "openshift-enterprise-tests",
-            1,
-        )
-        self.assertEqual(result, reconciled)
-        second_call = gen._resolve_stage_with_retry.call_args_list[1]
-        second_update_targets = second_call[0][4]
-        self.assertNotIn("python3-six", second_update_targets)
-        second_packages = second_call[0][2]
-        self.assertTrue(any("python3-six-1.11.0-8.el8" in p for p in second_packages))
-
-
-class TestIsBuilddepRequirement(unittest.TestCase):
-    def test_accepts_package_name(self):
-        self.assertTrue(RpmLockfilePrototypeGenerator._is_builddep_requirement("gcc"))
-
-    def test_accepts_package_with_dashes(self):
-        self.assertTrue(RpmLockfilePrototypeGenerator._is_builddep_requirement("openssl-devel"))
-
-    def test_rejects_rpmlib(self):
-        self.assertFalse(RpmLockfilePrototypeGenerator._is_builddep_requirement("rpmlib(CompressedFileNames)"))
-
-    def test_rejects_config(self):
-        self.assertFalse(RpmLockfilePrototypeGenerator._is_builddep_requirement("config(pkcs11-helper)"))
-
-    def test_rejects_file_path(self):
-        self.assertFalse(RpmLockfilePrototypeGenerator._is_builddep_requirement("/usr/bin/perl"))
-
-    def test_rejects_pkgconfig(self):
-        self.assertFalse(RpmLockfilePrototypeGenerator._is_builddep_requirement("pkgconfig(openssl)"))
-
-    def test_rejects_empty(self):
-        self.assertFalse(RpmLockfilePrototypeGenerator._is_builddep_requirement(""))
-
-
-class TestResolveBuilddepPackages(unittest.TestCase):
-    def _make_gen(self):
-        repos = MagicMock()
-        return RpmLockfilePrototypeGenerator(repos=repos, working_dir=Path(tempfile.mkdtemp()))
-
-    def test_no_matching_srpm(self):
-        gen = self._make_gen()
-        with TemporaryDirectory() as tmpdir:
-            result = asyncio.run(gen._resolve_builddep_packages(["pkcs11-helper*"], Path(tmpdir), "test-img"))
-            self.assertEqual(result, [])
-
-    def test_matching_srpm(self):
-        gen = self._make_gen()
-        with TemporaryDirectory() as tmpdir:
-            srpm_path = Path(tmpdir) / "pkcs11-helper-1.26.0-3.el8.src.rpm"
-            srpm_path.touch()
-
-            async def mock_gather(cmd, check=True, env=None):
-                return 0, "gcc\nopenssl-devel\nrpmlib(CompressedFileNames)\n/usr/bin/perl\nmake\n", ""
-
-            import doozerlib.lockfile_prototype.generator as gen_mod
-
-            original = gen_mod.cmd_gather_async
-            gen_mod.cmd_gather_async = mock_gather
-            try:
-                result = asyncio.run(gen._resolve_builddep_packages(["pkcs11-helper*"], Path(tmpdir), "test-img"))
-            finally:
-                gen_mod.cmd_gather_async = original
-
-            self.assertEqual(result, ["gcc", "make", "openssl-devel"])
-
-    def test_spec_file_skipped_with_warning(self):
-        gen = self._make_gen()
-        with TemporaryDirectory() as tmpdir:
-            spec_path = Path(tmpdir) / "tuned.spec"
-            spec_path.touch()
-            result = asyncio.run(gen._resolve_builddep_packages(["tuned.spec"], Path(tmpdir), "test-img"))
-            self.assertEqual(result, [])
 
 
 class TestExtractRhelVersionFromPullspec(unittest.TestCase):
@@ -2542,6 +1144,12 @@ class TestRhelMismatchEndToEnd(unittest.TestCase):
         return meta
 
     def test_el8_builder_skips_entire_stage(self):
+        """
+        Stage 0 (el8 builder) is skipped due to RHEL version mismatch.
+        Stage 1 (final, base-rhel9) is still resolved even though it has
+        no install commands — the upstream tool handles package extraction
+        and the resolver is called for every non-skipped stage.
+        """
         container = MagicMock(spec=ContainerImageHelper)
         container.resolve_to_digest = AsyncMock(side_effect=lambda p: p.split(":")[0] + "@sha256:abc123")
         container.get_installed_packages = AsyncMock(return_value=["gcc", "glibc", "readline"])
@@ -2572,10 +1180,261 @@ class TestRhelMismatchEndToEnd(unittest.TestCase):
             )
             asyncio.run(generator.generate_lockfile(self._make_mock_image_meta(), dest_dir))
 
-            # Stage 0 (el8 builder, el9-only repos) must be skipped entirely —
-            # no repos exist that could soundly resolve its packages, so it's
-            # dropped from the lockfile rather than pinning a mismatched RPM.
-            # The final stage has no install/update commands, so no stage
-            # ever reaches the resolver.
-            resolver.resolve.assert_not_called()
+            # Stage 0 (el8 builder, el9-only repos) must be skipped entirely.
+            # Stage 1 (final) is resolved even with no install commands.
+            resolver.resolve.assert_called_once()
             self.assertTrue((dest_dir / "rpms.lock.yaml").exists())
+
+
+class TestDetectStagesWithBareUpdates(unittest.TestCase):
+    """
+    Tests for _detect_stages_with_bare_updates.
+    """
+
+    def _entries_from_dockerfile(self, content: str) -> list[dict]:
+        """
+        Parse Dockerfile content into DockerfileParser structure entries.
+        """
+        from dockerfile_parse import DockerfileParser
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            df_path = Path(tmpdir) / "Dockerfile"
+            df_path.write_text(content)
+            return DockerfileParser(str(df_path)).structure
+
+    def test_bare_dnf_update(self):
+        entries = self._entries_from_dockerfile("FROM base\nRUN dnf -y update && yum clean all\n")
+        result = _detect_stages_with_bare_updates(entries)
+        self.assertEqual(result, {0})
+
+    def test_bare_yum_update(self):
+        entries = self._entries_from_dockerfile("FROM base\nRUN yum update -y && yum clean all\n")
+        result = _detect_stages_with_bare_updates(entries)
+        self.assertEqual(result, {0})
+
+    def test_bare_microdnf_update(self):
+        entries = self._entries_from_dockerfile("FROM base\nRUN microdnf update && microdnf clean all\n")
+        result = _detect_stages_with_bare_updates(entries)
+        self.assertEqual(result, {0})
+
+    def test_bare_upgrade(self):
+        entries = self._entries_from_dockerfile("FROM base\nRUN dnf upgrade -y && dnf clean all\n")
+        result = _detect_stages_with_bare_updates(entries)
+        self.assertEqual(result, {0})
+
+    def test_named_update_not_detected(self):
+        entries = self._entries_from_dockerfile("FROM base\nRUN dnf update -y openssl && dnf clean all\n")
+        result = _detect_stages_with_bare_updates(entries)
+        self.assertEqual(result, set())
+
+    def test_install_only_not_detected(self):
+        entries = self._entries_from_dockerfile("FROM base\nRUN dnf install -y nfs-utils\n")
+        result = _detect_stages_with_bare_updates(entries)
+        self.assertEqual(result, set())
+
+    def test_multi_stage_detects_correct_stage(self):
+        entries = self._entries_from_dockerfile(
+            "FROM builder AS build\n"
+            "RUN dnf install -y gcc\n"
+            "\n"
+            "FROM base\n"
+            "RUN dnf -y update && yum clean all\n"
+            "RUN dnf install -y nfs-utils\n"
+        )
+        result = _detect_stages_with_bare_updates(entries)
+        self.assertEqual(result, {1})
+
+    def test_no_run_commands(self):
+        entries = self._entries_from_dockerfile("FROM base\nCOPY . /app\n")
+        result = _detect_stages_with_bare_updates(entries)
+        self.assertEqual(result, set())
+
+
+class TestBareUpdateUpgradeResolution(unittest.TestCase):
+    """
+    Tests for bare update upgrade package resolution in generate_lockfile
+    and _resolve_stage_with_retry.
+    """
+
+    def _make_mock_repos(self) -> MagicMock:
+        repos = MagicMock()
+        baseos = MagicMock()
+        baseos.name = "rhel-9-baseos-rpms"
+        baseos.baseurl.return_value = "https://example.com/baseos/x86_64/os/"
+        baseos.content_set.return_value = "rhel-9-for-x86_64-baseos-rpms"
+        baseos.cs_optional = False
+        baseos._data.conf = {}
+        repo_map = {"rhel-9-baseos-rpms": baseos}
+        repos.__getitem__ = lambda self_repos, key: repo_map[key]
+        return repos
+
+    def _make_mock_image_meta(self) -> MagicMock:
+        meta = MagicMock()
+        meta.distgit_key = "ose-frr"
+        meta.get_arches.return_value = ["x86_64"]
+        meta.get_enabled_repos.return_value = {"rhel-9-baseos-rpms"}
+        meta.is_lockfile_generation_enabled.return_value = True
+        meta.is_cross_arch_enabled.return_value = False
+        return meta
+
+    def test_bare_update_passes_upgrade_packages(self):
+        """
+        When a non-final stage has a bare dnf update, base image packages
+        should be passed as upgradePackages to the resolver.
+        """
+        container = MagicMock(spec=ContainerImageHelper)
+        container.resolve_to_digest = AsyncMock(side_effect=lambda p: p + "@sha256:abc123")
+        container.get_installed_packages = AsyncMock(return_value=["glibc", "openssl", "rpm"])
+        container.read_file_from_image = AsyncMock(return_value="")
+
+        resolver = MagicMock(spec=RpmResolver)
+        resolver.resolve = AsyncMock(return_value=FAKE_LOCKFILE_DATA.model_copy(deep=True))
+
+        generator = RpmLockfilePrototypeGenerator(
+            repos=self._make_mock_repos(),
+            working_dir=Path(tempfile.mkdtemp()),
+            container_helper=container,
+            resolver=resolver,
+        )
+        generator.downstream_parents = [
+            "quay.io/test/builder:latest",
+            "quay.io/test/base:latest",
+        ]
+
+        with TemporaryDirectory() as tmpdir:
+            dest_dir = Path(tmpdir)
+            (dest_dir / "Dockerfile").write_text(
+                "FROM builder AS build\n"
+                "RUN dnf -y update && yum clean all\n"
+                "RUN dnf install -y gcc\n"
+                "\n"
+                "FROM base\n"
+                "COPY --from=build /app /app\n"
+            )
+
+            asyncio.run(generator.generate_lockfile(self._make_mock_image_meta(), dest_dir))
+
+        # Stage 0 has bare update — resolver should receive upgradePackages
+        calls = resolver.resolve.call_args_list
+        self.assertGreaterEqual(len(calls), 1)
+        first_config = calls[0].args[0]
+        self.assertIn("glibc", first_config.upgradePackages)
+        self.assertIn("openssl", first_config.upgradePackages)
+
+    def test_upgrade_packages_dropped_on_failure(self):
+        """
+        When upgrade packages from bare updates cause resolution failure,
+        they are all dropped and upgrades_dropped is set to True.
+        """
+        call_count = 0
+
+        async def mock_resolve(config, image_pullspec=None, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if config.upgradePackages and "glibc" in config.upgradePackages:
+                raise RuntimeError("No match for argument: glibc")
+            return FAKE_LOCKFILE_DATA.model_copy(deep=True)
+
+        container = MagicMock(spec=ContainerImageHelper)
+        container.resolve_to_digest = AsyncMock(side_effect=lambda p: p)
+        container.get_installed_packages = AsyncMock(return_value=[])
+        container.read_file_from_image = AsyncMock(return_value="")
+
+        resolver = MagicMock(spec=RpmResolver)
+        resolver.resolve = AsyncMock(side_effect=mock_resolve)
+
+        generator = RpmLockfilePrototypeGenerator(
+            repos=self._make_mock_repos(),
+            working_dir=Path(tempfile.mkdtemp()),
+            container_helper=container,
+            resolver=resolver,
+        )
+
+        repos = [RepoEntry(repoid="baseos", baseurl="https://example.com/$basearch/")]
+
+        result = asyncio.run(
+            generator._resolve_stage_with_retry(
+                repo_list=repos,
+                arches=["x86_64"],
+                packages=[],
+                image_pullspec="quay.io/test/base@sha256:abc123",
+                distgit_key="test-image",
+                stage_num=0,
+                upgrade_packages=["glibc", "openssl", "rpm"],
+            )
+        )
+
+        self.assertIsNotNone(result)
+        self.assertTrue(generator.upgrades_dropped)
+        # First call fails (glibc in upgradePackages), second succeeds without them
+        self.assertEqual(call_count, 2)
+
+    def test_bare_update_final_stage_disables_reinstall(self):
+        """
+        When the final stage has a bare dnf update, reinstallPackages
+        must be cleared to avoid pinning installed EVRs which would
+        silently suppress the upgrade.
+        """
+        container = MagicMock(spec=ContainerImageHelper)
+        container.resolve_to_digest = AsyncMock(side_effect=lambda p: p + "@sha256:abc123")
+        container.get_installed_packages = AsyncMock(return_value=["glibc", "openssl"])
+        container.read_file_from_image = AsyncMock(return_value="")
+
+        resolver = MagicMock(spec=RpmResolver)
+        resolver.resolve = AsyncMock(return_value=FAKE_LOCKFILE_DATA.model_copy(deep=True))
+
+        generator = RpmLockfilePrototypeGenerator(
+            repos=self._make_mock_repos(),
+            working_dir=Path(tempfile.mkdtemp()),
+            container_helper=container,
+            resolver=resolver,
+        )
+        generator.downstream_parents = ["quay.io/test/base:latest"]
+
+        with TemporaryDirectory() as tmpdir:
+            dest_dir = Path(tmpdir)
+            (dest_dir / "Dockerfile").write_text(
+                "FROM base\nRUN dnf install -y gcc\nRUN dnf -y update && yum clean all\n"
+            )
+
+            asyncio.run(generator.generate_lockfile(self._make_mock_image_meta(), dest_dir))
+
+        # Final stage has bare update — resolver should receive
+        # upgradePackages but NOT reinstallPackages
+        calls = resolver.resolve.call_args_list
+        self.assertGreaterEqual(len(calls), 1)
+        config = calls[0].args[0]
+        self.assertIn("glibc", config.upgradePackages)
+        self.assertEqual(config.reinstallPackages, [])
+
+    def test_bare_update_stage_alias_drops_upgrades(self):
+        """
+        When a stage with a bare update uses a stage alias (no pullspec),
+        upgrades_dropped must be set so the bare update is stripped.
+        """
+        container = MagicMock(spec=ContainerImageHelper)
+        container.resolve_to_digest = AsyncMock(side_effect=lambda p: p + "@sha256:abc123")
+        container.get_installed_packages = AsyncMock(return_value=[])
+        container.read_file_from_image = AsyncMock(return_value="")
+
+        resolver = MagicMock(spec=RpmResolver)
+        resolver.resolve = AsyncMock(return_value=FAKE_LOCKFILE_DATA.model_copy(deep=True))
+
+        generator = RpmLockfilePrototypeGenerator(
+            repos=self._make_mock_repos(),
+            working_dir=Path(tempfile.mkdtemp()),
+            container_helper=container,
+            resolver=resolver,
+        )
+        # Stage 0 is a stage alias (no "/"), stage 1 is real
+        generator.downstream_parents = ["build", "quay.io/test/base:latest"]
+
+        with TemporaryDirectory() as tmpdir:
+            dest_dir = Path(tmpdir)
+            (dest_dir / "Dockerfile").write_text(
+                "FROM scratch AS build\nRUN dnf -y update && yum clean all\n\nFROM base\nCOPY --from=build /app /app\n"
+            )
+
+            asyncio.run(generator.generate_lockfile(self._make_mock_image_meta(), dest_dir))
+
+        self.assertTrue(generator.upgrades_dropped)
