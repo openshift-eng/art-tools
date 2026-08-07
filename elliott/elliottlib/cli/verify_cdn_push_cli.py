@@ -123,11 +123,13 @@ async def check_blocking_advisories(api: AsyncErrataAPI, advisory_id: int, do_pu
         blocking_ids = erratum_data.get("blocking_advisories", [])
     except Exception as e:
         LOGGER.warning("Failed to get blocking advisories for %s: %s", advisory_id, e)
-        return [AdvisoryPushResult(
-            advisory_id=advisory_id,
-            impetus=f"blocking-lookup-{advisory_id}",
-            error=f"failed to check blocking advisories: {e}",
-        )]
+        return [
+            AdvisoryPushResult(
+                advisory_id=advisory_id,
+                impetus=f"blocking-lookup-{advisory_id}",
+                error=f"failed to check blocking advisories: {e}",
+            )
+        ]
 
     results = []
     for blocking_id in blocking_ids:
