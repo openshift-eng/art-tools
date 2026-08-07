@@ -1215,9 +1215,12 @@ class BugzillaBugTracker(BugTracker):
         return bug_config
 
     def login(self):
-        # Bugzilla is only used for publicly visible data. Explicitly disable
-        # cached credentials so an expired API key cannot prevent read access.
-        return bugzilla.Bugzilla(self._server, use_creds=False)
+        client = bugzilla.Bugzilla(self._server)
+        if not client.logged_in:
+            raise ValueError(
+                f"elliott requires cached login credentials for {self._server}. Login using 'bugzilla login --api-key"
+            )
+        return client
 
     def __init__(self, config):
         super().__init__(config, 'bugzilla')

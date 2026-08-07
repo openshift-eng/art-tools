@@ -579,15 +579,6 @@ class TestJIRABugTracker(unittest.TestCase):
 
 
 class TestBugzillaBugTracker(unittest.TestCase):
-    @mock.patch("elliottlib.bzutil.bugzilla.Bugzilla")
-    def test_login_uses_anonymous_client(self, mock_bugzilla):
-        client = mock_bugzilla.return_value
-
-        tracker = BugzillaBugTracker({"server": hostname})
-
-        mock_bugzilla.assert_called_once_with(hostname, use_creds=False)
-        self.assertIs(tracker.client(), client)
-
     def test_get_config(self):
         config = {"foo": 1, "bugzilla_config": {"bar": 2}}
         vars_mock = flexmock(MAJOR="4", MINOR="9")
