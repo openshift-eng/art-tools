@@ -4,13 +4,15 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import ANY, AsyncMock, Mock, patch
 
 import click
 import koji
 from artcommonlib.constants import GOLANG_BUILDER_IMAGE_NAME
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord
 from pyartcd.pipelines.update_golang import (
+    DEFAULT_GOLANG_ASSEMBLY,
+    GOLANG_ASSEMBLIES,
     UpdateGolangPipeline,
     extract_and_validate_golang_nvrs,
     get_latest_nvr_in_tag,
@@ -18,6 +20,7 @@ from pyartcd.pipelines.update_golang import (
     is_latest,
     is_latest_and_available,
     move_golang_bugs,
+    update_golang,
 )
 from tenacity import wait_none
 
@@ -316,6 +319,14 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
             build_system=build_system,
         )
 
+    def test_cli_only_offers_stream_type_assemblies(self):
+        assembly_param = next(param for param in update_golang.params if param.name == "assembly")
+
+        self.assertEqual(assembly_param.default, DEFAULT_GOLANG_ASSEMBLY)
+        self.assertEqual(tuple(assembly_param.type.choices), GOLANG_ASSEMBLIES)
+        with self.assertRaises(click.BadParameter):
+            assembly_param.type.convert("art-1234", assembly_param, None)
+
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     def test_init_brew_build_system(self, mock_konflux_db):
         """Test initialization with Brew build system"""
@@ -419,6 +430,64 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
         self.assertEqual(pipeline.data_gitref, "my-branch")
 
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    def test_existing_build_lookup_treats_legacy_builds_as_stream(self, mock_konflux_db):
+        pipeline = self._make_pipeline(build_system="brew")
+
+        self.assertTrue(pipeline._existing_build_matches_assembly("202608071200.p0.el9"))
+        self.assertTrue(pipeline._existing_build_matches_assembly("202608071200.p0.assembly.stream.el9"))
+        self.assertFalse(pipeline._existing_build_matches_assembly("202608071200.p0.assembly.test.el9"))
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    def test_existing_test_build_lookup_requires_explicit_test_assembly(self, mock_konflux_db):
+        pipeline = UpdateGolangPipeline(
+            runtime=self._make_test_runtime(),
+            ocp_version="4.16",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.25.8-1.el9"],
+            art_jira="ART-1234",
+            tag_builds=False,
+            build_system="brew",
+            use_new_golang_branch=True,
+            assembly="test",
+        )
+
+        self.assertFalse(pipeline._existing_build_matches_assembly("202608071200.p0.el9"))
+        self.assertFalse(pipeline._existing_build_matches_assembly("202608071200.p0.assembly.stream.el9"))
+        self.assertTrue(pipeline._existing_build_matches_assembly("202608071200.p0.assembly.test.el9"))
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    def test_rejects_non_stream_type_assembly(self, mock_konflux_db):
+        with self.assertRaisesRegex(ValueError, "Unsupported golang assembly"):
+            UpdateGolangPipeline(
+                runtime=self._make_test_runtime(),
+                ocp_version="4.16",
+                cves=None,
+                force_update_tracker=False,
+                go_nvrs=["golang-1.25.8-1.el9"],
+                art_jira="ART-1234",
+                tag_builds=False,
+                build_system="brew",
+                use_new_golang_branch=True,
+                assembly="art-1234",
+            )
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    def test_test_assembly_requires_unified_golang_branch(self, mock_konflux_db):
+        with self.assertRaisesRegex(ValueError, "test assembly requires the unified golang branch"):
+            UpdateGolangPipeline(
+                runtime=self._make_test_runtime(),
+                ocp_version="4.16",
+                cves=None,
+                force_update_tracker=False,
+                go_nvrs=["golang-1.25.8-1.el9"],
+                art_jira="ART-1234",
+                tag_builds=False,
+                build_system="brew",
+                assembly="test",
+            )
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     def test_get_doozer_var_args(self, mock_konflux_db):
         """Test _get_doozer_var_args returns --var args when use_new_golang_branch is True"""
         pipeline = self._make_pipeline()
@@ -427,6 +496,30 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
 
         pipeline.ocp_version = "5.0"
         self.assertEqual(pipeline._get_doozer_var_args(), ['--var', 'MAJOR=5', '--var', 'MINOR=0'])
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    def test_monobranch_validation_requires_assemblies_enabled(self, mock_konflux_db):
+        pipeline = self._make_pipeline()
+        pipeline.use_new_golang_branch = True
+        repo = Mock()
+        repo.get_contents.return_value = Mock(decoded_content=b"assemblies:\n  enabled: false\n")
+        pipeline._get_ocp_build_data_repo_and_branch = Mock(return_value=(repo, "golang"))
+
+        with self.assertRaisesRegex(ValueError, "Assemblies are not enabled.*golang"):
+            pipeline.validate_go_version_matches_group_vars("1.25.8")
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    def test_monobranch_validation_accepts_assemblies_enabled(self, mock_konflux_db):
+        pipeline = self._make_pipeline()
+        pipeline.use_new_golang_branch = True
+        repo = Mock()
+        repo.get_contents.return_value = Mock(decoded_content=b"assemblies:\n  enabled: true\n")
+        pipeline._get_ocp_build_data_repo_and_branch = Mock(return_value=(repo, "golang"))
+        pipeline._get_allowed_go_major_minors = Mock(return_value=("openshift-4.16", {"GO_LATEST": "1.25"}))
+
+        result = pipeline.validate_go_version_matches_group_vars("1.25.8")
+
+        self.assertEqual(result, ("openshift-4.16", {"GO_LATEST": "1.25"}, "1.25"))
 
     @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
@@ -557,6 +650,26 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
         requested_paths = [call.args[0] for call in upstream_repo.get_contents.call_args_list]
         self.assertEqual(requested_paths.count("group.yml"), 1)
         self.assertEqual(requested_paths.count("streams.yml"), 1)
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    async def test_update_golang_streams_is_stream_only(self, mock_konflux_db):
+        pipeline = UpdateGolangPipeline(
+            runtime=self._make_test_runtime(),
+            ocp_version="5.0",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.26.5-1.el8"],
+            art_jira="ART-1234",
+            tag_builds=False,
+            build_system="konflux",
+            use_new_golang_branch=True,
+            assembly="test",
+        )
+        pipeline._get_branch_content = Mock()
+
+        await pipeline.update_golang_streams("1.26.5", {8: "registry.example.com/builder:test"})
+
+        pipeline._get_branch_content.assert_not_called()
 
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     async def test_update_golang_streams_updates_go_extra_literal_streams(self, mock_konflux_db):
@@ -826,6 +939,54 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
         self.assertEqual(suffix, "/pub/RHOCP/plashets/4.16/stream/golang-el8/latest")
 
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    def test_get_content_repo_url_suffix_uses_test_assembly(self, mock_konflux_db):
+        pipeline = UpdateGolangPipeline(
+            runtime=self._make_test_runtime(),
+            ocp_version="5.0",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.26.5-1.el8"],
+            art_jira="ART-1234",
+            tag_builds=False,
+            use_new_golang_branch=True,
+            assembly="test",
+        )
+
+        self.assertEqual(
+            pipeline.get_content_repo_url_suffix(8),
+            "/pub/RHOCP/plashets/5.0/test/golang-el8/latest",
+        )
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    def test_verify_golang_builder_repo_formats_test_assembly(self, mock_konflux_db):
+        pipeline = UpdateGolangPipeline(
+            runtime=self._make_test_runtime(),
+            ocp_version="5.0",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.26.5-1.el8"],
+            art_jira="ART-1234",
+            tag_builds=False,
+            use_new_golang_branch=True,
+            assembly="test",
+        )
+        repo = Mock()
+        repo.get_contents.return_value = Mock(
+            decoded_content=b"""
+repos:
+  rhel-8-golang-rpms:
+    conf:
+      baseurl:
+        x86_64: https://example.com/pub/RHOCP/plashets/{MAJOR}.{MINOR}/{runtime_assembly}/golang-el8/latest/x86_64/os/
+"""
+        )
+        pipeline._get_ocp_build_data_repo_and_branch = Mock(return_value=(repo, "golang"))
+
+        pipeline.verify_golang_builder_repo(8, "1.26.5")
+
+        repo.get_contents.assert_called_once_with("group.yml", ref="golang")
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     def test_get_builder_pullspec(self, mock_konflux_db):
         """Test stream-update pullspec uses the published registry.redhat.io form"""
         pipeline = self._make_pipeline(build_system="brew")
@@ -924,6 +1085,44 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
             any("Skipping streams.yml update for brew-only run" in message for message in slack_messages),
             slack_messages,
         )
+
+    @patch("pyartcd.pipelines.update_golang.kinit", new_callable=AsyncMock)
+    @patch("pyartcd.pipelines.update_golang.move_golang_bugs", new_callable=AsyncMock)
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    async def test_run_test_assembly_skips_production_operations(self, mock_konflux_db, move_golang_bugs, mock_kinit):
+        pipeline = UpdateGolangPipeline(
+            runtime=self._make_test_runtime(),
+            ocp_version="5.0",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.26.5-1.el8"],
+            art_jira="ART-1234",
+            tag_builds=False,
+            build_system="konflux",
+            use_new_golang_branch=True,
+            assembly="test",
+        )
+        pipeline.validate_go_version_matches_group_vars = Mock(return_value=("golang", {"GO_LATEST": "1.26"}, "1.26"))
+        pipeline.process_build = AsyncMock(return_value=True)
+        pipeline._build_golang_plashets = AsyncMock()
+        builder_record = Mock(nvr="openshift-golang-builder-container-v1.26.5-202608071200.p0.assembly.test.el8")
+        pipeline.get_existing_builders_konflux = AsyncMock(return_value={8: builder_record})
+        pipeline._get_builder_pullspec = Mock()
+        pipeline._ensure_builder_pullspec_available = AsyncMock()
+        pipeline.update_golang_streams = AsyncMock()
+
+        await pipeline.run()
+
+        mock_kinit.assert_awaited_once()
+        pipeline._build_golang_plashets.assert_awaited_once()
+        self.assertEqual(pipeline._build_golang_plashets.await_args.args[0], "1.26.5")
+        self.assertEqual(list(pipeline._build_golang_plashets.await_args.args[1]), [8])
+        pipeline._get_builder_pullspec.assert_not_called()
+        pipeline._ensure_builder_pullspec_available.assert_not_awaited()
+        pipeline.update_golang_streams.assert_not_awaited()
+        move_golang_bugs.assert_not_awaited()
+        slack_messages = [call.args[0] for call in pipeline._slack_client.say_in_thread.await_args_list]
+        self.assertTrue(any("test assembly" in message for message in slack_messages), slack_messages)
 
     @patch("pyartcd.pipelines.update_golang.kinit", new_callable=AsyncMock)
     @patch("pyartcd.pipelines.update_golang.move_golang_bugs", new_callable=AsyncMock)
@@ -1381,6 +1580,94 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
         self.assertEqual(builder_nvrs, {8: "openshift-golang-builder-container-v1.20.12-202403212137.el8.g144a3f8"})
 
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    @patch("elliottlib.util.get_golang_container_nvrs_brew")
+    def test_get_existing_builders_brew_ignores_non_stream_assembly(self, mock_get_golang_nvrs, mock_konflux_db):
+        pipeline = UpdateGolangPipeline(
+            runtime=self._make_test_runtime(),
+            ocp_version="4.16",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.20.12-2.el8"],
+            art_jira="ART-1234",
+            tag_builds=False,
+            build_system="brew",
+            use_new_golang_branch=True,
+        )
+        pipeline.koji_session = Mock()
+        pipeline.koji_session.getPackage.return_value = {"id": 12345}
+        stream_nvr = "openshift-golang-builder-container-v1.20.12-2.assembly.stream.el8"
+        named_nvr = "openshift-golang-builder-container-v1.20.12-1.assembly.art-1234.el8"
+        pipeline.koji_session.listBuilds.return_value = [
+            {
+                "name": "openshift-golang-builder-container",
+                "version": "v1.20.12",
+                "release": "1.assembly.art-1234.el8",
+                "nvr": named_nvr,
+            },
+            {
+                "name": "openshift-golang-builder-container",
+                "version": "v1.20.12",
+                "release": "2.assembly.stream.el8",
+                "nvr": stream_nvr,
+            },
+        ]
+        mock_get_golang_nvrs.return_value = {
+            "1.20.12-2.el8": [("openshift-golang-builder-container", "v1.20.12", "2.assembly.stream.el8")]
+        }
+
+        builder_nvrs = pipeline.get_existing_builders_brew({8: "golang-1.20.12-2.el8"}, "1.20.12")
+
+        self.assertEqual(builder_nvrs, {8: stream_nvr})
+        self.assertEqual(mock_get_golang_nvrs.call_count, 1)
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    @patch("elliottlib.util.get_golang_container_nvrs_brew")
+    def test_get_existing_builders_brew_test_requires_exact_assembly(self, mock_get_golang_nvrs, mock_konflux_db):
+        pipeline = UpdateGolangPipeline(
+            runtime=self._make_test_runtime(),
+            ocp_version="5.0",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.26.5-1.el8"],
+            art_jira="ART-1234",
+            tag_builds=False,
+            build_system="brew",
+            use_new_golang_branch=True,
+            assembly="test",
+        )
+        pipeline.koji_session = Mock()
+        pipeline.koji_session.getPackage.return_value = {"id": 12345}
+        test_nvr = "openshift-golang-builder-container-v1.26.5-4.assembly.test.el8"
+        pipeline.koji_session.listBuilds.return_value = [
+            {
+                "name": "openshift-golang-builder-container",
+                "version": "v1.26.5",
+                "release": "3.assembly.stream.el8",
+                "nvr": "openshift-golang-builder-container-v1.26.5-3.assembly.stream.el8",
+            },
+            {
+                "name": "openshift-golang-builder-container",
+                "version": "v1.26.5",
+                "release": "2.el8",
+                "nvr": "openshift-golang-builder-container-v1.26.5-2.el8",
+            },
+            {
+                "name": "openshift-golang-builder-container",
+                "version": "v1.26.5",
+                "release": "4.assembly.test.el8",
+                "nvr": test_nvr,
+            },
+        ]
+        mock_get_golang_nvrs.return_value = {
+            "1.26.5-1.el8": [("openshift-golang-builder-container", "v1.26.5", "4.assembly.test.el8")]
+        }
+
+        builder_nvrs = pipeline.get_existing_builders_brew({8: "golang-1.26.5-1.el8"}, "1.26.5")
+
+        self.assertEqual(builder_nvrs, {8: test_nvr})
+        mock_get_golang_nvrs.assert_called_once()
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     @patch("pyartcd.pipelines.update_golang.elliottutil.get_golang_container_nvrs_for_konflux_record")
     async def test_get_existing_builders_konflux(self, mock_get_golang_nvrs, mock_konflux_db_class):
         """Test Konflux builder lookup falls back to the legacy name on exact RPM match"""
@@ -1483,9 +1770,96 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
             [
                 "openshift-golang-builder-1-26.rhel8",
                 "openshift-golang-builder-1-26.rhel9",
+                "openshift-golang-builder-1-26.rhel9",
+                GOLANG_BUILDER_IMAGE_NAME,
                 GOLANG_BUILDER_IMAGE_NAME,
             ],
         )
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    @patch("pyartcd.pipelines.update_golang.elliottutil.get_golang_container_nvrs_for_konflux_record")
+    async def test_get_existing_builders_konflux_stream_falls_back_to_legacy_assembly(
+        self, mock_get_golang_nvrs, mock_konflux_db_class
+    ):
+        mock_db_instance = Mock()
+        mock_konflux_db_class.return_value = mock_db_instance
+        legacy_record = Mock(
+            spec=KonfluxBuildRecord,
+            nvr="openshift-golang-builder-container-v1.26.5-202607272002.p2.g5a9ab9d.el8",
+        )
+        test_record = Mock(
+            spec=KonfluxBuildRecord,
+            nvr="openshift-golang-builder-container-v1.26.5-202607272003.p2.assembly.test.el8",
+        )
+        mock_get_golang_nvrs.return_value = {
+            "golang-1.26.5-1.el8": {("ignored-builder", "ignored-version", "ignored-release")}
+        }
+        pipeline = UpdateGolangPipeline(
+            runtime=self._make_test_runtime(),
+            ocp_version="5.0",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.26.5-1.el8"],
+            art_jira="ART-1234",
+            tag_builds=False,
+            build_system="konflux",
+            use_new_golang_branch=True,
+        )
+
+        async def mock_search_builds(*_args, **kwargs):
+            if "assembly" not in kwargs["where"]:
+                yield test_record
+                yield legacy_record
+
+        mock_db_instance.search_builds_by_fields = Mock(side_effect=mock_search_builds)
+
+        records = await pipeline.get_existing_builders_konflux({8: "golang-1.26.5-1.el8"}, "1.26.5")
+
+        self.assertEqual(records, {8: legacy_record})
+        mock_get_golang_nvrs.assert_called_once_with([legacy_record], ANY, exact=True)
+        self.assertEqual(
+            [call.kwargs["where"].get("assembly") for call in mock_db_instance.search_builds_by_fields.call_args_list],
+            ["stream", None],
+        )
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    @patch("pyartcd.pipelines.update_golang.elliottutil.get_golang_container_nvrs_for_konflux_record")
+    async def test_get_existing_builders_konflux_test_requires_exact_assembly(
+        self, mock_get_golang_nvrs, mock_konflux_db_class
+    ):
+        mock_db_instance = Mock()
+        mock_konflux_db_class.return_value = mock_db_instance
+        test_record = Mock(
+            spec=KonfluxBuildRecord,
+            nvr="openshift-golang-builder-container-v1.26.5-202608071200.p0.assembly.test.el8",
+        )
+        mock_get_golang_nvrs.return_value = {
+            "golang-1.26.5-1.el8": {("ignored-builder", "ignored-version", "ignored-release")}
+        }
+        pipeline = UpdateGolangPipeline(
+            runtime=self._make_test_runtime(),
+            ocp_version="5.0",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.26.5-1.el8"],
+            art_jira="ART-1234",
+            tag_builds=False,
+            build_system="konflux",
+            use_new_golang_branch=True,
+            assembly="test",
+        )
+
+        async def mock_search_builds(*_args, **kwargs):
+            self.assertEqual(kwargs["where"]["assembly"], "test")
+            yield test_record
+
+        mock_db_instance.search_builds_by_fields = Mock(side_effect=mock_search_builds)
+
+        records = await pipeline.get_existing_builders_konflux({8: "golang-1.26.5-1.el8"}, "1.26.5")
+
+        self.assertEqual(records, {8: test_record})
+        mock_get_golang_nvrs.assert_called_once_with([test_record], ANY, exact=True)
+        self.assertEqual(mock_db_instance.search_builds_by_fields.call_count, 1)
 
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     @patch("pyartcd.pipelines.update_golang.elliottutil.get_golang_container_nvrs_for_konflux_record")
@@ -1554,6 +1928,7 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
         mock_cmd_assert.assert_called_once()
         cmd = mock_cmd_assert.call_args[0][0]
         self.assertIn("doozer", cmd)
+        self.assertEqual(cmd[cmd.index("--assembly") + 1], "stream")
         self.assertIn("--var", cmd)
         self.assertIn("MAJOR=4", cmd)
         self.assertIn("MINOR=16", cmd)
@@ -1618,10 +1993,33 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
 
         cmd = mock_cmd_assert.call_args[0][0]
         self.assertIn("images:build", cmd)
+        self.assertEqual(cmd[cmd.index("--assembly") + 1], "stream")
         self.assertIn("--repo-type", cmd)
         self.assertIn("unsigned", cmd)
         self.assertIn("--push-to-defaults", cmd)
         self.assertIn("--scratch", cmd)
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    @patch("artcommonlib.exectools.cmd_assert_async")
+    async def test_build_brew_dry_run(self, mock_cmd_assert, mock_konflux_db):
+        pipeline = UpdateGolangPipeline(
+            runtime=Mock(
+                dry_run=True,
+                working_dir=Path("/tmp/working"),
+                new_slack_client=Mock(return_value=Mock()),
+            ),
+            ocp_version="4.16",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.20.12-2.el8"],
+            art_jira="ART-1234",
+            tag_builds=True,
+        )
+
+        await pipeline._build_brew(8, "1.20.12")
+
+        cmd = mock_cmd_assert.call_args.args[0]
+        self.assertIn("--dry-run", cmd)
 
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     @patch("artcommonlib.exectools.cmd_assert_async")
@@ -1642,12 +2040,15 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
             art_jira="ART-1234",
             tag_builds=True,
             build_system="konflux",
+            use_new_golang_branch=True,
+            assembly="test",
         )
 
         await pipeline._rebase_konflux(8, "1.20.12", "golang-1.20.12-2.el8")
 
         cmd = mock_cmd_assert.call_args[0][0]
         self.assertIn("beta:images:konflux:rebase", cmd)
+        self.assertEqual(cmd[cmd.index("--assembly") + 1], "test")
         self.assertIn("--extra-label", cmd)
         self.assertIn("io.openshift.build.golang-nvr=golang-1.20.12-2.el8", cmd)
 
@@ -1705,6 +2106,7 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
 
         cmd = mock_cmd_assert.call_args[0][0]
         self.assertIn("beta:images:konflux:build", cmd)
+        self.assertEqual(cmd[cmd.index("--assembly") + 1], "stream")
         self.assertIn("--konflux-kubeconfig", cmd)
         self.assertIn("/custom/kubeconfig", cmd)
 
@@ -1733,6 +2135,42 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
 
         cmd = mock_cmd_assert.call_args[0][0]
         self.assertIn("--dry-run", cmd)
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    @patch("artcommonlib.exectools.cmd_assert_async")
+    async def test_test_assembly_dry_run_commands_for_brew_and_konflux(self, mock_cmd_assert, mock_konflux_db):
+        pipeline = UpdateGolangPipeline(
+            runtime=Mock(
+                dry_run=True,
+                working_dir=Path("/tmp/working"),
+                new_slack_client=Mock(return_value=Mock()),
+            ),
+            ocp_version="4.16",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.20.12-2.el8"],
+            art_jira="ART-1234",
+            tag_builds=True,
+            build_system="both",
+            use_new_golang_branch=True,
+            assembly="test",
+        )
+
+        await pipeline._rebase_brew(8, "1.20.12", "golang-1.20.12-2.el8")
+        await pipeline._build_brew(8, "1.20.12")
+        await pipeline._rebase_konflux(8, "1.20.12", "golang-1.20.12-2.el8")
+        await pipeline._build_konflux(8, "1.20.12")
+
+        brew_rebase, brew_build, konflux_rebase, konflux_build = [
+            call.args[0] for call in mock_cmd_assert.call_args_list
+        ]
+        for cmd in (brew_rebase, brew_build, konflux_rebase, konflux_build):
+            self.assertEqual(cmd[cmd.index("--assembly") + 1], "test")
+        for cmd in (brew_rebase, konflux_rebase):
+            self.assertNotIn("--push", cmd)
+            self.assertNotIn("--dry-run", cmd)
+        for cmd in (brew_build, konflux_build):
+            self.assertIn("--dry-run", cmd)
 
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     @patch("artcommonlib.exectools.cmd_assert_async")
@@ -2024,7 +2462,7 @@ class TestIsRpmSigned(unittest.TestCase):
 class TestBuildGolangPlashets(IsolatedAsyncioTestCase):
     """Test the _build_golang_plashets method"""
 
-    def _make_pipeline(self, use_new_golang_branch=False, dry_run=False):
+    def _make_pipeline(self, use_new_golang_branch=False, dry_run=False, assembly=DEFAULT_GOLANG_ASSEMBLY):
         mock_slack = Mock()
         mock_slack.say_in_thread = AsyncMock()
         mock_runtime = Mock(dry_run=dry_run, working_dir=Path("/tmp/working"))
@@ -2038,6 +2476,7 @@ class TestBuildGolangPlashets(IsolatedAsyncioTestCase):
             art_jira="ART-1234",
             tag_builds=True,
             use_new_golang_branch=use_new_golang_branch,
+            assembly=assembly,
         )
 
     @patch("pyartcd.pipelines.update_golang.jenkins")
@@ -2053,9 +2492,22 @@ class TestBuildGolangPlashets(IsolatedAsyncioTestCase):
         self.assertEqual(calls[0].kwargs["group"], "golang")
         self.assertEqual(calls[0].kwargs["repos"], ["rhel-8-golang-rpms"])
         self.assertEqual(calls[0].kwargs["version"], "4.18")
+        self.assertEqual(calls[0].kwargs["assembly"], "stream")
         self.assertEqual(calls[1].kwargs["group"], "golang")
         self.assertEqual(calls[1].kwargs["repos"], ["rhel-9-golang-rpms"])
         self.assertEqual(calls[1].kwargs["version"], "4.18")
+        self.assertEqual(calls[1].kwargs["assembly"], "stream")
+
+    @patch("pyartcd.pipelines.update_golang.jenkins")
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    async def test_test_assembly_triggers_test_plashet(self, mock_konflux_db, mock_jenkins):
+        pipeline = self._make_pipeline(use_new_golang_branch=True, assembly="test")
+        mock_jenkins.start_build_plashets.return_value = "SUCCESS"
+
+        await pipeline._build_golang_plashets("1.22.9", [9])
+
+        mock_jenkins.start_build_plashets.assert_called_once()
+        self.assertEqual(mock_jenkins.start_build_plashets.call_args.kwargs["assembly"], "test")
 
     @patch("pyartcd.pipelines.update_golang.jenkins")
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
