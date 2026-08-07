@@ -92,6 +92,13 @@ class TestCheckAdvisorySecurityAlerts(IsolatedAsyncioTestCase):
         self.assertFalse(result.blocking)
         self.assertTrue(result.ok)
 
+    async def test_unknown_type(self):
+        api = AsyncMock()
+        api.get_advisory.return_value = {}
+        result = await check_advisory_security_alerts(api, 12345, "rpm")
+        self.assertTrue(result.failed)
+        self.assertIn("unable to determine", result.error)
+
     async def test_rhsa_blocking(self):
         api = AsyncMock()
         api.get_advisory.return_value = {"errata": {"rhsa": {}}}

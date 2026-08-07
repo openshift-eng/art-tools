@@ -57,6 +57,11 @@ async def check_advisory_security_alerts(api: AsyncErrataAPI, advisory_id: int, 
         advisory_data = await api.get_advisory(advisory_id)
         result.errata_type = get_errata_type(advisory_data)
 
+        if not result.errata_type:
+            result.error = "unable to determine advisory type"
+            LOGGER.error("Advisory %s (%s): %s", advisory_id, impetus, result.error)
+            return result
+
         if result.errata_type != "rhsa":
             LOGGER.info(
                 "Advisory %s (%s): type %s, skipping security alerts check",
@@ -171,7 +176,8 @@ async def verify_security_alerts_cli(runtime, output):
 
     Refreshes security alert data from ProdSec and checks for blocking
     alerts on all RHSA advisories in the assembly. Non-RHSA advisories
-    are skipped. Exits with code 1 if any blocking alert is found.
+    are skipped. Exits with code 1 if any blocking alert is found or
+    if any advisory check fails with an error.
 
     Requires --group and --assembly global options. Advisory IDs are
     resolved from the assembly config in releases.yml.
