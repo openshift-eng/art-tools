@@ -75,6 +75,7 @@ from elliottlib.cli.verify_attached_bugs_cli import verify_attached_bugs_cli
 from elliottlib.cli.verify_attached_operators_cli import verify_attached_operators_cli
 from elliottlib.cli.verify_cvp_cli import verify_cvp_cli
 from elliottlib.cli.verify_image_grades_cli import verify_image_grades_cli
+from elliottlib.cli.verify_kernel_tag_cli import verify_kernel_tag_cli
 from elliottlib.cli.verify_payload import verify_payload
 from elliottlib.cli.verify_signatures_cli import verify_signatures_cli
 from elliottlib.exceptions import ElliottFatalError
@@ -327,6 +328,7 @@ cli.add_command(find_bugs_second_fix_cli)
 cli.add_command(process_release_from_fbc_bugs_cli)
 cli.add_command(verify_signatures_cli)
 cli.add_command(verify_image_grades_cli)
+cli.add_command(verify_kernel_tag_cli)
 
 # -----------------------------------------------------------------------------
 # CLI Entry point
