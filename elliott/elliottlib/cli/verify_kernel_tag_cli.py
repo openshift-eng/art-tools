@@ -83,8 +83,11 @@ def find_rhcos_nvrs(build_nvrs: set[str]) -> list[str]:
 
 
 def nvr_to_brewroot_metadata_url(rhcos_nvr: str) -> str:
-    path = re.sub(r"-([\d.]+)-(\d+)$", r"/\1/\2", rhcos_nvr)
-    return f"{BREW_DOWNLOAD_URL}/packages/{path}/metadata.json"
+    match = re.fullmatch(r"([A-Za-z0-9_.+-]+?)-([\d.]+)-(\d+)", rhcos_nvr)
+    if not match:
+        raise ValueError(f"Cannot parse RHCOS NVR: {rhcos_nvr}")
+    name, version, release = match.groups()
+    return f"{BREW_DOWNLOAD_URL}/packages/{name}/{version}/{release}/metadata.json"
 
 
 def get_kernel_nvrs_from_metadata(metadata: dict, kernel_packages: set[str]) -> list[str]:
