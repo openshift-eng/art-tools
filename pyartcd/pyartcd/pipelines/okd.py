@@ -4,6 +4,7 @@ import logging
 import os
 import shutil
 import sys
+import urllib.parse
 from pathlib import Path
 from typing import Optional
 
@@ -603,7 +604,11 @@ class KonfluxOkdPipeline:
 
         # Load image metadata from ocp-build-data to get payload tag names
         self.logger.info('Loading image metadata to resolve payload tag names')
-        ocp_build_data_path = Path(self.runtime.doozer_working) / 'ocp-build-data' / 'images'
+        # Derive the data directory name from the data_path URL, matching
+        # the logic in artcommonlib/gitdata.py GitData.clone_data().
+        data_url = urllib.parse.urlparse(self.data_path)
+        data_name = os.path.splitext(os.path.basename(data_url.path))[0]
+        ocp_build_data_path = Path(self.runtime.doozer_working) / data_name / 'images'
 
         is_name = f'scos-{self.version}-art'
         env = os.environ.copy()
