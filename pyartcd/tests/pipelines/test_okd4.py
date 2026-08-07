@@ -1032,6 +1032,112 @@ class TestDetectEmbargoedBuilds(IsolatedAsyncioTestCase):
         self.assertEqual(len(self.pipeline.embargoed_builds), 0)
 
 
+class TestUpdateImagestreamsDataPath(IsolatedAsyncioTestCase):
+    """Tests that update_imagestreams resolves the ocp-build-data clone directory
+    dynamically from self.data_path, so forks with different repo names work."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.mock_runtime = MagicMock()
+        self.mock_runtime.dry_run = False
+        self.mock_runtime.doozer_working = str(Path(self.tmpdir) / 'doozer_working')
+        Path(self.mock_runtime.doozer_working).mkdir(parents=True)
+
+        mock_slack_client = MagicMock()
+        mock_slack_client.say = AsyncMock()
+        mock_slack_client.bind_channel = MagicMock()
+        self.mock_runtime.new_slack_client = MagicMock(return_value=mock_slack_client)
+
+    def _make_pipeline(self, data_path):
+        return KonfluxOkdPipeline(
+            runtime=self.mock_runtime,
+            image_build_strategy='all',
+            image_list=None,
+            assembly='stream',
+            data_path=data_path,
+            data_gitref='',
+            version='4.22',
+            ignore_locks=False,
+            plr_template='',
+            lock_identifier='test-lock',
+            build_priority='10',
+            imagestream_namespace='origin',
+        )
+
+    async def test_update_imagestreams_canonical_data_path(self):
+        """update_imagestreams reads metadata from 'ocp-build-data' for the canonical URL."""
+
+        # given
+        data_path = 'https://github.com/openshift-eng/ocp-build-data'
+        pipeline = self._make_pipeline(data_path)
+        pipeline.built_images = [
+            {'name': 'cli', 'nvr': 'cli-1.0', 'image_pullspec': 'quay.io/okd/cli:latest', 'image_tag': 'latest'},
+        ]
+
+        # Create the expected metadata directory and file
+        images_dir = Path(self.mock_runtime.doozer_working) / 'ocp-build-data' / 'images'
+        images_dir.mkdir(parents=True)
+        yaml_file = images_dir / 'cli.yml'
+        yaml_file.write_text(yaml.dump({'name': 'openshift/ose-cli', 'for_payload': True}))
+
+        with (
+            patch.object(pipeline, '_tag_image_to_stream', new_callable=AsyncMock),
+            patch('pyartcd.pipelines.okd.jenkins'),
+        ):
+            # when / then — should not raise FileNotFoundError
+            await pipeline.update_imagestreams()
+
+    async def test_update_imagestreams_fork_data_path(self):
+        """update_imagestreams reads metadata from fork-named directory, not hardcoded 'ocp-build-data'."""
+
+        # given — a fork whose repo basename differs from the canonical name
+        data_path = 'https://github.com/redhat-chai-bot/openshift-eng_ocp-build-data'
+        pipeline = self._make_pipeline(data_path)
+        pipeline.built_images = [
+            {'name': 'cli', 'nvr': 'cli-1.0', 'image_pullspec': 'quay.io/okd/cli:latest', 'image_tag': 'latest'},
+        ]
+
+        # Create the expected metadata directory using the fork's repo name
+        images_dir = Path(self.mock_runtime.doozer_working) / 'openshift-eng_ocp-build-data' / 'images'
+        images_dir.mkdir(parents=True)
+        yaml_file = images_dir / 'cli.yml'
+        yaml_file.write_text(yaml.dump({'name': 'openshift/ose-cli', 'for_payload': True}))
+
+        with (
+            patch.object(pipeline, '_tag_image_to_stream', new_callable=AsyncMock) as mock_tag,
+            patch('pyartcd.pipelines.okd.jenkins'),
+        ):
+            # when — should resolve the fork directory, not hardcoded 'ocp-build-data'
+            await pipeline.update_imagestreams()
+
+            # then — the image should be tagged successfully
+            mock_tag.assert_called_once()
+
+    async def test_update_imagestreams_data_path_with_git_suffix(self):
+        """update_imagestreams strips .git suffix when deriving the data directory name."""
+
+        # given
+        data_path = 'https://github.com/openshift-eng/ocp-build-data.git'
+        pipeline = self._make_pipeline(data_path)
+        pipeline.built_images = [
+            {'name': 'cli', 'nvr': 'cli-1.0', 'image_pullspec': 'quay.io/okd/cli:latest', 'image_tag': 'latest'},
+        ]
+
+        # .git suffix should be stripped → directory is 'ocp-build-data'
+        images_dir = Path(self.mock_runtime.doozer_working) / 'ocp-build-data' / 'images'
+        images_dir.mkdir(parents=True)
+        yaml_file = images_dir / 'cli.yml'
+        yaml_file.write_text(yaml.dump({'name': 'openshift/ose-cli', 'for_payload': True}))
+
+        with (
+            patch.object(pipeline, '_tag_image_to_stream', new_callable=AsyncMock) as mock_tag,
+            patch('pyartcd.pipelines.okd.jenkins'),
+        ):
+            # when / then — should not raise
+            await pipeline.update_imagestreams()
+            mock_tag.assert_called_once()
+
+
 class TestRebaseFailCounters(IsolatedAsyncioTestCase):
     """Tests for update_rebase_fail_counters reading per-image status from state.yaml."""
 
