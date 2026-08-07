@@ -1296,7 +1296,7 @@ async def update_golang(
     cves_list = cves.split(',') if cves else None
     if force_update_tracker and not cves_list:
         raise ValueError('CVEs must be provided with --force-update-tracker')
-    if data_gitref and len(go_nvrs) > 1:
+    if data_gitref and len(go_nvrs) > 1 and not use_new_golang_branch:
         raise click.BadParameter(
             '--data-gitref can only be used with a single NVR to ensure the git ref is coupled to the correct RHEL version branch'
         )
