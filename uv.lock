@@ -3156,7 +3156,7 @@ requires-dist = [
     { name = "requests", specifier = ">=2.32.5" },
     { name = "requests-gssapi", specifier = "~=1.2.3" },
     { name = "requests-kerberos", specifier = ">=0.15.0" },
-    { name = "rpm-lockfile-prototype", marker = "sys_platform == 'linux'", git = "https://github.com/konflux-ci/rpm-lockfile-prototype" },
+    { name = "rpm-lockfile-prototype", marker = "sys_platform == 'linux'", git = "https://github.com/konflux-ci/rpm-lockfile-prototype?tag=v0.28.0" },
     { name = "ruamel-yaml", specifier = ">=0.18.16" },
     { name = "schema", specifier = ">=0.7.8" },
     { name = "semver", specifier = "~=3.0.1" },
@@ -3196,8 +3196,8 @@ wheels = [
 
 [[package]]
 name = "rpm-lockfile-prototype"
-version = "0.25.1"
-source = { git = "https://github.com/konflux-ci/rpm-lockfile-prototype#3ceef623ecf425a30d6c60496b9e8974d88a1d1d" }
+version = "0.28.0"
+source = { git = "https://github.com/konflux-ci/rpm-lockfile-prototype?tag=v0.28.0#8be0797db2368def3aa86ca9733c8d835bbefef7" }
 dependencies = [
     { name = "dockerfile-parse" },
     { name = "jsonschema" },
