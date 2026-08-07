@@ -863,6 +863,43 @@ class ImageMetadata(Metadata):
             return str(group_override).strip()
         return default
 
+    def get_konflux_component_name(self, app_name: str) -> str:
+        """Returns the Konflux Component resource name for regular image builds.
+
+        Checks for an override in konflux.component.name_override first. If not set,
+        falls back to the auto-generated name from util.konflux_image_component_name().
+        Raises ValueError if the resulting name exceeds the Kubernetes 63-char limit.
+        """
+        override = self.config.konflux.component.name_override
+        if override is not Missing and override:
+            return str(override)
+        name = util.konflux_image_component_name(app_name, self.distgit_key)
+        if len(name) > 63:
+            raise ValueError(
+                f"[{self.distgit_key}] Konflux component name '{name}' is {len(name)} chars, "
+                f"exceeding the 63-char limit. Set 'konflux.component.name_override' in the image config."
+            )
+        return name
+
+    def get_konflux_bundle_component_name(self, app_name: str) -> str:
+        """Returns the Konflux Component resource name for OLM bundle builds.
+
+        Checks for an override in konflux.component.bundle_name_override first. If not set,
+        falls back to the auto-generated name using the bundle short name.
+        Raises ValueError if the resulting name exceeds the Kubernetes 63-char limit.
+        """
+        override = self.config.konflux.component.bundle_name_override
+        if override is not Missing and override:
+            return str(override)
+        bundle_name = self.get_olm_bundle_short_name()
+        name = util.konflux_image_component_name(app_name, bundle_name)
+        if len(name) > 63:
+            raise ValueError(
+                f"[{self.distgit_key}] Konflux bundle component name '{name}' is {len(name)} chars, "
+                f"exceeding the 63-char limit. Set 'konflux.component.bundle_name_override' in the image config."
+            )
+        return name
+
     def _validate_upstream_builder_stream(self) -> None:
         """
         When canonical_builders_from_upstream is enabled, validate that the upstream golang builder

@@ -354,7 +354,7 @@ class KonfluxImageBuilder:
 
                     image_with_digest = f"{image_pullspec.split(':')[0]}@{image_digest}"
                     source_url = artlib_util.convert_remote_git_to_https(build_repo.url)
-                    konflux_component_name = util.konflux_image_component_name(app_name, metadata.distgit_key)
+                    konflux_component_name = metadata.get_konflux_component_name(app_name)
 
                     ec_result = await self._konflux_client.verify_enterprise_contract(
                         namespace=self._config.namespace,
@@ -768,7 +768,7 @@ class KonfluxImageBuilder:
         await self._konflux_client.ensure_application(name=app_name, display_name=app_name)
 
         # Ensure the component resource exists
-        component_name = util.konflux_image_component_name(app_name, metadata.distgit_key)
+        component_name = metadata.get_konflux_component_name(app_name)
         default_revision = f"art-{self._config.group_name}-assembly-test-dgk-{metadata.distgit_key}"
         logger.info(f"Using component: {component_name}")
         await self._konflux_client.ensure_component(

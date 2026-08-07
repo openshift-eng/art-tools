@@ -1191,8 +1191,7 @@ class KonfluxOlmBundleBuilder:
                     is_ocp_group = self.group.startswith("openshift-")
                     if outcome is KonfluxBuildOutcome.SUCCESS and is_ocp_group and not self.skip_ec_verify:
                         app_name = util.konflux_application_name(metadata.runtime.group)
-                        bundle_name = metadata.get_olm_bundle_short_name()
-                        component_name = util.konflux_image_component_name(app_name, bundle_name)
+                        component_name = metadata.get_konflux_bundle_component_name(app_name)
                         image_with_digest = f"{image_pullspec.split(':')[0]}@{image_digest}"
                         source_url = artlib_util.convert_remote_git_to_https(bundle_build_repo.url)
 
@@ -1300,8 +1299,7 @@ class KonfluxOlmBundleBuilder:
         await konflux_client.ensure_application(name=app_name, display_name=app_name)
         logger.info(f"Konflux application {app_name} created")
         # Ensure the Component resource exists
-        bundle_name = metadata.get_olm_bundle_short_name()
-        component_name = util.konflux_image_component_name(app_name, bundle_name)
+        component_name = metadata.get_konflux_bundle_component_name(app_name)
         logger.info(f"Creating Konflux component: {component_name}")
         dest_image_repo = output_image.split(":")[0]
         await konflux_client.ensure_component(
