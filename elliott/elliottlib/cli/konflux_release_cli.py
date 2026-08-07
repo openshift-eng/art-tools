@@ -262,7 +262,7 @@ class CreateReleaseCli:
         return created_release
 
     def get_object_name(self) -> str:
-        assembly_str = self.runtime.assembly.replace(".", "-")
+        assembly_str = (self.runtime.assembly or self.runtime.group).replace(".", "-")
         return f"{self.runtime.product}-{self.release_env}-{assembly_str}-{self.kind}-{get_utc_now_formatted_str()}"
 
     async def create_snapshot(self, shipment: Shipment) -> dict:
@@ -361,10 +361,11 @@ class CreateReleaseCli:
 
     def get_annotations(self) -> dict:
         annotations = {
-            "art.redhat.com/assembly": self.runtime.assembly,
             "art.redhat.com/env": self.release_env,
             "art.redhat.com/kind": self.kind,
         }
+        if self.runtime.assembly is not None:
+            annotations["art.redhat.com/assembly"] = self.runtime.assembly
         if self.job_url:
             annotations["art.redhat.com/job-url"] = self.job_url
         return annotations

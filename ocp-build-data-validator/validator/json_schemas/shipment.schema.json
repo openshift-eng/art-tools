@@ -198,8 +198,16 @@
           "type": "string"
         },
         "assembly": {
-          "title": "Assembly",
-          "type": "string"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Assembly"
         },
         "fbc": {
           "anyOf": [
@@ -229,8 +237,7 @@
       "required": [
         "product",
         "application",
-        "group",
-        "assembly"
+        "group"
       ],
       "title": "Metadata",
       "type": "object"

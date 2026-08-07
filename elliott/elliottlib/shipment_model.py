@@ -18,7 +18,7 @@ class Metadata(StrictBaseModel):
     product: str  # product associated with shipment - see group.yml `product` field
     application: str  # Konflux application to release for
     group: str  # associated build-data group for component metadata
-    assembly: str  # associated build-data assembly
+    assembly: Optional[str] = None  # associated build-data assembly; None when assemblies not enabled (e.g. golang)
     fbc: Optional[bool] = False  # indicates if shipment is for an FBC release
     advisory_required: Optional[bool] = True  # when False, shipment-ci skips advisory URL check (registry-push-only)
 

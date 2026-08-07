@@ -508,12 +508,10 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
         mock_runtime.return_value = self.runtime
         mock_konflux_client_init.return_value = self.konflux_client
 
-        # initialize a regular shipment without a required field i.e. metadata.assembly
-        # so that the shipment schema validation fails
+        # initialize a shipment without a required field (product) to verify schema validation
         shipment_config = {
             "shipment": {
                 "metadata": {
-                    "product": "ocp",
                     "application": "openshift-4-18",
                     "group": "openshift-4.18",
                     "fbc": True,
@@ -551,9 +549,78 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
             await cli.run()
 
         self.assertIn(
-            "1 validation error for ShipmentConfig\nshipment.metadata.assembly\n  Field required",
+            "1 validation error for ShipmentConfig\nshipment.metadata.product\n  Field required",
             str(context.exception),
         )
+
+    @patch("elliottlib.cli.konflux_release_cli.get_utc_now_formatted_str", return_value="timestamp")
+    @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
+    @patch("elliottlib.runtime.Runtime")
+    async def test_none_assembly_passes_for_golang(self, mock_runtime, mock_konflux_client_init, _):
+        """When assemblies are not enabled (e.g. golang), both meta.assembly and
+        runtime.assembly are None. Validation should pass."""
+        self.runtime.assembly = None
+        self.runtime.group = "golang"
+        mock_runtime.return_value = self.runtime
+        mock_konflux_client_init.return_value = self.konflux_client
+
+        shipment_config = ShipmentConfig(
+            shipment=Shipment(
+                metadata=Metadata(
+                    product="ocp",
+                    application="art-images-base",
+                    group="golang",
+                ),
+                environments=Environments(
+                    stage=ShipmentEnv(releasePlan="test-stage-rp"),
+                    prod=ShipmentEnv(releasePlan="test-prod-rp"),
+                ),
+                snapshot=Snapshot(
+                    nvrs=["golang-builder-v1.25-rhel9-container-v1.25.0-1"],
+                    spec=SnapshotSpec(
+                        application="art-images-base",
+                        components=[
+                            SnapshotComponent(
+                                name="golang-builder-v1.25-rhel9",
+                                source=ComponentSource(
+                                    git=GitSource(url="https://github.com/test.git", revision="abc")
+                                ),
+                                containerImage="quay.io/test:latest",
+                            ),
+                        ],
+                    ),
+                ),
+                data=Data(
+                    releaseNotes=ReleaseNotes(type="RHBA", synopsis="s", topic="t", description="d", solution="s")
+                ),
+            ),
+        )
+        self.runtime.shipment_gitdata.load_yaml_file.return_value = shipment_config.model_dump(exclude_none=True)
+        self.konflux_client._get_api.return_value = MagicMock()
+        self.konflux_client._get.return_value = MagicMock()
+
+        cli = CreateReleaseCli(
+            runtime=self.runtime,
+            config_path=self.config_path,
+            release_env=self.release_env,
+            konflux_config=self.konflux_config,
+            image_repo_pull_secret={},
+            dry_run=True,
+            kind="image",
+        )
+
+        object_name = cli.get_object_name()
+        self.assertIn("golang", object_name)
+        self.assertNotIn("None", object_name)
+
+        annotations = cli.get_annotations()
+        self.assertNotIn("art.redhat.com/assembly", annotations)
+
+        # Verify the assembly validation in run() also passes (None == None).
+        # This exercises the guard at: elif meta.assembly != self.runtime.assembly
+        await cli.run()
+        # dry_run=True still creates resources — it just changes the log message
+        self.assertEqual(self.konflux_client._create.call_count, 2)  # snapshot + release
 
     @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
     @patch("elliottlib.runtime.Runtime")
