@@ -198,6 +198,10 @@ class TestNvrToBrewrootMetadataUrl(IsolatedAsyncioTestCase):
         url = nvr_to_brewroot_metadata_url("rhcos-x86_64-4.21.9.6.202608051529-0")
         self.assertIn("/packages/rhcos-x86_64/4.21.9.6.202608051529/0/metadata.json", url)
 
+    def test_malformed_nvr_raises(self):
+        with self.assertRaises(ValueError):
+            nvr_to_brewroot_metadata_url("not-a-valid-nvr")
+
 
 class TestGetKernelNvrsFromMetadata(IsolatedAsyncioTestCase):
     def test_finds_kernel(self):
@@ -266,7 +270,7 @@ class TestGetKernelRpmsFromRhcos(IsolatedAsyncioTestCase):
         mock_resp.raise_for_status.side_effect = HTTPError("404 Not Found")
         mock_get.return_value = mock_resp
         with self.assertRaises(HTTPError) as cm:
-            get_kernel_rpms_from_rhcos("rhcos-x86_64-fake-1", {"kernel"})
+            get_kernel_rpms_from_rhcos("rhcos-x86_64-418.92.1-1", {"kernel"})
         self.assertIn("404 Not Found", str(cm.exception))
 
 
