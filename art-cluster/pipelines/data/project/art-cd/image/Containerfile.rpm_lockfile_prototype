@@ -10,7 +10,7 @@ RUN curl --silent --show-error --fail --insecure --output /etc/pki/ca-trust/sour
 
 WORKDIR /app
 
-ARG GIT_REF=tags/v0.25.0
+ARG GIT_REF=tags/v0.30.0
 
 RUN python3 -m pip install https://github.com/konflux-ci/rpm-lockfile-prototype/archive/refs/${GIT_REF}.tar.gz
 
