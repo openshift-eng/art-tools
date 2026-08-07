@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from artcommonlib.model import Model
 from doozerlib.backend.konflux_client import API_VERSION, KIND_APPLICATION, KIND_RELEASE, KIND_RELEASE_PLAN
-from elliottlib.cli.konflux_release_cli import CreateReleaseCli, validate_snapshot_against_rpa
+from elliottlib.cli.konflux_release_cli import CreateReleaseCli, ReleaseConfig, validate_snapshot_against_rpa
 from elliottlib.cli.konflux_release_watch_cli import WatchReleaseCli
 from elliottlib.shipment_model import (
     ComponentSource,
@@ -182,6 +182,49 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
         # Patch verify_connection and resource_url to be regular Mocks, not AsyncMock
         self.konflux_client.verify_connection = MagicMock(return_value=True)
         self.konflux_client.resource_url = MagicMock()
+
+    @patch("elliottlib.cli.konflux_release_cli.get_utc_now_formatted_str", return_value="20260805200004")
+    @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
+    def test_object_name_is_normalized_and_preserves_timestamp(self, mock_konflux_client_init, _mock_timestamp):
+        mock_konflux_client_init.return_value = self.konflux_client
+        self.runtime.assembly = "4.18.2_RC+1"
+
+        cli = CreateReleaseCli(
+            runtime=self.runtime,
+            config_path=self.config_path,
+            release_env=self.release_env,
+            konflux_config=self.konflux_config,
+            image_repo_pull_secret=self.image_repo_pull_secret,
+            dry_run=self.dry_run,
+            kind="image.v2",
+        )
+
+        name = cli.get_object_name()
+        self.assertEqual(name, "ocp-prod-4-18-2-rc-1-image-v2-20260805200004")
+        self.assertLessEqual(len(name), 63)
+
+    @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
+    async def test_release_rejects_invalid_snapshot_reference(self, mock_konflux_client_init):
+        mock_konflux_client_init.return_value = self.konflux_client
+        cli = CreateReleaseCli(
+            runtime=self.runtime,
+            config_path=self.config_path,
+            release_env=self.release_env,
+            konflux_config=self.konflux_config,
+            image_repo_pull_secret=self.image_repo_pull_secret,
+            dry_run=self.dry_run,
+            kind="image",
+        )
+        release_config = ReleaseConfig(
+            snapshot="snapshot.v1",
+            release_plan="test-release-plan",
+            application="test-application",
+            release_name="test-release",
+        )
+
+        with self.assertRaisesRegex(ValueError, "Release snapshot reference"):
+            await cli.new_release(release_config)
+        self.konflux_client._get.assert_not_awaited()
 
     @patch("elliottlib.cli.konflux_release_cli.validate_snapshot_against_rpa", new_callable=AsyncMock)
     @patch("elliottlib.cli.konflux_release_cli.get_utc_now_formatted_str", return_value="timestamp")

@@ -326,6 +326,24 @@ class TestSnapshotNaming(IsolatedAsyncioTestCase):
         self.image_repo_pull_secret = "/path/to/pull-secret"
         self.dry_run = False
 
+    @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
+    async def test_custom_snapshot_name_must_be_dns_label(self, mock_konflux_client_init):
+        mock_konflux_client = AsyncMock()
+        mock_konflux_client.verify_connection = Mock(return_value=True)
+        mock_konflux_client_init.return_value = mock_konflux_client
+
+        cli = CreateSnapshotCli(
+            runtime=self.runtime,
+            konflux_config=self.konflux_config,
+            image_repo_pull_secret=self.image_repo_pull_secret,
+            builds=["test-component-v1.0.0-1"],
+            dry_run=self.dry_run,
+            custom_name="snapshot.v1",
+        )
+
+        with self.assertRaisesRegex(ValueError, "Custom snapshot name"):
+            await cli.new_snapshots([])
+
     @patch("elliottlib.cli.snapshot_cli.get_utc_now_formatted_str", return_value="20251031141128")
     @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
     async def test_openshift_group_snapshot_name(self, mock_konflux_client_init, _mock_timestamp):

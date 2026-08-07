@@ -13,6 +13,8 @@ from artcommonlib.util import (
     get_inflight,
     isolate_major_minor_in_group,
     normalize_group_name_for_k8s,
+    normalize_k8s_dns_label,
+    validate_k8s_dns_label,
 )
 
 
@@ -430,6 +432,27 @@ class TestSoftwareLifecyclePhase(unittest.TestCase):
         actual = release_util.isolate_timestamp_in_release("")
         expected = None
         self.assertEqual(actual, expected)
+
+
+class TestK8sDnsLabels(unittest.TestCase):
+    def test_normalize(self):
+        self.assertEqual(normalize_k8s_dns_label("Golang.Builder__v1.23"), "golang-builder-v1-23")
+
+    def test_normalize_with_length_budget(self):
+        self.assertEqual(normalize_k8s_dns_label("component-name", max_length=10), "component")
+
+    def test_normalize_rejects_invalid_length_budget(self):
+        for max_length in (0, 64):
+            with self.subTest(max_length=max_length), self.assertRaises(ValueError):
+                normalize_k8s_dns_label("component", max_length=max_length)
+
+    def test_validate(self):
+        self.assertEqual(validate_k8s_dns_label("golang-builder-v1-23"), "golang-builder-v1-23")
+
+    def test_validate_rejects_invalid_names(self):
+        for name in ("", "v1.23", "Uppercase", "under_score", "-leading", "trailing-", "a" * 64):
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                validate_k8s_dns_label(name, "Snapshot name")
 
 
 class TestNormalizeGroupNameForK8s(unittest.TestCase):

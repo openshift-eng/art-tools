@@ -11,8 +11,10 @@ from artcommonlib.constants import OCP_RPA_BASE_URL, OCP_RPA_ENVS, OCP_RPA_KINDS
 from artcommonlib.util import (
     get_utc_now_formatted_str,
     new_roundtrip_yaml_handler,
+    normalize_k8s_dns_label,
     resolve_konflux_kubeconfig_by_product,
     resolve_konflux_namespace_by_product,
+    validate_k8s_dns_label,
 )
 from doozerlib.backend.konflux_client import (
     API_VERSION,
@@ -262,8 +264,12 @@ class CreateReleaseCli:
         return created_release
 
     def get_object_name(self) -> str:
-        assembly_str = self.runtime.assembly.replace(".", "-")
-        return f"{self.runtime.product}-{self.release_env}-{assembly_str}-{self.kind}-{get_utc_now_formatted_str()}"
+        timestamp = get_utc_now_formatted_str()
+        raw_prefix = f"{self.runtime.product}-{self.release_env}-{self.runtime.assembly}-{self.kind}"
+        prefix = normalize_k8s_dns_label(raw_prefix, max_length=63 - len(timestamp) - 1)
+        if not prefix:
+            raise ValueError(f"Release object name prefix {raw_prefix!r} cannot be normalized to a Kubernetes name")
+        return f"{prefix}-{timestamp}"
 
     async def create_snapshot(self, shipment: Shipment) -> dict:
         """
@@ -320,7 +326,7 @@ class CreateReleaseCli:
 
     async def new_release(self, release_config: ReleaseConfig) -> dict:
         release_plan = release_config.release_plan
-        snapshot = release_config.snapshot
+        snapshot = validate_k8s_dns_label(release_config.snapshot, "Release snapshot reference")
 
         # make sure releasePlan exists
         LOGGER.info(f"Fetching release plan {release_plan} ...")
