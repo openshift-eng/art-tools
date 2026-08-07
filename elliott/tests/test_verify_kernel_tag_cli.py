@@ -159,13 +159,22 @@ class TestGetKernelPackagesAndTag(IsolatedAsyncioTestCase):
         self.assertEqual(packages, set())
         self.assertEqual(tag, "")
 
-    def test_multiple_entries(self):
+    def test_multiple_entries_same_tag(self):
+        config = [
+            {"packages": ["kernel"], "stop_ship_tag": "early-kernel-stop-ship", "integration_tag": "ic1"},
+            {"packages": ["kernel-rt"], "stop_ship_tag": "early-kernel-stop-ship", "integration_tag": "ic2"},
+        ]
+        packages, tag = get_kernel_packages_and_tag(config)
+        self.assertEqual(packages, {"kernel", "kernel-rt"})
+        self.assertEqual(tag, "early-kernel-stop-ship")
+
+    def test_multiple_entries_different_tags_raises(self):
         config = [
             {"packages": ["kernel"], "stop_ship_tag": "tag1", "integration_tag": "ic1"},
             {"packages": ["kernel-rt"], "stop_ship_tag": "tag2", "integration_tag": "ic2"},
         ]
-        packages, tag = get_kernel_packages_and_tag(config)
-        self.assertEqual(packages, {"kernel", "kernel-rt"})
+        with self.assertRaises(ValueError):
+            get_kernel_packages_and_tag(config)
 
 
 class TestFindRhcosNvrs(IsolatedAsyncioTestCase):
@@ -251,10 +260,12 @@ class TestGetKernelRpmsFromRhcos(IsolatedAsyncioTestCase):
 
     @patch("elliottlib.cli.verify_kernel_tag_cli.requests.get")
     def test_http_error(self, mock_get):
+        from requests.exceptions import HTTPError
+
         mock_resp = MagicMock()
-        mock_resp.raise_for_status.side_effect = Exception("404 Not Found")
+        mock_resp.raise_for_status.side_effect = HTTPError("404 Not Found")
         mock_get.return_value = mock_resp
-        with self.assertRaises(Exception, msg="404 Not Found"):
+        with self.assertRaises(HTTPError):
             get_kernel_rpms_from_rhcos("rhcos-x86_64-fake-1", {"kernel"})
 
 
@@ -326,7 +337,8 @@ class TestCheckAdvisoryKernelTag(IsolatedAsyncioTestCase):
         mock_check_tags.return_value = []
 
         result = await check_advisory_kernel_tag(api, 12345, "image", MagicMock(), {"kernel"}, "early-kernel-stop-ship")
-        self.assertTrue(result.skipped)
+        self.assertTrue(result.failed)
+        self.assertIn("no kernel RPMs found", result.error)
 
     @patch("elliottlib.cli.verify_kernel_tag_cli.check_kernel_tags")
     @patch("elliottlib.cli.verify_kernel_tag_cli.get_kernel_rpms_from_rhcos")
