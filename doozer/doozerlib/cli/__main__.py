@@ -60,6 +60,7 @@ from doozerlib.cli.olm_bundle import list_olm_operators, olm_bundles_print, reba
 from doozerlib.cli.release_gen_assembly import gen_assembly_from_releases, releases_gen_assembly
 from doozerlib.cli.release_gen_assembly_targeted import gen_assembly_from_targeted
 from doozerlib.cli.release_gen_payload import release_gen_payload
+from doozerlib.cli.release_payload import release_payload_rebase_and_build
 from doozerlib.cli.rpms import (
     rpms_build,
     rpms_clone,
