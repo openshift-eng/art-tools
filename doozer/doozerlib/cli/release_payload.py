@@ -128,7 +128,8 @@ class ReleasePayloadRebaseAndBuildCli:
         :return: The pullspec for the cluster-version-operator image referenced by the manifests.
         """
         await exectools.to_thread(manifests_dir.mkdir, parents=True, exist_ok=True)
-        release_name = f"{self.version}-{self.release}"
+        semver = self.version.lstrip("v")
+        release_name = f"{semver}-{self.release}"
         cmd = [
             "oc",
             "adm",
