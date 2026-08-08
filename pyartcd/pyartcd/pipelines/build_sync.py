@@ -554,11 +554,19 @@ class BuildSyncPipeline:
         # path to local assembly_report.yml
         file_path = f'{GEN_PAYLOAD_ARTIFACTS_OUT_DIR}/assembly-report.yaml'
 
+        filtered_issues = {'assembly_issues': {}}
+
+        if not os.path.exists(file_path):
+            self.logger.warning('Assembly report file not found: %s', file_path)
+            return filtered_issues
+
         # Open and load the YAML file
         with open(file_path, 'r') as file:
             data = yaml.safe_load(file)
 
-        filtered_issues = {'assembly_issues': {}}
+        if not data:
+            self.logger.warning('Assembly report file is empty: %s', file_path)
+            return filtered_issues
 
         if 'assembly_issues' in data:
             for component, issues in data['assembly_issues'].items():
@@ -566,7 +574,7 @@ class BuildSyncPipeline:
                 if filtered_data:  # Add component only if there are valid issues
                     filtered_issues['assembly_issues'][component] = filtered_data
 
-            return filtered_issues
+        return filtered_issues
 
     @start_as_current_span_async(TRACER, "build-sync.handle-failure")
     async def handle_failure(self):
@@ -591,12 +599,17 @@ class BuildSyncPipeline:
         # Update fail counter on Redis
         await redis.set_value(self.fail_count_name, fail_count)
 
-        unpermissable_issues = self.get_unpermissable_assembly_issues()
-        if unpermissable_issues['assembly_issues']:
-            report = yaml.safe_dump(unpermissable_issues)
-            jenkins.update_title(' [UNVIABLE]')
-        else:
-            report = "Unknown Failure. Please investigate"
+        try:
+            unpermissable_issues = self.get_unpermissable_assembly_issues()
+            if unpermissable_issues['assembly_issues']:
+                report = yaml.safe_dump(unpermissable_issues)
+                jenkins.update_title(' [UNVIABLE]')
+            else:
+                report = "Unknown Failure. Please investigate"
+                jenkins.update_title(' [FAILURE]')
+        except Exception as e:
+            self.logger.error('Failed to analyze assembly report: %s', e)
+            report = "Unknown Failure. Assembly report was unavailable for analysis. Please investigate"
             jenkins.update_title(' [FAILURE]')
 
         # Less than 2 failures, assembly != stream: just break the build
