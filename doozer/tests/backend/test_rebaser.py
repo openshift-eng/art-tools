@@ -2195,3 +2195,134 @@ class TestPrivateFixDetectionE2E(IsolatedAsyncioTestCase):
             util.is_commit_in_public_upstream_async.assert_called_once()
         finally:
             util.is_commit_in_public_upstream_async = original_func
+
+
+class TestPublicRepoFilesPush(IsolatedAsyncioTestCase):
+    """
+    Tests for pushing .repo files to public upstream (openshift/os) for RHCOS images.
+    """
+
+    def setUp(self):
+        self.runtime = MagicMock()
+        self.runtime.group = "openshift-4.17"
+        self.runtime.assembly = "stream"
+
+        # Create rebaser with required arguments
+        base_dir = Path("/tmp/test")
+        source_resolver = MagicMock()
+        repo_type = "unsigned"
+        self.rebaser = KonfluxRebaser(self.runtime, base_dir, source_resolver, repo_type)
+
+    def test_get_public_repo_branch_name(self):
+        """
+        Test that _get_public_repo_branch_name generates correct branch names.
+        """
+        metadata = MagicMock()
+        metadata.distgit_key = "rhcos-node-image"
+
+        # Test for OCP 4.17
+        self.runtime.group = "openshift-4.17"
+        branch_name = self.rebaser._get_public_repo_branch_name(metadata)
+        self.assertEqual(branch_name, "art-repos-rhcos-node-image-4.17")
+
+        # Test for OCP 5.0
+        self.runtime.group = "openshift-5.0"
+        branch_name = self.rebaser._get_public_repo_branch_name(metadata)
+        self.assertEqual(branch_name, "art-repos-rhcos-node-image-5.0")
+
+        # Test for rhcos-node-extensions
+        metadata.distgit_key = "rhcos-node-extensions"
+        self.runtime.group = "openshift-4.18"
+        branch_name = self.rebaser._get_public_repo_branch_name(metadata)
+        self.assertEqual(branch_name, "art-repos-rhcos-node-extensions-4.18")
+
+    def test_get_public_repo_branch_name_invalid_group(self):
+        """
+        Test that _get_public_repo_branch_name raises ValueError for invalid group names.
+        """
+        metadata = MagicMock()
+        metadata.distgit_key = "rhcos-node-image"
+
+        self.runtime.group = "invalid-group"
+        with self.assertRaises(ValueError):
+            self.rebaser._get_public_repo_branch_name(metadata)
+
+    async def test_push_repo_files_skips_non_rhcos_images(self):
+        """
+        Test that _push_repo_files_to_public_upstream skips non-RHCOS images.
+        """
+        metadata = MagicMock()
+        metadata.config = Model({})
+        build_repo = MagicMock()
+
+        # Test with no web URL
+        await self.rebaser._push_repo_files_to_public_upstream(metadata, build_repo)
+
+        # Test with different web URL
+        metadata.config.content = Model(
+            {'source': Model({'git': Model({'web': 'https://github.com/openshift/different-repo'})})}
+        )
+        await self.rebaser._push_repo_files_to_public_upstream(metadata, build_repo)
+
+        # No git operations should have been called
+        # (we're just verifying it returns early without errors)
+
+    async def test_push_repo_files_rhcos_image_filtering(self):
+        """
+        Test that _push_repo_files_to_public_upstream only processes RHCOS images.
+        """
+        from unittest.mock import patch
+
+        from artcommonlib import git_helper
+
+        metadata = MagicMock()
+        metadata.distgit_key = "rhcos-node-image"
+        metadata.config = Model(
+            {'content': Model({'source': Model({'git': Model({'web': 'https://github.com/openshift/os'})})})}
+        )
+
+        build_repo = MagicMock()
+        build_repo.url = "git@github.com:openshift-priv/os.git"
+        build_repo.local_dir = Path("/tmp/build-repo")
+
+        # Mock git operations to check if they're called
+        with patch.object(git_helper, 'gather_git_async', new=AsyncMock()) as mock_gather:
+            # Mock that files haven't changed
+            mock_gather.return_value = (0, "", "")
+
+            # Mock ls-remote to say branch doesn't exist (empty output)
+            mock_gather.return_value = (0, "", "")
+
+            # Mock git_clone to prevent actual cloning
+            with patch.object(git_helper, 'git_clone') as mock_clone:
+                mock_clone.side_effect = FileNotFoundError("Expected - test should check before cloning")
+
+                # Should attempt to check if files changed (first call to gather_git_async)
+                # Then check if branch exists (second call via ls-remote)
+                # Then attempt to clone (which we mock to fail)
+                with self.assertRaises(FileNotFoundError):
+                    await self.rebaser._push_repo_files_to_public_upstream(metadata, build_repo)
+
+                # Verify ls-remote was called (indicates RHCOS image was detected)
+                self.assertTrue(mock_gather.called)
+
+    def test_branch_name_format_consistency(self):
+        """
+        Test that branch names follow the expected format across all RHCOS image variants.
+        """
+        rhcos_images = [
+            "rhcos-node-image",
+            "rhcos-node-image-rhel10",
+            "rhcos-node-extensions",
+            "rhcos-node-extensions-rhel10",
+        ]
+
+        self.runtime.group = "openshift-4.17"
+
+        for image_name in rhcos_images:
+            metadata = MagicMock()
+            metadata.distgit_key = image_name
+            branch_name = self.rebaser._get_public_repo_branch_name(metadata)
+            self.assertTrue(branch_name.startswith("art-repos-"))
+            self.assertTrue(branch_name.endswith("-4.17"))
+            self.assertIn(image_name, branch_name)
