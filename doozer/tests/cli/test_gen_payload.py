@@ -69,6 +69,191 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         self.assertEqual([], issues)
         self.assertEqual(2, len(rhcos_entries))
 
+    def test_normalize_rhcos_consistency_config_flat(self):
+        """Flat {distgit_key: [pkg]} format is wrapped under the rhel-coreos stream key."""
+        flat = {"driver-toolkit": ["kernel"]}
+        result = rgp_cli.PayloadGenerator.normalize_rhcos_consistency_config(flat)
+        self.assertEqual({"rhel-coreos": {"driver-toolkit": ["kernel"]}}, result)
+
+    def test_normalize_rhcos_consistency_config_nested(self):
+        """Stream-keyed nested format passes through unchanged."""
+        nested = {
+            "rhel-coreos": {"driver-toolkit": ["kernel"]},
+            "rhel-coreos-10": {"driver-toolkit-rhel10": ["kernel"]},
+        }
+        result = rgp_cli.PayloadGenerator.normalize_rhcos_consistency_config(nested)
+        self.assertEqual(nested, result)
+
+    def test_normalize_rhcos_consistency_config_empty(self):
+        """Empty or None input returns an empty dict."""
+        self.assertEqual({}, rgp_cli.PayloadGenerator.normalize_rhcos_consistency_config({}))
+        self.assertEqual({}, rgp_cli.PayloadGenerator.normalize_rhcos_consistency_config(None))
+
+    def test_normalize_rhcos_consistency_config_mixed_raises(self):
+        """Mixed list and dict values raise ValueError."""
+        mixed = {"driver-toolkit": ["kernel"], "rhel-coreos-10": {"driver-toolkit-rhel10": ["kernel"]}}
+        with self.assertRaises(ValueError):
+            rgp_cli.PayloadGenerator.normalize_rhcos_consistency_config(mixed)
+
+    @patch.object(rgp_cli.PayloadGenerator, "validate_pkg_consistency_req", return_value=None)
+    def test_find_rhcos_payload_rpm_inconsistencies_legacy_flat_still_works(self, validate_mock):
+        """Flat require_consistency config is treated as rhel-coreos stream; RHEL9 RPMs are used."""
+        rhcos_build = MagicMock()
+        rhcos_build.runtime.logger = MagicMock()
+        rhcos_build.get_os_metadata_rpm_list.return_value = [
+            ("kernel-core", 0, "5.14.0", "427.116.1.el9_4", "x86_64", "rhel-coreos"),
+            ("kernel", 0, "5.14.0", "427.116.1.el9_4", "x86_64", "rhel-coreos"),
+        ]
+        payload_bri = {"driver-toolkit": MagicMock()}
+        pg = rgp_cli.PayloadGenerator(runtime=MagicMock())
+        flat_config = {"driver-toolkit": ["kernel"]}
+
+        issues = pg.find_rhcos_payload_rpm_inconsistencies(
+            rhcos_build,
+            payload_bri,
+            flat_config,
+        )
+
+        self.assertEqual([], issues)
+        validate_mock.assert_called_once()
+        _, _, _, rhcos_rpm_vrs, _, _ = validate_mock.call_args[0]
+        self.assertEqual(
+            {"kernel-core": "5.14.0-427.116.1.el9_4", "kernel": "5.14.0-427.116.1.el9_4"},
+            rhcos_rpm_vrs,
+        )
+
+    def test_find_rhcos_payload_rpm_inconsistencies_rhel10_stream_checked(self):
+        """RHEL10 stream config uses the rhel-coreos-10 RPM dict, not the RHEL9 one."""
+        rhcos_build = MagicMock()
+        rhcos_build.runtime.logger = MagicMock()
+        rhcos_build.get_os_metadata_rpm_list.return_value = [
+            ("kernel-core", 0, "5.14.0", "427.116.1.el9_4", "x86_64", "rhel-coreos"),
+            ("kernel-core", 0, "6.12.0", "100.el10", "x86_64", "rhel-coreos-10"),
+        ]
+        payload_bri = {"driver-toolkit-rhel10": MagicMock()}
+        pg = rgp_cli.PayloadGenerator(runtime=MagicMock())
+        nested_config = {
+            "rhel-coreos-10": {"driver-toolkit-rhel10": ["kernel"]},
+        }
+        mismatch_issue = AssemblyIssue(
+            "RHCOS and 'driver-toolkit-rhel10' should use the same build of package 'kernel'",
+            "driver-toolkit-rhel10",
+            AssemblyIssueCode.FAILED_CONSISTENCY_REQUIREMENT,
+        )
+
+        with patch.object(
+            rgp_cli.PayloadGenerator,
+            "validate_pkg_consistency_req",
+            return_value=mismatch_issue,
+        ) as validate_mock:
+            issues = pg.find_rhcos_payload_rpm_inconsistencies(
+                rhcos_build,
+                payload_bri,
+                nested_config,
+            )
+
+        self.assertEqual(1, len(issues))
+        self.assertEqual(AssemblyIssueCode.FAILED_CONSISTENCY_REQUIREMENT, issues[0].code)
+        validate_mock.assert_called_once()
+        _, _, _, rhcos_rpm_vrs, _, _ = validate_mock.call_args[0]
+        self.assertEqual({"kernel-core": "6.12.0-100.el10"}, rhcos_rpm_vrs)
+
+    @patch.object(rgp_cli.PayloadGenerator, "validate_pkg_consistency_req")
+    def test_find_rhcos_payload_rpm_inconsistencies_missing_stream_no_issue(self, validate_mock):
+        """When the RHCOS build has no RHEL10 RPMs, rhel-coreos-10 checks are skipped silently."""
+        rhcos_build = MagicMock()
+        rhcos_build.runtime.logger = MagicMock()
+        rhcos_build.get_os_metadata_rpm_list.return_value = [
+            ("kernel-core", 0, "5.14.0", "427.116.1.el9_4", "x86_64", "rhel-coreos"),
+        ]
+        payload_bri = {"driver-toolkit-rhel10": MagicMock()}
+        pg = rgp_cli.PayloadGenerator(runtime=MagicMock())
+        nested_config = {
+            "rhel-coreos-10": {"driver-toolkit-rhel10": ["kernel"]},
+        }
+
+        issues = pg.find_rhcos_payload_rpm_inconsistencies(
+            rhcos_build,
+            payload_bri,
+            nested_config,
+        )
+
+        self.assertEqual([], issues)
+        validate_mock.assert_not_called()
+
+    @patch.object(rgp_cli.PayloadGenerator, "validate_pkg_consistency_req", return_value=None)
+    def test_find_rhcos_payload_rpm_inconsistencies_pre_ocp5_flat_config_no_issues(self, validate_mock):
+        """Pre-5.0 branch: flat require_consistency, RHEL9-only RHCOS RPMs, versions match."""
+        rhcos_build = MagicMock()
+        rhcos_build.runtime.logger = MagicMock()
+        rhcos_build.get_os_metadata_rpm_list.return_value = [
+            ("kernel", 0, "5.14.0", "427.116.1.el9_4", "x86_64", "rhel-coreos"),
+            ("kernel-core", 0, "5.14.0", "427.116.1.el9_4", "x86_64", "rhel-coreos"),
+        ]
+        payload_bri = {"driver-toolkit": MagicMock()}
+        pg = rgp_cli.PayloadGenerator(runtime=MagicMock())
+
+        issues = pg.find_rhcos_payload_rpm_inconsistencies(
+            rhcos_build,
+            payload_bri,
+            {"driver-toolkit": ["kernel"]},
+        )
+
+        self.assertEqual([], issues)
+        validate_mock.assert_called_once()
+        # RHEL9-only RPMs must be used — no RHEL10 dict constructed
+        _, _, _, rhcos_rpm_vrs, _, _ = validate_mock.call_args[0]
+        self.assertIn("kernel", rhcos_rpm_vrs)
+        self.assertEqual("5.14.0-427.116.1.el9_4", rhcos_rpm_vrs["kernel"])
+
+    @patch.object(
+        rgp_cli.PayloadGenerator,
+        "validate_pkg_consistency_req",
+        return_value=AssemblyIssue(
+            "RHCOS and 'driver-toolkit' should use the same build of package 'kernel'",
+            "driver-toolkit",
+            AssemblyIssueCode.FAILED_CONSISTENCY_REQUIREMENT,
+        ),
+    )
+    def test_find_rhcos_payload_rpm_inconsistencies_pre_ocp5_flat_config_mismatch(self, validate_mock):
+        """Pre-5.0 branch: flat require_consistency, RHEL9-only RHCOS RPMs, version mismatch raises issue."""
+        rhcos_build = MagicMock()
+        rhcos_build.runtime.logger = MagicMock()
+        rhcos_build.get_os_metadata_rpm_list.return_value = [
+            ("kernel", 0, "5.14.0", "427.116.1.el9_4", "x86_64", "rhel-coreos"),
+        ]
+        payload_bri = {"driver-toolkit": MagicMock()}
+        pg = rgp_cli.PayloadGenerator(runtime=MagicMock())
+
+        issues = pg.find_rhcos_payload_rpm_inconsistencies(
+            rhcos_build,
+            payload_bri,
+            {"driver-toolkit": ["kernel"]},
+        )
+
+        self.assertEqual(1, len(issues))
+        self.assertEqual(AssemblyIssueCode.FAILED_CONSISTENCY_REQUIREMENT, issues[0].code)
+
+    def test_find_rhcos_payload_rpm_inconsistencies_unknown_distgit_key(self):
+        """A distgit key not in the payload raises an IMPERMISSIBLE AssemblyIssue."""
+        rhcos_build = MagicMock()
+        rhcos_build.runtime.logger = MagicMock()
+        rhcos_build.get_os_metadata_rpm_list.return_value = [
+            ("kernel-core", 0, "5.14.0", "427.116.1.el9_4", "x86_64", "rhel-coreos"),
+        ]
+        pg = rgp_cli.PayloadGenerator(runtime=MagicMock())
+        flat_config = {"missing-image": ["kernel"]}
+
+        issues = pg.find_rhcos_payload_rpm_inconsistencies(
+            rhcos_build,
+            {},
+            flat_config,
+        )
+
+        self.assertEqual(1, len(issues))
+        self.assertEqual(AssemblyIssueCode.IMPERMISSIBLE, issues[0].code)
+        self.assertEqual("missing-image", issues[0].component)
+
     # test parameter validation
     def test_parameter_validation(self):
         # test when assembly is not valid
