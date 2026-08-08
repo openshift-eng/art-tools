@@ -277,41 +277,45 @@ class Ocp4ScanPipeline:
 
         Failures are logged and reported to Slack but do not fail the pipeline.
         """
-        group = f"openshift-{self.version}"
-        group_config = await util.load_group_config(
-            group=group,
-            assembly=self.assembly,
-            doozer_data_path=self.data_path,
-            doozer_data_gitref=self.data_gitref,
-        )
-        bridge_release = group_config.get("bridge_release", {}) or {}
-        bug_mirroring = bridge_release.get("bug_mirroring", {}) or {}
-        if not bug_mirroring.get("enabled", False):
-            self.logger.info("Bridge bug mirroring is disabled for %s", group)
-            return
-
-        if self.data_gitref:
-            group += f"@{self.data_gitref}"
-        cmd = [
-            "elliott",
-            f"--group={group}",
-            f"--assembly={self.assembly}",
-            "--build-system=konflux",
-            f"--working-dir={self._elliott_working}",
-            f"--data-path={self.data_path}",
-            "find-bugs:bridge-mirror",
-        ]
-        if self.runtime.dry_run:
-            cmd.append("--dry-run")
-
         try:
+            group = f"openshift-{self.version}"
+            group_config = await util.load_group_config(
+                group=group,
+                assembly=self.assembly,
+                doozer_data_path=self.data_path,
+                doozer_data_gitref=self.data_gitref,
+            )
+            bridge_release = group_config.get("bridge_release", {}) or {}
+            bug_mirroring = bridge_release.get("bug_mirroring", {}) or {}
+            if not bug_mirroring.get("enabled", False):
+                self.logger.info("Bridge bug mirroring is disabled for %s", group)
+                return
+
+            if self.data_gitref:
+                group += f"@{self.data_gitref}"
+            cmd = [
+                "elliott",
+                f"--group={group}",
+                f"--assembly={self.assembly}",
+                "--build-system=konflux",
+                f"--working-dir={self._elliott_working}",
+                f"--data-path={self.data_path}",
+                "find-bugs:bridge-mirror",
+            ]
+            if self.runtime.dry_run:
+                cmd.append("--dry-run")
+
             await exectools.cmd_assert_async(cmd)
-        except ChildProcessError as e:
+
+        except Exception as e:
             self.logger.error("Bridge bug mirroring failed for %s: %s", self.version, e)
-            if not self.runtime.dry_run:
-                slack_client = self.runtime.new_slack_client()
-                slack_client.bind_channel(f"openshift-{self.version}")
-                await slack_client.say(f"Bridge bug mirroring failed for {self.version}. Please investigate")
+            try:
+                if not self.runtime.dry_run:
+                    slack_client = self.runtime.new_slack_client()
+                    slack_client.bind_channel(f"openshift-{self.version}")
+                    await slack_client.say(f"Bridge bug mirroring failed for {self.version}. Please investigate")
+            except Exception:
+                self.logger.exception("Failed to send Slack notification for bridge bug mirroring failure")
 
 
 @cli.command('beta:konflux:ocp4-scan')

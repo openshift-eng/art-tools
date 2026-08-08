@@ -180,6 +180,8 @@ class TestJIRABugTracker(unittest.TestCase):
         }
         mock_issue = flexmock(key="OCPBUGS-1")
         mock_jira_client = flexmock()
+        mock_version = flexmock(name="4.23")
+        mock_jira_client.should_receive("project_versions").with_args("OCPBUGS").and_return([mock_version])
         mock_jira_client.should_receive("create_issue").with_args(
             fields={
                 "summary": "Bridge bug",
