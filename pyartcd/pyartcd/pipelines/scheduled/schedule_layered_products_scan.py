@@ -3,7 +3,7 @@ import asyncio
 import click
 from artcommonlib import redis
 
-from pyartcd import jenkins, util
+from pyartcd import jenkins, tekton, util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import Lock, LockManager
 from pyartcd.runtime import Runtime
@@ -30,9 +30,15 @@ async def run_for(group: str, runtime: Runtime, lock_manager: LockManager):
         return
 
     # Schedule layered products scan
-    runtime.logger.info('[%s] Scheduling layered-products-scan-konflux', group)
+    runtime.logger.info('[%s] Scheduling layered-products-scan', group)
 
-    jenkins.start_layered_products_scan_konflux(group=group, block_until_building=False)
+    if tekton.is_tekton_context():
+        tekton.start_pipeline_run(
+            pipeline_name="layered-products-scan",
+            params={"group": group, "assembly": "stream"},
+        )
+    else:
+        jenkins.start_layered_products_scan_konflux(group=group, block_until_building=False)
 
 
 @cli.command('schedule-layered-products-scan')
@@ -40,7 +46,8 @@ async def run_for(group: str, runtime: Runtime, lock_manager: LockManager):
 @pass_runtime
 @click_coroutine
 async def layered_products_scan(runtime: Runtime, group: tuple):
-    jenkins.init_jenkins()
+    if not tekton.is_tekton_context():
+        jenkins.init_jenkins()
     lock_manager = LockManager([redis.redis_url()])
     try:
         await asyncio.gather(*[run_for(g, runtime, lock_manager) for g in group])
