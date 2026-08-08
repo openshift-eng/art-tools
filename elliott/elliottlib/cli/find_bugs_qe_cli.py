@@ -79,6 +79,12 @@ def close_reconciliation_bugs(runtime, noop: bool, bug_tracker):
         status=statuses,
         include_labels=['art:reconciliation'],
     )
+    if query is None:
+        LOGGER.error(
+            "Skipping reconciliation bug search: no valid target versions found in Jira"
+            " (versions may not be set up yet)"
+        )
+        return
     bugs = bug_tracker._search(query, verbose=runtime.debug)
     LOGGER.info(f"Found {len(bugs)} bugs to close: {', '.join(sorted(str(b.id) for b in bugs))}")
 
