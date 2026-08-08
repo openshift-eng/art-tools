@@ -28,7 +28,7 @@ class TestBug(unittest.TestCase):
 
     def test_is_invalid_tracker_bug(self):
         bug_true = flexmock(id=1, summary="CVE-2022-0001", keywords=[], whiteboard_component=None)
-        self.assertEqual(BugzillaBug(bug_true).is_invalid_tracker_bug(), True)
+        self.assertTrue(BugzillaBug(bug_true).is_invalid_tracker_bug())
 
     @parameterized.expand(
         [
@@ -638,9 +638,8 @@ class TestJIRABug(unittest.TestCase):
                 issuetype=flexmock(name="Bug"),
             ),
         )
-        expected = True
         actual = JIRABug(bug).is_tracker_bug()
-        self.assertEqual(expected, actual)
+        self.assertTrue(actual)
 
     def test_is_tracker_bug_missing_keywords(self):
         bug = flexmock(
@@ -650,9 +649,8 @@ class TestJIRABug(unittest.TestCase):
                 issuetype=flexmock(name="Bug"),
             ),
         )
-        expected = False
         actual = JIRABug(bug).is_tracker_bug()
-        self.assertEqual(expected, actual)
+        self.assertFalse(actual)
 
     def test_is_tracker_bug_missing_pscomponent(self):
         bug = flexmock(
@@ -662,9 +660,8 @@ class TestJIRABug(unittest.TestCase):
                 issuetype=flexmock(name="Bug"),
             ),
         )
-        expected = False
         actual = JIRABug(bug).is_tracker_bug()
-        self.assertEqual(expected, actual)
+        self.assertFalse(actual)
 
     def test_is_tracker_bug_missing_flaw(self):
         bug = flexmock(
@@ -674,9 +671,8 @@ class TestJIRABug(unittest.TestCase):
                 issuetype=flexmock(name="Bug"),
             ),
         )
-        expected = False
         actual = JIRABug(bug).is_tracker_bug()
-        self.assertEqual(expected, actual)
+        self.assertFalse(actual)
 
     def test_component_sub_component(self):
         bug = JIRABug(
@@ -779,15 +775,13 @@ class TestBugzillaBug(unittest.TestCase):
             keywords=constants.TRACKER_BUG_KEYWORDS,
             whiteboard_component="my-image",
         )
-        expected = True
         actual = BugzillaBug(bug).is_tracker_bug()
-        self.assertEqual(expected, actual)
+        self.assertTrue(actual)
 
     def test_is_tracker_bug_fail(self):
         bug = flexmock(id="1", keywords=["SomeOtherKeyword"], whiteboard_component="my-image")
-        expected = False
         actual = BugzillaBug(bug).is_tracker_bug()
-        self.assertEqual(expected, actual)
+        self.assertFalse(actual)
 
     def test_whiteboard_component(self):
         bug = BugzillaBug(flexmock(id=1, whiteboard="foo"))
