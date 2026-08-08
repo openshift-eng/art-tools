@@ -20,8 +20,8 @@ MAX_RESOLUTION_RETRIES = 5
 MAX_REINSTALL_STRIP_RETRIES = 5
 DEFAULT_PLATFORM = "linux/amd64"
 
-SYSTEM_PYTHON = "/usr/bin/python3"
-RPM_LOCKFILE_ENTRY_POINT = "from rpm_lockfile import main; main()"
+RPM_LOCKFILE_IMAGE = "default-route-openshift-image-registry.apps.artc2023.pc3z.p1.openshiftapps.com/art-cd/rpm-lockfile-prototype:v0.25.0"
+CONTAINER_RPMDB_CACHE_PATH = Path("/root/.cache/rpm-lockfile-prototype/rpmdbs")
 
 # Shell subshell expressions that evaluate to the current architecture
 ARCH_SUBSHELL_KEYWORDS = ("$(arch)", "$(uname -m)", "$(uname -p)", "$(go env GOARCH)")
