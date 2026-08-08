@@ -20,7 +20,7 @@ spec:
   output:
     to:
       kind: ImageStreamTag
-      name: rpm-lockfile-prototype:v0.25.0
+      name: rpm-lockfile-prototype:v0.29.0
   successfulBuildsHistoryLimit: 10
   failedBuildsHistoryLimit: 5
   runPolicy: Serial
