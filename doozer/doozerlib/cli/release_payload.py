@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import os
@@ -235,6 +236,9 @@ class ReleasePayloadRebaseAndBuildCli:
             revision=build_repo.branch,
         )
 
+        git_auth_secret = await konflux_client.ensure_git_auth_secret(namespace=self.konflux_namespace)
+        refresh_task = asyncio.create_task(konflux_client.token_refresh_loop(namespace=self.konflux_namespace))
+
         output_image = f"{self.image_repo}:{self.version}-{self.release}"
         # The Component (and its branch) is shared by every assembly of the group, so fold the
         # assembly into the generateName prefix -- otherwise builds for different assemblies are
@@ -242,34 +246,47 @@ class ReleasePayloadRebaseAndBuildCli:
         # redundant with the assembly (e.g. group `openshift-4.21` + assembly `4.21.1`), and
         # dropping it keeps the generated name shorter.
         assembly_slug = str(runtime.assembly).replace(".", "-").replace("_", "-").lower()
-        pipelinerun_info = await konflux_client.start_pipeline_run_for_image_build(
-            generate_name=f"release-payload-{assembly_slug}-",
-            namespace=self.konflux_namespace,
-            application_name=app_name,
-            component_name=component_name,
-            git_url=build_repo.https_url,
-            commit_sha=build_repo.commit_hash,
-            target_branch=build_repo.branch or build_repo.commit_hash,
-            output_image=output_image,
-            building_arches=arches,
-            pipelinerun_template_url=self.plr_template,
-            build_params=ImageBuildParams(
-                skip_checks=self.skip_checks,
-                skip_tasks=self.skip_tasks,
-                hermetic=True,
-                fetch_tags=False,
-            ),
-        )
-        url = konflux_client.resource_url(pipelinerun_info.to_dict())
-        self._logger.info("PipelineRun %s created: %s", pipelinerun_info.name, url)
+        try:
+            pipelinerun_info = await konflux_client.start_pipeline_run_for_image_build(
+                generate_name=f"release-payload-{assembly_slug}-",
+                namespace=self.konflux_namespace,
+                application_name=app_name,
+                component_name=component_name,
+                git_url=build_repo.https_url,
+                commit_sha=build_repo.commit_hash,
+                target_branch=build_repo.branch or build_repo.commit_hash,
+                output_image=output_image,
+                building_arches=arches,
+                git_auth_secret=git_auth_secret,
+                pipelinerun_template_url=self.plr_template,
+                build_params=ImageBuildParams(
+                    skip_checks=self.skip_checks,
+                    skip_tasks=self.skip_tasks,
+                    hermetic=True,
+                    fetch_tags=False,
+                ),
+            )
+            url = konflux_client.resource_url(pipelinerun_info.to_dict())
+            self._logger.info("PipelineRun %s created: %s", pipelinerun_info.name, url)
 
-        self._logger.info("Waiting for PipelineRun %s to complete...", pipelinerun_info.name)
-        pipelinerun_info = await konflux_client.wait_for_pipelinerun(
-            pipelinerun_info.name, namespace=self.konflux_namespace
-        )
-        succeeded_condition = pipelinerun_info.find_condition('Succeeded')
-        outcome = KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition(succeeded_condition)
-        self._logger.info("PipelineRun %s completed with outcome %s", pipelinerun_info.name, outcome)
+            self._logger.info("Waiting for PipelineRun %s to complete...", pipelinerun_info.name)
+            pipelinerun_info = await konflux_client.wait_for_pipelinerun(
+                pipelinerun_info.name, namespace=self.konflux_namespace
+            )
+            succeeded_condition = pipelinerun_info.find_condition('Succeeded')
+            outcome = KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition(succeeded_condition)
+            self._logger.info("PipelineRun %s completed with outcome %s", pipelinerun_info.name, outcome)
+        finally:
+            refresh_task.cancel()
+            try:
+                await refresh_task
+            except asyncio.CancelledError:
+                pass
+            try:
+                await konflux_client.delete_git_auth_secret(namespace=self.konflux_namespace)
+                await konflux_client.cleanup_stale_git_auth_secrets(namespace=self.konflux_namespace)
+            except Exception as e:
+                self._logger.warning("Failed to cleanup git-auth secrets: %s", e)
 
         return {
             "output_image": output_image,
