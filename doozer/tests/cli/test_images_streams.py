@@ -417,3 +417,75 @@ def test_master_version_comparison(target, master, expect_ahead):
     # This is the exact comparison from images_streams.py:1170
     target_is_ahead = (major, minor) > (master_major, master_minor)
     assert target_is_ahead == expect_ahead
+
+
+# Tests for get_image_digest
+
+
+def test_get_image_digest_json_success(mocker):
+    """Test get_image_digest returns digest from JSON output when available."""
+    mock_gather = mocker.patch('doozerlib.cli.images_streams.exectools.cmd_gather')
+    # JSON call succeeds
+    mock_gather.return_value = (0, '{"digest": "sha256:abc123def456"}', '')
+
+    result = images_streams.get_image_digest('quay.io/openshift/ci:test-tag')
+
+    assert result == 'sha256:abc123def456'
+    # Should have called with -o json
+    mock_gather.assert_called_once()
+    assert '-o json' in mock_gather.call_args[0][0]
+
+
+def test_get_image_digest_json_fails_text_fallback(mocker):
+    """Test get_image_digest falls back to text parsing when JSON fails (manifest lists)."""
+    mock_gather = mocker.patch('doozerlib.cli.images_streams.exectools.cmd_gather')
+    # JSON call fails (manifest list), text call succeeds
+    mock_gather.side_effect = [
+        (1, '', 'error: manifest list not supported with -o json'),
+        (0, 'Name: quay.io/openshift/ci:test-tag\nDigest: sha256:manifest_list_digest\nMediaType: ...', ''),
+    ]
+
+    result = images_streams.get_image_digest('quay.io/openshift/ci:test-tag')
+
+    assert result == 'sha256:manifest_list_digest'
+    assert mock_gather.call_count == 2
+
+
+def test_get_image_digest_json_empty_digest_text_fallback(mocker):
+    """Test get_image_digest falls back to text when JSON returns empty digest."""
+    mock_gather = mocker.patch('doozerlib.cli.images_streams.exectools.cmd_gather')
+    # JSON succeeds but has no digest key
+    mock_gather.side_effect = [
+        (0, '{"mediaType": "application/vnd.oci.image.index.v1+json"}', ''),
+        (0, 'Digest: sha256:fallback_digest\n', ''),
+    ]
+
+    result = images_streams.get_image_digest('quay.io/openshift/ci:test-tag')
+
+    assert result == 'sha256:fallback_digest'
+    assert mock_gather.call_count == 2
+
+
+def test_get_image_digest_both_fail(mocker):
+    """Test get_image_digest returns None when both JSON and text fail."""
+    mock_gather = mocker.patch('doozerlib.cli.images_streams.exectools.cmd_gather')
+    mock_gather.side_effect = [
+        (1, '', 'error: json failed'),
+        (1, '', 'error: text also failed'),
+    ]
+
+    result = images_streams.get_image_digest('quay.io/openshift/ci:nonexistent')
+
+    assert result is None
+    assert mock_gather.call_count == 2
+
+
+def test_get_image_digest_with_registry_config(mocker):
+    """Test get_image_digest passes registry config to both attempts."""
+    mock_gather = mocker.patch('doozerlib.cli.images_streams.exectools.cmd_gather')
+    mock_gather.return_value = (0, '{"digest": "sha256:abc"}', '')
+
+    images_streams.get_image_digest('quay.io/openshift/ci:test', registry_config='/path/to/auth.json')
+
+    cmd = mock_gather.call_args[0][0]
+    assert '--registry-config=/path/to/auth.json' in cmd

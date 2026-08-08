@@ -73,13 +73,29 @@ def get_image_digest(pullspec: str, registry_config: Optional[str] = None) -> Op
     """
     Get the digest of an image, handling both single-arch and manifest lists.
     Returns the digest string (e.g., 'sha256:...') or None if not found.
-    """
-    # Use text output (not -o json) because -o json fails for manifest lists
-    cmd = f'oc image info {pullspec}'
-    if registry_config:
-        cmd += f' --registry-config={registry_config}'
 
-    rc, stdout, stderr = exectools.cmd_gather(cmd)
+    Tries JSON output first (works reliably for single-arch images and returns
+    a digest that is usable with ``oc image mirror ... @sha256:...``).  Falls
+    back to text-output parsing when ``-o json`` fails, which happens for
+    manifest lists.
+    """
+    registry_flag = f' --registry-config={registry_config}' if registry_config else ''
+
+    # Try JSON first — gives us a digest that works for oc image mirror
+    json_cmd = f'oc image info {pullspec} -o json{registry_flag}'
+    rc, stdout, stderr = exectools.cmd_gather(json_cmd)
+    if rc == 0:
+        try:
+            info = json.loads(stdout)
+            digest = info.get('digest', '')
+            if digest:
+                return digest
+        except (json.JSONDecodeError, KeyError):
+            pass  # Fall through to text parsing
+
+    # Fallback: text output (works for manifest lists where -o json fails)
+    text_cmd = f'oc image info {pullspec}{registry_flag}'
+    rc, stdout, stderr = exectools.cmd_gather(text_cmd)
     if rc != 0:
         return None
 
@@ -229,7 +245,27 @@ def images_streams_mirror(
                     )
                     if registry_config_file:
                         gc_mirror_cmd += f' --registry-config={registry_config_file}'
-                    exectools.cmd_assert(gc_mirror_cmd, retries=3, realtime=True)
+                    # Use graceful error handling: the image was already mirrored
+                    # to the floating tag in the step above, so the GC-prevention
+                    # tag is a nice-to-have, not a hard requirement.  For manifest
+                    # lists the digest from get_image_digest may not be directly
+                    # resolvable, causing "manifest unknown" errors.
+                    rc_gc, _, stderr_gc = exectools.cmd_gather(gc_mirror_cmd, retries=3, realtime=True)
+                    if rc_gc != 0:
+                        if 'manifest unknown' in stderr_gc or 'not found' in stderr_gc:
+                            runtime.logger.warning(
+                                f'Could not create GC-prevention tag for {upstream_entry_name}, '
+                                f'skipping: {stderr_gc.strip()}'
+                            )
+                            print(
+                                f'For {upstream_entry_name}, '
+                                f'GC-prevention mirror failed (manifest unknown) - continuing'
+                            )
+                        else:
+                            raise ChildProcessError(
+                                f'Failed to create GC-prevention tag for {upstream_entry_name}: {stderr_gc}',
+                                (rc_gc, stderr_gc),
+                            )
 
                     # Update imagestream to reference QCI by digest via quay-proxy.
                     # Do NOT set reference=True; without it the image controller
