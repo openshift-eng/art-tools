@@ -38,6 +38,8 @@ class Lock(enum.Enum):
 class Keys(enum.Enum):
     BREW_MASS_REBUILD_QUEUE = 'appdata:brew:mass-rebuild-queue'
     KONFLUX_MASS_REBUILD_QUEUE = 'appdata:konflux:mass-rebuild-queue'
+    BREW_LAST_MASS_REBUILD_START = 'appdata:brew:last-mass-rebuild-start'
+    KONFLUX_LAST_MASS_REBUILD_START = 'appdata:konflux:last-mass-rebuild-start'
 
 
 # Use a BIG timeout value so that locks do not silently expire.
@@ -268,6 +270,34 @@ async def enqueue_for_lock(
 async def _enqueue_for_lock(
     coro: coroutine, lock_manager, lock: Lock, lock_name: str, lock_id: str, ocp_version: str, version_queue_name
 ):
+    from datetime import datetime, timedelta
+
+    # Determine the last mass rebuild start timestamp key based on lock type
+    if lock == Lock.KONFLUX_MASS_REBUILD:
+        last_start_key = Keys.KONFLUX_LAST_MASS_REBUILD_START.value
+    elif lock == Lock.MASS_REBUILD:
+        last_start_key = Keys.BREW_LAST_MASS_REBUILD_START.value
+    else:
+        # Not a mass rebuild lock, skip cooldown check
+        last_start_key = None
+
+    # Check 24-hour cooldown for mass rebuilds
+    if last_start_key:
+        last_start_str = await redis.get_value(last_start_key)
+        if last_start_str:
+            last_start = datetime.fromisoformat(last_start_str)
+            time_since_last = datetime.now() - last_start
+            cooldown_remaining = timedelta(hours=24) - time_since_last
+
+            if cooldown_remaining.total_seconds() > 0:
+                hours_remaining = cooldown_remaining.total_seconds() / 3600
+                next_allowed = last_start + timedelta(hours=24)
+                lock_manager.logger.info(
+                    f"Mass rebuild cooldown active. Last mass rebuild started at {last_start:%Y-%m-%d %H:%M:%S}. "
+                    f"Next mass rebuild allowed at {next_allowed:%Y-%m-%d %H:%M:%S} ({hours_remaining:.1f}h remaining)"
+                )
+                raise TryAgain()
+
     if not await lock_manager.is_locked(lock_name):
         # TODO: use a redis tx here
         # fetch the first element in the reverse sorted set by score (item with the max score)
@@ -277,6 +307,13 @@ async def _enqueue_for_lock(
         if version_on_top == ocp_version:
             # remove yourself from the queue
             await redis.call('zpopmax', version_queue_name)
+
+            # Record mass rebuild start time before acquiring lock
+            if last_start_key:
+                now = datetime.now().isoformat()
+                await redis.set_value(last_start_key, now, expiry=60 * 60 * 48)  # Keep for 48 hours
+                lock_manager.logger.info(f"Starting mass rebuild. Recorded start time: {now}")
+
             return await run_with_lock(coro, lock, lock_name, lock_id)
         else:
             lock_manager.logger.info(f"Do not have priority for {lock_name} as {version_on_top} is ahead. Waiting ..")
