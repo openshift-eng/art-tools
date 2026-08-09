@@ -59,8 +59,10 @@ async def inspect_stream(runtime: Runtime, code: AssemblyIssueCode, strict: bool
             exit(0)
 
         runtime.logger.info("Checking cross-payload consistency requirements defined in group.yml")
-        for img in requirements.keys():
-            runtime.late_resolve_image(img, add=True)
+        stream_requirements = PayloadGenerator.normalize_rhcos_consistency_config(requirements)
+        for consistency_config in stream_requirements.values():
+            for img in consistency_config.keys():
+                runtime.late_resolve_image(img, add=True)
         assembly_inspector = AssemblyInspector(runtime)
         await assembly_inspector.initialize(lookup_mode="images")
         package_rpm_finder = PackageRpmFinder(runtime)
