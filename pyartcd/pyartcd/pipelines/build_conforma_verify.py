@@ -685,31 +685,29 @@ class BuildConformaVerifyPipeline:
             return
 
         if not any_failed:
-            message = (
-                f":white_check_mark: build-conforma-verify in {self.version} "
-                f"(assembly=`{self.assembly}`) passed (effective_time=`{self.effective_time}`)"
-            )
+            self.logger.info("All builds passed conforma verification; skipping Slack notification")
+            return
+
+        failed_parts = []
+        if image_failed:
+            failed_parts.append(f"{image_failed} image(s)")
+        if bundle_failed:
+            failed_parts.append(f"{bundle_failed} bundle(s)")
+        if fbc_failed:
+            failed_parts.append(f"{fbc_failed} FBC(s)")
+        if failed_parts:
+            detail = f"failed for: {', '.join(failed_parts)}"
         else:
-            failed_parts = []
-            if image_failed:
-                failed_parts.append(f"{image_failed} image(s)")
-            if bundle_failed:
-                failed_parts.append(f"{bundle_failed} bundle(s)")
-            if fbc_failed:
-                failed_parts.append(f"{fbc_failed} FBC(s)")
-            if failed_parts:
-                detail = f"failed for: {', '.join(failed_parts)}"
-            else:
-                detail = "failed (no violation details available)"
-            message = (
-                f":warning: build-conforma-verify in {self.version} "
-                f"(assembly=`{self.assembly}`) {detail} "
-                f"(effective_time=`{self.effective_time}`)"
-            )
+            detail = "failed (no violation details available)"
+        message = (
+            f":warning: build-conforma-verify in {self.version} "
+            f"(assembly=`{self.assembly}`) {detail} "
+            f"(effective_time=`{self.effective_time}`)"
+        )
 
         await self.slack_client.say_in_thread(message)
 
-        if any_failed and all_violations:
+        if all_violations:
             unique_rules: dict[str, str] = {}
             for violations in all_violations.values():
                 for v in violations:

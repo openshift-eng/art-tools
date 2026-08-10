@@ -179,7 +179,7 @@ class TestSlackReporting(unittest.TestCase):
 
         asyncio.run(p._report_to_slack(any_failed=False, image_failed=0, bundle_failed=0, fbc_failed=0))
 
-    def test_success_message(self):
+    def test_success_skips_slack(self):
         slack = MagicMock()
         slack.say_in_thread = AsyncMock()
         p = _make_pipeline(slack_client=slack, effective_time="2026-08-05T00:00:00Z")
@@ -188,13 +188,7 @@ class TestSlackReporting(unittest.TestCase):
 
         asyncio.run(p._report_to_slack(any_failed=False, image_failed=0, bundle_failed=0, fbc_failed=0))
 
-        slack.say_in_thread.assert_called_once()
-        msg = slack.say_in_thread.call_args[0][0]
-        self.assertIn(":white_check_mark:", msg)
-        self.assertIn("4.18", msg)
-        self.assertIn("assembly=`stream`", msg)
-        self.assertIn("passed", msg)
-        self.assertIn("effective_time=`2026-08-05T00:00:00Z`", msg)
+        slack.say_in_thread.assert_not_called()
 
     def test_failure_message(self):
         slack = MagicMock()
@@ -281,7 +275,7 @@ class TestSlackReporting(unittest.TestCase):
 
         import asyncio
 
-        asyncio.run(p._report_to_slack(any_failed=False, image_failed=0, bundle_failed=0, fbc_failed=0))
+        asyncio.run(p._report_to_slack(any_failed=True, image_failed=1, bundle_failed=0, fbc_failed=0))
 
         msg = slack.say_in_thread.call_args[0][0]
         self.assertIn("effective_time=`now`", msg)
