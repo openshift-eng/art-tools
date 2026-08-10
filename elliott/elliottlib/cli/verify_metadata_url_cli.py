@@ -84,6 +84,7 @@ def validate_metadata_url(url: str) -> None:
 
 
 async def check_url_accessible(url: str) -> bool:
+    # Redirects disabled to prevent SSRF via redirect chains
     validate_metadata_url(url)
     LOGGER.info("Checking accessibility of metadata URL")
     session = aiohttp.ClientSession()
@@ -105,6 +106,7 @@ async def verify_metadata_url(release: str) -> VerifyMetadataUrlResult:
         LOGGER.info("Release %s pullspec: %s", release, result.pullspec)
 
         result.metadata_url = await extract_metadata_url(result.pullspec)
+        validate_metadata_url(result.metadata_url)
         LOGGER.info("Metadata URL: %s", result.metadata_url)
 
         result.accessible = await check_url_accessible(result.metadata_url)
