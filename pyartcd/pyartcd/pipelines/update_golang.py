@@ -189,7 +189,6 @@ class UpdateGolangPipeline:
         skip_pr: bool = False,
         external_golang_rpms: bool = False,
         network_mode: str | None = None,
-        use_new_golang_branch: bool = False,
         major_bump: bool = False,
     ):
         self.runtime = runtime
@@ -209,20 +208,11 @@ class UpdateGolangPipeline:
         self.skip_pr = skip_pr
         self.external_golang_rpms = external_golang_rpms
         self.network_mode = network_mode
-        self.use_new_golang_branch = use_new_golang_branch
         self.major_bump = major_bump
         self._slack_client = self.runtime.new_slack_client()
         self._doozer_working_dir = self.runtime.working_dir / "doozer-working"
         self._doozer_env_vars = os.environ.copy()
         self._branch_content = None
-
-        # Deprecation warning for separate golang branches
-        if not use_new_golang_branch:
-            _LOGGER.warning(
-                "Using unique golang version branches is deprecated. "
-                "Will use golang mono branch instead. "
-                "See: https://github.com/openshift-eng/ocp-build-data/tree/golang"
-            )
 
         # Get kubeconfig from environment variable if not provided
         if not kubeconfig:
@@ -634,22 +624,19 @@ class UpdateGolangPipeline:
 
     def should_sign_golang_rpm(self, el_v, go_version) -> bool:
         """Check sign_golang_rpm config for a specific golang version.
-        With monobranch: reads the per-image metadata (e.g. images/openshift-golang-builder-1-22.rhel9.yml)
-        since multiple golang versions share the same group.yml.
-        With separated branches: reads group.yml from the per-version branch.
+        Reads the per-image metadata (e.g. images/openshift-golang-builder-1-22.rhel9.yml)
+        since multiple golang versions share the same group.yml in the monobranch.
+        If not set in image config, falls back to group.yml.
         Defaults to False so that RHEL-shipped golang is never accidentally signed by us.
         """
-        if self.use_new_golang_branch:
-            default_branch = self.GOLANG_DATA_BRANCH
-            repo, branch = self._get_ocp_build_data_repo_and_branch(default_branch)
-            image_key = self.get_golang_image_key(el_v, go_version)
-            content = repo.get_contents(f"images/{image_key}.yml", ref=branch)
-            image_config = yaml.load(content.decoded_content)
-            if image_config.get('sign_golang_rpm') is not None:
-                return image_config.get('sign_golang_rpm', False)
-        else:
-            default_branch = self.get_golang_branch(el_v, go_version)
+        default_branch = self.GOLANG_DATA_BRANCH
         repo, branch = self._get_ocp_build_data_repo_and_branch(default_branch)
+        image_key = self.get_golang_image_key(el_v, go_version)
+        content = repo.get_contents(f"images/{image_key}.yml", ref=branch)
+        image_config = yaml.load(content.decoded_content)
+        if image_config.get('sign_golang_rpm') is not None:
+            return image_config.get('sign_golang_rpm', False)
+        # Fall back to group.yml
         content = repo.get_contents("group.yml", ref=branch)
         group_config = yaml.load(content.decoded_content)
         return group_config.get('sign_golang_rpm', False)
@@ -659,12 +646,8 @@ class UpdateGolangPipeline:
         _LOGGER.info("Building golang plashets for go %s, RHEL versions: %s", go_v, list(el_versions))
 
         for el_v in el_versions:
-            if self.use_new_golang_branch:
-                group = self.GOLANG_DATA_BRANCH
-                version = self.ocp_version
-            else:
-                group = self.get_golang_branch(el_v, go_version)
-                version = None
+            group = self.GOLANG_DATA_BRANCH
+            version = self.ocp_version
             repo_name = f"rhel-{el_v}-golang-rpms"
             _LOGGER.info("Triggering plashet build for group=%s, repo=%s", group, repo_name)
             await self._slack_client.say_in_thread(f"Building golang plashet: group={group}, repo={repo_name}")
@@ -1249,11 +1232,6 @@ class UpdateGolangPipeline:
     help='Override network mode for Konflux builds. Takes precedence over image and group config settings.',
 )
 @click.option(
-    '--use-new-golang-branch/--no-use-new-golang-branch',
-    default=False,
-    help='[DEPRECATED] This flag is now ignored. The pipeline always uses the unified "golang" monobranch layout.',
-)
-@click.option(
     '--major-bump',
     is_flag=True,
     default=False,
@@ -1280,7 +1258,6 @@ async def update_golang(
     skip_pr: bool,
     external_golang_rpms: bool,
     network_mode: str | None,
-    use_new_golang_branch: bool,
     major_bump: bool,
 ):
     if not runtime.dry_run and not confirm:
@@ -1289,10 +1266,6 @@ async def update_golang(
     cves_list = cves.split(',') if cves else None
     if force_update_tracker and not cves_list:
         raise ValueError('CVEs must be provided with --force-update-tracker')
-    if data_gitref and len(go_nvrs) > 1 and not use_new_golang_branch:
-        raise click.BadParameter(
-            '--data-gitref can only be used with a single NVR to ensure the git ref is coupled to the correct RHEL version branch'
-        )
     if network_mode and build_system == 'brew':
         raise click.BadParameter('--network-mode only applies when --build-system is "konflux" or "both".')
 
@@ -1313,18 +1286,6 @@ async def update_golang(
         skip_pr,
         external_golang_rpms,
         network_mode,
-        use_new_golang_branch,
         major_bump,
     )
-    try:
-        await pipeline.run()
-    except Exception as e:
-        if use_new_golang_branch:
-            _LOGGER.error("Golang monobranch build failed: %s", e)
-            slack_client = runtime.new_slack_client()
-            slack_client.bind_channel(ocp_version)
-            await slack_client.say(
-                f":warning: [GOLANG MONOBRANCH FAILURE] update-golang for {ocp_version} failed "
-                f"using the unified golang branch: {e}"
-            )
-        raise
+    await pipeline.run()
