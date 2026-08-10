@@ -19,8 +19,8 @@ spec:
     type: Docker
   output:
     to:
-      kind: DockerImage
-      name: quay.io/redhat-user-workloads/ocp-art-tenant/art-cd:latest
+      kind: ImageStreamTag
+      name: art-cd:latest
   successfulBuildsHistoryLimit: 10
   failedBuildsHistoryLimit: 5
   runPolicy: Serial
