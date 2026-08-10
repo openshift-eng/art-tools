@@ -20,8 +20,10 @@ spec:
     type: Docker
   output:
     to:
-      kind: ImageStreamTag
-      name: art-cd:latest
+      kind: DockerImage
+      name: quay.io/redhat-user-workloads/ocp-art-tenant/art-cd:latest
+    pushSecret:
+      name: konflux-art-cd-push-secret
   successfulBuildsHistoryLimit: 10
   failedBuildsHistoryLimit: 5
   runPolicy: Serial
