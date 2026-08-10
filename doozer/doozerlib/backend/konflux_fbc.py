@@ -1329,8 +1329,11 @@ class KonfluxFbcRebaser:
                         entry["replaces"] = replaces
             else:
                 logger.warning("Bundle %s already exists in channel %s. Replacing...", olm_bundle_name, channel['name'])
+                existing_replaces = entry.get("replaces")
                 entry.clear()
                 entry["name"] = olm_bundle_name
+                if existing_replaces:
+                    entry["replaces"] = existing_replaces
             if olm_skip_range:
                 entry["skipRange"] = olm_skip_range
             if skips:

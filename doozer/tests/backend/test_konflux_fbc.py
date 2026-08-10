@@ -596,6 +596,143 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
             builder_image='registry.redhat.io/openshift1/ose-operator-registry:v1.1',
         )
 
+    @patch("doozerlib.opm.generate_dockerfile")
+    @patch("pathlib.Path.unlink")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._load_csv_from_bundle")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._get_referenced_images")
+    @patch("doozerlib.backend.konflux_fbc.DockerfileParser")
+    @patch("pathlib.Path.mkdir")
+    @patch("pathlib.Path.is_file", return_value=True)
+    @patch("pathlib.Path.open")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._fetch_olm_bundle_image_info", new_callable=AsyncMock)
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._fetch_olm_bundle_blob", new_callable=AsyncMock)
+    async def test_rebase_dir_preserves_replaces_on_rebuild(
+        self,
+        mock_fetch_olm_bundle_blob,
+        mock_fetch_olm_bundle_image_info,
+        mock_open,
+        mock_is_file,
+        mock_mkdir,
+        MockDockerfileParser,
+        mock_get_referenced_images,
+        mock_load_csv_from_bundle: AsyncMock,
+        mock_path_unlink: Mock,
+        mock_generate_dockerfile: AsyncMock,
+    ):
+        """Regression test: rebuilding an existing bundle must not lose the 'replaces' field.
+
+        When a bundle (e.g. v8.1.3) already exists in the channel with 'replaces: v8.1.2'
+        and the same bundle is rebased again (force-rebuild), the 'replaces' field must be
+        preserved. Previously entry.clear() nuked the field, leaving two channel heads.
+        """
+        metadata = MagicMock(spec=ImageMetadata)
+        metadata.distgit_key = "test-distgit-key"
+        metadata.runtime = MagicMock()
+        metadata.runtime.group_config = MagicMock()
+        metadata.runtime.group_config.vars = MagicMock()
+        metadata.runtime.group_config.vars.MAJOR = "4"
+        metadata.runtime.group_config.vars.MINOR = "9"
+        metadata.runtime.group_config.vars.FBC_DISABLE_CHANNEL_SKIPS = False
+        metadata.get_olm_bundle_delivery_repo_name = MagicMock(return_value="openshift4/foo-bundle")
+        build_repo = MagicMock()
+        build_repo.local_dir = self.base_dir
+        bundle_build = MagicMock(
+            spec=KonfluxBundleBuildRecord,
+            nvr="foo-bundle-1.0.0-1",
+            image_pullspec="dev.example.com/foo-bundle@sha256:abc123",
+            image_tag="deadbeef",
+            source_repo="https://example.com/foo-operator.git",
+            commitish="beefdead",
+            operator_nvr="foo-operator-1.0.0-1",
+            operand_nvrs=[],
+        )
+        version = "1.0.0"
+        release = "1"
+        logger = MagicMock()
+
+        mock_fetch_olm_bundle_image_info.return_value = {
+            "config": {
+                "config": {
+                    "Labels": {
+                        "name": "test-image-name",
+                        "operators.operatorframework.io.bundle.channels.v1": "stable-v8.1",
+                        "operators.operatorframework.io.bundle.channel.default.v1": "stable-v8.1",
+                        "operators.operatorframework.io.bundle.package.v1": "mta-operator",
+                        "operators.operatorframework.io.bundle.manifests.v1": "manifests/",
+                    },
+                },
+            },
+        }
+        # The current build is v8.1.3 — same bundle that's already in the catalog
+        mock_fetch_olm_bundle_blob.return_value = (
+            "mta-operator.v8.1.3",
+            "mta-operator",
+            {
+                "schema": "olm.bundle",
+                "name": "mta-operator.v8.1.3",
+                "package": "mta-operator",
+                "image": "dev.example.com/foo-bundle@sha256:abc123",
+                "relatedImages": [{"name": "", "image": "dev.example.com/foo-bundle@sha256:abc123"}],
+            },
+        )
+        mock_dfp = MockDockerfileParser.return_value
+        mock_dfp.envs = {}
+        mock_dfp.labels = {}
+
+        # Existing catalog already has v8.1.2 and v8.1.3, with v8.1.3 replacing v8.1.2.
+        # This is the state after a first successful rebase. A force-rebuild reuses this state.
+        existing_catalog_blobs = [
+            {"schema": "olm.package", "name": "mta-operator", "defaultChannel": "stable-v8.1"},
+            {
+                "schema": "olm.channel",
+                "name": "stable-v8.1",
+                "package": "mta-operator",
+                "entries": [
+                    {"name": "mta-operator.v8.1.2"},
+                    {"name": "mta-operator.v8.1.3", "replaces": "mta-operator.v8.1.2"},
+                ],
+            },
+            {
+                "schema": "olm.bundle",
+                "name": "mta-operator.v8.1.2",
+                "package": "mta-operator",
+                "relatedImages": [],
+            },
+            {
+                "schema": "olm.bundle",
+                "name": "mta-operator.v8.1.3",
+                "package": "mta-operator",
+                "relatedImages": [],
+            },
+        ]
+        existing_catalog_file = StringIO()
+        yaml.dump_all(existing_catalog_blobs, existing_catalog_file)
+        existing_catalog_file.seek(0)
+        result_catalog_file = StringIO()
+        images_mirror_set_file = StringIO()
+        mock_open.return_value.__enter__.side_effect = [
+            existing_catalog_file,
+            result_catalog_file,
+            images_mirror_set_file,
+        ]
+        mock_get_referenced_images.return_value = []
+        mock_load_csv_from_bundle.return_value = {"metadata": {"name": "mta-operator", "annotations": {}}}
+
+        await self.rebaser._rebase_dir(metadata, build_repo, bundle_build, version, release, logger)
+
+        result_catalog_file.seek(0)
+        result_blobs = self.rebaser._catagorize_catalog_blobs(list(yaml.load_all(result_catalog_file)))
+        channel_entries = result_blobs["mta-operator"]["olm.channel"]["stable-v8.1"]["entries"]
+
+        # v8.1.3 must still have replaces: v8.1.2 — not cleared by entry.clear()
+        v813 = next(e for e in channel_entries if e["name"] == "mta-operator.v8.1.3")
+        self.assertEqual(v813.get("replaces"), "mta-operator.v8.1.2", "replaces field must be preserved on rebuild")
+
+        # Confirm opm would not see dual heads: v8.1.2 must be superseded by v8.1.3
+        superseded = {e.get("replaces") for e in channel_entries if e.get("replaces")}
+        superseded |= {s for e in channel_entries for s in e.get("skips", [])}
+        self.assertIn("mta-operator.v8.1.2", superseded, "v8.1.2 must be superseded so there is only one channel head")
+
     def test_generate_image_digest_mirror_set(self):
         olm_bundle_blobs = [
             {
