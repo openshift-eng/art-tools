@@ -8,6 +8,7 @@ from elliottlib.cli.verify_metadata_url_cli import (
     extract_metadata_url,
     get_release_pullspec,
     render_result,
+    validate_metadata_url,
     verify_metadata_url,
 )
 
@@ -140,6 +141,39 @@ class TestExtractMetadataUrl(IsolatedAsyncioTestCase):
         with self.assertRaises(RuntimeError) as ctx:
             await extract_metadata_url("quay.io/test:4.18")
         self.assertIn("empty", str(ctx.exception))
+
+
+class TestValidateMetadataUrl(TestCase):
+    def test_valid_url(self):
+        validate_metadata_url("https://access.redhat.com/errata/RHBA-2025:1234")
+
+    def test_valid_url_with_port_443(self):
+        validate_metadata_url("https://access.redhat.com:443/errata/RHBA-2025:1234")
+
+    def test_http_rejected(self):
+        with self.assertRaises(ValueError) as ctx:
+            validate_metadata_url("http://access.redhat.com/errata/RHBA-2025:1234")
+        self.assertIn("https", str(ctx.exception))
+
+    def test_wrong_host_rejected(self):
+        with self.assertRaises(ValueError) as ctx:
+            validate_metadata_url("https://evil.example.com/errata/RHBA-2025:1234")
+        self.assertIn("access.redhat.com", str(ctx.exception))
+
+    def test_subdomain_rejected(self):
+        with self.assertRaises(ValueError) as ctx:
+            validate_metadata_url("https://access.redhat.com.evil.example/errata/RHBA-2025:1234")
+        self.assertIn("access.redhat.com", str(ctx.exception))
+
+    def test_non_standard_port_rejected(self):
+        with self.assertRaises(ValueError) as ctx:
+            validate_metadata_url("https://access.redhat.com:8443/errata/RHBA-2025:1234")
+        self.assertIn("port", str(ctx.exception))
+
+    def test_userinfo_rejected(self):
+        with self.assertRaises(ValueError) as ctx:
+            validate_metadata_url("https://user:pass@access.redhat.com/errata/RHBA-2025:1234")
+        self.assertIn("credentials", str(ctx.exception))
 
 
 class TestCheckUrlAccessible(IsolatedAsyncioTestCase):

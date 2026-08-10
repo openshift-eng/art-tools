@@ -2,6 +2,7 @@ import json
 import logging
 from dataclasses import dataclass
 from typing import Optional
+from urllib.parse import urlsplit
 
 import aiohttp
 import click
@@ -67,13 +68,29 @@ async def extract_metadata_url(pullspec: str) -> str:
     return url
 
 
+ALLOWED_METADATA_HOST = "access.redhat.com"
+
+
+def validate_metadata_url(url: str) -> None:
+    parsed = urlsplit(url)
+    if parsed.scheme != "https":
+        raise ValueError(f"Metadata URL must use https, got {parsed.scheme}")
+    if parsed.hostname != ALLOWED_METADATA_HOST:
+        raise ValueError(f"Metadata URL host must be {ALLOWED_METADATA_HOST}, got {parsed.hostname}")
+    if parsed.port is not None and parsed.port != 443:
+        raise ValueError(f"Metadata URL must not specify a non-standard port, got {parsed.port}")
+    if parsed.username or parsed.password:
+        raise ValueError("Metadata URL must not contain credentials")
+
+
 async def check_url_accessible(url: str) -> bool:
-    LOGGER.info("Checking accessibility of %s", url)
+    validate_metadata_url(url)
+    LOGGER.info("Checking accessibility of metadata URL")
     session = aiohttp.ClientSession()
     try:
-        resp = await session.get(url, timeout=aiohttp.ClientTimeout(total=30))
+        resp = await session.get(url, timeout=aiohttp.ClientTimeout(total=30), allow_redirects=False)
         try:
-            LOGGER.info("HTTP %s for %s", resp.status, url)
+            LOGGER.info("HTTP %s for metadata URL", resp.status)
             return resp.ok
         finally:
             resp.release()
