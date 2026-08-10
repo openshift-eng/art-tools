@@ -22,6 +22,8 @@ spec:
     to:
       kind: DockerImage
       name: quay.io/redhat-user-workloads/ocp-art-tenant/art-cd:latest
+    pushSecret:
+      name: quay-push-secret
   successfulBuildsHistoryLimit: 10
   failedBuildsHistoryLimit: 5
   runPolicy: Serial
