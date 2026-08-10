@@ -45,6 +45,8 @@ class RpmsInConfig(BaseModel):
     reinstallPackages: list[str] = Field(default_factory=list)
     upgradePackages: list[str] = Field(default_factory=list)
     moduleEnable: list[str] = Field(default_factory=list)
+    excludePackages: list[str] = Field(default_factory=list)
+    packagesFromContainerfile: dict | str | None = None
 
 
 # ── Lockfile output models ──
@@ -97,46 +99,3 @@ class LockfileData(BaseModel):
     lockfileVersion: int = LOCKFILE_VERSION
     lockfileVendor: str = LOCKFILE_VENDOR
     arches: list[ArchResult] = Field(default_factory=list)
-
-
-# ── Dockerfile analysis models ──
-
-
-class StageInfo(BaseModel):
-    """
-    Analysis results for a single Dockerfile stage.
-    """
-
-    packages: list[str] = Field(default_factory=list)
-    has_update: bool = False
-    arch_packages: dict[str, list[str]] = Field(default_factory=dict)
-    update_targets: list[str] = Field(default_factory=list)
-    builddep_packages: list[str] = Field(default_factory=list)
-    module_specs: list[str] = Field(default_factory=list)
-
-    def merge(self, other: "StageInfo") -> "StageInfo":
-        """
-        Merge another StageInfo into this one, combining packages
-        and update targets.
-        """
-        merged_arch = dict(self.arch_packages)
-        for arch, pkgs in other.arch_packages.items():
-            existing = set(merged_arch.get(arch, []))
-            existing.update(pkgs)
-            merged_arch[arch] = sorted(existing)
-        return StageInfo(
-            packages=sorted(set(self.packages + other.packages)),
-            has_update=self.has_update or other.has_update,
-            arch_packages=merged_arch,
-            update_targets=sorted(set(self.update_targets + other.update_targets)),
-            builddep_packages=sorted(set(self.builddep_packages + other.builddep_packages)),
-            module_specs=sorted(set(self.module_specs + other.module_specs)),
-        )
-
-
-class StageAnalysis(BaseModel):
-    """
-    Aggregated per-stage Dockerfile analysis results.
-    """
-
-    stages: list[StageInfo] = Field(default_factory=list)
