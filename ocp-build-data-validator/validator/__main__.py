@@ -4,7 +4,7 @@ import os
 import sys
 from multiprocessing import Pool, cpu_count
 
-from . import exceptions, format, github, global_session, releases, schema, support
+from . import exceptions, format, github, global_session, releases, schema, streams, support
 
 
 def validate(file, schema_only, images_dir):
@@ -25,7 +25,7 @@ def validate(file, schema_only, images_dir):
         msg = 'Schema mismatch: {}\nReturned error: {}'.format(file, err)
         support.fail_validation(msg, parsed)
 
-    if support.get_artifact_type(file) not in ['image', 'rpm', 'releases', 'group']:
+    if support.get_artifact_type(file) not in ['image', 'rpm', 'releases', 'group', 'streams']:
         print(f'✅ Validated {file}')
         return
 
@@ -42,6 +42,14 @@ def validate(file, schema_only, images_dir):
         err = releases.validate(parsed)
         if err:
             msg = "releases.yml validation failed\nReturned error: {}".format(err)
+            support.fail_validation(msg, parsed)
+        print(f'✅ Validated {file}')
+        return
+
+    if support.get_artifact_type(file) == 'streams':
+        err = streams.validate(parsed)
+        if err:
+            msg = "streams.yml validation failed\nReturned error: {}".format(err)
             support.fail_validation(msg, parsed)
         print(f'✅ Validated {file}')
         return
