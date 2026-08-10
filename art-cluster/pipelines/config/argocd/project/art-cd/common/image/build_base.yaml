@@ -20,7 +20,7 @@ spec:
   output:
     to:
       kind: ImageStreamTag
-      name: art-cd:latest
+      name: art-cd:base
   successfulBuildsHistoryLimit: 10
   failedBuildsHistoryLimit: 5
   runPolicy: Serial
