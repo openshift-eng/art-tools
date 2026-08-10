@@ -24,7 +24,6 @@ class TestSyncCIImagesPipeline:
         assert pipeline.runtime == mock_runtime
         assert pipeline.version == "4.17"
         assert pipeline.assembly == "stream"
-        assert pipeline.skip_prs is False
         assert pipeline.force_run is False
 
     def test_init_with_custom_params(self, mock_runtime):
@@ -33,13 +32,11 @@ class TestSyncCIImagesPipeline:
             mock_runtime,
             for_release="4.17",
             assembly="4.17.1",
-            skip_prs=True,
             force_run=True,
         )
 
         assert pipeline.version == "4.17"
         assert pipeline.assembly == "4.17.1"
-        assert pipeline.skip_prs is True
         assert pipeline.force_run is True
 
     def test_validate_invalid_version_format(self, mock_runtime):
@@ -51,17 +48,6 @@ class TestSyncCIImagesPipeline:
         """Test validation fails when FOR_RELEASE is empty string."""
         with pytest.raises(ValueError, match="FOR_RELEASE is required"):
             SyncCIImagesPipeline(mock_runtime, for_release="")
-
-    def test_validate_auto_sets_skip_prs_for_only_stream(self, mock_runtime):
-        """Test SKIP_PRS automatically set to true when ONLY_STREAM specified."""
-        pipeline = SyncCIImagesPipeline(
-            mock_runtime,
-            for_release="4.17",
-            only_stream="golang",
-            skip_prs=False,  # Will be overridden
-        )
-
-        assert pipeline.skip_prs is True
 
     def test_validate_valid_version_formats(self, mock_runtime):
         """Test validation passes for valid version formats."""
@@ -106,33 +92,6 @@ class TestSyncCIImagesPipeline:
         # Special characters not allowed
         with pytest.raises(ValueError, match="Invalid ASSEMBLY format"):
             SyncCIImagesPipeline(mock_runtime, for_release="4.17", assembly="invalid@assembly")
-
-    def test_validate_skip_prs_not_overridden_when_only_stream_not_set(self, mock_runtime):
-        """Test SKIP_PRS is not modified when ONLY_STREAM is not set."""
-        pipeline = SyncCIImagesPipeline(mock_runtime, for_release="4.17", skip_prs=False)
-
-        assert pipeline.skip_prs is False
-
-    def test_validate_skip_prs_already_true_not_changed(self, mock_runtime):
-        """Test SKIP_PRS stays true when already set and ONLY_STREAM specified."""
-        pipeline = SyncCIImagesPipeline(
-            mock_runtime,
-            for_release="4.17",
-            only_stream="golang",
-            skip_prs=True,  # Already true
-        )
-
-        assert pipeline.skip_prs is True
-
-    def test_validate_auto_sets_skip_prs_for_images(self, mock_runtime):
-        """Test SKIP_PRS automatically set to true when IMAGES specified."""
-        pipeline = SyncCIImagesPipeline(
-            mock_runtime,
-            for_release="4.17",
-            images="ci-openshift-base.rhel10",
-            skip_prs=False,
-        )
-        assert pipeline.skip_prs is True
 
     def test_images_parsed_as_list(self, mock_runtime):
         """Test comma-separated IMAGES string is parsed into a list."""
