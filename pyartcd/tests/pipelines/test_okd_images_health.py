@@ -32,6 +32,7 @@ class TestGetReport(IsolatedAsyncioTestCase):
             versions=versions,
             send_to_release_channel=False,
             send_to_okd_channel=False,
+            ping_chai_bot=False,
             data_path=DATA_PATH,
             data_gitref="",
             image_list=image_list,

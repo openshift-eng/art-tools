@@ -25,6 +25,7 @@ class ImagesHealthPipeline:
         versions: str,
         send_to_release_channel: bool,
         send_to_okd_channel: bool,
+        ping_chai_bot: bool,
         data_path: str,
         data_gitref: str,
         image_list: str,
@@ -35,6 +36,7 @@ class ImagesHealthPipeline:
         self.doozer_working = self.runtime.working_dir / "doozer_working"
         self.send_to_release_channel = send_to_release_channel
         self.send_to_okd_channel = send_to_okd_channel
+        self.ping_chai_bot = ping_chai_bot
         self.data_path = data_path
         self.data_gitref = data_gitref
         self.image_list = image_list.split(',') if image_list else []
@@ -95,6 +97,11 @@ class ImagesHealthPipeline:
 
         if self.send_to_okd_channel:
             await self.notify_okd_channel()
+
+        if self.ping_chai_bot:
+            multi_failure_images = self._get_multi_failure_images()
+            for version, failing_concerns in multi_failure_images.items():
+                await self.notify_chai_bot(version, failing_concerns)
 
     async def get_report(self, version: str) -> Optional[list]:
         group = OKD_GROUP_TEMPLATE.format(version)
@@ -509,11 +516,124 @@ class ImagesHealthPipeline:
         except Exception as e:
             self.runtime.logger.warning('invalid URL: %s', e)
 
+    def _get_multi_failure_images(self) -> dict[str, list[dict]]:
+        """
+        Filter self.report for images with >1 consecutive failure in a single group.
+        Only includes LATEST_ATTEMPT_FAILED and FAILING_AT_LEAST_FOR concern codes
+        where latest_success_idx > 1.
+
+        Return Value(s):
+            dict[str, list[dict]]: Version -> list of failing concerns
+        """
+        multi_failures = {}
+        for concern in self.report:
+            code = concern['code']
+            # Skip concerns that aren't actual failures
+            if code not in [ConcernCode.LATEST_ATTEMPT_FAILED.value, ConcernCode.FAILING_AT_LEAST_FOR.value]:
+                continue
+
+            # Only include images with >1 consecutive failure
+            if concern.get('latest_success_idx', 0) <= 1:
+                continue
+
+            # Extract version from group (openshift-4.21 -> 4.21)
+            group = concern.get('group', '')
+            version = group.replace('openshift-', '')
+
+            if version not in multi_failures:
+                multi_failures[version] = []
+            multi_failures[version].append(concern)
+
+        return multi_failures
+
+    def _build_chai_bot_prompt(self, version: str, failing_concerns: list[dict]) -> str:
+        """
+        Build structured prompt for @chai-bot to fix OKD build failures.
+
+        Arg(s):
+            version (str): OKD version (e.g., "4.21")
+            failing_concerns (list[dict]): List of concern dicts with failure info
+        Return Value(s):
+            str: Formatted prompt for chai-bot
+        """
+        okd_group = f'okd-{version}'
+        prompt_parts = [f'Please investigate and fix OKD build failures for *{okd_group}*.\n', '*Failing Images:*']
+
+        for concern in failing_concerns:
+            image_name = concern['image_name']
+            failure_count = concern.get('latest_success_idx', 0)
+            logs_url = self.get_logs_url(concern)
+            search_url = self.get_search_url(concern)
+
+            prompt_parts.append(
+                f'- `{image_name}`: {failure_count} consecutive failures '
+                f'({self.url_text(search_url, "history")} | {self.url_text(logs_url, "latest logs")})'
+            )
+
+        prompt_parts.extend(
+            [
+                '\n*Instructions:*',
+                '1. Analyze failure logs for each image',
+                '2. Determine if fix is possible via ocp-build-data metadata changes only (Dockerfile patches, environment variables, build args, etc.)',
+                '3. **DO NOT** push fixes to upstream source repositories - only modify ocp-build-data',
+                '4. Only proceed if confidence level >= 90%',
+                '5. If proceeding:',
+                f'   - Push fix to your ocp-build-data fork for group `openshift-{version}` with `--variant=okd`',
+                '   - **All image metadata changes MUST be under the `okd:` stanza only**',
+                '   - **Commit message MUST start with `scan-sources-konflux:noop` to prevent triggering ocp4-scan config checks**',
+                f'   - Trigger Jenkins build for the image in {okd_group} **without asking for user confirmation** — triggering the test build is part of the automated fix flow',
+                '   - If build succeeds:',
+                '     - Output concise report summarizing:',
+                '       - Which images were fixed',
+                '       - What changes were made (brief description)',
+                '       - Links to successful test builds',
+                '     - **Ask user to approve PR creation**',
+                '   - When user approves:',
+                '     - File PR for review',
+                '     - **Attribute PR to bot itself** (do not attempt to resolve GitHub username from Slack profile)',
+                '     - **PR description MUST include:**',
+                '       - Link to successful Jenkins test build',
+                '       - Link to this Slack thread where analysis was performed',
+                '     - **Set PR merge method to squash** (merge commits nullify the `:noop` tag)',
+                '6. If confidence < 90% or fix requires upstream changes:',
+                '   - Output diagnostic report only',
+                '   - Defer to human intervention',
+                '\n**Target only OKD builds. All fixes must be ocp-build-data metadata changes only.**',
+            ]
+        )
+
+        return '\n'.join(prompt_parts)
+
+    async def notify_chai_bot(self, version: str, failing_concerns: list[dict]):
+        """
+        Post prompt to chai-bot channel requesting automated fix attempts.
+
+        Arg(s):
+            version (str): OKD version (e.g., "4.21")
+            failing_concerns (list[dict]): List of concerns with >1 consecutive failure
+        """
+        if not failing_concerns:
+            return
+
+        prompt = self._build_chai_bot_prompt(version, failing_concerns)
+        self.slack_client.bind_channel('#team-art-chai-bot')
+
+        message = f'<@U0AKNPBBVT7> {prompt}'
+        await self.slack_client.say(message, unfurl_links=False, unfurl_media=False)
+        self.runtime.logger.info(
+            'Notified chai-bot in #team-art-chai-bot for %d failing images in okd-%s',
+            len(failing_concerns),
+            version,
+        )
+
 
 @cli.command('okd-images-health')
 @click.option('--versions', required=False, default='', help='OCP versions to scan')
 @click.option('--send-to-release-channel', is_flag=True, help='If true, send output to #art-release-4-<version>')
 @click.option('--send-to-okd-channel', is_flag=True, help='If true, send aggregated notification to #art-okd-release')
+@click.option(
+    '--ping-chai-bot', is_flag=True, help='If true, notify @chai-bot in #team-art-chai-bot for multi-failure images'
+)
 @click.option(
     '--data-path',
     required=False,
@@ -534,6 +654,7 @@ async def okd_images_health(
     versions: str,
     send_to_release_channel: bool,
     send_to_okd_channel: bool,
+    ping_chai_bot: bool,
     data_path: str,
     data_gitref: str,
     image_list: str,
@@ -544,6 +665,7 @@ async def okd_images_health(
         versions,
         send_to_release_channel,
         send_to_okd_channel,
+        ping_chai_bot,
         data_path,
         data_gitref,
         image_list,
