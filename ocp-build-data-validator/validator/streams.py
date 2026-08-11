@@ -35,11 +35,11 @@ def get_alias_collisions(streams_data: dict) -> Optional[str]:
                 collisions.append(f"Alias '{alias}' in stream '{stream_name}' collides with a top-level stream name")
 
             # Check if alias is defined by another stream
-            if alias in alias_to_stream:
+            if alias in alias_to_stream and alias_to_stream[alias] != stream_name:
                 collisions.append(
                     f"Alias '{alias}' is defined in both stream '{alias_to_stream[alias]}' and stream '{stream_name}'"
                 )
-            else:
+            elif alias not in alias_to_stream:
                 alias_to_stream[alias] = stream_name
 
     if collisions:

@@ -86,6 +86,17 @@ class TestStreams(unittest.TestCase):
         self.assertIn("Alias 'rhel' in stream 'golang' collides with a top-level stream name", err)
         self.assertIn("Alias 'shared-alias' is defined in both stream 'golang' and stream 'rhel'", err)
 
+    def test_duplicate_alias_within_same_stream(self):
+        """Duplicate aliases within the same stream should not be flagged as cross-stream collisions."""
+        data = {
+            "golang": {
+                "image": "openshift/golang-builder:v1.0",
+                "aliases": ["go-toolset", "go-toolset"],
+            },
+        }
+        err = streams.validate(data)
+        self.assertIsNone(err)
+
     def test_empty_aliases_list_no_collision(self):
         data = {
             "golang": {
