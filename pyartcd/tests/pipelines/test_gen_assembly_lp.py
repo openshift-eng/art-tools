@@ -22,7 +22,7 @@ class TestGenAssemblyLPPipeline(unittest.TestCase):
         )
         kwargs.update(overrides)
         pipeline = GenAssemblyLPPipeline(**kwargs)
-        pipeline.product = "acm"
+        pipeline.product = "rhacm2"
         return pipeline
 
     def test_init_requires_fbc_or_basis(self):
@@ -363,7 +363,7 @@ class TestGenAssemblyLPRun(unittest.TestCase):
     @patch.object(GenAssemblyLPPipeline, '_extract_nvrs_from_fbc', new_callable=AsyncMock)
     @patch.object(GenAssemblyLPPipeline, '_load_product_from_group_config', new_callable=AsyncMock)
     def test_run_fresh_assembly(self, mock_load_product, mock_extract, mock_fbc_map, mock_pr):
-        mock_load_product.return_value = "acm"
+        mock_load_product.return_value = "rhacm2"
         mock_extract.return_value = {
             "search-v2-api-container": "search-v2-api-container-2.17.3-1",
             "console-container": "console-container-2.17.3-1",
@@ -384,7 +384,7 @@ class TestGenAssemblyLPRun(unittest.TestCase):
     @patch.object(GenAssemblyLPPipeline, '_resolve_parent_operands', new_callable=AsyncMock)
     @patch.object(GenAssemblyLPPipeline, '_load_product_from_group_config', new_callable=AsyncMock)
     def test_run_inherited_assembly(self, mock_load_product, mock_resolve, mock_pr):
-        mock_load_product.return_value = "acm"
+        mock_load_product.return_value = "rhacm2"
         mock_resolve.return_value = {
             "search-v2-api-container": "search-v2-api-container-2.17.2-1",
             "console-container": "console-container-2.17.2-1",

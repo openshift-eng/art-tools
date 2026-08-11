@@ -90,8 +90,8 @@ GOLANG_NVR_ENV = '__doozer_golang_nvr'
 
 # Product-based mappings for Konflux tenant namespaces and kubeconfigs
 PRODUCT_NAMESPACE_MAP = {
-    "acm": "art-acm-tenant",
     "multicluster-engine": "art-acm-tenant",
+    "rhacm2": "art-acm-tenant",
     "cert-manager": "art-oap-tenant",
     "external-secrets-operator": "art-oap-tenant",
     "installer-ove-ui": "art-installer-agent-tenant",
@@ -117,8 +117,8 @@ PRODUCT_BASE_IMAGE_KONFLUX_RELEASE_MAP = {
     "oadp": ("oadp-images-base-silent", "oadp-images-base"),
     "logging": ("logging-images-base-silent", "logging-images-base"),
     "openshift-logging": ("logging-images-base-silent", "logging-images-base"),
-    "acm": ("acm-images-base-silent", "acm-images-base"),
     "multicluster-engine": ("acm-images-base-silent", "acm-images-base"),
+    "rhacm2": ("acm-images-base-silent", "acm-images-base"),
     "external-secrets-operator": ("oap-eso-images-base-silent", "oap-images-base"),
     "cert-manager": ("oap-cm-images-base-silent", "oap-images-base"),
     "zero-trust-workload-identity-manager": ("oap-zt-images-base-silent", "oap-images-base"),
@@ -130,8 +130,8 @@ PRODUCT_BASE_IMAGE_KONFLUX_EC_RELEASE_MAP = {
 }
 
 PRODUCT_KUBECONFIG_MAP = {
-    "acm": "ACM_KONFLUX_SA_KUBECONFIG",
     "multicluster-engine": "ACM_KONFLUX_SA_KUBECONFIG",
+    "rhacm2": "ACM_KONFLUX_SA_KUBECONFIG",
     "cert-manager": "OAP_KONFLUX_SA_KUBECONFIG",
     "external-secrets-operator": "OAP_KONFLUX_SA_KUBECONFIG",
     "installer-ove-ui": "ASSISTED_INSTALLER_SA_KUBECONFIG",
