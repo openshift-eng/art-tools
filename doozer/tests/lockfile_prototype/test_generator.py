@@ -997,9 +997,15 @@ class TestExtractRhelVersionFromPullspec(unittest.TestCase):
         ps = "registry.ci.openshift.org/ocp/builder:rhel-9-golang-1.25"
         self.assertEqual(RpmLockfilePrototypeGenerator._extract_rhel_version_from_pullspec(ps), 9)
 
-    def test_ubi_9_in_path_not_tag_returns_none(self):
+    def test_ubi_9_in_path_with_generic_tag(self):
+        # ubi9 in image name is enough to detect el9 even with a generic tag like "latest"
         ps = "registry.access.redhat.com/ubi9/ubi-minimal:latest"
-        self.assertIsNone(RpmLockfilePrototypeGenerator._extract_rhel_version_from_pullspec(ps))
+        self.assertEqual(RpmLockfilePrototypeGenerator._extract_rhel_version_from_pullspec(ps), 9)
+
+    def test_ubi_9_digest_only(self):
+        # digest-only with ubi9 in path: ubi9 detected from image name
+        ps = "registry.redhat.io/ubi9/ubi@sha256:d3e61197e0f96aee94872141b429f63eadb939de95a25fe6b504843f427b7a3f"
+        self.assertEqual(RpmLockfilePrototypeGenerator._extract_rhel_version_from_pullspec(ps), 9)
 
     def test_ubi_9_in_tag(self):
         ps = "registry.access.redhat.com/ubi9/ubi-minimal:ubi-9-minimal"
@@ -1019,6 +1025,11 @@ class TestExtractRhelVersionFromPullspec(unittest.TestCase):
 
     def test_no_colon_returns_none(self):
         self.assertIsNone(RpmLockfilePrototypeGenerator._extract_rhel_version_from_pullspec("builder_stage"))
+
+    def test_ubi9_bare_path_no_tag_no_digest(self):
+        # Bare path with no tag or digest: path-based match still works
+        ps = "registry.access.redhat.com/ubi9/ubi"
+        self.assertEqual(RpmLockfilePrototypeGenerator._extract_rhel_version_from_pullspec(ps), 9)
 
     def test_unrecognized_tag_returns_none(self):
         ps = "quay.io/test/builder:latest"

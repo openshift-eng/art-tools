@@ -512,12 +512,20 @@ class RpmLockfilePrototypeGenerator:
             int | None: RHEL major version (e.g. 8, 9), or None if
                 not detectable.
         """
-        if ":" not in pullspec:
-            return None
-        tag = pullspec.split("@")[0].split(":")[-1]
-        m = re.search(r"(?:rhel|ubi|centos|scos)-?(\d+)", tag)
+        # Search the full path (before digest) so image names like ubi9/ubi or
+        # rhel8/buildah are matched even when the tag is generic (e.g. "latest")
+        # or absent entirely.
+        path = pullspec.split("@", 1)[0]
+        m = re.search(r"(?:rhel|ubi|centos|scos)-?(\d+)", path)
         if m:
             return int(m.group(1))
+        # Fallback: NVR-style tags embed the version as .el8 / .el9.
+        # Guard here (not at the top) so bare paths without a tag still get
+        # the path-based match above.
+        image_ref = path.rsplit("/", 1)[-1]
+        if ":" not in image_ref:
+            return None
+        tag = image_ref.rsplit(":", 1)[-1]
         m = re.search(r"\.el(\d+)", tag)
         if m:
             return int(m.group(1))
