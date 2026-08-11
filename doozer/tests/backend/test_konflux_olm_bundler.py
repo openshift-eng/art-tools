@@ -606,6 +606,7 @@ spec:
         mock_build.version = "4.18.0"
         mock_build.release = "202506120000.p0.g1234567.assembly.stream.el9"
         mock_build.nvr = "operand-container-4.18.0-202506120000.p0.g1234567.assembly.stream.el9"
+        mock_build.assembly = self.assembly
         operand_meta.get_latest_konflux_build = AsyncMock(return_value=mock_build)
 
         metadata.runtime.name_in_bundle_map = {"operand-image": "operand"}
@@ -643,8 +644,9 @@ spec:
         self.assertIn("registry.redhat.io/openshift4/ose-operand@sha256:abc123def456", new_pullspec)
         self.assertEqual(nvr, "operand-container-4.18.0-202506120000.p0.g1234567.assembly.stream.el9")
 
-        # Verify DB query was made directly to Konflux
+        # Verify DB query was made with explicit assembly
         operand_meta.get_latest_konflux_build.assert_called_once_with(
+            assembly=self.assembly,
             el_target="el9",
             exclude_large_columns=True,
         )
@@ -668,6 +670,7 @@ spec:
         mock_build.version = "4.18.0"
         mock_build.release = "1.el9"
         mock_build.nvr = "operand-container-4.18.0-1.el9"
+        mock_build.assembly = self.assembly
         operand_meta.get_latest_konflux_build = AsyncMock(return_value=mock_build)
 
         metadata.runtime.name_in_bundle_map = {"operand-image": "operand"}
@@ -769,6 +772,7 @@ spec:
         mock_build.version = "8.1.3"
         mock_build.release = "202607170000.p0.gabcdef0.assembly.stream.el9"
         mock_build.nvr = "mta-ui-container-8.1.3-202607170000.p0.gabcdef0.assembly.stream.el9"
+        mock_build.assembly = self.assembly
         operand_meta.get_latest_konflux_build = AsyncMock(return_value=mock_build)
 
         metadata.runtime.name_in_bundle_map = {"mta-ui": "mta-ui"}
@@ -867,6 +871,43 @@ spec:
             await self.rebaser._resolve_operands_from_db(metadata, image_references, {}, {})
         self.assertIn("Could not find latest Konflux build", str(ctx.exception))
 
+    async def test_resolve_operands_from_db_assembly_mismatch(self):
+        """
+        Verify KonfluxOlmBundleRebaseError is raised when the resolved build's
+        assembly doesn't match the rebaser's assembly (e.g. test build returned
+        when stream was requested).
+        """
+        metadata = MagicMock()
+        metadata.distgit_key = "test-operator"
+        metadata.runtime.group = "logging-6.5"
+        metadata.runtime.data_dir = "/nonexistent/data/dir"
+
+        operand_meta = MagicMock()
+        operand_meta.image_name_short = "vector-rhel9"
+        operand_meta.distgit_key = "vector"
+        operand_meta.branch_el_target.return_value = 9
+
+        wrong_assembly_build = MagicMock()
+        wrong_assembly_build.nvr = "vector-container-6.5.2-202608071208.p2.gfe1b19d.assembly.test.el9"
+        wrong_assembly_build.assembly = "test"  # mismatch: rebaser uses "test-assembly"
+        operand_meta.get_latest_konflux_build = AsyncMock(return_value=wrong_assembly_build)
+
+        metadata.runtime.name_in_bundle_map = {"vector-rhel9": "vector"}
+        metadata.runtime.image_map = {"vector": operand_meta}
+
+        image_references = {
+            "vector-rhel9": {
+                "name": "vector-rhel9",
+                "from": {"name": "quay.io/openshift-logging/vector-rhel9:latest"},
+            },
+        }
+
+        with self.assertRaises(KonfluxOlmBundleRebaseError) as ctx:
+            await self.rebaser._resolve_operands_from_db(metadata, image_references, {}, {})
+        self.assertIn("Assembly mismatch", str(ctx.exception))
+        self.assertIn("'test'", str(ctx.exception))
+        self.assertIn(f"'{self.assembly}'", str(ctx.exception))
+
     @patch("doozerlib.backend.konflux_olm_bundler.is_nvr_embargoed", return_value=False)
     @patch("doozerlib.util.oc_image_info_for_arch_async")
     async def test_resolve_operands_with_delivery_override(self, mock_oc_image_info, _mock_is_embargoed):
@@ -886,6 +927,7 @@ spec:
         mock_build.version = "4.18.0"
         mock_build.release = "1.el9"
         mock_build.nvr = "ose-csi-driver-container-4.18.0-1.el9"
+        mock_build.assembly = self.assembly
         operand_meta.get_latest_konflux_build = AsyncMock(return_value=mock_build)
 
         metadata.runtime.name_in_bundle_map = {"csi-driver": "ose-csi-driver"}
@@ -978,6 +1020,7 @@ spec:
         mock_build.version = "1.5.8"
         mock_build.release = "202507160000.p0.g1234567.assembly.stream.el9"
         mock_build.nvr = "oadp-velero-container-1.5.8-202507160000.p0.g1234567.assembly.stream.el9"
+        mock_build.assembly = self.assembly
         operand_meta.get_latest_konflux_build = AsyncMock(return_value=mock_build)
 
         metadata.runtime.name_in_bundle_map = {"oadp-velero-rhel9": "oadp-velero"}
@@ -1044,12 +1087,14 @@ spec:
         embargoed_build.version = "4.18.0"
         embargoed_build.release = "202506120000.p3.g1234567.assembly.stream.el9"
         embargoed_build.nvr = "operand-container-4.18.0-202506120000.p3.g1234567.assembly.stream.el9"
+        embargoed_build.assembly = self.assembly
 
         # Public substitute build
         public_build = MagicMock()
         public_build.version = "4.18.0"
         public_build.release = "202506100000.p2.gabcdef0.assembly.stream.el9"
         public_build.nvr = "operand-container-4.18.0-202506100000.p2.gabcdef0.assembly.stream.el9"
+        public_build.assembly = self.assembly
 
         # First call returns embargoed, second (with embargoed=False) returns public
         operand_meta.get_latest_konflux_build = AsyncMock(side_effect=[embargoed_build, public_build])
@@ -1116,6 +1161,7 @@ spec:
         embargoed_build.version = "4.18.0"
         embargoed_build.release = "202506120000.p3.g1234567.assembly.stream.el9"
         embargoed_build.nvr = "operand-container-4.18.0-202506120000.p3.g1234567.assembly.stream.el9"
+        embargoed_build.assembly = self.assembly
 
         # First call returns embargoed, second returns None (no public build)
         operand_meta.get_latest_konflux_build = AsyncMock(side_effect=[embargoed_build, None])
@@ -1136,6 +1182,55 @@ spec:
             await self.rebaser._resolve_operands_from_db(metadata, image_references, {}, {})
         self.assertIn("embargoed", str(ctx.exception))
         self.assertIn("no public", str(ctx.exception).lower())
+
+    @patch("doozerlib.backend.konflux_olm_bundler.is_nvr_embargoed")
+    async def test_resolve_operands_from_db_embargo_public_build_assembly_mismatch(self, mock_is_embargoed):
+        """
+        Verify that KonfluxOlmBundleRebaseError is raised when the public substitute
+        build for an embargoed operand belongs to a different assembly.
+        """
+        metadata = MagicMock()
+        metadata.distgit_key = "test-operator"
+        metadata.runtime.group = "mtc-1.8"
+        metadata.runtime.data_dir = "/nonexistent/data/dir"
+
+        operand_meta = MagicMock()
+        operand_meta.image_name_short = "ose-operand"
+        operand_meta.distgit_key = "operand"
+        operand_meta.branch_el_target.return_value = 9
+
+        embargoed_build = MagicMock()
+        embargoed_build.version = "4.18.0"
+        embargoed_build.release = "202506120000.p3.g1234567.assembly.stream.el9"
+        embargoed_build.nvr = "operand-container-4.18.0-202506120000.p3.g1234567.assembly.stream.el9"
+        embargoed_build.assembly = self.assembly
+
+        # Public substitute has a different assembly
+        public_build = MagicMock()
+        public_build.version = "4.18.0"
+        public_build.release = "202506100000.p2.gabcdef0.assembly.test.el9"
+        public_build.nvr = "operand-container-4.18.0-202506100000.p2.gabcdef0.assembly.test.el9"
+        public_build.assembly = "test"  # mismatch: rebaser uses self.assembly ("stream")
+
+        operand_meta.get_latest_konflux_build = AsyncMock(side_effect=[embargoed_build, public_build])
+
+        metadata.runtime.name_in_bundle_map = {"operand-image": "operand"}
+        metadata.runtime.image_map = {"operand": operand_meta}
+
+        image_references = {
+            "operand-image": {
+                "name": "operand-image",
+                "from": {"name": "registry.example.com/openshift/ose-operand:v4.18"},
+            },
+        }
+
+        mock_is_embargoed.return_value = True
+
+        with self.assertRaises(KonfluxOlmBundleRebaseError) as ctx:
+            await self.rebaser._resolve_operands_from_db(metadata, image_references, {}, {})
+        self.assertIn("Assembly mismatch", str(ctx.exception))
+        self.assertIn(public_build.assembly, str(ctx.exception))
+        self.assertIn(self.assembly, str(ctx.exception))
 
     @patch("pathlib.Path.iterdir")
     @patch("pathlib.Path.exists", autospec=True)

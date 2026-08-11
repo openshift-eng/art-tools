@@ -636,6 +636,7 @@ class KonfluxOlmBundleRebaser:
             el_target = f"el{meta.branch_el_target()}"
             build_coros.append(
                 meta.get_latest_konflux_build(
+                    assembly=self.assembly,
                     el_target=el_target,
                     exclude_large_columns=True,
                 )
@@ -650,6 +651,13 @@ class KonfluxOlmBundleRebaser:
             if not build:
                 raise ValueError(f"Could not find latest Konflux build for {meta.distgit_key}")
 
+            if build.assembly != self.assembly:
+                raise KonfluxOlmBundleRebaseError(
+                    f"Assembly mismatch: resolved operand {build.nvr} for operator "
+                    f"{metadata.distgit_key} has assembly '{build.assembly}', "
+                    f"expected '{self.assembly}'."
+                )
+
             # Operator bundles must never reference embargoed operand images.
             # If the latest build is embargoed, substitute with the latest public build.
             try:
@@ -661,6 +669,7 @@ class KonfluxOlmBundleRebaser:
                 ) from e
             if embargoed:
                 public_build = await meta.get_latest_konflux_build(
+                    assembly=self.assembly,
                     default=None,
                     el_target=f"el{meta.branch_el_target()}",
                     embargoed=False,
@@ -671,6 +680,12 @@ class KonfluxOlmBundleRebaser:
                         f"Operand {build.nvr} referenced by operator {metadata.distgit_key} is "
                         f"embargoed, and no public (non-embargoed) build of '{meta.distgit_key}' "
                         f"is available to substitute. Cannot safely rebase this operator bundle."
+                    )
+                if public_build.assembly != self.assembly:
+                    raise KonfluxOlmBundleRebaseError(
+                        f"Assembly mismatch: public substitute operand {public_build.nvr} for operator "
+                        f"{metadata.distgit_key} has assembly '{public_build.assembly}', "
+                        f"expected '{self.assembly}'."
                     )
                 logger.warning(
                     "Operand %s referenced by operator %s is embargoed; substituting with public build %s",
