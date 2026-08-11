@@ -34,7 +34,6 @@ from doozerlib import rhcos, util
 from doozerlib.build_info import KonfluxBuildRecordInspector
 from doozerlib.cli import cli, click_coroutine, pass_runtime
 from doozerlib.cli import release_gen_payload as rgp
-from doozerlib.constants import KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.image import ImageMetadata
 from doozerlib.metadata import Metadata, RebuildHint, RebuildHintCode
@@ -1506,13 +1505,21 @@ class ConfigScanSources:
     @retry(reraise=True, stop=stop_after_attempt(10), wait=wait_fixed(5))
     async def get_current_task_bundle_shas(self) -> Dict[str, str]:
         """
-        Fetch current task bundle SHAs from the art-konflux-template GitHub repository
+        Fetch current task bundle SHAs from the art-konflux-template GitHub repository.
+        Respects the konflux.plr_template_commitish group config override (format: "owner@branch").
         """
-        self.logger.info(f'Fetching task bundle template from {KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL}')
+        plr_template_commitish = self.runtime.group_config.get("konflux", {}).get("plr_template_commitish")
+        if plr_template_commitish:
+            owner, branch = plr_template_commitish.split("@")
+        else:
+            owner = "openshift-priv"
+            branch = "main"
+
+        self.logger.info(f'Fetching task bundle template from {owner}/art-konflux-template ref={branch}')
 
         def _fetch():
-            repo = get_github_client_for_org("openshift-priv").get_repo("openshift-priv/art-konflux-template")
-            content = repo.get_contents(".tekton/art-konflux-template-push.yaml", ref="main")
+            repo = get_github_client_for_org(owner).get_repo(f"{owner}/art-konflux-template")
+            content = repo.get_contents(".tekton/art-konflux-template-push.yaml", ref=branch)
             return content.decoded_content.decode('utf-8')
 
         yaml_content = await asyncio.to_thread(_fetch)
