@@ -115,7 +115,7 @@ async def is_commit_in_public_upstream_async(revision: str, public_upstream_bran
     ]
     # The command exits with status 0 if true, or with status 1 if not. Errors are signaled by a non-zero status that is not 1.
     # https://git-scm.com/docs/git-merge-base#Documentation/git-merge-base.txt---is-ancestor
-    rc, out, err = await exectools.cmd_gather_async(cmd)
+    rc, out, err = await exectools.cmd_gather_async(cmd, check=False)
     if rc == 0:
         return True
     if rc == 1:
