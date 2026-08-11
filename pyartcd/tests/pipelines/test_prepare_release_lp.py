@@ -452,7 +452,7 @@ class TestPrepareReleaseLPRun(unittest.TestCase):
     def test_run_dry_run(self, mock_product, mock_assembly, mock_bundle, mock_fbc, mock_snapshot, mock_template):
         import tempfile
 
-        mock_product.return_value = "acm"
+        mock_product.return_value = "rhacm2"
         mock_assembly.return_value = {
             'assembly': {
                 'type': 'standard',
@@ -689,7 +689,7 @@ class TestCreateShipmentMrApprovalRules(unittest.TestCase):
             assembly="2.17.3",
             create_mr=True,
         )
-        pipeline.product = "acm"
+        pipeline.product = "rhacm2"
         pipeline.shipment_data_repo = AsyncMock()
         pipeline.shipment_data_repo_push_url = "https://gitlab.example.com/user/ocp-shipment-data.git"
         pipeline.shipment_data_repo_pull_url = "https://gitlab.example.com/org/ocp-shipment-data.git"
