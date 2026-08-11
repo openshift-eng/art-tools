@@ -581,5 +581,28 @@ class TestGetKonfluxBuildPriority(unittest.TestCase):
         self.assertGreaterEqual(int(util.get_konflux_build_priority(metadata, "openshift-4.19")), 1)
 
 
+class TestIsCommitInPublicUpstreamAsync(unittest.IsolatedAsyncioTestCase):
+    @patch("doozerlib.util.exectools.cmd_gather_async")
+    async def test_returns_true_on_exit_0(self, mock_gather):
+        mock_gather.return_value = (0, "", "")
+        result = await util.is_commit_in_public_upstream_async("abc123", "release-4.13", "/some/dir")
+        self.assertTrue(result)
+        mock_gather.assert_called_once_with(unittest.mock.ANY, check=False)
+
+    @patch("doozerlib.util.exectools.cmd_gather_async")
+    async def test_returns_false_on_exit_1(self, mock_gather):
+        # exit code 1 means "not an ancestor" — must NOT raise ChildProcessError
+        mock_gather.return_value = (1, "", "")
+        result = await util.is_commit_in_public_upstream_async("abc123", "release-4.13", "/some/dir")
+        self.assertFalse(result)
+        mock_gather.assert_called_once_with(unittest.mock.ANY, check=False)
+
+    @patch("doozerlib.util.exectools.cmd_gather_async")
+    async def test_raises_on_other_exit_codes(self, mock_gather):
+        mock_gather.return_value = (128, "", "fatal: not a git repo")
+        with self.assertRaises(IOError):
+            await util.is_commit_in_public_upstream_async("abc123", "release-4.13", "/some/dir")
+
+
 if __name__ == "__main__":
     unittest.main()
