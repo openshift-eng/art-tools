@@ -207,9 +207,12 @@ class KonfluxImageBuilder:
                 target_nvr_dict["version"] = _normalize_version(target_nvr_dict["version"])
                 latest_nvr_dict["version"] = _normalize_version(latest_nvr_dict["version"])
 
-                # Skip package name comparison for test assemblies
+                # Test assemblies and Golang builders can intentionally change component names.
+                # Golang builder metadata moved from versioned component names such as
+                # openshift-golang-builder-1-26-container to the shared
+                # openshift-golang-builder-container component.
                 # compare_nvr returns: 1 if target > latest, 0 if equal, -1 if target < latest
-                ignore_name = metadata.runtime.assembly == "test"
+                ignore_name = metadata.runtime.assembly == "test" or metadata.is_golang_builder()
                 if compare_nvr(target_nvr_dict, latest_nvr_dict, ignore_name=ignore_name) <= 0:
                     raise ValueError(
                         f"Target NVR {nvr} is not greater than the latest successful build {latest_build.nvr}. "
