@@ -24,15 +24,16 @@ class TestScanSourcesKonflux(IsolatedAsyncioTestCase):
         self.runtime.image_metas.return_value = []
         self.runtime.rpm_metas.return_value = []
         self.runtime.image_map = {}
+        self.runtime.group_config = {}  # Default: no group-level overrides
         self.session = MagicMock(spec=aiohttp.ClientSession)
         self.ci_kubeconfig = "/tmp/test_kubeconfig"
 
         # Mock get_github_client_for_org (returns client directly; no Github class or GITHUB_TOKEN)
         # Patch must persist for test duration since get_current_task_bundle_shas calls it at runtime
         self._github_patch = patch('doozerlib.cli.scan_sources_konflux.get_github_client_for_org')
-        mock_get_github_client = self._github_patch.start()
+        self.mock_get_github_client_fn = self._github_patch.start()
         self.mock_github_client = MagicMock()
-        mock_get_github_client.return_value = self.mock_github_client
+        self.mock_get_github_client_fn.return_value = self.mock_github_client
         self.scanner = ConfigScanSources(
             runtime=self.runtime,
             ci_kubeconfig=self.ci_kubeconfig,
@@ -559,6 +560,65 @@ class TestGetCurrentTaskBundleShas(TestScanSourcesKonflux):
 
         expected = {"task-nested-task": "nested123", "task-cleanup": "cleanup456"}
         self.assertEqual(result, expected)
+
+    async def test_get_current_task_bundle_shas_with_plr_template_commitish(self):
+        """Test fetching task bundle SHAs from a custom owner/branch via plr_template_commitish."""
+        yaml_content = yaml.dump(self.sample_yaml)
+        mock_content = MagicMock()
+        mock_content.decoded_content = yaml_content.encode('utf-8')
+        self.mock_github_client.get_repo.return_value.get_contents.return_value = mock_content
+
+        self.scanner.runtime.group_config = {"konflux": {"plr_template_commitish": "custom-owner@feature-branch"}}
+
+        result = await self.scanner.get_current_task_bundle_shas()
+
+        expected = {
+            "task-init": "abc123def456",
+            "task-git-clone-oci-ta": "def456ghi789",
+            "task-buildah-remote-oci-ta": "ghi789jkl012",
+        }
+        self.assertEqual(result, expected)
+        self.mock_get_github_client_fn.assert_called_with("custom-owner")
+        self.mock_github_client.get_repo.assert_called_with("custom-owner/art-konflux-template")
+        self.mock_github_client.get_repo.return_value.get_contents.assert_called_with(
+            ".tekton/art-konflux-template-push.yaml", ref="feature-branch"
+        )
+
+    async def test_get_current_task_bundle_shas_without_plr_template_commitish(self):
+        """Test that default owner/branch is used when plr_template_commitish is not set."""
+        yaml_content = yaml.dump(self.sample_yaml)
+        mock_content = MagicMock()
+        mock_content.decoded_content = yaml_content.encode('utf-8')
+        self.mock_github_client.get_repo.return_value.get_contents.return_value = mock_content
+
+        self.scanner.runtime.group_config = {}
+
+        result = await self.scanner.get_current_task_bundle_shas()
+
+        self.assertEqual(len(result), 3)
+        self.mock_get_github_client_fn.assert_called_with("openshift-priv")
+        self.mock_github_client.get_repo.assert_called_with("openshift-priv/art-konflux-template")
+        self.mock_github_client.get_repo.return_value.get_contents.assert_called_with(
+            ".tekton/art-konflux-template-push.yaml", ref="main"
+        )
+
+    async def test_get_current_task_bundle_shas_konflux_config_without_commitish(self):
+        """Test default behavior when konflux config exists but no plr_template_commitish."""
+        yaml_content = yaml.dump(self.sample_yaml)
+        mock_content = MagicMock()
+        mock_content.decoded_content = yaml_content.encode('utf-8')
+        self.mock_github_client.get_repo.return_value.get_contents.return_value = mock_content
+
+        self.scanner.runtime.group_config = {"konflux": {"some_other_key": "value"}}
+
+        result = await self.scanner.get_current_task_bundle_shas()
+
+        self.assertEqual(len(result), 3)
+        self.mock_get_github_client_fn.assert_called_with("openshift-priv")
+        self.mock_github_client.get_repo.assert_called_with("openshift-priv/art-konflux-template")
+        self.mock_github_client.get_repo.return_value.get_contents.assert_called_with(
+            ".tekton/art-konflux-template-push.yaml", ref="main"
+        )
 
 
 class TestTaskBundleIntegration(TestScanSourcesKonflux):
