@@ -794,7 +794,7 @@ class UpdateGolangPipeline:
                     build_records = self.konflux_db.search_builds_by_fields(
                         where=where,
                         extra_patterns=extra_patterns,
-                        limit=50 if assembly_filter is None else 1,
+                        limit=50,
                     )
                     async for build_record in build_records:
                         build_record = cast(KonfluxBuildRecord, build_record)
@@ -1243,7 +1243,9 @@ class UpdateGolangPipeline:
 
         if err:
             raise ValueError(
-                f"Content repo URLs for {golang_repo} in {branch} do not look correct. Wrong MAJOR/MINOR vars?"
+                f"Content repo URLs for {golang_repo} in {branch} do not look correct. "
+                f"Check MAJOR/MINOR vars and the {{runtime_assembly}} segment "
+                f"(expected assembly: {self.assembly})."
             )
 
         _LOGGER.info(f"Builder branch {branch} has the expected content set urls")
