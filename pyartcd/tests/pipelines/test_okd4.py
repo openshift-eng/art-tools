@@ -45,7 +45,7 @@ class TestKonfluxOkdPipeline(IsolatedAsyncioTestCase):
             assembly='stream',
             data_path='https://github.com/openshift-eng/ocp-build-data',
             data_gitref='',
-            version='4.20',
+            version='4.23',
             ignore_locks=False,
             plr_template='',
             lock_identifier='test-lock',
@@ -68,15 +68,15 @@ class TestKonfluxOkdPipeline(IsolatedAsyncioTestCase):
             # Should be called twice - once for stream-coreos, once for stream-coreos-extensions
             self.assertEqual(mock_tag.call_count, 2)
 
-            # Check first call (stream-coreos)
+            # Check first call (stream-coreos) — source is scos-5.0 (master branch)
             first_call = mock_tag.call_args_list[0]
-            self.assertEqual(first_call[1]['source_pullspec'], 'origin/scos-4.20:stream-coreos')
-            self.assertEqual(first_call[1]['target_tag'], 'origin/scos-4.20-art:stream-coreos')
+            self.assertEqual(first_call[1]['source_pullspec'], 'origin/scos-5.0:stream-coreos')
+            self.assertEqual(first_call[1]['target_tag'], 'origin/scos-4.23-art:stream-coreos')
 
             # Check second call (stream-coreos-extensions)
             second_call = mock_tag.call_args_list[1]
-            self.assertEqual(second_call[1]['source_pullspec'], 'origin/scos-4.20:stream-coreos-extensions')
-            self.assertEqual(second_call[1]['target_tag'], 'origin/scos-4.20-art:stream-coreos-extensions')
+            self.assertEqual(second_call[1]['source_pullspec'], 'origin/scos-5.0:stream-coreos-extensions')
+            self.assertEqual(second_call[1]['target_tag'], 'origin/scos-4.23-art:stream-coreos-extensions')
 
             # Should update Jenkins description twice (once per successful tag)
             self.assertEqual(mock_jenkins.update_description.call_count, 2)
@@ -153,7 +153,7 @@ class TestKonfluxOkdPipeline(IsolatedAsyncioTestCase):
             assembly='stream',
             data_path='https://github.com/openshift-eng/ocp-build-data',
             data_gitref='',
-            version='4.20',
+            version='4.23',
             ignore_locks=False,
             plr_template='',
             lock_identifier='test-lock',
@@ -185,7 +185,7 @@ class TestKonfluxOkdPipeline(IsolatedAsyncioTestCase):
             assembly='stream',
             data_path='https://github.com/openshift-eng/ocp-build-data',
             data_gitref='',
-            version='4.20',
+            version='4.23',
             ignore_locks=False,
             plr_template='',
             lock_identifier='test-lock',
@@ -232,7 +232,7 @@ class TestKonfluxOkdPipeline(IsolatedAsyncioTestCase):
             assembly='stream',
             data_path='https://github.com/openshift-eng/ocp-build-data',
             data_gitref='',
-            version='4.20',
+            version='4.23',
             ignore_locks=False,
             plr_template='',
             lock_identifier='test-lock',
@@ -257,73 +257,52 @@ class TestKonfluxOkdPipeline(IsolatedAsyncioTestCase):
 
             # Check first call uses custom namespace
             first_call = mock_tag.call_args_list[0]
-            self.assertEqual(first_call[1]['source_pullspec'], 'custom-namespace/scos-4.20:stream-coreos')
-            self.assertEqual(first_call[1]['target_tag'], 'custom-namespace/scos-4.20-art:stream-coreos')
+            self.assertEqual(first_call[1]['source_pullspec'], 'custom-namespace/scos-5.0:stream-coreos')
+            self.assertEqual(first_call[1]['target_tag'], 'custom-namespace/scos-4.23-art:stream-coreos')
 
             # Check second call uses custom namespace
             second_call = mock_tag.call_args_list[1]
-            self.assertEqual(second_call[1]['source_pullspec'], 'custom-namespace/scos-4.20:stream-coreos-extensions')
-            self.assertEqual(second_call[1]['target_tag'], 'custom-namespace/scos-4.20-art:stream-coreos-extensions')
+            self.assertEqual(second_call[1]['source_pullspec'], 'custom-namespace/scos-5.0:stream-coreos-extensions')
+            self.assertEqual(second_call[1]['target_tag'], 'custom-namespace/scos-4.23-art:stream-coreos-extensions')
 
-    async def test_mirror_coreos_imagestreams_skipped_for_4_21(self):
+    async def test_mirror_coreos_imagestreams_skipped_for_release_managed_versions(self):
         """
-        Test that CoreOS mirroring is skipped for version 4.21 (handled by openshift/release).
-        """
-
-        # given
-        pipeline = KonfluxOkdPipeline(
-            runtime=self.mock_runtime,
-            image_build_strategy='all',
-            image_list=None,
-            assembly='stream',
-            data_path='https://github.com/openshift-eng/ocp-build-data',
-            data_gitref='',
-            version='4.21',
-            ignore_locks=False,
-            plr_template='',
-            lock_identifier='test-lock',
-            build_priority='10',
-            imagestream_namespace='origin',
-        )
-
-        with patch.object(pipeline, '_tag_image_to_stream', new_callable=AsyncMock) as mock_tag:
-            # when
-            await pipeline.mirror_coreos_imagestreams()
-
-            # then
-            mock_tag.assert_not_called()
-
-    async def test_mirror_coreos_imagestreams_skipped_for_4_22(self):
-        """
-        Test that CoreOS mirroring is skipped for version 4.22 (handled by openshift/release).
+        Test that CoreOS mirroring is skipped for versions whose openshift/release CI config
+        promotes stream-coreos directly to the -art namespace.
         """
 
-        # given
-        pipeline = KonfluxOkdPipeline(
-            runtime=self.mock_runtime,
-            image_build_strategy='all',
-            image_list=None,
-            assembly='stream',
-            data_path='https://github.com/openshift-eng/ocp-build-data',
-            data_gitref='',
-            version='4.22',
-            ignore_locks=False,
-            plr_template='',
-            lock_identifier='test-lock',
-            build_priority='10',
-            imagestream_namespace='origin',
-        )
+        for version in ['4.21', '4.22', '5.0']:
+            with self.subTest(version=version):
+                pipeline = KonfluxOkdPipeline(
+                    runtime=self.mock_runtime,
+                    image_build_strategy='all',
+                    image_list=None,
+                    assembly='stream',
+                    data_path='https://github.com/openshift-eng/ocp-build-data',
+                    data_gitref='',
+                    version=version,
+                    ignore_locks=False,
+                    plr_template='',
+                    lock_identifier='test-lock',
+                    build_priority='10',
+                    imagestream_namespace='origin',
+                )
 
-        with patch.object(pipeline, '_tag_image_to_stream', new_callable=AsyncMock) as mock_tag:
-            # when
-            await pipeline.mirror_coreos_imagestreams()
+                pipeline.built_images = [
+                    {
+                        'name': 'test-image',
+                        'nvr': 'test-1.0',
+                        'image_pullspec': 'quay.io/test:latest',
+                        'image_tag': 'latest',
+                    }
+                ]
+                with patch.object(pipeline, '_tag_image_to_stream', new_callable=AsyncMock) as mock_tag:
+                    await pipeline.mirror_coreos_imagestreams()
+                    mock_tag.assert_not_called()
 
-            # then
-            mock_tag.assert_not_called()
-
-    async def test_mirror_coreos_imagestreams_4_23_uses_4_22_source(self):
+    async def test_mirror_coreos_imagestreams_4_23_uses_5_0_source(self):
         """
-        Test that CoreOS mirroring for version 4.23 uses 4.22 as the source.
+        Test that CoreOS mirroring for version 4.23 uses 5.0 as the source.
         """
 
         # given
@@ -357,59 +336,14 @@ class TestKonfluxOkdPipeline(IsolatedAsyncioTestCase):
             # Should be called twice
             self.assertEqual(mock_tag.call_count, 2)
 
-            # Check that 4.22 is used as source, 4.23 as target
+            # Check that 5.0 is used as source, 4.23 as target
             first_call = mock_tag.call_args_list[0]
-            self.assertEqual(first_call[1]['source_pullspec'], 'origin/scos-4.22:stream-coreos')
+            self.assertEqual(first_call[1]['source_pullspec'], 'origin/scos-5.0:stream-coreos')
             self.assertEqual(first_call[1]['target_tag'], 'origin/scos-4.23-art:stream-coreos')
 
             second_call = mock_tag.call_args_list[1]
-            self.assertEqual(second_call[1]['source_pullspec'], 'origin/scos-4.22:stream-coreos-extensions')
+            self.assertEqual(second_call[1]['source_pullspec'], 'origin/scos-5.0:stream-coreos-extensions')
             self.assertEqual(second_call[1]['target_tag'], 'origin/scos-4.23-art:stream-coreos-extensions')
-
-    async def test_mirror_coreos_imagestreams_5_0_uses_4_22_source(self):
-        """
-        Test that CoreOS mirroring for version 5.0 uses 4.22 as the source.
-        """
-
-        # given
-        pipeline = KonfluxOkdPipeline(
-            runtime=self.mock_runtime,
-            image_build_strategy='all',
-            image_list=None,
-            assembly='stream',
-            data_path='https://github.com/openshift-eng/ocp-build-data',
-            data_gitref='',
-            version='5.0',
-            ignore_locks=False,
-            plr_template='',
-            lock_identifier='test-lock',
-            build_priority='10',
-            imagestream_namespace='origin',
-        )
-        # Simulate successful image builds
-        pipeline.built_images = [
-            {'name': 'test-image', 'nvr': 'test-1.0', 'image_pullspec': 'quay.io/test:latest', 'image_tag': 'latest'}
-        ]
-
-        with (
-            patch.object(pipeline, '_tag_image_to_stream', new_callable=AsyncMock) as mock_tag,
-            patch('pyartcd.pipelines.okd.jenkins'),
-        ):
-            # when
-            await pipeline.mirror_coreos_imagestreams()
-
-            # then
-            # Should be called twice
-            self.assertEqual(mock_tag.call_count, 2)
-
-            # Check that 4.22 is used as source, 5.0 as target
-            first_call = mock_tag.call_args_list[0]
-            self.assertEqual(first_call[1]['source_pullspec'], 'origin/scos-4.22:stream-coreos')
-            self.assertEqual(first_call[1]['target_tag'], 'origin/scos-5.0-art:stream-coreos')
-
-            second_call = mock_tag.call_args_list[1]
-            self.assertEqual(second_call[1]['source_pullspec'], 'origin/scos-4.22:stream-coreos-extensions')
-            self.assertEqual(second_call[1]['target_tag'], 'origin/scos-5.0-art:stream-coreos-extensions')
 
 
 class TestGetPayloadTagName(IsolatedAsyncioTestCase):
