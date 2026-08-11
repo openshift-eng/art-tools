@@ -681,6 +681,12 @@ class KonfluxOlmBundleRebaser:
                         f"embargoed, and no public (non-embargoed) build of '{meta.distgit_key}' "
                         f"is available to substitute. Cannot safely rebase this operator bundle."
                     )
+                if public_build.assembly != self.assembly:
+                    raise KonfluxOlmBundleRebaseError(
+                        f"Assembly mismatch: public substitute operand {public_build.nvr} for operator "
+                        f"{metadata.distgit_key} has assembly '{public_build.assembly}', "
+                        f"expected '{self.assembly}'."
+                    )
                 logger.warning(
                     "Operand %s referenced by operator %s is embargoed; substituting with public build %s",
                     build.nvr,

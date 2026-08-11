@@ -1183,6 +1183,55 @@ spec:
         self.assertIn("embargoed", str(ctx.exception))
         self.assertIn("no public", str(ctx.exception).lower())
 
+    @patch("doozerlib.backend.konflux_olm_bundler.is_nvr_embargoed")
+    async def test_resolve_operands_from_db_embargo_public_build_assembly_mismatch(self, mock_is_embargoed):
+        """
+        Verify that KonfluxOlmBundleRebaseError is raised when the public substitute
+        build for an embargoed operand belongs to a different assembly.
+        """
+        metadata = MagicMock()
+        metadata.distgit_key = "test-operator"
+        metadata.runtime.group = "mtc-1.8"
+        metadata.runtime.data_dir = "/nonexistent/data/dir"
+
+        operand_meta = MagicMock()
+        operand_meta.image_name_short = "ose-operand"
+        operand_meta.distgit_key = "operand"
+        operand_meta.branch_el_target.return_value = 9
+
+        embargoed_build = MagicMock()
+        embargoed_build.version = "4.18.0"
+        embargoed_build.release = "202506120000.p3.g1234567.assembly.stream.el9"
+        embargoed_build.nvr = "operand-container-4.18.0-202506120000.p3.g1234567.assembly.stream.el9"
+        embargoed_build.assembly = self.assembly
+
+        # Public substitute has a different assembly
+        public_build = MagicMock()
+        public_build.version = "4.18.0"
+        public_build.release = "202506100000.p2.gabcdef0.assembly.test.el9"
+        public_build.nvr = "operand-container-4.18.0-202506100000.p2.gabcdef0.assembly.test.el9"
+        public_build.assembly = "test"  # mismatch: rebaser uses self.assembly ("stream")
+
+        operand_meta.get_latest_konflux_build = AsyncMock(side_effect=[embargoed_build, public_build])
+
+        metadata.runtime.name_in_bundle_map = {"operand-image": "operand"}
+        metadata.runtime.image_map = {"operand": operand_meta}
+
+        image_references = {
+            "operand-image": {
+                "name": "operand-image",
+                "from": {"name": "registry.example.com/openshift/ose-operand:v4.18"},
+            },
+        }
+
+        mock_is_embargoed.return_value = True
+
+        with self.assertRaises(KonfluxOlmBundleRebaseError) as ctx:
+            await self.rebaser._resolve_operands_from_db(metadata, image_references, {}, {})
+        self.assertIn("Assembly mismatch", str(ctx.exception))
+        self.assertIn(public_build.assembly, str(ctx.exception))
+        self.assertIn(self.assembly, str(ctx.exception))
+
     @patch("pathlib.Path.iterdir")
     @patch("pathlib.Path.exists", autospec=True)
     @patch("pathlib.Path.glob")
