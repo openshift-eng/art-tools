@@ -134,6 +134,50 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         metadata.get_latest_build.assert_not_awaited()
         start_build.assert_not_awaited()
 
+    async def test_build_ignores_component_name_for_stream_golang_builder(self):
+        metadata = self._metadata()
+        metadata.runtime.assembly = "stream"
+        metadata.is_golang_builder.return_value = True
+        metadata.get_latest_build.return_value = MagicMock(
+            nvr=("openshift-golang-builder-1-26-container-v1.26.5-202608101200.p0.assembly.stream.el8")
+        )
+        dest_dir = self.builder._config.base_dir.joinpath(metadata.qualified_key)
+        dest_dir.mkdir(parents=True)
+
+        class NvrCheckComplete(Exception):
+            pass
+
+        with (
+            patch(
+                "doozerlib.backend.konflux_image_builder.BuildRepo.from_local_dir",
+                new=AsyncMock(return_value=MagicMock()),
+            ),
+            patch.object(
+                self.builder,
+                "_parse_dockerfile",
+                return_value=(
+                    "test-uuid",
+                    "openshift-golang-builder-container",
+                    "v1.26.5",
+                    "202608111200.p0.assembly.stream.el8",
+                ),
+            ),
+            patch.object(
+                self.builder,
+                "_get_successful_image_build_by_nvr",
+                new=AsyncMock(return_value=None),
+            ),
+            patch.object(
+                self.builder,
+                "_wait_for_parent_members",
+                new=AsyncMock(side_effect=NvrCheckComplete),
+            ),
+        ):
+            with self.assertRaises(NvrCheckComplete):
+                await self.builder.build(metadata)
+
+        metadata.is_golang_builder.assert_called_once_with()
+
     async def test_build_uses_definitive_pullspec_for_attestation_validation(self):
         metadata = self._metadata()
         dest_dir = self.builder._config.base_dir.joinpath(metadata.qualified_key)
