@@ -38,6 +38,7 @@ class Lock(enum.Enum):
 class Keys(enum.Enum):
     BREW_MASS_REBUILD_QUEUE = 'appdata:brew:mass-rebuild-queue'
     KONFLUX_MASS_REBUILD_QUEUE = 'appdata:konflux:mass-rebuild-queue'
+    KONFLUX_LAST_MASS_REBUILD_START = 'appdata:konflux:last-mass-rebuild-start:{version}'
 
 
 # Use a BIG timeout value so that locks do not silently expire.
