@@ -1143,6 +1143,88 @@ repos:
     @patch("pyartcd.pipelines.update_golang.kinit", new_callable=AsyncMock)
     @patch("pyartcd.pipelines.update_golang.move_golang_bugs", new_callable=AsyncMock)
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    async def test_run_el10_only_prepares_rpm_without_builder_lookup(
+        self, mock_konflux_db, move_golang_bugs, mock_kinit
+    ):
+        pipeline = UpdateGolangPipeline(
+            runtime=self._make_test_runtime(),
+            ocp_version="5.0",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.26.5-1.el10"],
+            art_jira="ART-1234",
+            tag_builds=False,
+            build_system="brew",
+        )
+        pipeline.validate_golang_assemblies_enabled = Mock()
+        pipeline.validate_go_version_matches_group_vars = Mock(
+            return_value=("openshift-5.0", {"GO_LATEST": "1.26"}, "1.26")
+        )
+        pipeline.process_build = AsyncMock(return_value=True)
+        pipeline._build_golang_plashets = AsyncMock()
+        pipeline.get_existing_builders_brew = Mock()
+        pipeline.update_golang_streams = AsyncMock()
+
+        await pipeline.run()
+
+        pipeline.get_existing_builders_brew.assert_not_called()
+        pipeline.validate_go_version_matches_group_vars.assert_called_once_with("1.26.5")
+        pipeline.process_build.assert_awaited_once_with(10, "golang-1.26.5-1.el10")
+        pipeline._build_golang_plashets.assert_not_awaited()
+        pipeline.update_golang_streams.assert_not_awaited()
+        move_golang_bugs.assert_awaited_once()
+
+    @patch("pyartcd.pipelines.update_golang.kinit", new_callable=AsyncMock)
+    @patch("pyartcd.pipelines.update_golang.move_golang_bugs", new_callable=AsyncMock)
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    async def test_run_existing_image_builders_only_prepares_el10_rpm(
+        self, mock_konflux_db, move_golang_bugs, mock_kinit
+    ):
+        pipeline = UpdateGolangPipeline(
+            runtime=self._make_test_runtime(),
+            ocp_version="5.0",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=[
+                "golang-1.26.5-1.el8",
+                "golang-1.26.5-1.el9",
+                "golang-1.26.5-1.el10",
+            ],
+            art_jira="ART-1234",
+            tag_builds=False,
+            build_system="brew",
+        )
+        pipeline.validate_golang_assemblies_enabled = Mock()
+        pipeline.validate_go_version_matches_group_vars = Mock(
+            return_value=("openshift-5.0", {"GO_LATEST": "1.26"}, "1.26")
+        )
+        pipeline.process_build = AsyncMock(return_value=True)
+        pipeline._build_golang_plashets = AsyncMock()
+        pipeline.get_existing_builders_brew = Mock(
+            return_value={
+                8: "openshift-golang-builder-container-v1.26.5-existing.el8",
+                9: "openshift-golang-builder-container-v1.26.5-existing.el9",
+            }
+        )
+        pipeline.update_golang_streams = AsyncMock()
+
+        await pipeline.run()
+
+        pipeline.get_existing_builders_brew.assert_called_once_with(
+            {
+                8: "golang-1.26.5-1.el8",
+                9: "golang-1.26.5-1.el9",
+            },
+            "1.26.5",
+        )
+        pipeline.process_build.assert_awaited_once_with(10, "golang-1.26.5-1.el10")
+        pipeline._build_golang_plashets.assert_not_awaited()
+        pipeline.update_golang_streams.assert_not_awaited()
+        move_golang_bugs.assert_awaited_once()
+
+    @patch("pyartcd.pipelines.update_golang.kinit", new_callable=AsyncMock)
+    @patch("pyartcd.pipelines.update_golang.move_golang_bugs", new_callable=AsyncMock)
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     async def test_run_test_assembly_skips_production_operations(self, mock_konflux_db, move_golang_bugs, mock_kinit):
         pipeline = UpdateGolangPipeline(
             runtime=self._make_test_runtime(),

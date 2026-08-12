@@ -375,7 +375,7 @@ class UpdateGolangPipeline:
         # Check for existing builders before running validations and setup required only for new image builds.
         brew_nvrs = {}
         konflux_records: dict[int, KonfluxBuildRecord] = {}
-        if not self.force_image_build:
+        if not self.force_image_build and el_nvr_map_for_images:
             if self.build_system in ['both', 'brew']:
                 brew_nvrs = self.get_existing_builders_brew(el_nvr_map_for_images, go_version)
             if self.build_system in ['both', 'konflux']:
@@ -387,9 +387,12 @@ class UpdateGolangPipeline:
         konflux_missing = (
             el_nvr_map_for_images.keys() - konflux_records.keys() if self.build_system in ['both', 'konflux'] else set()
         )
+        missing_builder_els = brew_missing | konflux_missing
+        needs_rhel10_rpm_prep = 10 in el_nvr_map and not self.external_golang_rpms
+        rpm_els_to_prepare = missing_builder_els | ({10} if needs_rhel10_rpm_prep else set())
 
         process_rpm_builds = False
-        if brew_missing or konflux_missing:
+        if rpm_els_to_prepare:
             branch, allowed_major_minors, build_major_minor = self.validate_go_version_matches_group_vars(go_version)
             if self.tag_builds:
                 self.validate_tag_builds_go_latest(branch, allowed_major_minors, build_major_minor)
@@ -412,7 +415,7 @@ class UpdateGolangPipeline:
             f"(building {self.assembly} images on {self.build_system}{external_repos_msg}) :construction:"
         )
 
-        if brew_missing or konflux_missing:
+        if rpm_els_to_prepare:
             if self.external_golang_rpms:
                 _LOGGER.warning(
                     "Using golang RPMs from external repos. Skipping tagging and availability checks. "
@@ -424,7 +427,9 @@ class UpdateGolangPipeline:
             elif process_rpm_builds:
                 # Process golang RPM builds (always from Brew)
                 cannot_proceed = not all(
-                    await asyncio.gather(*[self.process_build(el_v, nvr) for el_v, nvr in el_nvr_map.items()])
+                    await asyncio.gather(
+                        *[self.process_build(el_v, el_nvr_map[el_v]) for el_v in sorted(rpm_els_to_prepare)]
+                    )
                 )
                 if cannot_proceed:
                     raise ValueError(
@@ -434,8 +439,9 @@ class UpdateGolangPipeline:
                 _LOGGER.info('All golang RPM builds are tagged and available!')
                 await self._slack_client.say_in_thread("All golang RPM builds are tagged and available!")
 
-                # Build plashets for golang RPMs before building images
-                await self._build_golang_plashets(go_version, el_nvr_map_for_images.keys())
+                # Build plashets only for RHEL versions whose builder images are missing.
+                if missing_builder_els:
+                    await self._build_golang_plashets(go_version, sorted(missing_builder_els))
             else:
                 matching_vars = sorted(
                     var_name
@@ -449,6 +455,7 @@ class UpdateGolangPipeline:
                     ", ".join(matching_vars),
                 )
 
+        if missing_builder_els:
             if not process_rpm_builds and not self.external_golang_rpms:
                 missing = []
                 if brew_missing:
