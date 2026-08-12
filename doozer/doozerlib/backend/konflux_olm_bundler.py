@@ -253,12 +253,11 @@ class KonfluxOlmBundleRebaser:
                 refs_path = candidate / "image-references"
                 break
 
-        image_references: dict[str, dict] = {}
+        image_references: list[dict] = []
         if refs_path is not None:
             async with aiofiles.open(refs_path, "r") as f:
                 image_refs = yaml.safe_load(await f.read())
-            for entry in image_refs.get("spec", {}).get("tags", []):
-                image_references[entry["name"]] = entry
+            image_references = image_refs.get("spec", {}).get("tags", []) or []
         else:
             logger.warning(
                 f"No image-references file found for {metadata.distgit_key}; "
@@ -277,7 +276,7 @@ class KonfluxOlmBundleRebaser:
             container_image = csv_data.get("metadata", {}).get("annotations", {}).get("containerImage")
 
             if container_image and image_references:
-                specs_from_refs = {ref["from"]["name"] for ref in image_references.values()}
+                specs_from_refs = {ref["from"]["name"] for ref in image_references}
                 if container_image not in specs_from_refs:
                     logger.warning(
                         f"CSV containerImage annotation '{container_image}' does not match any entry in image-references file. "
@@ -578,7 +577,7 @@ class KonfluxOlmBundleRebaser:
     async def _resolve_operands_from_db(
         self,
         metadata: ImageMetadata,
-        image_references: dict[str, dict],
+        image_references: list[dict],
         delivery_override_map: dict[str, str],
         delivery_namespace_map: dict[str, str],
         external_image_names: set[str] = frozenset(),
@@ -609,7 +608,9 @@ class KonfluxOlmBundleRebaser:
         entries_meta: list[tuple[str, str, ImageMetadata]] = []  # (name, spec, meta)
         build_coros = []
 
-        for name, ref_entry in image_references.items():
+        refs_list = image_references if isinstance(image_references, list) else list(image_references.values())
+        for ref_entry in refs_list:
+            name = ref_entry["name"]
             spec = ref_entry["from"]["name"]
 
             distgit_key = metadata.runtime.name_in_bundle_map.get(name)
@@ -740,7 +741,10 @@ class KonfluxOlmBundleRebaser:
                 delivery_override_map,
                 delivery_namespace_map,
             )
-            resolved[delivery_short_name] = (spec, new_pullspec, image_nvr)
+            if delivery_short_name not in resolved:
+                resolved[delivery_short_name] = (spec, new_pullspec, image_nvr)
+            else:
+                resolved[spec] = (spec, new_pullspec, image_nvr)
 
         return resolved
 
