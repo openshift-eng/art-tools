@@ -8,6 +8,7 @@ from . import (
     schedule_ocp4_scan,
     schedule_ocp4_scan_konflux,
     schedule_okd_scan,
+    schedule_open_reconciliation_prs,
     schedule_scan_plashet_rpms,
 )
 
@@ -17,5 +18,6 @@ __all__ = [
     'schedule_ocp4_scan',
     'schedule_ocp4_scan_konflux',
     'schedule_okd_scan',
+    'schedule_open_reconciliation_prs',
     'schedule_scan_plashet_rpms',
 ]

@@ -53,6 +53,7 @@ class Jobs(Enum):
     BUILD_CONFORMA_VERIFY = 'aos-cd-builds/build%2Fbuild-conforma-verify'
     SCAN_OPERATOR = 'aos-cd-builds/build%2Fscan-operator'
     SYNC_CI_IMAGES = 'aos-cd-builds/build%2Fsync-ci-images'
+    OPEN_RECONCILIATION_PRS = 'aos-cd-builds/build%2Fopen-reconciliation-prs'
 
 
 def get_jenkins_url():
@@ -535,6 +536,17 @@ def start_sync_ci_images(version: str, **kwargs) -> Optional[str]:
     }
     return start_build(
         job=Jobs.SYNC_CI_IMAGES,
+        params=params,
+        **kwargs,
+    )
+
+
+def start_open_reconciliation_prs(version: str, **kwargs) -> Optional[str]:
+    params = {
+        'VERSION': version,
+    }
+    return start_build(
+        job=Jobs.OPEN_RECONCILIATION_PRS,
         params=params,
         **kwargs,
     )
