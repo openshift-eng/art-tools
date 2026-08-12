@@ -98,6 +98,7 @@ class KonfluxOcpPipeline:
         skip_bundle_build: bool = None,
         skip_build_sync_konflux: bool = False,
         skip_ec_verify: bool = False,
+        skip_rhcos_integration_tests: bool = True,
         arches: Tuple[str, ...] = None,
         plr_template: str = None,
         lock_identifier: str = None,
@@ -118,6 +119,7 @@ class KonfluxOcpPipeline:
         self.skip_bundle_build = skip_bundle_build
         self.skip_build_sync_konflux = skip_build_sync_konflux
         self.skip_ec_verify = skip_ec_verify
+        self.skip_rhcos_integration_tests = skip_rhcos_integration_tests
         self.plr_template = plr_template
         self.lock_identifier = lock_identifier
         self.skip_plashets = skip_plashets
@@ -865,6 +867,45 @@ class KonfluxOcpPipeline:
         except Exception as e:
             LOGGER.exception(f"Failed to trigger bundle build: {e}")
 
+    def trigger_rhcos_integration_tests(self):
+        """Trigger RHCOS-owned Jenkins integration tests for rebuilt node/extensions images.
+
+        When RHCOS images (rhcos-node-image or rhcos-node-extensions) are rebuilt
+        successfully, this method will eventually trigger RHCOS-owned Jenkins
+        integration tests. If those tests pass, it will sync the ART-built
+        node/extensions images to the shadow imagestream tags.
+
+        Currently raises NotImplementedError when RHCOS images were rebuilt, as the
+        integration tests are not yet available. Set --skip-rhcos-integration-tests
+        to bypass (default: True).
+        """
+        if self.skip_rhcos_integration_tests:
+            LOGGER.warning("Skipping RHCOS integration tests because --skip-rhcos-integration-tests flag is set")
+            return
+
+        record_log = self.parse_record_log()
+        if not record_log:
+            LOGGER.warning('record.log not found, skipping RHCOS integration tests')
+            return
+
+        try:
+            records = record_log.get('image_build_konflux', [])
+            rhcos_distgit_keys = {'rhcos-node-image', 'rhcos-node-extensions'}
+            rebuilt_rhcos = [
+                record['name']
+                for record in records
+                if record.get('name') in rhcos_distgit_keys and record['status'] == '0'
+            ]
+            if rebuilt_rhcos:
+                LOGGER.info(f"RHCOS images rebuilt successfully: {', '.join(rebuilt_rhcos)}")
+                raise NotImplementedError(
+                    "RHCOS integration tests are not yet implemented. Set --skip-rhcos-integration-tests to bypass."
+                )
+        except NotImplementedError:
+            raise
+        except Exception as e:
+            LOGGER.exception(f"Failed to trigger RHCOS integration tests: {e}")
+
     def parse_record_log(self) -> Optional[dict]:
         record_log_path = Path(self.runtime.doozer_working, 'record.log')
         if not record_log_path.exists():
@@ -1080,6 +1121,7 @@ class KonfluxOcpPipeline:
                 )
 
             self.trigger_bundle_build()
+            self.trigger_rhcos_integration_tests()
 
             # Wrap problematic operations to prevent them from blocking each other or clean_up
             await run_safe(self.mirror_images, critical_failures)
@@ -1193,6 +1235,12 @@ class KonfluxOcpPipeline:
     "--skip-ec-verify", is_flag=True, default=False, help="Skip Enterprise Contract verification for built images"
 )
 @click.option(
+    "--skip-rhcos-integration-tests",
+    is_flag=True,
+    default=True,
+    help="Skip RHCOS integration tests (default: True, tests not yet available)",
+)
+@click.option(
     "--arch", "arches", metavar="TAG", multiple=True, help="(Optional) [MULTIPLE] Limit included arches to this list"
 )
 @click.option(
@@ -1244,6 +1292,7 @@ async def ocp4(
     skip_bundle_build: bool,
     skip_build_sync_konflux: bool,
     skip_ec_verify: bool,
+    skip_rhcos_integration_tests: bool,
     arches: Tuple[str, ...],
     plr_template: str,
     skip_plashets,
@@ -1271,6 +1320,7 @@ async def ocp4(
         skip_bundle_build=skip_bundle_build,
         skip_build_sync_konflux=skip_build_sync_konflux,
         skip_ec_verify=skip_ec_verify,
+        skip_rhcos_integration_tests=skip_rhcos_integration_tests,
         arches=arches,
         plr_template=plr_template,
         lock_identifier=lock_identifier,
