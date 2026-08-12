@@ -207,9 +207,9 @@ class TestNewIntegrationTestScenario(TestCase):
         self.assertEqual(resolver_ref["resolver"], "git")
         self.assertEqual(resolver_ref["resourceKind"], "pipeline")
         resolver_params = {p["name"]: p["value"] for p in resolver_ref["params"]}
-        self.assertEqual(resolver_params["url"], "https://github.com/konflux-ci/build-definitions")
+        self.assertEqual(resolver_params["url"], "https://github.com/conforma/cli")
         self.assertEqual(resolver_params["revision"], "main")
-        self.assertEqual(resolver_params["pathInRepo"], "pipelines/enterprise-contract.yaml")
+        self.assertEqual(resolver_params["pathInRepo"], "pipelines/enterprise-contract/0.1/enterprise-contract.yaml")
 
 
 class TestNewIntegrationTestScenarioPreGA(TestCase):
@@ -275,8 +275,8 @@ class TestNewEcPipelinerun(TestCase):
         pipeline_ref = manifest["spec"]["pipelineRef"]
         self.assertEqual(pipeline_ref["resolver"], "git")
         ref_params = {p["name"]: p["value"] for p in pipeline_ref["params"]}
-        self.assertEqual(ref_params["url"], "https://github.com/konflux-ci/build-definitions")
-        self.assertEqual(ref_params["pathInRepo"], "pipelines/enterprise-contract.yaml")
+        self.assertEqual(ref_params["url"], "https://github.com/conforma/cli")
+        self.assertEqual(ref_params["pathInRepo"], "pipelines/enterprise-contract/0.1/enterprise-contract.yaml")
 
         # params
         params = {p["name"]: p["value"] for p in manifest["spec"]["params"]}

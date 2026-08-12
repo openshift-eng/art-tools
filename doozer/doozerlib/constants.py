@@ -67,9 +67,9 @@ ART_BUILD_FAILURES_URL = 'https://art-build-failures-art-build-failures.apps.art
 # Enterprise Contract (EC) verification pipeline constants
 # TODO: Expand EC verification to layered products (logging, oadp, mta, rhmtc, quay, cert-manager, etc.)
 # Currently scoped to OCP only.
-KONFLUX_EC_PIPELINE_GIT_URL = "https://github.com/konflux-ci/build-definitions"
+KONFLUX_EC_PIPELINE_GIT_URL = "https://github.com/conforma/cli"
 KONFLUX_EC_PIPELINE_REVISION = "main"
-KONFLUX_EC_PIPELINE_PATH = "pipelines/enterprise-contract.yaml"
+KONFLUX_EC_PIPELINE_PATH = "pipelines/enterprise-contract/0.1/enterprise-contract.yaml"
 # https://gitlab.cee.redhat.com/releng/konflux-release-data/-/blob/main/tenants-config/cluster/kflux-ocp-p01/tenants/ocp-art-tenant/ecp-build-stage.yaml
 KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION = "ocp-art-tenant/conforma-build-stage"
 # PreGA (PREVIEW assembly) EC policy: same as stage but allows unsigned RPMs
