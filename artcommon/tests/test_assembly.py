@@ -10,6 +10,7 @@ from artcommonlib.assembly import (
     assembly_group_config,
     assembly_metadata_config,
     assembly_own_issues_config,
+    assembly_permits,
     assembly_resolved,
     assembly_rhcos_config,
     assembly_targeted_fixes_only,
@@ -853,3 +854,85 @@ releases:
 
     def test_none_releases_config_returns_false(self):
         self.assertFalse(assembly_targeted_fixes_only(None, "targeted_assembly"))
+
+
+class TestAssemblyPermits(TestCase):
+    def test_rhcos_conflicting_inherited_dependency_forbidden(self):
+        """CONFLICTING_INHERITED_DEPENDENCY permits for rhcos component should be rejected."""
+        releases_yml = """
+releases:
+  test_assembly:
+    assembly:
+      basis:
+        time: "2026-01-01T00:00:00+00:00"
+      permits:
+        - code: CONFLICTING_INHERITED_DEPENDENCY
+          component: rhcos
+"""
+        releases_config = Model(dict_to_model=yaml.safe_load(releases_yml))
+        group_config = Model(dict_to_model={'software_lifecycle': {'phase': 'release'}})
+
+        with self.assertRaises(ValueError) as cm:
+            assembly_permits(releases_config, group_config, "test_assembly")
+
+        self.assertIn("CONFLICTING_INHERITED_DEPENDENCY cannot be permitted for rhcos", str(cm.exception))
+        self.assertIn("RPM advisories to claim newer versions", str(cm.exception))
+
+    def test_rhcos_conflicting_inherited_dependency_wildcard_component_allowed(self):
+        """CONFLICTING_INHERITED_DEPENDENCY permits for wildcard component should be allowed."""
+        releases_yml = """
+releases:
+  test_assembly:
+    assembly:
+      basis:
+        time: "2026-01-01T00:00:00+00:00"
+      permits:
+        - code: CONFLICTING_INHERITED_DEPENDENCY
+          component: '*'
+"""
+        releases_config = Model(dict_to_model=yaml.safe_load(releases_yml))
+        group_config = Model(dict_to_model={'software_lifecycle': {'phase': 'release'}})
+
+        # Should not raise
+        permits = assembly_permits(releases_config, group_config, "test_assembly")
+        self.assertEqual(len(permits), 1)
+
+    def test_rhcos_conflicting_inherited_dependency_other_component_allowed(self):
+        """CONFLICTING_INHERITED_DEPENDENCY permits for non-rhcos components should be allowed."""
+        releases_yml = """
+releases:
+  test_assembly:
+    assembly:
+      basis:
+        time: "2026-01-01T00:00:00+00:00"
+      permits:
+        - code: CONFLICTING_INHERITED_DEPENDENCY
+          component: some-image
+"""
+        releases_config = Model(dict_to_model=yaml.safe_load(releases_yml))
+        group_config = Model(dict_to_model={'software_lifecycle': {'phase': 'release'}})
+
+        # Should not raise
+        permits = assembly_permits(releases_config, group_config, "test_assembly")
+        self.assertEqual(len(permits), 1)
+
+    def test_rhcos_other_issue_codes_allowed(self):
+        """Other issue codes for rhcos component should be allowed."""
+        releases_yml = """
+releases:
+  test_assembly:
+    assembly:
+      basis:
+        time: "2026-01-01T00:00:00+00:00"
+      permits:
+        - code: CONFLICTING_GROUP_RPM_INSTALLED
+          component: rhcos
+        - code: INCONSISTENT_RHCOS_RPMS
+          component: rhcos
+"""
+        releases_config = Model(dict_to_model=yaml.safe_load(releases_yml))
+        group_config = Model(dict_to_model={'software_lifecycle': {'phase': 'release'}})
+
+        # Should not raise
+        permits = assembly_permits(releases_config, group_config, "test_assembly")
+        self.assertEqual(len(permits), 2)

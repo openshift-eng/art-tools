@@ -253,6 +253,13 @@ def assembly_permits(releases_config: Model, group_config: Model, assembly: typi
             raise ValueError(f'IMPERMISSIBLE cannot be permitted in any assembly (assembly: {assembly})')
         if permit.code not in ['*', *[aic.name for aic in AssemblyIssueCode]]:
             raise ValueError(f'Undefined permit code in assembly {assembly}: {permit.code}')
+        if permit.code == AssemblyIssueCode.CONFLICTING_INHERITED_DEPENDENCY.name and permit.component == 'rhcos':
+            raise ValueError(
+                f'CONFLICTING_INHERITED_DEPENDENCY cannot be permitted for rhcos component '
+                f'(assembly: {assembly}). RHCOS content defines what is delivered to nodes, '
+                f'and permitting conflicts causes RPM advisories to claim newer versions than '
+                f'what actually shipped in RHCOS.'
+            )
     return defined_permits
 
 
