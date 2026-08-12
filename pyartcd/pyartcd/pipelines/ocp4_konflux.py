@@ -47,6 +47,17 @@ from pyartcd.util import (
 
 LOGGER = logging.getLogger(__name__)
 
+# ART-built RHCOS images that require integration testing after rebuild.
+# Covers both RHEL 9 (default) and RHEL 10 variants of node image and extensions.
+RHCOS_ART_IMAGE_KEYS = frozenset(
+    {
+        'rhcos-node-image',
+        'rhcos-node-extensions',
+        'rhcos-node-image-rhel10',
+        'rhcos-node-extensions-rhel10',
+    }
+)
+
 
 class BuildStrategy(Enum):
     ALL = 'all'
@@ -870,7 +881,7 @@ class KonfluxOcpPipeline:
     def trigger_rhcos_integration_tests(self):
         """Trigger RHCOS-owned Jenkins integration tests for rebuilt node/extensions images.
 
-        When RHCOS images (rhcos-node-image or rhcos-node-extensions) are rebuilt
+        When any RHCOS images listed in RHCOS_ART_IMAGE_KEYS are rebuilt
         successfully, this method will eventually trigger RHCOS-owned Jenkins
         integration tests. If those tests pass, it will sync the ART-built
         node/extensions images to the shadow imagestream tags.
@@ -890,11 +901,10 @@ class KonfluxOcpPipeline:
 
         try:
             records = record_log.get('image_build_konflux', [])
-            rhcos_distgit_keys = {'rhcos-node-image', 'rhcos-node-extensions'}
             rebuilt_rhcos = [
                 record['name']
                 for record in records
-                if record.get('name') in rhcos_distgit_keys and record['status'] == '0'
+                if record.get('name') in RHCOS_ART_IMAGE_KEYS and record['status'] == '0'
             ]
             if rebuilt_rhcos:
                 LOGGER.info(f"RHCOS images rebuilt successfully: {', '.join(rebuilt_rhcos)}")
