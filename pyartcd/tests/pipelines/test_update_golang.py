@@ -2208,105 +2208,6 @@ repos:
         self.assertEqual(mock_cmd_assert.call_count, 2)
 
 
-class TestShouldSignGolangRpm(unittest.TestCase):
-    """Test the should_sign_golang_rpm method"""
-
-    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
-    @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
-    def test_monobranch_image_override_takes_precedence(self, mock_get_github_client, mock_konflux_db):
-        """Image config sign_golang_rpm=true overrides group.yml default"""
-        mock_repo = Mock()
-        mock_repo.get_contents.return_value = Mock(decoded_content=b"sign_golang_rpm: true\n")
-        mock_get_github_client.return_value.get_repo.return_value = mock_repo
-
-        pipeline = UpdateGolangPipeline(
-            runtime=Mock(dry_run=False, working_dir=Path("/tmp/working")),
-            ocp_version="4.18",
-            cves=None,
-            force_update_tracker=False,
-            go_nvrs=["golang-1.22.9-1.el9"],
-            art_jira="ART-1234",
-            tag_builds=True,
-        )
-
-        result = pipeline.should_sign_golang_rpm(9, "1.22.9")
-
-        self.assertTrue(result)
-        mock_repo.get_contents.assert_called_once_with("images/openshift-golang-builder-1-22.rhel9.yml", ref="golang")
-
-    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
-    @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
-    def test_monobranch_falls_back_to_group_yml(self, mock_get_github_client, mock_konflux_db):
-        """When image config has no sign_golang_rpm, falls back to group.yml"""
-        mock_repo = Mock()
-        image_content = Mock(decoded_content=b"name: openshift-golang-builder\n")
-        group_content = Mock(decoded_content=b"sign_golang_rpm: true\n")
-        mock_repo.get_contents.side_effect = [image_content, group_content]
-        mock_get_github_client.return_value.get_repo.return_value = mock_repo
-
-        pipeline = UpdateGolangPipeline(
-            runtime=Mock(dry_run=False, working_dir=Path("/tmp/working")),
-            ocp_version="4.18",
-            cves=None,
-            force_update_tracker=False,
-            go_nvrs=["golang-1.22.9-1.el9"],
-            art_jira="ART-1234",
-            tag_builds=True,
-        )
-
-        result = pipeline.should_sign_golang_rpm(9, "1.22.9")
-
-        self.assertTrue(result)
-        self.assertEqual(mock_repo.get_contents.call_count, 2)
-        mock_repo.get_contents.assert_any_call("images/openshift-golang-builder-1-22.rhel9.yml", ref="golang")
-        mock_repo.get_contents.assert_any_call("group.yml", ref="golang")
-
-    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
-    @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
-    def test_monobranch_defaults_false_when_neither_set(self, mock_get_github_client, mock_konflux_db):
-        """When neither image config nor group.yml has sign_golang_rpm, defaults to False"""
-        mock_repo = Mock()
-        image_content = Mock(decoded_content=b"name: openshift-golang-builder\n")
-        group_content = Mock(decoded_content=b"name: golang\n")
-        mock_repo.get_contents.side_effect = [image_content, group_content]
-        mock_get_github_client.return_value.get_repo.return_value = mock_repo
-
-        pipeline = UpdateGolangPipeline(
-            runtime=Mock(dry_run=False, working_dir=Path("/tmp/working")),
-            ocp_version="4.22",
-            cves=None,
-            force_update_tracker=False,
-            go_nvrs=["golang-1.25.3-1.el9"],
-            art_jira="ART-1234",
-            tag_builds=True,
-        )
-
-        result = pipeline.should_sign_golang_rpm(9, "1.25.3")
-
-        self.assertFalse(result)
-
-    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
-    @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
-    def test_returns_false_when_explicitly_false(self, mock_get_github_client, mock_konflux_db):
-        mock_repo = Mock()
-        mock_repo.get_contents.return_value = Mock(decoded_content=b"sign_golang_rpm: false\n")
-        mock_get_github_client.return_value.get_repo.return_value = mock_repo
-
-        pipeline = UpdateGolangPipeline(
-            runtime=Mock(dry_run=False, working_dir=Path("/tmp/working")),
-            ocp_version="4.22",
-            cves=None,
-            force_update_tracker=False,
-            go_nvrs=["golang-1.25.3-1.el9"],
-            art_jira="ART-1234",
-            tag_builds=True,
-        )
-
-        result = pipeline.should_sign_golang_rpm(9, "1.25.3")
-
-        self.assertFalse(result)
-
-
 class TestEnsureSigned(IsolatedAsyncioTestCase):
     """Test the ensure_signed method"""
 
@@ -2322,11 +2223,11 @@ class TestEnsureSigned(IsolatedAsyncioTestCase):
             tag_builds=True,
         )
         pipeline.is_rpm_signed = Mock(return_value=True)
-        pipeline.should_sign_golang_rpm = Mock()
+        pipeline.koji_session = Mock(logged_in=True)
 
         await pipeline.ensure_signed(9, "golang-1.22.9-1.el9")
 
-        pipeline.should_sign_golang_rpm.assert_not_called()
+        pipeline.koji_session.tagBuild.assert_not_called()
 
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     async def test_unsigned_sustaining_tags_for_signing(self, mock_konflux_db):
@@ -2345,7 +2246,6 @@ class TestEnsureSigned(IsolatedAsyncioTestCase):
             tag_builds=True,
         )
         pipeline.is_rpm_signed = Mock(return_value=False)
-        pipeline.should_sign_golang_rpm = Mock(return_value=True)
         pipeline.koji_session = Mock(logged_in=True)
 
         await pipeline.ensure_signed(9, "golang-1.22.9-1.el9")
@@ -2369,7 +2269,6 @@ class TestEnsureSigned(IsolatedAsyncioTestCase):
             tag_builds=True,
         )
         pipeline.is_rpm_signed = Mock(return_value=False)
-        pipeline.should_sign_golang_rpm = Mock(return_value=True)
         pipeline.koji_session = Mock(logged_in=True)
 
         await pipeline.ensure_signed(9, "golang-1.22.9-1.el9")
@@ -2377,9 +2276,14 @@ class TestEnsureSigned(IsolatedAsyncioTestCase):
         pipeline.koji_session.tagBuild.assert_not_called()
 
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
-    async def test_unsigned_rhel_golang_raises(self, mock_konflux_db):
+    async def test_unsigned_rhel_golang_tags_for_signing(self, mock_konflux_db):
+        mock_slack = Mock()
+        mock_slack.say_in_thread = AsyncMock()
+        mock_runtime = Mock(dry_run=False, working_dir=Path("/tmp/working"))
+        mock_runtime.new_slack_client.return_value = mock_slack
+
         pipeline = UpdateGolangPipeline(
-            runtime=Mock(dry_run=False, working_dir=Path("/tmp/working")),
+            runtime=mock_runtime,
             ocp_version="4.22",
             cves=None,
             force_update_tracker=False,
@@ -2388,10 +2292,32 @@ class TestEnsureSigned(IsolatedAsyncioTestCase):
             tag_builds=True,
         )
         pipeline.is_rpm_signed = Mock(return_value=False)
-        pipeline.should_sign_golang_rpm = Mock(return_value=False)
+        pipeline.koji_session = Mock(logged_in=True)
 
-        with self.assertRaisesRegex(ValueError, "not signed.*RHEL"):
-            await pipeline.ensure_signed(9, "golang-1.25.3-1.el9")
+        await pipeline.ensure_signed(9, "golang-1.25.3-1.el9")
+
+        pipeline.koji_session.tagBuild.assert_called_once_with("rhaos-4.22-rhel-9-golang", "golang-1.25.3-1.el9")
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    async def test_non_stream_assembly_skips_signing(self, mock_konflux_db):
+        pipeline = UpdateGolangPipeline(
+            runtime=Mock(dry_run=False, working_dir=Path("/tmp/working")),
+            ocp_version="4.22",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.25.3-1.el9"],
+            art_jira="ART-1234",
+            tag_builds=False,
+            build_system="konflux",
+            assembly="test",
+        )
+        pipeline.is_rpm_signed = Mock()
+        pipeline.koji_session = Mock(logged_in=True)
+
+        await pipeline.ensure_signed(9, "golang-1.25.3-1.el9")
+
+        pipeline.is_rpm_signed.assert_not_called()
+        pipeline.koji_session.tagBuild.assert_not_called()
 
 
 class TestIsRpmSigned(unittest.TestCase):
