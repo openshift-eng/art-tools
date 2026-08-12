@@ -1449,3 +1449,45 @@ class TestBareUpdateUpgradeResolution(unittest.TestCase):
             asyncio.run(generator.generate_lockfile(self._make_mock_image_meta(), dest_dir))
 
         self.assertTrue(generator.upgrades_dropped)
+
+    def test_base_image_package_uses_upgrade_not_reinstall(self):
+        """
+        Base image packages must go to upgradePackages, NOT reinstallPackages.
+
+        reinstallPackages pins to the installed EVR and overrides DNF's upgrade
+        intent — e.g. python3-setuptools 53.0.0 from e4s wins over 67.6.1 in
+        the ironic plashet, causing prepare-image.sh's >= 64.0.0 requirement to
+        fail at build time.
+
+        Regression: ART-21309 rewrite (612950052) lost the fix from ART-21515
+        (055086c65 / PR #3126) that kept base image packages out of reinstall.
+        """
+        container = MagicMock(spec=ContainerImageHelper)
+        container.resolve_to_digest = AsyncMock(side_effect=lambda p: p + "@sha256:abc123")
+        container.get_installed_packages = AsyncMock(return_value=["glibc", "python3-setuptools"])
+        container.read_file_from_image = AsyncMock(return_value="")
+
+        resolver = MagicMock(spec=RpmResolver)
+        resolver.resolve = AsyncMock(return_value=FAKE_LOCKFILE_DATA.model_copy(deep=True))
+
+        generator = RpmLockfilePrototypeGenerator(
+            repos=self._make_mock_repos(),
+            working_dir=Path(tempfile.mkdtemp()),
+            container_helper=container,
+            resolver=resolver,
+        )
+        generator.downstream_parents = ["quay.io/test/base:latest"]
+
+        with TemporaryDirectory() as tmpdir:
+            dest_dir = Path(tmpdir)
+            (dest_dir / "Dockerfile").write_text("FROM base\nRUN dnf install -y python3-setuptools gcc\n")
+            asyncio.run(generator.generate_lockfile(self._make_mock_image_meta(), dest_dir))
+
+        calls = resolver.resolve.call_args_list
+        self.assertGreaterEqual(len(calls), 1)
+        config = calls[0].args[0]
+        # Base image packages must go to upgradePackages so repos can provide
+        # newer versions. reinstallPackages pins to the installed EVR and wins
+        # over the upgrade request, silently keeping the old version.
+        self.assertNotIn("python3-setuptools", config.reinstallPackages)
+        self.assertIn("python3-setuptools", config.upgradePackages)
