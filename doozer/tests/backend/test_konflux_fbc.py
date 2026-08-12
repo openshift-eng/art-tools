@@ -228,6 +228,33 @@ class TestKonfluxFbcImporter(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
+    def test_filter_catalog_blobs_unknown_schema_with_package_field(self):
+        """Unknown schemas that carry a 'package' field should be included, not raise."""
+        lifecycle_blob = {
+            "schema": "io.openshift.operators.lifecycles.v1alpha1",
+            "package": "test-package2",
+            "name": "test-lifecycle",
+        }
+        catalog_blobs = [
+            {"schema": "olm.package", "name": "test-package2"},
+            {"schema": "olm.channel", "name": "test-channel2", "package": "test-package2"},
+            lifecycle_blob,
+            {"schema": "olm.package", "name": "test-package3"},
+        ]
+        actual = self.importer._filter_catalog_blobs(catalog_blobs, {"test-package2"})
+        self.assertEqual(actual.keys(), {"test-package2"})
+        self.assertIn(lifecycle_blob, actual["test-package2"])
+
+    def test_filter_catalog_blobs_unknown_schema_without_package_field(self):
+        """Unknown schemas with no 'package' or 'name' field should be silently skipped."""
+        catalog_blobs = [
+            {"schema": "olm.package", "name": "test-package"},
+            {"schema": "some.unknown.schema.v1"},
+        ]
+        # Should not raise; the unknown blob is skipped
+        actual = self.importer._filter_catalog_blobs(catalog_blobs, {"test-package"})
+        self.assertEqual(actual.keys(), {"test-package"})
+
     @patch("doozerlib.backend.konflux_fbc.KonfluxFbcImporter._render_index_image", new_callable=AsyncMock)
     async def test_get_catalog_blobs_from_index_image(self, mock_render_index_image):
         index_image = "test-index-image"
@@ -863,7 +890,37 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
             {"schema": "olm.bundle", "name": "test-bundle2", "package": "test-package2"},
         )
 
-    def test_extract_version_from_bundle_name(self):
+    def test_categorize_catalog_blobs_unknown_schema_with_package_field(self):
+        """Unknown schemas that carry a 'package' field should be included, not raise."""
+        lifecycle_blob = {
+            "schema": "io.openshift.operators.lifecycles.v1alpha1",
+            "package": "test-package",
+            "name": "test-lifecycle",
+        }
+        catalog_blobs = [
+            {"schema": "olm.package", "name": "test-package"},
+            {"schema": "olm.channel", "name": "test-channel", "package": "test-package"},
+            lifecycle_blob,
+        ]
+        actual = self.rebaser._catagorize_catalog_blobs(catalog_blobs)
+        self.assertIn("test-package", actual)
+        self.assertIn("io.openshift.operators.lifecycles.v1alpha1", actual["test-package"])
+        self.assertEqual(
+            actual["test-package"]["io.openshift.operators.lifecycles.v1alpha1"]["test-lifecycle"],
+            lifecycle_blob,
+        )
+
+    def test_categorize_catalog_blobs_unknown_schema_without_package_field(self):
+        """Unknown schemas with no 'package' or 'name' field should be silently skipped."""
+        catalog_blobs = [
+            {"schema": "olm.package", "name": "test-package"},
+            {"schema": "some.unknown.schema.v1"},
+        ]
+        # Should not raise; the unknown blob is skipped
+        actual = self.rebaser._catagorize_catalog_blobs(catalog_blobs)
+        self.assertEqual(actual.keys(), {"test-package"})
+        self.assertNotIn("some.unknown.schema.v1", actual.get("test-package", {}))
+
         """Test version extraction from bundle names with 'v' prefix"""
         from semver import VersionInfo
 

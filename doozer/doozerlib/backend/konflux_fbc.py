@@ -301,8 +301,11 @@ class KonfluxFbcImporter:
                     package_name = blob["name"]
                 case "olm.channel" | "olm.bundle" | "olm.deprecations":
                     package_name = blob["package"]
-            if not package_name:
-                raise IOError(f"Couldn't determine package name for unknown schema: {schema}")
+                case _:
+                    package_name = blob.get("package") or blob.get("name")
+                    if not package_name:
+                        self._logger.warning("Skipping blob with unknown schema %s (no package/name field)", schema)
+                        continue
             if package_name not in allowed_package_names:
                 continue  # filtered out; skipping
             if package_name not in filtered:
@@ -1610,11 +1613,14 @@ class KonfluxFbcRebaser:
                     package_name = blob["name"]
                 case "olm.channel" | "olm.bundle" | "olm.deprecations":
                     package_name = blob["package"]
-                case _:  # Unknown schema
-                    raise IOError(f"Found unsupported schema: {schema}")
+                case _:
+                    package_name = blob.get("package") or blob.get("name")
+                    if not package_name:
+                        self._logger.warning("Skipping blob with unsupported schema %s", schema)
+                        continue
             if not package_name:
                 raise IOError(f"Couldn't determine package name for unknown schema: {schema}")
-            blob_key = package_name if schema == "olm.deprecations" else blob["name"]
+            blob_key = package_name if schema == "olm.deprecations" else blob.get("name", f"{schema}:{package_name}")
             categorized_blobs.setdefault(package_name, {}).setdefault(schema, {})[blob_key] = blob
         return categorized_blobs
 
