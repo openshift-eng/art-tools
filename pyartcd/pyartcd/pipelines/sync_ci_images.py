@@ -443,22 +443,32 @@ class SyncCIImagesPipeline:
         self._logger.info(f"Cloning ocp-build-data for {group}")
 
         try:
-            # Build git clone command
-            # For commit SHAs, git clone --branch doesn't work, so clone then checkout
             if self._is_commit_sha(gitref):
+                # git clone --branch doesn't accept commit SHAs; clone then checkout separately
                 self._logger.info(f"{version}: Cloning and checking out commit SHA {gitref}")
-                cmd = f"git clone {self.data_path} {group_dir} && git -C {group_dir} checkout {gitref}"
+                clone_cmd = f"git clone {self.data_path} {group_dir}"
+                rc, _, _ = await asyncio.wait_for(
+                    exectools.cmd_gather_async(clone_cmd, env=git_env, stdout=None, stderr=None),
+                    timeout=self.GIT_CLONE_TIMEOUT,
+                )
+                if rc != 0:
+                    raise RuntimeError(f"Git clone failed for {group}")
+                checkout_cmd = f"git -C {group_dir} checkout {gitref}"
+                rc, _, _ = await asyncio.wait_for(
+                    exectools.cmd_gather_async(checkout_cmd, env=git_env, stdout=None, stderr=None),
+                    timeout=60,
+                )
+                if rc != 0:
+                    raise RuntimeError(f"Git checkout {gitref} failed for {group}")
             else:
                 # Standard clone for branches and tags
                 cmd = f"git clone {self.data_path} --branch {gitref} --single-branch --depth 1 {group_dir}"
-
-            # Stream git clone output to console
-            rc, _, _ = await asyncio.wait_for(
-                exectools.cmd_gather_async(cmd, env=git_env, stdout=None, stderr=None), timeout=self.GIT_CLONE_TIMEOUT
-            )
-
-            if rc != 0:
-                raise RuntimeError(f"Git clone failed for {group}")
+                rc, _, _ = await asyncio.wait_for(
+                    exectools.cmd_gather_async(cmd, env=git_env, stdout=None, stderr=None),
+                    timeout=self.GIT_CLONE_TIMEOUT,
+                )
+                if rc != 0:
+                    raise RuntimeError(f"Git clone failed for {group}")
         except asyncio.TimeoutError as e:
             raise RuntimeError(f"Git clone timed out after {self.GIT_CLONE_TIMEOUT}s for {group}") from e
 
