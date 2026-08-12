@@ -591,6 +591,11 @@ class SyncCIImagesPipeline:
         if self.runtime.dry_run:
             pr_args += " --moist-run"  # doozer's dry-run equivalent for PRs
 
+        # Skip missing images gracefully (e.g. rhel-9-golang-1.25-openshift-4.22
+        # may not exist in CI registry yet). The mirror step already skips these;
+        # PR reconciliation should be consistent rather than crashing the pipeline.
+        pr_args += " --ignore-missing-images"
+
         rc, _, _ = await self._run_doozer_command(
             doozer_opts,
             "images:streams prs open",
