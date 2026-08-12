@@ -43,7 +43,6 @@ class SyncCIImagesPipeline:
     # Constants from Jenkinsfile
     BUILD_SYSTEM = "konflux"
     WAIT_TIME_MINUTES = 20
-    PR_INTERSTITIAL_SECONDS = 840
     GIT_CLONE_TIMEOUT = 300
 
     def __init__(
@@ -54,9 +53,7 @@ class SyncCIImagesPipeline:
         data_gitref: str = "",
         only_stream: str = "",
         images: str = "",
-        add_labels: str = "",
         assembly: str = "stream",
-        skip_prs: bool = False,
         skip_waits: bool = False,
         force_run: bool = False,
         update_images_only_when_missing: bool = False,
@@ -71,9 +68,7 @@ class SyncCIImagesPipeline:
             data_gitref: ocp-build-data git branch/tag/sha (default: use version branch)
             only_stream: Specific stream from streams.yml.
             images: Comma-separated distgit keys of images with ci_alignment.upstream_image.
-            add_labels: Space-delimited labels to add to PRs
             assembly: Assembly name (default: "stream")
-            skip_prs: Skip opening reconciliation PRs
             skip_waits: Skip sleep delays
             force_run: Run even if ocp-build-data unchanged
             update_images_only_when_missing: Only update images if missing
@@ -85,9 +80,7 @@ class SyncCIImagesPipeline:
         self.data_gitref = data_gitref
         self.only_stream = only_stream
         self.images = [i.strip() for i in images.split(',') if i.strip()] if images else []
-        self.add_labels = add_labels
         self.assembly = assembly
-        self.skip_prs = skip_prs
         self.skip_waits = skip_waits
         self.force_run = force_run
         self.update_images_only_when_missing = update_images_only_when_missing
@@ -108,11 +101,6 @@ class SyncCIImagesPipeline:
 
         if not re.match(r'^\d+\.\d+$', self.version):
             raise ValueError(f"Invalid FOR_RELEASE format: {self.version}. Expected format: X.Y (e.g., 4.17)")
-
-        # Auto-set SKIP_PRS if ONLY_STREAM or IMAGES is set.
-        if (self.only_stream or self.images) and not self.skip_prs:
-            self._logger.info("Setting SKIP_PRS to true because ONLY_STREAM or IMAGES is set")
-            self.skip_prs = True
 
         # Validate assembly format (alphanumeric, dash, dot, underscore)
         if self.assembly and not re.match(r'^[\w.-]+$', self.assembly):
@@ -576,50 +564,6 @@ class SyncCIImagesPipeline:
             doozer_opts, "images:streams check-upstream", f"{self._filter_args} --registry-auth {auth_file}"
         )
 
-    async def _open_reconciliation_prs(self, doozer_opts: str) -> int:
-        """Open PRs to reconcile BuildConfig drift."""
-        if self.skip_prs:
-            return 0
-
-        self._logger.info(f"{self.version}: Opening reconciliation PRs")
-
-        # Validate GITHUB_TOKEN for PR operations (doozer requires PAT to fork repos)
-        github_token = os.environ.get('GITHUB_TOKEN')
-        if not github_token:
-            raise EnvironmentError(
-                "GITHUB_TOKEN (Personal Access Token) required for PR operations. "
-                "Doozer requires a PAT (not GitHub App token) to fork repos and open PRs. "
-                "Set GITHUB_TOKEN environment variable."
-            )
-
-        pr_args = f"--github-access-token {github_token} --interstitial {self.PR_INTERSTITIAL_SECONDS}"
-        pr_args += ' --add-auto-labels'
-        pr_args += ' --add-label "jira/valid-bug" --add-label "verified"'
-        if self.add_labels:
-            for label in self.add_labels.split():
-                pr_args += f' --add-label "{label}"'
-        if self.runtime.dry_run:
-            pr_args += " --moist-run"  # doozer's dry-run equivalent for PRs
-
-        rc, _, _ = await self._run_doozer_command(
-            doozer_opts,
-            "images:streams prs open",
-            pr_args,
-            check=False,  # PRs can return 25 for partial success
-        )
-
-        if rc == 25:
-            self._logger.warning(f"{self.version}: Some PRs skipped (rc=25)")
-            return 25  # Don't update Redis on partial success - retry on next run
-        elif rc == 1 and self.runtime.dry_run:
-            # --moist-run exits with 1 to signal simulation mode (not a failure)
-            self._logger.info(f"{self.version}: PR simulation completed (rc=1 from --moist-run)")
-            return 0
-        elif rc != 0:
-            raise RuntimeError(f"PR opening failed with rc={rc}")
-
-        return 0
-
     async def _record_successful_run(self, current_sha: str) -> None:
         """Store current SHA in Redis to track last successful run."""
         if not self.runtime.dry_run:
@@ -644,10 +588,9 @@ class SyncCIImagesPipeline:
         4. Trigger CI builds
         5. Wait for builds to complete
         6. Verify upstream imagestream consistency
-        7. Open PRs to reconcile any BuildConfig drift
 
         Returns:
-            Return code: 0=success, 25=partial (PRs skipped), 50=failure
+            Return code: 0=success, 50=failure
         """
         jenkins.update_title(f' [{self.version}]')
         self._logger.info(f"Starting sync-ci-images for {self.version}")
@@ -672,10 +615,6 @@ class SyncCIImagesPipeline:
                 await self._mirror_images_to_ci(doozer_opts, auth_file)
                 await self._trigger_ci_builds(doozer_opts, auth_file)
                 await self._verify_upstream_consistency(doozer_opts, auth_file)
-
-                rc = await self._open_reconciliation_prs(doozer_opts)
-                if rc == 25:
-                    return 25
 
             # Record success
             await self._record_successful_run(current_sha)
@@ -709,21 +648,15 @@ class SyncCIImagesPipeline:
 @click.option(
     '--only-stream',
     default='',
-    help='Process only specific stream from streams.yml. Automatically sets SKIP_PRS=true.',
+    help='Process only specific stream from streams.yml.',
 )
 @click.option(
     '--images',
     default='',
     help='Comma-separated distgit keys to sync (e.g. ci-openshift-base.rhel10). '
-    'Each must have ci_alignment.upstream_image set. Automatically sets SKIP_PRS=true.',
-)
-@click.option(
-    '--add-labels', default='', help='Space-delimited labels to add to reconciliation PRs (e.g., "backport candidate")'
+    'Each must have ci_alignment.upstream_image set.',
 )
 @click.option('--assembly', default='stream', help='Assembly name to use for doozer operations (default: "stream")')
-@click.option(
-    '--skip-prs', is_flag=True, default=False, help='Skip opening reconciliation PRs (for testing/dry-run scenarios)'
-)
 @click.option(
     '--skip-waits', is_flag=True, default=False, help='Skip sleep delays between operations (for faster testing)'
 )
@@ -745,9 +678,7 @@ async def sync_ci_images_cli(
     data_gitref: str,
     only_stream: str,
     images: str,
-    add_labels: str,
     assembly: str,
-    skip_prs: bool,
     skip_waits: bool,
     force_run: bool,
     update_images_only_when_missing: bool,
@@ -760,7 +691,6 @@ async def sync_ci_images_cli(
 
     Return codes:
         0: Sync completed successfully
-        25: Partial success (some PRs were skipped)
         50: Sync failed
     """
     from pyartcd import jenkins, locks
@@ -775,9 +705,7 @@ async def sync_ci_images_cli(
         data_gitref=data_gitref,
         only_stream=only_stream,
         images=images,
-        add_labels=add_labels,
         assembly=assembly,
-        skip_prs=skip_prs,
         skip_waits=skip_waits,
         force_run=force_run,
         update_images_only_when_missing=update_images_only_when_missing,
