@@ -640,27 +640,24 @@ class UpdateGolangPipeline:
             await self._slack_client.say_in_thread(f"Tagged {build} with {build_tag} tag")
 
     async def ensure_signed(self, el_v, nvr):
+        if not self.is_production_assembly:
+            _LOGGER.info("Skipping signing for non-stream assembly %s", self.assembly)
+            return
+
         parsed = parse_nvr(nvr)
-        go_version = parsed['version']
         if self.is_rpm_signed(parsed):
             _LOGGER.info(f"{nvr} is already signed")
             return
 
-        if self.should_sign_golang_rpm(el_v, go_version):
-            signing_tag = f'rhaos-{self.ocp_version}-rhel-{el_v}-golang'
-            self.brew_login()
-            if self.dry_run:
-                _LOGGER.info(f"[DRY RUN] Would have tagged {nvr} into {signing_tag} for auto-signing")
-            else:
-                self.koji_session.tagBuild(signing_tag, nvr)
-                _LOGGER.info(f"Tagged {nvr} into {signing_tag} for auto-signing")
-                await self._slack_client.say_in_thread(f"Tagged {nvr} into {signing_tag} for auto-signing")
-                # Polling for the signed RPM to appear in brewroot is handled by the plashet build
+        signing_tag = f'rhaos-{self.ocp_version}-rhel-{el_v}-golang'
+        self.brew_login()
+        if self.dry_run:
+            _LOGGER.info(f"[DRY RUN] Would have tagged {nvr} into {signing_tag} for auto-signing")
         else:
-            raise ValueError(
-                f"{nvr} is not signed. RHEL-supported golang RPMs must be signed through the RHEL process. "
-                f"Wait for the RPM to be signed before running this pipeline."
-            )
+            self.koji_session.tagBuild(signing_tag, nvr)
+            _LOGGER.info(f"Tagged {nvr} into {signing_tag} for auto-signing")
+            await self._slack_client.say_in_thread(f"Tagged {nvr} into {signing_tag} for auto-signing")
+            # Polling for the signed RPM to appear in brewroot is handled by the plashet build
 
     @staticmethod
     def is_rpm_signed(parsed_nvr):
@@ -670,25 +667,6 @@ class UpdateGolangPipeline:
             if (build_path / 'data' / 'signed' / key).exists():
                 return True
         return False
-
-    def should_sign_golang_rpm(self, el_v, go_version) -> bool:
-        """Check sign_golang_rpm config for a specific golang version.
-        Reads the per-image metadata (e.g. images/openshift-golang-builder-1-22.rhel9.yml)
-        since multiple golang versions share the same group.yml in the monobranch.
-        If not set in image config, falls back to group.yml.
-        Defaults to False so that RHEL-shipped golang is never accidentally signed by us.
-        """
-        default_branch = self.GOLANG_DATA_BRANCH
-        repo, branch = self._get_ocp_build_data_repo_and_branch(default_branch)
-        image_key = self.get_golang_image_key(el_v, go_version)
-        content = repo.get_contents(f"images/{image_key}.yml", ref=branch)
-        image_config = yaml.load(content.decoded_content)
-        if image_config.get('sign_golang_rpm') is not None:
-            return image_config.get('sign_golang_rpm', False)
-        # Fall back to group.yml
-        content = repo.get_contents("group.yml", ref=branch)
-        group_config = yaml.load(content.decoded_content)
-        return group_config.get('sign_golang_rpm', False)
 
     async def _build_golang_plashets(self, go_version, el_versions):
         go_v = ".".join(go_version.split(".")[:2])
