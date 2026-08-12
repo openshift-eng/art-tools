@@ -387,14 +387,21 @@ class RpmLockfilePrototypeGenerator:
             extra_packages: list[str] = list(cat_packages.get(stage_num, []))
 
             reinstall_pkgs: list[str] | None = None
+            upgrade_pkgs: list[str] | None = None
             if stage_num == final_stage_num:
                 if image_pullspec:
                     base_pkgs = await self._get_base_image_packages(stage_num, image_pullspec, distgit_key)
                     if base_pkgs:
-                        reinstall_pkgs = list(base_pkgs)
+                        # Use upgrade semantics for base image packages so repos
+                        # can provide newer versions. reinstallPackages pins to the
+                        # installed EVR and overrides DNF's upgrade intent for the
+                        # same package — e.g. python3-setuptools 53.0.0 from e4s
+                        # would silently win over 67.6.1 in the ironic plashet even
+                        # when the Containerfile explicitly installs a newer version.
+                        upgrade_pkgs = list(base_pkgs)
                         self.logger.info(
-                            f"{distgit_key}: stage {stage_num}: {len(reinstall_pkgs)} base image "
-                            "packages will be reinstalled into lockfile"
+                            f"{distgit_key}: stage {stage_num}: {len(upgrade_pkgs)} base image "
+                            "packages added as upgrade targets into lockfile"
                         )
                 else:
                     base_pkgs = await self._get_base_image_packages(stage_num, None, distgit_key)
@@ -403,7 +410,6 @@ class RpmLockfilePrototypeGenerator:
                         if extra:
                             extra_packages = extra_packages + extra
 
-            upgrade_pkgs: list[str] | None = None
             if stage_num in stages_with_bare_updates:
                 if not image_pullspec:
                     # No base image to query (stage alias) — can't determine
@@ -413,27 +419,17 @@ class RpmLockfilePrototypeGenerator:
                         f"{distgit_key}: stage {stage_num}: bare update detected but no "
                         "base image available, marking upgrades as dropped"
                     )
-                else:
-                    if reinstall_pkgs:
-                        upgrade_pkgs = list(reinstall_pkgs)
-                    else:
-                        bare_update_base = await self._get_base_image_packages(stage_num, image_pullspec, distgit_key)
-                        if bare_update_base:
-                            upgrade_pkgs = list(bare_update_base)
-                    if upgrade_pkgs:
-                        # Reinstall pins the installed EVR which wins over an
-                        # upgrade request for the same package, silently keeping
-                        # old versions. This prevents the upgrade resolution from
-                        # failing on dep conflicts (e.g. glibc vs
-                        # glibc-minimal-langpack), which in turn prevents
-                        # upgrades_dropped from being set and the bare update
-                        # from being stripped.
-                        reinstall_pkgs = None
-                        self.logger.info(
-                            f"{distgit_key}: stage {stage_num}: {len(upgrade_pkgs)} base image "
-                            "packages added as upgrade targets for bare update "
-                            "(reinstall disabled to avoid pinning installed EVRs)"
-                        )
+                elif stage_num != final_stage_num and not upgrade_pkgs:
+                    # Final stage already populated upgrade_pkgs from base image;
+                    # only query again for non-final stages with bare updates.
+                    bare_update_base = await self._get_base_image_packages(stage_num, image_pullspec, distgit_key)
+                    if bare_update_base:
+                        upgrade_pkgs = list(bare_update_base)
+                if upgrade_pkgs and stage_num in stages_with_bare_updates:
+                    self.logger.info(
+                        f"{distgit_key}: stage {stage_num}: {len(upgrade_pkgs)} base image "
+                        "packages added as upgrade targets for bare update"
+                    )
 
             result = await self._resolve_with_reconciliation(
                 repo_list,
