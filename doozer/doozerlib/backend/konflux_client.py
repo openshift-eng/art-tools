@@ -510,6 +510,40 @@ class KonfluxClient:
                     self._logger.warning(f"Failed to delete stale Secret {secret.metadata.name}: {e}")
 
     @staticmethod
+    def _reconstruct_kubeconfig_from_flat(flat: str) -> dict:
+        """Reconstruct a kubeconfig dict from a single-line (newline-stripped) string.
+
+        ExternalSecrets can strip newlines from Vault values, producing a flat string that is
+        not valid YAML. Extract key fields via regex and build a minimal kubeconfig dict.
+        """
+        server = re.search(r'server:\s+(\S+)', flat)
+        token = re.search(r'token:\s+(\S+)', flat)
+        ca_data = re.search(r'certificate-authority-data:\s+(\S+)', flat)
+        namespace = re.search(r'namespace:\s+(\S+)', flat)
+        if not server or not token:
+            raise ValueError("Cannot reconstruct kubeconfig: missing server or token field")
+        cluster: dict = {'server': server.group(1)}
+        if ca_data:
+            cluster['certificate-authority-data'] = ca_data.group(1)
+        return {
+            'apiVersion': 'v1',
+            'kind': 'Config',
+            'clusters': [{'cluster': cluster, 'name': 'cluster'}],
+            'contexts': [
+                {
+                    'context': {
+                        'cluster': 'cluster',
+                        'namespace': namespace.group(1) if namespace else 'default',
+                        'user': 'user',
+                    },
+                    'name': 'context',
+                }
+            ],
+            'current-context': 'context',
+            'users': [{'name': 'user', 'user': {'token': token.group(1)}}],
+        }
+
+    @staticmethod
     def from_kubeconfig(
         default_namespace: str,
         config_file: Optional[str],
@@ -527,9 +561,28 @@ class KonfluxClient:
         :return: The KonfluxClient.
         """
         cfg = Configuration()
-        config.load_kube_config(
-            config_file=config_file, context=context, persist_config=False, client_configuration=cfg
-        )
+        temp_file = None
+        try:
+            actual_config_file = config_file
+            if config_file and os.path.exists(config_file):
+                with open(config_file) as f:
+                    content = f.read()
+                try:
+                    yaml.load(content)
+                except Exception:
+                    # File is not valid YAML (e.g., newlines stripped by ExternalSecrets/Vault).
+                    # Reconstruct a proper kubeconfig from the flat string.
+                    kubeconfig = KonfluxClient._reconstruct_kubeconfig_from_flat(content)
+                    with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as tmp:
+                        yaml.dump(kubeconfig, tmp)
+                        temp_file = tmp.name
+                    actual_config_file = temp_file
+            config.load_kube_config(
+                config_file=actual_config_file, context=context, persist_config=False, client_configuration=cfg
+            )
+        finally:
+            if temp_file and os.path.exists(temp_file):
+                os.unlink(temp_file)
         return KonfluxClient(default_namespace=default_namespace, config=cfg, dry_run=dry_run, logger=logger or LOGGER)
 
     @alru_cache
