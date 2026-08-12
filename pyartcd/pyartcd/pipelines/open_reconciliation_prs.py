@@ -289,8 +289,13 @@ class ReconcileCIUpstreamPipeline:
             # Determine whether this attempt hit a transient failure
             is_transient = self._is_transient_error(last_stderr)
 
-            # rc == 1 with --moist-run is expected (simulation mode), not a failure
+            # rc == 1 with --moist-run is expected (simulation mode), not a failure.
+            # Log stderr at WARNING even here so real crashes aren't silently swallowed.
             if rc == 1 and self.moist_run:
+                if last_stderr:
+                    self._logger.warning(
+                        f"{self.version}: doozer stderr during --moist-run (rc=1): {last_stderr[:500]}"
+                    )
                 self._logger.info(f"{self.version}: PR simulation completed (rc=1 from --moist-run)")
                 if attempt > 1:
                     self._logger.info(f"{self.version}: Succeeded on attempt {attempt}")
