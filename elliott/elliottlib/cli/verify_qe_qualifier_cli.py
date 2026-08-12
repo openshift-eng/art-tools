@@ -14,6 +14,7 @@ from elliottlib.cli.common import cli, click_coroutine
 LOGGER = logging.getLogger(__name__)
 
 RELEASE_CONTROLLER_URL = "https://{go_arch}.ocp.releases.ci.openshift.org"
+REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=30)
 
 
 @dataclass
@@ -46,7 +47,7 @@ async def check_qe_qualifier(release_tag: str, go_arch: str) -> QualifierCheckRe
     result = QualifierCheckResult(release_tag=release_tag, arch=go_arch)
 
     try:
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(timeout=REQUEST_TIMEOUT) as session:
             async with session.get(api_url) as response:
                 if response.status == 404:
                     result.error = f"Release tag {release_tag} not found on {go_arch} release controller"
@@ -177,17 +178,19 @@ async def verify_qe_qualifier_cli(runtime, output, stable, nightly):
 
     runtime.initialize()
 
-    releases_config = runtime.get_releases_config()
-    basis = assembly_basis(releases_config, runtime.assembly)
+    nightly_tags = {}
+    if nightly:
+        releases_config = runtime.get_releases_config()
+        basis = assembly_basis(releases_config, runtime.assembly)
 
-    reference_releases = basis.get("reference_releases", {})
-    if not reference_releases:
-        raise click.UsageError(f"Assembly {runtime.assembly} has no reference_releases in its basis config.")
+        reference_releases = basis.get("reference_releases", {})
+        if not reference_releases:
+            raise click.UsageError(f"Assembly {runtime.assembly} has no reference_releases in its basis config.")
 
-    if "x86_64" not in reference_releases:
-        raise click.UsageError(f"Assembly {runtime.assembly} has no x86_64 reference release.")
+        if "x86_64" not in reference_releases:
+            raise click.UsageError(f"Assembly {runtime.assembly} has no x86_64 reference release.")
 
-    nightly_tags = {"x86_64": reference_releases["x86_64"]}
+        nightly_tags = {"x86_64": reference_releases["x86_64"]}
 
     result = await verify_qe_qualifier(
         assembly=runtime.assembly,

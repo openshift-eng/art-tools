@@ -93,11 +93,11 @@ class TestVerifyQeQualifierResult(TestCase):
         self.assertFalse(r.passed)
 
 
-def _mock_aiohttp_session(response_status, response_json=None):
+def _mock_aiohttp_session(response_status, response_json=None, raise_for_status_error=None):
     mock_response = AsyncMock()
     mock_response.status = response_status
     mock_response.json = AsyncMock(return_value=response_json)
-    mock_response.raise_for_status = MagicMock()
+    mock_response.raise_for_status = MagicMock(side_effect=raise_for_status_error)
     mock_response.__aenter__ = AsyncMock(return_value=mock_response)
     mock_response.__aexit__ = AsyncMock(return_value=False)
 
@@ -173,6 +173,13 @@ class TestCheckQeQualifier(IsolatedAsyncioTestCase):
         mock_session.get = MagicMock(side_effect=Exception("connection refused"))
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=False)
+        with patch("elliottlib.cli.verify_qe_qualifier_cli.aiohttp.ClientSession", return_value=mock_session):
+            result = await check_qe_qualifier("4.22.9", "amd64")
+        self.assertFalse(result.passed)
+        self.assertIn("Failed to query", result.error)
+
+    async def test_http_500_error(self):
+        mock_session = _mock_aiohttp_session(500, raise_for_status_error=Exception("500 Server Error"))
         with patch("elliottlib.cli.verify_qe_qualifier_cli.aiohttp.ClientSession", return_value=mock_session):
             result = await check_qe_qualifier("4.22.9", "amd64")
         self.assertFalse(result.passed)
@@ -264,6 +271,21 @@ class TestVerifyQeQualifier(IsolatedAsyncioTestCase):
                 assembly="4.22.9",
                 arches=["x86_64"],
                 nightly_tags={"x86_64": "4.22.0-0.nightly-2026-08-05-104816"},
+                check_stable=True,
+                check_nightly=False,
+            )
+        self.assertTrue(result.passed)
+        self.assertEqual(len(result.stable_results), 1)
+        self.assertEqual(len(result.nightly_results), 0)
+
+    async def test_stable_only_no_nightly_tags(self):
+        response_data = {"qualifiers": {"qe": {"badgeEarned": True}}}
+        mock_session = _mock_aiohttp_session(200, response_data)
+        with patch("elliottlib.cli.verify_qe_qualifier_cli.aiohttp.ClientSession", return_value=mock_session):
+            result = await verify_qe_qualifier(
+                assembly="4.22.9",
+                arches=["x86_64"],
+                nightly_tags={},
                 check_stable=True,
                 check_nightly=False,
             )
