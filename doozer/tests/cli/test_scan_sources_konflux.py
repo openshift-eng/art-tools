@@ -702,6 +702,7 @@ class TestTaskBundleIntegration(TestScanSourcesKonflux):
         runtime.get_releases_config.return_value = {}
 
         group_config = MagicMock()
+        group_config.get.return_value = {}
         group_config.konflux.get.return_value = "hermetic"
         runtime.group_config = group_config
 
@@ -827,8 +828,10 @@ class TestScanExternalImageChanges(TestScanSourcesKonflux):
         self.build_record.rebase_repo_url = 'https://github.com/openshift-priv/oadp-operator.git'
         self.build_record.rebase_commitish = 'abc123def'
 
-        self.runtime.group_config = MagicMock()
-        self.runtime.group_config.vars = {'MAJOR': '1', 'MINOR': '5'}
+        group_config_mock = MagicMock()
+        group_config_mock.get.return_value = {}
+        group_config_mock.vars = {'MAJOR': '1', 'MINOR': '5'}
+        self.runtime.group_config = group_config_mock
 
     async def test_skips_for_ocp_product(self):
         """Should early-return for OCP product."""
@@ -1205,3 +1208,235 @@ class TestOkdArchChanges(TestScanSourcesKonflux):
 
         self.assertNotIn('enterprise-base', scanner.changing_image_names)
         self.assertEqual(scanner.assessment_code, {})
+
+
+class TestOkdBaseChainUpstreamChanges(TestScanSourcesKonflux):
+    """
+    Tests for ART-21094: OKD scan detects upstream changes on base_only images
+    and propagates rebuild flags to descendants.
+    """
+
+    def setUp(self):
+        """Set up test fixtures with group_config supporting both dict and attribute access."""
+        super().setUp()
+        group_config_mock = MagicMock()
+        group_config_mock.get.return_value = {}
+        group_config_mock.scan_freshness.threshold_hours = 6
+        self.runtime.group_config = group_config_mock
+
+    def _make_okd_scanner(self):
+        """
+        Create scanner with OKD variant and branch set for el_target resolution.
+        """
+        self.runtime.branch = 'rhaos-4.18-rhel-9'
+        self.runtime.stage = False
+        self.runtime.assembly = 'stream'
+        scanner = ConfigScanSources(
+            runtime=self.runtime,
+            ci_kubeconfig=self.ci_kubeconfig,
+            session=self.session,
+            as_yaml=False,
+            rebase_priv=False,
+            dry_run=False,
+            variant='okd',
+        )
+        return scanner
+
+    def _make_base_image_meta(self, distgit_key='openshift-enterprise-base-rhel9', descendants=None):
+        """
+        Create a mock base_only ImageMetadata with optional descendants.
+
+        Arg(s):
+            distgit_key (str): The distgit key for this image.
+            descendants (list): List of ImageMetadata mocks that depend on this image.
+        Return Value(s):
+            MagicMock: Configured ImageMetadata mock.
+        """
+        meta = MagicMock(spec=ImageMetadata)
+        meta.distgit_key = distgit_key
+        meta.qualified_key = f'containers/{distgit_key}'
+        meta.enabled = True
+        meta.config = MagicMock()
+        meta.config.for_payload = False
+        meta.config.base_only = True
+        meta.config.okd = Missing
+        meta.config.konflux = Missing
+        meta.config.content.source.git = MagicMock()
+        meta.children = descendants or []
+        meta.get_descendants.return_value = set(descendants or [])
+        return meta
+
+    def _make_payload_image_meta(self, distgit_key):
+        """
+        Create a mock payload ImageMetadata.
+
+        Arg(s):
+            distgit_key (str): The distgit key for this image.
+        Return Value(s):
+            MagicMock: Configured ImageMetadata mock.
+        """
+        meta = MagicMock(spec=ImageMetadata)
+        meta.distgit_key = distgit_key
+        meta.qualified_key = f'containers/{distgit_key}'
+        meta.enabled = True
+        meta.config = MagicMock()
+        meta.config.for_payload = True
+        meta.config.base_only = False
+        meta.config.okd = Missing
+        meta.config.konflux = Missing
+        meta.children = []
+        meta.get_descendants.return_value = set()
+        return meta
+
+    async def test_new_upstream_commit_on_base_only_triggers_rebuild(self):
+        """
+        base_only image with new upstream commit gets NEW_UPSTREAM_COMMIT flag in OKD scan.
+        """
+        scanner = self._make_okd_scanner()
+        base_meta = self._make_base_image_meta()
+
+        build_record = MagicMock(spec=KonfluxBuildRecord)
+        build_record.commitish = 'old_commit_abc123'
+        build_record.nvr = 'openshift-enterprise-base-rhel9-v4.18.0-202501010000.p0'
+        build_record.release = 'v4.18.0-202501010000.p0'
+        scanner.latest_image_build_records_map = {base_meta.distgit_key: build_record}
+
+        new_commit = 'new_commit_def456'
+        with patch.object(scanner, 'find_upstream_commit_hash', return_value=new_commit):
+            base_meta.get_latest_build = AsyncMock(return_value=None)
+            self.runtime.group_config.scan_freshness.threshold_hours = 6
+
+            await scanner.scan_for_upstream_changes(base_meta)
+
+        self.assertIn(base_meta.distgit_key, scanner.changing_image_names)
+        self.assertEqual(
+            scanner.assessment_code[f'{base_meta.qualified_key}+True'],
+            RebuildHintCode.NEW_UPSTREAM_COMMIT,
+        )
+
+    async def test_base_only_change_propagates_ancestor_changing_to_descendants(self):
+        """
+        When base_only image is marked changed, all descendants get ANCESTOR_CHANGING.
+        """
+        scanner = self._make_okd_scanner()
+
+        child_a = self._make_payload_image_meta('payload-image-a')
+        child_b = self._make_payload_image_meta('payload-image-b')
+        base_meta = self._make_base_image_meta(descendants=[child_a, child_b])
+
+        build_record = MagicMock(spec=KonfluxBuildRecord)
+        build_record.commitish = 'old_commit'
+        build_record.nvr = 'openshift-enterprise-base-rhel9-v4.18.0-202501010000.p0'
+        build_record.release = 'v4.18.0-202501010000.p0'
+        scanner.latest_image_build_records_map = {base_meta.distgit_key: build_record}
+
+        new_commit = 'new_commit_xyz789'
+        with patch.object(scanner, 'find_upstream_commit_hash', return_value=new_commit):
+            base_meta.get_latest_build = AsyncMock(return_value=None)
+            self.runtime.group_config.scan_freshness.threshold_hours = 6
+
+            await scanner.scan_for_upstream_changes(base_meta)
+
+        self.assertIn(child_a.distgit_key, scanner.changing_image_names)
+        self.assertIn(child_b.distgit_key, scanner.changing_image_names)
+        self.assertEqual(
+            scanner.assessment_code[f'{child_a.qualified_key}+True'],
+            RebuildHintCode.ANCESTOR_CHANGING,
+        )
+        self.assertEqual(
+            scanner.assessment_code[f'{child_b.qualified_key}+True'],
+            RebuildHintCode.ANCESTOR_CHANGING,
+        )
+
+    async def test_base_only_no_change_when_upstream_commit_already_built(self):
+        """
+        base_only image with existing build for latest upstream commit should not be flagged.
+        """
+        scanner = self._make_okd_scanner()
+        base_meta = self._make_base_image_meta()
+
+        current_commit = 'same_commit_abc123'
+
+        build_record = MagicMock(spec=KonfluxBuildRecord)
+        build_record.commitish = current_commit
+        build_record.nvr = 'openshift-enterprise-base-rhel9-v4.18.0-202501010000.p0'
+        scanner.latest_image_build_records_map = {base_meta.distgit_key: build_record}
+
+        upstream_build_record = MagicMock(spec=KonfluxBuildRecord)
+        upstream_build_record.commitish = current_commit
+
+        with patch.object(scanner, 'find_upstream_commit_hash', return_value=current_commit):
+            base_meta.get_latest_build = AsyncMock(return_value=upstream_build_record)
+
+            await scanner.scan_for_upstream_changes(base_meta)
+
+        self.assertNotIn(base_meta.distgit_key, scanner.changing_image_names)
+
+    async def test_base_only_included_in_okd_scan_set_and_scanned(self):
+        """
+        End-to-end: base_only image passes OKD filtering and scan_image runs upstream check.
+        """
+        scanner = self._make_okd_scanner()
+        base_meta = self._make_base_image_meta()
+        base_meta.config.konflux = Missing
+
+        self.assertTrue(scanner._is_image_enabled(base_meta))
+        self.assertTrue(scanner._is_image_enabled_for_scan(base_meta))
+
+        build_record = MagicMock(spec=KonfluxBuildRecord)
+        build_record.commitish = 'old_commit'
+        build_record.nvr = 'openshift-enterprise-base-rhel9-v4.18.0-202501010000.p0'
+        build_record.release = 'v4.18.0-202501010000.p0'
+        scanner.latest_image_build_records_map = {base_meta.distgit_key: build_record}
+
+        new_commit = 'brand_new_commit'
+        with patch.object(scanner, 'find_upstream_commit_hash', return_value=new_commit):
+            base_meta.get_latest_build = AsyncMock(return_value=None)
+            self.runtime.group_config.scan_freshness.threshold_hours = 6
+
+            await scanner.scan_image(base_meta)
+
+        self.assertEqual(scanner.issues, [])
+        self.assertIn(base_meta.distgit_key, scanner.changing_image_names)
+        self.assertEqual(
+            scanner.assessment_code[f'{base_meta.qualified_key}+True'],
+            RebuildHintCode.NEW_UPSTREAM_COMMIT,
+        )
+
+    async def test_descendants_skipped_after_ancestor_marked_changing(self):
+        """
+        After base_only image is flagged, descendant images already in changing_image_names
+        are skipped by @skip_check_if_changing (no redundant scan).
+        """
+        scanner = self._make_okd_scanner()
+
+        child = self._make_payload_image_meta('payload-child')
+        base_meta = self._make_base_image_meta(descendants=[child])
+
+        build_record = MagicMock(spec=KonfluxBuildRecord)
+        build_record.commitish = 'old_commit'
+        build_record.nvr = 'openshift-enterprise-base-rhel9-v4.18.0-202501010000.p0'
+        build_record.release = 'v4.18.0-202501010000.p0'
+        scanner.latest_image_build_records_map = {
+            base_meta.distgit_key: build_record,
+            child.distgit_key: MagicMock(spec=KonfluxBuildRecord),
+        }
+
+        new_commit = 'new_upstream_commit'
+        with patch.object(scanner, 'find_upstream_commit_hash', return_value=new_commit):
+            base_meta.get_latest_build = AsyncMock(return_value=None)
+            self.runtime.group_config.scan_freshness.threshold_hours = 6
+
+            # Scan base first (level 0 in dependency tree)
+            await scanner.scan_for_upstream_changes(base_meta)
+
+        # Child already marked as changing from ancestor propagation
+        self.assertIn(child.distgit_key, scanner.changing_image_names)
+
+        # scan_for_upstream_changes on child should be a no-op due to @skip_check_if_changing
+        child.get_latest_build = AsyncMock()
+        with patch.object(scanner, 'find_upstream_commit_hash', return_value='child_commit'):
+            await scanner.scan_for_upstream_changes(child)
+
+        # Child's get_latest_build should NOT have been called — skipped
+        child.get_latest_build.assert_not_called()
