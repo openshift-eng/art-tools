@@ -10,6 +10,7 @@ import asyncio
 import os
 import re
 import shutil
+import sys
 from pathlib import Path
 
 import click
@@ -95,11 +96,11 @@ class ReconcileCIUpstreamPipeline:
         if not self.version:
             raise ValueError("FOR_RELEASE is required")
 
-        if not re.match(r'^\d+\.\d+$', self.version):
+        if not re.fullmatch(r'\d+\.\d+', self.version):
             raise ValueError(f"Invalid FOR_RELEASE format: {self.version}. Expected format: X.Y (e.g., 4.18)")
 
         # Validate assembly format (alphanumeric, dash, dot, underscore)
-        if self.assembly and not re.match(r'^[\w.-]+$', self.assembly):
+        if self.assembly and not re.fullmatch(r'[\w.-]+', self.assembly):
             raise ValueError(
                 f"Invalid ASSEMBLY format: {self.assembly}. Only alphanumeric, dash, dot, and underscore allowed"
             )
@@ -334,13 +335,9 @@ class ReconcileCIUpstreamPipeline:
                 return 25
 
             if rc != 0:
-                raise RuntimeError(f"PR opening failed with rc={rc}")
-
-        # All retry attempts exhausted
-        raise RuntimeError(
-            f"PR opening failed after {self.MAX_RETRIES} attempts due to transient errors (last rc from doozer). "
-            f"Last stderr: {last_stderr[:500]}"
-        )
+                raise RuntimeError(
+                    f"PR opening failed after {attempt} attempt(s) with rc={rc}. Last stderr: {last_stderr[:500]}"
+                )
 
     def _cleanup(self, group_dir: Path | None) -> None:
         """Remove temporary clone directory."""
@@ -461,7 +458,7 @@ async def open_reconciliation_prs_cli(
             lock_name=lock_name,
             lock_id=lock_id,
         )
-        exit(exit_code if exit_code is not None else 0)
+        sys.exit(exit_code if exit_code is not None else 0)
     except Exception:
         runtime.logger.error(f"open-reconciliation-prs failed for {for_release}", exc_info=True)
-        exit(50)
+        sys.exit(50)
