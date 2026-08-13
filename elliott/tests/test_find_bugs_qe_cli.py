@@ -128,6 +128,25 @@ class FindBugsQETestCase(unittest.TestCase):
 
         close_reconciliation_bugs(runtime, True, bug_tracker)
 
+    def test_close_reconciliation_bugs_no_valid_target_versions(self):
+        """_query returns None when all configured target versions are filtered out
+        (e.g. not yet defined in JIRA for a new release). close_reconciliation_bugs
+        must treat that as "no bugs found" instead of searching with a None query,
+        which JIRA rejects as an unbounded query."""
+        runtime = flexmock(debug=False)
+        client = flexmock()
+        bug_tracker = flexmock(type='jira', _client=client)
+        flexmock(bug_tracker).should_receive("target_release").and_return(["5.1.0", "5.1.z", "5.1"])
+        flexmock(bug_tracker).should_receive("_query").with_args(
+            status=RECONCILIATION_STATUSES,
+            include_labels=['art:reconciliation'],
+        ).and_return(None).once()
+        flexmock(bug_tracker).should_receive("_search").never()
+        flexmock(client).should_receive("transition_issue").never()
+        flexmock(bug_tracker).should_receive("add_comment").never()
+
+        close_reconciliation_bugs(runtime, False, bug_tracker)
+
 
 if __name__ == '__main__':
     unittest.main()

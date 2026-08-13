@@ -79,7 +79,12 @@ def close_reconciliation_bugs(runtime, noop: bool, bug_tracker):
         status=statuses,
         include_labels=['art:reconciliation'],
     )
-    bugs = bug_tracker._search(query, verbose=runtime.debug)
+    if query is None:
+        # All configured target versions were filtered out (e.g. not yet defined in JIRA
+        # for a new release). _query() already logged why; nothing to search for.
+        bugs = []
+    else:
+        bugs = bug_tracker._search(query, verbose=runtime.debug)
     LOGGER.info(f"Found {len(bugs)} bugs to close: {', '.join(sorted(str(b.id) for b in bugs))}")
 
     close_comment = (
