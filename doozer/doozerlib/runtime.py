@@ -22,6 +22,7 @@ from artcommonlib.assembly import (
     assembly_basis_event,
     assembly_streams_config,
     assembly_type,
+    assembly_validate_member_distgit_keys,
 )
 from artcommonlib.config import BuildDataLoader
 from artcommonlib.config.plashet import PlashetConfig
@@ -885,6 +886,20 @@ class Runtime(GroupRuntime):
                     )
                 )
             no_collide_check[key] = meta
+
+        # Validate that every distgit_key referenced in the assembly's members section
+        # corresponds to an actual image or RPM definition. This catches typos like
+        # 'ose-kubernetes-nmstate-operator' vs 'openshift-kubernetes-nmstate-operator'
+        # that would otherwise be silently ignored, causing assembly overrides to have
+        # no effect.
+        if self.assembly and self.assembly != 'stream':
+            releases_config = self.get_releases_config()
+            if self.image_map:
+                assembly_validate_member_distgit_keys(
+                    releases_config, self.assembly, 'image', set(self.image_map.keys())
+                )
+            if self.rpm_map:
+                assembly_validate_member_distgit_keys(releases_config, self.assembly, 'rpm', set(self.rpm_map.keys()))
 
         if clone_distgits:
             self.clone_distgits()

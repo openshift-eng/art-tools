@@ -1,4 +1,5 @@
 import copy
+import difflib
 import typing
 from datetime import datetime, timezone
 from enum import Enum
@@ -561,3 +562,46 @@ def assembly_excluded_components(releases_config: Model, assembly: typing.Option
                 excluded.discard(component_entry.distgit_key)
 
     return excluded
+
+
+def assembly_validate_member_distgit_keys(
+    releases_config: Model, assembly: typing.Optional[str], meta_type: str, known_keys: set[str]
+) -> None:
+    """
+    Validates that every distgit_key referenced in the assembly's members section
+    (members.images or members.rpms) corresponds to an actual image or RPM definition.
+    Respects assembly inheritance through the basis chain.
+
+    Raises ValueError if any distgit_key is not found in known_keys, with a clear
+    error message and fuzzy-match suggestion when a close match exists.
+
+    :param releases_config: A Model for releases.yaml.
+    :param assembly: The name of the assembly
+    :param meta_type: 'rpm' or 'image'
+    :param known_keys: Set of valid distgit_keys from the group's metadata definitions.
+    :raises ValueError: If an assembly member distgit_key does not match any known definition.
+    """
+    if not assembly or not isinstance(releases_config, Model):
+        return
+
+    _check_recursion(releases_config, assembly)
+    target_assembly = releases_config.releases[assembly].assembly
+
+    # Validate ancestor assemblies first
+    if target_assembly.basis.assembly:
+        assembly_validate_member_distgit_keys(releases_config, target_assembly.basis.assembly, meta_type, known_keys)
+
+    component_list = target_assembly.members[f'{meta_type}s']
+    for component_entry in component_list:
+        dgk = component_entry.distgit_key
+        if dgk is Missing or dgk == '*':
+            continue
+        if dgk not in known_keys:
+            suggestion = ''
+            close_matches = difflib.get_close_matches(dgk, known_keys, n=1, cutoff=0.6)
+            if close_matches:
+                suggestion = f" Did you mean '{close_matches[0]}'?"
+            raise ValueError(
+                f"Assembly '{assembly}' references {meta_type} member '{dgk}' "
+                f"which does not match any known {meta_type} definition in the group.{suggestion}"
+            )

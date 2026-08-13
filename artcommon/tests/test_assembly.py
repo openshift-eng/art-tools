@@ -14,6 +14,7 @@ from artcommonlib.assembly import (
     assembly_resolved,
     assembly_rhcos_config,
     assembly_targeted_fixes_only,
+    assembly_validate_member_distgit_keys,
 )
 from artcommonlib.model import Missing, Model
 
@@ -936,3 +937,186 @@ releases:
         # Should not raise
         permits = assembly_permits(releases_config, group_config, "test_assembly")
         self.assertEqual(len(permits), 2)
+
+
+class TestAssemblyValidateMemberDistgitKeys(TestCase):
+    def test_valid_keys_no_error(self):
+        """Valid distgit_keys should pass validation without error."""
+        releases_yml = """
+releases:
+  test_assembly:
+    assembly:
+      members:
+        images:
+        - distgit_key: openshift-kuryr
+          metadata:
+            is: some-nvr
+        - distgit_key: openshift-apiserver
+          metadata:
+            is: another-nvr
+"""
+        releases_config = Model(dict_to_model=yaml.safe_load(releases_yml))
+        known_keys = {'openshift-kuryr', 'openshift-apiserver', 'openshift-controller-manager'}
+        # Should not raise
+        assembly_validate_member_distgit_keys(releases_config, 'test_assembly', 'image', known_keys)
+
+    def test_invalid_key_raises_error(self):
+        """An invalid distgit_key should raise ValueError with the bad key name."""
+        releases_yml = """
+releases:
+  test_assembly:
+    assembly:
+      members:
+        images:
+        - distgit_key: ose-kubernetes-nmstate-operator
+          metadata:
+            is: some-nvr
+"""
+        releases_config = Model(dict_to_model=yaml.safe_load(releases_yml))
+        known_keys = {'openshift-kuryr', 'openshift-apiserver'}
+        with self.assertRaises(ValueError) as cm:
+            assembly_validate_member_distgit_keys(releases_config, 'test_assembly', 'image', known_keys)
+        self.assertIn('ose-kubernetes-nmstate-operator', str(cm.exception))
+        self.assertIn("does not match any known image definition", str(cm.exception))
+
+    def test_fuzzy_suggestion_included(self):
+        """When a close match exists, the error message should include a suggestion."""
+        releases_yml = """
+releases:
+  test_assembly:
+    assembly:
+      members:
+        images:
+        - distgit_key: ose-kubernetes-nmstate-operator
+          metadata:
+            is: some-nvr
+"""
+        releases_config = Model(dict_to_model=yaml.safe_load(releases_yml))
+        known_keys = {'openshift-kubernetes-nmstate-operator', 'openshift-kuryr'}
+        with self.assertRaises(ValueError) as cm:
+            assembly_validate_member_distgit_keys(releases_config, 'test_assembly', 'image', known_keys)
+        self.assertIn("Did you mean", str(cm.exception))
+        self.assertIn("openshift-kubernetes-nmstate-operator", str(cm.exception))
+
+    def test_wildcard_key_skipped(self):
+        """The wildcard '*' distgit_key should be skipped during validation."""
+        releases_yml = """
+releases:
+  test_assembly:
+    assembly:
+      members:
+        rpms:
+        - distgit_key: '*'
+          metadata:
+            content:
+              source:
+                git:
+                  branch:
+                    target: custom_branch
+"""
+        releases_config = Model(dict_to_model=yaml.safe_load(releases_yml))
+        known_keys = {'openshift-kuryr'}
+        # Should not raise even though '*' is not in known_keys
+        assembly_validate_member_distgit_keys(releases_config, 'test_assembly', 'rpm', known_keys)
+
+    def test_no_assembly_no_error(self):
+        """None or empty assembly should return without error."""
+        releases_config = Model(dict_to_model={'releases': {}})
+        assembly_validate_member_distgit_keys(releases_config, None, 'image', set())
+        assembly_validate_member_distgit_keys(releases_config, '', 'image', set())
+
+    def test_no_members_section_no_error(self):
+        """An assembly without a members section should not raise."""
+        releases_yml = """
+releases:
+  test_assembly:
+    assembly:
+      group:
+        advisories:
+          image: 1
+"""
+        releases_config = Model(dict_to_model=yaml.safe_load(releases_yml))
+        assembly_validate_member_distgit_keys(releases_config, 'test_assembly', 'image', {'some-image'})
+
+    def test_inheritance_validates_ancestor(self):
+        """Validation should check distgit_keys in ancestor assemblies too."""
+        releases_yml = """
+releases:
+  parent:
+    assembly:
+      members:
+        images:
+        - distgit_key: nonexistent-image
+          metadata:
+            is: some-nvr
+  child:
+    assembly:
+      basis:
+        assembly: parent
+      members:
+        images:
+        - distgit_key: openshift-kuryr
+          metadata:
+            is: another-nvr
+"""
+        releases_config = Model(dict_to_model=yaml.safe_load(releases_yml))
+        known_keys = {'openshift-kuryr'}
+        with self.assertRaises(ValueError) as cm:
+            assembly_validate_member_distgit_keys(releases_config, 'child', 'image', known_keys)
+        self.assertIn('nonexistent-image', str(cm.exception))
+        # The error should reference the parent assembly where the bad key lives
+        self.assertIn("'parent'", str(cm.exception))
+
+    def test_rpm_validation(self):
+        """Validation should work for RPM members too."""
+        releases_yml = """
+releases:
+  test_assembly:
+    assembly:
+      members:
+        rpms:
+        - distgit_key: nonexistent-rpm
+          metadata:
+            content: {}
+"""
+        releases_config = Model(dict_to_model=yaml.safe_load(releases_yml))
+        known_keys = {'openshift-kuryr', 'openshift-clients'}
+        with self.assertRaises(ValueError) as cm:
+            assembly_validate_member_distgit_keys(releases_config, 'test_assembly', 'rpm', known_keys)
+        self.assertIn('nonexistent-rpm', str(cm.exception))
+        self.assertIn("does not match any known rpm definition", str(cm.exception))
+
+    def test_exclude_only_entry_validated(self):
+        """Even exclude-only entries should have their distgit_key validated."""
+        releases_yml = """
+releases:
+  test_assembly:
+    assembly:
+      members:
+        images:
+        - distgit_key: nonexistent-image
+          exclude: true
+"""
+        releases_config = Model(dict_to_model=yaml.safe_load(releases_yml))
+        known_keys = {'openshift-kuryr'}
+        with self.assertRaises(ValueError) as cm:
+            assembly_validate_member_distgit_keys(releases_config, 'test_assembly', 'image', known_keys)
+        self.assertIn('nonexistent-image', str(cm.exception))
+
+    def test_infinite_recursion_detected(self):
+        """Infinite recursion in assembly basis chain should be caught."""
+        releases_yml = """
+releases:
+  loop_assembly:
+    assembly:
+      basis:
+        assembly: loop_assembly
+      members:
+        images:
+        - distgit_key: some-image
+          metadata:
+            is: some-nvr
+"""
+        releases_config = Model(dict_to_model=yaml.safe_load(releases_yml))
+        with self.assertRaises(ValueError):
+            assembly_validate_member_distgit_keys(releases_config, 'loop_assembly', 'image', {'some-image'})
