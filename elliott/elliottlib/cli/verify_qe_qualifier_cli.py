@@ -41,19 +41,18 @@ class VerifyQeQualifierResult:
         return bool(all_results) and all(r.passed for r in all_results)
 
 
-async def check_qe_qualifier(release_tag: str, go_arch: str) -> QualifierCheckResult:
+async def check_qe_qualifier(release_tag: str, go_arch: str, session: aiohttp.ClientSession) -> QualifierCheckResult:
     url = RELEASE_CONTROLLER_URL.format(go_arch=go_arch)
     api_url = f"{url}/api/v1/releasetag/{release_tag}/qualifiers"
     result = QualifierCheckResult(release_tag=release_tag, arch=go_arch)
 
     try:
-        async with aiohttp.ClientSession(timeout=REQUEST_TIMEOUT) as session:
-            async with session.get(api_url) as response:
-                if response.status == 404:
-                    result.error = f"Release tag {release_tag} not found on {go_arch} release controller"
-                    return result
-                response.raise_for_status()
-                data = await response.json()
+        async with session.get(api_url) as response:
+            if response.status == 404:
+                result.error = f"Release tag {release_tag} not found on {go_arch} release controller"
+                return result
+            response.raise_for_status()
+            data = await response.json()
     except Exception as e:
         result.error = f"Failed to query release controller for {release_tag} ({go_arch}): {e}"
         return result
@@ -73,17 +72,18 @@ async def verify_qe_qualifier(
 ) -> VerifyQeQualifierResult:
     result = VerifyQeQualifierResult(assembly=assembly)
 
-    tasks = []
-    for arch in arches:
-        go_arch = go_arch_for_brew_arch(arch)
-        if check_stable:
-            tasks.append(("stable", check_qe_qualifier(assembly, go_arch)))
+    async with aiohttp.ClientSession(timeout=REQUEST_TIMEOUT) as session:
+        tasks = []
+        for arch in arches:
+            go_arch = go_arch_for_brew_arch(arch)
+            if check_stable:
+                tasks.append(("stable", check_qe_qualifier(assembly, go_arch, session)))
 
-        nightly_tag = nightly_tags.get(arch)
-        if check_nightly and nightly_tag:
-            tasks.append(("nightly", check_qe_qualifier(nightly_tag, go_arch)))
+            nightly_tag = nightly_tags.get(arch)
+            if check_nightly and nightly_tag:
+                tasks.append(("nightly", check_qe_qualifier(nightly_tag, go_arch, session)))
 
-    results = await asyncio.gather(*[t[1] for t in tasks])
+        results = await asyncio.gather(*[t[1] for t in tasks])
 
     for (kind, _), check in zip(tasks, results):
         if kind == "stable":

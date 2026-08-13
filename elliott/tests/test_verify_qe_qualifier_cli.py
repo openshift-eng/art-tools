@@ -108,6 +108,14 @@ def _mock_aiohttp_session(response_status, response_json=None, raise_for_status_
     return mock_session
 
 
+def _mock_error_session(error):
+    mock_session = AsyncMock()
+    mock_session.get = MagicMock(side_effect=error)
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+    return mock_session
+
+
 class TestCheckQeQualifier(IsolatedAsyncioTestCase):
     async def test_badge_earned(self):
         response_data = {
@@ -122,8 +130,7 @@ class TestCheckQeQualifier(IsolatedAsyncioTestCase):
             }
         }
         mock_session = _mock_aiohttp_session(200, response_data)
-        with patch("elliottlib.cli.verify_qe_qualifier_cli.aiohttp.ClientSession", return_value=mock_session):
-            result = await check_qe_qualifier("4.22.9", "amd64")
+        result = await check_qe_qualifier("4.22.9", "amd64", mock_session)
         self.assertTrue(result.passed)
         self.assertTrue(result.badge_earned)
         self.assertIsNone(result.error)
@@ -141,55 +148,45 @@ class TestCheckQeQualifier(IsolatedAsyncioTestCase):
             }
         }
         mock_session = _mock_aiohttp_session(200, response_data)
-        with patch("elliottlib.cli.verify_qe_qualifier_cli.aiohttp.ClientSession", return_value=mock_session):
-            result = await check_qe_qualifier("4.22.9", "amd64")
+        result = await check_qe_qualifier("4.22.9", "amd64", mock_session)
         self.assertFalse(result.passed)
         self.assertFalse(result.badge_earned)
 
     async def test_no_qe_qualifier(self):
         response_data = {"qualifiers": {}}
         mock_session = _mock_aiohttp_session(200, response_data)
-        with patch("elliottlib.cli.verify_qe_qualifier_cli.aiohttp.ClientSession", return_value=mock_session):
-            result = await check_qe_qualifier("4.22.9", "amd64")
+        result = await check_qe_qualifier("4.22.9", "amd64", mock_session)
         self.assertFalse(result.passed)
         self.assertFalse(result.badge_earned)
 
     async def test_empty_qualifiers(self):
         response_data = {}
         mock_session = _mock_aiohttp_session(200, response_data)
-        with patch("elliottlib.cli.verify_qe_qualifier_cli.aiohttp.ClientSession", return_value=mock_session):
-            result = await check_qe_qualifier("4.22.9", "amd64")
+        result = await check_qe_qualifier("4.22.9", "amd64", mock_session)
         self.assertFalse(result.passed)
 
     async def test_404_not_found(self):
         mock_session = _mock_aiohttp_session(404)
-        with patch("elliottlib.cli.verify_qe_qualifier_cli.aiohttp.ClientSession", return_value=mock_session):
-            result = await check_qe_qualifier("4.22.99", "amd64")
+        result = await check_qe_qualifier("4.22.99", "amd64", mock_session)
         self.assertFalse(result.passed)
         self.assertIn("not found", result.error)
 
     async def test_network_error(self):
-        mock_session = AsyncMock()
-        mock_session.get = MagicMock(side_effect=Exception("connection refused"))
-        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session.__aexit__ = AsyncMock(return_value=False)
-        with patch("elliottlib.cli.verify_qe_qualifier_cli.aiohttp.ClientSession", return_value=mock_session):
-            result = await check_qe_qualifier("4.22.9", "amd64")
+        mock_session = _mock_error_session(Exception("connection refused"))
+        result = await check_qe_qualifier("4.22.9", "amd64", mock_session)
         self.assertFalse(result.passed)
         self.assertIn("Failed to query", result.error)
 
     async def test_http_500_error(self):
         mock_session = _mock_aiohttp_session(500, raise_for_status_error=Exception("500 Server Error"))
-        with patch("elliottlib.cli.verify_qe_qualifier_cli.aiohttp.ClientSession", return_value=mock_session):
-            result = await check_qe_qualifier("4.22.9", "amd64")
+        result = await check_qe_qualifier("4.22.9", "amd64", mock_session)
         self.assertFalse(result.passed)
         self.assertIn("Failed to query", result.error)
 
     async def test_correct_url_construction(self):
         response_data = {"qualifiers": {"qe": {"badgeEarned": True}}}
         mock_session = _mock_aiohttp_session(200, response_data)
-        with patch("elliottlib.cli.verify_qe_qualifier_cli.aiohttp.ClientSession", return_value=mock_session):
-            await check_qe_qualifier("4.22.9", "amd64")
+        await check_qe_qualifier("4.22.9", "amd64", mock_session)
         mock_session.get.assert_called_once_with(
             "https://amd64.ocp.releases.ci.openshift.org/api/v1/releasetag/4.22.9/qualifiers"
         )
@@ -197,8 +194,7 @@ class TestCheckQeQualifier(IsolatedAsyncioTestCase):
     async def test_arm64_url(self):
         response_data = {"qualifiers": {"qe": {"badgeEarned": True}}}
         mock_session = _mock_aiohttp_session(200, response_data)
-        with patch("elliottlib.cli.verify_qe_qualifier_cli.aiohttp.ClientSession", return_value=mock_session):
-            await check_qe_qualifier("4.22.9", "arm64")
+        await check_qe_qualifier("4.22.9", "arm64", mock_session)
         mock_session.get.assert_called_once_with(
             "https://arm64.ocp.releases.ci.openshift.org/api/v1/releasetag/4.22.9/qualifiers"
         )
@@ -219,7 +215,7 @@ class TestVerifyQeQualifier(IsolatedAsyncioTestCase):
         self.assertEqual(len(result.nightly_results), 1)
 
     async def test_single_arch_stable_fail(self):
-        async def mock_check(tag, arch):
+        async def mock_check(tag, arch, session):
             result = QualifierCheckResult(release_tag=tag, arch=arch)
             result.badge_earned = "nightly" in tag
             return result
