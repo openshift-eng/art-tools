@@ -1048,15 +1048,24 @@ spec:
 
         resolved = await self.rebaser._resolve_operands_from_db(metadata, image_references, {}, {})
 
-        self.assertEqual(len(resolved), 3)
-        all_specs = [spec for spec, _, _ in resolved.values()]
-        self.assertIn("quay.io/jetstack/cert-manager-controller:v1.19.5", all_specs)
-        self.assertIn("quay.io/jetstack/cert-manager-cainjector:v1.19.5", all_specs)
-        self.assertIn("quay.io/jetstack/cert-manager-webhook:v1.19.5", all_specs)
-        for key in resolved:
-            self.assertNotIn("quay.io/", key)
-            _, pullspec, _ = resolved[key]
-            self.assertIn("registry.redhat.io/cert-manager/jetstack-cert-manager-rhel9@sha256:", pullspec)
+        expected_keys = {
+            "jetstack-cert-manager-rhel9",
+            "jetstack-cert-manager-rhel9-1",
+            "jetstack-cert-manager-rhel9-2",
+        }
+        self.assertEqual(set(resolved.keys()), expected_keys)
+
+        spec, pullspec, _ = resolved["jetstack-cert-manager-rhel9"]
+        self.assertEqual(spec, "quay.io/jetstack/cert-manager-controller:v1.19.5")
+        self.assertIn("registry.redhat.io/cert-manager/jetstack-cert-manager-rhel9@sha256:", pullspec)
+
+        spec, pullspec, _ = resolved["jetstack-cert-manager-rhel9-1"]
+        self.assertEqual(spec, "quay.io/jetstack/cert-manager-cainjector:v1.19.5")
+        self.assertIn("registry.redhat.io/cert-manager/jetstack-cert-manager-rhel9@sha256:", pullspec)
+
+        spec, pullspec, _ = resolved["jetstack-cert-manager-rhel9-2"]
+        self.assertEqual(spec, "quay.io/jetstack/cert-manager-webhook:v1.19.5")
+        self.assertIn("registry.redhat.io/cert-manager/jetstack-cert-manager-rhel9@sha256:", pullspec)
 
     @patch("doozerlib.backend.konflux_olm_bundler.is_nvr_embargoed", return_value=False)
     @patch("doozerlib.util.oc_image_info_for_arch_async")
