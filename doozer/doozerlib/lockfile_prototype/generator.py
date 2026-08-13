@@ -58,6 +58,51 @@ _BARE_UPDATE_RE = re.compile(
     r"\b(?:microdnf|dnf|yum)\s+(?:-y\s+)?(?:update|upgrade)(?:\s+-y)?\s*(?:\\\n\s*&&\s*|&&\s*|;\s*|\n|(?=$))"
 )
 
+_INSTALL_CMD_RE = re.compile(
+    r"\b(?:microdnf|dnf|yum)\s+(?:.*?\s+)?install\b(.*?)(?:&&|;|\n|$)",
+    re.DOTALL,
+)
+
+_PKG_NAME_RE = re.compile(r"^[a-zA-Z][\w.+\-]*$")
+
+_RPM_ARCHES = frozenset({"x86_64", "aarch64", "ppc64le", "s390x", "i686", "noarch", "src"})
+
+
+def _extract_install_packages(entries: list[dict], stage_num: int) -> set[str]:
+    """
+    Extract package names from yum/dnf/microdnf install commands in a
+    specific Dockerfile stage. This is a lightweight extraction used
+    only to detect overlap with base image packages — the canonical
+    extraction is done by the upstream tool's packagesFromContainerfile.
+
+    Architecture qualifiers (e.g. glibc.x86_64) are stripped so the
+    result matches the plain names returned by rpm -qa --qf %{NAME}.
+
+    Arg(s):
+        entries (list[dict]): DockerfileParser structure entries.
+        stage_num (int): 0-indexed stage number.
+    Return Value(s):
+        set[str]: Package names found in install commands.
+    """
+    packages: set[str] = set()
+    current_stage = -1
+    for entry in entries:
+        if entry["instruction"] == "FROM":
+            current_stage += 1
+        elif entry["instruction"] == "RUN" and current_stage == stage_num:
+            for m in _INSTALL_CMD_RE.finditer(entry["value"]):
+                for token in m.group(1).split():
+                    token = token.strip().rstrip("\\")
+                    if token.startswith("-") or token.startswith("$"):
+                        continue
+                    if _PKG_NAME_RE.match(token):
+                        if "." in token:
+                            name, _, suffix = token.rpartition(".")
+                            if suffix in _RPM_ARCHES:
+                                token = name
+                        packages.add(token)
+    return packages
+
 
 def _detect_stages_with_bare_updates(entries: list[dict]) -> set[int]:
     """
@@ -249,6 +294,7 @@ class RpmLockfilePrototypeGenerator:
             arches,
             image_meta.distgit_key,
             dockerfile_path,
+            entries,
         )
         lockfile = self._assemble_lockfile(stage_lockfiles, image_meta)
         self._write_lockfile(lockfile, out_file_path, image_meta.distgit_key)
@@ -354,6 +400,7 @@ class RpmLockfilePrototypeGenerator:
         arches: list[str],
         distgit_key: str,
         dockerfile_path: Path,
+        entries: list[dict],
     ) -> list[LockfileData]:
         """
         Resolve RPM packages for each Dockerfile stage.
@@ -442,6 +489,31 @@ class RpmLockfilePrototypeGenerator:
                 containerfile_path=str(dockerfile_path),
                 upgrade_packages=upgrade_pkgs,
             )
+
+            # Pass 2: pin Dockerfile packages that overlap with the base
+            # image. These are "already installed" so neither install nor
+            # upgrade captures them, but cachi2 needs them in the lockfile.
+            # Runs for every image-backed stage, not just final/bare-update.
+            if image_pullspec:
+                dockerfile_install_pkgs = _extract_install_packages(entries, stage_num)
+                if dockerfile_install_pkgs:
+                    if upgrade_pkgs:
+                        base_pkg_set = set(upgrade_pkgs)
+                    else:
+                        stage_base_pkgs = await self._get_base_image_packages(stage_num, image_pullspec, distgit_key)
+                        base_pkg_set = set(stage_base_pkgs) if stage_base_pkgs else set()
+                    pin_candidates = sorted(dockerfile_install_pkgs & base_pkg_set)
+                    if pin_candidates:
+                        result = await self._pin_missing_dockerfile_packages(
+                            result,
+                            pin_candidates,
+                            repo_list,
+                            arches,
+                            image_pullspec,
+                            distgit_key,
+                            stage_num,
+                        )
+
             if result:
                 stage_lockfiles.append(result)
 
@@ -930,6 +1002,88 @@ class RpmLockfilePrototypeGenerator:
 
         self.logger.info(f"{distgit_key}: stage {stage_num}: cross-arch versions reconciled successfully")
         return second_pass
+
+    async def _pin_missing_dockerfile_packages(
+        self,
+        result: LockfileData | None,
+        pin_candidates: list[str],
+        repo_list: list[RepoEntry],
+        arches: list[str],
+        image_pullspec: str,
+        distgit_key: str,
+        stage_num: int,
+    ) -> LockfileData | None:
+        """
+        Pin Dockerfile packages that overlap with the base image but
+        were not captured by the upgrade pass.
+
+        These packages are already installed at the repo-latest version,
+        so neither install (already present) nor upgrade (nothing newer)
+        produced a lockfile entry. A targeted per-arch reinstall pins
+        them at their installed version. No upgradePackages is set here
+        to avoid EVR conflicts between reinstall and upgrade.
+
+        Arg(s):
+            result (LockfileData | None): Pass 1 result.
+            pin_candidates (list[str]): Dockerfile install packages that
+                overlap with the base image.
+            repo_list (list[RepoEntry]): Repository entries.
+            arches (list[str]): Target architectures.
+            image_pullspec (str): Base image pullspec.
+            distgit_key (str): Image identifier for logging.
+            stage_num (int): Dockerfile stage number.
+        Return Value(s):
+            LockfileData | None: Merged result, or None if both
+                passes produced nothing.
+        """
+        locked_by_arch: dict[str, set[str]] = (
+            {entry.arch: {pkg.name for pkg in entry.packages} for entry in result.arches} if result else {}
+        )
+
+        missing_by_arch: dict[str, list[str]] = {
+            arch: sorted(p for p in pin_candidates if p not in locked_by_arch.get(arch, set())) for arch in arches
+        }
+        missing_by_arch = {arch: pkgs for arch, pkgs in missing_by_arch.items() if pkgs}
+        if not missing_by_arch:
+            return result
+
+        resolver_pullspec = ContainerImageHelper._proxy_pullspec(image_pullspec)
+        pin_results: list[LockfileData] = []
+
+        for arch, missing in missing_by_arch.items():
+            self.logger.info(
+                f"{distgit_key}: stage {stage_num}: pinning {len(missing)} Dockerfile "
+                f"packages not captured by upgrade pass on {arch}: {missing}"
+            )
+            in_yaml = build_rpms_in_yaml(
+                repo_list,
+                [arch],
+                missing,
+                reinstall_packages=missing,
+            )
+            try:
+                pin_result = await self._resolver.resolve(in_yaml, image_pullspec=resolver_pullspec)
+            except RuntimeError as e:
+                self.logger.warning(
+                    f"{distgit_key}: stage {stage_num}: pin pass failed on {arch}, "
+                    f"some Dockerfile packages may be unlocked: {e}"
+                )
+                continue
+
+            if pin_result and any(ae.packages for ae in pin_result.arches):
+                pinned = {pkg.name for ae in pin_result.arches for pkg in ae.packages}
+                self.logger.info(
+                    f"{distgit_key}: stage {stage_num}: pin pass locked "
+                    f"{len(pinned)} packages on {arch}: {sorted(pinned)}"
+                )
+                pin_results.append(pin_result)
+
+        if not pin_results:
+            return result
+
+        to_merge = [result] if result else []
+        to_merge.extend(pin_results)
+        return merge_lockfiles(to_merge)
 
     def _write_lockfile(self, lockfile: LockfileData | None, path: Path, distgit_key: str) -> None:
         """
