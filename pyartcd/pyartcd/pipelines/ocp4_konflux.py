@@ -915,6 +915,7 @@ class KonfluxOcpPipeline:
             raise
         except Exception as e:
             LOGGER.exception(f"Failed to trigger RHCOS integration tests: {e}")
+            raise
 
     def parse_record_log(self) -> Optional[dict]:
         record_log_path = Path(self.runtime.doozer_working, 'record.log')
