@@ -892,14 +892,18 @@ class Runtime(GroupRuntime):
         # 'ose-kubernetes-nmstate-operator' vs 'openshift-kubernetes-nmstate-operator'
         # that would otherwise be silently ignored, causing assembly overrides to have
         # no effect.
-        if self.assembly and self.assembly != 'stream':
+        if self.assembly and self.assembly_type is not AssemblyTypes.STREAM:
             releases_config = self.get_releases_config()
-            if self.image_map:
-                assembly_validate_member_distgit_keys(
-                    releases_config, self.assembly, 'image', set(self.image_map.keys())
-                )
-            if self.rpm_map:
-                assembly_validate_member_distgit_keys(releases_config, self.assembly, 'rpm', set(self.rpm_map.keys()))
+            all_image_keys = set(image_name_data.keys())
+            try:
+                rpm_name_data = self.gitdata.load_data(path='rpms')
+                all_rpm_keys = set(rpm_name_data.keys())
+            except gitdata.GitDataPathException:
+                all_rpm_keys = set()
+            if all_image_keys:
+                assembly_validate_member_distgit_keys(releases_config, self.assembly, 'image', all_image_keys)
+            if all_rpm_keys:
+                assembly_validate_member_distgit_keys(releases_config, self.assembly, 'rpm', all_rpm_keys)
 
         if clone_distgits:
             self.clone_distgits()
