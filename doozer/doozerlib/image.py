@@ -1464,7 +1464,7 @@ class ImageMetadata(Metadata):
         0. Variant must be OCP (not OKD); OKD never uses RH base-image snapshot→release
         1. Assembly must not be ``test`` (unconditional block, not bypassed by force)
         2. Image metadata ``base_image_release.force`` set to true enables workflow (OCP only)
-        3. Image must be ``base_only`` or a golang builder
+        3. Image must be ``base_only`` (golang builders are excluded — they use the shipment MR path)
         4. Base image release enabled override:
            - Image metadata configuration (``self.config.base_image_release.enabled``)
            - Group configuration (``self.runtime.group_config.base_image_release.enabled``)
@@ -1485,7 +1485,7 @@ class ImageMetadata(Metadata):
             self.logger.info("Base image release force enabled from metadata config True")
             return True
 
-        if not (self.is_base_image() or self.is_golang_builder()):
+        if not self.is_base_image():
             return False
 
         source = None
@@ -1503,6 +1503,44 @@ class ImageMetadata(Metadata):
 
         self.logger.info(f"Base image release enabled set from {source} {base_image_release_enabled}")
         return base_image_release_enabled
+
+    def should_create_golang_builder_shipment(self) -> bool:
+        """
+        Whether to create an ocp-shipment-data MR after a successful golang builder build.
+
+        Gates (in order):
+        0. Variant must be OCP — OKD never uses RH registry releases
+        1. Assembly must not be ``test``
+        2. Image must be a golang builder
+        3. Respects ``base_image_release.enabled`` at image or group level (defaults True)
+
+        Returns:
+            bool: True if a golang builder shipment MR should be created, False otherwise.
+        """
+        if self.runtime.variant is BuildVariant.OKD:
+            return False
+
+        if self.runtime.assembly == "test":
+            self.logger.info("Skipping golang builder shipment for test assembly")
+            return False
+
+        if not self.is_golang_builder():
+            return False
+
+        enabled = True
+        source = None
+        config_override = self.config.base_image_release.enabled
+        if config_override not in [Missing, None]:
+            enabled = bool(config_override)
+            source = "metadata config"
+        else:
+            group_override = self.runtime.group_config.base_image_release.enabled
+            if group_override not in [Missing, None]:
+                enabled = bool(group_override)
+                source = "group config"
+
+        self.logger.info(f"Golang builder shipment enabled set from {source} {enabled}")
+        return enabled
 
     def get_required_artifacts(self) -> list:
         """

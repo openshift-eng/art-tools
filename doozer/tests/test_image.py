@@ -1908,11 +1908,11 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         base_metadata = ImageMetadata(runtime, base_data)
         self.assertTrue(base_metadata.should_trigger_base_image_release())
 
-        # Test golang builder - should trigger workflow
+        # Golang builders do NOT use the base-image release path — they go through the shipment MR
         golang_builder = Model({'name': GOLANG_BUILDER_IMAGE_NAME})
         golang_data = Model({'key': 'golang-builder', 'data': golang_builder, 'filename': 'golang-builder.yaml'})
         golang_metadata = ImageMetadata(runtime, golang_data)
-        self.assertTrue(golang_metadata.should_trigger_base_image_release())
+        self.assertFalse(golang_metadata.should_trigger_base_image_release())
 
         # Test assembly: base/golang do not use the base-image release path
         test_assembly_runtime = MagicMock()
@@ -1924,7 +1924,7 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         self.assertFalse(ImageMetadata(test_assembly_runtime, base_data).should_trigger_base_image_release())
         self.assertFalse(ImageMetadata(test_assembly_runtime, golang_data).should_trigger_base_image_release())
 
-        # Named (non-test) assembly still uses the base-image release path
+        # Named (non-test) assembly: base images still use base-image release; golang builders still don't
         named_runtime = MagicMock()
         named_runtime.logger = logging.getLogger('test_runtime')
         named_runtime.variant = BuildVariant.OCP
@@ -1932,7 +1932,7 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         named_runtime.product = 'ocp'
         named_runtime.group_config = Model({})
         self.assertTrue(ImageMetadata(named_runtime, base_data).should_trigger_base_image_release())
-        self.assertTrue(ImageMetadata(named_runtime, golang_data).should_trigger_base_image_release())
+        self.assertFalse(ImageMetadata(named_runtime, golang_data).should_trigger_base_image_release())
 
         # Test regular image - should NOT trigger workflow
         regular_image = Model({'name': 'test-regular'})
@@ -2010,7 +2010,7 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         both_metadata = ImageMetadata(runtime_both, both_data)
         self.assertTrue(both_metadata.should_trigger_base_image_release())
 
-        # Layered product: same base/golang trigger rules as OCP when variant and assembly allow
+        # Layered product: base images trigger; golang builders still use the shipment MR path
         layered_runtime = MagicMock()
         layered_runtime.logger = logging.getLogger('test_runtime')
         layered_runtime.variant = BuildVariant.OCP
@@ -2018,7 +2018,7 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
         layered_runtime.product = 'rhmtc'
         layered_runtime.group_config = Model({})
         self.assertTrue(ImageMetadata(layered_runtime, base_data).should_trigger_base_image_release())
-        self.assertTrue(ImageMetadata(layered_runtime, golang_data).should_trigger_base_image_release())
+        self.assertFalse(ImageMetadata(layered_runtime, golang_data).should_trigger_base_image_release())
 
         # OKD: base image would trigger on OCP but never on OKD (no RH registry release)
         okd_runtime = MagicMock()
@@ -2053,6 +2053,83 @@ class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
             Model({'key': 'test-assembly-forced', 'data': test_assembly_forced, 'filename': 'taf.yaml'}),
         )
         self.assertFalse(test_assembly_forced_metadata.should_trigger_base_image_release())
+
+    def test_should_create_golang_builder_shipment(self):
+        from artcommonlib.constants import GOLANG_BUILDER_IMAGE_NAME
+        from artcommonlib.model import Model
+
+        runtime = MagicMock()
+        runtime.logger = logging.getLogger('test_runtime')
+        runtime.variant = BuildVariant.OCP
+        runtime.assembly = 'stream'
+        runtime.product = 'ocp'
+        runtime.group_config = Model({})
+
+        golang_builder = Model({'name': GOLANG_BUILDER_IMAGE_NAME})
+        golang_data = Model({'key': 'golang-builder', 'data': golang_builder, 'filename': 'golang-builder.yaml'})
+        golang_metadata = ImageMetadata(runtime, golang_data)
+
+        # Golang builder on OCP stream assembly → should create shipment
+        self.assertTrue(golang_metadata.should_create_golang_builder_shipment())
+
+        # Non-golang image → False
+        regular = Model({'name': 'test-regular'})
+        regular_data = Model({'key': 'test-regular', 'data': regular, 'filename': 'test-regular.yaml'})
+        self.assertFalse(ImageMetadata(runtime, regular_data).should_create_golang_builder_shipment())
+
+        # OKD variant → False
+        okd_runtime = MagicMock()
+        okd_runtime.logger = logging.getLogger('test_runtime')
+        okd_runtime.variant = BuildVariant.OKD
+        okd_runtime.assembly = 'stream'
+        okd_runtime.product = 'ocp'
+        okd_runtime.group_config = Model({})
+        self.assertFalse(ImageMetadata(okd_runtime, golang_data).should_create_golang_builder_shipment())
+
+        # Test assembly → False
+        test_runtime = MagicMock()
+        test_runtime.logger = logging.getLogger('test_runtime')
+        test_runtime.variant = BuildVariant.OCP
+        test_runtime.assembly = 'test'
+        test_runtime.product = 'ocp'
+        test_runtime.group_config = Model({})
+        self.assertFalse(ImageMetadata(test_runtime, golang_data).should_create_golang_builder_shipment())
+
+        # Named (non-test) assembly → True
+        named_runtime = MagicMock()
+        named_runtime.logger = logging.getLogger('test_runtime')
+        named_runtime.variant = BuildVariant.OCP
+        named_runtime.assembly = '4.17.1'
+        named_runtime.product = 'ocp'
+        named_runtime.group_config = Model({})
+        self.assertTrue(ImageMetadata(named_runtime, golang_data).should_create_golang_builder_shipment())
+
+        # base_image_release.enabled: false in image config → False
+        golang_disabled = Model({'name': GOLANG_BUILDER_IMAGE_NAME, 'base_image_release': Model({'enabled': False})})
+        golang_disabled_data = Model({'key': 'go-off', 'data': golang_disabled, 'filename': 'go-off.yaml'})
+        self.assertFalse(ImageMetadata(runtime, golang_disabled_data).should_create_golang_builder_shipment())
+
+        # base_image_release.enabled: false in group config → False
+        group_off_runtime = MagicMock()
+        group_off_runtime.logger = logging.getLogger('test_runtime')
+        group_off_runtime.variant = BuildVariant.OCP
+        group_off_runtime.assembly = 'stream'
+        group_off_runtime.product = 'ocp'
+        group_off_runtime.group_config = Model({'base_image_release': Model({'enabled': False})})
+        self.assertFalse(ImageMetadata(group_off_runtime, golang_data).should_create_golang_builder_shipment())
+
+        # Image-level enabled: true overrides group-level false
+        group_off_image_on_runtime = MagicMock()
+        group_off_image_on_runtime.logger = logging.getLogger('test_runtime')
+        group_off_image_on_runtime.variant = BuildVariant.OCP
+        group_off_image_on_runtime.assembly = 'stream'
+        group_off_image_on_runtime.product = 'ocp'
+        group_off_image_on_runtime.group_config = Model({'base_image_release': Model({'enabled': False})})
+        golang_enabled = Model({'name': GOLANG_BUILDER_IMAGE_NAME, 'base_image_release': Model({'enabled': True})})
+        golang_enabled_data = Model({'key': 'go-on', 'data': golang_enabled, 'filename': 'go-on.yaml'})
+        self.assertTrue(
+            ImageMetadata(group_off_image_on_runtime, golang_enabled_data).should_create_golang_builder_shipment()
+        )
 
 
 class TestExtractGolangVersionFromPullspec(unittest.TestCase):
