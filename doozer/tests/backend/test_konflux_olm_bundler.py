@@ -612,12 +612,12 @@ spec:
         metadata.runtime.name_in_bundle_map = {"operand-image": "operand"}
         metadata.runtime.image_map = {"operand": operand_meta}
 
-        image_references = {
-            "operand-image": {
+        image_references = [
+            {
                 "name": "operand-image",
                 "from": {"name": "registry.example.com/openshift/ose-operand:v4.18"},
             },
-        }
+        ]
 
         mock_oc_image_info.return_value = {
             "config": {
@@ -676,12 +676,12 @@ spec:
         metadata.runtime.name_in_bundle_map = {"operand-image": "operand"}
         metadata.runtime.image_map = {"operand": operand_meta}
 
-        image_references = {
-            "operand-image": {
+        image_references = [
+            {
                 "name": "operand-image",
                 "from": {"name": "registry.example.com/openshift/ose-operand:v4.18"},
             },
-        }
+        ]
 
         mock_oc_image_info.return_value = {
             "config": {
@@ -716,12 +716,12 @@ spec:
         metadata.runtime.data_dir = "/nonexistent/data/dir"
         metadata.runtime.name_in_bundle_map = {}
 
-        image_references = {
-            "postgresql": {
+        image_references = [
+            {
                 "name": "postgresql",
                 "from": {"name": "registry.redhat.io/rhel9/postgresql-15:latest"},
             },
-        }
+        ]
 
         resolved = await self.rebaser._resolve_operands_from_db(
             metadata, image_references, {}, {}, external_image_names={"postgresql"}
@@ -739,12 +739,12 @@ spec:
         metadata.runtime.data_dir = "/nonexistent/data/dir"
         metadata.runtime.name_in_bundle_map = {}
 
-        image_references = {
-            "unknown-image": {
+        image_references = [
+            {
                 "name": "unknown-image",
                 "from": {"name": "registry.example.com/openshift/unknown:v4.18"},
             },
-        }
+        ]
 
         with self.assertRaises(ValueError) as ctx:
             await self.rebaser._resolve_operands_from_db(metadata, image_references, {}, {}, external_image_names=set())
@@ -778,16 +778,16 @@ spec:
         metadata.runtime.name_in_bundle_map = {"mta-ui": "mta-ui"}
         metadata.runtime.image_map = {"mta-ui": operand_meta}
 
-        image_references = {
-            "mta-ui": {
+        image_references = [
+            {
                 "name": "mta-ui",
                 "from": {"name": "quay.io/konveyor/mta-ui:latest"},
             },
-            "postgresql": {
+            {
                 "name": "postgresql",
                 "from": {"name": "registry.redhat.io/rhel9/postgresql-15:latest"},
             },
-        }
+        ]
 
         mock_oc_image_info.return_value = {
             "config": {
@@ -832,12 +832,12 @@ spec:
         metadata.runtime.image_map = {}
         metadata.runtime.late_resolve_image.return_value = None
 
-        image_references = {
-            "disabled-image": {
+        image_references = [
+            {
                 "name": "disabled-image",
                 "from": {"name": "registry.example.com/openshift/disabled:v4.18"},
             },
-        }
+        ]
 
         with self.assertRaises(DoozerFatalError):
             await self.rebaser._resolve_operands_from_db(metadata, image_references, {}, {})
@@ -860,12 +860,12 @@ spec:
         metadata.runtime.name_in_bundle_map = {"operand-image": "operand"}
         metadata.runtime.image_map = {"operand": operand_meta}
 
-        image_references = {
-            "operand-image": {
+        image_references = [
+            {
                 "name": "operand-image",
                 "from": {"name": "registry.example.com/openshift/ose-operand:v4.18"},
             },
-        }
+        ]
 
         with self.assertRaises(ValueError) as ctx:
             await self.rebaser._resolve_operands_from_db(metadata, image_references, {}, {})
@@ -895,12 +895,12 @@ spec:
         metadata.runtime.name_in_bundle_map = {"vector-rhel9": "vector"}
         metadata.runtime.image_map = {"vector": operand_meta}
 
-        image_references = {
-            "vector-rhel9": {
+        image_references = [
+            {
                 "name": "vector-rhel9",
                 "from": {"name": "quay.io/openshift-logging/vector-rhel9:latest"},
             },
-        }
+        ]
 
         with self.assertRaises(KonfluxOlmBundleRebaseError) as ctx:
             await self.rebaser._resolve_operands_from_db(metadata, image_references, {}, {})
@@ -933,12 +933,12 @@ spec:
         metadata.runtime.name_in_bundle_map = {"csi-driver": "ose-csi-driver"}
         metadata.runtime.image_map = {"ose-csi-driver": operand_meta}
 
-        image_references = {
-            "csi-driver": {
+        image_references = [
+            {
                 "name": "csi-driver",
                 "from": {"name": "registry.example.com/openshift/ose-csi-driver-4.18-rhel9:v4.18"},
             },
-        }
+        ]
 
         mock_oc_image_info.return_value = {
             "config": {
@@ -988,6 +988,87 @@ spec:
 
     @patch("doozerlib.backend.konflux_olm_bundler.is_nvr_embargoed", return_value=False)
     @patch("doozerlib.util.oc_image_info_for_arch_async")
+    async def test_resolve_operands_duplicate_name_entries(self, mock_oc_image_info, _mock_is_embargoed):
+        """
+        Verify that when multiple image-references entries share the same tag name
+        (e.g. cert-manager controller, cainjector, webhook all mapping to
+        jetstack-cert-manager-rhel9), all upstream specs are resolved and included
+        in the result for CSV replacement.
+        """
+        metadata = MagicMock()
+        metadata.distgit_key = "cert-manager-operator"
+        metadata.runtime.group = "cert-manager-1.19"
+        metadata.runtime.data_dir = "/tmp/test-data-dir"
+
+        operand_meta = MagicMock()
+        operand_meta.image_name_short = "jetstack-cert-manager-rhel9"
+        operand_meta.distgit_key = "jetstack-cert-manager"
+        operand_meta.branch_el_target.return_value = 9
+        operand_meta.config = {"delivery": {"delivery_repo_names": ["cert-manager/jetstack-cert-manager-rhel9"]}}
+        mock_build = MagicMock()
+        mock_build.version = "1.19.0"
+        mock_build.release = "1.el9"
+        mock_build.nvr = "jetstack-cert-manager-container-1.19.0-1.el9"
+        mock_build.assembly = self.assembly
+        operand_meta.get_latest_konflux_build = AsyncMock(return_value=mock_build)
+
+        metadata.runtime.name_in_bundle_map = {"jetstack-cert-manager-rhel9": "jetstack-cert-manager"}
+        metadata.runtime.image_map = {"jetstack-cert-manager": operand_meta}
+
+        image_references = [
+            {
+                "name": "jetstack-cert-manager-rhel9",
+                "from": {"name": "quay.io/jetstack/cert-manager-controller:v1.19.5"},
+            },
+            {
+                "name": "jetstack-cert-manager-rhel9",
+                "from": {"name": "quay.io/jetstack/cert-manager-cainjector:v1.19.5"},
+            },
+            {
+                "name": "jetstack-cert-manager-rhel9",
+                "from": {"name": "quay.io/jetstack/cert-manager-webhook:v1.19.5"},
+            },
+        ]
+
+        mock_oc_image_info.return_value = {
+            "config": {
+                "config": {
+                    "Labels": {
+                        "com.redhat.component": "jetstack-cert-manager-container",
+                        "version": "1.19.0",
+                        "release": "1.el9",
+                    }
+                }
+            },
+            "listDigest": "sha256:abc123",
+            "contentDigest": "sha256:def456",
+        }
+        self.rebaser._group_config.get.return_value = "cert-manager"
+        self.rebaser._group_config.operator_image_ref_mode = "manifest-list"
+
+        resolved = await self.rebaser._resolve_operands_from_db(metadata, image_references, {}, {})
+
+        expected_keys = {
+            "jetstack-cert-manager-rhel9",
+            "jetstack-cert-manager-rhel9-1",
+            "jetstack-cert-manager-rhel9-2",
+        }
+        self.assertEqual(set(resolved.keys()), expected_keys)
+
+        spec, pullspec, _ = resolved["jetstack-cert-manager-rhel9"]
+        self.assertEqual(spec, "quay.io/jetstack/cert-manager-controller:v1.19.5")
+        self.assertIn("registry.redhat.io/cert-manager/jetstack-cert-manager-rhel9@sha256:", pullspec)
+
+        spec, pullspec, _ = resolved["jetstack-cert-manager-rhel9-1"]
+        self.assertEqual(spec, "quay.io/jetstack/cert-manager-cainjector:v1.19.5")
+        self.assertIn("registry.redhat.io/cert-manager/jetstack-cert-manager-rhel9@sha256:", pullspec)
+
+        spec, pullspec, _ = resolved["jetstack-cert-manager-rhel9-2"]
+        self.assertEqual(spec, "quay.io/jetstack/cert-manager-webhook:v1.19.5")
+        self.assertIn("registry.redhat.io/cert-manager/jetstack-cert-manager-rhel9@sha256:", pullspec)
+
+    @patch("doozerlib.backend.konflux_olm_bundler.is_nvr_embargoed", return_value=False)
+    @patch("doozerlib.util.oc_image_info_for_arch_async")
     async def test_resolve_operands_from_db_layered_upstream_registry(self, mock_oc_image_info, _mock_is_embargoed):
         """
         Verify that for a layered product (e.g. OADP) whose image-references
@@ -1026,12 +1107,12 @@ spec:
         metadata.runtime.name_in_bundle_map = {"oadp-velero-rhel9": "oadp-velero"}
         metadata.runtime.image_map = {"oadp-velero": operand_meta}
 
-        image_references = {
-            "oadp-velero-rhel9": {
+        image_references = [
+            {
                 "name": "oadp-velero-rhel9",
                 "from": {"name": "quay.io/konveyor/velero:oadp-1.5"},
             },
-        }
+        ]
 
         mock_oc_image_info.return_value = {
             "config": {
@@ -1102,12 +1183,12 @@ spec:
         metadata.runtime.name_in_bundle_map = {"operand-image": "operand"}
         metadata.runtime.image_map = {"operand": operand_meta}
 
-        image_references = {
-            "operand-image": {
+        image_references = [
+            {
                 "name": "operand-image",
                 "from": {"name": "registry.example.com/openshift/ose-operand:v4.18"},
             },
-        }
+        ]
 
         mock_is_embargoed.return_value = True
 
@@ -1169,12 +1250,12 @@ spec:
         metadata.runtime.name_in_bundle_map = {"operand-image": "operand"}
         metadata.runtime.image_map = {"operand": operand_meta}
 
-        image_references = {
-            "operand-image": {
+        image_references = [
+            {
                 "name": "operand-image",
                 "from": {"name": "registry.example.com/openshift/ose-operand:v4.18"},
             },
-        }
+        ]
 
         mock_is_embargoed.return_value = True
 
@@ -1217,12 +1298,12 @@ spec:
         metadata.runtime.name_in_bundle_map = {"operand-image": "operand"}
         metadata.runtime.image_map = {"operand": operand_meta}
 
-        image_references = {
-            "operand-image": {
+        image_references = [
+            {
                 "name": "operand-image",
                 "from": {"name": "registry.example.com/openshift/ose-operand:v4.18"},
             },
-        }
+        ]
 
         mock_is_embargoed.return_value = True
 
