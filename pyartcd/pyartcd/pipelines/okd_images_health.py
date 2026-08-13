@@ -99,9 +99,15 @@ class ImagesHealthPipeline:
             await self.notify_okd_channel()
 
         if self.ping_chai_bot:
-            multi_failure_images = self._get_multi_failure_images()
-            for version, failing_concerns in multi_failure_images.items():
-                await self.notify_chai_bot(version, failing_concerns)
+            multi_build_failures = self._get_multi_failure_images()
+            multi_rebase_failures = self._get_multi_rebase_failures()
+            all_versions = set(multi_build_failures) | set(multi_rebase_failures)
+            for version in all_versions:
+                await self.notify_chai_bot(
+                    version,
+                    multi_build_failures.get(version, []),
+                    multi_rebase_failures.get(version, {}),
+                )
 
     async def get_report(self, version: str) -> Optional[list]:
         group = OKD_GROUP_TEMPLATE.format(version)
@@ -546,29 +552,58 @@ class ImagesHealthPipeline:
 
         return multi_failures
 
-    def _build_chai_bot_prompt(self, version: str, failing_concerns: list[dict]) -> str:
+    def _get_multi_rebase_failures(self) -> dict[str, dict[str, dict]]:
         """
-        Build structured prompt for @chai-bot to fix OKD build failures.
+        Filter self.rebase_failures for images with >1 consecutive rebase failure.
+
+        Return Value(s):
+            dict[str, dict[str, dict]]: Version -> {image_name: failure_info}
+        """
+        result = {}
+        for version, failures in self.rebase_failures.items():
+            multi = {image: info for image, info in failures.items() if info.get('failure_count', 0) > 1}
+            if multi:
+                result[version] = multi
+        return result
+
+    def _build_chai_bot_prompt(
+        self, version: str, failing_concerns: list[dict], rebase_failures: dict[str, dict] | None = None
+    ) -> str:
+        """
+        Build structured prompt for @chai-bot to fix OKD build and rebase failures.
 
         Arg(s):
             version (str): OKD version (e.g., "4.21")
-            failing_concerns (list[dict]): List of concern dicts with failure info
+            failing_concerns (list[dict]): List of concern dicts with build failure info
+            rebase_failures (dict[str, dict]): Map of image_name -> failure_info for rebase failures
         Return Value(s):
             str: Formatted prompt for chai-bot
         """
         okd_group = f'okd-{version}'
-        prompt_parts = [f'Please investigate and fix OKD build failures for *{okd_group}*.\n', '*Failing Images:*']
+        prompt_parts = [f'Please investigate and fix OKD build failures for *{okd_group}*.\n']
 
-        for concern in failing_concerns:
-            image_name = concern['image_name']
-            failure_count = concern.get('latest_success_idx', 0)
-            logs_url = self.get_logs_url(concern)
-            search_url = self.get_search_url(concern)
+        if failing_concerns:
+            prompt_parts.append('*Failing Images (build failures):*')
+            for concern in failing_concerns:
+                image_name = concern['image_name']
+                failure_count = concern.get('latest_success_idx', 0)
+                logs_url = self.get_logs_url(concern)
+                search_url = self.get_search_url(concern)
 
-            prompt_parts.append(
-                f'- `{image_name}`: {failure_count} consecutive failures '
-                f'({self.url_text(search_url, "history")} | {self.url_text(logs_url, "latest logs")})'
-            )
+                prompt_parts.append(
+                    f'- `{image_name}`: {failure_count} consecutive failures '
+                    f'({self.url_text(search_url, "history")} | {self.url_text(logs_url, "latest logs")})'
+                )
+
+        if rebase_failures:
+            prompt_parts.append('\n*Failing Images (rebase failures):*')
+            for image_name, failure_info in sorted(rebase_failures.items()):
+                failure_count = failure_info.get('failure_count', 0)
+                jenkins_url = failure_info.get('jenkins_url', '')
+                line = f'- `{image_name}`: {failure_count} consecutive rebase failures'
+                if jenkins_url:
+                    line += f' ({self.url_text(jenkins_url, "last failure job")})'
+                prompt_parts.append(line)
 
         prompt_parts.extend(
             [
@@ -604,25 +639,29 @@ class ImagesHealthPipeline:
 
         return '\n'.join(prompt_parts)
 
-    async def notify_chai_bot(self, version: str, failing_concerns: list[dict]):
+    async def notify_chai_bot(
+        self, version: str, failing_concerns: list[dict], rebase_failures: dict[str, dict] | None = None
+    ):
         """
         Post prompt to chai-bot channel requesting automated fix attempts.
 
         Arg(s):
             version (str): OKD version (e.g., "4.21")
-            failing_concerns (list[dict]): List of concerns with >1 consecutive failure
+            failing_concerns (list[dict]): List of build failure concerns with >1 consecutive failure
+            rebase_failures (dict[str, dict]): Map of image_name -> failure_info for rebase failures with >1 failure
         """
-        if not failing_concerns:
+        if not failing_concerns and not rebase_failures:
             return
 
-        prompt = self._build_chai_bot_prompt(version, failing_concerns)
+        prompt = self._build_chai_bot_prompt(version, failing_concerns, rebase_failures or {})
         self.slack_client.bind_channel('#team-art-chai-bot')
 
         message = f'<@U0AKNPBBVT7> {prompt}'
         await self.slack_client.say(message, unfurl_links=False, unfurl_media=False)
         self.runtime.logger.info(
-            'Notified chai-bot in #team-art-chai-bot for %d failing images in okd-%s',
+            'Notified chai-bot in #team-art-chai-bot for %d build failure(s) and %d rebase failure(s) in okd-%s',
             len(failing_concerns),
+            len(rebase_failures) if rebase_failures else 0,
             version,
         )
 

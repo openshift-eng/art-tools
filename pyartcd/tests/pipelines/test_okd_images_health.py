@@ -155,3 +155,123 @@ class TestGetReport(IsolatedAsyncioTestCase):
         self.assertEqual(pipeline.versions, [])
         pipeline.get_report.assert_not_called()
         pipeline.notify_okd_channel.assert_not_called()
+
+
+class TestGetMultiRebaseFailures(IsolatedAsyncioTestCase):
+    def _make_pipeline(self):
+        runtime = MagicMock()
+        runtime.working_dir = MagicMock()
+        runtime.logger = MagicMock()
+        runtime.new_slack_client.return_value = MagicMock()
+        return ImagesHealthPipeline(
+            runtime=runtime,
+            versions="4.21",
+            send_to_release_channel=False,
+            send_to_okd_channel=False,
+            ping_chai_bot=True,
+            data_path=DATA_PATH,
+            data_gitref="",
+            image_list="",
+            assembly="stream",
+        )
+
+    def test_filters_single_failures(self):
+        """Images with only 1 rebase failure are excluded."""
+        pipeline = self._make_pipeline()
+        pipeline.rebase_failures = {
+            '4.21': {
+                'ironic': {'failure_count': 1, 'jenkins_url': ''},
+                'ovn-kubernetes': {'failure_count': 3, 'jenkins_url': 'http://jenkins/job/1'},
+            }
+        }
+        result = pipeline._get_multi_rebase_failures()
+        self.assertIn('4.21', result)
+        self.assertNotIn('ironic', result['4.21'])
+        self.assertIn('ovn-kubernetes', result['4.21'])
+
+    def test_excludes_versions_with_no_multi_failures(self):
+        """Versions where all images have <=1 failure are excluded from result."""
+        pipeline = self._make_pipeline()
+        pipeline.rebase_failures = {
+            '4.21': {'ironic': {'failure_count': 1, 'jenkins_url': ''}},
+        }
+        result = pipeline._get_multi_rebase_failures()
+        self.assertNotIn('4.21', result)
+
+    def test_empty_rebase_failures(self):
+        pipeline = self._make_pipeline()
+        pipeline.rebase_failures = {}
+        self.assertEqual(pipeline._get_multi_rebase_failures(), {})
+
+
+class TestNotifyChaiBot(IsolatedAsyncioTestCase):
+    def _make_pipeline(self):
+        runtime = MagicMock()
+        runtime.working_dir = MagicMock()
+        runtime.logger = MagicMock()
+        runtime.new_slack_client.return_value = MagicMock()
+        return ImagesHealthPipeline(
+            runtime=runtime,
+            versions="4.21",
+            send_to_release_channel=False,
+            send_to_okd_channel=False,
+            ping_chai_bot=True,
+            data_path=DATA_PATH,
+            data_gitref="",
+            image_list="",
+            assembly="stream",
+        )
+
+    async def test_skips_when_no_failures_of_either_kind(self):
+        pipeline = self._make_pipeline()
+        pipeline.slack_client.say = AsyncMock()
+        await pipeline.notify_chai_bot('4.21', [], {})
+        pipeline.slack_client.say.assert_not_called()
+
+    async def test_notifies_for_rebase_only(self):
+        """Rebase failures alone trigger chai-bot notification."""
+        pipeline = self._make_pipeline()
+        pipeline.slack_client.say = AsyncMock(return_value={'ts': '123'})
+        pipeline.slack_client.bind_channel = MagicMock()
+        rebase_failures = {
+            'ironic': {'failure_count': 3, 'jenkins_url': 'http://jenkins/job/1'},
+        }
+        await pipeline.notify_chai_bot('4.21', [], rebase_failures)
+        pipeline.slack_client.say.assert_called_once()
+        msg = pipeline.slack_client.say.call_args[0][0]
+        self.assertIn('ironic', msg)
+        self.assertIn('rebase failures', msg)
+
+    async def test_prompt_includes_both_build_and_rebase_sections(self):
+        """When both failure types present, prompt contains both sections."""
+        pipeline = self._make_pipeline()
+        pipeline.slack_client.say = AsyncMock(return_value={'ts': '123'})
+        pipeline.slack_client.bind_channel = MagicMock()
+        concern = _make_concern('console', 'openshift-4.21', 'LATEST_ATTEMPT_FAILED', latest_success_idx=3)
+        rebase_failures = {'ironic': {'failure_count': 3, 'jenkins_url': ''}}
+        await pipeline.notify_chai_bot('4.21', [concern], rebase_failures)
+        msg = pipeline.slack_client.say.call_args[0][0]
+        self.assertIn('build failures', msg)
+        self.assertIn('rebase failures', msg)
+        self.assertIn('console', msg)
+        self.assertIn('ironic', msg)
+
+    @patch("pyartcd.pipelines.okd_images_health.util.is_okd_version_enabled", new_callable=AsyncMock, return_value=True)
+    async def test_run_calls_chai_bot_for_rebase_only_version(self, _mock_enabled):
+        """run() calls notify_chai_bot when only rebase failures exist (no build failures)."""
+        pipeline = self._make_pipeline()
+        pipeline.get_report = AsyncMock()
+        pipeline.get_rebase_failures = AsyncMock()
+        pipeline.notify_chai_bot = AsyncMock()
+        pipeline.rebase_failures = {
+            '4.21': {'ironic': {'failure_count': 3, 'jenkins_url': ''}},
+        }
+        pipeline.report = []
+
+        await pipeline.run()
+
+        pipeline.notify_chai_bot.assert_awaited_once()
+        call_args = pipeline.notify_chai_bot.call_args
+        self.assertEqual(call_args[0][0], '4.21')
+        self.assertEqual(call_args[0][1], [])
+        self.assertIn('ironic', call_args[0][2])
