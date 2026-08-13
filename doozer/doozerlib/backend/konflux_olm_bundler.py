@@ -595,7 +595,7 @@ class KonfluxOlmBundleRebaser:
 
         Arg(s):
             metadata: ImageMetadata of the operator whose bundle is being rebased.
-            image_references: Parsed image-references entries {name: {from: {name: spec}}}.
+            image_references: List of image-references entries [{name: tag_name, from: {name: upstream_spec}}, ...].
             delivery_override_map: Versioned-to-unversioned name overrides.
             delivery_namespace_map: Image-to-namespace overrides.
         Return Value(s):
@@ -608,8 +608,7 @@ class KonfluxOlmBundleRebaser:
         entries_meta: list[tuple[str, str, ImageMetadata]] = []  # (name, spec, meta)
         build_coros = []
 
-        refs_list = image_references if isinstance(image_references, list) else list(image_references.values())
-        for ref_entry in refs_list:
+        for ref_entry in image_references:
             name = ref_entry["name"]
             spec = ref_entry["from"]["name"]
 
@@ -744,7 +743,8 @@ class KonfluxOlmBundleRebaser:
             if delivery_short_name not in resolved:
                 resolved[delivery_short_name] = (spec, new_pullspec, image_nvr)
             else:
-                resolved[spec] = (spec, new_pullspec, image_nvr)
+                suffix = len([k for k in resolved if k.startswith(delivery_short_name)])
+                resolved[f"{delivery_short_name}-{suffix}"] = (spec, new_pullspec, image_nvr)
 
         return resolved
 
