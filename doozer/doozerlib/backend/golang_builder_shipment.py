@@ -54,8 +54,8 @@ def format_shipment_mr_title(golang_group: str) -> str:
 
 
 GOLANG_BUILDER_SHIPMENT_RELEASE_PLAN_MAP = {
-    "stage": "ocp-art-golang-builder-ec-rhel9",
-    "prod": "ocp-art-golang-builder-prod-rhel9",
+    "stage": "ocp-art-golang-builder-ec",
+    "prod": "ocp-art-golang-builder-prod",
 }
 
 

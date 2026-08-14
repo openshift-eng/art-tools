@@ -84,11 +84,11 @@ spec:
         self.assertFalse(config.shipment.metadata.advisory_required)
         self.assertEqual(
             config.shipment.environments.stage.releasePlan,
-            "ocp-art-golang-builder-ec-rhel9",
+            "ocp-art-golang-builder-ec",
         )
         self.assertEqual(
             config.shipment.environments.prod.releasePlan,
-            "ocp-art-golang-builder-prod-rhel9",
+            "ocp-art-golang-builder-prod",
         )
         self.assertIn(
             "https://redhat.atlassian.net/browse/ART-20930",
@@ -131,11 +131,11 @@ spec:
 
         self.assertEqual(
             config.shipment.environments.stage.releasePlan,
-            "ocp-art-golang-builder-ec-rhel9",
+            "ocp-art-golang-builder-ec",
         )
         self.assertEqual(
             config.shipment.environments.prod.releasePlan,
-            "ocp-art-golang-builder-prod-rhel9",
+            "ocp-art-golang-builder-prod",
         )
 
 
@@ -177,7 +177,7 @@ class TestCreateShipmentMR(IsolatedAsyncioTestCase):
                 config,
                 golang_group="rhel-9-golang-1.25",
                 env="prod",
-                release_plan="ocp-art-golang-builder-prod-rhel9",
+                release_plan="ocp-art-golang-builder-prod",
                 nvrs=["some-nvr"],
             )
 
@@ -324,7 +324,7 @@ class TestCommitPushFailure(IsolatedAsyncioTestCase):
                     config,
                     golang_group="rhel-9-golang-1.25",
                     env="prod",
-                    release_plan="ocp-art-golang-builder-prod-rhel9",
+                    release_plan="ocp-art-golang-builder-prod",
                     nvrs=["some-nvr"],
                 )
         self.assertIn("Failed to push", str(ctx.exception))
@@ -493,7 +493,7 @@ class TestShipmentFilePath(IsolatedAsyncioTestCase):
                     config,
                     golang_group="rhel-9-golang-1.25",
                     env="prod",
-                    release_plan="ocp-art-golang-builder-prod-rhel9",
+                    release_plan="ocp-art-golang-builder-prod",
                     nvrs=["some-nvr"],
                 )
 
