@@ -5,12 +5,10 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 from artcommonlib.model import Model
 from doozerlib.backend.golang_builder_shipment import (
-    GOLANG_BUILDER_SHIPMENT_RELEASE_PLAN_MAP,
     GolangBuilderShipmentHandler,
     basic_auth_url,
     derive_golang_group,
     format_shipment_mr_title,
-    resolve_env_from_runtime,
 )
 from doozerlib.constants import ART_IMAGES_BASE_APPLICATION
 
@@ -23,45 +21,6 @@ class TestFormatShipmentMrTitle(unittest.TestCase):
             format_shipment_mr_title("rhel-9-golang-1.25"),
             "Shipment for rhel-9-golang-1.25",
         )
-
-
-class TestResolveReleasePlan(unittest.TestCase):
-    def test_prod_returns_prod_plan(self):
-        plan = GolangBuilderShipmentHandler.resolve_release_plan("prod")
-        self.assertEqual(plan, "ocp-art-golang-builder-prod-rhel9")
-
-    def test_stage_returns_ec_plan(self):
-        plan = GolangBuilderShipmentHandler.resolve_release_plan("stage")
-        self.assertEqual(plan, "ocp-art-golang-builder-ec-rhel9")
-
-    def test_unknown_env_raises(self):
-        with self.assertRaises(ValueError):
-            GolangBuilderShipmentHandler.resolve_release_plan("staging")
-
-    def test_removed_ec_key_raises(self):
-        with self.assertRaises(ValueError):
-            GolangBuilderShipmentHandler.resolve_release_plan("ec")
-
-    def test_map_keys_are_complete(self):
-        self.assertIn("stage", GOLANG_BUILDER_SHIPMENT_RELEASE_PLAN_MAP)
-        self.assertIn("prod", GOLANG_BUILDER_SHIPMENT_RELEASE_PLAN_MAP)
-
-
-class TestResolveEnvFromRuntime(unittest.TestCase):
-    def test_pre_release_returns_prod(self):
-        runtime = Mock()
-        runtime.group_config = Model({"software_lifecycle": {"phase": "pre-release"}})
-        self.assertEqual(resolve_env_from_runtime(runtime), "prod")
-
-    def test_release_returns_prod(self):
-        runtime = Mock()
-        runtime.group_config = Model({"software_lifecycle": {"phase": "release"}})
-        self.assertEqual(resolve_env_from_runtime(runtime), "prod")
-
-    def test_missing_lifecycle_returns_prod(self):
-        runtime = Mock()
-        runtime.group_config = Model({})
-        self.assertEqual(resolve_env_from_runtime(runtime), "prod")
 
 
 class TestBasicAuthUrl(unittest.TestCase):
@@ -81,7 +40,6 @@ class TestBuildShipmentConfig(unittest.TestCase):
         runtime.working_dir = "/tmp"
         handler = GolangBuilderShipmentHandler(
             runtime=runtime,
-            ocp_version="4.22",
             art_jira="ART-20930",
         )
         return handler
@@ -110,7 +68,6 @@ spec:
         nvrs = ["golang-builder-container-v1.25-202606220000.el9"]
         snapshot = handler._build_inline_snapshot(
             nvr=nvrs[0],
-            golang_group="rhel-9-golang-1.25",
             container_image="quay.io/test@sha256:abc123",
             rebase_repo_url="https://github.com/openshift-priv/builder",
             rebase_commitish="abc123",
@@ -119,7 +76,6 @@ spec:
             snapshot=snapshot,
             nvrs=nvrs,
             golang_group="rhel-9-golang-1.25",
-            ocp_version="4.22",
         )
 
         self.assertEqual(config.shipment.metadata.product, "ocp")
@@ -163,7 +119,6 @@ spec:
         nvrs = ["golang-builder-container-v1.26-202606220000.el9"]
         snapshot = handler._build_inline_snapshot(
             nvr=nvrs[0],
-            golang_group="rhel-9-golang-1.26",
             container_image="quay.io/test@sha256:def456",
             rebase_repo_url="https://github.com/openshift-priv/builder",
             rebase_commitish="def456",
@@ -172,7 +127,6 @@ spec:
             snapshot=snapshot,
             nvrs=nvrs,
             golang_group="rhel-9-golang-1.26",
-            ocp_version="4.22",
         )
 
         self.assertEqual(
@@ -193,7 +147,6 @@ class TestCreateShipmentMR(IsolatedAsyncioTestCase):
         runtime.working_dir = "/tmp"
         handler = GolangBuilderShipmentHandler(
             runtime=runtime,
-            ocp_version="4.22",
             art_jira="ART-20930",
         )
         handler.shipment_data_repo = AsyncMock()
@@ -226,7 +179,6 @@ class TestCreateShipmentMR(IsolatedAsyncioTestCase):
                 env="prod",
                 release_plan="ocp-art-golang-builder-prod-rhel9",
                 nvrs=["some-nvr"],
-                ocp_version="4.22",
             )
 
         self.assertEqual(result, mock_mr.web_url)
@@ -272,7 +224,7 @@ spec:
         runtime.group_config = Model({})
         runtime.working_dir = "/tmp"
         handler = GolangBuilderShipmentHandler(runtime=runtime)
-        await handler._create_snapshot_via_elliott([SAMPLE_GOLANG_NVR], "rhel-9-golang-1.25")
+        await handler._create_snapshot_via_elliott([SAMPLE_GOLANG_NVR])
         cmd_args = mock_cmd.call_args[0][0]
         self.assertTrue(any("--pull-secret=" in str(a) for a in cmd_args))
 
@@ -301,9 +253,9 @@ spec:
         runtime.logger = Mock()
         runtime.group_config = Model({})
         runtime.working_dir = "/tmp"
-        handler = GolangBuilderShipmentHandler(runtime=runtime, art_jira="ART-20930", ocp_version="4.22")
+        handler = GolangBuilderShipmentHandler(runtime=runtime, art_jira="ART-20930")
         nvr = "openshift-golang-builder-container-v1.25.8-202604081607.p0.g2aa6a05.el9"
-        snapshot = await handler._create_snapshot_via_elliott([nvr], "rhel-9-golang-1.25")
+        snapshot = await handler._create_snapshot_via_elliott([nvr])
 
         self.assertEqual(snapshot.spec.application, ART_IMAGES_BASE_APPLICATION)
         self.assertEqual(snapshot.spec.components[0].name, "golang-builder-v1.25-rhel9")
@@ -324,7 +276,7 @@ class TestCreateSnapshotErrors(IsolatedAsyncioTestCase):
         mock_cmd.return_value = (1, "", "elliott error: NVR not found")
         handler = self._make_handler()
         with self.assertRaises(RuntimeError) as ctx:
-            await handler._create_snapshot_via_elliott([SAMPLE_GOLANG_NVR], "rhel-9-golang-1.25")
+            await handler._create_snapshot_via_elliott([SAMPLE_GOLANG_NVR])
         self.assertIn("elliott snapshot new failed", str(ctx.exception))
 
     @patch("doozerlib.backend.golang_builder_shipment.exectools.cmd_gather_async")
@@ -334,7 +286,7 @@ class TestCreateSnapshotErrors(IsolatedAsyncioTestCase):
         mock_cmd.return_value = (0, "", "")
         handler = self._make_handler()
         with self.assertRaises(ValueError) as ctx:
-            await handler._create_snapshot_via_elliott([SAMPLE_GOLANG_NVR], "rhel-9-golang-1.25")
+            await handler._create_snapshot_via_elliott([SAMPLE_GOLANG_NVR])
         self.assertIn("invalid output", str(ctx.exception))
 
     @patch("doozerlib.backend.golang_builder_shipment.exectools.cmd_gather_async")
@@ -344,7 +296,7 @@ class TestCreateSnapshotErrors(IsolatedAsyncioTestCase):
         mock_cmd.return_value = (0, "apiVersion: v1\nkind: Snapshot\n", "")
         handler = self._make_handler()
         with self.assertRaises(ValueError) as ctx:
-            await handler._create_snapshot_via_elliott([SAMPLE_GOLANG_NVR], "rhel-9-golang-1.25")
+            await handler._create_snapshot_via_elliott([SAMPLE_GOLANG_NVR])
         self.assertIn("missing 'spec'", str(ctx.exception))
 
 
@@ -356,7 +308,6 @@ class TestCommitPushFailure(IsolatedAsyncioTestCase):
         runtime.working_dir = "/tmp"
         handler = GolangBuilderShipmentHandler(
             runtime=runtime,
-            ocp_version="4.22",
             art_jira="ART-20930",
         )
         handler.shipment_data_repo = AsyncMock()
@@ -375,20 +326,18 @@ class TestCommitPushFailure(IsolatedAsyncioTestCase):
                     env="prod",
                     release_plan="ocp-art-golang-builder-prod-rhel9",
                     nvrs=["some-nvr"],
-                    ocp_version="4.22",
                 )
         self.assertIn("Failed to push", str(ctx.exception))
 
 
 class TestCreateShipmentFromNvrs(IsolatedAsyncioTestCase):
     @patch("doozerlib.backend.golang_builder_shipment.derive_golang_group", return_value="rhel-9-golang-1.25")
-    @patch("doozerlib.backend.golang_builder_shipment.resolve_env_from_runtime", return_value="prod")
-    async def test_create_shipment_from_nvrs_wires_steps(self, mock_env, mock_derive):
+    async def test_create_shipment_from_nvrs_wires_steps(self, mock_derive):
         runtime = Mock()
         runtime.logger = Mock()
         runtime.group_config = Model({})
         runtime.working_dir = "/tmp"
-        handler = GolangBuilderShipmentHandler(runtime=runtime, ocp_version="4.22")
+        handler = GolangBuilderShipmentHandler(runtime=runtime)
         handler._setup_repos = AsyncMock()
         handler._create_snapshot_via_elliott = AsyncMock(return_value=Mock(spec=["spec"]))
         handler._create_snapshot_via_elliott.return_value.spec.application = ART_IMAGES_BASE_APPLICATION
@@ -411,7 +360,7 @@ class TestCreateShipmentInline(IsolatedAsyncioTestCase):
         runtime.logger = Mock()
         runtime.group_config = Model({})
         runtime.working_dir = "/tmp"
-        handler = GolangBuilderShipmentHandler(runtime=runtime, ocp_version="4.22")
+        handler = GolangBuilderShipmentHandler(runtime=runtime)
         handler._setup_repos = AsyncMock(side_effect=RuntimeError("boom"))
 
         result = await handler.create_shipment(
@@ -433,7 +382,6 @@ class TestBuildInlineSnapshot(unittest.TestCase):
         nvr = "openshift-golang-builder-container-v1.25.9-202605121249.p2.gdf787b0.el9"
         snapshot = handler._build_inline_snapshot(
             nvr=nvr,
-            golang_group="rhel-9-golang-1.25",
             container_image="quay.io/test@sha256:abc",
             rebase_repo_url="https://example.com/repo.git",
             rebase_commitish="abc123",
@@ -501,7 +449,6 @@ class TestShipmentFilePath(IsolatedAsyncioTestCase):
         runtime.working_dir = "/tmp"
         handler = GolangBuilderShipmentHandler(
             runtime=runtime,
-            ocp_version="4.22",
             art_jira="ART-20930",
         )
 
@@ -548,7 +495,6 @@ class TestShipmentFilePath(IsolatedAsyncioTestCase):
                     env="prod",
                     release_plan="ocp-art-golang-builder-prod-rhel9",
                     nvrs=["some-nvr"],
-                    ocp_version="4.22",
                 )
 
         self.assertEqual(len(recorded_paths), 1)

@@ -24,7 +24,7 @@ class TestGolangBuilderShipmentCli(unittest.IsolatedAsyncioTestCase):
             cli,
             [
                 "--group",
-                "rhel-9-golang-1.25",
+                "golang",
                 "golang-builder-shipment",
                 "openshift-golang-builder-container-v1.25.9-1.el9",
             ],
@@ -40,7 +40,7 @@ class TestGolangBuilderShipmentCli(unittest.IsolatedAsyncioTestCase):
 
         result = runner.invoke(
             cli,
-            ["--group", "rhel-9-golang-1.25", "golang-builder-shipment"],
+            ["--group", "golang", "golang-builder-shipment"],
             obj=MagicMock(dry_run=False),
         )
         self.assertNotEqual(result.exit_code, 0)

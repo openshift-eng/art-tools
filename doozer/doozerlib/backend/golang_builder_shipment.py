@@ -44,6 +44,8 @@ from pyartcd.git import GitRepository
 yaml = new_roundtrip_yaml_handler()
 
 _PRODUCT = "ocp"
+_ELLIOTT_GOLANG_GROUP = "golang"
+_DEFAULT_ENV = "prod"
 
 
 def format_shipment_mr_title(golang_group: str) -> str:
@@ -83,11 +85,6 @@ def basic_auth_url(url: str, token: str) -> str:
     return urlunparse(parsed._replace(netloc=netloc))
 
 
-def resolve_env_from_runtime(runtime) -> str:
-    """Return the shipment target env for MR placement (always prod)."""
-    return "prod"
-
-
 class GolangBuilderShipmentHandler:
     """Creates a shipment MR in ocp-shipment-data for golang builder images."""
 
@@ -98,11 +95,9 @@ class GolangBuilderShipmentHandler:
         shipment_data_repo_pull_url: Optional[str] = None,
         shipment_data_repo_push_url: Optional[str] = None,
         art_jira: str = "",
-        ocp_version: Optional[str] = None,
     ):
         self.runtime = runtime
         self.art_jira = art_jira
-        self.ocp_version = ocp_version
         self.logger = getattr(runtime, "logger", None) or logging.getLogger(__name__)
         self.gitlab_url = gitlab_url
         # Follow the established pyartcd pattern: use a known subdir of the runtime
@@ -116,29 +111,19 @@ class GolangBuilderShipmentHandler:
         self.shipment_data_repo = GitRepository(self._shipment_data_repo_dir, False)
         self._gitlab_token: Optional[str] = None
 
-    @staticmethod
-    def resolve_release_plan(env: str) -> str:
-        """Map shipment env to the correct ReleasePlan name."""
-        plan = GOLANG_BUILDER_SHIPMENT_RELEASE_PLAN_MAP.get(env)
-        if not plan:
-            raise ValueError(
-                f"Unknown env '{env}'. Must be one of: {list(GOLANG_BUILDER_SHIPMENT_RELEASE_PLAN_MAP.keys())}"
-            )
-        return plan
-
     async def create_shipment(
         self,
         nvr: str,
         container_image: str,
         rebase_repo_url: str,
         rebase_commitish: str,
+        env: Optional[str] = None,
     ) -> Optional[str]:
         """Create shipment MR for one golang builder build (non-fatal inline path)."""
         try:
             golang_group = derive_golang_group([nvr])
-            env = resolve_env_from_runtime(self.runtime)
-            release_plan = self.resolve_release_plan(env)
-            ocp_version = self.ocp_version or golang_group
+            env = env or _DEFAULT_ENV
+            release_plan = GOLANG_BUILDER_SHIPMENT_RELEASE_PLAN_MAP[env]
 
             self.logger.info(
                 "Starting golang builder shipment: nvr=%s golang_group=%s env=%s release_plan=%s",
@@ -152,7 +137,6 @@ class GolangBuilderShipmentHandler:
 
             snapshot = self._build_inline_snapshot(
                 nvr=nvr,
-                golang_group=golang_group,
                 container_image=container_image,
                 rebase_repo_url=rebase_repo_url,
                 rebase_commitish=rebase_commitish,
@@ -161,7 +145,6 @@ class GolangBuilderShipmentHandler:
                 snapshot=snapshot,
                 nvrs=[nvr],
                 golang_group=golang_group,
-                ocp_version=ocp_version,
             )
             mr_url = await self._create_shipment_mr(
                 shipment_config,
@@ -169,7 +152,6 @@ class GolangBuilderShipmentHandler:
                 env=env,
                 release_plan=release_plan,
                 nvrs=[nvr],
-                ocp_version=ocp_version,
             )
             self.logger.info("Golang builder shipment MR created: %s", mr_url)
             return mr_url
@@ -185,13 +167,11 @@ class GolangBuilderShipmentHandler:
         """Create shipment MR from NVR list (CLI path; may use elliott for snapshot)."""
         nvrs = sorted(nvrs)
         golang_group = derive_golang_group(nvrs)
-        env = env or resolve_env_from_runtime(self.runtime)
-        release_plan = self.resolve_release_plan(env)
-        ocp_version = self.ocp_version or golang_group
+        env = env or _DEFAULT_ENV
+        release_plan = GOLANG_BUILDER_SHIPMENT_RELEASE_PLAN_MAP[env]
 
         self.logger.info(
-            "Starting golang-builder-shipment: ocp_version=%s golang_group=%s env=%s release_plan=%s nvrs=%s",
-            ocp_version,
+            "Starting golang-builder-shipment: golang_group=%s env=%s release_plan=%s nvrs=%s",
             golang_group,
             env,
             release_plan,
@@ -200,12 +180,11 @@ class GolangBuilderShipmentHandler:
 
         await self._setup_repos()
 
-        snapshot = await self._create_snapshot_via_elliott(nvrs, golang_group)
+        snapshot = await self._create_snapshot_via_elliott(nvrs)
         shipment_config = self._build_shipment_config(
             snapshot=snapshot,
             nvrs=nvrs,
             golang_group=golang_group,
-            ocp_version=ocp_version,
         )
         mr_url = await self._create_shipment_mr(
             shipment_config,
@@ -213,7 +192,6 @@ class GolangBuilderShipmentHandler:
             env=env,
             release_plan=release_plan,
             nvrs=nvrs,
-            ocp_version=ocp_version,
         )
         self.logger.info("Shipment MR created: %s", mr_url)
         return mr_url
@@ -249,7 +227,6 @@ class GolangBuilderShipmentHandler:
     @staticmethod
     def _build_inline_snapshot(
         nvr: str,
-        golang_group: str,
         container_image: str,
         rebase_repo_url: str,
         rebase_commitish: str,
@@ -271,7 +248,6 @@ class GolangBuilderShipmentHandler:
         snapshot: Snapshot,
         nvrs: List[str],
         golang_group: str,
-        ocp_version: str,
     ) -> ShipmentConfig:
         # group must match the ocp-build-data branch name that elliott resolves.
         # For golang builders this is "golang", not the version-specific group
@@ -286,22 +262,18 @@ class GolangBuilderShipmentHandler:
         )
 
         environments = Environments(
-            stage=ShipmentEnv(releasePlan=self.resolve_release_plan("stage")),
-            prod=ShipmentEnv(releasePlan=self.resolve_release_plan("prod")),
+            stage=ShipmentEnv(releasePlan=GOLANG_BUILDER_SHIPMENT_RELEASE_PLAN_MAP["stage"]),
+            prod=ShipmentEnv(releasePlan=GOLANG_BUILDER_SHIPMENT_RELEASE_PLAN_MAP["prod"]),
         )
 
         release_notes = ReleaseNotes(
             type="RHBA",
-            synopsis=f"Golang builder image update for OpenShift {ocp_version}",
+            synopsis=f"Golang builder image update ({golang_group})",
             topic=(
-                f"An update for the golang builder images is now available for "
-                f"Red Hat OpenShift Container Platform {ocp_version}."
+                f"An update for the golang builder images ({golang_group}) is now available for "
+                f"Red Hat OpenShift Container Platform."
             ),
-            description=(
-                f"This update provides rebuilt golang builder images for "
-                f"Red Hat OpenShift Container Platform {ocp_version}.\n\n"
-                f"Golang group: {golang_group}"
-            ),
+            description=(f"This update provides rebuilt golang builder images for {golang_group}."),
             solution="The golang builder images are available from registry.redhat.io/openshift/golang-builder.",
         )
         if self.art_jira:
@@ -318,7 +290,7 @@ class GolangBuilderShipmentHandler:
         self.logger.info("Built ShipmentConfig with %d NVRs", len(nvrs))
         return config
 
-    async def _create_snapshot_via_elliott(self, nvrs: List[str], golang_group: str) -> Snapshot:
+    async def _create_snapshot_via_elliott(self, nvrs: List[str]) -> Snapshot:
         """Create a Snapshot from NVRs using ``elliott snapshot new --builds-file``."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
             for nvr in nvrs:
@@ -329,7 +301,7 @@ class GolangBuilderShipmentHandler:
             cmd = [
                 "elliott",
                 "--group",
-                golang_group,
+                _ELLIOTT_GOLANG_GROUP,
                 "--assembly",
                 "stream",
                 "snapshot",
@@ -371,7 +343,6 @@ class GolangBuilderShipmentHandler:
         env: str,
         release_plan: str,
         nvrs: List[str],
-        ocp_version: str,
     ) -> str:
         """Write the shipment YAML and open a draft MR in ocp-shipment-data."""
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
@@ -405,8 +376,7 @@ class GolangBuilderShipmentHandler:
             raise RuntimeError("Failed to push shipment data to remote")
 
         mr_title = format_shipment_mr_title(golang_group)
-        mr_description = f"Golang builder shipment for OCP {ocp_version}\n\n"
-        mr_description += f"Group: {golang_group}\n"
+        mr_description = f"Golang builder shipment for {golang_group}\n\n"
         mr_description += f"Environment: {env}\n"
         mr_description += f"ReleasePlan: {release_plan}\n"
         mr_description += f"NVRs: {len(nvrs)}\n"
