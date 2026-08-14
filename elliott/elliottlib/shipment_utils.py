@@ -1,4 +1,5 @@
 import logging
+import re
 from datetime import datetime
 from typing import Dict, Iterable, List, Tuple
 from urllib.parse import urlparse
@@ -16,6 +17,92 @@ from elliottlib.shipment_model import Issue, Issues, ReleaseNotes, ShipmentConfi
 logger = logging.getLogger(__name__)
 
 yaml = new_roundtrip_yaml_handler()
+
+
+# Single source of truth for the public errata URL.
+# verify_docs_approval.py defines the same constant; import from here once that module lands.
+PUBLIC_ERRATA_URL = "https://access.redhat.com/errata"
+
+
+def strip_advisory_cross_reference(text: str, rpm_name: str) -> str:
+    """
+    Remove the RPM advisory cross-reference block from advisory or shipment YAML text.
+
+    Strips the lead-in sentence ("See the following advisory for the RPM packages...")
+    together with the following URL paragraph from the text. Collapses any triple-newlines
+    left behind into a single blank line.
+
+    Handles two layouts:
+    - Sentence appended to a prior paragraph: "prior text. See the following...\n\nhttps://..."
+    - Sentence as its own paragraph: "prior text\n\nSee the following...\n\nhttps://..."
+
+    Arg(s):
+        text (str): freeform advisory/release-notes text to process.
+        rpm_name (str): the RPM advisory's full display name, e.g. "RHBA-2026:44227".
+    Return Value(s):
+        str: text with the cross-reference block removed.
+    """
+    escaped_url = re.escape(f"{PUBLIC_ERRATA_URL}/{rpm_name}")
+    # Strip "See the following advisory for RPM packages..." + blank line + URL line.
+    # " ?" matches the leading space when the sentence is attached to a prior sentence
+    # (" See the following...") without consuming the preceding period.
+    # "[ \t]*" before the URL handles YAML literal-block indentation (the URL line
+    # is indented when the text lives inside a YAML file rather than an ET advisory).
+    pattern = (
+        r" ?See the following advisory for (?:the )?RPM packages[^\n]*\n"
+        r"[ \t]*\n"
+        rf"[ \t]*{escaped_url}[^\n]*"
+    )
+    new_text = re.sub(pattern, "", text)
+    # Fallback: if the URL is still present (unusual format), strip just the URL paragraph.
+    if f"{PUBLIC_ERRATA_URL}/{rpm_name}" in new_text:
+        new_text = re.sub(rf"\n[ \t]*\n[ \t]*{escaped_url}[^\n]*", "", new_text)
+    # Collapse triple-newlines produced by removal.
+    new_text = re.sub(r"\n{3,}", "\n\n", new_text)
+    return new_text
+
+
+def strip_et_advisory_rpm_reference(advisory_num: int, rpm_name: str, dry_run: bool = False) -> bool:
+    """
+    Load an ET advisory, strip the RPM cross-reference from description/solution, and commit.
+
+    Soft-fails on Erratum load/commit errors (logs a warning, returns False).
+
+    Arg(s):
+        advisory_num (int): Numeric Errata Tool advisory ID.
+        rpm_name (str): the RPM advisory's full display name, e.g. "RHBA-2026:44227".
+        dry_run (bool): When True, log what would change but do not commit.
+    Return Value(s):
+        bool: True if the advisory text was (or would have been) changed.
+    """
+    try:
+        advisory = Erratum(errata_id=advisory_num)
+    except Exception as ex:
+        logger.warning("Failed to load ET advisory %s: %s", advisory_num, ex)
+        return False
+
+    updates = {}
+    for field in ("description", "solution"):
+        text = getattr(advisory, field, None)
+        if not text:
+            continue
+        new_text = strip_advisory_cross_reference(text, rpm_name)
+        if new_text != text:
+            updates[field] = new_text
+
+    if not updates:
+        return False
+    if dry_run:
+        logger.info("[DRY-RUN] Would strip RPM reference from ET advisory %s: %s", advisory_num, list(updates))
+        return True
+    try:
+        advisory.update(**updates)
+        advisory.commit()
+        logger.info("Stripped RPM reference from ET advisory %s: %s", advisory_num, list(updates))
+        return True
+    except Exception as ex:
+        logger.warning("Failed to commit ET advisory %s after stripping RPM reference: %s", advisory_num, ex)
+        return False
 
 
 def patch_et_advisory_text(

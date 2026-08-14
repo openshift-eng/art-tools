@@ -1,7 +1,7 @@
 import os
 import unittest
 from datetime import datetime
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 from artcommonlib.model import Model
 from elliottlib import shipment_utils
@@ -800,6 +800,139 @@ class TestGetFullAdvisoryIdFromShipment(unittest.TestCase):
             shipment_utils.get_full_advisory_id_from_shipment(_make_shipment_config("image", live_id=13660)),
             f"RHBA-{year}:13660",
         )
+
+
+class TestStripAdvisoryCrossReference(unittest.TestCase):
+    RPM = "RHBA-2026:44227"
+    URL = f"https://access.redhat.com/errata/{RPM}"
+
+    def test_strips_sentence_attached_to_paragraph(self):
+        text = (
+            "This advisory contains the container images for this release."
+            " See the following advisory for the RPM packages and full list of security fixes for this release:\n"
+            f"\n{self.URL}\n"
+            "\nThis update contains the following images:\n"
+        )
+        result = shipment_utils.strip_advisory_cross_reference(text, self.RPM)
+        self.assertNotIn(self.RPM, result)
+        self.assertIn("This advisory contains the container images for this release.", result)
+        self.assertIn("This update contains the following images:", result)
+
+    def test_strips_sentence_as_own_paragraph(self):
+        text = (
+            f"Intro paragraph.\n\nSee the following advisory for the RPM packages:\n\n{self.URL}\n\nNext paragraph.\n"
+        )
+        result = shipment_utils.strip_advisory_cross_reference(text, self.RPM)
+        self.assertNotIn(self.RPM, result)
+        self.assertIn("Intro paragraph.", result)
+        self.assertIn("Next paragraph.", result)
+
+    def test_no_triple_newlines_after_strip(self):
+        text = f"Para one.\n\nSee the following advisory for the RPM packages:\n\n{self.URL}\n\nPara two.\n"
+        result = shipment_utils.strip_advisory_cross_reference(text, self.RPM)
+        self.assertNotIn("\n\n\n", result)
+
+    def test_unchanged_when_no_reference(self):
+        text = "No advisory reference here.\n\nJust a normal paragraph.\n"
+        result = shipment_utils.strip_advisory_cross_reference(text, self.RPM)
+        self.assertEqual(result, text)
+
+    def test_unchanged_for_different_advisory(self):
+        other_url = "https://access.redhat.com/errata/RHBA-2026:99999"
+        text = f"See the following advisory for the RPM packages:\n\n{other_url}\n\nNext.\n"
+        result = shipment_utils.strip_advisory_cross_reference(text, self.RPM)
+        self.assertIn(other_url, result)
+
+    def test_fallback_strips_bare_url_paragraph(self):
+        # URL present but without the lead-in sentence (unusual format)
+        text = f"Para one.\n\n{self.URL}\n\nPara two.\n"
+        result = shipment_utils.strip_advisory_cross_reference(text, self.RPM)
+        self.assertNotIn(self.RPM, result)
+
+    def test_strips_yaml_indented_content(self):
+        # Mirrors the layout inside a YAML literal block scalar where each line
+        # has leading spaces and blank lines are bare newlines.
+        text = (
+            "      description: |\n"
+            "        Intro paragraph.\n"
+            "\n"
+            "        This advisory contains images. See the following advisory for the RPM packages for this release:\n"
+            "\n"
+            f"        {self.URL}\n"
+            "\n"
+            "        Space precludes documenting all images.\n"
+        )
+        result = shipment_utils.strip_advisory_cross_reference(text, self.RPM)
+        self.assertNotIn(self.RPM, result)
+        self.assertIn("This advisory contains images.", result)
+        self.assertIn("Space precludes documenting all images.", result)
+        # Blank line between the two remaining sentences must be preserved
+        self.assertIn("This advisory contains images.\n\n        Space precludes", result)
+
+
+class TestStripEtAdvisoryRpmReference(unittest.TestCase):
+    RPM = "RHBA-2026:44227"
+    URL = f"https://access.redhat.com/errata/{RPM}"
+
+    def _make_erratum(self, description="", solution=""):
+        m = MagicMock()
+        m.description = description
+        m.solution = solution
+        return m
+
+    @patch("elliottlib.shipment_utils.Erratum")
+    def test_strips_description_and_commits(self, mock_erratum_cls):
+        text = f"Intro. See the following advisory for the RPM packages:\n\n{self.URL}\n\nNext paragraph.\n"
+        advisory = self._make_erratum(description=text)
+        mock_erratum_cls.return_value = advisory
+
+        changed = shipment_utils.strip_et_advisory_rpm_reference(12345, self.RPM, dry_run=False)
+
+        self.assertTrue(changed)
+        advisory.update.assert_called_once()
+        advisory.commit.assert_called_once()
+        updated_description = advisory.update.call_args[1]["description"]
+        self.assertNotIn(self.RPM, updated_description)
+
+    @patch("elliottlib.shipment_utils.Erratum")
+    def test_dry_run_does_not_commit(self, mock_erratum_cls):
+        text = f"See the following advisory for the RPM packages:\n\n{self.URL}\n\nEnd.\n"
+        advisory = self._make_erratum(description=text)
+        mock_erratum_cls.return_value = advisory
+
+        changed = shipment_utils.strip_et_advisory_rpm_reference(12345, self.RPM, dry_run=True)
+
+        self.assertTrue(changed)
+        advisory.update.assert_not_called()
+        advisory.commit.assert_not_called()
+
+    @patch("elliottlib.shipment_utils.Erratum")
+    def test_returns_false_when_no_reference(self, mock_erratum_cls):
+        advisory = self._make_erratum(description="No reference here.")
+        mock_erratum_cls.return_value = advisory
+
+        changed = shipment_utils.strip_et_advisory_rpm_reference(12345, self.RPM)
+
+        self.assertFalse(changed)
+        advisory.update.assert_not_called()
+
+    @patch("elliottlib.shipment_utils.Erratum", side_effect=Exception("not found"))
+    def test_returns_false_on_erratum_load_failure(self, _):
+        changed = shipment_utils.strip_et_advisory_rpm_reference(12345, self.RPM)
+        self.assertFalse(changed)
+
+    @patch("elliottlib.shipment_utils.Erratum")
+    def test_returns_false_on_commit_failure(self, mock_erratum_cls):
+        text = f"See the following advisory for the RPM packages:\n\n{self.URL}\n\nEnd.\n"
+        advisory = self._make_erratum(description=text)
+        advisory.commit.side_effect = Exception("ET unavailable")
+        mock_erratum_cls.return_value = advisory
+
+        changed = shipment_utils.strip_et_advisory_rpm_reference(12345, self.RPM, dry_run=False)
+
+        self.assertFalse(changed)
+        advisory.update.assert_called_once()
+        advisory.commit.assert_called_once()
 
 
 if __name__ == '__main__':

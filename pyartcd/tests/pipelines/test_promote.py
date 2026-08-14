@@ -2547,3 +2547,214 @@ class TestDropEmptyAdvisories(IsolatedAsyncioTestCase):
         self.assertEqual(advisories["rpm"], 100)
         self.assertEqual(advisories["rhcos"], 200)
         self.assertEqual(advisories["image"], 300)
+
+
+class TestFixDocsAfterAdvisoryDrop(IsolatedAsyncioTestCase):
+    """Tests for PromotePipeline._fix_docs_after_advisory_drop and _fix_docs_after_rpm_drop."""
+
+    def _make_pipeline(self, dry_run=False):
+        runtime = MagicMock(
+            config={
+                "build_config": {"ocp_build_data_url": "https://example.com/ocp-build-data.git"},
+                "jira": {"url": JIRA_SERVER_URL},
+            },
+            dry_run=dry_run,
+            logger=MagicMock(),
+            new_slack_client=MagicMock(return_value=AsyncMock()),
+        )
+        runtime.working_dir = Path(tempfile.mkdtemp())
+        return PromotePipeline(runtime, group="openshift-4.10", assembly="4.10.99", signing_env="prod")
+
+    @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
+    async def test_rhcos_drop_is_noop(self, _):
+        pipeline = self._make_pipeline()
+        pipeline._fix_docs_after_rpm_drop = AsyncMock()
+
+        await pipeline._fix_docs_after_advisory_drop(
+            dropped_impetus="rhcos",
+            dropped_advisory=67890,
+            sibling_advisory_ids={"image": 100},
+            shipment_url=None,
+        )
+
+        pipeline._fix_docs_after_rpm_drop.assert_not_called()
+
+    @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
+    async def test_rpm_drop_delegates_to_rpm_helper(self, _):
+        pipeline = self._make_pipeline()
+        pipeline._fix_docs_after_rpm_drop = AsyncMock()
+
+        await pipeline._fix_docs_after_advisory_drop(
+            dropped_impetus="rpm",
+            dropped_advisory=12345,
+            sibling_advisory_ids={"image": 200, "rhcos": 400},
+            shipment_url="https://gitlab.example.com/group/project/-/merge_requests/42",
+        )
+
+        pipeline._fix_docs_after_rpm_drop.assert_awaited_once_with(
+            12345,
+            {"image": 200, "rhcos": 400},
+            "https://gitlab.example.com/group/project/-/merge_requests/42",
+        )
+
+    @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
+    @patch("pyartcd.pipelines.promote.strip_et_advisory_rpm_reference", return_value=True)
+    @patch("pyartcd.pipelines.promote.get_errata_live_id", return_value="RHBA-2026:44227")
+    async def test_rpm_drop_strips_et_advisories(self, mock_live_id, mock_strip, _):
+        pipeline = self._make_pipeline()
+
+        await pipeline._fix_docs_after_rpm_drop(
+            rpm_advisory=12345,
+            sibling_advisory_ids={"image": 200, "rhcos": 400},
+            shipment_url=None,
+        )
+
+        mock_live_id.assert_called_once_with(12345)
+        # Should strip from image and rhcos
+        self.assertEqual(mock_strip.call_count, 2)
+        calls = {c.args[0] for c in mock_strip.call_args_list}
+        self.assertEqual(calls, {200, 400})
+
+    @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
+    @patch("pyartcd.pipelines.promote.strip_et_advisory_rpm_reference", return_value=False)
+    @patch("pyartcd.pipelines.promote.get_errata_live_id", return_value="RHBA-2026:44227")
+    async def test_rpm_drop_skips_absent_sibling(self, mock_live_id, mock_strip, _):
+        """If rhcos advisory is absent (0 or missing), don't attempt to strip it."""
+        pipeline = self._make_pipeline()
+
+        await pipeline._fix_docs_after_rpm_drop(
+            rpm_advisory=12345,
+            sibling_advisory_ids={"image": 200},
+            shipment_url=None,
+        )
+
+        # Only image should be stripped (rhcos absent)
+        self.assertEqual(mock_strip.call_count, 1)
+        self.assertEqual(mock_strip.call_args.args[0], 200)
+
+    @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
+    @patch("pyartcd.pipelines.promote.get_errata_live_id", side_effect=Exception("ET unreachable"))
+    async def test_rpm_drop_aborts_on_name_resolution_failure(self, mock_live_id, _):
+        """If we can't resolve the RPM advisory name, log and return (no strip attempts)."""
+        pipeline = self._make_pipeline()
+
+        # Should not raise
+        await pipeline._fix_docs_after_rpm_drop(
+            rpm_advisory=12345,
+            sibling_advisory_ids={"image": 200},
+            shipment_url=None,
+        )
+
+        mock_live_id.assert_called_once_with(12345)
+
+    @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
+    @patch("pyartcd.pipelines.promote.strip_advisory_cross_reference", return_value="stripped content")
+    @patch("pyartcd.pipelines.promote.strip_et_advisory_rpm_reference", return_value=False)
+    @patch("pyartcd.pipelines.promote.get_errata_live_id", return_value="RHBA-2026:44227")
+    async def test_rpm_drop_updates_shipment_mr_yaml(self, mock_live_id, mock_strip_et, mock_strip_ref, _):
+        pipeline = self._make_pipeline()
+
+        # Minimal valid shipment YAML with a releaseNotes.description containing the RPM URL.
+        # strip_advisory_cross_reference is mocked, so the description content just needs to be non-empty.
+        shipment_yaml_bytes = (
+            b"shipment:\n"
+            b"  data:\n"
+            b"    releaseNotes:\n"
+            b"      description: |\n"
+            b"        Advisory text. See the following advisory for the RPM packages:\n"
+            b"\n"
+            b"        https://access.redhat.com/errata/RHBA-2026:44227\n"
+        )
+
+        mock_file = MagicMock()
+        mock_file.decode.return_value = shipment_yaml_bytes
+        mock_file.save = MagicMock()
+
+        mock_source_project = MagicMock()
+        mock_source_project.files.get.return_value = mock_file
+
+        mock_mr = MagicMock()
+        mock_mr.source_branch = "shipment-branch"
+        mock_mr.source_project_id = 99
+
+        mock_diff_entry = MagicMock()
+        mock_diff_entry.diffs = [
+            {"new_path": "shipment/openshift/openshift-4.10/image.yaml"},
+            {"new_path": "shipment/openshift/openshift-4.10/extras.yaml"},
+        ]
+        mock_diff_info = MagicMock()
+        mock_mr.diffs.list.return_value = [mock_diff_info]
+        mock_mr.diffs.get.return_value = mock_diff_entry
+
+        mock_project = MagicMock()
+        mock_project.mergerequests.get.return_value = mock_mr
+
+        mock_gl = MagicMock()
+        mock_gl.get_project.side_effect = [mock_project, mock_source_project]
+
+        with patch("pyartcd.pipelines.promote.GitLabClient") as mock_gl_cls:
+            mock_gl_cls.from_url.return_value = mock_gl
+
+            await pipeline._fix_docs_after_rpm_drop(
+                rpm_advisory=12345,
+                sibling_advisory_ids={"image": 200},
+                shipment_url="https://gitlab.example.com/group/project/-/merge_requests/42",
+            )
+
+        # strip_advisory_cross_reference called once per file (for the description field)
+        self.assertEqual(mock_strip_ref.call_count, 2)
+        # Both files saved to MR branch
+        self.assertEqual(mock_file.save.call_count, 2)
+
+    @patch("pyartcd.jira_client.JIRAClient.from_url", return_value=None)
+    @patch("pyartcd.pipelines.promote.strip_advisory_cross_reference", return_value="stripped content")
+    @patch("pyartcd.pipelines.promote.strip_et_advisory_rpm_reference", return_value=False)
+    @patch("pyartcd.pipelines.promote.get_errata_live_id", return_value="RHBA-2026:44227")
+    async def test_rpm_drop_dry_run_does_not_save_shipment_mr(self, mock_live_id, mock_strip_et, mock_strip_ref, _):
+        pipeline = self._make_pipeline(dry_run=True)
+
+        shipment_yaml_bytes = (
+            b"shipment:\n"
+            b"  data:\n"
+            b"    releaseNotes:\n"
+            b"      description: |\n"
+            b"        Advisory text. See the following advisory for the RPM packages:\n"
+            b"\n"
+            b"        https://access.redhat.com/errata/RHBA-2026:44227\n"
+        )
+
+        mock_file = MagicMock()
+        mock_file.decode.return_value = shipment_yaml_bytes
+        mock_file.save = MagicMock()
+
+        mock_source_project = MagicMock()
+        mock_source_project.files.get.return_value = mock_file
+
+        mock_mr = MagicMock()
+        mock_mr.source_branch = "shipment-branch"
+        mock_mr.source_project_id = 99
+
+        mock_diff_entry = MagicMock()
+        mock_diff_entry.diffs = [
+            {"new_path": "shipment/openshift/openshift-4.10/image.yaml"},
+        ]
+        mock_diff_info = MagicMock()
+        mock_mr.diffs.list.return_value = [mock_diff_info]
+        mock_mr.diffs.get.return_value = mock_diff_entry
+
+        mock_project = MagicMock()
+        mock_project.mergerequests.get.return_value = mock_mr
+
+        mock_gl = MagicMock()
+        mock_gl.get_project.side_effect = [mock_project, mock_source_project]
+
+        with patch("pyartcd.pipelines.promote.GitLabClient") as mock_gl_cls:
+            mock_gl_cls.from_url.return_value = mock_gl
+
+            await pipeline._fix_docs_after_rpm_drop(
+                rpm_advisory=12345,
+                sibling_advisory_ids={"image": 200},
+                shipment_url="https://gitlab.example.com/group/project/-/merge_requests/42",
+            )
+
+        mock_file.save.assert_not_called()
