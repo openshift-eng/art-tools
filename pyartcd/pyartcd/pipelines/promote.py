@@ -43,14 +43,19 @@ from doozerlib.cli.release_gen_payload import (
 )
 from elliottlib.errata import get_builds, get_errata_live_id
 from elliottlib.shipment_utils import (
+    PUBLIC_ERRATA_URL,
     get_full_advisory_id_from_shipment,
     get_shipment_config_from_mr,
     get_shipment_configs_from_mr,
     patch_et_advisory_text,
+    strip_advisory_cross_reference,
+    strip_et_advisory_rpm_reference,
 )
 from github import GithubException
 from ruamel.yaml import YAML
+from ruamel.yaml.error import YAMLError
 from ruamel.yaml.parser import ParserError
+from ruamel.yaml.scalarstring import LiteralScalarString
 from semver import VersionInfo
 from tenacity import (
     RetryCallState,
@@ -81,6 +86,10 @@ from pyartcd.signatory import AsyncSignatory, SigstoreSignatory
 
 yaml = YAML(typ="safe")
 yaml.default_flow_style = False
+
+# Advisory impetuses that are legitimately empty and therefore droppable.
+# _fix_docs_after_advisory_drop dispatch must stay in sync with this set.
+_DROPPABLE_IMPETUSES: tuple[str, ...] = ("rpm", "rhcos")
 
 # YAML handler for shipment config dumping
 shipment_yaml = YAML()
@@ -322,7 +331,10 @@ class PromotePipeline:
             if assembly_type == AssemblyTypes.STANDARD:
                 # Check for empty advisories (no builds attached) and drop them
                 # before attempting to move to QE, which would fail for empty advisories.
-                await self._drop_empty_advisories(impetus_advisories)
+                await self._drop_empty_advisories(
+                    impetus_advisories,
+                    shipment_url=(group_config.get("shipment") or {}).get("url"),
+                )
 
                 # Attempt to move all advisories to QE
                 tasks_with_args = []
@@ -387,7 +399,7 @@ class PromotePipeline:
             if assembly_type in [AssemblyTypes.STANDARD, AssemblyTypes.CANDIDATE]:
                 if not full_advisory_id:
                     raise VerificationError("Could not find live ID from image advisory. Please investigate.")
-                errata_url = f"https://access.redhat.com/errata/{full_advisory_id}"  # don't quote
+                errata_url = f"{PUBLIC_ERRATA_URL}/{full_advisory_id}"  # don't quote
                 logger.info("Using errata URL: %s", errata_url)
 
             # Verify attached bugs
@@ -1400,7 +1412,7 @@ class PromotePipeline:
         async with self._elliott_lock:
             await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars, stdout=sys.stderr)
 
-    async def _drop_empty_advisories(self, impetus_advisories: Dict[str, int]):
+    async def _drop_empty_advisories(self, impetus_advisories: Dict[str, int], shipment_url: str | None = None):
         """Check advisories that may legitimately have no builds and drop them.
 
         RPM and RHCOS advisories can end up empty in z-stream releases when
@@ -1410,10 +1422,12 @@ class PromotePipeline:
         Dropped advisories are removed from *impetus_advisories* so they
         are skipped by the QE loop and not leaked into downstream
         notifications or repository updates.
+
+        When an advisory is dropped, stale cross-references are cleaned up in
+        sibling ET advisories and the shipment MR (best-effort).
         """
         logger = self._logger
-        # Only rpm and rhcos advisories can legitimately be empty
-        droppable_impetuses = ("rpm", "rhcos")
+        droppable_impetuses = _DROPPABLE_IMPETUSES
 
         for impetus in droppable_impetuses:
             advisory = impetus_advisories.get(impetus, 0)
@@ -1424,6 +1438,26 @@ class PromotePipeline:
                 dropped = await self._check_and_drop_empty_advisory(impetus, advisory)
                 if dropped:
                     del impetus_advisories[impetus]
+                    try:
+                        await self._fix_docs_after_advisory_drop(
+                            dropped_impetus=impetus,
+                            dropped_advisory=advisory,
+                            sibling_advisory_ids=dict(impetus_advisories),
+                            shipment_url=shipment_url,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Failed to clean up cross-references after dropping %s advisory %s; continuing",
+                            impetus,
+                            advisory,
+                        )
+                        try:
+                            await self._slack_client.say_in_thread(
+                                f"Warning: failed to clean up cross-references after dropping {impetus} advisory "
+                                f"{advisory}. Manual cleanup may be required. Details in log."
+                            )
+                        except Exception:
+                            logger.exception("Failed to send Slack notification for cleanup failure")
             except Exception:
                 logger.exception("Failed to check/drop %s advisory %s; will still attempt QE move", impetus, advisory)
                 try:
@@ -1482,6 +1516,173 @@ class PromotePipeline:
         """
         builds = await to_thread(get_builds, advisory)
         return any(pv_data.get("builds") for pv_data in builds.values()) if builds else False
+
+    async def _fix_docs_after_advisory_drop(
+        self,
+        dropped_impetus: str,
+        dropped_advisory: int,
+        sibling_advisory_ids: dict[str, int],
+        shipment_url: str | None,
+    ) -> None:
+        """
+        Clean up stale cross-references after an advisory is dropped.
+
+        When an RPM advisory is dropped, surviving ET advisories (image, rhcos) and
+        the shipment MR YAML still reference it.  This method strips those references
+        so that verify-docs-approval passes without manual intervention.
+
+        When the RHCOS advisory is dropped nothing references it, so this is a no-op.
+
+        :param dropped_impetus: Advisory impetus that was dropped; must be a member of
+            ``_DROPPABLE_IMPETUSES`` ("rpm" or "rhcos").  Extend that constant and this
+            dispatch together when new droppable impetuses are introduced.
+        :param dropped_advisory: Numeric advisory ID of the dropped advisory.
+        :param sibling_advisory_ids: Remaining {impetus: advisory_num} after the drop.
+        :param shipment_url: Shipment MR URL, or None if using classic ET advisories only.
+        """
+        if dropped_impetus == "rhcos":
+            self._logger.info("RHCOS advisory %s dropped; no cross-references to clean up.", dropped_advisory)
+            return
+        if dropped_impetus == "rpm":
+            await self._fix_docs_after_rpm_drop(dropped_advisory, sibling_advisory_ids, shipment_url)
+            return
+        self._logger.info(
+            "%s advisory %s dropped; cross-reference cleanup not implemented for this impetus.",
+            dropped_impetus,
+            dropped_advisory,
+        )
+
+    async def _fix_docs_after_rpm_drop(
+        self,
+        rpm_advisory: int,
+        sibling_advisory_ids: dict[str, int],
+        shipment_url: str | None,
+    ) -> None:
+        """
+        Strip RPM advisory cross-references from sibling ET advisories and the shipment MR.
+
+        Fetches the RPM advisory's display name (e.g. "RHBA-2026:44227"), then:
+        - For each surviving sibling ET advisory (image, rhcos): strips the lead-in
+          sentence and URL from description/solution and commits.
+        - If a shipment MR URL is present: strips the URL from each YAML file's
+          description/solution fields and commits to the MR source branch.
+
+        :param rpm_advisory: Numeric advisory ID of the dropped RPM advisory.
+        :param sibling_advisory_ids: Remaining {impetus: advisory_num} after the drop.
+        :param shipment_url: Shipment MR URL, or None if using classic ET advisories only.
+        """
+        logger = self._logger
+        dry_run = self.runtime.dry_run
+
+        # Resolve the RPM advisory's display name so we know what text to strip.
+        try:
+            rpm_name = await to_thread(get_errata_live_id, rpm_advisory)
+        except Exception as ex:
+            logger.warning(
+                "Could not resolve display name for RPM advisory %s; skipping cross-reference cleanup: %s",
+                rpm_advisory,
+                ex,
+            )
+            return
+
+        logger.info("Stripping cross-references to dropped RPM advisory %s from sibling advisories.", rpm_name)
+
+        # Strip from sibling ET advisories (image, rhcos).
+        et_impetuses = ("image", "rhcos")
+        for impetus in et_impetuses:
+            advisory_num = sibling_advisory_ids.get(impetus, 0)
+            if not advisory_num or advisory_num <= 0:
+                continue
+            changed = await to_thread(strip_et_advisory_rpm_reference, advisory_num, rpm_name, dry_run)
+            if changed:
+                logger.info("Stripped RPM reference from %s advisory %s.", impetus, advisory_num)
+            else:
+                logger.info("No RPM cross-reference found in %s advisory %s; nothing to strip.", impetus, advisory_num)
+
+        # Strip from shipment MR YAML (image and extras files).
+        if not shipment_url:
+            return
+
+        parsed_url = urlparse(shipment_url)
+        target_project_path = parsed_url.path.strip("/").split("/-/merge_requests")[0]
+        mr_id = parsed_url.path.split("/")[-1]
+
+        gl = GitLabClient.from_url(shipment_url, dry_run=dry_run)
+        project = gl.get_project(target_project_path)
+        mr = project.mergerequests.get(mr_id)
+        source_project = gl.get_project(mr.source_project_id)
+
+        diff_versions = mr.diffs.list(all=True)
+        if not diff_versions:
+            logger.info("Shipment MR %s has no diff versions; nothing to strip.", shipment_url)
+            return
+        diff = mr.diffs.get(diff_versions[0].id)
+
+        # file_path -> (file_obj, new_content); file_obj kept to avoid a second fetch on write.
+        files_to_update: dict[str, tuple] = {}
+        for file_diff in diff.diffs:
+            file_path = file_diff.get("new_path") or file_diff.get("old_path")
+            if not file_path or not file_path.endswith((".yaml", ".yml")):
+                continue
+            path_parts = file_path.split("/")
+            if len(path_parts) < 4 or path_parts[0] != "shipment" or path_parts[2] != self.group:
+                continue
+            filename = file_path.split("/")[-1].replace(".yaml", "").replace(".yml", "")
+            if not any(kind in filename for kind in ("image", "extras")):
+                continue
+
+            file_obj = source_project.files.get(file_path, mr.source_branch)
+            original_str = file_obj.decode().decode("utf-8")
+
+            # Parse and modify only releaseNotes.description / .solution so
+            # the rest of the YAML (including blank lines inside other block
+            # scalars) is never touched.
+            try:
+                doc = shipment_yaml.load(original_str)
+                release_notes = doc["shipment"]["data"]["releaseNotes"]
+            except YAMLError as ex:
+                logger.warning("Shipment file %s: could not parse YAML; skipping: %s", file_path, ex)
+                continue
+            except (KeyError, TypeError):
+                logger.info("Shipment file %s: no releaseNotes section; skipping.", file_path)
+                continue
+
+            field_changed = False
+            for field in ("description", "solution"):
+                value = release_notes.get(field)
+                if not value:
+                    continue
+                stripped = strip_advisory_cross_reference(str(value), rpm_name)
+                if stripped == str(value):
+                    continue
+                release_notes[field] = (
+                    LiteralScalarString(stripped) if isinstance(value, LiteralScalarString) else stripped
+                )
+                field_changed = True
+
+            if not field_changed:
+                logger.info("Shipment file %s: no RPM cross-reference found; nothing to strip.", file_path)
+                continue
+
+            stream = io.StringIO()
+            shipment_yaml.dump(doc, stream)
+            files_to_update[file_path] = (file_obj, stream.getvalue())
+            logger.info("Shipment file %s: stripped RPM reference to %s.", file_path, rpm_name)
+
+        if not files_to_update:
+            return
+
+        if dry_run:
+            logger.info("[DRY-RUN] Would update shipment MR files: %s", list(files_to_update))
+            return
+
+        for file_path, (file_obj, content) in files_to_update.items():
+            file_obj.content = content
+            file_obj.save(
+                branch=mr.source_branch,
+                commit_message=f"Remove stale RPM advisory cross-reference ({rpm_name}) after advisory drop",
+            )
+            logger.info("Updated %s in shipment MR branch %s.", file_path, mr.source_branch)
 
     async def check_blocker_bugs(self):
         # Note: --assembly option should always be "stream". We are checking blocker bugs for this release branch regardless of the sweep cutoff timestamp.
