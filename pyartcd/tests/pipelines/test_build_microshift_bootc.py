@@ -89,6 +89,79 @@ class TestBuildMicroShiftBootcPipeline(IsolatedAsyncioTestCase):
         written_filepath = pipeline.shipment_data_repo.write_file.call_args[0][0]
         expected_filename = f"{self.assembly}.microshift-bootc.{existing_timestamp}.yaml"
         self.assertTrue(str(written_filepath).endswith(expected_filename))
+        # env defaults to prod when not provided
+        self.assertIn(f"/prod/{self.assembly}.microshift-bootc", str(written_filepath))
+
+    @patch('pyartcd.pipelines.build_microshift_bootc.get_github_client_for_org')
+    async def test_update_shipment_data_uses_env_for_directory(self, mock_get_client):
+        """
+        Test that the shipment file is written under the directory of the given env (e.g. stage)
+        """
+        # given
+        pipeline = BuildMicroShiftBootcPipeline(
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+            force=False,
+            force_plashet_sync=False,
+            prepare_shipment=True,
+            data_path="https://github.com/openshift-eng/ocp-build-data",
+            slack_client=self.mock_slack_client,
+        )
+
+        pipeline.shipment_data_repo = Mock()
+        pipeline.shipment_data_repo._directory = self.runtime.working_dir
+        pipeline.shipment_data_repo.write_file = AsyncMock()
+        pipeline.shipment_data_repo.add_all = AsyncMock()
+        pipeline.shipment_data_repo.log_diff = AsyncMock()
+        pipeline.shipment_data_repo.commit_push = AsyncMock(return_value=True)
+
+        mock_shipment_config = Mock()
+        mock_shipment_config.shipment.metadata.product = "ocp"
+        mock_shipment_config.shipment.metadata.group = self.group
+        mock_shipment_config.shipment.metadata.application = "ocp-art-tenant"
+        mock_shipment_config.model_dump = Mock(return_value={"shipment": {}})
+
+        timestamp = "20260129004538"
+        source_branch = f"prepare-microshift-bootc-shipment-{self.assembly}-{timestamp}"
+
+        # when
+        await pipeline._update_shipment_data(mock_shipment_config, "Test commit", source_branch, "stage")
+
+        # then
+        pipeline.shipment_data_repo.write_file.assert_called_once()
+        written_filepath = pipeline.shipment_data_repo.write_file.call_args[0][0]
+        self.assertIn(f"/stage/{self.assembly}.microshift-bootc", str(written_filepath))
+
+    def _make_pipeline_with_group_config(self, group_config: dict) -> BuildMicroShiftBootcPipeline:
+        pipeline = BuildMicroShiftBootcPipeline(
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+            force=False,
+            force_plashet_sync=False,
+            prepare_shipment=True,
+            data_path="https://github.com/openshift-eng/ocp-build-data",
+            slack_client=self.mock_slack_client,
+        )
+        pipeline.releases_config = Model({"releases": {self.assembly: {"assembly": {"group": group_config}}}})
+        return pipeline
+
+    def test_resolve_shipment_env_defaults_to_prod(self):
+        """No env anywhere -> prod"""
+        pipeline = self._make_pipeline_with_group_config({})
+        self.assertEqual(pipeline._resolve_shipment_env(), "prod")
+
+    def test_resolve_shipment_env_follows_standard_shipment(self):
+        """Follow the standard shipment env (e.g. stage for ec/rc)"""
+        pipeline = self._make_pipeline_with_group_config({"shipment": {"env": "stage"}})
+        self.assertEqual(pipeline._resolve_shipment_env(), "stage")
+
+    def test_resolve_shipment_env_raises_on_invalid(self):
+        """Invalid env value raises"""
+        pipeline = self._make_pipeline_with_group_config({"shipment": {"env": "bogus"}})
+        with self.assertRaises(ValueError):
+            pipeline._resolve_shipment_env()
 
     @patch('pyartcd.pipelines.build_microshift_bootc.GitLabClient')
     @patch('pyartcd.pipelines.build_microshift_bootc.get_github_client_for_org')
