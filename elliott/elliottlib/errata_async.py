@@ -90,6 +90,10 @@ class AsyncErrataAPI:
         path = f"/api/v1/erratum/{quote(str(advisory))}"
         return await self._make_request(aiohttp.hdrs.METH_GET, path)
 
+    async def refresh_security_alerts(self, advisory_id: int) -> Dict:
+        path = f"/api/v1/erratum/{advisory_id}/security_alerts/refresh"
+        return await self._make_request(aiohttp.hdrs.METH_POST, path)
+
     async def reserve_live_id(self) -> str:
         path = "/api/v1/advisory/reserve_live_id"
         result = await self._make_request(aiohttp.hdrs.METH_POST, path)

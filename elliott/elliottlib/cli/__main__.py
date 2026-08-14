@@ -79,6 +79,7 @@ from elliottlib.cli.verify_image_grades_cli import verify_image_grades_cli
 from elliottlib.cli.verify_kernel_tag_cli import verify_kernel_tag_cli
 from elliottlib.cli.verify_payload import verify_payload
 from elliottlib.cli.verify_qe_qualifier_cli import verify_qe_qualifier_cli
+from elliottlib.cli.verify_security_alerts_cli import verify_security_alerts_cli
 from elliottlib.cli.verify_signatures_cli import verify_signatures_cli
 from elliottlib.exceptions import ElliottFatalError
 from elliottlib.util import pbar_header, progress_func
@@ -329,6 +330,7 @@ cli.add_command(watch_release_cli)
 cli.add_command(find_bugs_second_fix_cli)
 cli.add_command(process_release_from_fbc_bugs_cli)
 cli.add_command(verify_cdn_push_cli)
+cli.add_command(verify_security_alerts_cli)
 cli.add_command(verify_signatures_cli)
 cli.add_command(verify_image_grades_cli)
 cli.add_command(verify_qe_qualifier_cli)
