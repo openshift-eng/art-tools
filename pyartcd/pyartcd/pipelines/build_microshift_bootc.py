@@ -584,6 +584,12 @@ class BuildMicroShiftBootcPipeline:
         """
         bootc_image_name = variant["image_name"]
         el_target = variant["el_target"]
+
+        # Use a variant-specific doozer working directory to prevent race conditions
+        # when building multiple variants in parallel
+        doozer_env = self._doozer_env_vars.copy()
+        doozer_env["DOOZER_WORKING_DIR"] = str(self._working_dir / f"doozer-working-{el_target}")
+
         major, minor = self._ocp_version
 
         # Check if an image is already pinned and don't rebuild unless forced
@@ -669,7 +675,7 @@ class BuildMicroShiftBootcPipeline:
         ]
         if not self.runtime.dry_run:
             rebase_cmd.append("--push")
-        await exectools.cmd_assert_async(rebase_cmd, env=self._doozer_env_vars)
+        await exectools.cmd_assert_async(rebase_cmd, env=doozer_env)
 
         build_cmd = [
             "doozer",
@@ -702,7 +708,7 @@ class BuildMicroShiftBootcPipeline:
         )
         if self.runtime.dry_run:
             build_cmd.append("--dry-run")
-        await exectools.cmd_assert_async(build_cmd, env=self._doozer_env_vars)
+        await exectools.cmd_assert_async(build_cmd, env=doozer_env)
 
         # sleep a little bit to account for time drift between systems
         await asyncio.sleep(10)
