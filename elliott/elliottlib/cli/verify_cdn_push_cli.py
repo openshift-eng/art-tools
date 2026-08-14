@@ -56,17 +56,14 @@ class AdvisoryPushResult:
 @dataclass
 class VerifyCdnPushResult:
     advisories: list[AdvisoryPushResult] = field(default_factory=list)
-    errors: list[str] = field(default_factory=list)
 
     @property
     def complete(self) -> bool:
-        if self.errors:
-            return False
         return bool(self.advisories) and all(a.complete for a in self.advisories)
 
     @property
     def failed(self) -> bool:
-        return bool(self.errors) or any(a.failed for a in self.advisories)
+        return any(a.failed for a in self.advisories)
 
 
 def parse_push_jobs(raw_jobs: list) -> list[PushJobInfo]:
@@ -189,7 +186,6 @@ def render_result(result: VerifyCdnPushResult, output: str) -> str:
                     }
                     for a in result.advisories
                 ],
-                "errors": result.errors,
             },
             indent=2,
         )
@@ -205,12 +201,6 @@ def render_result(result: VerifyCdnPushResult, output: str) -> str:
         for j in a.push_jobs:
             lines.append(f"    {j.target}: {j.status} (job {j.job_id})")
     lines.append("")
-
-    if result.errors:
-        lines.append("Errors:")
-        for err in result.errors:
-            lines.append(f"  - {err}")
-        lines.append("")
 
     overall = "COMPLETE" if result.complete else ("FAIL" if result.failed else "PENDING")
     lines.append(f"Overall: {overall}")
