@@ -1006,10 +1006,13 @@ class ImagesHealthPipeline:
                 '     - File PR for review',
                 '     - *Attribute PR to bot itself* (do not attempt to resolve GitHub username from Slack profile)',
                 '     - *PR description MUST include:*',
-                '       - Clickable URL to successful Jenkins test build (full `https://` URL to the build, not just the job path or a text description)',
+                '       - Clickable URL to successful Jenkins test build — use the full Jenkins URL'
+                ' (e.g. `https://art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com/job/aos-cd-builds/job/build%252Focp4-konflux/BUILD_NUMBER/`),'
+                ' not just the job name and build number as text',
                 '       - Clickable URL to this Slack thread (full `https://` URL, not just the channel name)',
                 '6. If confidence < 90% or fix requires upstream changes:',
                 '   - Output diagnostic report only',
+                '   - Suggest that ART add the `art:bot-skip-auto-fix` label to the Jira ticket tracking the failure, to prevent repeated automated investigation',
                 '   - Defer to human intervention',
                 '\n*All fixes must be ocp-build-data metadata changes only.*',
             ]
