@@ -882,6 +882,10 @@ class BuildMicroShiftBootcPipeline:
         assembly_shipment_config = self.assembly_group_config.get("microshift_bootc_shipment", {})
         had_existing_url = bool(assembly_shipment_config.get("url"))
 
+        # Determine the target environment (stage/prod) from the assembly definition.
+        env = self._resolve_shipment_env()
+        self._logger.info("Preparing microshift-bootc shipment for env: %s", env)
+
         # Step 4: Log all builds
         for image_name, build in builds.items():
             self._logger.info("Using bootc build for %s: %s", image_name, build.nvr)
@@ -893,7 +897,7 @@ class BuildMicroShiftBootcPipeline:
         shipment_config.shipment.snapshot = snapshot
 
         # Step 6: Create shipment MR
-        self.shipment_mr_url = await self._create_shipment_mr(shipment_config)
+        self.shipment_mr_url = await self._create_shipment_mr(shipment_config, env)
 
         if self.shipment_mr_url:
             await self.slack_client.say_in_thread(f"Shipment MR created: {self.shipment_mr_url}")
@@ -904,6 +908,18 @@ class BuildMicroShiftBootcPipeline:
                 await self._create_or_update_build_data_pr()
         else:
             await self.slack_client.say_in_thread("No changes in shipment data. MR was not created or updated.")
+
+    def _resolve_shipment_env(self) -> str:
+        """Resolve the target shipment environment (stage/prod) from the assembly definition.
+
+        Follows the assembly's standard ``shipment`` env so bootc tracks the same environment as
+        the rest of the release. gen-assembly sets ``shipment.env=stage`` for ec/rc (preview/
+        candidate) assemblies. Defaults to prod when unspecified.
+        """
+        env = self.assembly_group_config.get("shipment", {}).get("env") or "prod"
+        if env not in ("prod", "stage"):
+            raise ValueError("shipment config `env` should be either `prod` or `stage`")
+        return env
 
     async def _set_shipment_mr_ready(self):
         """
@@ -1165,8 +1181,11 @@ class BuildMicroShiftBootcPipeline:
 
         self._logger.info("Shipment data repository setup completed")
 
-    async def _create_shipment_mr(self, shipment_config: ShipmentConfig) -> str | None:
-        """Create or update shipment MR with the given shipment config. Returns None if no changes."""
+    async def _create_shipment_mr(self, shipment_config: ShipmentConfig, env: str = "prod") -> str | None:
+        """Create or update shipment MR with the given shipment config. Returns None if no changes.
+
+        :param env: The target environment (prod or stage) that determines the shipment file directory.
+        """
         self._logger.info("Creating or updating shipment MR...")
 
         target_branch = "main"
@@ -1187,7 +1206,7 @@ class BuildMicroShiftBootcPipeline:
         # Update shipment data repo with shipment config
         release_name = get_release_name_for_assembly(self.group, self.releases_config, self.assembly)
         commit_message = f"Add microshift-bootc shipment configuration for {release_name}"
-        updated = await self._update_shipment_data(shipment_config, commit_message, source_branch)
+        updated = await self._update_shipment_data(shipment_config, commit_message, source_branch, env)
         if not updated:
             self._logger.info("No changes in shipment data. MR will not be created or updated.")
             return None
@@ -1238,8 +1257,13 @@ class BuildMicroShiftBootcPipeline:
 
         return mr_url
 
-    async def _update_shipment_data(self, shipment_config: ShipmentConfig, commit_message: str, branch: str) -> bool:
-        """Update shipment data repo with the given shipment config file"""
+    async def _update_shipment_data(
+        self, shipment_config: ShipmentConfig, commit_message: str, branch: str, env: str = "prod"
+    ) -> bool:
+        """Update shipment data repo with the given shipment config file
+
+        :param env: The target environment (prod or stage) that determines the shipment file directory.
+        """
         # Extract timestamp from branch name (last segment after splitting by "-")
         # Branch format: prepare-microshift-bootc-shipment-{assembly}-{timestamp}
         timestamp = branch.split("-")[-1]
@@ -1247,7 +1271,6 @@ class BuildMicroShiftBootcPipeline:
         product = shipment_config.shipment.metadata.product
         group = shipment_config.shipment.metadata.group
         application = shipment_config.shipment.metadata.application
-        env = "prod"  # Default to prod for microshift-bootc shipments
 
         relative_target_dir = Path("shipment") / product / group / application / env
         target_dir = self.shipment_data_repo._directory / relative_target_dir
