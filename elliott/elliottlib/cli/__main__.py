@@ -76,6 +76,7 @@ from elliottlib.cli.verify_attached_operators_cli import verify_attached_operato
 from elliottlib.cli.verify_cdn_push_cli import verify_cdn_push_cli
 from elliottlib.cli.verify_cvp_cli import verify_cvp_cli
 from elliottlib.cli.verify_image_grades_cli import verify_image_grades_cli
+from elliottlib.cli.verify_kernel_tag_cli import verify_kernel_tag_cli
 from elliottlib.cli.verify_payload import verify_payload
 from elliottlib.cli.verify_qe_qualifier_cli import verify_qe_qualifier_cli
 from elliottlib.cli.verify_signatures_cli import verify_signatures_cli
@@ -331,6 +332,7 @@ cli.add_command(verify_cdn_push_cli)
 cli.add_command(verify_signatures_cli)
 cli.add_command(verify_image_grades_cli)
 cli.add_command(verify_qe_qualifier_cli)
+cli.add_command(verify_kernel_tag_cli)
 
 # -----------------------------------------------------------------------------
 # CLI Entry point
