@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
@@ -33,17 +34,14 @@ class AdvisoryAlertResult:
 @dataclass
 class VerifySecurityAlertsResult:
     advisories: list[AdvisoryAlertResult] = field(default_factory=list)
-    errors: list[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
-        if self.errors:
-            return False
         return all(a.ok for a in self.advisories)
 
     @property
     def failed(self) -> bool:
-        return bool(self.errors) or any(a.failed for a in self.advisories)
+        return any(a.failed for a in self.advisories)
 
 
 def get_errata_type(advisory_data: dict) -> str:
@@ -99,9 +97,11 @@ async def verify_security_alerts(advisories: dict[str, int]) -> VerifySecurityAl
     result = VerifySecurityAlertsResult()
 
     async with AsyncErrataAPI() as api:
-        for impetus, advisory_id in advisories.items():
-            ar = await check_advisory_security_alerts(api, advisory_id, impetus)
-            result.advisories.append(ar)
+        tasks = [
+            check_advisory_security_alerts(api, advisory_id, impetus) for impetus, advisory_id in advisories.items()
+        ]
+        results = await asyncio.gather(*tasks)
+        result.advisories.extend(results)
 
     return result
 
@@ -123,7 +123,6 @@ def render_result(result: VerifySecurityAlertsResult, output: str) -> str:
                     }
                     for a in result.advisories
                 ],
-                "errors": result.errors,
             },
             indent=2,
         )
@@ -140,12 +139,6 @@ def render_result(result: VerifySecurityAlertsResult, output: str) -> str:
         else:
             lines.append(f"  Advisory {a.advisory_id} ({a.impetus}): OK")
     lines.append("")
-
-    if result.errors:
-        lines.append("Errors:")
-        for err in result.errors:
-            lines.append(f"  - {err}")
-        lines.append("")
 
     overall = "OK" if result.ok else "FAIL"
     lines.append(f"Overall: {overall}")

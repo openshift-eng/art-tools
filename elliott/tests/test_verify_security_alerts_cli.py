@@ -55,11 +55,6 @@ class TestVerifySecurityAlertsResult(TestCase):
         self.assertFalse(r.ok)
         self.assertTrue(r.failed)
 
-    def test_global_errors(self):
-        r = VerifySecurityAlertsResult(errors=["oops"])
-        self.assertFalse(r.ok)
-        self.assertTrue(r.failed)
-
 
 class TestGetErrataType(TestCase):
     def test_rhsa(self):
