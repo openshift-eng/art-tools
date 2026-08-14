@@ -265,13 +265,13 @@ class TestKonfluxOkdPipeline(IsolatedAsyncioTestCase):
             self.assertEqual(second_call[1]['source_pullspec'], 'custom-namespace/scos-5.0:stream-coreos-extensions')
             self.assertEqual(second_call[1]['target_tag'], 'custom-namespace/scos-4.23-art:stream-coreos-extensions')
 
-    async def test_mirror_coreos_imagestreams_skipped_for_release_managed_versions(self):
+    async def test_mirror_coreos_imagestreams_uses_same_version_source(self):
         """
-        Test that CoreOS mirroring is skipped for versions whose openshift/release CI config
-        promotes stream-coreos directly to the -art namespace.
+        Test that CoreOS mirroring uses the version's own scos stream as source for every
+        version except the 4.23 special case (which has no dedicated scos-4.23 stream).
         """
 
-        for version in ['4.21', '4.22', '5.0']:
+        for version in ['4.21', '4.22', '5.0', '5.1']:
             with self.subTest(version=version):
                 pipeline = KonfluxOkdPipeline(
                     runtime=self.mock_runtime,
@@ -296,9 +296,25 @@ class TestKonfluxOkdPipeline(IsolatedAsyncioTestCase):
                         'image_tag': 'latest',
                     }
                 ]
-                with patch.object(pipeline, '_tag_image_to_stream', new_callable=AsyncMock) as mock_tag:
+                with (
+                    patch.object(pipeline, '_tag_image_to_stream', new_callable=AsyncMock) as mock_tag,
+                    patch('pyartcd.pipelines.okd.jenkins'),
+                ):
                     await pipeline.mirror_coreos_imagestreams()
-                    mock_tag.assert_not_called()
+
+                    self.assertEqual(mock_tag.call_count, 2)
+
+                    first_call = mock_tag.call_args_list[0]
+                    self.assertEqual(first_call[1]['source_pullspec'], f'origin/scos-{version}:stream-coreos')
+                    self.assertEqual(first_call[1]['target_tag'], f'origin/scos-{version}-art:stream-coreos')
+
+                    second_call = mock_tag.call_args_list[1]
+                    self.assertEqual(
+                        second_call[1]['source_pullspec'], f'origin/scos-{version}:stream-coreos-extensions'
+                    )
+                    self.assertEqual(
+                        second_call[1]['target_tag'], f'origin/scos-{version}-art:stream-coreos-extensions'
+                    )
 
     async def test_mirror_coreos_imagestreams_4_23_uses_5_0_source(self):
         """

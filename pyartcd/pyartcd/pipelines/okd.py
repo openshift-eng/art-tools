@@ -678,9 +678,12 @@ class KonfluxOkdPipeline:
         - origin/scos-{version}:stream-coreos-extensions -> origin/scos-{version}-art:stream-coreos-extensions
 
         Special case:
-        - Only 4.23 needs mirroring (source: scos-5.0 / master branch).
-          All other versions have openshift/release CI configs promoting stream-coreos
-          directly to the -art namespace.
+        - 4.23 has no dedicated scos-4.23 CoreOS stream (master builds 5.0), so it
+          sources CoreOS tags from scos-5.0. Every other version mirrors from its own
+          same-version scos stream.
+
+        Mirroring for all versions makes ART the reliable producer of the CoreOS tags
+        in the -art namespace, independent of openshift/release promotion timing.
         """
 
         if self.assembly != 'stream':
@@ -691,13 +694,10 @@ class KonfluxOkdPipeline:
             self.logger.warning('No images were successfully built; skipping CoreOS imagestream mirroring')
             return
 
-        # Only 4.23 needs mirroring; all other versions are handled by openshift/release CI configs
-        if self.version != '4.23':
-            self.logger.info('Version %s: CoreOS mirroring is handled by openshift/release; skipping', self.version)
-            return
-
         tags_to_mirror = ['stream-coreos', 'stream-coreos-extensions']
-        source_version = '5.0'
+
+        # Only 4.23 is special (no own scos-4.23 stream); everything else uses its own version.
+        source_version = '5.0' if self.version == '4.23' else self.version
 
         if self.runtime.dry_run:
             self.logger.info('[DRY RUN] Would mirror CoreOS imagestream tags')
