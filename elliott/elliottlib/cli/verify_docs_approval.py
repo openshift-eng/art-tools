@@ -47,6 +47,25 @@ def contains_exact_advisory_url(text: str, errata_name: str) -> bool:
     return re.search(pattern, text) is not None
 
 
+def _any_reference_to_advisory(text: str, errata_name: str) -> bool:
+    """
+    Check whether text references the advisory as a URL or a bare name.
+
+    Used by the inverse (does-not-reference) checks to catch both:
+      - URL form: https://access.redhat.com/errata/RHBA-2026:44227
+      - Bare name: RHBA-2026:44227 (without the URL prefix)
+
+    Arg(s):
+        text (str): freeform advisory/release-notes text to search.
+        errata_name (str): the advisory's full display name, e.g. "RHBA-2026:44227".
+    Return Value(s):
+        bool: True if text references that advisory in any form.
+    """
+    if contains_exact_advisory_url(text, errata_name):
+        return True
+    return bool(re.search(rf"(?<![-\w:]){re.escape(errata_name)}(?![-\w:])", text))
+
+
 def contains_advisory_reference(text: str, advisory_type: str, live_id: int) -> bool:
     """
     Check whether text references an advisory by type and live id, for any year.
@@ -271,7 +290,7 @@ def check_image_does_not_reference_dropped_rpm(
     name = "image does not reference dropped rpm"
     if image_release_notes is None or image_release_notes.description is None:
         return CheckResult(name=name, status="skip", detail="image shipment not available")
-    if contains_exact_advisory_url(image_release_notes.description, rpm_dropped_name):
+    if _any_reference_to_advisory(image_release_notes.description, rpm_dropped_name):
         return CheckResult(
             name=name, status="fail", detail=f"image description still references dropped advisory {rpm_dropped_name}"
         )
@@ -297,7 +316,7 @@ def check_rhcos_does_not_reference_dropped_rpm(
     name = "rhcos does not reference dropped rpm"
     if rhcos_text is None:
         return CheckResult(name=name, status="skip", detail="no rhcos advisory configured for this assembly")
-    if contains_exact_advisory_url(rhcos_text, rpm_dropped_name):
+    if _any_reference_to_advisory(rhcos_text, rpm_dropped_name):
         return CheckResult(
             name=name, status="fail", detail=f"rhcos advisory still references dropped advisory {rpm_dropped_name}"
         )
@@ -560,3 +579,7 @@ async def verify_docs_approval(runtime, image_config_path, extras_config_path):
     click.echo(format_report(results))
     if any(r.status == "fail" for r in results):
         raise click.ClickException("One or more docs-approval checks failed")
+    if not any(r.status == "pass" for r in results):
+        raise click.ClickException(
+            "All docs-approval checks were skipped; ensure --image-config and --extras-config are provided"
+        )

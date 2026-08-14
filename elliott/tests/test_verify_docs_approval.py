@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from elliottlib.cli.verify_docs_approval import (
     CheckResult,
+    _any_reference_to_advisory,
     _build_advisory_text,
     _is_dropped,
     _normalize_errata_name,
@@ -316,6 +317,14 @@ def test_check_image_does_not_reference_dropped_rpm_fail():
     assert "RHBA-2026:44227" in result.detail
 
 
+def test_check_image_does_not_reference_dropped_rpm_fail_bare_name():
+    # Advisory referenced by bare name (no URL prefix) must still be detected.
+    image = _release_notes("RHSA", 48676, description="This release resolves RHBA-2026:44227 and other issues.")
+    result = check_image_does_not_reference_dropped_rpm(image, "RHBA-2026:44227")
+    assert result.status == "fail"
+    assert "RHBA-2026:44227" in result.detail
+
+
 def test_check_image_does_not_reference_dropped_rpm_skip_when_no_image():
     result = check_image_does_not_reference_dropped_rpm(None, "RHBA-2026:44227")
     assert result.status == "skip"
@@ -333,9 +342,34 @@ def test_check_rhcos_does_not_reference_dropped_rpm_fail():
     assert "RHBA-2026:44227" in result.detail
 
 
+def test_check_rhcos_does_not_reference_dropped_rpm_fail_bare_name():
+    # Advisory referenced by bare name (no URL prefix) must still be detected.
+    text = "This RHCOS advisory supersedes RHBA-2026:44227."
+    result = check_rhcos_does_not_reference_dropped_rpm(text, "RHBA-2026:44227")
+    assert result.status == "fail"
+    assert "RHBA-2026:44227" in result.detail
+
+
 def test_check_rhcos_does_not_reference_dropped_rpm_skip_when_no_rhcos():
     result = check_rhcos_does_not_reference_dropped_rpm(None, "RHBA-2026:44227")
     assert result.status == "skip"
+
+
+def test_any_reference_to_advisory_url_form():
+    assert _any_reference_to_advisory("See https://access.redhat.com/errata/RHBA-2026:44227 here", "RHBA-2026:44227")
+
+
+def test_any_reference_to_advisory_bare_name():
+    assert _any_reference_to_advisory("resolves RHBA-2026:44227 and other things", "RHBA-2026:44227")
+
+
+def test_any_reference_to_advisory_no_match():
+    assert not _any_reference_to_advisory("no advisory mentioned here", "RHBA-2026:44227")
+
+
+def test_any_reference_to_advisory_embedded_no_match():
+    # Advisory name embedded inside a larger token must not be treated as a reference.
+    assert not _any_reference_to_advisory("prefixRHBA-2026:44227 is not a match", "RHBA-2026:44227")
 
 
 def test_build_advisory_text_handles_none_description():
@@ -375,7 +409,7 @@ def test_format_report_includes_status_and_detail():
 
 class TestRunChecks(unittest.IsolatedAsyncioTestCase):
     """
-    Verify run_checks wires Runtime/assembly-config/errata-tool lookups into the five checks.
+    Verify run_checks wires Runtime/assembly-config/errata-tool lookups into the six checks.
     """
 
     def _make_runtime(self, rpm_advisory_id=170123, rhcos_advisory_id=170124, assembly="4.20.32"):
