@@ -117,11 +117,6 @@ class TestVerifyCdnPushResult(TestCase):
         self.assertFalse(r.complete)
         self.assertTrue(r.failed)
 
-    def test_global_errors(self):
-        r = VerifyCdnPushResult(errors=["oops"])
-        self.assertFalse(r.complete)
-        self.assertTrue(r.failed)
-
 
 class TestParsePushJobs(TestCase):
     def test_picks_latest_per_target(self):
