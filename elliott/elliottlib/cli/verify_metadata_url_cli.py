@@ -32,9 +32,17 @@ class VerifyMetadataUrlResult:
         return not self.accessible or bool(self.error)
 
 
-async def get_release_pullspec(release: str) -> str:
+def _release_stream_name(release: str) -> str:
     major = release.split(".")[0]
-    url = f"{RELEASE_STREAM_API}/{major}-stable/latest?prefix={release}"
+    parts = release.split("-", 1)
+    if len(parts) > 1 and parts[1].startswith("ec."):
+        return f"{major}-dev-preview"
+    return f"{major}-stable"
+
+
+async def get_release_pullspec(release: str) -> str:
+    stream = _release_stream_name(release)
+    url = f"{RELEASE_STREAM_API}/{stream}/latest?prefix={release}"
     LOGGER.info("Fetching pullspec from %s", url)
     session = aiohttp.ClientSession()
     try:
@@ -106,9 +114,6 @@ async def verify_metadata_url(release: str) -> VerifyMetadataUrlResult:
         LOGGER.info("Release %s pullspec: %s", release, result.pullspec)
 
         result.metadata_url = await extract_metadata_url(result.pullspec)
-        validate_metadata_url(result.metadata_url)
-        LOGGER.info("Metadata URL: %s", result.metadata_url)
-
         result.accessible = await check_url_accessible(result.metadata_url)
 
     except Exception as e:

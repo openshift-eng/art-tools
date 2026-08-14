@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from elliottlib.cli.verify_metadata_url_cli import (
     VerifyMetadataUrlResult,
+    _release_stream_name,
     check_url_accessible,
     extract_metadata_url,
     get_release_pullspec,
@@ -47,6 +48,20 @@ class TestVerifyMetadataUrlResult(TestCase):
         )
         self.assertFalse(r.passed)
         self.assertTrue(r.failed)
+
+
+class TestReleaseStreamName(TestCase):
+    def test_stable_release(self):
+        self.assertEqual(_release_stream_name("4.18.50"), "4-stable")
+
+    def test_stable_major_5(self):
+        self.assertEqual(_release_stream_name("5.0.3"), "5-stable")
+
+    def test_ec_release(self):
+        self.assertEqual(_release_stream_name("5.0.0-ec.5"), "5-dev-preview")
+
+    def test_rc_release(self):
+        self.assertEqual(_release_stream_name("4.22.0-rc.0"), "4-stable")
 
 
 class TestGetReleasePullspec(IsolatedAsyncioTestCase):
@@ -106,6 +121,23 @@ class TestGetReleasePullspec(IsolatedAsyncioTestCase):
         mock_session.get.assert_called_once()
         call_args = mock_session.get.call_args
         self.assertIn("5-stable", str(call_args))
+
+    @patch("elliottlib.cli.verify_metadata_url_cli.aiohttp.ClientSession")
+    async def test_ec_release_uses_dev_preview(self, mock_session_cls):
+        mock_resp = AsyncMock()
+        mock_resp.ok = True
+        mock_resp.json = AsyncMock(
+            return_value={"pullSpec": "quay.io/openshift-release-dev/ocp-release:5.0.0-ec.5-x86_64"}
+        )
+        mock_resp.release = MagicMock()
+        mock_session = AsyncMock()
+        mock_session.get = AsyncMock(return_value=mock_resp)
+        mock_session_cls.return_value = mock_session
+
+        result = await get_release_pullspec("5.0.0-ec.5")
+        self.assertEqual(result, "quay.io/openshift-release-dev/ocp-release:5.0.0-ec.5-x86_64")
+        call_args = mock_session.get.call_args
+        self.assertIn("5-dev-preview", str(call_args))
 
 
 class TestExtractMetadataUrl(IsolatedAsyncioTestCase):
