@@ -70,6 +70,22 @@ class AsyncErrataAPI:
                 headers=response.headers,
             )
 
+    async def get_push_jobs(self, advisory_id: int) -> list:
+        path = f"/api/v1/erratum/{int(advisory_id)}/push"
+        return await self._make_request(aiohttp.hdrs.METH_GET, path)
+
+    async def push_cdn_stage(self, advisory_id: int, targets: Optional[list] = None) -> Optional[Dict]:
+        path = f"/api/v1/erratum/{int(advisory_id)}/push"
+        if targets is None:
+            targets = ["cdn_stage"]
+        data = [{"target": t} for t in targets]
+        try:
+            return await self._make_request(aiohttp.hdrs.METH_POST, path, json=data)
+        except ClientResponseError as e:
+            if e.status == 400 and "dependencies" in str(e.message):
+                return None
+            raise
+
     async def get_advisory(self, advisory: Union[int, str]) -> Dict:
         path = f"/api/v1/erratum/{quote(str(advisory))}"
         return await self._make_request(aiohttp.hdrs.METH_GET, path)

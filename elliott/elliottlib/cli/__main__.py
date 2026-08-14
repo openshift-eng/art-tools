@@ -73,6 +73,7 @@ from elliottlib.cli.tarball_sources_cli import tarball_sources_cli
 from elliottlib.cli.validate_rhsa import validate_rhsa_cli
 from elliottlib.cli.verify_attached_bugs_cli import verify_attached_bugs_cli
 from elliottlib.cli.verify_attached_operators_cli import verify_attached_operators_cli
+from elliottlib.cli.verify_cdn_push_cli import verify_cdn_push_cli
 from elliottlib.cli.verify_cvp_cli import verify_cvp_cli
 from elliottlib.cli.verify_image_grades_cli import verify_image_grades_cli
 from elliottlib.cli.verify_payload import verify_payload
@@ -326,6 +327,7 @@ cli.add_command(shipment_cli)
 cli.add_command(watch_release_cli)
 cli.add_command(find_bugs_second_fix_cli)
 cli.add_command(process_release_from_fbc_bugs_cli)
+cli.add_command(verify_cdn_push_cli)
 cli.add_command(verify_signatures_cli)
 cli.add_command(verify_image_grades_cli)
 cli.add_command(verify_qe_qualifier_cli)
