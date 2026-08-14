@@ -17,6 +17,7 @@ from elliottlib.cli.verify_kernel_tag_cli import (
     render_result,
     verify_kernel_tag,
 )
+from requests.exceptions import HTTPError
 
 
 class TestKernelBuildInfo(IsolatedAsyncioTestCase):
@@ -264,8 +265,6 @@ class TestGetKernelRpmsFromRhcos(IsolatedAsyncioTestCase):
 
     @patch("elliottlib.cli.verify_kernel_tag_cli.requests.get")
     def test_http_error(self, mock_get):
-        from requests.exceptions import HTTPError
-
         mock_resp = MagicMock()
         mock_resp.raise_for_status.side_effect = HTTPError("404 Not Found")
         mock_get.return_value = mock_resp

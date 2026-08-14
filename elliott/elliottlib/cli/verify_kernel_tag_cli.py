@@ -186,9 +186,12 @@ async def verify_kernel_tag(
     result = VerifyKernelTagResult(stop_ship_tag=stop_ship_tag)
 
     async with AsyncErrataAPI() as api:
-        for impetus, advisory_id in advisories.items():
-            ar = await check_advisory_kernel_tag(api, advisory_id, impetus, koji_api, kernel_packages, stop_ship_tag)
-            result.advisories.append(ar)
+        tasks = [
+            check_advisory_kernel_tag(api, advisory_id, impetus, koji_api, kernel_packages, stop_ship_tag)
+            for impetus, advisory_id in advisories.items()
+        ]
+        results = await asyncio.gather(*tasks)
+        result.advisories.extend(results)
 
     return result
 
