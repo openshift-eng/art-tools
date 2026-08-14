@@ -737,3 +737,174 @@ class TestRedisFailuresToJiraDict(TestCase):
         self.assertIn(('img-b', 'openshift-4.19'), result)
         self.assertEqual(result[('img-a', 'openshift-4.18')]['image_name'], 'img-a')
         self.assertEqual(result[('img-a', 'openshift-4.18')]['group'], 'openshift-4.18')
+
+
+class TestGetMultiRebaseFailures(TestCase):
+    def _make_pipeline(self):
+        runtime = _make_runtime()
+        return _make_pipeline(runtime, versions="4.18")
+
+    def test_filters_single_failures(self):
+        """Images with only 1 rebase failure are excluded."""
+        pipeline = self._make_pipeline()
+        pipeline.rebase_failures = {
+            '4.18': {
+                'ironic': {'failure_count': 1, 'jenkins_url': ''},
+                'hypershift': {'failure_count': 3, 'jenkins_url': 'http://jenkins/job/1'},
+            }
+        }
+        result = pipeline._get_multi_rebase_failures()
+        self.assertIn('4.18', result)
+        self.assertNotIn('ironic', result['4.18'])
+        self.assertIn('hypershift', result['4.18'])
+
+    def test_excludes_versions_with_no_multi_failures(self):
+        pipeline = self._make_pipeline()
+        pipeline.rebase_failures = {
+            '4.18': {'ironic': {'failure_count': 1, 'jenkins_url': ''}},
+        }
+        result = pipeline._get_multi_rebase_failures()
+        self.assertNotIn('4.18', result)
+
+    def test_empty_rebase_failures(self):
+        pipeline = self._make_pipeline()
+        pipeline.rebase_failures = {}
+        self.assertEqual(pipeline._get_multi_rebase_failures(), {})
+
+
+class TestGetMultiFailureImages(TestCase):
+    def _make_pipeline(self):
+        runtime = _make_runtime()
+        return _make_pipeline(runtime, versions="4.18")
+
+    def test_filters_single_failure(self):
+        """Images with latest_success_idx <= 1 are excluded."""
+        pipeline = self._make_pipeline()
+        pipeline.report = [
+            _make_concern('img-a', 'openshift-4.18', ConcernCode.LATEST_ATTEMPT_FAILED.value, latest_success_idx=1),
+            _make_concern('img-b', 'openshift-4.18', ConcernCode.LATEST_ATTEMPT_FAILED.value, latest_success_idx=3),
+        ]
+        result = pipeline._get_multi_failure_images()
+        self.assertIn('4.18', result)
+        names = [c['image_name'] for c in result['4.18']]
+        self.assertNotIn('img-a', names)
+        self.assertIn('img-b', names)
+
+    def test_includes_failing_at_least_for(self):
+        """FAILING_AT_LEAST_FOR concerns with >1 idx are included."""
+        pipeline = self._make_pipeline()
+        pipeline.report = [
+            _make_concern('img-a', 'openshift-4.18', ConcernCode.FAILING_AT_LEAST_FOR.value, latest_success_idx=5),
+        ]
+        result = pipeline._get_multi_failure_images()
+        self.assertIn('4.18', result)
+        self.assertEqual(result['4.18'][0]['image_name'], 'img-a')
+
+    def test_skips_never_built(self):
+        pipeline = self._make_pipeline()
+        pipeline.report = [
+            _make_concern('img-a', 'openshift-4.18', ConcernCode.NEVER_BUILT.value),
+        ]
+        result = pipeline._get_multi_failure_images()
+        self.assertEqual(result, {})
+
+
+class TestNotifyChaiBot(IsolatedAsyncioTestCase):
+    def _make_pipeline(self):
+        runtime = _make_runtime()
+        return ImagesHealthPipeline(
+            runtime=runtime,
+            versions="4.18",
+            send_to_release_channel=False,
+            public_channel="",
+            data_path=DATA_PATH,
+            data_gitref="",
+            image_list="",
+            assembly="stream",
+            sync_jira=False,
+            ping_chai_bot=True,
+        )
+
+    async def test_skips_when_no_failures(self):
+        pipeline = self._make_pipeline()
+        pipeline.slack_client.say = AsyncMock()
+        await pipeline.notify_chai_bot('4.18', [], {})
+        pipeline.slack_client.say.assert_not_called()
+
+    async def test_notifies_for_rebase_only(self):
+        """Rebase failures alone trigger chai-bot notification."""
+        pipeline = self._make_pipeline()
+        pipeline.slack_client.say = AsyncMock(return_value={'ts': '123'})
+        pipeline.slack_client.bind_channel = MagicMock()
+        rebase_failures = {
+            'ironic': {'failure_count': 3, 'jenkins_url': 'http://jenkins/job/1'},
+        }
+        await pipeline.notify_chai_bot('4.18', [], rebase_failures)
+        pipeline.slack_client.say.assert_called_once()
+        msg = pipeline.slack_client.say.call_args[0][0]
+        self.assertIn('ironic', msg)
+        self.assertIn('rebase failures', msg)
+
+    async def test_prompt_includes_both_build_and_rebase_sections(self):
+        """When both failure types present, prompt contains both sections."""
+        pipeline = self._make_pipeline()
+        pipeline.slack_client.say = AsyncMock(return_value={'ts': '123'})
+        pipeline.slack_client.bind_channel = MagicMock()
+        concern = _make_concern('console', 'openshift-4.18', 'LATEST_ATTEMPT_FAILED', latest_success_idx=3)
+        rebase_failures = {'ironic': {'failure_count': 3, 'jenkins_url': ''}}
+        await pipeline.notify_chai_bot('4.18', [concern], rebase_failures)
+        msg = pipeline.slack_client.say.call_args[0][0]
+        self.assertIn('build failures', msg)
+        self.assertIn('rebase failures', msg)
+        self.assertIn('console', msg)
+        self.assertIn('ironic', msg)
+
+    async def test_prompt_uses_openshift_group_not_okd(self):
+        """Prompt references openshift-X.Y group, not okd-X.Y."""
+        pipeline = self._make_pipeline()
+        pipeline.slack_client.say = AsyncMock(return_value={'ts': '123'})
+        pipeline.slack_client.bind_channel = MagicMock()
+        concern = _make_concern('console', 'openshift-4.18', 'LATEST_ATTEMPT_FAILED', latest_success_idx=2)
+        await pipeline.notify_chai_bot('4.18', [concern], {})
+        msg = pipeline.slack_client.say.call_args[0][0]
+        self.assertIn('openshift-4.18', msg)
+        self.assertNotIn('okd-', msg)
+
+    async def test_run_calls_chai_bot_for_multi_failures(self):
+        """run() calls notify_chai_bot when images have >1 consecutive failure."""
+        pipeline = self._make_pipeline()
+        pipeline.get_report = AsyncMock()
+        pipeline.get_rebase_failures = AsyncMock()
+        pipeline.get_ec_failures = AsyncMock()
+        pipeline.get_release_failures = AsyncMock()
+        pipeline.notify_chai_bot = AsyncMock()
+        pipeline.report = [
+            _make_concern('ironic', 'openshift-4.18', ConcernCode.LATEST_ATTEMPT_FAILED.value, latest_success_idx=3),
+        ]
+        pipeline.rebase_failures = {}
+        pipeline.scanned_versions = ['4.18']
+
+        await pipeline.run()
+
+        pipeline.notify_chai_bot.assert_awaited_once()
+        call_args = pipeline.notify_chai_bot.call_args
+        self.assertEqual(call_args[0][0], '4.18')
+        self.assertEqual(call_args[0][1][0]['image_name'], 'ironic')
+
+    async def test_run_skips_chai_bot_when_flag_false(self):
+        """run() does not call notify_chai_bot when ping_chai_bot=False."""
+        pipeline = self._make_pipeline()
+        pipeline.ping_chai_bot = False
+        pipeline.get_report = AsyncMock()
+        pipeline.get_rebase_failures = AsyncMock()
+        pipeline.get_ec_failures = AsyncMock()
+        pipeline.get_release_failures = AsyncMock()
+        pipeline.notify_chai_bot = AsyncMock()
+        pipeline.report = [
+            _make_concern('ironic', 'openshift-4.18', ConcernCode.LATEST_ATTEMPT_FAILED.value, latest_success_idx=3),
+        ]
+        pipeline.rebase_failures = {}
+
+        await pipeline.run()
+
+        pipeline.notify_chai_bot.assert_not_called()

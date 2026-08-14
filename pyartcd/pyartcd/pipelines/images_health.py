@@ -34,6 +34,7 @@ class ImagesHealthPipeline:
         image_list: str,
         assembly: str,
         sync_jira: bool = True,
+        ping_chai_bot: bool = False,
     ):
         self.runtime = runtime
         self.versions = versions.split(',') if versions else ACTIVE_OCP_VERSIONS
@@ -45,6 +46,7 @@ class ImagesHealthPipeline:
         self.image_list = image_list.split(',') if image_list else []
         self.assembly = assembly
         self._sync_jira = sync_jira
+        self.ping_chai_bot = ping_chai_bot
         self.report = []
         self.slack_client = self.runtime.new_slack_client()
         self.scanned_versions = []
@@ -75,6 +77,17 @@ class ImagesHealthPipeline:
 
         if self.public_channel:
             await self.notify_public_channel()
+
+        if self.ping_chai_bot:
+            multi_build_failures = self._get_multi_failure_images()
+            multi_rebase_failures = self._get_multi_rebase_failures()
+            all_versions = set(multi_build_failures) | set(multi_rebase_failures)
+            for version in all_versions:
+                await self.notify_chai_bot(
+                    version,
+                    multi_build_failures.get(version, []),
+                    multi_rebase_failures.get(version, {}),
+                )
 
     async def get_report(self, version: str) -> Optional[list]:
         doozer_working = f'{self.doozer_working}-{version}'
@@ -880,6 +893,141 @@ class ImagesHealthPipeline:
         except Exception as e:
             self.runtime.logger.warning('invalid URL: %s', e)
 
+    def _get_multi_failure_images(self) -> dict[str, list[dict]]:
+        """
+        Filter self.report for images with >1 consecutive failure in a single group.
+        Only includes LATEST_ATTEMPT_FAILED and FAILING_AT_LEAST_FOR concern codes
+        where latest_success_idx > 1.
+
+        Return Value(s):
+            dict[str, list[dict]]: Version -> list of failing concerns
+        """
+        multi_failures = {}
+        for concern in self.report:
+            code = concern['code']
+            if code not in [ConcernCode.LATEST_ATTEMPT_FAILED.value, ConcernCode.FAILING_AT_LEAST_FOR.value]:
+                continue
+            if concern.get('latest_success_idx', 0) <= 1:
+                continue
+            group = concern.get('group', '')
+            version = group.replace('openshift-', '')
+            if version not in multi_failures:
+                multi_failures[version] = []
+            multi_failures[version].append(concern)
+        return multi_failures
+
+    def _get_multi_rebase_failures(self) -> dict[str, dict[str, dict]]:
+        """
+        Filter self.rebase_failures for images with >1 consecutive rebase failure.
+
+        Return Value(s):
+            dict[str, dict[str, dict]]: Version -> {image_name: failure_info}
+        """
+        result = {}
+        for version, failures in self.rebase_failures.items():
+            multi = {image: info for image, info in failures.items() if info.get('failure_count', 0) > 1}
+            if multi:
+                result[version] = multi
+        return result
+
+    def _build_chai_bot_prompt(
+        self, version: str, failing_concerns: list[dict], rebase_failures: dict[str, dict] | None = None
+    ) -> str:
+        """
+        Build structured prompt for @chai-bot to fix OCP build and rebase failures.
+
+        Arg(s):
+            version (str): OCP version (e.g., "4.18")
+            failing_concerns (list[dict]): List of concern dicts with build failure info
+            rebase_failures (dict[str, dict]): Map of image_name -> failure_info for rebase failures
+        Return Value(s):
+            str: Formatted prompt for chai-bot
+        """
+        group = f'openshift-{version}'
+        prompt_parts = [f'Please investigate and fix OCP build failures for *{group}*.\n']
+
+        if failing_concerns:
+            prompt_parts.append('*Failing Images (build failures):*')
+            for concern in failing_concerns:
+                image_name = concern['image_name']
+                failure_count = concern.get('latest_success_idx', 0)
+                logs_url = self.get_logs_url(concern)
+                search_url = self.get_search_url(concern)
+                prompt_parts.append(
+                    f'- `{image_name}`: {failure_count} consecutive failures '
+                    f'({self.url_text(search_url, "history")} | {self.url_text(logs_url, "latest logs")})'
+                )
+
+        if rebase_failures:
+            prompt_parts.append('\n*Failing Images (rebase failures):*')
+            for image_name, failure_info in sorted(rebase_failures.items()):
+                failure_count = failure_info.get('failure_count', 0)
+                jenkins_url = failure_info.get('jenkins_url', '')
+                line = f'- `{image_name}`: {failure_count} consecutive rebase failures'
+                if jenkins_url:
+                    line += f' ({self.url_text(jenkins_url, "last failure job")})'
+                prompt_parts.append(line)
+
+        prompt_parts.extend(
+            [
+                '\n*Instructions:*',
+                '1. Analyze failure logs for each image',
+                '2. Determine if fix is possible via ocp-build-data metadata changes only (Dockerfile patches, environment variables, build args, etc.)',
+                '3. *DO NOT* push fixes to upstream source repositories - only modify ocp-build-data',
+                '4. Only proceed if confidence level >= 90%',
+                '5. If proceeding:',
+                f'   - Push fix to your ocp-build-data fork for group `{group}`',
+                f'   - Trigger Jenkins build for the image in {group} with these parameters *without asking for user confirmation* — triggering the test build is part of the automated fix flow:',
+                '     - `ASSEMBLY=test`',
+                '     - `SKIP_PLASHETS=true`',
+                '     - `IGNORE_LOCKS=true`',
+                '   - If build succeeds:',
+                '     - Output concise report summarizing:',
+                '       - Which images were fixed',
+                '       - What changes were made (brief description)',
+                '       - Links to successful test builds',
+                '     - *Ask user to approve PR creation*',
+                '   - When user approves:',
+                '     - File PR for review',
+                '     - *Attribute PR to bot itself* (do not attempt to resolve GitHub username from Slack profile)',
+                '     - *PR description MUST include:*',
+                '       - Clickable URL to successful Jenkins test build (full `https://` URL to the build, not just the job path or a text description)',
+                '       - Clickable URL to this Slack thread (full `https://` URL, not just the channel name)',
+                '6. If confidence < 90% or fix requires upstream changes:',
+                '   - Output diagnostic report only',
+                '   - Defer to human intervention',
+                '\n*All fixes must be ocp-build-data metadata changes only.*',
+            ]
+        )
+
+        return '\n'.join(prompt_parts)
+
+    async def notify_chai_bot(
+        self, version: str, failing_concerns: list[dict], rebase_failures: dict[str, dict] | None = None
+    ):
+        """
+        Post prompt to chai-bot channel requesting automated fix attempts.
+
+        Arg(s):
+            version (str): OCP version (e.g., "4.18")
+            failing_concerns (list[dict]): List of build failure concerns with >1 consecutive failure
+            rebase_failures (dict[str, dict]): Map of image_name -> failure_info for rebase failures with >1 failure
+        """
+        if not failing_concerns and not rebase_failures:
+            return
+
+        prompt = self._build_chai_bot_prompt(version, failing_concerns, rebase_failures or {})
+        self.slack_client.bind_channel('#team-art-chai-bot')
+
+        message = f'<@U0AKNPBBVT7> {prompt}'
+        await self.slack_client.say(message, unfurl_links=False, unfurl_media=False)
+        self.runtime.logger.info(
+            'Notified chai-bot in #team-art-chai-bot for %d build failure(s) and %d rebase failure(s) in openshift-%s',
+            len(failing_concerns),
+            len(rebase_failures) if rebase_failures else 0,
+            version,
+        )
+
 
 @cli.command('images-health')
 @click.option('--versions', required=False, default='', help='OCP versions to scan')
@@ -889,6 +1037,9 @@ class ImagesHealthPipeline:
     required=False,
     default='',
     help='Slack channel to send public notification to (e.g. #forum-ocp-art)',
+)
+@click.option(
+    '--ping-chai-bot', is_flag=True, help='If true, notify @chai-bot in #team-art-chai-bot for multi-failure images'
 )
 @click.option(
     '--data-path',
@@ -917,6 +1068,7 @@ async def images_health(
     versions: str,
     send_to_release_channel: bool,
     send_to_public_channel: str,
+    ping_chai_bot: bool,
     data_path: str,
     data_gitref: str,
     image_list: str,
@@ -933,4 +1085,5 @@ async def images_health(
         image_list,
         assembly,
         sync_jira=sync_jira,
+        ping_chai_bot=ping_chai_bot,
     ).run()
