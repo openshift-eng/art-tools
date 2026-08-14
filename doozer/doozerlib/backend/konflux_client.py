@@ -1459,27 +1459,14 @@ class KonfluxClient:
         if has_build_images_task:
             ephemeral_storage = (build_params.build_step_resources or {}).get("ephemeral-storage")
 
-            sbom_syft_resources: dict = {
-                "requests": {"memory": "5Gi"},
-                "limits": {"memory": "10Gi"},
-            }
-            if ephemeral_storage:
-                sbom_syft_resources["requests"]["ephemeral-storage"] = "1Gi"
-                sbom_syft_resources["limits"]["ephemeral-storage"] = "1Gi"
-
-            build_images_step_specs: list[dict] = [
-                {
-                    "name": "sbom-syft-generate",
-                    "computeResources": sbom_syft_resources,
-                },
-            ]
+            build_images_step_specs: list[dict] = []
 
             if ephemeral_storage:
                 post_build_resources: dict = {
                     "requests": {"ephemeral-storage": "1Gi"},
                     "limits": {"ephemeral-storage": "1Gi"},
                 }
-                for step_name in ("push", "prepare-sboms", "upload-sbom"):
+                for step_name in ("prepare-sboms", "upload-sbom"):
                     build_images_step_specs.append({"name": step_name, "computeResources": post_build_resources})
 
             if build_params.build_step_resources:
@@ -1493,12 +1480,13 @@ class KonfluxClient:
                     }
                 )
 
-            task_run_specs += [
-                {
-                    "pipelineTaskName": "build-images",
-                    "stepSpecs": build_images_step_specs,
-                }
-            ]
+            if build_images_step_specs:
+                task_run_specs += [
+                    {
+                        "pipelineTaskName": "build-images",
+                        "stepSpecs": build_images_step_specs,
+                    }
+                ]
         if has_prefetch_task:
             task_run_specs += [
                 {
