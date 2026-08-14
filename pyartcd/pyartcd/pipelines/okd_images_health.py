@@ -580,6 +580,7 @@ class ImagesHealthPipeline:
             str: Formatted prompt for chai-bot
         """
         okd_group = f'okd-{version}'
+        group = f'openshift-{version}'
         prompt_parts = [f'Please investigate and fix OKD build failures for *{okd_group}*.\n']
 
         if failing_concerns:
@@ -608,6 +609,13 @@ class ImagesHealthPipeline:
         prompt_parts.extend(
             [
                 '\n*Instructions:*',
+                '0. *Pre-check for known issues:* Before investigating each failing image, '
+                'query Jira: `project = ART AND summary ~ "Image build failure: <image_name>" '
+                f'AND summary ~ "({group})" AND statusCategory != Done`. '
+                'If a matching ticket exists with the label `art:bot-skip-auto-fix`, '
+                '*skip that image entirely* — it tracks a known issue that cannot be '
+                'resolved via ocp-build-data metadata changes. Report any skipped images '
+                'at the end with a link to the tracking ticket.',
                 '1. Analyze failure logs for each image',
                 '2. Determine if fix is possible via ocp-build-data metadata changes only (Dockerfile patches, environment variables, build args, etc.)',
                 '3. *DO NOT* push fixes to upstream source repositories - only modify ocp-build-data',
@@ -619,6 +627,14 @@ class ImagesHealthPipeline:
                 f'   - Trigger Jenkins build for the image in {okd_group} with these parameters *without asking for user confirmation* — triggering the test build is part of the automated fix flow:',
                 '     - `ASSEMBLY=stream`',
                 '     - `IGNORE_LOCKS=true`',
+                '   - *Give up after 3 failed fix attempts per image.* If the test build fails, '
+                'you may iterate with a different fix approach, but do not exceed 3 total attempts. '
+                'After 3 failures:',
+                '     - Stop attempting fixes for that image',
+                '     - Report in this thread what approaches were tried and why they failed',
+                '     - *Automatically apply the `art:bot-skip-auto-fix` label* to the Jira ticket '
+                'tracking the failure to prevent future automated fix attempts',
+                '     - Mention that ART can remove the label if they want the bot to retry later',
                 '   - If build succeeds:',
                 '     - Output concise report summarizing:',
                 '       - Which images were fixed',
