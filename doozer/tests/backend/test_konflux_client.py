@@ -899,9 +899,8 @@ class TestNewPipelinerunBuildStepResources(IsolatedAsyncioTestCase):
         )
 
         task_run_specs = result["spec"]["taskRunSpecs"]
-        build_images_spec = next(s for s in task_run_specs if s["pipelineTaskName"] == "build-images")
-        step_names = {s["name"] for s in build_images_spec["stepSpecs"]}
-        self.assertNotIn("build", step_names)
+        build_images_spec = next((s for s in task_run_specs if s["pipelineTaskName"] == "build-images"), None)
+        self.assertIsNone(build_images_spec, "Expected no build-images stepSpecs when build_step_resources is None")
 
 
 class TestNewPipelinerunWorkspaceStorage(IsolatedAsyncioTestCase):
@@ -964,13 +963,15 @@ class TestNewPipelinerunEphemeralStorage(IsolatedAsyncioTestCase):
         step_specs = {s["name"]: s for s in build_images_spec["stepSpecs"]}
 
         self.assertEqual(step_specs["build"]["computeResources"]["requests"]["ephemeral-storage"], "250Gi")
-        for step_name in ("push", "sbom-syft-generate", "prepare-sboms", "upload-sbom"):
+        for step_name in ("prepare-sboms", "upload-sbom"):
             self.assertIn(step_name, step_specs, f"Missing stepSpec for {step_name}")
             self.assertEqual(
                 step_specs[step_name]["computeResources"]["requests"]["ephemeral-storage"],
                 "1Gi",
                 f"Wrong ephemeral-storage for {step_name}",
             )
+        self.assertNotIn("sbom-syft-generate", step_specs)
+        self.assertNotIn("push", step_specs)
 
     @patch("doozerlib.backend.konflux_client.KonfluxClient._get_pipelinerun_template")
     async def test_no_ephemeral_storage_no_post_build_steps(self, mock_get_template):
@@ -986,6 +987,7 @@ class TestNewPipelinerunEphemeralStorage(IsolatedAsyncioTestCase):
         build_images_spec = next(s for s in task_run_specs if s["pipelineTaskName"] == "build-images")
         step_names = {s["name"] for s in build_images_spec["stepSpecs"]}
         self.assertIn("build", step_names)
+        self.assertNotIn("sbom-syft-generate", step_names)
         self.assertNotIn("push", step_names)
         self.assertNotIn("prepare-sboms", step_names)
         self.assertNotIn("upload-sbom", step_names)
