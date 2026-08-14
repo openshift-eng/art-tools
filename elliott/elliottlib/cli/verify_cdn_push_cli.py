@@ -50,7 +50,7 @@ class AdvisoryPushResult:
 
     @property
     def pending(self) -> bool:
-        return not self.complete and not self.failed and not self.error
+        return not self.complete and not self.failed
 
 
 @dataclass
