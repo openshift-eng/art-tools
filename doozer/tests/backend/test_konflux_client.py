@@ -889,8 +889,8 @@ class TestNewPipelinerunBuildStepResources(IsolatedAsyncioTestCase):
         self.assertEqual(build_step["computeResources"]["requests"]["memory"], "8Gi")
 
     @patch("doozerlib.backend.konflux_client.KonfluxClient._get_pipelinerun_template")
-    async def test_build_step_resources_none_is_noop(self, mock_get_template):
-        """Test that None build_step_resources doesn't add a build stepSpec."""
+    async def test_build_step_resources_none_no_build_step(self, mock_get_template):
+        """Test that None build_step_resources doesn't add a build stepSpec (SBOM steps still present)."""
         client = _make_mock_client(mock_get_template)
 
         result = await client._new_pipelinerun_for_image_build(
@@ -899,8 +899,12 @@ class TestNewPipelinerunBuildStepResources(IsolatedAsyncioTestCase):
         )
 
         task_run_specs = result["spec"]["taskRunSpecs"]
-        build_images_spec = next((s for s in task_run_specs if s["pipelineTaskName"] == "build-images"), None)
-        self.assertIsNone(build_images_spec, "Expected no build-images stepSpecs when build_step_resources is None")
+        build_images_spec = next(s for s in task_run_specs if s["pipelineTaskName"] == "build-images")
+        step_names = {s["name"] for s in build_images_spec["stepSpecs"]}
+        self.assertNotIn("build", step_names, "Expected no build stepSpec when build_step_resources is None")
+        # SBOM steps should still be present with default memory
+        self.assertIn("prepare-sboms", step_names)
+        self.assertIn("upload-sbom", step_names)
 
 
 class TestNewPipelinerunWorkspaceStorage(IsolatedAsyncioTestCase):
@@ -974,8 +978,8 @@ class TestNewPipelinerunEphemeralStorage(IsolatedAsyncioTestCase):
         self.assertNotIn("push", step_specs)
 
     @patch("doozerlib.backend.konflux_client.KonfluxClient._get_pipelinerun_template")
-    async def test_no_ephemeral_storage_no_post_build_steps(self, mock_get_template):
-        """Test that without ephemeral-storage, post-build steps don't get extra resources."""
+    async def test_no_ephemeral_storage_sbom_steps_have_memory_only(self, mock_get_template):
+        """Test that without ephemeral-storage, SBOM steps get default memory but no ephemeral-storage."""
         client = _make_mock_client(mock_get_template)
 
         result = await client._new_pipelinerun_for_image_build(
@@ -985,12 +989,100 @@ class TestNewPipelinerunEphemeralStorage(IsolatedAsyncioTestCase):
 
         task_run_specs = result["spec"]["taskRunSpecs"]
         build_images_spec = next(s for s in task_run_specs if s["pipelineTaskName"] == "build-images")
-        step_names = {s["name"] for s in build_images_spec["stepSpecs"]}
-        self.assertIn("build", step_names)
-        self.assertNotIn("sbom-syft-generate", step_names)
-        self.assertNotIn("push", step_names)
-        self.assertNotIn("prepare-sboms", step_names)
-        self.assertNotIn("upload-sbom", step_names)
+        step_specs = {s["name"]: s for s in build_images_spec["stepSpecs"]}
+        self.assertIn("build", step_specs)
+        self.assertNotIn("sbom-syft-generate", step_specs)
+        self.assertNotIn("push", step_specs)
+        # SBOM steps always present with default memory
+        for step_name in ("prepare-sboms", "upload-sbom"):
+            self.assertIn(step_name, step_specs)
+            self.assertEqual(step_specs[step_name]["computeResources"]["requests"]["memory"], "8Gi")
+            self.assertNotIn("ephemeral-storage", step_specs[step_name]["computeResources"]["requests"])
+
+
+class TestNewPipelinerunSbomStepResources(IsolatedAsyncioTestCase):
+    """Tests for SBOM step resource overrides in _new_pipelinerun_for_image_build."""
+
+    @patch("doozerlib.backend.konflux_client.KonfluxClient._get_pipelinerun_template")
+    async def test_default_memory_applied_without_sbom_step_resources(self, mock_get_template):
+        """Test that default 8Gi memory is applied to SBOM steps when no sbom_step_resources is set."""
+        client = _make_mock_client(mock_get_template)
+
+        result = await client._new_pipelinerun_for_image_build(
+            **_COMMON_KWARGS,
+            build_params=ImageBuildParams(),
+        )
+
+        task_run_specs = result["spec"]["taskRunSpecs"]
+        build_images_spec = next(s for s in task_run_specs if s["pipelineTaskName"] == "build-images")
+        step_specs = {s["name"]: s for s in build_images_spec["stepSpecs"]}
+        for step_name in ("prepare-sboms", "upload-sbom"):
+            self.assertIn(step_name, step_specs, f"Missing stepSpec for {step_name}")
+            resources = step_specs[step_name]["computeResources"]
+            self.assertEqual(resources["requests"]["memory"], "8Gi")
+            self.assertEqual(resources["limits"]["memory"], "8Gi")
+
+    @patch("doozerlib.backend.konflux_client.KonfluxClient._get_pipelinerun_template")
+    async def test_custom_sbom_step_resources_override_defaults(self, mock_get_template):
+        """Test that sbom_step_resources from ocp-build-data override the default memory."""
+        client = _make_mock_client(mock_get_template)
+
+        result = await client._new_pipelinerun_for_image_build(
+            **_COMMON_KWARGS,
+            build_params=ImageBuildParams(sbom_step_resources={"memory": "16Gi", "cpu": "2"}),
+        )
+
+        task_run_specs = result["spec"]["taskRunSpecs"]
+        build_images_spec = next(s for s in task_run_specs if s["pipelineTaskName"] == "build-images")
+        step_specs = {s["name"]: s for s in build_images_spec["stepSpecs"]}
+        for step_name in ("prepare-sboms", "upload-sbom"):
+            resources = step_specs[step_name]["computeResources"]
+            self.assertEqual(resources["requests"]["memory"], "16Gi", f"Custom memory not applied to {step_name}")
+            self.assertEqual(resources["limits"]["memory"], "16Gi")
+            self.assertEqual(resources["requests"]["cpu"], "2", f"Custom cpu not applied to {step_name}")
+            self.assertEqual(resources["limits"]["cpu"], "2")
+
+    @patch("doozerlib.backend.konflux_client.KonfluxClient._get_pipelinerun_template")
+    async def test_ephemeral_storage_combined_with_sbom_defaults(self, mock_get_template):
+        """Test that ephemeral-storage from build_step_resources is combined with SBOM default memory."""
+        client = _make_mock_client(mock_get_template)
+
+        result = await client._new_pipelinerun_for_image_build(
+            **_COMMON_KWARGS,
+            build_params=ImageBuildParams(build_step_resources={"ephemeral-storage": "250Gi"}),
+        )
+
+        task_run_specs = result["spec"]["taskRunSpecs"]
+        build_images_spec = next(s for s in task_run_specs if s["pipelineTaskName"] == "build-images")
+        step_specs = {s["name"]: s for s in build_images_spec["stepSpecs"]}
+        for step_name in ("prepare-sboms", "upload-sbom"):
+            resources = step_specs[step_name]["computeResources"]
+            self.assertEqual(resources["requests"]["memory"], "8Gi", f"Default memory missing for {step_name}")
+            self.assertEqual(
+                resources["requests"]["ephemeral-storage"], "1Gi",
+                f"Ephemeral-storage missing for {step_name}",
+            )
+
+    @patch("doozerlib.backend.konflux_client.KonfluxClient._get_pipelinerun_template")
+    async def test_sbom_step_resources_override_ephemeral_storage(self, mock_get_template):
+        """Test that sbom_step_resources can override the 1Gi ephemeral-storage default."""
+        client = _make_mock_client(mock_get_template)
+
+        result = await client._new_pipelinerun_for_image_build(
+            **_COMMON_KWARGS,
+            build_params=ImageBuildParams(
+                build_step_resources={"ephemeral-storage": "250Gi"},
+                sbom_step_resources={"memory": "12Gi", "ephemeral-storage": "5Gi"},
+            ),
+        )
+
+        task_run_specs = result["spec"]["taskRunSpecs"]
+        build_images_spec = next(s for s in task_run_specs if s["pipelineTaskName"] == "build-images")
+        step_specs = {s["name"]: s for s in build_images_spec["stepSpecs"]}
+        for step_name in ("prepare-sboms", "upload-sbom"):
+            resources = step_specs[step_name]["computeResources"]
+            self.assertEqual(resources["requests"]["memory"], "12Gi")
+            self.assertEqual(resources["requests"]["ephemeral-storage"], "5Gi")
 
 
 class TestSkipTasks(IsolatedAsyncioTestCase):

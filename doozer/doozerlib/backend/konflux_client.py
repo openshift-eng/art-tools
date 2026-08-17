@@ -57,6 +57,7 @@ class ImageBuildParams:
     additional_secret: Optional[str] = None
     privileged_nested: Optional[bool] = None
     build_step_resources: Optional[dict[str, str]] = None
+    sbom_step_resources: Optional[dict[str, str]] = None
     workspace_storage: Optional[str] = None
     prefetch: Optional[list] = None
     prefetch_mode: Optional[str] = None
@@ -1461,13 +1462,21 @@ class KonfluxClient:
 
             build_images_step_specs: list[dict] = []
 
+            # Default 8Gi memory for SBOM steps to prevent OOM on large images (e.g. driver-toolkit).
+            # Per-component sbom_step_resources from ocp-build-data override these defaults.
+            sbom_resources: dict[str, str] = {"memory": "8Gi"}
             if ephemeral_storage:
-                post_build_resources: dict = {
-                    "requests": {"ephemeral-storage": "1Gi"},
-                    "limits": {"ephemeral-storage": "1Gi"},
-                }
-                for step_name in ("prepare-sboms", "upload-sbom"):
-                    build_images_step_specs.append({"name": step_name, "computeResources": post_build_resources})
+                sbom_resources["ephemeral-storage"] = "1Gi"
+            if build_params.sbom_step_resources:
+                sbom_resources.update(build_params.sbom_step_resources)
+            for step_name in ("prepare-sboms", "upload-sbom"):
+                build_images_step_specs.append({
+                    "name": step_name,
+                    "computeResources": {
+                        "requests": dict(sbom_resources),
+                        "limits": dict(sbom_resources),
+                    },
+                })
 
             if build_params.build_step_resources:
                 build_images_step_specs.append(
