@@ -11,6 +11,7 @@ from typing import Optional
 import click
 import yaml
 from artcommonlib import exectools
+from artcommonlib.util import oc_image_info_for_arch_async
 from doozerlib.cli.images_okd import OKD_DEFAULT_IMAGE_REPO
 from doozerlib.state import STATE_PASS
 
@@ -583,10 +584,33 @@ class KonfluxOkdPipeline:
             return image_name_short[4:]
         return image_name_short
 
+    async def _get_arm64_pullspec(self, manifest_list_pullspec: str) -> Optional[str]:
+        """
+        Resolve the aarch64-specific pullspec from a multi-arch manifest list.
+
+        Arg(s):
+            manifest_list_pullspec (str): Multi-arch manifest list pullspec (digest-pinned).
+        Return Value(s):
+            str: aarch64-specific pullspec, or None if resolution fails.
+        """
+        try:
+            image_info = await oc_image_info_for_arch_async(manifest_list_pullspec, go_arch='arm64')
+            arch_digest = image_info.get('digest')
+            if not arch_digest:
+                self.logger.warning('No arm64 digest found in manifest list %s', manifest_list_pullspec)
+                return None
+            # Construct arch-specific pullspec: keep registry/repo, replace digest
+            base = manifest_list_pullspec.split('@')[0]
+            return f'{base}@{arch_digest}'
+        except Exception as e:
+            self.logger.warning('Failed to resolve arm64 pullspec from %s: %s', manifest_list_pullspec, e)
+            return None
+
     async def update_imagestreams(self):
         """
-        Update static OKD imagestream with successfully built images:
-        scos-{version}-art - accumulates all successfully built images
+        Update static OKD imagestreams with successfully built images:
+          scos-{version}-art     - multi-arch manifest list pullspecs
+          scos-{version}-art-arm64 - aarch64-specific pullspecs
         """
 
         if self.assembly != 'stream':
@@ -598,7 +622,12 @@ class KonfluxOkdPipeline:
             return
 
         if self.runtime.dry_run:
-            self.logger.info('[DRY RUN] Would update imagestreams in namespace %s', self.imagestream_namespace)
+            self.logger.info(
+                '[DRY RUN] Would update imagestreams scos-%s-art and scos-%s-art-arm64 in namespace %s',
+                self.version,
+                self.version,
+                self.imagestream_namespace,
+            )
             self.logger.info('[DRY RUN] Would tag %d images', len(self.built_images))
             return
 
@@ -611,6 +640,7 @@ class KonfluxOkdPipeline:
         ocp_build_data_path = Path(self.runtime.doozer_working) / data_name / 'images'
 
         is_name = f'scos-{self.version}-art'
+        is_arm64_name = f'scos-{self.version}-art-arm64'
         env = os.environ.copy()
         successful_tags = []
         failed_tags = []
@@ -646,20 +676,34 @@ class KonfluxOkdPipeline:
                 failed_tags.append(image_name)
                 continue
 
-            # Tag into imagestream
+            # Tag multi-arch manifest list into primary imagestream
             target = f'{self.imagestream_namespace}/{is_name}:{payload_tag}'
             try:
                 await self._tag_image_to_stream(source_pullspec=image_pullspec, target_tag=target, env=env)
                 self.logger.info('Tagged %s into %s', image_name, target)
                 successful_tags.append(image_name)
-
             except Exception as e:
                 self.logger.warning('Failed to tag %s into imagestream: %s', image_name, e)
                 failed_tags.append(image_name)
+                continue
+
+            # Tag aarch64-specific pullspec into arm64 imagestream
+            arm64_pullspec = await self._get_arm64_pullspec(image_pullspec)
+            if arm64_pullspec:
+                arm64_target = f'{self.imagestream_namespace}/{is_arm64_name}:{payload_tag}'
+                try:
+                    await self._tag_image_to_stream(source_pullspec=arm64_pullspec, target_tag=arm64_target, env=env)
+                    self.logger.info('Tagged %s arm64 into %s', image_name, arm64_target)
+                except Exception as e:
+                    self.logger.warning('Failed to tag %s arm64 into imagestream: %s', image_name, e)
+            else:
+                self.logger.warning(
+                    'Skipping arm64 imagestream tag for %s: could not resolve arm64 pullspec', image_name
+                )
 
         # Update Jenkins description with results
         if successful_tags:
-            success_msg = f'Updated {is_name} with {len(successful_tags)} images'
+            success_msg = f'Updated {is_name} and {is_arm64_name} with {len(successful_tags)} images'
             jenkins.update_description(f'{success_msg}<br>')
             self.logger.info(success_msg)
 
