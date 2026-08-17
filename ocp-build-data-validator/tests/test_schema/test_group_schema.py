@@ -102,3 +102,33 @@ class TestGroupSchema(unittest.TestCase):
             },
         }
         self.assertIn("'yes' is not of type 'boolean'", group_schema.validate("group.yml", invalid_data))
+
+    def test_validate_with_distinct_go_version_vars(self):
+        valid_data = {
+            "name": "openshift-4.22",
+            "vars": {"MAJOR": 4, "MINOR": 22, "GO_LATEST": "1.25", "GO_EXTRA": "1.24", "GO_PREVIOUS": "1.23"},
+        }
+        self.assertEqual("", group_schema.validate("group.yml", valid_data))
+
+    def test_validate_with_duplicate_go_version_vars(self):
+        invalid_data = {
+            "name": "openshift-4.22",
+            "vars": {"MAJOR": 4, "MINOR": 22, "GO_LATEST": "1.25", "GO_EXTRA": "1.25"},
+        }
+        result = group_schema.validate("group.yml", invalid_data)
+        self.assertIn("GO_EXTRA and GO_LATEST cannot both resolve to the same major.minor version (1.25)", result)
+
+    def test_validate_with_duplicate_go_version_vars_different_patch(self):
+        invalid_data = {
+            "name": "openshift-4.22",
+            "vars": {"MAJOR": 4, "MINOR": 22, "GO_LATEST": "1.25.1", "GO_PREVIOUS": "1.25.0"},
+        }
+        result = group_schema.validate("group.yml", invalid_data)
+        self.assertIn("GO_PREVIOUS and GO_LATEST cannot both resolve to the same major.minor version (1.25)", result)
+
+    def test_validate_with_invalid_go_version_var(self):
+        invalid_data = {
+            "name": "openshift-4.22",
+            "vars": {"MAJOR": 4, "MINOR": 22, "GO_LATEST": "not-a-version"},
+        }
+        self.assertIn("Invalid GO_LATEST value: not-a-version", group_schema.validate("group.yml", invalid_data))
