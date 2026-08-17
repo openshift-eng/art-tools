@@ -875,7 +875,7 @@ class TestNotifyChaiBot(IsolatedAsyncioTestCase):
         pipeline = self._make_pipeline()
         concern = _make_concern('console', 'openshift-4.18', 'LATEST_ATTEMPT_FAILED', latest_success_idx=2)
         prompt = pipeline._build_chai_bot_prompt('4.18', [concern], {})
-        self.assertIn('Suggest that ART add the `art:bot-skip-auto-fix` label', prompt)
+        self.assertIn('art:bot-skip-auto-fix', prompt)
         self.assertIn('art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com', prompt)
 
     async def test_run_calls_chai_bot_for_multi_failures(self):

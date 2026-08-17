@@ -609,51 +609,24 @@ class ImagesHealthPipeline:
         prompt_parts.extend(
             [
                 '\n*Instructions:*',
-                '0. *Pre-check for known issues:* Before investigating each failing image, '
-                'query Jira: `project = ART AND summary ~ "Image build failure: <image_name>" '
-                f'AND summary ~ "({group})" AND statusCategory != Done`. '
-                'If a matching ticket exists with the label `art:bot-skip-auto-fix`, '
-                '*skip that image entirely* — it tracks a known issue that cannot be '
-                'resolved via ocp-build-data metadata changes. Report any skipped images '
-                'at the end with a link to the tracking ticket.',
-                '1. Analyze failure logs for each image',
-                '2. Determine if fix is possible via ocp-build-data metadata changes only (Dockerfile patches, environment variables, build args, etc.)',
-                '3. *DO NOT* push fixes to upstream source repositories - only modify ocp-build-data',
-                '4. Only proceed if confidence level >= 90%',
-                '5. If proceeding:',
-                f'   - Push fix to your ocp-build-data fork for group `openshift-{version}` with `--variant=okd`',
-                '   - *All image metadata changes MUST be under the `okd:` stanza only*',
-                '   - *Commit message MUST start with `scan-sources-konflux:noop` to prevent triggering ocp4-scan config checks*',
-                f'   - Trigger Jenkins build for the image in {okd_group} with these parameters *without asking for user confirmation* — triggering the test build is part of the automated fix flow:',
-                '     - `ASSEMBLY=stream`',
-                '     - `IGNORE_LOCKS=true`',
-                '   - *Give up after 3 failed fix attempts per image.* If the test build fails, '
-                'you may iterate with a different fix approach, but do not exceed 3 total attempts. '
-                'After 3 failures:',
-                '     - Stop attempting fixes for that image',
-                '     - Report in this thread what approaches were tried and why they failed',
-                '     - *Automatically apply the `art:bot-skip-auto-fix` label* to the Jira ticket '
-                'tracking the failure to prevent future automated fix attempts',
-                '     - Mention that ART can remove the label if they want the bot to retry later',
-                '   - If build succeeds:',
-                '     - Output concise report summarizing:',
-                '       - Which images were fixed',
-                '       - What changes were made (brief description)',
-                '       - Links to successful test builds',
-                '     - *Ask user to approve PR creation*',
-                '   - When user approves:',
-                '     - File PR for review',
-                '     - *Attribute PR to bot itself* (do not attempt to resolve GitHub username from Slack profile)',
-                '     - *PR description MUST include:*',
-                '       - Clickable URL to successful Jenkins test build — use the full Jenkins URL'
-                ' (e.g. `https://art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com/job/aos-cd-builds/job/build%252Fokd/BUILD_NUMBER/`),'
-                ' not just the job name and build number as text',
-                '       - Clickable URL to this Slack thread (full `https://` URL, not just the channel name)',
-                '     - *Set PR merge method to squash* (merge commits nullify the `:noop` tag)',
-                '6. If confidence < 90% or fix requires upstream changes:',
-                '   - Output diagnostic report only',
-                '   - Suggest that ART add the `art:bot-skip-auto-fix` label to the Jira ticket tracking the failure, to prevent repeated automated investigation',
-                '   - Defer to human intervention',
+                '0. *Pre-check:* Before each image query Jira: `project = ART AND summary ~ "Image build failure: <image_name>"'
+                f' AND summary ~ "({group})" AND statusCategory != Done`.'
+                ' If ticket has `art:bot-skip-auto-fix` label, skip that image and report with ticket link.',
+                '1. Analyze failure logs. Fix via ocp-build-data metadata changes only (Dockerfile patches, env vars, build args).'
+                ' *DO NOT* push to upstream repos. Only proceed if confidence >= 90%.',
+                f'2. If proceeding: push fix to ocp-build-data fork for `openshift-{version}` (`--variant=okd`).'
+                ' *Changes MUST be under `okd:` stanza only.*'
+                ' *Commit message MUST start with `scan-sources-konflux:noop`.*'
+                f' Then trigger Jenkins build for `{okd_group}` *without user confirmation* (`ASSEMBLY=stream`, `IGNORE_LOCKS=true`).',
+                '   - *Max 3 fix attempts per image.* After 3 failures: stop, report all tried approaches,'
+                ' apply `art:bot-skip-auto-fix` to the Jira ticket (ART can remove to retry).',
+                '   - On success: report fixed images, changes made, and test build links; *ask user to approve PR*.',
+                '   - On approval: file PR attributed to bot (not Slack profile), *squash merge* (merge commits nullify `:noop`).'
+                ' PR description *must include* full clickable Jenkins build URL'
+                ' (e.g. `https://art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com/job/aos-cd-builds/job/build%252Fokd/BUILD_NUMBER/`)'
+                ' and full clickable Slack thread `https://` URL.',
+                '3. If confidence < 90% or upstream change required: diagnostic report only,'
+                ' suggest `art:bot-skip-auto-fix` label on Jira ticket, defer to humans.',
                 '\n*Target only OKD builds. All fixes must be ocp-build-data metadata changes only.*',
             ]
         )
