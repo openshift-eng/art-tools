@@ -532,10 +532,27 @@ def start_rhcos(build_version: str, new_build: bool, job_name: str = 'build', **
     )
 
 
-def start_sync_ci_images(version: str, **kwargs) -> Optional[str]:
+def start_sync_ci_images(
+    version: str,
+    assembly: str = 'stream',
+    image_list: list = None,
+    dry_run: bool = False,
+    load_disabled: bool = False,
+    live_test_mode: bool = False,
+    force_run: bool = False,
+    **kwargs,
+) -> Optional[str]:
     params = {
         'VERSION': version,
     }
+    if image_list:
+        params['IMAGES'] = ','.join(image_list)
+    params['ART_TOOLS_COMMIT'] = 'kopero2000@ci-golang-builder-from-update-golang-ART-21958'
+    params['DRY_RUN'] = dry_run
+    params['LOAD_DISABLED'] = load_disabled
+    params['LIVE_TEST_MODE'] = live_test_mode
+    params['ASSEMBLY'] = assembly
+    params['FORCE_RUN'] = force_run
     return start_build(
         job=Jobs.SYNC_CI_IMAGES,
         params=params,
