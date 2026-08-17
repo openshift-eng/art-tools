@@ -579,6 +579,18 @@
           "$ref": "#/properties/konflux/properties/build_step_resources"
         },
         "build_step_resources-": {},
+        "sbom_step_resources": {
+          "description": "Kubernetes resource requests/limits for the SBOM steps (e.g. memory)",
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "sbom_step_resources!": {
+          "$ref": "#/properties/konflux/properties/sbom_step_resources"
+        },
+        "sbom_step_resources?": {
+          "$ref": "#/properties/konflux/properties/sbom_step_resources"
+        },
+        "sbom_step_resources-": {},
         "workspace_storage": {
           "description": "PVC storage size for workspace volume (e.g. 100Gi)",
           "type": "string"
