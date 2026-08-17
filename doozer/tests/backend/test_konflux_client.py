@@ -1059,7 +1059,8 @@ class TestNewPipelinerunSbomStepResources(IsolatedAsyncioTestCase):
             resources = step_specs[step_name]["computeResources"]
             self.assertEqual(resources["requests"]["memory"], "8Gi", f"Default memory missing for {step_name}")
             self.assertEqual(
-                resources["requests"]["ephemeral-storage"], "1Gi",
+                resources["requests"]["ephemeral-storage"],
+                "1Gi",
                 f"Ephemeral-storage missing for {step_name}",
             )
 

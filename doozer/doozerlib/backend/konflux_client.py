@@ -1470,13 +1470,15 @@ class KonfluxClient:
             if build_params.sbom_step_resources:
                 sbom_resources.update(build_params.sbom_step_resources)
             for step_name in ("prepare-sboms", "upload-sbom"):
-                build_images_step_specs.append({
-                    "name": step_name,
-                    "computeResources": {
-                        "requests": dict(sbom_resources),
-                        "limits": dict(sbom_resources),
-                    },
-                })
+                build_images_step_specs.append(
+                    {
+                        "name": step_name,
+                        "computeResources": {
+                            "requests": dict(sbom_resources),
+                            "limits": dict(sbom_resources),
+                        },
+                    }
+                )
 
             if build_params.build_step_resources:
                 build_images_step_specs.append(
