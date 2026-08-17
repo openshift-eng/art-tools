@@ -273,10 +273,7 @@ async def get_bugs_sweep(runtime: Runtime, find_bugs_obj, bug_tracker, filter_at
         sweep_cutoff_timestamp = await get_sweep_cutoff_timestamp(runtime)
         if sweep_cutoff_timestamp:
             utc_ts = datetime.fromtimestamp(sweep_cutoff_timestamp, tz=timezone.utc)
-            logger.info(
-                f"Filtering bugs that were in a post-fix state ({len(bugs)}) at the "
-                f"cutoff time {utc_ts}..."
-            )
+            logger.info(f"Filtering bugs that were in a post-fix state ({len(bugs)}) at the cutoff time {utc_ts}...")
             # The initial search already ensures bugs are currently VERIFIED (or whatever
             # find_bugs_obj.status requires). For the historical cutoff check we use a broader
             # set: any status indicating the bug was already fixed at the cutoff time qualifies,

@@ -621,7 +621,9 @@ class KonfluxOcpPipeline:
 
     async def sweep_bugs(self):
         """
-        Find MODIFIED bugs for the target-releases, and set them to ON_QA
+        Find MODIFIED bugs for the target-releases, and set them to ON_QA.
+        Called after rebase so that ON_QA is set before builds complete, making
+        the bug status a reliable indicator that the fix was included in the rebase.
         """
 
         if self.assembly != 'stream':
@@ -901,6 +903,12 @@ class KonfluxOcpPipeline:
 
         await self.rebase_images(f"v{self.version}.0", self.release)
 
+        # Sweep bugs to ON_QA right after rebase: at this point we've pulled all source that
+        # includes the fixes, so any MODIFIED bug for this release has been incorporated.
+        # Doing this before build_images ensures ON_QA is set before basis.time (build completion),
+        # making the cutoff filter in elliott find-bugs:sweep reliable.
+        await self.sweep_bugs()
+
         # ART-14540: Notify component owners about missing branch protection
         record_log_path = Path(self.runtime.doozer_working) / "record.log"
         if record_log_path.exists():
@@ -1068,7 +1076,7 @@ class KonfluxOcpPipeline:
             await self.sync_images()
 
             if uses_konflux_imagestream_override(self.version):
-                await self.sweep_bugs()
+                # sweep_bugs (MODIFIED → ON_QA) now runs in rebase_and_build_images, after rebase.
                 await self.sweep_golang_bugs()
                 if not self.runtime.dry_run:
                     await self.sweep_second_fix_bugs()
