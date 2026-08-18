@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import shutil
 import tempfile
 from datetime import datetime, timezone
@@ -945,14 +946,23 @@ class ReleaseFromFbcPipeline:
                 e,
             )
 
+    _JIRA_KEY_RE = re.compile(r"^[A-Z][A-Z0-9]+-\d+$")
+    _JIRA_HOSTS = {"redhat.atlassian.net", "issues.redhat.com"}
+
     @staticmethod
     def _parse_jira_key(jira_url: str) -> str:
-        """Extract the JIRA issue key from a browse URL.
+        """Extract and validate a JIRA issue key from a browse URL.
 
-        E.g. "https://redhat.atlassian.net/browse/OADP-1234" -> "OADP-1234"
+        Accepts URLs like "https://redhat.atlassian.net/browse/OADP-1234".
+        Returns the issue key (e.g. "OADP-1234") or empty string if invalid.
         """
-        path = urlparse(jira_url).path.rstrip('/')
-        return path.split('/')[-1]
+        parsed = urlparse(jira_url.strip())
+        if parsed.hostname not in ReleaseFromFbcPipeline._JIRA_HOSTS:
+            return ""
+        key = parsed.path.rstrip("/").split("/")[-1]
+        if not ReleaseFromFbcPipeline._JIRA_KEY_RE.match(key):
+            return ""
+        return key
 
     def _update_jira_with_mr_link(self, mr_url: str):
         """Add a remote web link on the release JIRA ticket pointing to the shipment MR.
@@ -975,7 +985,7 @@ class ReleaseFromFbcPipeline:
             jira_client = self.runtime.new_jira_client()
             jira_client.add_remote_link(issue_key, {"title": "Shipment MR", "url": mr_url})
             self.logger.info("Added shipment MR link to JIRA ticket %s", issue_key)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — best-effort; JIRA failures must not block the release
             self.logger.warning("Failed to update JIRA ticket %s with MR link: %s", issue_key, e)
 
     async def update_shipment_data(

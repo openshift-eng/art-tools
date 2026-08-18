@@ -754,6 +754,30 @@ class TestReleaseJira(unittest.TestCase):
         key = ReleaseFromFbcPipeline._parse_jira_key("https://redhat.atlassian.net/browse/MTA-999/")
         self.assertEqual(key, "MTA-999")
 
+    def test_parse_jira_key_rejects_unsupported_host(self):
+        key = ReleaseFromFbcPipeline._parse_jira_key("https://evil.example.com/browse/OADP-1234")
+        self.assertEqual(key, "")
+
+    def test_parse_jira_key_rejects_malformed_key(self):
+        key = ReleaseFromFbcPipeline._parse_jira_key("https://redhat.atlassian.net/browse/not-a-key")
+        self.assertEqual(key, "")
+
+    def test_parse_jira_key_rejects_empty_path(self):
+        key = ReleaseFromFbcPipeline._parse_jira_key("https://redhat.atlassian.net/browse/")
+        self.assertEqual(key, "")
+
+    def test_parse_jira_key_rejects_relative_url(self):
+        key = ReleaseFromFbcPipeline._parse_jira_key("/browse/OADP-1234")
+        self.assertEqual(key, "")
+
+    def test_parse_jira_key_handles_whitespace(self):
+        key = ReleaseFromFbcPipeline._parse_jira_key("  https://redhat.atlassian.net/browse/OADP-1234  ")
+        self.assertEqual(key, "OADP-1234")
+
+    def test_parse_jira_key_issues_redhat_com(self):
+        key = ReleaseFromFbcPipeline._parse_jira_key("https://issues.redhat.com/browse/OADP-5678")
+        self.assertEqual(key, "OADP-5678")
+
     def test_update_jira_adds_remote_link(self):
         pipeline = self._make_pipeline(dry_run=False, release_jira="https://redhat.atlassian.net/browse/OADP-5678")
         mock_jira = MagicMock()
