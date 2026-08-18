@@ -1021,7 +1021,7 @@ class TestUpdateImagestreamsDataPath(IsolatedAsyncioTestCase):
         data_path = 'https://github.com/openshift-eng/ocp-build-data'
         pipeline = self._make_pipeline(data_path)
         pipeline.built_images = [
-            {'name': 'cli', 'nvr': 'cli-1.0', 'image_pullspec': 'quay.io/okd/cli:latest', 'image_tag': 'latest'},
+            {'name': 'cli', 'nvr': 'cli-1.0', 'image_pullspec': 'quay.io/okd/cli@sha256:abc', 'image_tag': 'latest'},
         ]
 
         # Create the expected metadata directory and file
@@ -1032,6 +1032,9 @@ class TestUpdateImagestreamsDataPath(IsolatedAsyncioTestCase):
 
         with (
             patch.object(pipeline, '_tag_image_to_stream', new_callable=AsyncMock),
+            patch.object(
+                pipeline, '_get_arch_pullspec', new_callable=AsyncMock, return_value='quay.io/okd/cli@sha256:arm64'
+            ),
             patch('pyartcd.pipelines.okd.jenkins'),
         ):
             # when / then — should not raise FileNotFoundError
@@ -1044,7 +1047,7 @@ class TestUpdateImagestreamsDataPath(IsolatedAsyncioTestCase):
         data_path = 'https://github.com/redhat-chai-bot/openshift-eng_ocp-build-data'
         pipeline = self._make_pipeline(data_path)
         pipeline.built_images = [
-            {'name': 'cli', 'nvr': 'cli-1.0', 'image_pullspec': 'quay.io/okd/cli:latest', 'image_tag': 'latest'},
+            {'name': 'cli', 'nvr': 'cli-1.0', 'image_pullspec': 'quay.io/okd/cli@sha256:abc', 'image_tag': 'latest'},
         ]
 
         # Create the expected metadata directory using the fork's repo name
@@ -1053,15 +1056,17 @@ class TestUpdateImagestreamsDataPath(IsolatedAsyncioTestCase):
         yaml_file = images_dir / 'cli.yml'
         yaml_file.write_text(yaml.dump({'name': 'openshift/ose-cli', 'for_payload': True}))
 
+        arm64_pullspec = 'quay.io/okd/cli@sha256:arm64digest'
         with (
             patch.object(pipeline, '_tag_image_to_stream', new_callable=AsyncMock) as mock_tag,
+            patch.object(pipeline, '_get_arch_pullspec', new_callable=AsyncMock, return_value=arm64_pullspec),
             patch('pyartcd.pipelines.okd.jenkins'),
         ):
             # when — should resolve the fork directory, not hardcoded 'ocp-build-data'
             await pipeline.update_imagestreams()
 
-            # then — the image should be tagged successfully
-            mock_tag.assert_called_once()
+            # then — tagged into both multi-arch and arm64 imagestreams
+            self.assertEqual(mock_tag.call_count, 2)
 
     async def test_update_imagestreams_data_path_with_git_suffix(self):
         """update_imagestreams strips .git suffix when deriving the data directory name."""
@@ -1070,7 +1075,7 @@ class TestUpdateImagestreamsDataPath(IsolatedAsyncioTestCase):
         data_path = 'https://github.com/openshift-eng/ocp-build-data.git'
         pipeline = self._make_pipeline(data_path)
         pipeline.built_images = [
-            {'name': 'cli', 'nvr': 'cli-1.0', 'image_pullspec': 'quay.io/okd/cli:latest', 'image_tag': 'latest'},
+            {'name': 'cli', 'nvr': 'cli-1.0', 'image_pullspec': 'quay.io/okd/cli@sha256:abc', 'image_tag': 'latest'},
         ]
 
         # .git suffix should be stripped → directory is 'ocp-build-data'
@@ -1079,13 +1084,201 @@ class TestUpdateImagestreamsDataPath(IsolatedAsyncioTestCase):
         yaml_file = images_dir / 'cli.yml'
         yaml_file.write_text(yaml.dump({'name': 'openshift/ose-cli', 'for_payload': True}))
 
+        arm64_pullspec = 'quay.io/okd/cli@sha256:arm64digest'
         with (
             patch.object(pipeline, '_tag_image_to_stream', new_callable=AsyncMock) as mock_tag,
+            patch.object(pipeline, '_get_arch_pullspec', new_callable=AsyncMock, return_value=arm64_pullspec),
             patch('pyartcd.pipelines.okd.jenkins'),
         ):
             # when / then — should not raise
             await pipeline.update_imagestreams()
-            mock_tag.assert_called_once()
+            # tagged into both multi-arch and arm64 imagestreams
+            self.assertEqual(mock_tag.call_count, 2)
+
+    async def test_update_imagestreams_tags_arm64_with_correct_namespace(self):
+        """update_imagestreams uses arch-suffixed namespace: origin-arm64/scos-{version}-art-arm64."""
+
+        data_path = 'https://github.com/openshift-eng/ocp-build-data'
+        pipeline = self._make_pipeline(data_path)
+        pipeline.built_images = [
+            {
+                'name': 'cli',
+                'nvr': 'cli-1.0',
+                'image_pullspec': 'quay.io/okd/cli@sha256:multiarchabcdef',
+                'image_tag': 'latest',
+            },
+        ]
+
+        images_dir = Path(self.mock_runtime.doozer_working) / 'ocp-build-data' / 'images'
+        images_dir.mkdir(parents=True)
+        (images_dir / 'cli.yml').write_text(yaml.dump({'name': 'openshift/ose-cli', 'for_payload': True}))
+
+        arm64_pullspec = 'quay.io/okd/cli@sha256:arm64digest'
+        with (
+            patch.object(pipeline, '_tag_image_to_stream', new_callable=AsyncMock) as mock_tag,
+            patch.object(pipeline, '_get_arch_pullspec', new_callable=AsyncMock, return_value=arm64_pullspec),
+            patch('pyartcd.pipelines.okd.jenkins'),
+        ):
+            await pipeline.update_imagestreams()
+
+            # First call: multi-arch manifest into origin/scos-4.22-art
+            first_call = mock_tag.call_args_list[0]
+            self.assertEqual(first_call[1]['source_pullspec'], 'quay.io/okd/cli@sha256:multiarchabcdef')
+            self.assertEqual(first_call[1]['target_tag'], 'origin/scos-4.22-art:cli')
+
+            # Second call: arm64-specific pullspec into origin-arm64/scos-4.22-art-arm64
+            second_call = mock_tag.call_args_list[1]
+            self.assertEqual(second_call[1]['source_pullspec'], arm64_pullspec)
+            self.assertEqual(second_call[1]['target_tag'], 'origin-arm64/scos-4.22-art-arm64:cli')
+
+    async def test_update_imagestreams_arch_failure_does_not_block_other_images(self):
+        """Failure to resolve arch pullspec logs a warning but does not fail the pipeline."""
+
+        data_path = 'https://github.com/openshift-eng/ocp-build-data'
+        pipeline = self._make_pipeline(data_path)
+        pipeline.built_images = [
+            {
+                'name': 'cli',
+                'nvr': 'cli-1.0',
+                'image_pullspec': 'quay.io/okd/cli@sha256:abc',
+                'image_tag': 'latest',
+            },
+        ]
+
+        images_dir = Path(self.mock_runtime.doozer_working) / 'ocp-build-data' / 'images'
+        images_dir.mkdir(parents=True)
+        (images_dir / 'cli.yml').write_text(yaml.dump({'name': 'openshift/ose-cli', 'for_payload': True}))
+
+        with (
+            patch.object(pipeline, '_tag_image_to_stream', new_callable=AsyncMock) as mock_tag,
+            # arch resolution fails
+            patch.object(pipeline, '_get_arch_pullspec', new_callable=AsyncMock, return_value=None),
+            patch('pyartcd.pipelines.okd.jenkins'),
+        ):
+            await pipeline.update_imagestreams()
+
+            # multi-arch tag still succeeds; arch-specific tags are skipped
+            self.assertEqual(mock_tag.call_count, 1)
+            first_call = mock_tag.call_args_list[0]
+            self.assertEqual(first_call[1]['target_tag'], 'origin/scos-4.22-art:cli')
+
+    async def test_update_imagestreams_custom_namespace_derives_arch_suffix(self):
+        """Arch-suffixed namespace is derived from custom namespace, not hardcoded."""
+
+        data_path = 'https://github.com/openshift-eng/ocp-build-data'
+        pipeline = KonfluxOkdPipeline(
+            runtime=self.mock_runtime,
+            image_build_strategy='all',
+            image_list=None,
+            assembly='stream',
+            data_path=data_path,
+            data_gitref='',
+            version='5.0',
+            ignore_locks=False,
+            plr_template='',
+            lock_identifier='test-lock',
+            build_priority='10',
+            imagestream_namespace='custom-ns',
+        )
+        pipeline.built_images = [
+            {
+                'name': 'cli',
+                'nvr': 'cli-1.0',
+                'image_pullspec': 'quay.io/okd/cli@sha256:multiarch',
+                'image_tag': 'latest',
+            },
+        ]
+
+        images_dir = Path(self.mock_runtime.doozer_working) / 'ocp-build-data' / 'images'
+        images_dir.mkdir(parents=True, exist_ok=True)
+        (images_dir / 'cli.yml').write_text(yaml.dump({'name': 'openshift/ose-cli', 'for_payload': True}))
+
+        arm64_pullspec = 'quay.io/okd/cli@sha256:arm64digest'
+        with (
+            patch.object(pipeline, '_tag_image_to_stream', new_callable=AsyncMock) as mock_tag,
+            patch.object(pipeline, '_get_arch_pullspec', new_callable=AsyncMock, return_value=arm64_pullspec),
+            patch('pyartcd.pipelines.okd.jenkins'),
+        ):
+            await pipeline.update_imagestreams()
+
+            # First call: multi-arch into custom-ns/scos-5.0-art
+            first_call = mock_tag.call_args_list[0]
+            self.assertEqual(first_call[1]['target_tag'], 'custom-ns/scos-5.0-art:cli')
+
+            # Second call: arm64 into custom-ns-arm64/scos-5.0-art-arm64
+            second_call = mock_tag.call_args_list[1]
+            self.assertEqual(second_call[1]['target_tag'], 'custom-ns-arm64/scos-5.0-art-arm64:cli')
+
+
+class TestGetArchPullspec(IsolatedAsyncioTestCase):
+    """Tests for _get_arch_pullspec using empty registry config."""
+
+    def _make_pipeline(self):
+        mock_runtime = MagicMock()
+        mock_runtime.dry_run = False
+        mock_runtime.doozer_working = '/tmp/doozer_working'
+        return KonfluxOkdPipeline(
+            runtime=mock_runtime,
+            image_build_strategy='all',
+            image_list=None,
+            assembly='stream',
+            data_path='https://github.com/openshift-eng/ocp-build-data',
+            data_gitref='',
+            version='4.22',
+            ignore_locks=False,
+            plr_template='',
+            lock_identifier='test-lock',
+            build_priority='10',
+            imagestream_namespace='origin',
+        )
+
+    @patch('pyartcd.pipelines.okd.oc_image_info_for_arch_async', new_callable=AsyncMock)
+    async def test_passes_empty_registry_config(self, mock_oc_image_info):
+        """_get_arch_pullspec passes an empty JSON registry config to oc_image_info_for_arch_async."""
+        mock_oc_image_info.return_value = {'digest': 'sha256:arm64abc'}
+        pipeline = self._make_pipeline()
+
+        result = await pipeline._get_arch_pullspec('quay.io/test/image@sha256:multiarch', 'arm64')
+
+        self.assertEqual(result, 'quay.io/test/image@sha256:arm64abc')
+        mock_oc_image_info.assert_called_once()
+        call_kwargs = mock_oc_image_info.call_args[1]
+        self.assertEqual(call_kwargs['go_arch'], 'arm64')
+        # Verify registry_config was passed (pointing to a temp file)
+        self.assertIn('registry_config', call_kwargs)
+        self.assertIsNotNone(call_kwargs['registry_config'])
+
+    @patch('pyartcd.pipelines.okd.oc_image_info_for_arch_async', new_callable=AsyncMock)
+    async def test_works_for_any_arch(self, mock_oc_image_info):
+        """_get_arch_pullspec works for any Go architecture string."""
+        mock_oc_image_info.return_value = {'digest': 'sha256:s390xdigest'}
+        pipeline = self._make_pipeline()
+
+        result = await pipeline._get_arch_pullspec('quay.io/test/image@sha256:multiarch', 's390x')
+
+        self.assertEqual(result, 'quay.io/test/image@sha256:s390xdigest')
+        call_kwargs = mock_oc_image_info.call_args[1]
+        self.assertEqual(call_kwargs['go_arch'], 's390x')
+
+    @patch('pyartcd.pipelines.okd.oc_image_info_for_arch_async', new_callable=AsyncMock)
+    async def test_returns_none_on_failure(self, mock_oc_image_info):
+        """_get_arch_pullspec returns None when oc image info fails."""
+        mock_oc_image_info.side_effect = Exception('auth error')
+        pipeline = self._make_pipeline()
+
+        result = await pipeline._get_arch_pullspec('quay.io/test/image@sha256:multiarch', 'arm64')
+
+        self.assertIsNone(result)
+
+    @patch('pyartcd.pipelines.okd.oc_image_info_for_arch_async', new_callable=AsyncMock)
+    async def test_returns_none_when_no_digest(self, mock_oc_image_info):
+        """_get_arch_pullspec returns None when no arch digest is found."""
+        mock_oc_image_info.return_value = {}
+        pipeline = self._make_pipeline()
+
+        result = await pipeline._get_arch_pullspec('quay.io/test/image@sha256:multiarch', 'arm64')
+
+        self.assertIsNone(result)
 
 
 class TestRebaseFailCounters(IsolatedAsyncioTestCase):
