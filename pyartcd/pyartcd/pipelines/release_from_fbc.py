@@ -39,6 +39,7 @@ from tenacity import retry, stop_after_attempt
 from pyartcd import constants
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.fbc_util import extract_fbc_labels as _extract_fbc_labels
+from pyartcd.fbc_util import extract_ocp_version_from_nvr
 from pyartcd.fbc_util import validate_fbc_related_images as _validate_fbc_related_images
 from pyartcd.git import GitRepository
 from pyartcd.runtime import Runtime
@@ -119,6 +120,9 @@ class ReleaseFromFbcPipeline:
 
         # FBC operator doozer keys - populated during validate_fbc_related_images()
         self._fbc_operator_keys: list[str] = []
+
+        # OCP version per advisory kind (e.g. 'fbc01' -> '4.19') for LP FBC shipment file naming
+        self._fbc_ocp_versions: Dict[str, str] = {}
 
         # Set default shipment_path if not provided, using same logic as elliott
         self.shipment_path_was_defaulted = not shipment_path
@@ -968,7 +972,11 @@ class ReleaseFromFbcPipeline:
         if advisory_kind.startswith('fbc'):
             # Extract counter from advisory_kind (e.g., 'fbc01' -> '01')
             counter = advisory_kind[3:]  # Remove 'fbc' prefix
-            filename = f"{self.assembly}.fbc.{timestamp}{counter}.yaml"
+            ocp_ver = self._fbc_ocp_versions.get(advisory_kind)
+            if ocp_ver:
+                filename = f"{self.assembly}.fbc.ocp{ocp_ver}.{timestamp}{counter}.yaml"
+            else:
+                filename = f"{self.assembly}.fbc.{timestamp}{counter}.yaml"
         else:
             filename = f"{self.assembly}.{advisory_kind}.{timestamp}.yaml"
 
@@ -1160,10 +1168,13 @@ class ReleaseFromFbcPipeline:
 
         # Create separate FBC shipment for each FBC build
         fbc_counter = 1
-        for _, fbc_snapshot in fbc_snapshots.items():
+        for fbc_nvr, fbc_snapshot in fbc_snapshots.items():
             if fbc_snapshot:
                 shipment_config = self.create_shipment_config('fbc', fbc_snapshot)
                 shipment_kind = f"fbc{fbc_counter:02d}"
+                ocp_ver = extract_ocp_version_from_nvr(fbc_nvr)
+                if ocp_ver:
+                    self._fbc_ocp_versions[shipment_kind] = ocp_ver
                 shipments_by_kind[shipment_kind] = shipment_config
                 fbc_counter += 1
 
