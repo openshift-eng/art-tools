@@ -4,6 +4,7 @@ import logging
 import os
 import shutil
 import tempfile
+from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import Optional, Tuple
@@ -41,6 +42,7 @@ from pyartcd.util import (
     get_group_images,
     get_group_rpms,
     increment_fail_counter,
+    is_mass_rebuild,
     mass_rebuild_score,
     reset_fail_counter,
 )
@@ -761,7 +763,7 @@ class KonfluxOcpPipeline:
                 jenkins.update_description(f'Images: building {n_images} images.<br/>')
 
             # It's a mass rebuild if we included more than half of all active images in the group
-            if n_images > self.build_plan.active_image_count / 2:
+            if is_mass_rebuild(n_images, self.build_plan.active_image_count):
                 self.mass_rebuild = True
 
         else:  # build_plan.build_strategy == BuildStrategy.EXCEPT
@@ -945,8 +947,13 @@ class KonfluxOcpPipeline:
             version_queue_name=queue,
         )
 
+    async def _record_mass_rebuild_start(self):
+        key = locks.Keys.KONFLUX_LAST_MASS_REBUILD_START.value.format(version=self.version)
+        await redis.set_value(key, datetime.now().isoformat(), expiry=60 * 60 * 24 * 7)  # keep for 7 days
+
     async def rebase_and_build_images(self):
         if self.mass_rebuild:
+            await self._record_mass_rebuild_start()
             await self.slack_client.say(
                 f':construction: Starting image builds for {self.version} mass rebuild :construction:'
             )

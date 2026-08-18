@@ -1,10 +1,11 @@
 import logging
 import os
 import sys
+from datetime import datetime, timedelta
 
 import click
 import yaml
-from artcommonlib import exectools
+from artcommonlib import exectools, redis
 
 from pyartcd import constants, jenkins, locks, util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -68,7 +69,7 @@ class Ocp4ScanPipeline:
         await self.handle_bridge_bug_mirroring()
 
         # Handle image source changes
-        self.handle_source_changes()
+        await self.handle_source_changes()
 
         # Handle RHCOS changes or inconsistencies
         await self.handle_rhcos_changes()
@@ -183,7 +184,7 @@ class Ocp4ScanPipeline:
             self.rhcos_inconsistent = True
             self.inconsistent_rhcos_rpms = e
 
-    def handle_source_changes(self):
+    async def handle_source_changes(self):
         if not self.changes:
             return
 
@@ -196,11 +197,22 @@ class Ocp4ScanPipeline:
         # Note: OCP5 uses the same ocp4-konflux job as OCP4
         match major_version:
             case 5 | 4:
-                self.trigger_ocp4()
+                await self.trigger_ocp4()
             case _:
                 raise ValueError(f'Unsupported OCP major version: {major_version}')
 
-    def trigger_ocp4(self):
+    async def _mass_rebuild_cooldown_active(self) -> bool:
+        """
+        Returns True if this group's last Konflux mass rebuild started less than 24h ago.
+        """
+
+        key = locks.Keys.KONFLUX_LAST_MASS_REBUILD_START.value.format(version=self.version)
+        last_start_str = await redis.get_value(key)
+        if not last_start_str:
+            return False
+        return datetime.now() - datetime.fromisoformat(last_start_str) < timedelta(hours=24)
+
+    async def trigger_ocp4(self):
         changed_rpm = self.changes.get('rpms', [])
 
         # Filter out okd-only images (mode: disabled, okd.mode: enabled)
@@ -213,6 +225,17 @@ class Ocp4ScanPipeline:
 
         if not changed_ocp_images and not changed_rpm:
             self.logger.info('No OCP images/RPMs to build')
+            return
+
+        active_ocp_image_count = sum(1 for image in self.report.get('images', []) if not image.get('okd_only'))
+        is_mass_rebuild = util.is_mass_rebuild(len(changed_ocp_images), active_ocp_image_count)
+        if is_mass_rebuild and await self._mass_rebuild_cooldown_active():
+            self.logger.info(
+                'Mass rebuild detected for %s but 24h cooldown has not elapsed; skipping ocp4-konflux trigger',
+                self.version,
+            )
+            jenkins.update_title(' [MASS REBUILD SKIPPED][COOLDOWN]')
+            jenkins.update_description('Mass rebuild detected but skipped: 24h cooldown has not elapsed.<br/>')
             return
 
         # Update Jenkins title and description

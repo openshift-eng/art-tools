@@ -2,8 +2,9 @@
 
 import os
 import unittest
+from datetime import datetime, timedelta
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import yaml
 from pyartcd.pipelines.ocp4_scan_konflux import Ocp4ScanPipeline
@@ -69,7 +70,7 @@ class TestOcp4ScanKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         pipeline.get_changes = AsyncMock(side_effect=fake_get_changes)
         pipeline.get_rhcos_inconsistencies = AsyncMock()
         pipeline.handle_bridge_bug_mirroring = AsyncMock()
-        pipeline.handle_source_changes = Mock()
+        pipeline.handle_source_changes = AsyncMock()
         pipeline.handle_rhcos_changes = AsyncMock()
 
         with self.assertRaises(SystemExit) as ctx:
@@ -96,7 +97,7 @@ class TestOcp4ScanKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         pipeline.get_changes = AsyncMock(side_effect=fake_get_changes)
         pipeline.get_rhcos_inconsistencies = AsyncMock()
         pipeline.handle_bridge_bug_mirroring = AsyncMock()
-        pipeline.handle_source_changes = Mock()
+        pipeline.handle_source_changes = AsyncMock()
         pipeline.handle_rhcos_changes = AsyncMock()
 
         with self.assertRaises(RuntimeError) as ctx:
@@ -124,7 +125,7 @@ class TestOcp4ScanKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         pipeline.get_changes = AsyncMock(side_effect=fake_get_changes)
         pipeline.get_rhcos_inconsistencies = AsyncMock()
         pipeline.handle_bridge_bug_mirroring = AsyncMock()
-        pipeline.handle_source_changes = Mock()
+        pipeline.handle_source_changes = AsyncMock()
         pipeline.handle_rhcos_changes = AsyncMock()
 
         with self.assertRaises(RuntimeError) as ctx:
@@ -158,7 +159,7 @@ class TestBridgeBugMirroring(unittest.IsolatedAsyncioTestCase):
         self.pipeline.get_changes = AsyncMock()
         self.pipeline.get_rhcos_inconsistencies = AsyncMock()
         self.pipeline.handle_bridge_bug_mirroring = AsyncMock()
-        self.pipeline.handle_source_changes = MagicMock()
+        self.pipeline.handle_source_changes = AsyncMock()
         self.pipeline.handle_rhcos_changes = AsyncMock()
 
         await self.pipeline.run()
@@ -211,6 +212,115 @@ class TestBridgeBugMirroring(unittest.IsolatedAsyncioTestCase):
 
         slack_client.bind_channel.assert_called_once_with("openshift-4.23")
         slack_client.say.assert_awaited_once_with("Bridge bug mirroring failed for 4.23. Please investigate")
+
+
+class TestTriggerOcp4MassRebuildCooldown(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.runtime = MagicMock(spec=Runtime)
+        self.runtime.dry_run = False
+        self.runtime.working_dir = MagicMock()
+        self.runtime.working_dir.__truediv__ = lambda self, x: MagicMock()
+        self.pipeline = Ocp4ScanPipeline(
+            runtime=self.runtime,
+            version='4.21',
+            data_path='https://github.com/openshift-eng/ocp-build-data',
+            assembly='stream',
+            data_gitref='',
+            image_list='',
+            skip_rpms=False,
+        )
+        # 3 of 4 active images changed -> mass rebuild
+        self.pipeline.report = {
+            'images': [
+                {'name': 'img1', 'changed': True},
+                {'name': 'img2', 'changed': True},
+                {'name': 'img3', 'changed': True},
+                {'name': 'img4', 'changed': False},
+            ]
+        }
+        self.pipeline.changes = {}
+
+    @patch('pyartcd.pipelines.ocp4_scan_konflux.jenkins')
+    @patch('pyartcd.pipelines.ocp4_scan_konflux.redis.get_value')
+    async def test_skips_trigger_when_mass_rebuild_cooldown_active(self, mock_get_value, mock_jenkins):
+        mock_get_value.return_value = datetime.now().isoformat()
+
+        await self.pipeline.trigger_ocp4()
+
+        mock_jenkins.start_ocp4_konflux.assert_not_called()
+        mock_jenkins.update_title.assert_called_with(' [MASS REBUILD SKIPPED][COOLDOWN]')
+
+    @patch('pyartcd.pipelines.ocp4_scan_konflux.jenkins')
+    @patch('pyartcd.pipelines.ocp4_scan_konflux.redis.get_value')
+    async def test_triggers_when_mass_rebuild_cooldown_expired(self, mock_get_value, mock_jenkins):
+        mock_get_value.return_value = (datetime.now() - timedelta(hours=25)).isoformat()
+
+        await self.pipeline.trigger_ocp4()
+
+        mock_jenkins.start_ocp4_konflux.assert_called_once()
+
+    @patch('pyartcd.pipelines.ocp4_scan_konflux.jenkins')
+    @patch('pyartcd.pipelines.ocp4_scan_konflux.redis.get_value')
+    async def test_triggers_when_no_prior_mass_rebuild_recorded(self, mock_get_value, mock_jenkins):
+        mock_get_value.return_value = None
+
+        await self.pipeline.trigger_ocp4()
+
+        mock_jenkins.start_ocp4_konflux.assert_called_once()
+
+    @patch('pyartcd.pipelines.ocp4_scan_konflux.jenkins')
+    @patch('pyartcd.pipelines.ocp4_scan_konflux.redis.get_value')
+    async def test_cooldown_not_checked_when_not_mass_rebuild(self, mock_get_value, mock_jenkins):
+        # Only 1 of 4 active images changed -> not a mass rebuild
+        self.pipeline.report = {
+            'images': [
+                {'name': 'img1', 'changed': True},
+                {'name': 'img2', 'changed': False},
+                {'name': 'img3', 'changed': False},
+                {'name': 'img4', 'changed': False},
+            ]
+        }
+        mock_get_value.return_value = datetime.now().isoformat()
+
+        await self.pipeline.trigger_ocp4()
+
+        mock_get_value.assert_not_called()
+        mock_jenkins.start_ocp4_konflux.assert_called_once()
+
+
+class TestMassRebuildCooldownCheck(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.runtime = MagicMock(spec=Runtime)
+        self.runtime.working_dir = MagicMock()
+        self.runtime.working_dir.__truediv__ = lambda self, x: MagicMock()
+        self.pipeline = Ocp4ScanPipeline(
+            runtime=self.runtime,
+            version='4.21',
+            data_path='https://github.com/openshift-eng/ocp-build-data',
+            assembly='stream',
+            data_gitref='',
+            image_list='',
+            skip_rpms=False,
+        )
+
+    @patch('pyartcd.pipelines.ocp4_scan_konflux.redis.get_value')
+    async def test_no_record_means_no_cooldown(self, mock_get_value):
+        mock_get_value.return_value = None
+
+        self.assertFalse(await self.pipeline._mass_rebuild_cooldown_active())
+        mock_get_value.assert_called_once_with('appdata:konflux:last-mass-rebuild-start:4.21')
+
+    @patch('pyartcd.pipelines.ocp4_scan_konflux.redis.get_value')
+    async def test_recent_record_means_cooldown_active(self, mock_get_value):
+        mock_get_value.return_value = datetime.now().isoformat()
+
+        self.assertTrue(await self.pipeline._mass_rebuild_cooldown_active())
+
+    @patch('pyartcd.pipelines.ocp4_scan_konflux.redis.get_value')
+    async def test_old_record_means_cooldown_expired(self, mock_get_value):
+        mock_get_value.return_value = (datetime.now() - timedelta(hours=25)).isoformat()
+
+        self.assertFalse(await self.pipeline._mass_rebuild_cooldown_active())
 
 
 if __name__ == '__main__':

@@ -997,6 +997,14 @@ async def get_microshift_builds(group, assembly, env):
     return [n for n in nvrs if isolate_assembly_in_release(n) == assembly]
 
 
+def is_mass_rebuild(included_count: int, active_count: int) -> bool:
+    """
+    Building more than half of a group's active images counts as a mass rebuild.
+    """
+
+    return active_count > 0 and included_count > active_count / 2
+
+
 def mass_rebuild_score(version: str, okd: bool = False) -> int:
     """
     For the ocp_version (e.g. `4.16`) return an integer score value
