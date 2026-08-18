@@ -1841,5 +1841,60 @@ class TestCreateShipmentMrImageConfigApprovers(unittest.TestCase):
         )
 
 
+class TestWriteShipmentFileOcpVersion(unittest.IsolatedAsyncioTestCase):
+    """Tests for OCP version inclusion in FBC shipment file names."""
+
+    def _make_pipeline(self):
+        runtime = MagicMock()
+        runtime.dry_run = False
+        runtime.working_dir = MagicMock()
+        runtime.working_dir.absolute.return_value = MagicMock()
+        runtime.config = {}
+
+        pipeline = ReleaseFromFbcPipeline(
+            runtime=runtime,
+            group="logging-6.5",
+            assembly="6.5.2",
+            fbc_pullspecs=["quay.io/test/fbc:latest"],
+            create_mr=False,
+        )
+        pipeline.product = "logging"
+        return pipeline
+
+    def _make_shipment_config(self):
+        config = MagicMock()
+        config.shipment.metadata.product = "logging"
+        config.shipment.metadata.group = "logging-6-5"
+        config.shipment.metadata.application = "logging-6-5"
+        config.model_dump.return_value = {}
+        return config
+
+    async def test_fbc_filename_includes_ocp_version_for_lp(self):
+        """FBC shipment filename includes ocp version when _fbc_ocp_versions is populated."""
+        pipeline = self._make_pipeline()
+        pipeline._fbc_ocp_versions = {"fbc01": "4.19"}
+        pipeline.shipment_data_repo = AsyncMock()
+        pipeline.shipment_data_repo._directory = MagicMock()
+        pipeline.shipment_data_repo._directory.__truediv__ = MagicMock(return_value=MagicMock())
+
+        result = await pipeline._write_shipment_file("fbc01", self._make_shipment_config(), "prod", "202608170101")
+
+        self.assertIn("ocp4.19", result)
+        self.assertIn("6.5.2.fbc.ocp4.19.202608170101", result)
+
+    async def test_fbc_filename_fallback_without_ocp_version(self):
+        """FBC shipment filename falls back to counter-only when no OCP version is available (OCP FBCs)."""
+        pipeline = self._make_pipeline()
+        pipeline._fbc_ocp_versions = {}
+        pipeline.shipment_data_repo = AsyncMock()
+        pipeline.shipment_data_repo._directory = MagicMock()
+        pipeline.shipment_data_repo._directory.__truediv__ = MagicMock(return_value=MagicMock())
+
+        result = await pipeline._write_shipment_file("fbc01", self._make_shipment_config(), "prod", "202608170101")
+
+        self.assertNotIn("ocp", result)
+        self.assertIn("6.5.2.fbc.202608170101", result)
+
+
 if __name__ == "__main__":
     unittest.main()
