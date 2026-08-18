@@ -4,6 +4,7 @@ import logging
 import os
 import shutil
 import sys
+import tempfile
 import urllib.parse
 from pathlib import Path
 from typing import Optional
@@ -11,6 +12,7 @@ from typing import Optional
 import click
 import yaml
 from artcommonlib import exectools
+from artcommonlib.arch_util import go_arch_for_brew_arch, go_suffix_for_arch
 from artcommonlib.util import oc_image_info_for_arch_async
 from doozerlib.cli.images_okd import OKD_DEFAULT_IMAGE_REPO
 from doozerlib.state import STATE_PASS
@@ -584,33 +586,43 @@ class KonfluxOkdPipeline:
             return image_name_short[4:]
         return image_name_short
 
-    async def _get_arm64_pullspec(self, manifest_list_pullspec: str) -> Optional[str]:
+    async def _get_arch_pullspec(self, manifest_list_pullspec: str, go_arch: str) -> Optional[str]:
         """
-        Resolve the aarch64-specific pullspec from a multi-arch manifest list.
+        Resolve an architecture-specific pullspec from a multi-arch manifest list.
+
+        Uses an empty registry config to force anonymous pull, preventing existing
+        credentials (e.g. QUAY_AUTH_FILE for openshift-release-dev) from interfering
+        with access to public Konflux repos.
 
         Arg(s):
             manifest_list_pullspec (str): Multi-arch manifest list pullspec (digest-pinned).
+            go_arch (str): Go-style architecture name (e.g. 'arm64', 'amd64').
         Return Value(s):
-            str: aarch64-specific pullspec, or None if resolution fails.
+            str: Architecture-specific pullspec, or None if resolution fails.
         """
         try:
-            image_info = await oc_image_info_for_arch_async(manifest_list_pullspec, go_arch='arm64')
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.json') as f:
+                f.write('{}')
+                f.flush()
+                image_info = await oc_image_info_for_arch_async(
+                    manifest_list_pullspec, go_arch=go_arch, registry_config=f.name
+                )
             arch_digest = image_info.get('digest')
             if not arch_digest:
-                self.logger.warning('No arm64 digest found in manifest list %s', manifest_list_pullspec)
+                self.logger.warning('No %s digest found in manifest list %s', go_arch, manifest_list_pullspec)
                 return None
             # Construct arch-specific pullspec: keep registry/repo, replace digest
             base = manifest_list_pullspec.split('@')[0]
             return f'{base}@{arch_digest}'
         except Exception as e:
-            self.logger.warning('Failed to resolve arm64 pullspec from %s: %s', manifest_list_pullspec, e)
+            self.logger.warning('Failed to resolve %s pullspec from %s: %s', go_arch, manifest_list_pullspec, e)
             return None
 
     async def update_imagestreams(self):
         """
         Update static OKD imagestreams with successfully built images:
-          scos-{version}-art     - multi-arch manifest list pullspecs
-          scos-{version}-art-arm64 - aarch64-specific pullspecs
+          scos-{version}-art            - multi-arch manifest list pullspecs (x86_64)
+          scos-{version}-art-{suffix}   - arch-specific pullspecs for each non-x86 arch
         """
 
         if self.assembly != 'stream':
@@ -621,14 +633,35 @@ class KonfluxOkdPipeline:
             self.logger.warning('No images were successfully built; skipping imagestream updates')
             return
 
+        # Derive the arch-specific imagestream names
+        is_base_name = f'scos-{self.version}-art'
+        non_x86_arches = [arch for arch in OKD_ARCHES if arch != 'x86_64']
+        arch_imagestreams = {}
+        for arch in non_x86_arches:
+            suffix = go_suffix_for_arch(arch)
+            go_arch = go_arch_for_brew_arch(arch)
+            arch_namespace = f'{self.imagestream_namespace}{suffix}'
+            arch_is_name = f'{is_base_name}{suffix}'
+            arch_imagestreams[arch] = {
+                'go_arch': go_arch,
+                'namespace': arch_namespace,
+                'is_name': arch_is_name,
+            }
+
         if self.runtime.dry_run:
+            arch_is_names = [info['is_name'] for info in arch_imagestreams.values()]
+            all_is_names = [is_base_name] + arch_is_names
             self.logger.info(
-                '[DRY RUN] Would update imagestreams scos-%s-art and scos-%s-art-arm64 in namespace %s',
-                self.version,
-                self.version,
-                self.imagestream_namespace,
+                '[DRY RUN] Would update imagestreams %s',
+                ', '.join(
+                    f'{self.imagestream_namespace}/{n}' if n == is_base_name else f'{info["namespace"]}/{n}'
+                    for n, info in zip(
+                        [is_base_name] + arch_is_names,
+                        [{'namespace': self.imagestream_namespace}] + list(arch_imagestreams.values()),
+                    )
+                ),
             )
-            self.logger.info('[DRY RUN] Would tag %d images', len(self.built_images))
+            self.logger.info('[DRY RUN] Would tag %d images into %s', len(self.built_images), ', '.join(all_is_names))
             return
 
         # Load image metadata from ocp-build-data to get payload tag names
@@ -639,11 +672,10 @@ class KonfluxOkdPipeline:
         data_name = os.path.splitext(os.path.basename(data_url.path))[0]
         ocp_build_data_path = Path(self.runtime.doozer_working) / data_name / 'images'
 
-        is_name = f'scos-{self.version}-art'
-        is_arm64_name = f'scos-{self.version}-art-arm64'
         env = os.environ.copy()
         successful_tags = []
         failed_tags = []
+        updated_imagestreams = set()
 
         for image in self.built_images:
             # Load image metadata file
@@ -677,33 +709,40 @@ class KonfluxOkdPipeline:
                 continue
 
             # Tag multi-arch manifest list into primary imagestream
-            target = f'{self.imagestream_namespace}/{is_name}:{payload_tag}'
+            target = f'{self.imagestream_namespace}/{is_base_name}:{payload_tag}'
             try:
                 await self._tag_image_to_stream(source_pullspec=image_pullspec, target_tag=target, env=env)
                 self.logger.info('Tagged %s into %s', image_name, target)
                 successful_tags.append(image_name)
+                updated_imagestreams.add(f'{self.imagestream_namespace}/{is_base_name}')
             except Exception as e:
                 self.logger.warning('Failed to tag %s into imagestream: %s', image_name, e)
                 failed_tags.append(image_name)
                 continue
 
-            # Tag aarch64-specific pullspec into arm64 imagestream
-            arm64_pullspec = await self._get_arm64_pullspec(image_pullspec)
-            if arm64_pullspec:
-                arm64_target = f'{self.imagestream_namespace}/{is_arm64_name}:{payload_tag}'
-                try:
-                    await self._tag_image_to_stream(source_pullspec=arm64_pullspec, target_tag=arm64_target, env=env)
-                    self.logger.info('Tagged %s arm64 into %s', image_name, arm64_target)
-                except Exception as e:
-                    self.logger.warning('Failed to tag %s arm64 into imagestream: %s', image_name, e)
-            else:
-                self.logger.warning(
-                    'Skipping arm64 imagestream tag for %s: could not resolve arm64 pullspec', image_name
-                )
+            # Tag arch-specific pullspecs into per-arch imagestreams
+            for arch, info in arch_imagestreams.items():
+                arch_pullspec = await self._get_arch_pullspec(image_pullspec, info['go_arch'])
+                if arch_pullspec:
+                    arch_target = f'{info["namespace"]}/{info["is_name"]}:{payload_tag}'
+                    try:
+                        await self._tag_image_to_stream(source_pullspec=arch_pullspec, target_tag=arch_target, env=env)
+                        self.logger.info('Tagged %s %s into %s', image_name, info['go_arch'], arch_target)
+                        updated_imagestreams.add(f'{info["namespace"]}/{info["is_name"]}')
+                    except Exception as e:
+                        self.logger.warning('Failed to tag %s %s into imagestream: %s', image_name, info['go_arch'], e)
+                else:
+                    self.logger.warning(
+                        'Skipping %s imagestream tag for %s: could not resolve %s pullspec',
+                        info['go_arch'],
+                        image_name,
+                        info['go_arch'],
+                    )
 
-        # Update Jenkins description with results
-        if successful_tags:
-            success_msg = f'Updated {is_name} and {is_arm64_name} with {len(successful_tags)} images'
+        # Update Jenkins description with results — only report imagestreams actually updated
+        if successful_tags and updated_imagestreams:
+            is_list = ', '.join(sorted(updated_imagestreams))
+            success_msg = f'Updated {is_list} with {len(successful_tags)} images'
             jenkins.update_description(f'{success_msg}<br>')
             self.logger.info(success_msg)
 
