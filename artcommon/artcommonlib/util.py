@@ -778,10 +778,46 @@ async def get_konflux_data(pullspec: str, mode: str = "attestation", registry_au
 
     cmd = f"cosign download {mode} {pullspec}"
     env = os.environ.copy()
-    if registry_auth_file:
-        LOGGER.debug("Using registry auth file: %s", registry_auth_file)
+    if not registry_auth_file:
+        _, out, _ = await cmd_gather_async(cmd, env=env)
+        return out.strip()
+
+    # cosign's go-containerregistry keychain resolves credentials by hostname,
+    # while Docker auth files commonly contain path-scoped entries. Select the
+    # most-specific entry for this pullspec and expose it under the hostname.
+    # This is important when different repositories on quay.io use credentials
+    # supplied through separate Jenkins bindings (for example RHCOS images).
+    LOGGER.debug("Using registry auth file: %s", registry_auth_file)
+    with open(registry_auth_file, encoding="utf-8") as auth_file:
+        auth_data = json.load(auth_file)
+
+    auths = auth_data.get("auths", {})
+    image_ref = pullspec.split("@", 1)[0].split("//", 1)[-1]
+    last_slash = image_ref.rfind("/")
+    last_colon = image_ref.rfind(":")
+    if last_colon > last_slash:
+        image_ref = image_ref[:last_colon]
+    host, separator, _ = image_ref.partition("/")
+    matching_auth = None
+    matching_key = ""
+    for key, value in auths.items():
+        normalized_key = key.split("//", 1)[-1].rstrip("/")
+        is_image_repository = image_ref == normalized_key or image_ref.startswith(f"{normalized_key}/")
+        if normalized_key == host or (separator and is_image_repository):
+            if len(normalized_key) > len(matching_key):
+                matching_key = normalized_key
+                matching_auth = value
+
+    if matching_auth is not None:
+        auth_data.setdefault("auths", {})[host] = matching_auth
+
+    with tempfile.TemporaryDirectory(prefix="cosign-docker-config-") as docker_config_dir:
+        docker_config_file = os.path.join(docker_config_dir, "config.json")
+        with open(docker_config_file, "w", encoding="utf-8") as config_file:
+            json.dump(auth_data, config_file)
+        env["DOCKER_CONFIG"] = docker_config_dir
         env["REGISTRY_AUTH_FILE"] = registry_auth_file
-    _, out, _ = await cmd_gather_async(cmd, env=env)
+        _, out, _ = await cmd_gather_async(cmd, env=env)
 
     return out.strip()
 
