@@ -974,7 +974,7 @@ class ReleaseFromFbcPipeline:
 
         issue_key = self._parse_jira_key(self.release_jira)
         if not issue_key:
-            self.logger.warning("Could not extract JIRA issue key from URL: %s", self.release_jira)
+            self.logger.warning("Could not extract a valid JIRA issue key from the provided --release-jira URL")
             return
 
         if self.dry_run:
