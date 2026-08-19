@@ -580,7 +580,7 @@ def categorize_bugs_by_type(
                 validation_result = fake_tracker_results.get(t.id)
                 if validation_result:
                     try:
-                        runtime.get_bug_tracker(t.bug_class).add_fake_tracker_comment(
+                        runtime.get_bug_tracker(t.bug_class).add_invalid_tracker_comment(
                             t.id, validation_result.reason, noop=not comment_on_invalid_bugs
                         )
                     except Exception as e:
