@@ -688,9 +688,9 @@ class BugTracker:
         """
         return self.add_comment_once(bug.id, comment, marker, private, noop)
 
-    def add_fake_tracker_comment(self, bugid: str, validation_reason: str, private: bool = False, noop=False):
+    def add_invalid_tracker_comment(self, bugid: str, validation_reason: str, private: bool = False, noop=False):
         """Add comment explaining bug looks like CVE tracker but is invalid."""
-        marker = "[ART-AUTOMATION: fake-tracker]"
+        marker = "[ART-AUTOMATION: invalid-tracker]"
         comment = f"""This bug looks like a CVE tracker but is not properly configured.
 
 {validation_reason or "Missing required tracker attributes."}
