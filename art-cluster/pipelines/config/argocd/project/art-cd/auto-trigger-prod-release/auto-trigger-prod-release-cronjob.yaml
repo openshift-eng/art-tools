@@ -1,0 +1,36 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: auto-trigger-prod-release
+  namespace: art-cd
+spec:
+  schedule: "*/30 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: Never
+          serviceAccountName: pipeline
+          containers:
+          - name: create-pipelinerun
+            image: quay.io/openshift/origin-cli:latest
+            command:
+            - /bin/sh
+            - -c
+            - |
+              oc create -f - <<EOF
+              apiVersion: tekton.dev/v1
+              kind: PipelineRun
+              metadata:
+                generateName: auto-trigger-prod-release-
+                namespace: art-cd
+              spec:
+                pipelineRef:
+                  name: auto-trigger-prod-release
+                params:
+                - name: dry-run
+                  value: "false"
+              EOF
