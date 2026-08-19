@@ -991,7 +991,7 @@ class ReleaseFromFbcPipeline:
 
         try:
             jira_client = self.runtime.new_jira_client()
-            jira_client.add_remote_link(issue_key, {"title": "Shipment MR", "url": mr_url})
+            jira_client._client.add_remote_link(issue_key, {"title": "Shipment MR", "url": mr_url})
             self.logger.info("Added shipment MR link to JIRA ticket %s", issue_key)
         except Exception as e:  # noqa: BLE001 — best-effort; JIRA failures must not block the release
             self.logger.warning("Failed to update JIRA ticket %s with MR link: %s", issue_key, e)

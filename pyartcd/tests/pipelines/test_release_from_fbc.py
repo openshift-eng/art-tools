@@ -797,7 +797,7 @@ class TestReleaseJira(unittest.TestCase):
 
         pipeline._update_jira_with_mr_link("https://gitlab.example.com/org/repo/-/merge_requests/10")
 
-        mock_jira.add_remote_link.assert_called_once_with(
+        mock_jira._client.add_remote_link.assert_called_once_with(
             "OADP-5678",
             {"title": "Shipment MR", "url": "https://gitlab.example.com/org/repo/-/merge_requests/10"},
         )
@@ -809,7 +809,7 @@ class TestReleaseJira(unittest.TestCase):
 
         pipeline._update_jira_with_mr_link("https://gitlab.example.com/org/repo/-/merge_requests/10")
 
-        mock_jira.add_remote_link.assert_called_once_with(
+        mock_jira._client.add_remote_link.assert_called_once_with(
             "OADP-5678",
             {"title": "Shipment MR", "url": "https://gitlab.example.com/org/repo/-/merge_requests/10"},
         )
