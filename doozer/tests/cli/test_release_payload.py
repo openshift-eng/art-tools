@@ -240,7 +240,10 @@ class TestRebase(unittest.IsolatedAsyncioTestCase):
                 self.cli,
                 "_generate_manifests",
                 mock.AsyncMock(
-                    return_value=("registry.example.com/cvo@sha256:cvo-digest", "registry.example.com/cli@sha256:cli-digest")
+                    return_value=(
+                        "registry.example.com/cvo@sha256:cvo-digest",
+                        "registry.example.com/cli@sha256:cli-digest",
+                    )
                 ),
             ) as mock_generate_manifests,
             mock.patch.object(
@@ -315,7 +318,9 @@ class TestRebase(unittest.IsolatedAsyncioTestCase):
 
     @mock.patch("doozerlib.cli.release_payload.get_release_name_for_assembly", return_value="4.21.1")
     @mock.patch("doozerlib.cli.release_payload.BuildRepo")
-    async def test_rebase_raises_when_art_images_pullspec_has_no_digest(self, mock_build_repo_class, mock_get_release_name):
+    async def test_rebase_raises_when_art_images_pullspec_has_no_digest(
+        self, mock_build_repo_class, mock_get_release_name
+    ):
         mock_build_repo = mock.AsyncMock()
         mock_build_repo.local_dir = self.repo_dir
         mock_build_repo_class.return_value = mock_build_repo
@@ -339,7 +344,9 @@ class TestRebase(unittest.IsolatedAsyncioTestCase):
 
     @mock.patch("doozerlib.cli.release_payload.get_release_name_for_assembly", return_value="5.0.0-ec.6")
     @mock.patch("doozerlib.cli.release_payload.BuildRepo")
-    async def test_rebase_preview_assembly_label_includes_prerelease(self, mock_build_repo_class, mock_get_release_name):
+    async def test_rebase_preview_assembly_label_includes_prerelease(
+        self, mock_build_repo_class, mock_get_release_name
+    ):
         self.runtime.group = "openshift-5.0"
         self.runtime.assembly = "ec.6"
         self.runtime.assembly_type = AssemblyTypes.PREVIEW
@@ -656,7 +663,6 @@ class TestSync(unittest.IsolatedAsyncioTestCase):
             result["arch_pullspecs"],
             [f"{self.cli.image_repo}@sha256:x8664digest", f"{self.cli.image_repo}@sha256:s390xdigest"],
         )
-
 
     @mock.patch("doozerlib.cli.release_payload.sync_to_quay", new_callable=mock.AsyncMock)
     @mock.patch("doozerlib.cli.release_payload.oc_image_info_async", new_callable=mock.AsyncMock)

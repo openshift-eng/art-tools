@@ -196,14 +196,10 @@ class ReleasePayloadRebaseAndBuildCli:
 
         cli_tag = next((tag for tag in tags if tag.get("name") == "cli"), None)
         if not cli_tag:
-            raise DoozerFatalError(
-                f"cli tag not found in generated {IMAGE_REFERENCES_FILENAME} manifest"
-            )
+            raise DoozerFatalError(f"cli tag not found in generated {IMAGE_REFERENCES_FILENAME} manifest")
         cli_pullspec = cli_tag.get("from", {}).get("name")
         if not cli_pullspec:
-            raise DoozerFatalError(
-                f"cli tag has no pullspec in generated {IMAGE_REFERENCES_FILENAME} manifest"
-            )
+            raise DoozerFatalError(f"cli tag has no pullspec in generated {IMAGE_REFERENCES_FILENAME} manifest")
         self._logger.info("Resolved cli pullspec: %s", cli_pullspec)
         return cvo_pullspec, cli_pullspec
 
@@ -486,9 +482,7 @@ class ReleasePayloadRebaseAndBuildCli:
         list_pullspec = f"{source_repo}@{list_digest}"
 
         self._logger.info("Resolving per-arch digests for %s...", source_pullspec)
-        arch_infos = await oc_image_info_async(
-            source_pullspec, '--show-multiarch', registry_config=registry_config
-        )
+        arch_infos = await oc_image_info_async(source_pullspec, '--show-multiarch', registry_config=registry_config)
         arch_digests = [info["digest"] for info in arch_infos if info.get("digest")]
         arch_pullspecs = [f"{source_repo}@{digest}" for digest in arch_digests]
 
@@ -923,15 +917,19 @@ async def release_payload_rebase_and_build(
         release_image_repo=release_image_repo,
         dry_run=dry_run,
     )
+    result_path = Path(runtime.working_dir, 'release-payload-result.json') if output == 'json' else None
+
     try:
         result = await cli_obj.run()
     except Exception as e:
-        if output == 'json':
-            click.echo(json.dumps({"error": str(e)}, indent=2))
+        if result_path is not None:
+            result_path.write_text(json.dumps({"error": str(e)}, indent=2))
+            LOGGER.info("Wrote error result to %s", result_path)
             sys.exit(1)
         raise
 
-    if output == 'json':
-        click.echo(json.dumps(result, indent=2))
+    if result_path is not None:
+        result_path.write_text(json.dumps(result, indent=2))
+        LOGGER.info("Wrote result to %s", result_path)
     else:
         LOGGER.info("Release payload rebase and build complete:\n%s", json.dumps(result, indent=2))
