@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import shutil
 import tempfile
 from datetime import datetime, timezone
@@ -77,6 +78,10 @@ class ReleaseFromFbcPipeline:
     that were excluded from the main release due to dependency version conflicts.
     """
 
+    _JIRA_KEY_RE = re.compile(r"^[A-Z][A-Z0-9]+-\d+$")
+    _JIRA_HOSTS = {"redhat.atlassian.net"}
+    _JIRA_BROWSE_URL = "https://redhat.atlassian.net/browse"
+
     def __init__(
         self,
         runtime: Runtime,
@@ -91,6 +96,7 @@ class ReleaseFromFbcPipeline:
         extra_image_nvrs: Optional[List[str]] = None,
         ocp_optional: bool = False,
         exclude_nvr_components: Optional[List[str]] = None,
+        release_jira: Optional[str] = None,
     ) -> None:
         self.logger = logging.getLogger(__name__)
         self.runtime = runtime
@@ -139,6 +145,7 @@ class ReleaseFromFbcPipeline:
 
         self.jira_bugs = jira_bugs
         self.target_release_date = target_release_date
+        self.release_jira = release_jira
 
         # Base elliott command template
         self._elliott_base_command = [
@@ -864,6 +871,10 @@ class ReleaseFromFbcPipeline:
             mr_title = f"Draft: Shipment for {self.product} {self.assembly}"
         mr_description = f"Created by job: {self.job_url}\n\n" if self.job_url else ""
         mr_description += f"Shipment files created for {self.assembly} using release-from-fbc command"
+        if self.release_jira:
+            issue_key = self._parse_jira_key(self.release_jira)
+            jira_url = f"{self._JIRA_BROWSE_URL}/{issue_key}" if issue_key else self.release_jira
+            mr_description += f"\n\nRelease JIRA: {jira_url}"
 
         if self.dry_run:
             self.logger.info("[DRY-RUN] Would have created MR with title: %s", mr_title)
@@ -940,6 +951,50 @@ class ReleaseFromFbcPipeline:
                 blocking_mr_url,
                 e,
             )
+
+    @staticmethod
+    def _parse_jira_key(jira_ref: str) -> str:
+        """Extract and validate a JIRA issue key from a URL or bare key.
+
+        Accepts:
+          - "OADP-1234" (bare key)
+          - "https://redhat.atlassian.net/browse/OADP-1234" (full URL)
+        Returns the issue key or empty string if invalid.
+        """
+        value = jira_ref.strip()
+        if ReleaseFromFbcPipeline._JIRA_KEY_RE.match(value):
+            return value
+        parsed = urlparse(value)
+        if parsed.hostname not in ReleaseFromFbcPipeline._JIRA_HOSTS:
+            return ""
+        key = parsed.path.rstrip("/").split("/")[-1]
+        if not ReleaseFromFbcPipeline._JIRA_KEY_RE.match(key):
+            return ""
+        return key
+
+    def _update_jira_with_mr_link(self, mr_url: str):
+        """Add a remote web link on the release JIRA ticket pointing to the shipment MR.
+
+        This is best-effort; failures are logged but do not raise.
+        """
+        if not self.release_jira:
+            return
+
+        issue_key = self._parse_jira_key(self.release_jira)
+        if not issue_key:
+            self.logger.warning("Could not extract a valid JIRA issue key from the provided --release-jira value")
+            return
+
+        if self.dry_run:
+            self.logger.info("[DRY-RUN] Would add remote link on %s pointing to the shipment MR", issue_key)
+            return
+
+        try:
+            jira_client = self.runtime.new_jira_client()
+            jira_client.add_remote_link(issue_key, {"title": "Shipment MR", "url": mr_url})
+            self.logger.info("Added shipment MR link to JIRA ticket %s", issue_key)
+        except Exception as e:  # noqa: BLE001 — best-effort; JIRA failures must not block the release
+            self.logger.warning("Failed to update JIRA ticket %s with MR link: %s", issue_key, e)
 
     async def update_shipment_data(
         self, shipments_by_kind: Dict[str, ShipmentConfig], env: str, commit_message: str, branch: str
@@ -1194,6 +1249,7 @@ class ReleaseFromFbcPipeline:
                         if main_ocp_mr_url:
                             await self._set_shipment_mr_dependency(main_ocp_mr_url)
 
+                    self._update_jira_with_mr_link(mr_url)
                     await self.set_shipment_mr_ready()
             except Exception as e:
                 self.logger.exception(f"Failed to create MR: {e}")
@@ -1280,6 +1336,14 @@ class ReleaseFromFbcPipeline:
     help='Comma-separated NVR component names to explicitly exclude from the shipment '
     '(e.g., kube-rbac-proxy-container). Only needed in edge cases with --ocp-optional.',
 )
+@click.option(
+    '--release-jira',
+    default=None,
+    help='Optional JIRA ticket key or URL for the release request '
+    '(e.g. OADP-1234 or https://redhat.atlassian.net/browse/OADP-1234). '
+    'When provided, the ticket is referenced in the shipment MR description, and a web link '
+    'to the MR is added back to the JIRA ticket.',
+)
 @pass_runtime
 @click_coroutine
 async def release_from_fbc(
@@ -1295,6 +1359,7 @@ async def release_from_fbc(
     target_release_date: Optional[str],
     ocp_optional: bool,
     exclude_nvr_components: Optional[str],
+    release_jira: Optional[str],
 ):
     """
     Create shipment files from an FBC image.
@@ -1380,6 +1445,7 @@ async def release_from_fbc(
         extra_image_nvrs=extra_image_nvrs_list,
         ocp_optional=ocp_optional,
         exclude_nvr_components=exclude_nvr_components_list,
+        release_jira=release_jira,
     )
 
     await pipeline.run()
