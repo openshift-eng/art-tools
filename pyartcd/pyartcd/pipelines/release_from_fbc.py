@@ -986,7 +986,7 @@ class ReleaseFromFbcPipeline:
             return
 
         if self.dry_run:
-            self.logger.info("[DRY-RUN] Would add remote link on %s pointing to %s", issue_key, mr_url)
+            self.logger.info("[DRY-RUN] Would add remote link on %s pointing to the shipment MR", issue_key)
             return
 
         try:
