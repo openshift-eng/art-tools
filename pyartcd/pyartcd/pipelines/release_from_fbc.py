@@ -78,6 +78,9 @@ class ReleaseFromFbcPipeline:
     that were excluded from the main release due to dependency version conflicts.
     """
 
+    _JIRA_KEY_RE = re.compile(r"^[A-Z][A-Z0-9]+-\d+$")
+    _JIRA_HOSTS = {"redhat.atlassian.net"}
+
     def __init__(
         self,
         runtime: Runtime,
@@ -946,8 +949,6 @@ class ReleaseFromFbcPipeline:
                 e,
             )
 
-    _JIRA_KEY_RE = re.compile(r"^[A-Z][A-Z0-9]+-\d+$")
-    _JIRA_HOSTS = {"redhat.atlassian.net", "issues.redhat.com"}
 
     @staticmethod
     def _parse_jira_key(jira_url: str) -> str:

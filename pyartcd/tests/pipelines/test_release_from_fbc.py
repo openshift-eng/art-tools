@@ -776,7 +776,7 @@ class TestReleaseJira(unittest.TestCase):
 
     def test_parse_jira_key_issues_redhat_com(self):
         key = ReleaseFromFbcPipeline._parse_jira_key("https://issues.redhat.com/browse/OADP-5678")
-        self.assertEqual(key, "OADP-5678")
+        self.assertEqual(key, "")
 
     def test_update_jira_adds_remote_link(self):
         pipeline = self._make_pipeline(dry_run=False, release_jira="https://redhat.atlassian.net/browse/OADP-5678")
