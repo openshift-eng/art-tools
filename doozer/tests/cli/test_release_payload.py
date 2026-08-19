@@ -34,6 +34,16 @@ spec:
       name: registry.example.com/ocp/release@sha256:cli-digest
 """
 
+IMAGE_REFERENCES_NO_CLI_YAML = """\
+apiVersion: image.openshift.io/1
+kind: ImageStream
+spec:
+  tags:
+  - name: cluster-version-operator
+    from:
+      name: registry.example.com/ocp/release@sha256:cvo-digest
+"""
+
 
 def _make_cli(runtime, **overrides) -> ReleasePayloadRebaseAndBuildCli:
     kwargs = dict(
@@ -120,9 +130,10 @@ class TestGenerateManifests(unittest.IsolatedAsyncioTestCase):
 
         mock_cmd_assert_async.side_effect = _write_manifests
 
-        cvo_pullspec = await self.cli._generate_manifests(self.manifests_dir)
+        cvo_pullspec, cli_pullspec = await self.cli._generate_manifests(self.manifests_dir)
 
         self.assertEqual(cvo_pullspec, "registry.example.com/ocp/release@sha256:cvo-digest")
+        self.assertEqual(cli_pullspec, "registry.example.com/ocp/release@sha256:cli-digest")
         cmd = mock_cmd_assert_async.call_args.args[0]
         self.assertIn(f"--to-dir={self.manifests_dir}", cmd)
         self.assertIn("--name=4.21.1-202608011200.p2", cmd)
@@ -158,6 +169,17 @@ class TestGenerateManifests(unittest.IsolatedAsyncioTestCase):
     async def test_generate_manifests_missing_cvo_tag_raises(self, mock_cmd_assert_async):
         async def _write_manifests(cmd, **kwargs):
             (self.manifests_dir / "image-references").write_text(IMAGE_REFERENCES_NO_CVO_YAML)
+            return 0
+
+        mock_cmd_assert_async.side_effect = _write_manifests
+
+        with self.assertRaises(DoozerFatalError):
+            await self.cli._generate_manifests(self.manifests_dir)
+
+    @mock.patch("doozerlib.cli.release_payload.exectools.cmd_assert_async")
+    async def test_generate_manifests_missing_cli_tag_raises(self, mock_cmd_assert_async):
+        async def _write_manifests(cmd, **kwargs):
+            (self.manifests_dir / "image-references").write_text(IMAGE_REFERENCES_NO_CLI_YAML)
             return 0
 
         mock_cmd_assert_async.side_effect = _write_manifests
@@ -211,13 +233,20 @@ class TestRebase(unittest.IsolatedAsyncioTestCase):
         mock_build_repo.commit_hash = "abc1234"
         mock_build_repo_class.return_value = mock_build_repo
 
-        art_images_pullspec = "quay.io/redhat-user-workloads/ocp-art-tenant/art-images@sha256:abc123def456"
+        cvo_art_images_pullspec = "quay.io/redhat-user-workloads/ocp-art-tenant/art-images@sha256:cvo-abc123def456"
+        cli_art_images_pullspec = "quay.io/redhat-user-workloads/ocp-art-tenant/art-images@sha256:cli-def456abc123"
         with (
             mock.patch.object(
-                self.cli, "_generate_manifests", mock.AsyncMock(return_value="registry.example.com/cvo@sha256:digest")
+                self.cli,
+                "_generate_manifests",
+                mock.AsyncMock(
+                    return_value=("registry.example.com/cvo@sha256:cvo-digest", "registry.example.com/cli@sha256:cli-digest")
+                ),
             ) as mock_generate_manifests,
             mock.patch.object(
-                self.cli, "_resolve_art_images_pullspec", mock.AsyncMock(return_value=art_images_pullspec)
+                self.cli,
+                "_resolve_art_images_pullspec",
+                mock.AsyncMock(side_effect=[cvo_art_images_pullspec, cli_art_images_pullspec]),
             ) as mock_resolve,
         ):
             build_repo, cvo_pullspec, branch = await self.cli._rebase()
@@ -230,19 +259,23 @@ class TestRebase(unittest.IsolatedAsyncioTestCase):
         mock_build_repo.ensure_source.assert_awaited_once()
         mock_build_repo.delete_all_files.assert_awaited_once()
         mock_generate_manifests.assert_awaited_once()
-        mock_resolve.assert_awaited_once_with("registry.example.com/cvo@sha256:digest")
+        self.assertEqual(mock_resolve.await_count, 2)
+        mock_resolve.assert_any_await("registry.example.com/cvo@sha256:cvo-digest")
+        mock_resolve.assert_any_await("registry.example.com/cli@sha256:cli-digest")
         mock_build_repo.commit.assert_awaited_once()
 
-        self.assertEqual(cvo_pullspec, "registry.example.com/cvo@sha256:digest")
+        self.assertEqual(cvo_pullspec, "registry.example.com/cvo@sha256:cvo-digest")
         self.assertEqual(branch, "art-openshift-4.21-assembly-4.21.1-dgk-release-payload")
         self.assertIs(build_repo, mock_build_repo)
 
         dockerfile_content = (self.repo_dir / "Dockerfile").read_text()
-        self.assertIn(f"FROM {art_images_pullspec} AS cvo", dockerfile_content)
+        self.assertIn(f"FROM {cli_art_images_pullspec} AS cli", dockerfile_content)
+        self.assertIn(f"FROM {cvo_art_images_pullspec} AS cvo", dockerfile_content)
         self.assertIn("FROM scratch", dockerfile_content)
         self.assertIn("COPY --from=cvo / /", dockerfile_content)
+        self.assertIn("COPY --from=cli /usr/bin/oc /usr/bin/image", dockerfile_content)
         self.assertIn('io.openshift.release="4.21.1"', dockerfile_content)
-        self.assertIn('io.openshift.release.base-image-digest="sha256:abc123def456"', dockerfile_content)
+        self.assertIn('io.openshift.release.base-image-digest="sha256:cvo-abc123def456"', dockerfile_content)
         self.assertIn("COPY release-manifests/ /release-manifests/", dockerfile_content)
 
         commit_message = mock_build_repo.commit.call_args.args[0]
@@ -262,7 +295,11 @@ class TestRebase(unittest.IsolatedAsyncioTestCase):
         self.cli.commit_message = "Custom commit message"
         with (
             mock.patch.object(
-                self.cli, "_generate_manifests", mock.AsyncMock(return_value="registry.example.com/cvo@sha256:digest")
+                self.cli,
+                "_generate_manifests",
+                mock.AsyncMock(
+                    return_value=("registry.example.com/cvo@sha256:digest", "registry.example.com/cli@sha256:digest")
+                ),
             ),
             mock.patch.object(
                 self.cli,
@@ -285,7 +322,11 @@ class TestRebase(unittest.IsolatedAsyncioTestCase):
 
         with (
             mock.patch.object(
-                self.cli, "_generate_manifests", mock.AsyncMock(return_value="registry.example.com/cvo@sha256:digest")
+                self.cli,
+                "_generate_manifests",
+                mock.AsyncMock(
+                    return_value=("registry.example.com/cvo@sha256:digest", "registry.example.com/cli@sha256:digest")
+                ),
             ),
             mock.patch.object(
                 self.cli,
@@ -317,7 +358,11 @@ class TestRebase(unittest.IsolatedAsyncioTestCase):
         art_images_pullspec = "quay.io/redhat-user-workloads/ocp-art-tenant/art-images@sha256:def456abc123"
         with (
             mock.patch.object(
-                self.cli, "_generate_manifests", mock.AsyncMock(return_value="registry.example.com/cvo@sha256:digest")
+                self.cli,
+                "_generate_manifests",
+                mock.AsyncMock(
+                    return_value=("registry.example.com/cvo@sha256:digest", "registry.example.com/cli@sha256:digest")
+                ),
             ),
             mock.patch.object(
                 self.cli, "_resolve_art_images_pullspec", mock.AsyncMock(return_value=art_images_pullspec)
