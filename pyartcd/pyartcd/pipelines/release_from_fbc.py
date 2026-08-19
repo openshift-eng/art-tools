@@ -80,6 +80,7 @@ class ReleaseFromFbcPipeline:
 
     _JIRA_KEY_RE = re.compile(r"^[A-Z][A-Z0-9]+-\d+$")
     _JIRA_HOSTS = {"redhat.atlassian.net"}
+    _JIRA_BROWSE_URL = "https://redhat.atlassian.net/browse"
 
     def __init__(
         self,
@@ -871,7 +872,9 @@ class ReleaseFromFbcPipeline:
         mr_description = f"Created by job: {self.job_url}\n\n" if self.job_url else ""
         mr_description += f"Shipment files created for {self.assembly} using release-from-fbc command"
         if self.release_jira:
-            mr_description += f"\n\nRelease JIRA: {self.release_jira}"
+            issue_key = self._parse_jira_key(self.release_jira)
+            jira_url = f"{self._JIRA_BROWSE_URL}/{issue_key}" if issue_key else self.release_jira
+            mr_description += f"\n\nRelease JIRA: {jira_url}"
 
         if self.dry_run:
             self.logger.info("[DRY-RUN] Would have created MR with title: %s", mr_title)
@@ -949,15 +952,19 @@ class ReleaseFromFbcPipeline:
                 e,
             )
 
-
     @staticmethod
-    def _parse_jira_key(jira_url: str) -> str:
-        """Extract and validate a JIRA issue key from a browse URL.
+    def _parse_jira_key(jira_ref: str) -> str:
+        """Extract and validate a JIRA issue key from a URL or bare key.
 
-        Accepts URLs like "https://redhat.atlassian.net/browse/OADP-1234".
-        Returns the issue key (e.g. "OADP-1234") or empty string if invalid.
+        Accepts:
+          - "OADP-1234" (bare key)
+          - "https://redhat.atlassian.net/browse/OADP-1234" (full URL)
+        Returns the issue key or empty string if invalid.
         """
-        parsed = urlparse(jira_url.strip())
+        value = jira_ref.strip()
+        if ReleaseFromFbcPipeline._JIRA_KEY_RE.match(value):
+            return value
+        parsed = urlparse(value)
         if parsed.hostname not in ReleaseFromFbcPipeline._JIRA_HOSTS:
             return ""
         key = parsed.path.rstrip("/").split("/")[-1]
@@ -975,7 +982,7 @@ class ReleaseFromFbcPipeline:
 
         issue_key = self._parse_jira_key(self.release_jira)
         if not issue_key:
-            self.logger.warning("Could not extract a valid JIRA issue key from the provided --release-jira URL")
+            self.logger.warning("Could not extract a valid JIRA issue key from the provided --release-jira value")
             return
 
         if self.dry_run:
@@ -1332,7 +1339,8 @@ class ReleaseFromFbcPipeline:
 @click.option(
     '--release-jira',
     default=None,
-    help='Optional JIRA ticket URL for the release request (e.g. https://redhat.atlassian.net/browse/OADP-1234). '
+    help='Optional JIRA ticket key or URL for the release request '
+    '(e.g. OADP-1234 or https://redhat.atlassian.net/browse/OADP-1234). '
     'When provided, the ticket is referenced in the shipment MR description, and a web link '
     'to the MR is added back to the JIRA ticket.',
 )

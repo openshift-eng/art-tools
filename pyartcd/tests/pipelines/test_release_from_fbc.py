@@ -778,8 +778,32 @@ class TestReleaseJira(unittest.TestCase):
         key = ReleaseFromFbcPipeline._parse_jira_key("https://issues.redhat.com/browse/OADP-5678")
         self.assertEqual(key, "")
 
+    def test_parse_jira_key_bare_key(self):
+        key = ReleaseFromFbcPipeline._parse_jira_key("OADP-1234")
+        self.assertEqual(key, "OADP-1234")
+
+    def test_parse_jira_key_bare_key_with_whitespace(self):
+        key = ReleaseFromFbcPipeline._parse_jira_key("  MTA-567  ")
+        self.assertEqual(key, "MTA-567")
+
+    def test_parse_jira_key_bare_key_invalid(self):
+        key = ReleaseFromFbcPipeline._parse_jira_key("not-a-key")
+        self.assertEqual(key, "")
+
     def test_update_jira_adds_remote_link(self):
         pipeline = self._make_pipeline(dry_run=False, release_jira="https://redhat.atlassian.net/browse/OADP-5678")
+        mock_jira = MagicMock()
+        pipeline.runtime.new_jira_client.return_value = mock_jira
+
+        pipeline._update_jira_with_mr_link("https://gitlab.example.com/org/repo/-/merge_requests/10")
+
+        mock_jira.add_remote_link.assert_called_once_with(
+            "OADP-5678",
+            {"title": "Shipment MR", "url": "https://gitlab.example.com/org/repo/-/merge_requests/10"},
+        )
+
+    def test_update_jira_adds_remote_link_bare_key(self):
+        pipeline = self._make_pipeline(dry_run=False, release_jira="OADP-5678")
         mock_jira = MagicMock()
         pipeline.runtime.new_jira_client.return_value = mock_jira
 
