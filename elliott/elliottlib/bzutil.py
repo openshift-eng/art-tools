@@ -359,11 +359,14 @@ class JIRABug(Bug):
             return None
 
     def is_tracker_bug(self):
+        has_whiteboard_component = bool(self.whiteboard_component)
+
         if self.is_type_vulnerability():
+            if not has_whiteboard_component:
+                return BugValidationResult(ok=False, reason="- Missing Whiteboard component")
             return BugValidationResult(ok=True, reason="")
 
         has_keywords = set(constants.TRACKER_BUG_KEYWORDS).issubset(set(self.keywords))
-        has_whiteboard_component = bool(self.whiteboard_component)
         has_linked_flaw = bool(self.corresponding_flaw_bug_ids)
 
         if not (has_keywords and has_whiteboard_component and has_linked_flaw):
