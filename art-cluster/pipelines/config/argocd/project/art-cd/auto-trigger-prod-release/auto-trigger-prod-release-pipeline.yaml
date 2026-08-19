@@ -33,6 +33,7 @@ spec:
         PROD_JOB_NAME = "prod-job"
         PROD_STAGE_NAME = "prod-release-triggers"
         REQUIRED_LABELS = {"stage-release-success", "prod-release-success"}
+        REQUEST_TIMEOUT = (5, 30)
 
         dry_run = "$(params.dry-run)" == "true"
 
@@ -62,7 +63,7 @@ spec:
         session.verify = "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem"
 
         def api_get(path, params=None):
-            resp = session.get(f"{api_base}{path}", params=params)
+            resp = session.get(f"{api_base}{path}", params=params, timeout=REQUEST_TIMEOUT)
             resp.raise_for_status()
             return resp.json()
 
@@ -97,9 +98,7 @@ spec:
         for mr in all_mrs:
             mr_iid = mr["iid"]
             mr_title = mr["title"]
-            mr_url = f"{GITLAB_HOST}/{PROJECT_PATH}/-/merge_requests/{mr_iid}"
             log(f"\nProcessing MR !{mr_iid}: {mr_title}")
-            log(f"  URL: {mr_url}")
 
             try:
                 pipelines = api_get(f"/merge_requests/{mr_iid}/pipelines")
@@ -113,14 +112,22 @@ spec:
                 log(f"  Latest pipeline: #{pipeline_id} (status: {pipeline_status})")
 
                 log(f"  Looking for job '{PROD_JOB_NAME}' in stage '{PROD_STAGE_NAME}'...")
-                bridges = api_get(f"/pipelines/{pipeline_id}/bridges")
-                prod_job = next(
-                    (
-                        b for b in bridges
-                        if b["name"] == PROD_JOB_NAME and b["stage"] == PROD_STAGE_NAME
-                    ),
-                    None,
-                )
+                prod_job = None
+                bridges_page = 1
+                while True:
+                    bridges = api_get(
+                        f"/pipelines/{pipeline_id}/bridges",
+                        params={"per_page": 100, "page": bridges_page},
+                    )
+                    if not bridges:
+                        break
+                    prod_job = next(
+                        (b for b in bridges if b["name"] == PROD_JOB_NAME and b["stage"] == PROD_STAGE_NAME),
+                        None,
+                    )
+                    if prod_job:
+                        break
+                    bridges_page += 1
 
                 if prod_job is None:
                     log(
@@ -145,7 +152,7 @@ spec:
 
                     if action and not dry_run:
                         log(f"  Triggering job '{PROD_JOB_NAME}' (ID: {job_id}, action: {action})...")
-                        resp = session.post(f"{api_base}/jobs/{job_id}/{action}")
+                        resp = session.post(f"{api_base}/jobs/{job_id}/{action}", timeout=REQUEST_TIMEOUT)
                         resp.raise_for_status()
                         result = resp.json()
                         log(f"  Triggered. New status: {result.get('status')}")
@@ -158,7 +165,8 @@ spec:
                 if not dry_run:
                     merge_resp = session.put(
                         f"{api_base}/merge_requests/{mr_iid}/merge",
-                        json={"merge_when_pipeline_succeeds": True},
+                        json={"auto_merge": True},
+                        timeout=REQUEST_TIMEOUT,
                     )
                     if merge_resp.status_code in (200, 201):
                         log(f"  Auto-merge set successfully.")
@@ -166,7 +174,7 @@ spec:
                     elif merge_resp.status_code in (405, 406):
                         log(
                             f"  WARNING: Could not set auto-merge on MR !{mr_iid} "
-                            f"(HTTP {merge_resp.status_code}): {merge_resp.text[:200]}"
+                            f"(HTTP {merge_resp.status_code})"
                         )
                     else:
                         merge_resp.raise_for_status()
@@ -175,20 +183,21 @@ spec:
                     auto_merged += 1
 
             except Exception as e:
-                msg = f"ERROR processing MR !{mr_iid}: {e}"
+                msg = f"ERROR processing MR !{mr_iid}: {type(e).__name__}"
                 print(msg, flush=True)
                 errors.append(msg)
                 continue
 
         print(f"\n{'[DRY-RUN] ' if dry_run else ''}Summary:", flush=True)
-        print(f"  MRs processed:    {len(all_mrs)}", flush=True)
+        print(f"  MRs processed:      {len(all_mrs)}", flush=True)
         print(f"  prod-job triggered: {triggered}", flush=True)
-        print(f"  Auto-merge set:   {auto_merged}", flush=True)
-        print(f"  Errors:           {len(errors)}", flush=True)
+        print(f"  Auto-merge set:     {auto_merged}", flush=True)
+        print(f"  Errors:             {len(errors)}", flush=True)
         if errors:
             print("Errors encountered:", flush=True)
             for err in errors:
                 print(f"  {err}", flush=True)
+            sys.exit(1)
     taskRef:
       kind: Task
       name: artcd

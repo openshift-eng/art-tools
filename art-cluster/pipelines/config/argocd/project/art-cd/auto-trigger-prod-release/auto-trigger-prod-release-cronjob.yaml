@@ -14,19 +14,42 @@ spec:
         spec:
           restartPolicy: Never
           serviceAccountName: pipeline
+          securityContext:
+            runAsNonRoot: true
           containers:
           - name: create-pipelinerun
             image: quay.io/openshift/origin-cli:latest
+            securityContext:
+              allowPrivilegeEscalation: false
+              readOnlyRootFilesystem: true
+              capabilities:
+                drop: ["ALL"]
+            resources:
+              requests:
+                cpu: 50m
+                memory: 64Mi
+              limits:
+                cpu: 100m
+                memory: 128Mi
             command:
             - /bin/sh
             - -c
             - |
+              active=$(oc get pipelinerun -n art-cd -l app=auto-trigger-prod-release \
+                --field-selector=status.conditions[0].reason!=Succeeded,status.conditions[0].reason!=Failed,status.conditions[0].reason!=PipelineRunCancelled \
+                -o name 2>/dev/null | wc -l)
+              if [ "$active" -gt 0 ]; then
+                echo "A PipelineRun is already active. Skipping."
+                exit 0
+              fi
               oc create -f - <<EOF
               apiVersion: tekton.dev/v1
               kind: PipelineRun
               metadata:
                 generateName: auto-trigger-prod-release-
                 namespace: art-cd
+                labels:
+                  app: auto-trigger-prod-release
               spec:
                 pipelineRef:
                   name: auto-trigger-prod-release
