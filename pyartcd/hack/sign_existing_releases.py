@@ -6,33 +6,24 @@ images they reference) with Sigstore/cosign.
 This tool can sign release payloads (manifest lists or single manifests) that
 already exist in quay.io. It reuses the SigstoreSignatory class for signing logic.
 
-For release images, only TAG-BASED signatures are created by default (digest
-signatures are skipped). This is appropriate for retroactive signing where digest
-signatures already exist. Use --sign-digest to also create digest signatures.
+By default, only TAG-BASED signatures are created (digest signatures are skipped).
+This is appropriate for retroactive signing where digest signatures already exist.
 
-Use --sign-release to control what gets signed:
-    yes  (default) sign the release image(s) and the components they reference
-    only          sign only the release image(s)
-    no            sign only the referenced component images
-
-Referenced component images are discovered by spidering each release payload with
-`oc adm release info -o json` and are always signed with digest identity only.
-NOTE: `oc adm release info` on a `-multi` pullspec only returns one arch's
-references, so to sign all referenced images across every architecture, pass the
-per-arch release pullspecs (e.g. via --file), not just the `-multi` pullspec.
+Use --sign-release to control what is signed: "yes" (default) signs the release
+image(s) and the component images they reference, "only" signs just the release
+image(s), and "no" signs only the referenced component images. Referenced component
+images are discovered with `oc adm release info -o json` and are always signed with
+digest identity only (multi-arch references are expanded to and signed for every
+architecture).
 
 Usage:
     # Sign a single release image and its referenced components (from art-tools directory)
     uv run pyartcd/hack/sign_existing_releases.py --dry-run \
         quay.io/openshift-release-dev/ocp-release:4.16.1-multi
 
-    # Sign only the release images (skip components) from a file
+    # Sign multiple release images (only, no components) from a file
     uv run pyartcd/hack/sign_existing_releases.py --dry-run --sign-release only \
         --file pullspecs.txt
-
-    # Sign only the referenced component images
-    uv run pyartcd/hack/sign_existing_releases.py --dry-run --sign-release no \
-        quay.io/openshift-release-dev/ocp-release:4.16.1-x86_64
 
     # Real signing (requires KMS credentials)
     KMS_CRED_FILE=/path/to/creds KMS_KEY_ID=key-id REKOR_URL=https://... \
@@ -49,10 +40,10 @@ import asyncio
 import logging
 import os
 import sys
-from typing import Dict, List, Optional, Set
+from typing import List, Optional, Set
 
 import click
-from pyartcd.signatory import ReleaseImageInfo, SigstoreSignatory
+from pyartcd.signatory import SigstoreSignatory
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
@@ -83,6 +74,93 @@ def extract_canonical_tag(pullspec: str) -> Optional[str]:
     return None
 
 
+async def sign_release_pullspec(
+    signatory: SigstoreSignatory,
+    pullspec: str,
+    tag_only: bool = True,
+    sign_release: str = "yes",
+    signed_components: Optional[Set[str]] = None,
+) -> bool:
+    """
+    Sign a single release pullspec and/or the component images it references.
+
+    For manifest lists, discovers all arch-specific manifests and signs each
+    with the manifest list's canonical tag.
+
+    :param signatory: The SigstoreSignatory instance to use
+    :param pullspec: The release image pullspec (tag-based preferred)
+    :param tag_only: If True, only sign release images with tag identity (skip digest
+        identity). Default is True for retroactive signing where digest signatures
+        already exist.
+    :param sign_release: One of "yes" (release image + referenced components), "only"
+        (release image only), or "no" (referenced component images only).
+    :param signed_components: Optional shared set of component pullspecs already signed
+        in this run, used to avoid re-signing components shared across release images.
+    :return: True if successful, False if any errors occurred
+    """
+    ok = True
+
+    # Sign the release image itself.
+    if sign_release != "no":
+        canonical_tag = extract_canonical_tag(pullspec)
+        if not canonical_tag:
+            logger.warning(
+                "Cannot determine canonical tag for %s (digest-based pullspec). "
+                "Skipping release-image signing - tag-based pullspecs are required.",
+                pullspec,
+            )
+        else:
+            logger.info("Processing %s (canonical tag: %s)", pullspec, canonical_tag)
+            # We don't have a release_name to validate against, so we'll skip that check
+            release_info, errors = await signatory.discover_release_image(
+                pullspec=pullspec,
+                canonical_tag=canonical_tag,
+                release_name="",  # Skip release name validation
+                verify_legacy_sig=False,
+            )
+            if errors:
+                for ps, err in errors.items():
+                    logger.error("Discovery error for %s: %s", ps, err)
+                ok = False
+            elif not release_info.manifests_to_sign:
+                logger.warning("No manifests found to sign for %s", pullspec)
+            else:
+                logger.info("Found %d manifest(s) to sign for %s", len(release_info.manifests_to_sign), pullspec)
+                errors = await signatory.sign_release_images([release_info], tag_only=tag_only)
+                if errors:
+                    for ps, err in errors.items():
+                        logger.error("Signing error for %s: %s", ps, err)
+                    ok = False
+                else:
+                    logger.info("Successfully signed release image %s", pullspec)
+
+    # Sign the component images referenced by the release (digest identity only).
+    if sign_release != "only":
+        seen = signed_components if signed_components is not None else set()
+        logger.info("Discovering component images referenced by %s", pullspec)
+        components, errors = await signatory.discover_component_images(
+            release_pullspec=pullspec,
+            release_name="",  # Not used for component discovery
+        )
+        if errors:
+            for ps, err in errors.items():
+                logger.error("Discovery error for %s: %s", ps, err)
+            ok = False
+        to_sign = components - seen
+        if to_sign:
+            logger.info("Signing %d component image(s) referenced by %s [digest only]", len(to_sign), pullspec)
+            errors = await signatory.sign_component_images(to_sign)
+            if errors:
+                for ps, err in errors.items():
+                    logger.error("Component signing error for %s: %s", ps, err)
+                ok = False
+            seen.update(to_sign - set(errors))  # only mark successfully-signed components as done
+        else:
+            logger.info("No new component images to sign for %s", pullspec)
+
+    return ok
+
+
 async def main_async(
     pullspecs: List[str],
     dry_run: bool,
@@ -93,13 +171,7 @@ async def main_async(
     """
     Main async entry point for signing release images and/or referenced components.
 
-    Mirrors the phased flow of the `sigstore-sign` pipeline:
-        1. Discover release images and their manifests (if signing release images).
-        2. Discover referenced component images by spidering each payload (if signing components).
-        3. Sign release image manifests (with canonical tags).
-        4. Sign component images (digest identity only).
-
-    :param pullspecs: List of release pullspecs to process
+    :param pullspecs: List of pullspecs to sign
     :param dry_run: If True, don't actually sign anything
     :param concurrency: Maximum concurrent operations
     :param sign_digest: If True, also sign release images with digest identity
@@ -132,96 +204,45 @@ async def main_async(
     )
 
     tag_only = not sign_digest
-    do_sign_release = sign_release != "no"
-    do_sign_components = sign_release != "only"
-
-    # Clean input: drop blanks and comment lines
-    cleaned = [ps.strip() for ps in pullspecs if ps.strip() and not ps.strip().startswith("#")]
-
-    logger.info("Starting to process %d release pullspec(s)...", len(cleaned))
-    logger.info(
-        "Release images: %s | Component images: %s",
-        ("TAG ONLY" if tag_only else "digest+tag") if do_sign_release else "SKIP",
-        "digest only" if do_sign_components else "SKIP",
-    )
+    logger.info("Starting to sign %d release pullspec(s)...", len(pullspecs))
+    logger.info("Mode: %s", "TAG ONLY (skipping digest signatures)" if tag_only else "BOTH digest and tag signatures")
     if dry_run:
         logger.info("[DRY RUN MODE] No actual signing will occur")
 
-    all_errors: Dict[str, Exception] = {}
+    # Process each pullspec. Track components signed across releases to avoid re-signing
+    # images shared between payloads (e.g. the same component referenced by multiple arches).
+    success_count = 0
+    error_count = 0
+    signed_components: Set[str] = set()
 
-    # --- Phase 1: Discover release images and their manifests ---
-    release_images: List[ReleaseImageInfo] = []
-    if do_sign_release:
-        for pullspec in cleaned:
-            canonical_tag = extract_canonical_tag(pullspec)
-            if not canonical_tag:
-                logger.warning(
-                    "Cannot determine canonical tag for %s (digest-based pullspec). "
-                    "Skipping release-image signing for it (tag-based pullspecs required).",
-                    pullspec,
-                )
-                continue
-            logger.info("Discovering release image %s (canonical tag: %s)", pullspec, canonical_tag)
-            release_info, errors = await signatory.discover_release_image(
-                pullspec=pullspec,
-                canonical_tag=canonical_tag,
-                release_name="",  # Skip release name validation
-                verify_legacy_sig=False,
+    for i, pullspec in enumerate(pullspecs, 1):
+        pullspec = pullspec.strip()
+        if not pullspec or pullspec.startswith("#"):
+            continue  # Skip empty lines and comments
+
+        logger.info("--- [%d/%d] Processing %s ---", i, len(pullspecs), pullspec)
+
+        try:
+            success = await sign_release_pullspec(
+                signatory,
+                pullspec,
+                tag_only=tag_only,
+                sign_release=sign_release,
+                signed_components=signed_components,
             )
-            release_images.append(release_info)
-            all_errors.update(errors)
-
-    # --- Phase 2: Discover referenced component images from each payload ---
-    component_images: Set[str] = set()
-    if do_sign_components:
-        for pullspec in cleaned:
-            canonical_tag = extract_canonical_tag(pullspec)
-            if canonical_tag and canonical_tag.endswith("-multi"):
-                logger.warning(
-                    "%s is a multi payload; `oc adm release info` returns only one arch's "
-                    "references. To sign all referenced images across every architecture, pass "
-                    "the per-arch release pullspecs instead of (or in addition to) the -multi one.",
-                    pullspec,
-                )
-            logger.info("Discovering component images from %s", pullspec)
-            components, errors = await signatory.discover_component_images(
-                release_pullspec=pullspec,
-                release_name="",  # Not used for component discovery
-            )
-            component_images.update(components)
-            all_errors.update(errors)
-
-    if all_errors:
-        for ps, err in all_errors.items():
-            logger.error("Discovery error for %s: %s", ps, err)
-        return 1
-
-    # --- Phase 3: Sign release images (with canonical tags) ---
-    if release_images:
-        total_manifests = sum(len(ri.manifests_to_sign) for ri in release_images)
-        logger.info(
-            "Signing %d release image(s) with %d total manifest(s) [%s]",
-            len(release_images),
-            total_manifests,
-            "TAG ONLY" if tag_only else "digest+tag",
-        )
-        if errors := await signatory.sign_release_images(release_images, tag_only=tag_only):
-            for ps, err in errors.items():
-                logger.error("Release image signing error for %s: %s", ps, err)
-            return 1
-
-    # --- Phase 4: Sign component images (digest identity only) ---
-    if component_images:
-        logger.info("Signing %d component image(s) [digest only]", len(component_images))
-        if errors := await signatory.sign_component_images(component_images):
-            for ps, err in errors.items():
-                logger.error("Component image signing error for %s: %s", ps, err)
-            return 1
+            if success:
+                success_count += 1
+            else:
+                error_count += 1
+        except Exception as exc:
+            logger.exception("Unexpected error processing %s: %s", pullspec, exc)
+            error_count += 1
 
     # Summary
     logger.info("=" * 60)
-    logger.info("Signing complete!")
-    return 0
+    logger.info("Signing complete: %d successful, %d errors", success_count, error_count)
+
+    return 0 if error_count == 0 else 1
 
 
 @click.command()
@@ -284,8 +305,6 @@ def main(
     Referenced component images are discovered by spidering each payload with
     `oc adm release info -o json` and are always signed with digest identity only.
     Use --sign-release to choose whether to sign release images, components, or both.
-    NOTE: a `-multi` payload only yields one arch's references, so pass the per-arch
-    release pullspecs to cover all referenced images across every architecture.
 
     Examples:
 
