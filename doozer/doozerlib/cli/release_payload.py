@@ -143,11 +143,11 @@ class ReleasePayloadRebaseAndBuildCli:
         namespace, name = payload_imagestream_namespace_and_name(base_namespace, base_name, self.arch, private=False)
         return namespace, name
 
-    async def _generate_manifests(self, manifests_dir: Path) -> Tuple[str, str]:
-        """Run `oc adm release new --to-dir` and return the CVO and CLI pullspecs.
+    async def _generate_manifests(self, manifests_dir: Path) -> str:
+        """Run `oc adm release new --to-dir` and return the cluster-version-operator pullspec.
 
         :param manifests_dir: Directory to write the release manifests into.
-        :return: A tuple of (cvo_pullspec, cli_pullspec) from the generated image-references manifest.
+        :return: The pullspec for the cluster-version-operator image referenced by the manifests.
         """
         await exectools.to_thread(manifests_dir.mkdir, parents=True, exist_ok=True)
         semver = self.version.lstrip("v")
@@ -193,15 +193,7 @@ class ReleasePayloadRebaseAndBuildCli:
                 f"cluster-version-operator tag has no pullspec in generated {IMAGE_REFERENCES_FILENAME} manifest"
             )
         self._logger.info("Resolved cluster-version-operator pullspec: %s", cvo_pullspec)
-
-        cli_tag = next((tag for tag in tags if tag.get("name") == "cli"), None)
-        if not cli_tag:
-            raise DoozerFatalError(f"cli tag not found in generated {IMAGE_REFERENCES_FILENAME} manifest")
-        cli_pullspec = cli_tag.get("from", {}).get("name")
-        if not cli_pullspec:
-            raise DoozerFatalError(f"cli tag has no pullspec in generated {IMAGE_REFERENCES_FILENAME} manifest")
-        self._logger.info("Resolved cli pullspec: %s", cli_pullspec)
-        return cvo_pullspec, cli_pullspec
+        return cvo_pullspec
 
     async def _resolve_art_images_pullspec(self, imagestream_pullspec: str) -> str:
         """Resolve a quay art-dev pullspec from the imagestream to the original Konflux build output.
@@ -256,27 +248,22 @@ class ReleasePayloadRebaseAndBuildCli:
         if manifests_dir.exists():
             await exectools.to_thread(shutil.rmtree, manifests_dir)
 
-        cvo_pullspec, cli_pullspec = await self._generate_manifests(manifests_dir)
+        cvo_pullspec = await self._generate_manifests(manifests_dir)
 
-        # The imagestream pullspecs are single-arch quay art-dev images. Resolve each to the
-        # original Konflux build output (image_pullspec in art-images) so the Dockerfile FROMs
-        # are multi-arch manifest lists natively accessible from within the Konflux build environment.
+        # The imagestream pullspec is a single-arch quay art-dev image. Resolve it to the
+        # original Konflux build output (image_pullspec in art-images) so the Dockerfile FROM
+        # is a multi-arch manifest list natively accessible from within the Konflux build environment.
         from_pullspec = await self._resolve_art_images_pullspec(cvo_pullspec)
-        cli_from_pullspec = await self._resolve_art_images_pullspec(cli_pullspec)
 
         if "@" not in from_pullspec:
             raise DoozerFatalError(f"Expected digest-based art-images pullspec but got: {from_pullspec}")
         cvo_image_digest = from_pullspec.split("@", 1)[1]
-        # The `cli` image ships /usr/bin/oc. When that binary is invoked as `image` (via argv[0]),
-        # it reads /release-manifests/image-references and returns component pullspecs -- the same
-        # mechanism `oc adm release new --to-image` uses to embed the binary in the release image.
+        # Use the CVO image directly as the base (not FROM scratch) so that the CVO image's
+        # ENTRYPOINT, ENV, and other metadata are preserved. The ENTRYPOINT is
+        # /usr/bin/cluster-version-operator, which supports `image <component>` as a subcommand --
+        # this is how node-image-pull.sh discovers component pullspecs during bootstrap.
         dockerfile_content = (
-            f"FROM {cli_from_pullspec} AS cli\n"
-            f"FROM {from_pullspec} AS cvo\n"
-            f"\n"
-            f"FROM scratch\n"
-            f"COPY --from=cvo / /\n"
-            f"COPY --from=cli /usr/bin/oc /usr/bin/image\n"
+            f"FROM {from_pullspec}\n"
             f'LABEL io.openshift.release="{self._get_release_label()}" \\\n'
             f'      io.openshift.release.base-image-digest="{cvo_image_digest}"\n'
             f"COPY {RELEASE_MANIFESTS_SUBDIR}/ /{RELEASE_MANIFESTS_SUBDIR}/\n"
