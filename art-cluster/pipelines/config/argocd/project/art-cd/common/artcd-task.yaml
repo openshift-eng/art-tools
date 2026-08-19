@@ -98,7 +98,7 @@ spec:
       value: /tmp/konflux-art-images-auth/config.json
     - name: DOCKER_CONFIG
       value: /tmp/konflux-art-images-auth
-    image: image-registry.openshift-image-registry.svc:5000/art-cd/art-cd:latest
+    image: quay.io/redhat-user-workloads/ocp-art-tenant/art-cd:latest
     name: invoke-artcd
     script: $(params.script)
     securityContext:
