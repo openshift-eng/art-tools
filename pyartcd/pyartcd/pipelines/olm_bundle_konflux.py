@@ -15,6 +15,67 @@ from pyartcd.runtime import Runtime
 from pyartcd.util import load_group_config
 
 
+async def _stage_release_related_images(
+    runtime: Runtime,
+    doozer_base_cmd: list,
+    namespace: str,
+    final_kubeconfig: str,
+    operator_nvrs: list,
+) -> list:
+    """Run doozer beta:bundle:stage-release-related-images for the given operator NVRs.
+
+    Called once per bundle job, before triggering FBC builds, so images are released to the advisory
+    here rather than once per FBC build (which could be many for layered products). Doozer stage-releases
+    each operator separately, so one operator's failure leaves the rest untouched.
+
+    :return: the operator NVRs whose stage release failed. An empty list means everything succeeded.
+    """
+    cmd = doozer_base_cmd + [
+        'beta:bundle:stage-release-related-images',
+        '--konflux-namespace',
+        namespace,
+        '--konflux-kubeconfig',
+        final_kubeconfig,
+    ]
+    if runtime.dry_run:
+        cmd.append('--dry-run')
+    cmd.append('--')
+    cmd.extend(operator_nvrs)
+
+    runtime.logger.info('Stage-releasing bundle related images')
+    try:
+        await exectools.cmd_assert_async(cmd)
+        return []
+    except ChildProcessError as e:
+        failed_nvrs = _parse_failed_stage_releases(runtime)
+        if not failed_nvrs:
+            # Doozer failed without attributing the failure to any operator (bad kubeconfig, crash before
+            # the first operator, ...). That is a job-wide failure, not a partial one.
+            runtime.logger.error(f'Stage release of related images failed with no per-operator results: {e}')
+            raise
+        runtime.logger.error(f'Stage release of related images failed for: {", ".join(failed_nvrs)}')
+        return failed_nvrs
+
+
+def _parse_failed_stage_releases(runtime: Runtime) -> list:
+    """Collect operator NVRs whose stage_release_related_images record.log entry reports a failure."""
+    record_log_path = Path(runtime.doozer_working, 'record.log')
+    if not record_log_path.exists():
+        runtime.logger.error('record.log not found - cannot determine stage release results')
+        return []
+    with record_log_path.open() as file:
+        record_log = parse_record_log(file)
+    failed_nvrs = []
+    for record in record_log.get('stage_release_related_images', []):
+        if record.get('status') == '0':
+            continue
+        nvr = record.get('operator_nvr')
+        if nvr:
+            failed_nvrs.append(nvr)
+            runtime.logger.error(f'Stage release failed for {nvr}: {record.get("message", "")}')
+    return failed_nvrs
+
+
 @cli.command('olm-bundle-konflux')
 @click.option('--version', required=True, help='OCP version')
 @click.option('--assembly', required=True, help='Assembly name')
@@ -82,8 +143,8 @@ async def olm_bundle_konflux(
     if not group:
         group = f"openshift-{version}"
 
-    # Create Doozer invocation
-    cmd = [
+    # Shared doozer invocation prefix, reused by the stage-release call below
+    doozer_base_cmd = [
         'doozer',
         '--build-system=konflux',
         f'--assembly={assembly}',
@@ -91,6 +152,9 @@ async def olm_bundle_konflux(
         f'--group={group}@{data_gitref}' if data_gitref else f'--group={group}',
         f'--data-path={data_path}',
     ]
+
+    # Create Doozer invocation
+    cmd = doozer_base_cmd.copy()
     if only:
         cmd.append(f'--images={only}')
     if exclude:
@@ -153,6 +217,10 @@ async def olm_bundle_konflux(
         runtime.logger.warning(f'Doozer command failed: {e}')
         runtime.logger.info('Checking record.log for partial success...')
 
+    # Explicitly-requested operator NVRs. Only used if record.log turns up empty, which means
+    # every requested bundle already existed and doozer skipped it.
+    fallback_nvrs = [n.strip() for n in nvrs.split(',') if n.strip()] if nvrs else []
+
     # Parse doozer record.log to determine actual build results
     # This runs regardless of whether doozer succeeded or failed
     operator_nvrs = []
@@ -184,10 +252,18 @@ async def olm_bundle_konflux(
 
     total_bundles = len(successful_bundles) + len(operators_with_failed_bundles)
     if total_bundles == 0:
-        runtime.logger.error('No bundle builds were attempted')
         if doozer_error:
+            runtime.logger.error('No bundle builds were attempted')
             raise doozer_error
-        raise RuntimeError('No bundle builds found in record.log')
+        if not fallback_nvrs:
+            raise RuntimeError('No bundle builds found in record.log and no input NVRs provided')
+        # Doozer succeeded but wrote no record.log — all bundles already existed and were skipped.
+        # Use fallback_nvrs to still trigger stage-release and FBC builds.
+        runtime.logger.info(
+            'No new bundles were built (all already exist); proceeding with %d pre-existing operator(s)',
+            len(fallback_nvrs),
+        )
+        operator_nvrs = fallback_nvrs
 
     if operators_with_failed_bundles and not successful_bundles:
         # All builds failed - re-raise the error or raise a new one
@@ -196,12 +272,36 @@ async def olm_bundle_konflux(
             raise doozer_error
         raise RuntimeError(f'All {len(operators_with_failed_bundles)} bundle build(s) failed')
 
+    # Operators whose related-image stage release failed; they are excluded from FBC and mark the job UNSTABLE
+    failed_stage_nvrs = []
+
     # Trigger FBC builds for successful bundles only
     if operator_nvrs:
         runtime.logger.info(f'Found operator NVRs: {operator_nvrs}')
 
         # Automatically propagate parameters if set in environment
         propagate_params = jenkins.get_propagatable_params()
+
+        # Stage-release related images before triggering any FBC builds.
+        # The release plan is resolved per product version (not OCP version), so a single call covers all target versions.
+        failed_stage_nvrs = await _stage_release_related_images(
+            runtime=runtime,
+            doozer_base_cmd=doozer_base_cmd,
+            namespace=namespace,
+            final_kubeconfig=final_kubeconfig,
+            operator_nvrs=operator_nvrs,
+        )
+        if failed_stage_nvrs:
+            # Don't build FBC for an operator whose images never made it to the advisory; the rest carry on.
+            operator_nvrs = [nvr for nvr in operator_nvrs if nvr not in failed_stage_nvrs]
+            if not operator_nvrs:
+                raise RuntimeError(
+                    f'Stage release of related images failed for every operator: {", ".join(failed_stage_nvrs)}'
+                )
+            runtime.logger.warning(
+                f'Skipping FBC builds for {len(failed_stage_nvrs)} operator(s) whose stage release failed; '
+                f'continuing with: {operator_nvrs}'
+            )
 
         # Check if this is a non-openshift group and if OCP_TARGET_VERSIONS is configured
         if group and not group.startswith("openshift-"):
@@ -255,15 +355,22 @@ async def olm_bundle_konflux(
                 propagate_params=propagate_params,
             )
 
-    if operators_with_failed_bundles and successful_bundles:
+    if operators_with_failed_bundles or failed_stage_nvrs:
         # Partial failure - exit with code 2 to mark Jenkins job as UNSTABLE
         runtime.logger.warning(
-            'Job completed with partial success - some bundle builds failed but FBC triggered for successful bundles'
+            'Job completed with partial success - FBC triggered only for the operators that fully succeeded'
         )
-        runtime.logger.warning(
-            f'{len(successful_bundles)} bundle(s) built successfully: {", ".join(successful_bundles)}'
-        )
-        runtime.logger.warning(f'{len(operators_with_failed_bundles)} bundle(s) failed - see errors above')
+        if successful_bundles:
+            runtime.logger.warning(
+                f'{len(successful_bundles)} bundle(s) built successfully: {", ".join(successful_bundles)}'
+            )
+        if operators_with_failed_bundles:
+            runtime.logger.warning(f'{len(operators_with_failed_bundles)} bundle(s) failed - see errors above')
+        if failed_stage_nvrs:
+            runtime.logger.warning(
+                f'{len(failed_stage_nvrs)} operator(s) failed to stage-release their related images: '
+                f'{", ".join(failed_stage_nvrs)}'
+            )
         sys.exit(2)
 
     # If we get here, all builds succeeded - job will be marked as SUCCESS
