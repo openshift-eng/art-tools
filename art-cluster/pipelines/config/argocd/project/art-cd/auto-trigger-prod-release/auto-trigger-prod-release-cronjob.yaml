@@ -4,7 +4,7 @@ metadata:
   name: auto-trigger-prod-release
   namespace: art-cd
 spec:
-  schedule: "*/30 * * * *"
+  schedule: "0 */6 * * *"
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
