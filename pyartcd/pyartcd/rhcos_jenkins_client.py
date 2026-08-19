@@ -89,7 +89,7 @@ class RhcosJenkinsClient:
         logger.info("Retrieving RHCOS Jenkins auth token using kubeconfig from %s", self.kubeconfig_env_var)
         session = self._get_session()
 
-        with oc.api_server(oc.get_config_context()['cluster']), oc.options({'kubeconfig': kubeconfig}):
+        with oc.options({'kubeconfig': kubeconfig}):
             jenkins_uid = oc.selector('sa/jenkins').objects()[0].model.metadata.uid
             for s in oc.selector('secrets'):
                 if (
