@@ -280,6 +280,18 @@ class KonfluxOcpPipeline:
             entry['name']: entry for entry in record_log.get('image_build_konflux', []) if int(entry['status'])
         }
 
+        # Always reset counters for successfully built images first, before any early returns.
+        # Without this, an all-infra-failure batch skips the reset and leaves stale counters.
+        counter_types = ['build-failure', 'ec-failure', 'release-failure']
+        if built_images:
+            await asyncio.gather(
+                *[
+                    reset_fail_counter(f'count:{counter_type}:konflux:{group}:{image}')
+                    for image in built_images
+                    for counter_type in counter_types
+                ]
+            )
+
         # A build failure only counts if a build was actually triggered.
         # If task_id=n/a and task_url=n/a, no PipelineRun was created = not a build failure.
         # Exclude "parent images failed to build" - those never attempted a build either.
@@ -294,7 +306,8 @@ class KonfluxOcpPipeline:
                 and failed_entries.get(image, {}).get('task_id') != 'n/a'
             ]
 
-            # If NO builds were actually attempted, skip all counter updates
+            # If NO builds were actually attempted, skip failure counter increments.
+            # built_images counters were already reset above.
             if not attempted_builds:
                 LOGGER.warning(
                     f'No builds were actually attempted for {group}: all {len(failed_images)} failures '
@@ -336,16 +349,6 @@ class KonfluxOcpPipeline:
             else:
                 # Fallback: unknown outcome, treat as build failure
                 build_failed_images.append(image)
-
-        # Reset all counter types for successful builds
-        counter_types = ['build-failure', 'ec-failure', 'release-failure']
-        await asyncio.gather(
-            *[
-                reset_fail_counter(f'count:{counter_type}:konflux:{group}:{image}')
-                for image in built_images
-                for counter_type in counter_types
-            ]
-        )
 
         # Increment counters for each failure type
         await asyncio.gather(
