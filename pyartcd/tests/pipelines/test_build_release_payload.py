@@ -1,6 +1,7 @@
 import json
 import os
 import unittest
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from pyartcd.pipelines.build_release_payload import BuildReleasePayloadPipeline, _default_release
@@ -193,9 +194,20 @@ class TestBuildReleasePayloadPipelineRun(unittest.IsolatedAsyncioTestCase):
         mock_doozer.assert_awaited_once()
         mock_cosign.assert_not_called()
 
-    @patch("pyartcd.pipelines.build_release_payload.exectools.cmd_gather_async", new_callable=AsyncMock)
-    async def test_run_doozer_command_normal_path_push_and_sync(self, mock_cmd):
-        mock_cmd.return_value = (0, json.dumps(SAMPLE_DOOZER_RESULT), "")
+    def _mock_doozer_result_file(self, mock_path_cls, result=None, exists=True, content=None):
+        """Helper: configure the Path mock so result_path.exists() and .read_text() behave as needed."""
+        mock_path_inst = MagicMock(spec=Path)
+        mock_path_inst.exists.return_value = exists
+        mock_path_inst.read_text.return_value = content if content is not None else json.dumps(
+            result if result is not None else SAMPLE_DOOZER_RESULT
+        )
+        mock_path_cls.return_value = mock_path_inst
+        return mock_path_inst
+
+    @patch("pyartcd.pipelines.build_release_payload.Path")
+    @patch("pyartcd.pipelines.build_release_payload.exectools.cmd_assert_async", new_callable=AsyncMock)
+    async def test_run_doozer_command_normal_path_push_and_sync(self, mock_cmd, mock_path_cls):
+        self._mock_doozer_result_file(mock_path_cls)
         pipeline = _make_pipeline(sync=True, skip_cosign=True)
 
         await pipeline._run_doozer()
@@ -205,9 +217,10 @@ class TestBuildReleasePayloadPipelineRun(unittest.IsolatedAsyncioTestCase):
         self.assertIn("--sync", cmd)
         self.assertNotIn("--dry-run", cmd)
 
-    @patch("pyartcd.pipelines.build_release_payload.exectools.cmd_gather_async", new_callable=AsyncMock)
-    async def test_run_doozer_command_push_without_sync(self, mock_cmd):
-        mock_cmd.return_value = (0, json.dumps({**SAMPLE_DOOZER_RESULT, "synced": False}), "")
+    @patch("pyartcd.pipelines.build_release_payload.Path")
+    @patch("pyartcd.pipelines.build_release_payload.exectools.cmd_assert_async", new_callable=AsyncMock)
+    async def test_run_doozer_command_push_without_sync(self, mock_cmd, mock_path_cls):
+        self._mock_doozer_result_file(mock_path_cls, result={**SAMPLE_DOOZER_RESULT, "synced": False})
         pipeline = _make_pipeline(sync=False, skip_cosign=True)
 
         await pipeline._run_doozer()
@@ -216,9 +229,10 @@ class TestBuildReleasePayloadPipelineRun(unittest.IsolatedAsyncioTestCase):
         self.assertIn("--push", cmd)
         self.assertNotIn("--sync", cmd)
 
-    @patch("pyartcd.pipelines.build_release_payload.exectools.cmd_gather_async", new_callable=AsyncMock)
-    async def test_run_doozer_command_dry_run_no_push(self, mock_cmd):
-        mock_cmd.return_value = (0, json.dumps({**SAMPLE_DOOZER_RESULT, "synced": False}), "")
+    @patch("pyartcd.pipelines.build_release_payload.Path")
+    @patch("pyartcd.pipelines.build_release_payload.exectools.cmd_assert_async", new_callable=AsyncMock)
+    async def test_run_doozer_command_dry_run_no_push(self, mock_cmd, mock_path_cls):
+        self._mock_doozer_result_file(mock_path_cls, result={**SAMPLE_DOOZER_RESULT, "synced": False})
         pipeline = _make_pipeline(dry_run=True, sync=True, skip_cosign=True)
 
         await pipeline._run_doozer()
@@ -228,9 +242,10 @@ class TestBuildReleasePayloadPipelineRun(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("--push", cmd)
         self.assertNotIn("--sync", cmd)
 
-    @patch("pyartcd.pipelines.build_release_payload.exectools.cmd_gather_async", new_callable=AsyncMock)
-    async def test_run_doozer_command_nvr_path(self, mock_cmd):
-        mock_cmd.return_value = (0, json.dumps(SAMPLE_DOOZER_RESULT), "")
+    @patch("pyartcd.pipelines.build_release_payload.Path")
+    @patch("pyartcd.pipelines.build_release_payload.exectools.cmd_assert_async", new_callable=AsyncMock)
+    async def test_run_doozer_command_nvr_path(self, mock_cmd, mock_path_cls):
+        self._mock_doozer_result_file(mock_path_cls)
         pipeline = _make_pipeline(nvr="release-payload-4.21.1-202608011200.p2", skip_cosign=True)
 
         await pipeline._run_doozer()
@@ -242,9 +257,10 @@ class TestBuildReleasePayloadPipelineRun(unittest.IsolatedAsyncioTestCase):
         # --release=<value> should not appear (only --release-image-repo is allowed)
         self.assertFalse(any(a.startswith("--release=") for a in cmd))
 
-    @patch("pyartcd.pipelines.build_release_payload.exectools.cmd_gather_async", new_callable=AsyncMock)
-    async def test_run_doozer_command_auto_generates_release_when_not_provided(self, mock_cmd):
-        mock_cmd.return_value = (0, json.dumps(SAMPLE_DOOZER_RESULT), "")
+    @patch("pyartcd.pipelines.build_release_payload.Path")
+    @patch("pyartcd.pipelines.build_release_payload.exectools.cmd_assert_async", new_callable=AsyncMock)
+    async def test_run_doozer_command_auto_generates_release_when_not_provided(self, mock_cmd, mock_path_cls):
+        self._mock_doozer_result_file(mock_path_cls)
         pipeline = _make_pipeline(release=None, skip_cosign=True)
 
         await pipeline._run_doozer()
@@ -254,9 +270,10 @@ class TestBuildReleasePayloadPipelineRun(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(release_args), 1)
         self.assertRegex(release_args[0], r"^--release=\d{12}\.p2$")
 
-    @patch("pyartcd.pipelines.build_release_payload.exectools.cmd_gather_async", new_callable=AsyncMock)
-    async def test_run_doozer_command_uses_explicit_release(self, mock_cmd):
-        mock_cmd.return_value = (0, json.dumps(SAMPLE_DOOZER_RESULT), "")
+    @patch("pyartcd.pipelines.build_release_payload.Path")
+    @patch("pyartcd.pipelines.build_release_payload.exectools.cmd_assert_async", new_callable=AsyncMock)
+    async def test_run_doozer_command_uses_explicit_release(self, mock_cmd, mock_path_cls):
+        self._mock_doozer_result_file(mock_path_cls)
         pipeline = _make_pipeline(release="202608011200.p2", skip_cosign=True)
 
         await pipeline._run_doozer()
@@ -264,9 +281,10 @@ class TestBuildReleasePayloadPipelineRun(unittest.IsolatedAsyncioTestCase):
         cmd = mock_cmd.call_args[0][0]
         self.assertIn("--release=202608011200.p2", cmd)
 
-    @patch("pyartcd.pipelines.build_release_payload.exectools.cmd_gather_async", new_callable=AsyncMock)
-    async def test_run_doozer_includes_all_optional_flags(self, mock_cmd):
-        mock_cmd.return_value = (0, json.dumps(SAMPLE_DOOZER_RESULT), "")
+    @patch("pyartcd.pipelines.build_release_payload.Path")
+    @patch("pyartcd.pipelines.build_release_payload.exectools.cmd_assert_async", new_callable=AsyncMock)
+    async def test_run_doozer_includes_all_optional_flags(self, mock_cmd, mock_path_cls):
+        self._mock_doozer_result_file(mock_path_cls)
         pipeline = _make_pipeline(
             version="v4.21.1",
             konflux_kubeconfig="/path/to/kube",
@@ -283,25 +301,24 @@ class TestBuildReleasePayloadPipelineRun(unittest.IsolatedAsyncioTestCase):
         self.assertIn("--registry-config=/path/to/auth", cmd)
         self.assertIn("--skip-checks", cmd)
 
-    @patch("pyartcd.pipelines.build_release_payload.exectools.cmd_gather_async", new_callable=AsyncMock)
+    @patch("pyartcd.pipelines.build_release_payload.exectools.cmd_assert_async", new_callable=AsyncMock)
     async def test_run_doozer_raises_on_doozer_failure(self, mock_cmd):
-        mock_cmd.return_value = (1, "", "some doozer error")
+        mock_cmd.side_effect = ChildProcessError("doozer failed", (1, "", "some doozer error"))
+        pipeline = _make_pipeline(skip_cosign=True)
+
+        with self.assertRaises(ChildProcessError):
+            await pipeline._run_doozer()
+
+    @patch("pyartcd.pipelines.build_release_payload.Path")
+    @patch("pyartcd.pipelines.build_release_payload.exectools.cmd_assert_async", new_callable=AsyncMock)
+    async def test_run_doozer_raises_on_invalid_json(self, mock_cmd, mock_path_cls):
+        self._mock_doozer_result_file(mock_path_cls, content="not json")
         pipeline = _make_pipeline(skip_cosign=True)
 
         with self.assertRaises(RuntimeError) as cm:
             await pipeline._run_doozer()
 
-        self.assertIn("doozer beta:release-payload:rebase-and-build failed", str(cm.exception))
-
-    @patch("pyartcd.pipelines.build_release_payload.exectools.cmd_gather_async", new_callable=AsyncMock)
-    async def test_run_doozer_raises_on_invalid_json(self, mock_cmd):
-        mock_cmd.return_value = (0, "not json", "")
-        pipeline = _make_pipeline(skip_cosign=True)
-
-        with self.assertRaises(RuntimeError) as cm:
-            await pipeline._run_doozer()
-
-        self.assertIn("Could not parse doozer JSON output", str(cm.exception))
+        self.assertIn("Could not parse doozer result file", str(cm.exception))
 
     @patch("pyartcd.pipelines.build_release_payload.BuildReleasePayloadPipeline._cosign", new_callable=AsyncMock)
     @patch(
