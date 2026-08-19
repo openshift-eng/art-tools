@@ -1,6 +1,7 @@
 import json
 import os
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Dict, List, Optional
 
 import click
@@ -119,14 +120,15 @@ class BuildReleasePayloadPipeline:
             cmd.append("--dry-run")
 
         self._logger.info("Running doozer command: %s", " ".join(cmd))
-        rc, stdout, stderr = await exectools.cmd_gather_async(cmd, check=False)
-        if rc != 0:
-            raise RuntimeError(f"doozer beta:release-payload:rebase-and-build failed (rc={rc}):\n{stderr}")
+        await exectools.cmd_assert_async(cmd)
 
+        result_path = Path(self.runtime.doozer_working, 'release-payload-result.json')
+        if not result_path.exists():
+            raise RuntimeError(f"doozer did not produce result file at {result_path}")
         try:
-            return json.loads(stdout)
+            return json.loads(result_path.read_text())
         except json.JSONDecodeError as e:
-            raise RuntimeError(f"Could not parse doozer JSON output: {e}\nOutput was:\n{stdout}") from e
+            raise RuntimeError(f"Could not parse doozer result file {result_path}: {e}") from e
 
     async def _cosign(self, doozer_result: Dict) -> None:
         """Cosign the synced release payload images.
