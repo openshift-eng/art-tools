@@ -17,24 +17,26 @@ RUN yum install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.n
     git config --system user.email origin-release@redhat.com
 
 # Install common go tools upstream devs are expecting in CI.
-# Pure cargo culting from https://github.com/openshift/release/blob/51d92eb6a6d730e932a5daf68829ca7936739904/projects/origin-release/golang-1.13/Dockerfile#L41
-RUN go get golang.org/x/tools/cmd/cover \
-        github.com/Masterminds/glide \
-        golang.org/x/tools/cmd/goimports \
-        github.com/tools/godep \
-        golang.org/x/lint/golint \
-        gotest.tools/gotestsum \
-        github.com/openshift/release/tools/gotest2junit \
-        github.com/openshift/imagebuilder/cmd/imagebuilder && \
-    GO111MODULE=on go get gotest.tools/gotestsum@v0.5.2 && \
+# Versions are pinned to the last release whose go.mod minimum is <= 1.21
+# to stay compatible with Go 1.21+ (OCP 4.16).
+# Removed deprecated/archived tools: glide, godep, golint, dep.
+# Note: `go tool cover` is built into Go since 1.2; the x/tools/cmd/cover
+# package was removed from x/tools long ago, so no explicit install needed.
+RUN GOFLAGS='' go install golang.org/x/tools/cmd/goimports@v0.24.0 && \
+    GOFLAGS='' go install gotest.tools/gotestsum@v1.12.2 && \
+    GOFLAGS='' go install github.com/openshift/imagebuilder/cmd/imagebuilder@v1.2.15 && \
+    git clone --depth=1 --filter=blob:none --sparse https://github.com/openshift/release.git /tmp/openshift-release && \
+    cd /tmp/openshift-release && git sparse-checkout set tools/gotest2junit && \
+    cd /tmp/openshift-release/tools/gotest2junit && \
+    go mod init github.com/openshift/release/tools/gotest2junit && \
+    go build -o $GOPATH/bin/gotest2junit . && \
+    cd / && rm -rf /tmp/openshift-release && \
     mv $GOPATH/bin/* /usr/bin/ && \
     rm -rf $GOPATH/* $GOPATH/.cache && \
     mkdir $GOPATH/bin && \
     mkdir -p /go/src/github.com/openshift/origin && \
     ln -s /usr/bin/imagebuilder $GOPATH/bin/imagebuilder && \
-    ln -s /usr/bin/goimports $GOPATH/bin/goimports && \
-    curl -L https://github.com/golang/dep/releases/download/v0.5.4/dep-linux-amd64 > /usr/bin/dep && \
-    chmod +x /usr/bin/dep
+    ln -s /usr/bin/goimports $GOPATH/bin/goimports
 
 RUN chmod g+xw -R $GOPATH && \
     chmod g+xw -R $(go env GOROOT)
