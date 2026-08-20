@@ -71,7 +71,17 @@ class TestVerifyReleasePipeline(unittest.IsolatedAsyncioTestCase):
         result = await pipeline.run()
 
         self.assertTrue(result.passed)
-        self.assertEqual(len(result.steps), 8)
+        expected_steps = {
+            "cdn-push",
+            "signatures",
+            "image-grades",
+            "payload",
+            "qe-qualifier",
+            "security-alerts",
+            "kernel-tag",
+            "cve-trackers",
+        }
+        self.assertEqual({s.name for s in result.steps}, expected_steps)
         for step in result.steps:
             self.assertEqual(step.status, StepStatus.PASS)
 

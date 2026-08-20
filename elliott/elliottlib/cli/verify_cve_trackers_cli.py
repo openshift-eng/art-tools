@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
@@ -177,7 +178,7 @@ async def verify_cve_trackers(runtime, permissive: bool = True) -> VerifyCVETrac
     mr_url = get_shipment_mr_url(runtime)
     if mr_url:
         LOGGER.info("Checking shipment MR for CVE tracker coverage: %s", mr_url)
-        shipment_jira_issues = get_shipment_jira_issues(mr_url, group=runtime.group)
+        shipment_jira_issues = await asyncio.to_thread(get_shipment_jira_issues, mr_url, runtime.group)
         LOGGER.info("Found %d jira issues in shipment MR", len(shipment_jira_issues))
 
         # Cross-check all CVE trackers against shipment data
@@ -206,7 +207,7 @@ async def verify_cve_trackers(runtime, permissive: bool = True) -> VerifyCVETrac
     is_flag=True,
     default=True,
     show_default=True,
-    help="Ignore bugs that are determined to be invalid and continue",
+    help="Ignore bugs that are determined to be invalid and continue. Use --no-permissive to fail on invalid bugs.",
 )
 @click.pass_obj
 @click_coroutine

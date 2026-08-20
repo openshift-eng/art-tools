@@ -95,7 +95,6 @@ class VerifyReleasePipeline:
         self.working_dir.mkdir(parents=True, exist_ok=True)
 
         self._elliott_env = os.environ.copy()
-        self._elliott_env["ELLIOTT_WORKING_DIR"] = str(self.working_dir / "elliott-working")
 
     @property
     def _elliott_base(self) -> list[str]:
