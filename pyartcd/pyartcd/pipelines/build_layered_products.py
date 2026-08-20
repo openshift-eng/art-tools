@@ -156,8 +156,11 @@ class BuildLayeredProductsPipeline:
     async def run_on_cluster(self):
         """Trigger build-layered-products on the artc cluster and watch until completion.
 
-        Uses `tkn pipeline start --showlog` which blocks until the PipelineRun terminates,
-        streams logs to stdout (visible in Jenkins console), and returns non-zero on failure.
+        Steps:
+        1. Start the pipeline and capture the PipelineRun name
+        2. Log the console URL back to Jenkins
+        3. Stream PipelineRun logs until completion
+        4. Check the final PipelineRun status and raise on failure
         """
         kubeconfig = os.environ.get('ART_CLUSTER_LP_KUBECONFIG')
         if not kubeconfig:
@@ -166,10 +169,13 @@ class BuildLayeredProductsPipeline:
             )
 
         data_path = self._doozer_env_vars.get('DOOZER_DATA_PATH', '')
+        namespace = "layered-products"
+        pipeline_name = "build-layered-products"
 
-        cmd = [
-            "tkn", "pipeline", "start", "build-layered-products",
-            "--namespace", "layered-products",
+        # Step 1: Start the pipeline and get the PipelineRun name
+        start_cmd = [
+            "tkn", "pipeline", "start", pipeline_name,
+            "--namespace", namespace,
             "--kubeconfig", kubeconfig,
             "--param", f"group={self.group}",
             "--param", f"assembly={self.assembly}",
@@ -183,13 +189,53 @@ class BuildLayeredProductsPipeline:
             "--param", f"ignore-locks={'true' if self.ignore_locks else 'false'}",
             "--param", f"art-tools-commit={os.environ.get('ART_TOOLS_COMMIT', '')}",
             "--pipeline-timeout", "4h",
-            "--showlog",
+            "--output", "name",
         ]
 
-        self._logger.info("Triggering build-layered-products on artc cluster (namespace: layered-products)")
-        # cmd_assert_async raises ChildProcessError on non-zero exit (= pipeline failure)
-        await exectools.cmd_assert_async(cmd, env=os.environ.copy())
-        self._logger.info("build-layered-products pipeline completed successfully on cluster")
+        self._logger.info("Triggering %s on artc cluster (namespace: %s)", pipeline_name, namespace)
+        rc, stdout, stderr = await exectools.cmd_gather_async(start_cmd, env=os.environ.copy())
+        if rc != 0:
+            raise ChildProcessError(
+                f"Failed to start {pipeline_name} on cluster (exit {rc}): {stderr.strip()}"
+            )
+
+        plr_name = stdout.strip()
+        if not plr_name:
+            raise RuntimeError("tkn pipeline start returned empty PipelineRun name")
+
+        # Step 2: Log the PipelineRun URL
+        plr_url = (
+            f"https://console-openshift-console.apps.artc2023.pc3z.p1.openshiftapps.com"
+            f"/k8s/ns/{namespace}/tekton.dev~v1~PipelineRun/{plr_name}/logs"
+        )
+        self._logger.info("Triggered PipelineRun on artc cluster: %s", plr_url)
+        jenkins.update_description(f'<a href="{plr_url}">PipelineRun: {plr_name}</a><br/>')
+
+        # Step 3: Stream logs until the PipelineRun completes
+        logs_cmd = [
+            "tkn", "pipelinerun", "logs", "--follow",
+            "--namespace", namespace,
+            "--kubeconfig", kubeconfig,
+            plr_name,
+        ]
+        await exectools.cmd_gather_async(logs_cmd, env=os.environ.copy())
+
+        # Step 4: Check the final status
+        status_cmd = [
+            "tkn", "pipelinerun", "describe", plr_name,
+            "--namespace", namespace,
+            "--kubeconfig", kubeconfig,
+            "--output", "jsonpath={.status.conditions[0].status}",
+        ]
+        rc, stdout, stderr = await exectools.cmd_gather_async(status_cmd, env=os.environ.copy())
+        succeeded = stdout.strip()
+
+        if succeeded != "True":
+            raise ChildProcessError(
+                f"PipelineRun {plr_name} failed (status={succeeded}). See logs above or: {plr_url}"
+            )
+
+        self._logger.info("PipelineRun %s completed successfully", plr_name)
 
     async def run(self):
         """Run the layered products rebase and build pipeline"""
