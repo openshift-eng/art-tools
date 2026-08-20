@@ -36,6 +36,7 @@ class BuildLayeredProductsPipeline:
         skip_bundle_build: bool,
         image_build_strategy: str = 'only',
         skip_rebase: bool = False,
+        ignore_locks: bool = False,
         kubeconfig: Optional[str] = None,
         data_gitref: Optional[str] = None,
         network_mode: Optional[str] = None,
@@ -50,6 +51,7 @@ class BuildLayeredProductsPipeline:
         self.image_build_strategy = BuildStrategy(image_build_strategy)
         self.skip_bundle_build = skip_bundle_build
         self.skip_rebase = skip_rebase
+        self.ignore_locks = ignore_locks
         self.kubeconfig = kubeconfig
         self.data_gitref = data_gitref
         self.network_mode = network_mode
@@ -150,6 +152,51 @@ class BuildLayeredProductsPipeline:
         with record_log_path.open('r') as file:
             record_log: dict = record_util.parse_record_log(file)
             return record_log
+
+    async def run_on_cluster(self):
+        """Trigger build-layered-products on the artc cluster and watch until completion.
+
+        Uses `tkn pipeline start --showlog` which blocks until the PipelineRun terminates,
+        streams logs to stdout (visible in Jenkins console), and returns non-zero on failure.
+        """
+        kubeconfig = os.environ.get('ART_CLUSTER_LP_KUBECONFIG')
+        if not kubeconfig:
+            raise ValueError(
+                "ART_CLUSTER_LP_KUBECONFIG environment variable must be set to trigger on cluster"
+            )
+
+        data_path = self._doozer_env_vars.get('DOOZER_DATA_PATH', '')
+
+        cmd = [
+            "tkn", "pipeline", "start", "build-layered-products",
+            "--namespace", "layered-products",
+            "--kubeconfig", kubeconfig,
+            "--param", f"group={self.group}",
+            "--param", f"assembly={self.assembly}",
+            "--param", f"image-list={self.image_list}",
+            "--param", f"data-path={data_path}",
+            "--param", f"dry-run={'true' if self.runtime.dry_run else 'false'}",
+            "--param", f"skip-rebase={'true' if self.skip_rebase else 'false'}",
+            "--param", f"ignore-locks={'true' if self.ignore_locks else 'false'}",
+            "--pipeline-timeout", "4h",
+            "--showlog",
+        ]
+
+        if self.data_gitref:
+            cmd.extend(["--param", f"data-gitref={self.data_gitref}"])
+        if self.network_mode:
+            cmd.extend(["--param", f"network-mode={self.network_mode}"])
+        if self.plr_template:
+            cmd.extend(["--param", f"plr-template={self.plr_template}"])
+
+        art_tools_commit = os.environ.get('ART_TOOLS_COMMIT', '')
+        if art_tools_commit:
+            cmd.extend(["--param", f"art-tools-commit={art_tools_commit}"])
+
+        self._logger.info("Triggering build-layered-products on artc cluster (namespace: layered-products)")
+        # cmd_assert_async raises ChildProcessError on non-zero exit (= pipeline failure)
+        await exectools.cmd_assert_async(cmd, env=os.environ.copy())
+        self._logger.info("build-layered-products pipeline completed successfully on cluster")
 
     async def run(self):
         """Run the layered products rebase and build pipeline"""
@@ -430,6 +477,12 @@ class BuildLayeredProductsPipeline:
     default='',
     help='Override the Pipeline Run template commit from openshift-priv/art-konflux-template; format: <owner>@<branch>',
 )
+@click.option(
+    '--on-cluster',
+    is_flag=True,
+    default=False,
+    help='Trigger the pipeline on the artc cluster (layered-products namespace) and watch until completion',
+)
 @pass_runtime
 @click_coroutine
 async def build_layered_products(
@@ -447,6 +500,7 @@ async def build_layered_products(
     network_mode: Optional[str],
     ignore_locks: bool,
     plr_template: str,
+    on_cluster: bool,
 ):
     """Rebase and build layered product image for an assembly"""
     try:
@@ -460,6 +514,7 @@ async def build_layered_products(
             data_path=data_path,
             skip_bundle_build=skip_bundle_build,
             skip_rebase=skip_rebase,
+            ignore_locks=ignore_locks,
             kubeconfig=kubeconfig,
             data_gitref=data_gitref,
             network_mode=network_mode,
@@ -468,7 +523,9 @@ async def build_layered_products(
 
         lock_identifier = jenkins.get_build_path_or_random()
 
-        if ignore_locks:
+        if on_cluster:
+            await pipeline.run_on_cluster()
+        elif ignore_locks:
             await pipeline.run()
         else:
             await locks.run_with_lock(
