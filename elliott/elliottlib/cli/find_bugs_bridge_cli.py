@@ -19,7 +19,11 @@ from elliottlib.cli.common import click_coroutine
 LOGGER = logging.getLogger(__name__)
 
 BRIDGE_LABEL = "art:bridge-bug"
-WONT_FIX_RESOLUTIONS = {"won't do"}
+# Resolutions that reviewers use to signal a closed mirror needs no further bridge action:
+# "Won't Do" (don't ship in the bridge), "Obsolete"/"Done" (fix already present in the bridge
+# release, so the mirror is unnecessary). Any of these is a valid terminal state; a mirror closed
+# with a resolution outside this set is treated as an anomaly requiring manual investigation.
+TERMINAL_RESOLUTIONS = {"won't do", "obsolete", "done"}
 REQUIRED_LINK_TYPES = {"depends_on", "blocked_by", "clones"}
 
 
@@ -322,13 +326,16 @@ class FindBugsBridgeCli:
             return False
         existing = self.existing_mirrors_by_source.get(source_bug.id, [])
         if existing:
-            if any(self._is_closed_wont_fix(mirror) for mirror in existing):
-                LOGGER.info("Skipping %s because an existing mirror is closed as Won't Do", source_bug.id)
+            if any(self._is_closed_terminal(mirror) for mirror in existing):
+                LOGGER.info(
+                    "Skipping %s because an existing mirror is closed with a terminal resolution", source_bug.id
+                )
                 return False
             if all(mirror.status.lower() == "closed" for mirror in existing):
                 self._record_invalid_bug(
                     source_bug.id,
-                    "Existing bridge mirror is closed without Won't Do; manual investigation required",
+                    "Existing bridge mirror is closed with an unexpected resolution "
+                    f"(not one of {sorted(TERMINAL_RESOLUTIONS)}); manual investigation required",
                 )
                 return False
             mirror = existing[0]
@@ -414,7 +421,8 @@ class FindBugsBridgeCli:
             "engineer decides otherwise.\n\n"
             f"How to disposition it for {self.major_minor}:\n"
             f"- You do not need to directly manage this issue's state unless you want to remove it from {self.major_minor} advisories.\n"
-            f"- If the issue should not appear in {self.major_minor} advisories, close this mirror with \"Won't Do\".\n"
+            f"- If the issue should not appear in {self.major_minor} advisories, or the fix is already present in "
+            f"{self.major_minor}, close this mirror with \"Won't Do\", \"Obsolete\", or \"Done\".\n"
             "- Otherwise, leave it open and ART automation will continue to manage its presence.\n\n"
             "Original description:\n"
             "----\n"
@@ -611,17 +619,21 @@ class FindBugsBridgeCli:
                 LOGGER.error("Invalid bridge bug case for %s: %s", source_bug_id, message)
 
     @staticmethod
-    def _is_closed_wont_fix(mirror_bug: JIRABug) -> bool:
-        """Return whether a mirror is closed with a Won't Do resolution.
+    def _is_closed_terminal(mirror_bug: JIRABug) -> bool:
+        """Return whether a mirror is closed with a terminal resolution.
+
+        A terminal resolution (see `TERMINAL_RESOLUTIONS`) means a reviewer has
+        deliberately dispositioned the mirror and no further bridge action is
+        required, so the source bug can be skipped cleanly.
 
         Args:
             mirror_bug: Bridge mirror issue to inspect.
 
         Returns:
-            bool: `True` when the mirror is closed with a Won't Do
-            resolution, otherwise `False`.
+            bool: `True` when the mirror is closed with a terminal resolution,
+            otherwise `False`.
         """
         if mirror_bug.status.lower() != "closed":
             return False
         resolution = (mirror_bug.resolution or "").replace("’", "'").lower()
-        return resolution in WONT_FIX_RESOLUTIONS
+        return resolution in TERMINAL_RESOLUTIONS

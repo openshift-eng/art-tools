@@ -138,7 +138,30 @@ class TestFindBugsBridgeCli(IsolatedAsyncioTestCase):
         self.cli.target_tracker.create_issue_link.assert_any_call("Cloners", "OCPBUGS-999", "OCPBUGS-123")
         self.assertEqual(self.cli.target_tracker.create_issue_link.call_count, 3)
 
-    async def test_sync_mirror_skips_existing_wont_fix(self):
+    async def test_sync_mirror_skips_existing_terminal_resolution(self):
+        # Reviewers close mirrors with any of these to signal no further bridge action is needed.
+        for resolution in ("Won't Do", "Obsolete", "Done"):
+            with self.subTest(resolution=resolution):
+                self.cli.target_tracker.reset_mock()
+                self.cli.invalid_bugs = {}
+
+                source_bug = MagicMock()
+                source_bug.id = "OCPBUGS-123"
+
+                image_meta = MagicMock()
+
+                existing_mirror = MagicMock()
+                existing_mirror.status = "Closed"
+                existing_mirror.resolution = resolution
+                self.cli.existing_mirrors_by_source = {"OCPBUGS-123": [existing_mirror]}
+
+                result = await self.cli._sync_mirror(source_bug, image_meta)
+
+                self.assertFalse(result)
+                self.cli.target_tracker.create_issue.assert_not_called()
+                self.assertEqual(self.cli.invalid_bugs, {})
+
+    async def test_sync_mirror_flags_closed_with_unexpected_resolution(self):
         source_bug = MagicMock()
         source_bug.id = "OCPBUGS-123"
 
@@ -146,13 +169,14 @@ class TestFindBugsBridgeCli(IsolatedAsyncioTestCase):
 
         existing_mirror = MagicMock()
         existing_mirror.status = "Closed"
-        existing_mirror.resolution = "Won't Do"
+        existing_mirror.resolution = "Duplicate"
         self.cli.existing_mirrors_by_source = {"OCPBUGS-123": [existing_mirror]}
 
         result = await self.cli._sync_mirror(source_bug, image_meta)
 
         self.assertFalse(result)
         self.cli.target_tracker.create_issue.assert_not_called()
+        self.assertIn("OCPBUGS-123", self.cli.invalid_bugs)
 
     async def test_sync_mirror_skips_update_when_unchanged(self):
         source_bug = MagicMock()
