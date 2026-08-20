@@ -69,7 +69,10 @@ def render_result(result: VerifyReleaseResult, output: str, version: str, assemb
 
     lines = [f"Verify release {assembly}", ""]
     for s in result.steps:
-        lines.append(f"  {s.name}: {s.status.value}")
+        line = f"  {s.name}: {s.status.value}"
+        if s.message:
+            line += f" — {s.message}"
+        lines.append(line)
     lines.append("")
     overall = "PASS" if result.passed else "FAIL"
     lines.append(f"Overall: {overall}")
@@ -215,7 +218,19 @@ class VerifyReleasePipeline:
     "--skip",
     "skip_steps",
     multiple=True,
-    help="Steps to skip (cdn-push, signatures, image-grades, payload, qe-qualifier, security-alerts, kernel-tag, cve-trackers)",
+    type=click.Choice(
+        [
+            "cdn-push",
+            "signatures",
+            "image-grades",
+            "payload",
+            "qe-qualifier",
+            "security-alerts",
+            "kernel-tag",
+            "cve-trackers",
+        ]
+    ),
+    help="Steps to skip.",
 )
 @click.option(
     "-o",
