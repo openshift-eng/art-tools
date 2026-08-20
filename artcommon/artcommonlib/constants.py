@@ -135,10 +135,10 @@ PRODUCT_BASE_IMAGE_KONFLUX_EC_RELEASE_MAP = {
 # Must stay aligned with konflux-release-data. See ART-17452.
 PRODUCT_FBC_STAGE_RELEASE_PLAN_MAP: dict[str, dict[tuple[int, int], str]] = {
     "cert-manager": {
-        (1, 19): "cm-advisory-stage-1-19",
+        (1, 19): "cm-stage-auto-1-19",
     },
     "external-secrets-operator": {
-        (1, 1): "eso-advisory-stage-1-1",
+        (1, 1): "eso-stage-auto-1-1",
     },
     "multicluster-engine": {
         (2, 11): "mce-advisory-stage-2-11",
@@ -149,8 +149,8 @@ PRODUCT_FBC_STAGE_RELEASE_PLAN_MAP: dict[str, dict[tuple[int, int], str]] = {
         (5, 0): "acm-advisory-stage-5-0",
     },
     "zero-trust-workload-identity-manager": {
-        (1, 0): "zt-advisory-stage-1-0",
-        (1, 1): "zt-advisory-stage-1-1",
+        (1, 0): "zt-stage-auto-1-0",
+        (1, 1): "zt-stage-auto-1-1",
     },
 }
 
