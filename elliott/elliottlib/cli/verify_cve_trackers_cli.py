@@ -73,7 +73,7 @@ def render_result(result: VerifyCVETrackersResult, output: str) -> str:
 
 async def get_advisory_jira_issues(advisory_id: int) -> set[str]:
     """Get all jira issue IDs attached to an advisory."""
-    bug_ids = errata.get_bug_ids(advisory_id)
+    bug_ids = await asyncio.to_thread(errata.get_bug_ids, advisory_id)
     return set(bug_ids.get("jira", []))
 
 
@@ -156,7 +156,7 @@ async def verify_cve_trackers(runtime, permissive: bool = True) -> VerifyCVETrac
     # Collect jira issues from RHSA advisories
     rhsa_jira_issues: set[str] = set()
     for impetus, advisory_id in advisories.items():
-        raw = errata.get_raw_erratum(advisory_id)
+        raw = await asyncio.to_thread(errata.get_raw_erratum, advisory_id)
         errata_type = next(iter(raw.get("errata", {}).keys()), "")
         if errata_type != "rhsa":
             LOGGER.info("Advisory %s (%s): type %s, skipping (not RHSA)", advisory_id, impetus, errata_type.upper())
@@ -203,11 +203,10 @@ async def verify_cve_trackers(runtime, permissive: bool = True) -> VerifyCVETrac
     help="Output format.",
 )
 @click.option(
-    "--permissive",
-    is_flag=True,
+    "--permissive/--no-permissive",
     default=True,
     show_default=True,
-    help="Ignore bugs that are determined to be invalid and continue. Use --no-permissive to fail on invalid bugs.",
+    help="Ignore bugs that are determined to be invalid and continue.",
 )
 @click.pass_obj
 @click_coroutine
