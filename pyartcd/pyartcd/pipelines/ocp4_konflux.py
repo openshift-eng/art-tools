@@ -1100,6 +1100,17 @@ class KonfluxOcpPipeline:
             LOGGER.warning("No release stream found in group.yml for %s, skipping integration test", rhel_label)
             return
 
+        # The RHCOS Jenkins job has no credentials for the internal Konflux build registry
+        # (art-images).  Rewrite pullspecs to art-images-share, which mirror_images already
+        # populated before this method is called.
+        _INTERNAL = "quay.io/redhat-user-workloads/ocp-art-tenant/art-images@"
+        _SHARED = "quay.io/redhat-user-workloads/ocp-art-tenant/art-images-share@"
+        if node_pullspec.startswith(_INTERNAL):
+            node_pullspec = _SHARED + node_pullspec[len(_INTERNAL):]
+        if ext_pullspec.startswith(_INTERNAL):
+            ext_pullspec = _SHARED + ext_pullspec[len(_INTERNAL):]
+        LOGGER.info("Using art-images-share pullspecs for RHCOS job: node=%s ext=%s", node_pullspec, ext_pullspec)
+
         try:
             client = self.rhcos_jenkins_client
             build_number = client.trigger_build(
@@ -1345,10 +1356,12 @@ class KonfluxOcpPipeline:
                 )
 
             self.trigger_bundle_build()
-            await run_safe(self.trigger_rhcos_integration_tests, critical_failures)
 
-            # Wrap problematic operations to prevent them from blocking each other or clean_up
+            # mirror_images must run before trigger_rhcos_integration_tests so that
+            # art-images-share pullspecs exist when we hand them to the RHCOS Jenkins job.
+            # The RHCOS job has no credentials for the internal art-images Konflux registry.
             await run_safe(self.mirror_images, critical_failures)
+            await run_safe(self.trigger_rhcos_integration_tests, critical_failures)
             await run_safe(self.mirror_streams_to_ci, critical_failures)
 
             try:
