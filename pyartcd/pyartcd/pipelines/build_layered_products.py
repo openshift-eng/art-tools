@@ -175,23 +175,16 @@ class BuildLayeredProductsPipeline:
             "--param", f"assembly={self.assembly}",
             "--param", f"image-list={self.image_list}",
             "--param", f"data-path={data_path}",
+            "--param", f"data-gitref={self.data_gitref or ''}",
+            "--param", f"plr-template={self.plr_template or ''}",
+            "--param", f"network-mode={self.network_mode or ''}",
             "--param", f"dry-run={'true' if self.runtime.dry_run else 'false'}",
             "--param", f"skip-rebase={'true' if self.skip_rebase else 'false'}",
             "--param", f"ignore-locks={'true' if self.ignore_locks else 'false'}",
+            "--param", f"art-tools-commit={os.environ.get('ART_TOOLS_COMMIT', '')}",
             "--pipeline-timeout", "4h",
             "--showlog",
         ]
-
-        if self.data_gitref:
-            cmd.extend(["--param", f"data-gitref={self.data_gitref}"])
-        if self.network_mode:
-            cmd.extend(["--param", f"network-mode={self.network_mode}"])
-        if self.plr_template:
-            cmd.extend(["--param", f"plr-template={self.plr_template}"])
-
-        art_tools_commit = os.environ.get('ART_TOOLS_COMMIT', '')
-        if art_tools_commit:
-            cmd.extend(["--param", f"art-tools-commit={art_tools_commit}"])
 
         self._logger.info("Triggering build-layered-products on artc cluster (namespace: layered-products)")
         # cmd_assert_async raises ChildProcessError on non-zero exit (= pipeline failure)
