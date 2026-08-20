@@ -116,6 +116,10 @@ def _parse_failed_stage_releases(runtime: Runtime) -> list:
 @click.option(
     '--force', is_flag=True, help='Rebuild bundle containers, even if they already exist for given operator NVRs'
 )
+@click.option(
+    '--force-release', is_flag=True,
+    help='Stage-release related images even if bundle containers were not rebuilt'
+)
 @click.option("--kubeconfig", required=False, help="Path to kubeconfig file to use for Konflux cluster connections")
 @click.option(
     '--plr-template',
@@ -135,6 +139,7 @@ async def olm_bundle_konflux(
     only: bool,
     exclude: str,
     force: bool,
+    force_release: bool,
     kubeconfig: str,
     plr_template: str,
     group: str,
@@ -251,6 +256,7 @@ async def olm_bundle_konflux(
             raise doozer_error
 
     total_bundles = len(successful_bundles) + len(operators_with_failed_bundles)
+    bundles_were_built = total_bundles > 0
     if total_bundles == 0:
         if doozer_error:
             runtime.logger.error('No bundle builds were attempted')
@@ -258,7 +264,7 @@ async def olm_bundle_konflux(
         if not fallback_nvrs:
             raise RuntimeError('No bundle builds found in record.log and no input NVRs provided')
         # Doozer succeeded but wrote no record.log — all bundles already existed and were skipped.
-        # Use fallback_nvrs to still trigger stage-release and FBC builds.
+        # Use fallback_nvrs to still trigger FBC builds.
         runtime.logger.info(
             'No new bundles were built (all already exist); proceeding with %d pre-existing operator(s)',
             len(fallback_nvrs),
@@ -283,24 +289,29 @@ async def olm_bundle_konflux(
         propagate_params = jenkins.get_propagatable_params()
 
         # Stage-release related images before triggering any FBC builds.
-        # The release plan is resolved per product version (not OCP version), so a single call covers all target versions.
-        failed_stage_nvrs = await _stage_release_related_images(
-            runtime=runtime,
-            doozer_base_cmd=doozer_base_cmd,
-            namespace=namespace,
-            final_kubeconfig=final_kubeconfig,
-            operator_nvrs=operator_nvrs,
-        )
-        if failed_stage_nvrs:
-            # Don't build FBC for an operator whose images never made it to the advisory; the rest carry on.
-            operator_nvrs = [nvr for nvr in operator_nvrs if nvr not in failed_stage_nvrs]
-            if not operator_nvrs:
-                raise RuntimeError(
-                    f'Stage release of related images failed for every operator: {", ".join(failed_stage_nvrs)}'
+        # Skip when bundles were not rebuilt — related images were already released in the original build.
+        if bundles_were_built or force_release:
+            failed_stage_nvrs = await _stage_release_related_images(
+                runtime=runtime,
+                doozer_base_cmd=doozer_base_cmd,
+                namespace=namespace,
+                final_kubeconfig=final_kubeconfig,
+                operator_nvrs=operator_nvrs,
+            )
+            if failed_stage_nvrs:
+                operator_nvrs = [nvr for nvr in operator_nvrs if nvr not in failed_stage_nvrs]
+                if not operator_nvrs:
+                    raise RuntimeError(
+                        f'Stage release of related images failed for every operator: {", ".join(failed_stage_nvrs)}'
+                    )
+                runtime.logger.warning(
+                    f'Skipping FBC builds for {len(failed_stage_nvrs)} operator(s) whose stage release failed; '
+                    f'continuing with: {operator_nvrs}'
                 )
-            runtime.logger.warning(
-                f'Skipping FBC builds for {len(failed_stage_nvrs)} operator(s) whose stage release failed; '
-                f'continuing with: {operator_nvrs}'
+        else:
+            runtime.logger.info(
+                'Skipping stage release of related images — no new bundles were built '
+                '(use --force-release to override)'
             )
 
         # Check if this is a non-openshift group and if OCP_TARGET_VERSIONS is configured
