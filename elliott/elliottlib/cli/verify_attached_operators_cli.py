@@ -1,3 +1,4 @@
+import asyncio
 import json
 import re
 from io import BytesIO
@@ -10,6 +11,7 @@ import requests
 import yaml
 from artcommonlib import exectools
 from artcommonlib.format_util import green_print, red_print
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBundleBuildRecord
 from errata_tool import Erratum
 
 from elliottlib import brew, constants, errata
@@ -17,6 +19,7 @@ from elliottlib.cli.common import cli, move_builds, pass_runtime
 from elliottlib.cli.find_builds_cli import find_builds_cli
 from elliottlib.exceptions import BrewBuildException, ElliottFatalError
 from elliottlib.runtime import Runtime
+from elliottlib.shipment_utils import get_builds_from_mr
 
 
 @cli.command("verify-attached-operators", short_help="Verify attached operator bundle references are (being) shipped")
@@ -35,7 +38,14 @@ from elliottlib.runtime import Runtime
     is_flag=True,
     help='Attach unshipped dependencies to advisory, removing them from any other advisory',
 )
-@click.argument("advisories", nargs=-1, type=click.IntRange(1), required=True)
+@click.option(
+    "--shipment-mr",
+    required=False,
+    metavar='URL',
+    help='(Konflux) URL of the shipment merge request to validate. '
+    'Defaults to the shipment URL configured for the assembly.',
+)
+@click.argument("advisories", nargs=-1, type=click.IntRange(1), required=False)
 @pass_runtime
 @click.pass_context
 def verify_attached_operators_cli(
@@ -44,6 +54,7 @@ def verify_attached_operators_cli(
     omit_shipped: bool,
     omit_attached: bool,
     gather_dependencies: bool,
+    shipment_mr: str,
     advisories: Tuple[int, ...],
 ):
     """
@@ -72,16 +83,42 @@ def verify_attached_operators_cli(
     --gather-dependencies can be specified to attach unshipped dependencies to the bundle advisory,
     removing them from any other advisory. This is intended only for operator pre-releases; during
     ordinary z-streams it may risk stealing dependencies from advisories intended to ship earlier.
+
+    KONFLUX MODE (--build-system=konflux):
+
+    In Konflux there are no advisories; the source of truth for what is shipping is the
+    shipment merge request (MR). This validates that the builds attached to the shipment MR
+    are correct: every operator and operand referenced by the MR's bundle (metadata) builds
+    must be present among the image builds (image + extras) attached to the same MR.
+
+    The MR is taken from --shipment-mr, or (if omitted) the shipment URL configured for the
+    assembly in releases.yml:
+
+        elliott -g openshift-4.19 --assembly 4.19.5 --build-system=konflux \\
+                verify-attached-operators --shipment-mr https://gitlab.../merge_requests/123
+
+    The --omit-shipped, --omit-attached, --gather-dependencies options and advisory arguments
+    are advisory-only and are not supported in Konflux mode.
     """
 
+    runtime.initialize(mode="images")
+
+    if runtime.build_system == 'konflux':
+        _verify_attached_operators_konflux(
+            runtime, advisories, omit_shipped, omit_attached, gather_dependencies, shipment_mr
+        )
+        return
+
+    if shipment_mr:
+        raise click.BadParameter("--shipment-mr is only supported with --build-system=konflux.")
+    if not advisories:
+        raise click.BadParameter("At least one advisory ID is required for Brew builds.")
     if gather_dependencies and omit_shipped:
         red_print("--gather-dependencies is incompatible with --omit-shipped")
         exit(1)  # it could cause us to attempt to attach already-shipped content
     if gather_dependencies and len(advisories) != 1:
         red_print("--gather-dependencies requires specifying exactly one metadata advisory as a destination")
         exit(1)
-
-    runtime.initialize(mode="images")
 
     problems, invalid, unshipped_builds_by_advisory = _analyze_image_builds(
         runtime, advisories, omit_shipped, omit_attached, gather_dependencies
@@ -108,6 +145,103 @@ def verify_attached_operators_cli(
             raise ElliottFatalError("Please attach builds as indicated before shipping bundles.")
 
     green_print("All operator bundles were valid and references were found.")
+
+
+def _verify_attached_operators_konflux(
+    runtime,
+    advisories: Tuple[int, ...],
+    omit_shipped: bool,
+    omit_attached: bool,
+    gather_dependencies: bool,
+    shipment_mr: str,
+):
+    """
+    Konflux equivalent of verify-attached-operators.
+
+    In Konflux there are no advisories; the source of truth for the builds being shipped is
+    the shipment MR. This validates that whatever is attached to the shipment MR is correct:
+    every operator and operand referenced by the MR's bundle (metadata) builds must be present
+    among the image (image + extras) builds attached to the same MR. This mirrors the check in
+    PrepareReleaseKonfluxPipeline.verify_attached_operators.
+    """
+    if advisories:
+        raise click.BadParameter("Konflux does not take advisory arguments; builds are read from the shipment MR.")
+    if omit_shipped or omit_attached or gather_dependencies:
+        raise click.BadParameter("Konflux does not support --omit-shipped, --omit-attached, or --gather-dependencies.")
+    if runtime.konflux_db is None:
+        raise ElliottFatalError("Cannot connect to the Konflux DB.")
+
+    mr_url = shipment_mr or (runtime.group_config.shipment.url or None)
+    if not mr_url:
+        raise click.BadParameter(
+            "No shipment MR to validate. Pass --shipment-mr, or configure shipment.url for the assembly."
+        )
+
+    missing = asyncio.run(_konflux_missing_references(runtime, mr_url))
+    if missing:
+        missing_str = "\n              ".join(missing)
+        red_print(f"""
+            Some bundle references are not part of the shipment (see notes above):
+              {missing_str}
+            Ensure all referenced operators and operands are attached to the shipment MR.
+        """)
+        raise ElliottFatalError("Please resolve the errors above before shipping bundles.")
+
+    green_print("All operator bundles were valid and references were found.")
+
+
+async def _konflux_missing_references(runtime, mr_url: str) -> List[str]:
+    """
+    Read the builds attached to the shipment MR and return a list of human-readable problems
+    for any operator/operand reference from a bundle that is not attached to the same MR.
+    """
+    builds_by_kind = get_builds_from_mr(mr_url)
+    olm_builds = builds_by_kind.get('metadata', [])
+    if not olm_builds:
+        green_print("No bundle builds attached to the shipment MR.")
+        return []
+
+    # references may be satisfied by any image or extras build attached to the shipment MR
+    image_builds = set(builds_by_kind.get('image', [])) | set(builds_by_kind.get('extras', []))
+
+    # look up each bundle's referenced operator/operands from the Konflux DB
+    runtime.konflux_db.bind(KonfluxBundleBuildRecord)
+    records = await asyncio.gather(
+        *[
+            runtime.konflux_db.get_latest_build(
+                nvr=nvr, outcome=KonfluxBuildOutcome.SUCCESS, exclude_large_columns=True
+            )
+            for nvr in olm_builds
+        ]
+    )
+
+    olm_builds_detail = {
+        record.nvr: {'operator_nvr': record.operator_nvr, 'operand_nvrs': record.operand_nvrs or []}
+        for record in records
+        if record is not None
+    }
+    green_print(f"Found {len(olm_builds_detail)} bundles")
+    return _check_konflux_bundle_references(olm_builds_detail, image_builds)
+
+
+def _check_konflux_bundle_references(olm_builds_detail: Dict[str, Dict], image_builds: Set[str]) -> List[str]:
+    """
+    Pure check: for each bundle, ensure its operator NVR and every operand NVR is present in the
+    set of image builds attached to the shipment. Returns a list of human-readable problems.
+    """
+    missing_references = []
+    for bundle_nvr, detail in olm_builds_detail.items():
+        operator_nvr = detail.get('operator_nvr')
+        if operator_nvr and operator_nvr not in image_builds:
+            missing_references.append(
+                f"Bundle {bundle_nvr} references operator {operator_nvr}, which is not attached to the shipment."
+            )
+        for operand in detail.get('operand_nvrs') or []:
+            if operand not in image_builds:
+                missing_references.append(
+                    f"Bundle {bundle_nvr} references operand {operand}, which is not attached to the shipment."
+                )
+    return missing_references
 
 
 def _analyze_image_builds(
