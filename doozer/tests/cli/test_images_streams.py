@@ -417,3 +417,136 @@ def test_master_version_comparison(target, master, expect_ahead):
     # This is the exact comparison from images_streams.py:1170
     target_is_ahead = (major, minor) > (master_major, master_minor)
     assert target_is_ahead == expect_ahead
+
+
+# Tests for _pin_ci_build_root_go_tools
+
+
+class TestPinCiBuildRootGoTools:
+    """Tests for the @latest Go tool version pinning guardrail."""
+
+    # Simulates the ocp-build-data rhel-8 template (4.17/4.18 style)
+    RHEL8_OBD_TEMPLATE = (
+        "FROM replaced-by-buildconfig\n"
+        "ENV GO_COMPLIANCE_POLICY=exempt_all\n"
+        "RUN GOFLAGS='' go install golang.org/x/tools/cmd/cover@latest && \\\n"
+        "    GOFLAGS='' go install golang.org/x/tools/cmd/goimports@latest && \\\n"
+        "    GOFLAGS='' go install github.com/tools/godep@latest && \\\n"
+        "    GOFLAGS='' go install golang.org/x/lint/golint@latest && \\\n"
+        "    GOFLAGS='' go install gotest.tools/gotestsum@v1.12.2 && \\\n"
+        "    GOFLAGS='' go install github.com/openshift/release/tools/gotest2junit@latest && \\\n"
+        "    GOFLAGS='' go install github.com/openshift/imagebuilder/cmd/imagebuilder@latest && \\\n"
+        "    mv $GOPATH/bin/* /usr/bin/\n"
+    )
+
+    # Simulates the ocp-build-data rhel-9 template (with GO111MODULE=on)
+    RHEL9_OBD_TEMPLATE = (
+        "FROM replaced-by-buildconfig\n"
+        "ENV GO_COMPLIANCE_POLICY=exempt_all\n"
+        "RUN GOFLAGS='' GO111MODULE=on go install golang.org/x/tools/cmd/cover@latest && \\\n"
+        "    GOFLAGS='' GO111MODULE=on go install golang.org/x/tools/cmd/goimports@latest && \\\n"
+        "    GOFLAGS='' GO111MODULE=on go install github.com/tools/godep@latest && \\\n"
+        "    GOFLAGS='' GO111MODULE=on go install golang.org/x/lint/golint@latest && \\\n"
+        "    GOFLAGS='' GO111MODULE=on go install gotest.tools/gotestsum@v1.12.2 && \\\n"
+        "    GOFLAGS='' GO111MODULE=on go install github.com/openshift/release/tools/gotest2junit@latest && \\\n"
+        "    GOFLAGS='' GO111MODULE=on go install github.com/openshift/imagebuilder/cmd/imagebuilder@latest && \\\n"
+        "    mv $GOPATH/bin/* /usr/bin/\n"
+    )
+
+    # Simulates the doozerlib fallback template (already pinned)
+    DOOZERLIB_TEMPLATE = (
+        "FROM replaced-by-buildconfig\n"
+        "RUN GOFLAGS='' go install golang.org/x/tools/cmd/goimports@v0.24.0 && \\\n"
+        "    GOFLAGS='' go install gotest.tools/gotestsum@v1.12.2 && \\\n"
+        "    GOFLAGS='' go install github.com/openshift/imagebuilder/cmd/imagebuilder@v1.2.15 && \\\n"
+        "    mv $GOPATH/bin/* /usr/bin/\n"
+    )
+
+    def test_no_go_install_returns_unchanged(self):
+        """Content without go install commands is returned unchanged."""
+        content = "FROM ubi8\nRUN yum install -y vim\n"
+        assert images_streams._pin_ci_build_root_go_tools(content) == content
+
+    def test_no_at_latest_returns_unchanged(self):
+        """Content with go install but no @latest is returned unchanged."""
+        assert images_streams._pin_ci_build_root_go_tools(self.DOOZERLIB_TEMPLATE) == self.DOOZERLIB_TEMPLATE
+
+    def test_pins_goimports(self):
+        result = images_streams._pin_ci_build_root_go_tools(self.RHEL8_OBD_TEMPLATE)
+        assert 'goimports@v0.24.0' in result
+        assert 'goimports@latest' not in result
+
+    def test_pins_imagebuilder(self):
+        result = images_streams._pin_ci_build_root_go_tools(self.RHEL8_OBD_TEMPLATE)
+        assert 'imagebuilder@v1.2.15' in result
+        assert 'imagebuilder@latest' not in result
+
+    def test_pins_gotestsum_when_latest(self):
+        """gotestsum@latest should be pinned (rhel-7 ocp-build-data uses @latest)."""
+        content = "RUN GOFLAGS='' go install gotest.tools/gotestsum@latest && \\\n    mv\n"
+        result = images_streams._pin_ci_build_root_go_tools(content)
+        assert 'gotestsum@v1.12.2' in result
+        assert 'gotestsum@latest' not in result
+
+    def test_removes_cover(self):
+        result = images_streams._pin_ci_build_root_go_tools(self.RHEL8_OBD_TEMPLATE)
+        assert 'cmd/cover@latest' not in result
+        assert 'true' in result  # replaced with no-op
+
+    def test_removes_godep(self):
+        result = images_streams._pin_ci_build_root_go_tools(self.RHEL8_OBD_TEMPLATE)
+        assert 'godep@latest' not in result
+
+    def test_removes_golint(self):
+        result = images_streams._pin_ci_build_root_go_tools(self.RHEL8_OBD_TEMPLATE)
+        assert 'golint@latest' not in result
+
+    def test_replaces_gotest2junit_with_clone_build(self):
+        result = images_streams._pin_ci_build_root_go_tools(self.RHEL8_OBD_TEMPLATE)
+        assert 'go install github.com/openshift/release/tools/gotest2junit@latest' not in result
+        assert 'git clone --depth=1' in result
+        assert 'sparse-checkout set tools/gotest2junit' in result
+        assert 'go build -o $GOPATH/bin/gotest2junit' in result
+
+    def test_handles_rhel9_go111module_prefix(self):
+        """The GO111MODULE=on prefix used in rhel-9 templates is handled."""
+        result = images_streams._pin_ci_build_root_go_tools(self.RHEL9_OBD_TEMPLATE)
+        assert 'goimports@v0.24.0' in result
+        assert 'goimports@latest' not in result
+        assert 'cmd/cover@latest' not in result
+        assert 'godep@latest' not in result
+        assert 'golint@latest' not in result
+        assert 'gotest2junit@latest' not in result
+        assert 'imagebuilder@v1.2.15' in result
+
+    def test_no_remaining_at_latest(self):
+        """After processing, no @latest references remain for known tools."""
+        result = images_streams._pin_ci_build_root_go_tools(self.RHEL8_OBD_TEMPLATE)
+        assert '@latest' not in result
+
+    def test_preserves_already_pinned_gotestsum(self):
+        """gotestsum already pinned to v1.12.2 in ocp-build-data 4.17+ is kept."""
+        result = images_streams._pin_ci_build_root_go_tools(self.RHEL8_OBD_TEMPLATE)
+        assert 'gotestsum@v1.12.2' in result
+
+    def test_preserves_non_go_content(self):
+        """ENV vars and other non-go-install content is preserved."""
+        result = images_streams._pin_ci_build_root_go_tools(self.RHEL8_OBD_TEMPLATE)
+        assert 'GO_COMPLIANCE_POLICY=exempt_all' in result
+        assert 'FROM replaced-by-buildconfig' in result
+        assert "mv $GOPATH/bin/* /usr/bin/" in result
+
+    def test_logs_warning_on_latest(self, mocker):
+        """A warning is logged when @latest is detected."""
+        mock_logger = mocker.MagicMock()
+        images_streams._pin_ci_build_root_go_tools(self.RHEL8_OBD_TEMPLATE, log=mock_logger)
+        mock_logger.warning.assert_called()
+        # First call should mention pinning
+        first_warning = mock_logger.warning.call_args_list[0]
+        assert 'pinning' in first_warning[0][0].lower() or '@latest' in first_warning[0][0]
+
+    def test_does_not_log_when_no_latest(self, mocker):
+        """No warning is logged when template has no @latest."""
+        mock_logger = mocker.MagicMock()
+        images_streams._pin_ci_build_root_go_tools(self.DOOZERLIB_TEMPLATE, log=mock_logger)
+        mock_logger.warning.assert_not_called()

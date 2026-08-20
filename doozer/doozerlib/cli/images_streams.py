@@ -68,6 +68,87 @@ transforms = set(
     ]
 )
 
+# Go tool version pins for ci-build-root Dockerfile templates.
+#
+# ocp-build-data ci_transforms/ templates on older branches (4.16-4.18) use
+# @latest for Go tool installs.  This breaks when the latest release of a tool
+# requires a Go version newer than what the builder image ships.  For example,
+# golang.org/x/tools v0.49.0+ requires go >= 1.25.0, but OCP 4.16-4.18
+# builders have Go 1.21-1.22.
+#
+# These pins are applied as a guardrail *after* reading the template,
+# regardless of whether it comes from ocp-build-data or the doozerlib
+# fallback.  If the template already uses pinned versions, the function is a
+# no-op.
+_CI_BUILD_ROOT_GO_TOOL_PINS = {
+    'golang.org/x/tools/cmd/goimports': 'v0.24.0',
+    'gotest.tools/gotestsum': 'v1.12.2',
+    'github.com/openshift/imagebuilder/cmd/imagebuilder': 'v1.2.15',
+}
+
+# Deprecated/archived Go tools whose @latest installs should be removed.
+_CI_BUILD_ROOT_DEPRECATED_GO_TOOLS = [
+    'golang.org/x/tools/cmd/cover',  # built into 'go tool cover' since Go 1.5
+    'github.com/tools/godep',  # archived; superseded by Go modules
+    'golang.org/x/lint/golint',  # archived; superseded by staticcheck
+]
+
+
+def _pin_ci_build_root_go_tools(content, log=None):
+    """Post-process a ci-build-root Dockerfile template to pin Go tool versions.
+
+    Replaces ``@latest`` references with pinned, compatible versions and
+    removes deprecated tools.  This guards against ocp-build-data templates
+    that still use ``@latest``.
+
+    The function also replaces the ``go install`` of ``gotest2junit`` (which
+    lives in a monorepo without a root ``go.mod``) with a sparse-clone +
+    build approach.
+    """
+    if 'go install' not in content or '@latest' not in content:
+        return content
+
+    if log:
+        log.warning('ci-build-root template contains @latest Go tool references; pinning to known-compatible versions')
+
+    # Pin tools to specific versions compatible with Go 1.21+
+    for tool, version in _CI_BUILD_ROOT_GO_TOOL_PINS.items():
+        content = content.replace(f'{tool}@latest', f'{tool}@{version}')
+
+    # Remove deprecated tools by replacing their install command with
+    # ``true`` (a shell no-op), preserving the ``&& \`` continuation.
+    for tool in _CI_BUILD_ROOT_DEPRECATED_GO_TOOLS:
+        pattern = re.compile(r"GOFLAGS=''\s*(?:GO111MODULE=on\s+)?go install\s+" + re.escape(tool) + r"@latest")
+        content = pattern.sub('true', content)
+
+    # Replace ``go install gotest2junit@latest`` with a sparse-clone + build
+    # approach.  openshift/release has no root go.mod, so ``go install``
+    # cannot resolve it.
+    gotest2junit_pattern = re.compile(
+        r"GOFLAGS=''\s*(?:GO111MODULE=on\s+)?go install\s+"
+        r"github\.com/openshift/release/tools/gotest2junit@latest"
+    )
+    gotest2junit_build = (
+        'git clone --depth=1 --filter=blob:none --sparse '
+        'https://github.com/openshift/release.git /tmp/openshift-release '
+        '&& cd /tmp/openshift-release && git sparse-checkout set tools/gotest2junit '
+        '&& cd /tmp/openshift-release/tools/gotest2junit '
+        '&& go mod init github.com/openshift/release/tools/gotest2junit '
+        '&& go build -o $GOPATH/bin/gotest2junit . '
+        '&& cd / && rm -rf /tmp/openshift-release'
+    )
+    content = gotest2junit_pattern.sub(gotest2junit_build, content)
+
+    # Warn about any remaining @latest references the guardrail didn't handle
+    remaining = re.findall(r'go install\s+(\S+)@latest', content)
+    if remaining and log:
+        log.warning(
+            'ci-build-root template still has unpinned @latest Go tools: %s',
+            remaining,
+        )
+
+    return content
+
 
 def get_image_digest(pullspec: str, registry_config: Optional[str] = None) -> Optional[str]:
     """
@@ -1265,6 +1346,13 @@ def images_streams_gen_buildconfigs(runtime, streams, images, output, as_user, a
 
         with open(transform_template, mode='r', encoding='utf-8') as tt:
             transform_template_content = tt.read()
+
+        # For ci-build-root transforms, pin any @latest Go tool references to
+        # known-compatible versions.  ocp-build-data templates on older branches
+        # (4.16-4.18) still use @latest, which breaks when the latest release
+        # of a Go tool requires a newer Go than what the builder image ships.
+        if 'ci-build-root' in transform:
+            transform_template_content = _pin_ci_build_root_go_tools(transform_template_content, runtime.logger)
 
         dfp = DockerfileParser(cache_content=True, fileobj=io.BytesIO())
         dfp.content = transform_template_content
