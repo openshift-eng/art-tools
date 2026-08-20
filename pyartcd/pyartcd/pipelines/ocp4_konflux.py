@@ -140,6 +140,10 @@ class KonfluxOcpPipeline:
         self.use_mass_rebuild_locks = use_mass_rebuild_locks
         self.network_mode = network_mode
 
+        # RHCOS Jenkins client, authenticated early in run() so its token is cached
+        # before the withCredentials kubeconfig temp file can be reaped mid-build.
+        self.rhcos_jenkins_client = None
+
         # If build plan includes more than half or excludes less than half or rebuilds everything, it's a mass rebuild
         self.mass_rebuild = False
 
@@ -885,6 +889,40 @@ class KonfluxOcpPipeline:
     RHCOS_RHEL9_PAIR = {'node': 'rhcos-node-image', 'extensions': 'rhcos-node-extensions'}
     RHCOS_RHEL10_PAIR = {'node': 'rhcos-node-image-rhel10', 'extensions': 'rhcos-node-extensions-rhel10'}
 
+    def _init_rhcos_jenkins_client(self):
+        """Authenticate the RHCOS Jenkins client early and cache its bearer token.
+
+        The RHCOS Jenkins kubeconfig is provided via a Jenkins withCredentials
+        file binding ($RHCOS_JENKINS_KUBECONFIG). That temp file can be reaped by
+        idle-file cleanup during a long build, so by the time integration tests
+        are triggered (~50+ minutes after the withCredentials block opened) the
+        file may no longer exist even though the env var is still set.
+
+        To avoid depending on that temp file surviving the whole build, we build
+        the client and resolve its auth token up front, while the kubeconfig file
+        is still fresh. The client caches the token in memory, so triggering the
+        tests later never needs to read the kubeconfig again.
+
+        Best-effort: on failure the client is left as None and integration tests
+        are skipped, since these are non-fatal shadow tests for now.
+        """
+        if self.skip_rhcos_integration_tests:
+            return
+
+        from pyartcd.rhcos_jenkins_client import RhcosJenkinsClient
+
+        try:
+            client = RhcosJenkinsClient(kubeconfig_env_var='RHCOS_JENKINS_KUBECONFIG')
+            # Resolve and cache the token now, while the kubeconfig file still exists
+            client.retrieve_auth_token()
+            self.rhcos_jenkins_client = client
+            LOGGER.info("RHCOS Jenkins client authenticated; token cached for later integration tests")
+        except Exception as e:
+            LOGGER.warning(
+                "Failed to authenticate RHCOS Jenkins client at startup; integration tests will be skipped: %s", e
+            )
+            self.rhcos_jenkins_client = None
+
     async def trigger_rhcos_integration_tests(self):
         """Trigger RHCOS-owned Jenkins integration tests for rebuilt node/extensions images.
 
@@ -898,6 +936,10 @@ class KonfluxOcpPipeline:
         """
         if self.skip_rhcos_integration_tests:
             LOGGER.warning("Skipping RHCOS integration tests because --skip-rhcos-integration-tests flag is set")
+            return
+
+        if not self.rhcos_jenkins_client:
+            LOGGER.warning("RHCOS Jenkins client is not available (auth failed at startup), skipping integration tests")
             return
 
         record_log = self.parse_record_log()
@@ -1057,9 +1099,7 @@ class KonfluxOcpPipeline:
             return
 
         try:
-            from pyartcd.rhcos_jenkins_client import RhcosJenkinsClient
-
-            client = RhcosJenkinsClient(kubeconfig_env_var='RHCOS_JENKINS_KUBECONFIG')
+            client = self.rhcos_jenkins_client
             build_number = client.trigger_build(
                 'build-node-image',
                 {
@@ -1183,6 +1223,11 @@ class KonfluxOcpPipeline:
         if 'XDG_RUNTIME_DIR' in os.environ:
             LOGGER.info('Unsetting XDG_RUNTIME_DIR to prevent use of default registry auth')
             del os.environ['XDG_RUNTIME_DIR']
+
+        # Authenticate the RHCOS Jenkins client and cache its token before the long
+        # build begins; the Jenkins withCredentials kubeconfig temp file may be
+        # reaped by the time integration tests are triggered near the end of the run.
+        self._init_rhcos_jenkins_client()
 
         # Get Jenkins credentials
         quay_auth_file = os.getenv('QUAY_AUTH_FILE')
