@@ -157,9 +157,8 @@ async def verify_cve_trackers(runtime, permissive: bool = True) -> VerifyCVETrac
     rhsa_jira_issues: set[str] = set()
     for impetus, advisory_id in advisories.items():
         raw = await asyncio.to_thread(errata.get_raw_erratum, advisory_id)
-        errata_type = next(iter(raw.get("errata", {}).keys()), "")
-        if errata_type != "rhsa":
-            LOGGER.info("Advisory %s (%s): type %s, skipping (not RHSA)", advisory_id, impetus, errata_type.upper())
+        if "rhsa" not in raw.get("errata", {}):
+            LOGGER.info("Advisory %s (%s): not RHSA, skipping", advisory_id, impetus)
             continue
         issues = await get_advisory_jira_issues(advisory_id)
         LOGGER.info("Advisory %s (%s): RHSA, found %d jira issues", advisory_id, impetus, len(issues))
@@ -177,7 +176,7 @@ async def verify_cve_trackers(runtime, permissive: bool = True) -> VerifyCVETrac
     # Check shipment MR (Konflux flow) if available
     mr_url = get_shipment_mr_url(runtime)
     if mr_url:
-        LOGGER.info("Checking shipment MR for CVE tracker coverage: %s", mr_url)
+        LOGGER.info("Checking shipment MR for CVE tracker coverage")
         shipment_jira_issues = await asyncio.to_thread(get_shipment_jira_issues, mr_url, runtime.group)
         LOGGER.info("Found %d jira issues in shipment MR", len(shipment_jira_issues))
 
