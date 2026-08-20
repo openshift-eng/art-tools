@@ -89,7 +89,11 @@ class RhcosJenkinsClient:
         logger.info("Retrieving RHCOS Jenkins auth token using kubeconfig from %s", self.kubeconfig_env_var)
         session = self._get_session()
 
-        with oc.options({'kubeconfig': kubeconfig}):
+        # Use oc.api_server(kubeconfig_path=...) rather than oc.options({'kubeconfig': ...}).
+        # The options path runs .lower() on the entire key=value string, which corrupts file
+        # paths that contain uppercase characters.  api_server() appends --kubeconfig verbatim.
+        # No api_url is passed, so no --server flag is added; the kubeconfig supplies the URL.
+        with oc.api_server(kubeconfig_path=kubeconfig):
             jenkins_uid = oc.selector('sa/jenkins').objects()[0].model.metadata.uid
             for s in oc.selector('secrets'):
                 if (

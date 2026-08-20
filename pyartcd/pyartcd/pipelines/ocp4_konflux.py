@@ -143,6 +143,8 @@ class KonfluxOcpPipeline:
         # RHCOS Jenkins client, authenticated early in run() so its token is cached
         # before the withCredentials kubeconfig temp file can be reaped mid-build.
         self.rhcos_jenkins_client = None
+        # Stored if _init_rhcos_jenkins_client() fails; re-raised in trigger_rhcos_integration_tests.
+        self._rhcos_init_error: Optional[Exception] = None
 
         # If build plan includes more than half or excludes less than half or rebuilds everything, it's a mass rebuild
         self.mass_rebuild = False
@@ -903,8 +905,9 @@ class KonfluxOcpPipeline:
         is still fresh. The client caches the token in memory, so triggering the
         tests later never needs to read the kubeconfig again.
 
-        Best-effort: on failure the client is left as None and integration tests
-        are skipped, since these are non-fatal shadow tests for now.
+        On failure the error is stored in self._rhcos_init_error and re-raised later
+        inside trigger_rhcos_integration_tests, which is wrapped by run_safe so the
+        pipeline exits non-zero without blocking subsequent steps.
         """
         if self.skip_rhcos_integration_tests:
             return
@@ -918,9 +921,8 @@ class KonfluxOcpPipeline:
             self.rhcos_jenkins_client = client
             LOGGER.info("RHCOS Jenkins client authenticated; token cached for later integration tests")
         except Exception as e:
-            LOGGER.warning(
-                "Failed to authenticate RHCOS Jenkins client at startup; integration tests will be skipped: %s", e
-            )
+            LOGGER.warning("Failed to authenticate RHCOS Jenkins client at startup; integration tests will fail: %s", e)
+            self._rhcos_init_error = e
             self.rhcos_jenkins_client = None
 
     async def trigger_rhcos_integration_tests(self):
@@ -931,16 +933,15 @@ class KonfluxOcpPipeline:
         via the build-node-image job. The tests are triggered independently for
         each RHEL version (9/10) whose images were rebuilt.
 
-        These are shadow images for now, so test failures are logged as warnings
-        but do not fail the pipeline.
+        Failures are propagated so the caller (run_safe) can record them in
+        critical_failures and cause the pipeline to exit non-zero.
         """
         if self.skip_rhcos_integration_tests:
             LOGGER.warning("Skipping RHCOS integration tests because --skip-rhcos-integration-tests flag is set")
             return
 
         if not self.rhcos_jenkins_client:
-            LOGGER.warning("RHCOS Jenkins client is not available (auth failed at startup), skipping integration tests")
-            return
+            raise RuntimeError(f"RHCOS Jenkins client unavailable (auth failed at startup): {self._rhcos_init_error}")
 
         record_log = self.parse_record_log()
         if not record_log:
@@ -1004,6 +1005,7 @@ class KonfluxOcpPipeline:
 
         except Exception as e:
             LOGGER.exception("Failed to trigger RHCOS integration tests: %s", e)
+            raise
 
     async def _trigger_rhcos_pair_test(
         self,
@@ -1114,17 +1116,14 @@ class KonfluxOcpPipeline:
             if result['result'] == 'SUCCESS':
                 LOGGER.info("RHCOS %s integration test passed: %s #%d", rhel_label, result['url'], build_number)
             else:
-                LOGGER.warning(
-                    "RHCOS %s integration test did not pass (result=%s): %s - %s",
-                    rhel_label,
-                    result['result'],
-                    result['url'],
-                    result.get('description', ''),
+                raise RuntimeError(
+                    f"RHCOS {rhel_label} integration test did not pass (result={result['result']}): "
+                    f"{result['url']} - {result.get('description', '')}"
                 )
 
         except Exception as e:
-            # Don't fail the pipeline for integration test issues - these are shadow images for now
-            LOGGER.warning("Failed to run %s RHCOS integration test: %s", rhel_label, e)
+            LOGGER.exception("Failed to run %s RHCOS integration test: %s", rhel_label, e)
+            raise
 
     def parse_record_log(self) -> Optional[dict]:
         record_log_path = Path(self.runtime.doozer_working, 'record.log')
@@ -1346,7 +1345,7 @@ class KonfluxOcpPipeline:
                 )
 
             self.trigger_bundle_build()
-            await self.trigger_rhcos_integration_tests()
+            await run_safe(self.trigger_rhcos_integration_tests, critical_failures)
 
             # Wrap problematic operations to prevent them from blocking each other or clean_up
             await run_safe(self.mirror_images, critical_failures)
