@@ -38,13 +38,6 @@ from elliottlib.shipment_utils import get_builds_from_mr
     is_flag=True,
     help='Attach unshipped dependencies to advisory, removing them from any other advisory',
 )
-@click.option(
-    "--shipment-mr",
-    required=False,
-    metavar='URL',
-    help='(Konflux) URL of the shipment merge request to validate. '
-    'Defaults to the shipment URL configured for the assembly.',
-)
 @click.argument("advisories", nargs=-1, type=click.IntRange(1), required=False)
 @pass_runtime
 @click.pass_context
@@ -54,7 +47,6 @@ def verify_attached_operators_cli(
     omit_shipped: bool,
     omit_attached: bool,
     gather_dependencies: bool,
-    shipment_mr: str,
     advisories: Tuple[int, ...],
 ):
     """
@@ -87,15 +79,13 @@ def verify_attached_operators_cli(
     KONFLUX MODE (--build-system=konflux):
 
     In Konflux there are no advisories; the source of truth for what is shipping is the
-    shipment merge request (MR). This validates that the builds attached to the shipment MR
-    are correct: every operator and operand referenced by the MR's bundle (metadata) builds
-    must be present among the image builds (image + extras) attached to the same MR.
-
-    The MR is taken from --shipment-mr, or (if omitted) the shipment URL configured for the
-    assembly in releases.yml:
+    shipment merge request (MR) configured for the assembly in releases.yml. This validates
+    that the builds attached to the shipment MR are correct: every operator and operand
+    referenced by the MR's bundle (metadata) builds must be present among the image builds
+    (image + extras) attached to the same MR.
 
         elliott -g openshift-4.19 --assembly 4.19.5 --build-system=konflux \\
-                verify-attached-operators --shipment-mr https://gitlab.../merge_requests/123
+                verify-attached-operators
 
     The --omit-shipped, --omit-attached, --gather-dependencies options and advisory arguments
     are advisory-only and are not supported in Konflux mode.
@@ -104,13 +94,9 @@ def verify_attached_operators_cli(
     runtime.initialize(mode="images")
 
     if runtime.build_system == 'konflux':
-        _verify_attached_operators_konflux(
-            runtime, advisories, omit_shipped, omit_attached, gather_dependencies, shipment_mr
-        )
+        _verify_attached_operators_konflux(runtime, advisories, omit_shipped, omit_attached, gather_dependencies)
         return
 
-    if shipment_mr:
-        raise click.BadParameter("--shipment-mr is only supported with --build-system=konflux.")
     if not advisories:
         raise click.BadParameter("At least one advisory ID is required for Brew builds.")
     if gather_dependencies and omit_shipped:
@@ -153,16 +139,15 @@ def _verify_attached_operators_konflux(
     omit_shipped: bool,
     omit_attached: bool,
     gather_dependencies: bool,
-    shipment_mr: str,
 ):
     """
     Konflux equivalent of verify-attached-operators.
 
     In Konflux there are no advisories; the source of truth for the builds being shipped is
-    the shipment MR. This validates that whatever is attached to the shipment MR is correct:
-    every operator and operand referenced by the MR's bundle (metadata) builds must be present
-    among the image (image + extras) builds attached to the same MR. This mirrors the check in
-    PrepareReleaseKonfluxPipeline.verify_attached_operators.
+    the shipment MR configured for the assembly. This validates that whatever is attached to
+    the shipment MR is correct: every operator and operand referenced by the MR's bundle
+    (metadata) builds must be present among the image (image + extras) builds attached to the
+    same MR. This mirrors the check in PrepareReleaseKonfluxPipeline.verify_attached_operators.
     """
     if advisories:
         raise click.BadParameter("Konflux does not take advisory arguments; builds are read from the shipment MR.")
@@ -171,11 +156,9 @@ def _verify_attached_operators_konflux(
     if runtime.konflux_db is None:
         raise ElliottFatalError("Cannot connect to the Konflux DB.")
 
-    mr_url = shipment_mr or (runtime.group_config.shipment.url or None)
+    mr_url = runtime.group_config.shipment.url or None
     if not mr_url:
-        raise click.BadParameter(
-            "No shipment MR to validate. Pass --shipment-mr, or configure shipment.url for the assembly."
-        )
+        raise click.BadParameter("No shipment MR to validate. Configure shipment.url for the assembly.")
 
     missing = asyncio.run(_konflux_missing_references(runtime, mr_url))
     if missing:
