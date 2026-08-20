@@ -117,8 +117,7 @@ def _parse_failed_stage_releases(runtime: Runtime) -> list:
     '--force', is_flag=True, help='Rebuild bundle containers, even if they already exist for given operator NVRs'
 )
 @click.option(
-    '--force-release', is_flag=True,
-    help='Stage-release related images even if bundle containers were not rebuilt'
+    '--force-release', is_flag=True, help='Stage-release related images even if bundle containers were not rebuilt'
 )
 @click.option("--kubeconfig", required=False, help="Path to kubeconfig file to use for Konflux cluster connections")
 @click.option(
@@ -310,8 +309,7 @@ async def olm_bundle_konflux(
                 )
         else:
             runtime.logger.info(
-                'Skipping stage release of related images — no new bundles were built '
-                '(use --force-release to override)'
+                'Skipping stage release of related images — no new bundles were built (use --force-release to override)'
             )
 
         # Check if this is a non-openshift group and if OCP_TARGET_VERSIONS is configured

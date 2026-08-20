@@ -90,11 +90,19 @@ class TestOlmBundleKonfluxStageReleaseGating(unittest.IsolatedAsyncioTestCase):
 
     def _get_original_func(self):
         from pyartcd.pipelines.olm_bundle_konflux import olm_bundle_konflux
+
         # Unwrap pass_runtime -> click_coroutine -> original async function
         return olm_bundle_konflux.callback.__wrapped__.__wrapped__
 
-    async def _run_pipeline(self, mock_stage_release, mock_load_group_config, mock_locks, mock_jenkins,
-                            nvrs='operator-container-4.18.0-1', force_release=False):
+    async def _run_pipeline(
+        self,
+        mock_stage_release,
+        mock_load_group_config,
+        mock_locks,
+        mock_jenkins,
+        nvrs='operator-container-4.18.0-1',
+        force_release=False,
+    ):
         mock_locks.run_with_lock = mock.AsyncMock()
         mock_load_group_config.return_value = {'product': 'ocp'}
         mock_jenkins.get_build_path_or_random.return_value = 'test'
@@ -122,7 +130,12 @@ class TestOlmBundleKonfluxStageReleaseGating(unittest.IsolatedAsyncioTestCase):
     @mock.patch("pyartcd.pipelines.olm_bundle_konflux.load_group_config", new_callable=mock.AsyncMock)
     @mock.patch("pyartcd.pipelines.olm_bundle_konflux._stage_release_related_images", new_callable=mock.AsyncMock)
     async def test_stage_release_skipped_when_bundles_not_rebuilt(
-        self, mock_stage_release, mock_load_group_config, mock_cmd_assert, mock_locks, mock_jenkins,
+        self,
+        mock_stage_release,
+        mock_load_group_config,
+        mock_cmd_assert,
+        mock_locks,
+        mock_jenkins,
     ):
         """When all bundles are skipped (already exist), stage release should not run."""
         await self._run_pipeline(mock_stage_release, mock_load_group_config, mock_locks, mock_jenkins)
@@ -136,7 +149,12 @@ class TestOlmBundleKonfluxStageReleaseGating(unittest.IsolatedAsyncioTestCase):
     @mock.patch("pyartcd.pipelines.olm_bundle_konflux.load_group_config", new_callable=mock.AsyncMock)
     @mock.patch("pyartcd.pipelines.olm_bundle_konflux._stage_release_related_images", new_callable=mock.AsyncMock)
     async def test_stage_release_runs_when_force_release_set(
-        self, mock_stage_release, mock_load_group_config, mock_cmd_assert, mock_locks, mock_jenkins,
+        self,
+        mock_stage_release,
+        mock_load_group_config,
+        mock_cmd_assert,
+        mock_locks,
+        mock_jenkins,
     ):
         """When --force-release is set, stage release runs even for skipped bundles."""
         mock_stage_release.return_value = []
@@ -152,15 +170,18 @@ class TestOlmBundleKonfluxStageReleaseGating(unittest.IsolatedAsyncioTestCase):
     @mock.patch("pyartcd.pipelines.olm_bundle_konflux.load_group_config", new_callable=mock.AsyncMock)
     @mock.patch("pyartcd.pipelines.olm_bundle_konflux._stage_release_related_images", new_callable=mock.AsyncMock)
     async def test_stage_release_runs_when_bundles_actually_built(
-        self, mock_stage_release, mock_load_group_config, mock_cmd_assert, mock_locks, mock_jenkins,
+        self,
+        mock_stage_release,
+        mock_load_group_config,
+        mock_cmd_assert,
+        mock_locks,
+        mock_jenkins,
     ):
         """When bundles are actually built (record.log has entries), stage release runs."""
         mock_stage_release.return_value = []
         self._write_bundle_record(status='0', operator_nvr='op-1-1', bundle_nvr='op-bundle-1-1')
 
-        await self._run_pipeline(
-            mock_stage_release, mock_load_group_config, mock_locks, mock_jenkins, nvrs=''
-        )
+        await self._run_pipeline(mock_stage_release, mock_load_group_config, mock_locks, mock_jenkins, nvrs='')
 
         mock_stage_release.assert_called_once()
 
