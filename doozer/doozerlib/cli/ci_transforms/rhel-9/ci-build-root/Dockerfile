@@ -30,6 +30,9 @@ RUN yum install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-8.n
 # Removed deprecated/archived tools: glide, godep, golint, dep.
 # Note: `go tool cover` is built into Go since 1.2; the x/tools/cmd/cover
 # package was removed from x/tools long ago, so no explicit install needed.
+# GOTOOLCHAIN=local prevents `go install` from auto-downloading a newer Go
+# toolchain when a package's go.mod requests one.
+ENV GOTOOLCHAIN=local
 RUN GOFLAGS='' go install golang.org/x/tools/cmd/goimports@v0.24.0 && \
     GOFLAGS='' go install gotest.tools/gotestsum@v1.12.2 && \
     GOFLAGS='' go install github.com/openshift/imagebuilder/cmd/imagebuilder@v1.2.15 && \
