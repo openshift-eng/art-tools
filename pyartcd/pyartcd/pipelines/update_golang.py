@@ -1212,6 +1212,7 @@ class UpdateGolangPipeline:
                     "artifact_type": str(ArtifactType.IMAGE),
                     "outcome": str(KonfluxBuildOutcome.SUCCESS),
                     "engine": str(Engine.KONFLUX),
+                    "assembly": self.assembly
                 },
                 limit=1,
             ),
@@ -1226,6 +1227,7 @@ class UpdateGolangPipeline:
             f"--working-dir={self._doozer_working_dir}-ci-{image_key}",
             "--build-system=konflux",
         ]
+        cmd.extend(self._get_doozer_assembly_args())
         if self.data_path:
             cmd.append(f"--data-path={self.data_path}")
         cmd.extend(
@@ -1258,6 +1260,7 @@ class UpdateGolangPipeline:
             f"--working-dir={self._doozer_working_dir}-ci-{image_key}",
             "--build-system=konflux",
         ]
+        cmd.extend(self._get_doozer_assembly_args())
         if self.data_path:
             cmd.append(f"--data-path={self.data_path}")
         cmd.extend(
@@ -1347,6 +1350,7 @@ class UpdateGolangPipeline:
                 f"--working-dir={self._doozer_working_dir}-ci-sync",
                 "--build-system=konflux",
             ]
+            cmd.extend(self._get_doozer_assembly_args())
             if self.data_path:
                 cmd.append(f"--data-path={self.data_path}")
             cmd.extend(["--group", group])
@@ -1384,7 +1388,9 @@ class UpdateGolangPipeline:
         or the raw golang-builder container), so once a golang-builder image is rebuilt, its
         corresponding build-root image is unconditionally rebuilt right after, to pick up the new
         base image. Both rebuild steps must complete before either image is mirrored to CI, so
-        everything rebuilt this run is synced together in a single final step.
+        everything rebuilt this run is synced together in a single final step -- except for the
+        test assembly, where the sync to CI is skipped since test-assembly builds must not be
+        mirrored into real CI streams.
         """
         variant = next(
             (
@@ -1487,6 +1493,10 @@ class UpdateGolangPipeline:
             )
 
         rebuilt_image_keys = stale_builder_keys + build_root_keys
+        if not self.is_production_assembly:
+            _LOGGER.info("Skipping CI image sync for the test assembly")
+            return
+
         try:
             await self._sync_ci_images(rebuilt_image_keys)
         except Exception as e:
