@@ -621,7 +621,7 @@ class KonfluxOkdPipeline:
     async def update_imagestreams(self):
         """
         Update static OKD imagestreams with successfully built images:
-          scos-{version}-art            - multi-arch manifest list pullspecs (x86_64)
+          scos-{version}-art            - amd64-specific pullspecs (x86_64)
           scos-{version}-art-{suffix}   - arch-specific pullspecs for each non-x86 arch
         """
 
@@ -708,11 +708,17 @@ class KonfluxOkdPipeline:
                 failed_tags.append(image_name)
                 continue
 
-            # Tag multi-arch manifest list into primary imagestream
+            # Resolve amd64-specific pullspec from manifest list and tag into primary imagestream
+            amd64_pullspec = await self._get_arch_pullspec(image_pullspec, go_arch_for_brew_arch('x86_64'))
+            if not amd64_pullspec:
+                self.logger.warning('Could not resolve amd64 pullspec for %s; skipping', image_name)
+                failed_tags.append(image_name)
+                continue
+
             target = f'{self.imagestream_namespace}/{is_base_name}:{payload_tag}'
             try:
-                await self._tag_image_to_stream(source_pullspec=image_pullspec, target_tag=target, env=env)
-                self.logger.info('Tagged %s into %s', image_name, target)
+                await self._tag_image_to_stream(source_pullspec=amd64_pullspec, target_tag=target, env=env)
+                self.logger.info('Tagged %s amd64 into %s', image_name, target)
                 successful_tags.append(image_name)
                 updated_imagestreams.add(f'{self.imagestream_namespace}/{is_base_name}')
             except Exception as e:
