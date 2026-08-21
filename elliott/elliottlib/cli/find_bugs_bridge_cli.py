@@ -390,7 +390,6 @@ class FindBugsBridgeCli:
             "components": components,
             "labels": [BRIDGE_LABEL],
         }
-        fields["versions"] = []
         priority = getattr(getattr(source_bug.bug.fields, "priority", None), "name", None)
         if priority:
             fields["priority"] = {"name": priority}
