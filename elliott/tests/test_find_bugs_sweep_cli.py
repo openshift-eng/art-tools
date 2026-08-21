@@ -6,7 +6,7 @@ import elliottlib.cli.find_bugs_sweep_cli as sweep_cli
 from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
 from click.testing import CliRunner
 from elliottlib import constants, errata
-from elliottlib.bzutil import JIRABugTracker
+from elliottlib.bzutil import BugValidationResult, JIRABugTracker
 from elliottlib.cli.common import Runtime, cli
 from elliottlib.cli.find_bugs_sweep_cli import (
     FindBugsMode,
@@ -690,9 +690,10 @@ class TestCategorizeBugsByType(unittest.TestCase):
         bugs = [
             flexmock(
                 id='OCPBUGS-5',
-                is_tracker_bug=lambda: True,
-                is_invalid_tracker_bug=lambda: False,
+                is_tracker_bug=lambda: BugValidationResult(ok=True, reason=''),
+                is_invalid_tracker_bug=lambda: BugValidationResult(ok=False, reason=''),
                 has_valid_target_version_in_summary=lambda *_: False,
+                make_summary_with_target_version=lambda *_: 'fixed summary',
                 whiteboard_component='foo',
                 component='',
             )
@@ -712,8 +713,8 @@ class TestCategorizeBugsByType(unittest.TestCase):
             # valid tracker
             flexmock(
                 id='OCPBUGS-2',
-                is_tracker_bug=lambda: True,
-                is_invalid_tracker_bug=lambda: False,
+                is_tracker_bug=lambda: BugValidationResult(ok=True, reason=''),
+                is_invalid_tracker_bug=lambda: BugValidationResult(ok=False, reason=''),
                 has_valid_target_version_in_summary=lambda *_: True,
                 whiteboard_component='buzz',
                 component='',
@@ -722,18 +723,21 @@ class TestCategorizeBugsByType(unittest.TestCase):
             # bad summary tracker
             flexmock(
                 id='OCPBUGS-4',
-                is_tracker_bug=lambda: True,
-                is_invalid_tracker_bug=lambda: False,
+                is_tracker_bug=lambda: BugValidationResult(ok=True, reason=''),
+                is_invalid_tracker_bug=lambda: BugValidationResult(ok=False, reason=''),
                 has_valid_target_version_in_summary=lambda *_: False,
+                make_summary_with_target_version=lambda *_: 'fixed summary',
                 whiteboard_component='foo',
                 component='',
+                bug_class='jira',
             ),
             # invalid tracker
             flexmock(
                 id='OCPBUGS-5',
-                is_tracker_bug=lambda: False,
-                is_invalid_tracker_bug=lambda: True,
+                is_tracker_bug=lambda: BugValidationResult(ok=False, reason=''),
+                is_invalid_tracker_bug=lambda: BugValidationResult(ok=True, reason='- Has CVE identifier in summary'),
                 component='',
+                bug_class='jira',
             ),
         ]
         builds_by_advisory_kind = {
@@ -744,6 +748,10 @@ class TestCategorizeBugsByType(unittest.TestCase):
         }
 
         flexmock(sweep_cli).should_receive("extras_bugs").and_return({bugs[0]})
+
+        # Mock bug tracker for adding comments - needed because self.runtime is MagicMock
+        mock_bug_tracker = MagicMock()
+        self.runtime.get_bug_tracker = MagicMock(return_value=mock_bug_tracker)
 
         expected = {
             'image': set(),

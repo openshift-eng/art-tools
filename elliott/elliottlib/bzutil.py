@@ -9,6 +9,7 @@ import os
 import re
 import urllib.parse
 import xmlrpc.client
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import cached_property
 from time import sleep
@@ -38,6 +39,17 @@ from elliottlib.util import (
 )
 
 logger = logutil.get_logger(__name__)
+
+
+@dataclass(frozen=True)
+class BugValidationResult:
+    """Result of bug validation with ok status and reason for failure."""
+
+    ok: bool
+    reason: str
+
+    def __bool__(self) -> bool:
+        return self.ok
 
 
 # This is easier to patch in unit tests
@@ -136,6 +148,10 @@ class Bug:
 
     @property
     def product(self):
+        raise NotImplementedError
+
+    @property
+    def bug_class(self) -> str:
         raise NotImplementedError
 
     @property
@@ -240,6 +256,10 @@ class BugzillaBug(Bug):
         return self.bug.blocks
 
     @property
+    def bug_class(self):
+        return 'bugzilla'
+
+    @property
     def whiteboard_component(self):
         """Get whiteboard component value of a bug.
 
@@ -258,17 +278,38 @@ class BugzillaBug(Bug):
     def is_tracker_bug(self):
         has_keywords = set(constants.TRACKER_BUG_KEYWORDS).issubset(set(self.keywords))
         has_whiteboard_component = bool(self.whiteboard_component)
-        return has_keywords and has_whiteboard_component
+
+        if not (has_keywords and has_whiteboard_component):
+            missing = []
+            if not has_keywords:
+                missing.append(f"- This bug lacks the required keywords: {set(constants.TRACKER_BUG_KEYWORDS)}")
+            if not has_whiteboard_component:
+                missing.append("- Missing Whiteboard component")
+            return BugValidationResult(ok=False, reason="\n".join(missing))
+
+        return BugValidationResult(ok=True, reason="")
 
     def is_invalid_tracker_bug(self):
-        if self.is_tracker_bug():
-            return False
+        tracker_result = self.is_tracker_bug()
+        if tracker_result.ok:
+            return BugValidationResult(ok=False, reason="")
+
         if 'WeaknessTracking' in self.keywords:
             # See e.g. https://bugzilla.redhat.com/show_bug.cgi?id=2092289. This bug is not a CVE tracker
-            return False
+            return BugValidationResult(ok=False, reason="")
+
         has_cve_in_summary = bool(re.search(r'CVE-\d+-\d+', self.summary))
         has_keywords = set(constants.TRACKER_BUG_KEYWORDS).issubset(set(self.keywords))
-        return has_keywords or has_cve_in_summary
+
+        if not (has_keywords or has_cve_in_summary):
+            return BugValidationResult(ok=False, reason="")
+
+        properties = []
+        if has_cve_in_summary:
+            properties.append("- Has CVE identifier in summary so this is registered as a bug")
+        properties.append(tracker_result.reason)
+
+        return BugValidationResult(ok=True, reason="\n".join(properties))
 
     def all_advisory_ids(self):
         return ErrataBug(self.id).all_advisory_ids
@@ -318,29 +359,55 @@ class JIRABug(Bug):
             return None
 
     def is_tracker_bug(self):
-        if self.is_type_vulnerability():
-            return True
-        has_keywords = set(constants.TRACKER_BUG_KEYWORDS).issubset(set(self.keywords))
         has_whiteboard_component = bool(self.whiteboard_component)
+
+        if self.is_type_vulnerability():
+            if not has_whiteboard_component:
+                return BugValidationResult(ok=False, reason="- Missing Whiteboard component")
+            return BugValidationResult(ok=True, reason="")
+
+        has_keywords = set(constants.TRACKER_BUG_KEYWORDS).issubset(set(self.keywords))
         has_linked_flaw = bool(self.corresponding_flaw_bug_ids)
-        return has_keywords and has_whiteboard_component and has_linked_flaw
+
+        if not (has_keywords and has_whiteboard_component and has_linked_flaw):
+            missing = []
+            if not has_keywords:
+                missing.append(f"- This bug lacks the required keywords: {set(constants.TRACKER_BUG_KEYWORDS)}")
+            if not has_whiteboard_component:
+                missing.append("- Missing Whiteboard component")
+            if not has_linked_flaw:
+                missing.append("- Missing flaw bug links")
+            return BugValidationResult(ok=False, reason="\n".join(missing))
+
+        return BugValidationResult(ok=True, reason="")
 
     def is_invalid_tracker_bug(self):
-        if self.is_tracker_bug():
-            return False
+        tracker_result = self.is_tracker_bug()
+        if tracker_result.ok:
+            return BugValidationResult(ok=False, reason="")
+
         if 'WeaknessTracking' in self.keywords:
             # See e.g. https://issues.redhat.com/browse/OCPBUGS-5804. This is not to be regarded a tracking bug.
-            return False
+            return BugValidationResult(ok=False, reason="")
         if 'art:cloned-kernel-bug' in self.keywords:
             # Bugs for advance-shipped kernel builds should not be regarded as a tracker. They might look like one,
             # but they are not invalid.
             # Context in this thread: https://redhat-internal.slack.com/archives/C04SCM5AYE4/p1685524912511489?thread_ts=1685489306.568039&cid=C04SCM5AYE4
             # This is likely not the end state, but at least for the time being.
-            return False
+            return BugValidationResult(ok=False, reason="")
+
         has_cve_in_summary = bool(re.search(r'CVE-\d+-\d+', self.summary))
         has_keywords = set(constants.TRACKER_BUG_KEYWORDS).issubset(set(self.keywords))
         has_linked_flaw = bool(self.corresponding_flaw_bug_ids)
-        return has_keywords or has_cve_in_summary or has_linked_flaw
+
+        if not (has_keywords or has_cve_in_summary or has_linked_flaw):
+            return BugValidationResult(ok=False, reason="")
+
+        properties = []
+        if has_cve_in_summary:
+            properties.append("- Has CVE identifier in summary so this is registered as a bug")
+        properties.append(tracker_result.reason)
+        return BugValidationResult(ok=True, reason="\n".join(properties))
 
     @property
     def summary(self):
@@ -419,6 +486,10 @@ class JIRABug(Bug):
     @property
     def product(self):
         return self.bug.fields.project.key
+
+    @property
+    def bug_class(self):
+        return 'jira'
 
     @property
     def cve_id(self):
@@ -596,6 +667,59 @@ class BugTracker:
 
     def add_comment(self, bugid, comment: str, private: bool, noop=False):
         raise NotImplementedError
+
+    def get_comments(self, bugid):
+        """Get all comments for a bug. Must be implemented by subclasses."""
+        raise NotImplementedError
+
+    def add_invalid_summary_comment(
+        self, bug: Bug, major_version: int, minor_version: int, private: bool = False, noop=False
+    ):
+        """Add comment explaining tracker has invalid summary format."""
+        marker = "[ART-AUTOMATION: invalid-summary]"
+        comment = f"""This tracker bug has an invalid summary format.
+
+        Expected: Summary should start or end with one of:
+        - [openshift-{major_version}.{minor_version}]
+        - [openshift-{major_version}.{minor_version}.z]
+        - [openshift-{major_version}.{minor_version}.0]
+
+        Current summary: {bug.summary}
+
+        ----
+        {marker}
+        """
+        return self.add_comment_once(bug.id, comment, marker, private, noop)
+
+    def add_invalid_tracker_comment(self, bugid: str, validation_reason: str, private: bool = False, noop=False):
+        """Add comment explaining bug looks like CVE tracker but is invalid."""
+        marker = "[ART-AUTOMATION: invalid-tracker]"
+        comment = f"""This bug looks like a CVE tracker but is not properly configured.
+
+{validation_reason or "Missing required tracker attributes."}
+
+Please complete tracker setup or remove CVE/SecurityTracking indicators.
+
+----
+{marker}
+"""
+        return self.add_comment_once(bugid, comment, marker, private, noop)
+
+    def add_comment_once(self, bugid, comment: str, marker: str, private: bool = False, noop=False):
+        """Add a comment to a bug only if a comment with the given marker doesn't already exist."""
+        # Check if we've already commented
+        try:
+            existing_comments = self.get_comments(bugid)
+            for existing_comment in existing_comments:
+                if marker in existing_comment:
+                    logger.info(f"Skipping comment on {bugid} - marker '{marker}' already exists")
+                    return False
+        except Exception as e:
+            logger.warning(f"Failed to check existing comments on {bugid}: {e}. Proceeding with comment.")
+
+        # Add the comment
+        self.add_comment(bugid, comment, private=private, noop=noop)
+        return True
 
     def create_bug(self, bug_title, bug_description, target_status, keywords: List, noop=False):
         raise NotImplementedError
@@ -989,6 +1113,12 @@ class JIRABugTracker(BugTracker):
         else:
             self._client.add_comment(bugid, comment)
 
+    def get_comments(self, bugid: str) -> List[str]:
+        """Get all comment bodies for a JIRA bug."""
+        issue = self._client.issue(bugid)
+        comments = issue.fields.comment.comments
+        return [comment.body for comment in comments]
+
     def _query(
         self,
         bugids: Optional[List] = None,
@@ -1319,7 +1449,14 @@ class BugzillaBugTracker(BugTracker):
         return self._client.update_bugs([bugid], self._client.build_update(status=target_status))
 
     def add_comment(self, bugid, comment: str, private, noop=False):
+        if noop:
+            logger.info(f"Would have added a private={private} comment to {bugid}: {comment}")
+            return
         self._client.update_bugs([bugid], self._client.build_update(comment=comment, comment_private=private))
+
+    def get_comments(self, bugid) -> List[str]:
+        """Get all comment bodies for a Bugzilla bug."""
+        raise NotImplementedError("Bugzilla comment operations not implemented")
 
     def filter_bugs_by_cutoff_event(
         self, bugs: Iterable, desired_statuses: Iterable[str], sweep_cutoff_timestamp: float, verbose=False
