@@ -40,7 +40,7 @@ from pyartcd import constants, jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.oc import get_image_info
 from pyartcd.runtime import Runtime
-from pyartcd.util import default_release_suffix, kinit
+from pyartcd.util import default_release_suffix, get_changes, kinit
 
 _LOGGER = logging.getLogger(__name__)
 yaml = new_roundtrip_yaml_handler()
@@ -570,7 +570,7 @@ class UpdateGolangPipeline:
                 _LOGGER.info("No Konflux golang builder images found; streams.yml will not be updated.")
 
         if self.is_production_assembly:
-            await self._reconcile_ci_images(go_version, build_major_minor, allowed_major_minors, el_nvr_map_for_images)
+            await self._refresh_ci_images(build_major_minor, allowed_major_minors, el_nvr_map_for_images)
 
             await move_golang_bugs(
                 ocp_version=self.ocp_version,
@@ -1202,22 +1202,36 @@ class UpdateGolangPipeline:
         )
         return ci_image_keys
 
-    async def _find_latest_ci_golang_builder_build(self, image_key: str, el_v: int) -> KonfluxBuildRecord | None:
-        """Look up the latest successful Konflux build record for a CI golang builder image."""
-        return await anext(
-            self.konflux_db.search_builds_by_fields(
-                where={
-                    "name": image_key,
-                    "el_target": f"el{el_v}",
-                    "artifact_type": str(ArtifactType.IMAGE),
-                    "outcome": str(KonfluxBuildOutcome.SUCCESS),
-                    "engine": str(Engine.KONFLUX),
-                    "assembly": self.assembly
-                },
-                limit=1,
-            ),
-            None,
-        )
+    async def _scan_stale_ci_images(self, image_keys: List[str]) -> List[str]:
+        """
+        Determine which of the given CI image keys need rebuilding, by invoking doozer's
+        `beta:config:konflux:scan-sources` -- the same builder-staleness check the standing ocp4
+        scan-sources job uses. For each image's declared builder/parent (resolving `stream:`
+        references against streams.yml), it queries the parent's actual current build and flags
+        the image if that build is newer than the image's own last build.
+        """
+        group = f"openshift-{self.ocp_version}"
+        cmd = [
+            "doozer",
+            f"--working-dir={self._doozer_working_dir}-ci-scan",
+            "--build-system=konflux",
+        ]
+        if self.data_path:
+            cmd.append(f"--data-path={self.data_path}")
+        cmd.extend(["--group", group])
+        cmd.extend(self._get_doozer_assembly_args())
+        cmd.extend(["-i", ",".join(image_keys)])
+        cmd.extend(["beta:config:konflux:scan-sources", "--yaml"])
+        if self.kubeconfig:
+            cmd.append(f"--ci-kubeconfig={self.kubeconfig}")
+
+        rc, out, _ = await exectools.cmd_gather_async(cmd, env=self._doozer_env_vars, stderr=None, check=False)
+        if rc != 0:
+            raise RuntimeError(f"doozer scan-sources failed with exit code {rc} for {', '.join(image_keys)}:\n{out}")
+
+        report = yaml.load(out) or {}
+        changes = get_changes(report)
+        return [image_key for image_key in changes.get('images', []) if image_key in image_keys]
 
     async def _rebase_ci_image(self, image_key: str, version: str, release: str):
         _LOGGER.info("Rebasing %s for Konflux...", image_key)
@@ -1367,9 +1381,8 @@ class UpdateGolangPipeline:
         "GO_PREVIOUS": "previous",
     }
 
-    async def _reconcile_ci_images(
+    async def _refresh_ci_images(
         self,
-        go_version: str,
         build_major_minor: str,
         allowed_major_minors: dict[str, str],
         el_nvr_map_for_images: dict[int, str],
@@ -1377,20 +1390,19 @@ class UpdateGolangPipeline:
         """
         Standing reconciliation check: make sure the ci-openshift-golang-builder-* image(s) for
         the variant (GO_LATEST/GO_EXTRA/GO_PREVIOUS) matching this run's golang version are built
-        against the actual latest golang-builder image in Konflux. The ocp-build-data-validator
-        enforces that GO_LATEST/GO_EXTRA/GO_PREVIOUS never share a major.minor, so at most one
-        variant can match here. We deliberately do NOT resolve the parent via streams.yml: any
-        streams.yml update from this same run is only a pending PR until a human merges it, so
-        checking against streams.yml would always report "unchanged" immediately after a bump.
-        Rebuilds (via doozer directly, without touching streams.yml or creating an ocp-build-data
-        PR) any golang-builder CI image found to be stale. ci-openshift-build-root-* images pull
-        their parent via a `member` reference to the golang-builder CI image (not a golang stream
-        or the raw golang-builder container), so once a golang-builder image is rebuilt, its
-        corresponding build-root image is unconditionally rebuilt right after, to pick up the new
-        base image. Both rebuild steps must complete before either image is mirrored to CI, so
-        everything rebuilt this run is synced together in a single final step -- except for the
-        test assembly, where the sync to CI is skipped since test-assembly builds must not be
-        mirrored into real CI streams.
+        against their current declared parent. The ocp-build-data-validator enforces that
+        GO_LATEST/GO_EXTRA/GO_PREVIOUS never share a major.minor, so at most one variant can match
+        here. Staleness is determined via doozer's `beta:config:konflux:scan-sources` (see
+        `_scan_stale_ci_images`) -- the same builder-staleness check used by the standing ocp4
+        scan-sources job. Rebuilds (via doozer directly, without touching streams.yml or creating
+        an ocp-build-data PR) any golang-builder CI image found to be stale. ci-openshift-build-root-*
+        images pull their parent via a `member` reference to the golang-builder CI image (not a
+        golang stream or the raw golang-builder container), so once a golang-builder image is
+        rebuilt, its corresponding build-root image is unconditionally rebuilt right after, to
+        pick up the new base image. Both rebuild steps must complete before either image is
+        mirrored to CI, so everything rebuilt this run is synced together in a single final step
+        -- except for the test assembly, where the sync to CI is skipped since test-assembly
+        builds must not be mirrored into real CI streams.
         """
         variant = next(
             (
@@ -1425,38 +1437,15 @@ class UpdateGolangPipeline:
             )
             return
 
-        builder_records = await self.get_existing_builders_konflux(
-            {el_v: el_nvr_map_for_images[el_v] for el_v, _ in builder_targets}, go_version
-        )
-
-        stale_builder_targets = []
-        for el_v, image_key in builder_targets:
-            builder_record = builder_records.get(el_v)
-            if not builder_record:
-                _LOGGER.warning(
-                    "No Konflux golang-builder build found for el%s go %s; cannot check %s for staleness",
-                    el_v,
-                    go_version,
-                    image_key,
-                )
-                continue
-            latest_ci_build = await self._find_latest_ci_golang_builder_build(image_key, el_v)
-            if not latest_ci_build:
-                _LOGGER.info("%s has never been built in Konflux; will build it", image_key)
-                stale_builder_targets.append((el_v, image_key))
-            elif latest_ci_build.start_time < builder_record.start_time:
-                _LOGGER.info(
-                    "%s (built %s) is older than its golang parent %s (built %s); will rebuild",
-                    image_key,
-                    latest_ci_build.start_time,
-                    builder_record.nvr,
-                    builder_record.start_time,
-                )
-                stale_builder_targets.append((el_v, image_key))
+        builder_image_keys = [image_key for _, image_key in builder_targets]
+        stale_image_keys = set(await self._scan_stale_ci_images(builder_image_keys))
+        stale_builder_targets = [
+            (el_v, image_key) for el_v, image_key in builder_targets if image_key in stale_image_keys
+        ]
 
         if not stale_builder_targets:
             _LOGGER.info(
-                "All CI golang builder images for openshift-%s already use the latest golang parent image",
+                "All CI golang builder images for openshift-%s already use their current parent image",
                 self.ocp_version,
             )
             return
