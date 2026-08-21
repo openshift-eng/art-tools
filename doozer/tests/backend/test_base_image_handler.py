@@ -135,9 +135,11 @@ class TestBaseImageHandler(IsolatedAsyncioTestCase):
     @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
     @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
     @patch("doozerlib.backend.base_image_handler.resolve_konflux_kubeconfig_by_product")
-    async def test_snapshot_release_golang_builder_success(
+    async def test_snapshot_release_golang_builder_returns_none(
         self, mock_kubeconfig, mock_namespace, mock_konflux_client_init
     ):
+        # Golang builders are excluded from the base-image release workflow via
+        # should_trigger_base_image_release(). They use the shipment MR path instead.
         from artcommonlib.constants import GOLANG_BUILDER_IMAGE_NAME
 
         mock_namespace.return_value = "ocp-art-tenant"
@@ -155,9 +157,8 @@ class TestBaseImageHandler(IsolatedAsyncioTestCase):
         golang_metadata = ImageMetadata(self.runtime, golang_data)
         golang_metadata.distgit_key = "golang-builder"
 
-        golang_nvr = "golang-builder-container-v1.0.0-1.el9"
         inp = BaseImageSnapshotInput(
-            nvr=golang_nvr,
+            nvr="golang-builder-container-v1.0.0-1.el9",
             distgit_key="golang-builder",
             container_image="quay.io/test/golang-builder:latest",
             rebase_repo_url="https://example.com/golang-builder.git",
@@ -168,21 +169,8 @@ class TestBaseImageHandler(IsolatedAsyncioTestCase):
         handler = BaseImageHandler(self.runtime, dry_run=True)
         self.runtime.image_map = {"golang-builder": golang_metadata}
 
-        with patch.object(handler, "_snapshot_from_component", new=AsyncMock(return_value="golang-snapshot")):
-            with patch.object(
-                handler,
-                "_create_release_from_snapshot",
-                new=AsyncMock(return_value=("golang-release", "https://konflux.example/releases/golang-release")),
-            ):
-                with patch.object(handler, "_wait_for_release_completion", return_value=True):
-                    result = await handler.snapshot_release(inp)
-
-        self.assertIsNotNone(result)
-        self.assertIsInstance(result, BaseImageReleaseResult)
-        self.assertEqual(result.release_name, "golang-release")
-        self.assertEqual(result.snapshot_name, "golang-snapshot")
-        self.assertEqual(result.release_pipeline, "https://konflux.example/releases/golang-release")
-        self.assertEqual(result.released_pullspec, rh_art_images_base_pullspec(golang_nvr))
+        result = await handler.snapshot_release(inp)
+        self.assertIsNone(result)
 
     @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
     @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")

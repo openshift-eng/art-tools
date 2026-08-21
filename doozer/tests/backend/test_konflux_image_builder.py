@@ -1159,8 +1159,8 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(inp.container_image, pullspec)
         self.assertFalse(inp.is_golang_builder)
 
-    async def test_trigger_base_image_release_golang_calls_is_golang_builder(self):
-        """Inline release passes through metadata.is_golang_builder() (openshift/golang-builder vs hyphen)."""
+    async def test_trigger_base_image_release_rejects_golang_builder(self):
+        """_trigger_base_image_release() returns None immediately for golang builders (defense-in-depth)."""
         from doozerlib.backend import base_image_handler
 
         metadata = self._metadata()
@@ -1170,25 +1170,15 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         build_repo.commit_hash = "abc123"
         pullspec = "quay.io/test/img@sha256:deadbeef"
 
-        release_result = base_image_handler.BaseImageReleaseResult(
-            release_name="test-release",
-            snapshot_name="test-snapshot",
-            nvr="test-nvr",
-            release_pipeline="https://example.com/pipeline",
-            released_pullspec="example.com/openshift/foo:test-nvr",
-        )
-
         with patch.object(
             base_image_handler.BaseImageHandler,
             "snapshot_release",
-            new=AsyncMock(return_value=release_result),
+            new=AsyncMock(),
         ) as mock_snap:
             result = await self.builder._trigger_base_image_release(metadata, "test-nvr", pullspec, build_repo)
 
-        self.assertIs(result, release_result)
-        metadata.is_golang_builder.assert_called_once()
-        inp = mock_snap.await_args[0][0]
-        self.assertTrue(inp.is_golang_builder)
+        self.assertIsNone(result)
+        mock_snap.assert_not_awaited()
 
     async def test_trigger_base_image_release_returns_none_when_handler_returns_none(self):
         """When handler returns None, _trigger_base_image_release returns None."""
@@ -1210,6 +1200,138 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNone(result)
         mock_snap.assert_awaited_once()
+
+    async def test_golang_builder_build_uses_shipment_gate(self):
+        """Successful golang builder build: no base-image release, shipment gate fires create_shipment."""
+        metadata = self._metadata()
+        metadata.should_trigger_base_image_release = MagicMock(return_value=False)
+        metadata.should_create_golang_builder_shipment = MagicMock(return_value=True)
+        dest_dir = self.builder._config.base_dir.joinpath(metadata.qualified_key)
+        dest_dir.mkdir(parents=True)
+
+        build_repo = MagicMock()
+        build_repo.local_dir = dest_dir
+        build_repo.url = "https://github.com/test/repo.git"
+        build_repo.https_url = "https://github.com/test/repo.git"
+        build_repo.commit_hash = "abc123"
+
+        initial_pipelinerun = MagicMock()
+        initial_pipelinerun.name = "test-pipelinerun"
+        initial_pipelinerun.to_dict.return_value = {"metadata": {"name": "test-pipelinerun"}}
+
+        completed_pipelinerun = MagicMock()
+        completed_pipelinerun.name = "test-pipelinerun"
+        completed_pipelinerun.find_condition.return_value = {"status": "True"}
+        completed_pipelinerun.to_dict.return_value = {
+            "metadata": {"name": "test-pipelinerun"},
+            "status": {
+                "results": [
+                    {"name": "IMAGE_URL", "value": "quay.io/test/golang-builder:latest"},
+                    {"name": "IMAGE_DIGEST", "value": "sha256:abc123"},
+                ]
+            },
+        }
+        self.mock_konflux_client.wait_for_pipelinerun = AsyncMock(return_value=completed_pipelinerun)
+
+        mock_mr_url = "https://gitlab.example.com/mr/1"
+
+        with (
+            patch(
+                "doozerlib.backend.konflux_image_builder.BuildRepo.from_local_dir",
+                new=AsyncMock(return_value=build_repo),
+            ),
+            patch.object(self.builder, "_parse_dockerfile", return_value=("test-uuid", "test-component", "1.0", "1")),
+            patch.object(self.builder, "_wait_for_parent_members", new=AsyncMock(return_value=[])),
+            patch.object(self.builder, "_start_build", new=AsyncMock(return_value=initial_pipelinerun)),
+            patch.object(self.builder, "update_konflux_db", new=AsyncMock(return_value=MagicMock(record_id="1"))),
+            patch.object(self.builder, "_trigger_base_image_release", new=AsyncMock()) as mock_trigger_release,
+            patch.object(self.builder, "_validate_build_attestation_and_signature", new=AsyncMock()),
+            patch.object(
+                self.builder._konflux_client,
+                "verify_enterprise_contract",
+                new=AsyncMock(return_value=MagicMock(ec_pipeline_url="", ec_failed=False)),
+            ),
+            patch(
+                "doozerlib.backend.konflux_image_builder.KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition",
+                return_value=KonfluxBuildOutcome.SUCCESS,
+            ),
+            patch(
+                "doozerlib.backend.konflux_image_builder.GolangBuilderShipmentHandler",
+            ) as mock_shipment_cls,
+        ):
+            mock_shipment_handler = AsyncMock()
+            mock_shipment_handler.create_shipment = AsyncMock(return_value=mock_mr_url)
+            mock_shipment_cls.return_value = mock_shipment_handler
+
+            await self.builder.build(metadata)
+
+        mock_trigger_release.assert_not_awaited()
+        mock_shipment_handler.create_shipment.assert_awaited_once()
+        call_kwargs = mock_shipment_handler.create_shipment.await_args
+        self.assertIsNotNone(call_kwargs.kwargs.get("nvr"))
+
+    async def test_golang_builder_build_skips_shipment_on_gate_false(self):
+        """When should_create_golang_builder_shipment() returns False, create_shipment() is not called."""
+        metadata = self._metadata()
+        metadata.should_trigger_base_image_release = MagicMock(return_value=False)
+        metadata.should_create_golang_builder_shipment = MagicMock(return_value=False)
+        dest_dir = self.builder._config.base_dir.joinpath(metadata.qualified_key)
+        dest_dir.mkdir(parents=True)
+
+        build_repo = MagicMock()
+        build_repo.local_dir = dest_dir
+        build_repo.url = "https://github.com/test/repo.git"
+        build_repo.commit_hash = "test-commit"
+
+        initial_pipelinerun = MagicMock()
+        initial_pipelinerun.name = "test-pipelinerun"
+        initial_pipelinerun.to_dict.return_value = {"metadata": {"name": "test-pipelinerun"}}
+
+        completed_pipelinerun = MagicMock()
+        completed_pipelinerun.name = "test-pipelinerun"
+        completed_pipelinerun.find_condition.return_value = {"status": "True"}
+        completed_pipelinerun.to_dict.return_value = {
+            "metadata": {"name": "test-pipelinerun"},
+            "status": {
+                "results": [
+                    {"name": "IMAGE_URL", "value": "quay.io/test/golang-builder:latest"},
+                    {"name": "IMAGE_DIGEST", "value": "sha256:abc123"},
+                ]
+            },
+        }
+        self.mock_konflux_client.wait_for_pipelinerun = AsyncMock(return_value=completed_pipelinerun)
+
+        with (
+            patch(
+                "doozerlib.backend.konflux_image_builder.BuildRepo.from_local_dir",
+                new=AsyncMock(return_value=build_repo),
+            ),
+            patch.object(self.builder, "_parse_dockerfile", return_value=("test-uuid", "test-component", "1.0", "1")),
+            patch.object(self.builder, "_wait_for_parent_members", new=AsyncMock(return_value=[])),
+            patch.object(self.builder, "_start_build", new=AsyncMock(return_value=initial_pipelinerun)),
+            patch.object(self.builder, "update_konflux_db", new=AsyncMock(return_value=MagicMock(record_id="1"))),
+            patch.object(self.builder, "_trigger_base_image_release", new=AsyncMock()),
+            patch.object(self.builder, "_validate_build_attestation_and_signature", new=AsyncMock()),
+            patch.object(
+                self.builder._konflux_client,
+                "verify_enterprise_contract",
+                new=AsyncMock(return_value=MagicMock(ec_pipeline_url="", ec_failed=False)),
+            ),
+            patch(
+                "doozerlib.backend.konflux_image_builder.KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition",
+                return_value=KonfluxBuildOutcome.SUCCESS,
+            ),
+            patch(
+                "doozerlib.backend.konflux_image_builder.GolangBuilderShipmentHandler",
+            ) as mock_shipment_cls,
+        ):
+            mock_shipment_handler = AsyncMock()
+            mock_shipment_handler.create_shipment = AsyncMock(return_value=None)
+            mock_shipment_cls.return_value = mock_shipment_handler
+
+            await self.builder.build(metadata)
+
+        mock_shipment_cls.assert_not_called()
 
     async def test_build_parent_failure_captures_message_in_record(self):
         """When parent images fail, the record message should capture the actual error, not 'Unknown failure'."""

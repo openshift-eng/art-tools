@@ -32,6 +32,7 @@ from dockerfile_parse import DockerfileParser
 from doozerlib import constants, util
 from doozerlib.backend.base_image_handler import BaseImageHandler, BaseImageReleaseResult, BaseImageSnapshotInput
 from doozerlib.backend.build_repo import BuildRepo
+from doozerlib.backend.golang_builder_shipment import GolangBuilderShipmentHandler
 from doozerlib.backend.konflux_client import ImageBuildParams, KonfluxClient
 from doozerlib.backend.pipelinerun_utils import PipelineRunInfo
 from doozerlib.backend.rebaser import KonfluxRebaser
@@ -430,6 +431,28 @@ class KonfluxImageBuilder:
                         outcome = (
                             KonfluxBuildOutcome.SUCCESS if release_succeeded else KonfluxBuildOutcome.RELEASE_ERROR
                         )
+
+                    if (
+                        outcome is KonfluxBuildOutcome.SUCCESS
+                        and metadata.should_create_golang_builder_shipment()
+                        and image_pullspec
+                        and image_digest
+                    ):
+                        try:
+                            shipment_handler = GolangBuilderShipmentHandler(
+                                metadata.runtime,
+                            )
+                            mr_url = await shipment_handler.create_shipment(
+                                nvr=nvr,
+                                container_image=definitive_image_pullspec,
+                                rebase_repo_url=build_repo.https_url,
+                                rebase_commitish=build_repo.commit_hash,
+                            )
+                            if mr_url:
+                                logger.info("Golang builder shipment MR: %s", mr_url)
+                                record["shipment_mr"] = mr_url
+                        except Exception:
+                            logger.exception("Golang builder shipment MR creation failed (non-fatal)")
 
                     build_record = await self.update_konflux_db(
                         metadata,
@@ -1429,6 +1452,13 @@ class KonfluxImageBuilder:
             :class:`BaseImageReleaseResult` when snapshot→release completes; ``None`` on failure or exception.
         """
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
+
+        if metadata.is_golang_builder():
+            logger.warning(
+                "Golang builder images use the shipment MR path for release; "
+                "_trigger_base_image_release() must not be called for them"
+            )
+            return None
 
         logger.info(f"Triggering base image snapshot-release for {nvr}")
 
