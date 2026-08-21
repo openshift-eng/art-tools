@@ -1,0 +1,32 @@
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: art-dashboard
+  namespace: art-cd
+  labels:
+    app: art-dashboard
+---
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: art-dashboard
+  namespace: art-cd
+  labels:
+    app: art-dashboard
+spec:
+  source:
+    type: Git
+    git:
+      uri: https://github.com/ashwindasr/art-tools.git
+      ref: art-dashboard
+    contextDir: art-dashboard
+  strategy:
+    type: Docker
+    dockerStrategy:
+      dockerfilePath: Dockerfile
+  output:
+    to:
+      kind: ImageStreamTag
+      name: art-dashboard:latest
+  triggers:
+    - type: ConfigChange
