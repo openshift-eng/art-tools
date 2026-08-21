@@ -91,9 +91,7 @@ class Bug:
         raise NotImplementedError
 
     def is_flaw_bug(self):
-        if self.product == "Security Response" and self.component == "vulnerability-draft":
-            raise ValueError(f'{self.id} has Component "vulnerability-draft". Consult ProdSec on how to proceed.')
-        return self.product == "Security Response" and self.component == "vulnerability"
+        return self.product == "Security Response" and self.component in ("vulnerability", "vulnerability-draft")
 
     def make_summary_with_target_version(self, major_version: int, minor_version: int) -> str:
         """Given an OCPBUGS bug summary and the major and minor version numbers,
