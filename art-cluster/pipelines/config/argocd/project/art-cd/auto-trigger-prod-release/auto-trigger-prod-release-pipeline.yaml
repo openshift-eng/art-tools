@@ -1,0 +1,203 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  labels:
+    app: artcd
+  name: auto-trigger-prod-release
+  namespace: art-cd
+spec:
+  description: Discover all open MRs in ocp-shipment-data that have both the
+    'stage-release-success' and 'prod-release-success' labels, trigger their prod-job
+    in the prod-release-triggers stage, and set auto-merge so they merge once the
+    pipeline is green.
+  params:
+  - default: 'true'
+    description: Validate only; print what would be triggered without actually triggering
+    name: dry-run
+    type: string
+  tasks:
+  - name: auto-trigger-prod-release
+    params:
+    - name: script
+      value: |
+        #!/usr/bin/env python3
+        import os
+        import subprocess
+        import sys
+        import urllib.parse
+
+        import requests
+
+        GITLAB_HOST = "https://gitlab.cee.redhat.com"
+        PROJECT_PATH = "hybrid-platforms/art/ocp-shipment-data"
+        PROD_JOB_NAME = "prod-job"
+        PROD_STAGE_NAME = "prod-release-triggers"
+        REQUIRED_LABELS = {"stage-release-success", "prod-release-success"}
+        REQUEST_TIMEOUT = (5, 30)
+
+        dry_run = "$(params.dry-run)" == "true"
+
+        gitlab_token = os.environ.get("GITLAB_TOKEN", "")
+        if not gitlab_token:
+            print("ERROR: GITLAB_TOKEN environment variable is not set", flush=True)
+            sys.exit(1)
+
+        log_prefix = "[DRY-RUN] " if dry_run else ""
+
+        def log(msg):
+            print(f"{log_prefix}{msg}", flush=True)
+
+        if dry_run:
+            subprocess.run([
+                "oc", "label", "--overwrite",
+                "-n", os.environ.get("TASKRUN_NAMESPACE", "art-cd"),
+                f"pipelinerun/$(context.pipelineRun.name)",
+                "dry-run=true",
+            ], check=False)
+
+        encoded_path = urllib.parse.quote(PROJECT_PATH, safe="")
+        api_base = f"{GITLAB_HOST}/api/v4/projects/{encoded_path}"
+
+        session = requests.Session()
+        session.headers["PRIVATE-TOKEN"] = gitlab_token
+        session.verify = "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem"
+
+        def api_get(path, params=None):
+            resp = session.get(f"{api_base}{path}", params=params, timeout=REQUEST_TIMEOUT)
+            resp.raise_for_status()
+            return resp.json()
+
+        log(f"Fetching open MRs with labels {sorted(REQUIRED_LABELS)} from {PROJECT_PATH}...")
+        all_mrs = []
+        page = 1
+        while True:
+            page_mrs = api_get(
+                "/merge_requests",
+                params={
+                    "state": "opened",
+                    "labels": ",".join(sorted(REQUIRED_LABELS)),
+                    "per_page": 100,
+                    "page": page,
+                },
+            )
+            if not page_mrs:
+                break
+            all_mrs.extend(page_mrs)
+            page += 1
+
+        if not all_mrs:
+            log("No open MRs found with both labels. Nothing to do.")
+            sys.exit(0)
+
+        log(f"Found {len(all_mrs)} MR(s) to process.")
+
+        errors = []
+        triggered = 0
+        auto_merged = 0
+
+        for mr in all_mrs:
+            mr_iid = mr["iid"]
+            mr_title = mr["title"]
+            log(f"\nProcessing MR !{mr_iid}: {mr_title}")
+
+            try:
+                pipelines = api_get(f"/merge_requests/{mr_iid}/pipelines")
+                if not pipelines:
+                    log(f"  WARNING: No pipelines found for MR !{mr_iid}, skipping.")
+                    continue
+
+                latest_pipeline = pipelines[0]
+                pipeline_id = latest_pipeline["id"]
+                pipeline_status = latest_pipeline["status"]
+                log(f"  Latest pipeline: #{pipeline_id} (status: {pipeline_status})")
+
+                log(f"  Looking for job '{PROD_JOB_NAME}' in stage '{PROD_STAGE_NAME}'...")
+                prod_job = None
+                bridges_page = 1
+                while True:
+                    bridges = api_get(
+                        f"/pipelines/{pipeline_id}/bridges",
+                        params={"per_page": 100, "page": bridges_page},
+                    )
+                    if not bridges:
+                        break
+                    prod_job = next(
+                        (b for b in bridges if b["name"] == PROD_JOB_NAME and b["stage"] == PROD_STAGE_NAME),
+                        None,
+                    )
+                    if prod_job:
+                        break
+                    bridges_page += 1
+
+                if prod_job is None:
+                    log(
+                        f"  WARNING: No bridge job '{PROD_JOB_NAME}' in stage '{PROD_STAGE_NAME}' "
+                        f"found in pipeline #{pipeline_id}. Skipping prod-job trigger."
+                    )
+                else:
+                    job_id = prod_job["id"]
+                    job_status = prod_job["status"]
+                    log(f"  Found job '{PROD_JOB_NAME}' (ID: {job_id}, status: {job_status})")
+
+                    if job_status == "failed":
+                        action = "retry"
+                    elif job_status == "manual":
+                        action = "play"
+                    else:
+                        log(
+                            f"  Job '{PROD_JOB_NAME}' is in '{job_status}' state — "
+                            f"no trigger needed (already running, succeeded, or cancelled)."
+                        )
+                        action = None
+
+                    if action and not dry_run:
+                        log(f"  Triggering job '{PROD_JOB_NAME}' (ID: {job_id}, action: {action})...")
+                        resp = session.post(f"{api_base}/jobs/{job_id}/{action}", timeout=REQUEST_TIMEOUT)
+                        resp.raise_for_status()
+                        result = resp.json()
+                        log(f"  Triggered. New status: {result.get('status')}")
+                        triggered += 1
+                    elif action and dry_run:
+                        log(f"  Would trigger job '{PROD_JOB_NAME}' (ID: {job_id}, action: {action}).")
+                        triggered += 1
+
+                log(f"  Setting auto-merge on MR !{mr_iid}...")
+                if not dry_run:
+                    merge_resp = session.put(
+                        f"{api_base}/merge_requests/{mr_iid}/merge",
+                        json={"auto_merge": True},
+                        timeout=REQUEST_TIMEOUT,
+                    )
+                    if merge_resp.status_code in (200, 201):
+                        log(f"  Auto-merge set successfully.")
+                        auto_merged += 1
+                    elif merge_resp.status_code in (405, 406):
+                        log(
+                            f"  WARNING: Could not set auto-merge on MR !{mr_iid} "
+                            f"(HTTP {merge_resp.status_code})"
+                        )
+                    else:
+                        merge_resp.raise_for_status()
+                else:
+                    log(f"  Would set auto-merge on MR !{mr_iid}.")
+                    auto_merged += 1
+
+            except Exception as e:
+                msg = f"ERROR processing MR !{mr_iid}: {type(e).__name__}"
+                print(msg, flush=True)
+                errors.append(msg)
+                continue
+
+        print(f"\n{'[DRY-RUN] ' if dry_run else ''}Summary:", flush=True)
+        print(f"  MRs processed:      {len(all_mrs)}", flush=True)
+        print(f"  prod-job triggered: {triggered}", flush=True)
+        print(f"  Auto-merge set:     {auto_merged}", flush=True)
+        print(f"  Errors:             {len(errors)}", flush=True)
+        if errors:
+            print("Errors encountered:", flush=True)
+            for err in errors:
+                print(f"  {err}", flush=True)
+            sys.exit(1)
+    taskRef:
+      kind: Task
+      name: artcd
