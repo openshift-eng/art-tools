@@ -5,7 +5,11 @@ from pathlib import Path
 import click
 from artcommonlib import exectools
 from artcommonlib.constants import PRODUCT_KUBECONFIG_MAP
-from artcommonlib.util import resolve_konflux_kubeconfig_by_product, resolve_konflux_namespace_by_product
+from artcommonlib.util import (
+    resolve_konflux_fbc_stage_release_plan,
+    resolve_konflux_kubeconfig_by_product,
+    resolve_konflux_namespace_by_product,
+)
 
 from pyartcd import constants, jenkins, locks
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -173,6 +177,16 @@ async def olm_bundle_konflux(
     )
     product = group_config.get('product', 'ocp')
 
+    version_str = group_config.get('version')
+    if version_str:
+        parts = str(version_str).split(".")
+        product_major, product_minor = int(parts[0]), int(parts[1])
+    else:
+        vars_section = group_config.get('vars', {})
+        product_major = int(vars_section.get('MAJOR', 0))
+        product_minor = int(vars_section.get('MINOR', 0))
+    has_stage_release_plan = bool(resolve_konflux_fbc_stage_release_plan(product, product_major, product_minor))
+
     # Set namespace based on product
     namespace = resolve_konflux_namespace_by_product(product)
     cmd.extend(['--konflux-namespace', namespace])
@@ -288,8 +302,16 @@ async def olm_bundle_konflux(
         propagate_params = jenkins.get_propagatable_params()
 
         # Stage-release related images before triggering any FBC builds.
-        # Skip when bundles were not rebuilt — related images were already released in the original build.
-        if bundles_were_built or force_release:
+        # Skip when no release plan is configured for this product/version.
+        # When a plan exists, skip only if bundles were not rebuilt (unless --force-release is set).
+        if not has_stage_release_plan:
+            runtime.logger.info(
+                "No stage release plan configured for product '%s' (%d.%d); skipping stage release",
+                product,
+                product_major,
+                product_minor,
+            )
+        elif bundles_were_built or force_release:
             failed_stage_nvrs = await _stage_release_related_images(
                 runtime=runtime,
                 doozer_base_cmd=doozer_base_cmd,

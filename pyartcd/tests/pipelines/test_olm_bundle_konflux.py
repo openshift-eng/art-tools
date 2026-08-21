@@ -102,9 +102,14 @@ class TestOlmBundleKonfluxStageReleaseGating(unittest.IsolatedAsyncioTestCase):
         mock_jenkins,
         nvrs='operator-container-4.18.0-1',
         force_release=False,
+        product='rhacm2',
+        group_config_extra=None,
     ):
         mock_locks.run_with_lock = mock.AsyncMock()
-        mock_load_group_config.return_value = {'product': 'ocp'}
+        group_cfg = {'product': product, 'vars': {'MAJOR': '2', 'MINOR': '16'}}
+        if group_config_extra:
+            group_cfg.update(group_config_extra)
+        mock_load_group_config.return_value = group_cfg
         mock_jenkins.get_build_path_or_random.return_value = 'test'
         mock_jenkins.get_propagatable_params.return_value = {}
 
@@ -184,6 +189,37 @@ class TestOlmBundleKonfluxStageReleaseGating(unittest.IsolatedAsyncioTestCase):
         await self._run_pipeline(mock_stage_release, mock_load_group_config, mock_locks, mock_jenkins, nvrs='')
 
         mock_stage_release.assert_called_once()
+
+    @mock.patch("pyartcd.pipelines.olm_bundle_konflux.jenkins")
+    @mock.patch("pyartcd.pipelines.olm_bundle_konflux.locks")
+    @mock.patch("pyartcd.pipelines.olm_bundle_konflux.exectools.cmd_assert_async", new_callable=mock.AsyncMock)
+    @mock.patch("pyartcd.pipelines.olm_bundle_konflux.load_group_config", new_callable=mock.AsyncMock)
+    @mock.patch("pyartcd.pipelines.olm_bundle_konflux._stage_release_related_images", new_callable=mock.AsyncMock)
+    async def test_stage_release_skipped_when_no_plan_configured(
+        self,
+        mock_stage_release,
+        mock_load_group_config,
+        mock_cmd_assert,
+        mock_locks,
+        mock_jenkins,
+    ):
+        """Products with no configured stage release plan skip stage release even with --force-release and built bundles."""
+        mock_stage_release.return_value = []
+        self._write_bundle_record(status='0', operator_nvr='op-1-1', bundle_nvr='op-bundle-1-1')
+
+        await self._run_pipeline(
+            mock_stage_release,
+            mock_load_group_config,
+            mock_locks,
+            mock_jenkins,
+            nvrs='',
+            force_release=True,
+            product='ocp',
+            group_config_extra={'vars': {'MAJOR': '5', 'MINOR': '1'}},
+        )
+
+        mock_stage_release.assert_not_called()
+        mock_jenkins.start_build_fbc.assert_called_once()
 
 
 if __name__ == '__main__':
