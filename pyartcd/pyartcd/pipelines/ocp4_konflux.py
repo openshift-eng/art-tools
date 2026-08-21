@@ -21,7 +21,8 @@ from artcommonlib.constants import (
     REGISTRY_QUAY_OPENSHIFT,
     REGISTRY_REDHAT_IO,
 )
-from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBuildRecord
+from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.registry_config import RegistryConfig, RegistryCredential
 from artcommonlib.util import (
     new_roundtrip_yaml_handler,
@@ -41,6 +42,7 @@ from pyartcd.util import (
     get_group_images,
     get_group_rpms,
     increment_fail_counter,
+    load_group_config,
     mass_rebuild_score,
     reset_fail_counter,
 )
@@ -137,6 +139,12 @@ class KonfluxOcpPipeline:
         self.build_priority = build_priority
         self.use_mass_rebuild_locks = use_mass_rebuild_locks
         self.network_mode = network_mode
+
+        # RHCOS Jenkins client, authenticated early in run() so its token is cached
+        # before the withCredentials kubeconfig temp file can be reaped mid-build.
+        self.rhcos_jenkins_client = None
+        # Stored if _init_rhcos_jenkins_client() fails; re-raised in trigger_rhcos_integration_tests.
+        self._rhcos_init_error: Optional[Exception] = None
 
         # If build plan includes more than half or excludes less than half or rebuilds everything, it's a mass rebuild
         self.mass_rebuild = False
@@ -881,21 +889,62 @@ class KonfluxOcpPipeline:
         except Exception as e:
             LOGGER.exception(f"Failed to trigger bundle build: {e}")
 
-    def trigger_rhcos_integration_tests(self):
+    # RHCOS image pairs grouped by RHEL version for integration testing.
+    # Each pair consists of a node image and its corresponding extensions image.
+    RHCOS_RHEL9_PAIR = {'node': 'rhcos-node-image', 'extensions': 'rhcos-node-extensions'}
+    RHCOS_RHEL10_PAIR = {'node': 'rhcos-node-image-rhel10', 'extensions': 'rhcos-node-extensions-rhel10'}
+
+    def _init_rhcos_jenkins_client(self):
+        """Authenticate the RHCOS Jenkins client early and cache its bearer token.
+
+        The RHCOS Jenkins kubeconfig is provided via a Jenkins withCredentials
+        file binding ($RHCOS_JENKINS_KUBECONFIG). That temp file can be reaped by
+        idle-file cleanup during a long build, so by the time integration tests
+        are triggered (~50+ minutes after the withCredentials block opened) the
+        file may no longer exist even though the env var is still set.
+
+        To avoid depending on that temp file surviving the whole build, we build
+        the client and resolve its auth token up front, while the kubeconfig file
+        is still fresh. The client caches the token in memory, so triggering the
+        tests later never needs to read the kubeconfig again.
+
+        On failure the error is stored in self._rhcos_init_error and re-raised later
+        inside trigger_rhcos_integration_tests, which is wrapped by run_safe so the
+        pipeline exits non-zero without blocking subsequent steps.
+        """
+        if self.skip_rhcos_integration_tests:
+            return
+
+        from pyartcd.rhcos_jenkins_client import RhcosJenkinsClient
+
+        try:
+            client = RhcosJenkinsClient(kubeconfig_env_var='RHCOS_JENKINS_KUBECONFIG')
+            # Resolve and cache the token now, while the kubeconfig file still exists
+            client.retrieve_auth_token()
+            self.rhcos_jenkins_client = client
+            LOGGER.info("RHCOS Jenkins client authenticated; token cached for later integration tests")
+        except Exception as e:
+            LOGGER.warning("Failed to authenticate RHCOS Jenkins client at startup; integration tests will fail: %s", e)
+            self._rhcos_init_error = e
+            self.rhcos_jenkins_client = None
+
+    async def trigger_rhcos_integration_tests(self):
         """Trigger RHCOS-owned Jenkins integration tests for rebuilt node/extensions images.
 
         When any RHCOS images listed in RHCOS_ART_IMAGE_KEYS are rebuilt
-        successfully, this method will eventually trigger RHCOS-owned Jenkins
-        integration tests. If those tests pass, it will sync the ART-built
-        node/extensions images to the shadow imagestream tags.
+        successfully, this method triggers RHCOS-owned Jenkins integration tests
+        via the build-node-image job. The tests are triggered independently for
+        each RHEL version (9/10) whose images were rebuilt.
 
-        Currently raises NotImplementedError when RHCOS images were rebuilt, as the
-        integration tests are not yet available. Set --skip-rhcos-integration-tests
-        to bypass (default: True).
+        Failures are propagated so the caller (run_safe) can record them in
+        critical_failures and cause the pipeline to exit non-zero.
         """
         if self.skip_rhcos_integration_tests:
             LOGGER.warning("Skipping RHCOS integration tests because --skip-rhcos-integration-tests flag is set")
             return
+
+        if not self.rhcos_jenkins_client:
+            raise RuntimeError(f"RHCOS Jenkins client unavailable (auth failed at startup): {self._rhcos_init_error}")
 
         record_log = self.parse_record_log()
         if not record_log:
@@ -904,20 +953,190 @@ class KonfluxOcpPipeline:
 
         try:
             records = record_log.get('image_build_konflux', [])
-            rebuilt_rhcos = [
-                record['name']
-                for record in records
-                if record.get('name') in RHCOS_ART_IMAGE_KEYS and record['status'] == '0'
+
+            # Build a lookup of rebuilt RHCOS images: {name: pullspec}
+            rebuilt_images = {}
+            for record in records:
+                name = record.get('name')
+                if name in RHCOS_ART_IMAGE_KEYS and record['status'] == '0':
+                    pullspec = record.get('image_pullspec', '')
+                    rebuilt_images[name] = pullspec
+
+            if not rebuilt_images:
+                LOGGER.info("No RHCOS images were rebuilt, skipping integration tests")
+                return
+
+            LOGGER.info("RHCOS images rebuilt successfully: %s", ', '.join(rebuilt_images.keys()))
+
+            # Build a full lookup of ALL RHCOS image records (including those not rebuilt)
+            # so we can find pullspecs for the pair partner if only one was rebuilt
+            all_rhcos_records = {}
+            for record in records:
+                name = record.get('name')
+                if name in RHCOS_ART_IMAGE_KEYS and record['status'] == '0':
+                    all_rhcos_records[name] = record.get('image_pullspec', '')
+
+            # Load group config to derive RELEASE streams from group.yml instead of hardcoding
+            group_config = await load_group_config(group=f"openshift-{self.version}", assembly="stream")
+
+            # Build release stream mapping: {rhel_label: release_stream}
+            # e.g. {'rhel9': '4.19-9.8', 'rhel10': '4.19-10.0'}
+            release_streams = {}
+            for tag in group_config.get('rhcos', {}).get('payload_tags', []):
+                rhel_ver = tag.get('rhel_version', '')
+                if rhel_ver:
+                    major = rhel_ver.split('.')[0]
+                    release_streams[f"rhel{major}"] = f"{self.version}-{rhel_ver}"
+
+            # Ensure default RHEL version from group vars is present
+            default_major = group_config['vars']['RHCOS_EL_MAJOR']
+            default_minor = group_config['vars']['RHCOS_EL_MINOR']
+            release_streams.setdefault(f"rhel{default_major}", f"{self.version}-{default_major}.{default_minor}")
+
+            LOGGER.info("RHCOS release streams from group.yml: %s", release_streams)
+
+            # Trigger tests for each RHEL version pair that has at least one rebuilt image
+            rhel_pairs = [
+                ('rhel9', self.RHCOS_RHEL9_PAIR),
+                ('rhel10', self.RHCOS_RHEL10_PAIR),
             ]
-            if rebuilt_rhcos:
-                LOGGER.info(f"RHCOS images rebuilt successfully: {', '.join(rebuilt_rhcos)}")
-                raise NotImplementedError(
-                    "RHCOS integration tests are not yet implemented. Set --skip-rhcos-integration-tests to bypass."
+
+            for rhel_label, pair in rhel_pairs:
+                await self._trigger_rhcos_pair_test(
+                    rhel_label, pair, rebuilt_images, all_rhcos_records, release_streams
                 )
-        except NotImplementedError:
-            raise
+
         except Exception as e:
-            LOGGER.exception(f"Failed to trigger RHCOS integration tests: {e}")
+            LOGGER.exception("Failed to trigger RHCOS integration tests: %s", e)
+            raise
+
+    async def _trigger_rhcos_pair_test(
+        self,
+        rhel_label: str,
+        pair: dict,
+        rebuilt_images: dict,
+        all_rhcos_records: dict,
+        release_streams: dict,
+    ):
+        """Trigger integration test for a single RHEL version's RHCOS image pair.
+
+        Args:
+            rhel_label: Human-readable label like 'rhel9' or 'rhel10'.
+            pair: Dict with 'node' and 'extensions' keys mapping to image names.
+            rebuilt_images: Dict of {image_name: pullspec} for images that were rebuilt.
+            all_rhcos_records: Dict of {image_name: pullspec} for all successful RHCOS builds.
+            release_streams: Dict mapping rhel_label to release stream (e.g. {'rhel9': '4.19-9.8'}).
+        """
+        node_name = pair['node']
+        ext_name = pair['extensions']
+
+        # Check if at least one image in this pair was rebuilt
+        if node_name not in rebuilt_images and ext_name not in rebuilt_images:
+            return
+
+        LOGGER.info("Triggering %s RHCOS integration tests", rhel_label)
+
+        # Resolve pullspecs: prefer from rebuilt, fall back to all records from same run
+        node_pullspec = rebuilt_images.get(node_name) or all_rhcos_records.get(node_name)
+        ext_pullspec = rebuilt_images.get(ext_name) or all_rhcos_records.get(ext_name)
+
+        # Fallback: look up the latest successful build from KonfluxDb for the missing partner
+        if not node_pullspec or not ext_pullspec:
+            db = KonfluxDb()
+            db.bind(KonfluxBuildRecord)
+            group = f"openshift-{self.version}"
+            if not node_pullspec:
+                LOGGER.info("Looking up latest %s build from KonfluxDb...", node_name)
+                record = await db.get_latest_build(
+                    name=node_name,
+                    group=group,
+                    outcome=KonfluxBuildOutcome.SUCCESS,
+                    assembly=self.assembly,
+                    exclude_large_columns=True,
+                )
+                if record:
+                    node_pullspec = record.image_pullspec
+                    LOGGER.info("Found latest %s pullspec from KonfluxDb: %s", node_name, node_pullspec)
+                else:
+                    LOGGER.warning("No successful %s build found in KonfluxDb for group %s", node_name, group)
+            if not ext_pullspec:
+                LOGGER.info("Looking up latest %s build from KonfluxDb...", ext_name)
+                record = await db.get_latest_build(
+                    name=ext_name,
+                    group=group,
+                    outcome=KonfluxBuildOutcome.SUCCESS,
+                    assembly=self.assembly,
+                    exclude_large_columns=True,
+                )
+                if record:
+                    ext_pullspec = record.image_pullspec
+                    LOGGER.info("Found latest %s pullspec from KonfluxDb: %s", ext_name, ext_pullspec)
+                else:
+                    LOGGER.warning("No successful %s build found in KonfluxDb for group %s", ext_name, group)
+
+        if not node_pullspec:
+            LOGGER.warning("Cannot trigger %s integration test: no pullspec found for %s", rhel_label, node_name)
+            return
+        if not ext_pullspec:
+            LOGGER.warning("Cannot trigger %s integration test: no pullspec found for %s", rhel_label, ext_name)
+            return
+
+        # Validate that pullspecs are digest-based
+        if '@sha256:' not in node_pullspec:
+            LOGGER.warning(
+                "Node image pullspec is not digest-based, skipping %s integration test: %s",
+                rhel_label,
+                node_pullspec,
+            )
+            return
+        if '@sha256:' not in ext_pullspec:
+            LOGGER.warning(
+                "Extensions image pullspec is not digest-based, skipping %s integration test: %s",
+                rhel_label,
+                ext_pullspec,
+            )
+            return
+
+        # Derive RELEASE param from group.yml (loaded by trigger_rhcos_integration_tests)
+        release_stream = release_streams.get(rhel_label)
+        if not release_stream:
+            LOGGER.warning("No release stream found in group.yml for %s, skipping integration test", rhel_label)
+            return
+
+        # The RHCOS Jenkins job has no credentials for the internal Konflux build registry
+        # (art-images).  Rewrite pullspecs to art-images-share, which mirror_images already
+        # populated before this method is called.
+        _INTERNAL = "quay.io/redhat-user-workloads/ocp-art-tenant/art-images@"
+        _SHARED = "quay.io/redhat-user-workloads/ocp-art-tenant/art-images-share@"
+        if node_pullspec.startswith(_INTERNAL):
+            node_pullspec = _SHARED + node_pullspec[len(_INTERNAL):]
+        if ext_pullspec.startswith(_INTERNAL):
+            ext_pullspec = _SHARED + ext_pullspec[len(_INTERNAL):]
+        LOGGER.info("Using art-images-share pullspecs for RHCOS job: node=%s ext=%s", node_pullspec, ext_pullspec)
+
+        try:
+            client = self.rhcos_jenkins_client
+            build_number = client.trigger_build(
+                'build-node-image',
+                {
+                    'NODE_IMAGE': node_pullspec,
+                    'EXTENSIONS_IMAGE': ext_pullspec,
+                    'RELEASE': release_stream,
+                },
+            )
+            LOGGER.info("Waiting for %s integration test build-node-image #%d...", rhel_label, build_number)
+            result = client.wait_for_build('build-node-image', build_number)
+
+            if result['result'] == 'SUCCESS':
+                LOGGER.info("RHCOS %s integration test passed: %s #%d", rhel_label, result['url'], build_number)
+            else:
+                raise RuntimeError(
+                    f"RHCOS {rhel_label} integration test did not pass (result={result['result']}): "
+                    f"{result['url']} - {result.get('description', '')}"
+                )
+
+        except Exception as e:
+            LOGGER.exception("Failed to run %s RHCOS integration test: %s", rhel_label, e)
             raise
 
     def parse_record_log(self) -> Optional[dict]:
@@ -1017,6 +1236,11 @@ class KonfluxOcpPipeline:
         if 'XDG_RUNTIME_DIR' in os.environ:
             LOGGER.info('Unsetting XDG_RUNTIME_DIR to prevent use of default registry auth')
             del os.environ['XDG_RUNTIME_DIR']
+
+        # Authenticate the RHCOS Jenkins client and cache its token before the long
+        # build begins; the Jenkins withCredentials kubeconfig temp file may be
+        # reaped by the time integration tests are triggered near the end of the run.
+        self._init_rhcos_jenkins_client()
 
         # Get Jenkins credentials
         quay_auth_file = os.getenv('QUAY_AUTH_FILE')
@@ -1135,10 +1359,12 @@ class KonfluxOcpPipeline:
                 )
 
             self.trigger_bundle_build()
-            self.trigger_rhcos_integration_tests()
 
-            # Wrap problematic operations to prevent them from blocking each other or clean_up
+            # mirror_images must run before trigger_rhcos_integration_tests so that
+            # art-images-share pullspecs exist when we hand them to the RHCOS Jenkins job.
+            # The RHCOS job has no credentials for the internal art-images Konflux registry.
             await run_safe(self.mirror_images, critical_failures)
+            await run_safe(self.trigger_rhcos_integration_tests, critical_failures)
             await run_safe(self.mirror_streams_to_ci, critical_failures)
 
             try:
@@ -1249,8 +1475,7 @@ class KonfluxOcpPipeline:
     "--skip-ec-verify", is_flag=True, default=False, help="Skip Enterprise Contract verification for built images"
 )
 @click.option(
-    "--skip-rhcos-integration-tests",
-    is_flag=True,
+    "--skip-rhcos-integration-tests/--no-skip-rhcos-integration-tests",
     default=True,
     help="Skip RHCOS integration tests (default: True, tests not yet available)",
 )
