@@ -1329,6 +1329,7 @@ class KonfluxDb:
         where: typing.Optional[typing.Dict[str, typing.Any]] = None,
         strict: bool = True,
         exclude_large_columns: bool = False,
+        group: typing.Optional[str] = None,
     ) -> list[KonfluxRecord | None]:
         """Get build records by NVRs.
 
@@ -1342,6 +1343,9 @@ class KonfluxDb:
         :param exclude_large_columns: If True, exclude installed_rpms and installed_packages columns from
                                       BigQuery queries to reduce query cost and latency.
                                       Defaults to False for backwards compatibility.
+        :param group: Optional group name for cache optimization (e.g. 'openshift-4.18', 'acm-2.16').
+                      When provided, the cache is loaded for this group, avoiding fallback to
+                      builder_base_image and improving lookup performance.
         :return: The build records.
         """
         nvrs = list(nvrs)
@@ -1364,6 +1368,7 @@ class KonfluxDb:
         async def _task(nvr):
             return await self.get_latest_build(
                 nvr=nvr,
+                group=group,
                 outcome=outcome,
                 assembly=assembly,
                 el_target=el_target,
