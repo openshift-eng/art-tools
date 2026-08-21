@@ -20,9 +20,7 @@ MAX_RESOLUTION_RETRIES = 5
 MAX_REINSTALL_STRIP_RETRIES = 5
 DEFAULT_PLATFORM = "linux/amd64"
 
-SYSTEM_PYTHON = "/usr/bin/python3"
-RPM_LOCKFILE_ENTRY_POINT = "from rpm_lockfile import main; main()"
-
+RPM_LOCKFILE_IMAGE = "quay.io/redhat-user-workloads/ocp-art-tenant/art-cd:rpm-lockfile-v0.30.0"
 # RPM pseudo-packages that appear in rpmdb but are not installable via DNF
 RPM_PSEUDO_PACKAGES = frozenset({"gpg-pubkey"})
 
