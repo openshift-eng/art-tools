@@ -92,3 +92,4 @@ KONFLUX_RELEASE_PREGA_EC_POLICY_CONFIGURATION = "rhtap-releng-tenant/registry-oc
 KONFLUX_RELEASE_FBC_EC_POLICY_CONFIGURATION = "rhtap-releng-tenant/fbc-ocp-art-stage"
 
 ART_IMAGES_BASE_APPLICATION = "art-images-base"
+ART_IMAGES_GOLANG_BUILDER_APPLICATION = "golang-builder"
