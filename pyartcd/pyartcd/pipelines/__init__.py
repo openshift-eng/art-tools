@@ -50,6 +50,7 @@ from . import (
     tag_rpms,
     tarball_sources,
     update_golang,
+    verify_release,
 )
 
 __all__ = [
@@ -100,4 +101,5 @@ __all__ = [
     'tag_rpms',
     'tarball_sources',
     'update_golang',
+    'verify_release',
 ]

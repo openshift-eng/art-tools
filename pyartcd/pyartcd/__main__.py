@@ -52,6 +52,7 @@ from pyartcd.pipelines import (
     tag_rpms,
     tarball_sources,
     update_golang,
+    verify_release,
 )
 from pyartcd.pipelines.scheduled import (
     schedule_build_conforma_verify,
@@ -116,6 +117,7 @@ __all__ = [
     "tag_rpms",
     "tarball_sources",
     "update_golang",
+    "verify_release",
     "schedule_build_conforma_verify",
     "schedule_build_sync_multi",
     "schedule_layered_products_scan",
