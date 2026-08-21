@@ -678,6 +678,7 @@ class KonfluxOcpPipeline:
             f'--registry-config={self._registry_auth_file}',
             "find-bugs:golang",
             "--analyze",
+            "--update-tracker",
         ]
 
         if self.runtime.dry_run:
