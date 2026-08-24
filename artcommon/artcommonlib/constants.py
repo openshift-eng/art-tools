@@ -94,7 +94,7 @@ PRODUCT_NAMESPACE_MAP = {
     "multicluster-engine": "art-acm-tenant",
     "rhacm2": "art-acm-tenant",
     "cert-manager": "art-oap-tenant",
-    "coo": "art-coo-tenant",
+    "cluster-observability-operator": "art-coo-tenant",
     "external-secrets": "art-oap-tenant",
     "installer-ove-ui": "art-installer-agent-tenant",
     "logging": "art-logging-tenant",
