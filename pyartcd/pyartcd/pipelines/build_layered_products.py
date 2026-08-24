@@ -13,7 +13,7 @@ from artcommonlib.constants import PRODUCT_KUBECONFIG_MAP
 from artcommonlib.util import resolve_konflux_kubeconfig_by_product, resolve_konflux_namespace_by_product
 from doozerlib.constants import KONFLUX_DEFAULT_IMAGE_REPO
 
-from pyartcd import constants, jenkins, locks
+from pyartcd import constants, jenkins, locks, tekton
 from pyartcd import record as record_util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import Lock
@@ -83,7 +83,7 @@ class BuildLayeredProductsPipeline:
         if self.assembly.lower() == "test":
             jenkins.update_title(" [TEST]")
 
-    def trigger_bundle_build(self):
+    async def trigger_bundle_build(self):
         if self.skip_bundle_build:
             self._logger.warning("Skipping bundle build step because --skip-bundle-build flag is set")
             return
@@ -129,18 +129,32 @@ class BuildLayeredProductsPipeline:
             operator_nvrs = non_embargoed_nvrs
 
             if operator_nvrs:
-                # Automatically propagate parameters if set in environment
-                propagate_params = jenkins.get_propagatable_params()
+                if tekton.is_tekton_context():
+                    await tekton.start_pipeline(
+                        pipeline_name="olm-bundle-konflux",
+                        params={
+                            "version": self.version,
+                            "assembly": self.assembly,
+                            "group": self.group,
+                            "operator-nvrs": ",".join(operator_nvrs),
+                            "data-path": self._doozer_env_vars.get("DOOZER_DATA_PATH", ""),
+                            "data-gitref": self.data_gitref or "",
+                            "art-tools-commit": os.environ.get("ART_TOOLS_COMMIT", ""),
+                        },
+                    )
+                else:
+                    # Automatically propagate parameters if set in environment
+                    propagate_params = jenkins.get_propagatable_params()
 
-                jenkins.start_olm_bundle_konflux(
-                    build_version=self.version,
-                    assembly=self.assembly,
-                    group=self.group,
-                    operator_nvrs=operator_nvrs,
-                    doozer_data_path=self._doozer_env_vars["DOOZER_DATA_PATH"] or '',
-                    doozer_data_gitref=self.data_gitref or '',
-                    propagate_params=propagate_params,
-                )
+                    jenkins.start_olm_bundle_konflux(
+                        build_version=self.version,
+                        assembly=self.assembly,
+                        group=self.group,
+                        operator_nvrs=operator_nvrs,
+                        doozer_data_path=self._doozer_env_vars["DOOZER_DATA_PATH"] or '',
+                        doozer_data_gitref=self.data_gitref or '',
+                        propagate_params=propagate_params,
+                    )
         except Exception as e:
             self._logger.exception(f"Failed to trigger bundle build: {e}")
 
@@ -164,9 +178,7 @@ class BuildLayeredProductsPipeline:
         """
         kubeconfig = os.environ.get('ART_CLUSTER_LP_KUBECONFIG')
         if not kubeconfig:
-            raise ValueError(
-                "ART_CLUSTER_LP_KUBECONFIG environment variable must be set to trigger on cluster"
-            )
+            raise ValueError("ART_CLUSTER_LP_KUBECONFIG environment variable must be set to trigger on cluster")
 
         data_path = self._doozer_env_vars.get('DOOZER_DATA_PATH', '')
         namespace = "layered-products"
@@ -174,30 +186,46 @@ class BuildLayeredProductsPipeline:
 
         # Step 1: Start the pipeline and get the PipelineRun name
         start_cmd = [
-            "tkn", "pipeline", "start", pipeline_name,
-            "--namespace", namespace,
-            "--kubeconfig", kubeconfig,
-            "--param", f"group={self.group}",
-            "--param", f"assembly={self.assembly}",
-            "--param", f"image-list={self.image_list}",
-            "--param", f"data-path={data_path}",
-            "--param", f"data-gitref={self.data_gitref or ''}",
-            "--param", f"plr-template={self.plr_template or ''}",
-            "--param", f"network-mode={self.network_mode or ''}",
-            "--param", f"dry-run={'true' if self.runtime.dry_run else 'false'}",
-            "--param", f"skip-rebase={'true' if self.skip_rebase else 'false'}",
-            "--param", f"ignore-locks={'true' if self.ignore_locks else 'false'}",
-            "--param", f"art-tools-commit={os.environ.get('ART_TOOLS_COMMIT', '')}",
-            "--pipeline-timeout", "4h",
-            "--output", "name",
+            "tkn",
+            "pipeline",
+            "start",
+            pipeline_name,
+            "--namespace",
+            namespace,
+            "--kubeconfig",
+            kubeconfig,
+            "--param",
+            f"group={self.group}",
+            "--param",
+            f"assembly={self.assembly}",
+            "--param",
+            f"image-list={self.image_list}",
+            "--param",
+            f"data-path={data_path}",
+            "--param",
+            f"data-gitref={self.data_gitref or ''}",
+            "--param",
+            f"plr-template={self.plr_template or ''}",
+            "--param",
+            f"network-mode={self.network_mode or ''}",
+            "--param",
+            f"dry-run={'true' if self.runtime.dry_run else 'false'}",
+            "--param",
+            f"skip-rebase={'true' if self.skip_rebase else 'false'}",
+            "--param",
+            f"ignore-locks={'true' if self.ignore_locks else 'false'}",
+            "--param",
+            f"art-tools-commit={os.environ.get('ART_TOOLS_COMMIT', '')}",
+            "--pipeline-timeout",
+            "4h",
+            "--output",
+            "name",
         ]
 
         self._logger.info("Triggering %s on artc cluster (namespace: %s)", pipeline_name, namespace)
         rc, stdout, stderr = await exectools.cmd_gather_async(start_cmd, env=os.environ.copy())
         if rc != 0:
-            raise ChildProcessError(
-                f"Failed to start {pipeline_name} on cluster (exit {rc}): {stderr.strip()}"
-            )
+            raise ChildProcessError(f"Failed to start {pipeline_name} on cluster (exit {rc}): {stderr.strip()}")
 
         plr_name = stdout.strip()
         if not plr_name:
@@ -213,27 +241,36 @@ class BuildLayeredProductsPipeline:
 
         # Step 3: Stream logs until the PipelineRun completes
         logs_cmd = [
-            "tkn", "pipelinerun", "logs", "--follow",
-            "--namespace", namespace,
-            "--kubeconfig", kubeconfig,
+            "tkn",
+            "pipelinerun",
+            "logs",
+            "--follow",
+            "--namespace",
+            namespace,
+            "--kubeconfig",
+            kubeconfig,
             plr_name,
         ]
         await exectools.cmd_gather_async(logs_cmd, env=os.environ.copy())
 
         # Step 4: Check the final status
         status_cmd = [
-            "tkn", "pipelinerun", "describe", plr_name,
-            "--namespace", namespace,
-            "--kubeconfig", kubeconfig,
-            "--output", "jsonpath={.status.conditions[0].status}",
+            "tkn",
+            "pipelinerun",
+            "describe",
+            plr_name,
+            "--namespace",
+            namespace,
+            "--kubeconfig",
+            kubeconfig,
+            "--output",
+            "jsonpath={.status.conditions[0].status}",
         ]
         rc, stdout, stderr = await exectools.cmd_gather_async(status_cmd, env=os.environ.copy())
         succeeded = stdout.strip()
 
         if succeeded != "True":
-            raise ChildProcessError(
-                f"PipelineRun {plr_name} failed (status={succeeded}). See logs above or: {plr_url}"
-            )
+            raise ChildProcessError(f"PipelineRun {plr_name} failed (status={succeeded}). See logs above or: {plr_url}")
 
         self._logger.info("PipelineRun %s completed successfully", plr_name)
 
@@ -258,7 +295,7 @@ class BuildLayeredProductsPipeline:
         product = group_config.get('product', 'ocp')
         image_repo = group_config.get('konflux', {}).get('image_repo') or KONFLUX_DEFAULT_IMAGE_REPO
         await self._rebase_and_build(product, image_repo)
-        self.trigger_bundle_build()
+        await self.trigger_bundle_build()
 
         if self.embargoed_operators_skipped:
             self._logger.warning(

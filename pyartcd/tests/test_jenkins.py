@@ -7,6 +7,34 @@ from pyartcd.jenkins import Jobs
 from pyartcd import jenkins
 
 
+class TestJenkinsTektonSafe(unittest.TestCase):
+    def setUp(self):
+        jenkins.jenkins_client = None
+        jenkins.current_build_url = None
+        jenkins.current_job_name = None
+
+    def tearDown(self):
+        jenkins.jenkins_client = None
+        jenkins.current_build_url = None
+        jenkins.current_job_name = None
+
+    def test_init_jenkins_skips_in_tekton_context(self):
+        with mock.patch.dict(os.environ, {"TEKTON_PIPELINERUN_NAME": "my-plr-123"}):
+            with mock.patch("pyartcd.jenkins.Jenkins") as mock_cls:
+                jenkins.init_jenkins()
+                mock_cls.assert_not_called()
+                self.assertIsNone(jenkins.jenkins_client)
+
+    def test_check_env_vars_returns_none_in_tekton_context(self):
+        with mock.patch.dict(os.environ, {"TEKTON_PIPELINERUN_NAME": "my-plr-123"}):
+            result = jenkins.update_title("test")
+            self.assertIsNone(result)
+
+        with mock.patch.dict(os.environ, {"TEKTON_PIPELINERUN_NAME": "my-plr-123"}):
+            result = jenkins.update_description("desc")
+            self.assertIsNone(result)
+
+
 class TestJenkinsStartBuild(unittest.TestCase):
     def setUp(self):
         jenkins.current_build_url = None

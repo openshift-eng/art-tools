@@ -411,7 +411,7 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
 
     @patch('pyartcd.pipelines.build_layered_products.jenkins.start_olm_bundle_konflux')
     @patch('pyartcd.pipelines.build_layered_products.jenkins.get_propagatable_params', return_value={})
-    def test_trigger_bundle_build_filters_embargoed_operators(self, mock_get_params, mock_start_bundle):
+    async def test_trigger_bundle_build_filters_embargoed_operators(self, mock_get_params, mock_start_bundle):
         """Embargoed operator NVRs are dropped from the trigger; non-embargoed ones proceed."""
         self.pipeline.skip_bundle_build = False
         self._write_image_build_record_log(
@@ -421,7 +421,7 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
             ]
         )
 
-        self.pipeline.trigger_bundle_build()
+        await self.pipeline.trigger_bundle_build()
 
         mock_start_bundle.assert_called_once()
         self.assertEqual(
@@ -435,7 +435,7 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
 
     @patch('pyartcd.pipelines.build_layered_products.jenkins.start_olm_bundle_konflux')
     @patch('pyartcd.pipelines.build_layered_products.jenkins.get_propagatable_params', return_value={})
-    def test_trigger_bundle_build_ambiguous_nvr_skips_and_warns(self, mock_get_params, mock_start_bundle):
+    async def test_trigger_bundle_build_ambiguous_nvr_skips_and_warns(self, mock_get_params, mock_start_bundle):
         """An NVR whose embargo status is ambiguous (matches more than one visibility suffix)
         is treated like an embargoed NVR: skip its bundle trigger and record it as skipped,
         rather than letting the ValueError bubble up and get silently swallowed by the
@@ -449,7 +449,7 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
             ]
         )
 
-        self.pipeline.trigger_bundle_build()
+        await self.pipeline.trigger_bundle_build()
 
         mock_start_bundle.assert_called_once()
         self.assertEqual(
@@ -460,7 +460,7 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
 
     @patch('pyartcd.pipelines.build_layered_products.jenkins.start_olm_bundle_konflux')
     @patch('pyartcd.pipelines.build_layered_products.jenkins.get_propagatable_params', return_value={})
-    def test_trigger_bundle_build_all_embargoed_skips_trigger(self, mock_get_params, mock_start_bundle):
+    async def test_trigger_bundle_build_all_embargoed_skips_trigger(self, mock_get_params, mock_start_bundle):
         """When every operator NVR is embargoed, the bundle build trigger is never called."""
         self.pipeline.skip_bundle_build = False
         self._write_image_build_record_log(
@@ -469,7 +469,7 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
             ]
         )
 
-        self.pipeline.trigger_bundle_build()
+        await self.pipeline.trigger_bundle_build()
 
         mock_start_bundle.assert_not_called()
         self.assertEqual(
@@ -479,7 +479,7 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
 
     @patch('pyartcd.pipelines.build_layered_products.jenkins.start_olm_bundle_konflux')
     @patch('pyartcd.pipelines.build_layered_products.jenkins.get_propagatable_params', return_value={})
-    def test_trigger_bundle_build_no_embargoed_calls_normally(self, mock_get_params, mock_start_bundle):
+    async def test_trigger_bundle_build_no_embargoed_calls_normally(self, mock_get_params, mock_start_bundle):
         """When no operator NVRs are embargoed, the trigger proceeds normally with an empty skip list."""
         self.pipeline.skip_bundle_build = False
         self._write_image_build_record_log(
@@ -488,7 +488,7 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
             ]
         )
 
-        self.pipeline.trigger_bundle_build()
+        await self.pipeline.trigger_bundle_build()
 
         mock_start_bundle.assert_called_once()
         self.assertEqual(
@@ -496,6 +496,25 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
             ['oadp-operator-container-v1.4.9-202607151200.p2.g172d0b2.assembly.stream.el9'],
         )
         self.assertEqual(self.pipeline.embargoed_operators_skipped, [])
+
+    @patch('pyartcd.pipelines.build_layered_products.tekton.start_pipeline', new_callable=AsyncMock)
+    async def test_trigger_bundle_build_uses_tekton_in_tekton_context(self, mock_start_pipeline):
+        """In Tekton context, trigger_bundle_build fires a Tekton pipeline instead of Jenkins."""
+        import os
+
+        self.pipeline.skip_bundle_build = False
+        self.pipeline.version = '1.4.9'
+        nvr = 'oadp-operator-container-v1.4.9-202607151200.p2.g172d0b2.assembly.stream.el9'
+        self._write_image_build_record_log([('oadp-operator', nvr)])
+        mock_start_pipeline.return_value = 'olm-bundle-konflux-run-abc'
+
+        with patch.dict(os.environ, {"TEKTON_PIPELINERUN_NAME": "parent-plr-123"}):
+            await self.pipeline.trigger_bundle_build()
+
+        mock_start_pipeline.assert_called_once()
+        call_kwargs = mock_start_pipeline.call_args.kwargs
+        self.assertEqual(call_kwargs['pipeline_name'], 'olm-bundle-konflux')
+        self.assertIn('operator-nvrs', call_kwargs['params'])
 
     @patch('pyartcd.pipelines.build_layered_products.jenkins.init_jenkins')
     @patch('pyartcd.pipelines.build_layered_products.load_group_config')
@@ -507,10 +526,10 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
 
         with (
             patch.object(self.pipeline, '_rebase_and_build', new_callable=AsyncMock),
-            patch.object(self.pipeline, 'trigger_bundle_build') as mock_trigger,
+            patch.object(self.pipeline, 'trigger_bundle_build', new_callable=AsyncMock) as mock_trigger,
         ):
 
-            def fake_trigger():
+            async def fake_trigger():
                 self.pipeline.embargoed_operators_skipped.append(
                     'oadp-operator-container-v1.4.9-202607151200.p3.g172d0b2.assembly.stream.el9'
                 )
@@ -532,7 +551,7 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
 
         with (
             patch.object(self.pipeline, '_rebase_and_build', new_callable=AsyncMock),
-            patch.object(self.pipeline, 'trigger_bundle_build'),
+            patch.object(self.pipeline, 'trigger_bundle_build', new_callable=AsyncMock),
         ):
             await self.pipeline.run()  # Should not raise
 

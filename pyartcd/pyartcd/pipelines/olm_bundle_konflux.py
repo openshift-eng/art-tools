@@ -1,4 +1,5 @@
 import asyncio
+import os
 import sys
 from pathlib import Path
 
@@ -7,12 +8,52 @@ from artcommonlib import exectools
 from artcommonlib.constants import PRODUCT_KUBECONFIG_MAP
 from artcommonlib.util import resolve_konflux_kubeconfig_by_product, resolve_konflux_namespace_by_product
 
-from pyartcd import constants, jenkins, locks
+from pyartcd import constants, jenkins, locks, tekton
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import Lock
 from pyartcd.record import parse_record_log
 from pyartcd.runtime import Runtime
 from pyartcd.util import load_group_config
+
+
+async def _trigger_fbc(
+    version: str,
+    group: str,
+    assembly: str,
+    operator_nvrs: list,
+    data_path: str,
+    data_gitref: str,
+    dry_run: bool,
+    ocp_target_version: str = "",
+    force_build: bool = False,
+    propagate_params: dict = None,
+):
+    """Trigger a build-fbc pipeline run — via Tekton on-cluster or Jenkins off-cluster."""
+    if tekton.is_tekton_context():
+        params = {
+            "version": version,
+            "assembly": assembly,
+            "group": group or "",
+            "operator-nvrs": ",".join(operator_nvrs),
+            "data-path": data_path,
+            "data-gitref": data_gitref or "",
+            "force": "true" if force_build else "false",
+            "art-tools-commit": os.environ.get("ART_TOOLS_COMMIT", ""),
+        }
+        if ocp_target_version:
+            params["ocp-target-version"] = ocp_target_version
+        await tekton.start_pipeline(pipeline_name="build-fbc", params=params)
+    else:
+        jenkins.start_build_fbc(
+            version=version,
+            group=group,
+            assembly=assembly,
+            operator_nvrs=operator_nvrs,
+            dry_run=dry_run,
+            ocp_target_version=ocp_target_version,
+            force_build=force_build,
+            propagate_params=propagate_params,
+        )
 
 
 @cli.command('olm-bundle-konflux')
@@ -220,11 +261,13 @@ async def olm_bundle_konflux(
                 # Generate multiple FBC jobs, one for each target version
                 for target_version in ocp_target_versions:
                     runtime.logger.info(f'Starting FBC job for target version: {target_version}')
-                    jenkins.start_build_fbc(
+                    await _trigger_fbc(
                         version=version,
                         group=group,
                         assembly=assembly,
                         operator_nvrs=operator_nvrs,
+                        data_path=data_path,
+                        data_gitref=data_gitref or "",
                         dry_run=runtime.dry_run,
                         ocp_target_version=target_version,
                         # Always force rebuild FBCs for OADP / MTA / MTC
@@ -235,22 +278,26 @@ async def olm_bundle_konflux(
             else:
                 runtime.logger.info(f'No OCP_TARGET_VERSIONS defined for group {group}, using original behavior')
                 # No OCP_TARGET_VERSIONS defined, use original behavior
-                jenkins.start_build_fbc(
+                await _trigger_fbc(
                     version=version,
                     group=group,
                     assembly=assembly,
                     operator_nvrs=operator_nvrs,
+                    data_path=data_path,
+                    data_gitref=data_gitref or "",
                     dry_run=runtime.dry_run,
                     propagate_params=propagate_params,
                 )
         else:
             runtime.logger.info(f'Group {group} does not match OADP/MTA/MTC pattern, using original behavior')
             # Not an OADP/MTA/MTC group, use original behavior
-            jenkins.start_build_fbc(
+            await _trigger_fbc(
                 version=version,
                 group=group if group else None,
                 assembly=assembly,
                 operator_nvrs=operator_nvrs,
+                data_path=data_path,
+                data_gitref=data_gitref or "",
                 dry_run=runtime.dry_run,
                 propagate_params=propagate_params,
             )

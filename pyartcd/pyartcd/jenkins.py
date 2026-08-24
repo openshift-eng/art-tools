@@ -66,6 +66,12 @@ def init_jenkins():
     if jenkins_client:
         return
 
+    from pyartcd.tekton import is_tekton_context
+
+    if is_tekton_context():
+        logger.info("Running in Tekton context, skipping Jenkins initialization")
+        return
+
     jenkins_url = get_jenkins_url()
 
     logger.info('Initializing Jenkins client..')
@@ -212,11 +218,17 @@ def get_build_parameters(build_path: str) -> Optional[dict]:
 
 def check_env_vars(func):
     """
-    Enforces that BUILD_URL and JOB_NAME are set
+    Enforces that BUILD_URL and JOB_NAME are set. No-op in Tekton context.
     """
 
     @functools.wraps(func)
     def wrapped(*args, **kwargs):
+        from pyartcd.tekton import is_tekton_context
+
+        if is_tekton_context():
+            logger.debug("Skipping %s in Tekton context (no Jenkins)", func.__name__)
+            return None
+
         global current_build_url, current_job_name
         current_build_url = current_build_url or get_build_url()
         current_job_name = current_job_name or get_job_name()
