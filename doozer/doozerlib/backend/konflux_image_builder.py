@@ -754,6 +754,10 @@ class KonfluxImageBuilder:
                                 if "requirements_build_files" not in data:
                                     data["requirements_build_files"] = []
                                 data["requirements_build_files"] += values
+
+                        if entry == "binary":
+                            data["binary"] = values
+
                         flag = True
                     prefetch.append(data)
 
