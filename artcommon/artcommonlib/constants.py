@@ -135,7 +135,7 @@ PRODUCT_KUBECONFIG_MAP = {
     "multicluster-engine": "ACM_KONFLUX_SA_KUBECONFIG",
     "rhacm2": "ACM_KONFLUX_SA_KUBECONFIG",
     "cert-manager": "OAP_KONFLUX_SA_KUBECONFIG",
-    "coo": "COO_KONFLUX_SA_KUBECONFIG",
+    "cluster-observability-operator": "COO_KONFLUX_SA_KUBECONFIG",
     "external-secrets": "OAP_KONFLUX_SA_KUBECONFIG",
     "installer-ove-ui": "ASSISTED_INSTALLER_SA_KUBECONFIG",
     "logging": "LOGGING_KONFLUX_SA_KUBECONFIG",
