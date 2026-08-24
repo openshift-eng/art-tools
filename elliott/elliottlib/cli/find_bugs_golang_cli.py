@@ -94,6 +94,7 @@ class FindBugsGolangCli:
         rpms_only: bool = False,
         skip_comment: bool = False,
         parse_changelog: bool = False,
+        skip_golang_cve_consistency_check: bool = False,
     ):
         self._runtime = runtime
         self._logger = LOGGER
@@ -112,6 +113,7 @@ class FindBugsGolangCli:
         self.rpms_only = rpms_only
         self.skip_comment = skip_comment
         self.parse_changelog = parse_changelog
+        self.skip_golang_cve_consistency_check = skip_golang_cve_consistency_check
 
         # cache
         self.pullspec = pullspec
@@ -393,6 +395,11 @@ class FindBugsGolangCli:
 
         items = list(cves_map.items())
         if not all(v == items[0][1] for _, v in items):
+            if self.skip_golang_cve_consistency_check:
+                LOGGER.warning(
+                    f"Skipping CVE consistency check. Inconsistent CVE IDs in changelogs for fixed in NVRs: {cves_map}"
+                )
+                return list(cves_map.values())[0]
             if len(cves_map) == 2:
                 LOGGER.error(
                     f"Inconsistent CVEs. Found extra in {items[0][0]}: {items[0][1] - items[1][1]} \n Found extra in {items[1][0]}: {items[1][1] - items[0][1]}"
@@ -786,6 +793,12 @@ class FindBugsGolangCli:
     "fixed, merging them with any CVE ID(s) given via --cve-id. Disabled by default: by default the command "
     "only considers CVE ID(s) explicitly given via --cve-id as fixed.",
 )
+@click.option(
+    "--skip-golang-cve-consistency-check",
+    is_flag=True,
+    default=False,
+    help="Skip the CVE consistency check across NVR changelogs",
+)
 @click.pass_obj
 @click_coroutine
 async def find_bugs_golang_cli(
@@ -806,6 +819,7 @@ async def find_bugs_golang_cli(
     rpms_only: bool,
     skip_comment: bool = False,
     parse_changelog: bool = False,
+    skip_golang_cve_consistency_check: bool = False,
 ):
     """Find golang security tracker bugs in jira and determine if they are fixed.
     Trackers are fetched from the OCPBUGS project
@@ -942,5 +956,6 @@ async def find_bugs_golang_cli(
         rpms_only=rpms_only,
         skip_comment=skip_comment,
         parse_changelog=parse_changelog,
+        skip_golang_cve_consistency_check=skip_golang_cve_consistency_check,
     )
     await cli.run()
