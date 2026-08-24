@@ -464,3 +464,34 @@ class TestKonfluxCachi2(TestCase):
         }
         expected = [expected_rpm_data, {'type': 'gomod', 'path': '.'}]
         self.assertEqual(result, expected)
+
+    @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
+    def test_prefetch_pip_with_binary_config(self, mock_konflux_client_init):
+        """Test that binary config is preserved when extracting pip package config"""
+        builder = KonfluxImageBuilder(MagicMock())
+        metadata = MagicMock()
+        metadata.is_cachi2_enabled.return_value = True
+        metadata.is_lockfile_generation_enabled.return_value = False
+        metadata.is_artifact_lockfile_enabled.return_value = False
+        metadata.get_konflux_network_mode.return_value = "open"
+        metadata.config.content.source.pkg_managers = ["pip"]
+        metadata.config.cachito.packages = {
+            'pip': [
+                {
+                    'path': '.',
+                    'requirements_files': ['requirements.txt', 'pip-build-constraints.txt'],
+                    'binary': {'py_version': '312'},
+                }
+            ]
+        }
+
+        result = builder._prefetch(metadata=metadata, group="test-group")
+        expected = [
+            {
+                'type': 'pip',
+                'path': '.',
+                'requirements_files': ['requirements.txt', 'pip-build-constraints.txt'],
+                'binary': {'py_version': '312'},
+            }
+        ]
+        self.assertEqual(result, expected)
