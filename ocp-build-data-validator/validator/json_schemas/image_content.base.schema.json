@@ -413,6 +413,18 @@
               "$ref": "#/properties/source/properties/git/properties/url"
             },
             "url-": {},
+            "url_pull": {
+              "description": "Optional HTTPS URL to pull source from instead of the (usually SSH) url. Used for fork-based test builds.",
+              "type": "string",
+              "minLength": 1
+            },
+            "url_pull?": {
+              "$ref": "#/properties/source/properties/git/properties/url_pull"
+            },
+            "url_pull!": {
+              "$ref": "#/properties/source/properties/git/properties/url_pull"
+            },
+            "url_pull-": {},
             "web": {
               "type": "string",
               "minLength": 1
