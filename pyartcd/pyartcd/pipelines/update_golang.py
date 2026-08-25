@@ -517,7 +517,11 @@ class UpdateGolangPipeline:
                     )
                 raise ValueError(error_msg)
 
-        # streams.yml should only reference the published pullspecs for Konflux-built builders.
+        # streams.yml references the registry.redhat.io pullspec derived from the NVR.
+        # We do NOT check availability here: at the time this pipeline runs, the Konflux
+        # build is done but the shipment MRs are still in-flight, so the image is not yet
+        # reachable at registry.redhat.io. The ocp-build-data PR body will warn reviewers
+        # not to merge until those MRs land.
         if self.build_system == "brew":
             skip_message = (
                 "Skipping streams.yml update for brew-only run; "
@@ -526,25 +530,20 @@ class UpdateGolangPipeline:
             _LOGGER.info(skip_message)
             await self._slack_client.say_in_thread(skip_message)
         elif not self.is_production_assembly:
-            skip_message = "Skipping published pullspec checks and streams.yml update for the test assembly."
+            skip_message = "Skipping streams.yml update for the test assembly."
             _LOGGER.info(skip_message)
             await self._slack_client.say_in_thread(skip_message)
         else:
             builder_pullspecs = {}
             for el_v, record in konflux_records.items():
                 published_pullspec = self._get_builder_pullspec(record.nvr)
-                try:
-                    await self._ensure_builder_pullspec_available(published_pullspec)
-                    builder_pullspecs[el_v] = published_pullspec
-                except RuntimeError:
-                    konflux_pullspec = self._get_konflux_builder_pullspec(record.nvr)
-                    _LOGGER.warning(
-                        "Published pullspec not available: %s, falling back to Konflux pullspec: %s",
-                        published_pullspec,
-                        konflux_pullspec,
-                    )
-                    await self._ensure_builder_pullspec_available(konflux_pullspec)
-                    builder_pullspecs[el_v] = konflux_pullspec
+                builder_pullspecs[el_v] = published_pullspec
+                _LOGGER.info(
+                    "Golang builder pullspec for RHEL %s: %s "
+                    "(shipment MRs may still be in-flight; do not merge the ocp-build-data PR until they land)",
+                    el_v,
+                    published_pullspec,
+                )
             if builder_pullspecs:
                 builder_details = "\n".join(
                     [
@@ -822,7 +821,7 @@ class UpdateGolangPipeline:
 
     @staticmethod
     def _get_konflux_builder_pullspec(builder_nvr: str):
-        """Generate a human-readable Konflux pullspec as fallback when registry.redhat.io is unavailable."""
+        """Generate a human-readable Konflux pullspec for diagnostic logging."""
         parsed_nvr = parse_nvr(builder_nvr)
         return f'{KONFLUX_DEFAULT_IMAGE_REPO}:golang-builder-{parsed_nvr["version"]}-{parsed_nvr["release"]}'
 
@@ -1007,7 +1006,19 @@ class UpdateGolangPipeline:
                 fork_repo.update_file("group.yml", update_message, output.read(), fork_file.sha, branch=branch_name)
             # create pr
             build_url = jenkins.get_build_url()
-            body = f"Created by job run {build_url}" if build_url else ""
+            pullspec_lines = "\n".join(
+                f"> - RHEL {el_v}: `{pullspec}`" for el_v, pullspec in sorted(builder_pullspecs.items())
+            )
+            shipment_warning = (
+                "\n\n> [!WARNING]\n"
+                "> **Do NOT merge until the golang builder shipment MRs are merged.**\n"
+                "> These images are published via shipment MRs in\n"
+                "> [ocp-shipment-data](https://gitlab.cee.redhat.com/hybrid-platforms/art/ocp-shipment-data/-/merge_requests).\n"
+                "> Merge those MRs first, then merge this PR.\n"
+                ">\n"
+                f"{pullspec_lines}"
+            )
+            body = (f"Created by job run {build_url}" if build_url else "") + shipment_warning
             pr = upstream_repo.create_pull(title=title, body=body, base=branch, head=f"openshift-bot:{branch_name}")
             _LOGGER.info(
                 f"PR created {pr.html_url} for {branch_name} to bump {self.ocp_version} golang builders to {go_version}"
