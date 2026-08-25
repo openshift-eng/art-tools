@@ -31,7 +31,6 @@ from tenacity import before_sleep_log, retry, retry_if_exception_type, stop_afte
 
 from pyartcd import constants, jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
-from pyartcd.oc import get_image_info
 from pyartcd.runtime import Runtime
 from pyartcd.util import default_release_suffix, kinit
 
@@ -824,14 +823,6 @@ class UpdateGolangPipeline:
         """Generate a human-readable Konflux pullspec for diagnostic logging."""
         parsed_nvr = parse_nvr(builder_nvr)
         return f'{KONFLUX_DEFAULT_IMAGE_REPO}:golang-builder-{parsed_nvr["version"]}-{parsed_nvr["release"]}'
-
-    async def _ensure_builder_pullspec_available(self, pullspec: str):
-        """Verify the published golang builder pullspec is available before updating streams.yml."""
-        registry_config = os.getenv("QUAY_AUTH_FILE")
-        try:
-            await get_image_info(pullspec, raise_if_not_found=True, registry_config=registry_config)
-        except Exception as e:
-            raise RuntimeError(f"Published golang builder pullspec is not available: {pullspec}: {e}") from e
 
     async def update_golang_streams(self, go_version, builder_pullspecs):
         """

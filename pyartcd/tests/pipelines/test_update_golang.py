@@ -1057,42 +1057,6 @@ repos:
         with self.assertRaisesRegex(ValueError, "Expected a golang builder image NVR"):
             pipeline._get_builder_pullspec("ose-cli-v4.16.0-202604150744.p2.gdeadbee.el9")
 
-    @patch("pyartcd.pipelines.update_golang.get_image_info", new_callable=AsyncMock)
-    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
-    async def test_ensure_builder_pullspec_available_reuses_oc_helper(self, mock_konflux_db, get_image_info):
-        """Test published pullspec availability check reuses pyartcd.oc.get_image_info with quay auth"""
-        pipeline = self._make_pipeline(build_system="konflux")
-
-        pullspec = "registry.redhat.io/openshift/golang-builder:openshift-golang-builder-container-v1.25.8-test"
-        quay_auth_file = str(Path(self.enterContext(tempfile.TemporaryDirectory())) / "quay-auth.json")
-
-        with patch.dict(
-            "os.environ",
-            {"QUAY_AUTH_FILE": quay_auth_file},
-            clear=False,
-        ):
-            await pipeline._ensure_builder_pullspec_available(pullspec)
-
-        get_image_info.assert_awaited_once_with(pullspec, raise_if_not_found=True, registry_config=quay_auth_file)
-
-    @patch("pyartcd.pipelines.update_golang.get_image_info", new_callable=AsyncMock)
-    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
-    async def test_ensure_builder_pullspec_available_errors_when_oc_helper_fails(self, mock_konflux_db, get_image_info):
-        """Test published pullspec availability check raises when pyartcd.oc.get_image_info fails"""
-        pipeline = self._make_pipeline(build_system="konflux")
-
-        pullspec = "registry.redhat.io/openshift/golang-builder:openshift-golang-builder-container-v1.25.8-test"
-        get_image_info.side_effect = ValueError("Image pullspec is not found.")
-        quay_auth_file = str(Path(self.enterContext(tempfile.TemporaryDirectory())) / "quay-auth.json")
-
-        with patch.dict(
-            "os.environ",
-            {"QUAY_AUTH_FILE": quay_auth_file},
-            clear=False,
-        ):
-            with self.assertRaisesRegex(RuntimeError, "Published golang builder pullspec is not available"):
-                await pipeline._ensure_builder_pullspec_available(pullspec)
-
     @patch("pyartcd.pipelines.update_golang.kinit", new_callable=AsyncMock)
     @patch("pyartcd.pipelines.update_golang.move_golang_bugs", new_callable=AsyncMock)
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
@@ -1142,7 +1106,6 @@ repos:
         builder_record = Mock(nvr="openshift-golang-builder-container-v1.26.5-202608071200.p0.assembly.test.el8")
         pipeline.get_existing_builders_konflux = AsyncMock(return_value={8: builder_record})
         pipeline._get_builder_pullspec = Mock()
-        pipeline._ensure_builder_pullspec_available = AsyncMock()
         pipeline.update_golang_streams = AsyncMock()
 
         await pipeline.run()
@@ -1152,7 +1115,6 @@ repos:
         self.assertEqual(pipeline._build_golang_plashets.await_args.args[0], "1.26.5")
         self.assertEqual(list(pipeline._build_golang_plashets.await_args.args[1]), [8])
         pipeline._get_builder_pullspec.assert_not_called()
-        pipeline._ensure_builder_pullspec_available.assert_not_awaited()
         pipeline.update_golang_streams.assert_not_awaited()
         move_golang_bugs.assert_not_awaited()
         slack_messages = [call.args[0] for call in pipeline._slack_client.say_in_thread.await_args_list]
@@ -1183,7 +1145,6 @@ repos:
         builder_record = Mock(nvr="openshift-golang-builder-container-v1.25.11-202607281030.p2.gbbb222.el8")
         pipeline.get_existing_builders_konflux = AsyncMock(return_value={8: builder_record})
         pipeline._get_builder_pullspec = Mock(return_value="registry.example.com/golang-builder:v1.25.11-el8")
-        pipeline._ensure_builder_pullspec_available = AsyncMock()
         pipeline.update_golang_streams = AsyncMock()
 
         await pipeline.run()
@@ -1263,7 +1224,6 @@ repos:
         pipeline.verify_golang_builder_repo = Mock()
         pipeline._rebase_and_build_konflux = AsyncMock()
         pipeline._get_builder_pullspec = Mock(return_value="registry.example.com/golang-builder:v1.25.11-el8")
-        pipeline._ensure_builder_pullspec_available = AsyncMock()
         pipeline.update_golang_streams = AsyncMock()
 
         await pipeline.run()
