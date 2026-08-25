@@ -4,69 +4,108 @@ Tests for doozerlib.lockfile_prototype.container_utils.
 
 import asyncio
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from doozerlib.lockfile_prototype.container_utils import ContainerImageHelper
 
 
 class TestContainerImageHelper(unittest.TestCase):
-    @patch("doozerlib.lockfile_prototype.container_utils.cmd_gather_async")
-    def test_resolve_to_digest_already_digest(self, mock_gather):
+    @patch("doozerlib.lockfile_prototype.container_utils.oc_image_info_for_arch_async", new_callable=AsyncMock)
+    def test_resolve_to_digest_already_list_digest(self, mock_oc):
         """
-        Pullspecs with @sha256: should be returned unchanged.
+        Pullspecs already pinned to the list digest should stay unchanged.
         """
+        mock_oc.return_value = {
+            "listDigest": "sha256:abc123",
+            "digest": "sha256:platform456",
+        }
         helper = ContainerImageHelper()
         result = asyncio.run(helper.resolve_to_digest("quay.io/test/img@sha256:abc123"))
         self.assertEqual(result, "quay.io/test/img@sha256:abc123")
-        mock_gather.assert_not_called()
+        mock_oc.assert_awaited_once()
 
-    @patch("doozerlib.lockfile_prototype.container_utils.cmd_gather_async")
-    def test_resolve_to_digest_tag(self, mock_gather):
+    @patch("doozerlib.lockfile_prototype.container_utils.oc_image_info_for_arch_async", new_callable=AsyncMock)
+    def test_resolve_to_digest_upgrades_platform_digest_to_list_digest(self, mock_oc):
         """
-        Tag-based pullspecs should be resolved via skopeo.
+        A platform-instance digest should be upgraded to listDigest when available.
         """
-        import json
+        mock_oc.return_value = {
+            "listDigest": "sha256:listaaa",
+            "digest": "sha256:platformbbb",
+        }
+        helper = ContainerImageHelper()
+        result = asyncio.run(helper.resolve_to_digest("quay.io/test/img@sha256:platformbbb"))
+        self.assertEqual(result, "quay.io/test/img@sha256:listaaa")
 
-        async def mock_skopeo(cmd, **kwargs):
-            return (0, json.dumps({"Digest": "sha256:def456"}), "")
+    @patch("doozerlib.lockfile_prototype.container_utils.oc_image_info_for_arch_async", new_callable=AsyncMock)
+    def test_resolve_to_digest_tag_prefers_list_digest(self, mock_oc):
+        """
+        Multi-arch tag pullspecs should pin listDigest, not the platform digest.
+        """
+        mock_oc.return_value = {
+            "listDigest": "sha256:listdigest",
+            "digest": "sha256:platformdigest",
+        }
+        helper = ContainerImageHelper()
+        result = asyncio.run(helper.resolve_to_digest("quay.io/test/img:latest"))
+        self.assertEqual(result, "quay.io/test/img@sha256:listdigest")
 
-        mock_gather.side_effect = mock_skopeo
+    @patch("doozerlib.lockfile_prototype.container_utils.oc_image_info_for_arch_async", new_callable=AsyncMock)
+    def test_resolve_to_digest_single_arch_falls_back_to_digest(self, mock_oc):
+        """
+        Single-arch images with no listDigest should pin the platform digest.
+        """
+        mock_oc.return_value = {"digest": "sha256:def456"}
         helper = ContainerImageHelper()
         result = asyncio.run(helper.resolve_to_digest("quay.io/test/img:latest"))
         self.assertEqual(result, "quay.io/test/img@sha256:def456")
 
-    @patch("doozerlib.lockfile_prototype.container_utils.cmd_gather_async")
-    def test_resolve_to_digest_brew_registry_uses_proxy(self, mock_gather):
+    @patch("doozerlib.lockfile_prototype.container_utils.oc_image_info_for_arch_async", new_callable=AsyncMock)
+    def test_resolve_to_digest_brew_registry_uses_proxy(self, mock_oc):
         """
         brew.registry.redhat.io pullspecs should be inspected via the registry proxy,
         but the returned pullspec should keep the original brew.registry domain.
         """
-        import json
-
-        async def mock_skopeo(cmd, **kwargs):
-            assert "registry-proxy.engineering.redhat.com" in cmd[-1], (
-                f"Expected proxy URL in skopeo command, got {cmd}"
-            )
-            return (0, json.dumps({"Digest": "sha256:abc123"}), "")
-
-        mock_gather.side_effect = mock_skopeo
+        mock_oc.return_value = {
+            "listDigest": "sha256:abc123",
+            "digest": "sha256:platform",
+        }
         helper = ContainerImageHelper()
         result = asyncio.run(helper.resolve_to_digest("brew.registry.redhat.io/rh-osbs/ubi8:8.6-754"))
         self.assertEqual(result, "brew.registry.redhat.io/rh-osbs/ubi8@sha256:abc123")
+        inspect_pullspec = mock_oc.await_args.args[0]
+        self.assertIn("registry-proxy.engineering.redhat.com", inspect_pullspec)
 
-    @patch("doozerlib.lockfile_prototype.container_utils.cmd_gather_async")
-    def test_resolve_to_digest_skopeo_fails(self, mock_gather):
+    @patch("doozerlib.lockfile_prototype.container_utils.oc_image_info_for_arch_async", new_callable=AsyncMock)
+    def test_resolve_to_digest_inspect_fails(self, mock_oc):
         """
-        If skopeo fails, return the original pullspec.
+        If inspect fails, return the original pullspec (bare-mode fallback).
         """
-
-        async def mock_fail(cmd, **kwargs):
-            return (1, "", "connection refused")
-
-        mock_gather.side_effect = mock_fail
+        mock_oc.side_effect = ChildProcessError("connection refused")
         helper = ContainerImageHelper()
         result = asyncio.run(helper.resolve_to_digest("quay.io/test/img:latest"))
         self.assertEqual(result, "quay.io/test/img:latest")
+
+    @patch("doozerlib.lockfile_prototype.container_utils.oc_image_info_for_arch_async", new_callable=AsyncMock)
+    def test_resolve_to_digest_no_digest_fields(self, mock_oc):
+        """
+        If inspect succeeds but returns no digest fields, keep the original pullspec.
+        """
+        mock_oc.return_value = {}
+        helper = ContainerImageHelper()
+        result = asyncio.run(helper.resolve_to_digest("quay.io/test/img:latest"))
+        self.assertEqual(result, "quay.io/test/img:latest")
+
+    def test_repo_from_pullspec_strips_tag_and_digest(self):
+        self.assertEqual(ContainerImageHelper._repo_from_pullspec("quay.io/test/img:latest"), "quay.io/test/img")
+        self.assertEqual(
+            ContainerImageHelper._repo_from_pullspec("quay.io/test/img@sha256:abc"),
+            "quay.io/test/img",
+        )
+        self.assertEqual(
+            ContainerImageHelper._repo_from_pullspec("registry.example.com:5000/ns/img:tag"),
+            "registry.example.com:5000/ns/img",
+        )
 
     @patch("doozerlib.lockfile_prototype.container_utils.cmd_gather_async")
     def test_get_installed_packages(self, mock_gather):
