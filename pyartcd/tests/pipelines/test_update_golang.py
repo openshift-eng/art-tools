@@ -716,6 +716,64 @@ class TestUpdateGolangPipeline(IsolatedAsyncioTestCase):
             "registry.example.com/golang-builder:v1.26.5-el8",
         )
 
+    @patch("pyartcd.pipelines.update_golang.jenkins")
+    @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    async def test_update_golang_streams_pr_body_contains_shipment_warning(
+        self, mock_konflux_db, mock_get_github_client, mock_jenkins
+    ):
+        """PR body includes a shipment-MR warning block with each timestamped pullspec listed"""
+        mock_jenkins.get_build_url.return_value = "https://jenkins.example.com/job/1"
+
+        upstream_repo = Mock()
+        upstream_repo.get_contents.return_value = Mock(decoded_content=b"vars:\n  GO_LATEST: 1.22\n")
+        upstream_repo.get_branch.return_value = Mock(commit=Mock(sha="abc123"))
+        fork_repo = Mock()
+        fork_repo.get_branches.return_value = []
+        fork_repo.create_git_ref.return_value = Mock(ref="refs/heads/test-branch")
+        fork_repo.get_contents.return_value = Mock(sha="file-sha", decoded_content=b"{}\n")
+        mock_get_github_client.return_value.get_repo.side_effect = lambda name: (
+            fork_repo if "openshift-bot" in name else upstream_repo
+        )
+
+        pipeline = UpdateGolangPipeline(
+            runtime=self._make_test_runtime(),
+            ocp_version="4.19",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.22.9-1.el8"],
+            art_jira="ART-1234",
+            tag_builds=False,
+            build_system="konflux",
+        )
+        pipeline._branch_content = {
+            "branch": "openshift-4.19",
+            "repo": upstream_repo,
+            "group": {"vars": {"GO_LATEST": "1.22"}},
+            "streams": {
+                "rhel-8-golang": {
+                    "aliases": ["rhel-8-golang-{GO_LATEST}"],
+                    "image": "registry.redhat.io/openshift/golang-builder:old-el8",
+                },
+                "rhel-9-golang": {
+                    "aliases": ["rhel-9-golang-{GO_LATEST}"],
+                    "image": "registry.redhat.io/openshift/golang-builder:old-el9",
+                },
+            },
+        }
+
+        el8_pullspec = "registry.redhat.io/openshift/golang-builder:openshift-golang-builder-container-v1.22.9-202608241902.p0.assembly.stream.el8"
+        el9_pullspec = "registry.redhat.io/openshift/golang-builder:openshift-golang-builder-container-v1.22.9-202608241902.p0.assembly.stream.el9"
+        await pipeline.update_golang_streams("1.22.9", {8: el8_pullspec, 9: el9_pullspec})
+
+        upstream_repo.create_pull.assert_called_once()
+        _, kwargs = upstream_repo.create_pull.call_args
+        body = kwargs["body"]
+        self.assertIn("[!WARNING]", body)
+        self.assertIn("ocp-shipment-data", body)
+        self.assertIn(el8_pullspec, body)
+        self.assertIn(el9_pullspec, body)
+
     @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     def test_validate_go_version_matches_group_vars_accepts_matching_go_previous(
@@ -1057,42 +1115,6 @@ repos:
         with self.assertRaisesRegex(ValueError, "Expected a golang builder image NVR"):
             pipeline._get_builder_pullspec("ose-cli-v4.16.0-202604150744.p2.gdeadbee.el9")
 
-    @patch("pyartcd.pipelines.update_golang.get_image_info", new_callable=AsyncMock)
-    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
-    async def test_ensure_builder_pullspec_available_reuses_oc_helper(self, mock_konflux_db, get_image_info):
-        """Test published pullspec availability check reuses pyartcd.oc.get_image_info with quay auth"""
-        pipeline = self._make_pipeline(build_system="konflux")
-
-        pullspec = "registry.redhat.io/openshift/golang-builder:openshift-golang-builder-container-v1.25.8-test"
-        quay_auth_file = str(Path(self.enterContext(tempfile.TemporaryDirectory())) / "quay-auth.json")
-
-        with patch.dict(
-            "os.environ",
-            {"QUAY_AUTH_FILE": quay_auth_file},
-            clear=False,
-        ):
-            await pipeline._ensure_builder_pullspec_available(pullspec)
-
-        get_image_info.assert_awaited_once_with(pullspec, raise_if_not_found=True, registry_config=quay_auth_file)
-
-    @patch("pyartcd.pipelines.update_golang.get_image_info", new_callable=AsyncMock)
-    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
-    async def test_ensure_builder_pullspec_available_errors_when_oc_helper_fails(self, mock_konflux_db, get_image_info):
-        """Test published pullspec availability check raises when pyartcd.oc.get_image_info fails"""
-        pipeline = self._make_pipeline(build_system="konflux")
-
-        pullspec = "registry.redhat.io/openshift/golang-builder:openshift-golang-builder-container-v1.25.8-test"
-        get_image_info.side_effect = ValueError("Image pullspec is not found.")
-        quay_auth_file = str(Path(self.enterContext(tempfile.TemporaryDirectory())) / "quay-auth.json")
-
-        with patch.dict(
-            "os.environ",
-            {"QUAY_AUTH_FILE": quay_auth_file},
-            clear=False,
-        ):
-            with self.assertRaisesRegex(RuntimeError, "Published golang builder pullspec is not available"):
-                await pipeline._ensure_builder_pullspec_available(pullspec)
-
     @patch("pyartcd.pipelines.update_golang.kinit", new_callable=AsyncMock)
     @patch("pyartcd.pipelines.update_golang.move_golang_bugs", new_callable=AsyncMock)
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
@@ -1142,7 +1164,6 @@ repos:
         builder_record = Mock(nvr="openshift-golang-builder-container-v1.26.5-202608071200.p0.assembly.test.el8")
         pipeline.get_existing_builders_konflux = AsyncMock(return_value={8: builder_record})
         pipeline._get_builder_pullspec = Mock()
-        pipeline._ensure_builder_pullspec_available = AsyncMock()
         pipeline.update_golang_streams = AsyncMock()
 
         await pipeline.run()
@@ -1152,7 +1173,6 @@ repos:
         self.assertEqual(pipeline._build_golang_plashets.await_args.args[0], "1.26.5")
         self.assertEqual(list(pipeline._build_golang_plashets.await_args.args[1]), [8])
         pipeline._get_builder_pullspec.assert_not_called()
-        pipeline._ensure_builder_pullspec_available.assert_not_awaited()
         pipeline.update_golang_streams.assert_not_awaited()
         move_golang_bugs.assert_not_awaited()
         slack_messages = [call.args[0] for call in pipeline._slack_client.say_in_thread.await_args_list]
@@ -1183,7 +1203,6 @@ repos:
         builder_record = Mock(nvr="openshift-golang-builder-container-v1.25.11-202607281030.p2.gbbb222.el8")
         pipeline.get_existing_builders_konflux = AsyncMock(return_value={8: builder_record})
         pipeline._get_builder_pullspec = Mock(return_value="registry.example.com/golang-builder:v1.25.11-el8")
-        pipeline._ensure_builder_pullspec_available = AsyncMock()
         pipeline.update_golang_streams = AsyncMock()
 
         await pipeline.run()
@@ -1263,7 +1282,6 @@ repos:
         pipeline.verify_golang_builder_repo = Mock()
         pipeline._rebase_and_build_konflux = AsyncMock()
         pipeline._get_builder_pullspec = Mock(return_value="registry.example.com/golang-builder:v1.25.11-el8")
-        pipeline._ensure_builder_pullspec_available = AsyncMock()
         pipeline.update_golang_streams = AsyncMock()
 
         await pipeline.run()
