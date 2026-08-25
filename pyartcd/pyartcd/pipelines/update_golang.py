@@ -14,7 +14,6 @@ from artcommonlib.constants import (
     BREW_HUB,
     GOLANG_BUILDER_IMAGE_NAME,
     GOLANG_NVR_LABEL,
-    KONFLUX_DEFAULT_IMAGE_REPO,
     PRODUCT_NAMESPACE_MAP,
 )
 from artcommonlib.github_auth import get_github_client_for_org
@@ -817,12 +816,6 @@ class UpdateGolangPipeline:
             raise ValueError(f"Expected a golang builder image NVR, got: {builder_nvr}")
         published_nvr = f'{component_name}-{parsed_nvr["version"]}-{parsed_nvr["release"]}'
         return rh_art_images_base_pullspec(published_nvr)
-
-    @staticmethod
-    def _get_konflux_builder_pullspec(builder_nvr: str):
-        """Generate a human-readable Konflux pullspec for diagnostic logging."""
-        parsed_nvr = parse_nvr(builder_nvr)
-        return f'{KONFLUX_DEFAULT_IMAGE_REPO}:golang-builder-{parsed_nvr["version"]}-{parsed_nvr["release"]}'
 
     async def update_golang_streams(self, go_version, builder_pullspecs):
         """
