@@ -2,15 +2,16 @@
 Container image utilities for RPM lockfile generation.
 
 Provides async helpers for interacting with container images via
-skopeo (tag-to-digest resolution) and podman (querying installed
-packages, reading files from images).
+oc (tag-to-digest resolution, preferring manifest-list digests) and
+podman (querying installed packages, reading files from images).
 """
 
-import json
 import logging
+import os
 
 from artcommonlib import logutil
 from artcommonlib.exectools import cmd_gather_async
+from artcommonlib.util import oc_image_info_for_arch_async
 
 from doozerlib.constants import BREW_REGISTRY_BASE_URL, REGISTRY_PROXY_BASE_URL
 from doozerlib.lockfile_prototype.constants import DEFAULT_PLATFORM, DIGEST_PREFIX, RPM_PSEUDO_PACKAGES
@@ -29,43 +30,55 @@ class ContainerImageHelper:
     def _proxy_pullspec(pullspec: str) -> str:
         return pullspec.replace(BREW_REGISTRY_BASE_URL, REGISTRY_PROXY_BASE_URL)
 
-    async def resolve_to_digest(self, pullspec: str) -> str:
+    @staticmethod
+    def _repo_from_pullspec(pullspec: str) -> str:
         """
-        If pullspec uses a tag, resolve it to a digest via skopeo inspect.
-        Returns the pullspec with @sha256:... instead of :tag.
-        If already a digest, returns as-is.
+        Return the repository portion of a pullspec, stripping tag and digest.
 
         Arg(s):
             pullspec (str): Container image pullspec.
         Return Value(s):
-            str: Pullspec with digest.
+            str: Repository (registry/namespace/name) without tag or digest.
         """
         if DIGEST_PREFIX in pullspec:
-            return pullspec
-
-        inspect_pullspec = self._proxy_pullspec(pullspec)
-        env = build_env()
-        cmd = ["skopeo", "inspect", "--no-tags", f"docker://{inspect_pullspec}"]
-        self.logger.debug(f"Resolving tag to digest: {pullspec}")
-
-        rc, stdout, stderr = await cmd_gather_async(cmd, check=False, env=env)
-
-        if rc != 0:
-            self.logger.warning(f"Failed to resolve digest for {pullspec}, using tag: {stderr[:200]}")
-            return pullspec
-
-        digest = json.loads(stdout).get("Digest", "")
-        if not digest:
-            self.logger.warning(f"No digest found for {pullspec}, using tag")
-            return pullspec
-
+            pullspec = pullspec.split(DIGEST_PREFIX, 1)[0]
         # Strip tag after the last "/" to avoid stripping port numbers
         last_slash = pullspec.rfind("/")
         if ":" in pullspec[last_slash + 1 :]:
-            repo = pullspec[: last_slash + 1] + pullspec[last_slash + 1 :].rsplit(":", 1)[0]
-        else:
-            repo = pullspec
-        resolved = f"{repo}@{digest}"
+            return pullspec[: last_slash + 1] + pullspec[last_slash + 1 :].rsplit(":", 1)[0]
+        return pullspec
+
+    async def resolve_to_digest(self, pullspec: str) -> str:
+        """
+        Resolve a pullspec to a digest-pinned pullspec.
+
+        Prefers the manifest-list digest (listDigest) so rpm-lockfile-prototype
+        --image mode can extract per-arch rpmdbs via skopeo --override-arch
+        (ART-22787). Falls back to the platform digest for single-arch images.
+        Already-digest pullspecs are re-inspected so a platform digest can be
+        upgraded to listDigest when the image is a manifest list.
+
+        Arg(s):
+            pullspec (str): Container image pullspec (tag or digest).
+        Return Value(s):
+            str: Pullspec with digest. Returns the original pullspec if inspect fails.
+        """
+        inspect_pullspec = self._proxy_pullspec(pullspec)
+        registry_config = os.environ.get("QUAY_AUTH_FILE") or os.environ.get("REGISTRY_AUTH_FILE")
+        self.logger.debug(f"Resolving to digest (prefer listDigest): {pullspec}")
+
+        try:
+            image_data = await oc_image_info_for_arch_async(inspect_pullspec, registry_config=registry_config)
+        except Exception as e:
+            self.logger.warning(f"Failed to resolve digest for {pullspec}, using original: {e}")
+            return pullspec
+
+        digest = image_data.get("listDigest") or image_data.get("digest")
+        if not digest:
+            self.logger.warning(f"No digest found for {pullspec}, using original")
+            return pullspec
+
+        resolved = f"{self._repo_from_pullspec(pullspec)}@{digest}"
         self.logger.debug(f"Resolved to: {resolved}")
         return resolved
 
