@@ -34,6 +34,7 @@ class Lock(enum.Enum):
     SCAN_OPERATOR = 'lock:scan-operator:{version}'
     SYNC_CI_IMAGES = 'lock:sync-ci-images:{version}'
     OPEN_RECONCILIATION_PRS = 'lock:open-reconciliation-prs:{version}'
+    OPEN_RECONCILIATION_PRS_LAYERED = 'lock:open-reconciliation-prs-layered:{group}'
 
 
 class Keys(enum.Enum):
@@ -163,6 +164,11 @@ LOCK_POLICY = {
         'lock_timeout': DEFAULT_LOCK_TIMEOUT,
     },
     Lock.OPEN_RECONCILIATION_PRS: {
+        'retry_count': 36000,
+        'retry_delay_min': 0.1,
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
+    },
+    Lock.OPEN_RECONCILIATION_PRS_LAYERED: {
         'retry_count': 36000,
         'retry_delay_min': 0.1,
         'lock_timeout': DEFAULT_LOCK_TIMEOUT,

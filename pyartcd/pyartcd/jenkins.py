@@ -54,6 +54,7 @@ class Jobs(Enum):
     SCAN_OPERATOR = 'aos-cd-builds/build%2Fscan-operator'
     SYNC_CI_IMAGES = 'aos-cd-builds/build%2Fsync-ci-images'
     OPEN_RECONCILIATION_PRS = 'aos-cd-builds/build%2Fopen-reconciliation-prs'
+    OPEN_RECONCILIATION_PRS_LAYERED = 'aos-cd-builds/build%2Fopen-reconciliation-prs-layered-products'
 
 
 def get_jenkins_url():
@@ -547,6 +548,17 @@ def start_open_reconciliation_prs(version: str, **kwargs) -> Optional[str]:
     }
     return start_build(
         job=Jobs.OPEN_RECONCILIATION_PRS,
+        params=params,
+        **kwargs,
+    )
+
+
+def start_open_reconciliation_prs_layered(group: str, **kwargs) -> Optional[str]:
+    params = {
+        'GROUP': group,
+    }
+    return start_build(
+        job=Jobs.OPEN_RECONCILIATION_PRS_LAYERED,
         params=params,
         **kwargs,
     )
