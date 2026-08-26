@@ -215,8 +215,8 @@ class BuildLayeredProductsPipeline:
             requested = [img.strip() for img in self.image_list.split(',') if img.strip()]
             remaining = [img for img in requested if img not in excluded]
             if not remaining:
-                self._logger.warning('No buildable images remaining after rebase; skipping build')
-                return
+                self._logger.error('No buildable images remaining after rebase')
+                raise ValueError('No buildable images remaining after rebase')
             build_image_list = ','.join(remaining)
         else:
             build_image_list = None
