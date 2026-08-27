@@ -2824,7 +2824,9 @@ class TestScanStaleCiImages(IsolatedAsyncioTestCase):
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     @patch("artcommonlib.exectools.cmd_gather_async")
     async def test_builds_command_and_returns_changed_images(self, mock_cmd_gather, mock_konflux_db):
-        pipeline = self._make_pipeline(kubeconfig="/tmp/kubeconfig")
+        # --ci-kubeconfig must come from the app.ci KUBECONFIG env var, not self.kubeconfig
+        # (which holds the Konflux SA kubeconfig and lacks RBAC on app.ci imagestreams).
+        pipeline = self._make_pipeline(kubeconfig="/tmp/konflux-kubeconfig")
         report = (
             "images:\n"
             "- name: ci-openshift-golang-builder-latest.rhel9\n"
@@ -2834,9 +2836,10 @@ class TestScanStaleCiImages(IsolatedAsyncioTestCase):
         )
         mock_cmd_gather.return_value = (0, report, "")
 
-        stale = await pipeline._scan_stale_ci_images(
-            ["ci-openshift-golang-builder-latest.rhel9", "ci-openshift-golang-builder-extra.rhel8"]
-        )
+        with patch.dict(os.environ, {"KUBECONFIG": "/tmp/ci-kubeconfig"}):
+            stale = await pipeline._scan_stale_ci_images(
+                ["ci-openshift-golang-builder-latest.rhel9", "ci-openshift-golang-builder-extra.rhel8"]
+            )
 
         self.assertEqual(stale, ["ci-openshift-golang-builder-latest.rhel9"])
         cmd = mock_cmd_gather.call_args.args[0]
@@ -2847,18 +2850,17 @@ class TestScanStaleCiImages(IsolatedAsyncioTestCase):
             cmd[cmd.index("-i") + 1],
             "ci-openshift-golang-builder-latest.rhel9,ci-openshift-golang-builder-extra.rhel8",
         )
-        self.assertIn("--ci-kubeconfig=/tmp/kubeconfig", cmd)
+        self.assertIn("--ci-kubeconfig=/tmp/ci-kubeconfig", cmd)
 
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     @patch("artcommonlib.exectools.cmd_gather_async")
     async def test_omits_ci_kubeconfig_when_not_set(self, mock_cmd_gather, mock_konflux_db):
         pipeline = self._make_pipeline(kubeconfig=None)
-        # Force this regardless of ambient env vars other tests in this process may have leaked
-        # (KONFLUX_SA_KUBECONFIG is a fallback the pipeline reads at construction time).
-        pipeline.kubeconfig = None
         mock_cmd_gather.return_value = (0, "images: []\n", "")
 
-        await pipeline._scan_stale_ci_images(["ci-openshift-golang-builder-latest.rhel9"])
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("KUBECONFIG", None)
+            await pipeline._scan_stale_ci_images(["ci-openshift-golang-builder-latest.rhel9"])
 
         cmd = mock_cmd_gather.call_args.args[0]
         self.assertFalse(any(arg.startswith("--ci-kubeconfig") for arg in cmd))

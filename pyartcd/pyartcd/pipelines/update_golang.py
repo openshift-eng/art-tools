@@ -1216,8 +1216,11 @@ class UpdateGolangPipeline:
         cmd.extend(self._get_doozer_assembly_args())
         cmd.extend(["-i", ",".join(image_keys)])
         cmd.extend(["beta:config:konflux:scan-sources", "--yaml"])
-        if self.kubeconfig:
-            cmd.append(f"--ci-kubeconfig={self.kubeconfig}")
+        # --ci-kubeconfig is for looking at release-controller imagestreams on app.ci, which is a
+        # different cluster/identity than self.kubeconfig (the Konflux SA kubeconfig).
+        ci_kubeconfig = os.environ.get('KUBECONFIG')
+        if ci_kubeconfig:
+            cmd.append(f"--ci-kubeconfig={ci_kubeconfig}")
 
         rc, out, _ = await exectools.cmd_gather_async(cmd, env=self._doozer_env_vars, stderr=None, check=False)
         if rc != 0:
