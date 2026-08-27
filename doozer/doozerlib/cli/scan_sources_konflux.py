@@ -1806,7 +1806,10 @@ class ConfigScanSources:
                 for container_conf in self.runtime.group_config.rhcos.payload_tags:
                     if self.runtime.group_config.rhcos.get("layered_rhcos", False):
                         build_id, pullspec = get_latest_layered_rhcos_build(
-                            container_conf, brew_arch, registry_config=self.runtime.registry_config
+                            container_conf,
+                            brew_arch,
+                            int(self.runtime.group_config.vars['MAJOR']),
+                            registry_config=self.runtime.registry_config,
                         )
                     else:
                         build_id, pullspec = rhcos.RHCOSBuildFinder(

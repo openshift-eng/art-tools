@@ -131,12 +131,13 @@ def get_build_id_from_rhcos_pullspec(pullspec, registry_config: str = None) -> s
     return build_id
 
 
-def get_latest_layered_rhcos_build(container_conf: Model, arch: str, registry_config: str = None):
+def get_latest_layered_rhcos_build(container_conf: Model, arch: str, major: int, registry_config: str = None):
     """
     Get the latest Layered RHCOS build ID and pullspec for the specified rhcos container configuration.
 
     :param container_conf: Payload tag config Model from group.yml (exposes rhel_build_id_index, rhcos_index_tag, etc.)
     :param arch: Brew architecture (e.g., 'x86_64', 'aarch64')
+    :param major: OCP major version, used to select the art-dev repo (e.g. 5 -> ocp-v5.0-art-dev)
     :param registry_config: Optional path to registry auth config file
     :return: Tuple of (build_id, pullspec)
     """
@@ -157,10 +158,8 @@ def get_latest_layered_rhcos_build(container_conf: Model, arch: str, registry_co
         )
         digest = json.loads(rhcos_info_str)['digest']
 
-    # NOTE: RHCOS images are always hosted in the OCP 4.x art-dev repository, even for OCP 5.x,
-    # until RHCOS 5.x becomes available. This is because RHCOS versioning is independent of OCP versioning.
-    # When RHCOS 5.x is released, this code will need to be updated to determine the RHCOS major version
-    # (which may differ from OCP major version) and pass it to get_art_prod_image_repo_for_version().
-    art_repo = get_art_prod_image_repo_for_version(major=4, repo_type="dev")
+    # RHCOS images are hosted in the art-dev repository matching the OCP major version
+    # (e.g. ocp-v5.0-art-dev for OCP 5.x), consistent with the rest of the release payload.
+    art_repo = get_art_prod_image_repo_for_version(major=major, repo_type="dev")
     pullspec = f"{art_repo}@{digest}"
     return build_id, pullspec
