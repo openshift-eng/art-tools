@@ -923,6 +923,109 @@ class TestScanExternalImageChanges(TestScanSourcesKonflux):
             await self.scanner.scan_external_image_changes(self.image_meta)
             mock_add_change.assert_not_called()
 
+        mock_oc_image_info.assert_awaited_once_with(
+            'registry.redhat.io/rhel9/postgresql-15:latest', registry_config=self.runtime.registry_config
+        )
+
+    @patch('doozerlib.cli.scan_sources_konflux.oc_image_info_for_arch_async')
+    async def test_external_image_auth_prefers_runtime_registry_config(self, mock_oc_image_info):
+        self.runtime.registry_config = '/runtime/auth.json'
+        mock_oc_image_info.return_value = {'listDigest': 'sha256:currentdigest123'}
+        art_yaml = {
+            'external-images': [
+                {
+                    'name': 'postgresql',
+                    'search': 'RELATED_IMAGE_POSTGRESQL',
+                    'replace': 'registry.redhat.io/rhel9/postgresql-15:latest',
+                }
+            ]
+        }
+        image_refs = {
+            'spec': {
+                'tags': [
+                    {
+                        'name': 'postgresql',
+                        'from': {'name': 'registry.redhat.io/rhel9/postgresql-15@sha256:currentdigest123'},
+                    }
+                ]
+            }
+        }
+        with (
+            patch.dict('os.environ', {'QUAY_AUTH_FILE': '/env/auth.json'}),
+            patch.object(self.scanner, '_fetch_art_yaml_from_rebase', new_callable=AsyncMock, return_value=art_yaml),
+            patch.object(
+                self.scanner, '_fetch_image_references_from_rebase', new_callable=AsyncMock, return_value=image_refs
+            ),
+        ):
+            await self.scanner.scan_external_image_changes(self.image_meta)
+        mock_oc_image_info.assert_awaited_once_with(
+            'registry.redhat.io/rhel9/postgresql-15:latest', registry_config='/runtime/auth.json'
+        )
+
+    @patch('doozerlib.cli.scan_sources_konflux.oc_image_info_for_arch_async')
+    async def test_external_image_auth_falls_back_to_environment(self, mock_oc_image_info):
+        self.runtime.registry_config = None
+        mock_oc_image_info.return_value = {'listDigest': 'sha256:currentdigest123'}
+        art_yaml = {
+            'external-images': [
+                {
+                    'name': 'postgresql',
+                    'search': 'RELATED_IMAGE_POSTGRESQL',
+                    'replace': 'registry.redhat.io/rhel9/postgresql-15:latest',
+                }
+            ]
+        }
+        image_refs = {
+            'spec': {
+                'tags': [
+                    {
+                        'name': 'postgresql',
+                        'from': {'name': 'registry.redhat.io/rhel9/postgresql-15@sha256:currentdigest123'},
+                    }
+                ]
+            }
+        }
+        with (
+            patch.dict('os.environ', {'QUAY_AUTH_FILE': '/env/auth.json'}),
+            patch.object(self.scanner, '_fetch_art_yaml_from_rebase', new_callable=AsyncMock, return_value=art_yaml),
+            patch.object(
+                self.scanner, '_fetch_image_references_from_rebase', new_callable=AsyncMock, return_value=image_refs
+            ),
+        ):
+            await self.scanner.scan_external_image_changes(self.image_meta)
+        mock_oc_image_info.assert_awaited_once_with(
+            'registry.redhat.io/rhel9/postgresql-15:latest', registry_config='/env/auth.json'
+        )
+
+    @patch('doozerlib.cli.scan_sources_konflux.Model')
+    @patch('doozerlib.cli.scan_sources_konflux.oc_image_info_for_arch_async', new_callable=AsyncMock)
+    async def test_builder_auth_prefers_runtime_registry_config(self, mock_oc_image_info, mock_model):
+        self.runtime.group = 'oadp-1.5'
+        self.runtime.registry_config = '/runtime/auth.json'
+        mock_model.return_value.config.config.Labels = {
+            'com.redhat.component': 'component',
+            'version': '1',
+            'release': '1',
+        }
+        await self.scanner.get_builder_build_nvr('registry.example/builder:latest')
+        mock_oc_image_info.assert_awaited_once_with(
+            'registry.example/builder:latest', registry_config='/runtime/auth.json'
+        )
+
+    @patch('doozerlib.cli.scan_sources_konflux.Model')
+    @patch('doozerlib.cli.scan_sources_konflux.oc_image_info_for_arch_async', new_callable=AsyncMock)
+    async def test_builder_auth_falls_back_to_environment(self, mock_oc_image_info, mock_model):
+        self.runtime.group = 'oadp-1.5'
+        self.runtime.registry_config = None
+        mock_model.return_value.config.config.Labels = {
+            'com.redhat.component': 'component',
+            'version': '1',
+            'release': '1',
+        }
+        with patch.dict('os.environ', {'QUAY_AUTH_FILE': '/env/auth.json'}):
+            await self.scanner.get_builder_build_nvr('registry.example/builder:latest')
+        mock_oc_image_info.assert_awaited_once_with('registry.example/builder:latest', registry_config='/env/auth.json')
+
     @patch('doozerlib.cli.scan_sources_konflux.oc_image_info_for_arch_async')
     async def test_triggers_rebuild_when_digest_changed(self, mock_oc_image_info):
         """Should trigger rebuild when external image has a new digest."""
