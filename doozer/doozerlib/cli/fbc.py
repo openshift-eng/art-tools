@@ -917,7 +917,7 @@ class FbcRebaseAndBuildCli:
     metavar='PATH',
     help="The registry authentication file to use for the index image."
     " This might be needed if --reset-to-prod is used and the production index image requires authentication."
-    " If not set, the KONFLUX_OPERATOR_INDEX_AUTH_FILE environment variable will be used if set.",
+    " If not set, the QUAY_AUTH_FILE environment variable will be used if set.",
 )
 @click.option(
     "--major-minor",
@@ -971,7 +971,7 @@ async def fbc_rebase_and_build(
         )
 
     if reset_to_prod and not prod_registry_auth:
-        prod_registry_auth = os.environ.get('KONFLUX_OPERATOR_INDEX_AUTH_FILE')
+        prod_registry_auth = os.environ.get('QUAY_AUTH_FILE')
 
     cli = FbcRebaseAndBuildCli(
         runtime=runtime,

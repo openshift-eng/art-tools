@@ -246,11 +246,7 @@ class PrepareReleaseKonfluxPipeline:
             )
 
         source_files = [quay_auth_file]
-        registries = [REGISTRY_QUAY_OCP_RELEASE_DEV]
-        redhat_registry_auth_file = os.getenv('KONFLUX_OPERATOR_INDEX_AUTH_FILE')
-        if redhat_registry_auth_file:
-            source_files.append(redhat_registry_auth_file)
-            registries.append(REGISTRY_REDHAT_IO)
+        registries = [REGISTRY_QUAY_OCP_RELEASE_DEV, REGISTRY_REDHAT_IO]
 
         with RegistryConfig(
             kubeconfig=os.environ.get('KUBECONFIG'),

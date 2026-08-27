@@ -961,10 +961,10 @@ class ConfigScanSources:
             builder_image_url = self.runtime.resolve_brew_image_url(builder_image_name)
 
         # Find and map the builder image NVR
-        # Use KONFLUX_OPERATOR_INDEX_AUTH_FILE for non-openshift groups (like OADP), otherwise use default
+        # Prefer QUAY_AUTH_FILE for non-openshift groups (like OADP), otherwise use default
         # Since OADP et. al. uses other streams like https://github.com/openshift-eng/ocp-build-data/blob/oadp-1.5/streams.yml#L13
         builder_auth_file = (
-            (os.getenv("KONFLUX_OPERATOR_INDEX_AUTH_FILE") or self.runtime.registry_config)
+            (os.getenv("QUAY_AUTH_FILE") or self.runtime.registry_config)
             if not self.runtime.group.startswith("openshift-")
             else self.runtime.registry_config
         )
@@ -1217,7 +1217,7 @@ class ConfigScanSources:
                 pinned_pullspecs[tag_name] = pullspec
 
         # Resolve current digests for all external images concurrently
-        registry_auth = os.getenv("KONFLUX_OPERATOR_INDEX_AUTH_FILE") or self.runtime.registry_config
+        registry_auth = os.getenv("QUAY_AUTH_FILE") or self.runtime.registry_config
 
         async def resolve_current_digest(replace_ref: str) -> Optional[str]:
             try:

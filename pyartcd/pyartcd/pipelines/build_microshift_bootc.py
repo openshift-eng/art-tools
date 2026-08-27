@@ -185,10 +185,7 @@ class BuildMicroShiftBootcPipeline:
             KONFLUX_DEFAULT_IMAGE_REPO,
             REGISTRY_CI_OPENSHIFT,
         ]
-        redhat_registry_auth_file = os.getenv('KONFLUX_OPERATOR_INDEX_AUTH_FILE')
-        if redhat_registry_auth_file:
-            source_files.append(redhat_registry_auth_file)
-            registries.append(REGISTRY_REDHAT_IO)
+        registries.append(REGISTRY_REDHAT_IO)
 
         with RegistryConfig(
             kubeconfig=os.environ.get('KUBECONFIG'),

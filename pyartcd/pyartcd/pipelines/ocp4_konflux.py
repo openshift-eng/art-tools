@@ -1021,7 +1021,6 @@ class KonfluxOcpPipeline:
 
         # Get Jenkins credentials
         quay_auth_file = os.getenv('QUAY_AUTH_FILE')
-        redhat_registry_auth_file = os.getenv('KONFLUX_OPERATOR_INDEX_AUTH_FILE')
 
         if not quay_auth_file:
             raise ValueError(
@@ -1031,8 +1030,6 @@ class KonfluxOcpPipeline:
 
         # Build source files list
         source_files = [quay_auth_file]
-        if redhat_registry_auth_file:
-            source_files.append(redhat_registry_auth_file)
 
         # Build explicit credentials for QCI push (DPTP's CI registry)
         qci_user = os.environ.get('QCI_USER')

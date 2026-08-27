@@ -105,7 +105,7 @@ class BuildFbcPipeline:
         self._logger.info('Checking if production index image exists: %s', index_image)
 
         cmd = ['skopeo', 'inspect', '--no-tags', f'docker://{index_image}']
-        auth = self.prod_registry_auth or os.environ.get('KONFLUX_OPERATOR_INDEX_AUTH_FILE')
+        auth = self.prod_registry_auth or os.environ.get('QUAY_AUTH_FILE')
         if auth:
             cmd.extend(['--authfile', auth])
 

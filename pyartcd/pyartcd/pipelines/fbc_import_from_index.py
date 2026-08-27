@@ -67,10 +67,10 @@ class FbcImportPipeline:
         if self.into_fbc_repo:
             cmd.extend(['--fbc-repo', self.into_fbc_repo])
 
-        auth_file = os.environ.get('KONFLUX_OPERATOR_INDEX_AUTH_FILE')
+        auth_file = os.environ.get('QUAY_AUTH_FILE')
         if not auth_file:
             self._logger.warning(
-                'KONFLUX_OPERATOR_INDEX_AUTH_FILE is not set. This may cause issues with operator index authentication.'
+                'QUAY_AUTH_FILE is not set. This may cause issues with operator index authentication.'
             )
         else:
             cmd.extend(['--registry-auth', auth_file])
