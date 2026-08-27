@@ -1,11 +1,12 @@
 import asyncio
+import os
 import re
 import stat
 from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import IsolatedAsyncioTestCase, TestCase
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import semver
 from artcommonlib.model import Missing, Model
@@ -1772,6 +1773,7 @@ class TestPrivateFixDetection(IsolatedAsyncioTestCase):
         finally:
             util.is_commit_in_public_upstream_async = original_func
 
+
     async def test_no_private_fix_when_pull_url_none_and_commit_is_in_public(self):
         """Test: url=openshift-priv, pull_url=None, commit IS in public -> private_fix=False.
 
@@ -1935,6 +1937,41 @@ class TestPrivateFixDetection(IsolatedAsyncioTestCase):
             child_private_fix = True
 
         self.assertTrue(child_private_fix)
+
+
+class TestRebaserExternalImageAuth(IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.directory = TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.rebaser = KonfluxRebaser.__new__(KonfluxRebaser)
+        self.rebaser._runtime = MagicMock()
+        self.rebaser._logger = MagicMock()
+
+    async def _assert_registry_config(self, runtime_config, expected_config):
+        self.rebaser._runtime.registry_config = runtime_config
+        csv_file = Path(self.directory.name) / 'bundle.csv'
+        csv_file.write_text('RELATED_IMAGE_TEST')
+        with patch.dict(os.environ, {'QUAY_AUTH_FILE': '/env/auth.json'}, clear=False), patch.object(
+            self.rebaser, '_find_image_refs_path', return_value=None
+        ), patch('doozerlib.backend.rebaser.util.oc_image_info_for_arch_async', new_callable=AsyncMock) as mock_info:
+            mock_info.return_value = {'digest': 'sha256:test'}
+            await self.rebaser._replace_external_image_refs(
+                str(csv_file),
+                {},
+                Path(self.directory.name),
+                {
+                    'external-images': [
+                        {'name': 'test', 'search': 'RELATED_IMAGE_TEST', 'replace': 'registry.example/test:latest'}
+                    ]
+                },
+            )
+            mock_info.assert_awaited_once_with('registry.example/test:latest', registry_config=expected_config)
+
+    async def test_runtime_registry_config_precedes_environment(self):
+        await self._assert_registry_config('/runtime/auth.json', '/runtime/auth.json')
+
+    async def test_environment_used_when_runtime_registry_config_is_unset(self):
+        await self._assert_registry_config(None, '/env/auth.json')
 
 
 class TestPrivateFixDetectionE2E(IsolatedAsyncioTestCase):

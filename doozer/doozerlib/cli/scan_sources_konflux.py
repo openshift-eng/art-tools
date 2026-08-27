@@ -964,7 +964,7 @@ class ConfigScanSources:
         # Prefer QUAY_AUTH_FILE for non-openshift groups (like OADP), otherwise use default
         # Since OADP et. al. uses other streams like https://github.com/openshift-eng/ocp-build-data/blob/oadp-1.5/streams.yml#L13
         builder_auth_file = (
-            (os.getenv("QUAY_AUTH_FILE") or self.runtime.registry_config)
+            (self.runtime.registry_config or os.getenv("QUAY_AUTH_FILE"))
             if not self.runtime.group.startswith("openshift-")
             else self.runtime.registry_config
         )
@@ -1217,7 +1217,7 @@ class ConfigScanSources:
                 pinned_pullspecs[tag_name] = pullspec
 
         # Resolve current digests for all external images concurrently
-        registry_auth = os.getenv("QUAY_AUTH_FILE") or self.runtime.registry_config
+        registry_auth = self.runtime.registry_config or os.getenv("QUAY_AUTH_FILE")
 
         async def resolve_current_digest(replace_ref: str) -> Optional[str]:
             try:
