@@ -279,7 +279,7 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
     ):
         """When group config has konflux.image_repo, it should be used instead of the default."""
         mock_load_config.return_value = {
-            'product': 'installer-ove-ui',
+            'product': 'openshift_agent_installer',
             'version': '4.20',
             'konflux': {
                 'image_repo': 'quay.io/redhat-user-workloads/ocp-agent-based-installer-tenant/ove-ui-iso',
@@ -288,7 +288,7 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
 
         pipeline = BuildLayeredProductsPipeline(
             runtime=self.runtime,
-            group='installer-ove-ui-4.20',
+            group='openshift_agent_installer-4.20',
             version='4.20',
             assembly='stream',
             image_list='art-agent-installer-iso',
