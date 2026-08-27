@@ -151,8 +151,8 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
             with self.assertRaises(ChildProcessError):
                 await self.pipeline._rebase('img-a')
 
-    async def test_rebase_and_build_skips_build_when_no_images_remain(self):
-        """When all images fail rebase, the build step is skipped entirely."""
+    async def test_rebase_and_build_raises_when_no_images_remain(self):
+        """When all images fail rebase, ValueError is raised."""
         state = {'images:konflux:rebase': {'failed-images': ['oadp-velero-restic-restore-helper']}}
         state_path = Path(self.runtime.doozer_working, 'state.yaml')
         with state_path.open('w') as f:
@@ -163,9 +163,11 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
             new_callable=AsyncMock,
             side_effect=ChildProcessError('exit code 1'),
         ):
-            await self.pipeline._rebase_and_build('oadp', KONFLUX_DEFAULT_IMAGE_REPO)
+            with self.assertRaises(ValueError) as ctx:
+                await self.pipeline._rebase_and_build('oadp', KONFLUX_DEFAULT_IMAGE_REPO)
 
-        self.pipeline._logger.warning.assert_any_call('No buildable images remaining after rebase; skipping build')
+        self.assertIn('No buildable images remaining after rebase', str(ctx.exception))
+        self.pipeline._logger.error.assert_any_call('No buildable images remaining after rebase')
 
     async def test_rebase_and_build_proceeds_with_remaining_images(self):
         """When some images fail rebase, build proceeds with the surviving images."""
