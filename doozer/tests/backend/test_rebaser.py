@@ -1773,7 +1773,6 @@ class TestPrivateFixDetection(IsolatedAsyncioTestCase):
         finally:
             util.is_commit_in_public_upstream_async = original_func
 
-
     async def test_no_private_fix_when_pull_url_none_and_commit_is_in_public(self):
         """Test: url=openshift-priv, pull_url=None, commit IS in public -> private_fix=False.
 
@@ -1951,9 +1950,11 @@ class TestRebaserExternalImageAuth(IsolatedAsyncioTestCase):
         self.rebaser._runtime.registry_config = runtime_config
         csv_file = Path(self.directory.name) / 'bundle.csv'
         csv_file.write_text('RELATED_IMAGE_TEST')
-        with patch.dict(os.environ, {'QUAY_AUTH_FILE': '/env/auth.json'}, clear=False), patch.object(
-            self.rebaser, '_find_image_refs_path', return_value=None
-        ), patch('doozerlib.backend.rebaser.util.oc_image_info_for_arch_async', new_callable=AsyncMock) as mock_info:
+        with (
+            patch.dict(os.environ, {'QUAY_AUTH_FILE': '/env/auth.json'}, clear=False),
+            patch.object(self.rebaser, '_find_image_refs_path', return_value=None),
+            patch('doozerlib.backend.rebaser.util.oc_image_info_for_arch_async', new_callable=AsyncMock) as mock_info,
+        ):
             mock_info.return_value = {'digest': 'sha256:test'}
             await self.rebaser._replace_external_image_refs(
                 str(csv_file),

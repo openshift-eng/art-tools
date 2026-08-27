@@ -933,14 +933,29 @@ class TestScanExternalImageChanges(TestScanSourcesKonflux):
         mock_oc_image_info.return_value = {'listDigest': 'sha256:currentdigest123'}
         art_yaml = {
             'external-images': [
-                {'name': 'postgresql', 'search': 'RELATED_IMAGE_POSTGRESQL', 'replace': 'registry.redhat.io/rhel9/postgresql-15:latest'}
+                {
+                    'name': 'postgresql',
+                    'search': 'RELATED_IMAGE_POSTGRESQL',
+                    'replace': 'registry.redhat.io/rhel9/postgresql-15:latest',
+                }
             ]
         }
-        image_refs = {'spec': {'tags': [{'name': 'postgresql', 'from': {'name': 'registry.redhat.io/rhel9/postgresql-15@sha256:currentdigest123'}}]}}
-        with patch.dict('os.environ', {'QUAY_AUTH_FILE': '/env/auth.json'}), patch.object(
-            self.scanner, '_fetch_art_yaml_from_rebase', new_callable=AsyncMock, return_value=art_yaml
-        ), patch.object(
-            self.scanner, '_fetch_image_references_from_rebase', new_callable=AsyncMock, return_value=image_refs
+        image_refs = {
+            'spec': {
+                'tags': [
+                    {
+                        'name': 'postgresql',
+                        'from': {'name': 'registry.redhat.io/rhel9/postgresql-15@sha256:currentdigest123'},
+                    }
+                ]
+            }
+        }
+        with (
+            patch.dict('os.environ', {'QUAY_AUTH_FILE': '/env/auth.json'}),
+            patch.object(self.scanner, '_fetch_art_yaml_from_rebase', new_callable=AsyncMock, return_value=art_yaml),
+            patch.object(
+                self.scanner, '_fetch_image_references_from_rebase', new_callable=AsyncMock, return_value=image_refs
+            ),
         ):
             await self.scanner.scan_external_image_changes(self.image_meta)
         mock_oc_image_info.assert_awaited_once_with(
@@ -953,14 +968,29 @@ class TestScanExternalImageChanges(TestScanSourcesKonflux):
         mock_oc_image_info.return_value = {'listDigest': 'sha256:currentdigest123'}
         art_yaml = {
             'external-images': [
-                {'name': 'postgresql', 'search': 'RELATED_IMAGE_POSTGRESQL', 'replace': 'registry.redhat.io/rhel9/postgresql-15:latest'}
+                {
+                    'name': 'postgresql',
+                    'search': 'RELATED_IMAGE_POSTGRESQL',
+                    'replace': 'registry.redhat.io/rhel9/postgresql-15:latest',
+                }
             ]
         }
-        image_refs = {'spec': {'tags': [{'name': 'postgresql', 'from': {'name': 'registry.redhat.io/rhel9/postgresql-15@sha256:currentdigest123'}}]}}
-        with patch.dict('os.environ', {'QUAY_AUTH_FILE': '/env/auth.json'}), patch.object(
-            self.scanner, '_fetch_art_yaml_from_rebase', new_callable=AsyncMock, return_value=art_yaml
-        ), patch.object(
-            self.scanner, '_fetch_image_references_from_rebase', new_callable=AsyncMock, return_value=image_refs
+        image_refs = {
+            'spec': {
+                'tags': [
+                    {
+                        'name': 'postgresql',
+                        'from': {'name': 'registry.redhat.io/rhel9/postgresql-15@sha256:currentdigest123'},
+                    }
+                ]
+            }
+        }
+        with (
+            patch.dict('os.environ', {'QUAY_AUTH_FILE': '/env/auth.json'}),
+            patch.object(self.scanner, '_fetch_art_yaml_from_rebase', new_callable=AsyncMock, return_value=art_yaml),
+            patch.object(
+                self.scanner, '_fetch_image_references_from_rebase', new_callable=AsyncMock, return_value=image_refs
+            ),
         ):
             await self.scanner.scan_external_image_changes(self.image_meta)
         mock_oc_image_info.assert_awaited_once_with(
@@ -973,10 +1003,14 @@ class TestScanExternalImageChanges(TestScanSourcesKonflux):
         self.runtime.group = 'oadp-1.5'
         self.runtime.registry_config = '/runtime/auth.json'
         mock_model.return_value.config.config.Labels = {
-            'com.redhat.component': 'component', 'version': '1', 'release': '1'
+            'com.redhat.component': 'component',
+            'version': '1',
+            'release': '1',
         }
         await self.scanner.get_builder_build_nvr('registry.example/builder:latest')
-        mock_oc_image_info.assert_awaited_once_with('registry.example/builder:latest', registry_config='/runtime/auth.json')
+        mock_oc_image_info.assert_awaited_once_with(
+            'registry.example/builder:latest', registry_config='/runtime/auth.json'
+        )
 
     @patch('doozerlib.cli.scan_sources_konflux.Model')
     @patch('doozerlib.cli.scan_sources_konflux.oc_image_info_for_arch_async', new_callable=AsyncMock)
@@ -984,7 +1018,9 @@ class TestScanExternalImageChanges(TestScanSourcesKonflux):
         self.runtime.group = 'oadp-1.5'
         self.runtime.registry_config = None
         mock_model.return_value.config.config.Labels = {
-            'com.redhat.component': 'component', 'version': '1', 'release': '1'
+            'com.redhat.component': 'component',
+            'version': '1',
+            'release': '1',
         }
         with patch.dict('os.environ', {'QUAY_AUTH_FILE': '/env/auth.json'}):
             await self.scanner.get_builder_build_nvr('registry.example/builder:latest')
