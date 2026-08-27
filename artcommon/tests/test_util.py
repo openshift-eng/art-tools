@@ -702,6 +702,17 @@ class TestBridgeOCPVersions(unittest.TestCase):
 class TestProductBasedResolution(unittest.TestCase):
     """Test product-based configuration resolution"""
 
+    @patch.dict("os.environ", {"ASSISTED_INSTALLER_SA_KUBECONFIG": "/path/to/installer-kubeconfig"})
+    def test_openshift_agent_installer_resolution(self):
+        self.assertEqual(
+            util.resolve_konflux_kubeconfig_by_product("openshift_agent_installer"),
+            "/path/to/installer-kubeconfig",
+        )
+        self.assertEqual(
+            util.resolve_konflux_namespace_by_product("openshift_agent_installer"),
+            "art-installer-agent-tenant",
+        )
+
     @patch.dict("os.environ", {"KONFLUX_SA_KUBECONFIG": "/path/to/kubeconfig"})
     def test_product_kubeconfig_resolution(self):
         # Test that both oc-mirror and oc-mirror-2.0 resolve to the same KONFLUX_SA_KUBECONFIG path
