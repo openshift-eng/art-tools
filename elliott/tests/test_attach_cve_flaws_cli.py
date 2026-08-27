@@ -221,6 +221,37 @@ class TestAttachCVEFlawsCLI(unittest.IsolatedAsyncioTestCase):
             expected = {'CVE-2022-1': {'rhcos-x86_64', 'rhcos-aarch64'}}
             self.assertEqual(result, expected)
 
+    def test_get_cve_component_mapping_rhcos_new_pscomponent_versions(self):
+        """Test that the new 'openshift/ose-rhel-coreos-{N}' pscomponent values
+        (for any RHEL version) are handled the same as the legacy 'rhcos' value."""
+        for pscomponent in (
+            "openshift/ose-rhel-coreos-8",
+            "openshift/ose-rhel-coreos-9",
+            "openshift/ose-rhel-coreos-10",
+        ):
+            with self.subTest(pscomponent=pscomponent):
+                with patch("artcommonlib.arch_util.RHCOS_BREW_COMPONENTS", {"rhcos-x86_64", "rhcos-aarch64"}):
+                    flaw_bugs = [
+                        BugzillaBug(Mock(id=101, alias=['CVE-2022-1'])),
+                    ]
+                    attached_tracker_bugs = [
+                        BugzillaBug(Mock(id=1, whiteboard=f'component: {pscomponent}')),
+                    ]
+                    tracker_flaws = {
+                        1: [101],
+                    }
+                    attached_components = {'rhcos-x86_64', 'rhcos-aarch64', 'some-other-component'}
+
+                    result = AttachCveFlaws.get_cve_component_mapping(
+                        self.mock_runtime,
+                        cast(Iterable[Bug], flaw_bugs),
+                        cast(List[Bug], attached_tracker_bugs),
+                        cast(Dict[int, Iterable], tracker_flaws),
+                        attached_components,
+                    )
+                    expected = {'CVE-2022-1': {'rhcos-x86_64', 'rhcos-aarch64'}}
+                    self.assertEqual(result, expected)
+
     def test_get_cve_component_non_attached_flaw(self):
         flaw_bugs = [
             BugzillaBug(Mock(id=101, alias=['CVE-2022-1'])),

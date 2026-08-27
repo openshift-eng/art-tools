@@ -17,7 +17,7 @@ from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import is_ocp_delivery_repo, new_roundtrip_yaml_handler
 
 from elliottlib import Runtime, bzutil, constants, errata
-from elliottlib.bzutil import Bug, BugTracker, JIRABug
+from elliottlib.bzutil import Bug, BugTracker, JIRABug, is_rhcos_pscomponent
 from elliottlib.cli import common
 from elliottlib.cli.common import click_coroutine
 from elliottlib.exceptions import ElliottFatalError
@@ -631,10 +631,11 @@ def categorize_bugs_by_type(
                     logger.info(f"{package_name} bugs included by default")
                 found.add(bug)
                 bugs_by_type[kind].add(bug)
-            elif package_name == "rhcos" and packages & arch_util.RHCOS_BREW_COMPONENTS:
+            elif is_rhcos_pscomponent(package_name) and packages & arch_util.RHCOS_BREW_COMPONENTS:
                 # rhcos trackers are special, since they have per-architecture component names
                 # (rhcos-x86_64, rhcos-aarch64, ...) in Brew,
-                # but the tracker bug has a generic "rhcos" component name
+                # but the tracker bug has a generic "rhcos" (or "openshift/ose-rhel-coreos-N")
+                # component name
                 logger.info(f"{kind} build found for #{bug.id}, {package_name} ")
                 found.add(bug)
                 bugs_by_type[kind].add(bug)
