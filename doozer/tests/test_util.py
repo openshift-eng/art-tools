@@ -1,5 +1,6 @@
 import logging
 import pathlib
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
@@ -581,6 +582,42 @@ class TestGetKonfluxBuildPriority(unittest.TestCase):
         self.assertGreaterEqual(int(util.get_konflux_build_priority(metadata, "openshift-4.19")), 1)
 
 
+class TestIsCommitInPublicUpstream(unittest.TestCase):
+    @patch("doozerlib.util.exectools.cmd_gather")
+    def test_returns_true_when_commit_is_ancestor(self, mock_gather):
+        mock_gather.return_value = (0, "", "")
+        result = util.is_commit_in_public_upstream("abc123", "release-4.13", "/some/dir")
+        self.assertTrue(result)
+        mock_gather.assert_called_once_with(unittest.mock.ANY)
+
+    @patch("doozerlib.util.exectools.cmd_gather")
+    def test_returns_true_when_tree_is_in_public_history(self, mock_gather):
+        mock_gather.side_effect = [
+            (1, "", ""),
+            (0, "tree123\n", ""),
+            (0, "newer-tree\ntree123\nolder-tree\n", ""),
+        ]
+        result = util.is_commit_in_public_upstream("abc123", "release-4.13", "/some/dir")
+        self.assertTrue(result)
+        self.assertEqual(mock_gather.call_count, 3)
+
+    @patch("doozerlib.util.exectools.cmd_gather")
+    def test_returns_false_when_tree_is_not_in_public_history(self, mock_gather):
+        mock_gather.side_effect = [
+            (1, "", ""),
+            (0, "private-tree\n", ""),
+            (0, "public-tree\n", ""),
+        ]
+        result = util.is_commit_in_public_upstream("abc123", "release-4.13", "/some/dir")
+        self.assertFalse(result)
+
+    @patch("doozerlib.util.exectools.cmd_gather")
+    def test_raises_on_ancestry_check_error(self, mock_gather):
+        mock_gather.return_value = (128, "", "fatal: not a git repo")
+        with self.assertRaises(IOError):
+            util.is_commit_in_public_upstream("abc123", "release-4.13", "/some/dir")
+
+
 class TestIsCommitInPublicUpstreamAsync(unittest.IsolatedAsyncioTestCase):
     @patch("doozerlib.util.exectools.cmd_gather_async")
     async def test_returns_true_on_exit_0(self, mock_gather):
@@ -590,18 +627,118 @@ class TestIsCommitInPublicUpstreamAsync(unittest.IsolatedAsyncioTestCase):
         mock_gather.assert_called_once_with(unittest.mock.ANY, check=False)
 
     @patch("doozerlib.util.exectools.cmd_gather_async")
-    async def test_returns_false_on_exit_1(self, mock_gather):
-        # exit code 1 means "not an ancestor" — must NOT raise ChildProcessError
-        mock_gather.return_value = (1, "", "")
+    async def test_returns_false_when_tree_is_not_in_public_history(self, mock_gather):
+        mock_gather.side_effect = [
+            (1, "", ""),
+            (0, "private-tree\n", ""),
+            (0, "public-tree\n", ""),
+        ]
         result = await util.is_commit_in_public_upstream_async("abc123", "release-4.13", "/some/dir")
         self.assertFalse(result)
-        mock_gather.assert_called_once_with(unittest.mock.ANY, check=False)
+        self.assertEqual(mock_gather.call_count, 3)
+
+    @patch("doozerlib.util.exectools.cmd_gather_async")
+    async def test_returns_true_when_tree_is_in_public_history(self, mock_gather):
+        mock_gather.side_effect = [
+            (1, "", ""),
+            (0, "tree123\n", ""),
+            (0, "newer-tree\ntree123\nolder-tree\n", ""),
+        ]
+        result = await util.is_commit_in_public_upstream_async("abc123", "release-4.13", "/some/dir")
+        self.assertTrue(result)
+        self.assertEqual(mock_gather.call_count, 3)
 
     @patch("doozerlib.util.exectools.cmd_gather_async")
     async def test_raises_on_other_exit_codes(self, mock_gather):
         mock_gather.return_value = (128, "", "fatal: not a git repo")
         with self.assertRaises(IOError):
             await util.is_commit_in_public_upstream_async("abc123", "release-4.13", "/some/dir")
+
+    @patch("doozerlib.util.exectools.cmd_gather_async")
+    async def test_raises_when_tree_cannot_be_resolved(self, mock_gather):
+        mock_gather.side_effect = [(1, "", ""), (128, "", "fatal: bad revision")]
+        with self.assertRaises(IOError):
+            await util.is_commit_in_public_upstream_async("abc123", "release-4.13", "/some/dir")
+
+    @patch("doozerlib.util.exectools.cmd_gather_async")
+    async def test_raises_when_public_history_cannot_be_read(self, mock_gather):
+        mock_gather.side_effect = [
+            (1, "", ""),
+            (0, "tree123\n", ""),
+            (128, "", "fatal: bad public ref"),
+        ]
+        with self.assertRaises(IOError):
+            await util.is_commit_in_public_upstream_async("abc123", "release-4.13", "/some/dir")
+
+
+class TestIsCommitInPublicUpstreamGit(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.repo_dir = pathlib.Path(self.temp_dir.name)
+        self._git("init")
+        self._git("config", "user.name", "Doozer Test")
+        self._git("config", "user.email", "doozer-test@example.com")
+
+        self._commit_file("source.txt", "base\n", "base")
+        base_commit = self._git("rev-parse", "HEAD")
+
+        self._git("checkout", "-b", "public-lineage")
+        self._commit_file("source.txt", "public content\n", "public change")
+        self.public_equivalent_commit = self._git("rev-parse", "HEAD")
+        self._commit_file("public.txt", "public v1\n", "public advancement")
+        public_v1_commit = self._git("rev-parse", "HEAD")
+
+        self._git("checkout", "--detach", base_commit)
+        self._commit_file("source.txt", "public content\n", "equivalent private change")
+        self.private_equivalent_commit = self._git("rev-parse", "HEAD")
+
+        self._git("checkout", "--detach", self.private_equivalent_commit)
+        self._git("merge", "--no-ff", "-m", "reconcile public", public_v1_commit)
+        self.reconciliation_commit = self._git("rev-parse", "HEAD")
+
+        self._git("checkout", "--detach", self.private_equivalent_commit)
+        self._commit_file("private.txt", "private content\n", "private change")
+        self.private_commit = self._git("rev-parse", "HEAD")
+
+        self._git("checkout", "public-lineage")
+        self._commit_file("public.txt", "public v2\n", "newer public advancement")
+        public_head = self._git("rev-parse", "HEAD")
+        self._git("update-ref", "refs/remotes/public_upstream/main", public_head)
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def _git(self, *args: str) -> str:
+        result = subprocess.run(
+            ["git", "-C", str(self.repo_dir), *args],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return result.stdout.strip()
+
+    def _commit_file(self, filename: str, contents: str, message: str):
+        self.repo_dir.joinpath(filename).write_text(contents)
+        self._git("add", filename)
+        self._git("commit", "-m", message)
+
+    async def test_public_ancestry_is_public(self):
+        self.assertTrue(
+            await util.is_commit_in_public_upstream_async(self.public_equivalent_commit, "main", self.repo_dir)
+        )
+
+    async def test_equivalent_sibling_tree_is_public(self):
+        self.assertTrue(
+            await util.is_commit_in_public_upstream_async(self.private_equivalent_commit, "main", self.repo_dir)
+        )
+
+    async def test_reconciliation_tree_matching_older_public_commit_is_public(self):
+        self.assertTrue(
+            await util.is_commit_in_public_upstream_async(self.reconciliation_commit, "main", self.repo_dir)
+        )
+
+    async def test_private_tree_is_private(self):
+        self.assertFalse(await util.is_commit_in_public_upstream_async(self.private_commit, "main", self.repo_dir))
 
 
 if __name__ == "__main__":

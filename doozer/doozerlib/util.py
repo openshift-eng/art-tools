@@ -80,13 +80,18 @@ def dict_get(dct, path, default=DICT_EMPTY):
 
 def is_commit_in_public_upstream(revision: str, public_upstream_branch: str, source_dir: Union[str, Path]):
     """
-    Determine if the public upstream branch includes the specified commit.
+    Determine if the public upstream branch includes the specified commit or its exact source tree.
+
+    Commit ancestry is the fast path. If the commit is not reachable from the public branch, fall back to
+    checking whether an identical root tree is reachable. This handles public branches whose history was
+    rewritten or which received the same change through a squash/cherry-pick under a different commit SHA.
 
     :param revision: Git commit hash or reference
     :param public_upstream_branch: Git branch of the public upstream source
     :param source_dir: Path to the local Git repository
     """
-    cmd = [
+    public_ref = "public_upstream/" + public_upstream_branch
+    ancestry_cmd = [
         "git",
         "-C",
         str(source_dir),
@@ -94,25 +99,53 @@ def is_commit_in_public_upstream(revision: str, public_upstream_branch: str, sou
         "--is-ancestor",
         "--",
         revision,
-        "public_upstream/" + public_upstream_branch,
+        public_ref,
     ]
     # The command exits with status 0 if true, or with status 1 if not. Errors are signaled by a non-zero status that is not 1.
     # https://git-scm.com/docs/git-merge-base#Documentation/git-merge-base.txt---is-ancestor
-    rc, out, err = exectools.cmd_gather(cmd)
+    rc, out, err = exectools.cmd_gather(ancestry_cmd)
     if rc == 0:
         return True
-    if rc == 1:
-        return False
-    raise IOError(
-        f"Couldn't determine if the commit {revision} is in the public upstream source repo. `git merge-base` exited with {rc}, stdout={out}, stderr={err}"
-    )
+    if rc != 1:
+        raise IOError(
+            f"Couldn't determine if the commit {revision} is in the public upstream source repo. "
+            f"`git merge-base` exited with {rc}, stdout={out}, stderr={err}"
+        )
+
+    tree_cmd = ["git", "-C", str(source_dir), "rev-parse", "--verify", f"{revision}^{{tree}}"]
+    rc, out, err = exectools.cmd_gather(tree_cmd)
+    if rc:
+        raise IOError(
+            f"Couldn't determine the source tree for commit {revision}. "
+            f"`git rev-parse` exited with {rc}, stdout={out}, stderr={err}"
+        )
+    revision_tree = out.strip()
+
+    public_trees_cmd = ["git", "-C", str(source_dir), "log", "--format=%T", public_ref]
+    rc, out, err = exectools.cmd_gather(public_trees_cmd)
+    if rc:
+        raise IOError(
+            f"Couldn't inspect source trees in public upstream branch {public_upstream_branch}. "
+            f"`git log` exited with {rc}, stdout={out}, stderr={err}"
+        )
+
+    if revision_tree in {line.strip() for line in out.splitlines()}:
+        logger.info(
+            "Commit %s is not reachable from %s, but its source tree %s is; treating it as public",
+            revision,
+            public_ref,
+            revision_tree,
+        )
+        return True
+    return False
 
 
 async def is_commit_in_public_upstream_async(revision: str, public_upstream_branch: str, source_dir: Union[str, Path]):
     """
     Same as is_commit_in_public_upstream, but for async execution.
     """
-    cmd = [
+    public_ref = "public_upstream/" + public_upstream_branch
+    ancestry_cmd = [
         "git",
         "-C",
         str(source_dir),
@@ -120,18 +153,45 @@ async def is_commit_in_public_upstream_async(revision: str, public_upstream_bran
         "--is-ancestor",
         "--",
         revision,
-        "public_upstream/" + public_upstream_branch,
+        public_ref,
     ]
     # The command exits with status 0 if true, or with status 1 if not. Errors are signaled by a non-zero status that is not 1.
     # https://git-scm.com/docs/git-merge-base#Documentation/git-merge-base.txt---is-ancestor
-    rc, out, err = await exectools.cmd_gather_async(cmd, check=False)
+    rc, out, err = await exectools.cmd_gather_async(ancestry_cmd, check=False)
     if rc == 0:
         return True
-    if rc == 1:
-        return False
-    raise IOError(
-        f"Couldn't determine if the commit {revision} is in the public upstream source repo. `git merge-base` exited with {rc}, stdout={out}, stderr={err}"
-    )
+    if rc != 1:
+        raise IOError(
+            f"Couldn't determine if the commit {revision} is in the public upstream source repo. "
+            f"`git merge-base` exited with {rc}, stdout={out}, stderr={err}"
+        )
+
+    tree_cmd = ["git", "-C", str(source_dir), "rev-parse", "--verify", f"{revision}^{{tree}}"]
+    rc, out, err = await exectools.cmd_gather_async(tree_cmd, check=False)
+    if rc:
+        raise IOError(
+            f"Couldn't determine the source tree for commit {revision}. "
+            f"`git rev-parse` exited with {rc}, stdout={out}, stderr={err}"
+        )
+    revision_tree = out.strip()
+
+    public_trees_cmd = ["git", "-C", str(source_dir), "log", "--format=%T", public_ref]
+    rc, out, err = await exectools.cmd_gather_async(public_trees_cmd, check=False)
+    if rc:
+        raise IOError(
+            f"Couldn't inspect source trees in public upstream branch {public_upstream_branch}. "
+            f"`git log` exited with {rc}, stdout={out}, stderr={err}"
+        )
+
+    if revision_tree in {line.strip() for line in out.splitlines()}:
+        logger.info(
+            "Commit %s is not reachable from %s, but its source tree %s is; treating it as public",
+            revision,
+            public_ref,
+            revision_tree,
+        )
+        return True
+    return False
 
 
 def is_in_directory(path: os.PathLike, directory: os.PathLike):
