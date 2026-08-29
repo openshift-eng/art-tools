@@ -237,20 +237,17 @@ class BaseImageHandler:
     async def _snapshot_from_component(self, component: dict) -> Optional[str]:
         """Build Snapshot CR with one component and create it in Konflux."""
         try:
-            group_safe = normalize_group_name_for_k8s(self.runtime.group)
-
-            if not group_safe:
-                raise ValueError(f"Group name '{self.runtime.group}' produces invalid normalized name for Kubernetes")
-
             timestamp = get_utc_now_formatted_str()
-            component_safe = normalize_k8s_dns_label(
-                component["name"], max_length=63 - len(group_safe) - len(timestamp) - 2
-            )
+            # The component name already carries the version (e.g. "ose-4-15-openshift-enterprise-base-rhel9"),
+            # so embedding group_safe in the snapshot name is redundant and wastes budget.
+            # With only {component_safe}-{timestamp}, the component gets up to 63 - len(timestamp) - 1 chars,
+            # which avoids collisions between long component names that previously truncated to the same prefix.
+            component_safe = normalize_k8s_dns_label(component["name"], max_length=63 - len(timestamp) - 1)
             if not component_safe:
                 raise ValueError(
                     f"Component name '{component['name']}' produces invalid normalized name for Kubernetes"
                 )
-            snapshot_name = f"{group_safe}-{component_safe}-{timestamp}"
+            snapshot_name = f"{component_safe}-{timestamp}"
             validate_k8s_dns_label(snapshot_name, "Generated snapshot name")
 
             if self.dry_run:
