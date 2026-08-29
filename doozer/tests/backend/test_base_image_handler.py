@@ -325,7 +325,7 @@ class TestBaseImageHandler(IsolatedAsyncioTestCase):
         with patch("doozerlib.backend.base_image_handler.get_utc_now_formatted_str", return_value="20260529104357"):
             name = await handler._snapshot_from_component(component)
 
-        self.assertEqual(name, "openshift-4-22-ose-4-22-openshift-base-rhel9-20260529104357")
+        self.assertEqual(name, "ose-4-22-openshift-base-rhel9-20260529104357")
 
     @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
     @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
@@ -344,7 +344,7 @@ class TestBaseImageHandler(IsolatedAsyncioTestCase):
         with patch("doozerlib.backend.base_image_handler.get_utc_now_formatted_str", return_value="20260805200004"):
             name = await handler._snapshot_from_component(component)
 
-        self.assertEqual(name, "golang-golang-builder-v1-23-rhel9-20260805200004")
+        self.assertEqual(name, "golang-builder-v1-23-rhel9-20260805200004")
         self.assertRegex(name, r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
 
     @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
@@ -363,9 +363,11 @@ class TestBaseImageHandler(IsolatedAsyncioTestCase):
             name = await handler._snapshot_from_component(component)
 
         self.assertLessEqual(len(name), 63)
-        self.assertTrue(name.startswith("openshift-4-22-"))
         self.assertTrue(name.endswith("-20260529104357"))
         self.assertNotRegex(name, r'--')
+        # Snapshot name no longer includes group prefix; it starts with the
+        # (truncated) component name directly.
+        self.assertFalse(name.startswith("openshift-4-22-"))
 
     @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
     @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
