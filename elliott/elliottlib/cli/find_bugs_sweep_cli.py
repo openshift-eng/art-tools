@@ -578,13 +578,12 @@ def categorize_bugs_by_type(
             for t in fake_trackers:
                 # Add comment with the validation result reason
                 validation_result = fake_tracker_results.get(t.id)
-                if validation_result:
-                    try:
-                        runtime.get_bug_tracker(t.bug_class).add_invalid_tracker_comment(
-                            t.id, validation_result.reason, noop=not comment_on_invalid_bugs
-                        )
-                    except Exception as e:
-                        logger.error(f"Failed to create comment for bug {t.id}: {e}")
+                try:
+                    runtime.get_bug_tracker(t.bug_class).add_invalid_tracker_comment(
+                        t.id, validation_result.reason, noop=not comment_on_invalid_bugs
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to create comment for bug {t.id}: {e}")
 
     if exclude_trackers:
         logger.info("Excluding tracker bugs because --exclude-trackers is set")

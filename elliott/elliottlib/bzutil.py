@@ -282,7 +282,8 @@ class BugzillaBug(Bug):
         if not (has_keywords and has_whiteboard_component):
             missing = []
             if not has_keywords:
-                missing.append(f"- This bug lacks the required keywords: {set(constants.TRACKER_BUG_KEYWORDS)}")
+                missing_keywords = set(constants.TRACKER_BUG_KEYWORDS) - set(self.keywords)
+                missing.append(f"- This bug lacks the required keyword(s): {missing_keywords}")
             if not has_whiteboard_component:
                 missing.append("- Missing Whiteboard component")
             return BugValidationResult(ok=False, reason="\n".join(missing))
@@ -372,7 +373,8 @@ class JIRABug(Bug):
         if not (has_keywords and has_whiteboard_component and has_linked_flaw):
             missing = []
             if not has_keywords:
-                missing.append(f"- This bug lacks the required keywords: {set(constants.TRACKER_BUG_KEYWORDS)}")
+                missing_keywords = set(constants.TRACKER_BUG_KEYWORDS) - set(self.keywords)
+                missing.append(f"- This bug lacks the required keyword(s): {missing_keywords}")
             if not has_whiteboard_component:
                 missing.append("- Missing Whiteboard component")
             if not has_linked_flaw:
