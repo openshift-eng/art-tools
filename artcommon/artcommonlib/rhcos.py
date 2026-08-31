@@ -5,7 +5,6 @@ from artcommonlib.arch_util import go_arch_for_brew_arch
 from artcommonlib.model import ListModel, Model
 from artcommonlib.oc_image_info import oc_image_info__cached
 from artcommonlib.runtime import GroupRuntime
-from artcommonlib.util import get_art_prod_image_repo_for_version
 
 # Historically the only RHCOS container was 'machine-os-content'; see
 # https://github.com/openshift/machine-config-operator/blob/master/docs/OSUpgrades.md
@@ -131,13 +130,12 @@ def get_build_id_from_rhcos_pullspec(pullspec, registry_config: str = None) -> s
     return build_id
 
 
-def get_latest_layered_rhcos_build(container_conf: Model, arch: str, major: int, registry_config: str = None):
+def get_latest_layered_rhcos_build(container_conf: Model, arch: str, registry_config: str = None):
     """
     Get the latest Layered RHCOS build ID and pullspec for the specified rhcos container configuration.
 
     :param container_conf: Payload tag config Model from group.yml (exposes rhel_build_id_index, rhcos_index_tag, etc.)
     :param arch: Brew architecture (e.g., 'x86_64', 'aarch64')
-    :param major: OCP major version, used to select the art-dev repo (e.g. 5 -> ocp-v5.0-art-dev)
     :param registry_config: Optional path to registry auth config file
     :return: Tuple of (build_id, pullspec)
     """
@@ -158,8 +156,10 @@ def get_latest_layered_rhcos_build(container_conf: Model, arch: str, major: int,
         )
         digest = json.loads(rhcos_info_str)['digest']
 
-    # RHCOS images are hosted in the art-dev repository matching the OCP major version
-    # (e.g. ocp-v5.0-art-dev for OCP 5.x), consistent with the rest of the release payload.
-    art_repo = get_art_prod_image_repo_for_version(major=major, repo_type="dev")
-    pullspec = f"{art_repo}@{digest}"
+    # Pin the digest against the same repository the index tag was resolved from, so the
+    # resulting pullspec is always retrievable. RHCOS images are published only to the repo
+    # referenced in config (e.g. ocp-v4.0-art-dev); reconstructing a different repo can yield
+    # a pullspec whose manifest does not exist there.
+    repo = container_conf.rhcos_index_tag.split('@', 1)[0].rsplit(':', 1)[0]
+    pullspec = f"{repo}@{digest}"
     return build_id, pullspec

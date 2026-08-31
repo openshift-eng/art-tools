@@ -1808,7 +1808,6 @@ class ConfigScanSources:
                         build_id, pullspec = get_latest_layered_rhcos_build(
                             container_conf,
                             brew_arch,
-                            int(self.runtime.group_config.vars['MAJOR']),
                             registry_config=self.runtime.registry_config,
                         )
                     else:
