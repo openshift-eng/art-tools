@@ -661,6 +661,47 @@ class TestCategorizeBugsByType(unittest.TestCase):
         for kind in expected:
             self.assertEqual(expected[kind], set(b.id for b in bugs_by_kind[kind]))
 
+    def test_categorize_rhcos_tracker_with_new_pscomponent_versions(self):
+        """Test that RHCOS tracker bugs with any 'openshift/ose-rhel-coreos-{N}' pscomponent
+        value are correctly matched to image builds containing RHCOS brew components."""
+        for pscomponent in (
+            "openshift/ose-rhel-coreos-8",
+            "openshift/ose-rhel-coreos-9",
+            "openshift/ose-rhel-coreos-10",
+        ):
+            with self.subTest(pscomponent=pscomponent):
+                bugs = [
+                    flexmock(
+                        id='OCPBUGS-10',
+                        is_tracker_bug=lambda: True,
+                        is_invalid_tracker_bug=lambda: False,
+                        has_valid_target_version_in_summary=lambda *_: True,
+                        whiteboard_component=pscomponent,
+                        component='',
+                        summary='',
+                    ),
+                ]
+
+                flexmock(sweep_cli).should_receive("extras_bugs").and_return(set())
+                flexmock(sweep_cli).should_receive("normalize_component_by_ocp_delivery_repo").and_return(pscomponent)
+
+                builds_by_advisory_kind = {
+                    'image': {'rhcos-x86_64-version-release.el9', 'rhcos-aarch64-version-release.el9'},
+                    'rpm': set(),
+                    'extras': set(),
+                    'microshift': set(),
+                }
+
+                bugs_by_kind, issues = categorize_bugs_by_type(
+                    runtime=self.runtime,
+                    bugs=bugs,
+                    builds_by_advisory_kind=builds_by_advisory_kind,
+                    major_version=self.major_version,
+                    minor_version=self.minor_version,
+                )
+                self.assertEqual(issues, [])
+                self.assertEqual({b.id for b in bugs_by_kind['image']}, {'OCPBUGS-10'})
+
     def test_raise_fake_trackers(self):
         bugs = [
             flexmock(

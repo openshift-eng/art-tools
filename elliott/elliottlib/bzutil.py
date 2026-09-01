@@ -39,6 +39,21 @@ from elliottlib.util import (
 
 logger = logutil.get_logger(__name__)
 
+# Product Security pscomponent values used for RHCOS tracker bugs.
+# PS is transitioning from "rhcos" to "openshift/ose-rhel-coreos-{N}" (where N is
+# a RHEL major version, e.g. 8, 9, 10); both the legacy value and the new pattern
+# must be accepted for backward compatibility.
+_RHCOS_PSCOMPONENT_RE = re.compile(r"^(rhcos|openshift/ose-rhel-coreos-\d+)$")
+
+
+def is_rhcos_pscomponent(value: str) -> bool:
+    """Return True if *value* is a recognised RHCOS pscomponent name.
+
+    Matches the legacy ``"rhcos"`` label as well as the new
+    ``"openshift/ose-rhel-coreos-{N}"`` pattern (any RHEL version).
+    """
+    return bool(_RHCOS_PSCOMPONENT_RE.match(value))
+
 
 # This is easier to patch in unit tests
 def datetime_now():

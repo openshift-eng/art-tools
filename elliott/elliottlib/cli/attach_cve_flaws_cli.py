@@ -15,7 +15,14 @@ from doozerlib.util import konflux_application_name, konflux_image_component_nam
 from errata_tool import Erratum
 
 from elliottlib import constants
-from elliottlib.bzutil import Bug, BugTracker, get_flaws, get_highest_security_impact, sort_cve_bugs
+from elliottlib.bzutil import (
+    Bug,
+    BugTracker,
+    get_flaws,
+    get_highest_security_impact,
+    is_rhcos_pscomponent,
+    sort_cve_bugs,
+)
 from elliottlib.cli.common import cli, click_coroutine, find_default_advisory, use_default_advisory_option
 from elliottlib.errata import is_security_advisory
 from elliottlib.errata_async import AsyncErrataAPI, AsyncErrataUtils
@@ -571,11 +578,12 @@ class AttachCveFlaws:
                     whiteboard_component = new_component
 
             if component_names is None:  # Only set if not already set for builder containers
-                if whiteboard_component == "rhcos":
+                if is_rhcos_pscomponent(whiteboard_component):
                     # rhcos trackers are special, since they have per-architecture component names
                     # (rhcos-x86_64, rhcos-aarch64, ...) in Brew,
-                    # but the tracker bug has a generic "rhcos" component name
-                    # so we need to associate this CVE with all per-architecture component names
+                    # but the tracker bug has a generic "rhcos" (or "openshift/ose-rhel-coreos-N")
+                    # component name so we need to associate this CVE with all per-architecture
+                    # component names
                     component_names = attached_components & arch_util.RHCOS_BREW_COMPONENTS
                 else:
                     component_names = {whiteboard_component}
