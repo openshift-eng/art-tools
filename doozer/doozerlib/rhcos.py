@@ -251,7 +251,6 @@ class RHCOSBuildFinder:
             build_id, pullspec = rhcos.get_latest_layered_rhcos_build(
                 container_conf,
                 self.brew_arch,
-                int(self.runtime.group_config.vars['MAJOR']),
                 registry_config=self.registry_config,
             )
             return build_id, pullspec

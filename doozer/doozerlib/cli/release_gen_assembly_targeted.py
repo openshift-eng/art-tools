@@ -389,7 +389,6 @@ class GenAssemblyTargetedCli:
                 build_id, pullspec = get_latest_layered_rhcos_build(
                     container_conf,
                     arch,
-                    int(self.runtime.group_config.vars['MAJOR']),
                     registry_config=self.runtime.registry_config,
                 )
                 rhcos_config[container_name]["images"][arch] = pullspec
