@@ -1,19 +1,23 @@
-# ART-14447: Sign Without UMB — Migrate Off RADAS/UMB for Release Signing
+# ART-14447: Sign Without UMB — Direct Signing Server Access
 
 ## Summary
 
-UMB is being decommissioned in Q3 2026. The only ART interaction with UMB is in the signing
-flow during release promotion, where `AsyncSignatory` sends requests to RADAS over
-STOMP/UMB and waits for signed artifacts.
+UMB is being decommissioned. The only ART interaction with UMB is in the release-signing
+flow, where `AsyncSignatory` sends requests to RADAS over STOMP/UMB and waits for signed
+artifacts.
 
-Based on feedback from the RADAS team: RADAS has received an extension to stay on UMB with
-reduced support until Q1 2027, and the plan is to sunset RADAS entirely rather than migrate
-it to Kafka. The RADAS team recommends exploring direct signing server access, which is
-reportedly simpler than a Kafka migration and is already being adopted by Konflux
-([KONFLUX-11077](https://redhat.atlassian.net/browse/KONFLUX-11077)).
+ART will move to the direct signing route: ART will no longer send signing requests through
+RADAS and UMB. The exact direct integration point is still to be confirmed after the signing
+server team approves access. The options are to trigger an appropriate Tekton pipeline in the
+`signing` repository or to use its signing client and verification code as a reference for a
+direct ART integration.
 
-**Updated recommendation:** Explore direct signing server access as the primary approach.
-The Kafka transport swap remains a viable fallback if direct signing doesn't pan out in time.
+The signing team is also developing a generic-signing pipeline that signs files regardless of
+file type. That may be a particularly good fit for ART's JSON digest claims and message
+digests, but its merge request is not reviewed yet.
+
+The Kafka transport swap is retained only as a contingency. It is not the target architecture
+and should not be implemented in parallel with the direct-signing work.
 
 ## Context
 
@@ -22,7 +26,7 @@ The Kafka transport swap remains a viable fallback if direct signing doesn't pan
 `AsyncSignatory` in `pyartcd/pyartcd/signatory.py` signs OCP artifacts by:
 
 1. Connecting to UMB via STOMP (`AsyncUMBClient` in `pyartcd/pyartcd/umb_client.py`)
-2. Sending a signing request (base64-encoded artifact + metadata) to
+2. Sending a signing request (base64-encoded artifact and metadata) to
    `/topic/VirtualTopic.eng.art.artifact.sign`
 3. Subscribing to a consumer queue
    `/queue/Consumer.{sa}.{sub}.VirtualTopic.eng.robosignatory.art.sign`
@@ -30,260 +34,232 @@ The Kafka transport swap remains a viable fallback if direct signing doesn't pan
 5. Decoding the base64 response and writing the signature file
 
 This is called from `pyartcd/pyartcd/pipelines/promote.py` to sign JSON digest claims
-(container image signatures) and message digests (sha256sum.txt.gpg). It is also used in
-`pyartcd/pyartcd/pipelines/sync_rhcos.py` for RHCOS message digest signing.
+(container image signatures) and message digests (`sha256sum.txt.gpg`). It is also used in
+`pyartcd/pyartcd/pipelines/sync_rhcos.py` for RHCOS message-digest signing.
 
 Sigstore/cosign signing (`SigstoreSignatory`) is a separate mechanism that does not use UMB
 and is unaffected by this work.
 
-### Timeline Constraints
+### Constraints and Recent Feedback
 
-- **UMB decommissioned:** Q3 2026 (general), but RADAS has an extension until Q1 2027
-- **UMB code-complete deadline:** Originally end of Q2 2026, but with the RADAS extension
-  there is more flexibility
-- **Konflux direct signing PoC:** Nearly complete as of April 2026
-  ([KONFLUX-11077](https://redhat.atlassian.net/browse/KONFLUX-11077))
-- **RADAS sunset:** Planned for 2027 — the RADAS team prefers to sunset rather than migrate
-  to Kafka
+- The UMB migration deadline is **the end of September 2026**.
+- RADAS has an extension to remain on UMB until Q1 2027, but that extension does not cover
+  every other service that interacts with UMB. ART must therefore plan against the September
+  deadline and request an extension from the UMB team if direct signing is at risk.
+- The RADAS team plans to sunset RADAS rather than migrate it to Kafka. Continuing to use
+  RADAS through a Messaging Bridge would be a temporary solution with another migration later.
+- Konflux is already moving to direct signing, so its work is a useful reference.
+- The signing team confirmed that consumers may either trigger one of the Tekton pipelines in
+  the `signing` repository or use the repository's signing and verification code as reference.
+- A generic-signing pipeline is being developed in
+  [signing MR !92](https://gitlab.cee.redhat.com/signing/signing/-/merge_requests/92). It is
+  not reviewed yet, so ART must not make delivery depend on it until its availability and
+  interface are confirmed.
+- Direct signing requires a dedicated service account with its own Kerberos principal and
+  keytab, possibly one per environment, plus explicit signing permissions from the signing
+  server team.
 
-## Recommended Approach: Direct Signing Server Access
+## Decision: Direct Signing
 
-### Rationale
+ART will pursue direct signing server access as the primary and intended solution. This
+bypasses both RADAS and the message bus, aligns with the signing team's and Konflux's direction,
+and avoids adding a Kafka dependency for a service that is planned for retirement.
 
-Feedback from the RADAS team indicates that calling the signing server directly (bypassing
-RADAS and UMB entirely) is straightforward and likely simpler than migrating to Kafka. The
-main complexity is working with ProdSec to get approval and access. Konflux is already in
-the process of switching to direct signing
-([KONFLUX-11077](https://redhat.atlassian.net/browse/KONFLUX-11077),
-[KONFLUX-8400](https://redhat.atlassian.net/browse/KONFLUX-8400)).
+Direct signing may mean invoking a signing-repository Tekton pipeline or calling the approved
+signing interface from ART. Both choices remove UMB/RADAS from the ART request path. The
+technical choice must be made only after the signing server team confirms the supported
+interface, authentication model, and ART's signing permissions.
 
-This approach is the cleanest long-term solution:
-- No message bus dependency at all (no UMB, no Kafka, no Messaging Bridge)
-- No RADAS dependency (which is being sunset anyway)
-- Aligns with the direction Konflux is already taking
-- Fewer moving parts and infrastructure to maintain
+### Approval and Access Are Phase Zero
 
-### What Needs to Be Explored
+No technical implementation should start before access approval. The first action is to open a
+Jira request in the `SIGNSERVER` project asking for:
 
-Before committing to this approach, the following must be clarified:
+- A service account for ART with its own Kerberos principal and keytab.
+- Separate credentials where required for stage, production, or other environments.
+- Permission to perform ART's signing operations on the required signing keys.
+- The supported direct-signing interface, authentication requirements, and onboarding steps.
 
-1. **Signing server API:** What is the interface? REST, gRPC, or something else? What
-   authentication is required?
-2. **ProdSec approval:** What is the process and timeline for getting ART approved for
-   direct access?
-3. **ART's signing use cases:** Can all of ART's signing operations (JSON digest claims,
-   message digests) be handled by direct signing, or are some RADAS-specific?
-4. **Rate limiting:** RADAS currently acts as a throttling layer. Does the signing server
-   have its own rate limits, and does ART's volume require any throttling on our side?
-5. **Environments:** Does the signing server have stage/prod environments matching ART's
-   needs?
-6. **Credentials and access:** What credentials are needed, and how are they provisioned?
+[`SIGNSERVER-2309`](https://redhat.atlassian.net/browse/SIGNSERVER-2309) is an example of a
+signing-permission request created for Konflux. It may be access-restricted, but it can serve as
+a template when filing the ART request.
 
-### High-Level Design (Pending Exploration)
+### Signing Repository Investigation
 
-If direct signing is viable, the implementation would:
+After approval, use the signing repository as the primary technical reference:
 
-- Replace `AsyncSignatory` (which wraps RADAS/UMB request/response) with a new
-  `DirectSignatory` that calls the signing server API directly
-- Keep the same public interface (`sign_json_digest`, `sign_message_digest`) so callers
-  in `promote.py` and `sync_rhcos.py` don't change
-- Use `--signing-transport` CLI flag (choices: `umb`, `direct`, default: `umb`) to allow
-  incremental rollout, same toggle pattern as the Kafka approach
-- Add a configurable response timeout (default 10 minutes) — fixes a pre-existing issue
-  in the UMB path where there is no timeout
-- Include solid unit tests and docstrings per the acceptance criteria
+- Inspect the existing Tekton pipelines and determine whether ART can trigger one directly.
+- Evaluate the generic-signing pipeline from
+  [MR !92](https://gitlab.cee.redhat.com/signing/signing/-/merge_requests/92) once its interface
+  and review status are known.
+- Review the signing and signature-verification code in the repository.
+- Review [RADAS's ART consumer](https://gitlab.cee.redhat.com/signing/radas/-/blob/master/radas/artconsumer.py#L79),
+  which concentrates the current ART-facing request and response behavior in one place.
 
-### Rollout Plan (Direct Signing)
+The investigation must answer:
 
-#### Phase 1 — Exploration and ProdSec Approval
+1. Is the supported entry point a REST API, gRPC API, Tekton pipeline trigger, or another
+   interface?
+2. What request and response format represents JSON digest claims and message digests?
+3. How are authentication, Kerberos credentials, key selection, and signing permissions
+   configured?
+4. Which stage and production endpoints are available?
+5. What timeout, retry, rate-limit, and failure semantics apply?
+6. Does the generic-signing pipeline support all ART use cases, or does ART need a narrower
+   integration?
 
-- Investigate signing server API (interface, auth, environments)
-- Coordinate with ProdSec for approval and access
-- Validate that ART's signing use cases are supported
-- Assess rate-limiting requirements
+## Proposed ART Design
 
-#### Phase 2 — Implementation
+The implementation should keep the existing signing boundary stable while replacing the
+RADAS/UMB mechanism behind it:
 
-- Implement `DirectSignatory` (or refactor `AsyncSignatory`) with the signing server API
-- Add `--signing-transport` flag (choices: `umb`, `direct`, default: `umb`) to both
-  `promote.py` and `sync_rhcos.py`
-- Add response timeout to both paths
-- Unit tests
+- Introduce or refactor a `DirectSignatory` that exposes the existing
+  `sign_json_digest` and `sign_message_digest` methods.
+- Keep callers in `promote.py` and `sync_rhcos.py` unchanged where possible.
+- If the approved entry point is a Tekton pipeline, create and monitor the relevant TaskRun or
+  PipelineRun and retrieve or publish the resulting signature files according to the signing
+  team's contract.
+- If the approved entry point is a direct client API, isolate request construction, credential
+  handling, response validation, and error translation in the signatory implementation.
+- Do not embed credentials in source or pipeline arguments. Use the approved service-account,
+  Kerberos-principal, and keytab provisioning mechanism for each environment.
+- Add a configurable response timeout, with a default of 10 minutes unless the signing team
+  specifies a different limit.
+- Keep the current UMB path available during staged rollout. A temporary switch such as
+  `--signing-transport direct|umb` may be used in `promote.py` and `sync_rhcos.py`; its name and
+  final configuration location should be confirmed once the direct integration shape is known.
+- Remove the switch and the UMB implementation after the direct path is proven in production.
 
-#### Phase 3 — Validate on Stage
+The design should not carry over UMB-specific concepts such as consumer queues, message
+acknowledgements, or stale-message filtering unless the approved direct interface actually
+requires equivalent behavior.
 
-- Run promote on stage with `--signing-transport direct`
-- Run `sync_rhcos` signing on stage with `--signing-transport direct`
-- Verify end-to-end signing and signature publishing
+### Candidate Integration Modes
 
-#### Phase 4 — Prod Cutover
+| Mode | Description | Assessment |
+|---|---|---|
+| **Signing-repository pipeline** | ART triggers an approved Tekton pipeline and waits for the signed output. | Prefer if the generic-signing pipeline supports ART's inputs and has a stable interface. |
+| **Direct signing client** | ART calls the approved signing interface using the signing repository's code as reference. | Use if pipeline triggering adds unnecessary orchestration or the generic pipeline is not ready. |
+| **Kafka through Messaging Bridge** | ART replaces STOMP with Kafka while RADAS remains behind the bridge. | Contingency only; requires continued RADAS dependency and a later migration. |
 
-- Flip Jenkins/Tekton configs to `--signing-transport direct`
-- Keep `umb` available as fallback
-- Monitor several successful releases
+## Rollout Plan
 
-#### Phase 5 — Cleanup
+### Phase 0 — Signing Server Approval and Access
 
-- Remove `--signing-transport` flag, `AsyncSignatory`, `AsyncUMBClient`, `umb_client.py`
-- Remove `stomp.py` dependency
-- Remove `UMB_BROKERS` from constants
+- File the `SIGNSERVER` Jira request, using `SIGNSERVER-2309` as a reference if accessible.
+- Request ART's service account, Kerberos principal, keytab, environment credentials, and key
+  permissions.
+- Confirm the supported direct interface and the signing team's operational requirements.
+- If approval or provisioning cannot complete before the September deadline, request an UMB
+  extension immediately rather than assuming the RADAS extension applies to ART.
 
-## Fallback: Kafka Transport Swap via Messaging Bridge
+### Phase 1 — Direct-Signing Discovery
 
-If direct signing doesn't pan out (ProdSec approval delays, API not ready, etc.), the Kafka
-transport swap remains a viable fallback that can be implemented within the timeline.
+- Inspect the signing repository's pipelines, signing code, and verification code.
+- Evaluate the generic-signing MR !92 and its expected contract.
+- Compare the pipeline-trigger and direct-client modes using ART's two signing use cases.
+- Validate the request/response format and signature verification in a non-production
+  environment.
 
-### How It Works
+### Phase 2 — Implementation
 
-IT Platform's Messaging Bridge (already in production) bidirectionally syncs UMB topics to
-Kafka topics. ART migrates from STOMP to Kafka; the bridge forwards messages to/from RADAS
-on UMB. The message format stays identical — only the transport changes.
+- Implement `DirectSignatory` or the equivalent direct integration.
+- Preserve the existing signatory methods and publishing behavior.
+- Add the temporary direct/UMB rollout switch if needed.
+- Add timeout, retry, authentication, and error handling required by the approved interface.
+- Add unit tests and docstrings before stage validation.
 
-### Design
+### Phase 3 — Stage Validation
 
-Introduce a `SigningTransport` protocol that `AsyncSignatory` delegates to:
+- Run `promote.py` with direct signing in stage.
+- Run `sync_rhcos.py` message-digest signing in stage.
+- Verify that produced signatures are valid and published to the expected locations.
+- Exercise signing failures, timeouts, invalid responses, credential failures, and retry
+  behavior.
 
-```python
-class SigningTransport(Protocol):
-    async def connect(self) -> None: ...
-    async def close(self) -> None: ...
-    async def send(self, destination: str, body: str) -> None: ...
-    async def subscribe(self, queue: str, subscription_id: str) -> AsyncIterator: ...
-    async def ack(self, message_id: str, subscription_id: str) -> None: ...
-```
+### Phase 4 — Production Cutover
 
-Two implementations:
+- Enable direct signing in the production Jenkins/Tekton configuration.
+- Keep UMB available as an immediate rollback while monitoring several successful releases.
+- Complete cutover by the end of September 2026, or obtain an explicit UMB extension if that
+  date cannot be met.
 
-- **`UMBTransport`** — wraps the existing `AsyncUMBClient` (extracts what `AsyncSignatory`
-  already does today). `ack()` maps directly to STOMP's per-message acknowledgement.
-- **`KafkaTransport`** — wraps `Retriable-Kafka-Client`, mapping `send()` to the Kafka
-  producer and `subscribe()` to the Kafka consumer on the response topic. `ack()` commits
-  the Kafka offset. Offsets are committed only after a response with matching `request_id`
-  is successfully validated and processed. This provides at-least-once delivery; duplicate
-  responses are tolerated via existing `request_id` correlation (duplicates are discarded
-  since the corresponding `Future` has already been resolved).
+### Phase 5 — Cleanup
 
-`Retriable-Kafka-Client` uses synchronous `confluent_kafka` with a thread-based executor
-pool model. `KafkaTransport` bridges this into asyncio by running the Kafka consumer poll
-loop in a thread and feeding messages into an `asyncio.Queue` — the same pattern
-`AsyncUMBClient` already uses to bridge `stomp.py`'s threading model.
+- Remove the temporary rollout switch and UMB-specific signatory path.
+- Remove `AsyncUMBClient`, `umb_client.py`, the `stomp.py` dependency, and `UMB_BROKERS` once
+  no ART workflow depends on them.
+- Update operational documentation and remove obsolete credentials/configuration.
 
-### Files Changed (Kafka Approach)
+## Contingency: Kafka Transport via Messaging Bridge
 
-| File | Change |
-|---|---|
-| `pyartcd/pyartcd/signing_transport.py` (new) | `SigningTransport` protocol, `UMBTransport`, `KafkaTransport` |
-| `pyartcd/pyartcd/kafka_client.py` (new) | Async Kafka client wrapping `Retriable-Kafka-Client` |
-| `pyartcd/pyartcd/signatory.py` | Refactor `AsyncSignatory` to accept `SigningTransport` instead of UMB-specific params |
-| `pyartcd/pyartcd/constants.py` | Add `KAFKA_BROKERS` dict (per environment) and Kafka topic names |
-| `pyartcd/pyartcd/pipelines/promote.py` | `sign_artifacts()` reads `--signing-transport` flag, creates appropriate transport |
-| `pyartcd/pyartcd/pipelines/sync_rhcos.py` | Same transport selection for RHCOS message digest signing |
-| CLI wiring (promote and sync_rhcos pipelines) | Add `--signing-transport` option (choices: `umb`, `kafka`, default: `umb`) |
+Use this option only if direct signing is blocked by approval, provisioning, or an unavailable
+interface and the UMB team confirms that a temporary extension is possible.
 
-### Kafka Authentication & Configuration
+IT Platform's Messaging Bridge can synchronize UMB topics with Kafka. ART would replace its
+STOMP client with Kafka while the bridge continues forwarding the existing message format to
+RADAS. This could preserve the current signing behavior, but it keeps ART dependent on RADAS
+and introduces another migration when RADAS is sunset.
 
-Kafka uses SASL username/password auth (unlike UMB's certificate-based auth):
+If activated, the contingency design would:
 
-- **Broker URLs** — `KAFKA_BROKERS` in `constants.py`, keyed by environment (prod/stage/qa/dev)
-- **Credentials** — environment variables `KAFKA_USERNAME` and `KAFKA_PASSWORD`, following the
-  same pattern as `SIGNING_CERT`/`SIGNING_KEY` for UMB
-- **Consumer group ID** — `artcd-signing-{uuid}` per instance, ensuring no two promote runs
-  steal each other's responses. Ephemeral groups are cleaned up by Kafka automatically.
-- **Topics** — Kafka topic names set up during Messaging Bridge onboarding, stored in
-  `constants.py`
+- Introduce a transport abstraction so the existing `AsyncSignatory` logic can run over UMB or
+  Kafka.
+- Use a unique Kafka consumer group per signing run and correlate responses by the existing
+  `request_id`.
+- Commit Kafka offsets only after a matching response has been validated and processed.
+- Add a bounded response timeout to both transports.
+- Onboard Kafka topics, credentials, and bridge mappings with IT Platform before code rollout.
 
-Topic mapping (exact names TBD during onboarding):
+The Kafka plan is deliberately not the current implementation target. No Kafka code or
+infrastructure work should begin unless the direct route is formally blocked or the schedule
+requires this contingency.
 
-| UMB | Kafka |
-|---|---|
-| `/topic/VirtualTopic.eng.art.artifact.sign` (send) | TBD during bridge setup |
-| `/queue/Consumer.{sa}.{sub}.VirtualTopic.eng.robosignatory.art.sign` (receive) | TBD during bridge setup |
+## Alternatives Considered
 
-Request/response correlation: the existing `request_id` field in the message body is used to
-match responses. On Kafka, the consumer receives all messages on the response topic and filters
-by `request_id`, discarding unrelated messages — same as the current UMB flow.
+### Continue Through RADAS and Kafka
 
-### Error Handling & Resilience (Kafka Approach)
+This would be a smaller transport change, but it preserves a dependency on RADAS even though
+the RADAS team plans to sunset it. It is therefore a contingency rather than a long-term
+solution.
 
-| Failure Mode | Behavior |
-|---|---|
-| **Connection failure** | `KafkaTransport` lets the error bubble up and fail the pipeline, same as `UMBTransport` |
-| **Stale messages** | Same 1-hour staleness check on message timestamp — transport-independent |
-| **Signing failure** | RADAS returning `signing_status != "success"` raises `SignatoryServerError` — unchanged |
-| **Response timeout** | NEW: configurable timeout (default 10 minutes) on both transports. Raises `TimeoutError` instead of hanging indefinitely. This fixes a pre-existing issue in the UMB path too. |
-| **Consumer group conflicts** | Unique group ID per instance (`artcd-signing-{uuid}`) prevents response stealing |
-| **Kafka offset-commit semantics** | `KafkaTransport` commits offsets only after a response with matching `request_id` is successfully validated and processed. Unmatched or stale messages are not committed until a valid response is found. This provides at-least-once delivery; duplicates are tolerated via `request_id` correlation. |
+### Move Signing into an ART-Owned Konflux Task
 
-### Kafka Rollout Plan
+ART could create its own Tekton Task or PipelineRun and have that task perform signing. This is
+still compatible with the direct-signing decision, but it adds orchestration and ownership for
+ART. Triggering an existing approved pipeline in the signing repository should be preferred if
+it provides the required contract. An ART-owned task remains an option if the signing team
+recommends it after access approval.
 
-1. **Infrastructure onboarding** — Kafka access, topics, Messaging Bridge sync
-2. **Code** — transport abstraction, `--signing-transport` flag, timeout, unit tests
-3. **Validate on stage** — both `promote.py` and `sync_rhcos.py`
-4. **Prod cutover** — flip to `--signing-transport kafka`, monitor
-5. **Cleanup** — remove UMB code after decommissioning
+## Testing Strategy
 
-## Alternative Considered: Move Signing to a Konflux Task
+### Unit Tests
 
-Instead of migrating the transport layer inside pyartcd, an alternative approach is to move
-the signing step itself into a Konflux Tekton Task. The promote pipeline (Jenkins) would
-trigger a Konflux TaskRun, passing signing parameters, and wait for the signed artifacts to
-come back.
+- Mock the approved signing API or pipeline client and verify request construction.
+- Cover the happy path for both JSON digest claims and message digests.
+- Verify response parsing, signature-file handling, and existing publishing behavior.
+- Cover signing failures, invalid responses, timeouts, credential failures, and retries.
+- Verify that callers in `promote.py` and `sync_rhcos.py` retain the expected behavior.
+- Add docstrings that explain the direct interface, credential assumptions, and lifecycle.
 
-### How It Would Work
+### Integration and Manual Testing
 
-1. A **Tekton Task** is deployed in the ART Konflux tenant that handles signing requests
-   (initially via RADAS/UMB or Kafka, eventually via the direct signing server API)
-2. `promote.py` uses the existing `KonfluxClient` (from `artcommon/artcommonlib/konflux/`)
-   to create a TaskRun with parameters: pullspecs, digests, version, sig_keyname
-3. The TaskRun produces signature files (either as OCI artifacts or pushes directly to S3)
-4. `promote.py` waits for the TaskRun to complete, then continues with publishing
-
-This pattern already exists in ART: `ocp4_konflux.py` shells out to doozer, which uses
-`KonfluxImageBuilder` and `KonfluxClient` to create PipelineRuns via the Kubernetes API and
-watch them to completion. The machinery for Konflux orchestration is proven.
-
-### Comparison of All Three Approaches
-
-| | Direct Signing Server | Kafka Transport Swap | Move to Konflux Task |
-|---|---|---|---|
-| **Scope** | Replace RADAS with direct API calls | Replace STOMP with Kafka transport | Build Tekton Task + cross-system orchestration |
-| **Effort** | TBD (depends on API complexity) | ~1-2 weeks | Significantly more |
-| **Message bus dependency** | None | Kafka + Messaging Bridge | Depends on what the Task uses internally |
-| **RADAS dependency** | None | Still depends on RADAS (via bridge) | Depends on implementation |
-| **Future-proof** | Yes — this is the target architecture | Temporary — needs another migration later | Yes — if built on direct signing |
-| **ProdSec approval** | Required | Not required | Required (for direct signing) |
-| **Q2 2026 deadline** | Depends on ProdSec timeline | Comfortable margin | Tight |
-| **Signing credentials** | New signing server credentials | Kafka username/password | In Konflux |
-| **sync_rhcos.py** | Same approach applies | Same transport abstraction | Needs separate migration |
-
-## Decision
-
-**Explore direct signing server access first.** This is the cleanest solution and aligns
-with the direction Konflux is already taking. The RADAS UMB extension to Q1 2027 removes
-the immediate urgency, giving time to work through ProdSec approval and integration.
-
-If direct signing is blocked or delayed beyond the timeline, fall back to the Kafka
-transport swap, which can be implemented quickly.
-
-## Testing Strategy (Applies to Both Approaches)
-
-**Unit tests:**
-
-- Mock the signing server (or Kafka client) and verify signing logic
-- Test timeout behavior — both transports raise clear error when no response arrives
-- Test stale message filtering
-- Existing `test_signatory.py` tests adapted for the new transport
-
-**Integration/manual testing:**
-
-1. Stage environment first with the new transport
-2. Verify both `promote.py` and `sync_rhcos.py` signing paths
-3. Prod cutover after successful stage validation
+1. Validate the approved direct entry point in stage.
+2. Run both ART signing paths in stage.
+3. Verify signatures using the signing repository's verification code or the existing ART
+   verification tooling.
+4. Confirm successful publication and rollback behavior.
+5. Cut over to production only after the stage results and signing-server team approval are
+   recorded.
 
 ## References
 
 - Jira: [ART-14447](https://redhat.atlassian.net/browse/ART-14447)
-- UMB Decommissioning plan: [Google Doc](https://docs.google.com/document/d/1k0ch92nck9vFotretm3O2mPVhPIEmzyvidRsEvBXcQ0)
+- Signing repository: [signing](https://gitlab.cee.redhat.com/signing/signing)
+- Generic signing pipeline: [signing MR !92](https://gitlab.cee.redhat.com/signing/signing/-/merge_requests/92)
+- Current ART consumer reference: [radas/artconsumer.py](https://gitlab.cee.redhat.com/signing/radas/-/blob/master/radas/artconsumer.py#L79)
+- Example signing-permission request: [SIGNSERVER-2309](https://redhat.atlassian.net/browse/SIGNSERVER-2309)
+- UMB decommissioning plan: [Google Doc](https://docs.google.com/document/d/1k0ch92nck9vFotretm3O2mPVhPIEmzyvidRsEvBXcQ0)
 - RADAS to Kafka: [Google Doc](https://docs.google.com/document/d/1j0L-C9KCQQqXtMc0tgSs8DgetZRXkW40FqZr1zm3B_s)
 - Retriable Kafka Client: [GitHub](https://github.com/release-engineering/Retriable-Kafka-Client)
 - RADAS Kafka decision: CLOUDWF-11222
