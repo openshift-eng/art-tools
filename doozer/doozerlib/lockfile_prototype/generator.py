@@ -58,14 +58,44 @@ _BARE_UPDATE_RE = re.compile(
     r"\b(?:microdnf|dnf|yum)\s+(?:-y\s+)?(?:update|upgrade)(?:\s+-y)?\s*(?:\\\n\s*&&\s*|&&\s*|;\s*|\n|(?=$))"
 )
 
+# Flags between the manager and ``install`` must not cross ``&&`` / ``;``
+# or a mixed RUN (normal install + --installroot) would skip the first command.
 _INSTALL_CMD_RE = re.compile(
-    r"\b(?:microdnf|dnf|yum)\s+(?:.*?\s+)?install\b(.*?)(?:&&|;|\n|$)",
+    r"\b(?:microdnf|dnf|yum)\s+(?:[^\n&;]*?\s+)?install\b(.*?)(?:&&|;|\n|$)",
     re.DOTALL,
 )
+
+_INSTALLROOT_RE = re.compile(r"--installroot(?:=|\s+)\S+")
 
 _PKG_NAME_RE = re.compile(r"^[a-zA-Z][\w.+\-]*$")
 
 _RPM_ARCHES = frozenset({"x86_64", "aarch64", "ppc64le", "s390x", "i686", "noarch", "src"})
+
+
+def _tokens_from_install_args(install_args: str) -> set[str]:
+    """
+    Parse package names from the argument tail of a dnf/yum install
+    command. Flags (``-*``), variables (``$*``), and non-package
+    tokens are skipped. Architecture qualifiers (e.g. glibc.x86_64)
+    are stripped.
+
+    Arg(s):
+        install_args (str): Text after the ``install`` verb.
+    Return Value(s):
+        set[str]: Package names.
+    """
+    packages: set[str] = set()
+    for token in install_args.split():
+        token = token.strip().rstrip("\\")
+        if token.startswith("-") or token.startswith("$"):
+            continue
+        if _PKG_NAME_RE.match(token):
+            if "." in token:
+                name, _, suffix = token.rpartition(".")
+                if suffix in _RPM_ARCHES:
+                    token = name
+            packages.add(token)
+    return packages
 
 
 def _extract_install_packages(entries: list[dict], stage_num: int) -> set[str]:
@@ -91,16 +121,39 @@ def _extract_install_packages(entries: list[dict], stage_num: int) -> set[str]:
             current_stage += 1
         elif entry["instruction"] == "RUN" and current_stage == stage_num:
             for m in _INSTALL_CMD_RE.finditer(entry["value"]):
-                for token in m.group(1).split():
-                    token = token.strip().rstrip("\\")
-                    if token.startswith("-") or token.startswith("$"):
-                        continue
-                    if _PKG_NAME_RE.match(token):
-                        if "." in token:
-                            name, _, suffix = token.rpartition(".")
-                            if suffix in _RPM_ARCHES:
-                                token = name
-                        packages.add(token)
+                packages |= _tokens_from_install_args(m.group(1))
+    return packages
+
+
+def _extract_installroot_packages(entries: list[dict], stage_num: int) -> set[str]:
+    """
+    Extract package names from dnf/yum/microdnf install commands that
+    use ``--installroot``. Those packages are installed into an empty
+    root, not into the stage image, so they must be resolved with
+    ``--bare``.
+
+    ``dnf --installroot … clean all`` has no install verb and is
+    ignored. Both ``--installroot=/path`` and ``--installroot /path``
+    forms are recognized.
+
+    Arg(s):
+        entries (list[dict]): DockerfileParser structure entries.
+        stage_num (int): 0-indexed stage number.
+    Return Value(s):
+        set[str]: Package names from --installroot install commands.
+    """
+    packages: set[str] = set()
+    current_stage = -1
+    for entry in entries:
+        if entry["instruction"] == "FROM":
+            current_stage += 1
+        elif entry["instruction"] == "RUN" and current_stage == stage_num:
+            if not _INSTALLROOT_RE.search(entry["value"]):
+                continue
+            for m in _INSTALL_CMD_RE.finditer(entry["value"]):
+                if not _INSTALLROOT_RE.search(m.group(0)):
+                    continue
+                packages |= _tokens_from_install_args(m.group(1))
     return packages
 
 
@@ -415,6 +468,11 @@ class RpmLockfilePrototypeGenerator:
         Stages without RUN commands (and no $(cat ...) extra packages)
         are skipped — they can't install RPMs. The final stage is always
         processed because it may need base image reinstall packages.
+
+        ``dnf --installroot`` packages are resolved separately with
+        ``--bare`` (empty rpmdb). They are not installs into the stage
+        image. Stages whose only RPM work is --installroot skip the
+        ``--image`` pass entirely.
         """
         stage_lockfiles: list[LockfileData] = []
         final_stage_num = total_stages - 1
@@ -425,13 +483,49 @@ class RpmLockfilePrototypeGenerator:
                     self.logger.debug(f"{distgit_key}: stage {stage_num}: no RUN commands, skipping")
                     continue
 
-            image_pullspec = await self._determine_stage_pullspec(stage_num, distgit_key)
-
             if stage_num != final_stage_num:
                 if self._has_rhel_version_mismatch(stage_num, repo_list, distgit_key):
                     continue
 
             extra_packages: list[str] = list(cat_packages.get(stage_num, []))
+            installroot_pkgs = _extract_installroot_packages(entries, stage_num)
+            normal_install_pkgs = _extract_install_packages(entries, stage_num) - installroot_pkgs
+            # --installroot is empty-root, not an install into the stage image.
+            # Skip --image when this stage has nothing else that needs the
+            # base-image rpmdb (CLO builder: make build + dnf --installroot).
+            skip_image_mode = bool(installroot_pkgs) and not (
+                normal_install_pkgs
+                or extra_packages
+                or stage_num in stages_with_bare_updates
+                or stage_num == final_stage_num
+            )
+
+            stage_results: list[LockfileData] = []
+            if installroot_pkgs:
+                self.logger.info(
+                    f"{distgit_key}: stage {stage_num}: resolving {len(installroot_pkgs)} "
+                    f"--installroot packages in bare mode: {sorted(installroot_pkgs)}"
+                )
+                installroot_result = await self._resolve_with_reconciliation(
+                    repo_list,
+                    arches,
+                    sorted(installroot_pkgs),
+                    None,
+                    distgit_key,
+                    stage_num,
+                    containerfile_path=None,
+                )
+                if installroot_result:
+                    stage_results.append(installroot_result)
+
+            if skip_image_mode:
+                if stage_results:
+                    stage_lockfiles.append(
+                        merge_lockfiles(stage_results) if len(stage_results) > 1 else stage_results[0]
+                    )
+                continue
+
+            image_pullspec = await self._determine_stage_pullspec(stage_num, distgit_key)
 
             reinstall_pkgs: list[str] | None = None
             upgrade_pkgs: list[str] | None = None
@@ -488,14 +582,16 @@ class RpmLockfilePrototypeGenerator:
                 reinstall_packages=reinstall_pkgs,
                 containerfile_path=str(dockerfile_path),
                 upgrade_packages=upgrade_pkgs,
+                exclude_packages=sorted(installroot_pkgs) if installroot_pkgs else None,
             )
 
             # Pass 2: pin Dockerfile packages that overlap with the base
             # image. These are "already installed" so neither install nor
             # upgrade captures them, but cachi2 needs them in the lockfile.
             # Runs for every image-backed stage, not just final/bare-update.
+            # --installroot names are resolved in the bare pass above.
             if image_pullspec:
-                dockerfile_install_pkgs = _extract_install_packages(entries, stage_num)
+                dockerfile_install_pkgs = _extract_install_packages(entries, stage_num) - installroot_pkgs
                 if dockerfile_install_pkgs:
                     if upgrade_pkgs:
                         base_pkg_set = set(upgrade_pkgs)
@@ -515,7 +611,9 @@ class RpmLockfilePrototypeGenerator:
                         )
 
             if result:
-                stage_lockfiles.append(result)
+                stage_results.append(result)
+            if stage_results:
+                stage_lockfiles.append(merge_lockfiles(stage_results) if len(stage_results) > 1 else stage_results[0])
 
         return stage_lockfiles
 
@@ -658,6 +756,7 @@ class RpmLockfilePrototypeGenerator:
         reinstall_packages: list[str] | None = None,
         containerfile_path: str | None = None,
         upgrade_packages: list[str] | None = None,
+        exclude_packages: list[str] | None = None,
     ) -> LockfileData | None:
         """
         Resolve a single stage, retrying after removing unavailable packages.
@@ -679,6 +778,9 @@ class RpmLockfilePrototypeGenerator:
                 package extraction.
             upgrade_packages (list[str] | None): Base image packages to
                 upgrade (from bare dnf/yum update commands).
+            exclude_packages (list[str] | None): Packages to exclude
+                from Containerfile extraction (e.g. --installroot names
+                resolved separately in --bare mode).
         Return Value(s):
             LockfileData | None: Lockfile data, or None if all packages filtered out.
         """
@@ -698,7 +800,7 @@ class RpmLockfilePrototypeGenerator:
         remaining_upgrade = list(upgrade_packages) if upgrade_packages else []
         real_retries = 0
         reinstall_strip_count = 0
-        excluded_packages: set[str] = set()
+        excluded_packages: set[str] = set(exclude_packages) if exclude_packages else set()
 
         while real_retries < MAX_RESOLUTION_RETRIES:
             all_upgrade_targets = list(remaining_reinstall)
@@ -905,6 +1007,7 @@ class RpmLockfilePrototypeGenerator:
         reinstall_packages: list[str] | None = None,
         containerfile_path: str | None = None,
         upgrade_packages: list[str] | None = None,
+        exclude_packages: list[str] | None = None,
     ) -> LockfileData | None:
         """
         Resolve a stage with cross-arch version reconciliation.
@@ -926,6 +1029,8 @@ class RpmLockfilePrototypeGenerator:
                 package extraction.
             upgrade_packages (list[str] | None): Base image packages to
                 upgrade (from bare dnf/yum update commands).
+            exclude_packages (list[str] | None): Packages to exclude
+                from Containerfile extraction (e.g. --installroot names).
         Return Value(s):
             LockfileData | None: Resolved lockfile with consistent
                 versions, or None if no packages remain.
@@ -940,6 +1045,7 @@ class RpmLockfilePrototypeGenerator:
             reinstall_packages=reinstall_packages,
             containerfile_path=containerfile_path,
             upgrade_packages=upgrade_packages,
+            exclude_packages=exclude_packages,
         )
         if not first_pass:
             return None
@@ -978,6 +1084,7 @@ class RpmLockfilePrototypeGenerator:
                 reinstall_packages=pinned_reinstall,
                 containerfile_path=containerfile_path,
                 upgrade_packages=pinned_upgrade,
+                exclude_packages=exclude_packages,
             )
         except RuntimeError as e:
             raise RuntimeError(

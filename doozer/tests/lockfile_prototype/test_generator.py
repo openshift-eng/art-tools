@@ -14,6 +14,8 @@ from doozerlib.lockfile_prototype.container_utils import ContainerImageHelper
 from doozerlib.lockfile_prototype.generator import (
     RpmLockfilePrototypeGenerator,
     _detect_stages_with_bare_updates,
+    _extract_install_packages,
+    _extract_installroot_packages,
     _is_local_rpm,
     build_rpms_in_yaml,
 )
@@ -1491,3 +1493,282 @@ class TestBareUpdateUpgradeResolution(unittest.TestCase):
         # over the upgrade request, silently keeping the old version.
         self.assertNotIn("python3-setuptools", config.reinstallPackages)
         self.assertIn("python3-setuptools", config.upgradePackages)
+
+
+def _lockfile_with_packages(names: list[str]) -> LockfileData:
+    return LockfileData(
+        lockfileVersion=1,
+        lockfileVendor="redhat",
+        arches=[
+            ArchResult(
+                arch="x86_64",
+                packages=[
+                    PackageEntry(
+                        url=f"https://example.com/{n}-1.0-1.el9.x86_64.rpm",
+                        repoid="rhel-9-baseos-rpms",
+                        name=n,
+                        evr="1.0-1.el9",
+                    )
+                    for n in names
+                ],
+                source=[],
+                module_metadata=[],
+            )
+        ],
+    )
+
+
+class TestExtractInstallrootPackages(unittest.TestCase):
+    """
+    Tests for _extract_installroot_packages vs normal dnf install.
+    """
+
+    def _entries_from_dockerfile(self, content: str) -> list[dict]:
+        from dockerfile_parse import DockerfileParser
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            df_path = Path(tmpdir) / "Dockerfile"
+            df_path.write_text(content)
+            return DockerfileParser(str(df_path)).structure
+
+    def test_equals_form(self):
+        entries = self._entries_from_dockerfile(
+            "FROM base\nRUN dnf --installroot=/mnt/rootfs install -y rsync xz tar gzip python3-pyyaml\n"
+        )
+        self.assertEqual(
+            _extract_installroot_packages(entries, 0),
+            {"rsync", "xz", "tar", "gzip", "python3-pyyaml"},
+        )
+
+    def test_space_form(self):
+        entries = self._entries_from_dockerfile("FROM base\nRUN dnf --installroot /mnt/rootfs install -y rsync xz\n")
+        self.assertEqual(_extract_installroot_packages(entries, 0), {"rsync", "xz"})
+        self.assertNotIn("/mnt/rootfs", _extract_installroot_packages(entries, 0))
+
+    def test_clean_all_ignored(self):
+        entries = self._entries_from_dockerfile(
+            "FROM base\n"
+            "RUN dnf --installroot=/mnt/rootfs install -y rsync xz \\\n"
+            "      && dnf --installroot=/mnt/rootfs clean all\n"
+        )
+        self.assertEqual(_extract_installroot_packages(entries, 0), {"rsync", "xz"})
+
+    def test_normal_install_not_treated_as_installroot(self):
+        entries = self._entries_from_dockerfile("FROM base\nRUN dnf install -y nfs-utils jq\n")
+        self.assertEqual(_extract_installroot_packages(entries, 0), set())
+        self.assertEqual(_extract_install_packages(entries, 0), {"nfs-utils", "jq"})
+
+    def test_mixed_run_only_installroot_match(self):
+        entries = self._entries_from_dockerfile(
+            "FROM base\nRUN dnf install -y gcc && dnf --installroot=/mnt/rootfs install -y rsync\n"
+        )
+        self.assertEqual(_extract_installroot_packages(entries, 0), {"rsync"})
+        self.assertEqual(_extract_install_packages(entries, 0), {"gcc", "rsync"})
+        self.assertEqual(
+            _extract_install_packages(entries, 0) - _extract_installroot_packages(entries, 0),
+            {"gcc"},
+        )
+
+    def test_clean_all_only_ignored(self):
+        entries = self._entries_from_dockerfile("FROM base\nRUN dnf --installroot=/mnt/rootfs clean all\n")
+        self.assertEqual(_extract_installroot_packages(entries, 0), set())
+
+
+class TestInstallrootBareResolve(unittest.TestCase):
+    """
+    Tests for --installroot packages resolved with --bare in generate_lockfile.
+    """
+
+    def _make_mock_repos(self) -> MagicMock:
+        repos = MagicMock()
+        baseos = MagicMock()
+        baseos.name = "rhel-9-baseos-rpms"
+        baseos.baseurl.return_value = "https://example.com/baseos/x86_64/os/"
+        baseos.content_set.return_value = "rhel-9-for-x86_64-baseos-rpms"
+        baseos.cs_optional = False
+        baseos._data.conf = {}
+        repo_map = {"rhel-9-baseos-rpms": baseos}
+        repos.__getitem__ = lambda self_repos, key: repo_map[key]
+        return repos
+
+    def _make_mock_image_meta(self) -> MagicMock:
+        meta = MagicMock()
+        meta.distgit_key = "cluster-logging-operator"
+        meta.get_arches.return_value = ["x86_64"]
+        meta.get_enabled_repos.return_value = {"rhel-9-baseos-rpms"}
+        meta.is_lockfile_generation_enabled.return_value = True
+        meta.is_cross_arch_enabled.return_value = False
+        return meta
+
+    def test_clo_like_skips_image_mode_for_installroot_only_stage(self):
+        """
+        Stage 0 only uses dnf --installroot: resolve those names with
+        --bare (no golang-builder pull). Final stage still uses --image.
+        """
+        installroot_names = ["gzip", "python3-pyyaml", "rsync", "tar", "xz"]
+
+        async def mock_resolve(config, image_pullspec=None, containerfile_path=None, stage_num=None):
+            if image_pullspec is None:
+                names = [p if isinstance(p, str) else p.name for p in config.packages]
+                return _lockfile_with_packages(names)
+            return FAKE_LOCKFILE_DATA.model_copy(deep=True)
+
+        container = MagicMock(spec=ContainerImageHelper)
+        container.resolve_to_digest = AsyncMock(side_effect=lambda p: p + "@sha256:abc123")
+        container.get_installed_packages = AsyncMock(return_value=[])
+        container.read_file_from_image = AsyncMock(return_value="")
+
+        resolver = MagicMock(spec=RpmResolver)
+        resolver.resolve = AsyncMock(side_effect=mock_resolve)
+
+        generator = RpmLockfilePrototypeGenerator(
+            repos=self._make_mock_repos(),
+            working_dir=Path(tempfile.mkdtemp()),
+            container_helper=container,
+            resolver=resolver,
+        )
+        generator.downstream_parents = [
+            "quay.io/test/golang-builder:latest",
+            "quay.io/test/ubi-micro:latest",
+        ]
+
+        with TemporaryDirectory() as tmpdir:
+            dest_dir = Path(tmpdir)
+            (dest_dir / "Dockerfile").write_text(
+                "FROM golang-builder AS builder\n"
+                "RUN make build\n"
+                "RUN dnf --installroot=/mnt/rootfs install -y rsync xz tar gzip python3-pyyaml "
+                "&& dnf --installroot=/mnt/rootfs clean all\n"
+                "\n"
+                "FROM ubi-micro\n"
+                "COPY --from=builder /mnt/rootfs /\n"
+            )
+            asyncio.run(generator.generate_lockfile(self._make_mock_image_meta(), dest_dir))
+
+            lockfile_path = dest_dir / "rpms.lock.yaml"
+            self.assertTrue(lockfile_path.exists())
+            dumped = yaml.safe_load(lockfile_path.read_text())
+
+        digest_args = [c.args[0] for c in container.resolve_to_digest.call_args_list]
+        self.assertFalse(any("golang-builder" in p for p in digest_args))
+
+        bare_calls = [c for c in resolver.resolve.call_args_list if c.kwargs.get("image_pullspec") is None]
+        self.assertEqual(len(bare_calls), 1)
+        self.assertIsNone(bare_calls[0].kwargs.get("containerfile_path"))
+        self.assertEqual(sorted(bare_calls[0].args[0].packages), installroot_names)
+
+        image_calls = [c for c in resolver.resolve.call_args_list if c.kwargs.get("image_pullspec")]
+        self.assertTrue(image_calls)
+        self.assertFalse(any("golang-builder" in (c.kwargs.get("image_pullspec") or "") for c in image_calls))
+
+        locked_names = {pkg["name"] for arch in dumped["arches"] for pkg in arch.get("packages", [])}
+        for name in installroot_names:
+            self.assertIn(name, locked_names)
+
+    def test_normal_install_still_uses_image_mode(self):
+        """
+        A stage with only dnf install (no --installroot) must keep --image
+        and must not add a --bare resolve call.
+        """
+        container = MagicMock(spec=ContainerImageHelper)
+        container.resolve_to_digest = AsyncMock(side_effect=lambda p: p + "@sha256:abc123")
+        container.get_installed_packages = AsyncMock(return_value=[])
+        container.read_file_from_image = AsyncMock(return_value="")
+
+        resolver = MagicMock(spec=RpmResolver)
+        resolver.resolve = AsyncMock(return_value=FAKE_LOCKFILE_DATA.model_copy(deep=True))
+
+        generator = RpmLockfilePrototypeGenerator(
+            repos=self._make_mock_repos(),
+            working_dir=Path(tempfile.mkdtemp()),
+            container_helper=container,
+            resolver=resolver,
+        )
+        generator.downstream_parents = ["quay.io/test/base:latest"]
+
+        with TemporaryDirectory() as tmpdir:
+            dest_dir = Path(tmpdir)
+            (dest_dir / "Dockerfile").write_text("FROM base\nRUN dnf install -y nfs-utils\n")
+            asyncio.run(generator.generate_lockfile(self._make_mock_image_meta(), dest_dir))
+
+        bare_calls = [c for c in resolver.resolve.call_args_list if c.kwargs.get("image_pullspec") is None]
+        self.assertEqual(bare_calls, [])
+        image_calls = [c for c in resolver.resolve.call_args_list if c.kwargs.get("image_pullspec")]
+        self.assertTrue(image_calls)
+        self.assertTrue(any(c.kwargs.get("containerfile_path") for c in image_calls))
+
+    def test_mixed_stage_bare_and_image_merged(self):
+        """
+        A stage with both a normal dnf install and --installroot: --bare
+        for installroot names, --image with those names excluded from
+        pin, results merged.
+        """
+
+        async def mock_resolve(config, image_pullspec=None, containerfile_path=None, stage_num=None):
+            if image_pullspec is None:
+                names = [p if isinstance(p, str) else p.name for p in config.packages]
+                return _lockfile_with_packages(names)
+            if config.reinstallPackages:
+                return _lockfile_with_packages(list(config.reinstallPackages))
+            return FAKE_LOCKFILE_DATA.model_copy(deep=True)
+
+        container = MagicMock(spec=ContainerImageHelper)
+        container.resolve_to_digest = AsyncMock(side_effect=lambda p: p + "@sha256:abc123")
+        container.get_installed_packages = AsyncMock(return_value=["gcc", "rsync", "xz", "glibc"])
+        container.read_file_from_image = AsyncMock(return_value="")
+
+        resolver = MagicMock(spec=RpmResolver)
+        resolver.resolve = AsyncMock(side_effect=mock_resolve)
+
+        generator = RpmLockfilePrototypeGenerator(
+            repos=self._make_mock_repos(),
+            working_dir=Path(tempfile.mkdtemp()),
+            container_helper=container,
+            resolver=resolver,
+        )
+        generator.downstream_parents = [
+            "quay.io/test/builder:latest",
+            "quay.io/test/base:latest",
+        ]
+
+        with TemporaryDirectory() as tmpdir:
+            dest_dir = Path(tmpdir)
+            (dest_dir / "Dockerfile").write_text(
+                "FROM builder AS build\n"
+                "RUN dnf install -y gcc\n"
+                "RUN dnf --installroot=/mnt/rootfs install -y rsync xz\n"
+                "\n"
+                "FROM base\n"
+                "COPY --from=build /app /app\n"
+            )
+            asyncio.run(generator.generate_lockfile(self._make_mock_image_meta(), dest_dir))
+
+            dumped = yaml.safe_load((dest_dir / "rpms.lock.yaml").read_text())
+
+        bare_calls = [c for c in resolver.resolve.call_args_list if c.kwargs.get("image_pullspec") is None]
+        self.assertEqual(len(bare_calls), 1)
+        self.assertEqual(sorted(bare_calls[0].args[0].packages), ["rsync", "xz"])
+        self.assertIsNone(bare_calls[0].kwargs.get("containerfile_path"))
+
+        stage0_image = [
+            c
+            for c in resolver.resolve.call_args_list
+            if c.kwargs.get("containerfile_path") and "builder" in (c.kwargs.get("image_pullspec") or "")
+        ]
+        self.assertTrue(stage0_image)
+        self.assertEqual(sorted(stage0_image[0].args[0].excludePackages), ["rsync", "xz"])
+
+        pin_calls = [
+            c for c in resolver.resolve.call_args_list if c.kwargs.get("image_pullspec") and c.args[0].reinstallPackages
+        ]
+        self.assertTrue(pin_calls)
+        for call in pin_calls:
+            self.assertNotIn("rsync", call.args[0].reinstallPackages)
+            self.assertNotIn("xz", call.args[0].reinstallPackages)
+            self.assertNotIn("rsync", call.args[0].packages)
+            self.assertNotIn("xz", call.args[0].packages)
+
+        locked_names = {pkg["name"] for arch in dumped["arches"] for pkg in arch.get("packages", [])}
+        self.assertIn("rsync", locked_names)
+        self.assertIn("xz", locked_names)
+        self.assertIn("gcc", locked_names)
