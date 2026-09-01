@@ -386,6 +386,8 @@ def images_streams_mirror(
             # upstream_image to all the upstream_image_mirror destinations so they all get the same version.
             if config.upstream_image_mirror is not Missing:
                 for upstream_image_mirror_dest in config.upstream_image_mirror:
+                    if live_test_mode:
+                        upstream_image_mirror_dest += '.test'
                     # Mirror to each destination only if not in only-if-missing mode OR destination doesn't exist
                     if not only_if_missing or not destinations_to_check.get(upstream_image_mirror_dest, False):
                         priv_cmd = f'oc image mirror {config.upstream_image}'
