@@ -1585,10 +1585,23 @@ class GenPayloadCli:
         # tags for a payload, so tags will only be updated, and none removed.
         incomplete_payload_update: bool = False
 
+        # The complete set of expected payload tag names BEFORE filtering out
+        # embargoed/mismatched images.  When we know the full picture (no
+        # --images/--exclude CLI filter), tags present in the existing
+        # imagestream but absent from this set are genuinely deprecated (e.g.
+        # for_payload was changed to false) and should be pruned even during
+        # an incomplete_payload_update.  Set to None when the CLI filter is
+        # active, because payload_entries is already filtered and we cannot
+        # distinguish deprecated tags from simply-not-selected ones.
+        full_payload_tag_names: Optional[Set[str]] = set(payload_entries.keys())
+
         if self.runtime.images or self.runtime.exclude:
             # If images are being explicitly included or excluded, assume we will not be
             # performing a full replacement of the imagestream content.
             incomplete_payload_update = True
+            # payload_entries is already filtered — we can't tell deprecated
+            # from simply-not-selected, so disable deprecated-tag detection.
+            full_payload_tag_names = None
 
         for payload_tag_name, payload_entry in payload_entries.items():
             # Skip mismatched siblings - they were not mirrored and should not be in the imagestream
@@ -1630,7 +1643,11 @@ class GenPayloadCli:
         )
         if self.apply:
             await self.apply_arch_imagestream(
-                imagestream_namespace, imagestream_name, istags, incomplete_payload_update
+                imagestream_namespace,
+                imagestream_name,
+                istags,
+                incomplete_payload_update,
+                full_payload_tag_names,
             )
 
     async def write_imagestream_artifact_file(
@@ -1655,7 +1672,12 @@ class GenPayloadCli:
             await out_file.write(yaml.safe_dump(istream_spec, indent=2, default_flow_style=False))
 
     async def apply_arch_imagestream(
-        self, imagestream_namespace: str, imagestream_name: str, istags: List[Dict], incomplete_payload_update: bool
+        self,
+        imagestream_namespace: str,
+        imagestream_name: str,
+        istags: List[Dict],
+        incomplete_payload_update: bool,
+        full_payload_tag_names: Optional[Set[str]] = None,
     ):
         """
         Orchestrate the update and tag removal for one arch imagestream in the OCP cluster.
@@ -1669,7 +1691,7 @@ class GenPayloadCli:
                 return
 
             pruning_tags, adding_tags = await self.apply_imagestream_update(
-                istream_apiobj, istags, incomplete_payload_update
+                istream_apiobj, istags, incomplete_payload_update, full_payload_tag_names
             )
 
             if pruning_tags:
@@ -1740,7 +1762,11 @@ class GenPayloadCli:
         return imagestream_mode == 'locked'
 
     async def apply_imagestream_update(
-        self, istream_apiobj, istags: List[Dict], incomplete_payload_update: bool
+        self,
+        istream_apiobj,
+        istags: List[Dict],
+        incomplete_payload_update: bool,
+        full_payload_tag_names: Optional[Set[str]] = None,
     ) -> Tuple[Set[str], Set[str]]:
         """
         Apply changes for one integration imagestream object on the app.ci cluster.
@@ -1818,7 +1844,18 @@ class GenPayloadCli:
                 # we need to preserve existing tag values that were not updated.
                 for istag in apiobj.model.spec.tags:
                     if istag.name not in incoming_tag_names:
-                        new_istags.append(istag)
+                        if full_payload_tag_names is not None and istag.name not in full_payload_tag_names:
+                            # Tag is not expected in the full payload — it was deprecated
+                            # (e.g. for_payload changed from true to false in ocp-build-data)
+                            self.logger.info(
+                                'Tag %s is not in the full set of expected payload tags; '
+                                'marking as deprecated for pruning.',
+                                istag.name,
+                            )
+                            pruning_tags.add(istag.name)
+                        else:
+                            # Legitimately missing from incoming set (embargoed/mismatched/filtered) — preserve
+                            new_istags.append(istag)
             else:
                 # Else, we believe the assembled tags are canonical. Declare
                 # old tags to prune.

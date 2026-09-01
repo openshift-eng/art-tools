@@ -993,6 +993,139 @@ spec:
             "issue1,issue2", istream_apiobj.model.metadata.annotations["release.openshift.io/inconsistency"]
         )
 
+    @patch("doozerlib.cli.release_gen_payload.PayloadGenerator.build_inconsistency_annotations")
+    @patch("doozerlib.cli.release_gen_payload.modify_and_replace_api_object")
+    async def test_apply_imagestream_update_prunes_deprecated_tags(self, mar_mock, binc_mock):
+        """
+        During an incomplete_payload_update, tags that are NOT in full_payload_tag_names
+        should be identified as deprecated and pruned.
+        """
+        gpcli = rgp_cli.GenPayloadCli(
+            output_dir="/tmp",
+            runtime=Mock(
+                brew_event="999999",
+                assembly_type=AssemblyTypes.STREAM,
+            ),
+        )
+
+        mar_mock.side_effect = lambda apiobj, func, *_: func(apiobj)
+        binc_mock.side_effect = lambda issues: {
+            "release.openshift.io/inconsistency": ",".join(str(it) for it in issues),
+        }
+
+        istream_apiobj = Mock(
+            oc.APIObject,
+            model=oc.Model(
+                dict(
+                    metadata=dict(),
+                    spec=dict(
+                        tags=[
+                            dict(name="active-image"),
+                            dict(name="deprecated-image"),
+                            dict(name="embargoed-image"),
+                        ]
+                    ),
+                )
+            ),
+        )
+        # Only active-image is in the incoming istags (embargoed-image was skipped)
+        new_istags = [dict(name="active-image")]
+        # Full payload knows about active-image and embargoed-image, but NOT deprecated-image
+        full_payload_tag_names = {"active-image", "embargoed-image"}
+
+        (pruning, adding) = await gpcli.apply_imagestream_update(
+            istream_apiobj, new_istags, True, full_payload_tag_names
+        )
+        self.assertEqual(pruning, {"deprecated-image"}, "deprecated tag should be pruned")
+        self.assertEqual(adding, set(), "no new tags")
+        tag_names = [t["name"] if isinstance(t, dict) else t.name for t in istream_apiobj.model.spec.tags]
+        self.assertIn("active-image", tag_names, "active tag should remain")
+        self.assertIn("embargoed-image", tag_names, "embargoed tag should be preserved")
+        self.assertNotIn("deprecated-image", tag_names, "deprecated tag should not be in final tags")
+
+    @patch("doozerlib.cli.release_gen_payload.PayloadGenerator.build_inconsistency_annotations")
+    @patch("doozerlib.cli.release_gen_payload.modify_and_replace_api_object")
+    async def test_apply_imagestream_update_preserves_tags_when_filtered(self, mar_mock, binc_mock):
+        """
+        When full_payload_tag_names is None (--images/--exclude used), all extra tags
+        should be preserved during incomplete_payload_update, matching original behavior.
+        """
+        gpcli = rgp_cli.GenPayloadCli(
+            output_dir="/tmp",
+            runtime=Mock(
+                brew_event="999999",
+                assembly_type=AssemblyTypes.STREAM,
+            ),
+        )
+
+        mar_mock.side_effect = lambda apiobj, func, *_: func(apiobj)
+        binc_mock.side_effect = lambda issues: {
+            "release.openshift.io/inconsistency": ",".join(str(it) for it in issues),
+        }
+
+        istream_apiobj = Mock(
+            oc.APIObject,
+            model=oc.Model(
+                dict(
+                    metadata=dict(),
+                    spec=dict(
+                        tags=[
+                            dict(name="existing-tag"),
+                            dict(name="another-tag"),
+                        ]
+                    ),
+                )
+            ),
+        )
+        new_istags = [dict(name="existing-tag")]
+
+        # full_payload_tag_names=None means we can't determine deprecated tags
+        (pruning, _adding) = await gpcli.apply_imagestream_update(istream_apiobj, new_istags, True, None)
+        self.assertEqual(pruning, set(), "nothing should be pruned when full set is unknown")
+        tag_names = [t["name"] if isinstance(t, dict) else t.name for t in istream_apiobj.model.spec.tags]
+        self.assertIn("another-tag", tag_names, "unknown tag should be preserved when filtered")
+
+    @patch("doozerlib.cli.release_gen_payload.PayloadGenerator.build_inconsistency_annotations")
+    @patch("doozerlib.cli.release_gen_payload.modify_and_replace_api_object")
+    async def test_apply_imagestream_update_full_update_unchanged(self, mar_mock, binc_mock):
+        """
+        When incomplete_payload_update is False (full update), behavior should be
+        unchanged regardless of full_payload_tag_names.
+        """
+        gpcli = rgp_cli.GenPayloadCli(
+            output_dir="/tmp",
+            runtime=Mock(
+                brew_event="999999",
+                assembly_type=AssemblyTypes.STREAM,
+            ),
+        )
+
+        mar_mock.side_effect = lambda apiobj, func, *_: func(apiobj)
+        binc_mock.side_effect = lambda issues: {
+            "release.openshift.io/inconsistency": ",".join(str(it) for it in issues),
+        }
+
+        istream_apiobj = Mock(
+            oc.APIObject,
+            model=oc.Model(
+                dict(
+                    metadata=dict(),
+                    spec=dict(
+                        tags=[
+                            dict(name="old-tag"),
+                        ]
+                    ),
+                )
+            ),
+        )
+        new_istags = [dict(name="new-tag")]
+
+        # Full update with full_payload_tag_names set — should still prune old-tag
+        (pruning, adding) = await gpcli.apply_imagestream_update(istream_apiobj, new_istags, False, {"new-tag"})
+        self.assertEqual(pruning, {"old-tag"}, "full update should prune old tags regardless")
+        self.assertEqual(adding, {"new-tag"}, "new tag should be added")
+        self.assertEqual(istream_apiobj.model.spec.tags, [dict(name="new-tag")], "only new tags should remain")
+
     def test_get_multi_release_names(self):
         runtime = MagicMock(
             assembly="stream",
