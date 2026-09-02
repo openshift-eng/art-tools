@@ -1220,6 +1220,11 @@ class UpdateGolangPipeline:
         # `if self.data_path: cmd.append(f"--data-path={self.data_path}")`.
         cmd.append(f"--data-path={self._CI_TEST_DATA_PATH}")
         cmd.extend(["--group", group])
+        # These images are `mode: disabled` in ocp-build-data so the standing ocp4-scan job (which
+        # scans the whole group without --load-disabled) leaves their lifecycle to this pipeline.
+        # scan-sources applies that same enabled-filter even to explicitly `-i`-named images, so
+        # --load-disabled is required here or this scan would always report them as not stale.
+        cmd.append("--load-disabled")
         cmd.extend(self._get_doozer_assembly_args())
         cmd.extend(["-i", ",".join(image_keys)])
         cmd.extend(["beta:config:konflux:scan-sources", "--yaml"])
