@@ -1412,23 +1412,22 @@ class UpdateGolangPipeline:
         el_nvr_map_for_images: dict[int, str],
     ):
         """
-        Standing reconciliation check: make sure the ci-openshift-golang-builder-* image(s) for
-        the variant (GO_LATEST/GO_EXTRA/GO_PREVIOUS) matching this run's golang version are built
-        against their current declared parent. The ocp-build-data-validator enforces that
-        GO_LATEST/GO_EXTRA/GO_PREVIOUS never share a major.minor, so at most one variant can match
-        here. Staleness is determined via doozer's `beta:config:konflux:scan-sources` (see
-        `_scan_stale_ci_images`) -- the same builder-staleness check used by the standing ocp4
-        scan-sources job. Rebuilds (via doozer directly, without touching streams.yml or creating
-        an ocp-build-data PR) any golang-builder CI image found to be stale. ci-openshift-build-root-*
-        images pull their parent via a `member` reference to the golang-builder CI image (not a
-        golang stream or the raw golang-builder container), so once a golang-builder image is
-        stale, its corresponding build-root image is unconditionally rebuilt alongside it, in the
-        same rebase/build batch (see `_rebase_and_build_ci_images`) -- doozer only resolves a
-        `from: member:` reference correctly when both images are loaded in the same run. Once
-        both rebuild, everything is synced together in a single final step. For the test
-        assembly, `_sync_ci_images` passes `--live-test-mode`, which publishes to the
-        `.test`-suffixed CI imagestream tag instead of the real one, so test-assembly runs never
-        overwrite what production CI actually consumes.
+        Standing reconciliation check: make sure the ci-openshift-golang-builder-* and
+        ci-openshift-build-root-* image(s) for the variant (GO_LATEST/GO_EXTRA/GO_PREVIOUS)
+        matching this run's golang version are built against their current declared parent. The
+        ocp-build-data-validator enforces that GO_LATEST/GO_EXTRA/GO_PREVIOUS never share a
+        major.minor, so at most one variant can match here. Both families are scanned together in
+        a single `_scan_stale_ci_images` call (see `beta:config:konflux:scan-sources`) -- the same
+        builder-staleness check used by the standing ocp4 scan-sources job -- so build-root's own
+        source changes are caught directly. Loading both together also means doozer's own change
+        propagation (a changing image marks its `member`-referencing descendants as changing too)
+        naturally covers the case where build-root itself hasn't changed but its golang-builder
+        parent has. Whatever comes back stale is rebased+built together in one batch (see
+        `_rebase_and_build_ci_images`) -- doozer only resolves a `from: member:` reference
+        correctly when both images are loaded in the same run. Once done, everything rebuilt is
+        synced together in a single final step. For the test assembly, `_sync_ci_images` passes
+        `--live-test-mode`, which publishes to the `.test`-suffixed CI imagestream tag instead of
+        the real one, so test-assembly runs never overwrite what production CI actually consumes.
         """
         # TODO: revert -- re-deriving allowed_major_minors from the test fork/branch below.
         # _get_allowed_go_major_minors (which produced the `allowed_major_minors` param) always
@@ -1470,37 +1469,34 @@ class UpdateGolangPipeline:
             )
             return
 
-        builder_image_keys = [image_key for _, image_key in builder_targets]
-        stale_image_keys = set(await self._scan_stale_ci_images(builder_image_keys))
-        stale_builder_targets = [
-            (el_v, image_key) for el_v, image_key in builder_targets if image_key in stale_image_keys
-        ]
-
-        if not stale_builder_targets:
-            _LOGGER.info(
-                "All CI golang builder images for openshift-%s already use their current parent image",
-                self.ocp_version,
-            )
-            return
-
-        stale_builder_keys = [image_key for _, image_key in stale_builder_targets]
-
-        # Build-root image(s) whose golang-builder parent is about to be rebuilt. Rebuilt in the
-        # same batch as their golang-builder parent (not a separate call) so doozer resolves the
-        # `from: member:` reference in-process.
-        build_root_keys = [
-            f"{CI_BUILD_ROOT_IMAGE_PREFIX}{variant}.rhel{el_v}"
-            for el_v, _ in stale_builder_targets
+        # Build-root counterpart for every el_v that has a golang-builder image, scanned alongside
+        # it regardless of the builder's own staleness -- both build-root's own source changes and
+        # "parent golang-builder changed" (via doozer's descendant-propagation once both images are
+        # loaded together) are caught by this one scan.
+        build_root_targets = [
+            (el_v, f"{CI_BUILD_ROOT_IMAGE_PREFIX}{variant}.rhel{el_v}")
+            for el_v, _ in builder_targets
             if f"{CI_BUILD_ROOT_IMAGE_PREFIX}{variant}.rhel{el_v}" in all_image_keys
         ]
-        if not build_root_keys:
+        if not build_root_targets:
             _LOGGER.info(
-                "No CI build-root images found for variant %s on openshift-%s; skipping CI build-root rebuild",
+                "No CI build-root images found for variant %s on openshift-%s; scanning golang builder image(s) only",
                 variant,
                 self.ocp_version,
             )
 
-        rebuilt_image_keys = stale_builder_keys + build_root_keys
+        scan_targets = builder_targets + build_root_targets
+        scan_keys = [image_key for _, image_key in scan_targets]
+        stale_image_keys = set(await self._scan_stale_ci_images(scan_keys))
+        rebuilt_image_keys = [image_key for image_key in scan_keys if image_key in stale_image_keys]
+
+        if not rebuilt_image_keys:
+            _LOGGER.info(
+                "All CI golang builder/build-root images for openshift-%s already use their current parent image",
+                self.ocp_version,
+            )
+            return
+
         await self._slack_client.say_in_thread(
             f":construction: Rebuilding CI golang builder/build-root image(s) for "
             f"{self.ocp_version}: {', '.join(rebuilt_image_keys)}"
