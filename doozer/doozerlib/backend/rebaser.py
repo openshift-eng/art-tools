@@ -556,6 +556,13 @@ class KonfluxRebaser:
                 if parent_metadata.should_trigger_base_image_release():
                     released_pullspec = (build.released_pullspec or "").strip()
                     if released_pullspec:
+                        self._logger.info(
+                            "member-resolve: %s NOT loaded in this run; late-resolved via latest Konflux "
+                            "build (nvr=%s) -> %s",
+                            member,
+                            build.nvr,
+                            released_pullspec,
+                        )
                         return released_pullspec, build.embargoed
                     self._logger.warning(
                         "Late-resolved parent %s: Konflux latest build has empty released_pullspec (nvr=%s); "
@@ -565,10 +572,29 @@ class KonfluxRebaser:
                     )
                     rh_pullspec = util.rh_art_images_base_pullspec(build.nvr)
                     if await self._registry_pullspec_exists(rh_pullspec):
+                        self._logger.info(
+                            "member-resolve: %s NOT loaded in this run; late-resolved via latest Konflux "
+                            "build (nvr=%s) -> %s",
+                            member,
+                            build.nvr,
+                            rh_pullspec,
+                        )
                         return rh_pullspec, build.embargoed
                     raise IOError(f"Late-resolved parent {member}: art-images-base tag unreachable at {rh_pullspec}")
+                self._logger.info(
+                    "member-resolve: %s NOT loaded in this run; late-resolved via latest Konflux build (nvr=%s) -> %s",
+                    member,
+                    build.nvr,
+                    build.image_pullspec,
+                )
                 return build.image_pullspec, build.embargoed
 
+            self._logger.info(
+                "member-resolve: %s NOT loaded in this run; --latest-parent-version not set, leaving FROM "
+                "unchanged -> %s",
+                member,
+                original_parent,
+            )
             return original_parent, False
         else:
             if not self.image_repo:
@@ -582,9 +608,23 @@ class KonfluxRebaser:
             private_fix = parent_metadata.private_fix
             if parent_metadata.should_trigger_base_image_release():
                 parent_nvr = self._rebased_member_image_nvr(parent_metadata)
-                return util.rh_art_images_base_pullspec(parent_nvr), private_fix
+                pullspec = util.rh_art_images_base_pullspec(parent_nvr)
+                self._logger.info(
+                    "member-resolve: %s loaded in this run; resolved via rebased NVR (%s) -> %s",
+                    member,
+                    parent_nvr,
+                    pullspec,
+                )
+                return pullspec, private_fix
             parent_image_repo = parent_metadata.get_konflux_image_repo(default=self.image_repo)
-            return f"{parent_image_repo}:{parent_metadata.image_name_short}-{self.uuid_tag}", private_fix
+            pullspec = f"{parent_image_repo}:{parent_metadata.image_name_short}-{self.uuid_tag}"
+            self._logger.info(
+                "member-resolve: %s loaded in this run; resolved via shared run uuid_tag (%s) -> %s",
+                member,
+                self.uuid_tag,
+                pullspec,
+            )
+            return pullspec, private_fix
 
     @start_as_current_span_async(TRACER, "rebase.resolve_stream_parent")
     async def _resolve_stream_parent(

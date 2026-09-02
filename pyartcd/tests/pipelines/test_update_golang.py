@@ -2160,8 +2160,8 @@ repos:
 
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     @patch("artcommonlib.exectools.cmd_assert_async")
-    async def test_rebase_ci_image_includes_assembly(self, mock_cmd_assert, mock_konflux_db):
-        """Test _rebase_ci_image passes --assembly for the pipeline's assembly"""
+    async def test_rebase_ci_images_includes_assembly(self, mock_cmd_assert, mock_konflux_db):
+        """Test _rebase_ci_images passes --assembly for the pipeline's assembly"""
         mock_runtime = Mock(dry_run=False, working_dir=Path("/tmp/working"))
         mock_runtime.new_slack_client.return_value = Mock()
 
@@ -2177,7 +2177,7 @@ repos:
             assembly="test",
         )
 
-        await pipeline._rebase_ci_image("ci-openshift-golang-builder-latest.rhel9", "v4.18.0", "1")
+        await pipeline._rebase_ci_images(["ci-openshift-golang-builder-latest.rhel9"], "v4.18.0", "1")
 
         cmd = mock_cmd_assert.call_args[0][0]
         self.assertIn("beta:images:konflux:rebase", cmd)
@@ -2185,8 +2185,8 @@ repos:
 
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
     @patch("artcommonlib.exectools.cmd_assert_async")
-    async def test_build_ci_image_includes_assembly(self, mock_cmd_assert, mock_konflux_db):
-        """Test _build_ci_image passes --assembly for the pipeline's assembly"""
+    async def test_build_ci_images_includes_assembly(self, mock_cmd_assert, mock_konflux_db):
+        """Test _build_ci_images passes --assembly for the pipeline's assembly"""
         mock_runtime = Mock(dry_run=False, working_dir=Path("/tmp/working"))
         mock_runtime.new_slack_client.return_value = Mock()
 
@@ -2201,7 +2201,7 @@ repos:
             build_system="konflux",
         )
 
-        await pipeline._build_ci_image("ci-openshift-golang-builder-latest.rhel9")
+        await pipeline._build_ci_images(["ci-openshift-golang-builder-latest.rhel9"])
 
         cmd = mock_cmd_assert.call_args[0][0]
         self.assertIn("beta:images:konflux:build", cmd)
@@ -2669,7 +2669,7 @@ class TestReconcileCiImages(IsolatedAsyncioTestCase):
         pipeline._sync_ci_images.assert_awaited_once_with(["ci-openshift-golang-builder-latest.rhel9"])
         self.assertTrue(
             any(
-                "Rebuilding CI golang builder image" in call.args[0]
+                "Rebuilding CI golang builder/build-root image" in call.args[0]
                 for call in pipeline._slack_client.say_in_thread.await_args_list
             )
         )
@@ -2703,7 +2703,7 @@ class TestReconcileCiImages(IsolatedAsyncioTestCase):
     async def test_reconcile_triggers_build_root_after_golang_builder_rebuild(self, mock_konflux_db):
         """
         Build-root images pull their parent via a `member` reference to the golang-builder CI
-        image, not via the golang-builder staleness scan, so once golang builder is rebuilt its
+        image, not via the golang-builder staleness scan, so once golang builder is stale its
         build-root sibling is triggered unconditionally -- no extra staleness check for build-root.
         """
         pipeline = self._make_pipeline()
@@ -2719,18 +2719,17 @@ class TestReconcileCiImages(IsolatedAsyncioTestCase):
         # Only the golang-builder image is scanned; build-root is triggered directly, without a
         # staleness check of its own.
         pipeline._scan_stale_ci_images.assert_awaited_once_with(["ci-openshift-golang-builder-latest.rhel9"])
-        # Golang builder and build-root are rebuilt as two separate, ordered batch calls.
-        self.assertEqual(
-            [call.args[0] for call in pipeline._rebase_and_build_ci_images.await_args_list],
-            [["ci-openshift-golang-builder-latest.rhel9"], ["ci-openshift-build-root-latest.rhel9"]],
+        # Golang builder and build-root are rebuilt together in a single batch call, so doozer
+        # resolves the `from: member:` reference between them in-process.
+        pipeline._rebase_and_build_ci_images.assert_awaited_once_with(
+            ["ci-openshift-golang-builder-latest.rhel9", "ci-openshift-build-root-latest.rhel9"]
         )
-        # Both families are synced together in a single call, after both rebuild steps complete.
+        # Both families are synced together in a single call, after the rebuild batch completes.
         pipeline._sync_ci_images.assert_awaited_once_with(
             ["ci-openshift-golang-builder-latest.rhel9", "ci-openshift-build-root-latest.rhel9"]
         )
         slack_messages = [call.args[0] for call in pipeline._slack_client.say_in_thread.await_args_list]
-        self.assertTrue(any("Rebuilding CI golang builder image" in m for m in slack_messages))
-        self.assertTrue(any("Rebuilding CI build-root image" in m for m in slack_messages))
+        self.assertTrue(any("Rebuilding CI golang builder/build-root image" in m for m in slack_messages))
         self.assertTrue(any("Synced CI image" in m for m in slack_messages))
 
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
@@ -2769,16 +2768,14 @@ class TestReconcileCiImages(IsolatedAsyncioTestCase):
             return_value=["ci-openshift-golang-builder-latest.rhel9", "ci-openshift-build-root-latest.rhel9"]
         )
         pipeline._scan_stale_ci_images = AsyncMock(return_value=["ci-openshift-golang-builder-latest.rhel9"])
-        pipeline._rebase_and_build_ci_images = AsyncMock(
-            side_effect=[None, RuntimeError("Failed to rebuild 1/1")],
-        )
+        pipeline._rebase_and_build_ci_images = AsyncMock(side_effect=RuntimeError("Failed to rebuild 1/1"))
         pipeline._sync_ci_images = AsyncMock()
 
         with self.assertRaisesRegex(RuntimeError, "Failed to rebuild"):
             await pipeline._refresh_ci_images(*self.RECONCILE_ARGS)
 
-        # Sync only happens after both rebuild stages complete, so a build-root failure means
-        # nothing gets mirrored to CI this run -- even though golang-builder itself rebuilt fine.
+        # Sync only happens after the rebuild batch completes, so a build-root failure means
+        # nothing gets mirrored to CI this run -- even though the batch call is single-shot.
         pipeline._sync_ci_images.assert_not_awaited()
 
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
@@ -2892,36 +2889,29 @@ class TestRebaseAndBuildCiImages(IsolatedAsyncioTestCase):
         )
 
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
-    async def test_rebases_and_builds_each_image(self, mock_konflux_db):
+    async def test_rebases_then_builds_the_batch_together(self, mock_konflux_db):
+        """
+        All given image keys are rebased in one doozer call, then built in one doozer call --
+        not per-image -- so a `from: member:` reference between them (e.g.
+        ci-openshift-build-root-* -> ci-openshift-golang-builder-*) resolves in-process.
+        """
         pipeline = self._make_pipeline()
-        pipeline._rebase_ci_image = AsyncMock()
-        pipeline._build_ci_image = AsyncMock()
+        pipeline._rebase_ci_images = AsyncMock()
+        pipeline._build_ci_images = AsyncMock()
 
-        await pipeline._rebase_and_build_ci_images(
-            ["ci-openshift-golang-builder-latest.rhel9", "ci-openshift-build-root-latest.rhel9"]
-        )
+        image_keys = ["ci-openshift-golang-builder-latest.rhel9", "ci-openshift-build-root-latest.rhel9"]
+        await pipeline._rebase_and_build_ci_images(image_keys)
 
-        self.assertEqual(
-            {call.args[0] for call in pipeline._rebase_ci_image.await_args_list},
-            {"ci-openshift-golang-builder-latest.rhel9", "ci-openshift-build-root-latest.rhel9"},
-        )
-        self.assertEqual(
-            {call.args[0] for call in pipeline._build_ci_image.await_args_list},
-            {"ci-openshift-golang-builder-latest.rhel9", "ci-openshift-build-root-latest.rhel9"},
-        )
+        self.assertEqual(pipeline._rebase_ci_images.await_args.args[0], image_keys)
+        pipeline._build_ci_images.assert_awaited_once_with(image_keys)
 
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
-    async def test_raises_aggregated_error_when_some_images_fail(self, mock_konflux_db):
+    async def test_raises_when_build_fails(self, mock_konflux_db):
         pipeline = self._make_pipeline()
-        pipeline._rebase_ci_image = AsyncMock()
+        pipeline._rebase_ci_images = AsyncMock()
+        pipeline._build_ci_images = AsyncMock(side_effect=ChildProcessError("build failed"))
 
-        async def _build_side_effect(image_key):
-            if image_key == "ci-openshift-build-root-latest.rhel9":
-                raise ChildProcessError("build failed")
-
-        pipeline._build_ci_image = AsyncMock(side_effect=_build_side_effect)
-
-        with self.assertRaisesRegex(RuntimeError, r"Failed to rebuild 1/2 CI image\(s\)"):
+        with self.assertRaises(ChildProcessError):
             await pipeline._rebase_and_build_ci_images(
                 ["ci-openshift-golang-builder-latest.rhel9", "ci-openshift-build-root-latest.rhel9"]
             )
