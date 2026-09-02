@@ -269,15 +269,17 @@ class UpdateGolangPipeline:
     def _get_upstream_ocp_build_data_repo(self):
         return get_github_client_for_org("openshift-eng").get_repo("openshift-eng/ocp-build-data")
 
-    def _get_ocp_build_data_repo_and_branch(self, default_branch):
+    def _get_ocp_build_data_repo_and_branch(self, default_branch, data_path=None, data_gitref=None):
         """Get the ocp-build-data repo and branch, respecting data_path/data_gitref overrides."""
-        if self.data_path:
-            match = re.search(r'github\.com[:/](.+?)(?:\.git)?$', self.data_path)
+        data_path = self.data_path if data_path is None else data_path
+        data_gitref = self.data_gitref if data_gitref is None else data_gitref
+        if data_path:
+            match = re.search(r'github\.com[:/](.+?)(?:\.git)?$', data_path)
             if match:
                 repo_name = match.group(1)
                 org = repo_name.split('/')[0]
                 repo = get_github_client_for_org(org).get_repo(repo_name)
-                branch = self.data_gitref or default_branch
+                branch = data_gitref or default_branch
                 return repo, branch
         return self._get_upstream_ocp_build_data_repo(), default_branch
 
@@ -1183,7 +1185,11 @@ class UpdateGolangPipeline:
         need to be rebuilt whenever their respective parent changes.
         """
         branch = f"openshift-{self.ocp_version}"
-        repo, branch = self._get_ocp_build_data_repo_and_branch(branch)
+        # TODO: revert -- forcing the test fork/branch below for CI rebuild testing; restore
+        # `repo, branch = self._get_ocp_build_data_repo_and_branch(branch)`.
+        repo, branch = self._get_ocp_build_data_repo_and_branch(
+            branch, data_path=self._CI_TEST_DATA_PATH, data_gitref=self._CI_TEST_DATA_GITREF
+        )
         contents = repo.get_contents("images", ref=branch)
         ci_image_keys = sorted(
             content.name[: -len(".yml")]
@@ -1204,14 +1210,15 @@ class UpdateGolangPipeline:
         references against streams.yml), it queries the parent's actual current build and flags
         the image if that build is newer than the image's own last build.
         """
-        group = f"openshift-{self.ocp_version}"
+        group = self._get_ci_group()
         cmd = [
             "doozer",
             f"--working-dir={self._doozer_working_dir}-ci-scan",
             "--build-system=konflux",
         ]
-        if self.data_path:
-            cmd.append(f"--data-path={self.data_path}")
+        # TODO: revert -- forcing the test data_path below for CI rebuild testing; restore
+        # `if self.data_path: cmd.append(f"--data-path={self.data_path}")`.
+        cmd.append(f"--data-path={self._CI_TEST_DATA_PATH}")
         cmd.extend(["--group", group])
         cmd.extend(self._get_doozer_assembly_args())
         cmd.extend(["-i", ",".join(image_keys)])
@@ -1230,30 +1237,37 @@ class UpdateGolangPipeline:
         changes = get_changes(report)
         return [image_key for image_key in changes.get('images', []) if image_key in image_keys]
 
-    async def _rebase_ci_image(self, image_key: str, version: str, release: str):
-        _LOGGER.info("Rebasing %s for Konflux...", image_key)
-        group = f"openshift-{self.ocp_version}"
+    async def _rebase_ci_images(self, image_keys: List[str], version: str, release: str):
+        _LOGGER.info("Rebasing %s for Konflux...", ", ".join(image_keys))
+        group = self._get_ci_group()
         cmd = [
             "doozer",
-            f"--working-dir={self._doozer_working_dir}-ci-{image_key}",
+            f"--working-dir={self._doozer_working_dir}-ci-rebase",
             "--build-system=konflux",
         ]
         cmd.extend(self._get_doozer_assembly_args())
-        if self.data_path:
-            cmd.append(f"--data-path={self.data_path}")
+        # TODO: revert -- forcing the test data_path below for CI rebuild testing; restore
+        # `if self.data_path: cmd.append(f"--data-path={self.data_path}")`.
+        cmd.append(f"--data-path={self._CI_TEST_DATA_PATH}")
         cmd.extend(
             [
                 "--group",
                 group,
+                # All CI images being rebuilt this run are rebased together in one doozer
+                # invocation (matching ocp4_konflux's approach), so a `from: member:` reference
+                # between them (e.g. ci-openshift-build-root-* -> ci-openshift-golang-builder-*)
+                # is resolved in-process. --latest-parent-version is kept as a fallback for a
+                # member that isn't part of this batch (e.g. only the build-root side went stale).
+                "--latest-parent-version",
                 "-i",
-                image_key,
+                ",".join(image_keys),
                 "beta:images:konflux:rebase",
                 "--version",
                 version,
                 "--release",
                 release,
                 "--message",
-                f"Bump golang parent image for {image_key}",
+                f"Bump golang parent image for {', '.join(image_keys)}",
             ]
         )
         if self.network_mode:
@@ -1262,24 +1276,26 @@ class UpdateGolangPipeline:
             cmd.append("--push")
         await exectools.cmd_assert_async(cmd, env=self._doozer_env_vars)
 
-    async def _build_ci_image(self, image_key: str):
-        _LOGGER.info("Building %s on Konflux...", image_key)
-        group = f"openshift-{self.ocp_version}"
+    async def _build_ci_images(self, image_keys: List[str]):
+        _LOGGER.info("Building %s on Konflux...", ", ".join(image_keys))
+        group = self._get_ci_group()
         konflux_namespace = PRODUCT_NAMESPACE_MAP["ocp"]
         cmd = [
             "doozer",
-            f"--working-dir={self._doozer_working_dir}-ci-{image_key}",
+            f"--working-dir={self._doozer_working_dir}-ci-build",
             "--build-system=konflux",
         ]
         cmd.extend(self._get_doozer_assembly_args())
-        if self.data_path:
-            cmd.append(f"--data-path={self.data_path}")
+        # TODO: revert -- forcing the test data_path below for CI rebuild testing; restore
+        # `if self.data_path: cmd.append(f"--data-path={self.data_path}")`.
+        cmd.append(f"--data-path={self._CI_TEST_DATA_PATH}")
         cmd.extend(
             [
                 "--group",
                 group,
+                "--latest-parent-version",
                 "-i",
-                image_key,
+                ",".join(image_keys),
                 "beta:images:konflux:build",
                 f"--konflux-namespace={konflux_namespace}",
                 "--skip-ec-verify",
@@ -1295,24 +1311,13 @@ class UpdateGolangPipeline:
 
     async def _rebase_and_build_ci_images(self, image_keys: List[str]):
         """
-        Rebase+build each CI image directly via doozer, without touching streams.yml or creating
-        an ocp-build-data PR.
+        Rebase, then build, all given CI images together -- one doozer invocation per phase --
+        directly via doozer, without touching streams.yml or creating an ocp-build-data PR.
         """
         version = f"v{self.ocp_version}.0"
         release = default_release_suffix()
-
-        async def _rebase_and_build(image_key: str):
-            await self._rebase_ci_image(image_key, version, release)
-            await self._build_ci_image(image_key)
-
-        results = await asyncio.gather(
-            *[_rebase_and_build(image_key) for image_key in image_keys],
-            return_exceptions=True,
-        )
-        failed = [(image_key, r) for image_key, r in zip(image_keys, results) if isinstance(r, Exception)]
-        if failed:
-            summary = "\n".join(f"  ❌ {image_key}: {err}" for image_key, err in failed)
-            raise RuntimeError(f"Failed to rebuild {len(failed)}/{len(image_keys)} CI image(s):\n{summary}")
+        await self._rebase_ci_images(image_keys, version, release)
+        await self._build_ci_images(image_keys)
 
     @staticmethod
     def _get_required_env(var_name: str) -> str:
@@ -1358,7 +1363,7 @@ class UpdateGolangPipeline:
         other way to redirect it away from the production tag.
         """
         _LOGGER.info("Syncing CI image(s) to CI: %s", ", ".join(image_keys))
-        group = f"openshift-{self.ocp_version}"
+        group = self._get_ci_group()
         with self._create_ci_sync_registry_config() as auth_file:
             cmd = [
                 "doozer",
@@ -1366,8 +1371,9 @@ class UpdateGolangPipeline:
                 "--build-system=konflux",
             ]
             cmd.extend(self._get_doozer_assembly_args())
-            if self.data_path:
-                cmd.append(f"--data-path={self.data_path}")
+            # TODO: revert -- forcing the test data_path below for CI rebuild testing; restore
+            # `if self.data_path: cmd.append(f"--data-path={self.data_path}")`.
+            cmd.append(f"--data-path={self._CI_TEST_DATA_PATH}")
             cmd.extend(["--group", group])
             for image_key in image_keys:
                 cmd.extend(["--image", image_key])
@@ -1383,6 +1389,12 @@ class UpdateGolangPipeline:
         "GO_EXTRA": "extra",
         "GO_PREVIOUS": "previous",
     }
+
+    # TODO: revert -- temporary hardcoded fork/branch for testing the CI golang-builder/build-root
+    # rebuild path end-to-end. Every site tagged "TODO: revert" below forces this instead of the
+    # normal --data-path/--data-gitref values; remove them all once testing is done.
+    _CI_TEST_DATA_PATH = "https://github.com/kopero2000/ocp-build-data"
+    _CI_TEST_DATA_GITREF = "openshift-5.0-test"
 
     async def _refresh_ci_images(
         self,
@@ -1401,12 +1413,13 @@ class UpdateGolangPipeline:
         an ocp-build-data PR) any golang-builder CI image found to be stale. ci-openshift-build-root-*
         images pull their parent via a `member` reference to the golang-builder CI image (not a
         golang stream or the raw golang-builder container), so once a golang-builder image is
-        rebuilt, its corresponding build-root image is unconditionally rebuilt right after, to
-        pick up the new base image. Both rebuild steps must complete before either image is
-        mirrored to CI, so everything rebuilt this run is synced together in a single final step.
-        For the test assembly, `_sync_ci_images` passes `--live-test-mode`, which publishes to
-        the `.test`-suffixed CI imagestream tag instead of the real one, so test-assembly runs
-        never overwrite what production CI actually consumes.
+        stale, its corresponding build-root image is unconditionally rebuilt alongside it, in the
+        same rebase/build batch (see `_rebase_and_build_ci_images`) -- doozer only resolves a
+        `from: member:` reference correctly when both images are loaded in the same run. Once
+        both rebuild, everything is synced together in a single final step. For the test
+        assembly, `_sync_ci_images` passes `--live-test-mode`, which publishes to the
+        `.test`-suffixed CI imagestream tag instead of the real one, so test-assembly runs never
+        overwrite what production CI actually consumes.
         """
         variant = next(
             (
@@ -1455,30 +1468,16 @@ class UpdateGolangPipeline:
             return
 
         stale_builder_keys = [image_key for _, image_key in stale_builder_targets]
-        await self._slack_client.say_in_thread(
-            f":construction: Rebuilding CI golang builder image(s) for "
-            f"{self.ocp_version}: {', '.join(stale_builder_keys)}"
-        )
-        await self._rebase_and_build_ci_images(stale_builder_keys)
-        await self._slack_client.say_in_thread(
-            f":white_check_mark: Rebuilt CI golang builder image(s): {', '.join(stale_builder_keys)}"
-        )
 
-        # Trigger the build-root image(s) whose golang-builder parent was just rebuilt above.
+        # Build-root image(s) whose golang-builder parent is about to be rebuilt. Rebuilt in the
+        # same batch as their golang-builder parent (not a separate call) so doozer resolves the
+        # `from: member:` reference in-process.
         build_root_keys = [
             f"{CI_BUILD_ROOT_IMAGE_PREFIX}{variant}.rhel{el_v}"
             for el_v, _ in stale_builder_targets
             if f"{CI_BUILD_ROOT_IMAGE_PREFIX}{variant}.rhel{el_v}" in all_image_keys
         ]
-        if build_root_keys:
-            await self._slack_client.say_in_thread(
-                f":construction: Rebuilding CI build-root image(s) for {self.ocp_version}: {', '.join(build_root_keys)}"
-            )
-            await self._rebase_and_build_ci_images(build_root_keys)
-            await self._slack_client.say_in_thread(
-                f":white_check_mark: Rebuilt CI build-root image(s): {', '.join(build_root_keys)}"
-            )
-        else:
+        if not build_root_keys:
             _LOGGER.info(
                 "No CI build-root images found for variant %s on openshift-%s; skipping CI build-root rebuild",
                 variant,
@@ -1486,6 +1485,15 @@ class UpdateGolangPipeline:
             )
 
         rebuilt_image_keys = stale_builder_keys + build_root_keys
+        await self._slack_client.say_in_thread(
+            f":construction: Rebuilding CI golang builder/build-root image(s) for "
+            f"{self.ocp_version}: {', '.join(rebuilt_image_keys)}"
+        )
+        await self._rebase_and_build_ci_images(rebuilt_image_keys)
+        await self._slack_client.say_in_thread(
+            f":white_check_mark: Rebuilt CI golang builder/build-root image(s): {', '.join(rebuilt_image_keys)}"
+        )
+
         try:
             await self._sync_ci_images(rebuilt_image_keys)
         except Exception as e:
@@ -1513,6 +1521,17 @@ class UpdateGolangPipeline:
         if self.data_gitref:
             group += f'@{self.data_gitref}'
         return group, image_key
+
+    def _get_ci_group(self) -> str:
+        """The openshift-{version} doozer group used by the CI golang-builder/build-root
+        methods, honoring --data-gitref so a fork's non-default-named branch (e.g.
+        openshift-5.0-test) is actually checked out instead of doozer defaulting to a branch
+        literally named openshift-{version}."""
+        group = f"openshift-{self.ocp_version}"
+        # TODO: revert -- forcing the test data_gitref below for CI rebuild testing; restore
+        # `if self.data_gitref: group += f'@{self.data_gitref}'`.
+        group += f'@{self._CI_TEST_DATA_GITREF}'
+        return group
 
     def verify_golang_builder_repo(self, el_v, go_version):
         default_branch = self.GOLANG_DATA_BRANCH
