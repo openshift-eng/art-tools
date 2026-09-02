@@ -1426,6 +1426,13 @@ class UpdateGolangPipeline:
         `.test`-suffixed CI imagestream tag instead of the real one, so test-assembly runs never
         overwrite what production CI actually consumes.
         """
+        # TODO: revert -- re-deriving allowed_major_minors from the test fork/branch below.
+        # _get_allowed_go_major_minors (which produced the `allowed_major_minors` param) always
+        # reads the real upstream ocp-build-data regardless of --data-path, so without this the
+        # variant match below would use production GO_LATEST/GO_EXTRA/GO_PREVIOUS values while
+        # every doozer call in this method reads from the test fork. Restore by deleting this
+        # line so `allowed_major_minors` (the param) is used directly below.
+        allowed_major_minors = self._get_ci_allowed_go_major_minors()
         variant = next(
             (
                 self.CI_VARIANT_BY_GROUP_VAR[var_name]
@@ -1537,6 +1544,23 @@ class UpdateGolangPipeline:
         # `if self.data_gitref: group += f'@{self.data_gitref}'`.
         group += f'@{self._CI_TEST_DATA_GITREF}'
         return group
+
+    # TODO: revert -- delete this whole method once CI rebuild testing is done.
+    def _get_ci_allowed_go_major_minors(self) -> dict[str, str]:
+        """CI-scoped re-lookup of GO_LATEST/GO_EXTRA/GO_PREVIOUS against the test fork/branch, for
+        _refresh_ci_images' variant matching only -- see the TODO where this is called."""
+        branch = f"openshift-{self.ocp_version}"
+        repo, branch = self._get_ocp_build_data_repo_and_branch(
+            branch, data_path=self._CI_TEST_DATA_PATH, data_gitref=self._CI_TEST_DATA_GITREF
+        )
+        group_content = self._load_yaml_from_repo(repo, "group.yml", branch)
+        vars_content = group_content.get("vars", {})
+        return {
+            var_name: extract_major_minor(var_value, f"group.yml {var_name}")
+            for var_name in ("GO_LATEST", "GO_EXTRA", "GO_PREVIOUS")
+            for var_value in [vars_content.get(var_name)]
+            if var_value
+        }
 
     def verify_golang_builder_repo(self, el_v, go_version):
         default_branch = self.GOLANG_DATA_BRANCH
