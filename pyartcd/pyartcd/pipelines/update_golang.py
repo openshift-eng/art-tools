@@ -1227,7 +1227,11 @@ class UpdateGolangPipeline:
         cmd.append("--load-disabled")
         cmd.extend(self._get_doozer_assembly_args())
         cmd.extend(["-i", ",".join(image_keys)])
-        cmd.extend(["beta:config:konflux:scan-sources", "--yaml"])
+        # These CI images declare `scan_sources: exempt_rpms: - '*'`, so RPM changes never affect
+        # their staleness anyway. --skip-rpms avoids loading/cloning every RPM source in the whole
+        # group (mode='images' instead of 'both' in doozer), which is otherwise unconditional and
+        # unrelated to the -i image filter above.
+        cmd.extend(["beta:config:konflux:scan-sources", "--yaml", "--skip-rpms"])
         # --ci-kubeconfig is for looking at release-controller imagestreams on app.ci, which is a
         # different cluster/identity than self.kubeconfig (the Konflux SA kubeconfig).
         ci_kubeconfig = os.environ.get('KUBECONFIG')
