@@ -748,6 +748,28 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
             nvr=nvr, outcome=KonfluxBuildOutcome.SUCCESS, strict=True, exclude_large_columns=False
         )
 
+    @patch("artcommonlib.konflux.konflux_db.KonfluxDb.get_latest_build")
+    async def test_get_build_records_by_nvrs_preserves_group_filter(self, get_latest_build_mock: MagicMock):
+        get_latest_build_mock.return_value = KonfluxBuildRecord(nvr="test-1.0-1")
+
+        records = await self.db.get_build_records_by_nvrs(
+            ["test-1.0-1"], where={"group": "oadp-1.5", "engine": "konflux"}
+        )
+
+        self.assertEqual(len(records), 1)
+        get_latest_build_mock.assert_awaited_once_with(
+            nvr="test-1.0-1",
+            outcome=KonfluxBuildOutcome.SUCCESS,
+            assembly=None,
+            group="oadp-1.5",
+            el_target=None,
+            artifact_type=None,
+            engine="konflux",
+            embargoed=None,
+            strict=True,
+            exclude_large_columns=False,
+        )
+
     def test_get_latest_build_with_string_enums(self):
         """Test that string enum parameters can be converted to enums for cache comparisons"""
         # This tests the critical fix: elliott CLI passes enum parameters as strings (e.g., 'konflux', 'success'),

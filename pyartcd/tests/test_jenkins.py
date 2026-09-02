@@ -114,3 +114,12 @@ class TestJenkinsStartBuild(unittest.TestCase):
             'job/aos-cd-builds/job/build%252Focp4/46870'
         )
         self.assertEqual(jenkins.get_build_id_from_url(build_url), 46870)
+
+    @mock.patch("pyartcd.jenkins.start_build")
+    def test_start_build_conforma_verify_uses_group_parameter(self, start_build_mock):
+        jenkins.start_build_conforma_verify(group="oadp-1.5")
+
+        params = start_build_mock.call_args.kwargs["params"]
+        self.assertEqual(start_build_mock.call_args.kwargs["job"], Jobs.BUILD_CONFORMA_VERIFY)
+        self.assertEqual(params["GROUP"], "oadp-1.5")
+        self.assertNotIn("BUILD_VERSION", params)

@@ -8,7 +8,7 @@ from typing import List, Optional
 
 import click
 from artcommonlib import exectools, logutil
-from artcommonlib.constants import KONFLUX_DEFAULT_NAMESPACE
+from artcommonlib.constants import KONFLUX_DEFAULT_NAMESPACE, PRODUCT_KUBECONFIG_MAP, PRODUCT_NAMESPACE_MAP
 from artcommonlib.konflux.konflux_build_record import (
     Engine,
     KonfluxBuildOutcome,
@@ -28,7 +28,7 @@ from doozerlib.constants import (
     KONFLUX_EC_PIPELINE_REVISION,
 )
 
-from pyartcd import constants
+from pyartcd import constants, util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.runtime import Runtime
 from pyartcd.slack import SlackClient
@@ -42,7 +42,7 @@ class BuildConformaVerifyPipeline:
     def __init__(
         self,
         runtime: Runtime,
-        version: str,
+        group: str,
         assembly: str,
         builds: Optional[List[str]],
         data_path: Optional[str] = None,
@@ -57,7 +57,9 @@ class BuildConformaVerifyPipeline:
         slack_client: Optional[SlackClient] = None,
     ):
         self.runtime = runtime
-        self.version = version
+        self.group = group
+        self.namespace = KONFLUX_DEFAULT_NAMESPACE
+        self.kubeconfig_env_var = 'KONFLUX_SA_KUBECONFIG'
         self.assembly = assembly
         self.builds = builds or []
         self.data_path = data_path or constants.OCP_BUILD_DATA_URL
@@ -75,8 +77,6 @@ class BuildConformaVerifyPipeline:
 
         self.working_dir = self.runtime.working_dir / "conforma_verify"
         self.working_dir.mkdir(parents=True, exist_ok=True)
-
-        self.group = f"openshift-{version}"
 
     @property
     def _elliott_base_command(self) -> list[str]:
@@ -107,7 +107,26 @@ class BuildConformaVerifyPipeline:
             f'--data-path={self.data_path}',
         ]
 
+    async def _resolve_layered_product_settings(self):
+        """Load group config to resolve the Konflux namespace and kubeconfig for this group."""
+        group_config = await util.load_group_config(
+            group=self.group,
+            assembly=self.assembly,
+            doozer_data_path=self.data_path,
+            doozer_data_gitref=self.data_gitref,
+        )
+        product = group_config.get('product')
+        if not product:
+            raise ValueError(f"No product configured for layered-product group '{self.group}'")
+        if product not in PRODUCT_NAMESPACE_MAP or product not in PRODUCT_KUBECONFIG_MAP:
+            raise ValueError(f"Unsupported layered-product group '{self.group}' product '{product}'")
+
+        self.namespace = PRODUCT_NAMESPACE_MAP[product]
+        self.kubeconfig_env_var = PRODUCT_KUBECONFIG_MAP[product]
+
     async def run(self):
+        if not self.group.startswith('openshift-'):
+            await self._resolve_layered_product_settings()
         any_failed = False
         image_failed = 0
         bundle_failed = 0
@@ -354,9 +373,13 @@ class BuildConformaVerifyPipeline:
 
         Returns (passed, violations_by_component).
         """
-        kubeconfig = os.getenv("KONFLUX_SA_KUBECONFIG")
+        kubeconfig = os.getenv(self.kubeconfig_env_var)
+        if not kubeconfig:
+            raise ValueError(
+                f"Kubeconfig environment variable {self.kubeconfig_env_var} is not set for group '{self.group}'"
+            )
         konflux_client = KonfluxClient.from_kubeconfig(
-            default_namespace=KONFLUX_DEFAULT_NAMESPACE,
+            default_namespace=self.namespace,
             config_file=kubeconfig,
             context=None,
             dry_run=self.dry_run,
@@ -436,7 +459,7 @@ class BuildConformaVerifyPipeline:
                 "kind": "PipelineRun",
                 "metadata": {
                     "generateName": generate_name,
-                    "namespace": KONFLUX_DEFAULT_NAMESPACE,
+                    "namespace": self.namespace,
                     "labels": labels,
                     "annotations": {
                         "test.appstudio.openshift.io/kind": "enterprise-contract",
@@ -479,7 +502,7 @@ class BuildConformaVerifyPipeline:
 
         async def _wait_for_batch(batch_idx: int, batch: list[dict], plr_name: str) -> dict:
             try:
-                plr_info = await konflux_client.wait_for_pipelinerun(plr_name, namespace=KONFLUX_DEFAULT_NAMESPACE)
+                plr_info = await konflux_client.wait_for_pipelinerun(plr_name, namespace=self.namespace)
                 plr_url = KonfluxClient.resource_url(plr_info.to_dict())
                 condition = plr_info.find_condition("Succeeded")
                 outcome = KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition(condition)
@@ -559,7 +582,7 @@ class BuildConformaVerifyPipeline:
             if "verify" not in pod_name:
                 continue
 
-            namespace = pod_info.namespace or KONFLUX_DEFAULT_NAMESPACE
+            namespace = pod_info.namespace or self.namespace
             for step_name in ("step-report", "step-detailed-report"):
                 try:
                     log = konflux_client.corev1_client.read_namespaced_pod_log(
@@ -700,7 +723,7 @@ class BuildConformaVerifyPipeline:
         else:
             detail = "failed (no violation details available)"
         message = (
-            f":warning: build-conforma-verify in {self.version} "
+            f":warning: build-conforma-verify in {self.group} "
             f"(assembly=`{self.assembly}`) {detail} "
             f"(effective_time=`{self.effective_time}`)"
         )
@@ -719,8 +742,8 @@ class BuildConformaVerifyPipeline:
             await self.slack_client.say_in_thread("\n".join(lines))
 
 
-@cli.command("build-conforma-verify", short_help="Run Conforma (EC) verification on OCP builds")
-@click.option("--version", required=True, help="OCP version (e.g. 4.18)")
+@cli.command("build-conforma-verify", short_help="Run Conforma (EC) verification on image builds")
+@click.option("--group", required=True, help="Group name (e.g. openshift-4.18, logging-6.2)")
 @click.option("--assembly", required=True, default="stream", help="Assembly name")
 @click.option("--data-path", default=None, help="ocp-build-data repo URL or path")
 @click.option("--data-gitref", default=None, help="ocp-build-data git ref")
@@ -764,7 +787,7 @@ class BuildConformaVerifyPipeline:
 @click_coroutine
 async def build_conforma_verify(
     runtime: Runtime,
-    version: str,
+    group: str,
     assembly: str,
     data_path: Optional[str],
     data_gitref: Optional[str],
@@ -790,7 +813,7 @@ async def build_conforma_verify(
 
     pipeline = BuildConformaVerifyPipeline(
         runtime=runtime,
-        version=version,
+        group=group,
         assembly=assembly,
         builds=builds_list,
         data_path=data_path,
