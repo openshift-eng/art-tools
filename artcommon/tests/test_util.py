@@ -14,6 +14,7 @@ from artcommonlib.util import (
     isolate_major_minor_in_group,
     normalize_group_name_for_k8s,
     normalize_k8s_dns_label,
+    resolve_konflux_fbc_stage_release_plan,
     validate_k8s_dns_label,
 )
 
@@ -1273,3 +1274,29 @@ class TestGetInflight(unittest.TestCase):
         result = get_inflight('rc.4', 'openshift-4.22', date='2026-05-25')
 
         self.assertEqual(result, '4.21.16')
+
+
+class TestResolveKonfluxFbcStageReleasePlan(unittest.TestCase):
+    def test_layered_product_versions_return_exact_names(self):
+        expected_plans = {
+            ("cert-manager", 1, 19): "cm-advisory-stage-auto-1-19",
+            ("external-secrets-operator", 1, 1): "eso-advisory-stage-auto-1-1",
+            ("multicluster-engine", 2, 11): "mce-advisory-stage-2-11",
+            ("multicluster-engine", 5, 0): "mce-advisory-stage-5-0",
+            ("rhacm2", 2, 16): "acm-advisory-stage-2-16",
+            ("rhacm2", 5, 0): "acm-advisory-stage-5-0",
+            ("zero-trust-workload-identity-manager", 1, 0): "zt-advisory-stage-auto-1-0",
+            ("zero-trust-workload-identity-manager", 1, 1): "zt-advisory-stage-auto-1-1",
+        }
+
+        for (product, major, minor), expected_plan in expected_plans.items():
+            with self.subTest(product=product, major=major, minor=minor):
+                self.assertEqual(resolve_konflux_fbc_stage_release_plan(product, major, minor), expected_plan)
+
+    def test_ocp_version_passed_as_product_version_returns_none(self):
+        # Passing OCP version (4.18) instead of product version yields None — no such plan
+        self.assertIsNone(resolve_konflux_fbc_stage_release_plan("rhacm2", 4, 18))
+
+    def test_unknown_product_returns_none(self):
+        self.assertIsNone(resolve_konflux_fbc_stage_release_plan("quay", 4, 18))
+        self.assertIsNone(resolve_konflux_fbc_stage_release_plan("", 4, 18))

@@ -165,6 +165,31 @@ PRODUCT_BASE_IMAGE_KONFLUX_EC_RELEASE_MAP = {
     "ocp": ("ocp-art-images-base-silent-ec", "art-images-base"),
 }
 
+# Per-version ReleasePlan name lookup for FBC related-image advisory-stage release workflow.
+# Keys are (product_major, product_minor) tuples — these are PRODUCT versions, NOT OCP versions.
+# Exact plan names sourced from konflux-release-data ReleasePlan resources per product tenant.
+# Must stay aligned with konflux-release-data. See ART-17452.
+PRODUCT_FBC_STAGE_RELEASE_PLAN_MAP: dict[str, dict[tuple[int, int], str]] = {
+    "cert-manager": {
+        (1, 19): "cm-advisory-stage-auto-1-19",
+    },
+    "external-secrets-operator": {
+        (1, 1): "eso-advisory-stage-auto-1-1",
+    },
+    "multicluster-engine": {
+        (2, 11): "mce-advisory-stage-2-11",
+        (5, 0): "mce-advisory-stage-5-0",
+    },
+    "rhacm2": {
+        (2, 16): "acm-advisory-stage-2-16",
+        (5, 0): "acm-advisory-stage-5-0",
+    },
+    "zero-trust-workload-identity-manager": {
+        (1, 0): "zt-advisory-stage-auto-1-0",
+        (1, 1): "zt-advisory-stage-auto-1-1",
+    },
+}
+
 PRODUCT_KUBECONFIG_MAP = {
     "multicluster-engine": "ACM_KONFLUX_SA_KUBECONFIG",
     "rhacm2": "ACM_KONFLUX_SA_KUBECONFIG",

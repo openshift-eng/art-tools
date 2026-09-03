@@ -8,7 +8,7 @@ from artcommonlib.konflux.konflux_build_record import (
     KonfluxBundleBuildRecord,
 )
 from artcommonlib.model import Model
-from doozerlib.cli.images_konflux import KonfluxBundleCli, KonfluxRebaseCli
+from doozerlib.cli.images_konflux import BundleStageReleaseRelatedImagesCli, KonfluxBundleCli, KonfluxRebaseCli
 from doozerlib.exceptions import DoozerFatalError, ParentRebaseFailedError
 from doozerlib.runtime import Runtime
 from doozerlib.source_resolver import SourceResolver
@@ -330,3 +330,257 @@ class TestKonfluxRebaseCli(unittest.IsolatedAsyncioTestCase):
         )
         self.assertNotIn("failed-images", rebase_state)
         self.assertNotIn("skipped-due-to-parent-rebase-failure", rebase_state)
+
+
+class TestBundleStageReleaseRelatedImagesCli(unittest.IsolatedAsyncioTestCase):
+    """Cover product major/minor resolution and the per-operator stage release loop.
+
+    Layered products (e.g. ACM) set `version: 2.16.0` in group.yml while using MAJOR/MINOR for
+    the OCP brew-branch version (e.g. 4.21).  OCP groups have no `version:` field and their
+    MAJOR/MINOR vars ARE the product version.  The code must prefer group_config.version when
+    present and fall back to vars.MAJOR/MINOR only when it is absent (MissingModel is falsy).
+
+    Each operator is stage-released on its own so that one failure cannot stop the others from
+    reaching their FBC builds; every outcome is written to record.log for the calling pipeline.
+    """
+
+    def _make_runtime(self, *, product: str, version_str: str = "", major: int = 0, minor: int = 0):
+        runtime = mock.Mock(spec=Runtime)
+        runtime.assembly = "stream"
+        runtime.product = product
+        runtime.konflux_db = mock.Mock()
+        runtime.konflux_db.bind = mock.Mock()
+        runtime.group = "rhacm2-2.16"
+        runtime.record_logger = mock.Mock()
+        gc_data = {"vars": {"MAJOR": major, "MINOR": minor}}
+        if version_str:
+            gc_data["version"] = version_str
+        runtime.group_config = Model(gc_data)
+        return runtime
+
+    def _make_cli(self, runtime, operator_nvrs=("some-operator-nvr",)):
+        return BundleStageReleaseRelatedImagesCli(
+            runtime=runtime,
+            operator_nvrs=operator_nvrs,
+            stage_release_plan=None,
+            konflux_kubeconfig="/path/to/kubeconfig",
+            konflux_context=None,
+            konflux_namespace="test-namespace",
+            dry_run=False,
+        )
+
+    @mock.patch("doozerlib.cli.images_konflux.KonfluxDb")
+    @mock.patch("doozerlib.cli.images_konflux.resolve_konflux_fbc_stage_release_plan")
+    async def test_layered_product_uses_group_config_version(self, mock_resolve, mock_db_class):
+        """ACM: group_config.version='2.16.0' must be used, not vars.MAJOR=4 / MINOR=21."""
+        mock_db_class.return_value = mock.Mock()
+        mock_resolve.return_value = None  # no plan → early return after the resolve call
+
+        runtime = self._make_runtime(product="rhacm2", version_str="2.16.0", major=4, minor=21)
+        await self._make_cli(runtime).run()
+
+        mock_resolve.assert_called_once_with("rhacm2", 2, 16)
+
+    @mock.patch("doozerlib.cli.images_konflux.KonfluxDb")
+    @mock.patch("doozerlib.cli.images_konflux.resolve_konflux_fbc_stage_release_plan")
+    async def test_ocp_group_uses_vars_major_minor(self, mock_resolve, mock_db_class):
+        """OCP: no version: field in group config; vars.MAJOR/MINOR are the product version."""
+        mock_db_class.return_value = mock.Mock()
+        mock_resolve.return_value = None
+
+        runtime = self._make_runtime(product="ocp", major=5, minor=0)
+        await self._make_cli(runtime).run()
+
+        mock_resolve.assert_called_once_with("ocp", 5, 0)
+
+    @staticmethod
+    def _mock_konflux_client(released_condition):
+        client = mock.AsyncMock()
+        client.resource_url = mock.Mock(return_value="https://konflux/url")
+        created = mock.Mock()
+        created.metadata.name = "fbc-ri-stage-rhacm2-2-16-operator-a-xyz"
+        client._create = mock.AsyncMock(return_value=created)
+        client._get = mock.AsyncMock(return_value={})
+        client.wait_for_release = mock.AsyncMock(return_value={"status": {"conditions": [released_condition]}})
+        return client
+
+    @staticmethod
+    def _component(name, pullspec):
+        return {
+            "name": name,
+            "source": {"git": {"url": "https://git/repo", "revision": "deadbeef"}},
+            "containerImage": pullspec,
+        }
+
+    @staticmethod
+    def _operator_record(name):
+        record = mock.Mock()
+        record.name = name
+        record.nvr = f"{name}-1-1"
+        return record
+
+    @staticmethod
+    def _ref(component_name):
+        build = mock.Mock()
+        build.get_konflux_component_name.return_value = component_name
+        build.rebase_repo_url = "https://git/repo"
+        build.rebase_commitish = "deadbeef"
+        build.image_pullspec = f"img-{component_name}"
+        return build
+
+    def _prepare_run(self, runtime, operator_names, records=None):
+        """Wire up a runtime so run() reaches the per-operator stage release loop."""
+        operators = records if records is not None else [self._operator_record(n) for n in operator_names]
+        runtime.konflux_db.get_build_records_by_nvrs = mock.AsyncMock(return_value=operators)
+        meta = mock.Mock()
+        meta.get_olm_bundle_short_name.return_value = "some-bundle"
+        runtime.image_map = {name: meta for name in operator_names}
+        return operators
+
+    @mock.patch("doozerlib.cli.images_konflux.KonfluxDb")
+    async def test_stage_release_creates_snapshot_and_release_for_one_operator(self, mock_db_class):
+        """A single operator's related images go into one Snapshot and one Release."""
+        client = self._mock_konflux_client({"type": "Released", "status": "True", "reason": "Succeeded"})
+        cli = self._make_cli(self._make_runtime(product="rhacm2", version_str="2.16.0", major=4, minor=21))
+
+        components = [self._component("comp-a", "img-a"), self._component("comp-b", "img-b")]
+        url = await cli._stage_release(
+            konflux_client=client,
+            components=components,
+            release_plan_name="acm-advisory-stage-2-16",
+            group="rhacm2-2.16",
+            assembly="stream",
+            operator_name="operator-a",
+            operator_nvr="operator-a-1-1",
+        )
+
+        self.assertEqual(url, "https://konflux/url")
+        self.assertEqual([c.args[0]["kind"] for c in client._create.call_args_list], ["Snapshot", "Release"])
+        snapshot = client._create.call_args_list[0].args[0]
+        self.assertEqual([c["name"] for c in snapshot["spec"]["components"]], ["comp-a", "comp-b"])
+        self.assertEqual(snapshot["metadata"]["labels"]["release.appstudio.openshift.io/auto-release"], "false")
+        # Names are generated server-side so two operators cannot collide on a truncated label
+        self.assertNotIn("name", snapshot["metadata"])
+        self.assertTrue(snapshot["metadata"]["generateName"].startswith("fbc-ri-stage-rhacm2-2-16-operator-a-"))
+        release = client._create.call_args_list[1].args[0]
+        self.assertEqual(release["spec"]["releasePlan"], "acm-advisory-stage-2-16")
+        self.assertEqual(release["metadata"]["annotations"]["art.redhat.com/operator-nvr"], "operator-a-1-1")
+        client.wait_for_release.assert_awaited_once()
+
+    @mock.patch("doozerlib.cli.images_konflux.KonfluxDb")
+    async def test_stage_release_raises_when_release_fails(self, mock_db_class):
+        client = self._mock_konflux_client(
+            {"type": "Released", "status": "False", "reason": "Failed", "message": "managed pipeline blew up"}
+        )
+        cli = self._make_cli(self._make_runtime(product="rhacm2", version_str="2.16.0", major=4, minor=21))
+
+        with self.assertRaisesRegex(RuntimeError, "managed pipeline blew up"):
+            await cli._stage_release(
+                konflux_client=client,
+                components=[self._component("comp-a", "img-a")],
+                release_plan_name="acm-advisory-stage-2-16",
+                group="rhacm2-2.16",
+                assembly="stream",
+                operator_name="operator-a",
+                operator_nvr="operator-a-1-1",
+            )
+
+    @mock.patch("doozerlib.cli.images_konflux.get_referenced_images")
+    @mock.patch("doozerlib.cli.images_konflux.KonfluxClient")
+    @mock.patch("doozerlib.cli.images_konflux.KonfluxDb")
+    @mock.patch("doozerlib.cli.images_konflux.resolve_konflux_fbc_stage_release_plan")
+    async def test_run_creates_one_release_per_operator(
+        self, mock_resolve, mock_db_class, mock_client_cls, mock_get_refs
+    ):
+        """Two operators sharing an operand get one Release each; the shared operand is in both."""
+        mock_resolve.return_value = "acm-advisory-stage-2-16"
+        runtime = self._make_runtime(product="rhacm2", version_str="2.16.0", major=4, minor=21)
+        self._prepare_run(runtime, ["operator-a", "operator-b"])
+
+        mock_get_refs.side_effect = [
+            [self._ref("comp-a"), self._ref("comp-shared")],
+            [self._ref("comp-b"), self._ref("comp-shared")],
+        ]
+
+        async def _bundle_builds(*args, **kwargs):
+            yield mock.Mock()
+
+        cli = self._make_cli(runtime, operator_nvrs=("operator-a-1-1", "operator-b-1-1"))
+        cli._db_for_bundles.search_builds_by_fields = _bundle_builds
+        cli._stage_release = mock.AsyncMock(return_value="https://konflux/url")
+
+        await cli.run()
+
+        self.assertEqual(cli._stage_release.await_count, 2)
+        first, second = cli._stage_release.await_args_list
+        self.assertEqual([c["name"] for c in first.kwargs["components"]], ["comp-a", "comp-shared"])
+        self.assertEqual(first.kwargs["operator_nvr"], "operator-a-1-1")
+        self.assertEqual([c["name"] for c in second.kwargs["components"]], ["comp-b", "comp-shared"])
+        self.assertEqual(second.kwargs["operator_nvr"], "operator-b-1-1")
+
+        statuses = [call.kwargs["status"] for call in runtime.record_logger.add_record.call_args_list]
+        self.assertEqual(statuses, [0, 0])
+
+    @mock.patch("doozerlib.cli.images_konflux.get_referenced_images")
+    @mock.patch("doozerlib.cli.images_konflux.KonfluxClient")
+    @mock.patch("doozerlib.cli.images_konflux.KonfluxDb")
+    @mock.patch("doozerlib.cli.images_konflux.resolve_konflux_fbc_stage_release_plan")
+    async def test_run_continues_after_operator_failure(
+        self, mock_resolve, mock_db_class, mock_client_cls, mock_get_refs
+    ):
+        """A failing operator is recorded and skipped; the next operator is still released."""
+        mock_resolve.return_value = "acm-advisory-stage-2-16"
+        runtime = self._make_runtime(product="rhacm2", version_str="2.16.0", major=4, minor=21)
+        self._prepare_run(runtime, ["operator-a", "operator-b"])
+
+        mock_get_refs.side_effect = [[self._ref("comp-a")], [self._ref("comp-b")]]
+
+        async def _bundle_builds(*args, **kwargs):
+            yield mock.Mock()
+
+        cli = self._make_cli(runtime, operator_nvrs=("operator-a-1-1", "operator-b-1-1"))
+        cli._db_for_bundles.search_builds_by_fields = _bundle_builds
+        cli._stage_release = mock.AsyncMock(side_effect=[RuntimeError("release blew up"), "https://konflux/url"])
+
+        with self.assertRaisesRegex(DoozerFatalError, "operator-a-1-1"):
+            await cli.run()
+
+        self.assertEqual(cli._stage_release.await_count, 2)
+        records = [call.kwargs for call in runtime.record_logger.add_record.call_args_list]
+        self.assertEqual(
+            [(r["operator_nvr"], r["status"]) for r in records], [("operator-a-1-1", 1), ("operator-b-1-1", 0)]
+        )
+        self.assertIn("release blew up", records[0]["message"])
+
+    @mock.patch("doozerlib.cli.images_konflux.get_referenced_images")
+    @mock.patch("doozerlib.cli.images_konflux.KonfluxClient")
+    @mock.patch("doozerlib.cli.images_konflux.KonfluxDb")
+    @mock.patch("doozerlib.cli.images_konflux.resolve_konflux_fbc_stage_release_plan")
+    async def test_run_records_operator_with_missing_build_record(
+        self, mock_resolve, mock_db_class, mock_client_cls, mock_get_refs
+    ):
+        """An NVR with no build record fails only itself; the others are still stage-released."""
+        mock_resolve.return_value = "acm-advisory-stage-2-16"
+        runtime = self._make_runtime(product="rhacm2", version_str="2.16.0", major=4, minor=21)
+        self._prepare_run(runtime, ["operator-b"], records=[None, self._operator_record("operator-b")])
+
+        mock_get_refs.side_effect = [[self._ref("comp-b")]]
+
+        async def _bundle_builds(*args, **kwargs):
+            yield mock.Mock()
+
+        cli = self._make_cli(runtime, operator_nvrs=("operator-a-1-1", "operator-b-1-1"))
+        cli._db_for_bundles.search_builds_by_fields = _bundle_builds
+        cli._stage_release = mock.AsyncMock(return_value="https://konflux/url")
+
+        with self.assertRaisesRegex(DoozerFatalError, "operator-a-1-1"):
+            await cli.run()
+
+        # strict=False keeps a missing NVR from taking down the whole command
+        self.assertFalse(runtime.konflux_db.get_build_records_by_nvrs.await_args.kwargs["strict"])
+        cli._stage_release.assert_awaited_once()
+        self.assertEqual(cli._stage_release.await_args.kwargs["operator_nvr"], "operator-b-1-1")
+        records = [call.kwargs for call in runtime.record_logger.add_record.call_args_list]
+        self.assertEqual(
+            [(r["operator_nvr"], r["status"]) for r in records], [("operator-a-1-1", 1), ("operator-b-1-1", 0)]
+        )
