@@ -1385,9 +1385,9 @@ class UpdateGolangPipeline:
             # `if self.data_path: cmd.append(f"--data-path={self.data_path}")`.
             cmd.append(f"--data-path={self._CI_TEST_DATA_PATH}")
             cmd.extend(["--group", group])
+            cmd.extend(["images:streams", "mirror", "--registry-auth", auth_file])
             for image_key in image_keys:
                 cmd.extend(["--image", image_key])
-            cmd.extend(["images:streams", "mirror", "--registry-auth", auth_file])
             if not self.is_production_assembly:
                 cmd.append("--live-test-mode")
             if self.dry_run:
@@ -1505,8 +1505,7 @@ class UpdateGolangPipeline:
             )
         else:
             _LOGGER.info(
-                "All CI golang builder/build-root images for openshift-%s already use their current parent "
-                "image;",
+                "All CI golang builder/build-root images for openshift-%s already use their current parent image;",
                 self.ocp_version,
             )
 
