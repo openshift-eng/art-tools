@@ -1359,7 +1359,7 @@ class KonfluxDb:
 
         # Extract additional filters from where if provided
         assembly = where.get('assembly') if where else None
-        group = where.get('group') if where else None
+        group = where.get('group', group) if where else group
         el_target = where.get('el_target') if where else None
         artifact_type = where.get('artifact_type') if where else None
         engine = where.get('engine') if where else None
@@ -1369,7 +1369,6 @@ class KonfluxDb:
         async def _task(nvr):
             return await self.get_latest_build(
                 nvr=nvr,
-                group=group,
                 outcome=outcome,
                 assembly=assembly,
                 group=group,

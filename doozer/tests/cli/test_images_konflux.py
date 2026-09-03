@@ -458,6 +458,7 @@ class TestBundleStageReleaseRelatedImagesCli(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([c.args[0]["kind"] for c in client._create.call_args_list], ["Snapshot", "Release"])
         snapshot = client._create.call_args_list[0].args[0]
         self.assertEqual([c["name"] for c in snapshot["spec"]["components"]], ["comp-a", "comp-b"])
+        self.assertEqual(snapshot["metadata"]["labels"]["release.appstudio.openshift.io/auto-release"], "false")
         # Names are generated server-side so two operators cannot collide on a truncated label
         self.assertNotIn("name", snapshot["metadata"])
         self.assertTrue(snapshot["metadata"]["generateName"].startswith("fbc-ri-stage-rhacm2-2-16-operator-a-"))

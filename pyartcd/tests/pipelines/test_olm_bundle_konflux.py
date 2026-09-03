@@ -105,7 +105,10 @@ class TestOlmBundleKonfluxStageReleaseGating(unittest.IsolatedAsyncioTestCase):
         product='rhacm2',
         group_config_extra=None,
     ):
-        mock_locks.run_with_lock = mock.AsyncMock()
+        async def run_with_lock(*, coro, **_kwargs):
+            return await coro
+
+        mock_locks.run_with_lock = mock.AsyncMock(side_effect=run_with_lock)
         group_cfg = {'product': product, 'vars': {'MAJOR': '2', 'MINOR': '16'}}
         if group_config_extra:
             group_cfg.update(group_config_extra)

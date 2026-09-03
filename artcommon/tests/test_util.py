@@ -1277,9 +1277,21 @@ class TestGetInflight(unittest.TestCase):
 
 
 class TestResolveKonfluxFbcStageReleasePlan(unittest.TestCase):
-    def test_layered_product_version_returns_exact_name(self):
-        # ACM 2.16 — product version, not OCP version
-        self.assertEqual(resolve_konflux_fbc_stage_release_plan("rhacm2", 2, 16), "acm-advisory-stage-2-16")
+    def test_layered_product_versions_return_exact_names(self):
+        expected_plans = {
+            ("cert-manager", 1, 19): "cm-advisory-stage-auto-1-19",
+            ("external-secrets-operator", 1, 1): "eso-advisory-stage-auto-1-1",
+            ("multicluster-engine", 2, 11): "mce-advisory-stage-2-11",
+            ("multicluster-engine", 5, 0): "mce-advisory-stage-5-0",
+            ("rhacm2", 2, 16): "acm-advisory-stage-2-16",
+            ("rhacm2", 5, 0): "acm-advisory-stage-5-0",
+            ("zero-trust-workload-identity-manager", 1, 0): "zt-advisory-stage-auto-1-0",
+            ("zero-trust-workload-identity-manager", 1, 1): "zt-advisory-stage-auto-1-1",
+        }
+
+        for (product, major, minor), expected_plan in expected_plans.items():
+            with self.subTest(product=product, major=major, minor=minor):
+                self.assertEqual(resolve_konflux_fbc_stage_release_plan(product, major, minor), expected_plan)
 
     def test_ocp_version_passed_as_product_version_returns_none(self):
         # Passing OCP version (4.18) instead of product version yields None — no such plan

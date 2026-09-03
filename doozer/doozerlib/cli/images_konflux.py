@@ -1106,6 +1106,8 @@ class BundleStageReleaseRelatedImagesCli:
                 "labels": {
                     "test.appstudio.openshift.io/type": "override",
                     "appstudio.openshift.io/application": application_name,
+                    # This workflow creates and waits for its own Release below.
+                    "release.appstudio.openshift.io/auto-release": "false",
                 },
             },
             "spec": {"application": application_name, "components": components},
