@@ -763,8 +763,8 @@ class KonfluxOkdPipeline:
         This is a temporary solution until the RHCOS team starts mirroring to ART's imagestreams directly.
 
         Mirrors:
-        - origin/scos-{version}:stream-coreos -> origin/scos-{version}-art:stream-coreos
-        - origin/scos-{version}:stream-coreos-extensions -> origin/scos-{version}-art:stream-coreos-extensions
+        - quay-proxy.ci.openshift.org/openshift/ci:<namespace>_scos-{version}_stream-coreos -> origin/scos-{version}-art:stream-coreos
+        - quay-proxy.ci.openshift.org/openshift/ci:<namespace>_scos-{version}_stream-coreos-extensions -> origin/scos-{version}-art:stream-coreos-extensions
 
         Special case:
         - 4.23 has no dedicated scos-4.23 CoreOS stream (master builds 5.0), so it
@@ -791,21 +791,25 @@ class KonfluxOkdPipeline:
         if self.runtime.dry_run:
             self.logger.info('[DRY RUN] Would mirror CoreOS imagestream tags')
             for tag in tags_to_mirror:
-                self.logger.info(f'[DRY RUN] From: {self.imagestream_namespace}/scos-{source_version}:{tag}')
+                self.logger.info(
+                    f'[DRY RUN] From: quay-proxy.ci.openshift.org/openshift/ci:{self.imagestream_namespace}_scos-{source_version}_{tag}'
+                )
                 self.logger.info(f'[DRY RUN] To: {self.imagestream_namespace}/scos-{self.version}-art:{tag}')
             return
 
         env = os.environ.copy()
 
         for tag in tags_to_mirror:
-            source_tag = f'{self.imagestream_namespace}/scos-{source_version}:{tag}'
+            source_pullspec = (
+                f'quay-proxy.ci.openshift.org/openshift/ci:{self.imagestream_namespace}_scos-{source_version}_{tag}'
+            )
             target_tag = f'{self.imagestream_namespace}/scos-{self.version}-art:{tag}'
 
-            self.logger.info('Mirroring CoreOS imagestream from %s to %s', source_tag, target_tag)
+            self.logger.info('Mirroring CoreOS imagestream from %s to %s', source_pullspec, target_tag)
 
             try:
-                await self._tag_image_to_stream(source_pullspec=source_tag, target_tag=target_tag, env=env)
-                success_msg = f'Mirrored CoreOS tag: {source_tag} -> {target_tag}'
+                await self._tag_image_to_stream(source_pullspec=source_pullspec, target_tag=target_tag, env=env)
+                success_msg = f'Mirrored CoreOS tag: {source_pullspec} -> {target_tag}'
                 jenkins.update_description(f'{success_msg}<br>')
                 self.logger.info(success_msg)
 
