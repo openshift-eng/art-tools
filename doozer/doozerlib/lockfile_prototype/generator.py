@@ -63,6 +63,12 @@ _INSTALL_CMD_RE = re.compile(
     re.DOTALL,
 )
 
+_INSTALLROOT_ARG_RE = re.compile(r"--installroot(?:=\S+|\s+\S+)")
+
+_PACKAGE_OPERATION_RE = re.compile(
+    r"\b(?:install|groupinstall|update|upgrade|reinstall|remove|erase|distro-sync|module)\b"
+)
+
 _PKG_NAME_RE = re.compile(r"^[a-zA-Z][\w.+\-]*$")
 
 _RPM_ARCHES = frozenset({"x86_64", "aarch64", "ppc64le", "s390x", "i686", "noarch", "src"})
@@ -127,6 +133,35 @@ def _detect_stages_with_bare_updates(entries: list[dict]) -> set[int]:
     return stages
 
 
+def _detect_stages_with_installroot_only(entries: list[dict]) -> set[int]:
+    """
+    Detect stages whose package install commands all target an alternate root.
+
+    These stages do not install packages into the stage base image, so their
+    package resolution should use a bare rpmdb. A stage containing both
+    installroot and normal installs remains image-backed.
+
+    Arg(s):
+        entries (list[dict]): DockerfileParser structure entries.
+    Return Value(s):
+        set[int]: Stage numbers (0-indexed) with installroot-only installs.
+    """
+    stage_modes: dict[int, set[str]] = {}
+    stage_idx = -1
+    for entry in entries:
+        if entry["instruction"] == "FROM":
+            stage_idx += 1
+        elif entry["instruction"] == "RUN" and stage_idx >= 0:
+            run_value = entry["value"].replace("\\\n", " ")
+            for command in re.split(r"&&|;|\n", run_value):
+                has_package_manager = re.search(r"\b(?:microdnf|dnf|yum)\b", command)
+                if has_package_manager and _PACKAGE_OPERATION_RE.search(command):
+                    mode = "installroot" if _INSTALLROOT_ARG_RE.search(command) else "normal"
+                    stage_modes.setdefault(stage_idx, set()).add(mode)
+
+    return {stage for stage, modes in stage_modes.items() if modes == {"installroot"}}
+
+
 def build_rpms_in_yaml(
     repos: list[RepoEntry],
     arches: list[str],
@@ -136,6 +171,7 @@ def build_rpms_in_yaml(
     upgrade_packages: list[str] | None = None,
     module_enable: list[str] | None = None,
     exclude_packages: list[str] | None = None,
+    context: dict[str, bool | str] | None = None,
 ) -> RpmsInConfig:
     """
     Build the rpms.in.yaml config for rpm-lockfile-prototype.
@@ -155,6 +191,8 @@ def build_rpms_in_yaml(
         exclude_packages (list[str] | None): Packages to exclude from
             resolution (e.g., OKD-only packages extracted from Containerfile
             that are absent from RHEL repos).
+        context (dict[str, bool | str] | None): Resolution context override,
+            such as {"bare": True} for an empty target root.
     Return Value(s):
         RpmsInConfig: Config ready for YAML serialization.
     """
@@ -178,6 +216,7 @@ def build_rpms_in_yaml(
     return RpmsInConfig(
         arches=arches,
         contentOrigin={"repos": repos},
+        context=context,
         packages=package_entries,
         reinstallPackages=list(reinstall_packages) if reinstall_packages else [],
         upgradePackages=list(upgrade_packages) if upgrade_packages else [],
@@ -418,6 +457,7 @@ class RpmLockfilePrototypeGenerator:
         """
         stage_lockfiles: list[LockfileData] = []
         final_stage_num = total_stages - 1
+        stages_with_installroot_only = _detect_stages_with_installroot_only(entries)
 
         for stage_num in range(total_stages):
             if stage_num != final_stage_num:
@@ -426,16 +466,22 @@ class RpmLockfilePrototypeGenerator:
                     continue
 
             image_pullspec = await self._determine_stage_pullspec(stage_num, distgit_key)
+            bare_context = stage_num in stages_with_installroot_only and image_pullspec is not None
 
-            if stage_num != final_stage_num:
+            if stage_num != final_stage_num and not bare_context:
                 if self._has_rhel_version_mismatch(stage_num, repo_list, distgit_key):
                     continue
+
+            if bare_context:
+                self.logger.info(
+                    f"{distgit_key}: stage {stage_num}: installroot-only stage, resolving with bare context"
+                )
 
             extra_packages: list[str] = list(cat_packages.get(stage_num, []))
 
             reinstall_pkgs: list[str] | None = None
             upgrade_pkgs: list[str] | None = None
-            if stage_num == final_stage_num:
+            if stage_num == final_stage_num and not bare_context:
                 if image_pullspec:
                     base_pkgs = await self._get_base_image_packages(stage_num, image_pullspec, distgit_key)
                     if base_pkgs:
@@ -457,7 +503,7 @@ class RpmLockfilePrototypeGenerator:
                         if extra:
                             extra_packages = extra_packages + extra
 
-            if stage_num in stages_with_bare_updates:
+            if stage_num in stages_with_bare_updates and not bare_context:
                 if not image_pullspec:
                     # No base image to query (stage alias) — can't determine
                     # upgrade targets, so mark dropped to strip the bare update
@@ -482,19 +528,20 @@ class RpmLockfilePrototypeGenerator:
                 repo_list,
                 arches,
                 extra_packages,
-                image_pullspec,
+                None if bare_context else image_pullspec,
                 distgit_key,
                 stage_num,
                 reinstall_packages=reinstall_pkgs,
                 containerfile_path=str(dockerfile_path),
                 upgrade_packages=upgrade_pkgs,
+                bare_context=bare_context,
             )
 
             # Pass 2: pin Dockerfile packages that overlap with the base
             # image. These are "already installed" so neither install nor
             # upgrade captures them, but cachi2 needs them in the lockfile.
             # Runs for every image-backed stage, not just final/bare-update.
-            if image_pullspec:
+            if image_pullspec and not bare_context:
                 dockerfile_install_pkgs = _extract_install_packages(entries, stage_num)
                 if dockerfile_install_pkgs:
                     if upgrade_pkgs:
@@ -658,6 +705,7 @@ class RpmLockfilePrototypeGenerator:
         reinstall_packages: list[str] | None = None,
         containerfile_path: str | None = None,
         upgrade_packages: list[str] | None = None,
+        bare_context: bool = False,
     ) -> LockfileData | None:
         """
         Resolve a single stage, retrying after removing unavailable packages.
@@ -679,6 +727,7 @@ class RpmLockfilePrototypeGenerator:
                 package extraction.
             upgrade_packages (list[str] | None): Base image packages to
                 upgrade (from bare dnf/yum update commands).
+            bare_context (bool): Whether to emit a bare resolution context.
         Return Value(s):
             LockfileData | None: Lockfile data, or None if all packages filtered out.
         """
@@ -713,6 +762,7 @@ class RpmLockfilePrototypeGenerator:
                 reinstall_packages=remaining_reinstall if image_pullspec else None,
                 upgrade_packages=effective_upgrade,
                 exclude_packages=sorted(excluded_packages) if excluded_packages else None,
+                context={"bare": True} if bare_context else None,
             )
 
             try:
@@ -905,6 +955,7 @@ class RpmLockfilePrototypeGenerator:
         reinstall_packages: list[str] | None = None,
         containerfile_path: str | None = None,
         upgrade_packages: list[str] | None = None,
+        bare_context: bool = False,
     ) -> LockfileData | None:
         """
         Resolve a stage with cross-arch version reconciliation.
@@ -926,6 +977,7 @@ class RpmLockfilePrototypeGenerator:
                 package extraction.
             upgrade_packages (list[str] | None): Base image packages to
                 upgrade (from bare dnf/yum update commands).
+            bare_context (bool): Whether to emit a bare resolution context.
         Return Value(s):
             LockfileData | None: Resolved lockfile with consistent
                 versions, or None if no packages remain.
@@ -940,6 +992,7 @@ class RpmLockfilePrototypeGenerator:
             reinstall_packages=reinstall_packages,
             containerfile_path=containerfile_path,
             upgrade_packages=upgrade_packages,
+            bare_context=bare_context,
         )
         if not first_pass:
             return None
@@ -978,6 +1031,7 @@ class RpmLockfilePrototypeGenerator:
                 reinstall_packages=pinned_reinstall,
                 containerfile_path=containerfile_path,
                 upgrade_packages=pinned_upgrade,
+                bare_context=bare_context,
             )
         except RuntimeError as e:
             raise RuntimeError(

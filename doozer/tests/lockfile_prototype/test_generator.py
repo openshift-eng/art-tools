@@ -14,6 +14,7 @@ from doozerlib.lockfile_prototype.container_utils import ContainerImageHelper
 from doozerlib.lockfile_prototype.generator import (
     RpmLockfilePrototypeGenerator,
     _detect_stages_with_bare_updates,
+    _detect_stages_with_installroot_only,
     _is_local_rpm,
     build_rpms_in_yaml,
 )
@@ -457,6 +458,65 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
         self.assertEqual(len(captured_pullspecs), 1)
         # --image mode: pullspec is preserved (not forced to None)
         self.assertIsNotNone(captured_pullspecs[0])
+
+    def test_installroot_only_stage_uses_bare_context(self):
+        """
+        An image-backed stage that only installs into an alternate root
+        must resolve with a bare context for that stage.
+        """
+        meta = self._make_mock_image_meta()
+        generator = self._make_generator()
+        generator.downstream_parents = ["quay.io/test/base@sha256:abc123"]
+
+        captured: list[tuple[RpmsInConfig, str | None]] = []
+
+        async def capture_resolve(config, image_pullspec=None, **kwargs):
+            captured.append((config, image_pullspec))
+            return FAKE_LOCKFILE_DATA.model_copy(deep=True)
+
+        generator._resolver.resolve = AsyncMock(side_effect=capture_resolve)
+
+        with TemporaryDirectory() as tmpdir:
+            dest_dir = Path(tmpdir)
+            (dest_dir / "Dockerfile").write_text(
+                "FROM base\nRUN dnf --installroot=/mnt/rootfs install -y test-installroot-only\n"
+            )
+            asyncio.run(generator.generate_lockfile(meta, dest_dir))
+
+        self.assertEqual(len(captured), 1)
+        config, image_pullspec = captured[0]
+        self.assertIsNone(image_pullspec)
+        self.assertEqual(config.context, {"bare": True})
+
+    def test_mixed_install_stage_keeps_image_context(self):
+        """
+        A stage with both normal and installroot installs must remain
+        image-backed because one context applies to the entire resolution.
+        """
+        meta = self._make_mock_image_meta()
+        generator = self._make_generator()
+        generator.downstream_parents = ["quay.io/test/base@sha256:abc123"]
+
+        captured: list[tuple[RpmsInConfig, str | None]] = []
+
+        async def capture_resolve(config, image_pullspec=None, **kwargs):
+            captured.append((config, image_pullspec))
+            return FAKE_LOCKFILE_DATA.model_copy(deep=True)
+
+        generator._resolver.resolve = AsyncMock(side_effect=capture_resolve)
+
+        with TemporaryDirectory() as tmpdir:
+            dest_dir = Path(tmpdir)
+            (dest_dir / "Dockerfile").write_text(
+                "FROM base\n"
+                "RUN dnf install -y normal-package && \\\n    dnf --installroot=/mnt/rootfs install -y test-installroot-only\n"
+            )
+            asyncio.run(generator.generate_lockfile(meta, dest_dir))
+
+        self.assertEqual(len(captured), 1)
+        config, image_pullspec = captured[0]
+        self.assertIsNotNone(image_pullspec)
+        self.assertIsNone(config.context)
 
     def test_cat_file_resolved_from_parent_dockerfile_heredoc(self):
         """
@@ -1258,6 +1318,51 @@ class TestDetectStagesWithBareUpdates(unittest.TestCase):
     def test_no_run_commands(self):
         entries = self._entries_from_dockerfile("FROM base\nCOPY . /app\n")
         result = _detect_stages_with_bare_updates(entries)
+        self.assertEqual(result, set())
+
+
+class TestDetectStagesWithInstallrootOnly(unittest.TestCase):
+    """Tests for _detect_stages_with_installroot_only."""
+
+    def test_detects_only_installroot_stages(self):
+        entries = [
+            {"instruction": "FROM", "value": "base"},
+            {"instruction": "RUN", "value": "dnf install -y normal-package"},
+            {"instruction": "FROM", "value": "base"},
+            {
+                "instruction": "RUN",
+                "value": "dnf --installroot=/mnt/rootfs install -y root-package",
+            },
+        ]
+
+        result = _detect_stages_with_installroot_only(entries)
+
+        self.assertEqual(result, {1})
+
+    def test_excludes_mixed_stages(self):
+        entries = [
+            {"instruction": "FROM", "value": "base"},
+            {
+                "instruction": "RUN",
+                "value": ("dnf install -y normal-package && dnf --installroot=/mnt/rootfs install -y root-package"),
+            },
+        ]
+
+        result = _detect_stages_with_installroot_only(entries)
+
+        self.assertEqual(result, set())
+
+    def test_excludes_stages_with_normal_updates(self):
+        entries = [
+            {"instruction": "FROM", "value": "base"},
+            {
+                "instruction": "RUN",
+                "value": ("dnf --installroot=/mnt/rootfs install -y root-package && dnf update -y normal-package"),
+            },
+        ]
+
+        result = _detect_stages_with_installroot_only(entries)
+
         self.assertEqual(result, set())
 
 
