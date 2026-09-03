@@ -1425,10 +1425,13 @@ class UpdateGolangPipeline:
         naturally covers the case where build-root itself hasn't changed but its golang-builder
         parent has. Whatever comes back stale is rebased+built together in one batch (see
         `_rebase_and_build_ci_images`) -- doozer only resolves a `from: member:` reference
-        correctly when both images are loaded in the same run. Once done, everything rebuilt is
-        synced together in a single final step. For the test assembly, `_sync_ci_images` passes
-        `--live-test-mode`, which publishes to the `.test`-suffixed CI imagestream tag instead of
-        the real one, so test-assembly runs never overwrite what production CI actually consumes.
+        correctly when both images are loaded in the same run. Once done, every image considered
+        this run (not just what was rebuilt) is synced to CI in a single final step -- re-mirroring
+        an already-current image is cheap for a handful of images, and it keeps CI in sync with the
+        latest successful build even when nothing needed rebuilding. For the test assembly,
+        `_sync_ci_images` passes `--live-test-mode`, which publishes to the `.test`-suffixed CI
+        imagestream tag instead of the real one, so test-assembly runs never overwrite what
+        production CI actually consumes.
         """
         # TODO: revert -- re-deriving allowed_major_minors from the test fork/branch below.
         # _get_allowed_go_major_minors (which produced the `allowed_major_minors` param) always
@@ -1491,30 +1494,31 @@ class UpdateGolangPipeline:
         stale_image_keys = set(await self._scan_stale_ci_images(scan_keys))
         rebuilt_image_keys = [image_key for image_key in scan_keys if image_key in stale_image_keys]
 
-        if not rebuilt_image_keys:
+        if rebuilt_image_keys:
+            await self._slack_client.say_in_thread(
+                f":construction: Rebuilding CI golang builder/build-root image(s) for "
+                f"{self.ocp_version}: {', '.join(rebuilt_image_keys)}"
+            )
+            await self._rebase_and_build_ci_images(rebuilt_image_keys)
+            await self._slack_client.say_in_thread(
+                f":white_check_mark: Rebuilt CI golang builder/build-root image(s): {', '.join(rebuilt_image_keys)}"
+            )
+        else:
             _LOGGER.info(
-                "All CI golang builder/build-root images for openshift-%s already use their current parent image",
+                "All CI golang builder/build-root images for openshift-%s already use their current parent "
+                "image;",
                 self.ocp_version,
             )
-            return
 
-        await self._slack_client.say_in_thread(
-            f":construction: Rebuilding CI golang builder/build-root image(s) for "
-            f"{self.ocp_version}: {', '.join(rebuilt_image_keys)}"
-        )
-        await self._rebase_and_build_ci_images(rebuilt_image_keys)
-        await self._slack_client.say_in_thread(
-            f":white_check_mark: Rebuilt CI golang builder/build-root image(s): {', '.join(rebuilt_image_keys)}"
-        )
-
+        # Sync every image considered this run, not just what was just rebuilt -- mirroring an
+        # already-current image is a no-op cost-wise (a handful of images at most), and it keeps CI
+        # in sync with the latest successful build even on runs where nothing needed rebuilding.
         try:
-            await self._sync_ci_images(rebuilt_image_keys)
+            await self._sync_ci_images(scan_keys)
         except Exception as e:
             raise RuntimeError(f"Failed to sync CI image(s) to CI: {e}") from e
 
-        await self._slack_client.say_in_thread(
-            f":white_check_mark: Synced CI image(s): {', '.join(rebuilt_image_keys)}"
-        )
+        await self._slack_client.say_in_thread(f":white_check_mark: Synced CI image(s): {', '.join(scan_keys)}")
 
     GOLANG_DATA_BRANCH = 'golang'
 
