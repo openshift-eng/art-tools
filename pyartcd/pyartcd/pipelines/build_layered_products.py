@@ -13,7 +13,7 @@ from artcommonlib.constants import PRODUCT_KUBECONFIG_MAP
 from artcommonlib.util import resolve_konflux_kubeconfig_by_product, resolve_konflux_namespace_by_product
 from doozerlib.constants import KONFLUX_DEFAULT_IMAGE_REPO
 
-from pyartcd import constants, jenkins, locks
+from pyartcd import constants, jenkins, locks, tekton
 from pyartcd import record as record_util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import Lock
@@ -36,6 +36,7 @@ class BuildLayeredProductsPipeline:
         skip_bundle_build: bool,
         image_build_strategy: str = 'only',
         skip_rebase: bool = False,
+        ignore_locks: bool = False,
         kubeconfig: Optional[str] = None,
         data_gitref: Optional[str] = None,
         network_mode: Optional[str] = None,
@@ -50,6 +51,7 @@ class BuildLayeredProductsPipeline:
         self.image_build_strategy = BuildStrategy(image_build_strategy)
         self.skip_bundle_build = skip_bundle_build
         self.skip_rebase = skip_rebase
+        self.ignore_locks = ignore_locks
         self.kubeconfig = kubeconfig
         self.data_gitref = data_gitref
         self.network_mode = network_mode
@@ -81,7 +83,7 @@ class BuildLayeredProductsPipeline:
         if self.assembly.lower() == "test":
             jenkins.update_title(" [TEST]")
 
-    def trigger_bundle_build(self):
+    async def trigger_bundle_build(self):
         if self.skip_bundle_build:
             self._logger.warning("Skipping bundle build step because --skip-bundle-build flag is set")
             return
@@ -127,18 +129,32 @@ class BuildLayeredProductsPipeline:
             operator_nvrs = non_embargoed_nvrs
 
             if operator_nvrs:
-                # Automatically propagate parameters if set in environment
-                propagate_params = jenkins.get_propagatable_params()
+                if tekton.is_tekton_context():
+                    await tekton.start_pipeline(
+                        pipeline_name="olm-bundle-konflux",
+                        params={
+                            "version": self.version,
+                            "assembly": self.assembly,
+                            "group": self.group,
+                            "operator-nvrs": ",".join(operator_nvrs),
+                            "data-path": self._doozer_env_vars.get("DOOZER_DATA_PATH", ""),
+                            "data-gitref": self.data_gitref or "",
+                            "art-tools-commit": os.environ.get("ART_TOOLS_COMMIT", ""),
+                        },
+                    )
+                else:
+                    # Automatically propagate parameters if set in environment
+                    propagate_params = jenkins.get_propagatable_params()
 
-                jenkins.start_olm_bundle_konflux(
-                    build_version=self.version,
-                    assembly=self.assembly,
-                    group=self.group,
-                    operator_nvrs=operator_nvrs,
-                    doozer_data_path=self._doozer_env_vars["DOOZER_DATA_PATH"] or '',
-                    doozer_data_gitref=self.data_gitref or '',
-                    propagate_params=propagate_params,
-                )
+                    jenkins.start_olm_bundle_konflux(
+                        build_version=self.version,
+                        assembly=self.assembly,
+                        group=self.group,
+                        operator_nvrs=operator_nvrs,
+                        doozer_data_path=self._doozer_env_vars["DOOZER_DATA_PATH"] or '',
+                        doozer_data_gitref=self.data_gitref or '',
+                        propagate_params=propagate_params,
+                    )
         except Exception as e:
             self._logger.exception(f"Failed to trigger bundle build: {e}")
 
@@ -150,6 +166,113 @@ class BuildLayeredProductsPipeline:
         with record_log_path.open('r') as file:
             record_log: dict = record_util.parse_record_log(file)
             return record_log
+
+    async def run_on_cluster(self):
+        """Trigger build-layered-products on the artc cluster and watch until completion.
+
+        Steps:
+        1. Start the pipeline and capture the PipelineRun name
+        2. Log the console URL back to Jenkins
+        3. Stream PipelineRun logs until completion
+        4. Check the final PipelineRun status and raise on failure
+        """
+        kubeconfig = os.environ.get('ART_CLUSTER_LP_KUBECONFIG')
+        if not kubeconfig:
+            raise ValueError("ART_CLUSTER_LP_KUBECONFIG environment variable must be set to trigger on cluster")
+
+        data_path = self._doozer_env_vars.get('DOOZER_DATA_PATH', '')
+        namespace = "layered-products"
+        pipeline_name = "build-layered-products"
+
+        # Step 1: Start the pipeline and get the PipelineRun name
+        start_cmd = [
+            "tkn",
+            "pipeline",
+            "start",
+            pipeline_name,
+            "--namespace",
+            namespace,
+            "--kubeconfig",
+            kubeconfig,
+            "--param",
+            f"group={self.group}",
+            "--param",
+            f"assembly={self.assembly}",
+            "--param",
+            f"image-list={self.image_list}",
+            "--param",
+            f"data-path={data_path}",
+            "--param",
+            f"data-gitref={self.data_gitref or ''}",
+            "--param",
+            f"plr-template={self.plr_template or ''}",
+            "--param",
+            f"network-mode={self.network_mode or ''}",
+            "--param",
+            f"dry-run={'true' if self.runtime.dry_run else 'false'}",
+            "--param",
+            f"skip-rebase={'true' if self.skip_rebase else 'false'}",
+            "--param",
+            f"ignore-locks={'true' if self.ignore_locks else 'false'}",
+            "--param",
+            f"art-tools-commit={os.environ.get('ART_TOOLS_COMMIT', '')}",
+            "--pipeline-timeout",
+            "4h",
+            "--output",
+            "name",
+        ]
+
+        self._logger.info("Triggering %s on artc cluster (namespace: %s)", pipeline_name, namespace)
+        rc, stdout, stderr = await exectools.cmd_gather_async(start_cmd, env=os.environ.copy())
+        if rc != 0:
+            raise ChildProcessError(f"Failed to start {pipeline_name} on cluster (exit {rc}): {stderr.strip()}")
+
+        plr_name = stdout.strip()
+        if not plr_name:
+            raise RuntimeError("tkn pipeline start returned empty PipelineRun name")
+
+        # Step 2: Log the PipelineRun URL
+        plr_url = (
+            f"https://console-openshift-console.apps.artc2023.pc3z.p1.openshiftapps.com"
+            f"/k8s/ns/{namespace}/tekton.dev~v1~PipelineRun/{plr_name}/logs"
+        )
+        self._logger.info("Triggered PipelineRun on artc cluster: %s", plr_url)
+        jenkins.update_description(f'<a href="{plr_url}">PipelineRun: {plr_name}</a><br/>')
+
+        # Step 3: Stream logs until the PipelineRun completes
+        logs_cmd = [
+            "tkn",
+            "pipelinerun",
+            "logs",
+            "--follow",
+            "--namespace",
+            namespace,
+            "--kubeconfig",
+            kubeconfig,
+            plr_name,
+        ]
+        await exectools.cmd_gather_async(logs_cmd, env=os.environ.copy())
+
+        # Step 4: Check the final status
+        status_cmd = [
+            "tkn",
+            "pipelinerun",
+            "describe",
+            plr_name,
+            "--namespace",
+            namespace,
+            "--kubeconfig",
+            kubeconfig,
+            "--output",
+            "jsonpath={.status.conditions[0].status}",
+        ]
+        rc, stdout, stderr = await exectools.cmd_gather_async(status_cmd, env=os.environ.copy())
+        succeeded = stdout.strip()
+
+        if succeeded != "True":
+            raise ChildProcessError(f"PipelineRun {plr_name} failed (status={succeeded}). See logs above or: {plr_url}")
+
+        self._logger.info("PipelineRun %s completed successfully", plr_name)
 
     async def run(self):
         """Run the layered products rebase and build pipeline"""
@@ -172,7 +295,7 @@ class BuildLayeredProductsPipeline:
         product = group_config.get('product', 'ocp')
         image_repo = group_config.get('konflux', {}).get('image_repo') or KONFLUX_DEFAULT_IMAGE_REPO
         await self._rebase_and_build(product, image_repo)
-        self.trigger_bundle_build()
+        await self.trigger_bundle_build()
 
         if self.embargoed_operators_skipped:
             self._logger.warning(
@@ -430,6 +553,12 @@ class BuildLayeredProductsPipeline:
     default='',
     help='Override the Pipeline Run template commit from openshift-priv/art-konflux-template; format: <owner>@<branch>',
 )
+@click.option(
+    '--on-cluster',
+    is_flag=True,
+    default=False,
+    help='Trigger the pipeline on the artc cluster (layered-products namespace) and watch until completion',
+)
 @pass_runtime
 @click_coroutine
 async def build_layered_products(
@@ -447,6 +576,7 @@ async def build_layered_products(
     network_mode: Optional[str],
     ignore_locks: bool,
     plr_template: str,
+    on_cluster: bool,
 ):
     """Rebase and build layered product image for an assembly"""
     try:
@@ -460,6 +590,7 @@ async def build_layered_products(
             data_path=data_path,
             skip_bundle_build=skip_bundle_build,
             skip_rebase=skip_rebase,
+            ignore_locks=ignore_locks,
             kubeconfig=kubeconfig,
             data_gitref=data_gitref,
             network_mode=network_mode,
@@ -468,7 +599,9 @@ async def build_layered_products(
 
         lock_identifier = jenkins.get_build_path_or_random()
 
-        if ignore_locks:
+        if on_cluster:
+            await pipeline.run_on_cluster()
+        elif ignore_locks:
             await pipeline.run()
         else:
             await locks.run_with_lock(

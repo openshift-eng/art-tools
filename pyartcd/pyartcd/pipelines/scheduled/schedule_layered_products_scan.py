@@ -1,9 +1,10 @@
 import asyncio
+import os
 
 import click
 from artcommonlib import redis
 
-from pyartcd import jenkins, util
+from pyartcd import jenkins, tekton, util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import Lock, LockManager
 from pyartcd.runtime import Runtime
@@ -32,7 +33,17 @@ async def run_for(group: str, runtime: Runtime, lock_manager: LockManager):
     # Schedule layered products scan
     runtime.logger.info('[%s] Scheduling layered-products-scan-konflux', group)
 
-    jenkins.start_layered_products_scan_konflux(group=group, block_until_building=False)
+    if tekton.is_tekton_context():
+        await tekton.start_pipeline(
+            pipeline_name="layered-products-scan",
+            params={
+                "group": group,
+                "assembly": "stream",
+                "art-tools-commit": os.environ.get("ART_TOOLS_COMMIT", ""),
+            },
+        )
+    else:
+        jenkins.start_layered_products_scan_konflux(group=group, block_until_building=False)
 
 
 @cli.command('schedule-layered-products-scan')

@@ -5,7 +5,7 @@ import click
 import yaml
 from artcommonlib import exectools
 
-from pyartcd import constants, jenkins, locks, util
+from pyartcd import constants, jenkins, locks, tekton, util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import Lock
 from pyartcd.runtime import Runtime
@@ -56,7 +56,7 @@ class LayeredProductsScanPipeline:
         await self.get_changes()
 
         # Handle image source changes
-        self.handle_source_changes()
+        await self.handle_source_changes()
 
     def check_params(self):
         """
@@ -82,10 +82,12 @@ class LayeredProductsScanPipeline:
             [
                 'beta:config:konflux:scan-sources',
                 '--yaml',
-                f'--ci-kubeconfig={os.environ["KUBECONFIG"]}',
                 '--rebase-priv',
             ]
         )
+        kubeconfig = os.environ.get("KUBECONFIG")
+        if kubeconfig:
+            cmd.append(f'--ci-kubeconfig={kubeconfig}')
         if self.runtime.dry_run:
             cmd.append('--dry-run')
 
@@ -99,7 +101,7 @@ class LayeredProductsScanPipeline:
         else:
             self.logger.info('No changes detected in layered products RPMs or images')
 
-    def handle_source_changes(self):
+    async def handle_source_changes(self):
         if not self.changes:
             return
 
@@ -136,11 +138,24 @@ class LayeredProductsScanPipeline:
 
         # Trigger layered product build
         self.logger.info('Triggering a layered products %s build', self.group)
-        jenkins.start_layered_products(
-            group=self.group,
-            assembly=self.assembly,
-            image_list=image_list,
-        )
+        if tekton.is_tekton_context():
+            await tekton.start_pipeline(
+                pipeline_name="build-layered-products",
+                params={
+                    "group": self.group,
+                    "assembly": self.assembly,
+                    "image-list": ",".join(image_list),
+                    "data-path": self.data_path,
+                    "data-gitref": self.data_gitref or "",
+                    "art-tools-commit": os.environ.get("ART_TOOLS_COMMIT", ""),
+                },
+            )
+        else:
+            jenkins.start_layered_products(
+                group=self.group,
+                assembly=self.assembly,
+                image_list=image_list,
+            )
 
 
 @cli.command('layered-products-scan')
@@ -159,8 +174,9 @@ class LayeredProductsScanPipeline:
 async def layered_products_scan(
     runtime: Runtime, group: str, assembly: str, data_path: str, data_gitref, image_list: str
 ):
-    # KUBECONFIG env var must be defined in order to scan sources
-    if not os.getenv('KUBECONFIG'):
+    # KUBECONFIG is needed off-cluster for doozer scan-sources to query the CI cluster.
+    # On-cluster (Tekton), doozer uses the in-cluster config automatically.
+    if not os.getenv('KUBECONFIG') and not tekton.is_tekton_context():
         raise RuntimeError('Environment variable KUBECONFIG must be defined')
 
     jenkins.init_jenkins()
