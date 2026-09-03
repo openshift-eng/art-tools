@@ -1126,6 +1126,157 @@ spec:
         self.assertEqual(adding, {"new-tag"}, "new tag should be added")
         self.assertEqual(istream_apiobj.model.spec.tags, [dict(name="new-tag")], "only new tags should remain")
 
+    @patch("doozerlib.cli.release_gen_payload.PayloadGenerator.build_inconsistency_annotations")
+    @patch("doozerlib.cli.release_gen_payload.modify_and_replace_api_object")
+    async def test_apply_imagestream_update_prunes_stale_status_tags(self, mar_mock, binc_mock):
+        """
+        Tags that exist in .status.tags but not in .spec.tags and not in the
+        expected payload set should be detected as stale and added to pruning_tags.
+        This covers the case where build-sync removed a tag from .spec.tags but
+        the OpenShift image registry controller left it in .status.tags.
+        """
+        gpcli = rgp_cli.GenPayloadCli(
+            output_dir="/tmp",
+            runtime=Mock(
+                brew_event="999999",
+                assembly_type=AssemblyTypes.STREAM,
+            ),
+        )
+
+        mar_mock.side_effect = lambda apiobj, func, *_: func(apiobj)
+        binc_mock.side_effect = lambda issues: {
+            "release.openshift.io/inconsistency": ",".join(str(it) for it in issues),
+        }
+
+        istream_apiobj = Mock(
+            oc.APIObject,
+            model=oc.Model(
+                dict(
+                    metadata=dict(),
+                    spec=dict(
+                        tags=[
+                            dict(name="active-image"),
+                        ]
+                    ),
+                    status=dict(
+                        tags=[
+                            dict(tag="active-image"),
+                            dict(tag="stale-image"),  # exists in status but not in spec
+                        ]
+                    ),
+                )
+            ),
+        )
+        new_istags = [dict(name="active-image")]
+        # full_payload_tag_names does NOT include stale-image
+        full_payload_tag_names = {"active-image"}
+
+        # Full update: stale-image is not in spec so it won't appear in spec-based
+        # pruning, but it IS in .status.tags and should be pruned
+        (pruning, adding) = await gpcli.apply_imagestream_update(
+            istream_apiobj, new_istags, False, full_payload_tag_names
+        )
+        self.assertIn("stale-image", pruning, "stale status tag should be pruned")
+        self.assertEqual(adding, set(), "no new tags")
+
+    @patch("doozerlib.cli.release_gen_payload.PayloadGenerator.build_inconsistency_annotations")
+    @patch("doozerlib.cli.release_gen_payload.modify_and_replace_api_object")
+    async def test_apply_imagestream_update_preserves_expected_status_tags(self, mar_mock, binc_mock):
+        """
+        Tags in .status.tags that ARE in the expected payload set (full_payload_tag_names)
+        should NOT be pruned, even if they don't appear in the incoming istags.
+        This protects tags that are legitimately in the payload but were skipped
+        in this particular run (e.g. due to embargo).
+        """
+        gpcli = rgp_cli.GenPayloadCli(
+            output_dir="/tmp",
+            runtime=Mock(
+                brew_event="999999",
+                assembly_type=AssemblyTypes.STREAM,
+            ),
+        )
+
+        mar_mock.side_effect = lambda apiobj, func, *_: func(apiobj)
+        binc_mock.side_effect = lambda issues: {
+            "release.openshift.io/inconsistency": ",".join(str(it) for it in issues),
+        }
+
+        istream_apiobj = Mock(
+            oc.APIObject,
+            model=oc.Model(
+                dict(
+                    metadata=dict(),
+                    spec=dict(
+                        tags=[
+                            dict(name="tag-a"),
+                        ]
+                    ),
+                    status=dict(
+                        tags=[
+                            dict(tag="tag-a"),
+                            dict(tag="tag-b"),  # in status but not in spec; IS expected
+                        ]
+                    ),
+                )
+            ),
+        )
+        new_istags = [dict(name="tag-a")]
+        # tag-b IS in the full expected payload set — it should NOT be pruned
+        full_payload_tag_names = {"tag-a", "tag-b"}
+
+        (pruning, adding) = await gpcli.apply_imagestream_update(
+            istream_apiobj, new_istags, False, full_payload_tag_names
+        )
+        self.assertNotIn("tag-b", pruning, "expected status tag should NOT be pruned")
+
+    @patch("doozerlib.cli.release_gen_payload.PayloadGenerator.build_inconsistency_annotations")
+    @patch("doozerlib.cli.release_gen_payload.modify_and_replace_api_object")
+    async def test_apply_imagestream_update_no_status_pruning_when_filtered(self, mar_mock, binc_mock):
+        """
+        When full_payload_tag_names is None (--images/--exclude used), no
+        .status.tags entries should be pruned because we can't distinguish
+        deprecated tags from simply-not-selected ones.
+        """
+        gpcli = rgp_cli.GenPayloadCli(
+            output_dir="/tmp",
+            runtime=Mock(
+                brew_event="999999",
+                assembly_type=AssemblyTypes.STREAM,
+            ),
+        )
+
+        mar_mock.side_effect = lambda apiobj, func, *_: func(apiobj)
+        binc_mock.side_effect = lambda issues: {
+            "release.openshift.io/inconsistency": ",".join(str(it) for it in issues),
+        }
+
+        istream_apiobj = Mock(
+            oc.APIObject,
+            model=oc.Model(
+                dict(
+                    metadata=dict(),
+                    spec=dict(
+                        tags=[
+                            dict(name="existing-tag"),
+                        ]
+                    ),
+                    status=dict(
+                        tags=[
+                            dict(tag="existing-tag"),
+                            dict(tag="status-only-tag"),
+                        ]
+                    ),
+                )
+            ),
+        )
+        new_istags = [dict(name="existing-tag")]
+
+        # full_payload_tag_names=None means we can't determine deprecated tags
+        (pruning, _adding) = await gpcli.apply_imagestream_update(istream_apiobj, new_istags, True, None)
+        self.assertNotIn(
+            "status-only-tag", pruning, "status tags should NOT be pruned when full payload set is unknown"
+        )
+
     def test_get_multi_release_names(self):
         runtime = MagicMock(
             assembly="stream",
