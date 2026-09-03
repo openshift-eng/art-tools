@@ -1,8 +1,10 @@
 import asyncio
 import json
 import logging
+import os
 import sys
 import traceback
+from datetime import timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -15,11 +17,25 @@ from artcommonlib.konflux.konflux_build_record import (
 )
 from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.telemetry import start_as_current_span_async
-from artcommonlib.util import validate_build_priority
+from artcommonlib.util import (
+    KubeCondition,
+    normalize_k8s_dns_label,
+    resolve_konflux_fbc_stage_release_plan,
+    validate_build_priority,
+)
 from artcommonlib.variants import BuildVariant
+from kubernetes.dynamic import exceptions as k8s_exceptions
 from opentelemetry import trace
 
-from doozerlib import constants
+from doozerlib import constants, util
+from doozerlib.backend.konflux_client import (
+    API_VERSION,
+    KIND_RELEASE,
+    KIND_RELEASE_PLAN,
+    KIND_SNAPSHOT,
+    KonfluxClient,
+)
+from doozerlib.backend.konflux_fbc import get_referenced_images
 from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder, KonfluxImageBuilderConfig
 from doozerlib.backend.konflux_olm_bundler import KonfluxOlmBundleBuilder, KonfluxOlmBundleRebaser
 from doozerlib.backend.rebaser import KonfluxRebaser
@@ -829,3 +845,398 @@ async def images_konflux_bundle(
         output=output,
     )
     await cli.run()
+
+
+class BundleStageReleaseRelatedImagesCli:
+    """Stage-release operator + operand images (bundle related images) via a Konflux advisory-stage ReleasePlan.
+
+    Runs at the end of the bundle build job, before FBC builds are triggered. Each operator gets its own
+    Snapshot/Release, created one after another, so a failure is contained to the operator that caused it.
+    The release plan is resolved from the product version in group config (MAJOR.MINOR),
+    not from the OCP version.
+    """
+
+    def __init__(
+        self,
+        runtime: Runtime,
+        operator_nvrs: Tuple[str, ...],
+        stage_release_plan: Optional[str],
+        konflux_kubeconfig: Optional[str],
+        konflux_context: Optional[str],
+        konflux_namespace: str,
+        dry_run: bool,
+    ):
+        self.runtime = runtime
+        self.operator_nvrs = operator_nvrs
+        self.stage_release_plan = stage_release_plan
+        self.konflux_kubeconfig = konflux_kubeconfig
+        self.konflux_context = konflux_context
+        self.konflux_namespace = konflux_namespace
+        self.dry_run = dry_run
+        self._logger = LOGGER.getChild("BundleStageReleaseRelatedImagesCli")
+        self._db_for_bundles = KonfluxDb()
+        self._db_for_bundles.bind(KonfluxBundleBuildRecord)
+
+    async def run(self):
+        runtime = self.runtime
+        runtime.initialize(config_only=True)
+        assembly = runtime.assembly
+
+        if assembly != "stream":
+            self._logger.info("Assembly is '%s' (not 'stream'); skipping stage release of related images", assembly)
+            return
+
+        assert runtime.konflux_db is not None, "konflux_db is not initialized. Doozer bug?"
+        runtime.konflux_db.bind(KonfluxBuildRecord)
+
+        # Use product version (not OCP version) to resolve the release plan.
+        # Layered products (e.g. ACM) set `version: 2.16.0` in group.yml; MAJOR/MINOR there are the OCP
+        # version used for the brew branch — do NOT use them for product version resolution.
+        # OCP groups (e.g. openshift-5.0) have no `version:` field; MAJOR/MINOR ARE the product version.
+        # MissingModel.__bool__ is False, so `if version_str:` is the correct guard for the missing case.
+        assert runtime.group_config is not None, "group_config is not initialized. Doozer bug?"
+        version_str = runtime.group_config.version
+        if version_str:
+            parts = str(version_str).split(".")
+            product_major, product_minor = int(parts[0]), int(parts[1])
+        else:
+            product_major = int(runtime.group_config.vars.MAJOR)
+            product_minor = int(runtime.group_config.vars.MINOR)
+
+        # Resolve release plan once (same for all operators in this group)
+        release_plan = self.stage_release_plan
+        if not release_plan:
+            release_plan = resolve_konflux_fbc_stage_release_plan(runtime.product, product_major, product_minor)
+        if not release_plan:
+            self._logger.info(
+                "No stage release plan configured for product '%s' (%d.%d); skipping stage release",
+                runtime.product,
+                product_major,
+                product_minor,
+            )
+            return
+
+        # Look up operator build records. strict=False so a single missing NVR is reported against that
+        # operator only, instead of raising and taking down every other operator's stage release.
+        records = await runtime.konflux_db.get_build_records_by_nvrs(
+            list(self.operator_nvrs), strict=False, exclude_large_columns=True, group=runtime.group
+        )
+        resolved: List[Tuple[str, KonfluxBuildRecord]] = []
+        failed_nvrs: List[str] = []
+        for nvr, record in zip(self.operator_nvrs, records):
+            if record is None:
+                self._logger.error("No build record found for operator NVR %s", nvr)
+                self._add_record(nvr, operator=None, error=f"No build record found for operator NVR {nvr}")
+                failed_nvrs.append(nvr)
+            else:
+                resolved.append((nvr, record))
+
+        if not resolved:
+            raise DoozerFatalError(f"No build records found for operator NVRs: {self.operator_nvrs}")
+
+        # NOTE: this second initialize() is not skipped only because the config_only call above
+        # returns before Runtime sets self.initialized. If that ever changes, the
+        # `if self.initialized: return` guard would swallow this call and leave image_map empty.
+        runtime.images = [r.name for _, r in resolved]
+        runtime.initialize(mode='images', clone_distgits=False)
+
+        konflux_client = KonfluxClient.from_kubeconfig(
+            default_namespace=self.konflux_namespace,
+            config_file=self.konflux_kubeconfig,
+            context=self.konflux_context,
+            dry_run=self.dry_run,
+        )
+
+        # One Snapshot/Release per operator: an operator whose stage release fails must not prevent the
+        # other operators in this job from being released and moving on to their FBC builds.
+        # Operators of the same product routinely share operands, so a shared operand ends up in more than
+        # one Snapshot. That duplication is deliberate — it is what keeps operators independent — and it is
+        # also why these run serially: two Releases pushing the same image concurrently is asking for trouble.
+        for nvr, record in resolved:
+            try:
+                release_url = await self._stage_release_operator(
+                    konflux_client=konflux_client,
+                    record=record,
+                    release_plan_name=release_plan,
+                    assembly=assembly,
+                )
+            except Exception as e:  # noqa: BLE001 - failures are contained to this operator
+                self._logger.error(
+                    "Stage release failed for operator %s (%s): %s\n%s",
+                    record.name,
+                    nvr,
+                    e,
+                    ''.join(traceback.TracebackException.from_exception(e).format()),
+                )
+                self._add_record(nvr, operator=record.name, error=str(e))
+                failed_nvrs.append(nvr)
+            else:
+                self._add_record(nvr, operator=record.name, release_url=release_url)
+
+        if failed_nvrs:
+            raise DoozerFatalError(f"Stage release of related images failed for: {', '.join(failed_nvrs)}")
+        self._logger.info("Stage release of related images completed for %d operator(s)", len(resolved))
+
+    def _add_record(
+        self,
+        operator_nvr: str,
+        operator: Optional[str],
+        release_url: str = "",
+        error: str = "",
+    ):
+        """Record this operator's stage release outcome in record.log for the calling pipeline.
+
+        pyartcd reads these to drop failed operators from the FBC trigger list while letting the rest through.
+        """
+        if not self.runtime.record_logger:
+            return
+        # '|' is the record field separator; keep an error message from inventing fields
+        message = error.replace("|", "/")[:500]
+        self.runtime.record_logger.add_record(
+            "stage_release_related_images",
+            status=1 if error else 0,
+            operator_nvr=operator_nvr,
+            operator=operator or "",
+            release_url=release_url,
+            message=message,
+        )
+
+    async def _stage_release_operator(
+        self,
+        konflux_client: KonfluxClient,
+        record: KonfluxBuildRecord,
+        release_plan_name: str,
+        assembly: str,
+    ) -> str:
+        """Stage-release one operator's related images (itself + its operands). Returns the release URL."""
+        runtime = self.runtime
+        operator_name = record.name
+        operator_meta = runtime.image_map.get(operator_name)
+        if not operator_meta:
+            raise DoozerFatalError(f"No image metadata for operator '{operator_name}'; cannot resolve bundle name")
+
+        where = {
+            "name": operator_meta.get_olm_bundle_short_name(),
+            "group": runtime.group,
+            "operator_nvr": record.nvr,
+            "outcome": str(KonfluxBuildOutcome.SUCCESS),
+        }
+        bundle_build = await anext(self._db_for_bundles.search_builds_by_fields(where=where, limit=1), None)
+        if not bundle_build:
+            raise DoozerFatalError(f"Bundle build not found for operator {operator_name} ({record.nvr})")
+
+        # Dedup by component name within this operator: an operator can list itself among its operands.
+        components: Dict[str, dict] = {}
+        for build in await get_referenced_images(runtime.konflux_db, bundle_build):
+            name = build.get_konflux_component_name()
+            if name in components:
+                continue
+            components[name] = {
+                "name": name,
+                "source": {"git": {"url": build.rebase_repo_url, "revision": build.rebase_commitish}},
+                "containerImage": build.image_pullspec,
+            }
+
+        if not components:
+            self._logger.info(
+                "No related image builds found for operator %s (%s); nothing to stage-release",
+                operator_name,
+                record.nvr,
+            )
+            return ""
+
+        self._logger.info(
+            "Stage-releasing %d related image(s) for operator %s (%s) via ReleasePlan '%s'...",
+            len(components),
+            operator_name,
+            record.nvr,
+            release_plan_name,
+        )
+        release_url = await self._stage_release(
+            konflux_client=konflux_client,
+            components=sorted(components.values(), key=lambda c: c["name"]),
+            release_plan_name=release_plan_name,
+            group=runtime.group,
+            assembly=assembly,
+            operator_name=operator_name,
+            operator_nvr=record.nvr,
+        )
+        self._logger.info("Stage release succeeded for operator %s (%s): %s", operator_name, record.nvr, release_url)
+        return release_url
+
+    async def _stage_release(
+        self,
+        konflux_client: KonfluxClient,
+        components: List[dict],
+        release_plan_name: str,
+        group: str,
+        assembly: str,
+        operator_name: str,
+        operator_nvr: str,
+    ) -> str:
+        """Create one Snapshot + Release for one operator's related images and wait for it.
+
+        Returns the release URL.
+        """
+        application_name = util.konflux_application_name(group)
+        # Snapshot names are generated server-side: two operators truncated to the same 63-char DNS label
+        # would otherwise collide.
+        # 63-char DNS label budget: "fbc-ri-stage-" (13) + group + "-" + operator + "-" + 5 chars the
+        # apiserver appends for generateName.
+        group_safe = normalize_k8s_dns_label(group, max_length=20)
+        operator_safe = normalize_k8s_dns_label(operator_name, max_length=max(1, 43 - len(group_safe)))
+        generate_name = f"fbc-ri-stage-{group_safe}-{operator_safe}-"
+
+        if self.dry_run:
+            self._logger.info(
+                "[DRY-RUN] Would create Snapshot '%s*' with %d component(s) and Release via '%s'",
+                generate_name,
+                len(components),
+                release_plan_name,
+            )
+            return "https://dry-run.invalid"
+
+        # Create Snapshot
+        snapshot_obj = {
+            "apiVersion": API_VERSION,
+            "kind": KIND_SNAPSHOT,
+            "metadata": {
+                "generateName": generate_name,
+                "namespace": self.konflux_namespace,
+                "labels": {
+                    "test.appstudio.openshift.io/type": "override",
+                    "appstudio.openshift.io/application": application_name,
+                },
+            },
+            "spec": {"application": application_name, "components": components},
+        }
+        result_snapshot = await konflux_client._create(snapshot_obj)
+        snapshot_name = result_snapshot.metadata.name
+        snapshot_url = konflux_client.resource_url(result_snapshot)
+        self._logger.info("Created Snapshot %s (%s)", snapshot_name, snapshot_url)
+
+        # Wait for Snapshot to be readable
+        timeout_s, poll_s, elapsed = 60, 10, 0
+        while elapsed < timeout_s:
+            try:
+                await konflux_client._get(API_VERSION, KIND_SNAPSHOT, snapshot_name)
+                break
+            except k8s_exceptions.NotFoundError:
+                await asyncio.sleep(poll_s)
+                elapsed += poll_s
+        else:
+            raise RuntimeError(f"Snapshot {snapshot_name} not available after 1 minute")
+
+        # Verify ReleasePlan exists before creating Release
+        try:
+            await konflux_client._get(API_VERSION, KIND_RELEASE_PLAN, release_plan_name)
+        except k8s_exceptions.NotFoundError:
+            raise RuntimeError(
+                f"ReleasePlan '{release_plan_name}' not found in namespace '{self.konflux_namespace}'. "
+                "Ensure ART-17452 has landed and the ReleasePlan name is correct."
+            ) from None
+
+        # Create Release
+        release_annotations = {
+            "art.redhat.com/kind": "bundle-ri-stage-release",
+            "art.redhat.com/group": group,
+            "art.redhat.com/assembly": assembly,
+            "art.redhat.com/distgit-key": operator_name,
+            "art.redhat.com/operator-nvr": operator_nvr,
+        }
+        if job_url := os.getenv("BUILD_URL"):
+            release_annotations["art.redhat.com/job-url"] = job_url
+
+        release_obj = {
+            "apiVersion": API_VERSION,
+            "kind": KIND_RELEASE,
+            "metadata": {
+                "generateName": generate_name,
+                "namespace": self.konflux_namespace,
+                "labels": {"appstudio.openshift.io/application": application_name},
+                "annotations": release_annotations,
+            },
+            "spec": {"releasePlan": release_plan_name, "snapshot": snapshot_name},
+        }
+        created_release = await konflux_client._create(release_obj)
+        release_name = created_release.metadata.name
+        release_url = konflux_client.resource_url(created_release)
+        self._logger.info("Created Release %s for Snapshot %s (%s)", release_name, snapshot_name, release_url)
+
+        released = KubeCondition.find_condition(
+            await konflux_client.wait_for_release(release_name, overall_timeout_timedelta=timedelta(minutes=30)),
+            'Released',
+        )
+        if not released or released.status != "True" or released.reason != "Succeeded":
+            raise RuntimeError(
+                f"Stage release {release_name} for {operator_nvr} did not succeed "
+                f"({released.reason if released else 'no Released condition'}): "
+                f"{released.message if released else 'timed out'}. See {release_url}"
+            )
+        self._logger.info("Stage release %s succeeded", release_name)
+        return release_url
+
+
+@cli.command(
+    "beta:bundle:stage-release-related-images",
+    short_help="Stage-release bundle related images (operator + operands) before FBC builds are triggered.",
+)
+@click.option(
+    '--konflux-kubeconfig', metavar='PATH', help='Path to the kubeconfig file to use for Konflux cluster connections.'
+)
+@click.option(
+    '--konflux-context',
+    metavar='CONTEXT',
+    help='The name of the kubeconfig context to use for Konflux cluster connections.',
+)
+@click.option(
+    '--konflux-namespace',
+    metavar='NAMESPACE',
+    default=KONFLUX_DEFAULT_NAMESPACE,
+    help='The namespace to use for Konflux cluster connections.',
+)
+@click.option(
+    "--stage-release-plan",
+    metavar="NAME",
+    default=None,
+    help="Override the auto-resolved Konflux ReleasePlan name.",
+)
+@click.option(
+    '--dry-run', default=False, is_flag=True, help='Do not create Snapshots/Releases, only print what would be done.'
+)
+@click.argument('operator_nvrs', nargs=-1, required=True)
+@pass_runtime
+@click_coroutine
+async def bundle_stage_release_related_images(
+    runtime: Runtime,
+    konflux_kubeconfig: Optional[str],
+    konflux_context: Optional[str],
+    konflux_namespace: str,
+    stage_release_plan: Optional[str],
+    dry_run: bool,
+    operator_nvrs: Tuple[str, ...],
+):
+    """Stage-release operator and operand images to the advisory before FBC builds.
+
+    Takes operator NVRs and, for each one in turn, looks up its bundle build, extracts the referenced
+    images (operator + operands), and releases them through a Konflux advisory-stage ReleasePlan as its
+    own Snapshot/Release. One operator's failure does not stop the others: every outcome is written to
+    record.log as a `stage_release_related_images` entry, and the command exits non-zero if any operator
+    failed so the caller can drop just those operators.
+
+    Only runs for the 'stream' assembly. If no release plan is configured for the product, the command
+    exits successfully without doing anything.
+    """
+    if not konflux_kubeconfig:
+        konflux_kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
+
+    stage_cli = BundleStageReleaseRelatedImagesCli(
+        runtime=runtime,
+        operator_nvrs=operator_nvrs,
+        stage_release_plan=stage_release_plan,
+        konflux_kubeconfig=konflux_kubeconfig,
+        konflux_context=konflux_context,
+        konflux_namespace=konflux_namespace,
+        dry_run=dry_run,
+    )
+    await stage_cli.run()
