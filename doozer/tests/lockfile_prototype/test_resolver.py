@@ -321,6 +321,36 @@ class TestPackagesFromContainerfile(unittest.TestCase):
         self.assertEqual(len(captured_configs), 1)
         self.assertIsNone(captured_configs[0].get("packagesFromContainerfile"))
 
+    @patch("doozerlib.lockfile_prototype.resolver.cmd_gather_async")
+    def test_bare_context_is_written_to_config(self, mock_gather):
+        """
+        A bare context override must be preserved in the generated
+        rpms.in.yaml input.
+        """
+        captured_configs: list[dict] = []
+
+        async def mock_cmd(cmd, **kwargs):
+            infile = cmd[-1]
+            with open(infile) as f:
+                captured_configs.append(yaml.safe_load(f))
+            outfile_idx = cmd.index("--outfile") + 1
+            with open(cmd[outfile_idx], "w") as f:
+                yaml.safe_dump(self.FAKE_LOCKFILE_DATA, f)
+            return (0, "", "")
+
+        mock_gather.side_effect = mock_cmd
+        resolver = RpmResolver(working_dir=Path(tempfile.mkdtemp()))
+        config = RpmsInConfig(
+            arches=["x86_64"],
+            contentOrigin={"repos": []},
+            context={"bare": True},
+            packages=["nfs-utils"],
+        )
+        asyncio.run(resolver.resolve(config))
+
+        self.assertEqual(len(captured_configs), 1)
+        self.assertEqual(captured_configs[0]["context"], {"bare": True})
+
 
 class TestParseMissingPackages(unittest.TestCase):
     def test_cli_format(self):
