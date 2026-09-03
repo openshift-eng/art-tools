@@ -1706,9 +1706,21 @@ class GenPayloadCli:
                     for old_tag in pruning_tags:
                         # Even though we have replaced the .spec on the imagestream, the old tag will still
                         # be reflected in .status. The release controller considers this a legit declaration,
-                        # so we must remove it explicitly using `oc delete istag`
+                        # so we must remove it explicitly using `oc delete istag`.
+                        # We use a direct subprocess call instead of the openshift-client-python wrapper
+                        # because oc.selector().delete() silently fails to remove tags that only exist
+                        # in .status.tags (not in .spec.tags).
                         try:
-                            oc.selector(f"istag/{imagestream_name}:{old_tag}").delete()
+                            await exectools.cmd_assert_async(
+                                [
+                                    'oc',
+                                    'delete',
+                                    f'istag/{imagestream_name}:{old_tag}',
+                                    '-n',
+                                    imagestream_namespace,
+                                    '--ignore-not-found',
+                                ]
+                            )
                         except Exception:
                             # This is not a fatal error, but failure to delete may leave issues being
                             # displayed on the release controller page.
