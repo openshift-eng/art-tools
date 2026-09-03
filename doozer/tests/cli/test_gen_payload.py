@@ -922,16 +922,27 @@ spec:
         """.strip(),
         )
 
+    @patch("doozerlib.cli.release_gen_payload.exectools.cmd_assert_async", new_callable=AsyncMock)
     @patch("doozerlib.cli.release_gen_payload.oc")
-    async def test_apply_arch_imagestream(self, oc_mock):
+    async def test_apply_arch_imagestream(self, oc_mock, cmd_assert_mock):
         # pretty much just ensuring names aren't messed up, not checking logic
         gpcli = flexmock(rgp_cli.GenPayloadCli())
         gpcli.ensure_imagestream_apiobj = Mock()
         gpcli.apply_imagestream_update = AsyncMock()
-        gpcli.apply_imagestream_update.return_value = ["prune-me", "add-me"]
+        gpcli.apply_imagestream_update.return_value = ({"prune-me"}, {"add-me"})
         await gpcli.apply_arch_imagestream("ocp-s390x", "release-s390x", ["prune-me", "add-me"], True)
         gpcli.ensure_imagestream_apiobj.assert_called()
         gpcli.apply_imagestream_update.assert_awaited()
+        cmd_assert_mock.assert_awaited_once_with(
+            [
+                'oc',
+                'delete',
+                'istag/release-s390x:prune-me',
+                '-n',
+                'ocp-s390x',
+                '--ignore-not-found',
+            ]
+        )
 
     @patch("doozerlib.cli.release_gen_payload.oc")
     def test_ensure_imagestream_apiobj(self, oc_mock):
