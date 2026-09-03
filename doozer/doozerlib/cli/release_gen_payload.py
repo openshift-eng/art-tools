@@ -1861,6 +1861,28 @@ class GenPayloadCli:
                 # old tags to prune.
                 pruning_tags = existing_tag_names - incoming_tag_names
 
+            # Also detect stale tags in .status.tags that are no longer in the payload.
+            # When build-sync replaces .spec.tags, removed tags persist in .status.tags
+            # as "Pushed image" entries maintained by the OpenShift image registry
+            # controller. The release controller reads .status.tags too, so stale entries
+            # cause deprecated images to appear in nightlies. The only way to clean them
+            # up is `oc delete istag`, which is handled by apply_arch_imagestream() for
+            # every tag in pruning_tags.
+            status_tags = apiobj.model.status.tags
+            if status_tags is not oc.Missing and status_tags:
+                status_tag_names = {tag.tag for tag in status_tags}
+                status_only_stale = status_tag_names - incoming_tag_names - pruning_tags
+                if status_only_stale:
+                    if full_payload_tag_names is not None:
+                        # We know the full expected set — only prune status tags not in it
+                        status_deprecated = status_only_stale - full_payload_tag_names
+                    else:
+                        # When filtered (--images/--exclude), we can't determine what's deprecated
+                        status_deprecated = set()
+                    pruning_tags |= status_deprecated
+                    if status_deprecated:
+                        self.logger.info("Detected stale tags in .status.tags that need cleanup: %s", status_deprecated)
+
             apiobj.model.spec.tags = new_istags
 
         await modify_and_replace_api_object(istream_apiobj, update_single_arch_istags, self.output_path, self.moist_run)
