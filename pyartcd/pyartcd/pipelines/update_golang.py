@@ -21,6 +21,7 @@ from artcommonlib.constants import (
     REGISTRY_QUAY_OCP_RELEASE_DEV,
     REGISTRY_QUAY_OPENSHIFT,
     REGISTRY_REDHAT_IO,
+    KONFLUX_DEFAULT_IMAGE_REPO,
 )
 from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
