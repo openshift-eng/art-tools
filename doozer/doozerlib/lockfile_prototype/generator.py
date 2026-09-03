@@ -153,7 +153,7 @@ def _detect_stages_with_installroot_only(entries: list[dict]) -> set[int]:
             stage_idx += 1
         elif entry["instruction"] == "RUN" and stage_idx >= 0:
             run_value = entry["value"].replace("\\\n", " ")
-            for command in re.split(r"&&|;|\n", run_value):
+            for command in re.split(r"\|\||&&|;|\n", run_value):
                 has_package_manager = re.search(r"\b(?:microdnf|dnf|yum)\b", command)
                 if has_package_manager and _PACKAGE_OPERATION_RE.search(command):
                     mode = "installroot" if _INSTALLROOT_ARG_RE.search(command) else "normal"

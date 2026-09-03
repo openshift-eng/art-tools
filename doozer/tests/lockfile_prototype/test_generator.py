@@ -1365,6 +1365,19 @@ class TestDetectStagesWithInstallrootOnly(unittest.TestCase):
 
         self.assertEqual(result, set())
 
+    def test_excludes_stages_with_normal_fallback_commands(self):
+        entries = [
+            {"instruction": "FROM", "value": "base"},
+            {
+                "instruction": "RUN",
+                "value": "dnf --installroot=/mnt/rootfs install root-pkg || dnf install fallback-pkg",
+            },
+        ]
+
+        result = _detect_stages_with_installroot_only(entries)
+
+        self.assertEqual(result, set())
+
 
 class TestBareUpdateUpgradeResolution(unittest.TestCase):
     """
