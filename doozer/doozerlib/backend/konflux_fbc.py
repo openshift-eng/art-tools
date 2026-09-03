@@ -49,22 +49,6 @@ class AssemblyBundleCsvInfo(NamedTuple):
     bundle_blob: Optional[Dict]  # The olm.bundle blob to add to the catalog
 
 
-async def get_referenced_images(
-    konflux_db: "KonfluxDb", bundle_build: "KonfluxBundleBuildRecord"
-) -> "List[KonfluxBuildRecord]":
-    """Get operator + operand build records referenced by a bundle build.
-
-    Filters out "external" NVRs (images we consume but don't build, e.g. postgresql).
-    """
-    assert bundle_build.operator_nvr, "operator_nvr is empty; doozer bug?"
-    nvrs = {bundle_build.operator_nvr}
-    if bundle_build.operand_nvrs:
-        nvrs |= set(bundle_build.operand_nvrs)
-    nvrs = {nvr for nvr in nvrs if nvr != "external"}
-    assert konflux_db.record_cls is KonfluxBuildRecord, "konflux_db is not bound to KonfluxBuildRecord. Doozer bug?"
-    return await konflux_db.get_build_records_by_nvrs(list(nvrs), exclude_large_columns=True, group=bundle_build.group)
-
-
 LOGGER = logging.getLogger(__name__)
 yaml = opm.yaml
 
@@ -1142,7 +1126,15 @@ class KonfluxFbcRebaser:
         return nvr
 
     async def _get_referenced_images(self, konflux_db: KonfluxDb, bundle_build: KonfluxBundleBuildRecord):
-        return await get_referenced_images(konflux_db, bundle_build)
+        assert bundle_build.operator_nvr, "operator_nvr is empty; doozer bug?"
+        nvrs = {bundle_build.operator_nvr}
+        if bundle_build.operand_nvrs:
+            nvrs |= set(bundle_build.operand_nvrs)
+        # Filter out "external" image NVRs - these are external images we consume but do not necessarly build (i.e postgresql, etc)
+        nvrs = {nvr for nvr in nvrs if nvr != "external"}
+        assert konflux_db.record_cls is KonfluxBuildRecord, "konflux_db is not bound to KonfluxBuildRecord. Doozer bug?"
+        ref_builds = await konflux_db.get_build_records_by_nvrs(list(nvrs), exclude_large_columns=True)
+        return ref_builds
 
     async def _rebase_dir(
         self,
@@ -1199,7 +1191,7 @@ class KonfluxFbcRebaser:
         konflux_db: KonfluxDb = metadata.runtime.konflux_db
         konflux_db.bind(KonfluxBuildRecord)
         ref_builds = await self._get_referenced_images(konflux_db, bundle_build)
-        ref_builds.append(bundle_build)  # Include the bundle build itself (for IDMS only)
+        ref_builds.append(bundle_build)  # Include the bundle build itself
         ref_pullspecs = {
             b.image_pullspec.replace(constants.REGISTRY_PROXY_BASE_URL, constants.BREW_REGISTRY_BASE_URL)
             for b in ref_builds
