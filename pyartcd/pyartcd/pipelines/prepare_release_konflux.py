@@ -759,10 +759,18 @@ class PrepareReleaseKonfluxPipeline:
         if not self.dry_run:
             all_unresolved = et_unresolved + shipment_unresolved
             if all_unresolved:
-                raise ValueError(
-                    "Advisory placeholders not fully resolved after Phase 4:\n"
-                    + "\n".join(f"  - {item}" for item in all_unresolved)
-                )
+                phase = ((self.group_config or {}).get('software_lifecycle') or {}).get('phase')
+                if phase == 'pre-release':
+                    self.logger.warning(
+                        "Advisory placeholders not fully resolved after Phase 4 "
+                        "(pre-release assembly — continuing):\n%s",
+                        "\n".join(f"  - {item}" for item in all_unresolved),
+                    )
+                else:
+                    raise ValueError(
+                        "Advisory placeholders not fully resolved after Phase 4:\n"
+                        + "\n".join(f"  - {item}" for item in all_unresolved)
+                    )
 
     def _resolve_classic_advisory_placeholders(
         self, advisory_num: int, image_advisory: str | None, rpm_advisory: str | None

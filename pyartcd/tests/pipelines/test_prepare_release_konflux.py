@@ -1231,6 +1231,57 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
 
     @patch("elliottlib.shipment_utils.Erratum")
     @patch("pyartcd.pipelines.prepare_release_konflux.get_errata_live_id")
+    async def test_resolve_advisory_placeholders_warns_for_prerelease(self, mock_get_live_id, mock_erratum_cls):
+        """Pre-release assemblies downgrade unresolved-placeholder ValueError to a warning."""
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+        )
+        pipeline.logger = Mock()
+        pipeline.dry_run = False
+        pipeline.update_shipment_mr = AsyncMock()
+        pipeline.group_config = {'software_lifecycle': {'phase': 'pre-release'}}
+
+        # RPM live-ID lookup fails → rpm_advisory_id stays None
+        mock_get_live_id.side_effect = Exception("ET unavailable")
+
+        image_shipment = ShipmentConfig(
+            shipment=Shipment(
+                metadata=Metadata(product="ocp", group=self.group, assembly=self.assembly, application="app-image"),
+                environments=Environments(
+                    stage=ShipmentEnv(releasePlan="rp-img-stage"),
+                    prod=ShipmentEnv(releasePlan="rp-img-prod"),
+                ),
+                data=Data(
+                    releaseNotes=ReleaseNotes(
+                        type="RHBA",
+                        live_id=16164,
+                        description="See {IMAGE_ADVISORY} and {RPM_ADVISORY} for details.",
+                    )
+                ),
+            )
+        )
+
+        rpm_advisory_mock = Mock(description="", solution="")
+        mock_erratum_cls.return_value = rpm_advisory_mock
+
+        impetus_advisories = {"rpm": 999}
+        shipment_data = ({"image": image_shipment}, "prod", "https://gitlab.example.com/x/-/merge_requests/1")
+
+        # Must NOT raise for pre-release assemblies
+        await pipeline.resolve_advisory_placeholders(impetus_advisories, shipment_data)
+
+        # Find the pre-release warning among all logger.warning calls
+        warning_messages = [str(call) for call in pipeline.logger.warning.call_args_list]
+        self.assertTrue(
+            any("pre-release" in msg for msg in warning_messages),
+            f"Expected a pre-release warning in logger.warning calls: {warning_messages}",
+        )
+
+    @patch("elliottlib.shipment_utils.Erratum")
+    @patch("pyartcd.pipelines.prepare_release_konflux.get_errata_live_id")
     async def test_resolve_advisory_placeholders_raises_on_shipment_mr_push_failure(
         self, mock_get_live_id, mock_erratum_cls
     ):
