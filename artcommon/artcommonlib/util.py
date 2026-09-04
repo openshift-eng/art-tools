@@ -402,7 +402,7 @@ def get_inflight(assembly, group, date=None):
         headers={'Accept': 'application/json'},
     )
     if response.status_code == 404:
-        logger.info(
+        LOGGER.info(
                 "No previous-minor z-stream release schedule exists for %s; "
                 "continuing without an inflight release.",
                 prev_group,)
