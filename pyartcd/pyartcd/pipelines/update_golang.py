@@ -1186,11 +1186,7 @@ class UpdateGolangPipeline:
         need to be rebuilt whenever their respective parent changes.
         """
         branch = f"openshift-{self.ocp_version}"
-        # TODO: revert -- forcing the test fork/branch below for CI rebuild testing; restore
-        # `repo, branch = self._get_ocp_build_data_repo_and_branch(branch)`.
-        repo, branch = self._get_ocp_build_data_repo_and_branch(
-            branch, data_path=self._CI_TEST_DATA_PATH, data_gitref=self._CI_TEST_DATA_GITREF
-        )
+        repo, branch = self._get_ocp_build_data_repo_and_branch(branch)
         contents = repo.get_contents("images", ref=branch)
         ci_image_keys = sorted(
             content.name[: -len(".yml")]
@@ -1217,9 +1213,8 @@ class UpdateGolangPipeline:
             f"--working-dir={self._doozer_working_dir}-ci-scan",
             "--build-system=konflux",
         ]
-        # TODO: revert -- forcing the test data_path below for CI rebuild testing; restore
-        # `if self.data_path: cmd.append(f"--data-path={self.data_path}")`.
-        cmd.append(f"--data-path={self._CI_TEST_DATA_PATH}")
+        if self.data_path:
+            cmd.append(f"--data-path={self.data_path}")
         cmd.extend(["--group", group])
         # These images are `mode: disabled` in ocp-build-data so the standing ocp4-scan job (which
         # scans the whole group without --load-disabled) leaves their lifecycle to this pipeline.
@@ -1256,9 +1251,8 @@ class UpdateGolangPipeline:
             "--build-system=konflux",
         ]
         cmd.extend(self._get_doozer_assembly_args())
-        # TODO: revert -- forcing the test data_path below for CI rebuild testing; restore
-        # `if self.data_path: cmd.append(f"--data-path={self.data_path}")`.
-        cmd.append(f"--data-path={self._CI_TEST_DATA_PATH}")
+        if self.data_path:
+            cmd.append(f"--data-path={self.data_path}")
         cmd.extend(
             [
                 "--group",
@@ -1296,9 +1290,8 @@ class UpdateGolangPipeline:
             "--build-system=konflux",
         ]
         cmd.extend(self._get_doozer_assembly_args())
-        # TODO: revert -- forcing the test data_path below for CI rebuild testing; restore
-        # `if self.data_path: cmd.append(f"--data-path={self.data_path}")`.
-        cmd.append(f"--data-path={self._CI_TEST_DATA_PATH}")
+        if self.data_path:
+            cmd.append(f"--data-path={self.data_path}")
         cmd.extend(
             [
                 "--group",
@@ -1381,9 +1374,8 @@ class UpdateGolangPipeline:
                 "--build-system=konflux",
             ]
             cmd.extend(self._get_doozer_assembly_args())
-            # TODO: revert -- forcing the test data_path below for CI rebuild testing; restore
-            # `if self.data_path: cmd.append(f"--data-path={self.data_path}")`.
-            cmd.append(f"--data-path={self._CI_TEST_DATA_PATH}")
+            if self.data_path:
+                cmd.append(f"--data-path={self.data_path}")
             cmd.extend(["--group", group])
             # These images are `mode: disabled` in ocp-build-data (see _scan_stale_ci_images), and
             # unlike that command this one doesn't use the global `-i` image filter (its `--image`
@@ -1404,12 +1396,6 @@ class UpdateGolangPipeline:
         "GO_EXTRA": "extra",
         "GO_PREVIOUS": "previous",
     }
-
-    # TODO: revert -- temporary hardcoded fork/branch for testing the CI golang-builder/build-root
-    # rebuild path end-to-end. Every site tagged "TODO: revert" below forces this instead of the
-    # normal --data-path/--data-gitref values; remove them all once testing is done.
-    _CI_TEST_DATA_PATH = "https://github.com/kopero2000/ocp-build-data"
-    _CI_TEST_DATA_GITREF = "openshift-5.0-test"
 
     async def _refresh_ci_images(
         self,
@@ -1438,13 +1424,6 @@ class UpdateGolangPipeline:
         imagestream tag instead of the real one, so test-assembly runs never overwrite what
         production CI actually consumes.
         """
-        # TODO: revert -- re-deriving allowed_major_minors from the test fork/branch below.
-        # _get_allowed_go_major_minors (which produced the `allowed_major_minors` param) always
-        # reads the real upstream ocp-build-data regardless of --data-path, so without this the
-        # variant match below would use production GO_LATEST/GO_EXTRA/GO_PREVIOUS values while
-        # every doozer call in this method reads from the test fork. Restore by deleting this
-        # line so `allowed_major_minors` (the param) is used directly below.
-        allowed_major_minors = self._get_ci_allowed_go_major_minors()
         variant = next(
             (
                 self.CI_VARIANT_BY_GROUP_VAR[var_name]
@@ -1549,27 +1528,9 @@ class UpdateGolangPipeline:
         openshift-5.0-test) is actually checked out instead of doozer defaulting to a branch
         literally named openshift-{version}."""
         group = f"openshift-{self.ocp_version}"
-        # TODO: revert -- forcing the test data_gitref below for CI rebuild testing; restore
-        # `if self.data_gitref: group += f'@{self.data_gitref}'`.
-        group += f'@{self._CI_TEST_DATA_GITREF}'
+        if self.data_gitref:
+            group += f'@{self.data_gitref}'
         return group
-
-    # TODO: revert -- delete this whole method once CI rebuild testing is done.
-    def _get_ci_allowed_go_major_minors(self) -> dict[str, str]:
-        """CI-scoped re-lookup of GO_LATEST/GO_EXTRA/GO_PREVIOUS against the test fork/branch, for
-        _refresh_ci_images' variant matching only -- see the TODO where this is called."""
-        branch = f"openshift-{self.ocp_version}"
-        repo, branch = self._get_ocp_build_data_repo_and_branch(
-            branch, data_path=self._CI_TEST_DATA_PATH, data_gitref=self._CI_TEST_DATA_GITREF
-        )
-        group_content = self._load_yaml_from_repo(repo, "group.yml", branch)
-        vars_content = group_content.get("vars", {})
-        return {
-            var_name: extract_major_minor(var_value, f"group.yml {var_name}")
-            for var_name in ("GO_LATEST", "GO_EXTRA", "GO_PREVIOUS")
-            for var_value in [vars_content.get(var_name)]
-            if var_value
-        }
 
     def verify_golang_builder_repo(self, el_v, go_version):
         default_branch = self.GOLANG_DATA_BRANCH
