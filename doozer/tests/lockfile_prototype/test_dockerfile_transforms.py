@@ -3,11 +3,58 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from doozerlib.lockfile_prototype.dockerfile_transforms import (
+    add_installroot_gpg_key_import,
     fix_rpm_verify_commands,
     strip_bare_updates,
     strip_bare_updates_from_scripts,
     transform_reinstall_commands,
 )
+
+
+class TestAddInstallrootGpgKeyImport(unittest.TestCase):
+    def test_preserves_exec_form_cmd(self):
+        content = "CMD [\"dnf\", \"--installroot=/mnt/rootfs\"]\n"
+
+        result = add_installroot_gpg_key_import(content)
+
+        self.assertEqual(result, content)
+
+    def test_preserves_exec_form_run(self):
+        content = "RUN [\"dnf\", \"--installroot=/mnt/rootfs\", \"install\", \"test-package\"]\n"
+
+        result = add_installroot_gpg_key_import(content)
+
+        self.assertEqual(result, content)
+
+    def test_preserves_installroot_text_inside_quoted_run_argument(self):
+        content = "RUN echo \"dnf --installroot=/mnt/rootfs install test-package\"\n"
+
+        result = add_installroot_gpg_key_import(content)
+
+        self.assertEqual(result, content)
+
+    def test_supports_installroot_as_a_separate_argument(self):
+        content = "RUN dnf install -y --installroot /mnt/rootfs test-package\n"
+
+        result = add_installroot_gpg_key_import(content)
+
+        self.assertIn("rpm --root /mnt/rootfs --import /etc/pki/rpm-gpg/RPM-GPG-KEY-redhat-release", result)
+        self.assertIn("dnf install -y --installroot /mnt/rootfs test-package", result)
+
+    def test_preserves_content_without_installroot(self):
+        content = "RUN dnf install -y test-package\n"
+
+        result = add_installroot_gpg_key_import(content)
+
+        self.assertEqual(result, content)
+
+    def test_is_idempotent(self):
+        content = "RUN dnf --installroot=/mnt/rootfs install -y test-package\n"
+
+        once = add_installroot_gpg_key_import(content)
+        twice = add_installroot_gpg_key_import(once)
+
+        self.assertEqual(twice, once)
 
 
 class TestStripBareUpdates(unittest.TestCase):

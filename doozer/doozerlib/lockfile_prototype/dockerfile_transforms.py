@@ -6,9 +6,219 @@ to fix incompatibilities between package names in install commands and the
 actual names recorded in the rpmdb (e.g. virtual provides, package renames).
 """
 
+import json
 import logging
 import re
+import unicodedata
+from io import StringIO
 from pathlib import Path
+
+import bashlex
+import bashlex.errors
+from dockerfile_parse import DockerfileParser
+
+_RUN_INSTRUCTION_RE = re.compile(r"^(?P<prefix>[ \t]*RUN[ \t]+)(?P<body>.*)$", re.DOTALL | re.IGNORECASE)
+_INSTALLROOT_OPTION_RE = re.compile(r"^--installroot$")
+_INSTALLROOT_ARGUMENT_RE = re.compile(r"^--installroot=(?P<root>[^\s;&|\\]+)$")
+_PACKAGE_MANAGER_RE = re.compile(r"^(?:microdnf|dnf|yum)$")
+_RPM_GPG_KEY_PATH = "/etc/pki/rpm-gpg/RPM-GPG-KEY-redhat-release"
+
+
+def add_installroot_gpg_key_import(df_content: str) -> str:
+    """
+    Import the Red Hat RPM GPG key before installing into an empty installroot.
+
+    The RPM database in a newly created installroot has no imported GPG keys,
+    even though the key file exists in the image filesystem. Existing roots,
+    such as bootc roots, are left unchanged when they contain any files.
+
+    Arg(s):
+        df_content (str): Raw Dockerfile text.
+    Return Value(s):
+        str: Transformed Dockerfile text with conditional GPG key imports.
+    """
+
+    normalized_content = unicodedata.normalize("NFC", df_content)
+    parser = DockerfileParser(fileobj=StringIO(normalized_content))
+    lines = normalized_content.splitlines(keepends=True)
+    line_offsets = [0]
+    for line in lines:
+        line_offsets.append(line_offsets[-1] + len(line))
+
+    replacements: list[tuple[int, int, str]] = []
+    for entry in parser.structure:
+        if entry["instruction"] != "RUN":
+            continue
+
+        startline = entry["startline"]
+        endline = entry["endline"]
+        start_offset = line_offsets[startline]
+        end_offset = line_offsets[endline + 1]
+        original = normalized_content[start_offset:end_offset]
+        transformed = _transform_shell_run_instruction(original)
+        if transformed != original:
+            replacements.append((start_offset, end_offset, transformed))
+
+    for start_offset, end_offset, replacement in reversed(replacements):
+        normalized_content = normalized_content[:start_offset] + replacement + normalized_content[end_offset:]
+
+    return normalized_content
+
+
+def _transform_shell_run_instruction(instruction: str) -> str:
+    """
+    Transform package-manager commands in one shell-form RUN instruction.
+
+    Arg(s):
+        instruction (str): Raw Dockerfile RUN instruction.
+    Return Value(s):
+        str: RUN instruction with conditional installroot key imports.
+    """
+    instruction_match = _RUN_INSTRUCTION_RE.fullmatch(instruction)
+    if instruction_match is None:
+        return instruction
+
+    prefix = instruction_match.group("prefix")
+    body = instruction_match.group("body")
+    command_start, shell_body = _strip_run_options(body)
+    if _is_exec_form_run(shell_body):
+        return instruction
+
+    transformed_body = _transform_shell_run_body(shell_body)
+    if transformed_body == shell_body:
+        return instruction
+    return prefix + body[:command_start] + transformed_body
+
+
+def _strip_run_options(body: str) -> tuple[int, str]:
+    """
+    Find the shell command after Dockerfile-specific RUN options.
+
+    Arg(s):
+        body (str): Text following the RUN instruction keyword.
+    Return Value(s):
+        tuple[int, str]: Offset and text of the shell command.
+    """
+    offset = 0
+    while True:
+        while offset < len(body) and body[offset] in " \t":
+            offset += 1
+        if not body.startswith("--", offset):
+            return offset, body[offset:]
+
+        option_end = offset
+        while option_end < len(body) and body[option_end] not in " \t\n":
+            option_end += 1
+        offset = option_end
+
+
+def _is_exec_form_run(body: str) -> bool:
+    """
+    Return whether a RUN body uses Docker's JSON array form.
+
+    Arg(s):
+        body (str): RUN body after Dockerfile-specific options.
+    Return Value(s):
+        bool: True when the body parses as a JSON array.
+    """
+    try:
+        parsed = json.loads(body.strip())
+    except json.JSONDecodeError:
+        return False
+    return isinstance(parsed, list)
+
+
+def _transform_shell_run_body(shell_body: str) -> str:
+    """
+    Add GPG key imports before executable package-manager commands.
+
+    Arg(s):
+        shell_body (str): Shell-form RUN body.
+    Return Value(s):
+        str: Transformed shell command text.
+    """
+    try:
+        nodes = bashlex.parse(shell_body, strictmode=False)
+    except bashlex.errors.ParsingError:
+        return shell_body
+
+    command_nodes: list = []
+    for node in nodes:
+        _append_command_nodes(node, command_nodes)
+
+    insertions: list[tuple[int, str]] = []
+    for command in command_nodes:
+        parts = getattr(command, "parts", [])
+        if not parts or parts[0].kind != "word":
+            continue
+        command_name = parts[0].word.rsplit("/", 1)[-1]
+        if _PACKAGE_MANAGER_RE.fullmatch(command_name) is None:
+            continue
+
+        root = _find_installroot(parts[1:])
+        if root is None:
+            continue
+
+        guard = _installroot_gpg_key_guard(root)
+        if shell_body[: command.pos[0]].endswith(guard):
+            continue
+        insertions.append((command.pos[0], guard))
+
+    for position, guard in reversed(sorted(insertions)):
+        shell_body = shell_body[:position] + guard + shell_body[position:]
+    return shell_body
+
+
+def _append_command_nodes(node, command_nodes: list) -> None:
+    """
+    Collect shell command nodes from a bashlex syntax tree.
+
+    Arg(s):
+        node: Current bashlex syntax-tree node.
+        command_nodes (list): List receiving command nodes.
+    """
+    if node.kind == "command":
+        command_nodes.append(node)
+    for attribute in ("parts", "list"):
+        for child in getattr(node, attribute, []) or []:
+            _append_command_nodes(child, command_nodes)
+
+
+def _find_installroot(parts: list) -> str | None:
+    """
+    Find an installroot path in package-manager argument nodes.
+
+    Arg(s):
+        parts (list): Bashlex word nodes after the package-manager command.
+    Return Value(s):
+        str | None: Installroot path, or None when the option is absent.
+    """
+    for index, part in enumerate(parts):
+        if part.kind != "word":
+            continue
+        argument = unicodedata.normalize("NFC", part.word)
+        argument_match = _INSTALLROOT_ARGUMENT_RE.fullmatch(argument)
+        if argument_match is not None:
+            return argument_match.group("root")
+        if _INSTALLROOT_OPTION_RE.fullmatch(argument) and index + 1 < len(parts):
+            next_part = parts[index + 1]
+            if next_part.kind == "word":
+                return unicodedata.normalize("NFC", next_part.word)
+    return None
+
+
+def _installroot_gpg_key_guard(root: str) -> str:
+    """
+    Build a shell guard that imports the Red Hat RPM GPG key for an empty root.
+
+    Arg(s):
+        root (str): Installroot path.
+    Return Value(s):
+        str: Shell guard followed by a command separator.
+    """
+    return (
+        f"if [ -d {root} ] && [ -z \"$(ls -A {root})\" ]; then rpm --root {root} --import {_RPM_GPG_KEY_PATH}; fi && "
+    )
 
 
 def strip_bare_updates(df_content: str) -> str:
