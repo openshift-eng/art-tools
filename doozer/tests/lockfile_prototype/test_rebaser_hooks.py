@@ -27,7 +27,7 @@ class TestApplyDockerfileTransforms(unittest.TestCase):
             result,
         )
         self.assertIn(
-            '[ -z "$(ls -A /mnt/rootfs)" ]',
+            "[ -z \"$(ls -A /mnt/rootfs)\" ]",
             result,
         )
         self.assertIn("dnf --installroot=/mnt/rootfs install -y test-package", result)

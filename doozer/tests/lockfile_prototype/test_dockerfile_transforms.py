@@ -12,6 +12,27 @@ from doozerlib.lockfile_prototype.dockerfile_transforms import (
 
 
 class TestAddInstallrootGpgKeyImport(unittest.TestCase):
+    def test_preserves_exec_form_cmd(self):
+        content = "CMD [\"dnf\", \"--installroot=/mnt/rootfs\"]\n"
+
+        result = add_installroot_gpg_key_import(content)
+
+        self.assertEqual(result, content)
+
+    def test_preserves_exec_form_run(self):
+        content = "RUN [\"dnf\", \"--installroot=/mnt/rootfs\", \"install\", \"test-package\"]\n"
+
+        result = add_installroot_gpg_key_import(content)
+
+        self.assertEqual(result, content)
+
+    def test_preserves_installroot_text_inside_quoted_run_argument(self):
+        content = "RUN echo \"dnf --installroot=/mnt/rootfs install test-package\"\n"
+
+        result = add_installroot_gpg_key_import(content)
+
+        self.assertEqual(result, content)
+
     def test_supports_installroot_as_a_separate_argument(self):
         content = "RUN dnf install -y --installroot /mnt/rootfs test-package\n"
 
