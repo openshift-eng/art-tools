@@ -403,9 +403,9 @@ def get_inflight(assembly, group, date=None):
     )
     if response.status_code == 404:
         LOGGER.info(
-                "No previous-minor z-stream release schedule exists for %s; "
-                "continuing without an inflight release.",
-                prev_group,)
+            "No previous-minor z-stream release schedule exists for %s; continuing without an inflight release.",
+            prev_group,
+        )
         return None
     response.raise_for_status()
     try:
