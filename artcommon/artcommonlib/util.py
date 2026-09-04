@@ -401,6 +401,12 @@ def get_inflight(assembly, group, date=None):
         f'{RELEASE_SCHEDULES}/{prev_group}.z/?fields=all_ga_tasks',
         headers={'Accept': 'application/json'},
     )
+    if response.status_code == 404:
+        LOGGER.info(
+            "No previous-minor z-stream release schedule exists for %s; continuing without an inflight release.",
+            prev_group,
+        )
+        return None
     response.raise_for_status()
     try:
         data = response.json()
