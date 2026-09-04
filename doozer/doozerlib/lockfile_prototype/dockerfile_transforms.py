@@ -10,6 +10,39 @@ import logging
 import re
 from pathlib import Path
 
+_INSTALLROOT_COMMAND_RE = re.compile(
+    r"\b(?:microdnf|dnf|yum)\b"
+    r"(?:(?!&&|\|\||;|\n)[^\n]|\\\n)*?"
+    r"--installroot(?:=(?P<equals>[^\s;&|\\]+)|[ \t]+(?P<separate>[^\s;&|\\]+))"
+)
+_RPM_GPG_KEY_PATH = "/etc/pki/rpm-gpg/RPM-GPG-KEY-redhat-release"
+
+
+def add_installroot_gpg_key_import(df_content: str) -> str:
+    """
+    Import the Red Hat RPM GPG key before installing into an empty installroot.
+
+    The RPM database in a newly created installroot has no imported GPG keys,
+    even though the key file exists in the image filesystem. Existing roots,
+    such as bootc roots, are left unchanged when they contain any files.
+
+    Arg(s):
+        df_content (str): Raw Dockerfile text.
+    Return Value(s):
+        str: Transformed Dockerfile text with conditional GPG key imports.
+    """
+
+    def _replace(match: re.Match) -> str:
+        root = match.group("equals") or match.group("separate")
+        guard = (
+            f'if [ -d {root} ] && [ -z "$(ls -A {root})" ]; then rpm --root {root} --import {_RPM_GPG_KEY_PATH}; fi && '
+        )
+        if match.string[: match.start()].endswith(guard):
+            return match.group(0)
+        return guard + match.group(0)
+
+    return _INSTALLROOT_COMMAND_RE.sub(_replace, df_content)
+
 
 def strip_bare_updates(df_content: str) -> str:
     """

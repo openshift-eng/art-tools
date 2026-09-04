@@ -13,6 +13,7 @@ import yaml
 
 from doozerlib.lockfile_prototype.constants import DEFAULT_RPM_LOCKFILE_NAME
 from doozerlib.lockfile_prototype.dockerfile_transforms import (
+    add_installroot_gpg_key_import,
     strip_bare_updates,
     strip_bare_updates_from_scripts,
     transform_reinstall_commands,
@@ -108,8 +109,9 @@ def apply_dockerfile_transforms(
 
     Applied after lockfile generation so update targets are already
     resolved into the lockfile. Removes bare yum/dnf update commands
-    and wraps reinstall commands in fail-safe ``(cmd || true)`` so
-    they degrade gracefully when the installed NEVRA is unavailable.
+    and imports the Red Hat GPG key into empty installroots. It also
+    wraps reinstall commands in fail-safe ``(cmd || true)`` so they
+    degrade gracefully when the installed NEVRA is unavailable.
 
     Arg(s):
         dest_dir (Path): Build directory containing the Dockerfile.
@@ -126,5 +128,6 @@ def apply_dockerfile_transforms(
     if strip_updates:
         df_content = strip_bare_updates(df_content)
         strip_bare_updates_from_scripts(dest_dir, logger=_logger)
+    df_content = add_installroot_gpg_key_import(df_content)
     df_content = transform_reinstall_commands(df_content)
     df_path.write_text(df_content)
