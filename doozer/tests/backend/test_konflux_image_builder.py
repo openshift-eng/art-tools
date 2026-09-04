@@ -71,6 +71,24 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         metadata.is_golang_builder = MagicMock(return_value=False)
         return metadata
 
+    @patch.dict("os.environ", {"RHCOS_QUAY_AUTH_FILE": "/tmp/rhcos-auth.json"}, clear=False)
+    def test_registry_auth_file_for_image_uses_rhcos_credentials_only_for_rhcos_repo(self):
+        self.builder._config.registry_auth_file = "/tmp/merged-auth.json"
+
+        with patch("pathlib.Path.is_file", return_value=True):
+            self.assertEqual(
+                self.builder._registry_auth_file_for_image(
+                    "quay.io/redhat-user-workloads/ocp-art-tenant/art-rhcos-images@sha256:digest"
+                ),
+                "/tmp/rhcos-auth.json",
+            )
+        self.assertEqual(
+            self.builder._registry_auth_file_for_image(
+                "quay.io/redhat-user-workloads/ocp-art-tenant/art-images@sha256:digest"
+            ),
+            "/tmp/merged-auth.json",
+        )
+
     async def test_get_successful_image_build_by_nvr_is_not_assembly_scoped(self):
         metadata = self._metadata()
         existing_build = MagicMock(spec=KonfluxBuildRecord)
