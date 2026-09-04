@@ -138,6 +138,26 @@ class TestImageSchema(unittest.TestCase):
         }
         self.assertIsNone(image_schema.validate('filename', valid_data))
 
+    def test_validate_with_valid_konflux_skip_validate_slsa(self):
+        data = {
+            'from': {},
+            'name': 'my-name',
+            'for_payload': True,
+            'delivery': {'delivery_repo_names': ['foo', 'bar']},
+            'konflux': {'skip_validate_slsa': True},
+        }
+        self.assertIsNone(image_schema.validate('filename', data))
+
+    def test_validate_with_invalid_konflux_skip_validate_slsa(self):
+        data = {
+            'from': {},
+            'name': 'my-name',
+            'for_payload': True,
+            'delivery': {'delivery_repo_names': ['foo', 'bar']},
+            'konflux': {'skip_validate_slsa': 'true'},
+        }
+        self.assertIn("'true' is not of type 'boolean'", image_schema.validate('filename', data))
+
     def test_validate_with_empty_konflux_cachi2_lockfile_rpms(self):
         """Test empty rpms array is valid"""
         valid_data = {
