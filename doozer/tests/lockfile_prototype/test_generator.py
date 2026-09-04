@@ -20,6 +20,7 @@ from doozerlib.lockfile_prototype.generator import (
 )
 from doozerlib.lockfile_prototype.models import (
     ArchResult,
+    ArchSpecificPackage,
     LockfileData,
     PackageEntry,
     RepoEntry,
@@ -65,6 +66,29 @@ class TestBuildRpmsInYaml(unittest.TestCase):
         self.assertEqual(len(arch_entries), 1)
         self.assertEqual(arch_entries[0].name, "librtas")
         self.assertEqual(arch_entries[0].arches["only"], "ppc64le")
+
+    def test_arch_specific_upgrade_packages(self):
+        repos = [
+            RepoEntry(
+                repoid="rhel-9-baseos-rpms",
+                baseurl="https://example.com/baseos/$basearch/os/",
+            ),
+        ]
+        result = build_rpms_in_yaml(
+            repos=repos,
+            arches=["x86_64", "ppc64le"],
+            packages=[],
+            upgrade_packages=[ArchSpecificPackage(name="kernel", arches={"only": "ppc64le"})],
+        )
+
+        self.assertEqual(
+            result.upgradePackages,
+            [ArchSpecificPackage(name="kernel", arches={"only": "ppc64le"})],
+        )
+        self.assertEqual(
+            result.model_dump()["upgradePackages"],
+            [{"name": "kernel", "arches": {"only": "ppc64le"}}],
+        )
 
     def test_multiple_repos(self):
         repos = [
@@ -238,6 +262,67 @@ class TestRpmLockfilePrototypeGenerator(unittest.TestCase):
             container_helper=self._make_mock_container(),
             resolver=self._make_mock_resolver(),
         )
+
+    def test_base_image_packages_are_scoped_to_each_architecture(self):
+        container = self._make_mock_container()
+
+        async def get_installed_packages(image_pullspec: str, arch: str) -> list[str]:
+            return {
+                "x86_64": ["glibc", "x86-only"],
+                "ppc64le": ["glibc", "ppc-only"],
+            }[arch]
+
+        container.get_installed_packages = AsyncMock(side_effect=get_installed_packages)
+        generator = RpmLockfilePrototypeGenerator(
+            repos=self._make_mock_repos(),
+            working_dir=Path(tempfile.mkdtemp()),
+            container_helper=container,
+            resolver=self._make_mock_resolver(),
+        )
+
+        result = asyncio.run(
+            generator._get_base_image_packages(
+                0,
+                "quay.io/test/base@sha256:abc123",
+                "test-image",
+                ["x86_64", "ppc64le"],
+            )
+        )
+
+        self.assertEqual(
+            [(package.name, package.arches) for package in result],
+            [
+                ("glibc", {"only": "x86_64"}),
+                ("x86-only", {"only": "x86_64"}),
+                ("glibc", {"only": "ppc64le"}),
+                ("ppc-only", {"only": "ppc64le"}),
+            ],
+        )
+
+    def test_assemble_lockfile_retains_configured_empty_architectures(self):
+        meta = self._make_mock_image_meta()
+        meta.is_cross_arch_enabled.return_value = False
+        generator = self._make_generator()
+        lockfile = LockfileData(
+            arches=[
+                ArchResult(
+                    arch="x86_64",
+                    packages=[
+                        PackageEntry(
+                            url="https://example.com/glibc.rpm",
+                            repoid="baseos",
+                            name="glibc",
+                            evr="1.0-1",
+                        )
+                    ],
+                )
+            ]
+        )
+
+        result = generator._assemble_lockfile([lockfile], meta)
+
+        self.assertEqual([entry.arch for entry in result.arches], ["x86_64", "ppc64le"])
+        self.assertEqual(result.arches[1].packages, [])
 
     def test_generate_lockfile_writes_result(self):
         meta = self._make_mock_image_meta()
@@ -1447,8 +1532,11 @@ class TestBareUpdateUpgradeResolution(unittest.TestCase):
         calls = resolver.resolve.call_args_list
         self.assertGreaterEqual(len(calls), 1)
         first_config = calls[0].args[0]
-        self.assertIn("glibc", first_config.upgradePackages)
-        self.assertIn("openssl", first_config.upgradePackages)
+        upgrade_names = [
+            package if isinstance(package, str) else package.name for package in first_config.upgradePackages
+        ]
+        self.assertIn("glibc", upgrade_names)
+        self.assertIn("openssl", upgrade_names)
 
     def test_upgrade_packages_dropped_on_failure(self):
         """
@@ -1533,7 +1621,8 @@ class TestBareUpdateUpgradeResolution(unittest.TestCase):
         calls = resolver.resolve.call_args_list
         self.assertGreaterEqual(len(calls), 1)
         config = calls[0].args[0]
-        self.assertIn("glibc", config.upgradePackages)
+        upgrade_names = [package if isinstance(package, str) else package.name for package in config.upgradePackages]
+        self.assertIn("glibc", upgrade_names)
         self.assertEqual(config.reinstallPackages, [])
 
     def test_bare_update_stage_alias_drops_upgrades(self):
@@ -1608,4 +1697,5 @@ class TestBareUpdateUpgradeResolution(unittest.TestCase):
         # newer versions. reinstallPackages pins to the installed EVR and wins
         # over the upgrade request, silently keeping the old version.
         self.assertNotIn("python3-setuptools", config.reinstallPackages)
-        self.assertIn("python3-setuptools", config.upgradePackages)
+        upgrade_names = [package if isinstance(package, str) else package.name for package in config.upgradePackages]
+        self.assertIn("python3-setuptools", upgrade_names)

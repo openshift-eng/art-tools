@@ -44,7 +44,7 @@ class RpmsInConfig(BaseModel):
     context: dict[str, bool | str] | None = None
     packages: list[str | ArchSpecificPackage] = Field(default_factory=list)
     reinstallPackages: list[str] = Field(default_factory=list)
-    upgradePackages: list[str] = Field(default_factory=list)
+    upgradePackages: list[str | ArchSpecificPackage] = Field(default_factory=list)
     moduleEnable: list[str] = Field(default_factory=list)
     excludePackages: list[str] = Field(default_factory=list)
     packagesFromContainerfile: dict | str | None = None
