@@ -1385,6 +1385,11 @@ class UpdateGolangPipeline:
             # `if self.data_path: cmd.append(f"--data-path={self.data_path}")`.
             cmd.append(f"--data-path={self._CI_TEST_DATA_PATH}")
             cmd.extend(["--group", group])
+            # These images are `mode: disabled` in ocp-build-data (see _scan_stale_ci_images), and
+            # unlike that command this one doesn't use the global `-i` image filter (its `--image`
+            # below is a subcommand-local option), so the runtime's default enabled-only filter
+            # would otherwise drop them before `images:streams mirror` can look them up.
+            cmd.append("--load-disabled")
             cmd.extend(["images:streams", "mirror", "--registry-auth", auth_file])
             for image_key in image_keys:
                 cmd.extend(["--image", image_key])
