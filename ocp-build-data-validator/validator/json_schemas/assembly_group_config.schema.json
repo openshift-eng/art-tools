@@ -1,0 +1,863 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "assembly_group_config.schema.json",
+  "title": "Assembly Group Configuration",
+  "type": "object",
+  "properties": {
+    "arches": {
+      "type": "array",
+      "items": {
+        "$ref": "arch.schema.json"
+      }
+    },
+    "arches!": {
+      "$ref": "#/properties/arches"
+    },
+    "arches?": {
+      "$ref": "#/properties/arches"
+    },
+    "arches-": {},
+    "repos": {
+      "$ref": "repos.schema.json"
+    },
+    "repos!": {
+      "$ref": "#/properties/repos"
+    },
+    "repos?": {
+      "$ref": "#/properties/repos"
+    },
+    "repos-": {},
+    "advisories": {
+      "type": "object",
+      "properties": {
+        "image": {
+          "type": "integer"
+        },
+        "image!": {
+          "$ref": "#/properties/advisories/properties/image"
+        },
+        "image?": {
+          "$ref": "#/properties/advisories/properties/image"
+        },
+        "image-": {},
+        "rpm": {
+          "type": "integer"
+        },
+        "rpm!": {
+          "$ref": "#/properties/advisories/properties/rpm"
+        },
+        "rpm?": {
+          "$ref": "#/properties/advisories/properties/rpm"
+        },
+        "rpm-": {},
+        "extras": {
+          "type": "integer"
+        },
+        "extras!": {
+          "$ref": "#/properties/advisories/properties/extras"
+        },
+        "extras?": {
+          "$ref": "#/properties/advisories/properties/extras"
+        },
+        "extras-": {},
+        "metadata": {
+          "type": "integer"
+        },
+        "metadata!": {
+          "$ref": "#/properties/advisories/properties/metadata"
+        },
+        "metadata?": {
+          "$ref": "#/properties/advisories/properties/metadata"
+        },
+        "metadata-": {},
+        "microshift": {
+          "type": "integer"
+        },
+        "microshift!": {
+          "$ref": "#/properties/advisories/properties/microshift"
+        },
+        "microshift?": {
+          "$ref": "#/properties/advisories/properties/microshift"
+        },
+        "microshift-": {},
+        "silentops": {
+          "type": "integer"
+        },
+        "silentops!": {
+          "$ref": "#/properties/advisories/properties/silentops"
+        },
+        "silentops?": {
+          "$ref": "#/properties/advisories/properties/silentops"
+        },
+        "silentops-": {},
+        "prerelease": {
+          "type": "integer"
+        },
+        "prerelease!": {
+          "$ref": "#/properties/advisories/properties/prerelease"
+        },
+        "prerelease?": {
+          "$ref": "#/properties/advisories/properties/prerelease"
+        },
+        "prerelease-": {},
+        "advance": {
+          "type": "integer"
+        },
+        "advance!": {
+          "$ref": "#/properties/advisories/properties/advance"
+        },
+        "advance?": {
+          "$ref": "#/properties/advisories/properties/advance"
+        },
+        "advance-": {},
+        "rhcos": {
+          "type": "integer"
+        },
+        "rhcos!": {
+          "$ref": "#/properties/advisories/properties/advance"
+        },
+        "rhcos?": {
+          "$ref": "#/properties/advisories/properties/advance"
+        },
+        "rhcos-": {}
+      },
+      "additionalProperties": false
+    },
+    "advisories!": {
+      "$ref": "#/properties/advisories"
+    },
+    "advisories?": {
+      "$ref": "#/properties/advisories"
+    },
+    "advisories-": {},
+    "dependencies": {
+      "$ref": "assembly_dependencies.schema.json"
+    },
+    "dependencies!": {
+      "$ref": "#/properties/dependencies"
+    },
+    "dependencies?": {
+      "$ref": "#/properties/dependencies"
+    },
+    "dependencies-": {},
+    "release_jira": {
+      "type": "string",
+      "minLength": 1
+    },
+    "release_jira!": {
+      "$ref": "#/properties/release_jira"
+    },
+    "release_jira?": {
+      "$ref": "#/properties/release_jira"
+    },
+    "release_jira-": {},
+    "upgrades": {
+      "type": "string"
+    },
+    "shipment_advisory": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "live_id": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false
+    },
+    "shipment": {
+      "additionalProperties": false,
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string"
+        },
+        "env": {
+          "type": "string",
+          "enum": ["stage", "prod"]
+        },
+        "advisories": {
+          "type": "array",
+          "items": {
+            "$ref": "#/properties/shipment_advisory"
+          }
+        }
+      }
+    },
+    "shipment!": {
+      "$ref": "#/properties/shipment"
+    },
+    "shipment?": {
+      "$ref": "#/properties/shipment"
+    },
+    "shipment-": {},
+    "microshift_bootc_shipment": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "microshift_bootc_shipment!": {
+      "$ref": "#/properties/microshift_bootc_shipment"
+    },
+    "microshift_bootc_shipment?": {
+      "$ref": "#/properties/microshift_bootc_shipment"
+    },
+    "microshift_bootc_shipment-": {},
+    "upgrades!": {
+      "$ref": "#/properties/upgrades"
+    },
+    "upgrades?": {
+      "$ref": "#/properties/upgrades"
+    },
+    "upgrades-": {},
+    "upgrades_next": {
+      "type": "string"
+    },
+    "upgrades_next!": {
+      "$ref": "#/properties/upgrades_next"
+    },
+    "upgrades_next?": {
+      "$ref": "#/properties/upgrades_next"
+    },
+    "upgrades_next-": {},
+    "check_golang_versions": {
+      "oneOf": [
+        {"type": "boolean"},
+        {"type": "string"}
+      ]
+    },
+    "check_golang_versions!": {
+      "$ref": "#/properties/check_golang_versions"
+    },
+    "check_golang_versions?": {
+      "$ref": "#/properties/check_golang_versions"
+    },
+    "check_golang_versions-": {},
+    "cachito": {
+      "description": "Cachito integration configuration",
+      "type": "object",
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "version": {"type": "integer"}
+      },
+      "additionalProperties": true
+    },
+    "cachito!": {
+      "$ref": "#/properties/cachito"
+    },
+    "cachito?": {
+      "$ref": "#/properties/cachito"
+    },
+    "cachito-": {},
+    "build_profiles": {
+      "description": "Build profile configurations for images and RPMs",
+      "$ref": "build_profiles.schema.json"
+    },
+    "build_profiles!": {
+      "$ref": "#/properties/build_profiles"
+    },
+    "build_profiles?": {
+      "$ref": "#/properties/build_profiles"
+    },
+    "build_profiles-": {},
+    "rhcos": {
+      "description": "RHCOS needs special config as it is a special build",
+      "type": "object",
+      "properties": {
+        "allow_missing_brew_rpms": {
+          "type": "boolean"
+        },
+        "payload_tags": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+               "name": {"type": "string"},
+               "build_metadata_key": {"type": "string"},
+               "primary": {"type": "boolean"},
+               "meta_type": {"type": "string"},
+               "rhel_build_id_index": {"type": "string"},
+               "rhel_version": {
+                 "oneOf": [
+                   {"type": "string"},
+                   {"type": "number"}
+                 ]
+               },
+               "rhcos_index_tag": {"type": "string"}
+            },
+            "additionalProperties": true
+          }
+        },
+        "exempt_rpms": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "layered_rhcos": {"type": "boolean"},
+        "require_consistency": {"type": "object"},
+        "enabled_repos": {
+          "type": "array",
+          "items": {"type": "string"}
+        }
+      },
+      "additionalProperties": true
+    },
+    "urls": {
+      "description": "URLs",
+      "type": "object",
+      "properties": {
+        "brewhub": {"type": "string"},
+        "brew_image_host": {"type": "string"},
+        "brew_image_namespace": {"type": "string"},
+        "cgit": {"type": "string"},
+        "rhcos_release_base": {
+          "type": "object",
+          "properties": {
+            "multi": {"type": "string"}
+          },
+          "patternProperties": {
+            ".+": {"type": "string"}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "urls!": {
+      "$ref": "#/properties/urls"
+    },
+    "urls?": {
+      "$ref": "#/properties/urls"
+    },
+    "urls-": {},
+    "canonical_builders_from_upstream": {
+      "type": "boolean"
+    },
+    "canonical_builders_from_upstream?": {
+      "$ref": "#/properties/canonical_builders_from_upstream"
+    },
+    "canonical_builders_from_upstream!": {
+      "$ref": "#/properties/canonical_builders_from_upstream"
+    },
+    "canonical_builders_from_upstream-": {},
+    "base_image_release": {
+      "description": "Default base-image release behavior for the group. Per-image base_image_release overrides.",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "description": "If false, disables snapshot-to-release for qualifying base images unless overridden per image. Omitted defaults to true.",
+          "type": "boolean"
+        },
+        "enabled!": {
+          "$ref": "#/properties/base_image_release/properties/enabled"
+        },
+        "enabled?": {
+          "$ref": "#/properties/base_image_release/properties/enabled"
+        },
+        "enabled-": {}
+      },
+      "additionalProperties": false
+    },
+    "base_image_release!": {
+      "$ref": "#/properties/base_image_release"
+    },
+    "base_image_release?": {
+      "$ref": "#/properties/base_image_release"
+    },
+    "base_image_release-": {},
+    "konflux": {
+      "description": "Konflux configuration",
+      "type": "object",
+      "properties": {
+        "arches": {
+          "type": "array",
+          "items": {
+            "$ref": "arch.schema.json"
+          }
+        },
+        "arches!": {
+          "$ref": "#/properties/konflux/properties/arches"
+        },
+        "arches?": {
+          "$ref": "#/properties/konflux/properties/arches"
+        },
+        "arches-": {},
+        "cachi2": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "enabled!": {
+              "$ref": "#/properties/konflux/properties/cachi2/properties/enabled"
+            },
+            "enabled?": {
+              "$ref": "#/properties/konflux/properties/cachi2/properties/enabled"
+            },
+            "enabled-": {},
+            "gomod_version_patch": {
+              "type": "boolean"
+            },
+            "gomod_version_patch!": {
+              "$ref": "#/properties/konflux/properties/cachi2/properties/gomod_version_patch"
+            },
+            "gomod_version_patch?": {
+              "$ref": "#/properties/konflux/properties/cachi2/properties/gomod_version_patch"
+            },
+            "gomod_version_patch-": {},
+            "prefetch_mode": {
+              "description": "Mode for the prefetch-dependencies task (e.g. 'strict', 'permissive')",
+              "type": "string",
+              "enum": ["strict", "permissive"]
+            },
+            "prefetch_mode!": {
+              "$ref": "#/properties/konflux/properties/cachi2/properties/prefetch_mode"
+            },
+            "prefetch_mode?": {
+              "$ref": "#/properties/konflux/properties/cachi2/properties/prefetch_mode"
+            },
+            "prefetch_mode-": {},
+            "lockfile": {
+              "type": "object",
+              "properties": {
+                "force": {
+                  "type": "boolean"
+                },
+                "force!": {
+                  "$ref": "#/properties/konflux/properties/cachi2/properties/lockfile/properties/force"
+                },
+                "force?": {
+                  "$ref": "#/properties/konflux/properties/cachi2/properties/lockfile/properties/force"
+                },
+                "force-": {},
+                "backend": {
+                  "description": "Lockfile generation backend to use (e.g., 'art-internal', 'rpm-lockfile-prototype')",
+                  "type": "string"
+                },
+                "backend!": {
+                  "$ref": "#/properties/konflux/properties/cachi2/properties/lockfile/properties/backend"
+                },
+                "backend?": {
+                  "$ref": "#/properties/konflux/properties/cachi2/properties/lockfile/properties/backend"
+                },
+                "backend-": {}
+              },
+              "additionalProperties": false
+            },
+            "lockfile!": {
+              "$ref": "#/properties/konflux/properties/cachi2/properties/lockfile"
+            },
+            "lockfile?": {
+              "$ref": "#/properties/konflux/properties/cachi2/properties/lockfile"
+            },
+            "lockfile-": {}
+          },
+          "additionalProperties": false
+        },
+        "cachi2!": {
+          "$ref": "#/properties/konflux/properties/cachi2"
+        },
+        "cachi2?": {
+          "$ref": "#/properties/konflux/properties/cachi2"
+        },
+        "cachi2-": {},
+        "sast": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "enabled!": {
+              "$ref": "#/properties/konflux/properties/sast/properties/enabled"
+            },
+            "enabled?": {
+              "$ref": "#/properties/konflux/properties/sast/properties/enabled"
+            },
+            "enabled-": {}
+          },
+          "additionalProperties": false
+        },
+        "sast!": {
+          "$ref": "#/properties/konflux/properties/sast"
+        },
+        "sast?": {
+          "$ref": "#/properties/konflux/properties/sast"
+        },
+        "sast-": {},
+        "skip_tasks": {
+          "description": "List of Tekton task names to remove from PipelineRuns",
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "skip_tasks!": {
+          "$ref": "#/properties/konflux/properties/skip_tasks"
+        },
+        "skip_tasks?": {
+          "$ref": "#/properties/konflux/properties/skip_tasks"
+        },
+        "skip_tasks-": {},
+        "build_args": {
+          "description": "List of KEY=VALUE strings passed as the build-args pipeline param",
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[^=\\s]+=.+$" }
+        },
+        "build_args!": {
+          "$ref": "#/properties/konflux/properties/build_args"
+        },
+        "build_args?": {
+          "$ref": "#/properties/konflux/properties/build_args"
+        },
+        "build_args-": {},
+        "additional_secret": {
+          "description": "Kubernetes secret name set as ADDITIONAL_SECRET on the build-images task",
+          "type": "string"
+        },
+        "additional_secret!": {
+          "$ref": "#/properties/konflux/properties/additional_secret"
+        },
+        "additional_secret?": {
+          "$ref": "#/properties/konflux/properties/additional_secret"
+        },
+        "additional_secret-": {},
+        "privileged_nested": {
+          "description": "Enable PRIVILEGED_NESTED on the build-images task",
+          "type": "boolean"
+        },
+        "privileged_nested!": {
+          "$ref": "#/properties/konflux/properties/privileged_nested"
+        },
+        "privileged_nested?": {
+          "$ref": "#/properties/konflux/properties/privileged_nested"
+        },
+        "privileged_nested-": {},
+        "enable_symlink_check": {
+          "description": "Enable symlink check in the build pipeline. Defaults to true if not specified.",
+          "type": "boolean"
+        },
+        "enable_symlink_check!": {
+          "$ref": "#/properties/konflux/properties/enable_symlink_check"
+        },
+        "enable_symlink_check?": {
+          "$ref": "#/properties/konflux/properties/enable_symlink_check"
+        },
+        "enable_symlink_check-": {},
+        "enable_package_registry_proxy": {
+          "description": "Enable the package registry proxy in the build pipeline. Defaults to true if not specified.",
+          "type": "boolean"
+        },
+        "enable_package_registry_proxy!": {
+          "$ref": "#/properties/konflux/properties/enable_package_registry_proxy"
+        },
+        "enable_package_registry_proxy?": {
+          "$ref": "#/properties/konflux/properties/enable_package_registry_proxy"
+        },
+        "enable_package_registry_proxy-": {},
+        "clone_git_tags": {
+          "description": "Whether the clone-repository task fetches git tags. Defaults to true if not specified.",
+          "type": "boolean"
+        },
+        "clone_git_tags!": {
+          "$ref": "#/properties/konflux/properties/clone_git_tags"
+        },
+        "clone_git_tags?": {
+          "$ref": "#/properties/konflux/properties/clone_git_tags"
+        },
+        "clone_git_tags-": {},
+        "build_step_resources": {
+          "description": "Kubernetes resource requests/limits for the build step (e.g. memory, ephemeral-storage)",
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "build_step_resources!": {
+          "$ref": "#/properties/konflux/properties/build_step_resources"
+        },
+        "build_step_resources?": {
+          "$ref": "#/properties/konflux/properties/build_step_resources"
+        },
+        "build_step_resources-": {},
+        "sbom_step_resources": {
+          "description": "Kubernetes resource requests/limits for the SBOM steps (e.g. memory)",
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "sbom_step_resources!": {
+          "$ref": "#/properties/konflux/properties/sbom_step_resources"
+        },
+        "sbom_step_resources?": {
+          "$ref": "#/properties/konflux/properties/sbom_step_resources"
+        },
+        "sbom_step_resources-": {},
+        "workspace_storage": {
+          "description": "PVC storage size for workspace volume (e.g. 100Gi)",
+          "type": "string"
+        },
+        "workspace_storage!": {
+          "$ref": "#/properties/konflux/properties/workspace_storage"
+        },
+        "workspace_storage?": {
+          "$ref": "#/properties/konflux/properties/workspace_storage"
+        },
+        "workspace_storage-": {},
+        "network_mode": {
+          "type": "string"
+        },
+        "network_mode!": {
+          "$ref": "#/properties/konflux/properties/network_mode"
+        },
+        "network_mode?": {
+          "$ref": "#/properties/konflux/properties/network_mode"
+        },
+        "network_mode-": {},
+        "build_attempts": {
+          "description": "The number of times a build should be attempted before giving up",
+          "type": "integer",
+          "minimum": 1
+        },
+        "build_attempts!": {
+          "$ref": "#/properties/konflux/properties/build_attempts"
+        },
+        "build_attempts?": {
+          "$ref": "#/properties/konflux/properties/build_attempts"
+        },
+        "build_attempts-": {},
+        "plr_template_commitish": {
+          "description": "Git commit-ish (branch, tag, or SHA) for the Pipeline Run template repository",
+          "type": "string",
+          "minLength": 1
+        },
+        "plr_template_commitish!": {
+          "$ref": "#/properties/konflux/properties/plr_template_commitish"
+        },
+        "plr_template_commitish?": {
+          "$ref": "#/properties/konflux/properties/plr_template_commitish"
+        },
+        "plr_template_commitish-": {}
+      },
+      "additionalProperties": false
+    },
+    "konflux!": {
+      "$ref": "#/properties/konflux"
+    },
+    "konflux?": {
+      "$ref": "#/properties/konflux"
+    },
+    "konflux-": {},
+    "okd": {
+      "type": "object",
+      "properties": {
+        "branch": {
+          "type": "string"
+        },
+        "branch!": {
+          "$ref": "#/properties/okd/properties/branch"
+        },
+        "branch?": {
+          "$ref": "#/properties/okd/properties/branch"
+        },
+        "branch-": {},
+        "enabled": {
+          "type": "boolean"
+        },
+        "enabled!": {
+          "$ref": "#/properties/okd/properties/enabled"
+        },
+        "enabled?": {
+          "$ref": "#/properties/okd/properties/enabled"
+        },
+        "enabled-": {},
+        "konflux": {
+          "type": "object",
+          "properties": {
+            "build_priority": {"type": "integer"},
+            "build_priority!": {"$ref": "#/properties/okd/properties/konflux/properties/build_priority"},
+            "build_priority?": {"$ref": "#/properties/okd/properties/konflux/properties/build_priority"},
+            "build_priority-": {},
+            "cachi2": {
+              "type": "object",
+              "properties": {
+                "enabled": {"type": "boolean"},
+                "enabled!": {"$ref": "#/properties/okd/properties/konflux/properties/cachi2/properties/enabled"},
+                "enabled?": {"$ref": "#/properties/okd/properties/konflux/properties/cachi2/properties/enabled"},
+                "enabled-": {},
+                "prefetch_mode": {
+                  "description": "Mode for the prefetch-dependencies task (e.g. 'strict', 'permissive')",
+                  "type": "string",
+                  "enum": ["strict", "permissive"]
+                },
+                "prefetch_mode!": {"$ref": "#/properties/okd/properties/konflux/properties/cachi2/properties/prefetch_mode"},
+                "prefetch_mode?": {"$ref": "#/properties/okd/properties/konflux/properties/cachi2/properties/prefetch_mode"},
+                "prefetch_mode-": {},
+                "lockfile": {
+                  "type": "object",
+                  "properties": {
+                    "force": {"type": "boolean"},
+                    "force!": {"$ref": "#/properties/okd/properties/konflux/properties/cachi2/properties/lockfile/properties/force"},
+                    "force?": {"$ref": "#/properties/okd/properties/konflux/properties/cachi2/properties/lockfile/properties/force"},
+                    "force-": {},
+                    "backend": {
+                      "description": "Lockfile generation backend to use (e.g., 'art-internal', 'rpm-lockfile-prototype')",
+                      "type": "string"
+                    },
+                    "backend!": {"$ref": "#/properties/okd/properties/konflux/properties/cachi2/properties/lockfile/properties/backend"},
+                    "backend?": {"$ref": "#/properties/okd/properties/konflux/properties/cachi2/properties/lockfile/properties/backend"},
+                    "backend-": {}
+                  },
+                  "additionalProperties": false
+                },
+                "lockfile!": {"$ref": "#/properties/okd/properties/konflux/properties/cachi2/properties/lockfile"},
+                "lockfile?": {"$ref": "#/properties/okd/properties/konflux/properties/cachi2/properties/lockfile"},
+                "lockfile-": {}
+              },
+              "additionalProperties": false
+            },
+            "cachi2!": {"$ref": "#/properties/okd/properties/konflux/properties/cachi2"},
+            "cachi2?": {"$ref": "#/properties/okd/properties/konflux/properties/cachi2"},
+            "cachi2-": {}
+          },
+          "additionalProperties": false
+        },
+        "konflux!": {
+          "$ref": "#/properties/okd/properties/konflux"
+        },
+        "konflux?": {
+          "$ref": "#/properties/okd/properties/konflux"
+        },
+        "konflux-": {},
+        "arches": {
+          "type": "array",
+          "items": {
+            "$ref": "arch.schema.json"
+          }
+        },
+        "arches!": {
+          "$ref": "#/properties/okd/properties/arches"
+        },
+        "arches?": {
+          "$ref": "#/properties/okd/properties/arches"
+        },
+        "arches-": {},
+        "enabled": {
+          "type": "boolean"
+        },
+        "enabled!": {
+          "$ref": "#/properties/okd/properties/enabled"
+        },
+        "enabled?": {
+          "$ref": "#/properties/okd/properties/enabled"
+        },
+        "enabled-": {}
+      },
+      "additionalProperties": false
+    },
+    "okd!": {
+      "$ref": "#/properties/okd"
+    },
+    "okd?": {
+      "$ref": "#/properties/okd"
+    },
+    "okd-": {},
+    "operator_index_mode": {
+      "type": "string",
+      "enum": ["pre-release", "pre-ga", "ga"]
+    },
+    "release_date": {
+      "type": "string"
+    },
+    "freeze_automation": {
+      "oneOf": [
+        {"type": "boolean"},
+        {"type": "string"}
+      ]
+    },
+    "vars": {"type": "object"},
+    "compliance": {"type": "object"},
+    "multi_arch": {"type": "object"},
+    "new_payload_versioning_scheme": {"type": "boolean"},
+    "operator_image_ref_mode": {"type": "string"},
+    "operator_channel_stable": {"type": "string"},
+    "signing_advisory": {"type": "integer"},
+    "assemblies": {"type": "object"},
+    "check_external_packages": {"type": "array"},
+    "default_image_build_profile": {"type": "string"},
+    "default_rpm_build_profile": {"type": "string"},
+    "rpm_deliveries": {"type": "array"},
+    "branch": {"type": "string"},
+    "name": {"type": "string"},
+    "dist_git_ignore": {"type": "array"},
+    "push": {"type": "object"},
+    "public_upstreams": {"type": "array"},
+    "default_image_build_method": {"type": "string"},
+    "image_build_log_scanner": {"type": "object"},
+    "scan_freshness": {"type": "object"},
+    "csv_namespace": {"type": "string"},
+    "software_lifecycle": {"type": "object"},
+    "external_scanners": {"type": "object"},
+    "reconciliation_prs": {"type": "object"},
+    "mr_approvers": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": {"type": "string"}
+      }
+    },
+    "bridge_release": {
+      "type": "object",
+      "properties": {
+        "basis_group": {
+          "type": "string",
+          "minLength": 1
+        },
+        "basis_group!": {
+          "$ref": "#/properties/bridge_release/properties/basis_group"
+        },
+        "basis_group?": {
+          "$ref": "#/properties/bridge_release/properties/basis_group"
+        },
+        "basis_group-": {},
+        "bug_mirroring": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "enabled!": {
+              "$ref": "#/properties/bridge_release/properties/bug_mirroring/properties/enabled"
+            },
+            "enabled?": {
+              "$ref": "#/properties/bridge_release/properties/bug_mirroring/properties/enabled"
+            },
+            "enabled-": {}
+          },
+          "required": [
+            "enabled"
+          ],
+          "additionalProperties": false
+        },
+        "bug_mirroring!": {
+          "$ref": "#/properties/bridge_release/properties/bug_mirroring"
+        },
+        "bug_mirroring?": {
+          "$ref": "#/properties/bridge_release/properties/bug_mirroring"
+        },
+        "bug_mirroring-": {}
+      },
+      "required": [
+        "basis_group",
+        "bug_mirroring"
+      ],
+      "additionalProperties": false
+    },
+    "bridge_release!": {
+      "$ref": "#/properties/bridge_release"
+    },
+    "bridge_release?": {
+      "$ref": "#/properties/bridge_release"
+    },
+    "bridge_release-": {}
+  },
+  "additionalProperties": false
+}

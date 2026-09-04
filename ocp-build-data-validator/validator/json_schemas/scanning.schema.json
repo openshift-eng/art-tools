@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "scanning.schema.json",
+  "title": "Scanning Content",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "sast_scanning": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "jira_integration": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "description": "Whether to raise OCPBUGS tickets for failing SAST scans. Default value: false",
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    }
+  }
+}

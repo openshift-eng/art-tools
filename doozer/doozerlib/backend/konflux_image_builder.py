@@ -1,0 +1,1494 @@
+import asyncio
+import json
+import logging
+import os
+import pprint
+import re
+import traceback
+import uuid
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Dict, List, Optional, Set, Tuple, cast
+
+from artcommonlib import bigquery, exectools
+from artcommonlib import constants as artlib_constants
+from artcommonlib import util as artlib_util
+from artcommonlib.arch_util import go_arch_for_brew_arch
+from artcommonlib.build_visibility import is_release_embargoed
+from artcommonlib.konflux.konflux_build_record import (
+    ArtifactType,
+    Engine,
+    KonfluxBuildOutcome,
+    KonfluxBuildRecord,
+)
+from artcommonlib.model import Missing
+from artcommonlib.oc_image_info import oc_image_info__cached_async
+from artcommonlib.release_util import SoftwareLifecyclePhase, isolate_el_version_in_release, split_el_suffix_in_release
+from artcommonlib.rpm_utils import compare_nvr, parse_nvr
+from artcommonlib.util import fetch_slsa_attestation, get_konflux_data
+from artcommonlib.variants import BuildVariant
+from dockerfile_parse import DockerfileParser
+from doozerlib import constants, util
+from doozerlib.backend.base_image_handler import BaseImageHandler, BaseImageReleaseResult, BaseImageSnapshotInput
+from doozerlib.backend.build_repo import BuildRepo
+from doozerlib.backend.golang_builder_shipment import GolangBuilderShipmentHandler
+from doozerlib.backend.konflux_client import ImageBuildParams, KonfluxClient
+from doozerlib.backend.pipelinerun_utils import PipelineRunInfo
+from doozerlib.backend.rebaser import KonfluxRebaser
+from doozerlib.image import ImageMetadata
+from doozerlib.lockfile import DEFAULT_ARTIFACT_LOCKFILE_NAME, DEFAULT_RPM_LOCKFILE_NAME
+from doozerlib.record_logger import RecordLogger
+from doozerlib.source_resolver import SourceResolution
+from packageurl import PackageURL
+from tenacity import retry, stop_after_attempt, wait_fixed
+
+from pyartcd import constants as pyartcd_constants
+
+LOGGER = logging.getLogger(__name__)
+
+
+def _normalize_version(version: str) -> str:
+    """
+    Pad a 2-segment version string to 3 segments so that "v4.20" and
+    "v4.20.0" compare as equal in NVR comparisons.
+
+    This handles the microshift-bootc transition from 3-segment ("v4.20.0")
+    to 2-segment ("v4.20") versioning.
+
+    Arg(s):
+        version (str): Version string, optionally prefixed with "v".
+    Return Value(s):
+        str: Version padded to at least 3 segments (e.g. "v4.20" -> "v4.20.0").
+    """
+    parts = version.split(".")
+    if len(parts) == 2:
+        version = f"{version}.0"
+    return version
+
+
+class KonfluxImageBuildError(Exception):
+    def __init__(self, message: str, pipelinerun_name: str, pipelinerun_dict: Optional[Dict]) -> None:
+        super().__init__(message)
+        self.pipelinerun_name = pipelinerun_name
+        self.pipelinerun_dict = pipelinerun_dict
+
+
+def _get_konflux_config(metadata, key, default=None):
+    """Read a value from konflux config, image-level overrides group-level."""
+    group_val = metadata.runtime.group_config.get("konflux", {}).get(key, default)
+    image_val = metadata.config.get("konflux", {}).get(key, Missing)
+    return image_val if image_val is not Missing else group_val
+
+
+@dataclass
+class KonfluxImageBuilderConfig:
+    """Options for the KonfluxImageBuilder class."""
+
+    base_dir: Path
+    group_name: str
+    namespace: str
+    plr_template: Optional[str] = None
+    kubeconfig: Optional[str] = None
+    context: Optional[str] = None
+    image_repo: str = constants.KONFLUX_DEFAULT_IMAGE_REPO
+    registry_auth_file: Optional[str] = None
+    skip_checks: bool = False
+    skip_tasks: tuple[str, ...] = ()
+    dry_run: bool = False
+    build_priority: Optional[str] = None
+    ec_policy_configuration: str = constants.KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION
+    prega_ec_policy_configuration: str = constants.KONFLUX_PREGA_EC_POLICY_CONFIGURATION
+    skip_ec_verify: bool = False
+
+
+class KonfluxImageBuilder:
+    """This class is responsible for building container images with Konflux."""
+
+    def __init__(
+        self,
+        config: KonfluxImageBuilderConfig,
+        logger: Optional[logging.Logger] = None,
+        record_logger: Optional[RecordLogger] = None,
+    ):
+        """Initialize the KonfluxImageBuilder.
+
+        :param config: Options for the KonfluxImageBuilder.
+        :param logger: Logger to use for logging. Defaults to the module logger.
+        :param record_logger: Logger to use for logging build records. If None, no build records will be logged.
+        """
+        self._config = config
+        self._logger = logger or LOGGER
+        self._record_logger = record_logger
+        self._konflux_client = KonfluxClient.from_kubeconfig(
+            default_namespace=config.namespace,
+            config_file=config.kubeconfig,
+            context=config.context,
+            dry_run=config.dry_run,
+        )
+
+    async def build(self, metadata: ImageMetadata, git_auth_secret: Optional[str] = None):
+        """Build a container image with Konflux."""
+        logger = self._logger.getChild(f"[{metadata.distgit_key}]")
+        metadata.build_status = False
+        dest_dir = self._config.base_dir.joinpath(metadata.qualified_key)
+        df_path = dest_dir.joinpath("Dockerfile")
+        record = {
+            "dir": str(dest_dir.absolute()),
+            "dockerfile": str(df_path.absolute()),
+            "name": metadata.distgit_key,
+            "nvrs": "n/a",
+            "message": "Unknown failure",
+            "task_id": "n/a",
+            "task_url": "n/a",
+            "status": -1,  # Status defaults to failure until explicitly set by success. This handles raised exceptions.
+            "has_olm_bundle": 1 if metadata.is_olm_operator else 0,
+            "ec_pipeline_url": "",
+            "build_pipeline_url": "",
+            "release_pipeline": "",
+            "base_image_release_failed": "false",
+        }
+        try:
+            if dest_dir.exists():
+                # Load exiting build source repository
+                build_repo = await BuildRepo.from_local_dir(dest_dir, logger)
+            else:
+                # Clone the build source repository
+                source = None
+                if metadata.has_source():
+                    logger.info(f"Resolving source for {metadata.qualified_key}")
+                    source = cast(
+                        SourceResolution,
+                        await exectools.to_thread(
+                            metadata.runtime.source_resolver.resolve_source, metadata, no_clone=True
+                        ),
+                    )
+                else:
+                    raise IOError(
+                        f"Image {metadata.qualified_key} doesn't have upstream source. This is no longer supported."
+                    )
+
+                dest_branch = KonfluxRebaser.construct_dest_branch(
+                    group=self._config.group_name,
+                    assembly_name=metadata.runtime.assembly,
+                    distgit_key=metadata.distgit_key,
+                )
+                build_repo = BuildRepo(url=source.url, branch=dest_branch, local_dir=dest_dir, logger=logger)
+                await build_repo.ensure_source()
+
+            # Parse Dockerfile
+            uuid_tag, component_name, version, release = self._parse_dockerfile(metadata.distgit_key, df_path)
+            nvr = f"{component_name}-{version}-{release}"
+
+            # get_latest_build() is assembly-aware and, for assemblies with a basis event,
+            # intentionally resolves to the stream build at the basis event. That behavior is
+            # useful for selecting assembly content, but it can miss an exact NVR that was
+            # already built for the current or another assembly. Check exact NVR existence
+            # without assembly or group scoping before applying the ordering check below.
+            existing_build = await self._get_successful_image_build_by_nvr(metadata, nvr)
+            if existing_build is not None:
+                raise ValueError(
+                    f"Successful image NVR {nvr} already exists in DB! "
+                    f"Existing build assembly: {existing_build.assembly}; "
+                    f"pullspec: {existing_build.image_pullspec}. "
+                    "To rebuild, please do another rebase to get a newer NVR"
+                )
+
+            # Sanity check to ensure we're not rebuilding an existing or older NVR
+            latest_build = await metadata.get_latest_build(
+                engine=Engine.KONFLUX.value,
+                outcome=KonfluxBuildOutcome.SUCCESS,
+                exclude_large_columns=True,
+            )
+            if latest_build:
+                # Parse both NVRs and normalize versions to 3 segments so that
+                # "v4.20" and "v4.20.0" compare as equal (microshift-bootc transition)
+                target_nvr_dict = parse_nvr(nvr)
+                latest_nvr_dict = parse_nvr(latest_build.nvr)
+                target_nvr_dict["version"] = _normalize_version(target_nvr_dict["version"])
+                latest_nvr_dict["version"] = _normalize_version(latest_nvr_dict["version"])
+
+                # Test assemblies and Golang builders can intentionally change component names.
+                # Golang builder metadata moved from versioned component names such as
+                # openshift-golang-builder-1-26-container to the shared
+                # openshift-golang-builder-container component.
+                # compare_nvr returns: 1 if target > latest, 0 if equal, -1 if target < latest
+                ignore_name = metadata.runtime.assembly == "test" or metadata.is_golang_builder()
+                if compare_nvr(target_nvr_dict, latest_nvr_dict, ignore_name=ignore_name) <= 0:
+                    raise ValueError(
+                        f"Target NVR {nvr} is not greater than the latest successful build {latest_build.nvr}. "
+                        f"Latest build pullspec: {latest_build.image_pullspec}. "
+                        "To rebuild, please do another rebase to get a newer NVR"
+                    )
+
+            record["nvrs"] = nvr
+            image_repo = metadata.get_konflux_image_repo(default=self._config.image_repo)
+            output_image = f"{image_repo}:{uuid_tag}"
+            additional_tags = [f"{metadata.image_name_short}-{version}-{release}"]
+
+            # Wait for parent members to be built
+            parent_members = await self._wait_for_parent_members(metadata)
+            failed_parents = [
+                parent_member.distgit_key
+                for parent_member in parent_members
+                if parent_member is not None and not parent_member.build_status
+            ]
+            if failed_parents:
+                raise IOError(
+                    f"Couldn't build {metadata.distgit_key} because the following parent images failed to build: {', '.join(failed_parents)}"
+                )
+
+            # Start the build
+            logger.info("Starting Konflux image build for %s...", metadata.distgit_key)
+            build_attempts = metadata.get_konflux_build_attempts()
+            building_arches = metadata.get_arches()
+            logger.info(f"Building for arches: {building_arches}")
+            error = None
+            ec_pipeline_url = ''
+            # Resolve build priority based on precedence rules
+            if self._config.build_priority == "auto":
+                build_priority = util.get_konflux_build_priority(metadata=metadata, group=self._config.group_name)
+                logger.info(f"Auto-resolved build priority for {metadata.distgit_key}: {build_priority}")
+            else:
+                # If it's a specific number (1-10), use it directly
+                build_priority = self._config.build_priority
+                logger.info(f"Using explicit build priority for {metadata.distgit_key}: {build_priority}")
+
+            for attempt in range(build_attempts):
+                logger.info("Build attempt %s/%s", attempt + 1, build_attempts)
+                pipelinerun_info = await self._start_build(
+                    metadata=metadata,
+                    build_repo=build_repo,
+                    building_arches=building_arches,
+                    output_image=output_image,
+                    additional_tags=additional_tags,
+                    nvr=nvr,
+                    build_priority=build_priority,
+                    dest_dir=dest_dir,
+                    git_auth_secret=git_auth_secret,
+                )
+                pipelinerun_name = pipelinerun_info.name
+                record["task_id"] = pipelinerun_name
+                record["task_url"] = self._konflux_client.resource_url(pipelinerun_info.to_dict())
+                record["build_pipeline_url"] = record["task_url"]  # Store build pipeline URL for failure tracking
+                await self.update_konflux_db(
+                    metadata,
+                    build_repo,
+                    pipelinerun_info,
+                    KonfluxBuildOutcome.PENDING,
+                    building_arches,
+                    build_priority,
+                )
+
+                logger.info("Waiting for PipelineRun %s to complete...", pipelinerun_name)
+
+                pipelinerun_info = await self._konflux_client.wait_for_pipelinerun(
+                    pipelinerun_name, namespace=self._config.namespace
+                )
+                logger.info("PipelineRun %s completed", pipelinerun_name)
+
+                succeeded_condition = pipelinerun_info.find_condition('Succeeded')
+                outcome = KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition(succeeded_condition)
+
+                # Even if the build succeeded, if the SLSA attestation cannot be retrieved, it is unreleasable.
+                if outcome is KonfluxBuildOutcome.SUCCESS:
+                    results = pipelinerun_info.to_dict().get('status', {}).get('results', [])
+                    image_pullspec = next((r['value'] for r in results if r['name'] == 'IMAGE_URL'), None)
+                    image_digest = next((r['value'] for r in results if r['name'] == 'IMAGE_DIGEST'), None)
+
+                    # In dry-run mode, the simulated PipelineRun has no results, so skip operations requiring them
+                    if image_pullspec and image_digest:
+                        definitive_image_pullspec = f"{image_pullspec.split(':')[0]}@{image_digest}"
+                        record["image_pullspec"] = definitive_image_pullspec
+
+                        image_tag = image_pullspec.split(':')[-1]
+                        record["image_tag"] = image_tag
+
+                        # Validate SLSA attestation and source image signature
+                        # Skip for non-OCP groups (e.g., OKD) as they may not have attestations/signatures
+                        is_ocp_group = self._config.group_name.startswith("openshift-")
+                        if is_ocp_group:
+                            try:
+                                # use image_digest here to be precise, image_pullspec can collide in case of golang-builder images
+                                await self._validate_build_attestation_and_signature(
+                                    definitive_image_pullspec, metadata.distgit_key
+                                )
+                            except Exception as e:
+                                logger.error(
+                                    f"Failed to get SLA attestation / source signature from konflux for image {definitive_image_pullspec}, marking build as {KonfluxBuildOutcome.BUILD_ERROR}. Error: {e}"
+                                )
+                                outcome = KonfluxBuildOutcome.BUILD_ERROR
+                        else:
+                            logger.info(
+                                "Skipping SLSA attestation validation for %s: non-OCP group '%s'",
+                                metadata.distgit_key,
+                                self._config.group_name,
+                            )
+                    elif not self._config.dry_run:
+                        # This should never happen in real builds - only expected in dry-run mode
+                        raise IOError("PipelineRun succeeded but IMAGE_URL or IMAGE_DIGEST missing from results")
+
+                # Run enterprise-contract (EC) verification after a successful build
+                # TODO: Expand EC verification to layered products
+                # TODO: Expose EC failure links (ITS/PLR URLs) via Slack notification or dashboard column
+                is_ocp_group = self._config.group_name.startswith("openshift-")
+                should_run_ec = (
+                    outcome is KonfluxBuildOutcome.SUCCESS
+                    and metadata.runtime.variant is not BuildVariant.OKD
+                    and is_ocp_group
+                    and not self._config.skip_ec_verify
+                    and metadata.for_release
+                    and image_pullspec  # EC requires actual build results
+                    and image_digest
+                )
+                if should_run_ec:
+                    app_name = util.konflux_application_name(self._config.group_name)
+
+                    # Select EC policy based on software lifecycle phase:
+                    # - pre-release phase uses a more permissive policy that allows unsigned RPMs
+                    # - All other phases use the default stage policy
+                    lifecycle_phase = metadata.runtime.group_config.software_lifecycle.phase
+                    if (
+                        lifecycle_phase is not Missing
+                        and SoftwareLifecyclePhase.from_name(lifecycle_phase) == SoftwareLifecyclePhase.PRE_RELEASE
+                    ):
+                        ec_policy = self._config.prega_ec_policy_configuration
+                    else:
+                        ec_policy = self._config.ec_policy_configuration
+
+                    image_with_digest = f"{image_pullspec.split(':')[0]}@{image_digest}"
+                    source_url = artlib_util.convert_remote_git_to_https(build_repo.url)
+                    konflux_component_name = metadata.get_konflux_component_name(app_name)
+
+                    ec_result = await self._konflux_client.verify_enterprise_contract(
+                        namespace=self._config.namespace,
+                        application_name=app_name,
+                        component_name=konflux_component_name,
+                        image_pullspec=image_with_digest,
+                        source_url=source_url,
+                        commit_sha=build_repo.commit_hash,
+                        ec_policy=ec_policy,
+                        logger=logger,
+                    )
+                    # Always save EC pipeline URL for tracking, regardless of pass/fail
+                    ec_pipeline_url = ec_result.ec_pipeline_url
+                    record["ec_pipeline_url"] = ec_pipeline_url
+                    if ec_result.ec_failed:
+                        outcome = KonfluxBuildOutcome.ITS_ERROR
+
+                elif outcome is KonfluxBuildOutcome.SUCCESS:
+                    if metadata.runtime.variant is BuildVariant.OKD:
+                        logger.info(
+                            "Skipping EC verification for %s: OKD variant does not use RH EC workflow",
+                            metadata.distgit_key,
+                        )
+                    elif self._config.skip_ec_verify:
+                        logger.info(
+                            "Skipping EC verification for %s: --skip-ec-verify flag is set", metadata.distgit_key
+                        )
+                    elif not is_ocp_group:
+                        logger.info(
+                            "Skipping EC verification for %s: non-OCP group '%s'",
+                            metadata.distgit_key,
+                            self._config.group_name,
+                        )
+                    elif not metadata.for_release:
+                        logger.info(
+                            "Skipping EC verification for %s: image is not for_release",
+                            metadata.distgit_key,
+                        )
+
+                if self._config.dry_run:
+                    logger.info("Dry run: Would have inserted build record in Konflux DB")
+
+                else:
+                    # One completion record per attempt. Base images trigger snapshot→release (digest pullspec)
+                    # before persisting SUCCESS or FAILURE so Jenkins/batch workflows can query SUCCESS rows.
+                    release_result: Optional[BaseImageReleaseResult] = None
+                    if (
+                        outcome is KonfluxBuildOutcome.SUCCESS
+                        and metadata.should_trigger_base_image_release()
+                        and image_pullspec
+                        and image_digest
+                    ):
+                        release_result = await self._trigger_base_image_release(
+                            metadata, nvr, definitive_image_pullspec, build_repo
+                        )
+                        # Success is indicated by having a released_pullspec (empty on failure)
+                        release_succeeded = release_result and release_result.released_pullspec
+                        if release_succeeded:
+                            logger.info("Base image release succeeded for %s, persisting build record", nvr)
+                            record["release_pipeline"] = release_result.release_pipeline
+                        else:
+                            logger.error(
+                                "Base image release failed for %s, persisting build record as %s",
+                                nvr,
+                                KonfluxBuildOutcome.RELEASE_ERROR,
+                            )
+                            record["base_image_release_failed"] = "true"
+                            if release_result and release_result.release_pipeline:
+                                record["release_pipeline"] = release_result.release_pipeline
+                        outcome = (
+                            KonfluxBuildOutcome.SUCCESS if release_succeeded else KonfluxBuildOutcome.RELEASE_ERROR
+                        )
+
+                    if (
+                        outcome is KonfluxBuildOutcome.SUCCESS
+                        and metadata.should_create_golang_builder_shipment()
+                        and image_pullspec
+                        and image_digest
+                    ):
+                        try:
+                            shipment_handler = GolangBuilderShipmentHandler(
+                                metadata.runtime,
+                            )
+                            mr_url = await shipment_handler.create_shipment(
+                                nvr=nvr,
+                                container_image=definitive_image_pullspec,
+                                rebase_repo_url=build_repo.https_url,
+                                rebase_commitish=build_repo.commit_hash,
+                            )
+                            if mr_url:
+                                logger.info("Golang builder shipment MR: %s", mr_url)
+                                record["shipment_mr"] = mr_url
+                        except Exception:
+                            logger.exception("Golang builder shipment MR creation failed (non-fatal)")
+
+                    build_record = await self.update_konflux_db(
+                        metadata,
+                        build_repo,
+                        pipelinerun_info,
+                        outcome,
+                        building_arches,
+                        build_priority,
+                        ec_pipeline_url=ec_pipeline_url,
+                        release_pipeline=release_result.release_pipeline if release_result else '',
+                        released_pullspec=release_result.released_pullspec if release_result else '',
+                    )
+                    if build_record:
+                        record["record_id"] = build_record.record_id
+
+                if not outcome.is_success():
+                    record["outcome"] = str(outcome)
+                    error = KonfluxImageBuildError(
+                        f"Konflux image build for {metadata.distgit_key} failed with output={outcome}",
+                        pipelinerun_name,
+                        pipelinerun_info.to_dict(),
+                    )
+                    if ec_pipeline_url:
+                        # EC policy failures are not recoverable by rebuilding -- the image
+                        # artifact is valid but violates policy. Retrying would just rebuild
+                        # the same image and fail EC again, wasting cluster resources.
+                        break
+                else:
+                    metadata.build_status = True
+                    record["message"] = "Success"
+                    record["status"] = 0
+                    break
+
+            if not metadata.build_status and error:
+                record["message"] = str(error)
+                raise error
+
+        except Exception as exc:
+            # Capture the actual error message for any exception that bypasses
+            # the build loop's error handling (e.g., parent build failures,
+            # NVR validation errors). Without this, record["message"] would
+            # remain "Unknown failure" and downstream counter logic couldn't
+            # distinguish failure types.
+            if record["message"] == "Unknown failure":
+                record["message"] = str(exc)
+            raise
+
+        finally:
+            if self._record_logger:
+                if 'okd' in self._config.group_name:
+                    key = 'image_build_okd'
+                else:
+                    key = 'image_build_konflux'
+                self._record_logger.add_record(key, **record)
+            metadata.build_event.set()
+        return pipelinerun_name, pipelinerun_info.to_dict()
+
+    @staticmethod
+    async def _get_successful_image_build_by_nvr(metadata: ImageMetadata, nvr: str) -> Optional[KonfluxBuildRecord]:
+        """Find a successful Konflux image build by exact NVR, regardless of assembly or group."""
+        where = {
+            "nvr": nvr,
+            "outcome": KonfluxBuildOutcome.SUCCESS,
+            "artifact_type": ArtifactType.IMAGE,
+            "engine": Engine.KONFLUX,
+        }
+        build = await anext(
+            metadata.runtime.konflux_db.search_builds_by_fields(
+                where=where,
+                limit=1,
+                exclude_columns=["installed_rpms", "installed_packages"],
+            ),
+            None,
+        )
+        if build is None:
+            return None
+        assert isinstance(build, KonfluxBuildRecord)
+        return build
+
+    def _parse_dockerfile(self, distgit_key: str, df_path: Path):
+        """Parse the Dockerfile and return the UUID tag, component name, version, and release.
+
+        :param distgit_key: The distgit key of the image.
+        :param df_path: The path to the Dockerfile.
+        :return: A tuple containing the UUID tag, component name, version, and release.
+        :raises ValueError: If the Dockerfile is missing the required environment variables or labels.
+        """
+        df = DockerfileParser(str(df_path))
+
+        uuid_tag = df.envs.get("__doozer_uuid_tag")
+        if not uuid_tag:
+            raise ValueError(
+                f"[{distgit_key}] Dockerfile must have a '__doozer_uuid_tag' environment variable; Did you forget to run 'doozer beta:images:konflux:rebase' first?"
+            )
+
+        component_name = df.labels['com.redhat.component']
+        if not component_name:
+            raise ValueError(f"[{distgit_key}] Dockerfile must have a 'com.redhat.component' label.")
+
+        version = df.labels.get("version")
+        if not version:
+            raise ValueError(f"[{distgit_key}] Dockerfile must have a 'version' label.")
+        release = df.labels.get("release")
+
+        if not release:
+            raise ValueError(f"[{distgit_key}] Dockerfile must have a 'release' label.")
+
+        return uuid_tag, component_name, version, release
+
+    async def _validate_build_attestation_and_signature(self, image_pullspec: str, distgit_key: str):
+        """
+        Validate SLSA attestation and source image signature for a built image.
+
+        :param image_pullspec: The pullspec of the built image
+        :param distgit_key: The distgit key for logging purposes
+        :raises: Exception if validation fails
+        """
+        # Get SLA attestation from konflux. The command will error out if it cannot find it.
+        attestation = await fetch_slsa_attestation(
+            image_pullspec=image_pullspec,
+            build_name=distgit_key,
+            registry_auth_file=self._config.registry_auth_file,
+        )
+        if not attestation:
+            raise ValueError("SLSA attestation cannot be empty")
+
+        # Extract tasks from predicate.buildConfig
+        tasks = attestation["predicate"]["buildConfig"]["tasks"]
+
+        # Find the build-source-image task and extract IMAGE_REF
+        source_image_pullspec = None
+        for task in tasks:
+            if task["name"] == "build-source-image":
+                for result in task["results"]:
+                    if result["name"] == "IMAGE_REF":
+                        source_image_pullspec = result["value"]
+                        break
+
+        if not source_image_pullspec:
+            raise ValueError(f"Could not find source image pullspec for {distgit_key} in image {image_pullspec}")
+
+        # If the source image is not signed, consider the build as failed, since Conforma will fail
+        # at release time otherwise
+        try:
+            await get_konflux_data(
+                pullspec=source_image_pullspec, mode="signature", registry_auth_file=self._config.registry_auth_file
+            )
+        except ChildProcessError:
+            LOGGER.error(f'Failed to fetch signature for {source_image_pullspec}')
+            raise
+
+    async def _wait_for_parent_members(self, metadata: ImageMetadata):
+        # If this image is FROM another group member, we need to wait on that group member to be built
+        logger = self._logger.getChild(f"[{metadata.distgit_key}]")
+        parent_members = list(metadata.get_parent_members().values())
+        for parent_member in parent_members:
+            if parent_member is None:
+                continue  # Parent member is not included in the group; no need to wait
+            logger.info("Parent image %s is building; waiting...", parent_member.distgit_key)
+            # wait for parent member to be built
+            while not parent_member.build_event.is_set():
+                # asyncio.sleep instead of Event.wait since it's less CPU intensive
+                await asyncio.sleep(20)  # check every 20 seconds
+        return parent_members
+
+    @staticmethod
+    def _repo_gets_hermetic_module_hotfixes(repo_name: str, group: str, golang_pattern: re.Pattern) -> bool:
+        """
+        art-unsigned.repo sets module_hotfixes=1 on OSE (plashet) repos so non-modular RPMs there can win over
+        modular AppStream streams (e.g. runc). Apply the same hint to cachi2 hermetic prefetch DNF repo options.
+        """
+        if not (group.startswith("openshift-") or golang_pattern.match(group)):
+            return False
+        lower = repo_name.lower()
+        return 'ose-rpms' in lower or 'rhocp' in lower
+
+    def _prefetch(self, metadata: ImageMetadata, group: str, dest_dir: Optional[Path] = None) -> list:
+        """
+        To generate the param values for konflux's prefetch dependencies task which uses cachi2 (similar to cachito in
+        brew) to fetch packages and make it available to the build task (which ideally will be hermetic)
+        https://issues.redhat.com/browse/ART-11902
+        """
+        logger = self._logger.getChild(f"[{metadata.distgit_key}]")
+
+        cachi2_enabled = metadata.is_cachi2_enabled()
+
+        if not cachi2_enabled:
+            logger.info("Not setting pre-fetch since cachi2 not enabled")
+            return []
+
+        prefetch = []
+        required_package_managers = metadata.config.content.source.pkg_managers
+
+        if required_package_managers in [Missing, None]:
+            # We assume that dest_dir is the current directory by default
+            required_package_managers = artlib_util.detect_package_managers(metadata=metadata, dest_dir=dest_dir)
+
+        if required_package_managers in [Missing, None]:
+            raise ValueError(f"{required_package_managers} should not be empty if cachi2 is enabled")
+
+        network_mode = metadata.get_konflux_network_mode()
+        lockfile_enabled = metadata.is_lockfile_generation_enabled()
+        if network_mode == "hermetic" and lockfile_enabled:
+            lockfile_path = metadata.config.konflux.cachi2.lockfile.get("path", ".")
+            data = {
+                "type": "rpm",
+                "path": lockfile_path,
+            }
+
+            golang_pattern = re.compile(r'^golang$|^golang-|^rhel-\d+-golang-\d+\.\d+')
+            if group.startswith("openshift-") or golang_pattern.match(group):
+                # For groups like oadp, mta, logging we should always use signed repos
+                # For golang groups (golang-* and rhel-X-golang-Y.Z), always exclude gpg check regardless of lifecycle phase
+                should_disable_gpg = False
+
+                if golang_pattern.match(group):
+                    should_disable_gpg = True
+                elif group.startswith("openshift-"):
+                    phase = SoftwareLifecyclePhase.from_name(metadata.runtime.group_config.software_lifecycle.phase)
+                    should_disable_gpg = phase <= SoftwareLifecyclePhase.SIGNING
+
+                enabled_repos = metadata.get_enabled_repos()
+                if enabled_repos:
+                    dnf_options = {}
+                    repos = metadata.runtime.repos
+                    building_arches = metadata.get_arches()
+
+                    for repo_name in enabled_repos:
+                        repo = repos[repo_name]
+                        for arch in building_arches:
+                            content_set_id = repo.content_set(arch)
+                            if content_set_id is None:
+                                content_set_id = f'{repo_name}-{arch}'
+
+                            opts: dict = {}
+                            extra_options = repo._data.conf.get("extra_options", {})
+                            for k, v in dict(extra_options).items():
+                                opts[k] = str(v)
+                            if should_disable_gpg:
+                                opts["gpgcheck"] = "0"
+                            if self._repo_gets_hermetic_module_hotfixes(repo_name, group, golang_pattern):
+                                opts["module_hotfixes"] = "1"
+
+                            if opts:
+                                dnf_options[content_set_id] = opts
+
+                    if dnf_options:
+                        data["options"] = {"dnf": dnf_options}
+                        if should_disable_gpg:
+                            logger.info(
+                                f"Adding hermetic RPM prefetch DNF options for {len(dnf_options)} repository IDs "
+                                f"(gpgcheck disabled for prerelease; module_hotfixes on OSE/rhocp where applicable)"
+                            )
+                        else:
+                            logger.info(
+                                f"Adding hermetic RPM prefetch DNF options for {len(dnf_options)} repository IDs "
+                                f"(module_hotfixes on OSE/rhocp repos, aligned with art-unsigned.repo)"
+                            )
+
+            prefetch.append(data)
+            logger.info(f"Adding RPM prefetch for lockfile {DEFAULT_RPM_LOCKFILE_NAME} at path: {lockfile_path}")
+        else:
+            logger.debug(f"Skipping RPM prefetch - network_mode: {network_mode}, lockfile_enabled: {lockfile_enabled}")
+
+        artifact_lockfile_enabled = metadata.is_artifact_lockfile_enabled()
+        if artifact_lockfile_enabled:
+            artifact_lockfile_path = metadata.config.konflux.cachi2.artifact_lockfile.get("path", ".")
+            artifact_data = {
+                "type": "generic",
+                "path": artifact_lockfile_path,
+            }
+            prefetch.append(artifact_data)
+            logger.info(
+                f"Adding generic prefetch for artifact lockfile {DEFAULT_ARTIFACT_LOCKFILE_NAME} at path: {artifact_lockfile_path}"
+            )
+        else:
+            logger.debug(
+                f"Skipping generic prefetch - network_mode: {network_mode}, artifact_lockfile_enabled: {artifact_lockfile_enabled}"
+            )
+
+        for package_manager in ["gomod", "npm", "pip", "yarn", "cargo"]:
+            if package_manager in required_package_managers:
+                paths: dict = metadata.config.cachito.packages.get(package_manager, [])
+
+                flag = False
+                data = {"type": package_manager}
+                for path in paths:
+                    data = {"type": package_manager}
+                    for entry, values in path.items():
+                        if entry == "path":
+                            data["path"] = values
+
+                        if entry in ["requirements_files", "requirements_build_files"]:
+                            if entry == "requirements_files":
+                                if "requirements_files" not in data:
+                                    data["requirements_files"] = []
+                                data["requirements_files"] = data["requirements_files"] + values
+                            if entry == "requirements_build_files":
+                                if "requirements_build_files" not in data:
+                                    data["requirements_build_files"] = []
+                                data["requirements_build_files"] += values
+
+                        if entry == "binary":
+                            data["binary"] = values
+
+                        flag = True
+                    prefetch.append(data)
+
+                if not flag:
+                    data["path"] = "."
+                    prefetch.append(data)
+
+        if prefetch:
+            logger.info(f"Adding pre-fetch params: {prefetch}")
+
+        return prefetch
+
+    async def _start_build(
+        self,
+        metadata: ImageMetadata,
+        build_repo: BuildRepo,
+        building_arches: list[str],
+        output_image: str,
+        additional_tags: list[str],
+        nvr: str,
+        build_priority: str,
+        dest_dir: Optional[Path] = None,
+        git_auth_secret: Optional[str] = None,
+    ) -> PipelineRunInfo:
+        logger = self._logger.getChild(f"[{metadata.distgit_key}]")
+        if not build_repo.commit_hash:
+            raise IOError(
+                f"The build branch {build_repo.branch} doesn't have any commits in the build repository {build_repo.https_url}"
+            )
+
+        git_branch = build_repo.branch or build_repo.commit_hash
+        git_url = build_repo.https_url
+        git_commit = build_repo.commit_hash
+
+        # Ensure the Application resource exists
+        app_name = util.konflux_application_name(self._config.group_name)
+        logger.info(f"Using application: {app_name}")
+        await self._konflux_client.ensure_application(name=app_name, display_name=app_name)
+
+        # Ensure the component resource exists
+        component_name = metadata.get_konflux_component_name(app_name)
+        default_revision = f"art-{self._config.group_name}-assembly-test-dgk-{metadata.distgit_key}"
+        logger.info(f"Using component: {component_name}")
+        await self._konflux_client.ensure_component(
+            name=component_name,
+            application=app_name,
+            component_name=component_name,
+            image_repo=output_image.split(":")[0],
+            source_url=git_url,
+            revision=default_revision,
+        )
+
+        # Start a PipelineRun
+        # Check if hermetic builds need to be enabled
+        hermetic = metadata.get_konflux_network_mode() == "hermetic"
+
+        prefetch = self._prefetch(metadata=metadata, dest_dir=dest_dir, group=self._config.group_name)
+
+        sast_config = _get_konflux_config(metadata, "sast", {})
+        sast = sast_config.get("enabled", True) if hasattr(sast_config, 'get') else sast_config
+
+        raw_ba = _get_konflux_config(metadata, "build_args", [])
+        build_args = None
+        if raw_ba:
+            build_args = [str(arg.primitive()) if hasattr(arg, 'primitive') else str(arg) for arg in raw_ba]
+
+        raw_secret = _get_konflux_config(metadata, "additional_secret")
+        additional_secret = str(raw_secret) if raw_secret else None
+
+        raw_priv = _get_konflux_config(metadata, "privileged_nested")
+        privileged_nested = bool(raw_priv) if raw_priv else None
+
+        raw_res = _get_konflux_config(metadata, "build_step_resources")
+        build_step_resources = dict(raw_res) if raw_res else None
+
+        raw_sbom_res = _get_konflux_config(metadata, "sbom_step_resources")
+        sbom_step_resources = dict(raw_sbom_res) if raw_sbom_res else None
+
+        raw_ws = _get_konflux_config(metadata, "workspace_storage")
+        workspace_storage = str(raw_ws) if raw_ws else None
+
+        group_skip_tasks = metadata.runtime.group_config.get("konflux", {}).get("skip_tasks", [])
+        image_skip_tasks = metadata.config.get("konflux", {}).get("skip_tasks", [])
+        merged_skip_tasks = list(set(self._config.skip_tasks) | set(group_skip_tasks) | set(image_skip_tasks))
+
+        annotations = {
+            "art-network-mode": metadata.get_konflux_network_mode(),
+            "art-nvr": nvr,
+        }
+
+        build_timeout_minutes = metadata.config.konflux.build_timeout
+        if build_timeout_minutes:
+            annotations["art-overall-timeout-minutes"] = str(build_timeout_minutes)
+            logger.info(f"Setting custom build timeout: {build_timeout_minutes} minutes")
+
+        raw_symlink_check = _get_konflux_config(metadata, "enable_symlink_check")
+        enable_symlink_check = bool(raw_symlink_check) if raw_symlink_check is not None else None
+
+        raw_pkg_registry_proxy = _get_konflux_config(metadata, "enable_package_registry_proxy")
+        enable_package_registry_proxy = bool(raw_pkg_registry_proxy) if raw_pkg_registry_proxy is not None else None
+
+        raw_fetch_tags = _get_konflux_config(metadata, "clone_git_tags", True)
+        fetch_tags = bool(raw_fetch_tags) if raw_fetch_tags is not None else None
+
+        cachi2_config = _get_konflux_config(metadata, "cachi2", {})
+        prefetch_mode = (
+            str(cachi2_config.get("prefetch_mode")) if cachi2_config and cachi2_config.get("prefetch_mode") else None
+        )
+        if not self._config.plr_template:
+            plr_template_commit_override = _get_konflux_config(metadata, "plr_template_commitish")
+            if plr_template_commit_override:
+                plr_template_owner, plr_template_branch = plr_template_commit_override.split("@")
+                self._config.plr_template = pyartcd_constants.KONFLUX_IMAGE_BUILD_PLR_TEMPLATE_URL_FORMAT.format(
+                    owner=plr_template_owner, branch_name=plr_template_branch
+                )
+            else:
+                self._config.plr_template = constants.KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL
+
+        build_params = ImageBuildParams(
+            hermetic=hermetic,
+            enable_symlink_check=enable_symlink_check,
+            enable_package_registry_proxy=enable_package_registry_proxy,
+            fetch_tags=fetch_tags,
+            prefetch=prefetch,
+            prefetch_mode=prefetch_mode,
+            sast=sast,
+            build_args=build_args,
+            additional_secret=additional_secret,
+            privileged_nested=privileged_nested,
+            build_step_resources=build_step_resources,
+            sbom_step_resources=sbom_step_resources,
+            workspace_storage=workspace_storage,
+            vm_override=metadata.config.get("konflux", {}).get("vm_override"),
+            skip_checks=self._config.skip_checks,
+            skip_tasks=merged_skip_tasks,
+            annotations=annotations,
+            build_priority=build_priority,
+            additional_tags=additional_tags or [],
+        )
+
+        build_kwargs = dict(
+            generate_name=f"{component_name}-",
+            namespace=self._config.namespace,
+            application_name=app_name,
+            component_name=component_name,
+            git_url=git_url,
+            commit_sha=git_commit,
+            target_branch=git_branch,
+            output_image=output_image,
+            building_arches=building_arches,
+            pipelinerun_template_url=self._config.plr_template,
+            build_params=build_params,
+        )
+        if git_auth_secret:
+            build_kwargs["git_auth_secret"] = git_auth_secret
+        pipelinerun_info = await self._konflux_client.start_pipeline_run_for_image_build(**build_kwargs)
+
+        logger.info(f"Created PipelineRun: {self._konflux_client.resource_url(pipelinerun_info.to_dict())}")
+        return pipelinerun_info
+
+    @staticmethod
+    async def get_installed_packages(
+        image_pullspec: str, arches: list[str], registry_auth_file: Optional[str] = None
+    ) -> Tuple[Set[str], Set[str]]:
+        """
+        :return: Returns tuple of (package_nvrs, source_rpms) for an image pullspec, assumes that the sbom exists in registry
+        """
+
+        @retry(stop=stop_after_attempt(3), wait=wait_fixed(5))
+        async def _get_sbom_with_retry(cmd, env):
+            rc, stdout, _ = await exectools.cmd_gather_async(cmd, env=env)
+            if rc != 0:
+                LOGGER.warning("cosign command failed to download SBOM: %s", stdout)
+                raise ChildProcessError("cosign command failed to download SBOM")
+
+            content = json.loads(stdout)
+
+            # Check if the SBOM is valid
+            # The SBOM should be a JSON object with a "components" key that is a non-empty list
+            if not ("packages" in content and isinstance(content["packages"], list) and len(content["packages"]) > 0):
+                LOGGER.warning("cosign command returned invalid SBOM: %s", content)
+                raise ChildProcessError("cosign command returned invalid SBOM")
+
+            return content
+
+        async def _get_for_arch(arch):
+            go_arch = go_arch_for_brew_arch(arch)
+
+            cmd = [
+                "cosign",
+                "download",
+                "sbom",
+                image_pullspec,
+                "--platform",
+                f"linux/{go_arch}",
+            ]
+
+            env = os.environ.copy()
+            if registry_auth_file:
+                LOGGER.debug("Using registry auth file: %s", registry_auth_file)
+                env["REGISTRY_AUTH_FILE"] = registry_auth_file
+
+            sbom_contents = await _get_sbom_with_retry(cmd, env=env)
+            source_rpms = set()
+            package_nvrs = set()
+
+            for x in sbom_contents["packages"]:
+                purl_string = next(
+                    (ref["referenceLocator"] for ref in x["externalRefs"] if ref["referenceType"] == "purl"), ""
+                )
+
+                # https://github.com/package-url/packageurl-python does not support purl schemes other than "pkg"
+                if not purl_string.startswith("pkg:"):
+                    continue
+                try:
+                    purl = PackageURL.from_string(purl_string)
+                except ValueError as e:
+                    LOGGER.warning(f"Failed to parse purl: {purl_string} {e}")
+                    continue
+
+                if purl.type != "rpm":
+                    continue
+
+                arch_qual = purl.qualifiers.get("arch")
+                if not arch_qual or arch_qual == "src" or purl.name == "gpg-pubkey":
+                    continue
+
+                if purl.name and purl.version:
+                    package_nvrs.add(f"{purl.name}-{purl.version}")
+
+                # Old format (Mobster <1.2.1): upstream qualifier points to source RPM
+                # e.g. pkg:rpm/redhat/acl@2.3.1-4.el9?arch=x86_64&upstream=acl-2.3.1-4.el9.src.rpm&distro=rhel-9.8
+                # New format (Mobster >=1.2.1): upstream is stripped; only checksum+repository_id remain
+                # e.g. pkg:rpm/redhat/acl@2.3.1-4.el9?arch=x86_64&checksum=sha256:...&repository_id=...
+                source_rpm = purl.qualifiers.get("upstream")
+                if source_rpm:
+                    source_rpms.add(source_rpm.removesuffix(".src.rpm"))
+                elif purl.name and purl.version:
+                    source_rpms.add(f"{purl.name}-{purl.version}")
+
+            if not package_nvrs:
+                LOGGER.warning("No rpms found in sbom for arch %s. Please investigate", arch)
+            return package_nvrs, source_rpms
+
+        results = await asyncio.gather(*(_get_for_arch(arch) for arch in arches))
+        for arch, result in zip(arches, results):
+            package_nvrs, source_rpms = result
+            if not package_nvrs:
+                raise ChildProcessError(f"Could not get rpms from SBOM for arch {arch}")
+
+        all_package_nvrs = set()
+        all_source_rpms = set()
+        for package_nvrs, source_rpms in results:
+            all_package_nvrs.update(package_nvrs)
+            all_source_rpms.update(source_rpms)
+
+        return all_package_nvrs, all_source_rpms
+
+    @staticmethod
+    def _resolve_source_package_nvrs(source_rpms: set, runtime) -> set:
+        """
+        Resolve binary RPM NVRs to their source package NVRs via Brew.
+
+        When Mobster >=1.2.1 SBOMs lack the 'upstream' qualifier, the SBOM parser
+        falls back to using binary RPM names (e.g. kernel-core) as source package
+        names. These don't match actual Brew build NVRs (e.g. kernel). This method
+        resolves them by querying Koji: getBuild to identify valid builds, then
+        getRPM for those that aren't, to find the actual source package build.
+        """
+        if not source_rpms:
+            return source_rpms
+
+        with runtime.shared_koji_client_session() as session:
+            nvrs = sorted(source_rpms)
+
+            with session.multicall(strict=True) as multicall:
+                build_tasks = [multicall.getBuild(nvr) for nvr in nvrs]
+
+            resolved = set()
+            unresolved_nvrs = []
+            for nvr, task in zip(nvrs, build_tasks):
+                if task.result:
+                    resolved.add(nvr)
+                else:
+                    unresolved_nvrs.append(nvr)
+
+            if not unresolved_nvrs:
+                return resolved
+
+            # Binary NVRs need RPM lookup to find their source package build.
+            # getRPM needs NVRA, so try x86_64 first (most common), then noarch.
+            with session.multicall(strict=True) as multicall:
+                rpm_tasks = [multicall.getRPM(f"{nvr}.x86_64") for nvr in unresolved_nvrs]
+
+            still_unresolved = []
+            nvr_to_build_id: dict[str, int] = {}
+            for nvr, task in zip(unresolved_nvrs, rpm_tasks):
+                if task.result and task.result.get("build_id"):
+                    nvr_to_build_id[nvr] = task.result["build_id"]
+                else:
+                    still_unresolved.append(nvr)
+
+            # Retry unresolved with noarch
+            if still_unresolved:
+                with session.multicall(strict=True) as multicall:
+                    rpm_tasks = [multicall.getRPM(f"{nvr}.noarch") for nvr in still_unresolved]
+                for nvr, task in zip(still_unresolved, rpm_tasks):
+                    if task.result and task.result.get("build_id"):
+                        nvr_to_build_id[nvr] = task.result["build_id"]
+                    else:
+                        LOGGER.warning("Could not resolve source package for binary RPM NVR %s", nvr)
+                        resolved.add(nvr)
+
+            if nvr_to_build_id:
+                unique_build_ids = list(set(nvr_to_build_id.values()))
+                with session.multicall(strict=True) as multicall:
+                    build_tasks = [multicall.getBuild(bid) for bid in unique_build_ids]
+                bid_to_build = {bid: task.result for bid, task in zip(unique_build_ids, build_tasks) if task.result}
+
+                for nvr, bid in nvr_to_build_id.items():
+                    build = bid_to_build.get(bid)
+                    if build:
+                        source_nvr = f"{build['name']}-{build['version']}-{build['release']}"
+                        resolved.add(source_nvr)
+                    else:
+                        LOGGER.warning("Could not find Brew build for build_id %s (from %s)", bid, nvr)
+                        resolved.add(nvr)
+
+            return resolved
+
+    async def update_konflux_db(
+        self,
+        metadata,
+        build_repo,
+        pipelinerun_info: PipelineRunInfo,
+        outcome,
+        building_arches,
+        build_priority,
+        ec_pipeline_url='',
+        release_pipeline='',
+        released_pullspec='',
+    ) -> Optional[KonfluxBuildRecord]:
+        logger = self._logger.getChild(f"[{metadata.distgit_key}]")
+        if not metadata.runtime.konflux_db:
+            logger.warning('Konflux DB connection is not initialized, not writing build record to the Konflux DB.')
+            return None
+
+        rebase_repo_url = build_repo.https_url
+        rebase_commit = build_repo.commit_hash
+
+        df_path = build_repo.local_dir.joinpath("Dockerfile")
+        df = DockerfileParser(str(df_path))
+
+        source_repo = df.labels['io.openshift.build.source-location']
+        commitish = df.labels['io.openshift.build.commit.id']
+
+        component_name = df.labels['com.redhat.component']
+        version = df.labels['version']
+        release = df.labels['release']
+        nvr = "-".join([component_name, version, release])
+
+        pipelinerun_dict = pipelinerun_info.to_dict()
+        pipelinerun_name = pipelinerun_info.name
+        # Pipelinerun names will eventually repeat over time, so also gather the pipelinerun uid
+        if self._config.dry_run:
+            # Mock uid for dry-run mode with zero UUID
+            pipelinerun_uid = str(uuid.UUID(int=0))
+        else:
+            pipelinerun_uid = pipelinerun_dict['metadata']['uid']
+        build_pipeline_url = self._konflux_client.resource_url(pipelinerun_dict)
+        build_component = pipelinerun_dict['metadata']['labels']['appstudio.openshift.io/component']
+
+        # Extract the el_target (e.g., 'el9' for OCP or 'scos9' for OKD) from the release string.
+        # Strip RHEL minor version suffix (e.g., el8_10 -> el8) to keep el_target scoped to major version,
+        # consistent with how queries filter by el_target.
+        _, el_suffix = split_el_suffix_in_release(release)
+        if el_suffix:
+            el_target_value = re.sub(r'_\d+$', '', el_suffix)
+        else:
+            el_target_value = f'el{isolate_el_version_in_release(release)}'
+
+        build_record_params = {
+            'name': metadata.distgit_key,
+            'version': version,
+            'release': release,
+            'el_target': el_target_value,
+            'arches': building_arches,
+            'embargoed': is_release_embargoed(release, 'konflux'),
+            'hermetic': metadata.get_konflux_network_mode() == "hermetic",
+            'start_time': datetime.now(tz=timezone.utc),
+            'end_time': None,
+            'nvr': nvr,
+            'group': self._config.group_name,
+            'assembly': metadata.runtime.assembly,
+            'source_repo': source_repo,
+            'commitish': commitish,
+            'rebase_repo_url': rebase_repo_url,
+            'rebase_commitish': rebase_commit,
+            'artifact_type': ArtifactType.IMAGE,
+            'engine': Engine.KONFLUX,
+            'outcome': outcome,
+            'parent_images': await self.extract_parent_image_nvrs(
+                df.parent_images, logger, self._config.registry_auth_file
+            ),
+            'art_job_url': os.getenv('BUILD_URL', 'n/a'),
+            'build_id': f'{pipelinerun_name}-{pipelinerun_uid}',
+            'build_pipeline_url': build_pipeline_url,
+            'pipeline_commit': 'n/a',  # TODO: populate this
+            'build_component': build_component,
+            'build_priority': int(build_priority),
+            'ec_pipeline_url': ec_pipeline_url,
+            'release_pipeline': release_pipeline,
+            'released_pullspec': released_pullspec,
+        }
+
+        if outcome is KonfluxBuildOutcome.SUCCESS:
+            # results:
+            # - name: IMAGE_URL
+            #   value: quay.io/openshift-release-dev/ocp-v4.0-art-dev-test:ose-network-metrics-daemon-rhel9-v4.18.0-20241001.151532
+            # - name: IMAGE_DIGEST
+            #   value: sha256:49d65afba393950a93517f09385e1b441d1735e0071678edf6fc0fc1fe501807
+
+            results = pipelinerun_dict.get('status', {}).get('results', [])
+            image_pullspec = next((r['value'] for r in results if r['name'] == 'IMAGE_URL'), None)
+            image_digest = next((r['value'] for r in results if r['name'] == 'IMAGE_DIGEST'), None)
+
+            if not (image_pullspec and image_digest):
+                raise ValueError(
+                    f"[{metadata.distgit_key}] Could not find expected results in konflux "
+                    f"pipelinerun {pipelinerun_name}"
+                )
+
+            definitive_image_pullspec = f"{image_pullspec.split(':')[0]}@{image_digest}"
+
+            # Skip RPM extraction for images that don't use RPMs (e.g. FROM scratch builds).
+            # no_shell implies no /bin/sh and no RPMs installed in the image.
+            # Also auto-skip when base image is 'scratch' (consistent with rebaser logic).
+            from_stream = metadata.config.get('from', {}).get('stream')
+            skip_rpm_extraction = metadata.config.konflux.get("no_shell", False) or from_stream == 'scratch'
+            if skip_rpm_extraction:
+                logger.info(
+                    "Skipping RPM extraction (no_shell=%s, from.stream=%s): image does not use RPMs",
+                    metadata.config.konflux.get("no_shell", False),
+                    from_stream,
+                )
+                package_nvrs: set = set()
+                source_rpms: set = set()
+            else:
+                # use image_digest here to be precise, image_pullspec can collide in case of golang-builder images
+                package_nvrs, source_rpms = await self.get_installed_packages(
+                    definitive_image_pullspec, building_arches, self._config.registry_auth_file
+                )
+                source_rpms = await exectools.to_thread(
+                    self._resolve_source_package_nvrs, source_rpms, metadata.runtime
+                )
+
+            build_record_params.update(
+                {
+                    'image_pullspec': definitive_image_pullspec,
+                    'installed_packages': sorted(source_rpms),
+                    'installed_rpms': sorted(package_nvrs),
+                    'image_tag': image_pullspec.split(':')[-1],
+                }
+            )
+        status = pipelinerun_dict.get('status', {})
+        if status:
+            start_time = status.get('startTime')
+            if start_time:
+                build_record_params['start_time'] = datetime.strptime(start_time, '%Y-%m-%dT%H:%M:%SZ')
+            completion_time = status.get('completionTime')
+            if completion_time:  # Pending will not have a completion time
+                build_record_params['end_time'] = datetime.strptime(completion_time, '%Y-%m-%dT%H:%M:%SZ')
+
+        build_record = KonfluxBuildRecord(**build_record_params)
+        metadata.runtime.konflux_db.add_build(build_record)
+        logger.info('Konflux build %s info stored successfully with status %s', build_record.nvr, outcome)
+
+        try:
+            taskrun_db_client = bigquery.BigQueryClient()
+            taskrun_db_client.bind(artlib_constants.TASKRUN_TABLE_ID)
+
+            # Use the static method to build taskrun records
+            rows = self.build_taskrun_records(
+                pipelinerun_info, build_id=build_record.build_id, record_id=build_record.record_id
+            )
+
+            if rows:
+                try:
+                    taskrun_db_client.client.insert_rows_json(
+                        f'{artlib_constants.GOOGLE_CLOUD_PROJECT}.{artlib_constants.DATASET_ID}.{artlib_constants.TASKRUN_TABLE_ID}',
+                        rows,
+                    )
+                except:
+                    logger.warning('Error inserting taskrun information in bigquery')
+                    pprint.pprint(rows)
+                    raise
+        except:
+            logger.warning('Error recording taskrun information in bigquery')
+            traceback.print_exc()
+
+        return build_record
+
+    @staticmethod
+    def build_taskrun_records(
+        pipelinerun_info: PipelineRunInfo, build_id: Optional[str] = None, record_id: Optional[str] = None
+    ) -> List[Dict]:
+        """
+        Build taskrun records from a PipelineRunInfo instance.
+
+        This extracts all relevant information about pods and their containers
+        to create records suitable for BigQuery or other analytics storage.
+
+        :param pipelinerun_info: The PipelineRunInfo containing pod information
+        :param build_id: Optional build ID to include in records
+        :param record_id: Optional record ID to include in records
+        :return: List of taskrun record dictionaries
+        """
+        rows = []
+        pods = pipelinerun_info.get_pods()
+
+        for pod_info in pods:
+            pod = pod_info.to_dict()
+            pod_metadata = pod.get('metadata', {})
+            max_finished_time = None
+            all_containers_finished = True
+            exit_code_sum = 0
+            creation_timestamp = pod_info.creation_timestamp
+            pod_name = pod_info.name
+            task_name = pod_metadata['labels']['tekton.dev/pipelineTask']  # e.g. "build-images"
+            task_run = pod_metadata['labels'][
+                'tekton.dev/taskRun'
+            ]  # e.g. "ose-4-19-pf-status-relay-operator-h5pj5-build-images-1"
+            task_run_uid = pod_metadata['labels'][
+                'tekton.dev/taskRunUID'
+            ]  # e.g. "58b6cdea-e72e-4c45-aac9-7010aa67fa28"
+            pipeline_run_name = pod_metadata['labels'][
+                'tekton.dev/pipelineRun'
+            ]  # e.g. "ose-4-19-pf-status-relay-operator-h5pj5"
+            pipeline_run_uid = pod_metadata['labels'][
+                'tekton.dev/pipelineRunUID'
+            ]  # e.g. "d288cbd8-de96-49d9-8294-b65246eff937"
+            pod_status = pod.get('status')
+
+            pod_start_time = pod_info.start_time
+
+            pod_scheduled_condition = pod_info.find_condition('PodScheduled')
+            pod_initialized_condition = pod_info.find_condition('Initialized')
+
+            containers_info = []
+
+            # Process all containers using ContainerInfo objects
+            for container in pod_info.get_all_containers():
+                state, state_reason = container.get_state()
+                exit_code = container.exit_code
+
+                # Update tracking variables
+                if container.is_terminated:
+                    if exit_code is not None:
+                        exit_code_sum += exit_code
+                    if container.finished_time:
+                        if max_finished_time is None or container.finished_time > max_finished_time:
+                            max_finished_time = container.finished_time
+                else:
+                    all_containers_finished = False
+
+                container_info = {
+                    'name': container.name,
+                    'is_init': container.is_init_container,
+                    'image': container.image,
+                    'started_time': container.started_time.isoformat() if container.started_time else None,
+                    'finished_time': container.finished_time.isoformat() if container.finished_time else None,
+                    'state': state,
+                    'exit_code': exit_code,
+                    'reason': state_reason,
+                    'log_output': container.get_log_content(),
+                }
+                containers_info.append(container_info)
+
+            taskrun_record = {
+                'creation_time': creation_timestamp.isoformat() if creation_timestamp else None,
+                'task': task_name,
+                'task_run': task_run,
+                'task_run_uid': task_run_uid,
+                'pipeline_run': pipeline_run_name,
+                'pod_phase': pod_status.get('phase', 'Unknown'),
+                'scheduled_time': pod_scheduled_condition.last_transition_time.isoformat()
+                if pod_scheduled_condition and pod_scheduled_condition.is_status_true()
+                else None,
+                'initialized_time': pod_initialized_condition.last_transition_time.isoformat()
+                if pod_initialized_condition and pod_initialized_condition.is_status_true()
+                else None,
+                'start_time': pod_start_time.isoformat() if pod_start_time else None,
+                'containers': containers_info,
+                'capture_time': datetime.now(tz=timezone.utc).isoformat(),
+                'max_finished_time': max_finished_time.isoformat()
+                if max_finished_time and all_containers_finished
+                else None,
+                'pod_name': pod_name,
+                'pipeline_run_uid': pipeline_run_uid,
+                'success': all_containers_finished and exit_code_sum == 0,
+            }
+
+            # Add optional fields
+            if build_id is not None:
+                taskrun_record['build_id'] = build_id
+            if record_id is not None:
+                taskrun_record['record_id'] = record_id
+
+            rows.append(taskrun_record)
+
+        return rows
+
+    @staticmethod
+    async def extract_parent_image_nvrs(
+        parent_image_pullspecs: List[str],
+        logger: logging.Logger,
+        registry_auth_file: Optional[str] = None,
+    ) -> List[str]:
+        """
+        Extract NVRs from parent image pullspecs by inspecting their labels.
+
+        For each parent image, attempts to extract the NVR from container labels
+        (com.redhat.component, version, release). If the image doesn't have these
+        labels (e.g., external images not built by the tool), returns the original
+        pullspec for that entry.
+
+        NVRs never contain '/', so code reading this field can distinguish between
+        NVRs and pullspecs by checking for the presence of '/'.
+
+        :param parent_image_pullspecs: List of parent image pullspecs from the Dockerfile
+        :param logger: Logger instance for debug output
+        :param registry_auth_file: Optional path to registry auth file for pulling image metadata
+        :return: List of NVRs (or original pullspecs for unknown) corresponding to each parent image
+        """
+        parent_image_nvrs = []
+        for pullspec in parent_image_pullspecs:
+            try:
+                # brew.registry.redhat.io requires auth that may not be available;
+                # use the no-auth registry proxy instead (image content is identical)
+                inspect_pullspec = pullspec.replace(constants.BREW_REGISTRY_BASE_URL, constants.REGISTRY_PROXY_BASE_URL)
+                # Use oc image info with optional auth file to get image labels
+                # Use --filter-by-os to handle manifest list images
+                try:
+                    stdout = await oc_image_info__cached_async(
+                        inspect_pullspec,
+                        '--filter-by-os=amd64',
+                        registry_config=registry_auth_file if registry_auth_file else None,
+                    )
+                except ChildProcessError as e:
+                    logger.warning(f"Could not access parent image {inspect_pullspec}: {e}")
+                    parent_image_nvrs.append(pullspec)
+                    continue
+
+                image_info = json.loads(stdout)
+                labels = image_info.get('config', {}).get('config', {}).get('Labels', {})
+
+                name = labels.get('com.redhat.component')
+                version = labels.get('version')
+                release = labels.get('release')
+
+                if name and version and release:
+                    nvr = f"{name}-{version}-{release}"
+                    parent_image_nvrs.append(nvr)
+                    logger.debug(f"Extracted NVR {nvr} from parent image {pullspec}")
+                else:
+                    # Image accessible but missing NVR labels (external image) - informational
+                    logger.info(
+                        f"Parent image {pullspec} missing NVR labels: "
+                        f"component={name}, version={version}, release={release}"
+                    )
+                    parent_image_nvrs.append(pullspec)
+
+            except Exception as e:
+                # Unexpected error during processing
+                logger.warning(f"Error extracting NVR from parent image {pullspec}: {e}")
+                parent_image_nvrs.append(pullspec)
+
+        return parent_image_nvrs
+
+    async def _trigger_base_image_release(
+        self,
+        metadata: ImageMetadata,
+        nvr: str,
+        container_image: str,
+        build_repo: BuildRepo,
+    ) -> Optional[BaseImageReleaseResult]:
+        """Run snapshot→release for one base image via :class:`BaseImageHandler` (no Jenkins job).
+
+        Args:
+            metadata: Image metadata for the built image
+            nvr: Image NVR string
+            container_image: Definitive digest pullspec (``repo@sha256:…``)
+            build_repo: Build repo (rebase git URL and commit for snapshot source)
+
+        Returns:
+            :class:`BaseImageReleaseResult` when snapshot→release completes; ``None`` on failure or exception.
+        """
+        logger = self._logger.getChild(f"[{metadata.distgit_key}]")
+
+        if metadata.is_golang_builder():
+            logger.warning(
+                "Golang builder images use the shipment MR path for release; "
+                "_trigger_base_image_release() must not be called for them"
+            )
+            return None
+
+        logger.info(f"Triggering base image snapshot-release for {nvr}")
+
+        try:
+            snapshot_input = BaseImageSnapshotInput(
+                nvr=nvr,
+                distgit_key=metadata.distgit_key,
+                container_image=container_image,
+                rebase_repo_url=build_repo.https_url,
+                rebase_commitish=build_repo.commit_hash,
+                is_golang_builder=metadata.is_golang_builder(),
+            )
+            handler = BaseImageHandler(
+                metadata.runtime,
+                dry_run=self._config.dry_run,
+            )
+            result = await handler.snapshot_release(snapshot_input)
+            if result is None:
+                logger.error("Base image snapshot-release did not complete successfully for %s", nvr)
+                return None
+            if not result.released_pullspec:
+                logger.error(f"Base image release failed to complete for {nvr} - see {result.release_pipeline}")
+            else:
+                logger.info(f"Successfully triggered base image snapshot-release for {nvr}")
+            return result
+
+        except Exception as e:
+            logger.error(f"Failed base image snapshot-release for {nvr}: {e}")
+            return None

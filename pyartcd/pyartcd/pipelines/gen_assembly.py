@@ -1,0 +1,473 @@
+import asyncio
+import logging
+import os
+import re
+import traceback
+from io import StringIO
+from typing import Iterable, Optional, OrderedDict, Tuple
+
+import aiohttp
+import click
+from artcommonlib import exectools
+from artcommonlib.constants import (
+    KONFLUX_DEFAULT_IMAGE_REPO,
+    REGISTRY_CI_OPENSHIFT,
+    REGISTRY_QUAY_OCP_RELEASE_DEV,
+)
+from artcommonlib.registry_config import RegistryConfig
+from artcommonlib.util import (
+    get_inflight,
+    isolate_major_minor_in_group,
+    new_roundtrip_yaml_handler,
+    uses_konflux_imagestream_override,
+)
+from doozerlib.cli.get_nightlies import get_nightly_tag_base, rc_api_url
+
+from pyartcd import constants, jenkins
+from pyartcd.cli import cli, click_coroutine, pass_runtime
+from pyartcd.click_validators import validate_release_date
+from pyartcd.runtime import Runtime
+from pyartcd.util import create_or_update_assembly_pr
+
+yaml = new_roundtrip_yaml_handler()
+
+
+class GenAssemblyPipeline:
+    """
+    Generate an assembly definition from nightlies or releases.
+    """
+
+    def __init__(
+        self,
+        runtime: Runtime,
+        group: str,
+        assembly: str,
+        build_system: str,
+        data_path: str,
+        nightlies: Tuple[str, ...],
+        allow_pending: bool,
+        allow_rejected: bool,
+        allow_inconsistency: bool,
+        custom: bool,
+        arches: Tuple[str, ...],
+        in_flight: Optional[str],
+        previous_list: Tuple[str, ...],
+        auto_previous: bool,
+        auto_trigger_build_sync: bool,
+        skip_get_nightlies: bool,
+        ignore_non_x86_nightlies: Optional[bool] = False,
+        logger: Optional[logging.Logger] = None,
+        gen_microshift: bool = False,
+        date: Optional[str] = None,
+    ):
+        self.runtime = runtime
+        self.group = group
+        self.assembly = assembly
+        self.build_system = build_system
+        self.data_path = data_path
+        self.nightlies = nightlies
+        self.ignore_non_x86_nightlies = ignore_non_x86_nightlies
+        self.allow_pending = allow_pending
+        self.allow_rejected = allow_rejected
+        self.allow_inconsistency = allow_inconsistency
+        self.auto_trigger_build_sync = auto_trigger_build_sync
+        self.custom = custom
+        self.arches = arches
+        self.date = date
+        self.skip_get_nightlies = skip_get_nightlies
+        self.gen_microshift = gen_microshift
+        if in_flight and in_flight != "none":
+            self.in_flight = in_flight
+        elif in_flight == "none":
+            self.in_flight = None
+        elif not custom:
+            self.in_flight = get_inflight(assembly, group, date)
+        else:
+            self.in_flight = None
+
+        self.previous_list = previous_list
+        self.auto_previous = auto_previous
+        self._logger = logger or runtime.logger
+        self._slack_client = self.runtime.new_slack_client()
+        self._working_dir = self.runtime.working_dir.absolute()
+
+        # GitHub auth is handled by get_github_client_for_org() with App auth / PAT fallback
+
+        # determines OCP version
+        match = re.fullmatch(r"openshift-(\d+).(\d+)", group)
+        if not match:
+            raise ValueError(f"Invalid group name: {group}")
+        self._ocp_version = (int(match[1]), int(match[2]))
+
+        # sets environment variables for Doozer
+        self._doozer_env_vars = os.environ.copy()
+        self._doozer_env_vars["DOOZER_WORKING_DIR"] = str(self._working_dir / "doozer-working")
+        self._doozer_env_vars["DOOZER_DATA_PATH"] = (
+            data_path if data_path else self.runtime.config.get("build_config", {}).get("ocp_build_data_url")
+        )
+
+        # Registry config will be set up in run() method
+        self._registry_config: str | None = None
+
+        if self.skip_get_nightlies and len(self.nightlies) != len(self.arches):
+            raise ValueError(
+                f"When using --skip-get-nightlies, nightlies for all given {len(self.arches)} arches must be specified"
+            )
+
+        self.private_nightlies = any("priv" in nightly for nightly in self.nightlies)
+        if self.private_nightlies:
+            if not all("priv" in nightly for nightly in self.nightlies):
+                raise ValueError("All nightlies must be private or none")
+
+    async def run(self):
+        if 'XDG_RUNTIME_DIR' in os.environ:
+            self._logger.info('Unsetting XDG_RUNTIME_DIR to prevent use of default registry auth')
+            del os.environ['XDG_RUNTIME_DIR']
+        self._doozer_env_vars.pop('XDG_RUNTIME_DIR', None)
+
+        quay_auth_file = os.getenv('QUAY_AUTH_FILE')
+        if not quay_auth_file:
+            raise ValueError(
+                "QUAY_AUTH_FILE environment variable is required but not set. "
+                "Ensure Jenkins credentials are properly bound."
+            )
+
+        source_files = [quay_auth_file]
+
+        with RegistryConfig(
+            kubeconfig=os.environ.get('KUBECONFIG'),
+            source_files=source_files,
+            registries=[
+                REGISTRY_QUAY_OCP_RELEASE_DEV,
+                KONFLUX_DEFAULT_IMAGE_REPO,
+                REGISTRY_CI_OPENSHIFT,
+            ],
+        ) as global_auth_file:
+            self._registry_config = global_auth_file
+
+            self._logger.info(
+                'Set registry auth file=%s for pipeline operations (cherry-picked from %d source file(s))',
+                global_auth_file,
+                len(source_files),
+            )
+
+            await self._run_pipeline()
+
+    async def _run_pipeline(self):
+        self._slack_client.bind_channel(self.group)
+        slack_response = await self._slack_client.say(
+            f":construction: Generating assembly definition {self.assembly} :construction:"
+        )
+        slack_thread = slack_response["message"]["ts"]
+        try:
+            if self.arches and not self.custom:
+                self._logger.warning("Customizing arches for non-custom assembly, proceed with caution")
+
+            if self.custom and (self.auto_previous or self.previous_list or self.in_flight):
+                raise ValueError("Specifying previous list for a custom release is not allowed.")
+
+            if self.skip_get_nightlies:
+                candidate_nightlies = self.nightlies
+            elif self.ignore_non_x86_nightlies:
+                if self.nightlies:
+                    # Use the specified nightlies directly - user knows what they want
+                    candidate_nightlies = self.nightlies
+                else:
+                    # No nightlies specified, get the latest accepted x86_64 nightly
+                    candidate_nightlies = [await self._get_latest_accepted_nightly()]
+            else:
+                candidate_nightlies, latest_nightly = await asyncio.gather(
+                    *[self._get_nightlies(), self._get_latest_accepted_nightly()]
+                )
+
+            self._logger.info("Generating assembly definition...")
+            assembly_definition = await self._gen_assembly_from_releases(candidate_nightlies)
+            out = StringIO()
+            yaml.dump(assembly_definition, out)
+            self._logger.info("Generated assembly definition:\n%s", out.getvalue())
+
+            # For Konflux, stop here at the moment
+            if self.build_system == 'konflux' and not uses_konflux_imagestream_override(
+                self.group.removeprefix('openshift-')
+            ):
+                return
+
+            # Create a PR
+            pr = await self._create_or_update_pull_request(assembly_definition)
+            if not pr:
+                # No PR update was made
+                self._logger.warning("No PR update was made")
+                return
+
+            # Sends a slack message
+            message = (
+                f"Please review assembly definition for {self.assembly}: {pr.html_url}\n\n"
+                f"The inflight release is {self.in_flight}"
+            )
+            if not self.skip_get_nightlies:
+                if not self.ignore_non_x86_nightlies and latest_nightly not in candidate_nightlies:
+                    message += '\n\n:warning: note that `gen-assembly` did not select the latest accepted amd64 nightly'
+            else:
+                message += '\n\n:warning: note that `gen-assembly` was run with `--skip-get-nightlies`'
+
+            await self._slack_client.say(message, slack_thread)
+
+        except Exception as err:
+            error_message = f"Error generating assembly definition: {err}\n {traceback.format_exc()}"
+            self._logger.error(error_message)
+            await self._slack_client.say(f"Error generating assembly definition for {self.assembly}", slack_thread)
+            raise
+
+    async def _get_latest_accepted_nightly(self):
+        self._logger.info('Retrieving most recent accepted amd64 nightly...')
+        major, minor = isolate_major_minor_in_group(self.group)
+        tag_base = get_nightly_tag_base(major, minor, self.build_system)
+        rc_endpoint = f"{rc_api_url(tag_base, 'amd64', self.private_nightlies)}/latest"
+        async with aiohttp.ClientSession() as session:
+            async with session.get(rc_endpoint) as response:
+                if response.status != 200:
+                    self._logger.warning('Failed retrieving latest accepted nighly from %s', rc_endpoint)
+                    return None
+                return (await response.json()).get('name')
+
+    async def _get_nightlies(self):
+        """
+        Get nightlies from Release Controllers
+        :return: NVRs
+        """
+
+        self._logger.info("Getting nightlies from Release Controllers...")
+
+        cmd = [
+            "doozer",
+            "--group",
+            self.group,
+            "--assembly",
+            "stream",
+            "--build-system",
+            self.build_system,
+        ]
+        if self._registry_config:
+            cmd.append(f"--registry-config={self._registry_config}")
+        if self.arches:
+            cmd.append("--arches")
+            cmd.append(",".join(self.arches))
+        cmd.append("get-nightlies")
+        if self.allow_pending:
+            cmd.append("--allow-pending")
+        if self.allow_rejected:
+            cmd.append("--allow-rejected")
+        if self.allow_inconsistency:
+            cmd.append("--allow-inconsistency")
+        for nightly in self.nightlies:
+            cmd.append(f"--matching={nightly}")
+
+        _, out, _ = await exectools.cmd_gather_async(cmd, stderr=None, env=self._doozer_env_vars)
+        return out.strip().split()
+
+    async def _gen_assembly_from_releases(self, candidate_nightlies: Iterable[str]) -> OrderedDict:
+        """Run doozer release:gen-assembly from-releases
+        :return: Assembly definition
+        """
+
+        cmd = [
+            "doozer",
+            "--group",
+            self.group,
+            "--assembly",
+            "stream",
+            "--build-system",
+            self.build_system,
+        ]
+        if self._registry_config:
+            cmd.append(f"--registry-config={self._registry_config}")
+        if self.arches:
+            cmd.append("--arches")
+            cmd.append(",".join(self.arches))
+        cmd.append("release:gen-assembly")
+        cmd.append(f"--name={self.assembly}")
+        cmd.append("from-releases")
+        for nightly in candidate_nightlies:
+            cmd.append(f"--nightly={nightly}")
+
+        if self.gen_microshift:
+            cmd.append("--gen-microshift")
+        if self.date:
+            cmd.append(f"--date={self.date}")
+        if self.custom:
+            cmd.append("--custom")
+        else:
+            if self.in_flight:
+                cmd.append(f"--in-flight={self.in_flight}")
+            for previous in self.previous_list:
+                cmd.append(f"--previous={previous}")
+            if self.auto_previous:
+                cmd.append("--auto-previous")
+        _, out, _ = await exectools.cmd_gather_async(cmd, stderr=None, env=self._doozer_env_vars)
+        return yaml.load(out)
+
+    async def _create_or_update_pull_request(self, assembly_definition: OrderedDict):
+        """
+        Create or update pull request for ocp-build-data.
+
+        Arg(s):
+            assembly_definition: the assembly definition to be added to releases.yml
+        """
+        title = f"Add assembly {self.assembly}"
+        body = f"Created by job run {jenkins.get_build_url()}"
+
+        return await create_or_update_assembly_pr(
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+            build_system=self.build_system,
+            assembly_definition=assembly_definition,
+            title=title,
+            body=body,
+            working_dir=self._working_dir,
+            auto_trigger_build_sync=self.auto_trigger_build_sync,
+            logger=self._logger,
+        )
+
+
+@cli.command("gen-assembly")
+@click.option(
+    "--data-path",
+    metavar='BUILD_DATA',
+    default=None,
+    help=f"Git repo or directory containing groups metadata e.g. {constants.OCP_BUILD_DATA_URL}",
+)
+@click.option(
+    "-g",
+    "--group",
+    metavar='NAME',
+    required=True,
+    help="The group of components on which to operate. e.g. openshift-4.9",
+)
+@click.option(
+    "--assembly", metavar="ASSEMBLY_NAME", required=True, help="The name of an assembly to generate for. e.g. 4.9.1"
+)
+@click.option(
+    "--build-system",
+    metavar="BUILD_SYSTEM",
+    required=False,
+    default='brew',
+    help="What build system we're operating on ('brew'|'konflux')",
+)
+@click.option(
+    "--nightly",
+    "nightlies",
+    metavar="TAG",
+    multiple=True,
+    help="(Optional) [MULTIPLE] List of nightlies to match with `doozer get-nightlies` (if empty, find latest)",
+)
+@click.option("--allow-pending", is_flag=True, help="Match nightlies that have not completed tests")
+@click.option("--allow-rejected", is_flag=True, help="Match nightlies that have failed their tests")
+@click.option(
+    "--allow-inconsistency",
+    is_flag=True,
+    help="Allow matching nightlies built from matching commits but with inconsistent RPMs",
+)
+@click.option(
+    "--custom",
+    is_flag=True,
+    help="Custom assemblies are not for official release. They can, for example, not have all required arches for the group.",
+)
+@click.option('--auto-trigger-build-sync', is_flag=True, help='Will trigger build-sync automatically after PR creation')
+@click.option(
+    "--arch",
+    "arches",
+    metavar="TAG",
+    multiple=True,
+    help="(Optional) [MULTIPLE] (for custom assemblies only) Limit included arches to this list",
+)
+@click.option('--in-flight', 'in_flight', metavar='EDGE', help='An in-flight release that can upgrade to this release')
+@click.option(
+    '--previous',
+    'previous_list',
+    metavar='EDGES',
+    default=[],
+    multiple=True,
+    help='A list of releases that can upgrade to this release',
+)
+@click.option(
+    '--auto-previous',
+    'auto_previous',
+    is_flag=True,
+    help='If specified, previous list is calculated from Cincinnati graph',
+)
+@click.option(
+    '--skip-get-nightlies',
+    'skip_get_nightlies',
+    is_flag=True,
+    default=False,
+    help='Skip get_nightlies_function (Use only for special cases)',
+)
+@click.option(
+    '--ignore-non-x86-nightlies',
+    'ignore_non_x86_nightlies',
+    is_flag=True,
+    default=False,
+    help='Ignore non-x86 nightlies, only use x86 nightly',
+)
+@click.option(
+    "--gen-microshift",
+    'gen_microshift',
+    default=False,
+    is_flag=True,
+    help="Create microshift entry for assembly release.",
+)
+@click.option(
+    "--date",
+    metavar="YYYY-Mon-DD",
+    help="Expected release date (e.g. 2020-Nov-25 or 2020-11-25). Will be converted to YYYY-Mon-DD format.",
+)
+@pass_runtime
+@click_coroutine
+async def gen_assembly(
+    runtime: Runtime,
+    data_path: str,
+    group: str,
+    assembly: str,
+    build_system: str,
+    nightlies: Tuple[str, ...],
+    allow_pending: bool,
+    allow_rejected: bool,
+    allow_inconsistency: bool,
+    custom: bool,
+    auto_trigger_build_sync: bool,
+    arches: Tuple[str, ...],
+    in_flight: Optional[str],
+    previous_list: Tuple[str, ...],
+    auto_previous: bool,
+    skip_get_nightlies: bool,
+    ignore_non_x86_nightlies: bool,
+    gen_microshift: bool,
+    date: Optional[str],
+):
+    # Validate and convert date format if provided
+    if date:
+        date = validate_release_date(None, None, date)
+
+    pipeline = GenAssemblyPipeline(
+        runtime=runtime,
+        group=group,
+        assembly=assembly,
+        build_system=build_system,
+        data_path=data_path,
+        nightlies=nightlies,
+        allow_pending=allow_pending,
+        allow_rejected=allow_rejected,
+        allow_inconsistency=allow_inconsistency,
+        arches=arches,
+        custom=custom,
+        auto_trigger_build_sync=auto_trigger_build_sync,
+        in_flight=in_flight,
+        previous_list=previous_list,
+        auto_previous=auto_previous,
+        skip_get_nightlies=skip_get_nightlies,
+        ignore_non_x86_nightlies=ignore_non_x86_nightlies,
+        gen_microshift=gen_microshift,
+        date=date,
+    )
+    await pipeline.run()

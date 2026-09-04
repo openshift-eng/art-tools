@@ -1,0 +1,500 @@
+import hashlib
+import json
+import logging
+import random
+import uuid
+from datetime import datetime
+from enum import Enum
+from typing import List, Optional, Union
+from urllib.parse import unquote, urlparse
+
+from artcommonlib import constants
+from artcommonlib import util as artlib_util
+
+LOGGER = logging.getLogger(__name__)
+
+
+class KonfluxEnum(Enum):
+    def __str__(self):
+        return self.value
+
+
+class KonfluxBuildOutcome(KonfluxEnum):
+    """Konflux build lifecycle outcome stored in BigQuery.
+
+    Taxonomy:
+    - SUCCESS: releasable build completed all required stages.
+    - PENDING: in-progress or awaiting further processing (intermediate row).
+    - BUILD_ERROR: build PipelineRun failed (canonical PLR failure; prefer over FAILURE).
+    - ITS_ERROR: Enterprise Contract / IntegrationTestScenario verification failed after a successful build.
+    - RELEASE_ERROR: base-image snapshot/release failed after a successful build.
+    - FAILURE: legacy generic failure; retained for old rows and out-of-scope writers (FBC/OLM may still emit it).
+    - TIMEOUT / CANCELLED: pipelinerun terminal states from Tekton Succeeded condition.
+    """
+
+    FAILURE = 'failure'
+    SUCCESS = 'success'
+    PENDING = 'pending'
+    TIMEOUT = 'timeout'
+    CANCELLED = 'cancelled'
+    BUILD_ERROR = 'build_error'
+    ITS_ERROR = 'its_error'
+    RELEASE_ERROR = 'release_error'
+
+    @classmethod
+    def db_filter_values(cls) -> tuple[str, ...]:
+        """Outcome values included in KonfluxDb default and cache queries."""
+        return (
+            cls.SUCCESS.value,
+            cls.FAILURE.value,
+            cls.BUILD_ERROR.value,
+            cls.ITS_ERROR.value,
+            cls.RELEASE_ERROR.value,
+            cls.TIMEOUT.value,
+            cls.CANCELLED.value,
+        )
+
+    def is_success(self) -> bool:
+        return self is KonfluxBuildOutcome.SUCCESS
+
+    def is_failure(self) -> bool:
+        return self in (
+            KonfluxBuildOutcome.FAILURE,
+            KonfluxBuildOutcome.BUILD_ERROR,
+            KonfluxBuildOutcome.ITS_ERROR,
+            KonfluxBuildOutcome.RELEASE_ERROR,
+            KonfluxBuildOutcome.TIMEOUT,
+            KonfluxBuildOutcome.CANCELLED,
+        )
+
+    @classmethod
+    def extract_from_pipelinerun_succeeded_condition(
+        cls, succeeded_condition: Optional[artlib_util.KubeCondition]
+    ) -> "KonfluxBuildOutcome":
+        if succeeded_condition:
+            assert succeeded_condition.type == 'Succeeded'
+            if succeeded_condition.is_status_true():
+                return cls.SUCCESS
+            reason = succeeded_condition.reason
+            if reason == 'Cancelled':
+                return cls.CANCELLED
+            if reason == 'Timeout':
+                return cls.TIMEOUT
+            return cls.BUILD_ERROR
+        return cls.PENDING
+
+
+class ArtifactType(KonfluxEnum):
+    RPM = 'rpm'
+    IMAGE = 'image'
+
+
+class Engine(KonfluxEnum):
+    KONFLUX = 'konflux'
+    BREW = 'brew'
+
+
+class KonfluxRecord:
+    # These fields are excluded when computing the build ID, but are included in the build string representation
+    EXCLUDED_KEYS = [
+        'record_id',
+        'build_id',
+        'nvr',
+        'ec_pipeline_url',
+        'release_pipeline',
+        'released_pullspec',
+    ]
+
+    TABLE_ID = None
+
+    def __init__(
+        self,
+        name: str = '',
+        group: str = '',
+        version: str = '',
+        release: str = '',
+        assembly: str = '',
+        source_repo: str = '',
+        commitish: str = '',
+        rebase_repo_url: str = '',
+        rebase_commitish: str = '',
+        start_time: datetime = None,
+        end_time: datetime = None,
+        engine: Engine = Engine.KONFLUX,
+        image_pullspec: str = '',
+        image_tag: str = '',
+        outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS,
+        art_job_url: str = '',
+        build_pipeline_url: str = '',
+        pipeline_commit: str = '',
+        schema_level: int = 0,
+        ingestion_time: datetime = None,
+        build_component: str = '',
+        build_priority: int = constants.KONFLUX_DEFAULT_BUILD_PRIORITY,
+    ):
+        """
+        All fields default to None to facilitate testing
+        """
+
+        self.name = name
+        self.group = group
+        self.version = version
+        self.release = release
+        self.assembly = assembly
+        self.source_repo = source_repo
+        self.commitish = commitish
+        self.rebase_repo_url = rebase_repo_url
+        self.rebase_commitish = rebase_commitish
+        self.start_time = start_time
+        self.end_time = end_time
+        self.engine = engine if isinstance(engine, Engine) else Engine(engine)
+        self.image_pullspec = image_pullspec
+        self.image_tag = image_tag
+        self.outcome = outcome if isinstance(outcome, KonfluxBuildOutcome) else KonfluxBuildOutcome(outcome)
+        self.art_job_url = art_job_url
+        self.build_pipeline_url = build_pipeline_url
+        self.pipeline_commit = pipeline_commit
+        self.schema_level = schema_level
+        self.build_component = build_component
+        self.build_priority = build_priority
+        # A build will correspond to multiple records, as Doozer will first create a build record with PENDING state.
+        # Once the pipeline completed, a new record will be created for the same build, with the final build outcome.
+        # Two records for the same build will share the same build_id, but will have different record_ids
+        # ingestion_time is set by Doozer and will let us select the most recent record
+        # The NVR can be used as a compact, human-readable name for the build
+        self.ingestion_time = ingestion_time
+        self.record_id = None
+        self.build_id = None
+        self.nvr = None
+
+    def __repr__(self):
+        return self.nvr
+
+    def init_uuids(self, record_id, build_id, nvr):
+        # These fields must be computed in the child class, otherwise we would be hashing incomplete types into UUIDs
+        self.record_id = record_id if record_id else self.generate_record_id()
+        self.build_id = build_id if build_id else self.generate_build_id()
+        self.nvr = nvr if nvr else self.get_nvr()
+
+    def generate_build_id(self) -> str:
+        """
+        The build ID is generated by hashing the string representation of a build object.
+        Since 2 different builds cannot have the same exact fields, this should protect us from collisions.
+        """
+
+        build_repr = {key: val for key, val in self.to_dict().items() if key not in self.EXCLUDED_KEYS}
+        return self._generate_uuid(hashlib.sha256(json.dumps(build_repr).encode()).digest())
+
+    @classmethod
+    def generate_record_id(cls) -> str:
+        """
+        Generates a unique ID for every record. Two records referring to the same build will always have distinct IDs
+        """
+
+        random_data = str(random.getrandbits(256)).encode()
+        return cls._generate_uuid(hashlib.sha256(random_data).digest())
+
+    @staticmethod
+    def _generate_uuid(hash_bytes: bytes):
+        return str(uuid.UUID(bytes=hash_bytes[:16]))
+
+    def get_nvr(self):
+        self.nvr = f'{self.name}-{self.version}-{self.release}'
+        return self.nvr
+
+    def __str__(self):
+        return json.dumps(self.to_dict(), indent=4)
+
+    def to_dict(self) -> dict:
+        """
+        Returns a dict object representing the build data.
+        KonfluxDb.add_builds() can use data in this form to store the build info into the DB.
+        """
+
+        return {
+            key: (
+                value.strftime("%Y-%m-%dT%H:%M:%S")
+                if isinstance(value, datetime)
+                else value.value
+                if isinstance(value, Enum)
+                else value
+            )
+            for key, value in self.__dict__.items()
+        }
+
+    def get_konflux_application_name(self) -> str:
+        """
+        Returns the application name for the Konflux record.
+        This is used to identify the application in Konflux.
+        """
+        # Konflux application name can be extracted from the build pipeline URL.
+        # e.g. 'https://konflux-ui.apps.kflux-ocp-p01.7ayg.p1.openshiftapps.com/ns/ocp-art-tenant/applications/openshift-4-18/pipelineruns/openshift-4-18-helloworld-operator-bundle-prdtg' -> 'openshift-4-18'
+        # TODO: This is a temporary solution. We may want to change the way we store the application name in the future.
+        if self.engine is not Engine.KONFLUX:
+            raise ValueError("This method is only applicable for Konflux builds")
+        if not self.build_pipeline_url:
+            raise ValueError("build_pipeline_url is not set, cannot extract application name")
+        plr_url = urlparse(self.build_pipeline_url)
+        # Extract the namespace from the URL path
+        ns = unquote(plr_url.path.split('/')[4])
+        return ns
+
+    def get_konflux_component_name(self) -> str:
+        """
+        Returns the component name for the Konflux record.
+        This is used to identify the component in Konflux.
+        """
+        if self.build_component:
+            return self.build_component
+
+        # TODO: (2025-07-16) now that we have started storing component name in DB,
+        # we can remove the below fallback (parse the component from url) in a couple of weeks
+
+        # Konflux component name can be extracted from the build pipeline URL.
+        # e.g. 'https://konflux-ui.apps.kflux-ocp-p01.7ayg.p1.openshiftapps.com/ns/ocp-art-tenant/applications/openshift-4-18/pipelineruns/openshift-4-18-helloworld-operator-bundle-prdtg' -> 'openshift-4-18-helloworld-operator-bundle'
+        # TODO: This is a temporary solution. We may want to change the way we store the component name in the future.
+        if self.engine is not Engine.KONFLUX:
+            raise ValueError("This method is only applicable for Konflux builds")
+        if not self.build_pipeline_url:
+            raise ValueError("build_pipeline_url is not set, cannot extract component name")
+        plr_url = urlparse(self.build_pipeline_url)
+        # Extract the last part of the URL path. e.g. openshift-4-18-helloworld-operator-bundle-prdtg
+        plr_name = unquote(plr_url.path.split('/')[-1])
+
+        # openshift-4-18-helloworld-operator-bundle-prdtg -> openshift-4-18-helloworld-operator-bundle
+        # sometimes the component name is too long, so there is no hyphen in the end
+        # first remove the last 5 chars (unique identifier)
+        component_name = plr_name[:-5]
+        # now check if the last char is a hyphen and if so, remove it
+        if component_name.endswith('-'):
+            component_name = component_name[:-1]
+        return component_name
+
+
+class KonfluxBuildRecord(KonfluxRecord):
+    TABLE_ID = constants.BUILDS_TABLE_ID
+
+    """
+    This class represents the data structure we use to store build information in Konflux
+    By calling the konfluxdb.support.konflux_build.generate_build_schema() function,
+    a table schema can be auto-generated from this class definition.
+    The schema we get can then be injected into the konfluxdb.support.konflux_db.SupportKonfluxDb.create_table()
+    function, that will create the table in BigQuery for us.
+
+    In order for this to work, this class should contain no fields other than those we want to appear as table columns.
+    """
+
+    def __getitem__(self, key):
+        if hasattr(self, key):
+            return getattr(self, key)
+        else:
+            raise KeyError(f"'{key}' not found")
+
+    def __init__(
+        self,
+        name: str = '',
+        group: str = '',
+        version: str = '',
+        release: str = '',
+        assembly: str = '',
+        el_target: str = '',
+        arches: list = [],
+        installed_packages: list = [],
+        installed_rpms: list = [],
+        parent_images: list = [],
+        source_repo: str = '',
+        commitish: str = '',
+        rebase_repo_url: str = '',
+        rebase_commitish: str = '',
+        embargoed: bool = False,
+        hermetic: bool = False,
+        start_time: datetime = None,
+        end_time: datetime = None,
+        artifact_type: ArtifactType = ArtifactType.IMAGE,
+        engine: Engine = Engine.KONFLUX,
+        image_pullspec: str = '',
+        image_tag: str = '',
+        outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS,
+        art_job_url: str = '',
+        build_pipeline_url: str = '',
+        pipeline_commit: str = '',
+        schema_level: int = 0,
+        ingestion_time: datetime = None,
+        record_id: str = '',
+        build_id: str = None,
+        nvr: str = None,
+        build_component: str = '',
+        build_priority: int = constants.KONFLUX_DEFAULT_BUILD_PRIORITY,
+        ec_pipeline_url: str = '',
+        release_pipeline: str = '',
+        released_pullspec: str = '',
+    ):
+        super().__init__(
+            name,
+            group,
+            version,
+            release,
+            assembly,
+            source_repo,
+            commitish,
+            rebase_repo_url,
+            rebase_commitish,
+            start_time,
+            end_time,
+            engine,
+            image_pullspec,
+            image_tag,
+            outcome,
+            art_job_url,
+            build_pipeline_url,
+            pipeline_commit,
+            schema_level,
+            ingestion_time,
+            build_component,
+            build_priority,
+        )
+
+        self.el_target = el_target
+        self.arches = arches
+        self.installed_packages = installed_packages
+        self.installed_rpms = installed_rpms
+        self.parent_images = parent_images
+        self.embargoed = embargoed
+        self.hermetic = hermetic
+        self.artifact_type = artifact_type if isinstance(artifact_type, ArtifactType) else ArtifactType(artifact_type)
+        self.ec_pipeline_url = ec_pipeline_url
+        self.release_pipeline = release_pipeline
+        self.released_pullspec = released_pullspec
+        self.init_uuids(record_id, build_id, nvr)
+
+
+class KonfluxBundleBuildRecord(KonfluxRecord):
+    TABLE_ID = constants.BUNDLES_TABLE_ID
+
+    def __init__(
+        self,
+        name: str = '',
+        group: str = '',
+        version: str = '',
+        release: str = '',
+        assembly: str = '',
+        source_repo: str = '',
+        commitish: str = '',
+        rebase_repo_url: str = '',
+        rebase_commitish: str = '',
+        start_time: datetime = None,
+        end_time: datetime = None,
+        engine: Engine = Engine.KONFLUX,
+        image_pullspec: str = '',
+        image_tag: str = '',
+        outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS,
+        art_job_url: str = '',
+        build_pipeline_url: str = '',
+        pipeline_commit: str = '',
+        schema_level: int = 0,
+        ingestion_time: datetime = None,
+        operand_nvrs: list = [],
+        operator_nvr: str = '',
+        bundle_package_name: str = None,
+        bundle_csv_name: str = None,
+        record_id: str = '',
+        build_id: str = None,
+        nvr: str = None,
+        build_component: str = '',
+        build_priority: int = constants.KONFLUX_DEFAULT_BUILD_PRIORITY,
+        ec_pipeline_url: str = '',
+    ):
+        super().__init__(
+            name,
+            group,
+            version,
+            release,
+            assembly,
+            source_repo,
+            commitish,
+            rebase_repo_url,
+            rebase_commitish,
+            start_time,
+            end_time,
+            engine,
+            image_pullspec,
+            image_tag,
+            outcome,
+            art_job_url,
+            build_pipeline_url,
+            pipeline_commit,
+            schema_level,
+            ingestion_time,
+            build_component,
+            build_priority,
+        )
+        self.operand_nvrs = operand_nvrs
+        self.operator_nvr = operator_nvr
+        self.bundle_package_name = bundle_package_name
+        self.bundle_csv_name = bundle_csv_name
+        self.ec_pipeline_url = ec_pipeline_url
+        self.init_uuids(record_id, build_id, nvr)
+
+
+class KonfluxFbcBuildRecord(KonfluxRecord):
+    TABLE_ID = constants.FBCS_TABLE_ID
+
+    def __init__(
+        self,
+        name: str = '',
+        group: Optional[str] = '',
+        version: str = '',
+        release: str = '',
+        assembly: Union[str, None] = '',
+        source_repo: str = '',
+        commitish: str = '',
+        rebase_repo_url: str = '',
+        rebase_commitish: str = '',
+        start_time: datetime = None,
+        end_time: Optional[datetime] = None,
+        engine: Engine = Engine.KONFLUX,
+        image_pullspec: Optional[str] = None,
+        image_tag: Optional[str] = None,
+        outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS,
+        art_job_url: str = '',
+        build_pipeline_url: str = '',
+        pipeline_commit: str = '',
+        schema_level: int = 0,
+        ingestion_time: datetime = None,
+        bundle_nvrs: List[str] = [],
+        arches: List[str] = [],
+        record_id: str = '',
+        build_id: str = '',
+        nvr: str = '',
+        build_component: str = '',
+        build_priority: int = constants.KONFLUX_DEFAULT_BUILD_PRIORITY,
+        ec_pipeline_url: str = '',
+    ):
+        super().__init__(
+            name,
+            group,
+            version,
+            release,
+            assembly,
+            source_repo,
+            commitish,
+            rebase_repo_url,
+            rebase_commitish,
+            start_time,
+            end_time,
+            engine,
+            image_pullspec,
+            image_tag,
+            outcome,
+            art_job_url,
+            build_pipeline_url,
+            pipeline_commit,
+            schema_level,
+            ingestion_time,
+            build_component,
+            build_priority,
+        )
+        self.bundle_nvrs = bundle_nvrs
+        self.arches = arches
+        self.ec_pipeline_url = ec_pipeline_url
+        self.init_uuids(record_id, build_id, nvr)

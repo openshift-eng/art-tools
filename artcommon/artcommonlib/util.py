@@ -1,0 +1,1547 @@
+import asyncio
+import base64
+import inspect
+import json
+import logging
+import os
+import re
+import tempfile
+from datetime import date, datetime, timedelta, timezone
+from functools import lru_cache
+from json import JSONDecodeError
+from pathlib import Path
+from typing import Any, Callable, Dict, Iterable, List, Optional, OrderedDict, Tuple, Union
+
+import aiohttp
+import requests
+import requests_gssapi
+from artcommonlib import logutil
+from artcommonlib.constants import (
+    GOLANG_BUILDER_IMAGE_NAME,
+    KONFLUX_DEFAULT_IMAGE_REPO,
+    KONFLUX_DEFAULT_NAMESPACE,
+    OCP5_BRIDGE_MINOR_BASE,
+    PRODUCT_BASE_IMAGE_KONFLUX_EC_RELEASE_MAP,
+    PRODUCT_BASE_IMAGE_KONFLUX_RELEASE_MAP,
+    PRODUCT_FBC_STAGE_RELEASE_PLAN_MAP,
+    PRODUCT_KUBECONFIG_MAP,
+    PRODUCT_NAMESPACE_MAP,
+    RELEASE_SCHEDULES,
+)
+from artcommonlib.exectools import cmd_gather_async, limit_concurrency
+from artcommonlib.model import ListModel, Missing
+from artcommonlib.oc_image_info import (
+    oc_image_info__cached__lru,
+    oc_image_info__cached_async__lru,
+)
+from artcommonlib.ocp_version_lineage import resolve_inflight_schedule_group
+from artcommonlib.release_util import SoftwareLifecyclePhase, isolate_el_version_in_release
+from ruamel.yaml import YAML
+from semver import VersionInfo
+from tenacity import before_sleep_log, retry, retry_if_exception_type, stop_after_attempt, wait_fixed
+
+LOGGER = logging.getLogger(__name__)
+KONFLUX_LOGGER = logutil.get_logger(__name__)
+
+K8S_DNS_LABEL_MAX_LENGTH = 63
+K8S_DNS_LABEL_PATTERN = re.compile(r'^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?$')
+
+
+def extract_version_fields(version, at_least=0):
+    """
+    For a specified version, return a list with major, minor, patch.. isolated
+    as integers.
+    :param version: A version to parse
+    :param at_least: The minimum number of fields to find (else raise an error)
+    """
+    try:
+        fields = [int(f) for f in version.strip().split('-')[0].lstrip('v').split('.')]  # v1.17.1 => [ '1', '17', '1' ]
+    except (TypeError, ValueError) as e:
+        raise IOError(f'Unable to parse version fields from {version!r}') from e
+    if len(fields) < at_least:
+        raise IOError(f'Unable to find required {at_least} fields in {version}')
+    return fields
+
+
+def is_ocp_delivery_repo(name: str) -> bool:
+    return name.startswith(("openshift4/", "openshift5/"))
+
+
+def get_utc_now_formatted_str(microseconds: bool = False):
+    return datetime.now(tz=timezone.utc).strftime("%Y%m%d%H%M%S%f" if microseconds else "%Y%m%d%H%M%S")
+
+
+def remove_prefix(s: str, prefix: str) -> str:
+    if s.startswith(prefix):
+        return s[len(prefix) :]
+    else:
+        return s[:]
+
+
+def remove_prefixes(s: str, *args) -> str:
+    for prefix in args:
+        s = remove_prefix(s, prefix)
+    return s
+
+
+def remove_suffix(s: str, suffix: str) -> str:
+    # suffix='' should not call self[:-0].
+    if suffix and s.endswith(suffix):
+        return s[: -len(suffix)]
+    else:
+        return s[:]
+
+
+def isolate_el_version_in_brew_tag(tag: Union[str, int]) -> Optional[int]:
+    """
+    Given a brew tag (target) name, determines whether it contains
+    a RHEL version. If it does, it returns the version value.
+    If it is not found, None is returned. If an int is passed in,
+    the int is just returned.
+    """
+    if isinstance(tag, int):
+        # If this is already an int, just use it.
+        return tag
+    else:
+        try:
+            return int(str(tag))  # int as a str?
+        except ValueError:
+            pass
+    el_version_match = re.search(r"rhel-(\d+)", tag)
+    return int(el_version_match[1]) if el_version_match else None
+
+
+def new_roundtrip_yaml_handler():
+    """
+    Creates and returns a configured YAML handler with specific formatting settings.
+    Returns:
+        YAML: A YAML handler configured with:
+            - round-trip (rt) mode for preserving comments and formatting
+            - disabled flow style for better readability
+            - preserved quotes
+            - 4096 character line width
+            - custom indentation (2 spaces for mappings, 4 for sequences)
+    """
+    yaml = YAML(typ="rt")
+    yaml.default_flow_style = False
+    yaml.preserve_quotes = True
+    yaml.width = 4096
+    yaml.indent(mapping=2, sequence=4, offset=2)
+    return yaml
+
+
+@lru_cache(maxsize=512)
+def convert_remote_git_to_https(source_url: str):
+    """
+    Accepts a source git URL in ssh or https format and return it in a normalized
+    https format (:port on servers is not supported):
+        - https protocol
+        - no trailing /
+    :param source_url: Git remote
+    :return: Normalized https git URL
+    """
+    url = source_url.strip().rstrip('/')
+    url = remove_prefixes(url, 'http://', 'https://', 'git://', 'git@', 'ssh://')
+    url = remove_suffix(url, '.git')
+    url = url.split('@', 1)[-1]  # Strip username@
+
+    if url.find(':') > -1:
+        server, org_repo = url.rsplit(':', 1)
+    elif url.rfind('/') > -1:
+        server, org_repo = url.rsplit('/', 1)
+    else:
+        return f'https://{url}'  # weird..
+
+    return f'https://{server}/{org_repo}'
+
+
+@lru_cache(maxsize=512)
+def convert_remote_git_to_ssh(url):
+    """
+    Accepts a remote git URL and turns it into a git@
+    ssh form.
+    :param url: The initial URL
+    :return: A url in git@server:repo.git
+    """
+    server, org, repo_name = split_git_url(url)
+    return f'git@{server}:{org}/{repo_name}.git'
+
+
+def _extract_git_hostname(url: str) -> str | None:
+    """Extract the hostname from a git remote URL (standard or SCP-style)."""
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+    if parsed.hostname:
+        return parsed.hostname.lower()
+    # SCP-style: git@github.com:org/repo.git or user@host:path
+    m = re.match(r'^(?:[^@]+@)?([^:/]+)[:/]', url)
+    return m.group(1).lower() if m else None
+
+
+def ensure_github_https_url(url: str) -> str:
+    """Convert a GitHub SSH/git URL to HTTPS, leaving non-GitHub URLs unchanged.
+
+    This is used when switching git CLI operations from SSH to HTTPS + GIT_ASKPASS.
+    Non-GitHub URLs (distgit, gitlab, etc.) are returned as-is so that their
+    existing auth mechanisms (Kerberos, SSH agent) continue to work.
+
+    :param url: Any git remote URL
+    :return: HTTPS URL if the input points to github.com, otherwise the original URL
+    """
+    if _extract_git_hostname(url.strip()) != "github.com":
+        return url
+    return convert_remote_git_to_https(url)
+
+
+def split_git_url(url) -> (str, str, str):
+    """
+    :param url: A remote ssh or https github url
+    :return: Splits a github url into the server name, org, and repo name
+    """
+    https_normalized = convert_remote_git_to_https(url)
+    url = https_normalized[8:]  # strip https://
+    server, repo = url.split('/', 1)  # e.g. 'github.com', 'openshift/origin'
+    org, repo_name = repo.split('/', 1)
+    return server, org, repo_name
+
+
+@retry(reraise=True, wait=wait_fixed(10), stop=stop_after_attempt(3))
+async def download_file_from_github(repository, branch, path, github_client, destination):
+    """Download a file from a GitHub repository using the PyGithub Contents API.
+
+    :param repository: Git remote URL (ssh or https)
+    :param branch: Branch or commit ref to download from
+    :param path: Path to the file within the repository
+    :param github_client: An authenticated github.Github instance
+    :param destination: Local file path to write the downloaded content to
+    """
+    _, org, repo_name = split_git_url(repository)
+
+    def _fetch():
+        repo = github_client.get_repo(f"{org}/{repo_name}")
+        return repo.get_contents(path, ref=branch).decoded_content
+
+    LOGGER.info('Downloading %s/%s/%s ref=%s ...', org, repo_name, path, branch)
+    data = await asyncio.to_thread(_fetch)
+    with open(str(destination), "wb") as f:
+        f.write(data)
+
+
+def merge_objects(a, b):
+    """Merges two, potentially deep, objects into a new one and returns the result.
+    'a' is layered over 'b' and is dominant when necessary. The output is 'c'.
+    """
+    if not isinstance(a, dict) or not isinstance(b, dict):
+        return a
+    c: OrderedDict = b.copy()
+    for k, v in a.items():
+        c[k] = merge_objects(v, b.get(k))
+        if k not in b:
+            # move new entry to the beginning
+            c.move_to_end(k, last=False)
+    return c
+
+
+def normalize_release_date(value: str) -> str:
+    """
+    Normalize a release date string to YYYY-Mon-DD format (e.g. 2026-Mar-31).
+    Accepts YYYY-Mon-DD (passthrough) or YYYY-MM-DD (converted).
+
+    Arg(s):
+        value: Date string in YYYY-Mon-DD or YYYY-MM-DD format
+    Return Value(s):
+        str: Date in YYYY-Mon-DD format
+    """
+    elliott_format = "%Y-%b-%d"
+    try:
+        datetime.strptime(value, elliott_format)
+        return value
+    except ValueError:
+        pass
+
+    try:
+        parsed = datetime.strptime(value, "%Y-%m-%d")
+        return parsed.strftime(elliott_format)
+    except ValueError:
+        pass
+
+    raise ValueError(
+        f"Release date '{value}' must be in YYYY-Mon-DD format (e.g. 2026-Mar-31) "
+        f"or YYYY-MM-DD format (e.g. 2026-03-31)"
+    )
+
+
+def is_future_release_date(date_str):
+    """
+    If the input date is in future then return True else False
+    """
+    formats = ["%Y-%m-%d", "%Y-%b-%d"]
+    for fmt in formats:
+        try:
+            target_date = datetime.strptime(date_str, fmt).replace(tzinfo=timezone.utc)
+            return target_date > datetime.now(tz=timezone.utc)
+        except ValueError:
+            continue
+    raise ValueError(f"Unable to parse date string '{date_str}' with any of the supported formats: {formats}")
+
+
+def get_assembly_release_date(assembly, group, date=None):
+    """
+    Get assembly release release date from release schedule API.
+
+    :param assembly: Assembly name
+    :param group: Group name
+    :param date: Optional explicitly provided date. Accepts formats:
+                 - YYYY-MM-DD (e.g., 2026-03-31)
+                 - YYYY-MMM-DD (e.g., 2026-Mar-31)
+                 If provided, this date is used instead of fetching from the API.
+    :raises ValueError: If the assembly release date is not found
+    :return: Date in format YYYY-MMM-DD (e.g., 2026-Mar-31)
+    """
+    # If a date is explicitly provided, normalize it to the expected format
+    if date:
+        # Try to parse the date in multiple formats and return in YYYY-MMM-DD format
+        for fmt in ["%Y-%m-%d", "%Y-%b-%d"]:
+            try:
+                parsed_date = datetime.strptime(date, fmt)
+                return parsed_date.strftime("%Y-%b-%d")
+            except ValueError:
+                continue
+        # If neither format worked, return the date as-is (will fail later with better context)
+        return date
+
+    s = requests.Session()
+    auth = requests_gssapi.HTTPSPNEGOAuth(mutual_authentication=requests_gssapi.OPTIONAL)
+    s.post('https://pp.engineering.redhat.com/oidc/authenticate', auth=auth)
+    response = s.get(f'{RELEASE_SCHEDULES}/{group}.z/?fields=all_ga_tasks', headers={'Accept': 'application/json'})
+    response.raise_for_status()
+    try:
+        data = response.json()
+        for release in data['all_ga_tasks']:
+            if assembly in release['name']:
+                # convert date format for advisory usage, 2024-02-13 -> 2024-Feb-13
+                return datetime.strptime(release['date_start'], "%Y-%m-%d").strftime("%Y-%b-%d")
+    except KeyError:
+        pass
+    raise ValueError(f'Assembly release date not found for {assembly}')
+
+
+async def get_assembly_release_date_async(release_name: str):
+    """
+    Get assembly release release date from release schedule API.
+
+    :raises ValueError: If the assembly release date is not found
+    """
+    version = VersionInfo.parse(release_name)
+    release_train = f'openshift-{version.major}.{version.minor}.z'
+    async with aiohttp.ClientSession() as session:
+        auth = requests_gssapi.HTTPSPNEGOAuth(mutual_authentication=requests_gssapi.OPTIONAL)
+        await session.post('https://pp.engineering.redhat.com/oidc/authenticate', auth=auth)
+        async with session.get(
+            f'{RELEASE_SCHEDULES}/{release_train}/?fields=all_ga_tasks', headers={'Accept': 'application/json'}
+        ) as response:
+            response.raise_for_status()
+            data = await response.json()
+            for release in data['all_ga_tasks']:
+                if release_name in release['name']:
+                    # convert date format for advisory usage, 2024-02-13 -> 2024-Feb-13
+                    return datetime.strptime(release['date_start'], "%Y-%m-%d").strftime("%Y-%b-%d")
+    raise ValueError(f'Assembly release date not found for {release_name}')
+
+
+def is_release_next_week(group):
+    """
+    Check if there release of group need to release in the near week
+    """
+    s = requests.Session()
+    auth = requests_gssapi.HTTPSPNEGOAuth(mutual_authentication=requests_gssapi.OPTIONAL)
+    s.post('https://pp.engineering.redhat.com/oidc/authenticate', auth=auth)
+    release_schedules = s.get(
+        f'{RELEASE_SCHEDULES}/{group}.z/?fields=all_ga_tasks', headers={'Accept': 'application/json'}
+    )
+    for release in release_schedules.json()['all_ga_tasks']:
+        release_date = datetime.strptime(release['date_finish'], "%Y-%m-%d").date()
+        if release_date > date.today() and release_date <= date.today() + timedelta(days=7):
+            return True
+    return False
+
+
+def get_inflight(assembly, group, date=None):
+    """
+    Get inflight release name from current assembly release.
+
+    Searches the previous minor's release schedule for a Y-1 z-stream release
+    whose date_start (the scheduled GA/errata date from Product Pages) falls
+    within 7 days before (or on the same day as) the assembly release date.
+    When multiple releases qualify, the latest is chosen.
+    A same-day release is included because it is expected to ship by the time
+    the assembly reaches customers.
+
+    :param assembly: Assembly name
+    :param group: Group name
+    :param date: Optional explicitly provided date. Accepts YYYY-MM-DD
+                 (e.g., 2026-03-31) or YYYY-MMM-DD (e.g., 2026-Mar-31)
+    :return: Version string (e.g., '4.21.16') of the in-flight release, or None
+    """
+    inflight_release = None
+    assembly_release_date = get_assembly_release_date(assembly, group, date)
+    major, minor = get_ocp_version_from_group(group)
+
+    try:
+        prev_group = resolve_inflight_schedule_group(major, minor)
+    except ValueError:
+        # No previous version exists (e.g., OCP 3.0)
+        return None
+
+    s = requests.Session()
+    auth = requests_gssapi.HTTPSPNEGOAuth(mutual_authentication=requests_gssapi.OPTIONAL)
+    s.post('https://pp.engineering.redhat.com/oidc/authenticate', auth=auth)
+    response = s.get(
+        f'{RELEASE_SCHEDULES}/{prev_group}.z/?fields=all_ga_tasks',
+        headers={'Accept': 'application/json'},
+    )
+    response.raise_for_status()
+    try:
+        data = response.json()
+        assembly_date = datetime.strptime(assembly_release_date, "%Y-%b-%d")
+        best_candidate = None
+        best_date = None
+        for release in data['all_ga_tasks']:
+            release_date = datetime.strptime(release['date_start'], "%Y-%m-%d")
+            if release_date > assembly_date:
+                continue
+            days_diff = (assembly_date - release_date).days
+            if days_diff <= 7:  # Y-1 release within 7-day lookback window
+                match = re.search(r'\d+\.\d+\.\d+', release['name'])
+                if match:
+                    if best_date is None or release_date > best_date:
+                        best_candidate = match.group()
+                        best_date = release_date
+                else:
+                    LOGGER.warning(f"Release '{release['name']}' qualified but has no X.Y.Z version in its name")
+
+        if best_candidate:
+            inflight_release = best_candidate
+
+    except json.JSONDecodeError as e:
+        raise ValueError(f'Failed to parse JSON for {prev_group}: {e}')
+    except ValueError as e:
+        if "time data" in str(e) or "does not match format" in str(e):
+            raise ValueError(
+                f"Invalid date format when comparing assembly_release_date with release['date_start'] for {prev_group}: {e}"
+            )
+        else:
+            raise  # Re-raise other ValueErrors unchanged
+    except KeyError as e:
+        raise ValueError(f'Failed to parse release schedule data for {prev_group}: {e}')
+
+    if not inflight_release:
+        LOGGER.info(
+            f'Did not find a {prev_group} release that is releasing ~ in the same week as {assembly} {assembly_release_date}'
+        )
+    else:
+        LOGGER.info(f'Found {inflight_release} as in-flight release for {assembly} {assembly_release_date}')
+
+    return inflight_release
+
+
+def isolate_rhel_major_from_version(version: str) -> Optional[int]:
+    """
+    E.g. '9.2' => 9
+    """
+
+    match = re.fullmatch(r"(\d+).(\d+)", version)
+    if match:
+        return int(match[1])
+    return None
+
+
+def isolate_rhel_major_from_distgit_branch(branch: str) -> Optional[int]:
+    """
+    E.g. 'rhaos-4.16-rhel-9' => 9
+    """
+
+    match = re.fullmatch(r"^rhaos-\d+\.\d+-rhel-(\d+)", branch)
+    if match:
+        return int(match[1])
+    return None
+
+
+def get_ocp_version_from_group(group):
+    """
+    Extract ocp version from group value openshift-4.15 --> 4, 15
+    """
+    match = re.fullmatch(r"openshift-(\d+).(\d+)", group)
+    if not match:
+        raise ValueError(f"Invalid group name: {group}")
+    return int(match[1]), int(match[2])
+
+
+def deep_merge(dict1, dict2):
+    """
+    Recursively merge two dictionaries.
+
+    Returns:
+    A new dictionary with merged values.
+    """
+
+    merged = dict1.copy()
+
+    for key, value in dict2.items():
+        if isinstance(merged.get(key), dict) and isinstance(value, dict):
+            # If both values are dictionaries, merge them recursively
+            merged[key] = deep_merge(merged[key], value)
+        else:
+            # Otherwise, simply update the value
+            merged[key] = value
+
+    return merged
+
+
+def isolate_major_minor_in_group(group_name: str) -> Tuple[Optional[int], Optional[int]]:
+    """
+    Given a group name, determines whether it contains an OCP {major}.{minor} version.
+    If it does, it returns the version value as (int, int).
+    If it is not found, (None, None) is returned.
+    """
+
+    match = re.fullmatch(r"openshift-(\d+).(\d+)", group_name)
+    if not match:
+        return None, None
+    return int(match[1]), int(match[2])
+
+
+def uses_konflux_imagestream_override(version: str) -> bool:
+    """
+    Check if an OCP version uses Konflux imagestream override.
+    All OCP versions >= 4.12 (including 5.0+) use Konflux imagestream override.
+
+    :param version: Version string in format "4.22", "5.0", etc.
+    :return: True if version >= 4.12, False otherwise
+    :raises ValueError: If version string is not in valid format
+    """
+    match = re.fullmatch(r"(\d+)\.(\d+)", version)
+    if not match:
+        raise ValueError(f"Invalid version string: {version!r}. Expected format: 'MAJOR.MINOR' (e.g., '4.22', '5.0')")
+
+    return (int(match[1]), int(match[2])) >= (4, 12)
+
+
+def get_art_prod_image_repo_for_version(major: int, repo_type: str = "dev") -> str:
+    """
+    Get the ART production image repository for a specific OCP major version.
+
+    For OCP 4.x: quay.io/openshift-release-dev/ocp-v4.0-art-dev
+    For OCP 5.x: quay.io/openshift-release-dev/ocp-v5.0-art-dev
+
+    :param major: OCP major version (e.g., 4, 5)
+    :param repo_type: Type of repository - "dev", "dev-priv", "prev", or "test"
+    :return: Full repository URL
+    :raises ValueError: If major version < 4 or repo_type is invalid
+
+    Examples:
+        >>> get_art_prod_image_repo_for_version(4, "dev")
+        'quay.io/openshift-release-dev/ocp-v4.0-art-dev'
+        >>> get_art_prod_image_repo_for_version(5, "dev")
+        'quay.io/openshift-release-dev/ocp-v5.0-art-dev'
+        >>> get_art_prod_image_repo_for_version(5, "dev-priv")
+        'quay.io/openshift-release-dev/ocp-v5.0-art-dev-priv'
+
+    TODO: In the future, this function will respect repository configurations in ocp-build-data
+    instead of using hardcoded repository URLs. This will allow for more flexibility in
+    configuring image repositories per OCP version.
+    """
+    if major < 4:
+        raise ValueError(f"ART image repos only exist for OCP 4.x and later (requested: {major}.x)")
+
+    valid_repo_types = {"dev", "dev-priv", "prev", "test"}
+    if repo_type not in valid_repo_types:
+        raise ValueError(f"Invalid repo_type '{repo_type}'. Must be one of: {valid_repo_types}")
+
+    return f"quay.io/openshift-release-dev/ocp-v{major}.0-art-{repo_type}"
+
+
+def get_ocp5_bridge_release(major: int, minor: int) -> Tuple[int, int]:
+    """
+    Return the OCP 4.x compat bridge release for an OCP 5.x version.
+
+    5.0 -> 4.23, 5.1 -> 4.24, and so on.
+    """
+    if major != 5:
+        raise ValueError(f"get_ocp5_bridge_release only supports OCP 5.x (got {major}.{minor})")
+    if minor < 0:
+        raise ValueError(f"Invalid OCP minor version: {major}.{minor}")
+
+    return 4, OCP5_BRIDGE_MINOR_BASE + minor
+
+
+def validate_bridge_release_basis_group(bridge_group: str, basis_group: str) -> None:
+    """
+    Validate bridge_release.basis_group for an OCP 5.x compat bridge group.
+
+    The bridge group (e.g. openshift-4.23) must be the sibling of the basis group
+    (e.g. openshift-5.0) per get_ocp5_bridge_release (5.0 -> 4.23, 5.1 -> 4.24, ...).
+    """
+    bridge_major, bridge_minor = get_ocp_version_from_group(bridge_group)
+    basis_major, basis_minor = get_ocp_version_from_group(basis_group)
+
+    try:
+        expected_bridge_major, expected_bridge_minor = get_ocp5_bridge_release(basis_major, basis_minor)
+    except ValueError as e:
+        raise ValueError(
+            f"bridge_release.basis_group {basis_group!r} is not a valid OCP 5.x basis "
+            f"for bridge group {bridge_group!r}: {e}"
+        ) from e
+
+    if (bridge_major, bridge_minor) != (expected_bridge_major, expected_bridge_minor):
+        if bridge_minor < OCP5_BRIDGE_MINOR_BASE:
+            raise ValueError(f"{bridge_group!r} is not an OCP 5.x bridge release group")
+        expected_basis_group = f"openshift-5.{bridge_minor - OCP5_BRIDGE_MINOR_BASE}"
+        raise ValueError(
+            f"bridge_release.basis_group for {bridge_group!r} must be {expected_basis_group!r}, found {basis_group!r}"
+        )
+
+
+def extract_group_from_nvr(nvr: str) -> Optional[str]:
+    """
+    Extract the group from an NVR by matching -vMAJOR.MINOR pattern.
+
+    Example NVR: "ose-azure-file-csi-driver-container-v4.13.0-202409181807.p0.g15e6f80.assembly.stream.el8"
+    Returns: "openshift-4.13"
+
+    :param nvr: Build NVR string
+    :return: Group string like "openshift-4.13" or None if pattern not found
+    """
+    # Match -vMAJOR.MINOR pattern (e.g., -v4.13, -v4.18)
+    match = re.search(r'-v(\d+)\.(\d+)\.', nvr)
+    if match:
+        major, minor = match.groups()
+        if GOLANG_BUILDER_IMAGE_NAME in nvr:
+            el_v = isolate_el_version_in_release(nvr)
+            if el_v is None:
+                return None
+            return f"rhel-{el_v}-golang-{major}.{minor}"
+        return f"openshift-{major}.{minor}"
+    return None
+
+
+async def run_limited_unordered(func, args: Iterable, limit: int) -> List:
+    """
+    limit the concurrency of asyncio tasks - adapted from https://death.andgravity.com/limit-concurrency
+    :param func: async function to run against the args
+    :param args: collection of args to be run (each arg is a list of parameters to func)
+    :param limit: max number of tasks to run concurrently
+    :return: an iterator of the task results (not necessarily in the order of args given)
+
+    example usage:
+      async def foo(bar, baz):
+        await asyncio.sleep(1)
+        return bar + baz
+
+      print(await run_limited_unordered(foo, {(1, 2), (3, 4), ...}, limit=2))
+      -> [3, 7, ...]  # (after a wait of len(args)/2)
+    """
+    return [it async for it in run_limited_generator(func, args, limit)]
+
+
+async def run_limited_generator(func, args: Iterable, limit: int) -> Iterable:
+    tasks = map(lambda params: func(*params), args)
+    async for task in _limit_concurrency(tasks, limit):
+        yield await task
+
+
+async def _limit_concurrency(tasks: List, limit: int):
+    tasks = iter(tasks)
+    complete = False
+    pending = set()
+
+    while pending or not complete:
+        while len(pending) < limit and not complete:
+            try:
+                task = next(tasks)
+            except StopIteration:
+                complete = True
+            else:
+                pending.add(asyncio.ensure_future(task))
+
+        if not pending:
+            return
+
+        done, pending = await asyncio.wait(
+            pending,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        while done:
+            yield done.pop()
+
+
+class KubeCondition:
+    def __init__(self, condition_obj: Dict):
+        self.type = condition_obj.get('type')
+        self.message = condition_obj.get('message')
+        self.reason = condition_obj.get('reason')
+        self.status = condition_obj.get('status')
+        self.last_transition_time = None
+        if condition_obj.get('lastTransitionTime'):
+            self.last_transition_time = datetime.fromisoformat(condition_obj.get('lastTransitionTime').rstrip("Z"))
+
+    def is_status_true(self) -> bool:
+        return str(self.status).lower() == 'true'
+
+    def is_status_false(self) -> bool:
+        return str(self.status).lower() == 'false'
+
+    @staticmethod
+    def find_condition(obj, condition_type: str, _default: Optional["KubeCondition"] = None) -> "KubeCondition":
+        """
+        Searches a kube object's status.conditions for a specified condition type. Returns the
+        condition entry if found. Otherwise, returns _default value.
+        """
+        try:
+            for condition in obj.get('status', {}).get('conditions', []):
+                if condition['type'] == condition_type:
+                    return KubeCondition(condition)
+        except AttributeError:
+            pass
+        return _default
+
+
+def is_cachito_enabled(metadata, group_config, logger):
+    """
+    Cachito will be configured if `cachito.enabled` is True in image metadata or `cachito.enabled` is True in group config.
+    https://osbs.readthedocs.io/en/latest/users.html#remote-sources
+    """
+    cachito_enabled = False
+    if metadata.config.cachito.enabled:
+        cachito_enabled = True
+        logger.info("cachito/cachi2 enabled from metadata config")
+    elif metadata.config.cachito.enabled is Missing:
+        if group_config.cachito.enabled:
+            cachito_enabled = True
+            logger.info("cachito/cachi2 enabled from group config")
+        elif isinstance(metadata.config.content.source.pkg_managers, ListModel):
+            logger.warning(
+                f"pkg_managers directive for {metadata.name} has no effect since cachito/cachi2 is not enabled in "
+                "image metadata or group config."
+            )
+    if cachito_enabled and not metadata.has_source():
+        logger.warning("Cachito integration for distgit-only image %s is not supported.", metadata.name)
+        cachito_enabled = False
+    return cachito_enabled
+
+
+def detect_package_managers(metadata, dest_dir: Path):
+    """Detect and return package managers used by the source
+    :return: a list of package managers
+    """
+    if not dest_dir or not dest_dir.is_dir():
+        raise FileNotFoundError(f"Distgit directory for image {metadata.distgit_key} hasn't been cloned.")
+    pkg_manager_files = {
+        "gomod": ["go.mod"],
+        "npm": ["npm-shrinkwrap.json", "package-lock.json"],
+        "pip": ["requirements.txt", "requirements-build.txt"],
+        "yarn": ["yarn.lock"],
+    }
+    pkg_managers: List[str] = []
+    for pkg_manager, files in pkg_manager_files.items():
+        if any(dest_dir.joinpath(file).is_file() for file in files):
+            pkg_managers.append(pkg_manager)
+    return pkg_managers
+
+
+@retry(
+    reraise=True,
+    retry=retry_if_exception_type(ChildProcessError),
+    wait=wait_fixed(30),
+    stop=stop_after_attempt(10),
+    before_sleep=before_sleep_log(LOGGER, logging.WARNING),
+)
+async def get_konflux_data(pullspec: str, mode: str = "attestation", registry_auth_file: Optional[str] = None) -> str:
+    """
+    Retrieve Konflux data (attestation or signature) for a given pullspec.
+
+    :param pullspec: Container image pullspec
+    :param mode: Type of data to download ('attestation' or 'signature')
+    :param registry_auth_file: Optional registry auth file path
+    :return: Downloaded data as string
+    :raises ValueError: If mode is not 'attestation' or 'signature'
+    """
+    if mode not in ('attestation', 'signature'):
+        raise ValueError(f"mode must be 'attestation' or 'signature', got: {mode}")
+
+    cmd = f"cosign download {mode} {pullspec}"
+    env = os.environ.copy()
+    if registry_auth_file:
+        LOGGER.debug("Using registry auth file: %s", registry_auth_file)
+        env["REGISTRY_AUTH_FILE"] = registry_auth_file
+    _, out, _ = await cmd_gather_async(cmd, env=env)
+
+    return out.strip()
+
+
+async def fetch_slsa_attestation(
+    image_pullspec: str, build_name: str, registry_auth_file: Optional[str] = None
+) -> Optional[Dict]:
+    """
+    Fetch SLSA attestation for the given image pullspec.
+
+    :param image_pullspec: Container image pullspec
+    :param build_name: Build name for logging purposes
+    :param registry_auth_file: Optional registry auth file path
+    :return: Parsed SLSA attestation as dict, or None if failed
+    """
+    try:
+        # Get SLSA attestation for the build
+        LOGGER.info(f'Fetching SLSA attestation for {image_pullspec}')
+        attestation = await get_konflux_data(
+            pullspec=image_pullspec,
+            mode="attestation",
+            registry_auth_file=registry_auth_file,
+        )
+        return json.loads(base64.b64decode(json.loads(attestation)["payload"]).decode("utf-8"))
+
+    except ChildProcessError:
+        LOGGER.warning('Failed to fetch SLSA attestation for %s (%s) after all retries', build_name, image_pullspec)
+        return None
+
+    except (JSONDecodeError, Exception) as e:
+        LOGGER.warning('Failed to parse SLSA attestation for %s: %s', build_name, e)
+        return None
+
+
+async def _oc_image_mirror(cmd: list, description: str, timeout: int = 1800):
+    """Run oc image mirror, streaming output and logging only summary/error lines."""
+
+    async def _drain_stream(stream, collected: list, label: str):
+        async for raw_line in stream:
+            line = raw_line.decode("utf-8", errors="replace").rstrip()
+            collected.append(line)
+            stripped = line.strip()
+            if stripped.startswith(("info:", "error:", "warning:")):
+                LOGGER.info(f"oc image mirror [{label}]: {stripped}")
+
+    LOGGER.info(f"Executing: {' '.join(cmd)}")
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout_lines: list[str] = []
+    stderr_lines: list[str] = []
+    try:
+        await asyncio.wait_for(
+            asyncio.gather(
+                _drain_stream(proc.stdout, stdout_lines, "stdout"),
+                _drain_stream(proc.stderr, stderr_lines, "stderr"),
+                proc.wait(),
+            ),
+            timeout=timeout,
+        )
+    except TimeoutError:
+        LOGGER.warning(f"Timeout occurred while {description} after {timeout // 60} minutes")
+        proc.kill()
+        await proc.wait()
+        raise
+
+    if proc.returncode != 0:
+        stdout_text = "\n".join(stdout_lines)
+        stderr_text = "\n".join(stderr_lines)
+        LOGGER.error(
+            f"oc image mirror failed while {description} (rc={proc.returncode})\n"
+            f"stdout:\n{stdout_text}\nstderr:\n{stderr_text}"
+        )
+        raise ChildProcessError(f"Process {cmd!r} exited with code {proc.returncode}.")
+
+
+@limit_concurrency(limit=32)
+@retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(5), retry=retry_if_exception_type(ChildProcessError))
+async def sync_to_quay(source_pullspec, destination_repo, tags=None):
+    LOGGER.info(f"Syncing image from {source_pullspec} to {destination_repo}")
+    cmd = [
+        'oc',
+        'image',
+        'mirror',
+        '--keep-manifest-list',
+        source_pullspec,
+        destination_repo,
+    ]
+
+    konflux_registry_auth_file = os.getenv("QUAY_AUTH_FILE")
+    if konflux_registry_auth_file:
+        cmd += [f'--registry-config={konflux_registry_auth_file}']
+
+    await _oc_image_mirror(cmd, f"syncing image from {source_pullspec} to {destination_repo}")
+    LOGGER.info(f"Syncing from {source_pullspec} to {destination_repo} completed")
+
+    # Sync the builds to a "sha" tag as well to prevent it from being garbage collected in quay
+    shasum = source_pullspec.split("@sha256:")[1]
+    LOGGER.info(f"Tagging image from {destination_repo}@sha256:{shasum} to {destination_repo}:sha256-{shasum}")
+    cmd = [
+        'oc',
+        'image',
+        'mirror',
+        '--keep-manifest-list',
+        f"{destination_repo}@sha256:{shasum}",
+        f"{destination_repo}:sha256-{shasum}",
+    ]
+    if konflux_registry_auth_file:
+        cmd += [f'--registry-config={konflux_registry_auth_file}']
+
+    await _oc_image_mirror(
+        cmd, f"tagging image from {destination_repo}@sha256:{shasum} to {destination_repo}:sha256-{shasum}"
+    )
+    LOGGER.info(f"Tagging from {destination_repo}@sha256:{shasum} to {destination_repo}:sha256-{shasum} completed")
+
+    # Mirror optional tags if provided
+    if tags:
+        for tag in tags:
+            LOGGER.info(f"Tagging image from {destination_repo}@sha256:{shasum} to {destination_repo}:{tag}")
+            cmd = [
+                'oc',
+                'image',
+                'mirror',
+                '--keep-manifest-list',
+                f"{destination_repo}@sha256:{shasum}",
+                f"{destination_repo}:{tag}",
+            ]
+            if konflux_registry_auth_file:
+                cmd += [f'--registry-config={konflux_registry_auth_file}']
+            await _oc_image_mirror(
+                cmd, f"tagging image from {destination_repo}@sha256:{shasum} to {destination_repo}:{tag}"
+            )
+            LOGGER.info(f"Tagging from {destination_repo}@sha256:{shasum} to {destination_repo}:{tag} completed")
+
+
+def _extract_images_from_catalog_json(catalog_path: str) -> list[str]:
+    """Parse catalog.json (FBC format) and return relatedImages from olm.bundle entries.
+
+    Handles three catalog.json formats:
+      1. Single JSON document (array or object)
+      2. Compact NDJSON (one JSON object per line)
+      3. Pretty-printed concatenated JSON (multiple multi-line objects)
+
+    Only extracts from entries where schema == "olm.bundle", mirroring:
+        jq -r 'select(.schema == "olm.bundle") | .relatedImages[].image'
+    """
+    with open(catalog_path, 'r') as f:
+        content = f.read()
+
+    entries: list[dict] = []
+    try:
+        parsed = json.loads(content)
+        if isinstance(parsed, list):
+            entries = parsed
+        elif isinstance(parsed, dict):
+            entries = [parsed]
+    except json.JSONDecodeError:
+        pass
+
+    if not entries:
+        for line in content.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+                if isinstance(obj, dict):
+                    entries.append(obj)
+            except json.JSONDecodeError:
+                continue
+
+    if not entries:
+        decoder = json.JSONDecoder()
+        idx = 0
+        content_len = len(content)
+        while idx < content_len:
+            remaining = content[idx:].lstrip()
+            if not remaining:
+                break
+            idx = content_len - len(remaining)
+            try:
+                obj, end_offset = decoder.raw_decode(content, idx)
+                if isinstance(obj, dict):
+                    entries.append(obj)
+                idx = end_offset
+            except json.JSONDecodeError:
+                break
+
+    if not entries:
+        raise RuntimeError(f"Failed to parse catalog.json: no valid JSON entries found in {catalog_path}")
+
+    images: list[str] = []
+    bundle_count = 0
+    for entry in entries:
+        if entry.get('schema') != 'olm.bundle':
+            continue
+        bundle_count += 1
+        for ri in entry.get('relatedImages', []):
+            img = ri.get('image')
+            if img:
+                images.append(img)
+
+    LOGGER.info(
+        f"Parsed catalog.json: {len(entries)} entries, {bundle_count} olm.bundle(s), "
+        f"{len(images)} relatedImages extracted"
+    )
+    return images
+
+
+async def extract_related_images_from_fbc(fbc_pullspec: str, product: str) -> list[str]:
+    """
+    Extract related image pullspecs from FBC image using ORAS workflow.
+
+    :param fbc_pullspec: FBC image pullspec
+    :param product: Product name for URL transformation (e.g., 'openshift', 'oadp')
+    :return: List of image pullspecs from art-images repository
+    """
+    ATTACHED_ARTIFACT_TYPE = 'application/vnd.konflux-ci.attached-artifact'
+    RELATED_IMAGES_MEDIA_TYPE = 'related-images'
+    RENDERED_CATALOG_MEDIA_TYPE = 'rendered-catalog'
+
+    LOGGER.info(f"Extracting related images from FBC: {fbc_pullspec}")
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        # Step 1: Discover attached artifacts using ORAS
+        LOGGER.info("Discovering attached artifacts...")
+        discover_cmd = ['oras', 'discover', '--format', 'json', fbc_pullspec]
+        rc, discover_output, discover_stderr = await cmd_gather_async(discover_cmd, cwd=temp_dir)
+
+        if rc != 0:
+            raise RuntimeError(
+                f"ORAS discover command failed: {' '.join(discover_cmd)}\nReturn code: {rc}\nStdout: {discover_output}\nStderr: {discover_stderr}"
+            )
+
+        # Parse JSON and extract digest for the attached artifact
+        discover_data = json.loads(discover_output)
+        LOGGER.debug(f"ORAS discover response: {discover_data}")
+
+        digest = None
+        catalog_digest = None  # Keep track of catalog artifact as fallback
+        referrers = discover_data.get('referrers', [])
+        LOGGER.info(f"Found {len(referrers)} referrers")
+
+        # Look for related-images or rendered-catalog (fallback)
+        for i, referrer in enumerate(referrers):
+            artifact_type = referrer.get('artifactType')
+            annotations = referrer.get('annotations', {})
+            attached_media_type = annotations.get('attachedMediaType', '')
+            LOGGER.debug(
+                f"Referrer {i}: artifactType={artifact_type}, attachedMediaType={attached_media_type}, digest={referrer.get('digest')}"
+            )
+
+            if artifact_type == ATTACHED_ARTIFACT_TYPE:
+                if RELATED_IMAGES_MEDIA_TYPE in attached_media_type:
+                    digest = referrer.get('digest')
+                    LOGGER.info(f"Found '{RELATED_IMAGES_MEDIA_TYPE}' artifact with digest: {digest}")
+                    break
+                # If we find rendered-catalog, save it but keep looking for related-images
+                elif RENDERED_CATALOG_MEDIA_TYPE in attached_media_type:
+                    catalog_digest = referrer.get('digest')
+                    LOGGER.info(f"Found '{RENDERED_CATALOG_MEDIA_TYPE}' artifact with digest: {catalog_digest}")
+
+        # If we didn't find related-images, use catalog if available
+        if not digest and catalog_digest:
+            digest = catalog_digest
+            LOGGER.info(
+                f"No '{RELATED_IMAGES_MEDIA_TYPE}' artifact found, using '{RENDERED_CATALOG_MEDIA_TYPE}' artifact with digest: {digest}"
+            )
+
+        if not digest:
+            available_artifacts = [
+                {
+                    'artifactType': r.get('artifactType'),
+                    'attachedMediaType': r.get('annotations', {}).get('attachedMediaType', 'N/A'),
+                }
+                for r in referrers
+            ]
+            raise RuntimeError(
+                f"No attached artifact found with type '{ATTACHED_ARTIFACT_TYPE}' and media type containing "
+                f"'{RELATED_IMAGES_MEDIA_TYPE}' or '{RENDERED_CATALOG_MEDIA_TYPE}'. "
+                f"Available artifacts: {available_artifacts}"
+            )
+
+        # Step 2: Pull the attached artifact
+        LOGGER.info(f"Pulling attached artifact with digest: {digest}")
+        # Extract the base registry and repo from the original FBC pullspec
+        # We need to preserve the full repository path, only remove the tag/digest
+        if '@' in fbc_pullspec:
+            # Format: repo@digest
+            base_pullspec = fbc_pullspec.split('@')[0]
+        elif ':' in fbc_pullspec:
+            # Format: repo:tag - need to find the last : that separates tag
+            # Split by : and rejoin all but the last part (which is the tag)
+            parts = fbc_pullspec.split(':')
+            if len(parts) > 2:  # registry:port/repo:tag format
+                # Find the tag part (everything after the last / and :)
+                base_pullspec = ':'.join(parts[:-1])
+            else:
+                base_pullspec = parts[0]
+        else:
+            base_pullspec = fbc_pullspec
+        artifact_pullspec = f"{base_pullspec}@{digest}"
+        pull_cmd = ['oras', 'pull', artifact_pullspec]
+        LOGGER.info(f"Pulling from: {artifact_pullspec}")
+        rc, pull_output, pull_stderr = await cmd_gather_async(pull_cmd, cwd=temp_dir)
+
+        if rc != 0:
+            raise RuntimeError(
+                f"ORAS pull command failed: {' '.join(pull_cmd)}\nReturn code: {rc}\nStdout: {pull_output}\nStderr: {pull_stderr}"
+            )
+
+        # Step 3: Read and process the catalog file
+        pulled_files = os.listdir(temp_dir)
+        LOGGER.info(f"Files found in pulled artifact: {pulled_files}")
+
+        # Debug: Show the contents of each file for analysis
+        for file in pulled_files:
+            if file.endswith('.json'):
+                LOGGER.debug(f"Contents of {file}:")
+                with open(os.path.join(temp_dir, file), 'r') as f:
+                    content = f.read()
+                    LOGGER.debug(f"{file}: {content[:200]}...")  # First 200 chars
+
+        # Transform the URLs - require product name to be specified
+        if not product:
+            raise ValueError(
+                "Product parameter is required to determine the registry namespace for image transformation"
+            )
+
+        # Map product names to registry namespaces
+        # OCP uses 'openshift4' namespace in registry.redhat.io
+        product_to_namespace = {
+            'ocp': 'openshift4',
+            'openshift': 'openshift4',
+        }
+        registry_namespace = product_to_namespace.get(product, product)
+        LOGGER.info(f"Using registry namespace '{registry_namespace}' for product '{product}'")
+
+        registry_transform_pattern = rf'registry\.redhat\.io/{registry_namespace}/[^@]*'
+
+        related_images = []
+        related_images_path = os.path.join(temp_dir, 'related-images.json')
+        if os.path.exists(related_images_path):
+            LOGGER.info("Reading related-images.json...")
+            with open(related_images_path, 'r') as f:
+                raw_images = json.load(f)
+
+            LOGGER.info(f"Found {len(raw_images)} images in related-images.json")
+
+            for img_url in raw_images:
+                # Check if the URL matches the registry namespace pattern
+                if f'registry.redhat.io/{registry_namespace}/' in img_url:
+                    # Apply the transformation to quay.io/redhat-user-workloads/ocp-art-tenant/art-images
+                    transformed_url = re.sub(
+                        registry_transform_pattern,
+                        KONFLUX_DEFAULT_IMAGE_REPO,
+                        img_url,
+                    )
+                    related_images.append(transformed_url)
+                    LOGGER.debug(f"Transformed: {img_url} -> {transformed_url}")
+                else:
+                    related_images.append(img_url)
+                    LOGGER.debug(f"Using as-is: {img_url}")
+
+            LOGGER.info(f"Processed {len(related_images)} images from related-images.json")
+
+            # Print all transformed pull specs for debugging
+            LOGGER.info("=== TRANSFORMED PULL SPECS ===")
+            for i, img in enumerate(related_images, 1):
+                LOGGER.info(f"{i:2d}. {img}")
+            LOGGER.info("=== END TRANSFORMED PULL SPECS ===")
+
+        else:
+            catalog_json_path = os.path.join(temp_dir, 'catalog.json')
+            if os.path.exists(catalog_json_path):
+                LOGGER.info(
+                    "related-images.json not found, extracting relatedImages from olm.bundle entries in catalog.json"
+                )
+                found_images = _extract_images_from_catalog_json(catalog_json_path)
+
+                for img_url in found_images:
+                    if f'registry.redhat.io/{registry_namespace}/' in img_url:
+                        transformed_url = re.sub(
+                            registry_transform_pattern,
+                            KONFLUX_DEFAULT_IMAGE_REPO,
+                            img_url,
+                        )
+                        related_images.append(transformed_url)
+                    else:
+                        related_images.append(img_url)
+
+                related_images = list(set(related_images))
+                LOGGER.info(f"Extracted {len(related_images)} unique images from catalog.json")
+            else:
+                raise RuntimeError(
+                    f"Neither related-images.json nor catalog.json found in pulled artifact. Available files: {pulled_files}"
+                )
+
+        if not related_images:
+            LOGGER.error("No image URLs found in catalog file")
+            raise RuntimeError("No image URLs extracted from FBC catalog")
+
+    LOGGER.info(f"Extracted {len(related_images)} image pullspecs from FBC")
+    return related_images
+
+
+def validate_build_priority(build_priority):
+    """
+    Validate build priority value.
+
+    :param build_priority: Priority value to validate
+    :return: None if valid
+    :raises: ValueError if invalid
+    """
+    if build_priority == "auto":
+        return
+
+    if build_priority is None:
+        raise ValueError("Build priority shouldn't be None")
+
+    try:
+        priority_int = int(build_priority)
+        if not (1 <= priority_int <= 10):
+            raise ValueError(f"Build priority must be 'auto' or a number between 1-10, got: {build_priority}")
+    except ValueError as e:
+        if "invalid literal" in str(e):
+            raise ValueError(f"Build priority must be 'auto' or a number between 1-10, got: {build_priority}")
+        raise
+
+
+def normalize_k8s_dns_label(name: str, max_length: int = K8S_DNS_LABEL_MAX_LENGTH) -> str:
+    """Normalize *name* to a Kubernetes DNS label within *max_length*."""
+    if not 1 <= max_length <= K8S_DNS_LABEL_MAX_LENGTH:
+        raise ValueError(f"max_length must be between 1 and {K8S_DNS_LABEL_MAX_LENGTH}, got {max_length}")
+    if not name:
+        return ""
+
+    normalized = re.sub(r'[^a-z0-9-]', '-', name.lower())
+    normalized = re.sub(r'-+', '-', normalized).strip('-')
+    return normalized[:max_length].rstrip('-')
+
+
+def validate_k8s_dns_label(name: str, field_name: str = "Name") -> str:
+    """Return *name* when it is a Kubernetes DNS label; otherwise raise ``ValueError``."""
+    if not isinstance(name, str) or len(name) > K8S_DNS_LABEL_MAX_LENGTH or not K8S_DNS_LABEL_PATTERN.fullmatch(name):
+        raise ValueError(
+            f"{field_name} {name!r} must be at most {K8S_DNS_LABEL_MAX_LENGTH} characters and match "
+            f"{K8S_DNS_LABEL_PATTERN.pattern!r}"
+        )
+    return name
+
+
+def normalize_group_name_for_k8s(group_name: str) -> str:
+    """
+    Normalize a group name to comply with Kubernetes DNS label rules.
+
+    Kubernetes DNS label rules:
+    - Must be lowercase alphanumeric or '-'
+    - Must start and end with alphanumeric character
+    - Cannot be longer than 63 characters
+    - Cannot have consecutive '-'
+
+    Args:
+        group_name: The group name to normalize (e.g., "Test_Group-1.5")
+
+    Returns:
+        Normalized group name (e.g., "test-group-1-5")
+    """
+    # Truncate to 63 characters if needed (leave room for timestamp suffix)
+    # Reserve space for timestamp format like "-20251031141128-1" (18 chars)
+    max_group_length = 63 - 18 - 1  # -1 for the connecting dash
+    return normalize_k8s_dns_label(group_name, max_length=max_group_length)
+
+
+def resolve_konflux_kubeconfig_by_product(product: str, provided_kubeconfig: Optional[str] = None) -> Optional[str]:
+    """
+    Resolve the Konflux kubeconfig path based on product type.
+
+    Args:
+        product: The product type (e.g., "ocp", "oadp", "mta", "rhmtc", "logging")
+        provided_kubeconfig: Explicitly provided kubeconfig path (takes precedence)
+
+    Returns:
+        Resolved kubeconfig path or None to rely on oc login
+    """
+    if provided_kubeconfig:
+        return provided_kubeconfig
+
+    env_var = PRODUCT_KUBECONFIG_MAP.get(product)
+    if env_var:
+        kubeconfig = os.environ.get(env_var)
+        if kubeconfig:
+            KONFLUX_LOGGER.info(f"Using kubeconfig from {env_var} for product '{product}'")
+            return kubeconfig
+        KONFLUX_LOGGER.warning(f"Environment variable {env_var} is not set for product '{product}'")
+    else:
+        KONFLUX_LOGGER.warning(
+            f"No kubeconfig mapping found for product '{product}'. Available products: {list(PRODUCT_KUBECONFIG_MAP.keys())}"
+        )
+
+    available_env_vars = list(PRODUCT_KUBECONFIG_MAP.values())
+    KONFLUX_LOGGER.info(
+        f"No kubeconfig specified for product '{product}'. "
+        f"Available env vars: {', '.join(available_env_vars)}. Will rely on oc being logged in to the cluster."
+    )
+    return None
+
+
+def resolve_konflux_namespace_by_product(product: str, provided_namespace: Optional[str] = None) -> str:
+    """
+    Resolve the Konflux namespace based on product type.
+
+    Args:
+        product: The product type (e.g., "ocp", "oadp", "mta", "rhmtc", "logging")
+        provided_namespace: Explicitly provided namespace (takes precedence)
+
+    Returns:
+        Resolved namespace (guaranteed to return a valid namespace)
+    """
+    if provided_namespace:
+        return provided_namespace
+
+    namespace = PRODUCT_NAMESPACE_MAP.get(product)
+    if namespace:
+        KONFLUX_LOGGER.info(f"Using namespace '{namespace}' for product '{product}'")
+        return namespace
+
+    KONFLUX_LOGGER.warning(
+        f"No namespace mapping found for product '{product}'. Available products: {list(PRODUCT_NAMESPACE_MAP.keys())}. Using default: '{KONFLUX_DEFAULT_NAMESPACE}'"
+    )
+    return KONFLUX_DEFAULT_NAMESPACE
+
+
+def resolve_konflux_base_image_release_targets(
+    product: str,
+    lifecycle_phase: Optional[str] = None,
+) -> Tuple[str, str]:
+    """
+    Resolve the Konflux ReleasePlan name and Application for the silent base-image workflow.
+
+    The ReleasePlan name is the resource metadata.name; the Application is Snapshot/Release
+    spec.application and matching labels. These must match konflux-release-data for the product's tenant.
+    Layered products use `<product>-images-base` (e.g. `mtc-images-base`). OCP keeps `art-images-base`.
+
+    When ``lifecycle_phase`` is ``pre-release`` and the product has an EC release plan configured
+    (OCP today), use the EC base image ReleasePlan (``registry-ocp-art-base-ec-prod`` policy).
+    See https://redhat.atlassian.net/browse/ART-19498.
+
+    Unknown products default to the OCP targets (same as resolve_konflux_namespace_by_product fallback).
+
+    Args:
+        product: Runtime product key (e.g. ocp, rhmtc, mta).
+        lifecycle_phase: ``group.yml`` ``software_lifecycle.phase`` value, if known.
+
+    Returns:
+        (release_plan_name, application_name)
+    """
+    if lifecycle_phase not in (None, '', Missing):
+        try:
+            if SoftwareLifecyclePhase.from_name(lifecycle_phase) == SoftwareLifecyclePhase.PRE_RELEASE:
+                ec_targets = PRODUCT_BASE_IMAGE_KONFLUX_EC_RELEASE_MAP.get(product)
+                if ec_targets:
+                    plan, app = ec_targets
+                    KONFLUX_LOGGER.info(
+                        f"Using pre-release base-image Konflux releasePlan '{plan}' "
+                        f"and application '{app}' for product '{product}'"
+                    )
+                    return ec_targets
+        except ValueError:
+            KONFLUX_LOGGER.warning(
+                f"Unknown software_lifecycle.phase '{lifecycle_phase}' for product '{product}'; "
+                "using default base-image release plan"
+            )
+
+    targets = PRODUCT_BASE_IMAGE_KONFLUX_RELEASE_MAP.get(product)
+    if targets:
+        plan, app = targets
+        KONFLUX_LOGGER.info(
+            f"Using base-image Konflux releasePlan '{plan}' and application '{app}' for product '{product}'"
+        )
+        return targets
+
+    default_plan, default_app = PRODUCT_BASE_IMAGE_KONFLUX_RELEASE_MAP["ocp"]
+    KONFLUX_LOGGER.warning(
+        f"No base-image Konflux mapping for product '{product}'. "
+        f"Known keys: {list(PRODUCT_BASE_IMAGE_KONFLUX_RELEASE_MAP.keys())}. "
+        f"Using OCP defaults: releasePlan={default_plan!r}, application={default_app!r}"
+    )
+    return default_plan, default_app
+
+
+def resolve_konflux_fbc_stage_release_plan(product: str, major: int, minor: int) -> Optional[str]:
+    """
+    Resolve the Konflux ReleasePlan name for FBC related-image advisory-stage release.
+
+    ReleasePlan names are per product version (e.g. ``acm-advisory-stage-2-16`` for ACM 2.16).
+    ``major`` and ``minor`` are the **product** version — NOT the OCP version.
+    Must stay aligned with konflux-release-data ReleasePlan resources (see ART-17452).
+
+    Args:
+        product: Runtime product key (e.g. rhacm2, multicluster-engine, logging).
+        major: Product major version (e.g. 2 for ACM 2.16, 6 for logging 6.5).
+        minor: Product minor version (e.g. 16 for ACM 2.16, 5 for logging 6.5).
+
+    Returns:
+        ReleasePlan resource metadata.name, or None if the product/version has no configured plan.
+    """
+    version_map = PRODUCT_FBC_STAGE_RELEASE_PLAN_MAP.get(product)
+    if not version_map:
+        return None
+    return version_map.get((major, minor))
+
+
+async def run_safe(func: Callable[[], Any], failures_list: Optional[List[Tuple[str, Exception]]] = None) -> Any:
+    """
+    Execute a function (sync or async) and catch exceptions.
+    Logs exception and optionally appends (func_name, exception) to failures_list.
+    Returns the function's return value on success, or None on failure.
+
+    :param func: The function to execute (sync or async)
+    :param failures_list: Optional list to append (func.__name__, exception) tuples on failure
+    :return: Function's return value on success, None on failure
+    """
+    try:
+        if inspect.iscoroutinefunction(func):
+            return await func()
+        return func()
+    except Exception as e:
+        LOGGER.exception("Failed to %s", func.__name__)
+        if failures_list is not None:
+            failures_list.append((func.__name__, e))
+        return None
+
+
+# ===============================================================================
+# oc image info wrapper functions
+# ===============================================================================
+# These functions provide convenient wrappers around the low-level caching
+# functions in artcommonlib.oc_image_info, adding JSON parsing, error handling,
+# and common use-case helpers (e.g., --filter-by-os, --show-multiarch).
+# ===============================================================================
+
+
+def oc_image_info(
+    pullspec: str,
+    *options,
+    registry_config: Optional[str] = None,
+    strict: bool = True,
+) -> Union[Dict, List[Dict], None]:
+    """
+    Returns the parsed JSON output of `oc image info` for the specified pullspec.
+
+    Uses both Redis caching (for sha256-pinned pullspecs) and in-memory LRU caching
+    (for all pullspecs within the process lifetime), avoiding redundant registry lookups.
+
+    :param pullspec: Image pullspec (e.g., 'registry.io/repo/image:tag' or 'registry.io/repo/image@sha256:...')
+    :param options: Extra oc image info flags (e.g., '--show-multiarch', '--filter-by-os=amd64')
+    :param registry_config: Path to registry auth config file
+    :param strict: If True, raise IOError on errors. If False, return None for "manifest unknown" errors.
+    :return: Parsed JSON output (dict or list) or None if strict=False and image doesn't exist
+    :raises IOError: If command fails and strict=True
+    """
+    try:
+        out = oc_image_info__cached__lru(pullspec, *options, registry_config=registry_config)
+    except ChildProcessError as e:
+        err_msg = str(e)
+        if not strict and 'manifest unknown' in err_msg.lower():
+            return None
+        raise IOError(err_msg) from e
+
+    return json.loads(out)
+
+
+def oc_image_info_for_arch(
+    pullspec: str,
+    go_arch: str = 'amd64',
+    registry_config: Optional[str] = None,
+    strict: bool = True,
+) -> Union[Dict, None]:
+    """
+    Get image info filtered by architecture.
+
+    Adds --filter-by-os flag because multi-arch manifest lists cause
+    oc image info to error without filtering.
+
+    :param pullspec: Image pullspec
+    :param go_arch: Architecture to filter by (e.g., 'amd64', 'arm64')
+    :param registry_config: Path to registry config file
+    :param strict: If True, raise exception on errors. If False, return None for "manifest unknown" errors.
+    :return: Dict of image info or None if strict=False and image doesn't exist
+    :raises AssertionError: If result is not a dict (should never happen with --filter-by-os)
+    """
+    result = oc_image_info(pullspec, f'--filter-by-os={go_arch}', registry_config=registry_config, strict=strict)
+    if result is None:
+        return None
+    assert isinstance(result, dict), f"Expected dict from oc_image_info with --filter-by-os, got {type(result)}"
+    return result
+
+
+def oc_image_info_show_multiarch(
+    pullspec: str,
+    registry_config: Optional[str] = None,
+    strict: bool = True,
+) -> Union[Dict, List[Dict], None]:
+    """
+    Get image info with --show-multiarch flag.
+
+    For single-arch images: returns a dict representing the manifest.
+    For multi-arch images: returns a list of dicts, one per architecture.
+
+    :param pullspec: Image pullspec
+    :param registry_config: Path to registry config file
+    :param strict: If True, raise exception on errors. If False, return None for "manifest unknown" errors.
+    :return: Dict or list of dicts, or None if strict=False and image doesn't exist
+    """
+    return oc_image_info(
+        pullspec,
+        '--show-multiarch',
+        registry_config=registry_config,
+        strict=strict,
+    )
+
+
+@retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
+async def oc_image_info_async(
+    pullspec: str,
+    *options,
+    registry_config: Optional[str] = None,
+) -> Union[Dict, List]:
+    """
+    Async version of oc_image_info.
+
+    Returns the parsed JSON output of `oc image info` for the specified pullspec.
+    Uses both Redis caching (for sha256-pinned pullspecs) and in-memory LRU caching.
+
+    Retries up to 3 times (with 10s wait) before giving up.
+
+    :param pullspec: Image pullspec
+    :param options: Extra oc image info flags (e.g., '--show-multiarch', '--filter-by-os=amd64')
+    :param registry_config: Path to registry auth config file
+    :return: Parsed JSON output (dict or list)
+    :raises ChildProcessError: If command fails after all retry attempts
+    """
+    out = await oc_image_info__cached_async__lru(pullspec, *options, registry_config=registry_config)
+    return json.loads(out)
+
+
+async def oc_image_info_for_arch_async(
+    pullspec: str,
+    go_arch: str = 'amd64',
+    registry_config: Optional[str] = None,
+) -> Dict:
+    """
+    Async version of oc_image_info_for_arch.
+
+    Get image info filtered by architecture using --filter-by-os flag.
+
+    :param pullspec: Image pullspec
+    :param go_arch: Architecture to filter by (e.g., 'amd64', 'arm64')
+    :param registry_config: Path to registry config file
+    :return: Dict of image info for the specified architecture
+    """
+    return await oc_image_info_async(
+        pullspec,
+        f'--filter-by-os={go_arch}',
+        registry_config=registry_config,
+    )

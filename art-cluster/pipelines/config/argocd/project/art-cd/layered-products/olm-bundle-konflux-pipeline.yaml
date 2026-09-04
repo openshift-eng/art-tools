@@ -1,0 +1,127 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: olm-bundle-konflux
+  namespace: art-cd
+  labels:
+    app: artcd
+spec:
+  description: Build OLM bundle containers for operators via Konflux, then trigger
+    downstream FBC build.
+  params:
+  - description: OCP version (e.g. 1.5.0)
+    name: version
+    type: string
+  - description: Assembly name
+    name: assembly
+    type: string
+  - default: ""
+    description: (Optional) The group of components (e.g. oadp-1.5)
+    name: group
+    type: string
+  - default: https://github.com/openshift-eng/ocp-build-data
+    description: ocp-build-data fork to use
+    name: data-path
+    type: string
+  - default: ""
+    description: (Optional) Doozer data path git [branch / tag / sha] to use
+    name: data-gitref
+    type: string
+  - description: Comma-separated list of operator NVRs to build bundles for
+    name: operator-nvrs
+    type: string
+  - default: ""
+    description: (Optional) Only build these operators (comma-separated brew packages)
+    name: only
+    type: string
+  - default: ""
+    description: (Optional) Exclude these operators (comma-separated brew packages)
+    name: exclude
+    type: string
+  - default: "false"
+    description: Rebuild bundle containers even if they already exist
+    name: force
+    type: string
+  - default: ""
+    description: (Optional) Override Pipeline Run template commit
+    name: plr-template
+    type: string
+  - default: "false"
+    description: Take no action, just echo what the job would have done
+    name: dry-run
+    type: string
+  - default: ""
+    description: '(Optional) Override art-tools version. Format: ghuser@branch (e.g.
+      ashwindasr@my-feature)'
+    name: art-tools-commit
+    type: string
+  tasks:
+  - name: olm-bundle-konflux
+    params:
+    - name: script
+      value: |
+        #!/usr/bin/env python3
+        import os
+        import subprocess
+
+        subprocess.run(["kinit", "-f", "-k", "-t", "/tmp/keytab/keytab", "exd-ocp-buildvm-bot-prod@IPA.REDHAT.COM"], check=True)
+
+        os.makedirs("/root/.config", exist_ok=True)
+        open("/root/.config/artcd.toml", "a").close()
+
+        os.environ["TEKTON_PIPELINERUN_NAME"] = "$(context.pipelineRun.name)"
+        os.environ["TEKTON_PIPELINE_NAME"] = "$(context.pipeline.name)"
+        os.environ["BUILD_URL"] = "https://console-openshift-console.apps.artc2023.pc3z.p1.openshiftapps.com/k8s/ns/art-cd/tekton.dev~v1~PipelineRun/$(context.pipelineRun.name)"
+
+        art_tools_commit = "$(params.art-tools-commit)"
+        if art_tools_commit:
+            owner, branch = art_tools_commit.split("@")
+            subprocess.run(["git", "clone", "-b", branch, f"https://github.com/{owner}/art-tools.git"], check=True)
+            subprocess.run(["pip", "install", "./art-tools"], check=True)
+            os.environ["ART_TOOLS_COMMIT"] = art_tools_commit
+
+        os.makedirs("./artcd_working", exist_ok=True)
+
+        cmd = [
+            "artcd",
+            "-v",
+            "--working-dir=./artcd_working",
+            "--config=/root/.config/artcd.toml",
+        ]
+
+        if "$(params.dry-run)" == "true":
+            cmd.append("--dry-run")
+
+        cmd.extend([
+            "olm-bundle-konflux",
+            "--version=$(params.version)",
+            "--assembly=$(params.assembly)",
+            "--data-path=$(params.data-path)",
+        ])
+
+        if "$(params.group)":
+            cmd.extend(["-g", "$(params.group)"])
+
+        if "$(params.data-gitref)":
+            cmd.append("--data-gitref=$(params.data-gitref)")
+
+        if "$(params.operator-nvrs)":
+            cmd.append("--nvrs=$(params.operator-nvrs)")
+
+        if "$(params.only)":
+            cmd.append("--only=$(params.only)")
+
+        if "$(params.exclude)":
+            cmd.append("--exclude=$(params.exclude)")
+
+        if "$(params.force)" == "true":
+            cmd.append("--force")
+
+        if "$(params.plr-template)":
+            cmd.append("--plr-template=$(params.plr-template)")
+
+        print(f"Running {cmd}...")
+        subprocess.run(cmd, check=True, env=os.environ.copy())
+    taskRef:
+      kind: Task
+      name: artcd

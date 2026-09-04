@@ -1,0 +1,1519 @@
+import os
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import yaml
+from pyartcd.jenkins import Jobs
+from pyartcd.pipelines import ocp
+
+from pyartcd import constants
+
+
+class TestInitialBuildPlan(unittest.IsolatedAsyncioTestCase):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.ocp4: ocp.OcpPipeline = self.default_ocp4_pipeline()
+
+    def setUp(self) -> None:
+        self.ocp4 = self.default_ocp4_pipeline()
+
+    @staticmethod
+    def default_ocp4_pipeline() -> ocp.OcpPipeline:
+        return ocp.OcpPipeline(
+            runtime=MagicMock(dry_run=False),
+            assembly='stream',
+            version='4.14',
+            data_path=constants.OCP_BUILD_DATA_URL,
+            data_gitref='',
+            build_rpms='all',
+            rpm_list='',
+            build_images='all',
+            image_list='',
+            skip_plashets=False,
+            mail_list_failure='',
+            comment_on_pr=False,
+        )
+
+    @patch("pyartcd.pipelines.ocp.get_group_images", autospec=True, return_value=[''] * 219)
+    async def test_initial_build_plan(self, _):
+        await self.ocp4._initialize_build_plan()
+
+        self.assertEqual(self.ocp4.build_plan.active_image_count, 219)
+        self.assertEqual(self.ocp4.build_plan.dry_run, False)
+        self.assertEqual(self.ocp4.build_plan.build_rpms, True)
+        self.assertEqual(self.ocp4.build_plan.rpms_included, [])
+        self.assertEqual(self.ocp4.build_plan.rpms_excluded, [])
+        self.assertEqual(self.ocp4.build_plan.build_images, True)
+        self.assertEqual(self.ocp4.build_plan.images_included, [])
+        self.assertEqual(self.ocp4.build_plan.images_excluded, [])
+
+    @patch("pyartcd.pipelines.ocp.get_group_images", autospec=True, return_value=[''] * 219)
+    async def test_initial_build_plan_no_images_no_rpms(self, _):
+        self.ocp4.build_rpms = 'none'
+        self.ocp4.build_images = 'none'
+
+        await self.ocp4._initialize_build_plan()
+
+        self.assertEqual(self.ocp4.build_plan.build_rpms, False)
+        self.assertEqual(self.ocp4.build_plan.build_images, False)
+
+    @patch("pyartcd.pipelines.ocp.get_group_images", autospec=True, return_value=[''] * 219)
+    async def test_initial_build_plan_include_rpm_list(self, _):
+        # RPM list not allowed when build_rpms == "all"
+        self.ocp4.rpm_list = 'rpm1, rpm2'
+        with self.assertRaises(AssertionError):
+            await self.ocp4._initialize_build_plan()
+
+        # RPM list allowed when build_rpms == "only"
+        self.ocp4.build_rpms = 'only'
+        await self.ocp4._initialize_build_plan()
+        self.assertEqual(self.ocp4.build_plan.rpms_included, ['rpm1', 'rpm2'])
+        self.assertEqual(self.ocp4.build_plan.rpms_excluded, [])
+
+    @patch("pyartcd.pipelines.ocp.get_group_images", autospec=True, return_value=[''] * 219)
+    async def test_initial_build_plan_exclude_rpm_list(self, _):
+        # RPM list not allowed when build_rpms == "all"
+        self.ocp4.rpm_list = 'rpm1, rpm2'
+        with self.assertRaises(AssertionError):
+            await self.ocp4._initialize_build_plan()
+
+        # RPM list allowed when build_rpms == "except"
+        self.ocp4.build_rpms = 'except'
+        await self.ocp4._initialize_build_plan()
+        self.assertEqual(self.ocp4.build_plan.rpms_included, [])
+        self.assertEqual(self.ocp4.build_plan.rpms_excluded, ['rpm1', 'rpm2'])
+
+    @patch("pyartcd.pipelines.ocp.get_group_images", autospec=True, return_value=[''] * 219)
+    async def test_initial_build_plan_include_image_list(self, _):
+        # Image list not allowed when build_images == "all"
+        self.ocp4.image_list = 'image1, image2'
+        with self.assertRaises(AssertionError):
+            await self.ocp4._initialize_build_plan()
+
+        # Image list allowed when build_images == "only"
+        self.ocp4.build_images = 'only'
+        await self.ocp4._initialize_build_plan()
+        self.assertEqual(self.ocp4.build_plan.images_included, ['image1', 'image2'])
+        self.assertEqual(self.ocp4.build_plan.images_excluded, [])
+
+    @patch("pyartcd.pipelines.ocp.get_group_images", autospec=True, return_value=[''] * 219)
+    async def test_initial_build_plan_exclude_image_list(self, _):
+        # Image list not allowed when build_images == "all"
+        self.ocp4.image_list = 'image1, image2'
+        with self.assertRaises(AssertionError):
+            await self.ocp4._initialize_build_plan()
+
+        # Image list allowed when build_images == "except"
+        self.ocp4.build_images = 'except'
+        await self.ocp4._initialize_build_plan()
+        self.assertEqual(self.ocp4.build_plan.images_included, [])
+        self.assertEqual(self.ocp4.build_plan.images_excluded, ['image1', 'image2'])
+
+
+class TestInitialize(unittest.IsolatedAsyncioTestCase):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.ocp4: ocp.OcpPipeline = self.default_ocp4_pipeline()
+
+    @staticmethod
+    def default_ocp4_pipeline() -> ocp.OcpPipeline:
+        return ocp.OcpPipeline(
+            runtime=MagicMock(dry_run=False),
+            assembly='stream',
+            version='4.14',
+            data_path=constants.OCP_BUILD_DATA_URL,
+            data_gitref='',
+            build_rpms='all',
+            rpm_list='',
+            build_images='all',
+            image_list='',
+            skip_plashets=False,
+            mail_list_failure='',
+            comment_on_pr=False,
+        )
+
+    def setUp(self) -> None:
+        self.ocp4 = self.default_ocp4_pipeline()
+
+    @patch("artcommonlib.exectools.cmd_gather_async")
+    async def test_check_assembly(self, cmd_gather_async_mock):
+        # Assemblies enabled, assembly = 'stream': no exception
+        cmd_gather_async_mock.return_value = (0, 'True', '')
+        self.ocp4.assembly = 'stream'
+        await self.ocp4._check_assembly()
+
+        # Assemblies enabled, assembly != 'stream': no exception
+        cmd_gather_async_mock.return_value = (0, 'True', '')
+        self.ocp4.assembly = 'art123456'
+        await self.ocp4._check_assembly()
+
+        # Assemblies disabled, assembly = 'stream': no exception
+        cmd_gather_async_mock.return_value = (0, 'Falsae', '')
+        self.ocp4.assembly = 'stream'
+        await self.ocp4._check_assembly()
+
+        # Assemblies disabled, assembly != 'stream': RuntimeError exception is raised
+        cmd_gather_async_mock.return_value = (0, 'False', '')
+        self.ocp4.assembly = 'art123456'
+        with self.assertRaises(RuntimeError):
+            await self.ocp4._check_assembly()
+
+    @patch("pyartcd.pipelines.ocp.get_group_images", autospec=True, return_value=[''] * 219)
+    async def test_initialize_build_plan_default(self, *_):
+        # Default ocp4 pipeline
+        await self.ocp4._initialize_build_plan()
+        self.assertEqual(self.ocp4.build_plan.active_image_count, 219)
+        self.assertEqual(self.ocp4.build_plan.build_images, True)
+        self.assertEqual(self.ocp4.build_plan.build_rpms, True)
+
+    @patch("pyartcd.pipelines.ocp.get_group_images", autospec=True, return_value=[''] * 219)
+    async def test_initialize_build_plan_no_images_no_rpms(self, *_):
+        # No images, rpms
+        self.ocp4.build_images = 'none'
+        self.ocp4.build_rpms = 'none'
+        await self.ocp4._initialize_build_plan()
+        self.assertEqual(self.ocp4.build_plan.build_images, False)
+        self.assertEqual(self.ocp4.build_plan.build_rpms, False)
+
+    @patch("pyartcd.pipelines.ocp.get_group_images", autospec=True, return_value=[''] * 219)
+    async def test_initialize_build_plan_include_images_rpms(self, *_):
+        # Include images/rpms, empty lists
+        self.ocp4.build_images = 'only'
+        self.ocp4.build_rpms = 'only'
+        self.ocp4.image_list = ''
+        self.ocp4.rpm_list = ''
+        with self.assertRaises(AssertionError):
+            await self.ocp4._initialize_build_plan()
+
+        # Include images/rpms, non-empty lists
+        self.ocp4.image_list = 'image1 ,image2'
+        self.ocp4.rpm_list = 'rpm1, rpm2'
+        await self.ocp4._initialize_build_plan()
+        self.assertEqual(self.ocp4.build_plan.build_images, True)
+        self.assertEqual(self.ocp4.build_plan.build_rpms, True)
+        self.assertEqual(self.ocp4.build_plan.images_included, ['image1', 'image2'])
+        self.assertEqual(self.ocp4.build_plan.rpms_included, ['rpm1', 'rpm2'])
+        self.assertEqual(self.ocp4.build_plan.images_excluded, [])
+        self.assertEqual(self.ocp4.build_plan.rpms_excluded, [])
+
+    @patch("pyartcd.pipelines.ocp.get_group_images", autospec=True, return_value=[''] * 219)
+    async def test_initialize_build_plan_exclude_images_rpms(self, *_):
+        # Exclude images/rpms, empty lists
+        self.ocp4.build_images = 'except'
+        self.ocp4.build_rpms = 'except'
+        self.ocp4.image_list = ''
+        self.ocp4.rpm_list = ''
+        with self.assertRaises(AssertionError):
+            await self.ocp4._initialize_build_plan()
+
+        # Exclude images/rpms, non-empty lists
+        self.ocp4.image_list = 'image1 ,image2'
+        self.ocp4.rpm_list = 'rpm1, rpm2'
+        await self.ocp4._initialize_build_plan()
+        self.assertEqual(self.ocp4.build_plan.build_images, True)
+        self.assertEqual(self.ocp4.build_plan.build_rpms, True)
+        self.assertEqual(self.ocp4.build_plan.images_included, [])
+        self.assertEqual(self.ocp4.build_plan.rpms_included, [])
+        self.assertEqual(self.ocp4.build_plan.images_excluded, ['image1', 'image2'])
+        self.assertEqual(self.ocp4.build_plan.rpms_excluded, ['rpm1', 'rpm2'])
+
+
+class TestBuilds(unittest.IsolatedAsyncioTestCase):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.ocp4: ocp.OcpPipeline = self.default_ocp4_pipeline()
+
+    def setUp(self) -> None:
+        os.environ['BUILD_URL'] = 'build-url'
+
+    def tearDown(self) -> None:
+        if os.environ.get('BUILD_URL'):
+            del os.environ['BUILD_URL']
+
+    @staticmethod
+    @patch("os.path.abspath", return_value='doozer_working')
+    def default_ocp4_pipeline(*_) -> ocp.OcpPipeline:
+        pipeline = ocp.OcpPipeline(
+            runtime=MagicMock(dry_run=False, doozer_working='doozer_working'),
+            assembly='stream',
+            version='4.11',
+            data_path=constants.OCP_BUILD_DATA_URL,
+            data_gitref='',
+            build_rpms='all',
+            rpm_list='',
+            build_images='all',
+            image_list='',
+            skip_plashets=False,
+            mail_list_failure='',
+            comment_on_pr=False,
+        )
+        pipeline._doozer_working = 'doozer_working'
+        pipeline.build_plan.active_image_count = 5
+        return pipeline
+
+    @patch("shutil.rmtree")
+    @patch("pyartcd.jenkins.update_title")
+    @patch("pyartcd.util.default_release_suffix", return_value="2100123111.p?")
+    @patch("artcommonlib.exectools.cmd_gather_async", autospec=True, return_value=(0, "rhaos-4.11-rhel-8", ""))
+    @patch("artcommonlib.exectools.cmd_assert_async")
+    async def test_build_rpms(self, cmd_assert_mock: AsyncMock, *_):
+        self.ocp4.release = '2100123111.p?'
+
+        # no RPMs
+        self.ocp4.build_plan.build_rpms = []
+        await self.ocp4._rebase_and_build_rpms()
+        cmd_assert_mock.assert_not_awaited()
+
+        # Include RPMs
+        cmd_assert_mock.reset_mock()
+        self.ocp4.build_plan.build_rpms = True
+        self.ocp4.build_plan.rpms_included = ['rpm1']
+        self.ocp4.build_plan.rpms_excluded = []
+        await self.ocp4._rebase_and_build_rpms()
+        cmd_assert_mock.assert_awaited_once_with(
+            [
+                'doozer',
+                '--assembly=stream',
+                '--working-dir=doozer_working',
+                '--data-path=https://github.com/openshift-eng/ocp-build-data',
+                '--group=openshift-4.11',
+                '--latest-parent-version',
+                '--rpms',
+                'rpm1',
+                'rpms:rebase-and-build',
+                '--version=4.11',
+                '--release=2100123111.p?',
+            ],
+        )
+
+        # Exclude RPMs
+        cmd_assert_mock.reset_mock()
+        self.ocp4.build_plan.build_rpms = True
+        self.ocp4.build_plan.rpms_included = []
+        self.ocp4.build_plan.rpms_excluded = ['rpm1']
+        await self.ocp4._rebase_and_build_rpms()
+        cmd_assert_mock.assert_awaited_once_with(
+            [
+                'doozer',
+                '--assembly=stream',
+                '--working-dir=doozer_working',
+                '--data-path=https://github.com/openshift-eng/ocp-build-data',
+                '--group=openshift-4.11',
+                '--latest-parent-version',
+                "--rpms=",
+                '--exclude',
+                'rpm1',
+                'rpms:rebase-and-build',
+                '--version=4.11',
+                '--release=2100123111.p?',
+            ],
+        )
+
+    @patch("shutil.rmtree")
+    @patch("builtins.open")
+    @patch("pyartcd.jenkins.init_jenkins")
+    @patch("pyartcd.jenkins.update_title")
+    @patch("pyartcd.jenkins.update_description")
+    @patch("pyartcd.util.default_release_suffix", return_value="2100123111.p?")
+    @patch("artcommonlib.exectools.cmd_gather_async", autospec=True, return_value=(0, "rhaos-4.11-rhel-8", ""))
+    @patch("pyartcd.util.load_group_config", return_value={'software_lifecycle': {'phase': 'release'}})
+    @patch("pyartcd.oc.qci_registry_login")
+    @patch("pyartcd.oc.registry_login")
+    @patch("pyartcd.record.parse_record_log")
+    @patch("artcommonlib.exectools.cmd_assert_async")
+    async def test_build_and_rebase_images(
+        self, cmd_assert_mock: AsyncMock, parse_record_log_mock, registry_login_mock, qci_login_mock, *_
+    ):
+        parse_record_log_mock.return_value = {}
+
+        # no images
+        self.ocp4.build_plan.images = []
+        await self.ocp4._rebase_and_build_images()
+        cmd_assert_mock.assert_not_awaited()
+
+        # Include images
+        cmd_assert_mock.reset_mock()
+        self.ocp4.build_plan.build_images = True
+        self.ocp4.build_plan.images_included = ['image1', 'image2']
+        self.ocp4.build_plan.images_excluded = []
+        await self.ocp4._build_images()
+        cmd_assert_mock.assert_awaited_once_with(
+            [
+                'doozer',
+                '--assembly=stream',
+                '--working-dir=doozer_working',
+                '--data-path=https://github.com/openshift-eng/ocp-build-data',
+                '--group=openshift-4.11',
+                '--latest-parent-version',
+                '--images',
+                'image1,image2',
+                'images:build',
+                '--repo-type',
+                'signed',
+            ],
+        )
+        registry_login_mock.assert_not_awaited()
+        qci_login_mock.assert_not_awaited()
+
+        # Exclude images
+        cmd_assert_mock.reset_mock()
+        self.ocp4.build_plan.build_images = True
+        self.ocp4.build_plan.images_included = []
+        self.ocp4.build_plan.images_excluded = ['image1', 'image2', 'image3']
+        await self.ocp4._build_images()
+        cmd_assert_mock.assert_awaited_once_with(
+            [
+                'doozer',
+                '--assembly=stream',
+                '--working-dir=doozer_working',
+                '--data-path=https://github.com/openshift-eng/ocp-build-data',
+                '--group=openshift-4.11',
+                '--latest-parent-version',
+                "--images=",
+                '--exclude',
+                'image1,image2,image3',
+                'images:build',
+                '--repo-type',
+                'signed',
+            ],
+        )
+        registry_login_mock.assert_not_awaited()
+        qci_login_mock.assert_not_awaited()
+
+        # Dry run
+        cmd_assert_mock.reset_mock()
+        self.ocp4.runtime.dry_run = True
+        self.ocp4.build_plan.build_images = True
+        self.ocp4.build_plan.images_included = ['image1', 'image2']
+        self.ocp4.build_plan.images_excluded = []
+        await self.ocp4._build_images()
+        cmd_assert_mock.assert_not_awaited()
+        registry_login_mock.assert_not_awaited()
+        qci_login_mock.assert_not_awaited()
+
+        # ApiServer rebuilt
+        cmd_assert_mock.reset_mock()
+        parse_record_log_mock.return_value = {
+            'build': [{'distgit': 'ose-openshift-apiserver', 'status': '0', 'nvrs': 'bogus'}]
+        }
+        self.ocp4.runtime.dry_run = False
+        self.ocp4.build_plan.build_images = True
+        self.ocp4.build_plan.images_included = ['image1', 'image2']
+        self.ocp4.build_plan.images_excluded = []
+        await self.ocp4._build_images()
+        registry_login_mock.assert_awaited_once()
+        qci_login_mock.assert_awaited_once()
+        cmd_assert_mock.assert_awaited_with(
+            [
+                'doozer',
+                '--assembly=stream',
+                '--working-dir=doozer_working',
+                '--data-path=https://github.com/openshift-eng/ocp-build-data',
+                '--group=openshift-4.11',
+                'images:streams',
+                'mirror',
+            ],
+        )
+
+    @patch("shutil.rmtree")
+    @patch("builtins.open")
+    @patch("pyartcd.record.parse_record_log", return_value={})
+    @patch("pyartcd.jenkins.update_title")
+    @patch("pyartcd.jenkins.update_description")
+    @patch("pyartcd.util.default_release_suffix", return_value="2100123111.p?")
+    @patch("artcommonlib.exectools.cmd_gather_async", autospec=True, return_value=(0, "rhaos-4.11-rhel-8", ""))
+    @patch("pyartcd.util.load_group_config", return_value={'software_lifecycle': {'phase': 'release'}})
+    @patch("artcommonlib.exectools.cmd_assert_async")
+    async def test_mass_rebuild(self, cmd_assert_async_mock: AsyncMock, *_):
+        # Build plan includes more than half of the images: it's a mass rebuild
+        self.ocp4.build_plan.build_images = True
+        self.ocp4.build_plan.images_included = ['image1', 'image2', 'image3']
+        self.ocp4.build_plan.images_excluded = []
+        self.ocp4.check_mass_rebuild()
+        self.assertTrue(self.ocp4.mass_rebuild)
+
+        # Build plan includes less than half of the images: not a mass rebuild
+        cmd_assert_async_mock.reset_mock()
+        self.ocp4.build_plan.build_images = True
+        self.ocp4.build_plan.images_included = ['image1', 'image2']
+        self.ocp4.build_plan.images_excluded = []
+        self.ocp4.check_mass_rebuild()
+        self.assertFalse(self.ocp4.mass_rebuild)
+
+        # Build plan excludes less than half of the images: it's a mass rebuild
+        cmd_assert_async_mock.reset_mock()
+        self.ocp4.build_plan.build_images = True
+        self.ocp4.build_plan.images_included = []
+        self.ocp4.build_plan.images_excluded = ['image1']
+        self.ocp4.check_mass_rebuild()
+        self.assertTrue(self.ocp4.mass_rebuild)
+
+        # Build plan excludes more than half of the images: not a mass rebuild
+        cmd_assert_async_mock.reset_mock()
+        self.ocp4.build_plan.build_images = True
+        self.ocp4.build_plan.images_included = []
+        self.ocp4.build_plan.images_excluded = ['image1', 'image2', 'image3']
+        self.ocp4.check_mass_rebuild()
+        self.assertFalse(self.ocp4.mass_rebuild)
+
+        # Build plan rebuilds everything: it's a mass rebuild
+        cmd_assert_async_mock.reset_mock()
+        self.ocp4.build_plan.build_images = True
+        self.ocp4.build_plan.images_included = []
+        self.ocp4.build_plan.images_excluded = []
+        self.ocp4.check_mass_rebuild()
+        self.assertTrue(self.ocp4.mass_rebuild)
+
+
+class TestBuildCompose(unittest.IsolatedAsyncioTestCase):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.ocp4: ocp.OcpPipeline = self.default_ocp4_pipeline()
+
+    @staticmethod
+    @patch("os.path.abspath", return_value='doozer_working')
+    def default_ocp4_pipeline(*_) -> ocp.OcpPipeline:
+        return ocp.OcpPipeline(
+            runtime=MagicMock(dry_run=False),
+            assembly='stream',
+            version='4.11',
+            data_path=constants.OCP_BUILD_DATA_URL,
+            data_gitref='',
+            build_rpms='all',
+            rpm_list='',
+            build_images='all',
+            image_list='',
+            skip_plashets=False,
+            mail_list_failure='',
+            comment_on_pr=False,
+        )
+
+    @patch("pyartcd.util.get_freeze_automation", return_value="False")
+    async def test_automation_freeze_false(self, *_):
+        # If automation is not frozen, compose build is permitted
+        res = await self.ocp4._is_compose_build_permitted()
+        self.assertEqual(res, True)
+
+    @patch("pyartcd.util.get_freeze_automation", return_value="weekdays")
+    async def test_automation_freeze_weekdays(self, *_):
+        # If automation is not frozen, compose build is permitted
+        res = await self.ocp4._is_compose_build_permitted()
+        self.assertEqual(res, True)
+
+    @patch("pyartcd.util.get_freeze_automation", return_value="yes")
+    async def test_automation_freeze_yes(self, *_):
+        # If automation is frozen, compose build is permitted
+        res = await self.ocp4._is_compose_build_permitted()
+        self.assertEqual(res, False)
+
+    @patch("pyartcd.util.get_freeze_automation", return_value="True")
+    async def test_automation_freeze_true(self, *_):
+        # If automation is frozen, compose build is permitted
+        res = await self.ocp4._is_compose_build_permitted()
+        self.assertEqual(res, False)
+
+    @patch("pyartcd.util.get_freeze_automation", return_value="scheduled")
+    @patch("pyartcd.util.is_manual_build", return_value=True)
+    async def test_automation_freeze_scheduled(self, *_):
+        # If automation is scheduled, build compose only if there are RPMs in the build plan
+        self.ocp4._slack_client.say = AsyncMock()
+        self.ocp4.build_plan.build_rpms = True
+        res = await self.ocp4._is_compose_build_permitted()
+        self.assertEqual(res, True)
+        self.ocp4._slack_client.say.assert_awaited_once()
+
+
+class TestUpdateDistgit(unittest.IsolatedAsyncioTestCase):
+    @patch("pyartcd.pipelines.ocp.OcpPipeline._build_images")
+    @patch("os.path.abspath", return_value='doozer_working')
+    @patch("pyartcd.util.notify_dockerfile_reconciliations")
+    @patch("pyartcd.util.notify_bz_info_missing")
+    @patch("artcommonlib.exectools.cmd_assert_async")
+    async def test_update_distgit(self, cmd_assert_mock: AsyncMock, bz_info_missing_mock, reconciliations_mock, *_):
+        pipeline = ocp.OcpPipeline(
+            runtime=MagicMock(dry_run=False, doozer_working='doozer_working'),
+            assembly='stream',
+            version='4.11',
+            data_path=constants.OCP_BUILD_DATA_URL,
+            data_gitref='',
+            build_rpms='all',
+            rpm_list='',
+            build_images='all',
+            image_list='',
+            skip_plashets=False,
+            mail_list_failure='',
+            comment_on_pr=False,
+        )
+
+        pipeline.release = '2099010109.p?'
+
+        # No images to build
+        pipeline.build_plan.build_images = False
+        await pipeline._rebase_and_build_images()
+        cmd_assert_mock.assert_not_awaited()
+        bz_info_missing_mock.assert_not_called()
+        reconciliations_mock.assert_not_called()
+
+        # Images to build
+        os.environ['BUILD_URL'] = 'build-url'
+        cmd_assert_mock.reset_mock()
+        bz_info_missing_mock.reset_mock()
+        reconciliations_mock.reset_mock()
+        pipeline.build_plan.build_images = True
+        await pipeline._rebase_and_build_images()
+        cmd_assert_mock.assert_awaited_once_with(
+            [
+                'doozer',
+                '--assembly=stream',
+                '--working-dir=doozer_working',
+                '--data-path=https://github.com/openshift-eng/ocp-build-data',
+                '--group=openshift-4.11',
+                '--images=',
+                'images:rebase',
+                '--version=v4.11',
+                '--release=2099010109.p?',
+                "--message='Updating Dockerfile version and release v4.11-2099010109.p?'",
+                '--push',
+                "--message='build-url'",
+            ],
+        )
+        bz_info_missing_mock.assert_called_once()
+        reconciliations_mock.assert_called_once()
+
+        # Dry run
+        cmd_assert_mock.reset_mock()
+        bz_info_missing_mock.reset_mock()
+        reconciliations_mock.reset_mock()
+        pipeline.build_plan.build_images = True
+        pipeline.runtime.dry_run = True
+        await pipeline._rebase_and_build_images()
+        cmd_assert_mock.assert_not_awaited()
+        bz_info_missing_mock.assert_not_called()
+        reconciliations_mock.assert_not_called()
+
+
+class TestSyncImages(unittest.IsolatedAsyncioTestCase):
+    @patch("os.path.abspath", return_value='doozer_working')
+    @patch("builtins.open")
+    @patch(
+        "pyartcd.record.parse_record_log",
+        return_value={
+            'build': [
+                {'has_olm_bundle': '1', 'status': '0', 'nvrs': 'nvr1,nvr2'},
+                {'has_olm_bundle': '0', 'status': '0', 'nvrs': 'nvr3'},
+                {'has_olm_bundle': '1', 'status': '1', 'nvrs': 'nvr4'},
+                {'has_olm_bundle': '1', 'status': '0', 'nvrs': ''},
+                {'has_olm_bundle': '1', 'status': '0', 'nvrs': 'nvr5'},
+            ],
+        },
+    )
+    @patch("pyartcd.jenkins.start_build")
+    async def test_ocp4_sync_images(self, start_build_mock: MagicMock, *_):
+        pipeline = ocp.OcpPipeline(
+            runtime=MagicMock(dry_run=False),
+            assembly='stream',
+            version='4.11',
+            data_path=constants.OCP_BUILD_DATA_URL,
+            data_gitref='',
+            build_rpms='all',
+            rpm_list='',
+            build_images='all',
+            image_list='',
+            skip_plashets=False,
+            mail_list_failure='',
+            comment_on_pr=False,
+        )
+
+        # No images
+        pipeline.build_plan.build_images = False
+        await pipeline._sync_images()
+        start_build_mock.assert_not_called()
+
+        # Built images
+        pipeline.build_plan.build_images = True
+        start_build_mock.reset_mock()
+        await pipeline._sync_images()
+
+        from unittest.mock import call
+
+        start_build_mock.assert_has_calls(
+            [
+                call(
+                    job=Jobs.BUILD_SYNC,
+                    params={
+                        'BUILD_VERSION': '4.11',
+                        'ASSEMBLY': 'stream',
+                        'DOOZER_DATA_PATH': 'https://github.com/openshift-eng/ocp-build-data',
+                    },
+                ),
+                call(
+                    job=Jobs.OLM_BUNDLE,
+                    params={
+                        'BUILD_VERSION': '4.11',
+                        'ASSEMBLY': 'stream',
+                        'DOOZER_DATA_PATH': 'https://github.com/openshift-eng/ocp-build-data',
+                        'DOOZER_DATA_GITREF': '',
+                        'OPERATOR_NVRS': 'nvr1,nvr5',
+                    },
+                ),
+            ]
+        )
+
+    @patch("os.path.abspath", return_value='doozer_working')
+    @patch("builtins.open")
+    @patch(
+        "pyartcd.record.parse_record_log",
+        return_value={
+            'build': [
+                {'has_olm_bundle': '1', 'status': '0', 'nvrs': 'nvr1,nvr2'},
+                {'has_olm_bundle': '0', 'status': '0', 'nvrs': 'nvr3'},
+                {'has_olm_bundle': '1', 'status': '1', 'nvrs': 'nvr4'},
+                {'has_olm_bundle': '1', 'status': '0', 'nvrs': ''},
+                {'has_olm_bundle': '1', 'status': '0', 'nvrs': 'nvr5'},
+            ],
+        },
+    )
+    @patch("pyartcd.jenkins.start_olm_bundle")
+    @patch("pyartcd.jenkins.start_build_sync")
+    async def test_util_sync_images(self, build_sync_mock, olm_bundle_mock, *_):
+        pipeline = ocp.OcpPipeline(
+            runtime=MagicMock(dry_run=False),
+            assembly='stream',
+            version='4.11',
+            data_path=constants.OCP_BUILD_DATA_URL,
+            data_gitref='',
+            build_rpms='all',
+            rpm_list='',
+            build_images='all',
+            image_list='',
+            skip_plashets=False,
+            mail_list_failure='',
+            comment_on_pr=False,
+        )
+
+        # No images
+        pipeline.build_plan.build_images = False
+        await pipeline._sync_images()
+        build_sync_mock.assert_not_called()
+        olm_bundle_mock.assert_not_called()
+
+        # Built images, assembly != 'stream
+        pipeline.build_plan.build_images = True
+        pipeline.assembly = 'test'
+        build_sync_mock.reset_mock()
+        olm_bundle_mock.reset_mock()
+        await pipeline._sync_images()
+        build_sync_mock.assert_not_called()
+        olm_bundle_mock.assert_called_once()
+
+        # Built images, assembly == 'stream
+        pipeline.build_plan.build_images = True
+        pipeline.assembly = 'stream'
+        build_sync_mock.reset_mock()
+        olm_bundle_mock.reset_mock()
+        await pipeline._sync_images()
+        build_sync_mock.assert_called_with(
+            build_version='4.11',
+            assembly='stream',
+            doozer_data_path='https://github.com/openshift-eng/ocp-build-data',
+            doozer_data_gitref='',
+        )
+        olm_bundle_mock.assert_called_with(
+            build_version='4.11',
+            assembly='stream',
+            operator_nvrs=['nvr1', 'nvr5'],
+            doozer_data_path='https://github.com/openshift-eng/ocp-build-data',
+            doozer_data_gitref='',
+        )
+
+
+class TestUtils(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        self.ocp4 = self.default_ocp4_pipeline()
+
+    @staticmethod
+    def default_ocp4_pipeline() -> ocp.OcpPipeline:
+        return ocp.OcpPipeline(
+            runtime=MagicMock(dry_run=False),
+            assembly='stream',
+            version='4.14',
+            data_path=constants.OCP_BUILD_DATA_URL,
+            data_gitref='',
+            build_rpms='all',
+            rpm_list='',
+            build_images='all',
+            image_list='',
+            skip_plashets=False,
+            mail_list_failure='',
+            comment_on_pr=False,
+        )
+
+    def test_include_exclude(self):
+        # Include RPMs
+        include_exclude = self.ocp4._include_exclude(
+            kind='rpms',
+            includes=['rpm1', 'rpm2'],
+            excludes=[],
+        )
+        self.assertEqual(include_exclude, ['--latest-parent-version', '--rpms', 'rpm1,rpm2'])
+
+        # Exclude RPMs
+        include_exclude = self.ocp4._include_exclude(
+            kind='rpms',
+            includes=[],
+            excludes=['rpm3', 'rpm4'],
+        )
+        self.assertEqual(include_exclude, ['--latest-parent-version', "--rpms=", '--exclude', 'rpm3,rpm4'])
+
+        # Include and exclude RPMs: includes take precedence
+        include_exclude = self.ocp4._include_exclude(
+            kind='rpms',
+            includes=['rpm1', 'rpm2'],
+            excludes=['rpm3', 'rpm4'],
+        )
+        self.assertEqual(include_exclude, ['--latest-parent-version', '--rpms', 'rpm1,rpm2'])
+
+        # Include images
+        include_exclude = self.ocp4._include_exclude(
+            kind='images',
+            includes=['image1', 'image2'],
+            excludes=[],
+        )
+        self.assertEqual(include_exclude, ['--latest-parent-version', '--images', 'image1,image2'])
+
+        # Exclude images
+        include_exclude = self.ocp4._include_exclude(
+            kind='images',
+            includes=[],
+            excludes=['image3', 'image4'],
+        )
+        self.assertEqual(include_exclude, ['--latest-parent-version', "--images=", '--exclude', 'image3,image4'])
+
+        # Include and exclude images: includes take precedence
+        include_exclude = self.ocp4._include_exclude(
+            kind='images',
+            includes=['image1', 'image2'],
+            excludes=['image3', 'image4'],
+        )
+        self.assertEqual(include_exclude, ['--latest-parent-version', '--images', 'image1,image2'])
+
+        # Wrong kind: ValueError
+        with self.assertRaises(ValueError):
+            self.ocp4._include_exclude(
+                kind='image',
+                includes=['image1', 'image2'],
+                excludes=[],
+            )
+
+    def test_display_tag_for(self):
+        # One image included
+        tag = self.ocp4._display_tag_for(['ironic'], 'image')
+        self.assertEqual(tag, ' [ironic image]')
+
+        # One RPM included
+        tag = self.ocp4._display_tag_for(['python-ansible'], 'rpm')
+        self.assertEqual(tag, ' [python-ansible rpm]')
+
+        # More than one RPM included
+        tag = self.ocp4._display_tag_for(['image1', 'image2'], 'image')
+        self.assertEqual(tag, ' [2 images]')
+
+        # More than one image included
+        tag = self.ocp4._display_tag_for(['rpm1', 'rpm2'], 'rpm')
+        self.assertEqual(tag, ' [2 rpms]')
+
+        # One image excluded
+        tag = self.ocp4._display_tag_for(['ironic'], 'image', is_excluded=True)
+        self.assertEqual(tag, ' [images except ironic]')
+
+        # More than one image excluded
+        tag = self.ocp4._display_tag_for(['image1', 'image2'], 'image', is_excluded=True)
+        self.assertEqual(tag, ' [images except 2]')
+
+        # One RPM excluded
+        tag = self.ocp4._display_tag_for(['python-ansible'], 'rpm', is_excluded=True)
+        self.assertEqual(tag, ' [rpms except python-ansible]')
+
+        # More than one image excluded
+        tag = self.ocp4._display_tag_for(['rpm1', 'rpm2'], 'rpm', is_excluded=True)
+        self.assertEqual(tag, ' [rpms except 2]')
+
+
+class TestKonfluxOcpPipeline(unittest.IsolatedAsyncioTestCase):
+    @patch('pyartcd.pipelines.ocp4_konflux.exectools.cmd_assert_async')
+    async def test_konflux_pipeline_network_mode_parameter_flow(self, mock_cmd):
+        """Test pipeline passes network-mode to both doozer commands."""
+        from pyartcd.pipelines.ocp4_konflux import KonfluxOcpPipeline
+
+        runtime = MagicMock()
+        runtime.dry_run = False
+
+        pipeline = KonfluxOcpPipeline(
+            runtime=runtime,
+            assembly='stream',
+            version='4.14',
+            data_path='test-path',
+            image_build_strategy='all',
+            image_list='',
+            rpm_build_strategy='none',
+            rpm_list='',
+            data_gitref='',
+            kubeconfig=None,
+            skip_rebase=False,
+            skip_bundle_build=False,
+            arches=(),
+            plr_template='',
+            lock_identifier='test',
+            skip_plashets=False,
+            build_priority='auto',
+            use_mass_rebuild_locks=False,
+            network_mode='open',
+        )
+
+        await pipeline.rebase_images('4.14.0', '1')
+        await pipeline.build_images()
+
+        self.assertEqual(mock_cmd.call_count, 2)
+
+        rebase_call = mock_cmd.call_args_list[0][0][0]
+        build_call = mock_cmd.call_args_list[1][0][0]
+
+        self.assertIn('--network-mode', rebase_call)
+        self.assertIn('open', rebase_call)
+        self.assertIn('--network-mode', build_call)
+        self.assertIn('open', build_call)
+
+
+class TestKonfluxOcpPipelineRebaseFailures(unittest.IsolatedAsyncioTestCase):
+    """Konflux rebase state: direct failures vs skipped children, and build image selection."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.runtime = MagicMock()
+        self.runtime.dry_run = False
+        self.runtime.doozer_working = str(Path(self.tmpdir) / 'doozer_working')
+        Path(self.runtime.doozer_working).mkdir(parents=True)
+
+    def _make_pipeline(self, **kwargs):
+        from pyartcd.pipelines.ocp4_konflux import KonfluxOcpPipeline
+
+        defaults = {
+            'runtime': self.runtime,
+            'assembly': 'stream',
+            'version': '4.14',
+            'data_path': 'test-path',
+            'image_build_strategy': 'all',
+            'image_list': '',
+            'rpm_build_strategy': 'none',
+            'rpm_list': '',
+            'data_gitref': '',
+            'kubeconfig': None,
+            'skip_rebase': False,
+            'skip_bundle_build': False,
+            'arches': (),
+            'plr_template': '',
+            'lock_identifier': 'test',
+            'skip_plashets': False,
+            'build_priority': 'auto',
+            'use_mass_rebuild_locks': False,
+            'network_mode': None,
+        }
+        defaults.update(kwargs)
+        return KonfluxOcpPipeline(**defaults)
+
+    def _write_rebase_state(self, failed, skipped, successful=None):
+        images = {}
+        for img in failed or []:
+            images[img] = {'status': 'failure'}
+        for img in skipped or []:
+            images[img] = {'status': 'skipped'}
+        for img in successful or []:
+            images[img] = {'status': 'success'}
+        payload = {'images': images}
+        if failed:
+            payload['failed-images'] = failed
+        if skipped:
+            payload['skipped-due-to-parent-rebase-failure'] = skipped
+        state = {'images:konflux:rebase': payload}
+        state_path = Path(self.runtime.doozer_working) / 'state.yaml'
+        with state_path.open('w') as f:
+            yaml.safe_dump(state, f)
+
+    @patch('pyartcd.pipelines.ocp4_konflux.exectools.cmd_assert_async')
+    async def test_rebase_failure_increments_counters_only_for_direct_failures(self, mock_cmd):
+        """rebase_images passes direct failures and skipped children so counters can treat skips as no-ops."""
+        self._write_rebase_state(['parent-img'], ['child-a', 'child-b'])
+        mock_cmd.side_effect = ChildProcessError('rebase failed')
+
+        pipeline = self._make_pipeline()
+        with patch.object(pipeline, 'update_rebase_fail_counters', new_callable=AsyncMock) as mock_counters:
+            await pipeline.rebase_images('4.14.0', '1')
+
+        mock_counters.assert_called_once_with(['parent-img'], ['child-a', 'child-b'])
+
+    @patch('pyartcd.pipelines.ocp4_konflux.increment_fail_counter', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.ocp4_konflux.reset_fail_counter', new_callable=AsyncMock)
+    async def test_update_rebase_fail_counters_skipped_children_unchanged_in_redis(self, mock_reset, mock_incr):
+        """Children skipped because a parent failed are not reset nor incremented (no-op)."""
+        from pyartcd.pipelines.ocp4_konflux import BuildStrategy
+
+        pipeline = self._make_pipeline()
+        pipeline.group_images = ['parent-img', 'child-a', 'healthy']
+        pipeline.build_plan.image_build_strategy = BuildStrategy.ALL
+
+        await pipeline.update_rebase_fail_counters(['parent-img'], ['child-a'])
+
+        # Extract image names from the redis branch strings
+        reset_names = {c.args[0].split(':')[-1] for c in mock_reset.call_args_list}
+        incr_names = {c.args[0].split(':')[-1] for c in mock_incr.call_args_list}
+        self.assertEqual(reset_names, {'healthy'})
+        self.assertEqual(incr_names, {'parent-img'})
+        self.assertNotIn('child-a', reset_names)
+        self.assertNotIn('child-a', incr_names)
+
+    @patch('pyartcd.pipelines.ocp4_konflux.increment_fail_counter', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.ocp4_konflux.reset_fail_counter', new_callable=AsyncMock)
+    async def test_update_rebase_fail_counters_only_reads_state_yaml(self, mock_reset, mock_incr):
+        """ONLY strategy derives successful images from state.yaml per-image status."""
+        from pyartcd.pipelines.ocp4_konflux import BuildStrategy
+
+        # Write state with per-image status including a parent image not in image_list
+        self._write_rebase_state(['parent-img'], [], successful=['img-a', 'extra-parent'])
+
+        pipeline = self._make_pipeline(image_build_strategy='only', image_list='img-a')
+        pipeline.build_plan.image_build_strategy = BuildStrategy.ONLY
+
+        await pipeline.update_rebase_fail_counters(['parent-img'])
+
+        reset_names = {c.args[0].split(':')[-1] for c in mock_reset.call_args_list}
+        incr_names = {c.args[0].split(':')[-1] for c in mock_incr.call_args_list}
+        # Both img-a and extra-parent should be reset (read from state.yaml, not image_list)
+        self.assertEqual(reset_names, {'img-a', 'extra-parent'})
+        self.assertEqual(incr_names, {'parent-img'})
+
+    @patch('pyartcd.pipelines.ocp4_konflux.exectools.cmd_assert_async')
+    async def test_build_after_rebase_uses_exclude_for_failed_and_skipped(self, mock_cmd):
+        """Build phase runs beta:images:konflux:build with --exclude covering every unrebased image."""
+        from pyartcd.pipelines.ocp4_konflux import BuildStrategy
+
+        self._write_rebase_state(['parent-img'], ['child-a', 'child-b'])
+        mock_cmd.side_effect = [ChildProcessError('rebase failed'), None]
+
+        pipeline = self._make_pipeline()
+        with patch.object(pipeline, 'update_rebase_fail_counters', new_callable=AsyncMock):
+            await pipeline.rebase_images('4.14.0', '1')
+        await pipeline.build_images()
+
+        self.assertEqual(mock_cmd.call_count, 2)
+        build_cmd = mock_cmd.call_args_list[1][0][0]
+        exclude_args = [arg for arg in build_cmd if arg.startswith('--exclude=')]
+        self.assertEqual(len(exclude_args), 1)
+        excluded = set(exclude_args[0].split('=', 1)[1].split(','))
+        self.assertEqual(excluded, {'parent-img', 'child-a', 'child-b'})
+        self.assertEqual(pipeline.build_plan.image_build_strategy, BuildStrategy.EXCEPT)
+
+    @patch('pyartcd.pipelines.ocp4_konflux.exectools.cmd_assert_async')
+    async def test_build_after_rebase_only_strategy_keeps_surviving_images(self, mock_cmd):
+        """ONLY strategy: build runs --images= for images that neither failed nor were skipped due to parent."""
+        from pyartcd.pipelines.ocp4_konflux import BuildStrategy
+
+        self._write_rebase_state(['parent-img'], ['child-a'])
+        mock_cmd.side_effect = [ChildProcessError('rebase failed'), None]
+
+        pipeline = self._make_pipeline(image_build_strategy='only', image_list='parent-img,child-a,survivor')
+        pipeline.build_plan.image_build_strategy = BuildStrategy.ONLY
+        pipeline.build_plan.images_included = ['parent-img', 'child-a', 'survivor']
+
+        with patch.object(pipeline, 'update_rebase_fail_counters', new_callable=AsyncMock):
+            await pipeline.rebase_images('4.14.0', '1')
+        await pipeline.build_images()
+
+        build_cmd = mock_cmd.call_args_list[1][0][0]
+        self.assertIn('--images=survivor', build_cmd)
+        self.assertEqual(pipeline.build_plan.images_included, ['survivor'])
+
+
+class TestKonfluxOcpPipelineBuildFailCounters(unittest.IsolatedAsyncioTestCase):
+    """Tests for update_build_fail_counters categorizing failures by type."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.runtime = MagicMock()
+        self.runtime.dry_run = False
+        self.runtime.doozer_working = str(Path(self.tmpdir) / 'doozer_working')
+        Path(self.runtime.doozer_working).mkdir(parents=True)
+
+    def _make_pipeline(self, assembly='stream', **kwargs):
+        from pyartcd.pipelines.ocp4_konflux import KonfluxOcpPipeline
+
+        defaults = {
+            'runtime': self.runtime,
+            'assembly': assembly,
+            'version': '4.18',
+            'data_path': 'test-path',
+            'image_build_strategy': 'all',
+            'image_list': '',
+            'rpm_build_strategy': 'none',
+            'rpm_list': '',
+            'data_gitref': '',
+            'kubeconfig': None,
+            'skip_rebase': False,
+            'skip_bundle_build': False,
+            'arches': (),
+            'plr_template': '',
+            'lock_identifier': 'test',
+            'skip_plashets': False,
+            'build_priority': 'auto',
+            'use_mass_rebuild_locks': False,
+            'network_mode': None,
+        }
+        defaults.update(kwargs)
+        return KonfluxOcpPipeline(**defaults)
+
+    @patch('pyartcd.pipelines.ocp4_konflux.increment_fail_counter', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.ocp4_konflux.reset_fail_counter', new_callable=AsyncMock)
+    async def test_build_fail_counters_categorize_ec_failures(self, mock_reset, mock_incr):
+        """EC failures use count:ec-failure key pattern."""
+        pipeline = self._make_pipeline()
+        record_log = {
+            'image_build_konflux': [
+                {
+                    'name': 'ironic',
+                    'status': '-1',
+                    'nvrs': 'ironic-1.0-1',
+                    'outcome': 'its_error',
+                    'ec_pipeline_url': 'http://its/plr/1',
+                    'build_pipeline_url': 'http://build/plr/1',
+                    'release_pipeline': '',
+                    'base_image_release_failed': 'false',
+                },
+            ]
+        }
+        await pipeline.update_build_fail_counters([], ['ironic'], record_log)
+
+        incr_branches = [c.args[0] for c in mock_incr.call_args_list]
+        self.assertEqual(len(incr_branches), 1)
+        self.assertIn('count:ec-failure:konflux:openshift-4.18:ironic', incr_branches[0])
+
+        # Verify pipeline_url is passed as metadata
+        incr_kwargs = mock_incr.call_args_list[0].kwargs
+        self.assertEqual(incr_kwargs['pipeline_url'], 'http://its/plr/1')
+
+    @patch('pyartcd.pipelines.ocp4_konflux.increment_fail_counter', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.ocp4_konflux.reset_fail_counter', new_callable=AsyncMock)
+    async def test_build_fail_counters_categorize_release_failures(self, mock_reset, mock_incr):
+        """Base image release failures use count:release-failure key pattern."""
+        pipeline = self._make_pipeline()
+        record_log = {
+            'image_build_konflux': [
+                {
+                    'name': 'ose-base',
+                    'status': '-1',
+                    'nvrs': 'ose-base-1.0-1',
+                    'outcome': 'release_error',
+                    'ec_pipeline_url': '',
+                    'build_pipeline_url': 'http://build/plr/2',
+                    'release_pipeline': 'http://release/plr/1',
+                    'base_image_release_failed': 'true',
+                },
+            ]
+        }
+        await pipeline.update_build_fail_counters([], ['ose-base'], record_log)
+
+        incr_branches = [c.args[0] for c in mock_incr.call_args_list]
+        self.assertEqual(len(incr_branches), 1)
+        self.assertIn('count:release-failure:konflux:openshift-4.18:ose-base', incr_branches[0])
+
+    @patch('pyartcd.pipelines.ocp4_konflux.increment_fail_counter', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.ocp4_konflux.reset_fail_counter', new_callable=AsyncMock)
+    async def test_build_fail_counters_regular_build_failure(self, mock_reset, mock_incr):
+        """Regular build failures still use count:build-failure key pattern."""
+        pipeline = self._make_pipeline()
+        record_log = {
+            'image_build_konflux': [
+                {
+                    'name': 'cluster-etcd-operator',
+                    'status': '-1',
+                    'nvrs': 'ceo-1.0-1',
+                    'ec_pipeline_url': '',
+                    'build_pipeline_url': 'http://build/plr/3',
+                    'release_pipeline': '',
+                    'base_image_release_failed': 'false',
+                },
+            ]
+        }
+        await pipeline.update_build_fail_counters([], ['cluster-etcd-operator'], record_log)
+
+        incr_branches = [c.args[0] for c in mock_incr.call_args_list]
+        self.assertEqual(len(incr_branches), 1)
+        self.assertIn('count:build-failure:konflux:openshift-4.18:cluster-etcd-operator', incr_branches[0])
+
+    @patch('pyartcd.pipelines.ocp4_konflux.increment_fail_counter', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.ocp4_konflux.reset_fail_counter', new_callable=AsyncMock)
+    async def test_build_fail_counters_mixed_failures(self, mock_reset, mock_incr):
+        """Mixed failure types: each uses its own counter pattern."""
+        pipeline = self._make_pipeline()
+        record_log = {
+            'image_build_konflux': [
+                {
+                    'name': 'ironic',
+                    'status': '-1',
+                    'nvrs': 'ironic-1.0-1',
+                    'outcome': 'its_error',
+                    'ec_pipeline_url': 'http://its/1',
+                    'build_pipeline_url': 'http://build/plr/4',
+                    'release_pipeline': '',
+                    'base_image_release_failed': 'false',
+                },
+                {
+                    'name': 'ose-base',
+                    'status': '-1',
+                    'nvrs': 'ose-base-1.0-1',
+                    'outcome': 'release_error',
+                    'ec_pipeline_url': '',
+                    'build_pipeline_url': 'http://build/plr/2',
+                    'release_pipeline': 'http://release/plr/1',
+                    'base_image_release_failed': 'true',
+                },
+                {
+                    'name': 'ceo',
+                    'status': '-1',
+                    'nvrs': 'ceo-1.0-1',
+                    'outcome': 'build_error',
+                    'ec_pipeline_url': '',
+                    'build_pipeline_url': 'http://build/plr/5',
+                    'release_pipeline': '',
+                    'base_image_release_failed': 'false',
+                },
+            ]
+        }
+        await pipeline.update_build_fail_counters([], ['ironic', 'ose-base', 'ceo'], record_log)
+
+        incr_branches = {c.args[0] for c in mock_incr.call_args_list}
+        self.assertEqual(len(incr_branches), 3)
+        self.assertIn('count:ec-failure:konflux:openshift-4.18:ironic', incr_branches)
+        self.assertIn('count:release-failure:konflux:openshift-4.18:ose-base', incr_branches)
+        self.assertIn('count:build-failure:konflux:openshift-4.18:ceo', incr_branches)
+
+    @patch('pyartcd.pipelines.ocp4_konflux.increment_fail_counter', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.ocp4_konflux.reset_fail_counter', new_callable=AsyncMock)
+    async def test_build_fail_counters_success_resets_all_types(self, mock_reset, mock_incr):
+        """Successfully built images reset all three counter types."""
+        pipeline = self._make_pipeline()
+        record_log = {
+            'image_build_konflux': [
+                {
+                    'name': 'ironic',
+                    'status': '0',
+                    'nvrs': 'ironic-1.0-1',
+                    'ec_pipeline_url': '',
+                    'build_pipeline_url': '',
+                    'release_pipeline': '',
+                    'base_image_release_failed': 'false',
+                },
+            ]
+        }
+        await pipeline.update_build_fail_counters(['ironic'], [], record_log)
+
+        reset_branches = {c.args[0] for c in mock_reset.call_args_list}
+        self.assertEqual(len(reset_branches), 3)
+        self.assertIn('count:build-failure:konflux:openshift-4.18:ironic', reset_branches)
+        self.assertIn('count:ec-failure:konflux:openshift-4.18:ironic', reset_branches)
+        self.assertIn('count:release-failure:konflux:openshift-4.18:ironic', reset_branches)
+        mock_incr.assert_not_called()
+
+    @patch('pyartcd.pipelines.ocp4_konflux.increment_fail_counter', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.ocp4_konflux.reset_fail_counter', new_callable=AsyncMock)
+    async def test_build_fail_counters_categorize_by_outcome(self, mock_reset, mock_incr):
+        """Granular outcome values categorize failures correctly."""
+        from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome
+
+        pipeline = self._make_pipeline()
+        record_log = {
+            'image_build_konflux': [
+                {
+                    'name': 'ironic',
+                    'status': '-1',
+                    'nvrs': 'ironic-1.0-1',
+                    'outcome': str(KonfluxBuildOutcome.ITS_ERROR),
+                },
+                {
+                    'name': 'ose-base',
+                    'status': '-1',
+                    'nvrs': 'ose-base-1.0-1',
+                    'outcome': str(KonfluxBuildOutcome.RELEASE_ERROR),
+                },
+                {
+                    'name': 'ceo',
+                    'status': '-1',
+                    'nvrs': 'ceo-1.0-1',
+                    'outcome': str(KonfluxBuildOutcome.BUILD_ERROR),
+                },
+            ]
+        }
+        await pipeline.update_build_fail_counters([], ['ironic', 'ose-base', 'ceo'], record_log)
+
+        incr_branches = {c.args[0] for c in mock_incr.call_args_list}
+        self.assertEqual(len(incr_branches), 3)
+        self.assertIn('count:ec-failure:konflux:openshift-4.18:ironic', incr_branches)
+        self.assertIn('count:release-failure:konflux:openshift-4.18:ose-base', incr_branches)
+        self.assertIn('count:build-failure:konflux:openshift-4.18:ceo', incr_branches)
+
+    @patch('pyartcd.pipelines.ocp4_konflux.increment_fail_counter', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.ocp4_konflux.reset_fail_counter', new_callable=AsyncMock)
+    async def test_build_fail_counters_non_stream_skipped(self, mock_reset, mock_incr):
+        """Non-stream assemblies skip counter updates entirely."""
+        pipeline = self._make_pipeline(assembly='4.18.1')
+        record_log = {
+            'image_build_konflux': [
+                {
+                    'name': 'ironic',
+                    'status': '-1',
+                    'nvrs': 'ironic-1.0-1',
+                    'outcome': 'its_error',
+                    'ec_pipeline_url': 'http://its/1',
+                    'build_pipeline_url': 'http://build/plr/4',
+                    'release_pipeline': '',
+                    'base_image_release_failed': 'false',
+                },
+            ]
+        }
+        await pipeline.update_build_fail_counters([], ['ironic'], record_log)
+        mock_reset.assert_not_called()
+        mock_incr.assert_not_called()
+
+    @patch('pyartcd.pipelines.ocp4_konflux.increment_fail_counter', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.ocp4_konflux.reset_fail_counter', new_callable=AsyncMock)
+    async def test_build_fail_counters_exclude_parent_failures(self, mock_reset, mock_incr):
+        """Images that failed because their parent images failed should not increment counters."""
+        pipeline = self._make_pipeline()
+        record_log = {
+            'image_build_konflux': [
+                {
+                    'name': 'ose-baremetal-installer',
+                    'status': '-1',
+                    'nvrs': 'n/a',
+                    'outcome': '',
+                    'ec_pipeline_url': '',
+                    'build_pipeline_url': '',
+                    'release_pipeline': '',
+                    'base_image_release_failed': 'false',
+                    'task_id': 'n/a',
+                    'message': "Couldn't build ose-baremetal-installer because the following parent images failed to build: ose-etcd, openshift-enterprise-hyperkube",
+                },
+            ]
+        }
+        await pipeline.update_build_fail_counters([], ['ose-baremetal-installer'], record_log)
+        mock_incr.assert_not_called()
+
+    @patch('pyartcd.pipelines.ocp4_konflux.increment_fail_counter', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.ocp4_konflux.reset_fail_counter', new_callable=AsyncMock)
+    async def test_build_fail_counters_mixed_real_and_parent_failures(self, mock_reset, mock_incr):
+        """Real failures should be counted, parent-failure children should not."""
+        pipeline = self._make_pipeline()
+        record_log = {
+            'image_build_konflux': [
+                {
+                    'name': 'openshift-enterprise-base-rhel9',
+                    'status': '-1',
+                    'nvrs': 'base-rhel9-1.0-1',
+                    'outcome': 'failure',
+                    'ec_pipeline_url': '',
+                    'build_pipeline_url': 'http://build/plr/base',
+                    'release_pipeline': '',
+                    'base_image_release_failed': 'false',
+                    'message': 'Build timed out',
+                },
+                {
+                    'name': 'ose-baremetal-installer',
+                    'status': '-1',
+                    'nvrs': 'n/a',
+                    'outcome': '',
+                    'ec_pipeline_url': '',
+                    'build_pipeline_url': '',
+                    'release_pipeline': '',
+                    'base_image_release_failed': 'false',
+                    'task_id': 'n/a',
+                    'message': "Couldn't build ose-baremetal-installer because the following parent images failed to build: openshift-enterprise-base-rhel9",
+                },
+                {
+                    'name': 'ose-network-tools',
+                    'status': '-1',
+                    'nvrs': 'n/a',
+                    'outcome': '',
+                    'ec_pipeline_url': '',
+                    'build_pipeline_url': '',
+                    'release_pipeline': '',
+                    'base_image_release_failed': 'false',
+                    'task_id': 'n/a',
+                    'message': "Couldn't build ose-network-tools because the following parent images failed to build: openshift-enterprise-base-rhel9",
+                },
+            ]
+        }
+        await pipeline.update_build_fail_counters(
+            [],
+            ['openshift-enterprise-base-rhel9', 'ose-baremetal-installer', 'ose-network-tools'],
+            record_log,
+        )
+        # Only the real failure (base-rhel9) should increment
+        incr_keys = [c.args[0] for c in mock_incr.call_args_list]
+        self.assertEqual(len(incr_keys), 1)
+        self.assertIn('openshift-enterprise-base-rhel9', incr_keys[0])
+        self.assertIn('build-failure', incr_keys[0])
+
+    @patch('pyartcd.pipelines.ocp4_konflux.increment_fail_counter', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.ocp4_konflux.reset_fail_counter', new_callable=AsyncMock)
+    async def test_build_fail_counters_all_parent_failures_no_increments(self, mock_reset, mock_incr):
+        """When all failures are parent-caused, no counters should be incremented."""
+        pipeline = self._make_pipeline()
+        record_log = {
+            'image_build_konflux': [
+                {
+                    'name': 'child-a',
+                    'status': '-1',
+                    'nvrs': 'n/a',
+                    'outcome': '',
+                    'ec_pipeline_url': '',
+                    'build_pipeline_url': '',
+                    'release_pipeline': '',
+                    'base_image_release_failed': 'false',
+                    'message': "Couldn't build child-a because the following parent images failed to build: parent-x",
+                },
+                {
+                    'name': 'child-b',
+                    'status': '-1',
+                    'nvrs': 'n/a',
+                    'outcome': '',
+                    'ec_pipeline_url': '',
+                    'build_pipeline_url': '',
+                    'release_pipeline': '',
+                    'base_image_release_failed': 'false',
+                    'message': "Couldn't build child-b because the following parent images failed to build: parent-x, parent-y",
+                },
+            ]
+        }
+        await pipeline.update_build_fail_counters([], ['child-a', 'child-b'], record_log)
+        mock_incr.assert_not_called()
+
+    @patch('pyartcd.pipelines.ocp4_konflux.jenkins')
+    @patch('pyartcd.pipelines.ocp4_konflux.KonfluxOcpPipeline.update_build_fail_counters', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.ocp4_konflux.KonfluxOcpPipeline.parse_record_log')
+    async def test_sync_images_excludes_parent_failures_from_description(self, mock_parse, mock_counters, mock_jenkins):
+        """Parent-failure children should be logged as skipped, not shown in the description."""
+        pipeline = self._make_pipeline()
+
+        record_log = {
+            'image_build_konflux': [
+                {
+                    'name': 'ose-must-gather',
+                    'status': '-1',
+                    'nvrs': 'n/a',
+                    'outcome': 'failure',
+                    'message': 'Konflux image build for ose-must-gather failed with output=build_error',
+                },
+                {
+                    'name': 'local-storage-mustgather',
+                    'status': '-1',
+                    'nvrs': 'n/a',
+                    'outcome': '',
+                    'message': "Couldn't build local-storage-mustgather because the following parent images failed to build: ose-must-gather",
+                },
+                {
+                    'name': 'ose-cli',
+                    'status': '0',
+                    'nvrs': 'ose-cli-4.14.0-1',
+                    'outcome': 'success',
+                    'message': '',
+                },
+            ]
+        }
+        mock_parse.return_value = record_log
+
+        await pipeline.sync_images()
+
+        # Verify the description includes both the real failure and the skipped image
+        expected_description = (
+            'Failed images: ose-must-gather<br/>Skipped (parent failure): local-storage-mustgather<br/>'
+        )
+        mock_jenkins.update_description.assert_called_once_with(expected_description)
+
+    @patch('pyartcd.pipelines.ocp4_konflux.jenkins')
+    @patch('pyartcd.pipelines.ocp4_konflux.KonfluxOcpPipeline.update_build_fail_counters', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.ocp4_konflux.KonfluxOcpPipeline.parse_record_log')
+    async def test_sync_images_all_parent_failures_no_description(self, mock_parse, mock_counters, mock_jenkins):
+        """When all failures are parent-caused, description should not show any failures."""
+        pipeline = self._make_pipeline()
+
+        record_log = {
+            'image_build_konflux': [
+                {
+                    'name': 'child-a',
+                    'status': '-1',
+                    'nvrs': 'n/a',
+                    'outcome': '',
+                    'message': "Couldn't build child-a because the following parent images failed to build: parent-x",
+                },
+                {
+                    'name': 'child-b',
+                    'status': '-1',
+                    'nvrs': 'n/a',
+                    'outcome': '',
+                    'message': "Couldn't build child-b because the following parent images failed to build: parent-x",
+                },
+                {
+                    'name': 'ose-cli',
+                    'status': '0',
+                    'nvrs': 'ose-cli-4.14.0-1',
+                    'outcome': 'success',
+                    'message': '',
+                },
+            ]
+        }
+        mock_parse.return_value = record_log
+
+        await pipeline.sync_images()
+
+        # When there are no real failures, only the skipped images description should be set
+        expected_description = 'Skipped (parent failure): child-a, child-b<br/>'
+        mock_jenkins.update_description.assert_called_once_with(expected_description)
+
+    @patch('pyartcd.pipelines.ocp4_konflux.jenkins')
+    @patch('pyartcd.pipelines.ocp4_konflux.KonfluxOcpPipeline.update_build_fail_counters', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.ocp4_konflux.KonfluxOcpPipeline.parse_record_log')
+    async def test_sync_images_many_skipped_uses_count(self, mock_parse, mock_counters, mock_jenkins):
+        """When there are >10 skipped images, show count instead of listing them."""
+        pipeline = self._make_pipeline()
+
+        # Create 12 skipped images
+        skipped_images = [
+            {
+                'name': f'child-{i}',
+                'status': '-1',
+                'nvrs': 'n/a',
+                'outcome': '',
+                'message': f"Couldn't build child-{i} because the following parent images failed to build: parent-x",
+            }
+            for i in range(12)
+        ]
+
+        record_log = {
+            'image_build_konflux': skipped_images
+            + [
+                {
+                    'name': 'ose-cli',
+                    'status': '0',
+                    'nvrs': 'ose-cli-4.14.0-1',
+                    'outcome': 'success',
+                    'message': '',
+                },
+            ]
+        }
+        mock_parse.return_value = record_log
+
+        await pipeline.sync_images()
+
+        # Should show count instead of listing all skipped images
+        expected_description = '12 images skipped due to parent failures<br/>'
+        mock_jenkins.update_description.assert_called_once_with(expected_description)

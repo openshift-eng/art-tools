@@ -1,0 +1,469 @@
+from unittest import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock, MagicMock, patch
+
+from artcommonlib.model import Model
+from artcommonlib.variants import BuildVariant
+from doozerlib.backend.base_image_handler import BaseImageHandler, BaseImageReleaseResult, BaseImageSnapshotInput
+from doozerlib.image import ImageMetadata
+from doozerlib.util import rh_art_images_base_pullspec
+
+
+class TestBaseImageHandler(IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.runtime = MagicMock()
+        self.runtime.group = "openshift-4.22"
+        self.runtime.group_config.name = "openshift-4.22"
+        self.runtime.assembly = "stream"
+        self.runtime.product = "ocp"
+        self.runtime.variant = BuildVariant.OCP
+
+        image_model = Model(
+            {
+                "name": "test-base",
+                "base_only": True,
+                "base_image_release": {"enabled": True},
+                "distgit": {"component": "ose-test-base-container"},
+            }
+        )
+        data_obj = Model({"key": "test-base", "data": image_model, "filename": "test-base.yaml"})
+        self.metadata = ImageMetadata(self.runtime, data_obj)
+        self.metadata.distgit_key = "test-base"
+
+        self.nvr = "test-base-container-v1.0.0-1.el9"
+        self.image_pullspec = "quay.io/test/test-base:latest"
+
+        self.default_input = BaseImageSnapshotInput(
+            nvr=self.nvr,
+            distgit_key="test-base",
+            container_image=self.image_pullspec,
+            rebase_repo_url="https://example.com/repo.git",
+            rebase_commitish="abc123",
+            is_golang_builder=False,
+        )
+
+    @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_kubeconfig_by_product")
+    async def test_snapshot_release_success(self, mock_kubeconfig, mock_namespace, mock_konflux_client_init):
+        mock_namespace.return_value = "ocp-art-tenant"
+        mock_kubeconfig.return_value = "/path/to/kubeconfig"
+        mock_konflux_client_init.return_value = AsyncMock()
+
+        handler = BaseImageHandler(self.runtime, dry_run=True)
+        self.runtime.image_map = {"test-base": self.metadata}
+
+        with patch.object(handler, "_snapshot_from_component", new=AsyncMock(return_value="test-snapshot")):
+            with patch.object(
+                handler,
+                "_create_release_from_snapshot",
+                new=AsyncMock(return_value=("test-release", "https://konflux.example/releases/test-release")),
+            ):
+                with patch.object(handler, "_wait_for_release_completion", return_value=True):
+                    result = await handler.snapshot_release(self.default_input)
+
+        self.assertIsNotNone(result)
+        self.assertIsInstance(result, BaseImageReleaseResult)
+        self.assertEqual(result.release_name, "test-release")
+        self.assertEqual(result.snapshot_name, "test-snapshot")
+        self.assertEqual(result.release_pipeline, "https://konflux.example/releases/test-release")
+        self.assertEqual(result.released_pullspec, rh_art_images_base_pullspec(self.default_input.nvr))
+
+    @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_kubeconfig_by_product")
+    async def test_snapshot_release_builds_one_component(
+        self, mock_kubeconfig, mock_namespace, mock_konflux_client_init
+    ):
+        mock_namespace.return_value = "ocp-art-tenant"
+        mock_kubeconfig.return_value = "/path/to/kubeconfig"
+        mock_konflux_client_init.return_value = AsyncMock()
+
+        handler = BaseImageHandler(self.runtime, dry_run=True)
+        self.runtime.image_map = {"test-base": self.metadata}
+
+        with patch.object(handler, "_snapshot_from_component", new=AsyncMock(return_value="snap")) as mock_snap:
+            with patch.object(
+                handler,
+                "_create_release_from_snapshot",
+                new=AsyncMock(return_value=("rel", "https://example.com/releases/rel")),
+            ):
+                with patch.object(handler, "_wait_for_release_completion", return_value=True):
+                    await handler.snapshot_release(self.default_input)
+
+        mock_snap.assert_awaited_once()
+        comp = mock_snap.await_args.args[0]
+        self.assertEqual(comp["containerImage"], self.image_pullspec)
+
+    @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_kubeconfig_by_product")
+    async def test_snapshot_release_unknown_metadata_returns_none(
+        self, mock_kubeconfig, mock_namespace, mock_konflux_client_init
+    ):
+        mock_namespace.return_value = "ocp-art-tenant"
+        mock_kubeconfig.return_value = "/path/to/kubeconfig"
+        mock_konflux_client_init.return_value = AsyncMock()
+
+        handler = BaseImageHandler(self.runtime, dry_run=False)
+        self.runtime.image_map = {}
+
+        result = await handler.snapshot_release(self.default_input)
+
+        self.assertIsNone(result)
+
+    @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_kubeconfig_by_product")
+    async def test_snapshot_release_empty_pullspec_returns_none(
+        self, mock_kubeconfig, mock_namespace, mock_konflux_client_init
+    ):
+        mock_namespace.return_value = "ocp-art-tenant"
+        mock_kubeconfig.return_value = "/path/to/kubeconfig"
+        mock_konflux_client_init.return_value = AsyncMock()
+
+        bad = BaseImageSnapshotInput(
+            nvr="x-container-v1-1.el9",
+            distgit_key="test-base",
+            container_image="",
+        )
+        handler = BaseImageHandler(self.runtime, dry_run=True)
+        self.runtime.image_map = {"test-base": self.metadata}
+
+        result = await handler.snapshot_release(bad)
+        self.assertIsNone(result)
+
+    @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_kubeconfig_by_product")
+    async def test_snapshot_release_golang_builder_returns_none(
+        self, mock_kubeconfig, mock_namespace, mock_konflux_client_init
+    ):
+        # Golang builders are excluded from the base-image release workflow via
+        # should_trigger_base_image_release(). They use the shipment MR path instead.
+        from artcommonlib.constants import GOLANG_BUILDER_IMAGE_NAME
+
+        mock_namespace.return_value = "ocp-art-tenant"
+        mock_kubeconfig.return_value = "/path/to/kubeconfig"
+        mock_konflux_client_init.return_value = AsyncMock()
+
+        golang_builder_model = Model(
+            {
+                "name": GOLANG_BUILDER_IMAGE_NAME,
+                "base_image_release": {"enabled": True},
+                "distgit": {"component": "ose-golang-builder-container"},
+            }
+        )
+        golang_data = Model({"key": "golang-builder", "data": golang_builder_model, "filename": "golang-builder.yaml"})
+        golang_metadata = ImageMetadata(self.runtime, golang_data)
+        golang_metadata.distgit_key = "golang-builder"
+
+        inp = BaseImageSnapshotInput(
+            nvr="golang-builder-container-v1.0.0-1.el9",
+            distgit_key="golang-builder",
+            container_image="quay.io/test/golang-builder:latest",
+            rebase_repo_url="https://example.com/golang-builder.git",
+            rebase_commitish="def456",
+            is_golang_builder=True,
+        )
+
+        handler = BaseImageHandler(self.runtime, dry_run=True)
+        self.runtime.image_map = {"golang-builder": golang_metadata}
+
+        result = await handler.snapshot_release(inp)
+        self.assertIsNone(result)
+
+    @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_kubeconfig_by_product")
+    async def test_create_release_from_snapshot_sets_release_annotations(
+        self, mock_kubeconfig, mock_namespace, mock_konflux_client_init
+    ):
+        mock_namespace.return_value = "ocp-art-tenant"
+        mock_kubeconfig.return_value = "/path/to/kubeconfig"
+
+        konflux_client = AsyncMock()
+        created_release = MagicMock()
+        created_release.metadata.name = "test-release"
+        konflux_client._create.return_value = created_release
+        konflux_client.resource_url = MagicMock(return_value="https://konflux.example/releases/test-release")
+        mock_konflux_client_init.return_value = konflux_client
+
+        handler = BaseImageHandler(self.runtime, dry_run=False)
+
+        with patch.object(handler, "_wait_for_snapshot_availability", new=AsyncMock(return_value=True)):
+            name_url = await handler._create_release_from_snapshot("test-snapshot", self.default_input)
+
+        self.assertEqual(name_url, ("test-release", "https://konflux.example/releases/test-release"))
+        konflux_client._get.assert_awaited_once()
+        konflux_client._create.assert_awaited_once()
+        release_obj = konflux_client._create.await_args.args[0]
+        annotations = release_obj["metadata"]["annotations"]
+        self.assertEqual(annotations["art.redhat.com/nvr"], self.nvr)
+        self.assertEqual(annotations["art.redhat.com/distgit-key"], "test-base")
+        self.assertNotIn("art.redhat.com/job-url", annotations)
+        self.assertEqual(release_obj["metadata"]["generateName"], "openshift-4-22-base-image-release-")
+
+    @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_kubeconfig_by_product")
+    async def test_create_release_from_snapshot_sets_job_url_when_build_url_set(
+        self, mock_kubeconfig, mock_namespace, mock_konflux_client_init
+    ):
+        mock_namespace.return_value = "ocp-art-tenant"
+        mock_kubeconfig.return_value = "/path/to/kubeconfig"
+
+        konflux_client = AsyncMock()
+        created_release = MagicMock()
+        created_release.metadata.name = "test-release"
+        konflux_client._create.return_value = created_release
+        konflux_client.resource_url = MagicMock(return_value="https://konflux.example/releases/test-release")
+        mock_konflux_client_init.return_value = konflux_client
+
+        handler = BaseImageHandler(self.runtime, dry_run=False)
+
+        with patch.object(handler, "_wait_for_snapshot_availability", new=AsyncMock(return_value=True)):
+            with patch.dict("os.environ", {"BUILD_URL": "https://jenkins.example/job/123/"}):
+                await handler._create_release_from_snapshot("test-snapshot", self.default_input)
+
+        release_obj = konflux_client._create.await_args.args[0]
+        self.assertEqual(
+            release_obj["metadata"]["annotations"]["art.redhat.com/job-url"],
+            "https://jenkins.example/job/123/",
+        )
+
+    @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_kubeconfig_by_product")
+    async def test_handler_pre_release_lifecycle_uses_ec_release_plan(
+        self, mock_kubeconfig, mock_namespace, mock_konflux_client_init
+    ):
+        mock_namespace.return_value = "ocp-art-tenant"
+        mock_kubeconfig.return_value = "/path/to/kubeconfig"
+        mock_konflux_client_init.return_value = AsyncMock()
+
+        self.runtime.group_config = Model({"software_lifecycle": Model({"phase": "pre-release"})})
+
+        handler = BaseImageHandler(self.runtime, dry_run=True)
+        self.assertEqual(handler.base_image_release_plan, "ocp-art-images-base-silent-ec")
+
+    @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_kubeconfig_by_product")
+    async def test_snapshot_release_failure_preserves_release_pipeline(
+        self, mock_kubeconfig, mock_namespace, mock_konflux_client_init
+    ):
+        """Test that release_pipeline URL is preserved even when release fails."""
+        mock_namespace.return_value = "ocp-art-tenant"
+        mock_kubeconfig.return_value = "/path/to/kubeconfig"
+        mock_konflux_client_init.return_value = AsyncMock()
+
+        handler = BaseImageHandler(self.runtime, dry_run=True)
+        self.runtime.image_map = {"test-base": self.metadata}
+
+        with patch.object(handler, "_snapshot_from_component", new=AsyncMock(return_value="test-snapshot")):
+            with patch.object(
+                handler,
+                "_create_release_from_snapshot",
+                new=AsyncMock(return_value=("failed-release", "https://konflux.example/releases/failed-release")),
+            ):
+                with patch.object(handler, "_wait_for_release_completion", return_value=False):
+                    result = await handler.snapshot_release(self.default_input)
+
+        # Should return a result with release_pipeline but empty released_pullspec
+        self.assertIsNotNone(result)
+        self.assertIsInstance(result, BaseImageReleaseResult)
+        self.assertEqual(result.release_name, "failed-release")
+        self.assertEqual(result.snapshot_name, "test-snapshot")
+        self.assertEqual(result.release_pipeline, "https://konflux.example/releases/failed-release")
+        self.assertEqual(result.released_pullspec, "")  # Empty on failure
+
+    @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_kubeconfig_by_product")
+    async def test_snapshot_release_creation_failure_returns_snapshot_url(
+        self, mock_kubeconfig, mock_namespace, mock_konflux_client_init
+    ):
+        """Test that when release creation fails, snapshot URL is returned for tracking."""
+        mock_namespace.return_value = "ocp-art-tenant"
+        mock_kubeconfig.return_value = "/path/to/kubeconfig"
+
+        # Create a mock konflux client that will be used to build snapshot URL
+        mock_client = AsyncMock()
+        mock_client.resource_url = MagicMock(return_value="https://konflux.example/snapshots/test-snapshot")
+        mock_konflux_client_init.return_value = mock_client
+
+        handler = BaseImageHandler(self.runtime, dry_run=False)
+        self.runtime.image_map = {"test-base": self.metadata}
+
+        with patch.object(handler, "_snapshot_from_component", new=AsyncMock(return_value="test-snapshot")):
+            # Release creation fails and returns None
+            with patch.object(handler, "_create_release_from_snapshot", new=AsyncMock(return_value=None)):
+                result = await handler.snapshot_release(self.default_input)
+
+        # Should return a partial result with snapshot URL as release_pipeline fallback
+        self.assertIsNotNone(result)
+        self.assertIsInstance(result, BaseImageReleaseResult)
+        self.assertEqual(result.release_name, "")  # Empty since release wasn't created
+        self.assertEqual(result.snapshot_name, "test-snapshot")
+        self.assertEqual(result.release_pipeline, "https://konflux.example/snapshots/test-snapshot")
+        self.assertEqual(result.released_pullspec, "")  # Empty on failure
+
+    @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_kubeconfig_by_product")
+    async def test_snapshot_name_includes_component_name(
+        self, mock_kubeconfig, mock_namespace, mock_konflux_client_init
+    ):
+        mock_namespace.return_value = "ocp-art-tenant"
+        mock_kubeconfig.return_value = "/path/to/kubeconfig"
+        mock_konflux_client_init.return_value = AsyncMock()
+
+        handler = BaseImageHandler(self.runtime, dry_run=True)
+
+        component = {"name": "ose-4-22-openshift-base-rhel9", "containerImage": "quay.io/test:latest"}
+
+        with patch("doozerlib.backend.base_image_handler.get_utc_now_formatted_str", return_value="20260529104357"):
+            name = await handler._snapshot_from_component(component)
+
+        self.assertEqual(name, "ose-4-22-openshift-base-rhel9-20260529104357")
+
+    @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_kubeconfig_by_product")
+    async def test_snapshot_name_normalizes_golang_component(
+        self, mock_kubeconfig, mock_namespace, mock_konflux_client_init
+    ):
+        mock_namespace.return_value = "ocp-art-tenant"
+        mock_kubeconfig.return_value = "/path/to/kubeconfig"
+        mock_konflux_client_init.return_value = AsyncMock()
+        self.runtime.group = "golang"
+
+        handler = BaseImageHandler(self.runtime, dry_run=True)
+        component = {"name": "golang-builder-v1.23-rhel9", "containerImage": "quay.io/test:latest"}
+
+        with patch("doozerlib.backend.base_image_handler.get_utc_now_formatted_str", return_value="20260805200004"):
+            name = await handler._snapshot_from_component(component)
+
+        self.assertEqual(name, "golang-builder-v1-23-rhel9-20260805200004")
+        self.assertRegex(name, r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
+
+    @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_kubeconfig_by_product")
+    async def test_snapshot_name_within_63_char_limit(self, mock_kubeconfig, mock_namespace, mock_konflux_client_init):
+        mock_namespace.return_value = "ocp-art-tenant"
+        mock_kubeconfig.return_value = "/path/to/kubeconfig"
+        mock_konflux_client_init.return_value = AsyncMock()
+
+        handler = BaseImageHandler(self.runtime, dry_run=True)
+
+        component = {"name": "a" * 100, "containerImage": "quay.io/test:latest"}
+
+        with patch("doozerlib.backend.base_image_handler.get_utc_now_formatted_str", return_value="20260529104357"):
+            name = await handler._snapshot_from_component(component)
+
+        self.assertLessEqual(len(name), 63)
+        self.assertTrue(name.endswith("-20260529104357"))
+        self.assertNotRegex(name, r'--')
+        # Snapshot name no longer includes group prefix; it starts with the
+        # (truncated) component name directly.
+        self.assertFalse(name.startswith("openshift-4-22-"))
+
+    @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_kubeconfig_by_product")
+    async def test_different_components_produce_different_snapshot_names(
+        self, mock_kubeconfig, mock_namespace, mock_konflux_client_init
+    ):
+        mock_namespace.return_value = "ocp-art-tenant"
+        mock_kubeconfig.return_value = "/path/to/kubeconfig"
+        mock_konflux_client_init.return_value = AsyncMock()
+
+        handler = BaseImageHandler(self.runtime, dry_run=True)
+
+        comp1 = {"name": "ose-4-22-openshift-base-rhel9", "containerImage": "quay.io/test:latest"}
+        comp2 = {"name": "ose-4-22-openshift-base-nodejs-rhel9", "containerImage": "quay.io/test:latest"}
+
+        with patch("doozerlib.backend.base_image_handler.get_utc_now_formatted_str", return_value="20260529104357"):
+            name1 = await handler._snapshot_from_component(comp1)
+            name2 = await handler._snapshot_from_component(comp2)
+
+        self.assertNotEqual(name1, name2)
+
+    @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_kubeconfig_by_product")
+    async def test_release_generate_name_includes_component(
+        self, mock_kubeconfig, mock_namespace, mock_konflux_client_init
+    ):
+        mock_namespace.return_value = "ocp-art-tenant"
+        mock_kubeconfig.return_value = "/path/to/kubeconfig"
+
+        konflux_client = AsyncMock()
+        created_release = MagicMock()
+        created_release.metadata.name = "test-release"
+        konflux_client._create.return_value = created_release
+        konflux_client.resource_url = MagicMock(return_value="https://konflux.example/releases/test-release")
+        mock_konflux_client_init.return_value = konflux_client
+
+        handler = BaseImageHandler(self.runtime, dry_run=False)
+
+        with patch.object(handler, "_wait_for_snapshot_availability", new=AsyncMock(return_value=True)):
+            await handler._create_release_from_snapshot(
+                "test-snapshot", self.default_input, "ose-4-22-openshift-base-rhel9"
+            )
+
+        release_obj = konflux_client._create.await_args.args[0]
+        self.assertEqual(release_obj["metadata"]["generateName"], "openshift-4-22-ose-4-22-openshift-base-rhel9-")
+
+    @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_kubeconfig_by_product")
+    async def test_release_rejects_invalid_snapshot_reference(
+        self, mock_kubeconfig, mock_namespace, mock_konflux_client_init
+    ):
+        mock_namespace.return_value = "ocp-art-tenant"
+        mock_kubeconfig.return_value = "/path/to/kubeconfig"
+        konflux_client = AsyncMock()
+        mock_konflux_client_init.return_value = konflux_client
+
+        handler = BaseImageHandler(self.runtime, dry_run=False)
+        result = await handler._create_release_from_snapshot("snapshot.v1", self.default_input)
+
+        self.assertIsNone(result)
+        konflux_client._get.assert_not_awaited()
+        konflux_client._create.assert_not_awaited()
+
+    @patch("doozerlib.backend.base_image_handler.KonfluxClient.from_kubeconfig")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_namespace_by_product")
+    @patch("doozerlib.backend.base_image_handler.resolve_konflux_kubeconfig_by_product")
+    async def test_create_release_from_snapshot_rhmtc_uses_product_plan_and_application(
+        self, mock_kubeconfig, mock_namespace, mock_konflux_client_init
+    ):
+        mock_namespace.return_value = "art-mtc-tenant"
+        mock_kubeconfig.return_value = "/path/to/kubeconfig"
+
+        konflux_client = AsyncMock()
+        created_release = MagicMock()
+        created_release.metadata.name = "test-release"
+        konflux_client._create.return_value = created_release
+        konflux_client.resource_url = MagicMock(return_value="https://konflux.example/releases/test-release")
+        mock_konflux_client_init.return_value = konflux_client
+
+        self.runtime.product = "rhmtc"
+
+        handler = BaseImageHandler(self.runtime, dry_run=False)
+
+        with patch.object(handler, "_wait_for_snapshot_availability", new=AsyncMock(return_value=True)):
+            await handler._create_release_from_snapshot("test-snapshot", self.default_input)
+
+        konflux_client._get.assert_awaited_once()
+        self.assertEqual(konflux_client._get.await_args.args[2], "mtc-images-base-silent")
+
+        konflux_client._create.assert_awaited_once()
+        release_obj = konflux_client._create.await_args.args[0]
+        self.assertEqual(release_obj["spec"]["releasePlan"], "mtc-images-base-silent")
+        self.assertEqual(
+            release_obj["metadata"]["labels"]["appstudio.openshift.io/application"],
+            "mtc-images-base",
+        )

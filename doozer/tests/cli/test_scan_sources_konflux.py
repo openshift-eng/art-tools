@@ -1,0 +1,1545 @@
+import base64
+import json
+from unittest import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import aiohttp
+import yaml
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord
+from artcommonlib.model import Missing
+from doozerlib.cli.scan_sources_konflux import ConfigScanSources
+from doozerlib.image import ImageMetadata
+from doozerlib.metadata import RebuildHintCode
+from doozerlib.runtime import Runtime
+
+
+class TestScanSourcesKonflux(IsolatedAsyncioTestCase):
+    def setUp(self):
+        """Set up test fixtures."""
+        self.runtime = MagicMock(spec=Runtime)
+        self.runtime.konflux_db = MagicMock()
+        self.runtime.group = 'openshift-4.20'  # Default to OCP group for tests
+        self.runtime.load_disabled = False
+        self.runtime.registry_config = None
+        self.runtime.image_metas.return_value = []
+        self.runtime.rpm_metas.return_value = []
+        self.runtime.image_map = {}
+        self.runtime.group_config = {}  # Default: no group-level overrides
+        self.session = MagicMock(spec=aiohttp.ClientSession)
+        self.ci_kubeconfig = "/tmp/test_kubeconfig"
+
+        # Mock get_github_client_for_org (returns client directly; no Github class or GITHUB_TOKEN)
+        # Patch must persist for test duration since get_current_task_bundle_shas calls it at runtime
+        self._github_patch = patch('doozerlib.cli.scan_sources_konflux.get_github_client_for_org')
+        self.mock_get_github_client_fn = self._github_patch.start()
+        self.mock_github_client = MagicMock()
+        self.mock_get_github_client_fn.return_value = self.mock_github_client
+        self.scanner = ConfigScanSources(
+            runtime=self.runtime,
+            ci_kubeconfig=self.ci_kubeconfig,
+            session=self.session,
+            as_yaml=False,
+            rebase_priv=False,
+            dry_run=False,
+        )
+
+        # Mock image metadata
+        self.image_meta = MagicMock(spec=ImageMetadata)
+        self.image_meta.distgit_key = "test-image"
+        # Mock config with for_release attribute
+        self.image_meta.config = MagicMock()
+        self.image_meta.config.for_release = True
+
+        # Mock build record
+        self.build_record = MagicMock(spec=KonfluxBuildRecord)
+        self.build_record.image_pullspec = "quay.io/test/image@sha256:abc123"
+        self.build_record.name = "test-image"
+
+        self.scanner.latest_image_build_records_map = {"test-image": self.build_record}
+
+        # Mock changing_image_names to allow scanning
+        self.scanner.changing_image_names = set()
+
+    def tearDown(self):
+        if hasattr(self, '_github_patch'):
+            self._github_patch.stop()
+        super().tearDown()
+
+
+class TestMinimalCrashIsolation(TestScanSourcesKonflux):
+    async def test_scan_image_records_issue_instead_of_raising(self):
+        self.image_meta.config.konflux = Missing
+
+        with (
+            patch.object(self.scanner, 'scan_for_upstream_changes', AsyncMock(side_effect=RuntimeError('boom'))),
+            patch.object(self.scanner, 'scan_dependency_changes', AsyncMock()),
+            patch.object(self.scanner, 'scan_builders_changes', AsyncMock()),
+            patch.object(self.scanner, 'scan_external_image_changes', AsyncMock()),
+            patch.object(self.scanner, 'scan_arch_changes', AsyncMock()),
+            patch.object(self.scanner, 'scan_network_mode_changes', AsyncMock()),
+            patch.object(self.scanner, 'scan_for_config_changes', AsyncMock()),
+            patch.object(self.scanner, 'scan_rpm_changes', AsyncMock()),
+            patch.object(self.scanner, 'scan_extra_packages', AsyncMock()),
+            patch.object(self.scanner, 'scan_task_bundle_changes', AsyncMock()),
+        ):
+            await self.scanner.scan_image(self.image_meta)
+
+        self.assertEqual(
+            self.scanner.issues,
+            [{'name': 'test-image', 'issue': 'Failed scanning image during upstream commit checks: boom'}],
+        )
+
+    @patch('doozerlib.cli.scan_sources_konflux.Dir')
+    @patch('doozerlib.cli.scan_sources_konflux.exectools.parallel_exec')
+    def test_rebase_into_priv_records_issue_and_continues(self, mock_parallel_exec, mock_dir):
+        broken_meta = MagicMock()
+        broken_meta.meta_type = 'image'
+        broken_meta.enabled = True
+        broken_meta.name = 'broken-image'
+        broken_meta.distgit_key = 'broken-image'
+        broken_meta.config.content = MagicMock()
+        broken_meta.config.content.source.git.url = 'https://example.com/org/broken.git'
+        broken_meta.config.content.source.git.branch.target = 'main'
+
+        good_meta = MagicMock()
+        good_meta.meta_type = 'image'
+        good_meta.enabled = True
+        good_meta.name = 'good-image'
+        good_meta.distgit_key = 'good-image'
+        good_meta.config.content = MagicMock()
+        good_meta.config.content.source.git.url = 'https://example.com/org/good.git'
+        good_meta.config.content.source.git.branch.target = 'main'
+
+        mock_parallel_exec.return_value.get.return_value = [
+            (broken_meta, ('https://example.com/public-org/broken.git', 'main', True)),
+            (good_meta, ('https://example.com/public-org/good.git', 'main', True)),
+        ]
+        mock_dir.return_value.__enter__.return_value = None
+        mock_dir.return_value.__exit__.return_value = None
+
+        self.runtime.source_resolver = MagicMock()
+        self.runtime.source_resolver.resolve_source.side_effect = [
+            MagicMock(source_path='/tmp/broken'),
+            MagicMock(source_path='/tmp/good'),
+        ]
+
+        with (
+            patch.object(self.scanner, '_is_image_enabled', return_value=True),
+            patch.object(self.scanner, '_do_shas_match', return_value=False),
+            patch.object(self.scanner, '_is_pub_ancestor_of_priv', side_effect=[RuntimeError('bad repo'), False]),
+            patch.object(self.scanner, '_try_reconciliation') as mock_try_reconciliation,
+        ):
+            self.scanner.rebase_into_priv()
+
+        self.assertEqual(
+            self.scanner.issues,
+            [{'name': 'broken-image', 'issue': 'Failed rebasing into -priv: bad repo'}],
+        )
+        mock_try_reconciliation.assert_called_once_with(
+            good_meta, 'good', 'main', 'main', priv_url='https://example.com/org/good.git'
+        )
+
+    def _make_scanner_for_rebase_test(self, group, rebase_priv=True, major_minor=None):
+        """Helper: create a ConfigScanSources with a group set and runtime.image_tree mocked."""
+        self.runtime.group = group
+        self.runtime.image_tree = {}
+        if major_minor:
+            self.runtime.get_major_minor_fields.return_value = major_minor
+        scanner = ConfigScanSources(
+            runtime=self.runtime,
+            ci_kubeconfig=self.ci_kubeconfig,
+            session=self.session,
+            as_yaml=False,
+            rebase_priv=rebase_priv,
+            dry_run=False,
+        )
+        scanner.all_metas = set()
+        scanner.all_image_metas = set()
+        scanner.all_rpm_metas = set()
+        return scanner
+
+    async def _run_with_rebase_mocked(self, scanner):
+        """Helper: run scanner with everything except the rebase-priv gate mocked out."""
+        with (
+            patch.object(scanner, 'rebase_into_priv') as mock_rebase,
+            patch.object(scanner, 'check_changing_rpms', new_callable=AsyncMock),
+            patch.object(scanner, 'get_current_task_bundle_shas', new_callable=AsyncMock, return_value={}),
+            patch.object(scanner, 'generate_dependency_tree', return_value={}),
+            patch.object(scanner, 'scan_images', new_callable=AsyncMock),
+            patch.object(scanner, 'detect_rhcos_status', new_callable=AsyncMock),
+            patch.object(scanner, 'generate_report'),
+        ):
+            await scanner.run()
+            return mock_rebase
+
+    async def test_run_rebase_priv_called_for_non_ocp_group(self):
+        """Non-OCP layered products should always rebase into openshift-priv, regardless of version."""
+        scanner = self._make_scanner_for_rebase_test('oc-mirror-2.0')
+        mock_rebase = await self._run_with_rebase_mocked(scanner)
+        mock_rebase.assert_called_once()
+
+    async def test_run_rebase_priv_called_for_ocp_4_20(self):
+        """OCP groups >= 4.12 should rebase into openshift-priv."""
+        scanner = self._make_scanner_for_rebase_test('openshift-4.20', major_minor=(4, 20))
+        mock_rebase = await self._run_with_rebase_mocked(scanner)
+        mock_rebase.assert_called_once()
+
+    async def test_run_rebase_priv_skipped_for_ocp_4_11(self):
+        """OCP groups < 4.12 should NOT rebase into openshift-priv."""
+        scanner = self._make_scanner_for_rebase_test('openshift-4.11', major_minor=(4, 11))
+        mock_rebase = await self._run_with_rebase_mocked(scanner)
+        mock_rebase.assert_not_called()
+
+    async def test_run_rebase_priv_called_for_oadp_group(self):
+        """OADP layered product groups should always rebase, just like oc-mirror."""
+        scanner = self._make_scanner_for_rebase_test('oadp-1.5')
+        mock_rebase = await self._run_with_rebase_mocked(scanner)
+        mock_rebase.assert_called_once()
+
+
+class TestScanTaskBundleChanges(TestScanSourcesKonflux):
+    """Test the scan_task_bundle_changes method."""
+
+    def setUp(self):
+        super().setUp()
+
+        # Sample SLSA attestation with task bundles (already parsed)
+        self.sample_attestation = {
+            "predicate": {
+                "materials": [
+                    {
+                        "uri": "quay.io/konflux-ci/tekton-catalog/task-git-clone",
+                        "digest": {"sha256": "abc123def456"},
+                    },
+                    {
+                        "uri": "quay.io/konflux-ci/tekton-catalog/task-buildah",
+                        "digest": {"sha256": "def456ghi789"},
+                    },
+                    {"uri": "quay.io/other-registry/some-other-task", "digest": {"sha256": "xyz999"}},
+                ]
+            }
+        }
+
+        # Sample current task bundles from GitHub
+        self.current_task_bundles = {
+            "task-git-clone": "new123def456",  # Different SHA - newer version
+            "task-buildah": "def456ghi789",  # Same SHA - up to date
+        }
+
+    @patch('doozerlib.cli.scan_sources_konflux.fetch_slsa_attestation')
+    async def test_scan_task_bundle_changes_no_attestation(self, mock_get_attestation):
+        """Test handling when SLSA attestation cannot be retrieved."""
+        mock_get_attestation.return_value = None
+
+        await self.scanner.scan_task_bundle_changes(self.image_meta)
+
+        # Should not add any changes when attestation fails
+        self.assertEqual(len(self.scanner.changing_image_names), 0)
+
+    @patch('doozerlib.cli.scan_sources_konflux.fetch_slsa_attestation')
+    async def test_scan_task_bundle_changes_invalid_attestation(self, mock_get_attestation):
+        """Test handling when SLSA attestation is malformed."""
+        mock_get_attestation.return_value = "invalid json"
+
+        await self.scanner.scan_task_bundle_changes(self.image_meta)
+
+        # Should not add any changes when attestation is invalid
+        self.assertEqual(len(self.scanner.changing_image_names), 0)
+
+    @patch('doozerlib.cli.scan_sources_konflux.fetch_slsa_attestation')
+    async def test_scan_task_bundle_changes_no_task_bundles(self, mock_get_attestation):
+        """Test handling when no tekton-catalog task bundles are found."""
+        attestation_without_task_bundles = json.dumps(
+            {
+                "payload": base64.b64encode(
+                    json.dumps(
+                        {
+                            "predicate": {
+                                "materials": [
+                                    {"uri": "quay.io/other-registry/some-image", "digest": {"sha256": "xyz999"}}
+                                ]
+                            }
+                        }
+                    ).encode()
+                ).decode()
+            }
+        )
+        mock_get_attestation.return_value = attestation_without_task_bundles
+
+        await self.scanner.scan_task_bundle_changes(self.image_meta)
+
+        # Should not add any changes when no task bundles found
+        self.assertEqual(len(self.scanner.changing_image_names), 0)
+
+    @patch('doozerlib.cli.scan_sources_konflux.fetch_slsa_attestation')
+    @patch.object(ConfigScanSources, 'get_current_task_bundle_shas')
+    async def test_scan_task_bundle_changes_github_fetch_fails(self, mock_get_current, mock_get_attestation):
+        """Test handling when GitHub task bundle fetch fails."""
+        mock_get_attestation.return_value = self.sample_attestation
+        mock_get_current.return_value = {}  # Empty dict indicates failure
+
+        await self.scanner.scan_task_bundle_changes(self.image_meta)
+
+        # Should not add any changes when GitHub fetch fails
+        self.assertEqual(len(self.scanner.changing_image_names), 0)
+
+    @patch('doozerlib.cli.scan_sources_konflux.fetch_slsa_attestation')
+    @patch.object(ConfigScanSources, 'add_image_meta_change')
+    async def test_scan_task_bundle_changes_sha_mismatch_triggers_rebuild(self, mock_add_change, mock_get_attestation):
+        """Test that task bundles with SHA mismatch trigger rebuilds."""
+        mock_get_attestation.return_value = self.sample_attestation
+        self.scanner.current_task_bundles = self.current_task_bundles
+
+        await self.scanner.scan_task_bundle_changes(self.image_meta)
+
+        # Should add change when SHA doesn't match
+        mock_add_change.assert_called_once()
+
+        # Verify the rebuild hint
+        call_args = mock_add_change.call_args[0]
+        rebuild_hint = call_args[1]
+        self.assertEqual(rebuild_hint.code, RebuildHintCode.TASK_BUNDLE_OUTDATED)
+        self.assertIn("task-git-clone", rebuild_hint.reason)
+
+    @patch('doozerlib.cli.scan_sources_konflux.fetch_slsa_attestation')
+    async def test_scan_task_bundle_changes_same_sha_no_rebuild(self, mock_get_attestation):
+        """Test that task bundles with same SHA don't trigger rebuilds."""
+        # Modify current bundles to have same SHA as used SHA
+        current_bundles_same = {
+            "task-git-clone": "abc123def456",  # Same SHA as in attestation
+            "task-buildah": "def456ghi789",  # Same SHA as in attestation
+        }
+
+        mock_get_attestation.return_value = self.sample_attestation
+        self.scanner.current_task_bundles = current_bundles_same
+
+        await self.scanner.scan_task_bundle_changes(self.image_meta)
+
+        # Should not add any changes when SHAs match
+        self.assertEqual(len(self.scanner.changing_image_names), 0)
+
+    @patch('doozerlib.cli.scan_sources_konflux.fetch_slsa_attestation')
+    @patch.object(ConfigScanSources, 'get_current_task_bundle_shas')
+    async def test_scan_task_bundle_changes_for_release_none(self, mock_get_current, mock_get_attestation):
+        """Test that task bundle scanning proceeds when for_release is None."""
+        # Set for_release to None
+        self.image_meta.config.for_release = None
+
+        mock_get_attestation.return_value = self.sample_attestation
+        mock_get_current.return_value = {}
+
+        await self.scanner.scan_task_bundle_changes(self.image_meta)
+
+        # Should call fetch_slsa_attestation when for_release is None (not skipped)
+        mock_get_attestation.assert_called_once_with(
+            self.build_record.image_pullspec, self.build_record.name, self.scanner.runtime.registry_config
+        )
+
+    @patch('doozerlib.cli.scan_sources_konflux.fetch_slsa_attestation')
+    @patch.object(ConfigScanSources, 'get_current_task_bundle_shas')
+    async def test_scan_task_bundle_changes_for_release_missing(self, mock_get_current, mock_get_attestation):
+        """Test that task bundle scanning proceeds when for_release is Missing."""
+        # Set for_release to Missing
+        self.image_meta.config.for_release = Missing
+
+        mock_get_attestation.return_value = self.sample_attestation
+        mock_get_current.return_value = {}
+
+        await self.scanner.scan_task_bundle_changes(self.image_meta)
+
+        # Should call fetch_slsa_attestation when for_release is Missing (not skipped)
+        mock_get_attestation.assert_called_once_with(
+            self.build_record.image_pullspec, self.build_record.name, self.scanner.runtime.registry_config
+        )
+
+    @patch('doozerlib.cli.scan_sources_konflux.fetch_slsa_attestation')
+    @patch.object(ConfigScanSources, 'get_current_task_bundle_shas')
+    async def test_scan_task_bundle_changes_for_release_true(self, mock_get_current, mock_get_attestation):
+        """Test that task bundle scanning proceeds when for_release is True."""
+        # for_release is already set to True in setUp, but let's be explicit
+        self.image_meta.config.for_release = True
+
+        mock_get_attestation.return_value = self.sample_attestation
+        mock_get_current.return_value = {}
+
+        await self.scanner.scan_task_bundle_changes(self.image_meta)
+
+        # Should call fetch_slsa_attestation when for_release is True (not skipped)
+        mock_get_attestation.assert_called_once_with(
+            self.build_record.image_pullspec, self.build_record.name, self.scanner.runtime.registry_config
+        )
+
+    @patch('doozerlib.cli.scan_sources_konflux.fetch_slsa_attestation')
+    async def test_scan_task_bundle_changes_for_release_false(self, mock_get_attestation):
+        """Test that task bundle scanning is skipped when for_release is False."""
+        # Set for_release to False
+        self.image_meta.config.for_release = False
+
+        await self.scanner.scan_task_bundle_changes(self.image_meta)
+
+        # Should NOT call fetch_slsa_attestation when for_release is False (skipped)
+        mock_get_attestation.assert_not_called()
+
+
+class TestGetCurrentTaskBundleShas(TestScanSourcesKonflux):
+    """Test the get_current_task_bundle_shas method."""
+
+    def setUp(self):
+        super().setUp()
+
+        # Sample YAML content with task references
+        self.sample_yaml = {
+            "spec": {
+                "tasks": [
+                    {
+                        "name": "init",
+                        "taskRef": {
+                            "resolver": "bundles",
+                            "params": [
+                                {"name": "name", "value": "init"},
+                                {
+                                    "name": "bundle",
+                                    "value": "quay.io/konflux-ci/tekton-catalog/task-init:0.2@sha256:abc123def456",
+                                },
+                            ],
+                        },
+                    },
+                    {
+                        "name": "git-clone-oci-ta",
+                        "taskRef": {
+                            "resolver": "bundles",
+                            "params": [
+                                {"name": "name", "value": "git-clone-oci-ta"},
+                                {
+                                    "name": "bundle",
+                                    "value": "quay.io/konflux-ci/tekton-catalog/task-git-clone-oci-ta:0.1@sha256:def456ghi789",
+                                },
+                            ],
+                        },
+                    },
+                    {
+                        "name": "buildah-remote-oci-ta",
+                        "taskRef": {
+                            "resolver": "bundles",
+                            "params": [
+                                {"name": "name", "value": "buildah-remote-oci-ta"},
+                                {
+                                    "name": "bundle",
+                                    "value": "quay.io/konflux-ci/tekton-catalog/task-buildah-remote-oci-ta:0.7@sha256:ghi789jkl012",
+                                },
+                            ],
+                        },
+                    },
+                    {
+                        "name": "non-task-bundle",
+                        "taskRef": {
+                            "resolver": "bundles",
+                            "params": [
+                                {"name": "name", "value": "non-task-bundle"},
+                                {
+                                    "name": "bundle",
+                                    "value": "quay.io/konflux-ci/tekton-catalog/git-clone@sha256:shouldnotbeextracted",
+                                },
+                            ],
+                        },
+                    },
+                    {
+                        "name": "other-task",
+                        "taskRef": {
+                            "resolver": "git",  # Different resolver
+                            "params": [{"name": "url", "value": "https://github.com/example/tasks"}],
+                        },
+                    },
+                ]
+            }
+        }
+
+    async def test_get_current_task_bundle_shas_success(self):
+        """Test successful fetching and parsing of task bundle SHAs."""
+        yaml_content = yaml.dump(self.sample_yaml)
+
+        mock_content = MagicMock()
+        mock_content.decoded_content = yaml_content.encode('utf-8')
+        self.mock_github_client.get_repo.return_value.get_contents.return_value = mock_content
+
+        result = await self.scanner.get_current_task_bundle_shas()
+
+        expected = {
+            "task-init": "abc123def456",
+            "task-git-clone-oci-ta": "def456ghi789",
+            "task-buildah-remote-oci-ta": "ghi789jkl012",
+        }
+        self.assertEqual(result, expected)
+
+        self.mock_github_client.get_repo.assert_called_with("openshift-priv/art-konflux-template")
+        self.mock_github_client.get_repo.return_value.get_contents.assert_called_with(
+            ".tekton/art-konflux-template-push.yaml", ref="main"
+        )
+
+    async def test_get_current_task_bundle_shas_http_error(self):
+        """Test that GitHub API errors propagate so @retry can handle them."""
+        from github import GithubException
+
+        self.mock_github_client.get_repo.return_value.get_contents.side_effect = GithubException(
+            404, {"message": "Not Found"}, None
+        )
+
+        with self.assertRaises(GithubException):
+            await self.scanner.get_current_task_bundle_shas()
+
+    async def test_get_current_task_bundle_shas_yaml_parse_error(self):
+        """Test handling of YAML parsing errors."""
+        invalid_yaml = "invalid: yaml: content: [unclosed"
+
+        mock_content = MagicMock()
+        mock_content.decoded_content = invalid_yaml.encode('utf-8')
+        self.mock_github_client.get_repo.return_value.get_contents.return_value = mock_content
+
+        result = await self.scanner.get_current_task_bundle_shas()
+
+        self.assertEqual(result, {})
+
+    async def test_get_current_task_bundle_shas_no_task_refs(self):
+        """Test handling when YAML contains no task references."""
+        yaml_without_tasks = {"spec": {"resources": []}}
+        yaml_content = yaml.dump(yaml_without_tasks)
+
+        mock_content = MagicMock()
+        mock_content.decoded_content = yaml_content.encode('utf-8')
+        self.mock_github_client.get_repo.return_value.get_contents.return_value = mock_content
+
+        result = await self.scanner.get_current_task_bundle_shas()
+
+        self.assertEqual(result, {})
+
+    async def test_get_current_task_bundle_shas_nested_structure(self):
+        """Test parsing task references in deeply nested YAML structures."""
+        nested_yaml = {
+            "metadata": {"name": "pipeline"},
+            "spec": {
+                "tasks": [
+                    {
+                        "name": "nested-task",
+                        "taskRef": {
+                            "resolver": "bundles",
+                            "params": [
+                                {"name": "name", "value": "nested-task"},
+                                {
+                                    "name": "bundle",
+                                    "value": "quay.io/konflux-ci/tekton-catalog/task-nested-task:0.1@sha256:nested123",
+                                },
+                            ],
+                        },
+                    }
+                ],
+                "finally": [
+                    {
+                        "name": "cleanup",
+                        "taskRef": {
+                            "resolver": "bundles",
+                            "params": [
+                                {"name": "name", "value": "cleanup"},
+                                {
+                                    "name": "bundle",
+                                    "value": "quay.io/konflux-ci/tekton-catalog/task-cleanup:0.2@sha256:cleanup456",
+                                },
+                            ],
+                        },
+                    }
+                ],
+            },
+        }
+
+        yaml_content = yaml.dump(nested_yaml)
+
+        mock_content = MagicMock()
+        mock_content.decoded_content = yaml_content.encode('utf-8')
+        self.mock_github_client.get_repo.return_value.get_contents.return_value = mock_content
+
+        result = await self.scanner.get_current_task_bundle_shas()
+
+        expected = {"task-nested-task": "nested123", "task-cleanup": "cleanup456"}
+        self.assertEqual(result, expected)
+
+    async def test_get_current_task_bundle_shas_with_plr_template_commitish(self):
+        """Test fetching task bundle SHAs from a custom owner/branch via plr_template_commitish."""
+        yaml_content = yaml.dump(self.sample_yaml)
+        mock_content = MagicMock()
+        mock_content.decoded_content = yaml_content.encode('utf-8')
+        self.mock_github_client.get_repo.return_value.get_contents.return_value = mock_content
+
+        self.scanner.runtime.group_config = {"konflux": {"plr_template_commitish": "custom-owner@feature-branch"}}
+
+        result = await self.scanner.get_current_task_bundle_shas()
+
+        expected = {
+            "task-init": "abc123def456",
+            "task-git-clone-oci-ta": "def456ghi789",
+            "task-buildah-remote-oci-ta": "ghi789jkl012",
+        }
+        self.assertEqual(result, expected)
+        self.mock_get_github_client_fn.assert_called_with("custom-owner")
+        self.mock_github_client.get_repo.assert_called_with("custom-owner/art-konflux-template")
+        self.mock_github_client.get_repo.return_value.get_contents.assert_called_with(
+            ".tekton/art-konflux-template-push.yaml", ref="feature-branch"
+        )
+
+    async def test_get_current_task_bundle_shas_without_plr_template_commitish(self):
+        """Test that default owner/branch is used when plr_template_commitish is not set."""
+        yaml_content = yaml.dump(self.sample_yaml)
+        mock_content = MagicMock()
+        mock_content.decoded_content = yaml_content.encode('utf-8')
+        self.mock_github_client.get_repo.return_value.get_contents.return_value = mock_content
+
+        self.scanner.runtime.group_config = {}
+
+        result = await self.scanner.get_current_task_bundle_shas()
+
+        self.assertEqual(len(result), 3)
+        self.mock_get_github_client_fn.assert_called_with("openshift-priv")
+        self.mock_github_client.get_repo.assert_called_with("openshift-priv/art-konflux-template")
+        self.mock_github_client.get_repo.return_value.get_contents.assert_called_with(
+            ".tekton/art-konflux-template-push.yaml", ref="main"
+        )
+
+    async def test_get_current_task_bundle_shas_konflux_config_without_commitish(self):
+        """Test default behavior when konflux config exists but no plr_template_commitish."""
+        yaml_content = yaml.dump(self.sample_yaml)
+        mock_content = MagicMock()
+        mock_content.decoded_content = yaml_content.encode('utf-8')
+        self.mock_github_client.get_repo.return_value.get_contents.return_value = mock_content
+
+        self.scanner.runtime.group_config = {"konflux": {"some_other_key": "value"}}
+
+        result = await self.scanner.get_current_task_bundle_shas()
+
+        self.assertEqual(len(result), 3)
+        self.mock_get_github_client_fn.assert_called_with("openshift-priv")
+        self.mock_github_client.get_repo.assert_called_with("openshift-priv/art-konflux-template")
+        self.mock_github_client.get_repo.return_value.get_contents.assert_called_with(
+            ".tekton/art-konflux-template-push.yaml", ref="main"
+        )
+
+
+class TestTaskBundleIntegration(TestScanSourcesKonflux):
+    """Integration tests for the complete task bundle scanning workflow."""
+
+    @patch('doozerlib.cli.scan_sources_konflux.fetch_slsa_attestation')
+    @patch.object(ConfigScanSources, 'add_image_meta_change')
+    async def test_full_workflow_rebuild_triggered(self, mock_add_change, mock_get_attestation):
+        """Test the complete workflow when a rebuild should be triggered."""
+        # Setup test data
+        attestation = {
+            "predicate": {
+                "materials": [
+                    {
+                        "uri": "quay.io/konflux-ci/tekton-catalog/git-clone",
+                        "digest": {"sha256": "old123"},
+                    }
+                ]
+            }
+        }
+
+        current_bundles = {"git-clone": "new456"}  # Different SHA
+
+        mock_get_attestation.return_value = attestation
+        self.scanner.current_task_bundles = current_bundles
+
+        await self.scanner.scan_task_bundle_changes(self.image_meta)
+
+        # Verify all methods were called in correct order
+        mock_get_attestation.assert_called_once_with(
+            self.build_record.image_pullspec, self.build_record.name, self.scanner.runtime.registry_config
+        )
+
+        # Verify rebuild hint was added
+        mock_add_change.assert_called_once()
+        rebuild_hint = mock_add_change.call_args[0][1]
+        self.assertEqual(rebuild_hint.code, RebuildHintCode.TASK_BUNDLE_OUTDATED)
+
+    @patch('doozerlib.cli.scan_sources_konflux.fetch_slsa_attestation')
+    @patch.object(ConfigScanSources, 'add_image_meta_change')
+    async def test_full_workflow_no_rebuild_needed(self, mock_add_change, mock_get_attestation):
+        """Test the complete workflow when no rebuild is needed."""
+        # Setup test data with matching SHAs
+        attestation = {
+            "predicate": {
+                "materials": [
+                    {
+                        "uri": "quay.io/konflux-ci/tekton-catalog/git-clone",
+                        "digest": {"sha256": "same123"},
+                    }
+                ]
+            }
+        }
+
+        current_bundles = {"git-clone": "same123"}  # Same SHA
+        mock_get_attestation.return_value = attestation
+        self.scanner.current_task_bundles = current_bundles
+
+        await self.scanner.scan_task_bundle_changes(self.image_meta)
+
+        # Verify early exit when SHAs match
+        mock_get_attestation.assert_called_once()
+        mock_add_change.assert_not_called()
+
+    async def test_skip_check_if_changing_decorator(self):
+        """Test that the skip_check_if_changing decorator works correctly."""
+        # Add image to changing set
+        self.scanner.changing_image_names.add("test-image")
+
+        with patch('artcommonlib.util.get_konflux_data') as mock_get_attestation:
+            await self.scanner.scan_task_bundle_changes(self.image_meta)
+
+            # Should not call get_attestation when image is already changing
+            mock_get_attestation.assert_not_called()
+
+    async def test_network_mode_override_end_to_end_integration(self):
+        """Test complete CLI override flow through all components."""
+        runtime = MagicMock()
+        runtime.network_mode_override = "internal-only"
+        runtime.assembly = "test"
+        runtime.get_releases_config.return_value = {}
+
+        group_config = MagicMock()
+        group_config.get.return_value = {}
+        group_config.konflux.get.return_value = "hermetic"
+        runtime.group_config = group_config
+
+        image_config = MagicMock()
+        image_config.konflux.get.return_value = "open"
+
+        data_obj = MagicMock()
+        data_obj.key = "test"
+        data_obj.filename = "test.yml"
+        data_obj.data = {"name": "test"}
+
+        from doozerlib.metadata import Metadata
+
+        meta = Metadata("image", runtime, data_obj)
+        meta.config = image_config
+
+        result = meta.get_konflux_network_mode()
+        self.assertEqual(result, "internal-only")
+
+
+class TestFindImagesWithDisabledDependencies(TestScanSourcesKonflux):
+    """Test the _find_images_with_disabled_dependencies method."""
+
+    def setUp(self):
+        super().setUp()
+        self.runtime.group = 'oadp-1.4'
+        self.runtime.gitdata = MagicMock()
+
+    def _make_gitdata_entry(self, key, mode='enabled', dependents=None):
+        entry = MagicMock()
+        entry.key = key
+        entry.data = {'mode': mode, 'name': f'test/{key}'}
+        if dependents:
+            entry.data['dependents'] = dependents
+        return entry
+
+    def test_no_disabled_images(self):
+        """No disabled images means no images should be flagged."""
+        self.scanner.changing_image_names = {'oadp-operator', 'oadp-velero'}
+        self.runtime.gitdata.load_data.return_value = {
+            'oadp-operator': self._make_gitdata_entry('oadp-operator'),
+            'oadp-velero': self._make_gitdata_entry('oadp-velero', dependents=['oadp-operator']),
+        }
+
+        result = self.scanner._find_images_with_disabled_dependencies()
+        self.assertEqual(result, set())
+
+    def test_disabled_image_with_dependent(self):
+        """A disabled image listing a changed image as dependent should flag the dependent."""
+        self.scanner.changing_image_names = {'oadp-operator', 'oadp-velero-restic-restore-helper'}
+        self.runtime.gitdata.load_data.return_value = {
+            'oadp-operator': self._make_gitdata_entry('oadp-operator'),
+            'oadp-velero': self._make_gitdata_entry('oadp-velero', mode='disabled', dependents=['oadp-operator']),
+            'oadp-velero-restic-restore-helper': self._make_gitdata_entry('oadp-velero-restic-restore-helper'),
+        }
+
+        result = self.scanner._find_images_with_disabled_dependencies()
+        self.assertEqual(result, {'oadp-operator'})
+
+    def test_disabled_image_dependent_not_changing(self):
+        """A disabled image whose dependent is not in the changing set should not flag anything."""
+        self.scanner.changing_image_names = {'oadp-velero-restic-restore-helper'}
+        self.runtime.gitdata.load_data.return_value = {
+            'oadp-operator': self._make_gitdata_entry('oadp-operator'),
+            'oadp-velero': self._make_gitdata_entry('oadp-velero', mode='disabled', dependents=['oadp-operator']),
+            'oadp-velero-restic-restore-helper': self._make_gitdata_entry('oadp-velero-restic-restore-helper'),
+        }
+
+        result = self.scanner._find_images_with_disabled_dependencies()
+        self.assertEqual(result, set())
+
+    def test_multiple_disabled_images_same_dependent(self):
+        """Multiple disabled images listing the same dependent should flag it once."""
+        self.scanner.changing_image_names = {'my-operator'}
+        self.runtime.gitdata.load_data.return_value = {
+            'my-operator': self._make_gitdata_entry('my-operator'),
+            'disabled-img-a': self._make_gitdata_entry('disabled-img-a', mode='disabled', dependents=['my-operator']),
+            'disabled-img-b': self._make_gitdata_entry('disabled-img-b', mode='disabled', dependents=['my-operator']),
+        }
+
+        result = self.scanner._find_images_with_disabled_dependencies()
+        self.assertEqual(result, {'my-operator'})
+
+    def test_wip_images_not_treated_as_disabled(self):
+        """Images with mode 'wip' should not be treated as disabled for dependency checking."""
+        self.scanner.changing_image_names = {'my-operator'}
+        self.runtime.gitdata.load_data.return_value = {
+            'my-operator': self._make_gitdata_entry('my-operator'),
+            'wip-image': self._make_gitdata_entry('wip-image', mode='wip', dependents=['my-operator']),
+        }
+
+        result = self.scanner._find_images_with_disabled_dependencies()
+        self.assertEqual(result, set())
+
+    def test_disabled_image_without_dependents(self):
+        """A disabled image without dependents should not affect anything."""
+        self.scanner.changing_image_names = {'my-operator'}
+        self.runtime.gitdata.load_data.return_value = {
+            'my-operator': self._make_gitdata_entry('my-operator'),
+            'disabled-standalone': self._make_gitdata_entry('disabled-standalone', mode='disabled'),
+        }
+
+        result = self.scanner._find_images_with_disabled_dependencies()
+        self.assertEqual(result, set())
+
+
+class TestScanExternalImageChanges(TestScanSourcesKonflux):
+    """Test the scan_external_image_changes method."""
+
+    def setUp(self):
+        super().setUp()
+        self.runtime.product = 'oadp'
+        self.scanner.runtime = self.runtime
+
+        self.image_meta.is_olm_operator = True
+        self.image_meta.config.get = MagicMock(
+            return_value={
+                'manifests-dir': 'manifests',
+                'bundle-dir': 'stable/',
+            }
+        )
+
+        self.build_record.rebase_repo_url = 'https://github.com/openshift-priv/oadp-operator.git'
+        self.build_record.rebase_commitish = 'abc123def'
+
+        group_config_mock = MagicMock()
+        group_config_mock.get.return_value = {}
+        group_config_mock.vars = {'MAJOR': '1', 'MINOR': '5'}
+        self.runtime.group_config = group_config_mock
+
+    async def test_skips_for_ocp_product(self):
+        """Should early-return for OCP product."""
+        self.runtime.product = 'ocp'
+        with patch.object(self.scanner, '_fetch_art_yaml_from_rebase', new_callable=AsyncMock) as mock_fetch:
+            await self.scanner.scan_external_image_changes(self.image_meta)
+            mock_fetch.assert_not_called()
+
+    async def test_skips_non_olm_operator(self):
+        """Should early-return for non-OLM operator images."""
+        self.image_meta.is_olm_operator = False
+        with patch.object(self.scanner, '_fetch_art_yaml_from_rebase', new_callable=AsyncMock) as mock_fetch:
+            await self.scanner.scan_external_image_changes(self.image_meta)
+            mock_fetch.assert_not_called()
+
+    async def test_skips_no_build_record(self):
+        """Should early-return when no build record exists."""
+        self.scanner.latest_image_build_records_map = {}
+        with patch.object(self.scanner, '_fetch_art_yaml_from_rebase', new_callable=AsyncMock) as mock_fetch:
+            await self.scanner.scan_external_image_changes(self.image_meta)
+            mock_fetch.assert_not_called()
+
+    async def test_skips_no_art_yaml(self):
+        """Should skip when art.yaml cannot be fetched."""
+        with patch.object(self.scanner, '_fetch_art_yaml_from_rebase', new_callable=AsyncMock) as mock_fetch:
+            mock_fetch.return_value = None
+            await self.scanner.scan_external_image_changes(self.image_meta)
+        self.assertEqual(len(self.scanner.changing_image_names), 0)
+
+    async def test_skips_no_external_images(self):
+        """Should skip when art.yaml has no external-images."""
+        with patch.object(self.scanner, '_fetch_art_yaml_from_rebase', new_callable=AsyncMock) as mock_fetch:
+            mock_fetch.return_value = {'updates': []}
+            await self.scanner.scan_external_image_changes(self.image_meta)
+        self.assertEqual(len(self.scanner.changing_image_names), 0)
+
+    async def test_skips_digest_based_replace(self):
+        """Should skip external images that already use digest references."""
+        art_yaml = {
+            'external-images': [
+                {
+                    'name': 'postgresql',
+                    'search': 'RELATED_IMAGE_POSTGRESQL',
+                    'replace': 'registry.redhat.io/rhel9/postgresql-15@sha256:already_pinned',
+                }
+            ]
+        }
+        with (
+            patch.object(self.scanner, '_fetch_art_yaml_from_rebase', new_callable=AsyncMock, return_value=art_yaml),
+            patch.object(
+                self.scanner, '_fetch_image_references_from_rebase', new_callable=AsyncMock
+            ) as mock_fetch_refs,
+        ):
+            await self.scanner.scan_external_image_changes(self.image_meta)
+            mock_fetch_refs.assert_not_called()
+        self.assertEqual(len(self.scanner.changing_image_names), 0)
+
+    @patch('doozerlib.cli.scan_sources_konflux.oc_image_info_for_arch_async')
+    async def test_no_rebuild_when_digest_unchanged(self, mock_oc_image_info):
+        """Should not trigger rebuild when external image digest is the same."""
+        art_yaml = {
+            'external-images': [
+                {
+                    'name': 'postgresql',
+                    'search': 'RELATED_IMAGE_POSTGRESQL',
+                    'replace': 'registry.redhat.io/rhel9/postgresql-15:latest',
+                }
+            ]
+        }
+        image_refs = {
+            'spec': {
+                'tags': [
+                    {
+                        'name': 'postgresql',
+                        'from': {'name': 'registry.redhat.io/rhel9/postgresql-15@sha256:currentdigest123'},
+                    }
+                ]
+            }
+        }
+        mock_oc_image_info.return_value = {'listDigest': 'sha256:currentdigest123'}
+
+        with (
+            patch.object(self.scanner, '_fetch_art_yaml_from_rebase', new_callable=AsyncMock, return_value=art_yaml),
+            patch.object(
+                self.scanner, '_fetch_image_references_from_rebase', new_callable=AsyncMock, return_value=image_refs
+            ),
+            patch.object(self.scanner, 'add_image_meta_change') as mock_add_change,
+        ):
+            await self.scanner.scan_external_image_changes(self.image_meta)
+            mock_add_change.assert_not_called()
+
+        mock_oc_image_info.assert_awaited_once_with(
+            'registry.redhat.io/rhel9/postgresql-15:latest', registry_config=self.runtime.registry_config
+        )
+
+    @patch('doozerlib.cli.scan_sources_konflux.oc_image_info_for_arch_async')
+    async def test_external_image_auth_prefers_runtime_registry_config(self, mock_oc_image_info):
+        self.runtime.registry_config = '/runtime/auth.json'
+        mock_oc_image_info.return_value = {'listDigest': 'sha256:currentdigest123'}
+        art_yaml = {
+            'external-images': [
+                {
+                    'name': 'postgresql',
+                    'search': 'RELATED_IMAGE_POSTGRESQL',
+                    'replace': 'registry.redhat.io/rhel9/postgresql-15:latest',
+                }
+            ]
+        }
+        image_refs = {
+            'spec': {
+                'tags': [
+                    {
+                        'name': 'postgresql',
+                        'from': {'name': 'registry.redhat.io/rhel9/postgresql-15@sha256:currentdigest123'},
+                    }
+                ]
+            }
+        }
+        with (
+            patch.dict('os.environ', {'QUAY_AUTH_FILE': '/env/auth.json'}),
+            patch.object(self.scanner, '_fetch_art_yaml_from_rebase', new_callable=AsyncMock, return_value=art_yaml),
+            patch.object(
+                self.scanner, '_fetch_image_references_from_rebase', new_callable=AsyncMock, return_value=image_refs
+            ),
+        ):
+            await self.scanner.scan_external_image_changes(self.image_meta)
+        mock_oc_image_info.assert_awaited_once_with(
+            'registry.redhat.io/rhel9/postgresql-15:latest', registry_config='/runtime/auth.json'
+        )
+
+    @patch('doozerlib.cli.scan_sources_konflux.oc_image_info_for_arch_async')
+    async def test_external_image_auth_falls_back_to_environment(self, mock_oc_image_info):
+        self.runtime.registry_config = None
+        mock_oc_image_info.return_value = {'listDigest': 'sha256:currentdigest123'}
+        art_yaml = {
+            'external-images': [
+                {
+                    'name': 'postgresql',
+                    'search': 'RELATED_IMAGE_POSTGRESQL',
+                    'replace': 'registry.redhat.io/rhel9/postgresql-15:latest',
+                }
+            ]
+        }
+        image_refs = {
+            'spec': {
+                'tags': [
+                    {
+                        'name': 'postgresql',
+                        'from': {'name': 'registry.redhat.io/rhel9/postgresql-15@sha256:currentdigest123'},
+                    }
+                ]
+            }
+        }
+        with (
+            patch.dict('os.environ', {'QUAY_AUTH_FILE': '/env/auth.json'}),
+            patch.object(self.scanner, '_fetch_art_yaml_from_rebase', new_callable=AsyncMock, return_value=art_yaml),
+            patch.object(
+                self.scanner, '_fetch_image_references_from_rebase', new_callable=AsyncMock, return_value=image_refs
+            ),
+        ):
+            await self.scanner.scan_external_image_changes(self.image_meta)
+        mock_oc_image_info.assert_awaited_once_with(
+            'registry.redhat.io/rhel9/postgresql-15:latest', registry_config='/env/auth.json'
+        )
+
+    @patch('doozerlib.cli.scan_sources_konflux.Model')
+    @patch('doozerlib.cli.scan_sources_konflux.oc_image_info_for_arch_async', new_callable=AsyncMock)
+    async def test_builder_auth_prefers_runtime_registry_config(self, mock_oc_image_info, mock_model):
+        self.runtime.group = 'oadp-1.5'
+        self.runtime.registry_config = '/runtime/auth.json'
+        mock_model.return_value.config.config.Labels = {
+            'com.redhat.component': 'component',
+            'version': '1',
+            'release': '1',
+        }
+        await self.scanner.get_builder_build_nvr('registry.example/builder:latest')
+        mock_oc_image_info.assert_awaited_once_with(
+            'registry.example/builder:latest', registry_config='/runtime/auth.json'
+        )
+
+    @patch('doozerlib.cli.scan_sources_konflux.Model')
+    @patch('doozerlib.cli.scan_sources_konflux.oc_image_info_for_arch_async', new_callable=AsyncMock)
+    async def test_builder_auth_falls_back_to_environment(self, mock_oc_image_info, mock_model):
+        self.runtime.group = 'oadp-1.5'
+        self.runtime.registry_config = None
+        mock_model.return_value.config.config.Labels = {
+            'com.redhat.component': 'component',
+            'version': '1',
+            'release': '1',
+        }
+        with patch.dict('os.environ', {'QUAY_AUTH_FILE': '/env/auth.json'}):
+            await self.scanner.get_builder_build_nvr('registry.example/builder:latest')
+        mock_oc_image_info.assert_awaited_once_with('registry.example/builder:latest', registry_config='/env/auth.json')
+
+    @patch('doozerlib.cli.scan_sources_konflux.oc_image_info_for_arch_async')
+    async def test_triggers_rebuild_when_digest_changed(self, mock_oc_image_info):
+        """Should trigger rebuild when external image has a new digest."""
+        art_yaml = {
+            'external-images': [
+                {
+                    'name': 'postgresql',
+                    'search': 'RELATED_IMAGE_POSTGRESQL',
+                    'replace': 'registry.redhat.io/rhel9/postgresql-15:latest',
+                }
+            ]
+        }
+        image_refs = {
+            'spec': {
+                'tags': [
+                    {
+                        'name': 'postgresql',
+                        'from': {'name': 'registry.redhat.io/rhel9/postgresql-15@sha256:olddigest456'},
+                    }
+                ]
+            }
+        }
+        mock_oc_image_info.return_value = {'listDigest': 'sha256:newdigest789'}
+
+        with (
+            patch.object(self.scanner, '_fetch_art_yaml_from_rebase', new_callable=AsyncMock, return_value=art_yaml),
+            patch.object(
+                self.scanner, '_fetch_image_references_from_rebase', new_callable=AsyncMock, return_value=image_refs
+            ),
+            patch.object(self.scanner, 'add_image_meta_change') as mock_add_change,
+        ):
+            await self.scanner.scan_external_image_changes(self.image_meta)
+            mock_add_change.assert_called_once()
+            call_args = mock_add_change.call_args[0]
+            self.assertEqual(call_args[0], self.image_meta)
+            self.assertEqual(call_args[1].code, RebuildHintCode.EXTERNAL_IMAGE_CHANGE)
+            self.assertIn('postgresql', call_args[1].reason)
+
+    @patch('doozerlib.cli.scan_sources_konflux.oc_image_info_for_arch_async')
+    async def test_graceful_handling_when_registry_unreachable(self, mock_oc_image_info):
+        """Should not crash when external registry is unreachable."""
+        art_yaml = {
+            'external-images': [
+                {
+                    'name': 'postgresql',
+                    'search': 'RELATED_IMAGE_POSTGRESQL',
+                    'replace': 'registry.redhat.io/rhel9/postgresql-15:latest',
+                }
+            ]
+        }
+        image_refs = {
+            'spec': {
+                'tags': [
+                    {
+                        'name': 'postgresql',
+                        'from': {'name': 'registry.redhat.io/rhel9/postgresql-15@sha256:olddigest456'},
+                    }
+                ]
+            }
+        }
+        mock_oc_image_info.side_effect = Exception('connection refused')
+
+        with (
+            patch.object(self.scanner, '_fetch_art_yaml_from_rebase', new_callable=AsyncMock, return_value=art_yaml),
+            patch.object(
+                self.scanner, '_fetch_image_references_from_rebase', new_callable=AsyncMock, return_value=image_refs
+            ),
+            patch.object(self.scanner, 'add_image_meta_change') as mock_add_change,
+        ):
+            await self.scanner.scan_external_image_changes(self.image_meta)
+            mock_add_change.assert_not_called()
+
+    @patch('doozerlib.cli.scan_sources_konflux.oc_image_info_for_arch_async')
+    async def test_multiple_external_images_first_changed(self, mock_oc_image_info):
+        """Should trigger rebuild and stop at the first changed external image."""
+        art_yaml = {
+            'external-images': [
+                {
+                    'name': 'postgresql',
+                    'search': 'RELATED_IMAGE_POSTGRESQL',
+                    'replace': 'registry.redhat.io/rhel9/postgresql-15:latest',
+                },
+                {
+                    'name': 'redis',
+                    'search': 'RELATED_IMAGE_REDIS',
+                    'replace': 'registry.redhat.io/rhel9/redis-7:latest',
+                },
+            ]
+        }
+        image_refs = {
+            'spec': {
+                'tags': [
+                    {
+                        'name': 'postgresql',
+                        'from': {'name': 'registry.redhat.io/rhel9/postgresql-15@sha256:oldpostgres'},
+                    },
+                    {
+                        'name': 'redis',
+                        'from': {'name': 'registry.redhat.io/rhel9/redis-7@sha256:oldredis'},
+                    },
+                ]
+            }
+        }
+        mock_oc_image_info.side_effect = [
+            {'listDigest': 'sha256:newpostgres'},
+            {'listDigest': 'sha256:oldredis'},
+        ]
+
+        with (
+            patch.object(self.scanner, '_fetch_art_yaml_from_rebase', new_callable=AsyncMock, return_value=art_yaml),
+            patch.object(
+                self.scanner, '_fetch_image_references_from_rebase', new_callable=AsyncMock, return_value=image_refs
+            ),
+            patch.object(self.scanner, 'add_image_meta_change') as mock_add_change,
+        ):
+            await self.scanner.scan_external_image_changes(self.image_meta)
+            mock_add_change.assert_called_once()
+            call_args = mock_add_change.call_args[0]
+            self.assertIn('postgresql', call_args[1].reason)
+
+    async def test_skip_check_if_already_changing(self):
+        """Should skip scan entirely if image is already marked for rebuild."""
+        self.scanner.changing_image_names = {'test-image'}
+        with patch.object(self.scanner, '_fetch_art_yaml_from_rebase', new_callable=AsyncMock) as mock_fetch:
+            await self.scanner.scan_external_image_changes(self.image_meta)
+            mock_fetch.assert_not_called()
+
+
+class TestOkdImageFiltering(TestScanSourcesKonflux):
+    """Tests for OKD image filtering including base_only images (ART-21083 Gap 2)."""
+
+    def _make_okd_scanner(self):
+        """Create a scanner with OKD variant."""
+        scanner = ConfigScanSources(
+            runtime=self.runtime,
+            ci_kubeconfig=self.ci_kubeconfig,
+            session=self.session,
+            as_yaml=False,
+            rebase_priv=False,
+            dry_run=False,
+            variant='okd',
+        )
+        return scanner
+
+    def _make_image_meta(self, for_payload=False, base_only=False, enabled=True, okd_mode=Missing):
+        """Create a mock ImageMetadata with configurable attributes."""
+        meta = MagicMock(spec=ImageMetadata)
+        meta.enabled = enabled
+        meta.mode = 'enabled' if enabled else 'disabled'
+        meta.config = MagicMock()
+        meta.config.for_payload = for_payload
+        meta.config.base_only = base_only
+        if okd_mode is Missing:
+            meta.config.okd = Missing
+        else:
+            meta.config.okd = MagicMock()
+            meta.config.okd.mode = okd_mode
+        return meta
+
+    def test_okd_includes_payload_images(self):
+        """OKD scan includes images with for_payload=true."""
+        scanner = self._make_okd_scanner()
+        meta = self._make_image_meta(for_payload=True)
+        self.assertTrue(scanner._is_image_enabled(meta))
+
+    def test_okd_includes_base_only_images(self):
+        """OKD scan includes base_only images (needed for dependency chain)."""
+        scanner = self._make_okd_scanner()
+        meta = self._make_image_meta(base_only=True)
+        self.assertTrue(scanner._is_image_enabled(meta))
+
+    def test_okd_excludes_non_payload_non_base_images(self):
+        """OKD scan excludes images that are neither payload nor base_only."""
+        scanner = self._make_okd_scanner()
+        meta = self._make_image_meta(for_payload=False, base_only=False)
+        self.assertFalse(scanner._is_image_enabled(meta))
+
+    def test_okd_scan_set_includes_base_only(self):
+        """_is_image_enabled_for_scan includes base_only for OKD."""
+        scanner = self._make_okd_scanner()
+        meta = self._make_image_meta(base_only=True)
+        self.assertTrue(scanner._is_image_enabled_for_scan(meta))
+
+    def test_ocp_ignores_base_only_flag(self):
+        """OCP variant returns image_meta.enabled regardless of base_only — behavior unchanged."""
+        meta = self._make_image_meta(base_only=True, for_payload=False)
+        # Default scanner is OCP variant — base_only/for_payload are irrelevant; enabled=True wins
+        self.assertTrue(self.scanner._is_image_enabled(meta))
+
+    def test_okd_includes_image_with_both_payload_and_base_only(self):
+        """Image with both for_payload=True and base_only=True is included (OR semantics)."""
+        scanner = self._make_okd_scanner()
+        meta = self._make_image_meta(for_payload=True, base_only=True)
+        self.assertTrue(scanner._is_image_enabled(meta))
+
+    def test_okd_excludes_disabled_non_okd_image(self):
+        """OKD scan excludes disabled images without okd.mode: enabled."""
+        scanner = self._make_okd_scanner()
+        meta = self._make_image_meta(for_payload=True, enabled=False)
+        self.assertFalse(scanner._is_image_enabled(meta))
+
+    def test_okd_includes_disabled_with_okd_mode_enabled(self):
+        """OKD scan includes disabled images that have okd.mode: enabled + for_payload."""
+        scanner = self._make_okd_scanner()
+        meta = self._make_image_meta(for_payload=True, enabled=False, okd_mode='enabled')
+        self.assertTrue(scanner._is_image_enabled(meta))
+
+
+class TestOkdArchChanges(TestScanSourcesKonflux):
+    """Tests for OKD arch-change detection (ART-21083 Gap 1)."""
+
+    def _make_okd_scanner_with_arches(self, arches):
+        """Create an OKD scanner with specific arches set on the runtime."""
+        self.runtime.arches = arches
+        self.runtime.build_system = 'konflux'
+        scanner = ConfigScanSources(
+            runtime=self.runtime,
+            ci_kubeconfig=self.ci_kubeconfig,
+            session=self.session,
+            as_yaml=False,
+            rebase_priv=False,
+            dry_run=False,
+            variant='okd',
+        )
+        return scanner
+
+    async def test_arch_expansion_triggers_rebuild(self):
+        """Image built for x86_64 only should trigger rebuild when OKD targets x86_64+aarch64."""
+        scanner = self._make_okd_scanner_with_arches(['x86_64', 'aarch64'])
+
+        meta = MagicMock(spec=ImageMetadata)
+        meta.distgit_key = 'enterprise-base'
+        meta.qualified_key = 'image:enterprise-base'
+        meta.get_arches.return_value = ['x86_64', 'aarch64']
+
+        build_record = MagicMock(spec=KonfluxBuildRecord)
+        build_record.arches = ['x86_64']
+        build_record.nvr = 'enterprise-base-9-1.0'
+        scanner.latest_image_build_records_map = {'enterprise-base': build_record}
+        scanner.changing_image_names = set()
+
+        await scanner.scan_arch_changes(meta)
+
+        self.assertIn('enterprise-base', scanner.changing_image_names)
+        self.assertEqual(scanner.assessment_code['image:enterprise-base+True'], RebuildHintCode.ARCHES_CHANGE)
+
+    async def test_matching_arches_no_rebuild(self):
+        """Image built for x86_64+aarch64 should NOT trigger when OKD targets the same."""
+        scanner = self._make_okd_scanner_with_arches(['x86_64', 'aarch64'])
+
+        meta = MagicMock(spec=ImageMetadata)
+        meta.distgit_key = 'enterprise-base'
+        meta.get_arches.return_value = ['x86_64', 'aarch64']
+
+        build_record = MagicMock(spec=KonfluxBuildRecord)
+        build_record.arches = ['x86_64', 'aarch64']
+        build_record.nvr = 'enterprise-base-9-1.0'
+        scanner.latest_image_build_records_map = {'enterprise-base': build_record}
+        scanner.changing_image_names = set()
+
+        await scanner.scan_arch_changes(meta)
+
+        self.assertNotIn('enterprise-base', scanner.changing_image_names)
+        self.assertEqual(scanner.assessment_code, {})
+
+    async def test_okd_two_arch_target_does_not_loop_on_four_arch_build(self):
+        """OKD scanner targeting 2 arches should NOT flag a 2-arch build even though OCP group has 4."""
+        scanner = self._make_okd_scanner_with_arches(['x86_64', 'aarch64'])
+
+        meta = MagicMock(spec=ImageMetadata)
+        meta.distgit_key = 'enterprise-base'
+        # get_arches() is constrained by runtime.arches (CLI --arches override),
+        # so it returns 2 OKD arches, not 4 OCP group arches
+        meta.get_arches.return_value = ['x86_64', 'aarch64']
+
+        build_record = MagicMock(spec=KonfluxBuildRecord)
+        build_record.arches = ['x86_64', 'aarch64']
+        build_record.nvr = 'enterprise-base-9-1.0'
+        scanner.latest_image_build_records_map = {'enterprise-base': build_record}
+        scanner.changing_image_names = set()
+
+        await scanner.scan_arch_changes(meta)
+
+        self.assertNotIn('enterprise-base', scanner.changing_image_names)
+        self.assertEqual(scanner.assessment_code, {})
+
+
+class TestOkdBaseChainUpstreamChanges(TestScanSourcesKonflux):
+    """
+    Tests for ART-21094: OKD scan detects upstream changes on base_only images
+    and propagates rebuild flags to descendants.
+    """
+
+    def setUp(self):
+        """Set up test fixtures with group_config supporting both dict and attribute access."""
+        super().setUp()
+        group_config_mock = MagicMock()
+        group_config_mock.get.return_value = {}
+        group_config_mock.scan_freshness.threshold_hours = 6
+        self.runtime.group_config = group_config_mock
+
+    def _make_okd_scanner(self):
+        """
+        Create scanner with OKD variant and branch set for el_target resolution.
+        """
+        self.runtime.branch = 'rhaos-4.18-rhel-9'
+        self.runtime.stage = False
+        self.runtime.assembly = 'stream'
+        scanner = ConfigScanSources(
+            runtime=self.runtime,
+            ci_kubeconfig=self.ci_kubeconfig,
+            session=self.session,
+            as_yaml=False,
+            rebase_priv=False,
+            dry_run=False,
+            variant='okd',
+        )
+        return scanner
+
+    def _make_base_image_meta(self, distgit_key='openshift-enterprise-base-rhel9', descendants=None):
+        """
+        Create a mock base_only ImageMetadata with optional descendants.
+
+        Arg(s):
+            distgit_key (str): The distgit key for this image.
+            descendants (list): List of ImageMetadata mocks that depend on this image.
+        Return Value(s):
+            MagicMock: Configured ImageMetadata mock.
+        """
+        meta = MagicMock(spec=ImageMetadata)
+        meta.distgit_key = distgit_key
+        meta.qualified_key = f'containers/{distgit_key}'
+        meta.enabled = True
+        meta.config = MagicMock()
+        meta.config.for_payload = False
+        meta.config.base_only = True
+        meta.config.okd = Missing
+        meta.config.konflux = Missing
+        meta.config.content.source.git = MagicMock()
+        meta.children = descendants or []
+        meta.get_descendants.return_value = set(descendants or [])
+        return meta
+
+    def _make_payload_image_meta(self, distgit_key):
+        """
+        Create a mock payload ImageMetadata.
+
+        Arg(s):
+            distgit_key (str): The distgit key for this image.
+        Return Value(s):
+            MagicMock: Configured ImageMetadata mock.
+        """
+        meta = MagicMock(spec=ImageMetadata)
+        meta.distgit_key = distgit_key
+        meta.qualified_key = f'containers/{distgit_key}'
+        meta.enabled = True
+        meta.config = MagicMock()
+        meta.config.for_payload = True
+        meta.config.base_only = False
+        meta.config.okd = Missing
+        meta.config.konflux = Missing
+        meta.children = []
+        meta.get_descendants.return_value = set()
+        return meta
+
+    async def test_new_upstream_commit_on_base_only_triggers_rebuild(self):
+        """
+        base_only image with new upstream commit gets NEW_UPSTREAM_COMMIT flag in OKD scan.
+        """
+        scanner = self._make_okd_scanner()
+        base_meta = self._make_base_image_meta()
+
+        build_record = MagicMock(spec=KonfluxBuildRecord)
+        build_record.commitish = 'old_commit_abc123'
+        build_record.nvr = 'openshift-enterprise-base-rhel9-v4.18.0-202501010000.p0'
+        build_record.release = 'v4.18.0-202501010000.p0'
+        scanner.latest_image_build_records_map = {base_meta.distgit_key: build_record}
+
+        new_commit = 'new_commit_def456'
+        with patch.object(scanner, 'find_upstream_commit_hash', return_value=new_commit):
+            base_meta.get_latest_build = AsyncMock(return_value=None)
+            self.runtime.group_config.scan_freshness.threshold_hours = 6
+
+            await scanner.scan_for_upstream_changes(base_meta)
+
+        self.assertIn(base_meta.distgit_key, scanner.changing_image_names)
+        self.assertEqual(
+            scanner.assessment_code[f'{base_meta.qualified_key}+True'],
+            RebuildHintCode.NEW_UPSTREAM_COMMIT,
+        )
+
+    async def test_base_only_change_propagates_ancestor_changing_to_descendants(self):
+        """
+        When base_only image is marked changed, all descendants get ANCESTOR_CHANGING.
+        """
+        scanner = self._make_okd_scanner()
+
+        child_a = self._make_payload_image_meta('payload-image-a')
+        child_b = self._make_payload_image_meta('payload-image-b')
+        base_meta = self._make_base_image_meta(descendants=[child_a, child_b])
+
+        build_record = MagicMock(spec=KonfluxBuildRecord)
+        build_record.commitish = 'old_commit'
+        build_record.nvr = 'openshift-enterprise-base-rhel9-v4.18.0-202501010000.p0'
+        build_record.release = 'v4.18.0-202501010000.p0'
+        scanner.latest_image_build_records_map = {base_meta.distgit_key: build_record}
+
+        new_commit = 'new_commit_xyz789'
+        with patch.object(scanner, 'find_upstream_commit_hash', return_value=new_commit):
+            base_meta.get_latest_build = AsyncMock(return_value=None)
+            self.runtime.group_config.scan_freshness.threshold_hours = 6
+
+            await scanner.scan_for_upstream_changes(base_meta)
+
+        self.assertIn(child_a.distgit_key, scanner.changing_image_names)
+        self.assertIn(child_b.distgit_key, scanner.changing_image_names)
+        self.assertEqual(
+            scanner.assessment_code[f'{child_a.qualified_key}+True'],
+            RebuildHintCode.ANCESTOR_CHANGING,
+        )
+        self.assertEqual(
+            scanner.assessment_code[f'{child_b.qualified_key}+True'],
+            RebuildHintCode.ANCESTOR_CHANGING,
+        )
+
+    async def test_base_only_no_change_when_upstream_commit_already_built(self):
+        """
+        base_only image with existing build for latest upstream commit should not be flagged.
+        """
+        scanner = self._make_okd_scanner()
+        base_meta = self._make_base_image_meta()
+
+        current_commit = 'same_commit_abc123'
+
+        build_record = MagicMock(spec=KonfluxBuildRecord)
+        build_record.commitish = current_commit
+        build_record.nvr = 'openshift-enterprise-base-rhel9-v4.18.0-202501010000.p0'
+        scanner.latest_image_build_records_map = {base_meta.distgit_key: build_record}
+
+        upstream_build_record = MagicMock(spec=KonfluxBuildRecord)
+        upstream_build_record.commitish = current_commit
+
+        with patch.object(scanner, 'find_upstream_commit_hash', return_value=current_commit):
+            base_meta.get_latest_build = AsyncMock(return_value=upstream_build_record)
+
+            await scanner.scan_for_upstream_changes(base_meta)
+
+        self.assertNotIn(base_meta.distgit_key, scanner.changing_image_names)
+
+    async def test_base_only_included_in_okd_scan_set_and_scanned(self):
+        """
+        End-to-end: base_only image passes OKD filtering and scan_image runs upstream check.
+        """
+        scanner = self._make_okd_scanner()
+        base_meta = self._make_base_image_meta()
+        base_meta.config.konflux = Missing
+
+        self.assertTrue(scanner._is_image_enabled(base_meta))
+        self.assertTrue(scanner._is_image_enabled_for_scan(base_meta))
+
+        build_record = MagicMock(spec=KonfluxBuildRecord)
+        build_record.commitish = 'old_commit'
+        build_record.nvr = 'openshift-enterprise-base-rhel9-v4.18.0-202501010000.p0'
+        build_record.release = 'v4.18.0-202501010000.p0'
+        scanner.latest_image_build_records_map = {base_meta.distgit_key: build_record}
+
+        new_commit = 'brand_new_commit'
+        with patch.object(scanner, 'find_upstream_commit_hash', return_value=new_commit):
+            base_meta.get_latest_build = AsyncMock(return_value=None)
+            self.runtime.group_config.scan_freshness.threshold_hours = 6
+
+            await scanner.scan_image(base_meta)
+
+        self.assertEqual(scanner.issues, [])
+        self.assertIn(base_meta.distgit_key, scanner.changing_image_names)
+        self.assertEqual(
+            scanner.assessment_code[f'{base_meta.qualified_key}+True'],
+            RebuildHintCode.NEW_UPSTREAM_COMMIT,
+        )
+
+    async def test_descendants_skipped_after_ancestor_marked_changing(self):
+        """
+        After base_only image is flagged, descendant images already in changing_image_names
+        are skipped by @skip_check_if_changing (no redundant scan).
+        """
+        scanner = self._make_okd_scanner()
+
+        child = self._make_payload_image_meta('payload-child')
+        base_meta = self._make_base_image_meta(descendants=[child])
+
+        build_record = MagicMock(spec=KonfluxBuildRecord)
+        build_record.commitish = 'old_commit'
+        build_record.nvr = 'openshift-enterprise-base-rhel9-v4.18.0-202501010000.p0'
+        build_record.release = 'v4.18.0-202501010000.p0'
+        scanner.latest_image_build_records_map = {
+            base_meta.distgit_key: build_record,
+            child.distgit_key: MagicMock(spec=KonfluxBuildRecord),
+        }
+
+        new_commit = 'new_upstream_commit'
+        with patch.object(scanner, 'find_upstream_commit_hash', return_value=new_commit):
+            base_meta.get_latest_build = AsyncMock(return_value=None)
+            self.runtime.group_config.scan_freshness.threshold_hours = 6
+
+            # Scan base first (level 0 in dependency tree)
+            await scanner.scan_for_upstream_changes(base_meta)
+
+        # Child already marked as changing from ancestor propagation
+        self.assertIn(child.distgit_key, scanner.changing_image_names)
+
+        # scan_for_upstream_changes on child should be a no-op due to @skip_check_if_changing
+        child.get_latest_build = AsyncMock()
+        with patch.object(scanner, 'find_upstream_commit_hash', return_value='child_commit'):
+            await scanner.scan_for_upstream_changes(child)
+
+        # Child's get_latest_build should NOT have been called — skipped
+        child.get_latest_build.assert_not_called()

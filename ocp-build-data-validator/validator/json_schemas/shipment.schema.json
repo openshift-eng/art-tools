@@ -1,0 +1,528 @@
+{
+  "$comment": "Schema generated on 2026-08-06 15:29 UTC from elliottlib.shipment_model",
+  "$defs": {
+    "ComponentSource": {
+      "additionalProperties": false,
+      "description": "Defines the source of a component",
+      "properties": {
+        "git": {
+          "$ref": "#/$defs/GitSource"
+        }
+      },
+      "required": [
+        "git"
+      ],
+      "title": "ComponentSource",
+      "type": "object"
+    },
+    "CveAssociation": {
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "title": "Key",
+          "type": "string"
+        },
+        "component": {
+          "title": "Component",
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "component"
+      ],
+      "title": "CveAssociation",
+      "type": "object"
+    },
+    "Data": {
+      "additionalProperties": false,
+      "description": "Represents spec.data field when constructing a Konflux release",
+      "properties": {
+        "releaseNotes": {
+          "$ref": "#/$defs/ReleaseNotes"
+        }
+      },
+      "required": [
+        "releaseNotes"
+      ],
+      "title": "Data",
+      "type": "object"
+    },
+    "EnvAdvisory": {
+      "additionalProperties": false,
+      "description": "Information about the advisory that got shipped to the environment",
+      "properties": {
+        "internal_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Internal Url"
+        },
+        "url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Url"
+        }
+      },
+      "title": "EnvAdvisory",
+      "type": "object"
+    },
+    "EnvResult": {
+      "additionalProperties": false,
+      "description": "Information about the release result for the environment",
+      "properties": {
+        "pipeline": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pipeline"
+        }
+      },
+      "title": "EnvResult",
+      "type": "object"
+    },
+    "Environments": {
+      "additionalProperties": false,
+      "description": "Environments to release the shipment to",
+      "properties": {
+        "stage": {
+          "$ref": "#/$defs/ShipmentEnv",
+          "description": "Config for releasing to stage environment"
+        },
+        "prod": {
+          "$ref": "#/$defs/ShipmentEnv",
+          "description": "Config for releasing to prod environment"
+        }
+      },
+      "required": [
+        "stage",
+        "prod"
+      ],
+      "title": "Environments",
+      "type": "object"
+    },
+    "GitSource": {
+      "additionalProperties": false,
+      "description": "Defines the git source of a component",
+      "properties": {
+        "url": {
+          "title": "Url",
+          "type": "string"
+        },
+        "revision": {
+          "title": "Revision",
+          "type": "string"
+        }
+      },
+      "required": [
+        "url",
+        "revision"
+      ],
+      "title": "GitSource",
+      "type": "object"
+    },
+    "Issue": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "source"
+      ],
+      "title": "Issue",
+      "type": "object"
+    },
+    "Issues": {
+      "additionalProperties": false,
+      "properties": {
+        "fixed": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/Issue"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fixed"
+        }
+      },
+      "title": "Issues",
+      "type": "object"
+    },
+    "Metadata": {
+      "additionalProperties": false,
+      "description": "Defines shipment metadata for a product release",
+      "properties": {
+        "product": {
+          "title": "Product",
+          "type": "string"
+        },
+        "application": {
+          "title": "Application",
+          "type": "string"
+        },
+        "group": {
+          "title": "Group",
+          "type": "string"
+        },
+        "assembly": {
+          "title": "Assembly",
+          "type": "string"
+        },
+        "fbc": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": false,
+          "title": "Fbc"
+        },
+        "advisory_required": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": true,
+          "title": "Advisory Required"
+        }
+      },
+      "required": [
+        "product",
+        "application",
+        "group",
+        "assembly"
+      ],
+      "title": "Metadata",
+      "type": "object"
+    },
+    "ReleaseNotes": {
+      "additionalProperties": false,
+      "description": "Represents releaseNotes field which contains all advisory metadata, when constructing a Konflux release",
+      "properties": {
+        "type": {
+          "enum": [
+            "RHEA",
+            "RHBA",
+            "RHSA"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "live_id": {
+          "default": null,
+          "title": "Live Id",
+          "type": "integer"
+        },
+        "synopsis": {
+          "default": null,
+          "title": "Synopsis",
+          "type": "string"
+        },
+        "topic": {
+          "default": null,
+          "title": "Topic",
+          "type": "string"
+        },
+        "description": {
+          "default": null,
+          "title": "Description",
+          "type": "string"
+        },
+        "solution": {
+          "default": null,
+          "title": "Solution",
+          "type": "string"
+        },
+        "issues": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Issues"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "cves": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/CveAssociation"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cves"
+        },
+        "references": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "References"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "ReleaseNotes",
+      "type": "object"
+    },
+    "Shipment": {
+      "additionalProperties": false,
+      "description": "Config to ship a Konflux release for a product",
+      "properties": {
+        "metadata": {
+          "$ref": "#/$defs/Metadata"
+        },
+        "tools": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Tools"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "environments": {
+          "$ref": "#/$defs/Environments"
+        },
+        "snapshot": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Snapshot"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "data": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Data"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "metadata",
+        "environments"
+      ],
+      "title": "Shipment",
+      "type": "object"
+    },
+    "ShipmentEnv": {
+      "additionalProperties": false,
+      "description": "Environment specific configuration for a release",
+      "properties": {
+        "releasePlan": {
+          "title": "Releaseplan",
+          "type": "string"
+        },
+        "advisory": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EnvAdvisory"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "result": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EnvResult"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "releasePlan"
+      ],
+      "title": "ShipmentEnv",
+      "type": "object"
+    },
+    "Snapshot": {
+      "additionalProperties": false,
+      "description": "Konflux Snapshot definition for release i.e. builds to release",
+      "properties": {
+        "spec": {
+          "$ref": "#/$defs/SnapshotSpec"
+        },
+        "nvrs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Nvrs",
+          "type": "array"
+        }
+      },
+      "required": [
+        "spec",
+        "nvrs"
+      ],
+      "title": "Snapshot",
+      "type": "object"
+    },
+    "SnapshotComponent": {
+      "additionalProperties": false,
+      "description": "Defines a component of a Konflux Snapshot",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "containerImage": {
+          "title": "Containerimage",
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/ComponentSource"
+        }
+      },
+      "required": [
+        "name",
+        "containerImage",
+        "source"
+      ],
+      "title": "SnapshotComponent",
+      "type": "object"
+    },
+    "SnapshotSpec": {
+      "additionalProperties": false,
+      "description": "Defines a Konflux Snapshot Object for creation",
+      "properties": {
+        "application": {
+          "title": "Application",
+          "type": "string"
+        },
+        "components": {
+          "items": {
+            "$ref": "#/$defs/SnapshotComponent"
+          },
+          "title": "Components",
+          "type": "array"
+        }
+      },
+      "required": [
+        "application",
+        "components"
+      ],
+      "title": "SnapshotSpec",
+      "type": "object"
+    },
+    "Tools": {
+      "additionalProperties": false,
+      "description": "Tools to use when releasing shipment to an environment",
+      "properties": {
+        "art_tools": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "art-tools repo commit to use when releasing shipment to an environment e.g. thegreyd@branch_name. Defaults to openshift-eng@main",
+          "title": "Art Tools"
+        },
+        "build_data": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "ocp-build-data repo commit to use when releasing shipment to an environment e.g. thegreyd@branch_name. Defaults to openshift@openshift-{MAJOR}.{MINOR}",
+          "title": "Build Data"
+        }
+      },
+      "title": "Tools",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Represents a Shipment Metadata Config file in a product's shipment-data repo",
+  "properties": {
+    "shipment": {
+      "$ref": "#/$defs/Shipment"
+    }
+  },
+  "required": [
+    "shipment"
+  ],
+  "title": "ShipmentConfig",
+  "type": "object"
+}

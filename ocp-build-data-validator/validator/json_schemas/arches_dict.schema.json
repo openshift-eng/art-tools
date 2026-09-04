@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "arches_dict.schema.json",
+  "title": "Architectures Dict",
+  "type": "object",
+  "properties": {
+    "x86_64": {
+      "type": "string",
+      "minLength": 1
+    },
+    "s390x": {
+      "type": "string",
+      "minLength": 1
+    },
+    "ppc64le": {
+      "type": "string",
+      "minLength": 1
+    },
+    "aarch64": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "additionalProperties": false
+}

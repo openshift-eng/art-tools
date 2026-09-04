@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cachito.schema.json",
+  "title": "Cachito",
+  "type": "object",
+  "description": "Cachito integration configuration",
+  "properties": {
+    "enabled": {
+      "type": "boolean",
+      "description": "True to enable Cachito support. Default value: false"
+    },
+    "enabled-": {},
+    "flags": {
+      "description": "Configure Cachito flags. See https://github.com/containerbuildsystem/cachito#flags",
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "flags!": {
+      "$ref": "#/properties/flags"
+    },
+    "flags?": {
+      "$ref": "#/properties/flags"
+    },
+    "flags-": {},
+    "packages": {
+      "description": "Allow user to customize `packages` option for Cachito configuration. See https://osbs.readthedocs.io/en/osbs_ocp3/users.html#remote-source-keys",
+      "type": "object",
+      "properties": {
+        "gomod": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "gomod!": {
+          "$ref": "#/properties/packages/properties/gomod"
+        },
+        "gomod?": {
+          "$ref": "#/properties/packages/properties/gomod"
+        },
+        "gomod-": {},
+        "pip": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "pip!": {
+          "$ref": "#/properties/packages/properties/pip"
+        },
+        "pip?": {
+          "$ref": "#/properties/packages/properties/pip"
+        },
+        "pip-": {},
+        "npm": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "npm!": {
+          "$ref": "#/properties/packages/properties/npm"
+        },
+        "npm?": {
+          "$ref": "#/properties/packages/properties/npm"
+        },
+        "npm-": {},
+        "yarn": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "yarn!": {
+          "$ref": "#/properties/packages/properties/yarn"
+        },
+        "yarn?": {
+          "$ref": "#/properties/packages/properties/yarn"
+        },
+        "yarn-": {},
+        "git-submodule": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "git-submodule!": {
+          "$ref": "#/properties/packages/properties/git-submodule"
+        },
+        "git-submodule?": {
+          "$ref": "#/properties/packages/properties/git-submodule"
+        },
+        "git-submodule-": {}
+      },
+      "additionalProperties": false
+    },
+    "packages!": {
+      "$ref": "#/properties/packages"
+    },
+    "packages?": {
+      "$ref": "#/properties/packages"
+    },
+    "packages-": {}
+  },
+  "additionalProperties": false
+}

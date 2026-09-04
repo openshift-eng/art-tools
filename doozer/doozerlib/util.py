@@ -1,0 +1,875 @@
+import copy
+import functools
+import json
+import logging
+import os
+import pathlib
+import re
+from collections import deque
+from datetime import datetime
+from itertools import chain
+from os.path import abspath
+from pathlib import Path
+from sys import getsizeof, stderr
+from typing import Dict, List, Optional, Union
+
+import aiohttp
+import artcommonlib
+import semver
+import yaml
+from artcommonlib import constants, exectools
+from artcommonlib.arch_util import GO_ARCHES, brew_arch_for_go_arch, go_arch_for_brew_arch, go_suffix_for_arch
+from artcommonlib.assembly import AssemblyTypes
+from artcommonlib.format_util import red_print
+from artcommonlib.model import Missing, Model
+from artcommonlib.rpm_utils import parse_nvr
+from artcommonlib.util import (
+    isolate_major_minor_in_group,
+    oc_image_info,  # noqa: F401 - re-exported for backward compatibility
+    oc_image_info_async,  # noqa: F401 - re-exported for backward compatibility
+    oc_image_info_for_arch,  # noqa: F401 - re-exported for backward compatibility
+    oc_image_info_for_arch_async,
+    oc_image_info_show_multiarch,  # noqa: F401 - re-exported for backward compatibility
+    uses_konflux_imagestream_override,
+)
+
+from doozerlib import constants as doozer_constants
+
+try:
+    from reprlib import repr
+except ImportError:
+    pass
+
+
+class NoAliasSafeDumper(yaml.SafeDumper):
+    """A YAML dumper that never emits anchors/aliases for duplicate objects."""
+
+    def ignore_aliases(self, data):
+        return True
+
+
+DICT_EMPTY = object()
+logger = logging.getLogger(__name__)
+
+
+def rh_art_images_base_pullspec(nvr: str) -> str:
+    """registry.redhat.io pullspec after Konflux silent release (image tag = full publish NVR string).
+
+    openshift-golang-builder image NVRs publish under openshift/ ``ART_IMAGES_GOLANG_BUILDER_APPLICATION``.
+    Other silent-released base images publish under openshift/ ``ART_IMAGES_BASE_APPLICATION``.
+    """
+    repo_app = (
+        doozer_constants.ART_IMAGES_GOLANG_BUILDER_APPLICATION
+        if nvr.startswith("openshift-golang-builder")
+        else doozer_constants.ART_IMAGES_BASE_APPLICATION
+    )
+    return f"{doozer_constants.DELIVERY_IMAGE_REGISTRY}/openshift/{repo_app}:{nvr}"
+
+
+def dict_get(dct, path, default=DICT_EMPTY):
+    dct = copy.deepcopy(dct)  # copy to not modify original
+    for key in path.split('.'):
+        try:
+            dct = dct[key]
+        except KeyError:
+            if default is DICT_EMPTY:
+                raise Exception('Unable to follow key path {}'.format(path))
+            return default
+    return dct
+
+
+def is_commit_in_public_upstream(revision: str, public_upstream_branch: str, source_dir: Union[str, Path]):
+    """
+    Determine if the public upstream branch includes the specified commit.
+
+    :param revision: Git commit hash or reference
+    :param public_upstream_branch: Git branch of the public upstream source
+    :param source_dir: Path to the local Git repository
+    """
+    cmd = [
+        "git",
+        "-C",
+        str(source_dir),
+        "merge-base",
+        "--is-ancestor",
+        "--",
+        revision,
+        "public_upstream/" + public_upstream_branch,
+    ]
+    # The command exits with status 0 if true, or with status 1 if not. Errors are signaled by a non-zero status that is not 1.
+    # https://git-scm.com/docs/git-merge-base#Documentation/git-merge-base.txt---is-ancestor
+    rc, out, err = exectools.cmd_gather(cmd)
+    if rc == 0:
+        return True
+    if rc == 1:
+        return False
+    raise IOError(
+        f"Couldn't determine if the commit {revision} is in the public upstream source repo. `git merge-base` exited with {rc}, stdout={out}, stderr={err}"
+    )
+
+
+async def is_commit_in_public_upstream_async(revision: str, public_upstream_branch: str, source_dir: Union[str, Path]):
+    """
+    Same as is_commit_in_public_upstream, but for async execution.
+    """
+    cmd = [
+        "git",
+        "-C",
+        str(source_dir),
+        "merge-base",
+        "--is-ancestor",
+        "--",
+        revision,
+        "public_upstream/" + public_upstream_branch,
+    ]
+    # The command exits with status 0 if true, or with status 1 if not. Errors are signaled by a non-zero status that is not 1.
+    # https://git-scm.com/docs/git-merge-base#Documentation/git-merge-base.txt---is-ancestor
+    rc, out, err = await exectools.cmd_gather_async(cmd, check=False)
+    if rc == 0:
+        return True
+    if rc == 1:
+        return False
+    raise IOError(
+        f"Couldn't determine if the commit {revision} is in the public upstream source repo. `git merge-base` exited with {rc}, stdout={out}, stderr={err}"
+    )
+
+
+def is_in_directory(path: os.PathLike, directory: os.PathLike):
+    """check whether a path is in another directory"""
+    a = Path(path).parent.resolve()
+    b = Path(directory).resolve()
+    try:
+        a.relative_to(b)
+        return True
+    except ValueError:
+        return False
+
+
+def mkdirs(path, mode=0o755):
+    """
+    Make sure a directory exists. Similar to shell command `mkdir -p`.
+    :param path: Str path
+    :param mode: create directories with mode
+    """
+    pathlib.Path(str(path)).mkdir(mode=mode, parents=True, exist_ok=True)
+
+
+def analyze_debug_timing(file):
+    peal = re.compile(r'^(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d),\d\d\d \w+ [(](\d+)[)] (.*)')
+
+    thread_names = {}
+    event_timings = {}  # maps internal to { <thread_name> => [event list] }
+    first_interval = None
+
+    def get_thread_name(thread):
+        if thread in thread_names:
+            return thread_names[thread]
+        c = f'T{len(thread_names)}'
+        thread_names[thread] = c
+        return c
+
+    def get_interval_map(interval):
+        nonlocal first_interval
+        if first_interval is None:
+            first_interval = interval
+        interval = interval - first_interval
+        if interval in event_timings:
+            return event_timings[interval]
+        mapping = {}
+        event_timings[interval] = mapping
+        return mapping
+
+    def get_thread_event_list(interval, thread):
+        thread_name = get_thread_name(thread)
+        interval_map = get_interval_map(interval)
+        if thread_name in interval_map:
+            return interval_map[thread_name]
+        event_list = []
+        interval_map[thread_name] = event_list
+        return event_list
+
+    def add_thread_event(interval, thread, event):
+        get_thread_event_list(int(interval), thread).append(event)
+
+    with open(file, 'r') as f:
+        for line in f:
+            m = peal.match(line.strip())
+            if m:
+                thread = m.group(2)  # thread id (e.g. 139770552305472)
+                datestr = m.group(1)  # 2020-04-09 10:17:03,092
+                event = m.group(3)
+                date_time_obj = datetime.strptime(datestr, '%Y-%m-%d %H:%M:%S')
+                minute_mark = int(int(date_time_obj.strftime("%s")) / 10)  # ten second intervals
+                add_thread_event(minute_mark, thread, event)
+
+    def print_em(*args):
+        for a in args:
+            print(str(a).ljust(5), end="")
+        print('')
+
+    print('Thread timelines')
+    names = sorted(list(thread_names.values()), key=lambda e: int(e[1:]))  # sorts as T1, T2, T3, .... by removing 'T'
+    print_em('*', *names)
+
+    sorted_intervals = sorted(list(event_timings.keys()))
+    for interval in range(0, sorted_intervals[-1] + 1):
+        print_em(interval, *names)
+        if interval in event_timings:
+            interval_map = event_timings[interval]
+            for i, thread_name in enumerate(names):
+                events = interval_map.get(thread_name, [])
+                for event in events:
+                    with_event = list(names)
+                    with_event[i] = thread_name + ': ' + event
+                    print_em(f' {interval}', *with_event[: i + 1])
+
+
+def what_is_in_master() -> str:
+    """
+    :return: Returns a string like "4.6" to identify which release currently resides in master branch.
+    """
+    # The promotion target of the openshift/images master branch defines this release master is associated with.
+    ci_config_url = 'https://raw.githubusercontent.com/openshift/release/master/ci-operator/config/openshift/images/openshift-images-master.yaml'
+    content = exectools.urlopen_assert(ci_config_url).read()
+    ci_config = yaml.safe_load(content)
+    # Look for something like: https://github.com/openshift/release/blob/251cb12e913dcde7be7a2b36a211650ed91c45c4/ci-operator/config/openshift/images/openshift-images-master.yaml#L64
+    promotion_to = ci_config.get('promotion', {}).get('to', [])
+    if promotion_to:
+        target_release = promotion_to[0].get('name', None)
+    else:
+        target_release = None
+    if not target_release:
+        red_print(content)
+        raise IOError('Unable to find which openshift release resides in master')
+    return target_release
+
+
+def extract_version_fields(version, at_least=0):
+    """
+    For a specified version, return a list with major, minor, patch.. isolated
+    as integers.
+    :param version: A version to parse
+    :param at_least: The minimum number of fields to find (else raise an error)
+    """
+    version = version.replace('golang-builder-', '')
+    fields = [int(f) for f in version.strip().split('-')[0].lstrip('v').split('.')]  # v1.17.1 => [ '1', '17', '1' ]
+    if len(fields) < at_least:
+        raise IOError(f'Unable to find required {at_least} fields in {version}')
+    return fields
+
+
+def get_docker_config_json(config_dir):
+    flist = os.listdir(abspath(config_dir))
+    if 'config.json' in flist:
+        return abspath(os.path.join(config_dir, 'config.json'))
+    else:
+        raise FileNotFoundError("Can not find the registry config file in {}".format(config_dir))
+
+
+def isolate_git_commit_in_release(release: str) -> Optional[str]:
+    """
+    Given a release field, determines whether it contains
+    .git.<commit> information or .g<commit> (new style). If it does, it returns the value
+    of <commit>. If it is not found, None is returned.
+    """
+    match = re.match(r'.*\.git\.([a-f0-9]+)(?:\.+|$)', release)
+    if match:
+        return match.group(1)
+
+    match = re.match(r'.*\.g([a-f0-9]+)(?:\.+|$)', release)
+    if match:
+        return match.group(1)
+
+    return None
+
+
+def isolate_nightly_name_components(nightly_name: str) -> (str, str, bool):
+    """
+    Given a release name (e.g. 4.8.0-0.nightly-s390x-2021-07-02-143555, 4.1.0-0.nightly-priv-2019-11-08-213727),
+    return:
+     - The major.minor of the release (e.g. 4.8)
+     - The brew CPU architecture name associated with the nightly (e.g. s390x, x86_64)
+     - Whether the release is from a private release controller.
+    :param nightly_name: The name of the nightly to analyze
+    :return: (major_minor, brew_arch, is_private)
+    """
+    major_minor = '.'.join(nightly_name.split('.')[:2])
+    nightly_name = nightly_name[nightly_name.find('.nightly') + 1 :]  # strip off versioning info (e.g.  4.8.0-0.)
+    components = nightly_name.split('-')
+    is_private = 'priv' in components
+    pos = components.index('nightly')
+    possible_arch = components[pos + 1]
+    if possible_arch not in GO_ARCHES:
+        go_arch = 'x86_64'  # for historical reasons, amd64 is not included in the release name
+    else:
+        go_arch = possible_arch
+    brew_arch = brew_arch_for_go_arch(go_arch)
+    return major_minor, brew_arch, is_private
+
+
+def get_nightly_pullspec(nightly: str, build_system: str = 'konflux') -> str:
+    """
+    Construct nightly pullspec from nightly name.
+
+    :param nightly: Nightly name (e.g., '5.0.0-0.nightly-2022-12-01-153811')
+    :param build_system: 'brew' or 'konflux'
+    :return: Full pullspec URL
+    """
+    major_minor, brew_cpu_arch, priv = isolate_nightly_name_components(nightly)
+
+    # Extract major version from nightly name
+    major = int(major_minor.split('.')[0])
+
+    if build_system == 'brew' or uses_konflux_imagestream_override(major_minor):
+        release_suffix = "release-5" if major == 5 else "release"
+    else:
+        release_suffix = 'konflux-release'
+
+    rc_suffix = go_suffix_for_arch(brew_cpu_arch, priv)
+    return f"registry.ci.openshift.org/ocp{rc_suffix}/{release_suffix}{rc_suffix}:{nightly}"
+
+
+# https://code.activestate.com/recipes/577504/
+def total_size(o, handlers=None, verbose=False):
+    """Returns the approximate memory footprint an object and all of its contents.
+
+    Automatically finds the contents of the following builtin containers and
+    their subclasses:  tuple, list, deque, dict, set and frozenset.
+    To search other containers, add handlers to iterate over their contents:
+
+        handlers = {SomeContainerClass: iter,
+                    OtherContainerClass: OtherContainerClass.get_elements}
+
+    """
+    if handlers is None:
+        handlers = dict()
+
+    def dict_handler(d):
+        return chain.from_iterable(d.items())
+
+    all_handlers = {
+        tuple: iter,
+        list: iter,
+        deque: iter,
+        dict: dict_handler,
+        set: iter,
+        frozenset: iter,
+    }
+    all_handlers.update(handlers)  # user handlers take precedence
+    seen = set()  # track which object id's have already been seen
+    default_size = getsizeof(0)  # estimate sizeof object without __sizeof__
+
+    def sizeof(o):
+        if id(o) in seen:  # do not double count the same object
+            return 0
+        seen.add(id(o))
+        s = getsizeof(o, default_size)
+
+        if verbose:
+            print(s, type(o), repr(o), file=stderr)
+
+        for typ, handler in all_handlers.items():
+            if isinstance(o, typ):
+                s += sum(map(sizeof, handler(o)))
+                break
+        return s
+
+    return sizeof(o)
+
+
+def to_nvre(build_record: Dict):
+    """
+    From a build record object (such as an entry returned by listTagged),
+    returns the full nvre in the form n-v-r:E.
+    """
+    nvr = build_record['nvr']
+    if 'epoch' in build_record and build_record["epoch"] and build_record["epoch"] != 'None':
+        return f'{nvr}:{build_record["epoch"]}'
+    return nvr
+
+
+def strip_epoch(nvr: str):
+    """
+    If an NVR string is N-V-R:E, returns only the NVR portion. Otherwise
+    returns NVR exactly as-is.
+    """
+    return nvr.split(':')[0]
+
+
+def get_release_tag_datetime(release: str) -> Optional[str]:
+    match = re.search(r"(\d{4})-(\d{2})-(\d{2})-(\d{6})", release)  # yyyy-MM-dd-HHmmss
+    if match:
+        return datetime.strptime(match.group(0), "%Y-%m-%d-%H%M%S")
+    return None
+
+
+def sort_semver(versions):
+    return sorted(versions, key=functools.cmp_to_key(semver.compare), reverse=True)
+
+
+async def find_manifest_list_sha(pullspec, registry_config: str = None):
+    image_data = await oc_image_info_for_arch_async(pullspec, registry_config=registry_config)
+    if 'listDigest' not in image_data:
+        raise ValueError('Specified image is not a manifest-list.')
+    return image_data['listDigest']
+
+
+def get_release_name(
+    assembly_type: artcommonlib.assembly.AssemblyTypes,
+    group_name: str,
+    assembly_name: str,
+    release_offset: Optional[int],
+):
+    major, minor = isolate_major_minor_in_group(group_name)
+
+    if assembly_type == AssemblyTypes.STANDARD:
+        if release_offset is not None:
+            raise ValueError("release_offset can't be set for a STANDARD release.")
+        return assembly_name
+
+    if major is None or minor is None:
+        raise ValueError(f"Cannot determine major.minor from group name: {group_name}")
+
+    if assembly_type == AssemblyTypes.CUSTOM:
+        if release_offset is None:
+            raise ValueError("release_offset is required for a CUSTOM release.")
+        release_name = f"{major}.{minor}.{release_offset}-assembly.{assembly_name}"
+    elif assembly_type in [AssemblyTypes.CANDIDATE, AssemblyTypes.PREVIEW]:
+        if release_offset is not None:
+            raise ValueError(f"release_offset can't be set for a {assembly_type.value} release.")
+        release_name = f"{major}.{minor}.0-{assembly_name}"
+    else:
+        raise ValueError(f"Assembly type {assembly_type} is not supported.")
+    return release_name
+
+
+def get_release_name_for_assembly(group_name: str, releases_config: Model, assembly_name: str):
+    """Get release name for an assembly."""
+    assembly_type = artcommonlib.assembly.assembly_type(releases_config, assembly_name)
+    patch_version = artcommonlib.assembly.assembly_basis(releases_config, assembly_name).get('patch_version')
+    if assembly_type is AssemblyTypes.CUSTOM:
+        patch_version = artcommonlib.assembly.assembly_basis(releases_config, assembly_name).get('patch_version')
+        # If patch_version is not set, go through the chain of assembly inheritance and determine one
+        current_assembly = assembly_name
+        while patch_version is None:
+            parent_assembly = releases_config.releases[current_assembly].assembly.basis.assembly
+            if parent_assembly is Missing:
+                break
+            if artcommonlib.assembly.assembly_type(releases_config, parent_assembly) is AssemblyTypes.STANDARD:
+                patch_version = int(parent_assembly.rsplit('.', 1)[-1])
+                break
+            current_assembly = parent_assembly
+        if patch_version is None:
+            hotfix_previous_assembly = releases_config.releases[
+                current_assembly
+            ].assembly.basis.hotfix_previous_assembly
+            if hotfix_previous_assembly:
+                patch_version = int(hotfix_previous_assembly.rsplit('.', 1)[-1])
+            else:
+                raise ValueError(
+                    "patch_version is not set in assembly definition and can't be auto-determined through the chain of inheritance."
+                )
+    return get_release_name(assembly_type, group_name, assembly_name, patch_version)
+
+
+async def oc_image_extract_async(pullspec: str, path_specs: list[str], registry_config: Optional[str] = None):
+    """
+    Extracts the image specified by pullspec to the destination directory.
+    :param pullspec: The image pullspec to extract.
+    :param path_specs: The specs of paths within the image to extract.
+    :param registry_config: The path to the registry config file.
+    """
+    cmd = ['oc', 'image', 'extract']
+    for path_spec in path_specs:
+        cmd.extend(['--path', path_spec])
+    if registry_config:
+        cmd.extend([f'--registry-config={registry_config}'])
+    cmd.extend(["--", pullspec])
+    await exectools.cmd_assert_async(cmd)
+
+
+def infer_assembly_type(custom, assembly_name):
+    # Infer assembly type
+    if custom:
+        return AssemblyTypes.CUSTOM
+    elif re.search(r'^[fr]c\.[0-9]+$', assembly_name):
+        return AssemblyTypes.CANDIDATE
+    elif re.search(r'^ec\.[0-9]+$', assembly_name):
+        return AssemblyTypes.PREVIEW
+    else:
+        return AssemblyTypes.STANDARD
+
+
+def get_konflux_build_priority(metadata, group):
+    """
+    Get the Konflux build priority based on the precedence rules.
+
+    :param metadata: ImageMetadata object containing config and runtime info
+    :param group: doozer group, eg: openshift-4.15 / oadp-1.5
+    :return: Priority value as string; "1" (high) "10" (low)
+    """
+    logger.info(f"Resolving build priority for {metadata.distgit_key}")
+    phase = metadata.runtime.group_config.software_lifecycle.phase
+
+    def higher_by(val: int) -> str:
+        new_priority = str(max(1, constants.KONFLUX_DEFAULT_BUILD_PRIORITY - val))
+        logger.info(f"Using phase-based priority for {metadata.distgit_key}: {new_priority} (phase: {phase})")
+        return new_priority
+
+    # 1. Image config priority
+    image_config_priority = metadata.config.konflux.get("build_priority")
+    if image_config_priority:
+        logger.info(f"Using image config priority for {metadata.distgit_key}: {image_config_priority}")
+        return str(image_config_priority)
+
+    # 2. Group config priority
+    group_config_priority = metadata.runtime.group_config.konflux.get("build_priority")
+    if group_config_priority:
+        logger.info(f"Using group config priority for {metadata.distgit_key}: {group_config_priority}")
+        return str(group_config_priority)
+
+    # 3. Golang builder images are high priority since they block other builds.
+    if 'golang' in group:
+        # Prioritize since golang builds may be part of addressing security issues.
+        return higher_by(3)
+
+    # 4. Higher than default priority for main & pre-GA N-1 streams.
+    if group.startswith("openshift-") and phase in ("pre-release", "signing"):
+        if metadata.children:
+            return higher_by(3)
+        return higher_by(2)
+
+    # 5. Non-leaf images get a priority bump since they block dependent builds.
+    if metadata.children:
+        return higher_by(1)
+
+    # Default
+    return higher_by(0)
+
+
+def konflux_application_name(group_name: str) -> str:
+    """
+    Konflux Application slug for standard OCP image builds (not FBC ``fbc-*``).
+
+    Converts group dots to dashes so values match Konflux/Application Studio constraints.
+    """
+    # "openshift-4.18" -> "openshift-4-18"
+    return group_name.replace(".", "-")
+
+
+def konflux_image_component_name(application_name: str, image_name: str) -> str:
+    """
+    Konflux Component name for a container image (distgit member), given the Application slug.
+
+    OpenShift forbids dots/underscores; component names must be RFC1123-ish (lowercase, length limits).
+    """
+    name = f"{application_name}-{image_name}".replace(".", "-").replace("_", "-")
+    # 'openshift-4-18-ose-installer-terraform' -> 'ose-4-18-ose-installer-terraform'
+    name = f"ose-{name[10:]}" if name.startswith("openshift-") else name
+    return name
+
+
+def konflux_golang_builder_component_name(nvr: str) -> str:
+    """
+    Konflux Component name for a golang-builder image derived from build NVR.
+
+    Example NVR::
+        openshift-golang-builder-container-v1.25.8-202604081607.p0.g2aa6a05.el8
+    yields something like::
+        golang-builder-v1.25-rhel8
+    """
+    nvr_parsed = parse_nvr(nvr)
+    version = nvr_parsed["version"]
+    release = nvr_parsed["release"]
+
+    if version.startswith("v"):
+        version_parts = version[1:].split(".")
+    else:
+        version_parts = version.split(".")
+
+    if len(version_parts) >= 2:
+        major_minor = f"v{version_parts[0]}.{version_parts[1]}"
+    else:
+        major_minor = version
+
+    el_suffix = "rhel9"
+    if ".el8" in release:
+        el_suffix = "rhel8"
+
+    return f"golang-builder-{major_minor}-{el_suffix}"
+
+
+def rc_api_url(tag: str, arch: str, private_nightly: bool) -> str:
+    """
+    Get the base URL for a release tag in the release controller.
+
+    :param tag: The RC release stream as a string (e.g. "4.9.0-0.nightly")
+    :param arch: Architecture we are interested in (e.g. "s390x")
+    :param private_nightly: Whether this is a private nightly
+    :return: e.g. "https://s390x.ocp.releases.ci.openshift.org/api/v1/releasestream/4.9.0-0.nightly-s390x"
+    """
+    from doozerlib import constants as doozer_constants
+
+    arch = go_arch_for_brew_arch(arch)
+    arch_suffix = go_suffix_for_arch(arch, private_nightly)
+
+    if private_nightly:
+        return f"{doozer_constants.RC_BASE_PRIV_URL.format(arch=arch)}/api/v1/releasestream/{tag}{arch_suffix}"
+
+    return f"{doozer_constants.RC_BASE_URL.format(arch=arch)}/api/v1/releasestream/{tag}{arch_suffix}"
+
+
+async def check_nightly_exists(nightly_name: str, private_nightly: bool = False) -> bool:
+    """
+    Check if a nightly payload exists in the release controller.
+
+    :param nightly_name: Nightly name to check (e.g., '4.21.0-0.nightly-2025-11-12-194750' or '4.21.0-0.nightly-multi-2025-11-12-194750')
+    :param private_nightly: Whether this is a private nightly
+    :return: True if the nightly exists, False otherwise
+    """
+    # Extract version and arch from nightly name
+    major_minor, arch, _ = isolate_nightly_name_components(nightly_name)
+
+    # If no arch was found in the name, default to multi
+    if not arch:
+        arch = 'multi'
+
+    # Construct tag base (e.g., "4.21.0-0.nightly")
+    # Note: rc_api_url will add the appropriate arch suffix (e.g., -s390x, -multi)
+    tag_base = f"{major_minor}.0-0.nightly"
+
+    # Query the release controller API
+    rc_url = f"{rc_api_url(tag_base, arch, private_nightly)}/tags"
+    logger.debug(f"Checking if {nightly_name} exists at {rc_url}")
+
+    try:
+        headers = {}
+        if private_nightly:
+            # Get the token
+            rc, token, err = exectools.cmd_gather(["oc", "whoami", "-t"], strip=True)
+            if rc != 0 or err:
+                logger.warning(f"Error while trying to get token for private nightlies: {err}")
+                return False
+            if not token:
+                logger.warning("Token empty, might not be logged in to correct cluster")
+                return False
+            headers = {"Authorization": f"Bearer {token}"}
+
+        async with aiohttp.ClientSession() as session:
+            async with session.get(rc_url, headers=headers) as resp:
+                if resp.status != 200:
+                    logger.warning(f"Could not query release controller: HTTP {resp.status}")
+                    return False
+                data = await resp.json()
+
+        # Check if the nightly name exists in the tags list
+        tags = data.get('tags', [])
+        if not isinstance(tags, list):
+            logger.debug(f"Unexpected tags type: {type(tags)}, treating as non-existent")
+            return False
+
+        for tag in tags:
+            if not isinstance(tag, dict):
+                logger.debug(f"Skipping non-dict tag entry: {type(tag)}")
+                continue
+            if tag.get('name') == nightly_name:
+                logger.info(f"Found existing nightly: {nightly_name}")
+                return True
+
+        logger.info(f"Nightly {nightly_name} does not exist")
+        return False
+
+    except aiohttp.ClientError as e:
+        logger.warning(f"HTTP client error checking for nightly: {e}")
+        return False
+    except json.JSONDecodeError as e:
+        logger.warning(f"Failed to parse JSON response from release controller: {e}")
+        return False
+    except Exception as e:
+        logger.warning(f"Error checking for nightly: {e}")
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Go coverage instrumentation helpers
+# ---------------------------------------------------------------------------
+
+# Path to coverage Go sources in hack/coverage/ (at the repo root)
+_HACK_COVERAGE_DIR = pathlib.Path(__file__).parent.parent.parent / 'hack' / 'coverage'
+
+# Path to the coverage_server.go resource injected into every main package
+_COVERAGE_SERVER_GO = _HACK_COVERAGE_DIR / 'coverage_server.go'
+
+# Path to the coverage_producer.go resource (injected only into the kubelet)
+_COVERAGE_PRODUCER_GO = _HACK_COVERAGE_DIR / 'coverage_producer.go'
+
+# Compiled regex to detect 'package main' declarations in Go source files
+_PKG_MAIN_PATTERN = re.compile(rb'^\s*package\s+main\s*($|//|/\*)')
+
+# Compiled regex to detect any 'package <name>' declaration in Go source files
+_PKG_ANY_PATTERN = re.compile(rb'^\s*package\s+(\w+)')
+
+# Compiled regex to detect build-ignore constraints that exclude a file from
+# normal compilation (``//go:build ignore`` or ``// +build ignore``).
+_BUILD_IGNORE_PATTERN = re.compile(rb'^\s*//\s*(\+build\s+ignore|go:build\s+ignore)\b')
+
+# Directories that should be skipped when scanning for main packages
+_SKIP_DIRS = frozenset({'.git', 'vendor', 'node_modules', '.idea', '.vscode', '__pycache__'})
+
+
+def _is_package_main(file_path: pathlib.Path) -> bool:
+    """Return True if *file_path* contains a ``package main`` declaration
+    within the first 50 lines **and** is not excluded by a ``//go:build ignore``
+    or ``// +build ignore`` build constraint.
+    """
+    try:
+        with file_path.open('rb') as f:
+            has_ignore = False
+            for _ in range(50):
+                line = f.readline()
+                if not line:
+                    break
+                if _BUILD_IGNORE_PATTERN.match(line):
+                    has_ignore = True
+                if _PKG_MAIN_PATTERN.match(line):
+                    return not has_ignore
+    except (OSError, PermissionError):
+        pass
+    return False
+
+
+def _get_effective_package(file_path: pathlib.Path) -> Optional[str]:
+    """Return the package name declared in *file_path*, or ``None`` if the
+    file should be skipped (has a ``//go:build ignore`` constraint or could
+    not be read).  Only the first 50 lines are inspected.
+    """
+    try:
+        with file_path.open('rb') as f:
+            has_ignore = False
+            for _ in range(50):
+                line = f.readline()
+                if not line:
+                    break
+                if _BUILD_IGNORE_PATTERN.match(line):
+                    has_ignore = True
+                m = _PKG_ANY_PATTERN.match(line)
+                if m:
+                    if has_ignore:
+                        return None  # File is build-ignored; skip it
+                    return m.group(1).decode('utf-8')
+    except (OSError, PermissionError):
+        pass
+    return None
+
+
+def find_go_main_packages(root_path: pathlib.Path) -> List[pathlib.Path]:
+    """Return a sorted list of directories under *root_path* that contain a
+    Go ``package main`` source file (excluding ``_test.go`` files and files
+    with ``//go:build ignore`` constraints).
+
+    As a safety net, a directory is only included when **all** of its
+    compilable ``.go`` files (non-test, non-ignored) consistently declare
+    ``package main``.  This prevents injecting ``coverage_server.go`` into
+    directories that have a mix of package names (e.g. a ``package main``
+    example file coexisting with regular library files).
+
+    Sub-modules (directories that contain their own ``go.mod``) are skipped
+    entirely.  These are separate Go modules — typically vendored
+    dependencies referenced via ``replace`` directives — and injecting
+    into them would pollute the vendor directory when ``go mod vendor``
+    copies their contents.
+    """
+    root = root_path.resolve()
+    main_dirs: set[pathlib.Path] = set()
+
+    for current_root, dirs, files in os.walk(root):
+        # Prune directories in-place to avoid descending into irrelevant trees
+        dirs[:] = [d for d in dirs if d not in _SKIP_DIRS]
+
+        current_path = pathlib.Path(current_root)
+
+        # Skip sub-modules: if a non-root directory has its own go.mod it is
+        # a separate Go module (e.g. a staging/ dependency used via a replace
+        # directive).  Injecting into it would cause files to leak into the
+        # vendor/ tree when ``go mod vendor`` runs.
+        if current_path != root and 'go.mod' in files:
+            dirs.clear()  # Stop descending into this sub-module
+            continue
+
+        go_files = [f for f in files if f.endswith('.go') and not f.endswith('_test.go')]
+        if not go_files:
+            continue
+
+        has_main = False
+        has_non_main = False
+        for file in go_files:
+            pkg = _get_effective_package(current_path / file)
+            if pkg is None:
+                continue  # Build-ignored or unreadable
+            if pkg == 'main':
+                has_main = True
+            else:
+                has_non_main = True
+
+        if has_main and not has_non_main:
+            main_dirs.add(current_path)
+
+    return sorted(main_dirs)
+
+
+def inject_coverage_server(dg_path: pathlib.Path, logger_instance: logging.Logger) -> None:
+    """Copy ``coverage_server.go`` into every Go ``main`` package directory
+    found under *dg_path* so that the coverage HTTP server is compiled into
+    each binary via its ``init()`` function.
+    """
+    import shutil
+
+    if not _COVERAGE_SERVER_GO.is_file():
+        logger_instance.warning('coverage_server.go resource not found at %s; skipping injection', _COVERAGE_SERVER_GO)
+        return
+
+    main_dirs = find_go_main_packages(dg_path)
+    if not main_dirs:
+        logger_instance.debug('No Go main packages found under %s; nothing to inject', dg_path)
+        return
+
+    for pkg_dir in main_dirs:
+        dest = pkg_dir / _COVERAGE_SERVER_GO.name
+        shutil.copy2(str(_COVERAGE_SERVER_GO), str(dest))
+        logger_instance.info('Injected %s into %s', _COVERAGE_SERVER_GO.name, pkg_dir)
+
+    logger_instance.info('Injected coverage server into %d main package(s)', len(main_dirs))
+
+
+def inject_coverage_producer(dg_path: pathlib.Path, logger_instance: logging.Logger) -> None:
+    """Copy ``coverage_producer.go`` into the kubelet's ``cmd/kubelet/``
+    directory if it exists and is a ``package main`` directory.
+
+    The producer is only useful inside the kubelet binary — it discovers
+    coverage-instrumented containers on the node and uploads their data to S3.
+    """
+    import shutil
+
+    if not _COVERAGE_PRODUCER_GO.is_file():
+        logger_instance.warning(
+            'coverage_producer.go resource not found at %s; skipping injection',
+            _COVERAGE_PRODUCER_GO,
+        )
+        return
+
+    kubelet_dir = (dg_path / 'cmd' / 'kubelet').resolve()
+    if not kubelet_dir.is_dir():
+        logger_instance.debug('No cmd/kubelet/ directory found under %s; skipping producer injection', dg_path)
+        return
+
+    # Verify it is actually a package main directory
+    main_dirs = find_go_main_packages(dg_path)
+    if kubelet_dir not in main_dirs:
+        logger_instance.warning(
+            'cmd/kubelet/ exists but is not a package main directory; skipping producer injection',
+        )
+        return
+
+    dest = kubelet_dir / _COVERAGE_PRODUCER_GO.name
+    shutil.copy2(str(_COVERAGE_PRODUCER_GO), str(dest))
+    logger_instance.info('Injected %s into %s', _COVERAGE_PRODUCER_GO.name, kubelet_dir)

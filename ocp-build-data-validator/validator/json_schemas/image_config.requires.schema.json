@@ -1,0 +1,238 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "image_config.requires.schema.json",
+    "properties": {
+      "content": {
+        "$ref": "image_content.requires.schema.json"
+      },
+      "odcs": {
+        "properties": {
+          "packages": {
+            "anyOf": [
+              {
+                "required": [
+                  "mode"
+                ]
+              },
+              {
+                "required": [
+                  "mode?"
+                ]
+              },
+              {
+                "required": [
+                  "mode!"
+                ]
+              }
+            ]
+          }
+        },
+        "anyOf": [
+          {
+            "required": [
+              "packages"
+            ]
+          },
+          {
+            "required": [
+              "packages?"
+            ]
+          },
+          {
+            "required": [
+              "packages!"
+            ]
+          }
+        ]
+      },
+      "scan_sources": {
+        "type": "object",
+        "properties": {
+          "extra_packages": {
+            "type": "array",
+            "items": {
+              "allOf": [
+                {
+                  "anyOf": [
+                    {
+                      "required": [
+                        "name"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "name?"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "name!"
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "anyOf": [
+                    {
+                      "required": [
+                        "tag"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "tag?"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "tag!"
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      },
+      "update-csv": {
+        "allOf": [
+          {
+            "anyOf": [
+              {
+                "required": [
+                  "manifests-dir"
+                ]
+              },
+              {
+                "required": [
+                  "manifests-dir?"
+                ]
+              },
+              {
+                "required": [
+                  "manifests-dir!"
+                ]
+              }
+            ]
+          },
+          {
+            "anyOf": [
+              {
+                "required": [
+                  "bundle-dir"
+                ]
+              },
+              {
+                "required": [
+                  "bundle-dir?"
+                ]
+              },
+              {
+                "required": [
+                  "bundle-dir!"
+                ]
+              }
+            ]
+          },
+          {
+            "anyOf": [
+              {
+                "required": [
+                  "registry"
+                ]
+              },
+              {
+                "required": [
+                  "registry?"
+                ]
+              },
+              {
+                "required": [
+                  "registry!"
+                ]
+              }
+            ]
+          },
+          {
+            "anyOf": [
+              {
+                "required": [
+                  "valid-subscription-label"
+                ]
+              },
+              {
+                "required": [
+                  "valid-subscription-label?"
+                ]
+              },
+              {
+                "required": [
+                  "valid-subscription-label!"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "maintainer": {
+        "anyOf": [
+          {
+            "required": [
+              "component"
+            ]
+          },
+          {
+            "required": [
+              "component?"
+            ]
+          },
+          {
+            "required": [
+              "component!"
+            ]
+          }
+        ]
+      }
+    },
+    "allOf": [
+      {
+        "anyOf": [
+          {
+            "required": [
+              "from"
+            ]
+          },
+          {
+            "required": [
+              "from?"
+            ]
+          },
+          {
+            "required": [
+              "from!"
+            ]
+          }
+        ]
+      },
+      {
+        "anyOf": [
+          {
+            "required": [
+              "name"
+            ]
+          },
+          {
+            "required": [
+              "name?"
+            ]
+          },
+          {
+            "required": [
+              "name!"
+            ]
+          }
+        ]
+      }
+    ]
+  }

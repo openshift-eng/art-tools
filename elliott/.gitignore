@@ -1,0 +1,33 @@
+# Python Ignores
+*.pyc
+build
+dist
+*.so
+*.pyc
+.cache
+.coverage
+htmlcov
+.eggs
+.cache
+venv
+cover
+*.egg-info
+.tox
+
+# Ignore _version.py created by setuptools_scm
+_version.py
+
+# Ignore emacs backup files
+*~
+
+# Ignore idea backup files
+.idea
+
+# Ignore vscode backup files
+.vscode
+
+# Ignore ocp-build-data
+ocp-build-data/
+
+# Ignore functional tests artifacts
+summary_results.json

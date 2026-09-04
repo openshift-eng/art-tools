@@ -1,0 +1,40 @@
+apiVersion: v1
+kind: List
+metadata: {}
+items:
+- apiVersion: build.openshift.io/v1
+  kind: BuildConfig
+  namespace: art-tools
+  metadata:
+    labels:
+      build: ocp-build-data-validator-update
+    name: ocp-build-data-validator-update
+  spec:
+    nodeSelector: null
+    output:
+      to:
+        kind: DockerImage
+        name: quay.io/openshift-art/art-ci-toolkit:latest
+      pushSecret:
+        name: quay-io-openshift-art-psi-image-builder-auth
+    postCommit: {}
+    resources: {}
+    source:
+      git:
+        uri: https://github.com/openshift/ocp-build-data-validator
+      type: Git
+    strategy:
+      dockerStrategy:
+        from:
+          kind: ImageStreamTag
+          name: ocp-build-data-validator:base
+        dockerfilePath: deploy/Dockerfile.update
+      type: Docker
+    triggers:
+    - github:
+        secretReference:
+          name: ocp-build-data-validator-webhook
+      type: GitHub
+    - type: ConfigChange
+    - imageChange: {}
+      type: ImageChange

@@ -1,0 +1,1302 @@
+import asyncio
+import json
+import unittest
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import yaml
+from artcommonlib import build_util, release_util, util
+from artcommonlib.model import Model
+from artcommonlib.release_util import SoftwareLifecyclePhase
+from artcommonlib.util import (
+    deep_merge,
+    extract_related_images_from_fbc,
+    get_inflight,
+    isolate_major_minor_in_group,
+    normalize_group_name_for_k8s,
+    normalize_k8s_dns_label,
+    resolve_konflux_fbc_stage_release_plan,
+    validate_k8s_dns_label,
+)
+
+
+class TestUtil(unittest.TestCase):
+    def test_convert_remote_git_to_https(self):
+        # git@ to https
+        self.assertEqual(
+            util.convert_remote_git_to_https('git@github.com:openshift/aos-cd-jobs.git'),
+            'https://github.com/openshift/aos-cd-jobs',
+        )
+
+        # https to https (no-op)
+        self.assertEqual(
+            util.convert_remote_git_to_https('https://github.com/openshift/aos-cd-jobs'),
+            'https://github.com/openshift/aos-cd-jobs',
+        )
+
+        # https to https, remove suffix
+        self.assertEqual(
+            util.convert_remote_git_to_https('https://github.com/openshift/aos-cd-jobs.git'),
+            'https://github.com/openshift/aos-cd-jobs',
+        )
+
+        # ssh to https
+        self.assertEqual(
+            util.convert_remote_git_to_https('ssh://ocp-build@github.com/openshift/aos-cd-jobs.git'),
+            'https://github.com/openshift/aos-cd-jobs',
+        )
+
+    def test_convert_remote_git_to_ssh(self):
+        # git@ to https
+        self.assertEqual(
+            util.convert_remote_git_to_ssh('https://github.com/openshift/aos-cd-jobs'),
+            'git@github.com:openshift/aos-cd-jobs.git',
+        )
+
+        # https to https (no-op)
+        self.assertEqual(
+            util.convert_remote_git_to_ssh('https://github.com/openshift/aos-cd-jobs'),
+            'git@github.com:openshift/aos-cd-jobs.git',
+        )
+
+        # https to https, remove suffix
+        self.assertEqual(
+            util.convert_remote_git_to_ssh('https://github.com/openshift/aos-cd-jobs'),
+            'git@github.com:openshift/aos-cd-jobs.git',
+        )
+
+        # ssh to https
+        self.assertEqual(
+            util.convert_remote_git_to_ssh('ssh://ocp-build@github.com/openshift/aos-cd-jobs.git'),
+            'git@github.com:openshift/aos-cd-jobs.git',
+        )
+
+    def test_ensure_github_https_url(self):
+        # SSH to HTTPS for github.com
+        self.assertEqual(
+            util.ensure_github_https_url('git@github.com:openshift/origin.git'),
+            'https://github.com/openshift/origin',
+        )
+
+        # HTTPS passthrough for github.com
+        self.assertEqual(
+            util.ensure_github_https_url('https://github.com/openshift/origin'),
+            'https://github.com/openshift/origin',
+        )
+
+        # SSH with explicit ssh:// prefix
+        self.assertEqual(
+            util.ensure_github_https_url('ssh://git@github.com/openshift-priv/art-fbc.git'),
+            'https://github.com/openshift-priv/art-fbc',
+        )
+
+        # Non-GitHub URL passthrough (distgit)
+        self.assertEqual(
+            util.ensure_github_https_url('ssh://pkgs.devel.redhat.com/containers/ose-cluster-kube-apiserver-operator'),
+            'ssh://pkgs.devel.redhat.com/containers/ose-cluster-kube-apiserver-operator',
+        )
+
+        # Non-GitHub URL passthrough (gitlab)
+        self.assertEqual(
+            util.ensure_github_https_url('https://gitlab.cee.redhat.com/some/repo'),
+            'https://gitlab.cee.redhat.com/some/repo',
+        )
+
+    def test_extract_version_fields_invalid_token_raises_ioerror(self):
+        with self.assertRaises(IOError):
+            util.extract_version_fields('5.x.0')
+
+    def test_find_latest_builds(self):
+        builds = [
+            {
+                "id": 13,
+                "name": "a-container",
+                "version": "v1.2.3",
+                "release": "3.assembly.stream.el8",
+                "tag_name": "tag1",
+            },
+            {
+                "id": 12,
+                "name": "a-container",
+                "version": "v1.2.3",
+                "release": "2.assembly.hotfix_a.el9",
+                "tag_name": "tag1",
+            },
+            {
+                "id": 11,
+                "name": "a-container",
+                "version": "v1.2.3",
+                "release": "1.assembly.hotfix_a",
+                "tag_name": "tag1",
+            },
+            {"id": 23, "name": "b-container", "version": "v1.2.3", "release": "3.assembly.test", "tag_name": "tag1"},
+            {
+                "id": 22,
+                "name": "b-container",
+                "version": "v1.2.3",
+                "release": "2.assembly.hotfix_b",
+                "tag_name": "tag1",
+            },
+            {"id": 21, "name": "b-container", "version": "v1.2.3", "release": "1.assembly.stream", "tag_name": "tag1"},
+            {"id": 33, "name": "c-container", "version": "v1.2.3", "release": "3", "tag_name": "tag1"},
+            {
+                "id": 32,
+                "name": "c-container",
+                "version": "v1.2.3",
+                "release": "2.assembly.hotfix_b",
+                "tag_name": "tag1",
+            },
+            {"id": 31, "name": "c-container", "version": "v1.2.3", "release": "1", "tag_name": "tag1"},
+        ]
+        actual = build_util.find_latest_builds(builds, "stream")
+        self.assertEqual([13, 21, 33], [b["id"] for b in actual])
+
+        actual = build_util.find_latest_builds(builds, "hotfix_a")
+        self.assertEqual([12, 21, 33], [b["id"] for b in actual])
+
+        actual = build_util.find_latest_builds(builds, "hotfix_b")
+        self.assertEqual([13, 22, 32], [b["id"] for b in actual])
+
+        actual = build_util.find_latest_builds(builds, "test")
+        self.assertEqual([13, 23, 33], [b["id"] for b in actual])
+
+        actual = build_util.find_latest_builds(builds, None)
+        self.assertEqual([13, 23, 33], [b["id"] for b in actual])
+
+    def test_isolate_assembly_in_release(self):
+        test_cases = [
+            ('1.2.3-y.p.p1', None),
+            ('1.2.3-y.p.p1.assembly', None),
+            ('1.2.3-y.p.p1.assembly.x', 'x'),
+            ('1.2.3-y.p.p1.assembly.xyz', 'xyz'),
+            ('1.2.3-y.p.p1.assembly.xyz.el7', 'xyz'),
+            ('1.2.3-y.p.p1.assembly.4.9.99.el7', '4.9.99'),
+            ('1.2.3-y.p.p1.assembly.4.9.el700.hi', '4.9'),
+            ('1.2.3-y.p.p1.assembly.art12398.el10', 'art12398'),
+            ('1.2.3-y.p.p1.assembly.art12398.el10', 'art12398'),
+            ('1.2.3-y.el9.p1.assembly.test', 'test'),
+        ]
+
+        for t in test_cases:
+            actual = release_util.isolate_assembly_in_release(t[0])
+            expected = t[1]
+            self.assertEqual(actual, expected)
+
+    def test_split_el_suffix_in_release(self):
+        test_cases = [
+            # (release_string, expected_prefix, expected_suffix)
+            ('1.2.3-y.p.p1.assembly.4.9.99.el7', '1.2.3-y.p.p1.assembly.4.9.99', 'el7'),
+            ('ansible-runner-http-1.0.0-2.el8ar', 'ansible-runner-http-1.0.0-2', 'el8'),
+            ('1.2.3-y.p.p1.assembly.art12398.el199', '1.2.3-y.p.p1.assembly.art12398', 'el199'),
+            ('1.2.3-y.p.p1.assembly.art12398', '1.2.3-y.p.p1.assembly.art12398', None),
+            # OKD/SCOS test cases
+            (
+                '4.17.0-202407241200.p0.assembly.stream.gdeadbee.scos9',
+                '4.17.0-202407241200.p0.assembly.stream.gdeadbee',
+                'scos9',
+            ),
+            ('1.2.3-y.p.p1.assembly.4.9.99.scos8', '1.2.3-y.p.p1.assembly.4.9.99', 'scos8'),
+            ('1.2.3-y.p.p1.assembly.art12398.scos10', '1.2.3-y.p.p1.assembly.art12398', 'scos10'),
+            # RHEL minor version test cases
+            ('202401221732.p0.g00c615b.el9_6', '202401221732.p0.g00c615b', 'el9_6'),
+            ('202401221732.p0.g00c615b.el9_4', '202401221732.p0.g00c615b', 'el9_4'),
+            ('1.2.3-y.p.p1.assembly.stream.el10_2', '1.2.3-y.p.p1.assembly.stream', 'el10_2'),
+        ]
+
+        for t in test_cases:
+            prefix, suffix = release_util.split_el_suffix_in_release(t[0])
+            self.assertEqual(prefix, t[1])
+            self.assertEqual(suffix, t[2])
+
+    def test_isolate_el_version_in_release(self):
+        test_cases = [
+            ('container-selinux-2.167.0-1.module+el8.5.0+12397+bf23b712:2', 8),
+            ('ansible-runner-http-1.0.0-2.el8ar', 8),
+            ('1.2.3-y.p.p1.assembly.4.9.99.el7', 7),
+            ('1.2.3-y.p.p1.assembly.4.9.el7', 7),
+            ('1.2.3-y.p.p1.assembly.art12398.el199', 199),
+            ('1.2.3-y.p.p1.assembly.art12398', None),
+            ('1.2.3-y.p.p1.assembly.4.7.e.8', None),
+            # OKD/SCOS test cases
+            ('4.17.0-202407241200.p0.assembly.stream.gdeadbee.scos9', 9),
+            ('1.2.3-y.p.p1.assembly.4.9.99.scos8', 8),
+            ('1.2.3-y.p.p1.assembly.art12398.scos10', 10),
+            # RHEL minor version test cases (should still return major version only)
+            ('202401221732.p0.g00c615b.el9_6', 9),
+            ('202401221732.p0.g00c615b.el9_4', 9),
+            ('1.2.3-y.p.p1.assembly.stream.el10_2', 10),
+        ]
+
+        for t in test_cases:
+            actual = release_util.isolate_el_version_in_release(t[0])
+            expected = t[1]
+            self.assertEqual(actual, expected)
+
+    def test_isolate_rhel_major_from_version(self):
+        self.assertEqual(9, util.isolate_rhel_major_from_version('9.2'))
+        self.assertEqual(8, util.isolate_rhel_major_from_version('8.6'))
+        self.assertEqual(10, util.isolate_rhel_major_from_version('10.1'))
+        self.assertEqual(None, util.isolate_rhel_major_from_version('invalid'))
+
+    def test_isolate_rhel_major_from_distgit_branch(self):
+        self.assertEqual(9, util.isolate_rhel_major_from_distgit_branch('rhaos-4.16-rhel-9'))
+        self.assertEqual(8, util.isolate_rhel_major_from_distgit_branch('rhaos-4.16-rhel-8'))
+        self.assertEqual(10, util.isolate_rhel_major_from_distgit_branch('rhaos-4.16-rhel-10'))
+        self.assertEqual(None, util.isolate_rhel_major_from_distgit_branch('invalid'))
+
+    def test_merge_objects(self):
+        yaml_data = """
+content:
+  source:
+    git:
+      branch:
+        target: release-4.16
+    ci_alignment:
+      streams_prs:
+        ci_build_root:
+          stream: rhel-9-golang-ci-build-root
+distgit:
+  branch: rhaos-4.16-rhel-9
+from:
+  builder:
+  - stream: golang
+  - stream: rhel-9-golang
+  member: openshift-enterprise-base-rhel9
+name: openshift/ose-machine-config-operator-rhel9
+alternative_upstream:
+- when: el8
+  distgit:
+    branch: rhaos-4.16-rhel-8
+  from:
+    member: openshift-enterprise-base
+  name: openshift/ose-machine-config-operator
+  content:
+    source:
+      ci_alignment:
+        streams_prs:
+          ci_build_root:
+            stream: rhel-8-golang-ci-build-root
+        """
+
+        config = Model(yaml.safe_load(yaml_data))
+        alt_config = config.alternative_upstream[0]
+        merged_config = Model(deep_merge(config.primitive(), alt_config.primitive()))
+
+        self.assertEqual(merged_config.name, 'openshift/ose-machine-config-operator')
+        self.assertEqual(merged_config.distgit.branch, 'rhaos-4.16-rhel-8')
+        self.assertEqual(merged_config.content.source.git.branch.target, 'release-4.16')
+        self.assertEqual(merged_config.get('from').get('builder'), [{'stream': 'golang'}, {'stream': 'rhel-9-golang'}])
+        self.assertEqual(merged_config.get('from').get('member'), 'openshift-enterprise-base')
+
+    def test_isolate_major_minor_in_group(self):
+        major, minor = isolate_major_minor_in_group('openshift-4.16')
+        self.assertEqual(major, 4)
+        self.assertEqual(minor, 16)
+
+        major, minor = isolate_major_minor_in_group('invalid-4.16')
+        self.assertEqual(major, None)
+        self.assertEqual(minor, None)
+
+        major, minor = isolate_major_minor_in_group('openshift-4.invalid')
+        self.assertEqual(major, None)
+        self.assertEqual(minor, None)
+
+        major, minor = isolate_major_minor_in_group('openshift-invalid.16')
+        self.assertEqual(major, None)
+        self.assertEqual(minor, None)
+
+    def test_resolve_konflux_base_image_release_targets_known_products(self):
+        self.assertEqual(
+            util.resolve_konflux_base_image_release_targets("ocp"),
+            ("ocp-art-images-base-silent", "art-images-base"),
+        )
+        self.assertEqual(
+            util.resolve_konflux_base_image_release_targets("rhmtc"),
+            ("mtc-images-base-silent", "mtc-images-base"),
+        )
+        self.assertEqual(
+            util.resolve_konflux_base_image_release_targets("mta"),
+            ("mta-images-base-silent", "mta-images-base"),
+        )
+        self.assertEqual(
+            util.resolve_konflux_base_image_release_targets("oadp"),
+            ("oadp-images-base-silent", "oadp-images-base"),
+        )
+        self.assertEqual(
+            util.resolve_konflux_base_image_release_targets("logging"),
+            ("logging-images-base-silent", "logging-images-base"),
+        )
+        self.assertEqual(
+            util.resolve_konflux_base_image_release_targets("openshift-logging"),
+            ("logging-images-base-silent", "logging-images-base"),
+        )
+
+    def test_resolve_konflux_base_image_release_targets_unknown_defaults_to_ocp(self):
+        self.assertEqual(
+            util.resolve_konflux_base_image_release_targets("unknown-product"),
+            ("ocp-art-images-base-silent", "art-images-base"),
+        )
+
+    def test_resolve_konflux_base_image_release_targets_pre_release_ocp_uses_ec_plan(self):
+        self.assertEqual(
+            util.resolve_konflux_base_image_release_targets("ocp", lifecycle_phase="pre-release"),
+            ("ocp-art-images-base-silent-ec", "art-images-base"),
+        )
+
+    def test_resolve_konflux_base_image_release_targets_release_phase_uses_prod_plan(self):
+        self.assertEqual(
+            util.resolve_konflux_base_image_release_targets("ocp", lifecycle_phase="release"),
+            ("ocp-art-images-base-silent", "art-images-base"),
+        )
+
+    def test_resolve_konflux_base_image_release_targets_pre_release_non_ocp_uses_prod_plan(self):
+        self.assertEqual(
+            util.resolve_konflux_base_image_release_targets("rhmtc", lifecycle_phase="pre-release"),
+            ("mtc-images-base-silent", "mtc-images-base"),
+        )
+
+
+class TestSoftwareLifecyclePhase(unittest.TestCase):
+    def test_from_name_valid(self):
+        self.assertEqual(SoftwareLifecyclePhase.from_name('eol'), SoftwareLifecyclePhase.EOL)
+        self.assertEqual(SoftwareLifecyclePhase.from_name('pre-release'), SoftwareLifecyclePhase.PRE_RELEASE)
+        self.assertEqual(SoftwareLifecyclePhase.from_name('signing'), SoftwareLifecyclePhase.SIGNING)
+        self.assertEqual(SoftwareLifecyclePhase.from_name('release'), SoftwareLifecyclePhase.RELEASE)
+
+    def test_from_name_invalid(self):
+        with self.assertRaises(ValueError):
+            SoftwareLifecyclePhase.from_name('invalid')
+
+    def test_lt(self):
+        self.assertTrue(SoftwareLifecyclePhase.PRE_RELEASE < SoftwareLifecyclePhase.SIGNING)
+        self.assertTrue(SoftwareLifecyclePhase.SIGNING < SoftwareLifecyclePhase.RELEASE)
+        self.assertTrue(SoftwareLifecyclePhase.RELEASE < SoftwareLifecyclePhase.EOL)
+        self.assertTrue(SoftwareLifecyclePhase.EOL < 101)
+        self.assertTrue(SoftwareLifecyclePhase.PRE_RELEASE < 1)
+
+    def test_gt(self):
+        self.assertTrue(SoftwareLifecyclePhase.RELEASE > SoftwareLifecyclePhase.SIGNING)
+        self.assertTrue(SoftwareLifecyclePhase.SIGNING > SoftwareLifecyclePhase.PRE_RELEASE)
+        self.assertTrue(SoftwareLifecyclePhase.EOL > SoftwareLifecyclePhase.RELEASE)
+        self.assertTrue(SoftwareLifecyclePhase.RELEASE > 1)
+        self.assertTrue(SoftwareLifecyclePhase.SIGNING > 0)
+
+    def test_le(self):
+        self.assertTrue(SoftwareLifecyclePhase.EOL <= SoftwareLifecyclePhase.EOL)
+        self.assertTrue(SoftwareLifecyclePhase.PRE_RELEASE <= SoftwareLifecyclePhase.SIGNING)
+        self.assertTrue(SoftwareLifecyclePhase.SIGNING <= SoftwareLifecyclePhase.RELEASE)
+        self.assertTrue(SoftwareLifecyclePhase.EOL <= 100)
+        self.assertTrue(SoftwareLifecyclePhase.PRE_RELEASE <= 0)
+
+    def test_ge(self):
+        self.assertTrue(SoftwareLifecyclePhase.RELEASE >= SoftwareLifecyclePhase.RELEASE)
+        self.assertTrue(SoftwareLifecyclePhase.SIGNING >= SoftwareLifecyclePhase.PRE_RELEASE)
+        self.assertTrue(SoftwareLifecyclePhase.EOL >= SoftwareLifecyclePhase.PRE_RELEASE)
+        self.assertTrue(SoftwareLifecyclePhase.RELEASE >= 2)
+        self.assertTrue(SoftwareLifecyclePhase.SIGNING >= 1)
+
+    def test_eq(self):
+        self.assertEqual(SoftwareLifecyclePhase.RELEASE, 2)
+        self.assertEqual(SoftwareLifecyclePhase.RELEASE, SoftwareLifecyclePhase.RELEASE)
+        self.assertNotEqual(SoftwareLifecyclePhase.RELEASE, SoftwareLifecyclePhase.PRE_RELEASE)
+        self.assertEqual(SoftwareLifecyclePhase.SIGNING, 1)
+        self.assertEqual(SoftwareLifecyclePhase.PRE_RELEASE, 0)
+        self.assertEqual(SoftwareLifecyclePhase.EOL.value, 100)
+        self.assertNotEqual(SoftwareLifecyclePhase.EOL.value, 101)
+
+    def test_isolate_timestamp_in_release(self):
+        actual = release_util.isolate_timestamp_in_release("foo-4.7.0-202107021813.p0.g01c9f3f.el8")
+        expected = "202107021813"
+        self.assertEqual(actual, expected)
+
+        actual = release_util.isolate_timestamp_in_release("foo-container-v4.7.0-202107021907.p0.g8b4b094")
+        expected = "202107021907"
+        self.assertEqual(actual, expected)
+
+        actual = release_util.isolate_timestamp_in_release("foo-container-v4.7.0-202107021907.p0.g8b4b094")
+        expected = "202107021907"
+        self.assertEqual(actual, expected)
+
+        actual = release_util.isolate_timestamp_in_release(
+            "foo-container-v4.8.0-202106152230.p0.g25122f5.assembly.stream"
+        )
+        expected = "202106152230"
+        self.assertEqual(actual, expected)
+
+        actual = release_util.isolate_timestamp_in_release("foo-container-v4.7.0-1.p0.g8b4b094")
+        expected = None
+        self.assertEqual(actual, expected)
+
+        actual = release_util.isolate_timestamp_in_release("foo-container-v4.7.0-202199999999.p0.g8b4b094")
+        expected = None
+        self.assertEqual(actual, expected)
+
+        actual = release_util.isolate_timestamp_in_release("")
+        expected = None
+        self.assertEqual(actual, expected)
+
+
+class TestK8sDnsLabels(unittest.TestCase):
+    def test_normalize(self):
+        self.assertEqual(normalize_k8s_dns_label("Golang.Builder__v1.23"), "golang-builder-v1-23")
+
+    def test_normalize_with_length_budget(self):
+        self.assertEqual(normalize_k8s_dns_label("component-name", max_length=10), "component")
+
+    def test_normalize_rejects_invalid_length_budget(self):
+        for max_length in (0, 64):
+            with self.subTest(max_length=max_length), self.assertRaises(ValueError):
+                normalize_k8s_dns_label("component", max_length=max_length)
+
+    def test_validate(self):
+        self.assertEqual(validate_k8s_dns_label("golang-builder-v1-23"), "golang-builder-v1-23")
+
+    def test_validate_rejects_invalid_names(self):
+        for name in ("", "v1.23", "Uppercase", "under_score", "-leading", "trailing-", "a" * 64):
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                validate_k8s_dns_label(name, "Snapshot name")
+
+
+class TestNormalizeGroupNameForK8s(unittest.TestCase):
+    """Test cases for normalize_group_name_for_k8s function"""
+
+    def test_simple_oadp_group(self):
+        """Test simple oadp group name normalization"""
+        result = normalize_group_name_for_k8s("oadp-1.5")
+        self.assertEqual(result, "oadp-1-5")
+
+    def test_complex_group_name(self):
+        """Test complex group name with mixed case, underscores, and dots"""
+        result = normalize_group_name_for_k8s("Test_Group-1.5")
+        self.assertEqual(result, "test-group-1-5")
+
+    def test_empty_string(self):
+        """Test empty string input"""
+        result = normalize_group_name_for_k8s("")
+        self.assertEqual(result, "")
+
+    def test_consecutive_dashes(self):
+        """Test collapse of consecutive dashes"""
+        result = normalize_group_name_for_k8s("test--group---name")
+        self.assertEqual(result, "test-group-name")
+
+    def test_leading_trailing_special_chars(self):
+        """Test trimming of leading/trailing non-alphanumeric characters"""
+        result = normalize_group_name_for_k8s("-_test.group_-")
+        self.assertEqual(result, "test-group")
+
+    def test_only_special_chars(self):
+        """Test string with only special characters"""
+        result = normalize_group_name_for_k8s("_..-__")
+        self.assertEqual(result, "")
+
+    def test_mixed_alphanumeric_special(self):
+        """Test mixed alphanumeric and special characters"""
+        result = normalize_group_name_for_k8s("test@group#1.2$name")
+        self.assertEqual(result, "test-group-1-2-name")
+
+    def test_long_group_name_truncation(self):
+        """Test truncation of very long group names"""
+        long_name = "a" * 100  # 100 character string
+        result = normalize_group_name_for_k8s(long_name)
+        # Should be truncated to leave room for timestamp (max 63 - 18 - 1 = 44 chars)
+        self.assertLessEqual(len(result), 44)
+        self.assertTrue(result.startswith("a"))
+
+    def test_uppercase_conversion(self):
+        """Test uppercase to lowercase conversion"""
+        result = normalize_group_name_for_k8s("OADP-1.5")
+        self.assertEqual(result, "oadp-1-5")
+
+    def test_numeric_group(self):
+        """Test group name with numbers"""
+        result = normalize_group_name_for_k8s("group123-4.56")
+        self.assertEqual(result, "group123-4-56")
+
+
+class TestArtImageRepoHelpers(unittest.TestCase):
+    """Tests for get_art_prod_image_repo_for_version"""
+
+    def test_get_art_image_repo_ocp_4_dev(self):
+        """Test OCP 4.x dev repository"""
+        repo = util.get_art_prod_image_repo_for_version(4, "dev")
+        self.assertEqual(repo, "quay.io/openshift-release-dev/ocp-v4.0-art-dev")
+
+    def test_get_art_image_repo_ocp_5_dev(self):
+        """Test OCP 5.x dev repository"""
+        repo = util.get_art_prod_image_repo_for_version(5, "dev")
+        self.assertEqual(repo, "quay.io/openshift-release-dev/ocp-v5.0-art-dev")
+
+    def test_get_art_image_repo_ocp_5_dev_priv(self):
+        """Test OCP 5.x private dev repository"""
+        repo = util.get_art_prod_image_repo_for_version(5, "dev-priv")
+        self.assertEqual(repo, "quay.io/openshift-release-dev/ocp-v5.0-art-dev-priv")
+
+    def test_get_art_image_repo_ocp_4_prev(self):
+        """Test OCP 4.x prev repository"""
+        repo = util.get_art_prod_image_repo_for_version(4, "prev")
+        self.assertEqual(repo, "quay.io/openshift-release-dev/ocp-v4.0-art-prev")
+
+    def test_get_art_image_repo_ocp_4_test(self):
+        """Test OCP 4.x test repository"""
+        repo = util.get_art_prod_image_repo_for_version(4, "test")
+        self.assertEqual(repo, "quay.io/openshift-release-dev/ocp-v4.0-art-test")
+
+    def test_get_art_image_repo_rejects_ocp_3(self):
+        """Test that OCP 3.x is rejected"""
+        with self.assertRaises(ValueError) as ctx:
+            util.get_art_prod_image_repo_for_version(3, "dev")
+        self.assertIn("ART image repos only exist for OCP 4.x and later", str(ctx.exception))
+        self.assertIn("3.x", str(ctx.exception))
+
+    def test_get_art_image_repo_invalid_repo_type(self):
+        """Test invalid repo_type parameter"""
+        with self.assertRaises(ValueError) as ctx:
+            util.get_art_prod_image_repo_for_version(4, "invalid")
+        self.assertIn("Invalid repo_type", str(ctx.exception))
+        self.assertIn("invalid", str(ctx.exception))
+
+
+class TestKonfluxImagestreamOverride(unittest.TestCase):
+    """Tests for uses_konflux_imagestream_override"""
+
+    def test_versions_below_4_12(self):
+        """Test versions below 4.12 return False"""
+        self.assertFalse(util.uses_konflux_imagestream_override("4.11"))
+        self.assertFalse(util.uses_konflux_imagestream_override("4.10"))
+        self.assertFalse(util.uses_konflux_imagestream_override("4.0"))
+        self.assertFalse(util.uses_konflux_imagestream_override("3.11"))
+        self.assertFalse(util.uses_konflux_imagestream_override("3.0"))
+
+    def test_version_4_12(self):
+        """Test version 4.12 returns True (boundary)"""
+        self.assertTrue(util.uses_konflux_imagestream_override("4.12"))
+
+    def test_versions_above_4_12(self):
+        """Test versions above 4.12 return True"""
+        self.assertTrue(util.uses_konflux_imagestream_override("4.13"))
+        self.assertTrue(util.uses_konflux_imagestream_override("4.14"))
+        self.assertTrue(util.uses_konflux_imagestream_override("4.15"))
+        self.assertTrue(util.uses_konflux_imagestream_override("4.16"))
+        self.assertTrue(util.uses_konflux_imagestream_override("4.17"))
+        self.assertTrue(util.uses_konflux_imagestream_override("4.18"))
+        self.assertTrue(util.uses_konflux_imagestream_override("4.19"))
+        self.assertTrue(util.uses_konflux_imagestream_override("4.20"))
+        self.assertTrue(util.uses_konflux_imagestream_override("4.21"))
+        self.assertTrue(util.uses_konflux_imagestream_override("4.22"))
+
+    def test_ocp_5_versions(self):
+        """Test all OCP 5.x versions return True"""
+        self.assertTrue(util.uses_konflux_imagestream_override("5.0"))
+        self.assertTrue(util.uses_konflux_imagestream_override("5.1"))
+        self.assertTrue(util.uses_konflux_imagestream_override("5.10"))
+        self.assertTrue(util.uses_konflux_imagestream_override("5.99"))
+
+    def test_future_major_versions(self):
+        """Test future major versions return True"""
+        self.assertTrue(util.uses_konflux_imagestream_override("6.0"))
+        self.assertTrue(util.uses_konflux_imagestream_override("10.0"))
+
+    def test_invalid_versions(self):
+        """Test invalid version strings raise ValueError"""
+        with self.assertRaises(ValueError):
+            util.uses_konflux_imagestream_override("invalid")
+        with self.assertRaises(ValueError):
+            util.uses_konflux_imagestream_override("4")
+        with self.assertRaises(ValueError):
+            util.uses_konflux_imagestream_override("4.12.1")
+        with self.assertRaises(ValueError):
+            util.uses_konflux_imagestream_override("")
+        with self.assertRaises(ValueError):
+            util.uses_konflux_imagestream_override("openshift-4.12")
+
+
+class TestIsFutureReleaseDate(unittest.TestCase):
+    """Tests for is_future_release_date function"""
+
+    def test_future_date_yyyy_mm_dd_format(self):
+        """Test future date in YYYY-MM-DD format"""
+        future_date = "2099-12-31"
+        result = util.is_future_release_date(future_date)
+        self.assertTrue(result)
+
+    def test_past_date_yyyy_mm_dd_format(self):
+        """Test past date in YYYY-MM-DD format"""
+        past_date = "2020-01-01"
+        result = util.is_future_release_date(past_date)
+        self.assertFalse(result)
+
+    def test_future_date_yyyy_mmm_dd_format(self):
+        """Test future date in YYYY-Mon-DD format (e.g., 2099-Dec-31)"""
+        future_date = "2099-Dec-31"
+        result = util.is_future_release_date(future_date)
+        self.assertTrue(result)
+
+    def test_past_date_yyyy_mmm_dd_format(self):
+        """Test past date in YYYY-Mon-DD format (e.g., 2020-Jan-01)"""
+        past_date = "2020-Jan-01"
+        result = util.is_future_release_date(past_date)
+        self.assertFalse(result)
+
+    def test_invalid_date_format(self):
+        """Test invalid date format raises ValueError"""
+        invalid_date = "not-a-date"
+        with self.assertRaises(ValueError):
+            util.is_future_release_date(invalid_date)
+
+    def test_empty_string(self):
+        """Test empty string raises ValueError"""
+        with self.assertRaises(ValueError):
+            util.is_future_release_date("")
+
+    def test_partial_date(self):
+        """Test partial date raises ValueError"""
+        with self.assertRaises(ValueError):
+            util.is_future_release_date("2024-01")
+
+    def test_various_month_abbreviations(self):
+        """Test various month abbreviations in YYYY-Mon-DD format"""
+        # Test different month abbreviations
+        test_cases = [
+            ("2099-Jan-15", True),  # Future
+            ("2099-Feb-15", True),
+            ("2099-Mar-15", True),
+            ("2020-Apr-15", False),  # Past
+            ("2020-May-15", False),
+            ("2020-Jun-15", False),
+        ]
+        for date_str, expected in test_cases:
+            result = util.is_future_release_date(date_str)
+            self.assertEqual(result, expected, f"Failed for date: {date_str}")
+
+
+class TestBridgeOCPVersions(unittest.TestCase):
+    """Tests for OCP 5.x bridge release helpers."""
+
+    def test_get_ocp5_bridge_release(self):
+        self.assertEqual(util.get_ocp5_bridge_release(5, 0), (4, 23))
+        self.assertEqual(util.get_ocp5_bridge_release(5, 1), (4, 24))
+        self.assertEqual(util.get_ocp5_bridge_release(5, 2), (4, 25))
+
+    def test_get_ocp5_bridge_release_rejects_non_ocp5(self):
+        with self.assertRaisesRegex(ValueError, "only supports OCP 5.x"):
+            util.get_ocp5_bridge_release(6, 0)
+        with self.assertRaisesRegex(ValueError, "only supports OCP 5.x"):
+            util.get_ocp5_bridge_release(4, 0)
+
+    def test_validate_bridge_release_basis_group(self):
+        util.validate_bridge_release_basis_group("openshift-4.23", "openshift-5.0")
+        util.validate_bridge_release_basis_group("openshift-4.24", "openshift-5.1")
+
+    def test_validate_bridge_release_basis_group_rejects_mismatch(self):
+        with self.assertRaisesRegex(ValueError, "must be 'openshift-5.0'"):
+            util.validate_bridge_release_basis_group("openshift-4.23", "openshift-5.1")
+        with self.assertRaisesRegex(ValueError, "must be 'openshift-5.1'"):
+            util.validate_bridge_release_basis_group("openshift-4.24", "openshift-5.0")
+        with self.assertRaisesRegex(ValueError, "only supports OCP 5.x"):
+            util.validate_bridge_release_basis_group("openshift-4.23", "openshift-4.22")
+
+
+# Legacy group-based resolver tests removed - functions no longer exist
+# Use product-based resolvers: resolve_konflux_kubeconfig_by_product() and resolve_konflux_namespace_by_product()
+
+
+class TestProductBasedResolution(unittest.TestCase):
+    """Test product-based configuration resolution"""
+
+    @patch.dict("os.environ", {"ASSISTED_INSTALLER_SA_KUBECONFIG": "/path/to/installer-kubeconfig"})
+    def test_openshift_agent_installer_resolution(self):
+        self.assertEqual(
+            util.resolve_konflux_kubeconfig_by_product("openshift_agent_installer"),
+            "/path/to/installer-kubeconfig",
+        )
+        self.assertEqual(
+            util.resolve_konflux_namespace_by_product("openshift_agent_installer"),
+            "art-installer-agent-tenant",
+        )
+
+    @patch.dict("os.environ", {"KONFLUX_SA_KUBECONFIG": "/path/to/kubeconfig"})
+    def test_product_kubeconfig_resolution(self):
+        # Test that both oc-mirror and oc-mirror-2.0 resolve to the same KONFLUX_SA_KUBECONFIG path
+        self.assertEqual(util.resolve_konflux_kubeconfig_by_product("oc-mirror"), "/path/to/kubeconfig")
+        self.assertEqual(util.resolve_konflux_kubeconfig_by_product("oc-mirror-2.0"), "/path/to/kubeconfig")
+
+        # Test that ocp also resolves to KONFLUX_SA_KUBECONFIG path
+        self.assertEqual(util.resolve_konflux_kubeconfig_by_product("ocp"), "/path/to/kubeconfig")
+
+    def test_product_kubeconfig_resolution_precedence(self):
+        # Explicitly provided kubeconfig should take precedence
+        self.assertEqual(util.resolve_konflux_kubeconfig_by_product("oc-mirror-2.0", "/custom/path"), "/custom/path")
+
+
+class TestExtractRelatedImagesFromFBC(unittest.TestCase):
+    """Tests for extract_related_images_from_fbc function with artifact fallback logic"""
+
+    def setUp(self):
+        """Set up common test data"""
+        self.fbc_pullspec = "quay.io/redhat-user-workloads/ocp-art-tenant/art-fbc@sha256:abc123"
+        self.product = "ocp"
+
+        # Sample related-images.json content
+        self.related_images_json = [
+            "registry.redhat.io/openshift4/ose-operator@sha256:111",
+            "registry.redhat.io/openshift4/ose-cli@sha256:222",
+            "quay.io/other/image@sha256:333",
+        ]
+
+        # Sample catalog.json content -- FBC compact NDJSON with olm.bundle schema
+        self.catalog_json_content = '\n'.join(
+            [
+                json.dumps(
+                    {
+                        "schema": "olm.package",
+                        "name": "test-operator",
+                        "defaultChannel": "stable",
+                    }
+                ),
+                json.dumps(
+                    {
+                        "schema": "olm.channel",
+                        "name": "stable",
+                        "package": "test-operator",
+                        "entries": [
+                            {"name": "test-operator.v1.0.0", "skipRange": ">=0.0.1 <1.0.0"},
+                        ],
+                    }
+                ),
+                json.dumps(
+                    {
+                        "schema": "olm.bundle",
+                        "name": "test-operator.v1.0.0",
+                        "package": "test-operator",
+                        "relatedImages": [
+                            {"name": "operator", "image": "registry.redhat.io/openshift4/ose-operator@sha256:444"},
+                            {"name": "cli", "image": "registry.redhat.io/openshift4/ose-cli@sha256:555"},
+                        ],
+                    }
+                ),
+            ]
+        )
+
+        # Same catalog data but pretty-printed (multi-line concatenated JSON),
+        # matching the format produced by OCP FBC builds
+        # (e.g., ose-metallb-operator-fbc-4.22.0-20260528170921)
+        self.catalog_json_content_pretty = '\n'.join(
+            [
+                json.dumps(
+                    {
+                        "schema": "olm.package",
+                        "name": "test-operator",
+                        "defaultChannel": "stable",
+                    },
+                    indent=4,
+                ),
+                json.dumps(
+                    {
+                        "schema": "olm.channel",
+                        "name": "stable",
+                        "package": "test-operator",
+                        "entries": [
+                            {"name": "test-operator.v1.0.0", "skipRange": ">=0.0.1 <1.0.0"},
+                        ],
+                    },
+                    indent=4,
+                ),
+                json.dumps(
+                    {
+                        "schema": "olm.bundle",
+                        "name": "test-operator.v1.0.0",
+                        "package": "test-operator",
+                        "relatedImages": [
+                            {"name": "operator", "image": "registry.redhat.io/openshift4/ose-operator@sha256:444"},
+                            {"name": "cli", "image": "registry.redhat.io/openshift4/ose-cli@sha256:555"},
+                        ],
+                    },
+                    indent=4,
+                ),
+            ]
+        )
+
+    def _create_discover_response(self, include_related_images=True, include_rendered_catalog=False):
+        """Helper to create ORAS discover response JSON"""
+        referrers = []
+
+        if include_related_images:
+            referrers.append(
+                {
+                    'digest': 'sha256:related-digest-111',
+                    'artifactType': 'application/vnd.konflux-ci.attached-artifact',
+                    'annotations': {
+                        'attachedMediaType': 'application/vnd.konflux-ci.attached-artifact.related-images+json'
+                    },
+                }
+            )
+
+        if include_rendered_catalog:
+            referrers.append(
+                {
+                    'digest': 'sha256:catalog-digest-222',
+                    'artifactType': 'application/vnd.konflux-ci.attached-artifact',
+                    'annotations': {
+                        'attachedMediaType': 'application/vnd.konflux-ci.attached-artifact.rendered-catalog+json'
+                    },
+                }
+            )
+
+        return json.dumps({'referrers': referrers})
+
+    @patch('artcommonlib.util.cmd_gather_async', new_callable=AsyncMock)
+    @patch('builtins.open', new_callable=MagicMock)
+    @patch('os.path.exists')
+    @patch('os.listdir')
+    def test_prefers_related_images_artifact(self, mock_listdir, mock_exists, mock_open, mock_cmd):
+        """Test that 'related-images' artifact is preferred when both artifacts exist"""
+        # Setup mocks - cmd_gather_async is called twice (discover + pull)
+        mock_cmd.side_effect = [
+            # First call: ORAS discover
+            (0, self._create_discover_response(include_related_images=True, include_rendered_catalog=True), ''),
+            # Second call: ORAS pull
+            (0, 'Pulled artifact successfully', ''),
+        ]
+
+        mock_listdir.return_value = ['related-images.json']
+        mock_exists.side_effect = lambda path: 'related-images.json' in path
+
+        # Mock file reading
+        mock_file = MagicMock()
+        mock_file.__enter__.return_value.read.return_value = json.dumps(self.related_images_json)
+        mock_open.return_value = mock_file
+
+        # Run async test
+        result = asyncio.run(extract_related_images_from_fbc(self.fbc_pullspec, self.product))
+
+        # Verify
+        self.assertGreater(len(result), 0)
+        # Should pull the related-images artifact (digest sha256:related-digest-111)
+        pull_call = mock_cmd.call_args_list[1]  # Second call is the pull
+        self.assertIn('sha256:related-digest-111', str(pull_call))
+
+    @patch('artcommonlib.util.cmd_gather_async', new_callable=AsyncMock)
+    @patch('builtins.open', new_callable=MagicMock)
+    @patch('os.path.exists')
+    @patch('os.listdir')
+    def test_falls_back_to_rendered_catalog_artifact(self, mock_listdir, mock_exists, mock_open, mock_cmd):
+        """Test that 'rendered-catalog' artifact is used when 'related-images' is missing (ART-14747 fix)"""
+        # Setup mocks - only rendered-catalog artifact exists
+        mock_cmd.side_effect = [
+            # First call: ORAS discover
+            (0, self._create_discover_response(include_related_images=False, include_rendered_catalog=True), ''),
+            # Second call: ORAS pull
+            (0, 'Pulled artifact successfully', ''),
+        ]
+
+        mock_listdir.return_value = ['catalog.json']
+        mock_exists.side_effect = lambda path: 'catalog.json' in path
+
+        # Mock file reading
+        mock_file = MagicMock()
+        mock_file.__enter__.return_value.read.return_value = self.catalog_json_content
+        mock_open.return_value = mock_file
+
+        # Run async test
+        result = asyncio.run(extract_related_images_from_fbc(self.fbc_pullspec, self.product))
+
+        # Verify
+        self.assertGreater(len(result), 0)
+        # Should pull the rendered-catalog artifact (digest sha256:catalog-digest-222)
+        pull_call = mock_cmd.call_args_list[1]  # Second call is the pull
+        self.assertIn('sha256:catalog-digest-222', str(pull_call))
+
+    @patch('artcommonlib.util.cmd_gather_async', new_callable=AsyncMock)
+    def test_error_when_no_artifacts_found(self, mock_cmd):
+        """Test detailed error message when neither artifact type exists"""
+        # Setup mocks - no matching artifacts
+        other_artifact_response = json.dumps(
+            {
+                'referrers': [
+                    {
+                        'digest': 'sha256:other-digest',
+                        'artifactType': 'application/vnd.other.type',
+                        'annotations': {'attachedMediaType': 'application/vnd.other+json'},
+                    }
+                ]
+            }
+        )
+
+        mock_cmd.return_value = (0, other_artifact_response, '')
+
+        # Run async test and expect RuntimeError
+        with self.assertRaises(RuntimeError) as ctx:
+            asyncio.run(extract_related_images_from_fbc(self.fbc_pullspec, self.product))
+
+        # Verify error message includes both artifactType and attachedMediaType
+        error_msg = str(ctx.exception)
+        self.assertIn('application/vnd.konflux-ci.attached-artifact', error_msg)
+        self.assertIn('related-images', error_msg)
+        self.assertIn('rendered-catalog', error_msg)
+        self.assertIn('attachedMediaType', error_msg)
+
+    @patch('artcommonlib.util.cmd_gather_async', new_callable=AsyncMock)
+    @patch('builtins.open', new_callable=MagicMock)
+    @patch('os.path.exists')
+    @patch('os.listdir')
+    def test_file_level_fallback_from_related_images_to_catalog(self, mock_listdir, mock_exists, mock_open, mock_cmd):
+        """Test file-level fallback: related-images artifact exists but only catalog.json file inside"""
+        # Setup mocks - related-images artifact exists
+        mock_cmd.side_effect = [
+            # First call: ORAS discover
+            (0, self._create_discover_response(include_related_images=True, include_rendered_catalog=False), ''),
+            # Second call: ORAS pull
+            (0, 'Pulled artifact successfully', ''),
+        ]
+
+        mock_listdir.return_value = ['catalog.json']  # Only catalog.json inside the artifact
+        # First check for related-images.json (False), then catalog.json (True)
+        mock_exists.side_effect = lambda path: 'catalog.json' in path
+
+        # Mock file reading
+        mock_file = MagicMock()
+        mock_file.__enter__.return_value.read.return_value = self.catalog_json_content
+        mock_open.return_value = mock_file
+
+        # Run async test
+        result = asyncio.run(extract_related_images_from_fbc(self.fbc_pullspec, self.product))
+
+        # Verify
+        self.assertGreater(len(result), 0)
+
+    @patch('artcommonlib.util.cmd_gather_async', new_callable=AsyncMock)
+    @patch('builtins.open', new_callable=MagicMock)
+    @patch('os.path.exists')
+    @patch('os.listdir')
+    def test_catalog_json_expected_from_rendered_catalog_artifact(self, mock_listdir, mock_exists, mock_open, mock_cmd):
+        """Test that using catalog.json from rendered-catalog artifact doesn't log warning"""
+        # Setup mocks - rendered-catalog artifact exists
+        mock_cmd.side_effect = [
+            # First call: ORAS discover
+            (0, self._create_discover_response(include_related_images=False, include_rendered_catalog=True), ''),
+            # Second call: ORAS pull
+            (0, 'Pulled artifact successfully', ''),
+        ]
+
+        mock_listdir.return_value = ['catalog.json']
+        mock_exists.side_effect = lambda path: 'catalog.json' in path
+
+        # Mock file reading
+        mock_file = MagicMock()
+        mock_file.__enter__.return_value.read.return_value = self.catalog_json_content
+        mock_open.return_value = mock_file
+
+        # Run async test
+        result = asyncio.run(extract_related_images_from_fbc(self.fbc_pullspec, self.product))
+
+        # Verify - should successfully extract images
+        self.assertGreater(len(result), 0)
+
+    @patch('artcommonlib.util.cmd_gather_async', new_callable=AsyncMock)
+    @patch('os.path.exists')
+    @patch('os.listdir')
+    def test_error_when_neither_file_found(self, mock_listdir, mock_exists, mock_cmd):
+        """Test error when neither related-images.json nor catalog.json found in pulled artifact"""
+        # Setup mocks
+        mock_cmd.side_effect = [
+            # First call: ORAS discover
+            (0, self._create_discover_response(include_related_images=True, include_rendered_catalog=False), ''),
+            # Second call: ORAS pull
+            (0, 'Pulled artifact successfully', ''),
+        ]
+
+        mock_listdir.return_value = ['other-file.txt']
+        mock_exists.return_value = False  # Neither file exists
+
+        # Run async test and expect RuntimeError
+        with self.assertRaises(RuntimeError) as ctx:
+            asyncio.run(extract_related_images_from_fbc(self.fbc_pullspec, self.product))
+
+        # Verify error message includes artifact type and available files
+        error_msg = str(ctx.exception)
+        self.assertIn('artifact', error_msg.lower())
+        self.assertIn('other-file.txt', error_msg)
+
+    @patch('artcommonlib.util.cmd_gather_async', new_callable=AsyncMock)
+    @patch('builtins.open', new_callable=MagicMock)
+    @patch('os.path.exists')
+    @patch('os.listdir')
+    def test_catalog_json_ignores_non_bundle_entries(self, mock_listdir, mock_exists, mock_open, mock_cmd):
+        """Structured extraction only reads olm.bundle entries, not olm.package or olm.channel"""
+        catalog_with_noise = '\n'.join(
+            [
+                json.dumps(
+                    {
+                        "schema": "olm.package",
+                        "name": "test-operator",
+                        "description": "Ships registry.redhat.io/openshift4/should-not-match@sha256:999",
+                    }
+                ),
+                json.dumps(
+                    {
+                        "schema": "olm.channel",
+                        "name": "stable",
+                        "package": "test-operator",
+                        "entries": [{"name": "test-operator.v1.0.0"}],
+                    }
+                ),
+                json.dumps(
+                    {
+                        "schema": "olm.bundle",
+                        "name": "test-operator.v1.0.0",
+                        "package": "test-operator",
+                        "relatedImages": [
+                            {"name": "op", "image": "registry.redhat.io/openshift4/ose-operator@sha256:444"},
+                        ],
+                    }
+                ),
+            ]
+        )
+
+        mock_cmd.side_effect = [
+            (0, self._create_discover_response(include_related_images=False, include_rendered_catalog=True), ''),
+            (0, 'Pulled artifact successfully', ''),
+        ]
+        mock_listdir.return_value = ['catalog.json']
+        mock_exists.side_effect = lambda path: 'catalog.json' in path
+
+        mock_file = MagicMock()
+        mock_file.__enter__.return_value.read.return_value = catalog_with_noise
+        mock_open.return_value = mock_file
+
+        result = asyncio.run(extract_related_images_from_fbc(self.fbc_pullspec, self.product))
+
+        self.assertEqual(len(result), 1)
+        self.assertNotIn('should-not-match', str(result))
+
+    @patch('artcommonlib.util.cmd_gather_async', new_callable=AsyncMock)
+    @patch('builtins.open', new_callable=MagicMock)
+    @patch('os.path.exists')
+    @patch('os.listdir')
+    def test_catalog_json_extracts_all_bundles(self, mock_listdir, mock_exists, mock_open, mock_cmd):
+        """All olm.bundle relatedImages are extracted (not filtered by channel head)"""
+        catalog_multi_bundle = '\n'.join(
+            [
+                json.dumps(
+                    {
+                        "schema": "olm.package",
+                        "name": "test-operator",
+                        "defaultChannel": "stable",
+                    }
+                ),
+                json.dumps(
+                    {
+                        "schema": "olm.channel",
+                        "name": "stable",
+                        "package": "test-operator",
+                        "entries": [
+                            {"name": "test-operator.v1.0.0", "skipRange": ">=0.0.1 <1.0.0"},
+                            {"name": "test-operator.v1.1.0", "skipRange": ">=0.0.1 <1.1.0"},
+                        ],
+                    }
+                ),
+                json.dumps(
+                    {
+                        "schema": "olm.bundle",
+                        "name": "test-operator.v1.0.0",
+                        "package": "test-operator",
+                        "relatedImages": [
+                            {"name": "old-op", "image": "registry.redhat.io/openshift4/ose-operator@sha256:old111"},
+                        ],
+                    }
+                ),
+                json.dumps(
+                    {
+                        "schema": "olm.bundle",
+                        "name": "test-operator.v1.1.0",
+                        "package": "test-operator",
+                        "relatedImages": [
+                            {"name": "new-op", "image": "registry.redhat.io/openshift4/ose-operator@sha256:new222"},
+                        ],
+                    }
+                ),
+            ]
+        )
+
+        mock_cmd.side_effect = [
+            (0, self._create_discover_response(include_related_images=False, include_rendered_catalog=True), ''),
+            (0, 'Pulled artifact successfully', ''),
+        ]
+        mock_listdir.return_value = ['catalog.json']
+        mock_exists.side_effect = lambda path: 'catalog.json' in path
+
+        mock_file = MagicMock()
+        mock_file.__enter__.return_value.read.return_value = catalog_multi_bundle
+        mock_open.return_value = mock_file
+
+        result = asyncio.run(extract_related_images_from_fbc(self.fbc_pullspec, self.product))
+
+        self.assertEqual(len(result), 2)
+        self.assertIn('sha256:new222', str(result))
+        self.assertIn('sha256:old111', str(result))
+
+    @patch('artcommonlib.util.cmd_gather_async', new_callable=AsyncMock)
+    @patch('builtins.open', new_callable=MagicMock)
+    @patch('os.path.exists')
+    @patch('os.listdir')
+    def test_catalog_json_pretty_printed_multiline(self, mock_listdir, mock_exists, mock_open, mock_cmd):
+        """Pretty-printed concatenated JSON (OCP FBC format) is parsed via raw_decode fallback"""
+        mock_cmd.side_effect = [
+            (0, self._create_discover_response(include_related_images=False, include_rendered_catalog=True), ''),
+            (0, 'Pulled artifact successfully', ''),
+        ]
+        mock_listdir.return_value = ['catalog.json']
+        mock_exists.side_effect = lambda path: 'catalog.json' in path
+
+        mock_file = MagicMock()
+        mock_file.__enter__.return_value.read.return_value = self.catalog_json_content_pretty
+        mock_open.return_value = mock_file
+
+        result = asyncio.run(extract_related_images_from_fbc(self.fbc_pullspec, self.product))
+
+        self.assertEqual(len(result), 2)
+        self.assertIn('sha256:444', str(result))
+        self.assertIn('sha256:555', str(result))
+
+
+class TestGetInflight(unittest.TestCase):
+    """Tests for get_inflight() — ART-18958 fix."""
+
+    def _mock_pp_response(self, all_ga_tasks):
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json.return_value = {'all_ga_tasks': all_ga_tasks}
+        return mock_response
+
+    @patch('artcommonlib.util.get_assembly_release_date')
+    @patch('artcommonlib.util.requests_gssapi')
+    @patch('artcommonlib.util.requests.Session')
+    def test_selects_release_scheduled_before_assembly_date(self, mock_session_cls, mock_gssapi, mock_get_date):
+        """A Y-1 release with date_start 1 day before assembly date should be selected."""
+        mock_get_date.return_value = '2026-May-25'
+        mock_session = MagicMock()
+        mock_session_cls.return_value = mock_session
+        mock_session.get.return_value = self._mock_pp_response(
+            [
+                {'name': '4.21.15 in Fast Channel', 'date_start': '2026-05-12'},
+                {'name': '4.21.16 in Fast Channel', 'date_start': '2026-05-24'},
+            ]
+        )
+
+        result = get_inflight('rc.4', 'openshift-4.22', date='2026-05-25')
+
+        self.assertEqual(result, '4.21.16')
+
+    @patch('artcommonlib.util.get_assembly_release_date')
+    @patch('artcommonlib.util.requests_gssapi')
+    @patch('artcommonlib.util.requests.Session')
+    def test_does_not_select_release_after_assembly_date(self, mock_session_cls, mock_gssapi, mock_get_date):
+        """A Y-1 release with date_start after assembly date must NOT be selected (the ART-18958 bug)."""
+        mock_get_date.return_value = '2026-May-25'
+        mock_session = MagicMock()
+        mock_session_cls.return_value = mock_session
+        mock_session.get.return_value = self._mock_pp_response(
+            [
+                {'name': '4.21.16 in Fast Channel', 'date_start': '2026-05-19'},
+                {'name': '4.21.17 in Fast Channel', 'date_start': '2026-05-26'},
+            ]
+        )
+
+        result = get_inflight('rc.4', 'openshift-4.22', date='2026-05-25')
+
+        # 4.21.16 is 6 days before (outside 7-day window: 25-19=6, within 7)
+        # 4.21.17 is 1 day AFTER — must be excluded
+        self.assertEqual(result, '4.21.16')
+
+    @patch('artcommonlib.util.get_assembly_release_date')
+    @patch('artcommonlib.util.requests_gssapi')
+    @patch('artcommonlib.util.requests.Session')
+    def test_picks_latest_when_multiple_qualify(self, mock_session_cls, mock_gssapi, mock_get_date):
+        """When multiple Y-1 releases are within the window, the latest one wins."""
+        mock_get_date.return_value = '2026-May-25'
+        mock_session = MagicMock()
+        mock_session_cls.return_value = mock_session
+        mock_session.get.return_value = self._mock_pp_response(
+            [
+                {'name': '4.21.15 in Fast Channel', 'date_start': '2026-05-20'},
+                {'name': '4.21.16 in Fast Channel', 'date_start': '2026-05-23'},
+            ]
+        )
+
+        result = get_inflight('rc.4', 'openshift-4.22', date='2026-05-25')
+
+        self.assertEqual(result, '4.21.16')
+
+    @patch('artcommonlib.util.get_assembly_release_date')
+    @patch('artcommonlib.util.requests_gssapi')
+    @patch('artcommonlib.util.requests.Session')
+    def test_returns_none_when_no_release_in_window(self, mock_session_cls, mock_gssapi, mock_get_date):
+        """When no Y-1 releases are within the 7-day window, returns None."""
+        mock_get_date.return_value = '2026-May-25'
+        mock_session = MagicMock()
+        mock_session_cls.return_value = mock_session
+        mock_session.get.return_value = self._mock_pp_response(
+            [
+                {'name': '4.21.14 in Fast Channel', 'date_start': '2026-05-10'},
+                {'name': '4.21.15 in Fast Channel', 'date_start': '2026-05-17'},
+                {'name': '4.21.16 in Fast Channel', 'date_start': '2026-05-30'},
+            ]
+        )
+
+        result = get_inflight('rc.4', 'openshift-4.22', date='2026-05-25')
+
+        # 4.21.14: 15 days before (outside), 4.21.15: 8 days before (outside), 4.21.16: after
+        self.assertIsNone(result)
+
+    @patch('artcommonlib.util.get_assembly_release_date')
+    def test_returns_none_for_minor_zero(self, mock_get_date):
+        """When minor version is 0 and no prior major is defined, there is no Y-1 group to query."""
+        mock_get_date.return_value = '2026-May-25'
+
+        result = get_inflight('rc.0', 'openshift-3.0', date='2026-05-25')
+
+        self.assertIsNone(result)
+
+    @patch('artcommonlib.util.get_assembly_release_date')
+    @patch('artcommonlib.util.requests_gssapi')
+    @patch('artcommonlib.util.requests.Session')
+    def test_exact_same_day_is_selected(self, mock_session_cls, mock_gssapi, mock_get_date):
+        """A Y-1 release on exactly the same day as assembly should be selected (days_diff=0)."""
+        mock_get_date.return_value = '2026-May-25'
+        mock_session = MagicMock()
+        mock_session_cls.return_value = mock_session
+        mock_session.get.return_value = self._mock_pp_response(
+            [
+                {'name': '4.21.16 in Fast Channel', 'date_start': '2026-05-25'},
+            ]
+        )
+
+        result = get_inflight('rc.4', 'openshift-4.22', date='2026-05-25')
+
+        self.assertEqual(result, '4.21.16')
+
+
+class TestResolveKonfluxFbcStageReleasePlan(unittest.TestCase):
+    def test_layered_product_versions_return_exact_names(self):
+        expected_plans = {
+            ("cert-manager", 1, 19): "cm-advisory-stage-auto-1-19",
+            ("external-secrets-operator", 1, 1): "eso-advisory-stage-auto-1-1",
+            ("multicluster-engine", 2, 11): "mce-advisory-stage-2-11",
+            ("multicluster-engine", 5, 0): "mce-advisory-stage-5-0",
+            ("rhacm2", 2, 16): "acm-advisory-stage-2-16",
+            ("rhacm2", 5, 0): "acm-advisory-stage-5-0",
+            ("zero-trust-workload-identity-manager", 1, 0): "zt-advisory-stage-auto-1-0",
+            ("zero-trust-workload-identity-manager", 1, 1): "zt-advisory-stage-auto-1-1",
+        }
+
+        for (product, major, minor), expected_plan in expected_plans.items():
+            with self.subTest(product=product, major=major, minor=minor):
+                self.assertEqual(resolve_konflux_fbc_stage_release_plan(product, major, minor), expected_plan)
+
+    def test_ocp_version_passed_as_product_version_returns_none(self):
+        # Passing OCP version (4.18) instead of product version yields None — no such plan
+        self.assertIsNone(resolve_konflux_fbc_stage_release_plan("rhacm2", 4, 18))
+
+    def test_unknown_product_returns_none(self):
+        self.assertIsNone(resolve_konflux_fbc_stage_release_plan("quay", 4, 18))
+        self.assertIsNone(resolve_konflux_fbc_stage_release_plan("", 4, 18))

@@ -1,0 +1,95 @@
+from artcommonlib.constants import KONFLUX_DEFAULT_FBC_REPO, KONFLUX_DEFAULT_IMAGE_REPO  # noqa: F401
+
+RC_BASE_URL = "https://{arch}.ocp.releases.ci.openshift.org"
+RC_BASE_PRIV_URL = "https://{arch}.ocp.internal.releases.ci.openshift.org"
+
+BREWWEB_URL = "https://brewweb.engineering.redhat.com/brew"
+DISTGIT_GIT_URL = "git+https://pkgs.devel.redhat.com/git"
+
+# Doozer used to be part of OIT
+OIT_COMMENT_PREFIX = '#oit##'
+OIT_BEGIN = '##OIT_BEGIN'
+OIT_END = '##OIT_END'
+
+CONTAINER_YAML_HEADER = """
+# This file is managed by Doozer: https://github.com/openshift-eng/art-tools/tree/main/doozer
+# operated by the OpenShift Automated Release Tooling team (#forum-ocp-art on CoreOS Slack).
+
+# Any manual changes will be overwritten by Doozer on the next build.
+#
+# See https://source.redhat.com/groups/public/container-build-system/container_build_system_wiki/odcs_integration_with_osbs
+# for more information on maintaining this file and the format and examples
+
+---
+"""
+
+# Environment variables that should be set for doozer interaction with db for storing and retrieving build records.
+# DB ENV VARS
+DB_HOST = "DOOZER_DB_HOST"
+DB_PORT = "DOOZER_DB_PORT"
+DB_USER = "DOOZER_DB_USER"
+DB_PWD_NAME = "DOOZER_DB_PASSWORD"
+DB_NAME = "DOOZER_DB_NAME"
+
+# default db parameters
+default_db_params = {
+    DB_NAME: "doozer_build",
+    DB_HOST: "localhost",
+    DB_PORT: "3306",
+}
+
+# TODO: once brew outage is resolved, change to 6 hours again (currently set to 100)
+BREW_BUILD_TIMEOUT = 100 * 60 * 60  # how long we wait before canceling a task
+
+# In Brew, 'ADD tls-ca-bundle.pem /tmp/tls-ca-bundle.pem' is injected during build and 'sslcacert=/tmp/tls-ca-bundle.pem'
+# is specified for CA cert, so that 'sslverify=true' can be used in yum repos.
+# To achieve the same in Konflux, we need to 'ADD tls-ca-bundle.pem /tmp/tls-ca-bundle.pem' in every Dockerfile stage
+# and set 'sslcacert=/tmp/Current-IT-Root-CAs.pem'
+KONFLUX_REPO_CA_BUNDLE_TMP_PATH = "/tmp/art"
+KONFLUX_REPO_CA_BUNDLE_FILENAME = "Current-IT-Root-CAs.pem"
+KONFLUX_REPO_CA_BUNDLE_HOST = "https://certs.corp.redhat.com/certs"
+WORKING_SUBDIR_KONFLUX_BUILD_SOURCES = "konflux_build_sources"
+WORKING_SUBDIR_KONFLUX_FBC_SOURCES = "konflux_fbc_sources"
+WORKING_SUBDIR_KONFLUX_OKD_SOURCES = "konflux_okd_sources"
+# Legacy constants removed - use get_art_prod_image_repo_for_version() from artcommonlib.util instead
+DELIVERY_IMAGE_REGISTRY = "registry.redhat.io"
+KONFLUX_UI_HOST = "https://konflux-ui.apps.kflux-ocp-p01.7ayg.p1.openshiftapps.com"
+KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL = "https://api.github.com/repos/openshift-priv/art-konflux-template/contents/.tekton/art-konflux-template-push.yaml?ref=main"
+KONFLUX_DEFAULT_BUNDLE_BUILD_PLR_TEMPLATE_URL = "https://api.github.com/repos/openshift-priv/art-konflux-template/contents/.tekton/art-bundle-konflux-template-push.yaml?ref=main"
+KONFLUX_DEFAULT_FBC_BUILD_PLR_TEMPLATE_URL = "https://api.github.com/repos/openshift-priv/art-konflux-template/contents/.tekton/art-fbc-konflux-template-push.yaml?ref=main"
+ART_FBC_GIT_REPO = "https://github.com/openshift-priv/art-fbc.git"
+REGISTRY_PROXY_BASE_URL = "registry-proxy.engineering.redhat.com"
+BREW_REGISTRY_BASE_URL = "brew.registry.redhat.io"
+
+ART_BUILD_HISTORY_URL = 'https://art-build-history-art-build-history.apps.artc2023.pc3z.p1.openshiftapps.com'
+ART_BUILD_FAILURES_URL = 'https://art-build-failures-art-build-failures.apps.artc2023.pc3z.p1.openshiftapps.com'
+
+# Enterprise Contract (EC) verification pipeline constants
+# TODO: Expand EC verification to layered products (logging, oadp, mta, rhmtc, quay, cert-manager, etc.)
+# Currently scoped to OCP only.
+KONFLUX_EC_PIPELINE_GIT_URL = "https://github.com/conforma/cli"
+KONFLUX_EC_PIPELINE_REVISION = "main"
+KONFLUX_EC_PIPELINE_PATH = "pipelines/enterprise-contract/0.1/enterprise-contract.yaml"
+# https://gitlab.cee.redhat.com/releng/konflux-release-data/-/blob/main/tenants-config/cluster/kflux-ocp-p01/tenants/ocp-art-tenant/ecp-build-stage.yaml
+KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION = "ocp-art-tenant/conforma-build-stage"
+# PreGA (PREVIEW assembly) EC policy: same as stage but allows unsigned RPMs
+# https://gitlab.cee.redhat.com/releng/konflux-release-data/-/blob/main/tenants-config/cluster/kflux-ocp-p01/tenants/ocp-art-tenant/ecp-build-ec-stage.yaml
+KONFLUX_PREGA_EC_POLICY_CONFIGURATION = "ocp-art-tenant/conforma-build-ec-stage"
+# Test assembly EC policies: base images are not released for test assemblies, so the
+# art-images base image registry rule is permanently excluded for build-time ITSs to pass.
+# https://gitlab.cee.redhat.com/releng/konflux-release-data/-/merge_requests/19219
+KONFLUX_TEST_EC_POLICY_CONFIGURATION = "ocp-art-tenant/conforma-build-stage-test"
+KONFLUX_TEST_PREGA_EC_POLICY_CONFIGURATION = "ocp-art-tenant/conforma-build-ec-stage-test"
+# Base image release EC policies (ReleasePlanAdmission policy name suffix). Selection is by
+# software_lifecycle.phase in resolve_konflux_base_image_release_targets — ART-19498.
+# Prod: registry-ocp-art-base-prod | Pre-release: registry-ocp-art-base-ec-prod
+KONFLUX_BASE_IMAGE_EC_POLICY_CONFIGURATION = "rhtap-releng-tenant/registry-ocp-art-base-prod"
+KONFLUX_BASE_IMAGE_PREGA_EC_POLICY_CONFIGURATION = "rhtap-releng-tenant/registry-ocp-art-base-ec-prod"
+
+# Release-time EC policies for conforma verification (used by scheduled build-conforma-verify)
+KONFLUX_RELEASE_EC_POLICY_CONFIGURATION = "rhtap-releng-tenant/registry-ocp-art-stage"
+KONFLUX_RELEASE_PREGA_EC_POLICY_CONFIGURATION = "rhtap-releng-tenant/registry-ocp-art-ec-stage"
+KONFLUX_RELEASE_FBC_EC_POLICY_CONFIGURATION = "rhtap-releng-tenant/fbc-ocp-art-stage"
+
+ART_IMAGES_BASE_APPLICATION = "art-images-base"
+ART_IMAGES_GOLANG_BUILDER_APPLICATION = "golang-builder"

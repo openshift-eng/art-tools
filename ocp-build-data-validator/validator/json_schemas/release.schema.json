@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "release.schema.json",
+  "title": "Release",
+  "description": "A release",
+  "type": "object",
+  "properties": {
+    "assembly": {
+      "$ref": "assembly.schema.json"
+    }
+  },
+  "required": [
+    "assembly"
+  ],
+  "additionalProperties": false
+}

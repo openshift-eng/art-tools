@@ -1,0 +1,21 @@
+ARG BASE_IMAGE=registry.access.redhat.com/ubi9:latest
+
+FROM ${BASE_IMAGE}
+RUN dnf install -y python3 python3-pip python3-dnf skopeo rpm git-core && dnf clean all
+
+# Install RH IT CA bundle so DNF can reach internal repos (rhsm-pulp.corp.redhat.com)
+RUN curl --silent --show-error --fail --insecure --output /etc/pki/ca-trust/source/anchors/Current-IT-Root-CAs.pem \
+        https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem && \
+    update-ca-trust
+
+WORKDIR /app
+
+ARG GIT_REF=tags/v0.30.0
+
+RUN python3 -m pip install https://github.com/konflux-ci/rpm-lockfile-prototype/archive/refs/${GIT_REF}.tar.gz
+
+WORKDIR /work
+
+# Runs as root: rpm-lockfile-prototype uses DNF's Python API for RPM dependency
+# resolution, which requires root access to the RPM database and cache directories.
+ENTRYPOINT ["/usr/local/bin/rpm-lockfile-prototype"]

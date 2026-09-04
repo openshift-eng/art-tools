@@ -1,0 +1,46 @@
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: doomsday-script-task
+spec:
+  params:
+    - description: 'OCP major version, eg: 4.15'
+      name: major
+      type: string
+    - description: 'Full version, eg: 4.15.5'
+      name: version
+      type: string
+  steps:
+    - env:
+        - name: DOCKER_CONFIG
+          value: /tmp/.docker
+        - name: SLACK_BOT_TOKEN
+          valueFrom:
+            secretKeyRef:
+              key: api-token
+              name: slack-bot-creds
+      image: default-route-openshift-image-registry.apps.artc2023.pc3z.p1.openshiftapps.com/art-cd/art-cd:latest
+      name: run-script
+      resources: {}
+      script: |
+        #!/usr/bin/env bash
+
+        set -e
+
+        touch artcd.toml
+        uv run artcd -vv --config artcd.toml quay-doomsday-backup --version $(params.version)
+      securityContext:
+        runAsGroup: 0
+        runAsUser: 0
+      volumeMounts:
+        - mountPath: /tmp/.docker
+          name: synced-art-publish-ci-dockerconfigjson
+        - mountPath: /root/.aws
+          name: synced-aws-doomsday-readonly
+  volumes:
+    - name: synced-art-publish-ci-dockerconfigjson
+      secret:
+        secretName: synced-art-publish-ci-dockerconfigjson
+    - name: synced-aws-doomsday-readonly
+      secret:
+        secretName: synced-aws-doomsday-readonly

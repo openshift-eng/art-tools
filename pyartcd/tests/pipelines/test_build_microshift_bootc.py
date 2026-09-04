@@ -1,0 +1,760 @@
+"""
+Unit tests for build_microshift_bootc pipeline
+"""
+
+import os
+import tempfile
+from pathlib import Path
+from unittest import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock, Mock, patch
+
+from artcommonlib.assembly import AssemblyTypes
+from artcommonlib.model import Model
+from pyartcd.pipelines.build_microshift_bootc import BuildMicroShiftBootcPipeline
+from pyartcd.runtime import Runtime
+from pyartcd.slack import SlackClient
+
+
+class TestBuildMicroShiftBootcPipeline(IsolatedAsyncioTestCase):
+    """
+    Test cases for the BuildMicroShiftBootcPipeline class
+    """
+
+    def setUp(self):
+        """
+        Set up test fixtures before each test method
+        """
+        self.runtime = Mock(spec=Runtime)
+        self.runtime.working_dir = Path(tempfile.mkdtemp())
+        self.runtime.dry_run = False
+        self.runtime.config = {
+            "gitlab_url": "https://gitlab.example.com",
+            "shipment_config": {
+                "shipment_data_url": "https://gitlab.example.com/shipment-data.git",
+                "shipment_data_push_url": "https://gitlab.example.com/shipment-data.git",
+            },
+        }
+        self.runtime.logger = Mock()
+        self.mock_slack_client = Mock(spec=SlackClient)
+        self.group = "openshift-4.21"
+        self.assembly = "4.21.0"
+        os.environ["GITHUB_TOKEN"] = "fake-token"
+        os.environ["GITLAB_TOKEN"] = "fake-gitlab-token"
+
+    def tearDown(self):
+        """
+        Clean up test fixtures after each test method
+        """
+        os.environ.pop("GITHUB_TOKEN", None)
+        os.environ.pop("GITLAB_TOKEN", None)
+
+    @patch('pyartcd.pipelines.build_microshift_bootc.get_github_client_for_org')
+    async def test_update_shipment_data_extracts_timestamp_from_branch(self, mock_get_client):
+        """
+        Test that timestamp is correctly extracted from branch name for filename generation
+        """
+        # given
+        pipeline = BuildMicroShiftBootcPipeline(
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+            force=False,
+            force_plashet_sync=False,
+            prepare_shipment=True,
+            data_path="https://github.com/openshift-eng/ocp-build-data",
+            slack_client=self.mock_slack_client,
+        )
+
+        pipeline.shipment_data_repo = Mock()
+        pipeline.shipment_data_repo._directory = self.runtime.working_dir
+        pipeline.shipment_data_repo.write_file = AsyncMock()
+        pipeline.shipment_data_repo.add_all = AsyncMock()
+        pipeline.shipment_data_repo.log_diff = AsyncMock()
+        pipeline.shipment_data_repo.commit_push = AsyncMock(return_value=True)
+
+        mock_shipment_config = Mock()
+        mock_shipment_config.shipment.metadata.product = "ocp"
+        mock_shipment_config.shipment.metadata.group = self.group
+        mock_shipment_config.shipment.metadata.application = "ocp-art-tenant"
+        mock_shipment_config.model_dump = Mock(return_value={"shipment": {}})
+
+        existing_timestamp = "20260129004538"
+        source_branch = f"prepare-microshift-bootc-shipment-{self.assembly}-{existing_timestamp}"
+
+        # when
+        await pipeline._update_shipment_data(mock_shipment_config, "Test commit", source_branch)
+
+        # then
+        pipeline.shipment_data_repo.write_file.assert_called_once()
+        written_filepath = pipeline.shipment_data_repo.write_file.call_args[0][0]
+        expected_filename = f"{self.assembly}.microshift-bootc.{existing_timestamp}.yaml"
+        self.assertTrue(str(written_filepath).endswith(expected_filename))
+        # env defaults to prod when not provided
+        self.assertIn(f"/prod/{self.assembly}.microshift-bootc", str(written_filepath))
+
+    @patch('pyartcd.pipelines.build_microshift_bootc.get_github_client_for_org')
+    async def test_update_shipment_data_uses_env_for_directory(self, mock_get_client):
+        """
+        Test that the shipment file is written under the directory of the given env (e.g. stage)
+        """
+        # given
+        pipeline = BuildMicroShiftBootcPipeline(
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+            force=False,
+            force_plashet_sync=False,
+            prepare_shipment=True,
+            data_path="https://github.com/openshift-eng/ocp-build-data",
+            slack_client=self.mock_slack_client,
+        )
+
+        pipeline.shipment_data_repo = Mock()
+        pipeline.shipment_data_repo._directory = self.runtime.working_dir
+        pipeline.shipment_data_repo.write_file = AsyncMock()
+        pipeline.shipment_data_repo.add_all = AsyncMock()
+        pipeline.shipment_data_repo.log_diff = AsyncMock()
+        pipeline.shipment_data_repo.commit_push = AsyncMock(return_value=True)
+
+        mock_shipment_config = Mock()
+        mock_shipment_config.shipment.metadata.product = "ocp"
+        mock_shipment_config.shipment.metadata.group = self.group
+        mock_shipment_config.shipment.metadata.application = "ocp-art-tenant"
+        mock_shipment_config.model_dump = Mock(return_value={"shipment": {}})
+
+        timestamp = "20260129004538"
+        source_branch = f"prepare-microshift-bootc-shipment-{self.assembly}-{timestamp}"
+
+        # when
+        await pipeline._update_shipment_data(mock_shipment_config, "Test commit", source_branch, "stage")
+
+        # then
+        pipeline.shipment_data_repo.write_file.assert_called_once()
+        written_filepath = pipeline.shipment_data_repo.write_file.call_args[0][0]
+        self.assertIn(f"/stage/{self.assembly}.microshift-bootc", str(written_filepath))
+
+    def _make_pipeline_with_group_config(self, group_config: dict) -> BuildMicroShiftBootcPipeline:
+        pipeline = BuildMicroShiftBootcPipeline(
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+            force=False,
+            force_plashet_sync=False,
+            prepare_shipment=True,
+            data_path="https://github.com/openshift-eng/ocp-build-data",
+            slack_client=self.mock_slack_client,
+        )
+        pipeline.releases_config = Model({"releases": {self.assembly: {"assembly": {"group": group_config}}}})
+        return pipeline
+
+    def test_resolve_shipment_env_defaults_to_prod(self):
+        """No env anywhere -> prod"""
+        pipeline = self._make_pipeline_with_group_config({})
+        self.assertEqual(pipeline._resolve_shipment_env(), "prod")
+
+    def test_resolve_shipment_env_follows_standard_shipment(self):
+        """Follow the standard shipment env (e.g. stage for ec/rc)"""
+        pipeline = self._make_pipeline_with_group_config({"shipment": {"env": "stage"}})
+        self.assertEqual(pipeline._resolve_shipment_env(), "stage")
+
+    def test_resolve_shipment_env_raises_on_invalid(self):
+        """Invalid env value raises"""
+        pipeline = self._make_pipeline_with_group_config({"shipment": {"env": "bogus"}})
+        with self.assertRaises(ValueError):
+            pipeline._resolve_shipment_env()
+
+    @patch('pyartcd.pipelines.build_microshift_bootc.GitLabClient')
+    @patch('pyartcd.pipelines.build_microshift_bootc.get_github_client_for_org')
+    async def test_create_shipment_mr_reuses_existing_timestamp(self, mock_get_client, mock_gitlab_class):
+        """
+        Test that when updating an existing MR, the timestamp from the existing branch is reused
+        """
+        # given
+        existing_timestamp = "20260129004538"
+        existing_branch = f"prepare-microshift-bootc-shipment-{self.assembly}-{existing_timestamp}"
+        existing_mr_url = "https://gitlab.example.com/shipment-data/-/merge_requests/123"
+
+        pipeline = BuildMicroShiftBootcPipeline(
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+            force=False,
+            force_plashet_sync=False,
+            prepare_shipment=True,
+            data_path="https://github.com/openshift-eng/ocp-build-data",
+            slack_client=self.mock_slack_client,
+        )
+
+        # Set gitlab_token like in test_prepare_release_konflux
+        pipeline.gitlab_token = "fake-gitlab-token"
+
+        pipeline.shipment_data_repo = Mock()
+        pipeline.shipment_data_repo._directory = self.runtime.working_dir
+        pipeline.shipment_data_repo.fetch_switch_branch = AsyncMock()
+        pipeline.shipment_data_repo.write_file = AsyncMock()
+        pipeline.shipment_data_repo.add_all = AsyncMock()
+        pipeline.shipment_data_repo.log_diff = AsyncMock()
+        pipeline.shipment_data_repo.commit_push = AsyncMock(return_value=True)
+
+        # Mock releases config with existing shipment URL - use Model wrapper like in test_prepare_release_konflux
+        pipeline.releases_config = Model(
+            {
+                "releases": {
+                    self.assembly: {"assembly": {"group": {"microshift_bootc_shipment": {"url": existing_mr_url}}}}
+                }
+            }
+        )
+
+        # Mock GitLab MR to return existing branch
+        mock_mr = Mock()
+        mock_mr.source_branch = existing_branch
+        mock_mr.web_url = existing_mr_url
+        mock_mr.description = "Original description"
+        mock_mr.state = "opened"
+
+        mock_project = Mock()
+        mock_project.mergerequests.get.return_value = mock_mr
+        # Return existing MR to exercise the update path (not create new)
+        mock_project.mergerequests.list.return_value = [mock_mr]
+        mock_project.mergerequests.create.return_value = mock_mr
+
+        mock_gitlab_instance = Mock()
+        mock_gitlab_instance.get_project.return_value = mock_project
+        mock_gitlab_instance.get_mr_from_url.return_value = mock_mr
+        mock_gitlab_class.return_value = mock_gitlab_instance
+
+        mock_shipment_config = Mock()
+        mock_shipment_config.shipment.metadata.product = "ocp"
+        mock_shipment_config.shipment.metadata.group = self.group
+        mock_shipment_config.shipment.metadata.application = "ocp-art-tenant"
+        mock_shipment_config.model_dump = Mock(return_value={"shipment": {}})
+
+        pipeline._gitlab = mock_gitlab_instance
+        # Simulate _load_or_init_shipment_config having cached the branch
+        pipeline._shipment_source_branch = existing_branch
+
+        # when
+        with patch('pyartcd.pipelines.build_microshift_bootc.get_release_name_for_assembly', return_value="4.21.0"):
+            _ = await pipeline._create_shipment_mr(mock_shipment_config)
+
+        # then
+        pipeline.shipment_data_repo.write_file.assert_called_once()
+        written_filepath = pipeline.shipment_data_repo.write_file.call_args[0][0]
+        expected_filename = f"{self.assembly}.microshift-bootc.{existing_timestamp}.yaml"
+        self.assertTrue(str(written_filepath).endswith(expected_filename))
+
+        # Verify the update path was exercised (not create)
+        mock_project.mergerequests.create.assert_not_called()
+        mock_mr.save.assert_called_once()
+
+    @patch('pyartcd.pipelines.build_microshift_bootc.get_github_client_for_org')
+    async def test_create_shipment_mr_generates_new_timestamp_for_new_shipment(self, mock_get_client):
+        """
+        Test that when creating a new MR (no existing shipment), a new branch with timestamp is created
+        """
+        # given
+        pipeline = BuildMicroShiftBootcPipeline(
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+            force=False,
+            force_plashet_sync=False,
+            prepare_shipment=True,
+            data_path="https://github.com/openshift-eng/ocp-build-data",
+            slack_client=self.mock_slack_client,
+        )
+
+        # Set gitlab_token like in test_prepare_release_konflux
+        pipeline.gitlab_token = "fake-gitlab-token"
+
+        pipeline.shipment_data_repo = Mock()
+        pipeline.shipment_data_repo._directory = self.runtime.working_dir
+        pipeline.shipment_data_repo.create_branch = AsyncMock()
+        pipeline.shipment_data_repo.write_file = AsyncMock()
+        pipeline.shipment_data_repo.add_all = AsyncMock()
+        pipeline.shipment_data_repo.log_diff = AsyncMock()
+        pipeline.shipment_data_repo.commit_push = AsyncMock(return_value=True)
+
+        # No existing shipment URL in releases config - use Model wrapper with proper structure
+        pipeline.releases_config = Model(
+            {"releases": {self.assembly: {"assembly": {"group": {}}}}}  # No shipment URL here
+        )
+
+        mock_gitlab_client = Mock()
+        mock_shipment_config = Mock()
+        mock_shipment_config.shipment.metadata.product = "ocp"
+        mock_shipment_config.shipment.metadata.group = self.group
+        mock_shipment_config.shipment.metadata.application = "ocp-art-tenant"
+        mock_shipment_config.model_dump = Mock(return_value={"shipment": {}})
+
+        mock_project = Mock()
+        mock_project.mergerequests.list.return_value = []
+        mock_mr = Mock()
+        mock_mr.web_url = "https://gitlab.example.com/shipment-data/-/merge_requests/123"
+        mock_project.mergerequests.create.return_value = mock_mr
+        mock_gitlab_client.get_project.return_value = mock_project
+        pipeline._gitlab = mock_gitlab_client
+
+        # when
+        with patch('pyartcd.pipelines.build_microshift_bootc.get_release_name_for_assembly', return_value="4.18.1"):
+            _ = await pipeline._create_shipment_mr(mock_shipment_config)
+
+        # then
+        # Verify a new branch with timestamp was created
+        pipeline.shipment_data_repo.create_branch.assert_called_once()
+        created_branch = pipeline.shipment_data_repo.create_branch.call_args[0][0]
+        self.assertTrue(created_branch.startswith(f"prepare-microshift-bootc-shipment-{self.assembly}-"))
+
+        # Verify the filename uses the timestamp from the branch
+        pipeline.shipment_data_repo.write_file.assert_called_once()
+        written_filepath = pipeline.shipment_data_repo.write_file.call_args[0][0]
+        filename = str(written_filepath.name)
+
+        self.assertTrue(filename.startswith(f"{self.assembly}.microshift-bootc."))
+        self.assertTrue(filename.endswith(".yaml"))
+
+        # Extract timestamp from branch and verify it matches the filename
+        timestamp_from_branch = created_branch.split("-")[-1]
+        timestamp_part = filename.replace(f"{self.assembly}.microshift-bootc.", "").replace(".yaml", "")
+        self.assertEqual(timestamp_from_branch, timestamp_part)
+        self.assertEqual(len(timestamp_part), 14)
+        self.assertTrue(timestamp_part.isdigit())
+
+    @patch("pyartcd.pipelines.build_microshift_bootc.get_microshift_builds")
+    async def test_get_microshift_rpm_commit_extracts_commit(self, mock_get_builds):
+        """
+        Test that _get_microshift_rpm_commit correctly extracts the git commit
+        from the microshift RPM NVR.
+        """
+        # given
+        mock_get_builds.return_value = [
+            "microshift-4.21.0-202601290005.p2.g0d0943b.assembly.4.21.0.el8",
+            "microshift-4.21.0-202601290005.p2.g0d0943b.assembly.4.21.0.el9",
+        ]
+        pipeline = BuildMicroShiftBootcPipeline(
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+            force=False,
+            force_plashet_sync=False,
+            prepare_shipment=False,
+            data_path="https://github.com/openshift-eng/ocp-build-data",
+            slack_client=self.mock_slack_client,
+        )
+
+        # when
+        commit = await pipeline._get_microshift_rpm_commit()
+
+        # then
+        self.assertEqual(commit, "0d0943b")
+        mock_get_builds.assert_called_once_with(self.group, self.assembly, env=pipeline._elliott_env_vars)
+
+    @patch("pyartcd.pipelines.build_microshift_bootc.get_microshift_builds")
+    async def test_get_microshift_rpm_commit_raises_when_no_nvrs(self, mock_get_builds):
+        """
+        Test that _get_microshift_rpm_commit raises ValueError when no NVRs are found.
+        """
+        # given
+        mock_get_builds.return_value = []
+        pipeline = BuildMicroShiftBootcPipeline(
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+            force=False,
+            force_plashet_sync=False,
+            prepare_shipment=False,
+            data_path="https://github.com/openshift-eng/ocp-build-data",
+            slack_client=self.mock_slack_client,
+        )
+
+        # when / then
+        with self.assertRaises(ValueError) as ctx:
+            await pipeline._get_microshift_rpm_commit()
+        self.assertIn("Could not find microshift RPM NVRs", str(ctx.exception))
+
+    @patch("pyartcd.pipelines.build_microshift_bootc.get_microshift_builds")
+    async def test_get_microshift_rpm_commit_raises_when_no_commit_in_nvr(self, mock_get_builds):
+        """
+        Test that _get_microshift_rpm_commit raises ValueError when the NVR
+        does not contain a recognizable commit hash.
+        """
+        # given
+        mock_get_builds.return_value = [
+            "microshift-4.21.0-202601290005.assembly.4.21.0.el9",
+        ]
+        pipeline = BuildMicroShiftBootcPipeline(
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+            force=False,
+            force_plashet_sync=False,
+            prepare_shipment=False,
+            data_path="https://github.com/openshift-eng/ocp-build-data",
+            slack_client=self.mock_slack_client,
+        )
+
+        # when / then
+        with self.assertRaises(ValueError) as ctx:
+            await pipeline._get_microshift_rpm_commit()
+        self.assertIn("commit", str(ctx.exception).lower())
+
+    def _make_pipeline(self, group="openshift-4.21", assembly="4.21.0"):
+        """Helper to create a pipeline instance with the given group and assembly."""
+        return BuildMicroShiftBootcPipeline(
+            runtime=self.runtime,
+            group=group,
+            assembly=assembly,
+            force=False,
+            force_plashet_sync=False,
+            prepare_shipment=False,
+            data_path="https://github.com/openshift-eng/ocp-build-data",
+            slack_client=self.mock_slack_client,
+        )
+
+    def test_get_assembly_label_value_standard(self):
+        pipeline = self._make_pipeline(assembly="4.21.0")
+        pipeline.assembly_type = AssemblyTypes.STANDARD
+        self.assertEqual(pipeline._get_assembly_label_value(), "v4.21.0")
+
+    def test_get_assembly_label_value_standard_z_stream(self):
+        pipeline = self._make_pipeline(assembly="4.18.3")
+        pipeline.assembly_type = AssemblyTypes.STANDARD
+        self.assertEqual(pipeline._get_assembly_label_value(), "v4.18.3")
+
+    def test_get_assembly_label_value_candidate_rc(self):
+        pipeline = self._make_pipeline(group="openshift-4.22", assembly="rc.1")
+        pipeline.assembly_type = AssemblyTypes.CANDIDATE
+        self.assertEqual(pipeline._get_assembly_label_value(), "v4.22.0-rc.1")
+
+    def test_get_assembly_label_value_candidate_ec(self):
+        pipeline = self._make_pipeline(group="openshift-4.22", assembly="ec.3")
+        pipeline.assembly_type = AssemblyTypes.CANDIDATE
+        self.assertEqual(pipeline._get_assembly_label_value(), "v4.22.0-ec.3")
+
+    def test_get_assembly_label_value_preview(self):
+        pipeline = self._make_pipeline(group="openshift-4.22", assembly="ec.2")
+        pipeline.assembly_type = AssemblyTypes.PREVIEW
+        self.assertEqual(pipeline._get_assembly_label_value(), "v4.22.0-ec.2")
+
+    def test_get_assembly_label_value_custom_raises(self):
+        pipeline = self._make_pipeline(assembly="custom-hotfix")
+        pipeline.assembly_type = AssemblyTypes.CUSTOM
+        with self.assertRaises(ValueError) as ctx:
+            pipeline._get_assembly_label_value()
+        self.assertIn("CUSTOM", str(ctx.exception))
+
+    def test_get_assembly_label_value_stream_returns_none(self):
+        pipeline = self._make_pipeline(assembly="stream")
+        pipeline.assembly_type = AssemblyTypes.STREAM
+        self.assertIsNone(pipeline._get_assembly_label_value())
+
+    @patch("pyartcd.pipelines.build_microshift_bootc.exectools.cmd_assert_async", new_callable=AsyncMock)
+    @patch.object(BuildMicroShiftBootcPipeline, "get_latest_bootc_build", new_callable=AsyncMock)
+    async def test_rebase_uses_two_segment_version(self, mock_get_build, mock_cmd):
+        """
+        Test that _rebase_and_build_bootc passes --version v4.21 (2 segments)
+        instead of v4.21.0 to avoid confusing tags on the container catalog
+        (OCPBUGS-78040).
+        """
+        mock_get_build.return_value = Mock(nvr="microshift-bootc-4.21.0-1.el9")
+        pipeline = self._make_pipeline(group="openshift-4.21", assembly="4.21.7")
+        pipeline.assembly_type = AssemblyTypes.STANDARD
+        pipeline.force = True
+        os.environ["KONFLUX_SA_KUBECONFIG"] = "/fake/kubeconfig"
+
+        try:
+            variant = {"image_name": "microshift-bootc", "el_target": "el9"}
+            with patch("asyncio.sleep", new_callable=AsyncMock):
+                await pipeline._rebase_and_build_bootc(variant, "abc1234")
+
+            rebase_cmd = mock_cmd.call_args_list[0][0][0]
+
+            # --version uses 2-segment format (no trailing .0)
+            ver_idx = rebase_cmd.index("--version")
+            self.assertEqual(rebase_cmd[ver_idx + 1], "v4.21")
+
+            # assembly label is also set
+            extra_label_indices = [i for i, v in enumerate(rebase_cmd) if v == "--extra-label"]
+            extra_labels = [rebase_cmd[i + 1] for i in extra_label_indices]
+            self.assertIn("assembly=v4.21.7", extra_labels)
+        finally:
+            os.environ.pop("KONFLUX_SA_KUBECONFIG", None)
+
+    @patch("pyartcd.pipelines.build_microshift_bootc.exectools.cmd_assert_async", new_callable=AsyncMock)
+    @patch.object(BuildMicroShiftBootcPipeline, "get_latest_bootc_build", new_callable=AsyncMock)
+    async def test_rebase_and_build_bootc_uses_rpm_commit(self, mock_get_build, mock_cmd):
+        """
+        Test that _rebase_and_build_bootc passes the RPM commit to --lock-upstream
+        instead of HEAD.
+        """
+        # given
+        mock_get_build.return_value = Mock(nvr="microshift-bootc-4.21.0-1.el9")
+        pipeline = BuildMicroShiftBootcPipeline(
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+            force=False,
+            force_plashet_sync=False,
+            prepare_shipment=False,
+            data_path="https://github.com/openshift-eng/ocp-build-data",
+            slack_client=self.mock_slack_client,
+        )
+        pipeline.assembly_type = AssemblyTypes.STANDARD
+        pipeline.force = True
+        os.environ["KONFLUX_SA_KUBECONFIG"] = "/fake/kubeconfig"
+
+        try:
+            # when
+            variant = {"image_name": "microshift-bootc", "el_target": "el9"}
+            with patch("asyncio.sleep", new_callable=AsyncMock):
+                await pipeline._rebase_and_build_bootc(variant, "0d0943b")
+
+            # then
+            # Verify rebase command uses the RPM commit, not HEAD
+            rebase_call = mock_cmd.call_args_list[0]
+            rebase_cmd = rebase_call[0][0]
+            lock_idx = rebase_cmd.index("--lock-upstream")
+            self.assertEqual(rebase_cmd[lock_idx + 1], "microshift-bootc")
+            self.assertEqual(rebase_cmd[lock_idx + 2], "0d0943b")
+
+            # Verify build command uses the RPM commit, not HEAD
+            build_call = mock_cmd.call_args_list[1]
+            build_cmd = build_call[0][0]
+            lock_idx = build_cmd.index("--lock-upstream")
+            self.assertEqual(build_cmd[lock_idx + 1], "microshift-bootc")
+            self.assertEqual(build_cmd[lock_idx + 2], "0d0943b")
+        finally:
+            os.environ.pop("KONFLUX_SA_KUBECONFIG", None)
+
+    @patch("pyartcd.pipelines.build_microshift_bootc.exectools.cmd_assert_async", new_callable=AsyncMock)
+    @patch.object(BuildMicroShiftBootcPipeline, "get_latest_bootc_build", new_callable=AsyncMock)
+    async def test_rebase_and_build_bootc_el10_variant(self, mock_get_build, mock_cmd):
+        """
+        Test that _rebase_and_build_bootc correctly handles the el10 variant,
+        using the microshift-bootc-rhel10 image name in doozer commands.
+        """
+        # given
+        mock_get_build.return_value = Mock(nvr="microshift-bootc-rhel10-container-v4.22-1.el10")
+        pipeline = self._make_pipeline(group="openshift-4.22", assembly="4.22.0")
+        pipeline.assembly_type = AssemblyTypes.STANDARD
+        pipeline.force = True
+        os.environ["KONFLUX_SA_KUBECONFIG"] = "/fake/kubeconfig"
+
+        try:
+            variant = {"image_name": "microshift-bootc-rhel10", "el_target": "el10"}
+            with patch("asyncio.sleep", new_callable=AsyncMock):
+                await pipeline._rebase_and_build_bootc(variant, "abc1234")
+
+            # Verify rebase command uses the el10 image name
+            rebase_cmd = mock_cmd.call_args_list[0][0][0]
+            img_idx = rebase_cmd.index("-i")
+            self.assertEqual(rebase_cmd[img_idx + 1], "microshift-bootc-rhel10")
+
+            lock_idx = rebase_cmd.index("--lock-upstream")
+            self.assertEqual(rebase_cmd[lock_idx + 1], "microshift-bootc-rhel10")
+            self.assertEqual(rebase_cmd[lock_idx + 2], "abc1234")
+
+            # Verify build command uses the el10 image name
+            build_cmd = mock_cmd.call_args_list[1][0][0]
+            img_idx = build_cmd.index("-i")
+            self.assertEqual(build_cmd[img_idx + 1], "microshift-bootc-rhel10")
+
+            # Verify get_latest_bootc_build called with el10 params
+            mock_get_build.assert_called_with(image_name="microshift-bootc-rhel10", el_target="el10")
+        finally:
+            os.environ.pop("KONFLUX_SA_KUBECONFIG", None)
+
+    @patch("pyartcd.pipelines.build_microshift_bootc.exectools.cmd_gather_async", new_callable=AsyncMock)
+    async def test_get_bootc_variants_discovers_both(self, mock_cmd_gather):
+        """
+        Test that _get_bootc_variants returns both el9 and el10 variants when both
+        image configs exist in build-data.
+        """
+        # given - doozer returns both image names
+        mock_cmd_gather.return_value = (
+            0,
+            "microshift-bootc: openshift/microshift-bootc-rhel9\nmicroshift-bootc-rhel10: openshift/microshift-bootc-rhel10\n",
+            "",
+        )
+        pipeline = self._make_pipeline(group="openshift-4.22", assembly="4.22.0")
+        pipeline.assembly_type = AssemblyTypes.STREAM
+
+        # Mock yaml.load to return the nested config:print output format
+        with patch("pyartcd.pipelines.build_microshift_bootc.yaml") as mock_yaml:
+            mock_yaml.load.return_value = {
+                "images": {
+                    "microshift-bootc": "openshift/microshift-bootc-rhel9",
+                    "microshift-bootc-rhel10": "openshift/microshift-bootc-rhel10",
+                },
+                "rpms": {},
+            }
+            variants = await pipeline._get_bootc_variants()
+
+        self.assertEqual(len(variants), 2)
+        self.assertEqual(variants[0]["image_name"], "microshift-bootc-rhel10")
+        self.assertEqual(variants[0]["el_target"], "el10")
+        self.assertEqual(variants[1]["image_name"], "microshift-bootc")
+        self.assertEqual(variants[1]["el_target"], "el9")
+
+    @patch("pyartcd.pipelines.build_microshift_bootc.exectools.cmd_gather_async", new_callable=AsyncMock)
+    async def test_get_bootc_variants_falls_back_to_el9_only(self, mock_cmd_gather):
+        """
+        Test that _get_bootc_variants falls back to just the el9 variant when doozer
+        query fails (e.g. for older versions without el10 config).
+        """
+        # given - doozer fails
+        mock_cmd_gather.return_value = (1, "", "error: image not found")
+        pipeline = self._make_pipeline(group="openshift-4.21", assembly="4.21.0")
+        pipeline.assembly_type = AssemblyTypes.STREAM
+
+        variants = await pipeline._get_bootc_variants()
+
+        self.assertEqual(len(variants), 1)
+        self.assertEqual(variants[0]["image_name"], "microshift-bootc")
+        self.assertEqual(variants[0]["el_target"], "el9")
+
+    def test_pin_image_nvr_multiple_variants(self):
+        """
+        Test that _pin_image_nvr correctly pins multiple variant NVRs in releases.yml.
+        """
+        pipeline = self._make_pipeline(group="openshift-4.22", assembly="4.22.0")
+        releases_config = {"releases": {"4.22.0": {"assembly": {"members": {"images": []}}}}}
+
+        # Pin el9 variant
+        pipeline._pin_image_nvr(
+            "microshift-bootc-container-v4.22-202606081229.el9",
+            "microshift-bootc",
+            releases_config,
+        )
+
+        # Pin el10 variant
+        pipeline._pin_image_nvr(
+            "microshift-bootc-rhel10-container-v4.22-202606081229.el10",
+            "microshift-bootc-rhel10",
+            releases_config,
+        )
+
+        images = releases_config["releases"]["4.22.0"]["assembly"]["members"]["images"]
+        self.assertEqual(len(images), 2)
+        self.assertEqual(images[0]["distgit_key"], "microshift-bootc")
+        self.assertEqual(images[0]["metadata"]["is"]["nvr"], "microshift-bootc-container-v4.22-202606081229.el9")
+        self.assertEqual(images[1]["distgit_key"], "microshift-bootc-rhel10")
+        self.assertEqual(
+            images[1]["metadata"]["is"]["nvr"], "microshift-bootc-rhel10-container-v4.22-202606081229.el10"
+        )
+
+    def test_pin_image_nvr_updates_existing_entry(self):
+        """
+        Test that _pin_image_nvr updates an existing pin entry instead of duplicating it.
+        """
+        pipeline = self._make_pipeline(group="openshift-4.22", assembly="4.22.0")
+        releases_config = {
+            "releases": {
+                "4.22.0": {
+                    "assembly": {
+                        "members": {
+                            "images": [
+                                {
+                                    "distgit_key": "microshift-bootc",
+                                    "metadata": {"is": {"nvr": "old-nvr.el9"}},
+                                    "why": "Pin microshift-bootc image to assembly",
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        }
+
+        pipeline._pin_image_nvr("new-nvr.el9", "microshift-bootc", releases_config)
+
+        images = releases_config["releases"]["4.22.0"]["assembly"]["members"]["images"]
+        self.assertEqual(len(images), 1)
+        self.assertEqual(images[0]["metadata"]["is"]["nvr"], "new-nvr.el9")
+
+    def test_validate_shipment_mr_raises_on_closed_mr(self):
+        """
+        Test that _validate_shipment_mr raises ValueError when MR is not in opened state
+        """
+        # given
+        pipeline = BuildMicroShiftBootcPipeline(
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+            force=False,
+            force_plashet_sync=False,
+            prepare_shipment=True,
+            data_path="https://github.com/openshift-eng/ocp-build-data",
+            slack_client=self.mock_slack_client,
+        )
+
+        pipeline.gitlab_token = "fake-gitlab-token"
+
+        # Mock GitLab MR in closed state
+        mock_mr = Mock()
+        mock_mr.state = "closed"
+
+        mock_gitlab_instance = Mock()
+        mock_gitlab_instance.get_mr_from_url.return_value = mock_mr
+        pipeline._gitlab = mock_gitlab_instance
+
+        shipment_url = "https://gitlab.example.com/shipment-data/-/merge_requests/123"
+
+        # when / then
+        with self.assertRaises(ValueError) as ctx:
+            pipeline._validate_shipment_mr(shipment_url)
+        self.assertIn("closed", str(ctx.exception))
+        self.assertIn("not opened", str(ctx.exception))
+
+    @patch("pyartcd.pipelines.build_microshift_bootc.jenkins.start_build_plashets")
+    @patch("pyartcd.pipelines.build_microshift_bootc.get_microshift_builds", new_callable=AsyncMock)
+    @patch("pyartcd.pipelines.build_microshift_bootc.default_release_suffix", return_value="202601290005.p0")
+    async def test_build_plashet_raises_on_failure(self, mock_release_suffix, mock_get_builds, mock_start_plashets):
+        """
+        Test that _build_plashet_for_bootc raises RuntimeError when the
+        build-plashets Jenkins job returns a non-SUCCESS result.
+        """
+        # given
+        mock_start_plashets.return_value = "FAILURE"
+        pipeline = self._make_pipeline()
+        pipeline.group_config = {"all_repos": []}
+        pipeline.force_plashet_sync = True  # skip the _rebuild_needed() check
+
+        # Mock plashet config discovery
+        mock_plashet = Mock()
+        mock_plashet.disabled = False
+        mock_plashet.type = "plashet"
+        mock_plashet.name = "rhel-9-server-microshift-rpms"
+        with patch("pyartcd.pipelines.build_microshift_bootc.RepoList") as mock_repo_list:
+            mock_repo_list.model_validate.return_value.root = [mock_plashet]
+
+            # when / then
+            with self.assertRaises(RuntimeError) as ctx:
+                await pipeline._build_plashet_for_bootc()
+            self.assertIn("FAILURE", str(ctx.exception))
+            self.assertIn("rhel-9-server-microshift-rpms", str(ctx.exception))
+
+    @patch("pyartcd.pipelines.build_microshift_bootc.jenkins.start_build_plashets")
+    @patch("pyartcd.pipelines.build_microshift_bootc.get_microshift_builds", new_callable=AsyncMock)
+    @patch("pyartcd.pipelines.build_microshift_bootc.default_release_suffix", return_value="202601290005.p0")
+    async def test_build_plashet_succeeds_on_success(self, mock_release_suffix, mock_get_builds, mock_start_plashets):
+        """
+        Test that _build_plashet_for_bootc completes without error when the
+        build-plashets Jenkins job returns SUCCESS.
+        """
+        # given
+        mock_start_plashets.return_value = "SUCCESS"
+        pipeline = self._make_pipeline()
+        pipeline.group_config = {"all_repos": []}
+        pipeline.force_plashet_sync = True  # skip the _rebuild_needed() check
+
+        # Mock plashet config discovery
+        mock_plashet = Mock()
+        mock_plashet.disabled = False
+        mock_plashet.type = "plashet"
+        mock_plashet.name = "rhel-9-server-microshift-rpms"
+        with patch("pyartcd.pipelines.build_microshift_bootc.RepoList") as mock_repo_list:
+            mock_repo_list.model_validate.return_value.root = [mock_plashet]
+
+            # when / then - should not raise
+            await pipeline._build_plashet_for_bootc()

@@ -1,0 +1,1469 @@
+import copy
+import json
+import unittest
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, Mock, PropertyMock, call, patch
+
+from artcommonlib.assembly import AssemblyTypes
+from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
+from artcommonlib.jira_config import JIRA_DOMAIN_NAME
+from artcommonlib.model import Model
+from artcommonlib.util import convert_remote_git_to_ssh
+from elliottlib.errata_async import AsyncErrataAPI
+from elliottlib.shipment_model import (
+    ComponentSource,
+    Data,
+    Environments,
+    GitSource,
+    Issue,
+    Issues,
+    Metadata,
+    ReleaseNotes,
+    Shipment,
+    ShipmentConfig,
+    ShipmentEnv,
+    Snapshot,
+    SnapshotComponent,
+    SnapshotSpec,
+)
+from pyartcd.git import GitRepository
+from pyartcd.pipelines.prepare_release_konflux import PrepareReleaseKonfluxPipeline
+from pyartcd.runtime import Runtime
+from pyartcd.slack import SlackClient
+
+from pyartcd import constants
+
+
+class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.runtime = Mock(spec=Runtime)
+        self.runtime.working_dir = Path("/tmp/working-dir")
+        self.runtime.dry_run = False
+        self.runtime.config = {
+            "gitlab_url": "https://gitlab.example.com",
+            "build_config": {
+                "ocp_build_data_url": "https://github.com/user1/repo1",
+                "ocp_build_data_push_url": "https://github.com/user2/repo2",
+            },
+            "shipment_config": {
+                "shipment_data_url": "https://gitlab.example.com/user3/repo3",
+                "shipment_data_push_url": "https://gitlab.example.com/user4/repo4",
+            },
+        }
+        self.mock_slack_client = Mock(spec=SlackClient)
+        self.group = "openshift-4.18"
+        self.assembly = "test-assembly"
+        self.gitlab_token = "gl_token"
+        self.job_url = "http://jenkins/job/test-job/1"
+
+    def test_init(self):
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+        )
+        pipeline.gitlab_token = self.gitlab_token
+
+        self.assertEqual(pipeline.build_data_repo_pull_url, self.runtime.config["build_config"]["ocp_build_data_url"])
+        self.assertEqual(pipeline.build_data_gitref, None)
+        self.assertEqual(pipeline.build_data_push_url, self.runtime.config["build_config"]["ocp_build_data_push_url"])
+        self.assertEqual(
+            pipeline.shipment_data_repo_pull_url, self.runtime.config["shipment_config"]["shipment_data_url"]
+        )
+        self.assertEqual(
+            pipeline.shipment_data_repo_push_url, self.runtime.config["shipment_config"]["shipment_data_push_url"]
+        )
+
+    def test_init_empty_config(self):
+        self.runtime.config = {}
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+        )
+        pipeline.gitlab_token = self.gitlab_token
+
+        self.assertEqual(pipeline.build_data_repo_pull_url, constants.OCP_BUILD_DATA_URL)
+        self.assertEqual(pipeline.build_data_gitref, None)
+        self.assertEqual(pipeline.build_data_push_url, constants.OCP_BUILD_DATA_URL)
+        self.assertEqual(pipeline.shipment_data_repo_pull_url, SHIPMENT_DATA_URL_TEMPLATE)
+        self.assertEqual(pipeline.shipment_data_repo_push_url, SHIPMENT_DATA_URL_TEMPLATE)
+
+    def test_init_with_custom_urls(self):
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+            build_data_repo_url="https://github.com/foo/build-repo@branch",
+            shipment_data_repo_url="https://gitlab.com/bar/shipment-repo",
+        )
+        pipeline.gitlab_token = self.gitlab_token
+
+        self.assertEqual(pipeline.build_data_repo_pull_url, "https://github.com/foo/build-repo")
+        self.assertEqual(pipeline.build_data_gitref, "branch")
+        self.assertEqual(pipeline.build_data_push_url, self.runtime.config["build_config"]["ocp_build_data_push_url"])
+        self.assertEqual(pipeline.shipment_data_repo_pull_url, "https://gitlab.com/bar/shipment-repo")
+        self.assertEqual(
+            pipeline.shipment_data_repo_push_url, self.runtime.config["shipment_config"]["shipment_data_push_url"]
+        )
+
+    @patch('pyartcd.pipelines.prepare_release_konflux.GitRepository')
+    async def test_setup_repos(self, MockGitRepositoryClass):
+        # Mock file contents for YAML parsing
+        file_contents = {"releases.yml": 'releases_key: releases_value', "group.yml": 'group_key: group_value'}
+
+        # Create mock repositories
+        mock_build_data_repo = AsyncMock(spec=GitRepository)
+        mock_build_data_repo.read_file.side_effect = lambda f: file_contents[f]
+
+        mock_shipment_data_repo = AsyncMock(spec=GitRepository)
+
+        MockGitRepositoryClass.side_effect = [mock_build_data_repo, mock_shipment_data_repo]
+
+        # Create pipeline and call setup_repos
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+        )
+        pipeline.gitlab_token = self.gitlab_token
+
+        await pipeline.setup_repos()
+
+        # Verify GitRepository instantiation
+        self.assertEqual(MockGitRepositoryClass.call_count, 2)
+
+        # Verify build repo setup
+        mock_build_data_repo.setup.assert_awaited_once_with(
+            remote_url=convert_remote_git_to_ssh(pipeline.build_data_push_url),
+            upstream_remote_url=pipeline.build_data_repo_pull_url,
+        )
+        mock_build_data_repo.fetch_switch_branch.assert_awaited_once_with(self.group)
+        mock_build_data_repo.read_file.assert_has_awaits([call("releases.yml"), call("group.yml")])
+
+        # Verify shipment repo setup
+        mock_shipment_data_repo.setup.assert_awaited_once_with(
+            remote_url=pipeline.basic_auth_url(pipeline.shipment_data_repo_push_url, pipeline.gitlab_token),
+            upstream_remote_url=pipeline.shipment_data_repo_pull_url,
+        )
+        mock_shipment_data_repo.fetch_switch_branch.assert_awaited_once_with("main")
+        mock_shipment_data_repo.read_file.assert_not_awaited()
+
+        # Verify config parsing
+        self.assertEqual(pipeline.releases_config, {'releases_key': 'releases_value'})
+        self.assertEqual(pipeline.group_config, {'group_key': 'group_value'})
+
+    async def test_validate_assembly_valid(self):
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+        )
+        pipeline.gitlab_token = self.gitlab_token
+        pipeline.releases_config = Model(
+            {
+                "releases": {
+                    "test-assembly": {
+                        "assembly": {
+                            "type": AssemblyTypes.STANDARD.value,
+                            "group": {"product": "ocp", "release_date": "2025-Oct-22"},
+                        }
+                    }
+                }
+            }
+        )
+        pipeline.group_config = Model({"product": "ocp"})
+        await pipeline.validate_assembly()  # Should not raise
+
+    async def test_validate_assembly_missing_assembly(self):
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+        )
+        pipeline.gitlab_token = self.gitlab_token
+        pipeline.releases_config = Model({"releases": {}})
+        with self.assertRaises(ValueError) as context:
+            await pipeline.validate_assembly()
+        self.assertIn("Assembly not found: test-assembly", str(context.exception))
+
+    async def test_validate_assembly_stream_type(self):
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+        )
+        pipeline.gitlab_token = self.gitlab_token
+        pipeline.releases_config = Model(
+            {"releases": {self.assembly: {"assembly": {"type": AssemblyTypes.STREAM.value}}}}
+        )
+        with self.assertRaises(ValueError) as context:
+            await pipeline.validate_assembly()
+        self.assertIn("Preparing a release from a stream assembly is no longer supported.", str(context.exception))
+
+    async def test_validate_assembly_product_mismatch(self):
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+        )
+        pipeline.gitlab_token = self.gitlab_token
+        pipeline.releases_config = Model(
+            {
+                "releases": {
+                    "test-assembly": {
+                        "assembly": {
+                            "type": AssemblyTypes.STANDARD.value,
+                            "group": {"product": "other-product", "release_date": "2025-Oct-22"},
+                        },
+                    },
+                },
+            },
+        )
+        pipeline.group_config = Model({})  # No product override from group.yml
+        with self.assertRaises(ValueError) as context:
+            await pipeline.validate_assembly()
+        self.assertIn("Product mismatch: other-product != ocp.", str(context.exception))
+
+        # Second part: group_config product takes precedence
+        pipeline.releases_config = Model(
+            {
+                "releases": {
+                    "test-assembly": {
+                        "assembly": {
+                            "type": AssemblyTypes.STANDARD.value,
+                            "group": {},  # No product in assembly definition
+                        }
+                    }
+                }
+            }
+        )
+        pipeline.group_config = Model({"product": "another-product"})  # Product defined in group.yml
+        with self.assertRaises(ValueError) as context:
+            await pipeline.validate_assembly()
+        self.assertIn("Product mismatch: another-product != ocp.", str(context.exception))
+
+    async def test_validate_shipment_config_no_advisories(self):
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+        )
+        pipeline.gitlab_token = self.gitlab_token
+        pipeline.releases_config = Model(
+            {
+                "releases": {
+                    self.assembly: {
+                        "assembly": {
+                            "group": {
+                                "shipment": {
+                                    "env": "prod",
+                                    # No advisories
+                                },
+                                "advisories": {"rpm": 123},
+                            }
+                        }
+                    }
+                }
+            }
+        )
+        with self.assertRaises(ValueError) as context:
+            await pipeline.validate_shipment_config(pipeline.shipment_config)
+        self.assertIn("Shipment config should specify which advisories to create and prepare", str(context.exception))
+
+    async def test_validate_shipment_config_no_kind(self):
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+        )
+        pipeline.gitlab_token = self.gitlab_token
+        pipeline.releases_config = Model(
+            {
+                "releases": {
+                    self.assembly: {
+                        "assembly": {
+                            "group": {
+                                "shipment": {
+                                    "env": "prod",
+                                    "advisories": [{"live_id": 123}],  # No 'kind' specified
+                                },
+                                "advisories": {"rpm": 123},
+                            }
+                        }
+                    }
+                }
+            }
+        )
+        with self.assertRaises(ValueError) as context:
+            await pipeline.validate_shipment_config(pipeline.shipment_config)
+        self.assertIn("Shipment config should specify `kind` for each advisory", str(context.exception))
+
+    @patch('pyartcd.pipelines.prepare_release_konflux.KonfluxDb')
+    async def test_verify_attached_operators(self, MockKonfluxDb):
+        """
+        Tests that verify_attached_operators completes successfully when all
+        operator and operand NVRs are present in the release builds.
+        """
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+        )
+        pipeline.logger = Mock()
+        build = MagicMock(
+            nvr="my-bundle-1.0", operator_nvr="my-operator-1.0", operand_nvrs=["my-operand-A-1.0", "my-operand-B-1.0"]
+        )
+
+        # Create async mock that returns the build
+        async def return_build(*args, **kwargs):
+            return build
+
+        mock_kdb_instance = MockKonfluxDb.return_value
+        mock_kdb_instance.bind = Mock()  # Mock the bind method
+        mock_kdb_instance.get_latest_build = AsyncMock(side_effect=return_build)
+
+        kind_to_builds = {
+            "metadata": ["my-bundle-1.0"],
+            "image": ["my-operator-1.0", "my-operand-A-1.0"],
+            "extras": ["my-operand-B-1.0"],
+        }
+
+        # Should NOT raise an exception since all builds are present
+        await pipeline.verify_attached_operators(kind_to_builds)
+
+    async def test_validate_shipment_config_overlap(self):
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+        )
+        pipeline.gitlab_token = self.gitlab_token
+        pipeline.releases_config = Model(
+            {
+                "releases": {
+                    self.assembly: {
+                        "assembly": {
+                            "group": {
+                                "shipment": {
+                                    "env": "prod",
+                                    "advisories": [{"kind": "image"}],  # overlap with group advisories
+                                },
+                                "advisories": {"image": 123},
+                            }
+                        }
+                    }
+                }
+            }
+        )
+        with self.assertRaises(ValueError) as context:
+            await pipeline.validate_shipment_config(pipeline.shipment_config)
+        self.assertIn(
+            "Shipment config should not specify advisories that are already defined in assembly.group.advisories",
+            str(context.exception),
+        )
+
+    @patch.object(
+        PrepareReleaseKonfluxPipeline,
+        "assembly_group_config",
+        new_callable=PropertyMock,
+    )
+    async def test_prepare_rpm_advisory_creates_and_processes_advisory(self, mock_assembly_group_config):
+        mock_assembly_group_config.return_value = {"advisories": {"rpm": -1}}
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=self.group,
+            assembly="4.18.0",  # Use the assembly that matches releases_config
+        )
+        pipeline.release_date = "2024-07-01"
+        pipeline.assembly_type = AssemblyTypes.STANDARD
+        pipeline.assembly = "4.18.0"
+        pipeline.releases_config = Model(
+            {
+                "releases": {
+                    "4.18.0": {
+                        "assembly": {
+                            "type": AssemblyTypes.STANDARD.value,
+                            "group": {"product": "ocp", "release_date": "2025-Oct-22"},
+                        }
+                    }
+                }
+            }
+        )
+        pipeline.logger = Mock()
+        pipeline._slack_client = AsyncMock()
+        pipeline.create_advisory = AsyncMock(return_value=12345)
+        pipeline.run_cmd_with_retry = AsyncMock()
+        pipeline.execute_command_with_logging = AsyncMock(return_value='{"rpm": ["BUG-1", "BUG-2"]}')
+        pipeline._elliott_base_command = [
+            "elliott",
+            "--group=openshift-4.18",
+            "--assembly=4.18.0",
+            "--build-system=konflux",
+        ]
+
+        pipeline.updated_assembly_group_config = Model({"advisories": {"rpm": -1}})
+
+        # Mock git repository operations
+        pipeline.build_data_repo = AsyncMock()
+        pipeline.build_data_repo.does_branch_exist_on_remote = AsyncMock(return_value=False)
+        pipeline.build_data_repo.create_branch = AsyncMock()
+        pipeline.build_data_repo.commit_all = AsyncMock()
+        pipeline.build_data_repo.push = AsyncMock()
+
+        # Run the function
+        with (
+            patch("pyartcd.pipelines.prepare_release_konflux.push_cdn_stage") as mock_push_cdn_stage,
+            patch("pyartcd.pipelines.prepare_release_konflux.get_github_client_for_org") as mock_get_github,
+            patch.object(PrepareReleaseKonfluxPipeline, "_wait_for_pr_merge", new_callable=AsyncMock),
+            patch("asyncio.sleep", new_callable=AsyncMock),
+        ):
+            # Mock PyGithub-style API: get_github_client_for_org(org).get_repo(...).get_pulls/create_pull
+            mock_gh_repo = Mock()
+            mock_gh_repo.get_pulls.return_value = []  # No existing PRs
+            mock_pr = Mock()
+            mock_pr.number = 1
+            mock_pr.html_url = "https://github.com/user1/repo1/pull/1"
+            mock_pr.body = ""
+            mock_gh_repo.create_pull.return_value = mock_pr
+            mock_get_github.return_value.get_repo.return_value = mock_gh_repo
+
+            impetus_advisories = await pipeline.create_et_advisories()
+            await pipeline.sweep_et_builds(impetus_advisories)
+            await pipeline.sweep_bugs(impetus_advisories, None)
+            await pipeline.finalize_et_advisories(impetus_advisories)
+
+        # Assertions
+        self.assertEqual(
+            pipeline.updated_assembly_group_config,
+            Model({"advisories": {"rpm": 12345}}),
+        )
+
+        pipeline.create_advisory.assert_awaited_once()
+        pipeline._slack_client.say_in_thread.assert_any_await(
+            "ET rpm advisory 12345 created with release date 2024-07-01"
+        )
+        pipeline.run_cmd_with_retry.assert_any_await(
+            [item for item in pipeline._elliott_base_command if item != '--build-system=konflux'],
+            ["find-builds", "--kind=rpm", "--attach=12345", "--clean"],
+        )
+        pipeline.execute_command_with_logging.assert_awaited()
+        pipeline.run_cmd_with_retry.assert_any_await(
+            pipeline._elliott_base_command, ["attach-bugs", "BUG-1", "BUG-2", "--advisory=12345"]
+        )
+        mock_push_cdn_stage.assert_called_with(12345)
+
+    async def test_validate_shipment_config_invalid_env(self):
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+        )
+        pipeline.gitlab_token = self.gitlab_token
+        pipeline.releases_config = Model(
+            {
+                "releases": {
+                    self.assembly: {
+                        "assembly": {
+                            "group": {
+                                "shipment": {
+                                    "env": "production",  # Invalid env
+                                    "advisories": [{"kind": "image"}],
+                                },
+                                "advisories": {"rpm": 123},
+                            }
+                        }
+                    }
+                }
+            }
+        )
+        with self.assertRaises(ValueError) as context:
+            await pipeline.validate_shipment_config(pipeline.shipment_config)
+        self.assertIn("Shipment config `env` should be either `prod` or `stage`", str(context.exception))
+
+    @patch.object(PrepareReleaseKonfluxPipeline, 'verify_attached_operators', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'attach_cve_flaws', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'create_update_build_data_pr', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.prepare_release_konflux.AsyncErrataAPI', spec=AsyncErrataAPI)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'update_shipment_mr', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'create_shipment_mr', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'find_bugs', new_callable=AsyncMock)
+    @patch("pyartcd.pipelines.prepare_release_konflux.validate_snapshot_against_rpa", new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'find_or_build_fbc_builds', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'find_or_build_bundle_builds', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'find_builds_all', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'get_snapshot', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'init_shipment', new_callable=AsyncMock)
+    async def test_prepare_shipment_new_mr_prod_env(
+        self,
+        mock_init_shipment,
+        mock_get_snapshot,
+        mock_find_builds_all,
+        mock_find_or_build_bundle_builds,
+        mock_find_or_build_fbc_builds,
+        mock_validate_rpa,
+        mock_find_bugs,
+        mock_create_shipment_mr,
+        mock_update_shipment_mr,
+        mock_errata_api,
+        mock_create_update_build_data_pr,
+        *_,
+    ):
+        group_config = {
+            "shipment": {
+                "env": "prod",
+                "advisories": [
+                    {"kind": "image"},
+                    {"kind": "extras"},
+                    {"kind": "metadata"},
+                    {"kind": "fbc"},
+                ],
+                # No 'url'
+            },
+            "advisories": {"rpm": 123},
+        }
+
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+        )
+        pipeline.gitlab_token = self.gitlab_token
+        pipeline.releases_config = Model(
+            {
+                "releases": {
+                    self.assembly: {
+                        "assembly": {
+                            "group": group_config,
+                        }
+                    }
+                }
+            }
+        )
+
+        mock_live_id = "LIVE_ID_FROM_ERRATA"
+        mock_errata_api_instance = mock_errata_api.return_value
+        mock_errata_api_instance.reserve_live_id = AsyncMock(return_value=mock_live_id)
+        mock_errata_api_instance.close = AsyncMock()
+
+        mock_shipment_image = ShipmentConfig(
+            shipment=Shipment(
+                metadata=Metadata(
+                    product="ocp",
+                    group=self.group,
+                    assembly=self.assembly,
+                    application="app-image",
+                ),
+                snapshot=Snapshot(
+                    nvrs=[],
+                    spec=SnapshotSpec(
+                        application="app-image",
+                        components=[],
+                    ),
+                ),
+                environments=Environments(
+                    stage=ShipmentEnv(releasePlan="rp-img-stage"),
+                    prod=ShipmentEnv(releasePlan="rp-img-prod"),
+                ),
+                data=Data(
+                    releaseNotes=ReleaseNotes(
+                        type="RHBA",
+                        synopsis="synopsis",
+                        topic="topic",
+                        description="description",
+                        solution="solution",
+                    )
+                ),
+            )
+        )
+        mock_shipment_extras = ShipmentConfig(
+            shipment=Shipment(
+                metadata=Metadata(
+                    product="ocp",
+                    group=self.group,
+                    assembly=self.assembly,
+                    application="app-extras",
+                ),
+                snapshot=Snapshot(
+                    nvrs=[],
+                    spec=SnapshotSpec(
+                        application="app-extras",
+                        components=[],
+                    ),
+                ),
+                environments=Environments(
+                    stage=ShipmentEnv(releasePlan="rp-ext-stage"),
+                    prod=ShipmentEnv(releasePlan="rp-ext-prod"),
+                ),
+                data=Data(
+                    releaseNotes=ReleaseNotes(
+                        type="RHBA",
+                        synopsis="synopsis",
+                        topic="topic",
+                        description="description",
+                        solution="solution",
+                    )
+                ),
+            )
+        )
+        mock_shipment_metadata = ShipmentConfig(
+            shipment=Shipment(
+                metadata=Metadata(
+                    product="ocp",
+                    group=self.group,
+                    assembly=self.assembly,
+                    application="app-metadata",
+                ),
+                snapshot=Snapshot(
+                    nvrs=[],
+                    spec=SnapshotSpec(
+                        application="app-metadata",
+                        components=[],
+                    ),
+                ),
+                environments=Environments(
+                    stage=ShipmentEnv(releasePlan="rp-meta-stage"),
+                    prod=ShipmentEnv(releasePlan="rp-meta-prod"),
+                ),
+                data=Data(
+                    releaseNotes=ReleaseNotes(
+                        type="RHBA",
+                        synopsis="synopsis",
+                        topic="topic",
+                        description="description",
+                        solution="solution",
+                    )
+                ),
+            )
+        )
+        mock_shipment_fbc = ShipmentConfig(
+            shipment=Shipment(
+                metadata=Metadata(
+                    product="ocp",
+                    group=self.group,
+                    assembly=self.assembly,
+                    application="app-fbc",
+                    fbc=True,
+                ),
+                snapshot=Snapshot(
+                    nvrs=[],
+                    spec=SnapshotSpec(
+                        application="app-fbc",
+                        components=[],
+                    ),
+                ),
+                environments=Environments(
+                    stage=ShipmentEnv(releasePlan="rp-fbc-stage"),
+                    prod=ShipmentEnv(releasePlan="rp-fbc-prod"),
+                ),
+            )
+        )
+
+        def init_shipment(kind):
+            return {
+                "image": mock_shipment_image,
+                "extras": mock_shipment_extras,
+                "metadata": mock_shipment_metadata,
+                "fbc": mock_shipment_fbc,
+            }.get(kind)
+
+        mock_init_shipment.side_effect = init_shipment
+
+        def find_builds_all():
+            return {
+                "image": ["image-nvr"],
+                "extras": ["extras-nvr"],
+                "metadata": [],
+                "olm_builds_not_found": ["extras-nvr"],
+            }
+
+        mock_find_builds_all.side_effect = find_builds_all
+
+        def find_or_build_bundle_builds(nvrs):
+            return ["extras-bundle-nvr"], []
+
+        mock_find_or_build_bundle_builds.side_effect = find_or_build_bundle_builds
+
+        def find_or_build_fbc_builds(nvrs):
+            return ["fbc-nvr"], []  # Return tuple of (successful_nvrs, errors)
+
+        mock_find_or_build_fbc_builds.side_effect = find_or_build_fbc_builds
+
+        mock_find_bugs.return_value = {
+            "image": ["IMAGEBUG"],
+            "extras": ["EXTRASBUG"],
+            "metadata": [],
+        }
+
+        mock_create_shipment_mr.return_value = "https://gitlab.example.com/mr/1"
+        mock_update_shipment_mr.return_value = "https://gitlab.example.com/mr/1"
+        mock_create_update_build_data_pr.return_value = True
+
+        def get_snapshot(builds):
+            if "image-nvr" in builds:
+                return Snapshot(
+                    nvrs=builds,
+                    spec=SnapshotSpec(
+                        application="app-image",
+                        components=[
+                            SnapshotComponent(
+                                name="test-image-component",
+                                source=ComponentSource(
+                                    git=GitSource(url="https://github.com/test-image.git", revision="abc123")
+                                ),
+                                containerImage="test-image:latest",
+                            ),
+                        ],
+                    ),
+                )
+            elif "extras-nvr" in builds:
+                return Snapshot(
+                    nvrs=builds,
+                    spec=SnapshotSpec(
+                        application="app-extras",
+                        components=[
+                            SnapshotComponent(
+                                name="test-extras-component",
+                                source=ComponentSource(
+                                    git=GitSource(url="https://github.com/test-extras.git", revision="def456")
+                                ),
+                                containerImage="test-extras:latest",
+                            ),
+                        ],
+                    ),
+                )
+            elif "extras-bundle-nvr" in builds:
+                return Snapshot(
+                    nvrs=builds,
+                    spec=SnapshotSpec(
+                        application="app-metadata",
+                        components=[
+                            SnapshotComponent(
+                                name="test-metadata-component",
+                                source=ComponentSource(
+                                    git=GitSource(url="https://github.com/test-metadata.git", revision="ghi789")
+                                ),
+                                containerImage="test-metadata:latest",
+                            ),
+                        ],
+                    ),
+                )
+            elif "fbc-nvr" in builds:
+                return Snapshot(
+                    nvrs=builds,
+                    spec=SnapshotSpec(
+                        application="app-fbc",
+                        components=[
+                            SnapshotComponent(
+                                name="test-fbc-component",
+                                source=ComponentSource(
+                                    git=GitSource(url="https://github.com/test-fbc.git", revision="jkl012")
+                                ),
+                                containerImage="test-fbc:latest",
+                            ),
+                        ],
+                    ),
+                )
+
+        mock_get_snapshot.side_effect = get_snapshot
+
+        pipeline.updated_assembly_group_config = Model(group_config)
+
+        shipment_data = await pipeline.prepare_shipment_builds()
+        await pipeline.sweep_bugs({}, shipment_data)
+        await pipeline.finalize_shipment(shipment_data)
+
+        # assert liveID is reserved
+        mock_errata_api.assert_called_once()
+        self.assertEqual(mock_errata_api_instance.reserve_live_id.call_count, 3)
+
+        # assert shipment init calls and get_snapshot calls
+        mock_init_shipment.assert_any_call("extras")
+        mock_init_shipment.assert_any_call("image")
+        mock_init_shipment.assert_any_call("metadata")
+        mock_init_shipment.assert_any_call("fbc")
+        self.assertEqual(mock_init_shipment.call_count, 4)
+        self.assertEqual(mock_find_builds_all.call_count, 1)
+        self.assertEqual(mock_find_or_build_bundle_builds.call_count, 1)
+        self.assertEqual(mock_find_or_build_fbc_builds.call_count, 1)
+        mock_get_snapshot.assert_any_call(['extras-nvr'])
+        mock_get_snapshot.assert_any_call(['image-nvr'])
+        mock_get_snapshot.assert_any_call(['extras-bundle-nvr'])
+        mock_get_snapshot.assert_any_call(['fbc-nvr'])
+        self.assertEqual(mock_get_snapshot.call_count, 4)
+
+        # Verify RPA validation was called for each shipment kind
+        self.assertTrue(mock_validate_rpa.await_count > 0, "validate_snapshot_against_rpa should have been called")
+
+        # copy and modify mocks to what is expected after init and build finding, i.e., at create shipment MR time
+        mock_shipment_image_create = copy.deepcopy(mock_shipment_image)
+        mock_shipment_extras_create = copy.deepcopy(mock_shipment_extras)
+        mock_shipment_metadata_create = copy.deepcopy(mock_shipment_metadata)
+        mock_shipment_fbc_create = copy.deepcopy(mock_shipment_fbc)
+        mock_shipment_image_create.shipment.data.releaseNotes.live_id = mock_live_id
+        mock_shipment_image_create.shipment.snapshot.nvrs = ["image-nvr"]
+        mock_shipment_extras_create.shipment.data.releaseNotes.live_id = mock_live_id
+        mock_shipment_extras_create.shipment.snapshot.nvrs = ["extras-nvr"]
+        mock_shipment_metadata_create.shipment.data.releaseNotes.live_id = mock_live_id
+        mock_shipment_metadata_create.shipment.snapshot.nvrs = ["extras-bundle-nvr"]
+        # fbc does not get live_id
+        mock_shipment_fbc_create.shipment.snapshot.nvrs = ["fbc-nvr"]
+
+        # assert MR is created with the right shipment configs
+        mock_create_shipment_mr.assert_awaited_once()
+        created_shipments_arg = mock_create_shipment_mr.call_args[0][0]
+        self.assertEqual(created_shipments_arg["image"], mock_shipment_image_create)
+        self.assertEqual(created_shipments_arg["extras"], mock_shipment_extras_create)
+        self.assertEqual(created_shipments_arg["metadata"], mock_shipment_metadata_create)
+        self.assertEqual(created_shipments_arg["fbc"], mock_shipment_fbc_create)
+        self.assertEqual(mock_create_shipment_mr.call_args[0][1], "prod")
+
+        mock_errata_api_instance.close.assert_called_once()
+
+        # assert bug finding was done and MR updated with the right shipment configs
+        mock_find_bugs.assert_awaited_once_with(filter_attached_bugs=True)
+
+        # update_shipment_mr is called 3 times: builds, bugs (via sweep_bugs), CVE flaws (via finalize_shipment)
+        self.assertEqual(mock_update_shipment_mr.call_count, 3)
+        updated_shipments_arg = mock_update_shipment_mr.call_args[0][0]
+
+        mock_shipment_image_update = copy.deepcopy(mock_shipment_image_create)
+        mock_shipment_extras_update = copy.deepcopy(mock_shipment_extras_create)
+        mock_shipment_metadata_update = copy.deepcopy(mock_shipment_metadata_create)
+        mock_shipment_image_update.shipment.data.releaseNotes.issues = Issues(
+            fixed=[Issue(id="IMAGEBUG", source=JIRA_DOMAIN_NAME)]
+        )
+        mock_shipment_extras_update.shipment.data.releaseNotes.issues = Issues(
+            fixed=[Issue(id="EXTRASBUG", source=JIRA_DOMAIN_NAME)]
+        )
+        self.assertEqual(updated_shipments_arg["image"], mock_shipment_image_update)
+        self.assertEqual(updated_shipments_arg["extras"], mock_shipment_extras_update)
+        self.assertEqual(updated_shipments_arg["metadata"], mock_shipment_metadata_update)
+        self.assertEqual(mock_update_shipment_mr.call_args[0][1], "prod")
+
+        self.assertEqual(
+            pipeline.updated_assembly_group_config,
+            Model(
+                {
+                    'shipment': {
+                        'env': 'prod',
+                        'advisories': [
+                            {'kind': 'image', 'live_id': 'LIVE_ID_FROM_ERRATA'},
+                            {'kind': 'extras', 'live_id': 'LIVE_ID_FROM_ERRATA'},
+                            {'kind': 'metadata', 'live_id': 'LIVE_ID_FROM_ERRATA'},
+                            {'kind': 'fbc'},
+                        ],
+                        'url': 'https://gitlab.example.com/mr/1',
+                    },
+                    'advisories': {'rpm': 123},
+                }
+            ),
+        )
+        self.assertEqual(pipeline.bundle_build_errors, [])
+        self.assertEqual(pipeline.fbc_build_errors, [])
+
+    @patch('pyartcd.pipelines.prepare_release_konflux.exectools.cmd_gather_async', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'filter_olm_operators', new_callable=AsyncMock)
+    async def test_find_or_build_bundle_builds_allows_partial_failures(
+        self, mock_filter_olm_operators, mock_cmd_gather_async
+    ):
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+        )
+        pipeline.release_name = "4.18.1"
+        mock_filter_olm_operators.return_value = ["test-operator-1.0.0-1"]
+        mock_cmd_gather_async.return_value = (
+            1,
+            json.dumps(
+                {
+                    "nvrs": ["test-operator-bundle-1.0.0-1"],
+                    "errors": [
+                        {
+                            "operator": "test-operator",
+                            "operator_nvr": "test-operator-1.0.0-1",
+                            "bundle_nvr": None,
+                            "error": "build failed",
+                            "traceback": "traceback text",
+                        }
+                    ],
+                    "failed_count": 1,
+                    "success_count": 1,
+                }
+            ),
+            "stderr output",
+        )
+
+        with patch.dict('os.environ', {"KONFLUX_SA_KUBECONFIG": "/tmp/kubeconfig"}):
+            successful_nvrs, errors = await pipeline.find_or_build_bundle_builds(["test-operator-1.0.0-1"])
+
+        self.assertEqual(successful_nvrs, ["test-operator-bundle-1.0.0-1"])
+        self.assertEqual(errors[0]["operator"], "test-operator")
+        self.assertEqual(errors[0]["error"], "build failed")
+        mock_cmd_gather_async.assert_awaited_once()
+
+    @patch.object(PrepareReleaseKonfluxPipeline, 'report_deferred_build_failures', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'verify_payload', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'set_shipment_mr_ready', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'create_update_build_data_pr', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'handle_jira_ticket', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'finalize_shipment', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'finalize_et_advisories', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'sweep_bugs', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'prepare_shipment_builds', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'sweep_et_builds', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'create_et_advisories', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'check_blockers', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'check_bug_config_for_ga', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'check_advisory_stage_policy', new_callable=AsyncMock)
+    @patch.object(PrepareReleaseKonfluxPipeline, 'initialize', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.prepare_release_konflux.RegistryConfig')
+    async def test_run_exits_unstable_when_deferred_build_failures_exist(
+        self,
+        mock_registry_config,
+        mock_initialize,
+        mock_check_advisory_stage_policy,
+        mock_check_bug_config_for_ga,
+        mock_check_blockers,
+        mock_create_et_advisories,
+        mock_sweep_et_builds,
+        mock_prepare_shipment_builds,
+        mock_sweep_bugs,
+        mock_finalize_et_advisories,
+        mock_finalize_shipment,
+        mock_handle_jira_ticket,
+        mock_create_update_build_data_pr,
+        mock_set_shipment_mr_ready,
+        mock_verify_payload,
+        mock_report_deferred_build_failures,
+    ):
+        mock_registry_config.return_value.__enter__ = Mock(return_value='/tmp/fake-auth.json')
+        mock_registry_config.return_value.__exit__ = Mock(return_value=False)
+
+        mock_create_et_advisories.return_value = {}
+        mock_prepare_shipment_builds.return_value = None
+
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+        )
+        pipeline.assembly_type = AssemblyTypes.STANDARD
+        pipeline.bundle_build_errors = ["bundle build failed for operator=test-operator: boom"]
+
+        with patch.dict('os.environ', {'QUAY_AUTH_FILE': '/tmp/fake-quay-auth.json'}):
+            with self.assertRaises(SystemExit) as cm:
+                await pipeline.run()
+        self.assertEqual(cm.exception.code, 2)
+
+        mock_initialize.assert_awaited_once()
+        mock_check_advisory_stage_policy.assert_awaited_once_with(AssemblyTypes.STANDARD)
+        mock_check_blockers.assert_awaited_once()
+        mock_create_et_advisories.assert_awaited_once()
+        mock_sweep_et_builds.assert_awaited_once()
+        mock_prepare_shipment_builds.assert_awaited_once()
+        mock_sweep_bugs.assert_awaited_once()
+        mock_finalize_et_advisories.assert_awaited_once()
+        mock_handle_jira_ticket.assert_awaited_once()
+        mock_create_update_build_data_pr.assert_awaited_once()
+        mock_set_shipment_mr_ready.assert_awaited_once()
+        mock_verify_payload.assert_awaited_once()
+        mock_report_deferred_build_failures.assert_awaited_once_with(pipeline.bundle_build_errors)
+
+    async def test_check_blockers_skips_when_targeted_fixes_only_set(self):
+        """Blocker check skipped when assembly has issues.targeted_fixes_only=true."""
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+        )
+        pipeline.gitlab_token = self.gitlab_token
+        pipeline.assembly_type = AssemblyTypes.STANDARD
+        pipeline.releases_config = Model(
+            {
+                "releases": {
+                    "test-assembly": {
+                        "assembly": {
+                            "type": AssemblyTypes.STANDARD.value,
+                            "basis": {"assembly": "test-assembly-parent"},
+                            "issues": {
+                                "targeted_fixes_only": True,
+                                "include": [
+                                    {"id": "OCPBUGS-85292"},
+                                    {"id": "OCPBUGS-99999"},
+                                ],
+                                "exclude": [],
+                            },
+                            "group": {"product": "ocp", "release_date": "2025-Oct-22"},
+                        }
+                    }
+                }
+            }
+        )
+        pipeline.logger = Mock()
+        pipeline.execute_command_with_logging = AsyncMock()
+
+        await pipeline.check_blockers()
+
+        # Blocker check skipped — targeted_fixes_only=true signals a hotfix release
+        pipeline.execute_command_with_logging.assert_not_called()
+
+    async def test_check_blockers_runs_when_targeted_fixes_only_not_set(self):
+        """Blocker check still runs when assembly has issues.include but targeted_fixes_only is not set."""
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+        )
+        pipeline.gitlab_token = self.gitlab_token
+        pipeline.assembly_type = AssemblyTypes.STANDARD
+        pipeline.releases_config = Model(
+            {
+                "releases": {
+                    "test-assembly": {
+                        "assembly": {
+                            "type": AssemblyTypes.STANDARD.value,
+                            "issues": {
+                                "include": [{"id": "OCPBUGS-85292"}],
+                            },
+                        }
+                    }
+                }
+            }
+        )
+        pipeline.logger = Mock()
+        pipeline.execute_command_with_logging = AsyncMock(return_value="Found 0 bugs: ")
+
+        await pipeline.check_blockers()
+
+        # Blocker check runs because targeted_fixes_only is not set
+        pipeline.execute_command_with_logging.assert_called_once()
+
+    async def test_check_blockers_skips_non_standard_assembly(self):
+        """Test that check_blockers skips for non-standard assembly types."""
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+        )
+        pipeline.assembly_type = AssemblyTypes.STREAM
+        pipeline.logger = Mock()
+        pipeline.execute_command_with_logging = AsyncMock()
+
+        await pipeline.check_blockers()
+
+        # Verify that execute_command_with_logging was not called
+        pipeline.execute_command_with_logging.assert_not_called()
+
+    async def test_resolve_advisory_placeholders_noop_when_nothing_resolvable(self):
+        """No rpm advisory and no shipment: nothing to resolve, no ET API calls."""
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+        )
+        pipeline.logger = Mock()
+
+        await pipeline.resolve_advisory_placeholders({}, None)
+
+    @patch("elliottlib.shipment_utils.Erratum")
+    @patch("pyartcd.pipelines.prepare_release_konflux.get_errata_live_id")
+    async def test_resolve_advisory_placeholders_patches_classic_advisories(self, mock_get_live_id, mock_erratum_cls):
+        """Classic rpm advisory gets IMAGE_ADVISORY placeholder resolved from image shipment live_id."""
+        from elliottlib.shipment_utils import get_full_advisory_id_from_shipment
+
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+        )
+        pipeline.logger = Mock()
+        pipeline.dry_run = False
+
+        mock_get_live_id.return_value = "RHBA-2026:16158"
+
+        image_shipment = ShipmentConfig(
+            shipment=Shipment(
+                metadata=Metadata(product="ocp", group=self.group, assembly=self.assembly, application="app-image"),
+                environments=Environments(
+                    stage=ShipmentEnv(releasePlan="rp-img-stage"),
+                    prod=ShipmentEnv(releasePlan="rp-img-prod"),
+                ),
+                data=Data(
+                    releaseNotes=ReleaseNotes(
+                        type="RHBA",
+                        live_id=16164,
+                    )
+                ),
+            )
+        )
+
+        rpm_advisory = Mock(description="See https://access.redhat.com/errata/{IMAGE_ADVISORY}", solution="")
+        mock_erratum_cls.return_value = rpm_advisory
+
+        impetus_advisories = {"rpm": 999}
+        shipment_data = ({"image": image_shipment}, "prod", "https://gitlab.example.com/x/-/merge_requests/1")
+
+        await pipeline.resolve_advisory_placeholders(impetus_advisories, shipment_data)
+
+        expected_image_advisory = get_full_advisory_id_from_shipment(image_shipment)
+
+        # classic rpm advisory patched with IMAGE_ADVISORY and committed
+        mock_erratum_cls.assert_called_once_with(errata_id=999)
+        rpm_advisory.update.assert_called_once_with(
+            description=f"See https://access.redhat.com/errata/{expected_image_advisory}"
+        )
+        rpm_advisory.commit.assert_called_once()
+
+    @patch("elliottlib.shipment_utils.Erratum")
+    @patch("pyartcd.pipelines.prepare_release_konflux.get_errata_live_id")
+    async def test_resolve_advisory_placeholders_commit_failure_soft_fails(self, mock_get_live_id, mock_erratum_cls):
+        """Erratum.commit() raising must not propagate — Phase 4 continues with a warning."""
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+        )
+        pipeline.logger = Mock()
+        pipeline.dry_run = False
+        pipeline.update_shipment_mr = AsyncMock()
+
+        mock_get_live_id.return_value = "RHBA-2026:16158"
+
+        image_shipment = ShipmentConfig(
+            shipment=Shipment(
+                metadata=Metadata(product="ocp", group=self.group, assembly=self.assembly, application="app-image"),
+                environments=Environments(
+                    stage=ShipmentEnv(releasePlan="rp-img-stage"),
+                    prod=ShipmentEnv(releasePlan="rp-img-prod"),
+                ),
+                data=Data(
+                    releaseNotes=ReleaseNotes(
+                        type="RHBA",
+                        live_id=16164,
+                    )
+                ),
+            )
+        )
+
+        rpm_advisory = Mock(description="See {IMAGE_ADVISORY}", solution="")
+        rpm_advisory.commit.side_effect = Exception("ET network error")
+        mock_erratum_cls.return_value = rpm_advisory
+
+        impetus_advisories = {"rpm": 999}
+        shipment_data = ({"image": image_shipment}, "prod", "https://gitlab.example.com/x/-/merge_requests/1")
+
+        # Must not raise; soft-fail is intentional for ET API errors.
+        await pipeline.resolve_advisory_placeholders(impetus_advisories, shipment_data)
+
+    @patch("elliottlib.shipment_utils.Erratum")
+    @patch("pyartcd.pipelines.prepare_release_konflux.get_errata_live_id")
+    async def test_resolve_advisory_placeholders_raises_when_placeholder_unresolvable(
+        self, mock_get_live_id, mock_erratum_cls
+    ):
+        """Raises ValueError if a target placeholder remains after Phase 4 substitution."""
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+        )
+        pipeline.logger = Mock()
+        pipeline.dry_run = False
+        pipeline.update_shipment_mr = AsyncMock()
+
+        # RPM live-ID lookup fails → rpm_advisory_id stays None
+        mock_get_live_id.side_effect = Exception("ET unavailable")
+
+        image_shipment = ShipmentConfig(
+            shipment=Shipment(
+                metadata=Metadata(product="ocp", group=self.group, assembly=self.assembly, application="app-image"),
+                environments=Environments(
+                    stage=ShipmentEnv(releasePlan="rp-img-stage"),
+                    prod=ShipmentEnv(releasePlan="rp-img-prod"),
+                ),
+                data=Data(
+                    releaseNotes=ReleaseNotes(
+                        type="RHBA",
+                        live_id=16164,
+                        description="See {IMAGE_ADVISORY} and {RPM_ADVISORY} for details.",
+                    )
+                ),
+            )
+        )
+
+        # Classic advisory has no placeholders in its text
+        rpm_advisory_mock = Mock(description="", solution="")
+        mock_erratum_cls.return_value = rpm_advisory_mock
+
+        impetus_advisories = {"rpm": 999}
+        shipment_data = ({"image": image_shipment}, "prod", "https://gitlab.example.com/x/-/merge_requests/1")
+
+        with self.assertRaises(ValueError) as ctx:
+            await pipeline.resolve_advisory_placeholders(impetus_advisories, shipment_data)
+
+        self.assertIn("RPM_ADVISORY", str(ctx.exception))
+        self.assertIn("not fully resolved", str(ctx.exception))
+
+    @patch("elliottlib.shipment_utils.Erratum")
+    @patch("pyartcd.pipelines.prepare_release_konflux.get_errata_live_id")
+    async def test_resolve_advisory_placeholders_warns_for_prerelease(self, mock_get_live_id, mock_erratum_cls):
+        """Pre-release assemblies get a warning instead of ValueError for unresolved placeholders."""
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+        )
+        pipeline.logger = Mock()
+        pipeline.dry_run = False
+        pipeline.update_shipment_mr = AsyncMock()
+        pipeline.group_config = {'software_lifecycle': {'phase': 'pre-release'}}
+
+        # RPM live-ID lookup fails → rpm_advisory_id stays None
+        mock_get_live_id.side_effect = Exception("ET unavailable")
+
+        image_shipment = ShipmentConfig(
+            shipment=Shipment(
+                metadata=Metadata(product="ocp", group=self.group, assembly=self.assembly, application="app-image"),
+                environments=Environments(
+                    stage=ShipmentEnv(releasePlan="rp-img-stage"),
+                    prod=ShipmentEnv(releasePlan="rp-img-prod"),
+                ),
+                data=Data(
+                    releaseNotes=ReleaseNotes(
+                        type="RHBA",
+                        live_id=16164,
+                        description="See {IMAGE_ADVISORY} and {RPM_ADVISORY} for details.",
+                    )
+                ),
+            )
+        )
+
+        # Classic advisory has no placeholders in its text
+        rpm_advisory_mock = Mock(description="", solution="")
+        mock_erratum_cls.return_value = rpm_advisory_mock
+
+        impetus_advisories = {"rpm": 999}
+        shipment_data = ({"image": image_shipment}, "prod", "https://gitlab.example.com/x/-/merge_requests/1")
+
+        # Must not raise for pre-release lifecycle
+        await pipeline.resolve_advisory_placeholders(impetus_advisories, shipment_data)
+
+        # Verify a warning about pre-release was logged (there may be other warnings too,
+        # e.g. from the RPM lookup failure, so we check call_args_list instead of assert_called_once)
+        prerelease_warnings = [call for call in pipeline.logger.warning.call_args_list if "pre-release" in str(call)]
+        self.assertEqual(len(prerelease_warnings), 1, "Expected exactly one pre-release warning")
+
+    @patch("elliottlib.shipment_utils.Erratum")
+    @patch("pyartcd.pipelines.prepare_release_konflux.get_errata_live_id")
+    async def test_resolve_advisory_placeholders_raises_on_shipment_mr_push_failure(
+        self, mock_get_live_id, mock_erratum_cls
+    ):
+        """Raises if update_shipment_mr() fails — in-memory changes must not be silently orphaned."""
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+        )
+        pipeline.logger = Mock()
+        pipeline.dry_run = False
+        pipeline.update_shipment_mr = AsyncMock(side_effect=Exception("GitLab push failed"))
+
+        mock_get_live_id.return_value = "RHBA-2026:16158"
+
+        image_shipment = ShipmentConfig(
+            shipment=Shipment(
+                metadata=Metadata(product="ocp", group=self.group, assembly=self.assembly, application="app-image"),
+                environments=Environments(
+                    stage=ShipmentEnv(releasePlan="rp-img-stage"),
+                    prod=ShipmentEnv(releasePlan="rp-img-prod"),
+                ),
+                data=Data(
+                    releaseNotes=ReleaseNotes(
+                        type="RHBA",
+                        live_id=16164,
+                        description="See {IMAGE_ADVISORY}",
+                    )
+                ),
+            )
+        )
+
+        rpm_advisory_mock = Mock(description="See {IMAGE_ADVISORY}", solution="")
+        mock_erratum_cls.return_value = rpm_advisory_mock
+
+        impetus_advisories = {"rpm": 999}
+        shipment_data = ({"image": image_shipment}, "prod", "https://gitlab.example.com/x/-/merge_requests/1")
+
+        with self.assertRaises(Exception) as ctx:
+            await pipeline.resolve_advisory_placeholders(impetus_advisories, shipment_data)
+
+        self.assertIn("GitLab push failed", str(ctx.exception))
+
+
+class TestCheckBugConfigForGa(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.runtime = Mock(spec=Runtime)
+        self.runtime.working_dir = Path("/tmp/working-dir")
+        self.runtime.dry_run = False
+        self.runtime.config = {
+            "gitlab_url": "https://gitlab.example.com",
+            "build_config": {
+                "ocp_build_data_url": "https://github.com/user1/repo1",
+                "ocp_build_data_push_url": "https://github.com/user2/repo2",
+            },
+            "shipment_config": {
+                "shipment_data_url": "https://gitlab.example.com/user3/repo3",
+                "shipment_data_push_url": "https://gitlab.example.com/user4/repo4",
+            },
+        }
+        self.mock_slack_client = Mock(spec=SlackClient)
+
+    def _make_pipeline(self, group="openshift-4.22", assembly="4.22.1"):
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=group,
+            assembly=assembly,
+        )
+        pipeline.gitlab_token = "gl_token"
+        pipeline.logger = Mock()
+        pipeline.build_data_repo = AsyncMock()
+        pipeline.releases_config = {
+            "releases": {
+                assembly: {
+                    "assembly": {
+                        "type": AssemblyTypes.STANDARD.value,
+                        "group": {"release_date": "2026-Jun-18"},
+                    }
+                }
+            }
+        }
+        return pipeline
+
+    async def test_passes_when_phase_release_and_z_stream_present(self):
+        """Standard assembly with correct phase and z-stream in bug.yml -> passes."""
+        pipeline = self._make_pipeline()
+        pipeline.assembly_type = AssemblyTypes.STANDARD
+        pipeline.group_config = {'software_lifecycle': {'phase': 'release'}}
+        pipeline.build_data_repo.read_file.return_value = "target_release:\n  - '4.22.0'\n  - '4.22.z'\n  - '4.22'\n"
+
+        await pipeline.check_bug_config_for_ga()
+
+        pipeline.logger.info.assert_called_with("GA readiness check passed.")
+
+    async def test_fails_when_phase_is_signing(self):
+        """Standard assembly with phase 'signing' -> raises ValueError."""
+        pipeline = self._make_pipeline()
+        pipeline.assembly_type = AssemblyTypes.STANDARD
+        pipeline.group_config = {'software_lifecycle': {'phase': 'signing'}}
+        pipeline.build_data_repo.read_file.return_value = "target_release:\n  - '4.22.0'\n  - '4.22.z'\n"
+
+        with self.assertRaises(ValueError) as ctx:
+            await pipeline.check_bug_config_for_ga()
+
+        self.assertIn("software_lifecycle.phase must be 'release'", str(ctx.exception))
+        self.assertIn("'signing'", str(ctx.exception))
+
+    async def test_fails_when_z_stream_absent_in_bug_yml(self):
+        """Standard assembly with correct phase but missing .z in target_release -> raises ValueError."""
+        pipeline = self._make_pipeline()
+        pipeline.assembly_type = AssemblyTypes.STANDARD
+        pipeline.group_config = {'software_lifecycle': {'phase': 'release'}}
+        pipeline.build_data_repo.read_file.return_value = "target_release:\n  - '4.22.0'\n  - '4.22'\n"
+
+        with self.assertRaises(ValueError) as ctx:
+            await pipeline.check_bug_config_for_ga()
+
+        self.assertIn("4.22.z", str(ctx.exception))
+
+    async def test_fails_with_both_errors_reported(self):
+        """Standard assembly with phase 'signing' and missing .z -> raises ValueError listing both issues."""
+        pipeline = self._make_pipeline()
+        pipeline.assembly_type = AssemblyTypes.STANDARD
+        pipeline.group_config = {'software_lifecycle': {'phase': 'signing'}}
+        pipeline.build_data_repo.read_file.return_value = "target_release:\n  - '4.22.0'\n"
+
+        with self.assertRaises(ValueError) as ctx:
+            await pipeline.check_bug_config_for_ga()
+
+        error_msg = str(ctx.exception)
+        self.assertIn("software_lifecycle.phase must be 'release'", error_msg)
+        self.assertIn("4.22.z", error_msg)
+
+    async def test_skips_for_non_standard_assembly(self):
+        """Preview/candidate assemblies are skipped -> no error raised."""
+        pipeline = self._make_pipeline()
+        pipeline.assembly_type = AssemblyTypes.PREVIEW
+        pipeline.group_config = {'software_lifecycle': {'phase': 'pre-release'}}
+
+        await pipeline.check_bug_config_for_ga()
+
+        pipeline.logger.info.assert_called_with(
+            "Assembly type is %s; skipping GA readiness check.", AssemblyTypes.PREVIEW
+        )
+        pipeline.build_data_repo.read_file.assert_not_called()
+
+    async def test_skips_target_release_check_when_bug_yml_missing(self):
+        """If bug.yml cannot be read, skip that check but still validate phase."""
+        pipeline = self._make_pipeline()
+        pipeline.assembly_type = AssemblyTypes.STANDARD
+        pipeline.group_config = {'software_lifecycle': {'phase': 'release'}}
+        pipeline.build_data_repo.read_file.side_effect = FileNotFoundError("bug.yml not found")
+
+        # Phase is correct, bug.yml is missing -> passes gracefully
+        await pipeline.check_bug_config_for_ga()
+
+        pipeline.logger.warning.assert_called_with("bug.yml not found or unreadable; skipping target_release check.")
+        pipeline.logger.info.assert_called_with("GA readiness check passed.")
+
+    async def test_fails_phase_even_when_bug_yml_missing(self):
+        """If bug.yml is missing but phase is wrong, the phase error is still raised."""
+        pipeline = self._make_pipeline()
+        pipeline.assembly_type = AssemblyTypes.STANDARD
+        pipeline.group_config = {'software_lifecycle': {'phase': 'signing'}}
+        pipeline.build_data_repo.read_file.side_effect = FileNotFoundError("bug.yml not found")
+
+        with self.assertRaises(ValueError) as ctx:
+            await pipeline.check_bug_config_for_ga()
+
+        self.assertIn("software_lifecycle.phase must be 'release'", str(ctx.exception))
+
+    async def test_fails_when_bug_yml_is_malformed(self):
+        """If bug.yml exists but cannot be parsed, a validation error is raised (not silently skipped)."""
+        import ruamel.yaml
+
+        pipeline = self._make_pipeline()
+        pipeline.assembly_type = AssemblyTypes.STANDARD
+        pipeline.group_config = {'software_lifecycle': {'phase': 'release'}}
+        pipeline.build_data_repo.read_file.side_effect = ruamel.yaml.YAMLError("bad yaml")
+
+        with self.assertRaises(ValueError) as ctx:
+            await pipeline.check_bug_config_for_ga()
+
+        self.assertIn("bug.yml could not be parsed", str(ctx.exception))

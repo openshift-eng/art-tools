@@ -1,0 +1,24 @@
+{
+  "description": "Permits assembly errors. See https://github.com/openshift-eng/art-docs/blob/master/content/assemblies.md#permissible-issues for more information.",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "properties": {
+      "code": {
+        "description": "The error code to permit",
+        "type": "string",
+        "minLength": 1
+      },
+      "component": {
+        "description": "Name of the component that this permit applies to. Use '*' to permit all components.",
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "additionalProperties": false,
+    "required": [
+      "code",
+      "component"
+    ]
+  }
+}

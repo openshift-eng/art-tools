@@ -1,0 +1,296 @@
+import unittest
+from unittest.mock import AsyncMock, MagicMock, patch
+
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome
+from artcommonlib.model import Missing, Model
+from artcommonlib.variants import BuildVariant
+from doozerlib.cli.images_health import LIMIT_BUILD_RESULTS, ConcernCode, ImagesHealthPipeline
+
+
+class TestImagesHealthOKDModeFiltering(unittest.IsolatedAsyncioTestCase):
+    """
+    Tests for OKD variant mode filtering in images:health command.
+
+    These tests verify that the OKD mode override (okd.mode) correctly overrides
+    the general mode field when determining which images to include/skip.
+    """
+
+    def setUp(self):
+        """
+        Set up test fixtures.
+        """
+        self.mock_runtime = MagicMock()
+        self.mock_runtime.group_config = MagicMock()
+        self.mock_runtime.group_config.name = "openshift-4.20"
+        self.mock_runtime.group = "openshift-4.20"
+        self.mock_runtime.konflux_db = MagicMock()
+        self.mock_runtime.konflux_db.bind = MagicMock()
+        self.mock_runtime.konflux_db._ensure_group_cached = AsyncMock()
+
+    def _create_image_meta(self, distgit_key: str, mode: str, okd_mode=Missing, for_payload=True):
+        """
+        Create a mock ImageMetadata object with specified mode configuration.
+
+        Arg(s):
+            distgit_key (str): The distgit key for the image.
+            mode (str): The top-level mode ('enabled' or 'disabled').
+            okd_mode: The OKD-specific mode override (default: Missing).
+            for_payload (bool): Whether the image is a payload image (default: True).
+        Return Value(s):
+            Mock: A mock ImageMetadata object.
+        """
+        image_meta = MagicMock()
+        image_meta.distgit_key = distgit_key
+        image_meta.mode = mode
+
+        # Create config with mode and okd section
+        config_dict = {'mode': mode, 'for_release': True, 'for_payload': for_payload, 'konflux': {'mode': 'enabled'}}
+
+        if okd_mode is not Missing:
+            config_dict['okd'] = {'mode': okd_mode}
+        else:
+            config_dict['okd'] = Missing
+
+        image_meta.config = Model(config_dict)
+        return image_meta
+
+    async def test_okd_variant_mode_disabled_no_override(self):
+        """
+        Test OKD variant with mode: disabled and no okd.mode override.
+
+        Expected: Image should be skipped.
+        """
+        image_meta = self._create_image_meta('test-image', 'disabled')
+        self.mock_runtime.image_metas.return_value = [image_meta]
+
+        pipeline = ImagesHealthPipeline(runtime=self.mock_runtime, limit=100, variant=BuildVariant.OKD)
+
+        with patch.object(pipeline, 'get_concerns', new=MagicMock()) as mock_get_concerns:
+            await pipeline.run()
+            # Image should be skipped, so get_concerns should not be called
+            mock_get_concerns.assert_not_called()
+
+    async def test_okd_variant_mode_disabled_okd_enabled(self):
+        """
+        Test OKD variant with mode: disabled but okd.mode: enabled.
+
+        Expected: Image should NOT be skipped (OKD override takes precedence).
+        """
+        image_meta = self._create_image_meta('test-image', 'disabled', okd_mode='enabled')
+        self.mock_runtime.image_metas.return_value = [image_meta]
+
+        pipeline = ImagesHealthPipeline(runtime=self.mock_runtime, limit=100, variant=BuildVariant.OKD)
+
+        with patch.object(pipeline, 'get_concerns', new=MagicMock()) as mock_get_concerns:
+            await pipeline.run()
+            # Image should NOT be skipped, so get_concerns should be called once
+            mock_get_concerns.assert_called_once_with(image_meta)
+
+    async def test_okd_variant_mode_enabled_okd_disabled(self):
+        """
+        Test OKD variant with mode: enabled but okd.mode: disabled.
+
+        Expected: Image should be skipped (OKD override takes precedence).
+        """
+        image_meta = self._create_image_meta('test-image', 'enabled', okd_mode='disabled')
+        self.mock_runtime.image_metas.return_value = [image_meta]
+
+        pipeline = ImagesHealthPipeline(runtime=self.mock_runtime, limit=100, variant=BuildVariant.OKD)
+
+        with patch.object(pipeline, 'get_concerns', new=MagicMock()) as mock_get_concerns:
+            await pipeline.run()
+            # Image should be skipped, so get_concerns should not be called
+            mock_get_concerns.assert_not_called()
+
+    async def test_okd_variant_mode_enabled_no_override(self):
+        """
+        Test OKD variant with mode: enabled and no okd.mode override.
+
+        Expected: Image should NOT be skipped.
+        """
+        image_meta = self._create_image_meta('test-image', 'enabled')
+        self.mock_runtime.image_metas.return_value = [image_meta]
+
+        pipeline = ImagesHealthPipeline(runtime=self.mock_runtime, limit=100, variant=BuildVariant.OKD)
+
+        with patch.object(pipeline, 'get_concerns', new=MagicMock()) as mock_get_concerns:
+            await pipeline.run()
+            # Image should NOT be skipped, so get_concerns should be called once
+            mock_get_concerns.assert_called_once_with(image_meta)
+
+    async def test_non_okd_variant_mode_disabled(self):
+        """
+        Test non-OKD variant (OCP) with mode: disabled.
+
+        Expected: Image should be skipped.
+        """
+        image_meta = self._create_image_meta('test-image', 'disabled')
+        self.mock_runtime.image_metas.return_value = [image_meta]
+
+        pipeline = ImagesHealthPipeline(runtime=self.mock_runtime, limit=100, variant=BuildVariant.OCP)
+
+        with patch.object(pipeline, 'get_concerns', new=MagicMock()) as mock_get_concerns:
+            await pipeline.run()
+            # Image should be skipped, so get_concerns should not be called
+            mock_get_concerns.assert_not_called()
+
+    async def test_non_okd_variant_mode_enabled(self):
+        """
+        Test non-OKD variant (OCP) with mode: enabled.
+
+        Expected: Image should NOT be skipped.
+        """
+        image_meta = self._create_image_meta('test-image', 'enabled')
+        self.mock_runtime.image_metas.return_value = [image_meta]
+
+        pipeline = ImagesHealthPipeline(runtime=self.mock_runtime, limit=100, variant=BuildVariant.OCP)
+
+        with patch.object(pipeline, 'get_concerns', new=MagicMock()) as mock_get_concerns:
+            await pipeline.run()
+            # Image should NOT be skipped, so get_concerns should be called once
+            mock_get_concerns.assert_called_once_with(image_meta)
+
+    async def test_okd_variant_non_payload_image_skipped(self):
+        """
+        Test OKD variant with non-payload image (for_payload=False).
+
+        Expected: Image should be skipped even if mode is enabled.
+        """
+        image_meta = self._create_image_meta('test-image', 'enabled', for_payload=False)
+        self.mock_runtime.image_metas.return_value = [image_meta]
+
+        pipeline = ImagesHealthPipeline(runtime=self.mock_runtime, limit=100, variant=BuildVariant.OKD)
+
+        with patch.object(pipeline, 'get_concerns', new=MagicMock()) as mock_get_concerns:
+            await pipeline.run()
+            # Non-payload image should be skipped for OKD
+            mock_get_concerns.assert_not_called()
+
+    async def test_okd_variant_payload_image_not_skipped(self):
+        """
+        Test OKD variant with payload image (for_payload=True).
+
+        Expected: Image should NOT be skipped.
+        """
+        image_meta = self._create_image_meta('test-image', 'enabled', for_payload=True)
+        self.mock_runtime.image_metas.return_value = [image_meta]
+
+        pipeline = ImagesHealthPipeline(runtime=self.mock_runtime, limit=100, variant=BuildVariant.OKD)
+
+        with patch.object(pipeline, 'get_concerns', new=MagicMock()) as mock_get_concerns:
+            await pipeline.run()
+            # Payload image should be processed for OKD
+            mock_get_concerns.assert_called_once_with(image_meta)
+
+    async def test_multiple_images_mixed_modes(self):
+        """
+        Test OKD variant with multiple images having different mode configurations.
+
+        Expected: Only images with effective mode 'enabled' should be processed.
+        """
+        image1 = self._create_image_meta('image-1', 'disabled')  # Should skip
+        image2 = self._create_image_meta('image-2', 'disabled', okd_mode='enabled')  # Should NOT skip
+        image3 = self._create_image_meta('image-3', 'enabled', okd_mode='disabled')  # Should skip
+        image4 = self._create_image_meta('image-4', 'enabled')  # Should NOT skip
+
+        self.mock_runtime.image_metas.return_value = [image1, image2, image3, image4]
+
+        pipeline = ImagesHealthPipeline(runtime=self.mock_runtime, limit=100, variant=BuildVariant.OKD)
+
+        with patch.object(pipeline, 'get_concerns', new=MagicMock()) as mock_get_concerns:
+            await pipeline.run()
+            # Only image2 and image4 should be processed
+            self.assertEqual(mock_get_concerns.call_count, 2)
+            mock_get_concerns.assert_any_call(image2)
+            mock_get_concerns.assert_any_call(image4)
+
+    async def test_multiple_images_with_payload_filtering(self):
+        """
+        Test OKD variant with multiple images including non-payload ones.
+
+        Expected: Only payload images with effective mode 'enabled' should be processed.
+        """
+        image1 = self._create_image_meta('image-1', 'enabled', for_payload=True)  # Should NOT skip (payload + enabled)
+        image2 = self._create_image_meta('image-2', 'enabled', for_payload=False)  # Should skip (non-payload)
+        image3 = self._create_image_meta('image-3', 'disabled', okd_mode='enabled', for_payload=True)  # Should NOT skip
+        image4 = self._create_image_meta('image-4', 'disabled', okd_mode='enabled', for_payload=False)  # Should skip
+
+        self.mock_runtime.image_metas.return_value = [image1, image2, image3, image4]
+
+        pipeline = ImagesHealthPipeline(runtime=self.mock_runtime, limit=100, variant=BuildVariant.OKD)
+
+        with patch.object(pipeline, 'get_concerns', new=MagicMock()) as mock_get_concerns:
+            await pipeline.run()
+            # Only image1 and image3 should be processed (both are payload images with effective mode 'enabled')
+            self.assertEqual(mock_get_concerns.call_count, 2)
+            mock_get_concerns.assert_any_call(image1)
+            mock_get_concerns.assert_any_call(image3)
+
+
+class TestGetConcernsFailureCodeSelection(unittest.TestCase):
+    """
+    Tests that get_concerns selects the correct ConcernCode when no successful build is found.
+
+    When fewer builds are returned than the query limit, the exact failure count is known
+    and LATEST_ATTEMPT_FAILED should be used. Only when results are truncated at the limit
+    is FAILING_AT_LEAST_FOR appropriate.
+    """
+
+    def _make_pipeline(self, limit=LIMIT_BUILD_RESULTS):
+        mock_runtime = MagicMock()
+        mock_runtime.group_config = MagicMock()
+        mock_runtime.group_config.name = "openshift-5.1"
+        mock_runtime.group = "openshift-5.1"
+        mock_runtime.konflux_db = MagicMock()
+        mock_runtime.konflux_db.bind = MagicMock()
+        pipeline = ImagesHealthPipeline(runtime=mock_runtime, limit=limit)
+        return pipeline
+
+    def _make_failed_build(self):
+        build = MagicMock()
+        build.outcome = KonfluxBuildOutcome.FAILURE
+        build.art_job_url = "http://example.com/job"
+        build.build_pipeline_url = "http://example.com/pipeline"
+        build.nvr = "test-container-v5.1.0-1.el9"
+        build.record_id = "abc123"
+        build.start_time = None
+        return build
+
+    def _make_image_meta(self, distgit_key="test-image"):
+        image_meta = MagicMock()
+        image_meta.distgit_key = distgit_key
+        image_meta.config = Model({"for_release": True})
+        return image_meta
+
+    def test_fewer_builds_than_limit_uses_latest_attempt_failed(self):
+        """
+        When only 5 builds exist and all fail, LATEST_ATTEMPT_FAILED should be used
+        with latest_success_idx=5, not FAILING_AT_LEAST_FOR with the misleading limit value.
+        """
+        pipeline = self._make_pipeline(limit=LIMIT_BUILD_RESULTS)
+        builds = [self._make_failed_build() for _ in range(5)]
+        pipeline.runtime.konflux_db.cache.get_builds_by_name = MagicMock(return_value=builds)
+        image_meta = self._make_image_meta()
+
+        pipeline.get_concerns(image_meta)
+
+        self.assertEqual(len(pipeline.concerns), 1)
+        concern = pipeline.concerns[0]
+        self.assertEqual(concern.code, ConcernCode.LATEST_ATTEMPT_FAILED.value)
+        self.assertEqual(concern.latest_success_idx, 5)
+
+    def test_builds_at_limit_all_failing_uses_failing_at_least_for(self):
+        """
+        When the query returns exactly LIMIT_BUILD_RESULTS failures and no success,
+        FAILING_AT_LEAST_FOR should be used because we don't know how far back failures go.
+        """
+        pipeline = self._make_pipeline(limit=LIMIT_BUILD_RESULTS)
+        builds = [self._make_failed_build() for _ in range(LIMIT_BUILD_RESULTS)]
+        pipeline.runtime.konflux_db.cache.get_builds_by_name = MagicMock(return_value=builds)
+        image_meta = self._make_image_meta()
+
+        pipeline.get_concerns(image_meta)
+
+        self.assertEqual(len(pipeline.concerns), 1)
+        concern = pipeline.concerns[0]
+        self.assertEqual(concern.code, ConcernCode.FAILING_AT_LEAST_FOR.value)

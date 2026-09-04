@@ -1,0 +1,112 @@
+FROM registry.ci.openshift.org/ocp/builder:rhel-9-golang-1.26-openshift-4.22
+
+
+# Set metadata
+LABEL name="openshift-art/artcd-base" \
+  maintainer="OpenShift Team Automated Release Tooling <aos-team-art@redhat.com>"
+
+# Trust Red Hat IT Root CA certificates and add repos
+RUN curl -fLo /etc/pki/ca-trust/source/anchors/2022-IT-Root-CA.pem https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem \
+ && update-ca-trust extract
+
+# Copy repository configurations for software installations
+COPY art-cluster/pipelines/data/project/art-cd/image/files/etc/yum.repos.d /etc/yum.repos.art/localdev
+
+# Install uv python package manager
+RUN curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh
+ENV PATH="/usr/local/bin:$PATH"
+
+# Install necessary packages and Python libraries
+# python3-dnf and skopeo are included for the system python3 (RHEL 9's
+# default interpreter, distinct from python3.11 below); see the
+# rpm-lockfile-prototype install step further down for why this matters.
+# rpm-lockfile-prototype shells out to skopeo to copy a base image's rootfs
+# locally so it can inspect the RPM DB there.
+RUN dnf -y install python3.11 python3.11-pip python3.11-wheel python3.11-devel gcc krb5-devel wget tar gzip git krb5-workstation \
+    brewkoji rhpkg podman skopeo python3-rpm python3-pip python3-dnf jq \
+    && uv pip install --system --upgrade setuptools \
+    && dnf clean all
+
+# Set ARG for OC_VERSION
+ARG OC_VERSION=latest
+
+# Install oc client
+RUN wget -O "openshift-client-linux-${OC_VERSION}.tar.gz" "https://mirror.openshift.com/pub/openshift-v4/clients/ocp/latest/openshift-client-linux.tar.gz" \
+  && tar -C /usr/local/bin -xzvf "openshift-client-linux-$OC_VERSION.tar.gz" oc kubectl
+
+# Install AWS client
+RUN wget -O "awscliv2.zip" "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" \
+  && unzip awscliv2.zip &&  ./aws/install
+
+# Install tkn client
+RUN curl -LO https://github.com/tektoncd/cli/releases/download/v0.37.0/tkn_0.37.0_Linux_x86_64.tar.gz &&  \
+    tar xvzf tkn_0.37.0_Linux_x86_64.tar.gz -C /usr/local/bin/ tkn
+
+# Install yq
+ARG YQ_VERSION=v4.44.6
+RUN wget -qO /usr/local/bin/yq "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64" \
+    && chmod +x /usr/local/bin/yq
+
+# Install opm (Operator Package Manager) for FBC builds
+ARG OPM_VERSION=v1.47.0
+ARG OPM_SHA256=502cb3ce30c979e0a486ca306677c3251c8315e66abe0fde0c25c96eff229061
+RUN curl -fsSLo /tmp/opm "https://github.com/operator-framework/operator-registry/releases/download/${OPM_VERSION}/linux-amd64-opm" \
+    && echo "${OPM_SHA256}  /tmp/opm" | sha256sum -c - \
+    && install -m 0755 /tmp/opm /usr/local/bin/opm \
+    && rm -f /tmp/opm
+
+# Install cosign for SLSA attestation verification
+COPY --from=ghcr.io/sigstore/cosign/cosign:v3.0.5 /ko-app/cosign /usr/local/bin/cosign
+
+# Install oras CLI (used for FBC artifact discovery)
+ARG ORAS_VERSION=1.3.0
+# SHA256 from https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_checksums.txt
+ARG ORAS_SHA256=6cdc692f929100feb08aa8de584d02f7bcc30ec7d88bc2adc2054d782db57c64
+RUN curl -fsSLo "oras_${ORAS_VERSION}_linux_amd64.tar.gz" \
+    "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_linux_amd64.tar.gz" \
+  && echo "${ORAS_SHA256}  oras_${ORAS_VERSION}_linux_amd64.tar.gz" | sha256sum -c - \
+  && mkdir -p oras-install/ \
+  && tar -zxf "oras_${ORAS_VERSION}_linux_amd64.tar.gz" -C oras-install/ \
+  && install -m 0755 oras-install/oras /usr/local/bin/oras \
+  && rm -rf "oras_${ORAS_VERSION}_linux_amd64.tar.gz" oras-install/
+
+# Set workspace
+WORKDIR /home/dev
+
+# Fixes issue "ERROR: Cannot uninstall requests 2.25.1, RECORD file not found. Hint: The package was installed by rpm."
+RUN rpm -e --nodeps python3-requests
+
+# Copy art-tools and run the install script
+COPY . .
+
+# Fixes issue "TypeError: canonicalize_version() got an unexpected keyword argument 'strip_trailing_zero'" while
+RUN uv pip install --python 3.11 --system setuptools==70.0.0
+
+# Install all art-tools packages in editable mode from the root pyproject.toml
+RUN uv pip install --python 3.11 --system -e .
+
+# doozer's RpmResolver (doozer/doozerlib/lockfile_prototype/resolver.py) shells
+# out to the system python3 (/usr/bin/python3) instead of the python3.11
+# interpreter above, because python3-dnf's compiled bindings are only
+# importable from the system Python. Install the same rpm-lockfile-prototype
+# revision pinned in uv.lock into that interpreter too, so the subprocess call
+# doesn't fail with "ModuleNotFoundError: No module named 'rpm_lockfile'".
+RUN LOCKFILE_REV=$(grep -A2 '^name = "rpm-lockfile-prototype"' uv.lock | grep 'source = ' | sed -n 's/.*#\([0-9a-f]\{40\}\).*/\1/p') \
+    && test -n "$LOCKFILE_REV" \
+    && /usr/bin/python3 -m pip install --no-cache-dir \
+       "rpm-lockfile-prototype @ git+https://github.com/konflux-ci/rpm-lockfile-prototype@${LOCKFILE_REV}"
+
+# Install check-payload tool for FIPS scanning, and copy to a location in PATH
+RUN git clone https://github.com/openshift/check-payload check-payload &&  \
+    cd check-payload  \
+    && make  \
+    && cp check-payload /usr/local/bin \
+    && cd .. \
+    && rm -rf check-payload # We only need the binary
+
+# Copy kerberos config for brew auth
+COPY artcommon/configs/krb5-redhat.conf /etc/krb5.conf
+
+# Create a non-root user and set as current
+RUN useradd -m -d /home/dev -u 1000 dev
+USER 1000

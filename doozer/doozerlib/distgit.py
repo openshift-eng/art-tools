@@ -1,0 +1,3083 @@
+import asyncio
+import copy
+import errno
+import glob
+import hashlib
+import io
+import logging
+import os
+import pathlib
+import re
+import shutil
+import sys
+import time
+import traceback
+from datetime import datetime
+from multiprocessing import Lock
+from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple, Union, cast
+
+import aiofiles
+import bashlex
+import requests
+import yaml
+from artcommonlib import assertion, exectools, logutil
+from artcommonlib.brew import BuildStates
+from artcommonlib.build_visibility import (
+    BuildVisibility,
+    get_all_visibility_suffixes,
+    get_visibility_suffix,
+    is_release_embargoed,
+    isolate_pflag_in_release,
+)
+from artcommonlib.constants import GIT_NO_PROMPTS, GOLANG_NVR_ENV, GOLANG_NVR_LABEL
+from artcommonlib.format_util import yellow_print
+from artcommonlib.git_helper import gather_git, git_clone
+from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
+from artcommonlib.lock import get_named_semaphore
+from artcommonlib.model import ListModel, Missing, Model
+from artcommonlib.pushd import Dir
+from artcommonlib.release_util import isolate_assembly_in_release, isolate_el_version_in_release
+from artcommonlib.rpm_utils import parse_nvr
+from artcommonlib.util import (
+    convert_remote_git_to_https,
+    deep_merge,
+    isolate_el_version_in_brew_tag,
+    isolate_rhel_major_from_distgit_branch,
+)
+from dockerfile_parse import DockerfileParser
+from tenacity import before_sleep_log, retry, retry_if_not_result, stop_after_attempt, wait_fixed
+
+import doozerlib
+from doozerlib import constants, state, util
+from doozerlib.build_info import BrewBuildRecordInspector
+from doozerlib.comment_on_pr import CommentOnPr
+from doozerlib.dblib import Record
+from doozerlib.exceptions import DoozerFatalError
+from doozerlib.osbs2_builder import OSBS2Builder, OSBS2BuildError
+from doozerlib.source_modifications import SourceModifierFactory
+from doozerlib.source_resolver import SourceResolver
+from doozerlib.util import extract_version_fields
+
+if TYPE_CHECKING:
+    from doozerlib.image import ImageMetadata
+    from doozerlib.metadata import Metadata
+
+# Always ignore these files/folders when rebasing into distgit
+# May be added to based on group/image config
+BASE_IGNORE = [".git", ".oit"]
+
+logger = logutil.get_logger(__name__)
+
+
+def recursive_overwrite(src, dest, ignore=set()):
+    """
+    Use rsync to copy one file tree to a new location
+    """
+    exclude = ' --exclude .git '
+    for i in ignore:
+        exclude += ' --exclude="{}" '.format(i)
+    cmd = 'rsync -av {} {}/ {}/'.format(exclude, src, dest)
+    exectools.cmd_assert(cmd, retries=3)
+
+
+def pull_image(url):
+    logger.info("Pulling image: %s" % url)
+
+    def wait(_):
+        logger.info("Error pulling image %s -- retrying in 60 seconds" % url)
+        time.sleep(60)
+
+    exectools.retry(retries=3, wait_f=wait, task_f=lambda: exectools.cmd_gather(["podman", "pull", url])[0] == 0)
+
+
+def map_image_name(name, image_map):
+    for match, replacement in image_map.items():
+        if name.find(match) != -1:
+            return name.replace(match, replacement)
+    return name
+
+
+class DistGitRepo(object):
+    def __init__(self, metadata: "Metadata", autoclone=True):
+        self.metadata = metadata
+        self.config: Model = metadata.config
+        self.runtime: "doozerlib.Runtime" = metadata.runtime
+        self.name: str = self.metadata.name
+        self.distgit_dir: str = None
+        self.dg_path: pathlib.Path = None
+        self.build_status = False
+        self.push_status = False
+
+        self.branch: str = self.runtime.branch
+        self.sha: Optional[str] = None
+
+        self.source_sha: str = None
+        self.source_full_sha: str = None
+        self.source_latest_tag: str = None
+        self.source_date_epoch = None
+        self.actual_source_url: str = None
+        self.public_facing_source_url: str = None
+
+        self.uuid_tag = None
+
+        # If we are rebasing, this map can be populated with
+        # variables acquired from the source path.
+        self.env_vars_from_source = None
+
+        # Allow the config yaml to override branch
+        # This is primarily useful for a sync only group.
+        if self.config.distgit.branch is not Missing:
+            self.branch = self.config.distgit.branch
+
+        self.logger = self.metadata.logger
+
+        # Initialize our distgit directory, if necessary
+        if autoclone:
+            self.clone(self.runtime.distgits_dir, self.branch)
+
+    def __repr__(self):
+        return self.name
+
+    def pull_sources(self):
+        """
+        Pull any distgit sources (use only after after clone)
+        """
+        with Dir(self.distgit_dir):
+            sources_file: pathlib.Path = self.dg_path.joinpath('sources')
+            if not sources_file.exists():
+                self.logger.debug('No sources file exists; skipping rhpkg sources')
+                return
+            exectools.cmd_assert('rhpkg sources')
+
+    def clone(self, distgits_root_dir, distgit_branch):
+        if self.metadata.prevent_cloning:
+            raise IOError(
+                f'Attempt to clone downstream {self.metadata.distgit_key} after cloning disabled; a regression has been introduced.'
+            )
+
+        with Dir(distgits_root_dir):
+            namespace_dir = os.path.join(distgits_root_dir, self.metadata.namespace)
+
+            # It is possible we have metadata for the same distgit twice in a group.
+            # There are valid scenarios (when they represent different branches) and
+            # scenarios where this is a user error. In either case, make sure we
+            # don't conflict by stomping on the same git directory.
+            self.distgit_dir = os.path.join(namespace_dir, self.metadata.distgit_key)
+            self.dg_path = pathlib.Path(self.distgit_dir)
+
+            fake_distgit = self.runtime.local and 'content' in self.metadata.config
+
+            if os.path.isdir(self.distgit_dir):
+                self.logger.info("Distgit directory already exists; skipping clone: %s" % self.distgit_dir)
+                if self.runtime.upcycle:
+                    self.logger.info("Refreshing source for '{}' due to --upcycle".format(self.distgit_dir))
+                    with Dir(self.distgit_dir):
+                        exectools.cmd_assert('git fetch --all', retries=3)
+                        exectools.cmd_assert('git reset --hard @{upstream}', retries=3)
+            else:
+                # Make a directory for the distgit namespace if it does not already exist
+                try:
+                    os.mkdir(namespace_dir)
+                except OSError as e:
+                    if e.errno != errno.EEXIST:
+                        raise
+
+                if fake_distgit and self.runtime.command == 'images:rebase':
+                    cmd_list = ['mkdir', '-p', self.distgit_dir]
+                    self.logger.info("Creating local build dir: {}".format(self.distgit_dir))
+                    exectools.cmd_assert(cmd_list)
+                else:
+                    if self.runtime.command == 'images:build':
+                        yellow_print(
+                            'Warning: images:rebase was skipped and therefore your '
+                            'local build will be sourced from the current dist-git '
+                            'contents and not the typical GitHub source. ',
+                        )
+
+                    self.logger.info(
+                        "Cloning distgit repository [branch:%s] into: %s" % (distgit_branch, self.distgit_dir)
+                    )
+
+                    # Has the user specified a specific commit to checkout from distgit on the command line?
+                    distgit_commitish = self.runtime.downstream_commitish_overrides.get(self.metadata.distgit_key, None)
+
+                    timeout = str(self.runtime.global_opts['rhpkg_clone_timeout'])
+                    rhpkg_clone_depth = int(self.runtime.global_opts.get('rhpkg_clone_depth', '0'))
+
+                    # Use git clone for both containers and RPMs to leverage git caches
+                    gitargs = ['--branch', distgit_branch]
+
+                    if not distgit_commitish:
+                        gitargs.append('--single-branch')
+
+                    if not distgit_commitish and rhpkg_clone_depth > 0:
+                        gitargs.extend(["--depth", str(rhpkg_clone_depth)])
+
+                    try:
+                        git_clone(
+                            self.metadata.distgit_remote_url(),
+                            self.distgit_dir,
+                            gitargs=gitargs,
+                            set_env=GIT_NO_PROMPTS,
+                            timeout=timeout,
+                            git_cache_dir=self.runtime.git_cache_dir,
+                        )
+                    except ChildProcessError as err:
+                        # Create branch on demand
+                        if (
+                            len(err.args) > 1
+                            and self.has_source()
+                            and re.fullmatch(r'rhaos-\d+\.\d+-rhel-\d+', distgit_branch)
+                        ):
+                            _, _, clone_error = err.args[1]
+                            if f"Remote branch {distgit_branch} not found" in clone_error:
+                                self.logger.info(f"Creating distgit branch {distgit_branch} for {self.name}")
+                                exectools.cmd_assert(f"git init {self.distgit_dir}")
+                                exectools.cmd_assert(
+                                    f'git -C {self.distgit_dir} remote add origin {self.metadata.distgit_remote_url()}'
+                                )
+                                exectools.cmd_assert(f'git -C {self.distgit_dir} checkout --orphan {distgit_branch}')
+                            else:
+                                raise
+                        else:
+                            raise
+
+                    if distgit_commitish:
+                        with Dir(self.distgit_dir):
+                            exectools.cmd_assert(f'git checkout {distgit_commitish}')
+        rc, out, err = exectools.cmd_gather(["git", "-C", self.distgit_dir, "rev-parse", "HEAD"], strip=True)
+        if rc == 0:
+            self.sha = out
+        elif "unknown revision" in err:
+            self.sha = None
+        else:
+            raise IOError(f"Couldn't determine commit hash for distgit repo {self.name}: {err}")
+
+    def merge_branch(self, target, allow_overwrite=False):
+        self.logger.info('Switching to branch: {}'.format(target))
+        cmd = ["rhpkg"]
+        if self.runtime.rhpkg_config_lst:
+            cmd.extend(self.runtime.rhpkg_config_lst)
+        cmd.extend(["switch-branch", target])
+        exectools.cmd_assert(cmd, retries=3)
+        if not allow_overwrite:
+            if os.path.isfile('Dockerfile') or os.path.isdir('.oit'):
+                raise IOError(
+                    'Unable to continue merge. Dockerfile found in target branch. Use --allow-overwrite to force.'
+                )
+        self.logger.info('Merging source branch history over current branch')
+        msg = 'Merge branch {} into {}'.format(self.branch, target)
+        exectools.cmd_assert(
+            cmd=['git', 'merge', '--allow-unrelated-histories', '-m', msg, self.branch],
+            retries=3,
+            on_retry=['git', 'reset', '--hard', target],  # in case merge failed due to storage
+        )
+
+    def has_source(self):
+        """
+        Check whether this dist-git repo has source content
+        """
+        return self.metadata.has_source()
+
+    def source_path(self):
+        """
+        :return: Returns the directory containing the source which should be used to populate distgit. This includes
+                the source.path subdirectory if the metadata includes one.
+        """
+        assert self.runtime.source_resolver is not None, "Runtime must be initialized with a source resolver"
+        source = self.runtime.source_resolver.resolve_source(self.metadata)
+        source_dir = SourceResolver.get_source_dir(source, self.metadata)
+        return source_dir
+
+    def _get_diff(self):
+        raise NotImplementedError  # to actually record a diff, child classes must override this function
+
+    def add_distgits_diff(self, diff):
+        return self.runtime.add_distgits_diff(self.metadata.distgit_key, diff)
+
+    def commit(
+        self,
+        cmdline_commit_msg: str,
+        commit_attributes: Optional[Dict[str, Union[int, str, bool]]] = None,
+        log_diff=False,
+    ):
+        if self.runtime.local:
+            return ''  # no commits if local
+
+        with Dir(self.distgit_dir):
+            commit_payload: Dict[str, Union[int, str, bool]] = {
+                'MaxFileSize': 100
+                * 1024
+                * 1024,  # 100MB push limit; see https://source.redhat.com/groups/public/release-engineering/release_engineering_rcm_wiki/dist_git_update_hooks
+                'jenkins.url': None
+                if 'unittest' in sys.modules.keys()
+                else os.getenv(
+                    'BUILD_URL'
+                ),  # Get the Jenkins build URL if available, but ignore if this is a unit test run
+            }
+
+            if self.dg_path:  # Might not be set if this is a unittest
+                df_path = self.dg_path.joinpath('Dockerfile')
+                if df_path.exists():
+                    # This is an image distgit commit, we can help the callers by reading in env variables for the commit message.
+                    # RPM commits are expected to pass these values in directly in commit_attributes.
+                    dfp = DockerfileParser(str(df_path))
+                    for var_name in [
+                        'version',
+                        'release',
+                        'io.openshift.build.source-location',
+                        'io.openshift.build.commit.id',
+                    ]:
+                        commit_payload[var_name] = dfp.labels.get(var_name, None)
+
+            if commit_attributes:
+                commit_payload.update(commit_attributes)
+
+            # The commit should be a valid yaml document so we can retrieve details
+            # programmatically later. The human specified portion of the commit is
+            # included in comments above the yaml payload.
+            cmdline_commit_msg = cmdline_commit_msg.strip().replace(
+                '\n', '\n# '
+            )  # If multiple lines are specified, split across commented lines.
+            commit_msg = f'# {cmdline_commit_msg}\n'  # Any message specified in '-m' during rebase
+            commit_msg += yaml.safe_dump(commit_payload, default_flow_style=False, sort_keys=True)
+
+            self.logger.info("Adding commit to local repo:\n{}".format(commit_msg))
+            if log_diff:
+                diff = self._get_diff()
+                if diff and diff.strip():
+                    self.add_distgits_diff(diff)
+            # commit changes; if these flake there is probably not much we can do about it
+            exectools.cmd_assert(["git", "add", "-A", "."])
+            exectools.cmd_assert(["git", "commit", "--allow-empty", "-m", commit_msg])
+            rc, sha, err = exectools.cmd_gather(["git", "rev-parse", "HEAD"])
+            assertion.success(rc, "Failure fetching commit SHA for {}".format(self.distgit_dir))
+        self.sha = sha.strip()
+        return self.sha
+
+    def cgit_file_available(self, filename: str = ".oit/art-signed.repo") -> Tuple[bool, str]:
+        """Check if the specified file associated with the commit hash pushed to distgit is available on cgit
+        :return: (existence, url)
+        """
+        assert self.sha is not None
+        self.logger.debug("Checking if distgit commit %s is available on cgit...", self.sha)
+        url = self.metadata.cgit_file_url(filename, commit_hash=self.sha, branch=self.branch)
+        response = requests.head(url)
+        if response.status_code == 404:
+            self.logger.debug("Distgit commit %s is not available on cgit", self.sha)
+            return False, url
+        response.raise_for_status()
+        self.logger.debug("Distgit commit %s is available on cgit", self.sha)
+        return True, url
+
+    @retry(
+        retry=retry_if_not_result(lambda r: r),
+        wait=wait_fixed(10),
+        stop=stop_after_attempt(60),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+    )
+    def wait_on_cgit_file(self, filename: str = ".oit/art-signed.repo"):
+        """Poll cgit for the specified file associated with the commit hash pushed to distgit"""
+        existence, _ = self.cgit_file_available(filename)
+        return existence
+
+    def push(self):
+        with Dir(self.distgit_dir):
+            self.logger.info("Pushing distgit repository %s", self.name)
+            try:
+                # When initializing new release branches, a large amount of data needs to
+                # be pushed. If every distgit within a release is being pushed at the same
+                # time, a single push invocation can take hours to complete -- making the
+                # timeout value counterproductive. Limit to 5 simultaneous pushes.
+                with get_named_semaphore('rhpkg::push', count=5):
+                    timeout = str(self.runtime.global_opts['rhpkg_push_timeout'])
+                    exectools.cmd_assert(f"timeout {timeout} git push --set-upstream origin {self.branch}", retries=3)
+                    # Many builds require a tag associated with a commit to be a semver
+                    # and they will only fail at runtime when parsing that tag
+                    # if it is not a valid semver. This means we must have a valid
+                    # tag for the commit. Since 4.6+ uses assemblies and we always have
+                    # unique tags with timestamps, we assert the push for 4.x
+                    major, _ = self.runtime.get_major_minor_fields()
+                    if major >= 4:
+                        exectools.cmd_assert("timeout {} git push --tags".format(timeout), retries=3)
+                    else:
+                        # Not asserting this exec since this is non-fatal if a tag already exists,
+                        # and tags in dist-git can't be --force overwritten. Timeouts at
+                        # 60 seconds have been observed.
+                        exectools.cmd_gather(['timeout', '300', 'git', 'push', '--tags'])
+            except IOError as e:
+                return (self.metadata, repr(e))
+            return (self.metadata, True)
+
+    @exectools.limit_concurrency(limit=5)
+    async def push_async(self):
+        self.logger.info("Pushing distgit repository %s", self.name)
+        # When initializing new release branches, an large amount of data needs to
+        # be pushed. If every distgit within a release is being pushed at the same
+        # time, a single push invocation can take hours to complete -- making the
+        # timeout value counterproductive. Limit to 5 simultaneous pushes.
+        timeout = str(self.runtime.global_opts['rhpkg_push_timeout'])
+        await exectools.cmd_assert_async(
+            ["timeout", f"{timeout}", "git", "push", "--set-upstream", "origin", self.branch, "--follow-tags"],
+            cwd=self.distgit_dir,
+        )
+
+    def get_branch_el(self) -> Optional[int]:
+        """
+        Extracts the RHEL version from the tag name and returns the integer value. e.g. 'rhaos-4.16-rhel-7' => 7.
+        If the branch name convention is not recognized, returns None.
+        """
+        return isolate_el_version_in_brew_tag(self.branch)
+
+    def tag(self, version, release):
+        if self.runtime.local:
+            return ''  # no tags if local
+
+        if version is None:
+            return
+
+        tag = '{}'.format(version)
+
+        if release is not None:
+            tag = '{}-{}'.format(tag, release)
+
+        with Dir(self.distgit_dir):
+            self.logger.info("Adding tag to local repo: {}".format(tag))
+            exectools.cmd_gather(["git", "tag", "-f", tag, "-m", tag])
+
+
+class ImageDistGitRepo(DistGitRepo):
+    source_labels = dict(
+        old=dict(
+            sha='io.openshift.source-repo-commit',
+            source='io.openshift.source-repo-url',
+            source_commit='io.openshift.source-commit-url',
+        ),
+        now=dict(
+            sha='io.openshift.build.commit.id',
+            source='io.openshift.build.source-location',
+            source_commit='io.openshift.build.commit.url',
+        ),
+    )
+
+    def __init__(self, metadata: "ImageMetadata", autoclone=True, source_modifier_factory=SourceModifierFactory()):
+        self.org_image_name = None
+        self.org_version = None
+        self.org_release = None
+        super(ImageDistGitRepo, self).__init__(metadata, autoclone=False)
+        self.metadata = metadata
+        self.build_lock = Lock()
+        self.build_lock.acquire()
+        self.logger: logging.Logger = metadata.logger
+        self.source_modifier_factory = source_modifier_factory
+
+        # If there's an upstream source, there can be a mismatch between
+        # how upstream wants to build their sources and ART's configuration
+        # In this case, when canonical builders from upstream are enabled,
+        # we need to determine what RHEL version upstream intends to use,
+        # and look for a related alternative ART configuration.
+        # If found, the image configs will be merged before doing the rebase
+        self.art_intended_el_version = None
+        self.upstream_intended_el_version = None
+        self.should_match_upstream = False
+
+        # Skip canonical builders initialization for performance when autoclone=False
+        # (e.g., for commands like images:list that don't need this information)
+        # This avoids expensive oc image info operations
+        if self.metadata.canonical_builders_enabled and autoclone:
+            # If the image is distgit-only, this logic does not apply
+            if self.has_source():
+                source_path = self.runtime.source_resolver.resolve_source(self.metadata).source_path
+                self.art_intended_el_version = self._determine_art_rhel_version()
+                self.upstream_intended_el_version = self._determine_upstream_rhel_version(source_path)
+            # To match upstream, we need to be able to infer upstream intended RHEL version
+            # and find a related alternative_upstream config stanza. This won't happen if:
+            # 1. we failed to determine upstream rhel version
+            # 2. upstream and ART rhel versions match: in this case, alternative_upstream is ignored
+            self._update_image_config()
+
+        # Initialize our distgit directory, if necessary
+        if autoclone:
+            self.clone(self.runtime.distgits_dir, self.branch)
+
+    def clone(self, distgits_root_dir, distgit_branch):
+        super(ImageDistGitRepo, self).clone(distgits_root_dir, distgit_branch)
+        self._read_master_data()
+
+    def _get_diff(self):
+        rc, out, _ = exectools.cmd_gather(["git", "-C", self.distgit_dir, "diff", "Dockerfile"])
+        assertion.success(rc, 'Failed fetching distgit diff')
+        return out
+
+    @property
+    def image_build_method(self):
+        return cast("ImageMetadata", self.metadata).image_build_method
+
+    def _write_fetch_artifacts(self):
+        # Write fetch-artifacts-url.yaml for OSBS to fetch external artifacts
+        # See https://osbs.readthedocs.io/en/osbs_ocp3/users.html#using-artifacts-from-koji-or-project-newcastle-aka-pnc
+        config_value = None
+        if self.config.content.source.artifacts.from_urls is not Missing:
+            config_value = self.config.content.source.artifacts.from_urls.primitive()
+        path = self.dg_path.joinpath('fetch-artifacts-url.yaml')
+        if path.exists():  # upstream provides its own fetch-artifacts-url.yaml
+            if not config_value:
+                self.logger.info("Use fetch-artifacts-url.yaml provided by upstream.")
+                return
+            raise ValueError(
+                "Image config option content.source.artifacts.from_urls cannot be used if upstream source has fetch-artifacts-url.yaml"
+            )
+        if not config_value:
+            return  # fetch-artifacts-url.yaml is not needed.
+        self.logger.info('Generating fetch-artifacts-url.yaml')
+        with path.open("w") as f:
+            yaml.safe_dump(config_value, f)
+
+    def _write_osbs_image_config(self, version: str):
+        # Writes OSBS image config (container.yaml).
+        # For more info about the format, see https://osbs.readthedocs.io/en/latest/users.html#image-configuration.
+
+        self.logger.info('Generating container.yaml')
+        container_config = self._generate_osbs_image_config(version)
+
+        if 'compose' in container_config:
+            self.logger.info("Rebasing with ODCS support")
+        else:
+            self.logger.info("Rebasing without ODCS support")
+
+        # generate yaml data with header
+        content_yml = yaml.safe_dump(container_config, default_flow_style=False)
+        with self.dg_path.joinpath('container.yaml').open('w', encoding="utf-8") as rc:
+            rc.write(constants.CONTAINER_YAML_HEADER + content_yml)
+
+    def _generate_osbs_image_config(self, version: str) -> Dict:
+        """
+        Generates OSBS image config (container.yaml).
+        Returns a dict for the config.
+
+        Example in image yml file:
+        odcs:
+            packages:
+                mode: auto (default) | manual
+                # auto - If container.yaml with packages is given from source, use them.
+                #        Otherwise all packages with from the Koji build tag will be included.
+                # manual - only use list below
+                list:
+                  - package1
+                  - package2
+        arches: # Optional list of image specific arches. If given, it must be a subset of group arches.
+          - x86_64
+          - s390x
+        container_yaml: ... # verbatim container.yaml content (see https://source.redhat.com/groups/public/container-build-system/container_build_system_wiki/odcs_integration_with_osbs)
+        """
+
+        # list of platform (architecture) names to build this image for
+        arches = self.metadata.get_arches()
+
+        # override image config with this dict
+        config_overrides = {}
+        if self.config.container_yaml is not Missing:
+            config_overrides = copy.deepcopy(self.config.container_yaml.primitive())
+
+        # Cachito will be configured if `cachito.enabled` is True in image meta
+        # or `cachito.enabled` is True in group config.
+        # https://osbs.readthedocs.io/en/latest/users.html#remote-sources
+        cachito_enabled = False
+        if self.config.cachito.enabled:
+            cachito_enabled = True
+        elif self.config.cachito.enabled is Missing:
+            if self.runtime.group_config.cachito.enabled:
+                cachito_enabled = True
+            elif isinstance(self.config.content.source.pkg_managers, ListModel):
+                self.logger.warning(
+                    f"pkg_managers directive for {self.name} has no effect since cachito is not enabled in "
+                    "image meta or group config."
+                )
+        if cachito_enabled and not self.has_source():
+            self.logger.warning("Cachito integration for distgit-only image %s is not supported.", self.name)
+            cachito_enabled = False
+        if cachito_enabled:
+            if config_overrides.get("go", {}).get("modules"):
+                raise ValueError(
+                    f"Cachito integration is enabled for image {self.name}. Specifying `go.modules` in `container.yaml` is not allowed."
+                )
+            pkg_managers = []  # Note if cachito is enabled but `pkg_managers` is set to an empty array, Cachito will provide the sources with no package manager magic.
+            if isinstance(self.config.content.source.pkg_managers, ListModel):
+                # Use specified package managers
+                pkg_managers = self.config.content.source.pkg_managers.primitive()
+            elif self.config.content.source.pkg_managers in [Missing, None]:
+                # Auto-detect package managers
+                pkg_managers = self._detect_package_managers()
+            else:
+                raise ValueError(
+                    f"Invalid content.source.pkg_managers config for image {self.name}: {self.config.content.source.pkg_managers}"
+                )
+            # Configure Cachito flags
+            # https://github.com/containerbuildsystem/cachito#flags
+            flags = []
+            if isinstance(self.config.cachito.flags, ListModel):
+                flags = self.config.cachito.flags.primitive()
+            elif isinstance(self.runtime.group_config.cachito.flags, ListModel):
+                flags = set(self.runtime.group_config.cachito.flags.primitive())
+                if 'gomod' not in pkg_managers:
+                    # Remove gomod related flags if gomod is not used.
+                    flags -= {"cgo-disable", "gomod-vendor", "gomod-vendor-check"}
+                elif not self.dg_path.joinpath('vendor').is_dir():
+                    # Remove gomod-vendor-check flag if vendor/ is not present when gomod is used
+                    flags -= {"gomod-vendor-check"}
+                flags = list(flags)
+
+            remote_source = {
+                'repo': convert_remote_git_to_https(self.actual_source_url),
+                'ref': self.source_full_sha,
+                'pkg_managers': pkg_managers,
+            }
+            if flags:
+                remote_source['flags'] = flags
+            # Allow user to customize `packages` option for Cachito configuration.
+            # See https://osbs.readthedocs.io/en/osbs_ocp3/users.html#remote-source-keys for details.
+            if self.config.cachito.packages is not Missing:
+                remote_source['packages'] = self.config.cachito.packages.primitive()
+            elif self.config.content.source.path:  # source is in subdirectory
+                remote_source['packages'] = {
+                    pkg_manager: [{"path": self.config.content.source.path}] for pkg_manager in pkg_managers
+                }
+            if self.config.cachito.version is not Missing:
+                remote_sources_version = self.config.cachito.version
+            elif self.runtime.group_config.cachito.version is not Missing:
+                remote_sources_version = self.runtime.group_config.cachito.version
+            else:
+                # https://spaces.redhat.com/pages/viewpage.action?pageId=591269742
+                remote_sources_version = 1
+
+            config_overrides.update(
+                {
+                    'remote_sources_version': remote_sources_version,
+                    'remote_sources': [
+                        {
+                            'name': 'cachito-gomod-with-deps',  # The remote source name is always `cachito-gomod-with-deps` for backward compatibility even if gomod is not used.
+                            'remote_source': remote_source,
+                        },
+                    ],
+                }
+            )
+
+        if self.metadata.image_build_method is not Missing and self.metadata.image_build_method != "osbs2":
+            config_overrides['image_build_method'] = self.metadata.image_build_method
+
+        if arches:
+            config_overrides.setdefault('platforms', {})['only'] = arches
+
+        # Request OSBS to apply specified tags to the newly-built image as floating tags.
+        # See https://osbs.readthedocs.io/en/latest/users.html?highlight=tags#image-tags
+        #
+        # Include the UUID in the tags. This will allow other images being rebased
+        # to have a known tag to refer to this image if they depend on it - even
+        # before it is built.
+        floating_tags = {f"{version}.{self.runtime.uuid}"}
+        if self.runtime.assembly:
+            floating_tags.add(f"assembly.{self.runtime.assembly}")
+        vsplit = version.split(".")  # Split the version number: v4.3.4 => [ 'v4', '3, '4' ]
+        if len(vsplit) > 1:
+            floating_tags.add(f"{vsplit[0]}.{vsplit[1]}")
+        if len(vsplit) > 2:
+            floating_tags.add(f"{vsplit[0]}.{vsplit[1]}.{vsplit[2]}")
+        if self.metadata.config.additional_tags:
+            floating_tags |= set(self.metadata.config.additional_tags)
+        if floating_tags:
+            config_overrides["tags"] = sorted(floating_tags)
+
+        if not self.runtime.group_config.doozer_feature_gates.odcs_enabled and not self.runtime.odcs_mode:
+            # ODCS mode is not enabled
+            return config_overrides
+
+        odcs = self.config.odcs
+        if odcs is Missing:
+            # image yml doesn't have `odcs` field defined
+            if not self.runtime.group_config.doozer_feature_gates.odcs_aggressive:
+                # Doozer's odcs_aggressive feature gate is off, disable ODCS mode for this image
+                return config_overrides
+            self.logger.warning("Enforce ODCS auto mode because odcs_aggressive feature gate is on")
+
+        package_mode = odcs.packages.get('mode', 'auto')
+        valid_package_modes = ['auto', 'manual']
+        if package_mode not in valid_package_modes:
+            raise ValueError('odcs.packages.mode must be one of {}'.format(', '.join(valid_package_modes)))
+
+        # generate container.yaml content for ODCS
+        config = {}
+        if self.has_source():  # if upstream source provides container.yaml, load it.
+            source_container_yaml = os.path.join(self.source_path(), 'container.yaml')
+            if os.path.isfile(source_container_yaml):
+                with open(source_container_yaml, 'r') as scy:
+                    config = yaml.full_load(scy)
+
+        # ensure defaults
+        config.setdefault('compose', {}).setdefault('pulp_repos', True)
+
+        # create package list for ODCS, see https://osbs.readthedocs.io/en/latest/users.html#compose
+        if package_mode == 'auto':
+            if isinstance(config["compose"].get("packages"), list):
+                # container.yaml with packages was given from source
+                self.logger.info("Use ODCS package list from source")
+            else:
+                config["compose"]["packages"] = []  # empty list composes all packages from the current Koji target
+        elif package_mode == 'manual':
+            if not odcs.packages.list:
+                raise ValueError('odcs.packages.mode == manual but none specified in odcs.packages.list')
+            config["compose"]["packages"] = list(odcs.packages.list)
+
+        # apply overrides
+        config.update(config_overrides)
+        return config
+
+    def _detect_package_managers(self):
+        """Detect and return package managers used by the source
+        :return: a list of package managers
+        """
+        if not self.dg_path or not self.dg_path.is_dir():
+            raise FileNotFoundError(f"Distgit directory for image {self.name} hasn't been cloned.")
+        pkg_manager_files = {
+            "gomod": ["go.mod"],
+            "npm": ["npm-shrinkwrap.json", "package-lock.json"],
+            "pip": ["requirements.txt", "requirements-build.txt"],
+            "yarn": ["yarn.lock"],
+        }
+        pkg_managers: List[str] = []
+        for pkg_manager, files in pkg_manager_files.items():
+            if any(self.dg_path.joinpath(file).is_file() for file in files):
+                pkg_managers.append(pkg_manager)
+        return pkg_managers
+
+    def _write_cvp_owners(self):
+        """
+        The Container Verification Pipeline will notify image owners when their image is
+        not passing CVP tests. ART knows these owners and needs to write them into distgit
+        for CVP to find.
+        :return:
+        """
+        self.logger.debug("Generating cvp-owners.yml for {}".format(self.metadata.distgit_key))
+        with self.dg_path.joinpath('cvp-owners.yml').open('w', encoding="utf-8") as co:
+            if self.config.owners:  # Not missing and non-empty
+                # only spam owners on failure; ref. https://red.ht/2x0edYd
+                owners = {owner: "FAILURE" for owner in self.config.owners}
+                yaml.safe_dump(owners, co, default_flow_style=False)
+
+    def generate_repo_conf(self):
+        """
+        Generates a repo file in .oit/repo.conf
+        """
+
+        self.logger.debug("Generating repo file for Dockerfile {}".format(self.metadata.distgit_key))
+
+        # Make our metadata directory if it does not exist
+        util.mkdirs(self.dg_path.joinpath('.oit'))
+
+        repos = self.runtime.repos
+        enabled_repos = self.config.get('enabled_repos', [])
+        non_shipping_repos = self.config.get('non_shipping_repos', [])
+
+        for t in repos.repotypes:
+            with self.dg_path.joinpath('.oit', f'art-{t}.repo').open('w', encoding="utf-8") as rc:
+                content = repos.repo_file(t, enabled_repos=enabled_repos)
+                rc.write(content)
+
+        with self.dg_path.joinpath('content_sets.yml').open('w', encoding="utf-8") as rc:
+            rc.write(repos.content_sets(enabled_repos=enabled_repos, non_shipping_repos=non_shipping_repos))
+
+    def _read_master_data(self):
+        with Dir(self.distgit_dir):
+            self.org_image_name = None
+            self.org_version = None
+            self.org_release = None
+            # Read in information about the image we are about to build
+            dockerfile = os.path.join(Dir.getcwd(), 'Dockerfile')
+            if os.path.isfile(dockerfile):
+                dfp = DockerfileParser(path=dockerfile)
+                self.org_image_name = dfp.labels.get("name")
+                self.org_version = dfp.labels.get("version")
+                self.org_release = dfp.labels.get("release")  # occasionally no release given
+
+    def push_image(
+        self,
+        tag_list,
+        push_to_defaults,
+        additional_registries=[],
+        version_release_tuple=None,
+        push_late=False,
+        dry_run=False,
+        registry_config_dir=None,
+        filter_by_os=None,
+    ):
+        """
+        Pushes the most recent image built for this distgit repo. This is
+        accomplished by looking at the 'version' field in the Dockerfile or
+        the version_release_tuple argument and querying
+        brew for the most recent images built for that version.
+        :param tag_list: The list of tags to apply to the image (overrides default tagging pattern).
+        :param push_to_defaults: Boolean indicating whether group/image yaml defined registries should be pushed to.
+        :param additional_registries: A list of non-default registries (optional namespace included) to push the image to.
+        :param version_release_tuple: Specify a version/release to pull as the source (if None, the latest build will be pulled).
+        :param push_late: Whether late pushes should be included.
+        :param dry_run: Will only print the docker operations that would have taken place.
+        :return: Returns True if successful (exception otherwise)
+        """
+
+        # Late pushes allow certain images to be the last of a group to be
+        # pushed to mirrors. CI/CD systems may initiate operations based on the
+        # update a given image and all other images need to be in place
+        # when that special image is updated. The special images are there
+        # pushed "late"
+        # Actions that need to push all images need to push all images
+        # need to make two passes/invocations of this method: one
+        # with push_late=False and one with push_late=True.
+
+        is_late_push = False
+        if self.config.push.late is not Missing:
+            is_late_push = self.config.push.late
+
+        if push_late != is_late_push:
+            return (self.metadata.distgit_key, True)
+
+        push_names = []
+
+        if push_to_defaults:
+            push_names.extend(self.metadata.get_default_push_names())
+
+        push_names.extend(self.metadata.get_additional_push_names(additional_registries))
+
+        # Nothing to push to? We are done.
+        if not push_names:
+            return (self.metadata.distgit_key, True)
+
+        # get registry_config_json file must before with Dir(self.distgit_dir)
+        # so that relative path or env like DOCKER_CONFIG will not pointed to distgit dir.
+        registry_config_file = ''
+        if registry_config_dir is not None:
+            registry_config_file = util.get_docker_config_json(registry_config_dir)
+
+        with Dir(self.distgit_dir):
+            if version_release_tuple:
+                version = version_release_tuple[0]
+                release = version_release_tuple[1]
+            else:
+                # History
+                # We used to rely on the "release" label being set in the Dockerfile, but this is problematic for several reasons.
+                # (1) If 'release' is not set, OSBS will determine one automatically that does not conflict
+                #       with a pre-existing image build. This is extremely helpful since we don't have to
+                #       worry about bumping the release during refresh images. This means we generally DON'T
+                #       want the release label in the file and can't, therefore, rely on it being there.
+                # (2) People have logged into distgit before in order to bump the release field. This happening
+                #       at the wrong time breaks the build.
+
+                # If the version & release information was not specified,
+                # try to detect latest build from brew.
+                # Read in version information from the Distgit dockerfile
+                _, version, release = self.metadata.get_latest_build_info(complete_before_event=-1)
+
+            image_name_and_version = "%s:%s-%s" % (self.config.name, version, release)
+            brew_image_url = self.runtime.resolve_brew_image_url(image_name_and_version)
+
+            push_tags = list(tag_list)
+
+            # If no tags were specified, build defaults
+            if not push_tags:
+                push_tags = self.metadata.get_default_push_tags(version, release)
+
+            all_push_urls = []
+
+            for image_name in push_names:
+                try:
+                    repo = image_name.split('/', 1)
+
+                    action = "push"
+                    record = {
+                        "distgit_key": self.metadata.distgit_key,
+                        "distgit": '{}/{}'.format(self.metadata.namespace, self.metadata.name),
+                        "repo": repo,  # ns/repo
+                        "name": image_name,  # full registry/ns/repo
+                        "version": version,
+                        "release": release,
+                        "message": "Unknown failure",
+                        "tags": ", ".join(push_tags),
+                        "status": -1,
+                        # Status defaults to failure until explicitly set by success. This handles raised exceptions.
+                    }
+
+                    for push_tag in push_tags:
+                        # Collect next SRC=DEST input
+                        url = '{}:{}'.format(image_name, push_tag)
+                        self.logger.info("Adding '{}' to push list".format(url))
+                        all_push_urls.append("{}={}".format(brew_image_url, url))
+
+                    if dry_run:
+                        for push_url in all_push_urls:
+                            self.logger.info(
+                                'Would have tagged {} as {}'.format(brew_image_url, push_url.split('=')[1])
+                            )
+                        dr = "--dry-run=true"
+                    else:
+                        dr = ""
+
+                    if self.runtime.group_config.insecure_source:
+                        insecure = "--insecure=true"
+                    else:
+                        insecure = ""
+
+                    push_config_dir = os.path.join(self.runtime.working_dir, 'push')
+                    if not os.path.isdir(push_config_dir):
+                        try:
+                            os.mkdir(push_config_dir)
+                        except OSError as e:
+                            # File exists, and it's a directory,
+                            # another thread already created this dir, that's OK.
+                            if e.errno == errno.EEXIST and os.path.isdir(push_config_dir):
+                                pass
+                            else:
+                                raise
+
+                    push_config = os.path.join(push_config_dir, self.metadata.distgit_key)
+
+                    if os.path.isfile(push_config):
+                        # just delete it to ease creating new config
+                        os.remove(push_config)
+
+                    with io.open(push_config, 'w', encoding="utf-8") as pc:
+                        pc.write('\n'.join(all_push_urls))
+                    mirror_cmd = 'oc image mirror '
+                    if filter_by_os is not None:
+                        mirror_cmd += "--filter-by-os={}".format(filter_by_os)
+                    mirror_cmd += " {} {} --filename={}".format(dr, insecure, push_config)
+                    if registry_config_file != '':
+                        mirror_cmd += f" --registry-config={registry_config_file}"
+
+                    if dry_run:  # skip everything else if dry run
+                        continue
+                    else:
+                        for r in range(10):
+                            self.logger.info("Mirroring image [retry={}]".format(r))
+                            rc, out, err = exectools.cmd_gather(mirror_cmd, timeout=1800)
+                            if rc == 0:
+                                break
+                            self.logger.info("Error mirroring image -- retrying in 60 seconds.\n{}".format(err))
+                            time.sleep(60)
+
+                        lstate = (
+                            self.runtime.state[self.runtime.command] if self.runtime.command == 'images:push' else None
+                        )
+
+                        if rc != 0:
+                            if lstate:
+                                state.record_image_fail(lstate, self.metadata, 'Build failure', self.runtime.logger)
+                            # Unable to push to registry
+                            raise IOError('Error pushing image: {}'.format(err))
+                        else:
+                            if lstate:
+                                state.record_image_success(lstate, self.metadata)
+                            self.logger.info('Success mirroring image')
+
+                        record["message"] = "Successfully pushed all tags"
+                        record["status"] = 0
+
+                except Exception as ex:
+                    lstate = self.runtime.state[self.runtime.command] if self.runtime.command == 'images:push' else None
+                    if lstate:
+                        state.record_image_fail(lstate, self.metadata, str(ex), self.runtime.logger)
+
+                    record["message"] = "Exception occurred: %s" % str(ex)
+                    self.logger.info("Error pushing %s: %s" % (self.metadata.distgit_key, ex))
+                    raise
+
+                finally:
+                    self.runtime.record_logger.add_record(action, **record)
+
+            return (self.metadata.distgit_key, True)
+
+    def wait_for_build(self, who_is_waiting):
+        """
+        Blocks the calling thread until this image has been built by doozer or throws an exception if this
+        image cannot be built.
+        :param who_is_waiting: The caller's distgit_key (i.e. the waiting image).
+        :return: Returns when the image has been built or throws an exception if the image could not be built.
+        """
+        self.logger.info("Member waiting for me to build: %s" % who_is_waiting)
+        # This lock is in an acquired state until this image definitively succeeds or fails.
+        # It is then released. Child images waiting on this image should block here.
+        with self.build_lock:
+            if not self.build_status:
+                raise IOError(
+                    "Error building image: %s (%s was waiting)" % (self.metadata.qualified_name, who_is_waiting)
+                )
+            else:
+                self.logger.info("Member successfully waited for me to build: %s" % who_is_waiting)
+
+    def _set_wait_for(self, image_name, terminate_event):
+        image = self.runtime.resolve_image(image_name, False)
+        if image is None:
+            self.logger.info("Skipping image build since it is not included: %s" % image_name)
+            return
+        parent_dgr = image.distgit_repo()
+        parent_dgr.wait_for_build(self.metadata.qualified_name)
+        if terminate_event.is_set():
+            raise KeyboardInterrupt()
+
+    def wait_for_rebase(self, image_name, terminate_event):
+        """Wait for image_name to be rebased."""
+        image = self.runtime.resolve_image(image_name, False)
+        if image is None:
+            self.logger.info("Skipping image rebase since it is not included: %s" % image_name)
+            return
+        self.logger.info("Waiting for image rebase: %s" % image_name)
+        image.rebase_event.wait()
+        if not image.rebase_status:  # failed to rebase
+            raise IOError(f"Error rebasing image: {self.metadata.qualified_name} ({image_name} was waiting)")
+        self.logger.info("Image rebase for %s completed. Stop waiting." % image_name)
+        if terminate_event.is_set():
+            raise KeyboardInterrupt()
+
+    def build_container(
+        self,
+        profile,
+        push_to_defaults,
+        additional_registries,
+        terminate_event,
+        scratch=False,
+        retries=3,
+        realtime=False,
+        dry_run=False,
+        registry_config_dir=None,
+        filter_by_os=None,
+        comment_on_pr=False,
+    ):
+        """
+        This method is designed to be thread-safe. Multiple builds should take place in brew
+        at the same time. After a build, images are pushed serially to all mirrors.
+        DONT try to change cwd during this time, all threads active will change cwd
+        :param profile: image build profile
+        :param push_to_defaults: If default registries should be pushed to.
+        :param additional_registries: A list of non-default registries resultant builds should be pushed to.
+        :param terminate_event: Allows the main thread to interrupt the build.
+        :param scratch: Whether this is a scratch build. UNTESTED.
+        :param retries: Number of times the build should be retried.
+        :return: True if the build was successful
+        """
+        if self.org_image_name is None or self.org_version is None:
+            if not os.path.isfile(os.path.join(self.distgit_dir, 'Dockerfile')):
+                msg = 'No Dockerfile found in {}'.format(self.distgit_dir)
+            else:
+                msg = 'Unknown error loading Dockerfile information'
+
+            self.logger.info(msg)
+            state.record_image_fail(self.runtime.state[self.runtime.command], self.metadata, msg, self.runtime.logger)
+            return (self.metadata.distgit_key, False)
+
+        owners = list(self.config.owners) if self.config.owners and self.config.owners is not Missing else []
+        action = "build"
+        release = self.org_release if self.org_release is not None else '?'
+        record = {
+            "dir": self.distgit_dir,
+            "dockerfile": "%s/Dockerfile" % self.distgit_dir,
+            "distgit": self.metadata.distgit_key,
+            "image": self.org_image_name,
+            "owners": ",".join(owners),
+            "version": self.org_version,
+            "release": release,
+            "message": "Unknown failure",
+            "task_id": "n/a",
+            "task_url": "n/a",
+            "status": -1,
+            "push_status": -1,
+            "has_olm_bundle": 1 if self.config['update-csv'] is not Missing else 0,
+            # Status defaults to failure until explicitly set by success. This handles raised exceptions.
+        }
+
+        if self.runtime.local and release == '?':
+            target_tag = self.org_version
+        else:
+            target_tag = "{}-{}".format(self.org_version, release)
+        target_image = ":".join((self.org_image_name, target_tag))
+
+        try:
+            # If this image is FROM another group member, we need to wait on that group member
+            # Use .get('from',None) since from is a reserved word.
+            image_from = Model(self.config.get('from', None))
+            if image_from.member is not Missing:
+                self._set_wait_for(image_from.member, terminate_event)
+            for builder in image_from.get('builder', []):
+                if 'member' in builder:
+                    self._set_wait_for(builder['member'], terminate_event)
+
+            if self.runtime.assembly and isolate_assembly_in_release(release) != self.runtime.assembly:
+                # Assemblies should follow its naming convention
+                raise ValueError(f"Image {self.name} is not rebased with assembly '{self.runtime.assembly}'.")
+
+            # Allow an image to wait on an arbitrary image in the group. This is presently
+            # just a workaround for: https://projects.engineering.redhat.com/browse/OSBS-5592
+            if self.config.wait_for is not Missing:
+                self._set_wait_for(self.config.wait_for, terminate_event)
+
+            push_version, push_release = ('', '')
+            if self.runtime.local:
+                self.build_status = self._build_container_local(target_image, profile["repo_type"], realtime)
+                if not self.build_status:
+                    state.record_image_fail(
+                        self.runtime.state[self.runtime.command], self.metadata, 'Build failure', self.runtime.logger
+                    )
+                else:
+                    state.record_image_success(self.runtime.state[self.runtime.command], self.metadata)
+                return (self.metadata.distgit_key, self.build_status)  # do nothing more since it's local only
+            else:
+
+                def wait(n):
+                    self.logger.info("Async error in image build thread [attempt #{}]".format(n + 1))
+                    # No need to retry if the failure will just recur
+                    error = self._detect_permanent_build_failures(self.runtime.group_config.image_build_log_scanner)
+                    if error is not None:
+                        for match in re.finditer("No package (.*) available", error):
+                            self._add_missing_pkgs(match.group(1))
+                        raise exectools.RetryException(
+                            "Saw permanent error in build logs:\n{}\nWill not retry after {} failed attempt(s)".format(
+                                error, n + 1
+                            ),
+                        )
+                    # Brew does not handle an immediate retry correctly, wait
+                    # before trying another build, terminating if interrupted.
+                    if terminate_event.wait(timeout=5 * 60):
+                        raise KeyboardInterrupt()
+
+                if len(self.metadata.targets) > 1:
+                    # FIXME: Currently we don't really support building images against multiple targets,
+                    # or we would overwrite the image tag when pushing to the registry.
+                    # `targets` is defined as an array just because we want to keep consistency with RPM build.
+                    raise DoozerFatalError("Building images against multiple targets is not currently supported.")
+
+                if self.metadata.image_build_method != "osbs2":
+                    raise DoozerFatalError(
+                        f"Do not understand image build method {self.metadata.image_build_method}. Only osbs2 exists"
+                    )
+                osbs2 = OSBS2Builder(self.runtime, scratch=scratch, dry_run=dry_run)
+                try:
+                    task_id, task_url, build_info = asyncio.run(osbs2.build(self.metadata, profile, retries=retries))
+                    record["task_id"] = task_id
+                    record["task_url"] = task_url
+                    if build_info:
+                        record["nvrs"] = build_info["nvr"]
+                    if not dry_run:
+                        self.update_build_db(True, task_id=task_id, scratch=scratch)
+                        self.update_konflux_db(
+                            build_info=build_info,
+                            outcome=KonfluxBuildOutcome.SUCCESS,
+                            build_pipeline_url=task_url,
+                            scratch=scratch,
+                        )
+
+                        if comment_on_pr and self.runtime.assembly == "stream":
+                            try:
+                                comment_on_pr_obj = CommentOnPr(
+                                    distgit_dir=self.distgit_dir,
+                                    nvr=build_info["nvr"],
+                                    build_id=build_info["id"],
+                                    distgit_name=self.metadata.name,
+                                )
+                                comment_on_pr_obj.run()
+                            except Exception as e:
+                                self.logger.error(
+                                    f"Error commenting on PR for build task id {task_id} for distgit"
+                                    f"{self.metadata.name}: {e}"
+                                )
+                        if not scratch:
+                            push_version = build_info["version"]
+                            push_release = build_info["release"]
+                except OSBS2BuildError as build_err:
+                    record["task_id"], record["task_url"] = build_err.task_id, build_err.task_url
+                    if build_err.task_id is not None:
+                        with self.runtime.shared_koji_client_session() as api:
+                            task_info = api.getTaskInfo(build_err.task_id)
+                            task_end_time = task_info['completion_time']
+                            task_start_time = task_info['create_time']
+                            build_err.end_time = task_end_time
+                            build_err.start_time = task_start_time
+
+                    if not dry_run:
+                        self.update_build_db(False, task_id=build_err.task_id, scratch=scratch)
+                        self.update_konflux_db(
+                            build_info=build_err,
+                            outcome=KonfluxBuildOutcome.FAILURE,
+                            build_pipeline_url=build_err.task_url,
+                            scratch=scratch,
+                        )
+                    raise
+            record["message"] = "Success"
+            record["status"] = 0
+            self.build_status = True
+
+        except (Exception, KeyboardInterrupt):
+            tb = traceback.format_exc()
+            record["message"] = "Exception occurred:\n{}".format(tb)
+            self.logger.info("Exception occurred during build:\n{}".format(tb))
+            # This is designed to fall through to finally. Since this method is designed to be
+            # threaded, we should not throw an exception; instead return False.
+        finally:
+            # Regardless of success, allow other images depending on this one to progress or fail.
+            self.build_lock.release()
+
+        self.push_status = True  # if if never pushes, the status is True
+        if not scratch and self.build_status and (push_to_defaults or additional_registries):
+            # If this is a scratch build, we aren't going to be pushing. We might be able to determine the
+            # image name by parsing the build log, but not worth the effort until we need scratch builds.
+            # The image name for a scratch build looks something like:
+            # brew-pulp-docker01.web.prod.ext.phx2.redhat.com:8888/openshift3/ose-base:rhaos-3.7-rhel-7-docker-candidate-16066-20170829214444
+
+            # To ensure we don't overwhelm the system building, pull & push synchronously
+            with self.runtime.mutex:
+                self.push_status = False
+                try:
+                    self.push_image(
+                        [],
+                        push_to_defaults,
+                        additional_registries,
+                        version_release_tuple=(push_version, push_release),
+                        registry_config_dir=registry_config_dir,
+                        filter_by_os=filter_by_os,
+                    )
+                    self.push_status = True
+                except Exception as push_e:
+                    self.logger.info("Error during push after successful build: %s" % str(push_e))
+                    self.push_status = False
+
+        record['push_status'] = '0' if self.push_status else '-1'
+
+        self.runtime.record_logger.add_record(action, **record)
+        lstate = self.runtime.state[self.runtime.command]
+        if not (self.build_status and self.push_status):
+            state.record_image_fail(lstate, self.metadata, 'Build failure', self.runtime.logger)
+        else:
+            state.record_image_success(lstate, self.metadata)
+        return (self.metadata.distgit_key, self.build_status and self.push_status)
+
+    def _build_container_local(self, target_image, repo_type, realtime=False):
+        """
+        The part of `build_container` which actually starts the build,
+        separated for clarity. Local build version.
+        """
+
+        if self.metadata.image_build_method == 'imagebuilder':
+            builder = 'imagebuilder -mount '
+        else:
+            builder = 'podman build -v '
+
+        cmd = builder
+        self.logger.info("Building image: %s" % target_image)
+        cmd += '{dir}/.oit/art-{repo_type}.repo:/etc/yum.repos.d/{repo_type}.repo -t {name}{tag} -t {name}:latest .'
+
+        name_split = target_image.split(':')
+        name = name_split[0]
+        tag = None
+        if len(name_split) > 1:
+            tag = name_split[1]
+
+        args = {
+            'dir': self.distgit_dir,
+            'repo_type': repo_type,
+            'name': name,
+            'tag': ':{}'.format(tag) if tag else '',
+        }
+
+        cmd = cmd.format(**args)
+
+        with Dir(self.distgit_dir):
+            self.logger.info(cmd)
+            rc, out, err = exectools.cmd_gather(cmd, realtime=True)
+
+            if rc != 0:
+                self.logger.error("Error running {}: out={}  ; err={}".format(builder, out, err))
+                return False
+
+            self.logger.debug(out + '\n\n' + err)
+
+            self.logger.info("Successfully built image: {}".format(target_image))
+        return True
+
+    def update_build_db(self, success_flag, task_id=None, scratch=False):
+        if scratch:
+            return
+
+        if not self.runtime.db:
+            self.logger.error('Database connection is not initialized, skipping writing record.')
+            return
+
+        with Dir(self.distgit_dir):
+            commit_sha = exectools.cmd_assert('git rev-parse HEAD')[0].strip()[:8]
+            invoke_ts = str(int(round(time.time() * 1000)))
+            invoke_ts_iso = self.runtime.timestamp()
+
+            with self.runtime.db.record('build', metadata=self.metadata):
+                Record.set('build.time.unix', invoke_ts)
+                Record.set('build.time.iso', invoke_ts_iso)
+                Record.set('dg.commit', commit_sha)
+                Record.set('brew.task_state', 'success' if success_flag else 'failure')
+                Record.set('brew.task_id', task_id)
+
+                dfp = DockerfileParser(str(Dir.getpath().joinpath('Dockerfile')))
+                for label_name in ['version', 'release', 'name', 'com.redhat.component']:
+                    Record.set(f'label.{label_name}', dfp.labels.get(label_name, ''))
+
+                Record.set('label.version', dfp.labels.get('version', ''))
+                Record.set('label.release', dfp.labels.get('release', ''))
+
+                # Ignore io.openshift labels other than the ones specified below
+                for label in [
+                    'io.openshift.build.source-location',
+                    'io.openshift.build.commit.id',
+                    'io.openshift.build.commit.url',
+                    'io.openshift.release.operator',
+                    'io.openshift.build.versions',
+                ]:
+                    if label in dfp.labels:
+                        Record.set(f'label.{label}', dfp.labels[label])
+
+                for k, v in dfp.envs.items():
+                    if k.startswith('KUBE_') or k.startswith('OS_'):
+                        Record.set(f'env.{k}', dfp.envs.get(k, ''))
+
+                Record.set('incomplete', False)
+                if task_id is not None:
+                    try:
+                        with self.runtime.shared_koji_client_session() as kcs:
+                            task_result = kcs.getTaskResult(task_id, raise_fault=False)
+                            """
+                            success example result:
+                            { 'koji_builds': ['1182060'],    # build_id created by task
+                              'repositories': [
+                                 'registry-proxy.engineering.redhat.com/rh-osbs/openshift-ose-ose-metering-ansible-operator-metadata:latest',
+                                 ...
+                               ]
+                            }
+                            fail example result:
+                            { 'faultCode': 1018,
+                              'faultString': 'log entries',
+                            }
+                            """
+                            Record.set('brew.faultCode', task_result.get('faultCode', 0))
+                            build_ids = task_result.get('koji_builds', [])
+                            Record.set('brew.build_ids', ','.join(build_ids))  # comma delimited list if > 1
+                            image_shas = []
+                            for idx, build_id in enumerate(build_ids):
+                                build_info = Model(
+                                    kcs.getBuild(int(build_id))
+                                )  # Example: https://gist.github.com/jupierce/fe05f8fe310fdf8aa8b5c5991cf21f05
+
+                                main_sha = (
+                                    build_info.extra.typeinfo.image.index.digests
+                                )  # Typically contains manifest list sha
+                                if main_sha:
+                                    image_shas.extend(main_sha.values())
+
+                                for build_datum in ['id', 'source', 'version', 'nvr', 'name', 'release', 'package_id']:
+                                    Record.set(f'build.{idx}.{build_datum}', build_info.get(build_datum, ''))
+
+                                archives = ListModel(
+                                    kcs.listArchives(int(build_id))
+                                )  # https://gist.github.com/jupierce/6f27ebf35e88ed5a9a2c8e66fdcd34b4
+                                for archive in archives:
+                                    archive_shas = archive.extra.docker.digests
+                                    if archive_shas:
+                                        image_shas.extend(archive_shas.values())
+
+                            Record.set('brew.image_shas', ','.join(image_shas))
+
+                    except:
+                        Record.set('incomplete', True)
+                        traceback.print_exc()
+                        self.logger.error(f'Unable to extract brew task information for {task_id}')
+
+    def get_installed_packages(self, image_pullspec) -> list:
+        bbii = BrewBuildRecordInspector(self.runtime, image_pullspec)
+        installed_packages_dict = bbii.get_all_installed_package_build_dicts()
+        return sorted([p['nvr'] for p in installed_packages_dict.values()])
+
+    def update_konflux_db(self, build_info, outcome, build_pipeline_url='', scratch=False):
+        if scratch:
+            return
+
+        if not self.runtime.konflux_db:
+            self.logger.warning('Konflux DB connection is not initialized, not writing build record to the Konflux DB.')
+            return
+
+        self.runtime.konflux_db.bind(KonfluxBuildRecord)
+        try:
+            dfp = DockerfileParser(str(self.dg_path.joinpath('Dockerfile')))
+            source_repo = dfp.labels['io.openshift.build.source-location']
+            commitish = dfp.labels['io.openshift.build.commit.id']
+            component_name = dfp.labels['com.redhat.component']
+            version = dfp.labels['version']
+            release = dfp.labels['release']
+            nvr = "-".join([component_name, version, release])
+
+            _, rebase_repo_url, _ = gather_git(['-C', self.distgit_dir, 'remote', 'get-url', 'origin'])
+            _, rebase_commitish, _ = gather_git(['-C', self.distgit_dir, 'rev-parse', 'HEAD'])
+
+            build_record_params = {
+                'name': self.metadata.distgit_key,
+                'group': self.runtime.group,
+                'assembly': self.runtime.assembly,
+                'nvr': nvr,
+                'version': version,
+                'release': release,
+                'el_target': f'el{isolate_el_version_in_release(release)}',
+                'embargoed': is_release_embargoed(release, self.runtime.build_system),
+                'arches': self.metadata.get_arches(),
+                'source_repo': source_repo,
+                'commitish': commitish,
+                'rebase_repo_url': convert_remote_git_to_https(rebase_repo_url),
+                'rebase_commitish': rebase_commitish.strip(),
+                'artifact_type': ArtifactType.IMAGE,
+                'engine': Engine.BREW,
+                'outcome': outcome,
+                'art_job_url': os.getenv('BUILD_URL', 'n/a'),
+                'build_pipeline_url': build_pipeline_url if build_pipeline_url else '',
+                'pipeline_commit': 'n/a',
+            }
+
+            if outcome == KonfluxBuildOutcome.FAILURE:
+                self.logger.info('Storing failed Brew build info for %s in Konflux DB', self.metadata.name)
+                build_record_params.update(
+                    {
+                        'start_time': build_info.start_time,
+                        'end_time': build_info.end_time,
+                    }
+                )
+
+            else:
+                self.logger.info('Storing Brew build info for %s in Konflux DB', build_info['nvr'])
+                image_pullspec = build_info['extra']['image']['index']['pull'][0]
+
+                build_record_params.update(
+                    {
+                        'installed_packages': self.get_installed_packages(image_pullspec),
+                        'installed_rpms': [],
+                        'parent_images': [
+                            build['nvr'] for build in build_info['extra']['image']['parent_image_builds'].values()
+                        ],
+                        'start_time': datetime.strptime(build_info['start_time'], '%Y-%m-%d %H:%M:%S.%f'),
+                        'end_time': datetime.strptime(build_info['completion_time'], '%Y-%m-%d %H:%M:%S.%f'),
+                        'image_pullspec': image_pullspec,
+                        'image_tag': build_info['extra']['image']['index']['tags'][0],
+                        'build_id': str(build_info['id']),
+                    }
+                )
+
+            build_record = KonfluxBuildRecord(**build_record_params)
+            self.runtime.konflux_db.add_build(build_record)
+            self.logger.info('Brew build info stored successfully')
+
+        except Exception:
+            self.logger.exception('Failed writing record to the konflux DB')
+
+    def _logs_dir(self, task_id=None):
+        segments = [self.runtime.brew_logs_dir, self.metadata.distgit_key]
+        if task_id is not None:
+            segments.append("noarch-" + task_id)
+        return os.path.join(*segments)
+
+    def _add_missing_pkgs(self, pkg_name):
+        """
+        add missing packages to runtime.missing_pkgs set
+        :param pkg_name: Missing packages like: No package (.*) available
+        """
+        with self.runtime.mutex:
+            self.runtime.missing_pkgs.add("{} image is missing package {}".format(self.metadata.distgit_key, pkg_name))
+
+    def _detect_permanent_build_failures(self, scanner):
+        """
+        check logs to determine if this container build failed for a known non-flake reason
+        :param scanner: Model object with fields
+                        "files" (list of log files to search)
+                        "matches" (list of compiled regexen for matching a line in the log)
+        """
+        if not scanner or not scanner.matches or not scanner.files:
+            self.logger.debug("Log file scanning not specified; skipping")
+            return None
+        logs_dir = self._logs_dir()
+        try:
+            # find the most recent subdir, which should contain logs for the latest build task
+            task_dirs = [os.path.join(logs_dir, d) for d in os.listdir(logs_dir)]
+            task_dirs = [d for d in task_dirs if os.path.isdir(d)]
+            if not task_dirs:
+                self.logger.info("No task logs found under {}; cannot analyze logs".format(logs_dir))
+                return None
+            latest_dir = max(task_dirs, key=os.path.getmtime)
+
+            # check the log files for recognizable problems
+            found_problems = []
+            for log_file in os.listdir(latest_dir):
+                if log_file not in scanner.files:
+                    continue
+                with io.open(os.path.join(latest_dir, log_file), encoding="utf-8") as log:
+                    for line in log:
+                        for regex in scanner.matches:
+                            match = regex.search(line)
+                            if match:
+                                found_problems.append(log_file + ": " + match.group(0))
+            if found_problems:
+                found_problems.insert(0, "Problem indicators found in logs under " + latest_dir)
+                return "\n".join(found_problems)
+        except OSError as e:
+            self.logger.warning("Exception while trying to analyze build logs in {}: {}".format(logs_dir, e))
+
+    @staticmethod
+    def _mangle_pkgmgr(cmd):
+        # alter the arg by splicing its content
+        def splice(pos, replacement):
+            return cmd[: pos[0]] + replacement + cmd[pos[1] :]
+
+        changed = False  # were there changes aside from whitespace?
+
+        # build a list of nodes we may want to alter from the AST
+        cmd_nodes = []
+
+        def append_nodes_from(node):
+            if node.kind in ["list", "compound"]:
+                sublist = node.parts if node.kind == "list" else node.list
+                for subnode in sublist:
+                    append_nodes_from(subnode)
+            elif node.kind in ["operator", "command"]:
+                cmd_nodes.append(node)
+
+        # remove dockerfile directive options that bashlex doesn't parse (e.g "RUN --mount=foobar")
+        # https://docs.docker.com/reference/dockerfile/#run
+        docker_cmd_options = []
+        for word in cmd.split():
+            if word.startswith("--"):
+                docker_cmd_options.append(word)
+                cmd = cmd.replace(word, "")
+            else:
+                break
+
+        try:
+            append_nodes_from(bashlex.parse(cmd)[0])
+        except bashlex.errors.ParsingError as e:
+            raise IOError("Error while parsing Dockerfile RUN command:\n{}\n{}".format(cmd, e))
+
+        # note: make changes working back from the end so that positions to splice don't change
+        for subcmd in reversed(cmd_nodes):
+            if subcmd.kind == "operator":
+                # we lose the line breaks in the original dockerfile,
+                # so try to format nicely around operators -- more readable git diffs.
+                cmd = splice(subcmd.pos, "\\\n " + subcmd.op)
+                continue  # not "changed" logically however
+
+            # replace package manager config with a no-op
+            if re.search(r'(^|/)(microdnf\s+|dnf\s+|yum-)config-manager$', subcmd.parts[0].word):
+                cmd = splice(subcmd.pos, ": 'removed yum-config-manager'")
+                changed = True
+                continue
+            if (
+                re.search(r'(^|/)(micro)?dnf$', subcmd.parts[0].word)
+                and len(subcmd.parts) > 1
+                and subcmd.parts[1].word == "config-manager"
+            ):
+                cmd = splice(subcmd.pos, ": 'removed dnf config-manager'")
+                changed = True
+                continue
+
+            # clear repo options from yum and dnf commands
+            if not re.search(r'(^|/)(yum|dnf|microdnf)$', subcmd.parts[0].word):
+                continue
+            next_word = None
+            for word in reversed(subcmd.parts):
+                if word.kind != "word":
+                    next_word = None
+                    continue
+
+                # seek e.g. "--enablerepo=foo" or "--disablerepo bar"
+                match = re.match(r'--(en|dis)ablerepo(=|$)', word.word)
+                if match:
+                    if next_word and match.group(2) != "=":
+                        # no "=", next word is the repo so remove it too
+                        cmd = splice(next_word.pos, "")
+                    cmd = splice(word.pos, "")
+                    changed = True
+                next_word = word
+
+            # note: there are a number of ways to defeat this logic, for instance by
+            # wrapping commands/args in quotes, or with commands that aren't valid
+            # to begin with. let's not worry about that; it need not be invulnerable.
+
+        if docker_cmd_options:
+            cmd = " ".join(docker_cmd_options) + " " + cmd
+        return changed, cmd
+
+    def _clean_repos(self, dfp):
+        """
+        Remove any calls to yum --enable-repo or
+        yum-config-manager in RUN instructions
+        """
+        for entry in reversed(dfp.structure):
+            if entry['instruction'] == 'RUN':
+                changed, new_value = self._mangle_pkgmgr(entry['value'])
+                if changed:
+                    dfp.add_lines_at(entry, "RUN " + new_value, replace=True)
+
+    def _resolve_image_from_upstream_parent(self, original_parent: str, dfp: DockerfileParser) -> Optional[str]:
+        """
+        Given an upstream image (CI) pullspec, find a matching entry in streams.yml by comparing the rhel version,
+        and the builder X.Y fields. If no match is found, return None
+        :param original_parent: The upstream image e.g.
+        registry.ci.openshift.org/ocp/builder:rhel-8-golang-1.20-openshift-4.15
+        :param dfp: DockerfileParser object for the image
+
+        Example: as of 3/5/2024, registry.ci.openshift.org/ocp/builder:rhel-9-golang-1.21-openshift-4.16 should match
+        openshift/golang-builder:v1.21.3-202401221732.el9.g00c615b as defined for the rhel-9-golang stream
+        """
+
+        try:
+            self.logger.debug('Retrieving image info for image %s', original_parent)
+            labels = util.oc_image_info_for_arch(original_parent)['config']['config']['Labels']
+
+            # Get builder X.Y
+            major, minor, _ = extract_version_fields(labels['version'])
+
+            # Get builder EL version
+            el_version = isolate_el_version_in_release(labels['release'])
+
+            # Get expected stream name
+            for stream in self.runtime.streams.values():
+                image = stream['image']
+                image_tag = image.split(':')[-1]
+
+                # Compare builder X.Y
+                stream_major, stream_minor, _ = extract_version_fields(image_tag)
+                if stream_major != major or stream_minor != minor:
+                    continue
+
+                # Compare el version
+                if isolate_el_version_in_release(image_tag) == el_version:
+                    # We found a match
+                    return image
+
+        except (ValueError, ChildProcessError) as e:
+            # We could get:
+            #   - a ChildProcessError when the upstream equivalent is not found
+            #   - a ValueError when 'version' or 'release' labels are undefined
+            # In all of the above, we'll just do typical stream resolution
+
+            self.logger.warning(f'Could not match upstream parent {original_parent}: {e}')
+
+        # If we got here, we couldn't match upstream so add a warning in the Dockerfile, and return None
+        dfp.add_lines_at(
+            0,
+            "",
+            "# Failed matching upstream equivalent, ART configuration was used to rebase parent images",
+            "",
+        )
+
+        return None
+
+    def _mapped_image_from_member(self, image, original_parent, dfp):
+        base = image.member
+        from_image_metadata = self.runtime.resolve_image(base, False)
+
+        # Non-builder upstream images (e.g. ocp/4.16:<component> which are not based on
+        # streams.yml entries are usually CI image builds. CI images are the output of
+        # Test Platform cluster builds that are not performed in brew/osbs.
+        # That said, the CI builds typically layer content on top of base images
+        # that ultimately derive from ART images like `openshift-base-rhel?` or
+        # `openshift-enterprise-base...` which ARE built in brew.
+        # In other words, ART creates base images, which serve as parent images
+        # for component builds in CI and those components are promoted by CI
+        # into the ocp/4.x imagestream.
+        # It is these non-nightly component images that upstream Dockerfiles are
+        # reconciled with.
+        # So, if ART inspects these images and tries to determine what brew builds
+        # they are associated with, the logic would detect the original ART base image
+        # and NOT the component the upstream image actually represented .
+        # For example, registry.ci.openshift.org/ocp/4.16:cli has the NVR
+        # openshift-enterprise-base-container-v4.16.0-....
+        # instead of an openshift-enterprise-cli-* NVR.
+        # In short, we cannot treat FROM entries like this as canonical.
+        # if self.should_match_upstream:
+        #     parent = self._resolve_parent(original_parent, dfp)
+        #     if parent:
+        #         return parent
+
+        if from_image_metadata is None:
+            if not self.runtime.ignore_missing_base:
+                raise IOError(
+                    "Unable to find base image metadata [%s] in included images. "
+                    "Use --ignore-missing-base to ignore." % base,
+                )
+            elif self.runtime.latest_parent_version or self.runtime.assembly_basis_event:
+                # If there is a basis event, we must look for latest; we can't just persist
+                # what is in the Dockerfile. It has to be constrained to the brew event.
+                self.logger.info(
+                    '[{}] parent image {} not included. Looking up FROM tag.'.format(self.config.name, base)
+                )
+                base_meta = self.runtime.late_resolve_image(base)
+                _, v, r = base_meta.get_latest_build_info()
+                if is_release_embargoed(r, self.runtime.build_system):  # latest parent is embargoed
+                    self.metadata.private_fix = True  # this image should also be embargoed
+                return "{}:{}-{}".format(base_meta.config.name, v, r)
+            # Otherwise, the user is not expecting the FROM field to be updated in this Dockerfile.
+            else:
+                return original_parent
+        else:
+            if self.runtime.local:
+                return '{}:latest'.format(from_image_metadata.config.name)
+            else:
+                if from_image_metadata.private_fix is None:  # This shouldn't happen.
+                    raise ValueError(
+                        f"Parent image {base} doesn't have .p? flag determined. This indicates a bug in Doozer.",
+                    )
+                # If the parent we are going to build is embargoed, this image should also be embargoed
+                if from_image_metadata.private_fix:
+                    self.metadata.private_fix = from_image_metadata.private_fix
+
+                # Everything in the group is going to be built with the uuid tag, so we must
+                # assume that it will exist for our parent.
+                return f"{from_image_metadata.config.name}:{self.uuid_tag}"
+
+    def _mapped_image_for_assembly_build(self, parent_images, i):
+        # When rebasing for an assembly build, we want to use the same parent image
+        # as our corresponding basis image. To that end, we cannot rely on a stream.yml
+        # entry -- which usually refers to a floating tag. Instead, we look up the latest
+        # build of this image, relative to the assembly basis event, in brew. It will have
+        # information on the exact parent images used at the time. We want to use that
+        # specific sha.
+        # If you are here trying to figure out how to change this behavior, you should
+        # consider using 'from!:' in the assembly metadata for this component. This will
+        # allow you to fully pin the parent images (e.g. {'from!:' ['image': <pullspec>] })
+        latest_build = self.metadata.get_latest_brew_build(default=None)
+        assembly_msg = (
+            f'{self.metadata.distgit_key} in assembly {self.runtime.assembly} '
+            f'with basis event {self.runtime.assembly_basis_event}'
+        )
+        if not latest_build:
+            raise IOError(f'Unable to find latest build for {assembly_msg}')
+        build_model = Model(dict_to_model=latest_build)
+        if build_model.extra.image.parent_images is Missing:
+            raise IOError(f'Unable to find latest build parent images in {latest_build} for {assembly_msg}')
+        elif len(build_model.extra.image.parent_images) != len(parent_images):
+            raise IOError(
+                f'Did not find the expected cardinality ({len(parent_images)} '
+                f'of parent images in {latest_build} for {assembly_msg}',
+            )
+
+        # build_model.extra.image.parent_images is an array of tags
+        # (entries like openshift/golang-builder:rhel_8_golang_1.15).
+        # We can't use floating tags for this, so we need to look up those tags in parent_image_builds,
+        # which is also in the extras data. Example parent_image_builds:
+        # {
+        #     "registry-proxy.engineering.redhat.com/rh-osbs/openshift-base-rhel8:v4.6.0.20210528.150530": {
+        #         "id": 1616717,
+        #         "nvr": "openshift-base-rhel8-container-v4.6.0-202105281403.p0.git.f17f552"
+        #     },
+        #     "registry-proxy.engineering.redhat.com/rh-osbs/openshift-golang-builder:rhel_8_golang_1.15": {
+        #         "id": 1542268,
+        #         "nvr": "openshift-golang-builder-container-v1.15.7-202103191923.el8"
+        #     }
+        # }
+        # Note this map actually gets us to an NVR.
+        # Example latest_build return: https://gist.github.com/jupierce/57e99b80572336e8652df3c6be7bf664
+        target_parent_name = build_model.extra.image.parent_images[
+            i
+        ]  # Which parent are looking for? e.g. 'openshift/golang-builder:rhel_8_golang_1.15'
+        tag_pullspec = self.runtime.resolve_brew_image_url(
+            target_parent_name
+        )  # e.g. registry-proxy.engineering.redhat.com/rh-osbs/openshift-golang-builder:rhel_8_golang_1.15
+        parent_build_info = build_model.extra.image.parent_image_builds[tag_pullspec]
+        if parent_build_info is Missing:
+            raise IOError(
+                f'Unable to resolve parent {target_parent_name} in {latest_build} for {assembly_msg}; tried {tag_pullspec}'
+            )
+        parent_build_nvr = parse_nvr(parent_build_info.nvr)
+        # Hang in there.. this is a long dance. Now that we know the NVR, we can construct
+        # a truly unique pullspec.
+        if '@' in tag_pullspec:
+            unique_pullspec = tag_pullspec.rsplit('@', 1)[0]  # remove the sha
+        elif ':' in tag_pullspec:
+            unique_pullspec = tag_pullspec.rsplit(':', 1)[0]  # remove the tag
+        else:
+            raise IOError(f'Unexpected pullspec format: {tag_pullspec}')
+        # qualify with the pullspec using nvr as a tag; e.g.
+        # registry-proxy.engineering.redhat.com/rh-osbs/openshift-golang-builder:v1.15.7-202103191923.el8'
+        unique_pullspec += f':{parent_build_nvr["version"]}-{parent_build_nvr["release"]}'
+        return unique_pullspec
+
+    def _mapped_image_from_stream(self, image, original_parent, dfp):
+        stream = self.runtime.resolve_stream(image.stream)
+
+        if not self.should_match_upstream:
+            # Do typical stream resolution.
+            return stream.image
+
+        # canonical_builders_from_upstream flag is either True, or 'auto' and we are before feature freeze
+        image = self._resolve_image_from_upstream_parent(original_parent, dfp)
+        if image:
+            return image
+
+        # Didn't find a match in streams.yml: do typical stream resolution
+        return stream.image
+
+    def _determine_art_rhel_version(self):
+        """
+        Then canonical builders feature is enabled, we will try to match upstream desired builders and base images.
+        To do so, we need to compare upstream and ART intended RHEL version: if they match, just apply upstream FROM
+        clauses; if they don't, ART needs to have an alternative_upstream config stanza in the image configuration.
+        """
+
+        branch = self.config.distgit.branch
+        if branch is Missing:
+            self.logger.warning('Distgit branch undefined for %s, defaulting to group config', self.name)
+            branch = self.runtime.group_config.branch
+        return isolate_rhel_major_from_distgit_branch(branch)
+
+    def _determine_upstream_rhel_version(self, source_path) -> Optional[int]:
+        """
+        The upstream indended RHEL version is obtained from the last build layer as defined in the Dockerfile.
+
+        Given a pullspec such as registry.ci.openshift.org/ocp/4.15:base-rhel9, use "oc image info" and Brew API
+        to determine the RHEL version. Use an in-memory caching mechanism to store the pullspec/rhel version pair
+        within the same Doozer execution.
+
+        Return either an integer representing the RHEL major version, or None if something went wrong.
+        """
+        df_name = self.config.content.source.dockerfile
+        if not df_name:
+            df_name = 'Dockerfile'
+        subdir = self.config.content.source.path
+        if not subdir:
+            subdir = '.'
+        df_path = str(pathlib.Path(source_path).joinpath(subdir).joinpath(df_name))
+
+        version = None
+        try:
+            with open(df_path) as f:
+                dfp = DockerfileParser(fileobj=f)
+                parent_images = dfp.parent_images
+
+            # We will infer the rhel version from the last build layer in the upstream Dockerfile
+            last_layer_pullspec = parent_images[-1]
+            image_labels = util.oc_image_info_for_arch(last_layer_pullspec)['config']['config']['Labels']
+            if 'version' not in image_labels or 'release' not in image_labels:
+                # This does not appear to be a brew image. We can't determine RHEL.
+                return None
+
+            bbii = BrewBuildRecordInspector(self.runtime, last_layer_pullspec)
+            version = bbii.get_rhel_base_version()
+
+        except Exception as e:
+            # Swallow exception as this is not fatal. We just can't determine the
+            # correct canonical upstream RHEL version to use.
+            self.logger.warning('Failed determining upstream rhel version: %s', e)
+
+        if not version:
+            self.logger.warning('Could not determine rhel version from upstream %s', self.name)
+
+        return version
+
+    def _update_image_config(self):
+        """
+        If we're trying to match upstream, check if there's a 'when' clause in image alternative_config field
+        that matches upstream RHEL version. If so, merge the 'when' clause content with the main image config
+        """
+
+        if not self.upstream_intended_el_version:
+            # Could not determine upstream rhel version: do not match upstream builders
+            self.logger.warning('Unknown upstream rhel version: will not merge configs')
+            self.should_match_upstream = False
+            return
+
+        elif self.upstream_intended_el_version == self.art_intended_el_version:
+            # ART/upstream el versions match: do not merge configs, but match upstream builders
+            self.logger.warning('ART and upstream intended rhel version match: will not merge configs')
+            self.should_match_upstream = True
+            return
+
+        # Check if there is an alternative configuration matching upstream RHEL version
+        alt_configs = self.config.alternative_upstream
+        matched = False
+        for alt_config in alt_configs or []:
+            if alt_config['when'] == f'el{self.upstream_intended_el_version}':
+                self.logger.info(
+                    'Merging rhel%s alternative config to match upstream', self.upstream_intended_el_version
+                )
+                self.config = Model(deep_merge(self.config.primitive(), alt_config.primitive()))
+                matched = True
+                break
+
+        if not matched:
+            # there's no 'when' clause matching upstream intended RHEL version, will not merge configs
+            # Besides, ART and upstream intended rhel versions do not match, therefore fallback to default ART's config
+            self.logger.warning(
+                '"%s" version is not mapped in alternative_config, will not merge configs',
+                self.upstream_intended_el_version,
+            )
+            self.should_match_upstream = False
+
+        else:
+            # We found an alternative_upstream config stanza. We can match upstream
+            self.should_match_upstream = True
+            # Distgit branch must be changed to track the alternative one
+            self.branch = self.config.distgit.branch
+            # Also update metadata config
+            self.metadata.config = self.config
+            self.metadata.targets = self.metadata.determine_targets()
+
+    def rebase_from_directives(self, dfp):
+        image_from = Model(self.config.get('from', None))
+
+        # Collect all the parent images we're supposed to use
+        downstream_parents = image_from.builder if image_from.builder is not Missing else []
+        downstream_parents.append(image_from)
+        if len(downstream_parents) != len(dfp.parent_images):
+            raise IOError(
+                "Build metadata for {name} expected {count1} image parent(s), but the upstream Dockerfile "
+                "contains {count2} FROM statements. These counts must match. Detail: '{meta_parents}' vs "
+                "'{upstream_parents}'.".format(
+                    name=self.config.name,
+                    count1=len(downstream_parents),
+                    count2=len(dfp.parent_images),
+                    meta_parents=downstream_parents,
+                    upstream_parents=dfp.parent_images,
+                )
+            )
+        mapped_images = []
+
+        upstream_parents = dfp.parent_images
+        for i, image in enumerate(downstream_parents):
+            # Does this image inherit from an image defined in a different group member distgit?
+            if image.member is not Missing:
+                mapped_images.append(self._mapped_image_from_member(image, upstream_parents[i], dfp))
+
+            # Is this image FROM another literal image name:tag?
+            elif image.image is not Missing:
+                mapped_images.append(image.image)
+
+            elif image.stream is not Missing:
+                if self.runtime.assembly_basis_event:
+                    # Rebasing for an assembly build
+                    mapped_images.append(self._mapped_image_for_assembly_build(downstream_parents, i))
+                else:
+                    # Rebasing for a stream/test build
+                    mapped_images.append(self._mapped_image_from_stream(image, upstream_parents[i], dfp))
+
+            else:
+                raise IOError("Image in 'from' for [%s] is missing its definition." % image.name)
+
+        # Write rebased from directives
+        dfp.parent_images = mapped_images
+
+    def _cachito_env_vars(self, dfp):
+        """
+        Insert ENV variables so that image owners can differentiate between cachito and cachi2 environments
+        """
+        env_variables = [
+            "ENV ART_BUILD_ENGINE=brew",
+            "ENV ART_BUILD_DEPS_METHOD=cachito",
+            "ENV ART_BUILD_NETWORK=internal-only",
+        ]
+        self.logger.info(f"Inserting cachito ENV variables: {env_variables}")
+        dfp.add_lines(
+            *env_variables,
+            at_start=True,
+            all_stages=True,
+        )
+
+    def update_distgit_dir(self, version, release, prev_release=None, force_yum_updates=False, extra_labels=None):
+        dg_path = self.dg_path
+        with Dir(self.distgit_dir):
+            # Source or not, we should find a Dockerfile in the root at this point or something is wrong
+            assertion.isfile(dg_path.joinpath("Dockerfile"), "Unable to find Dockerfile in distgit root")
+
+            # Workaround for https://issues.redhat.com/browse/STONEBLD-1929
+            containerfile = dg_path.joinpath('Containerfile')
+            if containerfile.is_file():
+                containerfile.unlink()
+
+            self.generate_repo_conf()
+
+            self._generate_config_digest()
+
+            self._write_cvp_owners()
+
+            self._write_fetch_artifacts()
+
+            dfp = DockerfileParser(path=str(dg_path.joinpath('Dockerfile')))
+
+            self._clean_repos(dfp)
+
+            self._cachito_env_vars(dfp)
+
+            # If no version has been specified, we will leave the version in the Dockerfile. Extract it.
+            if version is None:
+                version = dfp.labels.get("version", dfp.labels.get("Version", None))
+
+                if version is None:
+                    if self.runtime.local:
+                        # fallback so the logic doesn't fall over
+                        # but we can still build
+                        version = "v0.0.0"
+                    else:
+                        DoozerFatalError("No version found in Dockerfile for %s" % self.metadata.qualified_name)
+
+            self._write_osbs_image_config(version)
+
+            self.uuid_tag = "%s.%s" % (version, self.runtime.uuid)
+
+            # Split the version number v4.3.4 => [ 'v4', '3, '4' ]
+            vsplit = version.split(".")
+
+            major_version = vsplit[0].lstrip('v')
+            # Click validation should have ensured user specified semver, but double check because of version=None flow.
+            minor_version = '0' if len(vsplit) < 2 else vsplit[1]
+            patch_version = '0' if len(vsplit) < 3 else vsplit[2]
+
+            self.logger.debug("Dockerfile contains the following labels:")
+            for k, v in dfp.labels.items():
+                self.logger.debug("  '%s'='%s'" % (k, v))
+
+            # Set all labels in from config into the Dockerfile content
+            if self.config.labels is not Missing:
+                for k, v in self.config.labels.items():
+                    dfp.labels[k] = str(v)
+
+            if extra_labels:
+                for k, v in extra_labels.items():
+                    dfp.labels[k] = v
+
+            # Set the image name
+            dfp.labels["name"] = self.config.name
+
+            # Set the distgit repo name
+            dfp.labels["com.redhat.component"] = self.metadata.get_component_name()
+
+            # appregistry is managed in a separately-built metadata container (ref. ART-874)
+            if "com.redhat.delivery.appregistry" in dfp.labels:
+                dfp.labels["com.redhat.delivery.appregistry"] = "False"
+
+            jira_project, jira_component = self.metadata.get_jira_info()
+            dfp.labels['io.openshift.maintainer.project'] = jira_project
+            dfp.labels['io.openshift.maintainer.component'] = jira_component
+
+            if 'from' in self.config:
+                self.rebase_from_directives(dfp)
+
+            # Set image name in case it has changed
+            dfp.labels["name"] = self.config.name
+
+            # If no version was specified, pull it from the Dockerfile
+            if version is None:
+                version = dfp.labels['version']
+
+            # If the release is specified as "+", this means the user wants to bump the release.
+            if release == "+":
+                if self.runtime.assembly:
+                    raise ValueError('"+" is not supported for the release value when assemblies are enabled')
+
+                # increment the release that was in the Dockerfile
+                if prev_release:
+                    self.logger.info("Bumping release field in Dockerfile")
+                    if (
+                        self.runtime.group_config.public_upstreams
+                        and isolate_pflag_in_release(prev_release) in get_all_visibility_suffixes()
+                    ):
+                        # We can assume .pX is a suffix because assemblies are asserted disabled earlier.
+                        prev_release = prev_release[:-3]  # strip .p0/1
+                    # If release has multiple fields (e.g. 0.173.0.0), increment final field
+                    if "." in prev_release:
+                        components = prev_release.rsplit(".", 1)  # ["0.173","0"]
+                        bumped_field = int(components[1]) + 1
+                        release = "%s.%d" % (components[0], bumped_field)
+                    else:
+                        # If release is specified and a single field, just increment it
+                        release = "%d" % (int(prev_release) + 1)
+                    if self.runtime.group_config.public_upstreams:
+                        release += ".p?"  # appended '.p?' field will be replaced with .p0 or .p1 later
+                else:
+                    # When 'release' is not specified in the Dockerfile, OSBS will automatically
+                    # find a valid value for each build. This means OSBS is effectively auto-bumping.
+                    # This is better than us doing it, so let it.
+                    if self.runtime.group_config.public_upstreams:
+                        raise ValueError(
+                            "Failed to bump the release: Neither 'release' is specified in the Dockerfile nor we can use OSBS auto-bumping when a public upstream mapping is defined in ocp-build-data."
+                        )
+                    self.logger.info(
+                        "No release label found in Dockerfile; bumping unnecessary -- osbs will automatically select unique release value at build time"
+                    )
+                    release = None
+
+            # If a release is specified, set it. If it is not specified, remove the field.
+            # If osbs finds the field, unset, it will choose a value automatically. This is
+            # generally ideal for refresh-images where the only goal is to not collide with
+            # a pre-existing image version-release.
+            if release is not None:
+                pval = f'.{get_visibility_suffix(self.runtime.build_system, BuildVisibility.PUBLIC)}'
+                if self.runtime.group_config.public_upstreams:
+                    if not release.endswith(".p?"):
+                        raise ValueError(
+                            f"'release' must end with '.p?' for an image with a public upstream but its actual value is {release}"
+                        )
+                    if self.metadata.private_fix is None:
+                        raise ValueError(
+                            "metadata.private_fix must be set (or determined by _merge_source) before rebasing for an image with a public upstream"
+                        )
+                    if self.metadata.private_fix:
+                        pval = f'.{get_visibility_suffix(self.runtime.build_system, BuildVisibility.PRIVATE)}'
+
+                if release.endswith(".p?"):
+                    release = release[:-3]  # strip .p?
+                    release += pval
+
+                if self.source_full_sha:
+                    release += ".g" + self.source_full_sha[:7]
+
+                if self.runtime.assembly:
+                    release += f'.assembly.{self.runtime.assembly}'
+
+                el_minor = self.metadata.config.get('el_minor', None)
+                if el_minor is not Missing and el_minor is not None:
+                    if not isinstance(el_minor, int) or el_minor < 0:
+                        raise ValueError(f"el_minor must be a non-negative integer, got: {el_minor!r}")
+                if self.get_branch_el():
+                    el_suffix = "el" + str(self.get_branch_el())
+                    if el_minor is not Missing and el_minor is not None:
+                        el_suffix += "_" + str(el_minor)
+                    release += "." + el_suffix
+
+                dfp.labels['release'] = release
+            else:
+                if self.runtime.assembly:
+                    raise ValueError('Release value must be specified when assemblies are enabled')
+
+                if self.runtime.group_config.public_upstreams:
+                    raise ValueError(
+                        "We are not able to let OSBS choose a release value for an image with a public upstream."
+                    )
+                if "release" in dfp.labels:
+                    self.logger.info("Removing release field from Dockerfile")
+                    del dfp.labels['release']
+
+            # Delete differently cased labels that we override or use newer versions of
+            for deprecated in ["Release", "Architecture", "BZComponent"]:
+                if deprecated in dfp.labels:
+                    del dfp.labels[deprecated]
+
+            # remove old labels from dist-git
+            for label in self.source_labels['old']:
+                if label in dfp.labels:
+                    del dfp.labels[label]
+
+            # set with new source if known, otherwise leave alone for a refresh
+            srclab = self.source_labels['now']
+            if self.source_full_sha:
+                dfp.labels[srclab['sha']] = self.source_full_sha
+                if self.public_facing_source_url:
+                    dfp.labels[srclab['source']] = self.public_facing_source_url
+                    dfp.labels[srclab['source_commit']] = '{}/commit/{}'.format(
+                        self.public_facing_source_url, self.source_full_sha
+                    )
+
+            dfp.labels['version'] = version
+
+            # Remove any programmatic oit comments from previous management
+            df_lines = dfp.content.splitlines(False)
+            df_lines = [line for line in df_lines if not line.strip().startswith(constants.OIT_COMMENT_PREFIX)]
+
+            filtered_content = []
+            in_mod_block = False
+            for line in df_lines:
+                # Check for begin/end of mod block, skip any lines inside
+                if constants.OIT_BEGIN in line:
+                    in_mod_block = True
+                    continue
+                elif constants.OIT_END in line:
+                    in_mod_block = False
+                    continue
+
+                # if in mod, skip all
+                if in_mod_block:
+                    continue
+
+                # remove any old instances of empty.repo mods that aren't in mod block
+                if 'empty.repo' not in line:
+                    if line.endswith('\n'):
+                        line = line[0:-1]  # remove trailing newline, if exists
+                    filtered_content.append(line)
+
+            df_lines = filtered_content
+
+            # ART-8476 assert rhel version equivalence
+            if self.should_match_upstream:
+                el_version = isolate_el_version_in_brew_tag(self.config.distgit.branch)
+                df_lines.extend(
+                    [
+                        '',
+                        '# RHEL version in final image must match the one in ART\'s config',
+                        f'RUN source /etc/os-release && [ "$PLATFORM_ID" == platform:el{el_version} ]',
+                    ]
+                )
+
+            df_content = "\n".join(df_lines)
+
+            if release:
+                release_suffix = f'-{release}'
+            else:
+                release_suffix = ''
+
+            # Environment variables that will be injected into the Dockerfile
+            # unless content.set_build_variables=False
+            build_update_env_vars = {  # Set A
+                'OS_GIT_MAJOR': major_version,
+                'OS_GIT_MINOR': minor_version,
+                'OS_GIT_PATCH': patch_version,
+                'OS_GIT_VERSION': f'{major_version}.{minor_version}.{patch_version}{release_suffix}',
+                'OS_GIT_TREE_STATE': 'clean',
+                'SOURCE_GIT_TREE_STATE': 'clean',
+                'BUILD_VERSION': version,
+                'BUILD_RELEASE': release if release else '',
+            }
+
+            # Unlike update_env_vars (which can be disabled in metadata with content.set_build_variables=False),
+            # metadata_envs are always injected into doozer builds.
+            metadata_envs: Dict[str, str] = {
+                '__doozer_group': self.runtime.group,
+                '__doozer_key': self.metadata.distgit_key,
+                '__doozer_version': version,  # Useful when build variables are not being injected, but we still need "version" during the build.
+            }
+            if self.config.envs:
+                # Allow environment variables to be specified in the ART image metadata
+                metadata_envs.update(self.config.envs.primitive())
+
+            if extra_labels:
+                golang_nvr = extra_labels.get(GOLANG_NVR_LABEL)
+                if golang_nvr:
+                    metadata_envs[GOLANG_NVR_ENV] = golang_nvr
+
+            if self.runtime.group_config.build_profiles.enable_go_cover is True:
+                # This must be implemented by the ART golang wrappers
+                # in order to have any effect.
+                metadata_envs['GO_COMPLIANCE_COVER'] = '1'
+                # Inject the coverage HTTP server source into every Go main package
+                # directory so that it is compiled into the binary via its init() function.
+                util.inject_coverage_server(dg_path, self.logger)
+
+            df_fileobj = self._update_yum_update_commands(force_yum_updates, io.StringIO(df_content))
+            with dg_path.joinpath('Dockerfile').open('w', encoding="utf-8") as df:
+                shutil.copyfileobj(df_fileobj, df)
+                df_fileobj.close()
+
+            self._update_environment_variables(build_update_envs=build_update_env_vars, metadata_envs=metadata_envs)
+
+            self._reflow_labels()
+
+            self._update_csv(version, release)
+
+            return version, release
+
+    def _update_yum_update_commands(self, force_yum_updates: bool, df_fileobj: io.TextIOBase) -> io.StringIO:
+        """If force_yum_updates is True, inject "yum updates -y" in the final build stage; Otherwise, remove the lines we injected.
+        Returns an in-memory text stream for the new Dockerfile content
+        """
+        if force_yum_updates and not self.config.get('enabled_repos'):
+            # If no yum repos are disabled in image meta, "yum update -y" will fail with "Error: There are no enabled repositories in ...".
+            # Remove "yum update -y" lines intead.
+            self.logger.warning("Will not inject \"yum updates -y\" for this image because no yum repos are enabled.")
+            force_yum_updates = False
+        if force_yum_updates:
+            self.logger.info("Injecting \"yum updates -y\" in each stage...")
+
+        parser = DockerfileParser(fileobj=df_fileobj)
+
+        df_lines_iter = iter(parser.content.splitlines(False))
+        build_stage_num = len(parser.parent_images)
+        final_stage_user = self.metadata.config.final_stage_user or 0
+
+        yum_update_line_flag = "__doozer=yum-update"
+
+        # The yum repo supplied to the image build is going to be appropriate for the base/final image in a
+        # multistage build. If one of the stages of, for example, a RHEL8 image is a RHEL7 builder image,
+        # we should not run yum update as it will fail loudly. Instead, we check the RHEL version of the
+        # image at each stage at *build time* to ensure yum update only runs in appropriate stages.
+        el_ver = self.metadata.branch_el_target()
+        if el_ver == 7:
+            # For rebuild logic, we need to be able to prioritize repos; RHEL7 requires a plugin to be installed.
+            yum_update_line = "RUN yum install -y yum-plugin-priorities && yum update -y && yum clean all"
+        else:
+            yum_update_line = "RUN yum update -y && yum clean all"
+        output = io.StringIO()
+        build_stage = 0
+        for line in df_lines_iter:
+            if yum_update_line_flag in line:
+                # Remove the lines we have injected by skipping 2 lines
+                next(df_lines_iter)
+                continue
+            output.write(f'{line}\n')
+            if not force_yum_updates or not line.startswith('FROM '):
+                continue
+            build_stage += 1
+
+            if build_stage != build_stage_num:
+                # If this is not the final stage, ignore this FROM
+                continue
+
+            # This should be directly after the last 'FROM' (i.e. in the final stage of the Dockerfile).
+            # If the current user inherited from the base image for this stage is not root, `yum update -y` will fail
+            # and we must change the user to be root.
+            # However for the final stage, injecting "USER 0" without changing the original base image user
+            # may cause unexpected behavior if the container makes assumption about the user at runtime.
+            # Per https://github.com/openshift-eng/doozer/pull/428#issuecomment-861795424,
+            # introduce a new metadata `final_stage_user` for images so we can switch the user back later.
+            if final_stage_user:
+                output.write(f"# {yum_update_line_flag}\nUSER 0\n")
+            else:
+                self.logger.warning(
+                    "Will not inject `USER 0` before `yum update -y` for the final build stage because `final_stage_user` is missing (or 0) in image meta."
+                    " If this build fails with `yum update -y` permission denied error, please set correct `final_stage_user` and rebase again."
+                )
+            output.write(
+                f"# {yum_update_line_flag}\n{yum_update_line}  # set final_stage_user in ART metadata if this fails\n"
+            )
+            if final_stage_user:
+                output.write(f"# {yum_update_line_flag}\nUSER {final_stage_user}\n")
+        output.seek(0)
+        return output
+
+    def _generate_config_digest(self):
+        # The config digest is used by scan-sources to detect config changes
+        self.logger.info("Calculating config digest...")
+        digest = self.metadata.calculate_config_digest(self.runtime.group_config, self.runtime.streams)
+        with self.dg_path.joinpath(".oit", "config_digest").open('w') as f:
+            f.write(digest)
+        self.logger.info("Saved config digest %s to .oit/config_digest", digest)
+
+    def _find_previous_versions(self, pattern_suffix='') -> Set[str]:
+        """
+        Returns: Searches brew for builds of this operator in order and processes them into a set of versions.
+        These version may or may not have shipped.
+        """
+        with self.runtime.pooled_koji_client_session() as koji_api:
+            component_name = self.metadata.get_component_name()
+            package_info = koji_api.getPackage(
+                component_name
+            )  # e.g. {'id': 66873, 'name': 'atomic-openshift-descheduler-container'}
+            if not package_info:
+                raise IOError(f'No brew package is defined for {component_name}')
+            package_id = package_info[
+                'id'
+            ]  # we could just constrain package name using pattern glob, but providing package ID # should be a much more efficient DB query.
+            pattern_prefix = f'{component_name}-v{self.metadata.branch_major_minor()}.'
+            builds = koji_api.listBuilds(
+                packageID=package_id, state=BuildStates.COMPLETE.value, pattern=f'{pattern_prefix}{pattern_suffix}*'
+            )
+            nvrs: Set[str] = set([build['nvr'] for build in builds])
+            # NVRS should now be a set including entries like 'cluster-nfd-operator-container-v4.10.0-202211280957.p0.ga42b581.assembly.stream'
+            # We need to convert these into versions like "4.11.0-202205250107"
+            versions: Set[str] = set()
+            for nvr in nvrs:
+                without_component = nvr[
+                    len(f'{component_name}-v') :
+                ]  # e.g. "4.10.0-202211280957.p0.ga42b581.assembly.stream"
+                version_components = without_component.split('.')[0:3]  # e.g. ['4', '10', '0-202211280957']
+                version = '.'.join(version_components)
+                versions.add(version)
+
+            return versions
+
+    def _get_csv_file_and_refs(self, csv_config):
+        gvars = self.runtime.group_config.vars
+        bundle_dir = csv_config.get('bundle-dir', f'{gvars["MAJOR"]}.{gvars["MINOR"]}')
+        manifests_dir = csv_config.get('manifests-dir')
+        bundle_manifests_dir = os.path.join(manifests_dir, bundle_dir)
+
+        refs = None
+        ref_candidates = [
+            os.path.join(self.distgit_dir, dirpath, 'image-references')
+            for dirpath in [bundle_dir, manifests_dir, bundle_manifests_dir]
+        ]
+        for cand in ref_candidates:
+            if os.path.isfile(cand):
+                refs = cand
+        if not refs:
+            raise DoozerFatalError(
+                '{}: image-references file not found in any location: {}'.format(
+                    self.metadata.distgit_key, ref_candidates
+                )
+            )
+
+        with io.open(refs, 'r', encoding="utf-8") as f_ref:
+            ref_data = yaml.full_load(f_ref)
+        image_refs = ref_data.get('spec', {}).get('tags', {})
+        if not image_refs:
+            raise DoozerFatalError('Data in {} not valid'.format(refs))
+
+        manifests = os.path.join(self.distgit_dir, manifests_dir, bundle_dir)
+        csvs = list(pathlib.Path(manifests).glob('*.clusterserviceversion.yaml'))
+        if len(csvs) < 1:
+            raise DoozerFatalError(
+                '{}: did not find a *.clusterserviceversion.yaml file @ {}'.format(self.metadata.distgit_key, manifests)
+            )
+        elif len(csvs) > 1:
+            raise DoozerFatalError(
+                '{}: Must be exactly one *.clusterserviceversion.yaml file but found more than one @ {}'.format(
+                    self.metadata.distgit_key, manifests
+                )
+            )
+        return str(csvs[0]), image_refs
+
+    def _update_csv(self, version, release):
+        csv_config = self.metadata.config.get('update-csv', None)
+        if not csv_config:
+            return
+
+        csv_file, image_refs = self._get_csv_file_and_refs(csv_config)
+        registry = csv_config['registry'].rstrip("/")
+        image_map = csv_config.get('image-map', {})
+
+        # Record image references found
+        found_image_refs = set()
+
+        for ref in image_refs:
+            try:
+                name = ref['name']
+                name = map_image_name(name, image_map)
+                spec = ref['from']['name']
+            except:
+                raise DoozerFatalError('Error loading image-references data for {}'.format(self.metadata.distgit_key))
+
+            try:
+                distgit = self.runtime.name_in_bundle_map.get(name, None)
+                # fail if upstream is referring to an image we don't actually build
+                if not distgit:
+                    raise DoozerFatalError(
+                        'Unable to find {} in image-references data for {}'.format(name, self.metadata.distgit_key)
+                    )
+
+                meta = self.runtime.image_map.get(distgit, None)
+                if meta:  # image is currently be processed
+                    uuid_tag = "%s.%s" % (version, self.runtime.uuid)  # applied by additional-tags
+                    image_tag = '{}:{}'.format(meta.image_name_short, uuid_tag)
+                else:
+                    meta = self.runtime.late_resolve_image(distgit)
+                    _, v, r = meta.get_latest_build_info()
+                    image_tag = '{}:{}-{}'.format(meta.image_name_short, v, r)
+
+                if self.metadata.distgit_key != meta.distgit_key:
+                    if self.metadata.distgit_key not in meta.config.dependents:
+                        raise DoozerFatalError(
+                            f'Related image contains {meta.distgit_key} but this does not have {self.metadata.distgit_key} in dependents'
+                        )
+
+                namespace = self.runtime.group_config.get('csv_namespace', None)
+                if not namespace:
+                    raise DoozerFatalError('csv_namespace is required in group.yaml when any image defines update-csv')
+                replace = '{}/{}/{}'.format(registry, namespace, image_tag)
+
+                with io.open(csv_file, 'r+', encoding="utf-8") as f:
+                    content = f.read()
+                    if content.count(spec):
+                        content = content.replace(spec + '\n', replace + '\n')
+                        content = content.replace(spec + '"', replace + '"')
+                        f.seek(0)
+                        f.truncate()
+                        f.write(content)
+                        found_image_refs.add(name)
+            except Exception as e:
+                self.runtime.logger.error(e)
+                raise
+
+        if len(image_refs) != len(found_image_refs):
+            message = (
+                f"Mismatch between number of found image references in {csv_file} and image-references file. "
+                f"Found {len(found_image_refs)}: {sorted(found_image_refs)}, "
+                f"Expected {len(image_refs)}: {sorted([i['name'] for i in image_refs])}. "
+                "Operator metadata is invalid, please investigate."
+            )
+            self.runtime.logger.warning(message)
+
+        if version.startswith('v'):
+            version = version[1:]  # strip off leading v
+
+        x, y, z = version.split('.')[0:3]
+        date_time = release.split('.')[0]  # Extract datestamp (YYYYMMDDHHMM[SS])
+
+        replace_args = {
+            'MAJOR': x,
+            'MINOR': y,
+            'SUBMINOR': z,
+            'RELEASE': release,
+            'DATE_TIME': date_time,
+            'FULL_VER': '{}-{}'.format(version, date_time),
+        }
+
+        manifests_base = os.path.join(self.distgit_dir, csv_config['manifests-dir'])
+
+        art_yaml = os.path.join(manifests_base, 'art.yaml')
+
+        if os.path.isfile(art_yaml):
+            with io.open(art_yaml, 'r', encoding="utf-8") as art_file:
+                art_yaml_str = art_file.read()
+
+            try:
+                art_yaml_str = art_yaml_str.format(**replace_args)
+                art_yaml_data = yaml.full_load(art_yaml_str)
+            except Exception as ex:  # exception is low level, need to pull out the details and rethrow
+                raise DoozerFatalError('Error processing art.yaml!\n{}\n\n{}'.format(str(ex), art_yaml_str))
+
+            updates = art_yaml_data.get('updates', [])
+            if not isinstance(updates, list):
+                raise DoozerFatalError('`updates` key must be a list in art.yaml')
+
+            for u in updates:
+                f = u.get('file', None)
+                u_list = u.get('update_list', [])
+                if not f:
+                    raise DoozerFatalError('No file to update specified in art.yaml')
+                if not u_list:
+                    raise DoozerFatalError('update_list empty for {} in art.yaml'.format(f))
+
+                f_path = os.path.join(manifests_base, f)
+                if not os.path.isfile(f_path):
+                    raise DoozerFatalError('{} does not exist as defined in art.yaml'.format(f_path))
+
+                self.runtime.logger.info('Updating {}'.format(f_path))
+                with io.open(f_path, 'r+', encoding="utf-8") as sr_file:
+                    sr_file_str = sr_file.read()
+                    for sr in u_list:
+                        s = sr.get('search', None)
+                        r = sr.get('replace', None)
+                        if s is None or r is None:
+                            raise DoozerFatalError(
+                                'Must provide `search` and `replace` fields in art.yaml `update_list`'
+                            )
+                        if not isinstance(s, str) or not isinstance(r, str):
+                            raise DoozerFatalError(
+                                '`search` and `replace` fields in art.yaml `update_list` must be strings'
+                            )
+                        if not s:
+                            raise DoozerFatalError('`search` field in art.yaml `update_list` cannot be empty')
+
+                        original_string = sr_file_str
+                        sr_file_str = sr_file_str.replace(s, r)
+                        if sr_file_str == original_string:
+                            self.logger.error(
+                                f'Search `{s}` and replace was ineffective for {self.metadata.distgit_key}'
+                            )
+                    sr_file.seek(0)
+                    sr_file.truncate()
+                    sr_file.write(sr_file_str)
+
+        previous_build_versions: List[str] = self._find_previous_versions()
+        if previous_build_versions:
+            # We need to inject "skips" versions for https://issues.redhat.com/browse/OCPBUGS-6066 .
+            # We have the versions, but it needs to be written into the CSV under spec.skips.
+            # First, find the "name" of this plugin that precedes the version. If everything
+            # is correctly replaced in the CSV by art-config.yml, then metadata.name - spec.version
+            # should leave us with the name the operator uses.
+            csv_obj = yaml.safe_load(pathlib.Path(csv_file).read_text())
+            olm_name = csv_obj['metadata']['name']  # "nfd.4.11.0-202205301910"
+            olm_version = csv_obj['spec']['version']  # "4.11.0-202205301910"
+
+            if not olm_name.endswith(olm_version):
+                raise IOError(
+                    f'Expected {self.name} CSV metadata.name field ("{olm_name}" after rebase) to be suffixed by spec.version ("{olm_version}" after rebase). art-config.yml / upstream CSV metadata may be incorrect.'
+                )
+
+            olm_name_prefix = olm_name[: -1 * len(olm_version)]  # "nfd."
+
+            # Inject the skips..
+            csv_obj['spec']['skips'] = [f'{olm_name_prefix}{old_version}' for old_version in previous_build_versions]
+
+            # Re-write the CSV content.
+            pathlib.Path(csv_file).write_text(yaml.dump(csv_obj))
+
+    def _update_environment_variables(
+        self, build_update_envs: Dict[str, str], metadata_envs: Dict[str, str], filename='Dockerfile'
+    ):
+        """
+        There are three distinct sets of environment variables we need to consider
+        in a Dockerfile:
+        Set A) build environment variables which doozer calculates on every Dockerfile update (build_update_envs)
+        Set B) merge environment variables which doozer can calculate only when upstream source code is available
+               (self.env_vars_from_source). If self.env_vars_from_source=None, no merge
+               has occurred and we should not try to update envs from source we find in distgit.
+        Set C) metadata environment variable which are those which the Dockerfile author has set for their own purposes (these cannot
+               override doozer's build env values, but they are free to use other variables names).
+
+        Sets (A) and (B) can be disabled with .content.set_build_variables=False.
+
+        :param build_update_envs: The update environment variables to set (Set A).
+        :param metadata_envs: Environment variables that should always be included in the rebased Dockerfile.
+        :param filename: The Dockerfile name in the distgit dir to edit.
+        :return: N/A
+        """
+
+        do_set_build_variables = True
+        # set_build_variables must be explicitly set to False. If left unset, default to True. If False,
+        # we do not inject environment variables into the Dockerfile. This is occasionally necessary
+        # for images like the golang builders where these environment variables pollute the environment
+        # for code trying to establish their OWN src commit hash, etc.
+        if self.config.content.set_build_variables is not Missing and not self.config.content.set_build_variables:
+            do_set_build_variables = False
+
+        dg_path = self.dg_path
+        df_path = dg_path.joinpath(filename)
+
+        # The DockerfileParser can find & set environment variables, but is written such that it only updates the
+        # last instance of the env in the Dockerfile. For example, if, at different build stages, A=1 and later A=2
+        # are set, DockerfileParser will only manage the A=2 instance. We want to remove variables that doozer is
+        # going to set. To do so, we repeatedly load the Dockerfile and remove the env variable.
+        # In this way, from our example, on the second load and removal, A=1 should be removed.
+
+        # Build a dict of everything we want to remove from the Dockerfile.
+        all_envs_to_remove = dict()
+        all_envs_to_remove.update(metadata_envs)
+
+        if do_set_build_variables:
+            all_envs_to_remove.update(build_update_envs)
+            all_envs_to_remove.update(self.env_vars_from_source or {})
+
+        while True:
+            dfp = DockerfileParser(str(df_path))
+            # Find the intersection between envs we want to set and those present in parser
+            envs_intersect = set(list(all_envs_to_remove.keys())).intersection(set(list(dfp.envs.keys())))
+
+            if not envs_intersect:  # We've removed everything we want to ultimately set
+                break
+
+            self.logger.debug(f'Removing old env values from Dockerfile: {envs_intersect}')
+
+            for k in envs_intersect:
+                del dfp.envs[k]
+
+            dfp_content = dfp.content
+            # Write the file back out
+            with df_path.open('w', encoding="utf-8") as df:
+                df.write(dfp_content)
+
+        # The env vars we want to set have been removed from the target Dockerfile.
+        # Now, we want to inject the values we have available. In a Dockerfile, ENV must
+        # be set for each build stage. So the ENVs must be set after each FROM.
+
+        # Envs that will be written into the Dockerfile every time it is updated
+        actual_update_envs: Dict[str, str] = dict()
+        actual_update_envs.update(metadata_envs or {})
+
+        if do_set_build_variables:
+            actual_update_envs.update(build_update_envs)
+
+        env_update_line_flag = '__doozer=update'
+        env_merge_line_flag = '__doozer=merge'
+
+        def get_env_set_list(env_dict):
+            """
+            Returns a list of 'key1=value1 key2=value2'. Used mainly to ensure
+            ENV lines we inject don't change because of key iteration order.
+            """
+            sets = ''
+            for key in sorted(env_dict.keys()):
+                sets += f'{key}={env_dict[key]} '
+            return sets
+
+        # Build up an UPDATE mode environment variable line we want to inject into each stage.
+        update_env_line = None
+        if actual_update_envs:
+            update_env_line = f"ENV {env_update_line_flag} " + get_env_set_list(actual_update_envs)
+
+        # If a merge has occurred, build up a MERGE mode environment variable line we want to inject into each stage.
+        merge_env_line = None
+        if (
+            do_set_build_variables and self.env_vars_from_source is not None
+        ):  # If None, no merge has occurred. Anything else means it has.
+            self.env_vars_from_source.update(
+                dict(
+                    SOURCE_GIT_COMMIT=self.source_full_sha,
+                    SOURCE_GIT_TAG=self.source_latest_tag,
+                    SOURCE_GIT_URL=self.public_facing_source_url,
+                    SOURCE_DATE_EPOCH=self.source_date_epoch,
+                    OS_GIT_VERSION=f'{build_update_envs["OS_GIT_VERSION"]}-{self.source_full_sha[0:7]}',
+                    OS_GIT_COMMIT=f'{self.source_full_sha[0:7]}',
+                )
+            )
+
+            merge_env_line = f"ENV {env_merge_line_flag} " + get_env_set_list(self.env_vars_from_source)
+
+        # Open again!
+        dfp = DockerfileParser(str(df_path))
+        df_lines = dfp.content.splitlines(False)
+
+        with df_path.open('w', encoding="utf-8") as df:
+            for line in df_lines:
+                # Always remove the env line we update each time.
+                if env_update_line_flag in line:
+                    continue
+
+                # If we are adding environment variables from source, remove any previous merge line.
+                if merge_env_line and env_merge_line_flag in line:
+                    continue
+
+                df.write(f'{line}\n')
+
+                if line.startswith('FROM '):
+                    if update_env_line:
+                        df.write(f'{update_env_line}\n')
+                    if merge_env_line:
+                        df.write(f'{merge_env_line}\n')
+
+    def _reflow_labels(self, filename="Dockerfile"):
+        """
+        The Dockerfile parser we are presently using writes all labels on a single line
+        and occasionally makes multiple LABEL statements. Calling this method with a
+        Dockerfile in the current working directory will rewrite the file with
+        labels at the end in a single statement.
+        """
+
+        dg_path = self.dg_path
+        df_path = dg_path.joinpath(filename)
+        dfp = DockerfileParser(str(df_path))
+        labels = dict(dfp.labels)  # Make a copy of the labels we need to add back
+
+        # Delete any labels from the modeled content
+        for key in dfp.labels:
+            del dfp.labels[key]
+
+        # Capture content without labels
+        df_content = dfp.content.strip()
+
+        # Write the file back out and append the labels to the end
+        with df_path.open('w', encoding="utf-8") as df:
+            df.write("%s\n\n" % df_content)
+            if labels:
+                df.write("LABEL")
+                for k, v in labels.items():
+                    df.write(" \\\n")  # All but the last line should have line extension backslash "\"
+                    escaped_v = v.replace('"', '\\"')  # Escape any " with \"
+                    df.write("        %s=\"%s\"" % (k, escaped_v))
+                df.write("\n\n")
+
+    def _merge_source(self):
+        """
+        Pulls source defined in content.source and overwrites most things in the distgit
+        clone with content from that source.
+        """
+
+        # Initialize env_vars_from source.
+        # update_distgit_dir makes a distinction between None and {}
+        self.env_vars_from_source = {}
+        assert self.runtime.source_resolver is not None
+        source_resolution = self.runtime.source_resolver.resolve_source(self.metadata)
+        source_dir = self.source_path()
+        with Dir(source_dir):
+            # gather source repo short sha for audit trail
+            self.source_full_sha = source_resolution.commit_hash
+            self.source_date_epoch = str(int(source_resolution.committer_date.timestamp()))
+            self.source_latest_tag = source_resolution.latest_tag
+
+            self.actual_source_url = source_resolution.url  # This may differ from the URL we report to the public
+            self.public_facing_source_url = (
+                source_resolution.public_upstream_url
+            )  # Point to public upstream if there are private components to the URL
+            # If private_fix has not already been set (e.g. by --embargoed), determine if the source contains private fixes by checking if the private org branch commit exists in the public org
+            if self.metadata.private_fix is None:
+                self.metadata.private_fix = (
+                    source_resolution.has_public_upstream
+                    and not SourceResolver.is_branch_commit_hash(source_resolution.public_upstream_branch)
+                    and not util.is_commit_in_public_upstream(
+                        source_resolution.commit_hash, source_resolution.public_upstream_branch, source_dir
+                    )
+                )
+
+            self.env_vars_from_source.update(self.metadata.extract_kube_env_vars())
+
+            # See if the config is telling us a file other than "Dockerfile" defines the
+            # distgit image content.
+            if self.config.content.source.dockerfile is not Missing:
+                # Be aware that this attribute sometimes contains path elements too.
+                dockerfile_name = self.config.content.source.dockerfile
+            else:
+                dockerfile_name = "Dockerfile"
+
+        # The path to the source Dockerfile we are reconciling against.
+        source_dockerfile_path = os.path.join(self.source_path(), dockerfile_name)
+
+        # Clean up any files not special to the distgit repo
+        ignore_list = BASE_IGNORE
+        ignore_list.extend(self.runtime.group_config.get('dist_git_ignore', []))
+        ignore_list.extend(self.config.get('dist_git_ignore', []))
+
+        dg_path = self.dg_path
+        for ent in dg_path.iterdir():
+            if ent.name in ignore_list:
+                continue
+
+            # Otherwise, clean up the entry
+            if ent.is_file() or ent.is_symlink():
+                ent.unlink()
+            else:
+                shutil.rmtree(str(ent.resolve()))
+
+        # Copy all files and overwrite where necessary
+        recursive_overwrite(self.source_path(), self.distgit_dir)
+
+        df_path = dg_path.joinpath('Dockerfile')
+
+        if df_path.exists():
+            # The w+ below will not overwrite a symlink file with real content (it will
+            # be directed to the target file). So unlink explicitly.
+            df_path.unlink()
+
+        with (
+            open(source_dockerfile_path, mode='r', encoding='utf-8') as source_dockerfile,
+            open(str(df_path), mode='w+', encoding='utf-8') as distgit_dockerfile,
+        ):
+            # The source Dockerfile could be named virtually anything (e.g. Dockerfile.rhel) or
+            # be a symlink. Ultimately, we don't care - we just need its content in distgit
+            # as /Dockerfile (which OSBS requires). Read in the content and write it back out
+            # to the required distgit location.
+            source_dockerfile_content = source_dockerfile.read()
+            distgit_dockerfile.write(source_dockerfile_content)
+
+        # Clean up any extraneous Dockerfile.* that might be distractions (e.g. Dockerfile.centos)
+        for ent in dg_path.iterdir():
+            if ent.name.startswith("Dockerfile."):
+                ent.unlink()
+
+        # Delete .gitignore since it may block full sync and is not needed here
+        gitignore_path = dg_path.joinpath('.gitignore')
+        if gitignore_path.is_file():
+            gitignore_path.unlink()
+
+        owners = []
+        if self.config.owners is not Missing and isinstance(self.config.owners, list):
+            owners = list(self.config.owners)
+
+        dockerfile_notify = False
+
+        # Create a sha for Dockerfile. We use this to determine if we've reconciled it before.
+        source_dockerfile_hash = hashlib.sha256(io.open(source_dockerfile_path, 'rb').read()).hexdigest()
+
+        reconciled_path = dg_path.joinpath('.oit', 'reconciled')
+        util.mkdirs(reconciled_path)
+        reconciled_df_path = reconciled_path.joinpath(f'{source_dockerfile_hash}.Dockerfile')
+
+        # If the file does not exist, the source file has not been reconciled before.
+        if not reconciled_df_path.is_file():
+            # Something has changed about the file in source control
+            dockerfile_notify = True
+            # Record that we've reconciled against this source file so that we do not notify the owner again.
+            shutil.copy(str(source_dockerfile_path), str(reconciled_df_path))
+
+        if dockerfile_notify:
+            # Leave a record for external processes that owners will need to be notified.
+            with Dir(self.source_path()):
+                author_email = None
+                err = None
+                rc, sha, err = exectools.cmd_gather(
+                    # --no-merges because the merge bot is not the real author
+                    # --diff-filter=a to omit the "first" commit in a shallow clone which may not be the author
+                    #   (though this means when the only commit is the initial add, that is omitted)
+                    'git log --no-merges --diff-filter=a -n 1 --pretty=format:%H {}'.format(dockerfile_name),
+                )
+                if rc == 0:
+                    rc, ae, err = exectools.cmd_gather('git show -s --pretty=format:%ae {}'.format(sha))
+                    if rc == 0:
+                        if ae.lower().endswith('@redhat.com'):
+                            self.logger.info('Last Dockerfile committer: {}'.format(ae))
+                            author_email = ae
+                        else:
+                            err = 'Last committer email found, but is not @redhat.com address: {}'.format(ae)
+                if err:
+                    self.logger.info('Unable to get author email for last {} commit: {}'.format(dockerfile_name, err))
+
+            if author_email:
+                owners.append(author_email)
+
+            sub_path = self.config.content.source.path
+            if not sub_path:
+                source_dockerfile_subpath = dockerfile_name
+            else:
+                source_dockerfile_subpath = "{}/{}".format(sub_path, dockerfile_name)
+            # there ought to be a better way to determine the source alias that was registered:
+            source_root = self.runtime.source_resolver.resolve_source(self.metadata).source_path
+            source_alias = self.config.content.source.get('alias', os.path.basename(source_root))
+
+            self.runtime.record_logger.add_record(
+                "dockerfile_notify",
+                distgit=self.metadata.qualified_name,
+                image=self.config.name,
+                owners=','.join(owners),
+                source_alias=source_alias,
+                source_dockerfile_subpath=source_dockerfile_subpath,
+                dockerfile=str(dg_path.joinpath('Dockerfile')),
+            )
+
+    def _run_modifications(self):
+        """
+        Interprets and applies content.source.modifications steps in the image metadata.
+        """
+        dg_path = self.dg_path
+        df_path = dg_path.joinpath('Dockerfile')
+        with df_path.open('r', encoding="utf-8") as df:
+            dockerfile_data = df.read()
+
+        self.logger.debug(
+            "About to start modifying Dockerfile [%s]:\n%s\n" % (self.metadata.distgit_key, dockerfile_data)
+        )
+
+        # add build data modifications dir to path; we *could* add more
+        # specific paths for the group and the individual config but
+        # expect most scripts to apply across multiple groups.
+        metadata_scripts_path = self.runtime.data_dir + "/modifications"
+        path = os.pathsep.join([os.environ['PATH'], metadata_scripts_path])
+        new_dockerfile_data = dockerfile_data
+
+        for modification in self.config.content.source.modifications:
+            if self.source_modifier_factory.supports(modification.action):
+                # run additional modifications supported by source_modifier_factory
+                modifier = self.source_modifier_factory.create(**modification, distgit_path=self.dg_path)
+                # pass context as a dict so that the act function can modify its content
+                context = {
+                    "component_name": self.metadata.distgit_key,
+                    "kind": "Dockerfile",
+                    "content": new_dockerfile_data,
+                    "set_env": {
+                        "PATH": path,
+                        "BREW_EVENT": f'{self.runtime.brew_event}',
+                        "BREW_TAG": f'{self.metadata.candidate_brew_tag()}',
+                    },
+                    "distgit_path": self.dg_path,
+                }
+                modifier.act(context=context, ceiling_dir=str(dg_path))
+                new_dockerfile_data = context.get("result", new_dockerfile_data)
+            else:
+                raise IOError("Don't know how to perform modification action: %s" % modification.action)
+        if new_dockerfile_data is not None and new_dockerfile_data != dockerfile_data:
+            with df_path.open('w', encoding="utf-8") as df:
+                df.write(new_dockerfile_data)
+
+    def extract_version_release_private_fix(self) -> Tuple[str, str, str]:
+        """
+        Extract version, release, and private_fix fields from Dockerfile.
+        """
+        prev_release = None
+        private_fix = None
+        df_path = self.dg_path.joinpath('Dockerfile')
+        if df_path.is_file():
+            dfp = DockerfileParser(str(df_path))
+            # extract previous release to enable incrementing it
+            prev_release = dfp.labels.get("release")
+            if prev_release:
+                private_fix = is_release_embargoed(prev_release, self.runtime.build_system)
+            version = dfp.labels.get("version")
+            return version, prev_release, private_fix
+        return None, None, None
+
+    def rebase_dir(
+        self, version: str, release: str, terminate_event, force_yum_updates=False, extra_labels=None
+    ) -> Tuple[str, str]:
+        """
+        - Copies the checked out upstream source commit over the content the checked out distgit commit.
+        - Runs any configured source modifications for the component.
+        - Updates the version and release fields in the appropriate files in the checked out distgit.
+        :return: Returns a Tuple[applied_version, applied_release]. This may not match the incoming 'version'
+                    and 'release' fields since the called may not have supplied literal values (e.g. release == '+').
+        """
+        try:
+            # If this image is FROM another group member, we need to wait on that group
+            # member to determine if there are embargoes in that group member.
+            image_from = Model(self.config.get('from', None))
+            if image_from.member is not Missing:
+                self.wait_for_rebase(image_from.member, terminate_event)
+            for builder in image_from.get("builder", []):
+                if "member" in builder:
+                    self.wait_for_rebase(builder["member"], terminate_event)
+
+            dg_path = self.dg_path
+            df_path = dg_path.joinpath('Dockerfile')
+            prev_release = None
+            with Dir(self.distgit_dir):
+                prev_version, prev_release, prev_private_fix = self.extract_version_release_private_fix()
+                if version is None and not self.runtime.local:
+                    # Extract the previous version and use that
+                    version = prev_version
+
+                # Make our metadata directory if it does not exist
+                util.mkdirs(dg_path.joinpath('.oit'))
+
+                # If content.source is defined, pull in content from local source directory
+                if self.has_source():
+                    self._merge_source()
+
+                    # before mods, check if upstream source version should be used
+                    # this will override the version fetch above
+                    if self.metadata.config.get('use_source_version', False):
+                        dfp = DockerfileParser(str(df_path))
+                        version = dfp.labels["version"]
+                else:
+                    self.metadata.private_fix = bool(
+                        prev_private_fix
+                    )  # preserve private_fix boolean for distgit-only repo
+
+                # Source or not, we should find a Dockerfile in the root at this point or something is wrong
+                assertion.isfile(df_path, "Unable to find Dockerfile in distgit root")
+
+                if self.config.content.source.modifications is not Missing:
+                    self._run_modifications()
+
+            if self.metadata.private_fix:
+                self.logger.warning("The source of this image contains embargoed fixes.")
+
+            real_version, real_release = self.update_distgit_dir(
+                version, release, prev_release, force_yum_updates, extra_labels=extra_labels
+            )
+            self.metadata.rebase_status = True
+            return real_version, real_release
+        except Exception:
+            self.metadata.rebase_status = False
+            raise
+        finally:
+            self.metadata.rebase_event.set()  # awake all threads that are waiting for this image to be rebased
+
+
+class RPMDistGitRepo(DistGitRepo):
+    def __init__(self, metadata, autoclone=True):
+        super(RPMDistGitRepo, self).__init__(metadata, autoclone)
+        self.source = self.config.content.source
+
+    async def resolve_specfile_async(self) -> Tuple[pathlib.Path, Tuple[str, str, str], str]:
+        """Returns the path, NVR, and commit hash of the spec file in distgit_dir
+
+        :return: (spec_path, NVR, commit)
+        """
+        specs = glob.glob(f'{self.distgit_dir}/*.spec')
+        if len(specs) != 1:
+            raise IOError('Unable to find .spec file in RPM distgit: ' + self.name)
+        spec_path = pathlib.Path(specs[0])
+
+        async def _get_nvr():
+            cmd = [
+                "rpmspec",
+                "-q",
+                "--qf",
+                "%{name}-%{version}-%{release}",
+                "--srpm",
+                "--undefine",
+                "dist",
+                "--",
+                str(spec_path),
+            ]
+            _, out, _ = await exectools.cmd_gather_async(cmd)
+            return out.strip().rsplit("-", 2)
+
+        async def _get_commit():
+            async with aiofiles.open(spec_path, "r") as f:
+                async for line in f:
+                    line = line.strip()
+                    k = "%global commit "
+                    if line.startswith(k):
+                        return line[len(k) :]
+            return None
+
+        nvr, commit = await asyncio.gather(_get_nvr(), _get_commit())
+
+        return spec_path, nvr, commit

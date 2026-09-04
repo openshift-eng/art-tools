@@ -1,0 +1,52 @@
+name: unit-tests
+
+on:
+  pull_request:
+    paths:
+      - "**"
+
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    container: registry.fedoraproject.org/fedora:latest
+    steps:
+      - name: Install dependencies
+        run: dnf install -y --nobest git clang gcc krb5-devel make glibc
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{env.PYTHON_VERSION}}
+
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          set-safe-directory: ${{ env.GITHUB_WORKSPACE }}
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.11.26"
+          python-version: ${{env.PYTHON_VERSION}}
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Verify uv installation
+        run: |
+          uv --version
+          uv python find "$PYTHON_VERSION"
+
+      - name: Create venv and install dependencies
+        run: make venv
+
+      - name: Run tests
+        run: make test
+
+      - name: Run dependency audit
+        continue-on-error: true
+        run: make audit

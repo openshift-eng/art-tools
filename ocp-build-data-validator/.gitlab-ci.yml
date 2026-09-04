@@ -1,0 +1,5 @@
+test:
+  tags:
+    - ocp-build-data-validator
+  script:
+    - tox

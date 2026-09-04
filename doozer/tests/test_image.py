@@ -1,0 +1,2185 @@
+import logging
+import os
+import shutil
+import tempfile
+import unittest
+from unittest import IsolatedAsyncioTestCase, mock
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+from artcommonlib import exectools
+from artcommonlib.constants import GOLANG_BUILDER_IMAGE_NAME
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome
+from artcommonlib.model import Missing, Model
+from artcommonlib.variants import BuildVariant
+from doozerlib import build_info, image
+from doozerlib.image import ImageMetadata, extract_golang_version_from_pullspec
+from doozerlib.repodata import Repodata, Rpm
+from doozerlib.repos import Repos
+from flexmock import flexmock
+
+TEST_YAML = """---
+name: 'openshift/test'
+distgit:
+  namespace: 'hello'"""
+
+# base only images have an additional flag
+TEST_BASE_YAML = """---
+name: 'openshift/test_base'
+base_only: true
+distgit:
+  namespace: 'hello'"""
+
+
+class MockRuntime(object):
+    def __init__(self, logger):
+        self.logger = logger
+
+
+class TestImageMetadata(unittest.TestCase):
+    def setUp(self):
+        self.test_dir = tempfile.mkdtemp(prefix="ocp-cd-test-logs")
+
+        self.test_file = os.path.join(self.test_dir, "test_file")
+        self.logger = logging.getLogger()
+
+        self.cwd = os.getcwd()
+        os.chdir(self.test_dir)
+
+        test_yml = open('test.yml', 'w')
+        test_yml.write(TEST_YAML)
+        test_yml.close()
+
+    def tearDown(self):
+        os.chdir(self.cwd)
+        shutil.rmtree(self.test_dir)
+
+    @unittest.skip("assertion failing, check if desired behavior changed")
+    def test_init(self):
+        """
+        The metadata object appears to need to be created while CWD is
+        in the root of a git repo containing a file called '<name>.yml'
+        This file must contain a structure:
+           {'distgit': {'namespace': '<value>'}}
+
+        The metadata object requires:
+          a type string <image|rpm>
+          a Runtime object placeholder
+
+        """
+
+        #
+        # Check the logs
+        #
+        logs = [log.rstrip() for log in open(self.test_file).readlines()]
+
+        expected = 1
+        actual = len(logs)
+        self.assertEqual(expected, actual, "logging lines - expected: {}, actual: {}".format(expected, actual))
+
+    @unittest.skip("raising AttributeError: 'str' object has no attribute 'base_dir'")
+    def test_base_only(self):
+        """
+        Some images are used only as a base for other images.  These base images
+        are not included in a formal release.
+        """
+
+        test_base_yml = open('test_base.yml', 'w')
+        test_base_yml.write(TEST_BASE_YAML)
+        test_base_yml.close()
+
+        rt = MockRuntime(self.logger)
+        name = 'test.yml'
+        name_base = 'test_base.yml'
+
+        md = image.ImageMetadata(rt, name)
+        md_base = image.ImageMetadata(rt, name_base)
+
+        # Test the internal config value (will fail if implementation changes)
+        # If the flag is absent, default to false
+        self.assertFalse(md.config.base_only)
+        self.assertTrue(md_base.config.base_only)
+
+        # Test the base_only property of the ImageMetadata object
+        self.assertFalse(md.base_only)
+        self.assertTrue(md_base.base_only)
+
+    @unittest.skip("AttributeError: 'str' object has no attribute 'filename'")
+    def test_pull_url(self):
+        fake_runtime = flexmock(
+            get_latest_build_info=lambda: ('openshift-cli', '1.1.1', '8'),
+            group_config=flexmock(
+                urls=flexmock(
+                    brew_image_namespace='rh-osbs',
+                    brew_image_host='brew-pulp-docker01.web.prod.ext.phx2.redhat.com:8888',
+                )
+            ),
+        )
+
+        fake_image = flexmock(
+            pull_url=image.ImageMetadata.pull_url(), runtime=fake_runtime, config=flexmock(name='test')
+        )
+
+        self.assertEqual(
+            fake_image.pull_url(), "brew-pulp-docker01.web.prod.ext.phx2.redhat.com:8888/rh-osbs/openshift-test"
+        )
+
+    @unittest.skip("AttributeError: 'str' object has no attribute 'filename'")
+    def test_get_latest_build_info(self):
+        expected_cmd = ["brew", "latest-build", "rhaos-4.2-rhel-7-buildgo-toolset-1.10"]
+
+        latest_build_output = """
+        Build                                     Tag                   Built by
+        ----------------------------------------  --------------------  ----------------
+        go-toolset-1.10-1.10.3-7.el7              devtools-2018.4-rhel-7  deparker
+        """
+
+        (
+            flexmock(exectools)
+            .should_receive("cmd_gather")
+            .with_args(expected_cmd)
+            .once()
+            .and_return((0, latest_build_output))
+        )
+
+        test_base_yml = open('test_pull.yml', 'w')
+        test_base_yml.write(TEST_BASE_YAML)
+        test_base_yml.close()
+        rt = MockRuntime(self.logger)
+        name = 'test_pull.yml'
+        md = image.ImageMetadata(rt, name)
+        n, v, r = md.get_latest_build_info()
+        self.assertEqual(n, "go-toolset-1.10")
+        self.assertEqual(v, "1.10.3")
+        self.assertEqual(r, "7")
+
+    def test_get_brew_image_name_short(self):
+        image_model = Model(
+            {
+                'name': 'openshift/test',
+            }
+        )
+        data_obj = Model(
+            {
+                'key': 'my-distgit',
+                'data': image_model,
+                'filename': 'my-distgit.yaml',
+            }
+        )
+        rt = mock.MagicMock()
+        imeta = image.ImageMetadata(rt, data_obj)
+        self.assertEqual(imeta.get_brew_image_name_short(), 'openshift-test')
+
+    def _create_image_metadata(self, name):
+        image_model = Model(
+            {
+                'name': name,
+            }
+        )
+        data_obj = Model(
+            {
+                'key': 'my-distgit',
+                'data': image_model,
+                'filename': 'my-distgit.yaml',
+            }
+        )
+        rt = MagicMock()
+        rt.logger = logging.getLogger('test_runtime')  # Use real logger
+        return image.ImageMetadata(rt, data_obj)
+
+    def test_cachi2_enabled_1(self):
+        metadata = self._create_image_metadata('openshift/test_0')
+        mock_config = MagicMock()
+        mock_config.konflux.cachi2.enabled = True
+
+        self.assertTrue(metadata.is_cachi2_enabled())
+
+    def test_cachi2_enabled_2(self):
+        metadata = self._create_image_metadata('openshift/test')
+
+        mock_config = MagicMock()
+        mock_config.konflux.cachi2.enabled = False
+        metadata.config = mock_config
+
+        self.assertFalse(metadata.is_cachi2_enabled())
+
+    def test_cachi2_enabled_3(self):
+        metadata = self._create_image_metadata('openshift/test_1')
+
+        mock_config = MagicMock()
+        mock_config.konflux.cachi2.enabled = None
+        metadata.config = mock_config
+
+        metadata.runtime.group_config.konflux.cachi2.enabled = True
+
+        self.assertTrue(metadata.is_cachi2_enabled())
+
+    def test_cachi2_enabled_4(self):
+        metadata = self._create_image_metadata('openshift/test_2')
+
+        mock_config = MagicMock()
+        mock_config.konflux.cachi2.enabled = Missing
+        metadata.config = mock_config
+
+        metadata.runtime.group_config.konflux.cachi2.enabled = False
+
+        self.assertFalse(metadata.is_cachi2_enabled())
+
+    @patch("artcommonlib.util.is_cachito_enabled")
+    def test_cachi2_enabled_5(self, is_cachito_enabled):
+        metadata = self._create_image_metadata('openshift/test_3')
+
+        mock_config = MagicMock()
+        mock_config.konflux.cachi2.enabled = Missing
+        metadata.config = mock_config
+
+        metadata.runtime.group_config.konflux.cachi2.enabled = Missing
+        is_cachito_enabled.return_value = True
+
+        self.assertTrue(metadata.is_cachi2_enabled())
+
+    @patch("artcommonlib.util.is_cachito_enabled")
+    def test_cachi2_enabled_6(self, is_cachito_enabled):
+        metadata = self._create_image_metadata('openshift/test_4')
+
+        mock_config = MagicMock()
+        mock_config.konflux.cachi2.enabled = False
+        metadata.config = mock_config
+
+        metadata.runtime.group_config.konflux.cachi2.enabled = Missing
+        is_cachito_enabled.return_value = True
+
+        self.assertFalse(metadata.is_cachi2_enabled())
+
+    def test_lockfile_enabled_metadata_override_true(self):
+        self.logger = MagicMock()
+        metadata = self._create_image_metadata('openshift/test_lockfile')
+
+        mock_config = MagicMock()
+        mock_config.konflux.cachi2.lockfile.enabled = True
+        metadata.config = mock_config
+        metadata.logger = self.logger
+
+        metadata.runtime.group_config.konflux.cachi2.lockfile.enabled = False
+
+        with (
+            patch.object(ImageMetadata, "is_cachi2_enabled", return_value=True),
+            patch.object(ImageMetadata, "get_konflux_network_mode", return_value="hermetic"),
+        ):
+            result = metadata.is_lockfile_generation_enabled()
+        self.assertTrue(result)
+        self.logger.info.assert_any_call("Lockfile generation set from metadata config True")
+
+    def test_lockfile_enabled_metadata_override_false(self):
+        self.logger = MagicMock()
+        metadata = self._create_image_metadata('openshift/test_lockfile')
+
+        mock_config = MagicMock()
+        mock_config.konflux.cachi2.lockfile.enabled = False
+        metadata.config = mock_config
+        metadata.logger = self.logger
+
+        metadata.runtime.group_config.konflux.cachi2.lockfile.enabled = True
+
+        with patch.object(ImageMetadata, "is_cachi2_enabled", return_value=True):
+            result = metadata.is_lockfile_generation_enabled()
+        self.assertFalse(result)
+
+    def test_lockfile_enabled_group_override_true(self):
+        self.logger = MagicMock()
+        metadata = self._create_image_metadata('openshift/test_lockfile')
+
+        mock_config = MagicMock()
+        mock_config.konflux.cachi2.lockfile.enabled = None
+        metadata.config = mock_config
+        metadata.logger = self.logger
+
+        metadata.runtime.group_config.konflux.cachi2.lockfile.enabled = True
+
+        with (
+            patch.object(ImageMetadata, "is_cachi2_enabled", return_value=True),
+            patch.object(ImageMetadata, "get_konflux_network_mode", return_value="hermetic"),
+        ):
+            result = metadata.is_lockfile_generation_enabled()
+        self.assertTrue(result)
+        self.logger.info.assert_any_call("Lockfile generation set from group config True")
+
+    def test_lockfile_enabled_group_override_false(self):
+        self.logger = MagicMock()
+        metadata = self._create_image_metadata('openshift/test_lockfile')
+
+        mock_config = MagicMock()
+        mock_config.konflux.cachi2.lockfile.enabled = None
+        metadata.config = mock_config
+        metadata.logger = self.logger
+
+        metadata.runtime.group_config.konflux.cachi2.lockfile.enabled = False
+
+        with patch.object(ImageMetadata, "is_cachi2_enabled", return_value=True):
+            result = metadata.is_lockfile_generation_enabled()
+        self.assertFalse(result)
+
+    def test_lockfile_enabled_missing_overrides(self):
+        self.logger = MagicMock()
+        metadata = self._create_image_metadata('openshift/test_lockfile')
+
+        mock_config = MagicMock()
+        mock_config.konflux.cachi2.lockfile.enabled = Missing
+        metadata.config = mock_config
+        metadata.logger = self.logger
+
+        metadata.runtime.group_config.konflux.cachi2.lockfile.enabled = Missing
+
+        with (
+            patch.object(ImageMetadata, "is_cachi2_enabled", return_value=True),
+            patch.object(ImageMetadata, "get_konflux_network_mode", return_value="hermetic"),
+        ):
+            result = metadata.is_lockfile_generation_enabled()
+        self.assertTrue(result)
+
+    def test_lockfile_enabled_cachi2_disabled(self):
+        self.logger = MagicMock()
+        metadata = self._create_image_metadata('openshift/test_lockfile')
+
+        mock_config = MagicMock()
+        mock_config.konflux.cachi2.lockfile.enabled = True
+        metadata.config = mock_config
+        metadata.logger = self.logger
+
+        metadata.runtime.group_config.konflux.cachi2.lockfile.enabled = True
+
+        with patch.object(ImageMetadata, "is_cachi2_enabled", return_value=False):
+            result = metadata.is_lockfile_generation_enabled()
+        self.assertFalse(result)
+
+    def test_lockfile_enabled_all_missing(self):
+        self.logger = MagicMock()
+        metadata = self._create_image_metadata('openshift/test_lockfile')
+
+        mock_config = MagicMock()
+        mock_config.konflux.cachi2.lockfile.enabled = Missing
+        metadata.config = mock_config
+        metadata.logger = self.logger
+
+        metadata.runtime.group_config.konflux.cachi2.lockfile.enabled = Missing
+
+        with patch.object(ImageMetadata, "is_cachi2_enabled", return_value=Missing):
+            result = metadata.is_lockfile_generation_enabled()
+        self.assertFalse(result)
+
+    def test_lockfile_enabled_open_network_mode(self):
+        """Test that lockfile generation is disabled for open network mode"""
+        self.logger = MagicMock()
+        metadata = self._create_image_metadata('openshift/test_lockfile')
+
+        mock_config = MagicMock()
+        mock_config.konflux.cachi2.lockfile.enabled = True
+        metadata.config = mock_config
+        metadata.logger = self.logger
+
+        metadata.runtime.group_config.konflux.cachi2.lockfile.enabled = True
+
+        with (
+            patch.object(ImageMetadata, "is_cachi2_enabled", return_value=True),
+            patch.object(ImageMetadata, "get_konflux_network_mode", return_value="open"),
+        ):
+            result = metadata.is_lockfile_generation_enabled()
+        self.assertFalse(result)
+        self.logger.info.assert_any_call("Lockfile generation disabled: network mode is 'open' (requires 'hermetic')")
+
+    def test_lockfile_enabled_internal_only_network_mode(self):
+        """Test that lockfile generation is disabled for internal-only network mode"""
+        self.logger = MagicMock()
+        metadata = self._create_image_metadata('openshift/test_lockfile')
+
+        mock_config = MagicMock()
+        mock_config.konflux.cachi2.lockfile.enabled = True
+        metadata.config = mock_config
+        metadata.logger = self.logger
+
+        metadata.runtime.group_config.konflux.cachi2.lockfile.enabled = True
+
+        with (
+            patch.object(ImageMetadata, "is_cachi2_enabled", return_value=True),
+            patch.object(ImageMetadata, "get_konflux_network_mode", return_value="internal-only"),
+        ):
+            result = metadata.is_lockfile_generation_enabled()
+        self.assertFalse(result)
+        self.logger.info.assert_any_call(
+            "Lockfile generation disabled: network mode is 'internal-only' (requires 'hermetic')"
+        )
+
+    def test_get_enabled_repos_with_repos(self):
+        """Test get_enabled_repos returns repos that are both globally enabled and in image config"""
+        metadata = self._create_image_metadata('openshift/test_repos')
+
+        # Mock config to return repos from image config
+        mock_config = MagicMock()
+        mock_config.get.return_value = ['repo1', 'repo2', 'repo3']
+        metadata.config = mock_config
+
+        # Mock runtime.repos to have globally enabled repos
+        mock_repo1 = MagicMock()
+        mock_repo1.name = 'repo1'
+        mock_repo1.enabled = True
+
+        mock_repo2 = MagicMock()
+        mock_repo2.name = 'repo2'
+        mock_repo2.enabled = True
+
+        mock_repo3 = MagicMock()
+        mock_repo3.name = 'repo3'
+        mock_repo3.enabled = True
+
+        metadata.runtime.repos = {
+            'repo1': mock_repo1,
+            'repo2': mock_repo2,
+            'repo3': mock_repo3,
+        }
+
+        result = metadata.get_enabled_repos()
+
+        self.assertEqual(result, {'repo1', 'repo2', 'repo3'})
+        mock_config.get.assert_called_once_with("enabled_repos", [])
+
+    def test_get_enabled_repos_empty_config(self):
+        """Test get_enabled_repos returns empty set when no repos configured"""
+        metadata = self._create_image_metadata('openshift/test_repos_empty')
+
+        mock_config = MagicMock()
+        mock_config.get.return_value = []
+        metadata.config = mock_config
+
+        result = metadata.get_enabled_repos()
+
+        self.assertEqual(result, set())
+        mock_config.get.assert_called_once_with("enabled_repos", [])
+
+    def test_get_enabled_repos_intersection_logic(self):
+        """Test get_enabled_repos returns only repos enabled in BOTH group.yml AND image config"""
+        metadata = self._create_image_metadata('openshift/test_repos_intersection')
+
+        # Mock config to return repos from image config
+        mock_config = MagicMock()
+        mock_config.get.return_value = ['repo1', 'repo2', 'repo3']
+        metadata.config = mock_config
+
+        # Mock runtime.repos where only repo1 and repo2 are globally enabled
+        mock_repo1 = MagicMock()
+        mock_repo1.name = 'repo1'
+        mock_repo1.enabled = True
+
+        mock_repo2 = MagicMock()
+        mock_repo2.name = 'repo2'
+        mock_repo2.enabled = True
+
+        mock_repo3 = MagicMock()
+        mock_repo3.name = 'repo3'
+        mock_repo3.enabled = False  # NOT globally enabled
+
+        mock_repo4 = MagicMock()
+        mock_repo4.name = 'repo4'
+        mock_repo4.enabled = True  # Globally enabled but not in image config
+
+        metadata.runtime.repos = {
+            'repo1': mock_repo1,
+            'repo2': mock_repo2,
+            'repo3': mock_repo3,
+            'repo4': mock_repo4,
+        }
+
+        result = metadata.get_enabled_repos()
+
+        # Should only return repos enabled in BOTH places (repo1 and repo2)
+        self.assertEqual(result, {'repo1', 'repo2'})
+        mock_config.get.assert_called_once_with("enabled_repos", [])
+
+    def test_get_konflux_build_attempts_default(self):
+        """
+        Test default build attempts when no config is set
+        """
+        metadata = self._create_image_metadata('openshift/test')
+        mock_config = MagicMock()
+        mock_config.konflux.build_attempts = Missing
+        metadata.config = mock_config
+        metadata.runtime.group_config.konflux.build_attempts = Missing
+        metadata.logger = MagicMock()
+
+        attempts = metadata.get_konflux_build_attempts()
+        self.assertEqual(attempts, 3)
+
+    def test_get_konflux_build_attempts_metadata_override(self):
+        """
+        Test component-level override takes precedence over group
+        """
+        metadata = self._create_image_metadata('openshift/test')
+        mock_config = MagicMock()
+        mock_config.konflux.build_attempts = 5
+        metadata.config = mock_config
+        metadata.runtime.group_config.konflux.build_attempts = 2
+        metadata.logger = MagicMock()
+
+        attempts = metadata.get_konflux_build_attempts()
+        self.assertEqual(attempts, 5)
+
+    def test_get_konflux_build_attempts_group_override(self):
+        """
+        Test group-level override when component not set
+        """
+        metadata = self._create_image_metadata('openshift/test')
+        mock_config = MagicMock()
+        mock_config.konflux.build_attempts = Missing
+        metadata.config = mock_config
+        metadata.runtime.group_config.konflux.build_attempts = 1
+        metadata.logger = MagicMock()
+
+        attempts = metadata.get_konflux_build_attempts()
+        self.assertEqual(attempts, 1)
+
+    def test_get_konflux_image_repo_default(self):
+        """
+        Test default image repo is returned when no override is configured
+        """
+        metadata = self._create_image_metadata('openshift/test')
+        mock_config = MagicMock()
+        mock_config.konflux.image_repo = Missing
+        metadata.config = mock_config
+        metadata.runtime.group_config.konflux.image_repo = Missing
+        metadata.logger = MagicMock()
+
+        repo = metadata.get_konflux_image_repo(default="quay.io/default/repo")
+        self.assertEqual(repo, "quay.io/default/repo")
+
+    def test_get_konflux_image_repo_metadata_override(self):
+        """
+        Test image-level override takes precedence over group and default
+        """
+        metadata = self._create_image_metadata('openshift/test')
+        mock_config = MagicMock()
+        mock_config.konflux.image_repo = "quay.io/custom/image-repo"
+        metadata.config = mock_config
+        metadata.runtime.group_config.konflux.image_repo = "quay.io/group/repo"
+        metadata.logger = MagicMock()
+
+        repo = metadata.get_konflux_image_repo(default="quay.io/default/repo")
+        self.assertEqual(repo, "quay.io/custom/image-repo")
+
+    def test_get_konflux_image_repo_group_override(self):
+        """
+        Test group-level override when image config is not set
+        """
+        metadata = self._create_image_metadata('openshift/test')
+        mock_config = MagicMock()
+        mock_config.konflux.image_repo = Missing
+        metadata.config = mock_config
+        metadata.runtime.group_config.konflux.image_repo = "quay.io/group/repo"
+        metadata.logger = MagicMock()
+
+        repo = metadata.get_konflux_image_repo(default="quay.io/default/repo")
+        self.assertEqual(repo, "quay.io/group/repo")
+
+    def test_get_konflux_image_repo_empty_string_falls_through(self):
+        metadata = self._create_image_metadata('openshift/test')
+        mock_config = MagicMock()
+        mock_config.konflux.image_repo = ""
+        metadata.config = mock_config
+        metadata.runtime.group_config.konflux.image_repo = "quay.io/group/repo"
+        metadata.logger = MagicMock()
+
+        repo = metadata.get_konflux_image_repo(default="quay.io/default/repo")
+        self.assertEqual(repo, "quay.io/group/repo")
+
+    def test_get_konflux_image_repo_whitespace_falls_through(self):
+        metadata = self._create_image_metadata('openshift/test')
+        mock_config = MagicMock()
+        mock_config.konflux.image_repo = "   "
+        metadata.config = mock_config
+        metadata.runtime.group_config.konflux.image_repo = Missing
+        metadata.logger = MagicMock()
+
+        repo = metadata.get_konflux_image_repo(default="quay.io/default/repo")
+        self.assertEqual(repo, "quay.io/default/repo")
+
+    def test_get_konflux_image_repo_both_blank_falls_to_default(self):
+        metadata = self._create_image_metadata('openshift/test')
+        mock_config = MagicMock()
+        mock_config.konflux.image_repo = ""
+        metadata.config = mock_config
+        metadata.runtime.group_config.konflux.image_repo = "  "
+        metadata.logger = MagicMock()
+
+        repo = metadata.get_konflux_image_repo(default="quay.io/default/repo")
+        self.assertEqual(repo, "quay.io/default/repo")
+
+    def test_calculate_config_digest_old_style_repos(self):
+        """
+        Test calculate_config_digest with old-style repos (dict format).
+        """
+        metadata = self._create_image_metadata('openshift/test_digest_old')
+
+        # Mock image config with enabled_repos
+        metadata.config = Model({'name': 'test-image', 'enabled_repos': ['repo1', 'repo2'], 'non_shipping_repos': []})
+
+        # Old-style group_config with repos as dict
+        group_config = Model(
+            {
+                'repos': {
+                    'repo1': {'conf': {'baseurl': 'http://example.com/repo1'}, 'content_set': {'default': 'cs1'}},
+                    'repo2': {'conf': {'baseurl': 'http://example.com/repo2'}, 'content_set': {'default': 'cs2'}},
+                }
+            }
+        )
+
+        streams = Model({})
+
+        # Should not raise KeyError
+        digest = metadata.calculate_config_digest(group_config, streams)
+
+        # Verify digest is a valid sha256 hash
+        self.assertTrue(digest.startswith('sha256:'))
+        self.assertEqual(len(digest), 71)  # 'sha256:' + 64 hex chars
+
+    def test_calculate_config_digest_new_style_repos(self):
+        """
+        Test calculate_config_digest with new-style repos (list format).
+        """
+        metadata = self._create_image_metadata('openshift/test_digest_new')
+
+        # Mock image config with enabled_repos
+        metadata.config = Model({'name': 'test-image', 'enabled_repos': ['repo1', 'repo2'], 'non_shipping_repos': []})
+
+        # New-style group_config with all_repos as list
+        group_config = Model(
+            {
+                'all_repos': [
+                    {
+                        'name': 'repo1',
+                        'type': 'external',
+                        'conf': {'baseurl': 'http://example.com/repo1'},
+                        'content_set': {'default': 'cs1'},
+                    },
+                    {
+                        'name': 'repo2',
+                        'type': 'external',
+                        'conf': {'baseurl': 'http://example.com/repo2'},
+                        'content_set': {'default': 'cs2'},
+                    },
+                    {
+                        'name': 'repo3',
+                        'type': 'external',
+                        'conf': {'baseurl': 'http://example.com/repo3'},
+                        'content_set': {'default': 'cs3'},
+                    },
+                ]
+            }
+        )
+
+        streams = Model({})
+
+        # Should not raise KeyError
+        digest = metadata.calculate_config_digest(group_config, streams)
+
+        # Verify digest is a valid sha256 hash
+        self.assertTrue(digest.startswith('sha256:'))
+        self.assertEqual(len(digest), 71)  # 'sha256:' + 64 hex chars
+
+    def test_calculate_config_digest_no_repos(self):
+        """
+        Test calculate_config_digest with no repos enabled.
+        """
+        metadata = self._create_image_metadata('openshift/test_digest_no_repos')
+
+        # Mock image config with no enabled_repos
+        metadata.config = Model({'name': 'test-image', 'enabled_repos': [], 'non_shipping_repos': []})
+
+        # Group config doesn't matter when no repos are enabled
+        group_config = Model({})
+        streams = Model({})
+
+        # Should not raise any errors
+        digest = metadata.calculate_config_digest(group_config, streams)
+
+        # Verify digest is a valid sha256 hash
+        self.assertTrue(digest.startswith('sha256:'))
+        self.assertEqual(len(digest), 71)  # 'sha256:' + 64 hex chars
+
+    @patch('doozerlib.image.SourceResolver')
+    @patch('builtins.open', create=True)
+    @patch('pathlib.Path.joinpath')
+    @pytest.mark.skip(
+        reason="Removed: _apply_alternative_upstream_config replaced with _validate_upstream_builder_stream"
+    )
+    def test_apply_alternative_upstream_config_matching_rhel_version(
+        self, mock_joinpath, mock_open, mock_source_resolver
+    ):
+        """Test alternative config is merged when upstream RHEL version matches"""
+        metadata = self._create_image_metadata('openshift/test_alt_config')
+
+        # Mock config with alternative_upstream
+        metadata.config = Model(
+            {
+                'name': 'openshift/test_alt_config',
+                'distgit': {'branch': 'rhaos-4.16-rhel-9'},
+                'content': {'source': {'git': {'url': 'https://github.com/test/repo.git'}}},
+                'alternative_upstream': [{'when': 'el8', 'distgit': {'branch': 'rhaos-4.16-rhel-8'}}],
+            }
+        )
+
+        # Mock branch_el_target to return 9 (ART intended RHEL version)
+        metadata.branch_el_target = MagicMock(return_value=9)
+
+        # Mock source resolution
+        mock_source_resolution = MagicMock()
+        metadata.runtime.source_resolver.resolve_source = MagicMock(return_value=mock_source_resolution)
+
+        # Mock get_source_dir to return a path
+        mock_source_dir = MagicMock()
+        mock_source_resolver.get_source_dir = MagicMock(return_value=mock_source_dir)
+
+        # Mock Dockerfile path
+        mock_df_path = MagicMock()
+        mock_joinpath.return_value = mock_df_path
+
+        # Mock Dockerfile content with rhel-8 parent image
+        dockerfile_content = """FROM registry.ci.openshift.org/ocp/builder:rhel-8-golang-1.22-openshift-4.18
+RUN echo "test"
+"""
+        mock_open.return_value.__enter__.return_value = mock.mock_open(read_data=dockerfile_content).return_value
+
+        # Mock DockerfileParser
+        with patch('doozerlib.image.DockerfileParser') as mock_dfp:
+            mock_dfp_instance = MagicMock()
+            mock_dfp_instance.parent_images = [
+                'registry.ci.openshift.org/ocp/builder:rhel-8-golang-1.22-openshift-4.18'
+            ]
+            mock_dfp.return_value = mock_dfp_instance
+
+            # Mock determine_targets
+            metadata.determine_targets = MagicMock(return_value=['target-1', 'target-2'])
+
+            # Call the method
+            metadata._apply_alternative_upstream_config()
+
+        # Verify config was merged (branch should be updated to rhel-8)
+        self.assertEqual(metadata.config['distgit']['branch'], 'rhaos-4.16-rhel-8')
+        # Verify targets were updated
+        metadata.determine_targets.assert_called_once()
+        self.assertEqual(metadata.targets, ['target-1', 'target-2'])
+
+    @patch('doozerlib.image.SourceResolver')
+    @patch('builtins.open', create=True)
+    @pytest.mark.skip(
+        reason="Removed: _apply_alternative_upstream_config replaced with _validate_upstream_builder_stream"
+    )
+    @patch('pathlib.Path.joinpath')
+    def test_apply_alternative_upstream_config_no_match(self, mock_joinpath, mock_open, mock_source_resolver):
+        """Test that IOError is raised when upstream RHEL version doesn't match ART nor any alternative_upstream"""
+        metadata = self._create_image_metadata('openshift/test_alt_config_no_match')
+
+        # Mock config with alternative_upstream for el7 (won't match upstream's el8)
+        metadata.config = Model(
+            {
+                'name': 'openshift/test_alt_config_no_match',
+                'distgit': {'branch': 'rhaos-4.16-rhel-9'},
+                'content': {'source': {'git': {'url': 'https://github.com/test/repo.git'}}},
+                'alternative_upstream': [{'when': 'el7', 'distgit': {'branch': 'rhaos-4.16-rhel-7'}}],
+            }
+        )
+
+        # Mock branch_el_target to return 9 (ART version)
+        metadata.branch_el_target = MagicMock(return_value=9)
+
+        # Mock source resolution
+        mock_source_resolution = MagicMock()
+        metadata.runtime.source_resolver.resolve_source = MagicMock(return_value=mock_source_resolution)
+
+        # Mock get_source_dir
+        mock_source_dir = MagicMock()
+        mock_source_resolver.get_source_dir = MagicMock(return_value=mock_source_dir)
+
+        # Mock Dockerfile path
+        mock_df_path = MagicMock()
+        mock_joinpath.return_value = mock_df_path
+
+        # Mock Dockerfile with rhel-8 (upstream=8, ART=9, alternative_upstream=el7 - no match!)
+        dockerfile_content = """FROM registry.ci.openshift.org/ocp/builder:rhel-8-golang-1.22-openshift-4.18
+RUN echo "test"
+"""
+        mock_open.return_value.__enter__.return_value = mock.mock_open(read_data=dockerfile_content).return_value
+
+        # Mock DockerfileParser
+        with patch('doozerlib.image.DockerfileParser') as mock_dfp:
+            mock_dfp_instance = MagicMock()
+            mock_dfp_instance.parent_images = [
+                'registry.ci.openshift.org/ocp/builder:rhel-8-golang-1.22-openshift-4.18'
+            ]
+            mock_dfp.return_value = mock_dfp_instance
+
+            # Should raise IOError since upstream=8, ART=9, but only el7 alternative exists
+            with self.assertRaises(IOError) as context:
+                metadata._apply_alternative_upstream_config()
+
+        # Verify error message mentions the mismatch
+        self.assertIn('Upstream uses el8 but ART uses el9', str(context.exception))
+        self.assertIn('no matching alternative_upstream', str(context.exception))
+
+    @pytest.mark.skip(
+        reason="Removed: _apply_alternative_upstream_config replaced with _validate_upstream_builder_stream"
+    )
+    def test_apply_alternative_upstream_config_no_source(self):
+        """Test that IOError is raised when image has no source"""
+        metadata = self._create_image_metadata('openshift/test_no_source')
+
+        # Mock config without source
+        metadata.config = Model({'name': 'openshift/test_no_source', 'distgit': {'branch': 'rhaos-4.16-rhel-9'}})
+
+        # Mock has_source to return False
+        metadata.has_source = MagicMock(return_value=False)
+
+        # Should raise IOError
+        with self.assertRaises(IOError) as context:
+            metadata._apply_alternative_upstream_config()
+
+        self.assertIn('does not have upstream source', str(context.exception))
+
+    @patch('doozerlib.image.SourceResolver')
+    @patch('builtins.open', create=True)
+    @patch('pathlib.Path.joinpath')
+    @pytest.mark.skip(
+        reason="Removed: _apply_alternative_upstream_config replaced with _validate_upstream_builder_stream"
+    )
+    def test_apply_alternative_upstream_config_no_alternative_config(
+        self, mock_joinpath, mock_open, mock_source_resolver
+    ):
+        """Test when upstream and ART versions match - no alternative config needed"""
+        metadata = self._create_image_metadata('openshift/test_no_alt')
+
+        original_branch = 'rhaos-4.16-rhel-9'
+        # Mock config WITHOUT alternative_upstream
+        metadata.config = Model(
+            {
+                'name': 'openshift/test_no_alt',
+                'distgit': {'branch': original_branch},
+                'content': {'source': {'git': {'url': 'https://github.com/test/repo.git'}}},
+            }
+        )
+
+        # Mock branch_el_target to return 9
+        metadata.branch_el_target = MagicMock(return_value=9)
+
+        # Mock source resolution
+        mock_source_resolution = MagicMock()
+        metadata.runtime.source_resolver.resolve_source = MagicMock(return_value=mock_source_resolution)
+
+        # Mock get_source_dir
+        mock_source_dir = MagicMock()
+        mock_source_resolver.get_source_dir = MagicMock(return_value=mock_source_dir)
+
+        # Mock Dockerfile path
+        mock_df_path = MagicMock()
+        mock_joinpath.return_value = mock_df_path
+
+        # Mock Dockerfile with rhel-9 (matches ART version, no merge needed)
+        dockerfile_content = """FROM registry.ci.openshift.org/ocp/builder:rhel-9-golang-1.22-openshift-4.18
+RUN echo "test"
+"""
+        mock_open.return_value.__enter__.return_value = mock.mock_open(read_data=dockerfile_content).return_value
+
+        # Mock DockerfileParser
+        with patch('doozerlib.image.DockerfileParser') as mock_dfp:
+            mock_dfp_instance = MagicMock()
+            mock_dfp_instance.parent_images = [
+                'registry.ci.openshift.org/ocp/builder:rhel-9-golang-1.22-openshift-4.18'
+            ]
+            mock_dfp.return_value = mock_dfp_instance
+
+            # Mock determine_targets
+            metadata.determine_targets = MagicMock(return_value=['target-1'])
+
+            # Call the method - should not fail since versions match
+            metadata._apply_alternative_upstream_config()
+
+        # Verify config was NOT changed (upstream=9 matches ART=9, no merge needed)
+        self.assertEqual(metadata.config['distgit']['branch'], original_branch)
+        # Targets should not be updated when versions match
+        metadata.determine_targets.assert_not_called()
+
+    @patch('doozerlib.image.SourceResolver')
+    @patch('builtins.open', create=True)
+    @patch('pathlib.Path.joinpath')
+    @patch('doozerlib.image.util.oc_image_info_for_arch', return_value={'config': {'config': {'Labels': {}}}})
+    @pytest.mark.skip(reason="Removed: RHEL version detection replaced with golang version validation")
+    def test_determine_upstream_rhel_version_ubi_pattern(
+        self, mock_oc_image_info, mock_joinpath, mock_open, mock_source_resolver
+    ):
+        """Test RHEL version detection from ubi-based images"""
+        # Clear lru_cache to avoid interference from other tests or cached real calls
+        metadata = self._create_image_metadata('openshift/test_ubi')
+
+        # Mock config
+        metadata.config = Model(
+            {
+                'name': 'openshift/test_ubi',
+                'distgit': {'branch': 'rhaos-4.16-rhel-9'},
+                'content': {'source': {'git': {'url': 'https://github.com/test/repo.git'}}},
+                'alternative_upstream': [{'when': 'el8', 'distgit': {'branch': 'rhaos-4.16-rhel-8'}}],
+            }
+        )
+
+        # Mock branch_el_target
+        metadata.branch_el_target = MagicMock(return_value=9)
+
+        # Mock source resolution
+        mock_source_resolution = MagicMock()
+        metadata.runtime.source_resolver.resolve_source = MagicMock(return_value=mock_source_resolution)
+
+        # Mock get_source_dir
+        mock_source_dir = MagicMock()
+        mock_source_resolver.get_source_dir = MagicMock(return_value=mock_source_dir)
+
+        # Mock Dockerfile path
+        mock_df_path = MagicMock()
+        mock_joinpath.return_value = mock_df_path
+
+        # Mock Dockerfile with ubi8 pattern in tag (no dash)
+        dockerfile_content = """FROM registry.access.redhat.com/ubi/minimal:ubi8
+RUN echo "test"
+"""
+        mock_open.return_value.__enter__.return_value = mock.mock_open(read_data=dockerfile_content).return_value
+
+        # Mock DockerfileParser
+        with patch('doozerlib.image.DockerfileParser') as mock_dfp:
+            mock_dfp_instance = MagicMock()
+            mock_dfp_instance.parent_images = ['registry.access.redhat.com/ubi/minimal:ubi8']
+            mock_dfp.return_value = mock_dfp_instance
+
+            # Mock determine_targets
+            metadata.determine_targets = MagicMock(return_value=['target-1', 'target-2'])
+
+            # Call the method
+            metadata._apply_alternative_upstream_config()
+
+        # Verify config was merged (should detect el8 from ubi8 tag)
+        self.assertEqual(metadata.config['distgit']['branch'], 'rhaos-4.16-rhel-8')
+
+    @patch('doozerlib.image.SourceResolver')
+    @patch('builtins.open', create=True)
+    @patch('pathlib.Path.joinpath')
+    @patch('doozerlib.image.util.oc_image_info_for_arch', return_value={'config': {'config': {'Labels': {}}}})
+    @pytest.mark.skip(reason="Removed: RHEL version detection replaced with golang version validation")
+    def test_determine_upstream_rhel_version_fallback_to_builder(
+        self, mock_oc_image_info, mock_joinpath, mock_open, mock_source_resolver
+    ):
+        """Test that RHEL version detection falls back to builder images when the base image tag is unhelpful"""
+        metadata = self._create_image_metadata('openshift/test_fallback')
+
+        metadata.config = Model(
+            {
+                'name': 'openshift/test_fallback',
+                'distgit': {'branch': 'rhaos-5.0-rhel-9'},
+                'content': {'source': {'git': {'url': 'https://github.com/test/repo.git'}}},
+            }
+        )
+        metadata.branch_el_target = MagicMock(return_value=9)
+
+        mock_source_resolution = MagicMock()
+        metadata.runtime.source_resolver.resolve_source = MagicMock(return_value=mock_source_resolution)
+
+        mock_source_dir = MagicMock()
+        mock_source_resolver.get_source_dir = MagicMock(return_value=mock_source_dir)
+
+        mock_df_path = MagicMock()
+        mock_joinpath.return_value = mock_df_path
+
+        mock_open.return_value.__enter__.return_value = mock.mock_open(read_data="").return_value
+
+        with patch('doozerlib.image.DockerfileParser') as mock_dfp:
+            mock_dfp_instance = MagicMock()
+            mock_dfp_instance.parent_images = [
+                'registry.ci.openshift.org/ocp/builder:rhel-9-golang-1.25',
+                'registry.ci.openshift.org/ocp/4.22:aws-efs-utils-base',
+            ]
+            mock_dfp.return_value = mock_dfp_instance
+            metadata.determine_targets = MagicMock(return_value=['target-1'])
+
+            # Should not raise - RHEL version 9 detected from the builder image fallback
+            metadata._apply_alternative_upstream_config()
+
+    @patch('doozerlib.image.SourceResolver')
+    @patch('builtins.open', create=True)
+    @patch('pathlib.Path.joinpath')
+    @patch('doozerlib.image.util.oc_image_info_for_arch', return_value={'config': {'config': {'Labels': {}}}})
+    @pytest.mark.skip(reason="Removed: RHEL version detection replaced with golang version validation")
+    def test_determine_upstream_rhel_version_skips_compat_builder(
+        self, mock_oc_image_info, mock_joinpath, mock_open, mock_source_resolver
+    ):
+        """Test that primary rhel-9 builder is detected over a rhel-8 compatibility builder"""
+        metadata = self._create_image_metadata('openshift/ose-ovn-kubernetes-rhel9')
+
+        metadata.config = Model(
+            {
+                'name': 'openshift/ose-ovn-kubernetes-rhel9',
+                'distgit': {'branch': 'rhaos-5.0-rhel-9'},
+                'content': {'source': {'git': {'url': 'https://github.com/test/repo.git'}}},
+            }
+        )
+        metadata.branch_el_target = MagicMock(return_value=9)
+
+        mock_source_resolution = MagicMock()
+        metadata.runtime.source_resolver.resolve_source = MagicMock(return_value=mock_source_resolution)
+
+        mock_source_dir = MagicMock()
+        mock_source_resolver.get_source_dir = MagicMock(return_value=mock_source_dir)
+
+        mock_df_path = MagicMock()
+        mock_joinpath.return_value = mock_df_path
+
+        mock_open.return_value.__enter__.return_value = mock.mock_open(read_data="").return_value
+
+        with patch('doozerlib.image.DockerfileParser') as mock_dfp:
+            mock_dfp_instance = MagicMock()
+            # ovn-kubernetes pattern: primary rhel-9 builder, rhel-8 compat builder, base with no RHEL tag
+            mock_dfp_instance.parent_images = [
+                'registry.ci.openshift.org/ocp/builder:rhel-9-golang-1.25-openshift-4.22',
+                'registry.ci.openshift.org/ocp/builder:rhel-8-golang-1.25-openshift-4.22',
+                'registry.ci.openshift.org/ocp/4.22:ovn-kubernetes-base',
+            ]
+            mock_dfp.return_value = mock_dfp_instance
+            metadata.determine_targets = MagicMock(return_value=['target-1'])
+
+            # Should detect el9 from the primary builder, not el8 from the compat builder
+            metadata._apply_alternative_upstream_config()
+
+    @patch('doozerlib.image.SourceResolver')
+    @patch('builtins.open', create=True)
+    @patch('pathlib.Path.joinpath')
+    @patch('doozerlib.image.util.oc_image_info_for_arch', return_value={'config': {'config': {'Labels': {}}}})
+    @pytest.mark.skip(reason="Removed: RHEL version detection replaced with golang version validation")
+    def test_determine_upstream_rhel_version_compat_builder_before_primary(
+        self, mock_oc_image_info, mock_joinpath, mock_open, mock_source_resolver
+    ):
+        """Test that final base image RHEL version wins even when compat builder is listed first"""
+        metadata = self._create_image_metadata('openshift/test-reversed-builders')
+
+        metadata.config = Model(
+            {
+                'name': 'openshift/test-reversed-builders',
+                'distgit': {'branch': 'rhaos-5.0-rhel-9'},
+                'content': {'source': {'git': {'url': 'https://github.com/test/repo.git'}}},
+            }
+        )
+        metadata.branch_el_target = MagicMock(return_value=9)
+
+        mock_source_resolution = MagicMock()
+        metadata.runtime.source_resolver.resolve_source = MagicMock(return_value=mock_source_resolution)
+
+        mock_source_dir = MagicMock()
+        mock_source_resolver.get_source_dir = MagicMock(return_value=mock_source_dir)
+
+        mock_df_path = MagicMock()
+        mock_joinpath.return_value = mock_df_path
+
+        mock_open.return_value.__enter__.return_value = mock.mock_open(read_data="").return_value
+
+        with patch('doozerlib.image.DockerfileParser') as mock_dfp:
+            mock_dfp_instance = MagicMock()
+            # Compat builder listed BEFORE primary builder, base encodes RHEL version
+            mock_dfp_instance.parent_images = [
+                'registry.ci.openshift.org/ocp/builder:rhel-8-golang-1.25-openshift-4.22',
+                'registry.ci.openshift.org/ocp/builder:rhel-9-golang-1.25-openshift-4.22',
+                'registry.ci.openshift.org/ocp/4.22:base-rhel9',
+            ]
+            mock_dfp.return_value = mock_dfp_instance
+            metadata.determine_targets = MagicMock(return_value=['target-1'])
+
+            # Should detect el9 from the final base image, not el8 from the first compat builder
+            metadata._apply_alternative_upstream_config()
+
+    @patch('doozerlib.image.SourceResolver')
+    @patch('builtins.open', create=True)
+    @patch('pathlib.Path.joinpath')
+    @patch('doozerlib.image.util.oc_image_info_for_arch', side_effect=Exception('image not accessible'))
+    @pytest.mark.skip(
+        reason="Removed: _apply_alternative_upstream_config replaced with _validate_upstream_builder_stream"
+    )
+    def test_apply_alternative_upstream_config_undetermined_rhel_version(
+        self, mock_oc_image_info, mock_joinpath, mock_open, mock_source_resolver
+    ):
+        """Test that undetermined RHEL version logs a warning and returns instead of raising"""
+        metadata = self._create_image_metadata('openshift/ose-deployer-rhel9')
+
+        metadata.config = Model(
+            {
+                'name': 'openshift/ose-deployer-rhel9',
+                'distgit': {'branch': 'rhaos-5.0-rhel-9'},
+                'content': {'source': {'git': {'url': 'https://github.com/test/repo.git'}}},
+            }
+        )
+        metadata.branch_el_target = MagicMock(return_value=9)
+
+        mock_source_resolution = MagicMock()
+        metadata.runtime.source_resolver.resolve_source = MagicMock(return_value=mock_source_resolution)
+
+        mock_source_dir = MagicMock()
+        mock_source_resolver.get_source_dir = MagicMock(return_value=mock_source_dir)
+
+        mock_df_path = MagicMock()
+        mock_joinpath.return_value = mock_df_path
+
+        mock_open.return_value.__enter__.return_value = mock.mock_open(read_data="").return_value
+
+        with patch('doozerlib.image.DockerfileParser') as mock_dfp:
+            mock_dfp_instance = MagicMock()
+            # Single parent image with no RHEL version info (like :cli or :base)
+            mock_dfp_instance.parent_images = [
+                'registry.ci.openshift.org/ocp/4.22:cli',
+            ]
+            mock_dfp.return_value = mock_dfp_instance
+
+            # Should NOT raise - should log a warning and return gracefully
+            metadata._apply_alternative_upstream_config()
+
+    def test_get_olm_bundle_delivery_repo_name_override_single_entry(self):
+        metadata = self._create_image_metadata('openshift/test')
+        mock_config = MagicMock()
+        mock_config.delivery.delivery_repo_name_override = True
+        mock_config.delivery.delivery_repo_names = ['openshift4/ose-csi-livenessprobe-rhel9']
+        metadata.config = mock_config
+        with patch.object(type(metadata), 'is_olm_operator', new_callable=lambda: property(lambda self: True)):
+            result = metadata.get_olm_bundle_delivery_repo_name()
+        self.assertEqual(result, 'openshift4/ose-csi-livenessprobe-rhel9')
+
+    def test_get_olm_bundle_delivery_repo_name_override_multiple_entries_raises(self):
+        metadata = self._create_image_metadata('openshift/test')
+        mock_config = MagicMock()
+        mock_config.delivery.delivery_repo_name_override = True
+        mock_config.delivery.delivery_repo_names = [
+            'openshift4/ose-csi-livenessprobe-rhel9',
+            'openshift4/ose-csi-livenessprobe-rhel8',
+        ]
+        metadata.config = mock_config
+        with patch.object(type(metadata), 'is_olm_operator', new_callable=lambda: property(lambda self: True)):
+            with self.assertRaises(IOError):
+                metadata.get_olm_bundle_delivery_repo_name()
+
+    def test_get_olm_bundle_delivery_repo_name_no_override_uses_bundle_delivery_repo_name(self):
+        metadata = self._create_image_metadata('openshift/test')
+        mock_config = MagicMock()
+        mock_config.delivery.delivery_repo_name_override = False
+        mock_config.delivery.bundle_delivery_repo_name = 'openshift4/ose-my-operator-bundle'
+        metadata.config = mock_config
+        with patch.object(type(metadata), 'is_olm_operator', new_callable=lambda: property(lambda self: True)):
+            result = metadata.get_olm_bundle_delivery_repo_name()
+        self.assertEqual(result, 'openshift4/ose-my-operator-bundle')
+
+    def test_get_olm_bundle_delivery_repo_name_no_override_missing_bundle_delivery_repo_name_raises(self):
+        metadata = self._create_image_metadata('openshift/test')
+        mock_config = MagicMock()
+        mock_config.delivery.delivery_repo_name_override = False
+        mock_config.delivery.bundle_delivery_repo_name = Missing
+        metadata.config = mock_config
+        with patch.object(type(metadata), 'is_olm_operator', new_callable=lambda: property(lambda self: True)):
+            with self.assertRaises(IOError):
+                metadata.get_olm_bundle_delivery_repo_name()
+
+    def test_get_olm_bundle_delivery_repo_name_not_olm_operator_raises(self):
+        metadata = self._create_image_metadata('openshift/test')
+        with patch.object(type(metadata), 'is_olm_operator', new_callable=lambda: property(lambda self: False)):
+            with self.assertRaises(IOError):
+                metadata.get_olm_bundle_delivery_repo_name()
+
+    def test_get_olm_bundle_delivery_repo_name_override_missing_delivery_repo_names_raises(self):
+        metadata = self._create_image_metadata('openshift/test')
+        mock_config = MagicMock()
+        mock_config.delivery.delivery_repo_name_override = True
+        mock_config.delivery.delivery_repo_names = Missing
+        metadata.config = mock_config
+        with patch.object(type(metadata), 'is_olm_operator', new_callable=lambda: property(lambda self: True)):
+            with self.assertRaises(IOError):
+                metadata.get_olm_bundle_delivery_repo_name()
+
+    def test_get_olm_bundle_delivery_repo_name_override_empty_list_raises(self):
+        metadata = self._create_image_metadata('openshift/test')
+        mock_config = MagicMock()
+        mock_config.delivery.delivery_repo_name_override = True
+        mock_config.delivery.delivery_repo_names = []
+        metadata.config = mock_config
+        with patch.object(type(metadata), 'is_olm_operator', new_callable=lambda: property(lambda self: True)):
+            with self.assertRaises(IOError):
+                metadata.get_olm_bundle_delivery_repo_name()
+
+    def test_get_olm_bundle_short_name_no_override(self):
+        metadata = self._create_image_metadata('openshift/test')
+        mock_config = MagicMock()
+        mock_config.bundle_name_override = Missing
+        metadata.config = mock_config
+        with patch.object(type(metadata), 'is_olm_operator', new_callable=lambda: property(lambda self: True)):
+            result = metadata.get_olm_bundle_short_name()
+        self.assertEqual(result, 'my-distgit-bundle')
+
+    def test_get_olm_bundle_short_name_with_override(self):
+        metadata = self._create_image_metadata('openshift/test')
+        mock_config = MagicMock()
+        mock_config.bundle_name_override = 'acm-operator-bundle'
+        metadata.config = mock_config
+        with patch.object(type(metadata), 'is_olm_operator', new_callable=lambda: property(lambda self: True)):
+            result = metadata.get_olm_bundle_short_name()
+        self.assertEqual(result, 'acm-operator-bundle')
+
+    def test_get_olm_bundle_short_name_not_olm_operator_raises(self):
+        metadata = self._create_image_metadata('openshift/test')
+        with patch.object(type(metadata), 'is_olm_operator', new_callable=lambda: property(lambda self: False)):
+            with self.assertRaises(IOError):
+                metadata.get_olm_bundle_short_name()
+
+    def test_get_olm_bundle_image_name_with_override(self):
+        metadata = self._create_image_metadata('openshift/test')
+        mock_config = MagicMock()
+        mock_config.bundle_name_override = 'acm-operator-bundle'
+        metadata.config = mock_config
+        metadata.runtime.group_config.product = 'rhacm2'
+        with patch.object(type(metadata), 'is_olm_operator', new_callable=lambda: property(lambda self: True)):
+            result = metadata.get_olm_bundle_image_name()
+        self.assertEqual(result, 'rhacm2/acm-operator-bundle')
+
+    def test_get_konflux_component_name_no_override(self):
+        metadata = self._create_image_metadata('openshift/test')
+        mock_config = MagicMock()
+        mock_config.konflux.component.name_override = Missing
+        metadata.config = mock_config
+        result = metadata.get_konflux_component_name('openshift-4-18')
+        self.assertEqual(result, 'ose-4-18-my-distgit')
+
+    def test_get_konflux_component_name_with_override(self):
+        metadata = self._create_image_metadata('openshift/test')
+        mock_config = MagicMock()
+        mock_config.konflux.component.name_override = 'my-short-name'
+        metadata.config = mock_config
+        result = metadata.get_konflux_component_name('openshift-4-18')
+        self.assertEqual(result, 'my-short-name')
+
+    def test_get_konflux_component_name_exceeds_limit_raises(self):
+        metadata = self._create_image_metadata('openshift/test')
+        mock_config = MagicMock()
+        mock_config.konflux.component.name_override = Missing
+        metadata.config = mock_config
+        # Directly set distgit_key to a value that makes the generated name exceed 63 chars:
+        # 'zero-trust-1-1' (14) + '-' (1) + 'zero-trust-workload-identity-manager-op' (39) = 54 chars total
+        # But 'zero-trust-1-1' (14) + '-' (1) + 'zero-trust-workload-identity-manager-operator-x' (47) = 62 chars
+        # Use 'zero-trust-workload-identity-manager-operator-bundle' (52) -> 14+1+52 = 67 > 63
+        metadata.distgit_key = 'zero-trust-workload-identity-manager-operator-bundle'
+        with self.assertRaises(ValueError) as ctx:
+            metadata.get_konflux_component_name('zero-trust-1-1')
+        self.assertIn('63-char limit', str(ctx.exception))
+        self.assertIn('konflux.component.name_override', str(ctx.exception))
+
+    def test_get_konflux_bundle_component_name_no_override(self):
+        metadata = self._create_image_metadata('openshift/test')
+        mock_config = MagicMock()
+        mock_config.konflux.component.bundle_name_override = Missing
+        mock_config.bundle_name_override = Missing
+        metadata.config = mock_config
+        with patch.object(type(metadata), 'is_olm_operator', new_callable=lambda: property(lambda self: True)):
+            result = metadata.get_konflux_bundle_component_name('openshift-4-18')
+        self.assertEqual(result, 'ose-4-18-my-distgit-bundle')
+
+    def test_get_konflux_bundle_component_name_with_override(self):
+        metadata = self._create_image_metadata('openshift/test')
+        mock_config = MagicMock()
+        mock_config.konflux.component.bundle_name_override = 'my-short-bundle'
+        metadata.config = mock_config
+        with patch.object(type(metadata), 'is_olm_operator', new_callable=lambda: property(lambda self: True)):
+            result = metadata.get_konflux_bundle_component_name('openshift-4-18')
+        self.assertEqual(result, 'my-short-bundle')
+
+    def test_get_konflux_bundle_component_name_exceeds_limit_raises(self):
+        metadata = self._create_image_metadata('openshift/test')
+        mock_config = MagicMock()
+        mock_config.konflux.component.bundle_name_override = Missing
+        mock_config.bundle_name_override = Missing
+        metadata.config = mock_config
+        metadata.distgit_key = 'zero-trust-workload-identity-manager-operator'
+        with patch.object(type(metadata), 'is_olm_operator', new_callable=lambda: property(lambda self: True)):
+            with self.assertRaises(ValueError) as ctx:
+                metadata.get_konflux_bundle_component_name('zero-trust-1-1')
+        self.assertIn('63-char limit', str(ctx.exception))
+        self.assertIn('konflux.component.bundle_name_override', str(ctx.exception))
+
+
+class TestImageInspector(IsolatedAsyncioTestCase):
+    @mock.patch("doozerlib.repos.Repo.get_repodata_threadsafe")
+    @mock.patch("doozerlib.build_info.BrewImageInspector.get_installed_rpm_dicts")
+    @mock.patch("doozerlib.build_info.BrewImageInspector.image_arch")
+    @mock.patch("doozerlib.build_info.BrewImageInspector.get_image_meta")
+    @mock.patch("doozerlib.build_info.BrewImageInspector.get_build_id")
+    async def test_find_non_latest_rpms(
+        self,
+        get_build_id: mock.Mock,
+        get_image_meta: mock.Mock,
+        image_arch: mock.Mock,
+        get_installed_rpm_dicts: mock.Mock,
+        get_repodata_threadsafe: mock.AsyncMock,
+    ):
+        runtime = mock.MagicMock(
+            repos=Repos(
+                {
+                    "rhel-8-baseos-rpms": {
+                        "conf": {"baseurl": {"x86_64": "fake_url"}},
+                        "content_set": {"default": "fake"},
+                    },
+                    "rhel-8-appstream-rpms": {
+                        "conf": {"baseurl": {"x86_64": "fake_url"}},
+                        "content_set": {"default": "fake"},
+                    },
+                    "rhel-8-rt-rpms": {"conf": {"baseurl": {"x86_64": "fake_url"}}, "content_set": {"default": "fake"}},
+                },
+                ["x86_64", "s390x", "ppc64le", "aarch64"],
+            )
+        )
+        archive = mock.MagicMock()
+        brew_build_inspector = mock.MagicMock(autospec=build_info.BrewBuildRecordInspector)
+        get_build_id.return_value = 12345
+        brew_build_inspector.get_build_id.return_value = 12345
+        mock_meta = mock.MagicMock(
+            autospec=image.ImageMetadata,
+            config={
+                "enabled_repos": ["rhel-8-baseos-rpms", "rhel-8-appstream-rpms"],
+            },
+        )
+        mock_meta.get_enabled_repos.return_value = {"rhel-8-baseos-rpms", "rhel-8-appstream-rpms"}
+        mock_meta.runtime = runtime
+        get_image_meta.return_value = mock_meta
+        image_arch.return_value = "x86_64"
+        get_repodata_threadsafe.return_value = Repodata(
+            name='rhel-8-appstream-rpms',
+            primary_rpms=[
+                Rpm.from_dict(
+                    {
+                        'name': 'foo',
+                        'version': '1.0.0',
+                        'release': '1.el9',
+                        'epoch': '0',
+                        'arch': 'x86_64',
+                        'nvr': 'foo-1.0.0-1.el9',
+                    }
+                ),
+                Rpm.from_dict(
+                    {
+                        'name': 'bar',
+                        'version': '1.1.0',
+                        'release': '1.el9',
+                        'epoch': '0',
+                        'arch': 'x86_64',
+                        'nvr': 'bar-1.1.0-1.el9',
+                    }
+                ),
+            ],
+        )
+        get_installed_rpm_dicts.return_value = [
+            {
+                'name': 'foo',
+                'version': '1.0.0',
+                'release': '1.el9',
+                'epoch': '0',
+                'arch': 'x86_64',
+                'nvr': 'foo-1.0.0-1.el9',
+            },
+            {
+                'name': 'bar',
+                'version': '1.0.0',
+                'release': '1.el9',
+                'epoch': '0',
+                'arch': 'x86_64',
+                'nvr': 'bar-1.0.0-1.el9',
+            },
+        ]
+        inspector = build_info.BrewImageInspector(runtime, archive, brew_build_inspector)
+        actual = await inspector.find_non_latest_rpms()
+        get_image_meta.assert_called_once_with()
+        get_installed_rpm_dicts.assert_called_once_with()
+        get_repodata_threadsafe.assert_awaited()
+        self.assertEqual(actual, [('bar-0:1.0.0-1.el9.x86_64', 'bar-0:1.1.0-1.el9.x86_64', 'rhel-8-appstream-rpms')])
+
+
+class TestImageMetadataAsyncMethods(IsolatedAsyncioTestCase):
+    """Test class for async methods in ImageMetadata"""
+
+    def setUp(self):
+        self.logger = MagicMock()
+
+    def _create_image_metadata(self, name, distgit_key=None, **extra_image_fields):
+        """Helper to create ImageMetadata with mock runtime (e.g. base_only=True or golang-builder name)."""
+        image_model = Model({'name': name, **extra_image_fields})
+        data_obj = Model(
+            {
+                'key': distgit_key or 'test-image',
+                'data': image_model,
+                'filename': 'test-image.yaml',
+            }
+        )
+
+        rt = MagicMock()
+        rt.group = 'test-group'
+        rt.build_system = 'konflux'
+        rt.konflux_db = MagicMock()
+        rt.assembly = 'stream'
+        rt.product = 'ocp'
+
+        metadata = image.ImageMetadata(rt, data_obj)
+        metadata.logger = self.logger
+        return metadata
+
+    async def test_fetch_rpms_from_build_cached_packages(self):
+        """Test fetch_rpms_from_build returns cached packages"""
+        metadata = self._create_image_metadata('openshift/test-cached')
+        metadata.installed_rpms = ['pkg1', 'pkg2', 'pkg3']
+
+        result = await metadata.fetch_rpms_from_build()
+
+        self.assertEqual(result, {'pkg1', 'pkg2', 'pkg3'})
+        # Should not call konflux_db when cached
+        metadata.runtime.konflux_db.get_latest_build.assert_not_called()
+        self.logger.debug.assert_called_with("Using cached installed_rpms for test-image: 3 RPMs")
+        self.logger.error.assert_not_called()
+        self.logger.warning.assert_not_called()
+
+    async def test_fetch_rpms_from_build_cached_empty_packages(self):
+        """Test fetch_rpms_from_build returns cached empty packages"""
+        metadata = self._create_image_metadata('openshift/test-cached-empty')
+        metadata.installed_rpms = []
+
+        result = await metadata.fetch_rpms_from_build()
+
+        self.assertEqual(result, set())
+        metadata.runtime.konflux_db.get_latest_build.assert_not_called()
+        self.logger.debug.assert_called_with("Using cached installed_rpms for test-image: 0 RPMs")
+        self.logger.error.assert_not_called()
+        self.logger.warning.assert_not_called()
+
+    async def test_fetch_rpms_from_build_no_build_found(self):
+        """Test fetch_rpms_from_build when no build is found"""
+        metadata = self._create_image_metadata('openshift/test-no-build')
+
+        metadata.runtime.konflux_db.get_latest_build = AsyncMock(return_value=None)
+
+        result = await metadata.fetch_rpms_from_build()
+
+        self.assertEqual(result, set())
+        self.assertEqual(metadata.installed_rpms, [])
+        self.assertEqual(metadata.runtime.konflux_db.get_latest_build.await_count, 1)
+        self.logger.error.assert_not_called()
+
+    async def test_fetch_rpms_from_build_build_no_packages(self):
+        """Test fetch_rpms_from_build when build has no installed_rpms"""
+        metadata = self._create_image_metadata('openshift/test-no-packages')
+
+        mock_build = MagicMock()
+        mock_build.installed_rpms = None
+
+        metadata.runtime.konflux_db.get_latest_build = AsyncMock(return_value=mock_build)
+
+        result = await metadata.fetch_rpms_from_build()
+
+        self.assertEqual(result, set())
+        self.assertEqual(metadata.installed_rpms, [])
+        self.assertEqual(metadata.runtime.konflux_db.get_latest_build.await_count, 1)
+        self.logger.error.assert_not_called()
+
+    async def test_fetch_rpms_from_build_no_parent_full_package_set(self):
+        """Test fetch_rpms_from_build when no parent found, uses full package set"""
+        metadata = self._create_image_metadata('openshift/test-no-parent')
+
+        # Ensure no cached packages
+        metadata.installed_rpms = None
+
+        mock_build = MagicMock()
+        mock_build.installed_rpms = ['pkg1', 'pkg2', 'pkg3']
+
+        metadata.runtime.konflux_db.get_latest_build = AsyncMock(return_value=mock_build)
+
+        # Mock no parent members
+        with patch.object(metadata, 'get_parent_members', return_value={}):
+            result = await metadata.fetch_rpms_from_build()
+
+        self.assertEqual(result, {'pkg1', 'pkg2', 'pkg3'})
+        self.assertEqual(set(metadata.installed_rpms), {'pkg1', 'pkg2', 'pkg3'})
+        self.assertEqual(metadata.runtime.konflux_db.get_latest_build.await_count, 1)
+
+    async def test_fetch_rpms_from_build_exception_handling(self):
+        """Test fetch_rpms_from_build handles exceptions gracefully"""
+        metadata = self._create_image_metadata('openshift/test-exception')
+
+        metadata.runtime.konflux_db.get_latest_build = AsyncMock(side_effect=Exception("Database error"))
+
+        result = await metadata.fetch_rpms_from_build()
+
+        self.assertEqual(result, set())
+        self.assertEqual(metadata.installed_rpms, [])
+
+    async def test_fetch_rpms_from_build_uses_lockfile_seed_nvrs(self):
+        """Test fetch_rpms_from_build uses seed NVR when its DB record matches the distgit key"""
+        metadata = self._create_image_metadata('openshift/test-seed')
+
+        mock_build = MagicMock()
+        mock_build.installed_rpms = ['seed-pkg1', 'seed-pkg2']
+        mock_build.name = 'test-image'
+
+        metadata.runtime.konflux_db.get_build_record_by_nvr = AsyncMock(return_value=mock_build)
+
+        result = await metadata.fetch_rpms_from_build(lockfile_seed_nvrs=['test-image-container-v4.22.0-assembly.test'])
+
+        self.assertEqual(result, {'seed-pkg1', 'seed-pkg2'})
+        metadata.runtime.konflux_db.get_build_record_by_nvr.assert_awaited_once_with(
+            nvr='test-image-container-v4.22.0-assembly.test', strict=False
+        )
+        metadata.runtime.konflux_db.get_latest_build.assert_not_called()
+
+    async def test_fetch_rpms_from_build_seed_nvrs_no_match(self):
+        """Test fetch_rpms_from_build falls back to latest build when no seed NVR matches"""
+        metadata = self._create_image_metadata('openshift/test-no-seed')
+
+        mock_seed_build = MagicMock()
+        mock_seed_build.name = 'other-image'
+
+        mock_latest = MagicMock()
+        mock_latest.installed_rpms = ['latest-pkg1']
+
+        metadata.runtime.konflux_db.get_build_record_by_nvr = AsyncMock(return_value=mock_seed_build)
+        metadata.runtime.konflux_db.get_latest_build = AsyncMock(return_value=mock_latest)
+
+        result = await metadata.fetch_rpms_from_build(lockfile_seed_nvrs=['other-container-v4.22.0-assembly.test'])
+
+        self.assertEqual(result, {'latest-pkg1'})
+        self.assertEqual(metadata.runtime.konflux_db.get_latest_build.await_count, 1)
+
+    async def test_fetch_rpms_from_build_seed_nvr_not_in_db(self):
+        """Test fetch_rpms_from_build falls back when seed NVR not found in DB"""
+        metadata = self._create_image_metadata('openshift/test-seed-missing')
+
+        mock_latest = MagicMock()
+        mock_latest.installed_rpms = ['pkg1']
+
+        metadata.runtime.konflux_db.get_build_record_by_nvr = AsyncMock(return_value=None)
+        metadata.runtime.konflux_db.get_latest_build = AsyncMock(return_value=mock_latest)
+
+        result = await metadata.fetch_rpms_from_build(lockfile_seed_nvrs=['nonexistent-v4.22.0-assembly.test'])
+
+        self.assertEqual(result, {'pkg1'})
+        self.assertEqual(metadata.runtime.konflux_db.get_latest_build.await_count, 1)
+
+    async def test_fetch_rpms_from_build_no_seed_nvrs(self):
+        """Test fetch_rpms_from_build works when no lockfile_seed_nvrs are provided"""
+        metadata = self._create_image_metadata('openshift/test-no-seed-param')
+
+        mock_build = MagicMock()
+        mock_build.installed_rpms = ['pkg1']
+        metadata.runtime.konflux_db.get_latest_build = AsyncMock(return_value=mock_build)
+
+        result = await metadata.fetch_rpms_from_build()
+
+        self.assertEqual(result, {'pkg1'})
+        self.assertEqual(metadata.runtime.konflux_db.get_latest_build.await_count, 1)
+
+    async def test_fetch_rpms_from_build_regular_queries_success_only(self):
+        """Non-base images query the latest SUCCESS Konflux build once."""
+        metadata = self._create_image_metadata('openshift/test-regular-lookup')
+        mock_build = MagicMock()
+        mock_build.installed_rpms = ['pkg-a']
+        metadata.runtime.konflux_db.get_latest_build = AsyncMock(return_value=mock_build)
+
+        await metadata.fetch_rpms_from_build()
+
+        self.assertEqual(metadata.runtime.konflux_db.get_latest_build.await_count, 1)
+        called = metadata.runtime.konflux_db.get_latest_build.await_args.kwargs
+        self.assertEqual(called['outcome'], KonfluxBuildOutcome.SUCCESS)
+
+    async def test_fetch_rpms_from_build_golang_queries_success_only(self):
+        """Golang/base images use the same single SUCCESS latest-build lookup as other images."""
+        metadata = self._create_image_metadata(GOLANG_BUILDER_IMAGE_NAME, distgit_key='openshift-golang-builder')
+
+        mock_build = MagicMock()
+        mock_build.installed_rpms = ['golang-pkg-1']
+        metadata.runtime.konflux_db.get_latest_build = AsyncMock(return_value=mock_build)
+
+        result = await metadata.fetch_rpms_from_build()
+
+        self.assertEqual(result, {'golang-pkg-1'})
+        self.assertEqual(metadata.runtime.konflux_db.get_latest_build.await_count, 1)
+        called = metadata.runtime.konflux_db.get_latest_build.await_args.kwargs
+        self.assertEqual(called['outcome'], KonfluxBuildOutcome.SUCCESS)
+
+    def _setup_mock_config(self, metadata, lockfile_rpms=None):
+        """Helper to setup mock config with lockfile RPMs."""
+        mock_config = MagicMock()
+        mock_config.konflux.cachi2.lockfile.get.return_value = lockfile_rpms or []
+        metadata.config = mock_config
+        return mock_config
+
+    async def test_get_lockfile_rpms_union_of_build_and_config(self):
+        """Test that method returns union of RPMs from build and config."""
+        metadata = self._create_image_metadata('openshift/test-image')
+        self._setup_mock_config(metadata, lockfile_rpms=['config-rpm-1', 'config-rpm-2'])
+
+        # Mock fetch_rpms_from_build to return different RPMs
+        metadata.fetch_rpms_from_build = AsyncMock(return_value={'build-rpm-1', 'build-rpm-2'})
+        metadata.logger = MagicMock()
+
+        result = await metadata.get_lockfile_rpms_to_install()
+
+        expected = {'build-rpm-1', 'build-rpm-2', 'config-rpm-1', 'config-rpm-2'}
+        self.assertEqual(result, expected)
+        metadata.logger.info.assert_called_once_with('test-image adding 2 RPMs from lockfile config')
+
+    async def test_get_lockfile_rpms_build_only(self):
+        """Test when only build has RPMs (empty config)."""
+        metadata = self._create_image_metadata('openshift/test-image')
+        self._setup_mock_config(metadata, lockfile_rpms=[])
+
+        metadata.fetch_rpms_from_build = AsyncMock(return_value={'build-rpm-1', 'build-rpm-2'})
+        metadata.logger = MagicMock()
+
+        result = await metadata.get_lockfile_rpms_to_install()
+
+        expected = {'build-rpm-1', 'build-rpm-2'}
+        self.assertEqual(result, expected)
+        # Should not log when config is empty
+        metadata.logger.info.assert_not_called()
+
+    async def test_get_lockfile_rpms_config_only(self):
+        """Test when only config has RPMs (empty build)."""
+        metadata = self._create_image_metadata('openshift/test-image')
+        self._setup_mock_config(metadata, lockfile_rpms=['config-rpm-1', 'config-rpm-2'])
+
+        metadata.fetch_rpms_from_build = AsyncMock(return_value=set())
+        metadata.logger = MagicMock()
+
+        result = await metadata.get_lockfile_rpms_to_install()
+
+        expected = {'config-rpm-1', 'config-rpm-2'}
+        self.assertEqual(result, expected)
+        metadata.logger.info.assert_called_once_with('test-image adding 2 RPMs from lockfile config')
+
+    async def test_get_lockfile_rpms_empty_both_sources(self):
+        """Test when both build and config are empty."""
+        metadata = self._create_image_metadata('openshift/test-image')
+        self._setup_mock_config(metadata, lockfile_rpms=[])
+
+        metadata.fetch_rpms_from_build = AsyncMock(return_value=set())
+        metadata.logger = MagicMock()
+
+        result = await metadata.get_lockfile_rpms_to_install()
+
+        self.assertEqual(result, set())
+        metadata.logger.info.assert_not_called()
+
+    async def test_get_lockfile_rpms_missing_config_field(self):
+        """Test when config field is Missing."""
+        metadata = self._create_image_metadata('openshift/test-image')
+        mock_config = MagicMock()
+        mock_config.konflux.cachi2.lockfile.get.return_value = Missing
+        metadata.config = mock_config
+
+        metadata.fetch_rpms_from_build = AsyncMock(return_value={'build-rpm-1'})
+        metadata.logger = MagicMock()
+
+        result = await metadata.get_lockfile_rpms_to_install()
+
+        expected = {'build-rpm-1'}
+        self.assertEqual(result, expected)
+        metadata.logger.info.assert_not_called()
+
+    async def test_get_lockfile_rpms_none_config_field(self):
+        """Test when config field is None."""
+        metadata = self._create_image_metadata('openshift/test-image')
+        mock_config = MagicMock()
+        mock_config.konflux.cachi2.lockfile.get.return_value = None
+        metadata.config = mock_config
+
+        metadata.fetch_rpms_from_build = AsyncMock(return_value={'build-rpm-1'})
+        metadata.logger = MagicMock()
+
+        result = await metadata.get_lockfile_rpms_to_install()
+
+        expected = {'build-rpm-1'}
+        self.assertEqual(result, expected)
+        metadata.logger.info.assert_not_called()
+
+    async def test_get_lockfile_rpms_duplicate_handling(self):
+        """Test that duplicates are handled correctly (set union deduplication)."""
+        metadata = self._create_image_metadata('openshift/test-image')
+        self._setup_mock_config(metadata, lockfile_rpms=['rpm-1', 'rpm-2', 'rpm-3'])
+
+        # Same RPM in both sources
+        metadata.fetch_rpms_from_build = AsyncMock(return_value={'rpm-1', 'rpm-2', 'rpm-4'})
+        metadata.logger = MagicMock()
+
+        result = await metadata.get_lockfile_rpms_to_install()
+
+        # Should deduplicate automatically (set union)
+        expected = {'rpm-1', 'rpm-2', 'rpm-3', 'rpm-4'}
+        self.assertEqual(result, expected)
+        metadata.logger.info.assert_called_once_with('test-image adding 3 RPMs from lockfile config')
+
+    def test_is_dnf_modules_enable_enabled_default(self):
+        """Test dnf_modules_enable defaults to True when no configuration is set"""
+        metadata = self._create_image_metadata('openshift/test-dnf-modules-enable')
+
+        # Mock both configs as Missing
+        mock_config = MagicMock()
+        mock_config.konflux.cachi2.lockfile.dnf_modules_enable = Missing
+        metadata.config = mock_config
+
+        mock_group_config = MagicMock()
+        mock_group_config.konflux.cachi2.lockfile.dnf_modules_enable = Missing
+        metadata.runtime.group_config = mock_group_config
+        metadata.logger = MagicMock()
+
+        result = metadata.is_dnf_modules_enable_enabled()
+
+        self.assertTrue(result)
+        # Should not log when using default
+        metadata.logger.info.assert_not_called()
+
+    def test_is_dnf_modules_enable_enabled_image_config_override(self):
+        """Test dnf_modules_enable respects image-level configuration override"""
+        metadata = self._create_image_metadata('openshift/test-dnf-modules-enable')
+
+        # Mock image config override
+        mock_config = MagicMock()
+        mock_config.konflux.cachi2.lockfile.dnf_modules_enable = False
+        metadata.config = mock_config
+
+        # Mock group config as Missing
+        mock_group_config = MagicMock()
+        mock_group_config.konflux.cachi2.lockfile.dnf_modules_enable = Missing
+        metadata.runtime.group_config = mock_group_config
+        metadata.logger = MagicMock()
+
+        result = metadata.is_dnf_modules_enable_enabled()
+
+        self.assertFalse(result)
+        metadata.logger.info.assert_called_once_with("DNF modules enablement set from metadata config: False")
+
+    def test_is_dnf_modules_enable_enabled_group_config_override(self):
+        """Test dnf_modules_enable respects group-level configuration override"""
+        metadata = self._create_image_metadata('openshift/test-dnf-modules-enable')
+
+        # Mock image config as Missing
+        mock_config = MagicMock()
+        mock_config.konflux.cachi2.lockfile.dnf_modules_enable = Missing
+        metadata.config = mock_config
+
+        # Mock group config override
+        mock_group_config = MagicMock()
+        mock_group_config.konflux.cachi2.lockfile.dnf_modules_enable = True
+        metadata.runtime.group_config = mock_group_config
+        metadata.logger = MagicMock()
+
+        result = metadata.is_dnf_modules_enable_enabled()
+
+        self.assertTrue(result)
+        metadata.logger.info.assert_called_once_with("DNF modules enablement set from group config: True")
+
+    def test_is_dnf_modules_enable_enabled_precedence(self):
+        """Test dnf_modules_enable configuration hierarchy precedence (image > group)"""
+        metadata = self._create_image_metadata('openshift/test-dnf-modules-enable')
+
+        # Mock image config override (should take precedence)
+        mock_config = MagicMock()
+        mock_config.konflux.cachi2.lockfile.dnf_modules_enable = False
+        metadata.config = mock_config
+
+        # Mock group config with different value
+        mock_group_config = MagicMock()
+        mock_group_config.konflux.cachi2.lockfile.dnf_modules_enable = True
+        metadata.runtime.group_config = mock_group_config
+        metadata.logger = MagicMock()
+
+        result = metadata.is_dnf_modules_enable_enabled()
+
+        self.assertFalse(result)
+        # Should use image config and log it
+        metadata.logger.info.assert_called_once_with("DNF modules enablement set from metadata config: False")
+
+    def test_get_required_artifacts_disabled(self):
+        # Create a mock instance
+        metadata = MagicMock()
+        metadata.is_artifact_lockfile_enabled.return_value = False
+        metadata.get_required_artifacts = ImageMetadata.get_required_artifacts.__get__(metadata, ImageMetadata)
+
+        result = metadata.get_required_artifacts()
+        self.assertEqual(result, [])
+
+    def test_get_required_artifacts_enabled(self):
+        # Create a mock instance
+        metadata = MagicMock()
+        metadata.is_artifact_lockfile_enabled.return_value = True
+        metadata.config.konflux.cachi2.artifact_lockfile.resources = [
+            "https://example.com/cert1.pem",
+            "https://example.com/cert2.pem",
+        ]
+        metadata.get_required_artifacts = ImageMetadata.get_required_artifacts.__get__(metadata, ImageMetadata)
+
+        result = metadata.get_required_artifacts()
+        expected = [
+            {'url': "https://example.com/cert1.pem", 'filename': None},
+            {'url': "https://example.com/cert2.pem", 'filename': None},
+        ]
+        self.assertEqual(result, expected)
+
+    def test_get_required_artifacts_missing_resources(self):
+        from artcommonlib.model import Missing
+
+        # Create a mock instance
+        metadata = MagicMock()
+        metadata.is_artifact_lockfile_enabled.return_value = True
+        metadata.config.konflux.cachi2.artifact_lockfile.resources = Missing
+        metadata.get_required_artifacts = ImageMetadata.get_required_artifacts.__get__(metadata, ImageMetadata)
+
+        result = metadata.get_required_artifacts()
+        self.assertEqual(result, [])
+
+    def test_is_base_image(self):
+        from artcommonlib.constants import GOLANG_BUILDER_IMAGE_NAME
+        from artcommonlib.model import Model
+
+        runtime = MagicMock()
+        runtime.logger = logging.getLogger('test_runtime')
+        runtime.variant = BuildVariant.OCP
+
+        # Test base image with base_only: true
+        base_image = Model({'name': 'test-base', 'base_only': True})
+        base_data = Model({'key': 'test-base', 'data': base_image, 'filename': 'test-base.yaml'})
+        base_metadata = ImageMetadata(runtime, base_data)
+        self.assertTrue(base_metadata.is_base_image())
+
+        # Test regular image (not base)
+        regular_image = Model({'name': 'test-regular'})
+        regular_data = Model({'key': 'test-regular', 'data': regular_image, 'filename': 'test-regular.yaml'})
+        regular_metadata = ImageMetadata(runtime, regular_data)
+        self.assertFalse(regular_metadata.is_base_image())
+
+        # Test golang builder - should NOT be considered base image
+        golang_builder = Model({'name': GOLANG_BUILDER_IMAGE_NAME})
+        golang_data = Model({'key': 'golang-builder', 'data': golang_builder, 'filename': 'golang-builder.yaml'})
+        golang_metadata = ImageMetadata(runtime, golang_data)
+        self.assertFalse(golang_metadata.is_base_image())
+
+    def test_is_golang_builder(self):
+        from artcommonlib.constants import GOLANG_BUILDER_IMAGE_NAME
+        from artcommonlib.model import Model
+
+        runtime = MagicMock()
+        runtime.logger = logging.getLogger('test_runtime')
+        runtime.variant = BuildVariant.OCP
+
+        # Test golang builder image
+        golang_builder = Model({'name': GOLANG_BUILDER_IMAGE_NAME})
+        golang_data = Model({'key': 'golang-builder', 'data': golang_builder, 'filename': 'golang-builder.yaml'})
+        golang_metadata = ImageMetadata(runtime, golang_data)
+        self.assertTrue(golang_metadata.is_golang_builder())
+
+        # Test regular image (not golang builder)
+        regular_image = Model({'name': 'test-regular'})
+        regular_data = Model({'key': 'test-regular', 'data': regular_image, 'filename': 'test-regular.yaml'})
+        regular_metadata = ImageMetadata(runtime, regular_data)
+        self.assertFalse(regular_metadata.is_golang_builder())
+
+        # Test base image (not golang builder)
+        base_image = Model({'name': 'test-base', 'base_only': True})
+        base_data = Model({'key': 'test-base', 'data': base_image, 'filename': 'test-base.yaml'})
+        base_metadata = ImageMetadata(runtime, base_data)
+        self.assertFalse(base_metadata.is_golang_builder())
+
+    def test_should_trigger_base_image_release(self):
+        from artcommonlib.constants import GOLANG_BUILDER_IMAGE_NAME
+        from artcommonlib.model import Model
+
+        runtime = MagicMock()
+        runtime.logger = logging.getLogger('test_runtime')
+        runtime.variant = BuildVariant.OCP
+        runtime.assembly = 'stream'
+        runtime.product = 'ocp'
+        runtime.group_config = Model({})
+
+        # Test base image - should trigger workflow
+        base_image = Model({'name': 'test-base', 'base_only': True})
+        base_data = Model({'key': 'test-base', 'data': base_image, 'filename': 'test-base.yaml'})
+        base_metadata = ImageMetadata(runtime, base_data)
+        self.assertTrue(base_metadata.should_trigger_base_image_release())
+
+        # Golang builders do NOT use the base-image release path — they go through the shipment MR
+        golang_builder = Model({'name': GOLANG_BUILDER_IMAGE_NAME})
+        golang_data = Model({'key': 'golang-builder', 'data': golang_builder, 'filename': 'golang-builder.yaml'})
+        golang_metadata = ImageMetadata(runtime, golang_data)
+        self.assertFalse(golang_metadata.should_trigger_base_image_release())
+
+        # Test assembly: base/golang do not use the base-image release path
+        test_assembly_runtime = MagicMock()
+        test_assembly_runtime.logger = logging.getLogger('test_runtime')
+        test_assembly_runtime.variant = BuildVariant.OCP
+        test_assembly_runtime.assembly = 'test'
+        test_assembly_runtime.product = 'ocp'
+        test_assembly_runtime.group_config = Model({})
+        self.assertFalse(ImageMetadata(test_assembly_runtime, base_data).should_trigger_base_image_release())
+        self.assertFalse(ImageMetadata(test_assembly_runtime, golang_data).should_trigger_base_image_release())
+
+        # Named (non-test) assembly: base images still use base-image release; golang builders still don't
+        named_runtime = MagicMock()
+        named_runtime.logger = logging.getLogger('test_runtime')
+        named_runtime.variant = BuildVariant.OCP
+        named_runtime.assembly = '4.17.1'
+        named_runtime.product = 'ocp'
+        named_runtime.group_config = Model({})
+        self.assertTrue(ImageMetadata(named_runtime, base_data).should_trigger_base_image_release())
+        self.assertFalse(ImageMetadata(named_runtime, golang_data).should_trigger_base_image_release())
+
+        # Test regular image - should NOT trigger workflow
+        regular_image = Model({'name': 'test-regular'})
+        regular_data = Model({'key': 'test-regular', 'data': regular_image, 'filename': 'test-regular.yaml'})
+        regular_metadata = ImageMetadata(runtime, regular_data)
+        self.assertFalse(regular_metadata.should_trigger_base_image_release())
+
+        # Regular image with force=true should trigger regardless of base/golang qualification
+        forced_regular = Model({'name': 'test-regular', 'base_image_release': Model({'force': True})})
+        forced_regular_data = Model(
+            {'key': 'forced-regular', 'data': forced_regular, 'filename': 'forced-regular.yaml'}
+        )
+        forced_regular_metadata = ImageMetadata(runtime, forced_regular_data)
+        self.assertTrue(forced_regular_metadata.should_trigger_base_image_release())
+
+        # Regular image with force=false should keep existing behavior
+        regular_force_off = Model({'name': 'test-regular', 'base_image_release': Model({'force': False})})
+        regular_force_off_data = Model({'key': 'regular-force-off', 'data': regular_force_off, 'filename': 'rfo.yaml'})
+        regular_force_off_metadata = ImageMetadata(runtime, regular_force_off_data)
+        self.assertFalse(regular_force_off_metadata.should_trigger_base_image_release())
+
+        # Regular image with base_image_release.enabled: true does not qualify (not base/golang)
+        snap_regular = Model({'name': 'test-regular', 'base_image_release': Model({'enabled': True})})
+        snap_regular_data = Model({'key': 'test-snap', 'data': snap_regular, 'filename': 'test-snap.yaml'})
+        snap_regular_metadata = ImageMetadata(runtime, snap_regular_data)
+        self.assertFalse(snap_regular_metadata.should_trigger_base_image_release())
+
+        # Base image with base_image_release.enabled: false
+        base_snap_off = Model({'name': 'test-base', 'base_only': True, 'base_image_release': Model({'enabled': False})})
+        base_snap_off_data = Model({'key': 'base-off', 'data': base_snap_off, 'filename': 'base-off.yaml'})
+        base_snap_off_metadata = ImageMetadata(runtime, base_snap_off_data)
+        self.assertFalse(base_snap_off_metadata.should_trigger_base_image_release())
+
+        # Golang builder with base_image_release.enabled: false
+        golang_snap_off = Model({'name': GOLANG_BUILDER_IMAGE_NAME, 'base_image_release': Model({'enabled': False})})
+        golang_snap_off_data = Model({'key': 'go-off', 'data': golang_snap_off, 'filename': 'go-off.yaml'})
+        golang_snap_off_metadata = ImageMetadata(runtime, golang_snap_off_data)
+        self.assertFalse(golang_snap_off_metadata.should_trigger_base_image_release())
+
+        # Force=true overrides enabled=false
+        force_enabled_off = Model(
+            {'name': 'test-regular', 'base_image_release': Model({'enabled': False, 'force': True})}
+        )
+        force_enabled_off_data = Model({'key': 'force-enabled-off', 'data': force_enabled_off, 'filename': 'feo.yaml'})
+        force_enabled_off_metadata = ImageMetadata(runtime, force_enabled_off_data)
+        self.assertTrue(force_enabled_off_metadata.should_trigger_base_image_release())
+
+        # Group base_image_release.enabled: false, image omits field (inherits group -> off)
+        runtime_group_off = MagicMock()
+        runtime_group_off.logger = logging.getLogger('test_runtime')
+        runtime_group_off.variant = BuildVariant.OCP
+        runtime_group_off.assembly = 'stream'
+        runtime_group_off.product = 'ocp'
+        runtime_group_off.group_config = Model({'base_image_release': Model({'enabled': False})})
+        group_off_base = Model({'name': 'g-off-base', 'base_only': True})
+        group_off_data = Model({'key': 'g-off-base', 'data': group_off_base, 'filename': 'g-off-base.yaml'})
+        group_off_metadata = ImageMetadata(runtime_group_off, group_off_data)
+        self.assertFalse(group_off_metadata.should_trigger_base_image_release())
+
+        # Group off, image base_image_release.enabled: true (image overrides)
+        runtime_both = MagicMock()
+        runtime_both.logger = logging.getLogger('test_runtime')
+        runtime_both.variant = BuildVariant.OCP
+        runtime_both.assembly = 'stream'
+        runtime_both.product = 'ocp'
+        runtime_both.group_config = Model({'base_image_release': Model({'enabled': False})})
+        base_override = Model(
+            {
+                'name': 'override-base',
+                'base_only': True,
+                'base_image_release': Model({'enabled': True}),
+            }
+        )
+        both_data = Model({'key': 'override-base', 'data': base_override, 'filename': 'override-base.yaml'})
+        both_metadata = ImageMetadata(runtime_both, both_data)
+        self.assertTrue(both_metadata.should_trigger_base_image_release())
+
+        # Layered product: base images trigger; golang builders still use the shipment MR path
+        layered_runtime = MagicMock()
+        layered_runtime.logger = logging.getLogger('test_runtime')
+        layered_runtime.variant = BuildVariant.OCP
+        layered_runtime.assembly = 'stream'
+        layered_runtime.product = 'rhmtc'
+        layered_runtime.group_config = Model({})
+        self.assertTrue(ImageMetadata(layered_runtime, base_data).should_trigger_base_image_release())
+        self.assertFalse(ImageMetadata(layered_runtime, golang_data).should_trigger_base_image_release())
+
+        # OKD: base image would trigger on OCP but never on OKD (no RH registry release)
+        okd_runtime = MagicMock()
+        okd_runtime.logger = logging.getLogger('test_runtime')
+        okd_runtime.variant = BuildVariant.OKD
+        okd_runtime.assembly = 'stream'
+        okd_runtime.product = 'ocp'
+        okd_runtime.group_config = Model({})
+        okd_base_metadata = ImageMetadata(okd_runtime, base_data)
+        self.assertFalse(okd_base_metadata.should_trigger_base_image_release())
+
+        okd_golang_metadata = ImageMetadata(okd_runtime, golang_data)
+        self.assertFalse(okd_golang_metadata.should_trigger_base_image_release())
+
+        # Force=true does not enable base image release on OKD (OCP-only workflow)
+        okd_forced = Model({'name': 'test-regular', 'base_image_release': Model({'force': True})})
+        okd_forced_metadata = ImageMetadata(
+            okd_runtime, Model({'key': 'okd-forced', 'data': okd_forced, 'filename': 'okd-forced.yaml'})
+        )
+        self.assertFalse(okd_forced_metadata.should_trigger_base_image_release())
+
+        # Force=true does NOT bypass test assembly block (test assembly is unconditional skip)
+        test_assembly_forced_runtime = MagicMock()
+        test_assembly_forced_runtime.logger = logging.getLogger('test_runtime')
+        test_assembly_forced_runtime.variant = BuildVariant.OCP
+        test_assembly_forced_runtime.assembly = 'test'
+        test_assembly_forced_runtime.product = 'ocp'
+        test_assembly_forced_runtime.group_config = Model({})
+        test_assembly_forced = Model({'name': 'test-regular', 'base_image_release': Model({'force': True})})
+        test_assembly_forced_metadata = ImageMetadata(
+            test_assembly_forced_runtime,
+            Model({'key': 'test-assembly-forced', 'data': test_assembly_forced, 'filename': 'taf.yaml'}),
+        )
+        self.assertFalse(test_assembly_forced_metadata.should_trigger_base_image_release())
+
+    def test_should_create_golang_builder_shipment(self):
+        from artcommonlib.constants import GOLANG_BUILDER_IMAGE_NAME
+        from artcommonlib.model import Model
+
+        runtime = MagicMock()
+        runtime.logger = logging.getLogger('test_runtime')
+        runtime.variant = BuildVariant.OCP
+        runtime.assembly = 'stream'
+        runtime.product = 'ocp'
+        runtime.group_config = Model({})
+
+        golang_builder = Model({'name': GOLANG_BUILDER_IMAGE_NAME})
+        golang_data = Model({'key': 'golang-builder', 'data': golang_builder, 'filename': 'golang-builder.yaml'})
+        golang_metadata = ImageMetadata(runtime, golang_data)
+
+        # Golang builder on OCP stream assembly → should create shipment
+        self.assertTrue(golang_metadata.should_create_golang_builder_shipment())
+
+        # Non-golang image → False
+        regular = Model({'name': 'test-regular'})
+        regular_data = Model({'key': 'test-regular', 'data': regular, 'filename': 'test-regular.yaml'})
+        self.assertFalse(ImageMetadata(runtime, regular_data).should_create_golang_builder_shipment())
+
+        # OKD variant → False
+        okd_runtime = MagicMock()
+        okd_runtime.logger = logging.getLogger('test_runtime')
+        okd_runtime.variant = BuildVariant.OKD
+        okd_runtime.assembly = 'stream'
+        okd_runtime.product = 'ocp'
+        okd_runtime.group_config = Model({})
+        self.assertFalse(ImageMetadata(okd_runtime, golang_data).should_create_golang_builder_shipment())
+
+        # Test assembly → False
+        test_runtime = MagicMock()
+        test_runtime.logger = logging.getLogger('test_runtime')
+        test_runtime.variant = BuildVariant.OCP
+        test_runtime.assembly = 'test'
+        test_runtime.product = 'ocp'
+        test_runtime.group_config = Model({})
+        self.assertFalse(ImageMetadata(test_runtime, golang_data).should_create_golang_builder_shipment())
+
+        # Named (non-test) assembly → True
+        named_runtime = MagicMock()
+        named_runtime.logger = logging.getLogger('test_runtime')
+        named_runtime.variant = BuildVariant.OCP
+        named_runtime.assembly = '4.17.1'
+        named_runtime.product = 'ocp'
+        named_runtime.group_config = Model({})
+        self.assertTrue(ImageMetadata(named_runtime, golang_data).should_create_golang_builder_shipment())
+
+        # base_image_release.enabled: false in image config → False
+        golang_disabled = Model({'name': GOLANG_BUILDER_IMAGE_NAME, 'base_image_release': Model({'enabled': False})})
+        golang_disabled_data = Model({'key': 'go-off', 'data': golang_disabled, 'filename': 'go-off.yaml'})
+        self.assertFalse(ImageMetadata(runtime, golang_disabled_data).should_create_golang_builder_shipment())
+
+        # base_image_release.enabled: false in group config → False
+        group_off_runtime = MagicMock()
+        group_off_runtime.logger = logging.getLogger('test_runtime')
+        group_off_runtime.variant = BuildVariant.OCP
+        group_off_runtime.assembly = 'stream'
+        group_off_runtime.product = 'ocp'
+        group_off_runtime.group_config = Model({'base_image_release': Model({'enabled': False})})
+        self.assertFalse(ImageMetadata(group_off_runtime, golang_data).should_create_golang_builder_shipment())
+
+        # Image-level enabled: true overrides group-level false
+        group_off_image_on_runtime = MagicMock()
+        group_off_image_on_runtime.logger = logging.getLogger('test_runtime')
+        group_off_image_on_runtime.variant = BuildVariant.OCP
+        group_off_image_on_runtime.assembly = 'stream'
+        group_off_image_on_runtime.product = 'ocp'
+        group_off_image_on_runtime.group_config = Model({'base_image_release': Model({'enabled': False})})
+        golang_enabled = Model({'name': GOLANG_BUILDER_IMAGE_NAME, 'base_image_release': Model({'enabled': True})})
+        golang_enabled_data = Model({'key': 'go-on', 'data': golang_enabled, 'filename': 'go-on.yaml'})
+        self.assertTrue(
+            ImageMetadata(group_off_image_on_runtime, golang_enabled_data).should_create_golang_builder_shipment()
+        )
+
+
+class TestExtractGolangVersionFromPullspec(unittest.TestCase):
+    """
+    Test class for extract_golang_version_from_pullspec function
+    """
+
+    def test_extract_golang_version_with_digest(self):
+        """
+        Test that pullspecs with SHA digests are parsed correctly.
+        The digest portion should be stripped before parsing the tag.
+        """
+        pullspec_with_digest = (
+            "registry.ci.openshift.org/ocp/builder:rhel-9-golang-1.24-openshift-4.21"
+            "@sha256:143123d85045df426c5bbafc6863659880ebe276eb02c77ee868b88d08dbd05d"
+        )
+
+        golang_version = extract_golang_version_from_pullspec(pullspec_with_digest)
+
+        self.assertEqual(golang_version, (1, 24))
+
+    def test_extract_golang_version_without_digest(self):
+        """
+        Test that pullspecs without SHA digests still work correctly.
+        """
+        pullspec_without_digest = "registry.ci.openshift.org/ocp/builder:rhel-9-golang-1.24-openshift-4.21"
+
+        golang_version = extract_golang_version_from_pullspec(pullspec_without_digest)
+
+        self.assertEqual(golang_version, (1, 24))
+
+    def test_extract_golang_version_rhel8(self):
+        """
+        Test RHEL 8 builder with digest.
+        """
+        pullspec = (
+            "registry.ci.openshift.org/ocp/builder:rhel-8-golang-1.21-openshift-4.18"
+            "@sha256:abcd1234567890abcdef1234567890abcdef1234567890abcdef1234567890ab"
+        )
+
+        golang_version = extract_golang_version_from_pullspec(pullspec)
+
+        self.assertEqual(golang_version, (1, 21))
+
+    def test_extract_golang_version_no_golang_tag(self):
+        """
+        Test pullspec without golang version in tag returns None.
+        """
+        pullspec = "registry.ci.openshift.org/ocp/builder:base-rhel9"
+
+        golang_version = extract_golang_version_from_pullspec(pullspec)
+
+        self.assertIsNone(golang_version)
