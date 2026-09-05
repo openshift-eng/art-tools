@@ -1008,7 +1008,16 @@ class KonfluxOcpPipeline:
 
             image_tag = build["image_tag"]
             latest_tag = f'{build["name"]}-{self.version}'
-            await sync_to_quay(image_pullspec, KONFLUX_DEFAULT_IMAGE_SHARE_REPO, [image_tag, latest_tag])
+            # Floating <group>-<component> tag using delivery repo name for easy inference
+            delivery_name = build.get("delivery_repo_name", build["name"])
+            group_component_tag = f'openshift-{self.version}-{delivery_name}'
+            # NVR tag(s) for precise build identification
+            nvr_tags = [nvr.strip() for nvr in build["nvrs"].split(",") if nvr.strip()]
+            await sync_to_quay(
+                image_pullspec,
+                KONFLUX_DEFAULT_IMAGE_SHARE_REPO,
+                [image_tag, latest_tag, group_component_tag] + nvr_tags,
+            )
 
         await asyncio.gather(*[sync_build(build) for build in builds_to_mirror])
 
