@@ -397,9 +397,11 @@ class TestBundleStageReleaseRelatedImagesCli(unittest.IsolatedAsyncioTestCase):
     def _mock_konflux_client(released_condition):
         client = mock.AsyncMock()
         client.resource_url = mock.Mock(return_value="https://konflux/url")
-        created = mock.Mock()
-        created.metadata.name = "fbc-ri-stage-rhacm2-2-16-operator-a-xyz"
-        client._create = mock.AsyncMock(return_value=created)
+        created_snapshot = mock.Mock()
+        created_snapshot.metadata.name = "snapshot-xyz"
+        created_release = mock.Mock()
+        created_release.metadata.name = "release-xyz"
+        client._create = mock.AsyncMock(side_effect=[created_snapshot, created_release])
         client._get = mock.AsyncMock(return_value={})
         client.wait_for_release = mock.AsyncMock(return_value={"status": {"conditions": [released_condition]}})
         return client
@@ -465,7 +467,7 @@ class TestBundleStageReleaseRelatedImagesCli(unittest.IsolatedAsyncioTestCase):
         release = client._create.call_args_list[1].args[0]
         self.assertEqual(release["spec"]["releasePlan"], "acm-advisory-stage-2-16")
         self.assertEqual(release["metadata"]["annotations"]["art.redhat.com/operator-nvr"], "operator-a-1-1")
-        client.wait_for_release.assert_awaited_once_with("fbc-ri-stage-rhacm2-2-16-operator-a-xyz")
+        client.wait_for_release.assert_awaited_once_with("release-xyz")
 
     @mock.patch("doozerlib.cli.images_konflux.KonfluxDb")
     async def test_stage_release_raises_when_release_fails(self, mock_db_class):
