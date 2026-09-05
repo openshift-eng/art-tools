@@ -188,7 +188,6 @@ class UpdateGolangPipeline:
         kubeconfig: str | None = None,
         data_path: str | None = None,
         data_gitref: str | None = None,
-        skip_pr: bool = False,
         external_golang_rpms: bool = False,
         network_mode: str | None = None,
         major_bump: bool = False,
@@ -208,7 +207,6 @@ class UpdateGolangPipeline:
         self.tag_builds = tag_builds
         self.data_path = data_path
         self.data_gitref = data_gitref
-        self.skip_pr = skip_pr
         self.external_golang_rpms = external_golang_rpms
         self.network_mode = network_mode
         self.major_bump = major_bump
@@ -830,8 +828,6 @@ class UpdateGolangPipeline:
             return
 
         branch_content = self._get_branch_content()
-        branch = branch_content["branch"]
-        upstream_repo = branch_content["repo"]
         streams_content = branch_content["streams"]
         group_content = branch_content["group"]
 
@@ -869,8 +865,6 @@ class UpdateGolangPipeline:
                 f'rhel-{el_v}-golang-{extra_major_minor}',
             )
 
-        update_streams = update_group = False
-
         # register aliases
         stream_alias_map = {}
         for stream_name, info in streams_content.items():
@@ -898,7 +892,6 @@ class UpdateGolangPipeline:
                 for _, info in streams_content.items():
                     if info['image'] == latest_go:
                         info['image'] = pullspec
-                        update_streams = True
         # This is to bump minor golang for GO_PREVIOUS
         elif previous_major_minor and build_major_minor == previous_major_minor:
             for el_v, pullspec in builder_pullspecs.items():
@@ -908,7 +901,6 @@ class UpdateGolangPipeline:
                 for _, info in streams_content.items():
                     if info['image'] == previous_go:
                         info['image'] = pullspec
-                        update_streams = True
         # This is to bump minor golang for GO_EXTRA
         elif extra_major_minor and build_major_minor == extra_major_minor:
             for el_v, pullspec in builder_pullspecs.items():
@@ -928,7 +920,6 @@ class UpdateGolangPipeline:
                 for _, info in streams_content.items():
                     if info['image'] == extra_go:
                         info['image'] = pullspec
-                        update_streams = True
         # This is to bump major golang for GO_LATEST and update GO_PREVIOUS to current GO_LATEST
         elif build_major_minor_tuple > latest_major_minor_tuple:
             for el_v, pullspec in builder_pullspecs.items():
@@ -944,79 +935,7 @@ class UpdateGolangPipeline:
                     if info['image'] == previous_go:
                         info['image'] = latest_go
                 group_content['vars'][go_latest_var] = build_major_minor
-                update_streams = update_group = True
-        # save changes and create pr
-        if update_streams:
-            if self.dry_run:
-                _LOGGER.info(f"[DRY RUN] Would have created PR to update {go_version} golang builders")
-                return
-            if self.skip_pr:
-                # Log NVRs and pullspecs for golang builder images
-                builder_info = []
-                for el_v, pullspec in builder_pullspecs.items():
-                    builder_info.append(f"  - RHEL {el_v}: {pullspec}")
-                builder_details = "\n".join(builder_info)
-
-                _LOGGER.info(
-                    f"Skipping PR creation (--skip-pr flag set) for {go_version} golang builders update.\n"
-                    f"Golang builder images:\n{builder_details}"
-                )
-                await self._slack_client.say_in_thread(
-                    f"Skipping PR creation (--skip-pr flag set) for {go_version} golang builders update.\n"
-                    f"Golang builder images:\n{builder_details}"
-                )
-                return
-            fork_repo = get_github_client_for_org("openshift-bot").get_repo("openshift-bot/ocp-build-data")
-            branch_name = f"update-golang-{self.ocp_version}-{go_version}"
-            title = f"{self.art_jira} - Bump {self.ocp_version} golang builders to {go_version}"
-            update_message = f"Bump {self.ocp_version} golang builders to {go_version}"
-            for fork_branch in fork_repo.get_branches():
-                if fork_branch.name == branch_name:
-                    fork_repo.get_git_ref(f"heads/{branch_name}").delete()
-            fork_branch = fork_repo.create_git_ref(
-                f"refs/heads/{branch_name}", upstream_repo.get_branch(branch).commit.sha
-            )
-            _LOGGER.info(f"Created fork branch ref {fork_branch.ref}")
-            output = io.BytesIO()
-            yaml.dump(streams_content, output)
-            output.seek(0)
-            fork_file = fork_repo.get_contents("streams.yml", ref=branch_name)
-            fork_repo.update_file("streams.yml", update_message, output.read(), fork_file.sha, branch=branch_name)
-            if update_group:
-                output = io.BytesIO()
-                yaml.dump(group_content, output)
-                output.seek(0)
-                fork_file = fork_repo.get_contents("group.yml", ref=branch_name)
-                fork_repo.update_file("group.yml", update_message, output.read(), fork_file.sha, branch=branch_name)
-            # create pr
-            build_url = jenkins.get_build_url()
-            pullspec_lines = "\n".join(
-                f"> - RHEL {el_v}: `{pullspec}`" for el_v, pullspec in sorted(builder_pullspecs.items())
-            )
-            shipment_warning = (
-                "\n\n> [!WARNING]\n"
-                "> **Do NOT merge until the golang builder shipment MRs are merged.**\n"
-                "> These images are published via shipment MRs in\n"
-                "> [ocp-shipment-data](https://gitlab.cee.redhat.com/hybrid-platforms/art/ocp-shipment-data/-/merge_requests).\n"
-                "> Merge those MRs first, then merge this PR.\n"
-                ">\n"
-                f"{pullspec_lines}"
-            )
-            body = (f"Created by job run {build_url}" if build_url else "") + shipment_warning
-            pr = upstream_repo.create_pull(title=title, body=body, base=branch, head=f"openshift-bot:{branch_name}")
-            _LOGGER.info(
-                f"PR created {pr.html_url} for {branch_name} to bump {self.ocp_version} golang builders to {go_version}"
-            )
-            await self._slack_client.say_in_thread(
-                f"PR created {pr.html_url} for {branch_name} to bump {self.ocp_version} golang builders to {go_version}"
-            )
-        else:
-            if self.tag_builds:
-                await self._slack_client.say_in_thread(
-                    "No pr created, please double check if it's expected because new build get tagged."
-                )
-            else:
-                _LOGGER.info(f"No update needed in {branch}")
+        _LOGGER.info("streams.yml pinned-NVR update skipped: floating tags in use")
 
     async def _rebase_brew(self, el_v, go_version, go_nvr: str):
         _LOGGER.info("Rebasing for Brew...")
@@ -1269,12 +1188,6 @@ class UpdateGolangPipeline:
 )
 @click.option('--data-gitref', required=False, default='', help='Doozer data path git [branch / tag / sha] to use')
 @click.option(
-    '--skip-pr',
-    is_flag=True,
-    default=False,
-    help='Skip PR generation for ocp-build-data updates. Defaults to False (PRs will be created).',
-)
-@click.option(
     '--external-golang-rpms',
     is_flag=True,
     default=False,
@@ -1317,7 +1230,6 @@ async def update_golang(
     kubeconfig: str,
     data_path: str,
     data_gitref: str,
-    skip_pr: bool,
     external_golang_rpms: bool,
     network_mode: str | None,
     assembly: str,
@@ -1348,7 +1260,6 @@ async def update_golang(
         kubeconfig,
         data_path,
         data_gitref,
-        skip_pr,
         external_golang_rpms,
         network_mode,
         major_bump,
