@@ -4,7 +4,6 @@ import logging
 import os
 import sys
 import traceback
-from datetime import timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -1165,10 +1164,7 @@ class BundleStageReleaseRelatedImagesCli:
         release_url = konflux_client.resource_url(created_release)
         self._logger.info("Created Release %s for Snapshot %s (%s)", release_name, snapshot_name, release_url)
 
-        released = KubeCondition.find_condition(
-            await konflux_client.wait_for_release(release_name, overall_timeout_timedelta=timedelta(minutes=30)),
-            'Released',
-        )
+        released = KubeCondition.find_condition(await konflux_client.wait_for_release(release_name), 'Released')
         if not released or released.status != "True" or released.reason != "Succeeded":
             raise RuntimeError(
                 f"Stage release {release_name} for {operator_nvr} did not succeed "

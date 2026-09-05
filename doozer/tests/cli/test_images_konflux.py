@@ -465,7 +465,7 @@ class TestBundleStageReleaseRelatedImagesCli(unittest.IsolatedAsyncioTestCase):
         release = client._create.call_args_list[1].args[0]
         self.assertEqual(release["spec"]["releasePlan"], "acm-advisory-stage-2-16")
         self.assertEqual(release["metadata"]["annotations"]["art.redhat.com/operator-nvr"], "operator-a-1-1")
-        client.wait_for_release.assert_awaited_once()
+        client.wait_for_release.assert_awaited_once_with("fbc-ri-stage-rhacm2-2-16-operator-a-xyz")
 
     @mock.patch("doozerlib.cli.images_konflux.KonfluxDb")
     async def test_stage_release_raises_when_release_fails(self, mock_db_class):
@@ -475,6 +475,24 @@ class TestBundleStageReleaseRelatedImagesCli(unittest.IsolatedAsyncioTestCase):
         cli = self._make_cli(self._make_runtime(product="rhacm2", version_str="2.16.0", major=4, minor=21))
 
         with self.assertRaisesRegex(RuntimeError, "managed pipeline blew up"):
+            await cli._stage_release(
+                konflux_client=client,
+                components=[self._component("comp-a", "img-a")],
+                release_plan_name="acm-advisory-stage-2-16",
+                group="rhacm2-2.16",
+                assembly="stream",
+                operator_name="operator-a",
+                operator_nvr="operator-a-1-1",
+            )
+
+    @mock.patch("doozerlib.cli.images_konflux.KonfluxDb")
+    async def test_stage_release_raises_when_release_is_still_progressing(self, mock_db_class):
+        client = self._mock_konflux_client(
+            {"type": "Released", "status": "False", "reason": "Progressing", "message": "release is running"}
+        )
+        cli = self._make_cli(self._make_runtime(product="rhacm2", version_str="2.16.0", major=4, minor=21))
+
+        with self.assertRaisesRegex(RuntimeError, "Progressing"):
             await cli._stage_release(
                 konflux_client=client,
                 components=[self._component("comp-a", "img-a")],
