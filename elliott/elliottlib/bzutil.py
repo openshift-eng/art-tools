@@ -5,6 +5,7 @@ with BugTrackers
 
 import asyncio
 import itertools
+import logging
 import os
 import re
 import urllib.parse
@@ -979,7 +980,9 @@ class JIRABugTracker(BugTracker):
         if versions is None:
             versions = self.config.get('version')
         if versions and 'versions' not in fields:
-            fields['versions'] = [{'name': version} for version in versions]
+            versions = self._filter_valid_versions(versions)
+            if versions:
+                fields['versions'] = [{'name': version} for version in versions]
         if target_releases is None:
             target_releases = self.target_release()
         if target_releases and self.field_target_version not in fields:
@@ -991,6 +994,40 @@ class JIRABugTracker(BugTracker):
         if target_status:
             self._client.transition_issue(issue, target_status)
         return JIRABug(issue)
+
+    def _get_project_versions(self) -> set[str]:
+        """Return cached set of version names for the Jira project.
+
+        Successful lookups are cached for the lifetime of this tracker
+        instance. Transport/auth failures raise so the caller can decide
+        whether to fall back.
+        """
+        if not hasattr(self, "_project_versions_cache"):
+            self._project_versions_cache = {v.name for v in self._client.project_versions(self.project)}
+        return self._project_versions_cache
+
+    def _filter_valid_versions(self, versions: List[str]) -> List[str]:
+        """Filter version names to only those that exist in the Jira project.
+
+        Args:
+            versions: Configured version names to validate.
+
+        Returns:
+            List of version names that exist in the project. Returns the
+            original list unchanged if the project versions cannot be fetched.
+        """
+        try:
+            project_versions = self._get_project_versions()
+        except (JIRAError, requests.RequestException) as e:
+            logger.warning(
+                "Could not fetch project versions for %s; using configured versions as-is: %s", self.project, e
+            )
+            return versions
+        valid = [v for v in versions if v in project_versions]
+        invalid = [v for v in versions if v not in project_versions]
+        if invalid:
+            logger.warning("Affects versions %s do not exist in JIRA project %s; excluding them", invalid, self.project)
+        return valid
 
     def _update_bug_status(self, bugid, target_status):
         return self._client.transition_issue(bugid, target_status)
@@ -1172,7 +1209,15 @@ class JIRABugTracker(BugTracker):
 
     def create_issue_link(self, link_name: str, inward_issue: str, outward_issue: str):
         """Create a JIRA issue link between two issues."""
-        self._client.create_issue_link(link_name, inward_issue, outward_issue)
+        # Suppress noisy "Specified issue link type is not present" warning from the
+        # upstream jira library — it fires even when the link type name is correct.
+        jira_logger = logging.getLogger("jira.client")
+        prev_level = jira_logger.level
+        jira_logger.setLevel(logging.ERROR)
+        try:
+            self._client.create_issue_link(link_name, inward_issue, outward_issue)
+        finally:
+            jira_logger.setLevel(prev_level)
 
     def remove_bugs(self, advisory_obj, bugids: List, noop=False):
         if noop:
