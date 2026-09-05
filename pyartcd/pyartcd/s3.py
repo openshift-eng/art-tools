@@ -1,3 +1,4 @@
+import logging
 import os
 import sys
 from typing import Optional
@@ -5,8 +6,14 @@ from typing import Optional
 from artcommonlib import exectools
 from tenacity import retry, stop_after_attempt, wait_fixed
 
+logger = logging.getLogger(__name__)
 
+
+@retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(30))
 async def sync_repo_to_s3_mirror(local_dir: str, s3_path: str, dry_run: bool = False, remove_old: bool = True):
+    """Sync a repo to S3 and R2 in three passes, then verify both destinations match.
+    Retries the entire sync+verify sequence up to 3 times.
+    """
     # Sync is not transactional. If we update repomd.xml before files it references are populated,
     # users of the repo will get a 404. So we run in three passes:
     # 1. On the first pass, exclude files like repomd.xml and do not delete any old files.
@@ -24,6 +31,9 @@ async def sync_repo_to_s3_mirror(local_dir: str, s3_path: str, dry_run: bool = F
     # 3. Everything should be synced in a consistent way -- delete anything old with --delete.
     if remove_old:
         await sync_dir_to_s3_mirror(local_dir, s3_path, exclude='', include_only='', dry_run=dry_run, remove_old=True)
+
+    if not dry_run:
+        await _verify_synced_to_mirrors(local_dir, s3_path)
 
 
 async def sync_dir_to_s3_mirror(
@@ -81,9 +91,33 @@ async def sync_dir_to_s3_mirror(
         + options
         + [local_dir, full_s3_path]
     )
-    # Sync temporarily to Cloudflare as well
+    # Sync to Cloudflare as well
     await retry(
         wait=wait_fixed(30),  # wait for 30 seconds between retries
         stop=(stop_after_attempt(3)),  # max 3 attempts
         reraise=True,
     )(exectools.cmd_assert_async)(full_command, env=env, stdout=sys.stderr)
+
+
+async def _verify_synced_to_mirrors(local_dir: str, s3_path: str):
+    """Run a size-only dry-run sync to verify all local files exist at both S3 and R2 destinations."""
+    full_s3_path = f's3://art-srv-enterprise{s3_path}'
+    verify_cmd = ['aws', 's3', 'sync', '--no-progress', '--size-only', '--dryrun', local_dir, full_s3_path]
+    env = os.environ.copy()
+
+    rc, s3_out, s3_err = await exectools.cmd_gather_async(verify_cmd, env=env)
+    if rc != 0:
+        raise IOError(f"S3 post-sync verification command failed (rc={rc}):\n{s3_err.strip()}")
+    if s3_out.strip():
+        raise IOError(f"S3 post-sync verification failed -- files missing or size mismatch:\n{s3_out.strip()}")
+
+    rc, r2_out, r2_err = await exectools.cmd_gather_async(
+        verify_cmd + ['--profile', 'cloudflare', '--endpoint-url', os.environ['CLOUDFLARE_ENDPOINT']],
+        env=env,
+    )
+    if rc != 0:
+        raise IOError(f"R2 post-sync verification command failed (rc={rc}):\n{r2_err.strip()}")
+    if r2_out.strip():
+        raise IOError(f"R2 post-sync verification failed -- files missing or size mismatch:\n{r2_out.strip()}")
+
+    logger.info("Verified: all local files present in S3 and R2 for %s", s3_path)
