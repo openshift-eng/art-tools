@@ -362,9 +362,86 @@ def is_release_next_week(group):
     )
     for release in release_schedules.json()['all_ga_tasks']:
         release_date = datetime.strptime(release['date_finish'], "%Y-%m-%d").date()
-        if release_date > date.today() and release_date <= date.today() + timedelta(days=7):
+        if release_date > date.today() and release_date <= date.today() + timedelta(days=2):
             return True
     return False
+
+
+def should_honor_ignorable_repos(runtime, force_ignore: bool = False) -> bool:
+    """
+    Determine whether ignorable repos should be honored based on lifecycle phase,
+    release scheduling, and force flag.
+
+    Logic:
+    1. If force_ignore=True, always honor ignorable repos (return True)
+    2. If software_lifecycle.phase != "release", always honor ignorable repos (return True)
+    3. If phase == "release", check if release is scheduled within 2 days:
+       - If release is imminent, DO NOT honor ignorable (return False) to allow rebuilds
+       - Otherwise, honor ignorable (return True)
+
+    :param runtime: Runtime object with group_config and group name
+    :param force_ignore: Manual override to force ignoring repos even during GA releases
+    :return: True if ignorable repos should be skipped, False if they should be processed
+    """
+    # Force flag always wins
+    if force_ignore:
+        LOGGER.info("Force ignore flag set: honoring ignorable repos regardless of lifecycle phase")
+        return True
+
+    # Check if we have lifecycle phase configured
+    group_config = getattr(runtime, 'group_config', None)
+    if not group_config:
+        LOGGER.warning("No group_config available; defaulting to NOT honoring ignorable repos")
+        return False
+
+    software_lifecycle = getattr(group_config, 'software_lifecycle', None)
+    if not software_lifecycle or software_lifecycle is Missing:
+        LOGGER.warning("No software_lifecycle configured; defaulting to NOT honoring ignorable repos")
+        return False
+
+    phase_name = getattr(software_lifecycle, 'phase', None)
+    if not phase_name or phase_name is Missing:
+        LOGGER.warning("No software_lifecycle.phase configured; defaulting to NOT honoring ignorable repos")
+        return False
+
+    try:
+        phase = SoftwareLifecyclePhase.from_name(phase_name)
+    except (ValueError, AttributeError) as e:
+        LOGGER.warning(
+            f"Invalid software_lifecycle.phase '{phase_name}': {e}; defaulting to NOT honoring ignorable repos"
+        )
+        return False
+
+    # Always honor ignorable for non-release phases
+    if phase != SoftwareLifecyclePhase.RELEASE:
+        LOGGER.info(f"Software lifecycle phase is '{phase_name}' (not 'release'): honoring ignorable repos")
+        return True
+
+    # Phase is 'release' - check if we're close to a GA release
+    # Cache the result on runtime to avoid repeated API calls
+    cache_key = '_cached_is_release_next_week'
+    if hasattr(runtime, cache_key):
+        is_release_soon = getattr(runtime, cache_key)
+        LOGGER.debug(f"Using cached release schedule check: is_release_soon={is_release_soon}")
+    else:
+        try:
+            group_name = runtime.group.split('@')[0]  # Remove commitish if present
+            is_release_soon = is_release_next_week(group_name)
+            setattr(runtime, cache_key, is_release_soon)
+            LOGGER.info(f"Release schedule check for {group_name}: release within 2 days = {is_release_soon}")
+        except Exception as e:
+            LOGGER.warning(
+                f"Failed to query release schedule from Product Pages: {e}; defaulting to NOT honoring ignorable repos for safety"
+            )
+            is_release_soon = True  # Fail safe: assume release is coming, don't skip repos
+            setattr(runtime, cache_key, is_release_soon)
+
+    if is_release_soon:
+        LOGGER.info("Release is scheduled within 2 days: NOT honoring ignorable repos to enable rebuilds for GA")
+        return False
+    else:
+        LOGGER.info("No release scheduled within 2 days: honoring ignorable repos")
+        return True
 
 
 def get_inflight(assembly, group, date=None):
