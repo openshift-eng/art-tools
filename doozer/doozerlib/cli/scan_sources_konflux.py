@@ -1307,17 +1307,38 @@ class ConfigScanSources:
         If an outdated RPM is at the same version as in the parent image,
         rebuilding this image cannot fix it — the parent must be updated
         first. Suppressing these prevents pointless rebuild loops.
+
+        Supports both member parents (looked up from build records) and
+        stream parents (queried via podman against the stream pullspec).
         """
         parent_key = image_meta.config["from"].member
-        if not parent_key:
-            return non_latest_rpms
+        if parent_key:
+            # Member parent: look up NEVRAs from the build record
+            parent_build = self.latest_image_build_records_map.get(parent_key)
+            if not parent_build:
+                return non_latest_rpms
 
-        parent_build = self.latest_image_build_records_map.get(parent_key)
-        if not parent_build:
-            return non_latest_rpms
+            parent_rpms = self.package_rpm_finder.get_brew_rpms_from_build_record(parent_build)
+            parent_nevras = {to_nevra(rpm) for rpm in parent_rpms}
+            parent_label = parent_key
 
-        parent_rpms = self.package_rpm_finder.get_brew_rpms_from_build_record(parent_build)
-        parent_nevras = {to_nevra(rpm) for rpm in parent_rpms}
+        else:
+            # No member parent — check for a stream parent
+            stream_name = image_meta.config["from"].stream
+            if not stream_name:
+                return non_latest_rpms
+
+            # Query the stream parent for every arch present in non_latest_rpms
+            # so that arch-specific NEVRAs (e.g. .aarch64) are matched correctly.
+            arch_queries = [self._get_stream_parent_nevras(stream_name, arch) for arch in non_latest_rpms]
+            arch_results = await asyncio.gather(*arch_queries)
+            parent_nevras: set[str] = set()
+            for result in arch_results:
+                parent_nevras.update(result)
+
+            if not parent_nevras:
+                return non_latest_rpms
+            parent_label = f"stream:{stream_name}"
 
         filtered = {}
         suppressed = 0
@@ -1336,10 +1357,70 @@ class ConfigScanSources:
                 "%s: suppressed %d outdated RPMs inherited from parent %s",
                 image_meta.distgit_key,
                 suppressed,
-                parent_key,
+                parent_label,
             )
 
         return filtered
+
+    @alru_cache
+    async def _get_stream_parent_nevras(self, stream_name: str, brew_arch: str) -> set[str]:
+        """
+        Query the RPMDB of a stream parent image and return a set of NEVRA strings.
+
+        The result is cached per (stream_name, brew_arch) so that multiple
+        images sharing the same stream parent only trigger one podman
+        invocation per architecture.
+
+        Uses ``%{EPOCHNUM}`` (not ``%{EPOCH}``) so that packages without an
+        explicit epoch emit ``0`` instead of ``(none)``, matching the
+        ``to_nevra()`` format used elsewhere.
+        """
+        try:
+            stream_config = self.runtime.resolve_stream(stream_name)
+            pullspec = stream_config.image
+        except Exception:
+            self.logger.warning("Could not resolve stream '%s'; skipping stream parent RPM filter", stream_name)
+            return set()
+
+        go_arch = go_arch_for_brew_arch(brew_arch)
+        self.logger.debug("Querying RPMDB of stream parent %s (%s) for arch %s", stream_name, pullspec, brew_arch)
+
+        rc, stdout, stderr = await cmd_gather_async(
+            [
+                "podman",
+                "run",
+                "--rm",
+                "--pull=always",
+                "--platform",
+                f"linux/{go_arch}",
+                "--entrypoint",
+                "rpm",
+                pullspec,
+                "-qa",
+                "--qf",
+                r"%{NAME}-%{EPOCHNUM}:%{VERSION}-%{RELEASE}.%{ARCH}\n",
+            ]
+        )
+
+        if rc != 0:
+            self.logger.warning(
+                "Failed to query RPMDB from stream parent %s (%s, %s): %s",
+                stream_name,
+                pullspec,
+                brew_arch,
+                stderr[:300],
+            )
+            return set()
+
+        nevras = {line.strip() for line in stdout.splitlines() if line.strip()}
+        self.logger.info(
+            "Collected %d NEVRAs from stream parent %s (%s, %s)",
+            len(nevras),
+            stream_name,
+            pullspec,
+            brew_arch,
+        )
+        return nevras
 
     @skip_check_if_changing
     async def scan_extra_packages(self, image_meta: ImageMetadata):
