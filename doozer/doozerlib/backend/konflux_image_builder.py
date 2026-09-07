@@ -576,11 +576,12 @@ class KonfluxImageBuilder:
         :param distgit_key: The distgit key for logging purposes
         :raises: Exception if validation fails
         """
-        # Get SLA attestation from konflux. The command will error out if it cannot find it.
+        # RHCOS images use a separate Quay credential from the other Konflux images.
+        # Pass that source file directly so cosign can authenticate to the RHCOS repo.
         attestation = await fetch_slsa_attestation(
             image_pullspec=image_pullspec,
             build_name=distgit_key,
-            registry_auth_file=self._config.registry_auth_file,
+            registry_auth_file=self._registry_auth_file_for_image(image_pullspec),
         )
         if not attestation:
             raise ValueError("SLSA attestation cannot be empty")
@@ -609,6 +610,15 @@ class KonfluxImageBuilder:
         except ChildProcessError:
             LOGGER.error(f'Failed to fetch signature for {source_image_pullspec}')
             raise
+
+    def _registry_auth_file_for_image(self, image_pullspec: str) -> Optional[str]:
+        """Return the registry auth file appropriate for an image pullspec."""
+        rhcos_repo = artlib_constants.RHCOS_IMAGE_REPO
+        if image_pullspec.startswith((f"{rhcos_repo}@", f"{rhcos_repo}:")):
+            rhcos_auth_file = os.getenv("RHCOS_QUAY_AUTH_FILE")
+            if rhcos_auth_file and Path(rhcos_auth_file).is_file():
+                return rhcos_auth_file
+        return self._config.registry_auth_file
 
     async def _wait_for_parent_members(self, metadata: ImageMetadata):
         # If this image is FROM another group member, we need to wait on that group member to be built
