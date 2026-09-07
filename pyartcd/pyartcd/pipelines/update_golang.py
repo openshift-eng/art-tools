@@ -1483,7 +1483,14 @@ class UpdateGolangPipeline:
                 f":construction: Rebuilding CI golang builder/build-root image(s) for "
                 f"{self.ocp_version}: {', '.join(rebuilt_image_keys)}"
             )
-            await self._rebase_and_build_ci_images(rebuilt_image_keys)
+
+            # await self._rebase_and_build_ci_images(rebuilt_image_keys)
+            build_result = jenkins.start_ocp4_konflux(
+                build_version=self.ocp_version,
+                assembly=self.assembly,
+                image_list=rebuilt_image_keys,
+                dry_run=self.dry_run
+            )
             await self._slack_client.say_in_thread(
                 f":white_check_mark: Rebuilt CI golang builder/build-root image(s): {', '.join(rebuilt_image_keys)}"
             )
