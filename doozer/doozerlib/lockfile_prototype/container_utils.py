@@ -2,12 +2,14 @@
 Container image utilities for RPM lockfile generation.
 
 Provides async helpers for interacting with container images via
-oc (tag-to-digest resolution, preferring manifest-list digests) and
-podman (querying installed packages, reading files from images).
+oc (tag-to-digest resolution, preferring manifest-list digests,
+and reading files from images) and podman (querying installed packages).
 """
 
 import logging
 import os
+import tempfile
+from pathlib import Path
 
 from artcommonlib import logutil
 from artcommonlib.exectools import cmd_gather_async
@@ -114,31 +116,66 @@ class ContainerImageHelper:
             {line.strip() for line in stdout.splitlines() if line.strip() and line.strip() not in RPM_PSEUDO_PACKAGES}
         )
 
+    @staticmethod
+    def _registry_config_arg() -> list[str]:
+        """
+        Return ``['--registry-config', path]`` if a registry auth file is
+        available in the environment, otherwise an empty list.
+        """
+        auth = os.environ.get("QUAY_AUTH_FILE") or os.environ.get("REGISTRY_AUTH_FILE")
+        if auth:
+            return ["--registry-config", auth]
+        return []
+
     async def read_file_from_image(self, image_pullspec: str, filepath: str) -> str:
         """
-        Read a file from a container image via podman.
+        Read a file from a container image via ``oc image extract``.
+
+        Handles simple file paths (``/more-pkgs``), glob patterns
+        (``/etc/*.repo``), and directory paths (``/etc/yum.repos.d/``).
+        For a simple file the basename is read directly (fast path).
+        Otherwise all extracted regular files are concatenated in sorted
+        order.
 
         Arg(s):
             image_pullspec (str): Fully-qualified image pullspec.
-            filepath (str): Absolute path to file inside the image.
+            filepath (str): Absolute path (or glob) inside the image.
         Return Value(s):
             str: File contents, or empty string on failure.
         """
         query_pullspec = self._proxy_pullspec(image_pullspec)
-        cmd = [
-            "podman",
-            "run",
-            "--rm",
-            "--platform",
-            DEFAULT_PLATFORM,
-            "--entrypoint",
-            "cat",
-            query_pullspec,
-            filepath,
-        ]
-        env = build_env()
-        rc, stdout, stderr = await cmd_gather_async(cmd, check=False, env=env)
-        if rc != 0:
-            self.logger.warning(f"Failed to read {filepath} from {query_pullspec}: {stderr[:200]}")
-            return ""
-        return stdout
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cmd = [
+                "oc",
+                "image",
+                "extract",
+                query_pullspec,
+                "--path",
+                f"{filepath}:{tmpdir}",
+                "--confirm",
+                "--filter-by-os",
+                DEFAULT_PLATFORM,
+                *self._registry_config_arg(),
+            ]
+            rc, _, stderr = await cmd_gather_async(cmd, check=False)
+            if rc != 0:
+                self.logger.warning("Failed to read %s from %s: %s", filepath, query_pullspec, stderr[:200])
+                return ""
+
+            # Fast path: simple file whose basename lands directly in tmpdir
+            extracted = os.path.join(tmpdir, os.path.basename(filepath))
+            try:
+                with open(extracted) as f:
+                    return f.read()
+            except (FileNotFoundError, IsADirectoryError):
+                pass
+
+            # Fallback: glob/directory extraction — read all regular files
+            files = sorted(p for p in Path(tmpdir).rglob("*") if p.is_file())
+            if not files:
+                self.logger.warning("No files extracted for %s from %s", filepath, query_pullspec)
+                return ""
+            parts = []
+            for f in files:
+                parts.append(f.read_text())
+            return "".join(parts)

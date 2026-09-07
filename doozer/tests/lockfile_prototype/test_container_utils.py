@@ -3,6 +3,7 @@ Tests for doozerlib.lockfile_prototype.container_utils.
 """
 
 import asyncio
+import os
 import unittest
 from unittest.mock import AsyncMock, patch
 
@@ -134,13 +135,21 @@ class TestContainerImageHelper(unittest.TestCase):
     @patch("doozerlib.lockfile_prototype.container_utils.cmd_gather_async")
     def test_read_file_from_image(self, mock_gather):
         """
-        Should return file contents from podman cat.
+        Should extract a file via oc image extract and read it.
         """
 
-        async def mock_podman(cmd, **kwargs):
-            return (0, "package1 package2", "")
+        async def mock_cmd(cmd, **kwargs):
+            if cmd[0] == "oc":
+                # Simulate extracting a file; dest dir already exists (tmpdir)
+                path_arg = cmd[cmd.index("--path") + 1]
+                filepath, dest = path_arg.rsplit(":", 1)
+                extracted = os.path.join(dest, os.path.basename(filepath))
+                with open(extracted, "w") as f:
+                    f.write("package1 package2")
+                return (0, "", "")
+            return (1, "", "unexpected command")
 
-        mock_gather.side_effect = mock_podman
+        mock_gather.side_effect = mock_cmd
         helper = ContainerImageHelper()
         result = asyncio.run(helper.read_file_from_image("quay.io/test/img@sha256:abc", "/etc/pkgs"))
         self.assertEqual(result, "package1 package2")
@@ -148,7 +157,7 @@ class TestContainerImageHelper(unittest.TestCase):
     @patch("doozerlib.lockfile_prototype.container_utils.cmd_gather_async")
     def test_read_file_from_image_fails(self, mock_gather):
         """
-        Should return empty string on failure.
+        Should return empty string on oc image extract failure.
         """
 
         async def mock_fail(cmd, **kwargs):
@@ -157,4 +166,70 @@ class TestContainerImageHelper(unittest.TestCase):
         mock_gather.side_effect = mock_fail
         helper = ContainerImageHelper()
         result = asyncio.run(helper.read_file_from_image("quay.io/test/img@sha256:abc", "/etc/missing"))
+        self.assertEqual(result, "")
+
+    @patch("doozerlib.lockfile_prototype.container_utils.cmd_gather_async")
+    def test_read_file_from_image_glob_path(self, mock_gather):
+        """
+        Glob paths like /etc/*.repo should fall back to reading all extracted files.
+        """
+
+        async def mock_cmd(cmd, **kwargs):
+            if cmd[0] == "oc":
+                path_arg = cmd[cmd.index("--path") + 1]
+                _, dest = path_arg.rsplit(":", 1)
+                # oc extracts matching files — basename is literal "*.repo"
+                with open(os.path.join(dest, "base.repo"), "w") as f:
+                    f.write("[base]\n")
+                with open(os.path.join(dest, "extras.repo"), "w") as f:
+                    f.write("[extras]\n")
+                return (0, "", "")
+            return (1, "", "unexpected command")
+
+        mock_gather.side_effect = mock_cmd
+        helper = ContainerImageHelper()
+        result = asyncio.run(helper.read_file_from_image("quay.io/test/img@sha256:abc", "/etc/*.repo"))
+        # Files are sorted alphabetically: base.repo then extras.repo
+        self.assertEqual(result, "[base]\n[extras]\n")
+
+    @patch("doozerlib.lockfile_prototype.container_utils.cmd_gather_async")
+    def test_read_file_from_image_directory_path(self, mock_gather):
+        """
+        Directory paths like /etc/yum.repos.d/ should read all files in the dir.
+        """
+
+        async def mock_cmd(cmd, **kwargs):
+            if cmd[0] == "oc":
+                path_arg = cmd[cmd.index("--path") + 1]
+                _, dest = path_arg.rsplit(":", 1)
+                # oc extracts directory contents into tmpdir
+                os.makedirs(os.path.join(dest, "subdir"), exist_ok=True)
+                with open(os.path.join(dest, "subdir", "a.conf"), "w") as f:
+                    f.write("a-content")
+                with open(os.path.join(dest, "top.conf"), "w") as f:
+                    f.write("top-content")
+                return (0, "", "")
+            return (1, "", "unexpected command")
+
+        mock_gather.side_effect = mock_cmd
+        helper = ContainerImageHelper()
+        result = asyncio.run(helper.read_file_from_image("quay.io/test/img@sha256:abc", "/etc/yum.repos.d/"))
+        # rglob finds subdir/a.conf and top.conf; sorted order
+        self.assertEqual(result, "a-contenttop-content")
+
+    @patch("doozerlib.lockfile_prototype.container_utils.cmd_gather_async")
+    def test_read_file_from_image_empty_extraction(self, mock_gather):
+        """
+        When oc image extract succeeds but no files are extracted, return "".
+        """
+
+        async def mock_cmd(cmd, **kwargs):
+            if cmd[0] == "oc":
+                # Succeed but don't create any files
+                return (0, "", "")
+            return (1, "", "unexpected command")
+
+        mock_gather.side_effect = mock_cmd
+        helper = ContainerImageHelper()
+        result = asyncio.run(helper.read_file_from_image("quay.io/test/img@sha256:abc", "/etc/*.nonexistent"))
         self.assertEqual(result, "")
