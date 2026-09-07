@@ -225,6 +225,19 @@ OCP_RPA_KINDS = {
     "extras": "ocp-art-advisory",
     "microshift-bootc": "ocp-art-advisory",
 }
+LP_RPA_KINDS = {
+    "oadp": "oadp-advisory",
+    "mta": "mta-advisory",
+    "rhmtc": "mtc-advisory",
+    "quay": "quay-advisory",
+    "multicluster-engine": "mce-advisory",
+    "rhacm2": "acm-advisory",
+    "cert-manager": "cm-advisory",
+    "external-secrets-operator": "eso-advisory",
+    "zero-trust-workload-identity-manager": "zt-advisory",
+    "openshift-logging": "logging-advisory",
+    "logging": "logging-advisory",
+}
 OCP_RPA_ENVS = ["stage", "prod"]
 
 COREOS_RHEL10_STREAMS = [

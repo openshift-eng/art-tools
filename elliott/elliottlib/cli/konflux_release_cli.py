@@ -7,7 +7,7 @@ from typing import List, Optional, Set
 import aiohttp
 import click
 from artcommonlib import logutil
-from artcommonlib.constants import OCP_RPA_BASE_URL, OCP_RPA_ENVS, OCP_RPA_KINDS
+from artcommonlib.constants import LP_RPA_KINDS, OCP_RPA_BASE_URL, OCP_RPA_ENVS, OCP_RPA_KINDS
 from artcommonlib.util import (
     get_utc_now_formatted_str,
     new_roundtrip_yaml_handler,
@@ -88,27 +88,49 @@ async def _validate_snapshot_against_single_rpa(kind: str, rpa_name: str, snapsh
 
 
 async def validate_snapshot_against_rpa(group: str, env: str, kind: str, snapshot_components: List[str]) -> None:
-    match = re.fullmatch(r"openshift-(\d+)\.(\d+)", group)
-    if group.startswith("openshift-") and not match:
-        raise ValueError(f"Unrecognized openshift group format, refusing to skip RPA validation: {group!r}")
-    if not match:
-        return
-    major, minor = match.group(1), match.group(2)
-
     # FBC allowedPackages use OLM package names which don't match Konflux component names
     if kind == "fbc":
         LOGGER.info("Skipping RPA validation for FBC releases (different naming scheme)")
         return
 
-    if kind not in OCP_RPA_KINDS:
-        raise ValueError(f"Unsupported release kind for RPA validation: {kind!r}. Supported: {sorted(OCP_RPA_KINDS)}")
-
     if env not in OCP_RPA_ENVS:
         raise ValueError(f"Unsupported release env for RPA validation: {env!r}. Supported: {OCP_RPA_ENVS}")
 
+    # Detect OCP vs LP product
+    ocp_match = re.fullmatch(r"openshift-(\d+)\.(\d+)", group)
+    if ocp_match:
+        # OCP path: openshift-X.Y
+        major, minor = ocp_match.group(1), ocp_match.group(2)
+        if kind not in OCP_RPA_KINDS:
+            raise ValueError(
+                f"Unsupported release kind for RPA validation: {kind!r}. Supported: {sorted(OCP_RPA_KINDS)}"
+            )
+        rpa_base = OCP_RPA_KINDS[kind]
+    elif group.startswith("openshift-"):
+        # Unrecognized openshift format
+        raise ValueError(f"Unrecognized openshift group format, refusing to skip RPA validation: {group!r}")
+    else:
+        # LP path: {product}-{major}.{minor}
+        lp_match = re.match(r"^(\w+)-(\d+)\.(\d+)$", group)
+        if not lp_match:
+            LOGGER.info(f"Skipping RPA validation for unrecognized group format: {group!r}")
+            return
+
+        product_name = lp_match.group(1)
+        major, minor = lp_match.group(2), lp_match.group(3)
+
+        if product_name not in LP_RPA_KINDS:
+            LOGGER.info(f"Skipping RPA validation for unsupported LP product: {product_name!r}")
+            return
+
+        if kind != "image":
+            raise ValueError(f"Unsupported release kind for LP RPA validation: {kind!r}. LP supports 'image' only")
+
+        rpa_base = LP_RPA_KINDS[product_name]
+
     envs_to_check = [env] + [e for e in OCP_RPA_ENVS if e != env]
     for check_env in envs_to_check:
-        rpa_name = f"{OCP_RPA_KINDS[kind]}-{check_env}-{major}-{minor}"
+        rpa_name = f"{rpa_base}-{check_env}-{major}-{minor}"
         await _validate_snapshot_against_single_rpa(kind, rpa_name, snapshot_components)
 
 
