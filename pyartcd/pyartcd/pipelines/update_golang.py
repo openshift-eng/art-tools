@@ -15,13 +15,13 @@ from artcommonlib.constants import (
     GOLANG_BUILDER_IMAGE_NAME,
     GOLANG_NVR_LABEL,
     KONFLUX_DEFAULT_FBC_REPO,
+    KONFLUX_DEFAULT_IMAGE_REPO,
     KONFLUX_DEFAULT_IMAGE_SHARE_REPO,
     PRODUCT_NAMESPACE_MAP,
     REGISTRY_CI_OPENSHIFT,
     REGISTRY_QUAY_OCP_RELEASE_DEV,
     REGISTRY_QUAY_OPENSHIFT,
     REGISTRY_REDHAT_IO,
-    KONFLUX_DEFAULT_IMAGE_REPO,
 )
 from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
@@ -1489,8 +1489,12 @@ class UpdateGolangPipeline:
                 build_version=self.ocp_version,
                 assembly=self.assembly,
                 image_list=rebuilt_image_keys,
-                dry_run=self.dry_run
+                dry_run=self.dry_run,
+                block_until_complete=True,
             )
+            if build_result != "SUCCESS":
+                raise RuntimeError(f"CI image build for {self.ocp_version} failed with result: {build_result}")
+
             await self._slack_client.say_in_thread(
                 f":white_check_mark: Rebuilt CI golang builder/build-root image(s): {', '.join(rebuilt_image_keys)}"
             )
@@ -1503,10 +1507,18 @@ class UpdateGolangPipeline:
         # Sync every image considered this run, not just what was just rebuilt -- mirroring an
         # already-current image is a no-op cost-wise (a handful of images at most), and it keeps CI
         # in sync with the latest successful build even on runs where nothing needed rebuilding.
-        try:
-            await self._sync_ci_images(scan_keys)
-        except Exception as e:
-            raise RuntimeError(f"Failed to sync CI image(s) to CI: {e}") from e
+
+        sync_result = jenkins.start_sync_ci_images(
+            version=self.ocp_version,
+            block_until_complete=True,
+            assembly=self.assembly,
+            image_list=scan_keys,
+            dry_run=self.dry_run,
+            load_disabled=True,
+            live_test_mode=not self.is_production_assembly,
+        )
+        if sync_result != "SUCCESS":
+            raise RuntimeError(f"CI image sync for {self.ocp_version} failed with result: {sync_result}")
 
         await self._slack_client.say_in_thread(f":white_check_mark: Synced CI image(s): {', '.join(scan_keys)}")
 
