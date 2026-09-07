@@ -8,7 +8,7 @@ This pipeline:
 2. Renames them with release version, creates unversioned symlinks
 3. Creates legacy rhcos-installer-* symlinks from rhcos-live-* files
 4. Generates sha256sum.txt and rhcos-id.txt
-5. GPG-signs sha256sum.txt via RADAS/UMB
+5. Signs sha256sum.txt via the configured signing transport
 6. Syncs everything (including sha256sum.txt.gpg) to S3 and Cloudflare
 7. Updates latest directories as appropriate
 """
@@ -24,10 +24,10 @@ import aiohttp
 import click
 from artcommonlib.exectools import limit_concurrency
 
-from pyartcd import constants, util
+from pyartcd import util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.runtime import Runtime
-from pyartcd.signatory import AsyncSignatory
+from pyartcd.signatory import create_signatory
 
 S3_BUCKET = "s3://art-srv-enterprise"
 
@@ -46,6 +46,7 @@ class SyncRhcosPipeline:
         synclist: str,
         no_latest: bool = False,
         signing_env: Optional[str] = None,
+        signing_transport: str = "umb",
     ):
         self.runtime = runtime
         self.arch = arch
@@ -56,6 +57,11 @@ class SyncRhcosPipeline:
         self.synclist = synclist
         self.no_latest = no_latest
         self.signing_env = signing_env
+        if signing_transport not in ("umb", "direct"):
+            raise ValueError("signing_transport must be either 'umb' or 'direct'")
+        if signing_transport == "direct" and not signing_env:
+            raise ValueError("--signing-env is required for direct signing")
+        self.signing_transport = signing_transport
         self.logger = runtime.logger
 
         self.staging_dir = Path(runtime.working_dir) / f"staging-{version}"
@@ -219,21 +225,31 @@ class SyncRhcosPipeline:
         return h.hexdigest()
 
     async def _sign_sha256sum(self):
-        """GPG-sign sha256sum.txt via RADAS/UMB and write sha256sum.txt.gpg."""
+        """Sign sha256sum.txt via the configured transport and write sha256sum.txt.gpg."""
         cert_file = os.environ.get("SIGNING_CERT")
         key_file = os.environ.get("SIGNING_KEY")
-        if not cert_file or not key_file:
+        if self.signing_transport == "umb" and (not cert_file or not key_file):
             self.logger.warning("SIGNING_CERT/SIGNING_KEY not set; skipping sha256sum.txt signing")
             return
 
-        uri = constants.UMB_BROKERS[self.signing_env]
         sig_keyname = "redhatrelease2" if self.signing_env == "prod" else "beta2"
         sha256sum_path = self.staging_dir / "sha256sum.txt"
         gpg_path = self.staging_dir / "sha256sum.txt.gpg"
 
-        self.logger.info("Signing sha256sum.txt with key %s via %s", sig_keyname, self.signing_env)
+        self.logger.info(
+            "Signing sha256sum.txt with key %s via %s/%s",
+            sig_keyname,
+            self.signing_env,
+            self.signing_transport,
+        )
 
-        async with AsyncSignatory(uri, cert_file, key_file, sig_keyname=sig_keyname) as signatory:
+        async with create_signatory(
+            self.signing_transport,
+            signing_env=self.signing_env,
+            sig_keyname=sig_keyname,
+            cert_file=cert_file,
+            key_file=key_file,
+        ) as signatory:
             with open(sha256sum_path, "rb") as in_file, open(gpg_path, "wb") as sig_file:
                 await signatory.sign_message_digest(
                     product="openshift",
@@ -328,6 +344,13 @@ class SyncRhcosPipeline:
     default=None,
     help="Signing environment for GPG-signing sha256sum.txt (omit to skip signing)",
 )
+@click.option(
+    "--signing-transport",
+    type=click.Choice(["umb", "direct"]),
+    default="umb",
+    show_default=True,
+    help="Signing transport to use for sha256sum.txt",
+)
 @pass_runtime
 @click_coroutine
 async def sync_rhcos(
@@ -340,6 +363,7 @@ async def sync_rhcos(
     synclist: str,
     no_latest: bool,
     signing_env: Optional[str],
+    signing_transport: str,
 ):
     pipeline = SyncRhcosPipeline(
         runtime=runtime,
@@ -351,5 +375,6 @@ async def sync_rhcos(
         synclist=synclist,
         no_latest=no_latest,
         signing_env=signing_env,
+        signing_transport=signing_transport,
     )
     await pipeline.run()

@@ -1,8 +1,11 @@
 import asyncio
 import base64
 import json
+import os
+import tempfile
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
+from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
@@ -11,7 +14,8 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.serialization import Encoding
 from cryptography.x509.oid import NameOID
-from pyartcd.signatory import AsyncSignatory, SigstoreSignatory
+from pyartcd.exceptions import SignatoryServerError
+from pyartcd.signatory import AsyncSignatory, DirectSignatory, SigstoreSignatory, create_signatory
 
 
 class TestAsyncSignatory(IsolatedAsyncioTestCase):
@@ -287,6 +291,157 @@ class TestAsyncSignatory(IsolatedAsyncioTestCase):
             sig_file=sig_file,
         )
         self.assertEqual(sig_file.getvalue(), b'fake-signature')
+
+
+class TestDirectSignatory(IsolatedAsyncioTestCase):
+    async def test_sign_message_digest_writes_signature_from_client_output(self):
+        command_runner = AsyncMock(return_value=(0, "", ""))
+
+        async def write_signature(command, **kwargs):
+            output_path = Path(command[command.index("--output") + 1])
+            output_path.write_bytes(b"fake-direct-signature")
+            return 0, "", ""
+
+        command_runner.side_effect = write_signature
+        signatory = DirectSignatory(
+            client_command=("rh-signing-client",),
+            sig_keyname="redhatrelease2",
+            command_runner=command_runner,
+        )
+        sig_file = BytesIO()
+
+        await signatory.sign_message_digest("openshift", "4.19.0", BytesIO(b"sha256 data"), sig_file)
+
+        self.assertEqual(sig_file.getvalue(), b"fake-direct-signature")
+        command = command_runner.await_args.args[0]
+        self.assertEqual(command[:3], ["rh-signing-client", "--key", "redhatrelease2"])
+        self.assertEqual(command[4], "--gpgsign")
+        self.assertEqual(command[5], "--output")
+        self.assertEqual(command[7:], ["--onbehalfof", "timer"])
+
+    async def test_sign_json_digest_writes_signature_from_client_output(self):
+        command_runner = AsyncMock()
+
+        async def write_signature(command, **kwargs):
+            input_path = Path(command[3])
+            output_path = Path(command[command.index("--output") + 1])
+            claim = json.loads(input_path.read_text())
+            self.assertEqual(claim["critical"]["image"]["docker-manifest-digest"], "sha256:dead-beef")
+            output_path.write_bytes(b"fake-json-signature")
+            return 0, "", ""
+
+        command_runner.side_effect = write_signature
+        signatory = DirectSignatory(
+            client_command=("rh-signing-client",),
+            sig_keyname="redhatrelease2",
+            command_runner=command_runner,
+        )
+        sig_file = BytesIO()
+
+        await signatory.sign_json_digest(
+            "openshift", "4.19.0", "quay.io/example/release:4.19.0", "sha256:dead-beef", sig_file
+        )
+
+        self.assertEqual(sig_file.getvalue(), b"fake-json-signature")
+
+    async def test_context_manager_uses_isolated_kerberos_cache_and_leaves_keytab_untouched(self):
+        command_runner = AsyncMock(return_value=(0, "", ""))
+        with tempfile.TemporaryDirectory() as temp_dir:
+            keytab = Path(temp_dir) / "signing.keytab"
+            ccache = Path(temp_dir) / "krb5cc"
+            keytab.write_bytes(b"temporary-keytab")
+            signatory = DirectSignatory(
+                client_command=("rh-signing-client",),
+                sig_keyname="redhatrelease2",
+                keytab_file=str(keytab),
+                principal="art-signing@IPA.REDHAT.COM",
+                ccache_path=str(ccache),
+                command_runner=command_runner,
+            )
+
+            async with signatory:
+                pass
+            self.assertTrue(keytab.exists())
+
+        kinit_command = command_runner.await_args_list[0].args[0]
+        kdestroy_command = command_runner.await_args_list[1].args[0]
+        self.assertEqual(kinit_command[:2], ["kinit", "-k"])
+        self.assertIn(f"FILE:{ccache}", kinit_command)
+        self.assertEqual(kdestroy_command, ["kdestroy", "-c", f"FILE:{ccache}"])
+        self.assertEqual(command_runner.await_args_list[0].kwargs["env"]["KRB5CCNAME"], f"FILE:{ccache}")
+
+    async def test_sign_artifact_raises_when_client_fails(self):
+        command_runner = AsyncMock(return_value=(1, "", "signing server rejected request"))
+        signatory = DirectSignatory(client_command=("rh-signing-client",), command_runner=command_runner)
+
+        with self.assertRaisesRegex(SignatoryServerError, "signing server rejected request"):
+            await signatory.sign_message_digest("openshift", "4.19.0", BytesIO(b"sha256 data"), BytesIO())
+
+    async def test_sign_artifact_raises_when_client_does_not_write_signature(self):
+        command_runner = AsyncMock(return_value=(0, "", ""))
+        signatory = DirectSignatory(client_command=("rh-signing-client",), command_runner=command_runner)
+
+        with self.assertRaisesRegex(SignatoryServerError, "did not produce a signature"):
+            await signatory.sign_message_digest("openshift", "4.19.0", BytesIO(b"sha256 data"), BytesIO())
+
+    async def test_from_environment_requires_direct_signing_credentials(self):
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaisesRegex(ValueError, "DIRECT_SIGNING_PROD_KEYTAB"):
+                DirectSignatory.from_environment("prod", "redhatrelease2")
+
+    async def test_from_environment_does_not_use_credentials_from_another_environment(self):
+        with patch.dict(
+            os.environ,
+            {
+                "DIRECT_SIGNING_STAGE_KEYTAB": "/path/to/stage-keytab",
+                "DIRECT_SIGNING_STAGE_PRINCIPAL": "art-signing-stage@IPA.REDHAT.COM",
+            },
+            clear=True,
+        ):
+            with self.assertRaisesRegex(ValueError, "DIRECT_SIGNING_PROD_KEYTAB"):
+                DirectSignatory.from_environment("prod", "redhatrelease2")
+
+    async def test_from_environment_reads_direct_signing_configuration(self):
+        with patch.dict(
+            os.environ,
+            {
+                "DIRECT_SIGNING_STAGE_KEYTAB": "/path/to/stage-keytab",
+                "DIRECT_SIGNING_STAGE_PRINCIPAL": "art-signing-stage@IPA.REDHAT.COM",
+                "DIRECT_SIGNING_CLIENT_COMMAND": "rh-signing-client --config /path/to/config",
+                "DIRECT_SIGNING_REQUESTOR": "fabio.gallotti",
+                "DIRECT_SIGNING_TIMEOUT": "42",
+            },
+            clear=True,
+        ):
+            signatory = DirectSignatory.from_environment("stage", "beta2")
+
+        self.assertEqual(signatory.client_command, ("rh-signing-client", "--config", "/path/to/config"))
+        self.assertEqual(signatory.keytab_file, "/path/to/stage-keytab")
+        self.assertEqual(signatory.principal, "art-signing-stage@IPA.REDHAT.COM")
+        self.assertEqual(signatory.signing_env, "stage")
+        self.assertEqual(signatory.sig_keyname, "beta2")
+        self.assertEqual(signatory.requestor, "fabio.gallotti")
+        self.assertEqual(signatory.timeout, 42)
+
+
+class TestCreateSignatory(IsolatedAsyncioTestCase):
+    @patch("pyartcd.signatory.AsyncSignatory")
+    async def test_create_signatory_uses_umb_transport(self, async_signatory):
+        create_signatory(
+            "umb",
+            signing_env="prod",
+            sig_keyname="redhatrelease2",
+            cert_file="/path/cert",
+            key_file="/path/key",
+        )
+
+        async_signatory.assert_called_once()
+
+    @patch("pyartcd.signatory.DirectSignatory.from_environment")
+    async def test_create_signatory_uses_direct_transport(self, direct_signatory):
+        create_signatory("direct", signing_env="prod", sig_keyname="redhatrelease2")
+
+        direct_signatory.assert_called_once_with(signing_env="prod", sig_keyname="redhatrelease2")
 
 
 class TestSigstoreSignatory(IsolatedAsyncioTestCase):
