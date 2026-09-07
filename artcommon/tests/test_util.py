@@ -200,6 +200,16 @@ class TestUtil(unittest.TestCase):
             ('202401221732.p0.g00c615b.el9_6', '202401221732.p0.g00c615b', 'el9_6'),
             ('202401221732.p0.g00c615b.el9_4', '202401221732.p0.g00c615b', 'el9_4'),
             ('1.2.3-y.p.p1.assembly.stream.el10_2', '1.2.3-y.p.p1.assembly.stream', 'el10_2'),
+            # Floating image tags with -rhelN suffix (normalised to elN)
+            ('golang-builder-v1.22-rhel9', 'golang-builder-v1.22', 'el9'),
+            ('golang-builder-v1.22-rhel8', 'golang-builder-v1.22', 'el8'),
+            ('golang-builder-v1.21-rhel10', 'golang-builder-v1.21', 'el10'),
+            # Tag with extra segments after -rhelN (greedy .* binds to last -rhelN)
+            ('some-image-v2.3-rhel9-suffix', 'some-image-v2.3', 'el9'),
+            # Multiple -rhelN segments: rightmost wins
+            ('img-rhel8-rhel9', 'img-rhel8', 'el9'),
+            # Malformed -rhel (no digits): no match, returns (release, None)
+            ('img-rhel-foo', 'img-rhel-foo', None),
         ]
 
         for t in test_cases:
@@ -224,6 +234,14 @@ class TestUtil(unittest.TestCase):
             ('202401221732.p0.g00c615b.el9_6', 9),
             ('202401221732.p0.g00c615b.el9_4', 9),
             ('1.2.3-y.p.p1.assembly.stream.el10_2', 10),
+            # Floating image tags with -rhelN suffix
+            ('golang-builder-v1.22-rhel9', 9),
+            ('golang-builder-v1.22-rhel8', 8),
+            ('golang-builder-v1.21-rhel10', 10),
+            # Multiple -rhelN segments: rightmost wins
+            ('img-rhel8-rhel9', 9),
+            # Malformed -rhel (no digits): None
+            ('img-rhel-foo', None),
         ]
 
         for t in test_cases:

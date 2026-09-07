@@ -21,7 +21,13 @@ from artcommonlib.constants import ACTIVE_OCP_VERSIONS
 from artcommonlib.exectools import limit_concurrency
 from artcommonlib.github_auth import get_github_client_for_org
 from artcommonlib.model import Missing, Model
-from artcommonlib.release_util import SoftwareLifecyclePhase, isolate_assembly_in_release
+from artcommonlib.release_util import (
+    SoftwareLifecyclePhase,
+    isolate_assembly_in_release,
+)
+from artcommonlib.release_util import (
+    isolate_el_version_in_release as _artcommon_isolate_el_version_in_release,
+)
 from artcommonlib.util import merge_objects, new_roundtrip_yaml_handler, split_git_url
 from doozerlib import util as doozerutil
 from doozerlib.constants import ART_BUILD_HISTORY_URL
@@ -37,15 +43,15 @@ logger = logging.getLogger(__name__)
 
 def isolate_el_version_in_release(release: str) -> Optional[int]:
     """
-    Given a release field, determines whether is contains
-    a RHEL version. If it does, it returns the version value as int.
-    If it is not found, None is returned.
-    """
-    match = re.match(r'.*\.el(\d+)(?:\.+|$)', release)
-    if match:
-        return int(match.group(1))
+    Given a release field, determines whether it contains a RHEL version.
+    If it does, it returns the version value as int; otherwise None.
 
-    return None
+    Delegates to artcommonlib.release_util.isolate_el_version_in_release so
+    that both the canonical '.elN'/'+elN'/'.scosN' patterns and floating image
+    tag '-rhelN' suffixes (e.g. 'golang-builder-v1.22-rhel9') are handled in
+    one place.
+    """
+    return _artcommon_isolate_el_version_in_release(release)
 
 
 def isolate_el_version_in_branch(branch_name: str) -> Optional[int]:
