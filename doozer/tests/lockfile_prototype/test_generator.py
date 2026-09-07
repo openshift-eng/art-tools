@@ -15,6 +15,7 @@ from doozerlib.lockfile_prototype.generator import (
     RpmLockfilePrototypeGenerator,
     _detect_stages_with_bare_updates,
     _detect_stages_with_installroot_only,
+    _extract_install_packages,
     _is_local_rpm,
     build_rpms_in_yaml,
 )
@@ -1609,3 +1610,69 @@ class TestBareUpdateUpgradeResolution(unittest.TestCase):
         # over the upgrade request, silently keeping the old version.
         self.assertNotIn("python3-setuptools", config.reinstallPackages)
         self.assertIn("python3-setuptools", config.upgradePackages)
+
+
+class TestExtractInstallPackages(unittest.TestCase):
+    """Tests for _extract_install_packages with shell variable resolution."""
+
+    def _entries_from_dockerfile(self, content: str) -> list[dict]:
+        from dockerfile_parse import DockerfileParser
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            df_path = Path(tmpdir) / "Dockerfile"
+            df_path.write_text(content)
+            return DockerfileParser(str(df_path)).structure
+
+    def test_extract_install_direct_package_names(self):
+        """Direct package names: yum install -y git gzip → {"git", "gzip"}"""
+        entries = self._entries_from_dockerfile("FROM base\nRUN yum install -y git gzip\n")
+        result = _extract_install_packages(entries, 0)
+        self.assertEqual(result, {"git", "gzip"})
+
+    def test_extract_install_shell_variable_resolution(self):
+        """Shell variable: PACKAGES="git gzip" && yum install -y $PACKAGES → {"git", "gzip"}"""
+        entries = self._entries_from_dockerfile('FROM base\nRUN PACKAGES="git gzip" && yum install -y $PACKAGES\n')
+        result = _extract_install_packages(entries, 0)
+        self.assertEqual(result, {"git", "gzip"})
+
+    def test_extract_install_variable_with_appended_values(self):
+        """Appended variable: PACKAGES="git" && PACKAGES="$PACKAGES vim" → {"git", "vim"}"""
+        entries = self._entries_from_dockerfile(
+            'FROM base\nRUN PACKAGES="git" && PACKAGES="$PACKAGES vim" && yum install -y $PACKAGES\n'
+        )
+        result = _extract_install_packages(entries, 0)
+        self.assertEqual(result, {"git", "vim"})
+
+    def test_extract_install_conditional_variable_assignment(self):
+        """Conditional assignment (openshift-enterprise-tests pattern): all values accumulated."""
+        entries = self._entries_from_dockerfile(
+            "FROM base\n"
+            'RUN PACKAGES="git gzip util-linux" && \\\n'
+            '    if [ $HOSTTYPE = x86_64 ]; then PACKAGES="$PACKAGES python3-cinderclient"; fi && \\\n'
+            "    yum install -y $PACKAGES\n"
+        )
+        result = _extract_install_packages(entries, 0)
+        self.assertEqual(result, {"git", "gzip", "util-linux", "python3-cinderclient"})
+
+    def test_extract_install_mixed_direct_and_variable(self):
+        """Mixed direct and variable: yum install -y curl $PACKAGES"""
+        entries = self._entries_from_dockerfile('FROM base\nRUN PACKAGES="git vim" && yum install -y curl $PACKAGES\n')
+        result = _extract_install_packages(entries, 0)
+        self.assertEqual(result, {"curl", "git", "vim"})
+
+    def test_extract_install_unknown_variable_skipped(self):
+        """Unknown variable (not assigned in same RUN): gracefully skipped."""
+        entries = self._entries_from_dockerfile("FROM base\nRUN yum install -y curl $UNKNOWN_VAR\n")
+        result = _extract_install_packages(entries, 0)
+        self.assertEqual(result, {"curl"})
+
+    def test_extract_install_variables_do_not_leak_across_run_instructions(self):
+        """Variables from one RUN should NOT leak into another."""
+        entries = self._entries_from_dockerfile(
+            "FROM base\nRUN PACKAGES=\"git vim\" && yum install -y $PACKAGES\nRUN yum install -y $PACKAGES curl\n"
+        )
+        result = _extract_install_packages(entries, 0)
+        # First RUN resolves $PACKAGES → {"git", "vim"}.
+        # Second RUN has no assignment for PACKAGES → $PACKAGES is skipped,
+        # only "curl" is extracted from the second RUN.
+        self.assertEqual(result, {"git", "vim", "curl"})

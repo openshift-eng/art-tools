@@ -73,6 +73,42 @@ _PKG_NAME_RE = re.compile(r"^[a-zA-Z][\w.+\-]*$")
 
 _RPM_ARCHES = frozenset({"x86_64", "aarch64", "ppc64le", "s390x", "i686", "noarch", "src"})
 
+_VAR_ASSIGN_RE = re.compile(r"""\b([A-Za-z_][A-Za-z0-9_]*)=(?:"([^"]*)"|'([^']*)')""")
+
+
+def _resolve_run_variables(run_value: str) -> dict[str, set[str]]:
+    """
+    Scan a RUN instruction for ``VARNAME="value"`` assignments and build
+    a map of variable names to accumulated package-name tokens.
+
+    Accumulates all literal tokens from every assignment to each variable
+    (union of all values) so conditional assignments like::
+
+        PACKAGES="git gzip"
+        if [...]; then PACKAGES="$PACKAGES extra-pkg"; fi
+
+    produce ``{"PACKAGES": {"git", "gzip", "extra-pkg"}}``.
+
+    Self-references (``$VARNAME`` within values) are ignored — only
+    literal package-name tokens are extracted.
+
+    Arg(s):
+        run_value (str): The RUN instruction body text.
+    Return Value(s):
+        dict[str, set[str]]: Variable names to sets of package name tokens.
+    """
+    var_map: dict[str, set[str]] = {}
+    for match in _VAR_ASSIGN_RE.finditer(run_value):
+        var_name = match.group(1)
+        value = match.group(2) if match.group(2) is not None else match.group(3)
+        for token in value.split():
+            token = token.strip()
+            if token.startswith("$"):
+                continue
+            if _PKG_NAME_RE.match(token):
+                var_map.setdefault(var_name, set()).add(token)
+    return var_map
+
 
 def _extract_install_packages(entries: list[dict], stage_num: int) -> set[str]:
     """
@@ -96,10 +132,22 @@ def _extract_install_packages(entries: list[dict], stage_num: int) -> set[str]:
         if entry["instruction"] == "FROM":
             current_stage += 1
         elif entry["instruction"] == "RUN" and current_stage == stage_num:
+            var_map = _resolve_run_variables(entry["value"])
             for m in _INSTALL_CMD_RE.finditer(entry["value"]):
                 for token in m.group(1).split():
                     token = token.strip().rstrip("\\")
-                    if token.startswith("-") or token.startswith("$"):
+                    if token.startswith("-"):
+                        continue
+                    if token.startswith("$"):
+                        var_name = token[1:]
+                        if var_name.startswith("{") and var_name.endswith("}"):
+                            var_name = var_name[1:-1]
+                        for pkg in var_map.get(var_name, set()):
+                            if "." in pkg:
+                                name, _, suffix = pkg.rpartition(".")
+                                if suffix in _RPM_ARCHES:
+                                    pkg = name
+                            packages.add(pkg)
                         continue
                     if _PKG_NAME_RE.match(token):
                         if "." in token:
