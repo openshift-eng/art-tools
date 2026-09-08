@@ -100,6 +100,9 @@ class KonfluxImageBuilderConfig:
     ec_policy_configuration: Optional[str] = None
     prega_ec_policy_configuration: Optional[str] = None
     skip_ec_verify: bool = False
+    effective_time: str = "now"
+    integration_test_scenarios: tuple[str, ...] = ()
+    skip_custom_its: bool = False
 
 
 class KonfluxImageBuilder:
@@ -125,6 +128,17 @@ class KonfluxImageBuilder:
             config_file=config.kubeconfig,
             context=config.context,
             dry_run=config.dry_run,
+        )
+
+    async def validate_custom_integration_test_scenarios(self) -> None:
+        """Validate group-configured custom ITS resources before starting builds."""
+        if not self._config.integration_test_scenarios or self._config.skip_custom_its:
+            return
+        application_name = util.konflux_application_name(self._config.group_name)
+        await self._konflux_client.validate_integration_test_scenarios(
+            self._config.integration_test_scenarios,
+            application_name=application_name,
+            namespace=self._config.namespace,
         )
 
     async def build(self, metadata: ImageMetadata, git_auth_secret: Optional[str] = None):
@@ -334,10 +348,19 @@ class KonfluxImageBuilder:
 
                 # Run enterprise-contract (EC) verification after a successful build
                 # TODO: Expose EC failure links (ITS/PLR URLs) via Slack notification or dashboard column
+                lifecycle_phase = metadata.runtime.group_config.software_lifecycle.phase
+                if (
+                    lifecycle_phase is not Missing
+                    and SoftwareLifecyclePhase.from_name(lifecycle_phase) == SoftwareLifecyclePhase.PRE_RELEASE
+                ):
+                    ec_policy = self._config.prega_ec_policy_configuration
+                else:
+                    ec_policy = self._config.ec_policy_configuration
+
                 should_run_ec = (
                     outcome is KonfluxBuildOutcome.SUCCESS
                     and metadata.runtime.variant is not BuildVariant.OKD
-                    and self._config.ec_policy_configuration is not None
+                    and ec_policy is not None
                     and not self._config.skip_ec_verify
                     and metadata.for_release
                     and image_pullspec  # EC requires actual build results
@@ -345,18 +368,6 @@ class KonfluxImageBuilder:
                 )
                 if should_run_ec:
                     app_name = util.konflux_application_name(self._config.group_name)
-
-                    # Select EC policy based on software lifecycle phase:
-                    # - pre-release phase uses a more permissive policy that allows unsigned RPMs
-                    # - All other phases use the default stage policy
-                    lifecycle_phase = metadata.runtime.group_config.software_lifecycle.phase
-                    if (
-                        lifecycle_phase is not Missing
-                        and SoftwareLifecyclePhase.from_name(lifecycle_phase) == SoftwareLifecyclePhase.PRE_RELEASE
-                    ):
-                        ec_policy = self._config.prega_ec_policy_configuration
-                    else:
-                        ec_policy = self._config.ec_policy_configuration
 
                     image_with_digest = f"{image_pullspec.split(':')[0]}@{image_digest}"
                     source_url = artlib_util.convert_remote_git_to_https(build_repo.url)
@@ -371,6 +382,7 @@ class KonfluxImageBuilder:
                         commit_sha=build_repo.commit_hash,
                         ec_policy=ec_policy,
                         logger=logger,
+                        effective_time=self._config.effective_time,
                     )
                     # Always save EC pipeline URL for tracking, regardless of pass/fail
                     ec_pipeline_url = ec_result.ec_pipeline_url
@@ -388,9 +400,9 @@ class KonfluxImageBuilder:
                         logger.info(
                             "Skipping EC verification for %s: --skip-ec-verify flag is set", metadata.distgit_key
                         )
-                    elif self._config.ec_policy_configuration is None:
+                    elif ec_policy is None:
                         logger.info(
-                            "Skipping EC verification for %s: no EC policy configured for group '%s'",
+                            "Skipping EC verification for %s: no EC policy configured for the current lifecycle in group '%s'",
                             metadata.distgit_key,
                             self._config.group_name,
                         )
@@ -399,6 +411,37 @@ class KonfluxImageBuilder:
                             "Skipping EC verification for %s: image is not for_release",
                             metadata.distgit_key,
                         )
+
+                should_run_custom_its = (
+                    outcome is KonfluxBuildOutcome.SUCCESS
+                    and bool(self._config.integration_test_scenarios)
+                    and not self._config.skip_custom_its
+                    and metadata.for_release
+                )
+                if should_run_custom_its:
+                    app_name = util.konflux_application_name(self._config.group_name)
+                    custom_its_result = await self._konflux_client.wait_for_integration_test_scenarios(
+                        pipelinerun_name=pipelinerun_name,
+                        scenario_names=self._config.integration_test_scenarios,
+                        application_name=app_name,
+                        namespace=self._config.namespace,
+                    )
+                    for pipeline_url in custom_its_result.pipeline_urls:
+                        logger.info("Custom IntegrationTestScenario PipelineRun: %s", pipeline_url)
+                    if custom_its_result.failed:
+                        if custom_its_result.failed_pipeline_url:
+                            ec_pipeline_url = custom_its_result.failed_pipeline_url
+                            record["ec_pipeline_url"] = ec_pipeline_url
+                        outcome = KonfluxBuildOutcome.ITS_ERROR
+                elif (
+                    outcome is KonfluxBuildOutcome.SUCCESS
+                    and self._config.integration_test_scenarios
+                    and self._config.skip_custom_its
+                ):
+                    logger.info(
+                        "Skipping custom IntegrationTestScenarios for %s: --skip-custom-its flag is set",
+                        metadata.distgit_key,
+                    )
 
                 if self._config.dry_run:
                     logger.info("Dry run: Would have inserted build record in Konflux DB")

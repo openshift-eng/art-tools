@@ -624,6 +624,19 @@
           "$ref": "#/properties/konflux/properties/build_attempts"
         },
         "build_attempts-": {},
+        "integration_test_scenarios": {
+          "description": "Existing Konflux IntegrationTestScenario names to gate successful releasable builds",
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "integration_test_scenarios!": {
+          "$ref": "#/properties/konflux/properties/integration_test_scenarios"
+        },
+        "integration_test_scenarios?": {
+          "$ref": "#/properties/konflux/properties/integration_test_scenarios"
+        },
+        "integration_test_scenarios-": {},
         "plr_template_commitish": {
           "description": "Git commit-ish (branch, tag, or SHA) for the Pipeline Run template repository",
           "type": "string",

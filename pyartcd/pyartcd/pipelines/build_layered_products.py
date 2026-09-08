@@ -1,7 +1,9 @@
+import asyncio
 import logging
 import os
 import sys
 import traceback
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import List, Optional
 
@@ -10,6 +12,7 @@ import yaml
 from artcommonlib import exectools
 from artcommonlib.build_visibility import is_nvr_embargoed
 from artcommonlib.constants import PRODUCT_KUBECONFIG_MAP
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome
 from artcommonlib.util import resolve_konflux_kubeconfig_by_product, resolve_konflux_namespace_by_product
 from doozerlib.constants import KONFLUX_DEFAULT_IMAGE_REPO
 
@@ -19,7 +22,23 @@ from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import Lock
 from pyartcd.pipelines.ocp4_konflux import BuildStrategy
 from pyartcd.runtime import Runtime
-from pyartcd.util import default_release_suffix, load_group_config
+from pyartcd.util import default_release_suffix, increment_fail_counter, load_group_config, reset_fail_counter
+
+EC_EFFECTIVE_TIME_OFFSET_DAYS = 14
+
+
+def _resolve_effective_time(value: Optional[str]) -> str:
+    if not value:
+        return (datetime.now(timezone.utc) + timedelta(days=EC_EFFECTIVE_TIME_OFFSET_DAYS)).strftime(
+            '%Y-%m-%dT%H:%M:%SZ'
+        )
+    try:
+        parsed = datetime.fromisoformat(value.replace('Z', '+00:00'))
+    except ValueError as exc:
+        raise ValueError(f"Invalid --effective-time {value!r}; expected an RFC3339 timestamp") from exc
+    if parsed.tzinfo is None:
+        raise ValueError(f"Invalid --effective-time {value!r}; timezone is required")
+    return value
 
 
 class BuildLayeredProductsPipeline:
@@ -41,6 +60,8 @@ class BuildLayeredProductsPipeline:
         network_mode: Optional[str] = None,
         plr_template: Optional[str] = None,
         skip_ec_verify: bool = False,
+        skip_custom_its: bool = False,
+        effective_time: Optional[str] = None,
         logger: Optional[logging.Logger] = None,
     ):
         self.runtime = runtime
@@ -56,6 +77,8 @@ class BuildLayeredProductsPipeline:
         self.network_mode = network_mode
         self.plr_template = plr_template
         self.skip_ec_verify = skip_ec_verify
+        self.skip_custom_its = skip_custom_its
+        self.effective_time = _resolve_effective_time(effective_time)
         self._logger = logger or runtime.logger
         # Operator NVRs that were dropped from the bundle build trigger because they are embargoed.
         # The caller uses this to mark the Jenkins job UNSTABLE instead of a plain SUCCESS.
@@ -227,6 +250,7 @@ class BuildLayeredProductsPipeline:
             await self._build(strategy, build_image_list, excluded, product, image_repo)
         finally:
             self._update_build_description()
+            await self._update_build_fail_counters()
 
     async def _rebase(self, image_list: Optional[str]) -> List[str]:
         """Rebase layered product images.
@@ -310,6 +334,57 @@ class BuildLayeredProductsPipeline:
         elif len(failed_images) > 10:
             jenkins.update_description('Check record.log for the full list of failed images<br/>')
 
+    async def _update_build_fail_counters(self):
+        """Update stream build, EC/ITS, and release failure counters from record.log."""
+        if self.assembly != 'stream':
+            return
+        record_log = self.parse_record_log()
+        if not record_log:
+            return
+
+        records = record_log.get('image_build_konflux', [])
+        successful = [entry for entry in records if not int(entry['status'])]
+        failed = [entry for entry in records if int(entry['status'])]
+        counter_types = ('build-failure', 'ec-failure', 'release-failure')
+
+        await asyncio.gather(
+            *[
+                reset_fail_counter(f'count:{counter_type}:konflux:{self.group}:{entry["name"]}')
+                for entry in successful
+                for counter_type in counter_types
+            ]
+        )
+
+        attempted_failures = [
+            entry
+            for entry in failed
+            if entry.get('task_id') != 'n/a'
+            and 'parent images failed to build' not in entry.get('message', '')
+        ]
+        job_url = os.getenv('BUILD_URL')
+
+        updates = []
+        for entry in attempted_failures:
+            outcome = entry.get('outcome', '')
+            if outcome == str(KonfluxBuildOutcome.ITS_ERROR):
+                counter_type = 'ec-failure'
+                pipeline_url = entry.get('ec_pipeline_url')
+            elif outcome == str(KonfluxBuildOutcome.RELEASE_ERROR):
+                counter_type = 'release-failure'
+                pipeline_url = entry.get('release_pipeline')
+            else:
+                counter_type = 'build-failure'
+                pipeline_url = entry.get('build_pipeline_url')
+            updates.append(
+                increment_fail_counter(
+                    f'count:{counter_type}:konflux:{self.group}:{entry["name"]}',
+                    jenkins_url=job_url,
+                    nvr=entry.get('nvrs'),
+                    pipeline_url=pipeline_url,
+                )
+            )
+        await asyncio.gather(*updates)
+
     async def _build(
         self,
         strategy: BuildStrategy,
@@ -361,6 +436,9 @@ class BuildLayeredProductsPipeline:
             build_cmd.extend(['--network-mode', self.network_mode])
         if self.skip_ec_verify:
             build_cmd.append('--skip-ec-verify')
+        if self.skip_custom_its:
+            build_cmd.append('--skip-custom-its')
+        build_cmd.append(f'--effective-time={self.effective_time}')
         if self.runtime.dry_run:
             build_cmd.append("--dry-run")
 
@@ -430,6 +508,17 @@ class BuildLayeredProductsPipeline:
 @click.option(
     "--skip-ec-verify", is_flag=True, default=False, help="Skip Enterprise Contract verification for built images"
 )
+@click.option(
+    "--skip-custom-its",
+    is_flag=True,
+    default=False,
+    help="Skip custom IntegrationTestScenarios configured in group.yml",
+)
+@click.option(
+    "--effective-time",
+    default=None,
+    help="RFC3339 effective time for ART-managed Enterprise Contract verification (defaults to UTC now plus 14 days)",
+)
 @click.option("--ignore-locks", is_flag=True, default=False, help="(For testing) Do not wait for locks")
 @click.option(
     '--plr-template',
@@ -453,6 +542,8 @@ async def build_layered_products(
     data_gitref: Optional[str],
     network_mode: Optional[str],
     skip_ec_verify: bool,
+    skip_custom_its: bool,
+    effective_time: Optional[str],
     ignore_locks: bool,
     plr_template: str,
 ):
@@ -473,6 +564,8 @@ async def build_layered_products(
             network_mode=network_mode,
             plr_template=plr_template,
             skip_ec_verify=skip_ec_verify,
+            skip_custom_its=skip_custom_its,
+            effective_time=effective_time,
         )
 
         lock_identifier = jenkins.get_build_path_or_random()

@@ -4,6 +4,22 @@ from validator.schema import group_schema
 
 
 class TestGroupSchema(unittest.TestCase):
+    def test_validate_custom_integration_test_scenarios(self):
+        valid_data = {
+            "konflux": {
+                "integration_test_scenarios": ["abi-qe-prow-compact"],
+            }
+        }
+        self.assertEqual("", group_schema.validate("group.yml", valid_data))
+
+    def test_reject_duplicate_custom_integration_test_scenarios(self):
+        invalid_data = {
+            "konflux": {
+                "integration_test_scenarios": ["abi-qe-prow-compact", "abi-qe-prow-compact"],
+            }
+        }
+        self.assertIn("has non-unique elements", group_schema.validate("group.yml", invalid_data))
+
     def test_validate_with_valid_bridge_release_config(self):
         valid_data = {
             "name": "openshift-4.23",
