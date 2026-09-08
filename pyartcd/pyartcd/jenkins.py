@@ -53,7 +53,7 @@ class Jobs(Enum):
     BUILD_CONFORMA_VERIFY = 'aos-cd-builds/build%2Fbuild-conforma-verify'
     SCAN_OPERATOR = 'aos-cd-builds/build%2Fscan-operator'
     # TODO TEST
-    SYNC_CI_IMAGES = 'hack/bvizi/add-ci-config-to-golang-builder'
+    SYNC_CI_IMAGES = 'hack/bvizi/add-load-disabled'
     OPEN_RECONCILIATION_PRS = 'aos-cd-builds/build%2Fopen-reconciliation-prs'
     OPEN_RECONCILIATION_PRS_LAYERED = 'aos-cd-builds/build%2Fopen-reconciliation-prs-layered-products'
 
