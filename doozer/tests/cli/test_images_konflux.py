@@ -523,7 +523,7 @@ class TestBundleStageReleaseRelatedImagesCli(unittest.IsolatedAsyncioTestCase):
         ]
 
         async def _bundle_builds(*args, **kwargs):
-            yield mock.Mock()
+            yield self._ref("bundle-comp")
 
         cli = self._make_cli(runtime, operator_nvrs=("operator-a-1-1", "operator-b-1-1"))
         cli._db_for_bundles.search_builds_by_fields = _bundle_builds
@@ -533,9 +533,10 @@ class TestBundleStageReleaseRelatedImagesCli(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(cli._stage_release.await_count, 2)
         first, second = cli._stage_release.await_args_list
-        self.assertEqual([c["name"] for c in first.kwargs["components"]], ["comp-a", "comp-shared"])
+        # The bundle build itself is included alongside the operator + operand images
+        self.assertEqual([c["name"] for c in first.kwargs["components"]], ["bundle-comp", "comp-a", "comp-shared"])
         self.assertEqual(first.kwargs["operator_nvr"], "operator-a-1-1")
-        self.assertEqual([c["name"] for c in second.kwargs["components"]], ["comp-b", "comp-shared"])
+        self.assertEqual([c["name"] for c in second.kwargs["components"]], ["bundle-comp", "comp-b", "comp-shared"])
         self.assertEqual(second.kwargs["operator_nvr"], "operator-b-1-1")
 
         statuses = [call.kwargs["status"] for call in runtime.record_logger.add_record.call_args_list]
@@ -556,7 +557,7 @@ class TestBundleStageReleaseRelatedImagesCli(unittest.IsolatedAsyncioTestCase):
         mock_get_refs.side_effect = [[self._ref("comp-a")], [self._ref("comp-b")]]
 
         async def _bundle_builds(*args, **kwargs):
-            yield mock.Mock()
+            yield self._ref("bundle-comp")
 
         cli = self._make_cli(runtime, operator_nvrs=("operator-a-1-1", "operator-b-1-1"))
         cli._db_for_bundles.search_builds_by_fields = _bundle_builds
@@ -587,7 +588,7 @@ class TestBundleStageReleaseRelatedImagesCli(unittest.IsolatedAsyncioTestCase):
         mock_get_refs.side_effect = [[self._ref("comp-b")]]
 
         async def _bundle_builds(*args, **kwargs):
-            yield mock.Mock()
+            yield self._ref("bundle-comp")
 
         cli = self._make_cli(runtime, operator_nvrs=("operator-a-1-1", "operator-b-1-1"))
         cli._db_for_bundles.search_builds_by_fields = _bundle_builds

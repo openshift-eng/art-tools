@@ -1036,6 +1036,15 @@ class BundleStageReleaseRelatedImagesCli:
                 "containerImage": build.image_pullspec,
             }
 
+        # Include the bundle build itself in the snapshot
+        bundle_component_name = bundle_build.get_konflux_component_name()
+        if bundle_component_name not in components:
+            components[bundle_component_name] = {
+                "name": bundle_component_name,
+                "source": {"git": {"url": bundle_build.rebase_repo_url, "revision": bundle_build.rebase_commitish}},
+                "containerImage": bundle_build.image_pullspec,
+            }
+
         if not components:
             self._logger.info(
                 "No related image builds found for operator %s (%s); nothing to stage-release",
