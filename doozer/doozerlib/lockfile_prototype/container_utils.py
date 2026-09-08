@@ -10,6 +10,7 @@ import logging
 import os
 
 from artcommonlib import logutil
+from artcommonlib.arch_util import go_arch_for_brew_arch
 from artcommonlib.exectools import cmd_gather_async
 from artcommonlib.util import oc_image_info_for_arch_async
 
@@ -82,12 +83,13 @@ class ContainerImageHelper:
         self.logger.debug(f"Resolved to: {resolved}")
         return resolved
 
-    async def get_installed_packages(self, image_pullspec: str) -> list[str]:
+    async def get_installed_packages(self, image_pullspec: str, arch: str) -> list[str]:
         """
         Query the list of installed RPM package names from a container image.
 
         Arg(s):
             image_pullspec (str): Fully-qualified image pullspec (digest preferred).
+            arch (str): Brew architecture to query.
         Return Value(s):
             list[str]: Sorted unique package names installed in the image.
         """
@@ -97,7 +99,7 @@ class ContainerImageHelper:
             "run",
             "--rm",
             "--platform",
-            DEFAULT_PLATFORM,
+            f"linux/{go_arch_for_brew_arch(arch)}",
             "--entrypoint",
             "rpm",
             query_pullspec,

@@ -118,8 +118,25 @@ class TestContainerImageHelper(unittest.TestCase):
 
         mock_gather.side_effect = mock_podman
         helper = ContainerImageHelper()
-        result = asyncio.run(helper.get_installed_packages("quay.io/test/img@sha256:abc"))
+        result = asyncio.run(helper.get_installed_packages("quay.io/test/img@sha256:abc", "x86_64"))
         self.assertEqual(result, ["bash", "coreutils", "glibc"])
+
+    @patch("doozerlib.lockfile_prototype.container_utils.cmd_gather_async")
+    def test_get_installed_packages_uses_requested_architecture(self, mock_gather):
+        """
+        Should query the image using the platform matching the requested RPM architecture.
+        """
+
+        async def mock_podman(cmd, **kwargs):
+            return (0, "bash\n", "")
+
+        mock_gather.side_effect = mock_podman
+        helper = ContainerImageHelper()
+        asyncio.run(helper.get_installed_packages("quay.io/test/img@sha256:abc", "aarch64"))
+
+        command = mock_gather.call_args.args[0]
+        platform_index = command.index("--platform")
+        self.assertEqual(command[platform_index + 1], "linux/arm64")
 
     @patch("doozerlib.lockfile_prototype.container_utils.cmd_gather_async")
     def test_get_installed_packages_fails(self, mock_gather):
@@ -129,7 +146,7 @@ class TestContainerImageHelper(unittest.TestCase):
         mock_gather.side_effect = ChildProcessError("Process failed")
         helper = ContainerImageHelper()
         with self.assertRaises(ChildProcessError):
-            asyncio.run(helper.get_installed_packages("quay.io/test/img@sha256:abc"))
+            asyncio.run(helper.get_installed_packages("quay.io/test/img@sha256:abc", "x86_64"))
 
     @patch("doozerlib.lockfile_prototype.container_utils.cmd_gather_async")
     def test_read_file_from_image(self, mock_gather):
