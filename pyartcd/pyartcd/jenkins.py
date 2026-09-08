@@ -545,7 +545,7 @@ def start_sync_ci_images(
         'VERSION': version,
     }
     if image_list:
-        params['IMAGE_LIST'] = ','.join(image_list)
+        params['IMAGES'] = ','.join(image_list)
     params['ART_TOOLS_COMMIT'] = 'kopero2000@ci-golang-builder-from-update-golang-ART-21958'
     params['DRY_RUN'] = dry_run
     params['LOAD_DISABLED'] = load_disabled
