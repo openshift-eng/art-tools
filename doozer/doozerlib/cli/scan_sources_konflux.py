@@ -1368,7 +1368,7 @@ class ConfigScanSources:
         Query the RPMDB of a stream parent image and return a set of NEVRA strings.
 
         The result is cached per (stream_name, brew_arch) so that multiple
-        images sharing the same stream parent only trigger one podman
+        images sharing the same stream parent only trigger one ``oc image extract``
         invocation per architecture.
 
         Uses ``%{EPOCHNUM}`` (not ``%{EPOCH}``) so that packages without an
@@ -1385,32 +1385,47 @@ class ConfigScanSources:
         go_arch = go_arch_for_brew_arch(brew_arch)
         self.logger.debug("Querying RPMDB of stream parent %s (%s) for arch %s", stream_name, pullspec, brew_arch)
 
-        rc, stdout, stderr = await cmd_gather_async(
-            [
-                "podman",
-                "run",
-                "--rm",
-                "--pull=always",
-                "--platform",
-                f"linux/{go_arch}",
-                "--entrypoint",
+        with tempfile.TemporaryDirectory(prefix="scan-rpmdb-") as tmpdir:
+            registry_config = self.runtime.registry_config or os.getenv("QUAY_AUTH_FILE")
+            reg_conf_arg = f"--registry-config={registry_config}" if registry_config else ""
+
+            extract_cmd = (
+                f"oc image extract {pullspec}"
+                f" --path /var/lib/rpm/:{tmpdir}"
+                f" --confirm"
+                f" --filter-by-os linux/{go_arch}"
+                f" {reg_conf_arg}"
+            ).strip()
+
+            rc, _, stderr = await cmd_gather_async(extract_cmd)
+            if rc != 0:
+                self.logger.warning(
+                    "Failed to extract RPMDB from stream parent %s (%s, %s): %s",
+                    stream_name,
+                    pullspec,
+                    brew_arch,
+                    stderr[:300],
+                )
+                return set()
+
+            rpm_query_cmd = [
                 "rpm",
-                pullspec,
                 "-qa",
+                "--dbpath",
+                tmpdir,
                 "--qf",
                 r"%{NAME}-%{EPOCHNUM}:%{VERSION}-%{RELEASE}.%{ARCH}\n",
             ]
-        )
-
-        if rc != 0:
-            self.logger.warning(
-                "Failed to query RPMDB from stream parent %s (%s, %s): %s",
-                stream_name,
-                pullspec,
-                brew_arch,
-                stderr[:300],
-            )
-            return set()
+            rc, stdout, stderr = await cmd_gather_async(rpm_query_cmd)
+            if rc != 0:
+                self.logger.warning(
+                    "Failed to query local RPMDB for stream parent %s (%s, %s): %s",
+                    stream_name,
+                    pullspec,
+                    brew_arch,
+                    stderr[:300],
+                )
+                return set()
 
         nevras = {line.strip() for line in stdout.splitlines() if line.strip()}
         self.logger.info(

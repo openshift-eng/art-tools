@@ -1610,12 +1610,15 @@ class TestFilterParentInheritedRpms(TestScanSourcesKonflux):
         stream_config.image = 'registry.redhat.io/ubi9/ubi:9.2'
         self.runtime.resolve_stream = MagicMock(return_value=stream_config)
 
-        # Mock podman rpm query output — dmidecode matches, bash does not
-        mock_cmd_gather.return_value = (
-            0,
-            'dmidecode-1:3.3-7.el9.x86_64\nkernel-0:5.14.0-362.el9.x86_64\n',
-            '',
-        )
+        # oc image extract succeeds, then rpm -qa returns NEVRAs — dmidecode matches, bash does not
+        def side_effect(cmd, **kwargs):
+            if isinstance(cmd, str) and 'oc image extract' in cmd:
+                return (0, '', '')
+            if isinstance(cmd, list) and cmd[0] == 'rpm':
+                return (0, 'dmidecode-1:3.3-7.el9.x86_64\nkernel-0:5.14.0-362.el9.x86_64\n', '')
+            return (1, '', 'unexpected command')
+
+        mock_cmd_gather.side_effect = side_effect
 
         result = await self.scanner._filter_parent_inherited_rpms(self.image_meta, self.non_latest_rpms)
 
@@ -1624,24 +1627,24 @@ class TestFilterParentInheritedRpms(TestScanSourcesKonflux):
         self.assertEqual(len(result['x86_64']), 1)
         self.assertEqual(result['x86_64'][0][0], 'bash-0:5.1.8-6.el9.x86_64')
 
-        # Verify podman was called with the correct platform for x86_64
-        mock_cmd_gather.assert_awaited_once()
-        call_args = mock_cmd_gather.call_args[0][0]
-        self.assertIn('podman', call_args)
-        self.assertIn('linux/amd64', call_args)
-        self.assertIn('registry.redhat.io/ubi9/ubi:9.2', call_args)
+        # Verify oc image extract was called with the correct filter-by-os for x86_64
+        self.assertEqual(mock_cmd_gather.await_count, 2)
+        extract_cmd = mock_cmd_gather.call_args_list[0][0][0]
+        self.assertIn('oc image extract', extract_cmd)
+        self.assertIn('--filter-by-os linux/amd64', extract_cmd)
+        self.assertIn('registry.redhat.io/ubi9/ubi:9.2', extract_cmd)
 
     @patch('doozerlib.cli.scan_sources_konflux.cmd_gather_async', new_callable=AsyncMock)
-    async def test_stream_parent_podman_failure_returns_unfiltered(self, mock_cmd_gather):
-        """When podman fails to query the stream parent, all RPMs are returned."""
+    async def test_stream_parent_extract_failure_returns_unfiltered(self, mock_cmd_gather):
+        """When oc image extract fails to extract the stream parent RPMDB, all RPMs are returned."""
         self.image_meta.config.__getitem__ = MagicMock(return_value=MagicMock(member=None, stream='rhel9'))
 
         stream_config = MagicMock()
         stream_config.image = 'registry.redhat.io/ubi9/ubi:9.2'
         self.runtime.resolve_stream = MagicMock(return_value=stream_config)
 
-        # Simulate podman failure
-        mock_cmd_gather.return_value = (1, '', 'Error: image not found')
+        # Simulate oc image extract failure
+        mock_cmd_gather.return_value = (1, '', 'error: unable to read image')
 
         result = await self.scanner._filter_parent_inherited_rpms(self.image_meta, self.non_latest_rpms)
 
@@ -1666,12 +1669,15 @@ class TestFilterParentInheritedRpms(TestScanSourcesKonflux):
         stream_config.image = 'registry.redhat.io/ubi9/ubi:9.2'
         self.runtime.resolve_stream = MagicMock(return_value=stream_config)
 
-        # Both outdated RPMs exist in the parent at the same NEVRA
-        mock_cmd_gather.return_value = (
-            0,
-            'dmidecode-1:3.3-7.el9.x86_64\nbash-0:5.1.8-6.el9.x86_64\n',
-            '',
-        )
+        # oc image extract succeeds, then rpm -qa returns both outdated RPMs
+        def side_effect(cmd, **kwargs):
+            if isinstance(cmd, str) and 'oc image extract' in cmd:
+                return (0, '', '')
+            if isinstance(cmd, list) and cmd[0] == 'rpm':
+                return (0, 'dmidecode-1:3.3-7.el9.x86_64\nbash-0:5.1.8-6.el9.x86_64\n', '')
+            return (1, '', 'unexpected command')
+
+        mock_cmd_gather.side_effect = side_effect
 
         result = await self.scanner._filter_parent_inherited_rpms(self.image_meta, self.non_latest_rpms)
 
@@ -1694,12 +1700,15 @@ class TestFilterParentInheritedRpms(TestScanSourcesKonflux):
             ],
         }
 
-        # %{EPOCHNUM} outputs 0 for packages without an explicit epoch
-        mock_cmd_gather.return_value = (
-            0,
-            'bash-0:5.1.8-6.el9.x86_64\n',
-            '',
-        )
+        # oc image extract succeeds, then rpm -qa returns bash with epoch 0
+        def side_effect(cmd, **kwargs):
+            if isinstance(cmd, str) and 'oc image extract' in cmd:
+                return (0, '', '')
+            if isinstance(cmd, list) and cmd[0] == 'rpm':
+                return (0, 'bash-0:5.1.8-6.el9.x86_64\n', '')
+            return (1, '', 'unexpected command')
+
+        mock_cmd_gather.side_effect = side_effect
 
         result = await self.scanner._filter_parent_inherited_rpms(self.image_meta, no_epoch_rpms)
 
@@ -1725,14 +1734,14 @@ class TestFilterParentInheritedRpms(TestScanSourcesKonflux):
             ],
         }
 
-        # Return arch-appropriate NEVRAs for each podman call
+        # Return arch-appropriate NEVRAs: oc image extract succeeds, rpm -qa returns per-arch NEVRAs
         def side_effect(cmd, **kwargs):
-            platform = cmd[cmd.index('--platform') + 1]
-            if platform == 'linux/amd64':
-                return (0, 'dmidecode-1:3.3-7.el9.x86_64\n', '')
-            elif platform == 'linux/arm64':
-                return (0, 'dmidecode-1:3.3-7.el9.aarch64\n', '')
-            return (1, '', 'unexpected platform')
+            if isinstance(cmd, str) and 'oc image extract' in cmd:
+                return (0, '', '')
+            if isinstance(cmd, list) and cmd[0] == 'rpm':
+                # Return both arches generically; filtering is by the caller
+                return (0, 'dmidecode-1:3.3-7.el9.x86_64\ndmidecode-1:3.3-7.el9.aarch64\n', '')
+            return (1, '', 'unexpected command')
 
         mock_cmd_gather.side_effect = side_effect
 
@@ -1741,11 +1750,60 @@ class TestFilterParentInheritedRpms(TestScanSourcesKonflux):
         # Both arches' dmidecode should be filtered — result should be empty
         self.assertEqual(result, {})
 
-        # Verify podman was called twice — once per arch
-        self.assertEqual(mock_cmd_gather.await_count, 2)
-        platforms = [call.args[0][call.args[0].index('--platform') + 1] for call in mock_cmd_gather.call_args_list]
-        self.assertIn('linux/amd64', platforms)
-        self.assertIn('linux/arm64', platforms)
+        # Verify oc image extract was called twice (once per arch) + rpm -qa twice
+        self.assertEqual(mock_cmd_gather.await_count, 4)
+        extract_cmds = [c.args[0] for c in mock_cmd_gather.call_args_list if isinstance(c.args[0], str)]
+        self.assertEqual(len(extract_cmds), 2)
+        filter_os_values = [cmd.split('--filter-by-os ')[1].split()[0] for cmd in extract_cmds]
+        self.assertIn('linux/amd64', filter_os_values)
+        self.assertIn('linux/arm64', filter_os_values)
+
+    @patch('doozerlib.cli.scan_sources_konflux.cmd_gather_async', new_callable=AsyncMock)
+    async def test_stream_parent_rpm_query_failure_returns_unfiltered(self, mock_cmd_gather):
+        """When rpm -qa fails after oc image extract succeeds, all RPMs are returned."""
+        self.image_meta.config.__getitem__ = MagicMock(return_value=MagicMock(member=None, stream='rhel9'))
+
+        stream_config = MagicMock()
+        stream_config.image = 'registry.redhat.io/ubi9/ubi:9.2'
+        self.runtime.resolve_stream = MagicMock(return_value=stream_config)
+
+        # oc image extract succeeds, but rpm -qa fails
+        def side_effect(cmd, **kwargs):
+            if isinstance(cmd, str) and 'oc image extract' in cmd:
+                return (0, '', '')
+            if isinstance(cmd, list) and cmd[0] == 'rpm':
+                return (1, '', 'error: rpmdb: BDB0113 Thread/process failed')
+            return (1, '', 'unexpected command')
+
+        mock_cmd_gather.side_effect = side_effect
+
+        result = await self.scanner._filter_parent_inherited_rpms(self.image_meta, self.non_latest_rpms)
+
+        self.assertEqual(result, self.non_latest_rpms)
+
+    @patch('doozerlib.cli.scan_sources_konflux.cmd_gather_async', new_callable=AsyncMock)
+    async def test_stream_parent_passes_registry_config(self, mock_cmd_gather):
+        """Registry auth config is passed to oc image extract via --registry-config."""
+        self.image_meta.config.__getitem__ = MagicMock(return_value=MagicMock(member=None, stream='rhel9'))
+        self.runtime.registry_config = '/path/to/auth.json'
+
+        stream_config = MagicMock()
+        stream_config.image = 'registry.redhat.io/ubi9/ubi:9.2'
+        self.runtime.resolve_stream = MagicMock(return_value=stream_config)
+
+        def side_effect(cmd, **kwargs):
+            if isinstance(cmd, str) and 'oc image extract' in cmd:
+                return (0, '', '')
+            if isinstance(cmd, list) and cmd[0] == 'rpm':
+                return (0, 'bash-0:5.1.8-6.el9.x86_64\n', '')
+            return (1, '', 'unexpected command')
+
+        mock_cmd_gather.side_effect = side_effect
+
+        await self.scanner._filter_parent_inherited_rpms(self.image_meta, self.non_latest_rpms)
+
+        extract_cmd = mock_cmd_gather.call_args_list[0][0][0]
+        self.assertIn('--registry-config=/path/to/auth.json', extract_cmd)
 
     async def test_member_parent_takes_precedence_over_stream(self):
         """When both member and stream are set, member is used."""
