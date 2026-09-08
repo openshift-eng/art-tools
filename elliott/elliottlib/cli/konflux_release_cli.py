@@ -96,7 +96,7 @@ async def validate_snapshot_against_rpa(group: str, env: str, kind: str, snapsho
     if env not in OCP_RPA_ENVS:
         raise ValueError(f"Unsupported release env for RPA validation: {env!r}. Supported: {OCP_RPA_ENVS}")
 
-    # Detect OCP vs LP product
+    # Detect OCP vs LP product: check OCP format first, then LP products from allow-list
     ocp_match = re.fullmatch(r"openshift-(\d+)\.(\d+)", group)
     if ocp_match:
         # OCP path: openshift-X.Y
@@ -110,22 +110,20 @@ async def validate_snapshot_against_rpa(group: str, env: str, kind: str, snapsho
         # Unrecognized openshift format
         raise ValueError(f"Unrecognized openshift group format, refusing to skip RPA validation: {group!r}")
     else:
-        # LP path: {product}-{major}.{minor}
-        lp_match = re.match(r"^(\w+)-(\d+)\.(\d+)$", group)
+        # LP path: {product}-{major}.{minor}, check against allow-list
+        lp_match = re.match(r"^([a-z0-9-]+)-(\d+)\.(\d+)$", group)
         if not lp_match:
             LOGGER.info(f"Skipping RPA validation for unrecognized group format: {group!r}")
             return
 
         product_name = lp_match.group(1)
-        major, minor = lp_match.group(2), lp_match.group(3)
-
         if product_name not in LP_RPA_KINDS:
             LOGGER.info(f"Skipping RPA validation for unsupported LP product: {product_name!r}")
             return
 
+        major, minor = lp_match.group(2), lp_match.group(3)
         if kind != "image":
             raise ValueError(f"Unsupported release kind for LP RPA validation: {kind!r}. LP supports 'image' only")
-
         rpa_base = LP_RPA_KINDS[product_name]
 
     envs_to_check = [env] + [e for e in OCP_RPA_ENVS if e != env]
