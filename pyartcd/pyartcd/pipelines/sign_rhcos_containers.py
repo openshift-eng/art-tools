@@ -179,6 +179,11 @@ def sign_rhcos_containers(
     The rhcos.json file is extracted by the Jenkins job using:
         cat coreos-bootimages.yaml | yq -r .data.stream > rhcos.json
 
+    For OCP 5.x and later, coreos-bootimages.yaml also contains a .data.streams map
+    with one entry per RHCOS variant (e.g. rhel-10).  The Jenkins job extracts each
+    entry to a separate file (rhcos-<arch>-<stream>.json) and calls this command once
+    per file so that images in every variant are signed.
+
     Required environment variables:
     - KMS_CRED_FILE: Path to AWS credentials file for KMS signing
     - KMS_KEY_ID: AWS KMS key ID(s) for signing (comma-separated for multiple keys)
