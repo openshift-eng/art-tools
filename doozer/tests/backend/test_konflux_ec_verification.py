@@ -1,7 +1,7 @@
 """Tests for EC verification gating logic in KonfluxImageBuilder.build().
 
-Verifies that enterprise-contract verification is only triggered for images
-that are for_release=True, in an OCP group, and not skipped via --skip-ec-verify.
+Verifies that enterprise-contract verification is only triggered for releasable
+images whose product and lifecycle have a policy and are not explicitly skipped.
 """
 
 import asyncio
@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome
 from artcommonlib.variants import BuildVariant
 from doozerlib import constants
-from doozerlib.backend.konflux_client import ECVerificationResult
+from doozerlib.backend.konflux_client import CustomIntegrationTestResult, ECVerificationResult
 from doozerlib.backend.konflux_image_builder import (
     KonfluxImageBuilder,
     KonfluxImageBuilderConfig,
@@ -110,12 +110,21 @@ def _ec_exception_result():
 class TestEcVerificationGating(IsolatedAsyncioTestCase):
     """Test that EC verification is only triggered under the correct conditions."""
 
-    async def _run_build_and_get_ec_calls(self, config, metadata, mock_kc_init, ec_result=None):
+    async def _run_build_and_get_ec_calls(
+        self,
+        config,
+        metadata,
+        mock_kc_init,
+        ec_result=None,
+        custom_its_result=None,
+        expect_build_error=False,
+    ):
         """Helper: run build() with all heavy methods mocked, return verify_enterprise_contract mock."""
         if ec_result is None:
             ec_result = _ec_passed_result()
 
         builder = KonfluxImageBuilder(config)
+        self.last_builder = builder
 
         plr_info = _make_successful_pipelinerun_info()
 
@@ -143,13 +152,20 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
                 builder._konflux_client.resource_url = MagicMock(return_value="https://example.com/plr")
 
                 builder._konflux_client.verify_enterprise_contract = AsyncMock(return_value=ec_result)
+                builder._konflux_client.wait_for_integration_test_scenarios = AsyncMock(
+                    return_value=custom_its_result or CustomIntegrationTestResult(False, "", [])
+                )
 
                 with patch.object(
                     KonfluxBuildOutcome,
                     "extract_from_pipelinerun_succeeded_condition",
                     return_value=KonfluxBuildOutcome.SUCCESS,
                 ):
-                    await builder.build(metadata)
+                    if expect_build_error:
+                        with self.assertRaises(KonfluxImageBuildError):
+                            await builder.build(metadata)
+                    else:
+                        await builder.build(metadata)
 
         return builder._konflux_client.verify_enterprise_contract
 
@@ -202,6 +218,63 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
 
         verify_ec = await self._run_build_and_get_ec_calls(config, metadata, mock_kc_init)
         verify_ec.assert_not_called()
+
+    async def test_ec_skipped_when_prega_policy_is_not_configured(self, mock_kc_init):
+        config = _make_config(prega_ec_policy_configuration=None)
+        metadata = _make_metadata(for_release=True)
+        metadata.runtime.group_config.software_lifecycle.phase = "pre-release"
+
+        verify_ec = await self._run_build_and_get_ec_calls(config, metadata, mock_kc_init)
+
+        verify_ec.assert_not_called()
+
+    async def test_custom_its_runs_independently_of_ec(self, mock_kc_init):
+        config = _make_config(
+            ec_policy_configuration=None,
+            prega_ec_policy_configuration=None,
+            integration_test_scenarios=("qe-test",),
+        )
+        metadata = _make_metadata(for_release=True)
+
+        await self._run_build_and_get_ec_calls(config, metadata, mock_kc_init)
+
+        mock_kc_init.return_value.wait_for_integration_test_scenarios.assert_awaited_once_with(
+            pipelinerun_name="test-plr-abc12",
+            scenario_names=("qe-test",),
+            application_name="openshift-4-18",
+            namespace="ocp-art-tenant",
+        )
+
+    async def test_skip_custom_its_does_not_skip_ec(self, mock_kc_init):
+        config = _make_config(integration_test_scenarios=("qe-test",), skip_custom_its=True)
+        metadata = _make_metadata(for_release=True)
+
+        verify_ec = await self._run_build_and_get_ec_calls(config, metadata, mock_kc_init)
+
+        verify_ec.assert_awaited_once()
+        mock_kc_init.return_value.wait_for_integration_test_scenarios.assert_not_awaited()
+
+    async def test_custom_its_failure_sets_its_error_and_pipeline_url(self, mock_kc_init):
+        config = _make_config(
+            dry_run=False,
+            ec_policy_configuration=None,
+            prega_ec_policy_configuration=None,
+            integration_test_scenarios=("qe-test",),
+        )
+        metadata = _make_metadata(for_release=True)
+        failed_url = "https://example.com/pipelineruns/qe-test-123"
+
+        await self._run_build_and_get_ec_calls(
+            config,
+            metadata,
+            mock_kc_init,
+            custom_its_result=CustomIntegrationTestResult(True, failed_url, [failed_url]),
+            expect_build_error=True,
+        )
+
+        completion_call = self.last_builder.update_konflux_db.await_args_list[-1]
+        self.assertEqual(completion_call.args[3], KonfluxBuildOutcome.ITS_ERROR)
+        self.assertEqual(completion_call.kwargs["ec_pipeline_url"], failed_url)
 
     async def test_no_retry_when_ec_fails(self, mock_kc_init):
         """When EC verification fails, the build should NOT be retried."""
