@@ -788,6 +788,29 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
         self.assertEqual(calls, ["ocp-art-advisory-stage-4-18", "ocp-art-advisory-prod-4-18"])
 
     @patch("elliottlib.cli.konflux_release_cli.fetch_rpa", new_callable=AsyncMock)
+    async def test_validate_rpa_uses_configured_release_plans(self, mock_fetch_rpa):
+        """Uses RHEL-specific ReleasePlans from the shipment configuration when provided."""
+        rpa_data = {"spec": {"data": {"mapping": {"components": [{"name": "comp1"}]}}}}
+        mock_fetch_rpa.return_value = rpa_data
+
+        await validate_snapshot_against_rpa(
+            "openshift-5.0",
+            "stage",
+            "microshift-bootc",
+            ["comp1"],
+            release_plans={
+                "stage": "ocp-art-advisory-stage-5-0-rhel9",
+                "prod": "ocp-art-advisory-prod-5-0-rhel9",
+            },
+        )
+
+        calls = [c.args[0] for c in mock_fetch_rpa.await_args_list]
+        self.assertEqual(
+            calls,
+            ["ocp-art-advisory-stage-5-0-rhel9", "ocp-art-advisory-prod-5-0-rhel9"],
+        )
+
+    @patch("elliottlib.cli.konflux_release_cli.fetch_rpa", new_callable=AsyncMock)
     async def test_validate_rpa_skipped_for_non_openshift(self, mock_fetch_rpa):
         await validate_snapshot_against_rpa("oadp-1.5", "prod", "image", ["comp1"])
         mock_fetch_rpa.assert_not_called()
