@@ -124,6 +124,7 @@ PRODUCT_BASE_IMAGE_KONFLUX_RELEASE_MAP = {
     "rhacm2": ("acm-images-base-silent", "acm-images-base"),
     "external-secrets-operator": ("oap-eso-images-base-silent", "oap-images-base"),
     "cert-manager": ("oap-cm-images-base-silent", "oap-images-base"),
+    "cluster-observability-operator": ("coo-images-base-silent", "coo-images-base"),
     "zero-trust-workload-identity-manager": ("oap-zt-images-base-silent", "oap-images-base"),
 }
 
