@@ -109,8 +109,8 @@ class ECVerificationResult:
 class CustomIntegrationTestResult:
     """Result of configured custom IntegrationTestScenario runs."""
 
-    failed: bool
-    failed_pipeline_url: str
+    blocking_failed: bool
+    blocking_failed_pipeline_url: str
     pipeline_urls: List[str]
 
 
@@ -1060,35 +1060,53 @@ class KonfluxClient:
         scenario_names: Sequence[str],
         application_name: str,
         namespace: Optional[str] = None,
-    ) -> None:
-        """Fail if a configured custom ITS is missing or belongs to another application."""
+    ) -> set[str]:
+        """Validate configured custom ITS resources and return the release-blocking scenario names."""
         if self.dry_run:
             self._logger.warning(
                 "[DRY RUN] Would have validated custom IntegrationTestScenarios for application %s: %s",
                 application_name,
                 ", ".join(scenario_names),
             )
-            return
+            return set()
 
+        blocking_scenario_names = set()
         for scenario_name in scenario_names:
             scenario = await self.get_integration_test_scenario(
                 scenario_name,
                 namespace=namespace,
                 strict=True,
             )
-            actual_application = scenario.to_dict().get("spec", {}).get("application")
+            scenario_dict = scenario.to_dict()
+            actual_application = scenario_dict.get("spec", {}).get("application")
             if actual_application != application_name:
                 raise ValueError(
                     f"IntegrationTestScenario {scenario_name!r} belongs to application "
                     f"{actual_application!r}, expected {application_name!r}"
                 )
-            contexts = scenario.to_dict().get("spec", {}).get("contexts", [])
+            contexts = scenario_dict.get("spec", {}).get("contexts", [])
             context_names = {context.get("name") for context in contexts if isinstance(context, dict)}
             if context_names != {"disabled"}:
                 raise ValueError(
                     f"IntegrationTestScenario {scenario_name!r} must use only the 'disabled' context "
                     "for explicit ART triggering"
                 )
+            optional_label = (
+                scenario_dict.get("metadata", {}).get("labels", {}).get("test.appstudio.openshift.io/optional")
+            )
+            if optional_label == "false":
+                blocking_scenario_names.add(scenario_name)
+                self._logger.info(
+                    "Custom IntegrationTestScenario %s is release-blocking",
+                    scenario_name,
+                )
+            else:
+                self._logger.info(
+                    "Custom IntegrationTestScenario %s is optional and will not block the build",
+                    scenario_name,
+                )
+
+        return blocking_scenario_names
 
     @staticmethod
     def _new_custom_integration_test_snapshot(
@@ -1199,6 +1217,7 @@ class KonfluxClient:
         image_pullspec: str,
         source_url: str,
         commit_sha: str,
+        blocking_scenario_names: Optional[Sequence[str]] = None,
         snapshot_annotations: Optional[Dict[str, str]] = None,
         namespace: Optional[str] = None,
         trigger_timeout_seconds: int = 10 * 60,
@@ -1208,6 +1227,7 @@ class KonfluxClient:
         """Create a Snapshot, explicitly trigger configured scenarios, and wait for completion."""
         namespace = namespace or self.default_namespace
         scenario_names = tuple(dict.fromkeys(scenario_names))
+        blocking_scenario_names = set(blocking_scenario_names or ()).intersection(scenario_names)
         if not scenario_names:
             return CustomIntegrationTestResult(False, "", [])
         if self.dry_run:
@@ -1217,6 +1237,7 @@ class KonfluxClient:
             )
             return CustomIntegrationTestResult(False, "", [])
         statuses_by_scenario: Dict[str, dict] = {}
+        trigger_failed_scenarios = set()
         try:
             snapshot_manifest = self._new_custom_integration_test_snapshot(
                 namespace=namespace,
@@ -1232,16 +1253,45 @@ class KonfluxClient:
             self._logger.info("Created custom integration test Snapshot %s", snapshot_name)
 
             for scenario_name in scenario_names:
-                snapshot = await self._trigger_integration_test_scenario(
-                    snapshot_name,
-                    scenario_name,
-                    namespace,
-                    trigger_timeout_seconds,
-                    poll_interval_seconds,
-                )
+                try:
+                    snapshot = await self._trigger_integration_test_scenario(
+                        snapshot_name,
+                        scenario_name,
+                        namespace,
+                        trigger_timeout_seconds,
+                        poll_interval_seconds,
+                    )
+                except Exception:
+                    trigger_failed_scenarios.add(scenario_name)
+                    if scenario_name in blocking_scenario_names:
+                        self._logger.exception(
+                            "Failed to trigger release-blocking custom IntegrationTestScenario %s",
+                            scenario_name,
+                        )
+                        pipeline_urls = [
+                            self._custom_integration_test_pipeline_url(
+                                namespace,
+                                application_name,
+                                entry.get("testPipelineRunName", ""),
+                            )
+                            for entry in statuses_by_scenario.values()
+                            if entry.get("testPipelineRunName")
+                        ]
+                        return CustomIntegrationTestResult(True, "", pipeline_urls)
+                    self._logger.warning(
+                        "Failed to trigger optional custom IntegrationTestScenario %s; continuing the build",
+                        scenario_name,
+                        exc_info=True,
+                    )
+                    continue
                 statuses_by_scenario = self._snapshot_test_statuses(snapshot)
 
+            monitored_scenario_names = tuple(name for name in scenario_names if name not in trigger_failed_scenarios)
+            if not monitored_scenario_names:
+                return CustomIntegrationTestResult(False, "", [])
+
             completion_deadline = time.monotonic() + completion_timeout_seconds
+            reported_failures = set()
             while True:
                 pipeline_urls = [
                     self._custom_integration_test_pipeline_url(
@@ -1249,25 +1299,36 @@ class KonfluxClient:
                         application_name,
                         statuses_by_scenario[name].get("testPipelineRunName", ""),
                     )
-                    for name in scenario_names
+                    for name in monitored_scenario_names
                     if statuses_by_scenario[name].get("testPipelineRunName")
                 ]
-                failed_entry = next(
-                    (
-                        statuses_by_scenario[name]
-                        for name in scenario_names
-                        if statuses_by_scenario[name].get("status")
-                        not in {"Pending", "InProgress", "BuildPLRInProgress", "TestPassed", "TestWarning"}
-                    ),
+                pending_statuses = {"Pending", "InProgress", "BuildPLRInProgress"}
+                passing_statuses = {"TestPassed", "TestWarning"}
+                failed_scenario_names = [
+                    name
+                    for name in monitored_scenario_names
+                    if statuses_by_scenario[name].get("status") not in pending_statuses | passing_statuses
+                ]
+                for name in failed_scenario_names:
+                    if name in reported_failures:
+                        continue
+                    entry = statuses_by_scenario[name]
+                    log = self._logger.error if name in blocking_scenario_names else self._logger.warning
+                    log(
+                        "%s custom IntegrationTestScenario %s finished with %s: %s",
+                        "Release-blocking" if name in blocking_scenario_names else "Optional",
+                        name,
+                        entry.get("status"),
+                        entry.get("details", ""),
+                    )
+                    reported_failures.add(name)
+
+                blocking_failed_name = next(
+                    (name for name in failed_scenario_names if name in blocking_scenario_names),
                     None,
                 )
-                if failed_entry:
-                    self._logger.error(
-                        "Custom IntegrationTestScenario %s finished with %s: %s",
-                        failed_entry.get("scenario"),
-                        failed_entry.get("status"),
-                        failed_entry.get("details", ""),
-                    )
+                if blocking_failed_name:
+                    failed_entry = statuses_by_scenario[blocking_failed_name]
                     return CustomIntegrationTestResult(
                         True,
                         self._custom_integration_test_pipeline_url(
@@ -1277,33 +1338,42 @@ class KonfluxClient:
                         ),
                         pipeline_urls,
                     )
-                if all(
-                    statuses_by_scenario[name].get("status") in {"TestPassed", "TestWarning"} for name in scenario_names
-                ):
-                    for name in scenario_names:
-                        self._logger.info(
-                            "Custom IntegrationTestScenario %s finished with %s",
-                            name,
-                            statuses_by_scenario[name].get("status"),
-                        )
+
+                pending_scenario_names = [
+                    name
+                    for name in monitored_scenario_names
+                    if statuses_by_scenario[name].get("status") in pending_statuses
+                ]
+                if not pending_scenario_names:
+                    for name in monitored_scenario_names:
+                        if name not in failed_scenario_names:
+                            self._logger.info(
+                                "Custom IntegrationTestScenario %s finished with %s",
+                                name,
+                                statuses_by_scenario[name].get("status"),
+                            )
                     return CustomIntegrationTestResult(False, "", pipeline_urls)
                 if time.monotonic() >= completion_deadline:
-                    pending_entry = next(
-                        statuses_by_scenario[name]
-                        for name in scenario_names
-                        if statuses_by_scenario[name].get("status") not in {"TestPassed", "TestWarning"}
+                    blocking_pending_name = next(
+                        (name for name in pending_scenario_names if name in blocking_scenario_names),
+                        None,
                     )
-                    self._logger.error(
-                        "Timed out waiting for custom IntegrationTestScenario %s PipelineRun to complete",
+                    pending_entry = statuses_by_scenario[blocking_pending_name or pending_scenario_names[0]]
+                    log = self._logger.error if blocking_pending_name else self._logger.warning
+                    log(
+                        "Timed out waiting for %s custom IntegrationTestScenario %s PipelineRun to complete",
+                        "release-blocking" if blocking_pending_name else "optional",
                         pending_entry.get("scenario"),
                     )
                     return CustomIntegrationTestResult(
-                        True,
+                        bool(blocking_pending_name),
                         self._custom_integration_test_pipeline_url(
                             namespace,
                             application_name,
                             pending_entry.get("testPipelineRunName", ""),
-                        ),
+                        )
+                        if blocking_pending_name
+                        else "",
                         pipeline_urls,
                     )
 
@@ -1312,13 +1382,27 @@ class KonfluxClient:
                 if snapshot is None:
                     raise RuntimeError(f"Snapshot {snapshot_name} disappeared")
                 all_statuses = self._snapshot_test_statuses(snapshot)
-                statuses_by_scenario = {name: all_statuses[name] for name in scenario_names if name in all_statuses}
-                if not all(name in statuses_by_scenario for name in scenario_names):
+                statuses_by_scenario = {
+                    name: all_statuses[name] for name in monitored_scenario_names if name in all_statuses
+                }
+                if not all(name in statuses_by_scenario for name in monitored_scenario_names):
                     raise ValueError(
                         f"Snapshot {snapshot.metadata.name} lost configured integration test status entries"
                     )
         except Exception:
-            self._logger.exception("Custom IntegrationTestScenario verification error")
+            passed_blocking_scenario_names = {
+                name
+                for name in blocking_scenario_names
+                if statuses_by_scenario.get(name, {}).get("status") in {"TestPassed", "TestWarning"}
+            }
+            blocking_failed = bool(blocking_scenario_names - passed_blocking_scenario_names)
+            if blocking_failed:
+                self._logger.exception("Release-blocking custom IntegrationTestScenario verification error")
+            else:
+                self._logger.warning(
+                    "Optional custom IntegrationTestScenario verification error; continuing the build",
+                    exc_info=True,
+                )
             pipeline_urls = [
                 self._custom_integration_test_pipeline_url(
                     namespace,
@@ -1328,7 +1412,19 @@ class KonfluxClient:
                 for entry in statuses_by_scenario.values()
                 if entry.get("testPipelineRunName")
             ]
-            return CustomIntegrationTestResult(True, pipeline_urls[0] if pipeline_urls else "", pipeline_urls)
+            blocking_pipeline_url = next(
+                (
+                    self._custom_integration_test_pipeline_url(
+                        namespace,
+                        application_name,
+                        statuses_by_scenario[name].get("testPipelineRunName", ""),
+                    )
+                    for name in blocking_scenario_names
+                    if statuses_by_scenario.get(name, {}).get("testPipelineRunName")
+                ),
+                "",
+            )
+            return CustomIntegrationTestResult(blocking_failed, blocking_pipeline_url, pipeline_urls)
 
     @staticmethod
     def _new_ec_pipelinerun(

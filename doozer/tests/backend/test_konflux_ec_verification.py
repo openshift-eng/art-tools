@@ -117,6 +117,7 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
         mock_kc_init,
         ec_result=None,
         custom_its_result=None,
+        blocking_custom_its=None,
         expect_build_error=False,
     ):
         """Helper: run build() with all heavy methods mocked, return verify_enterprise_contract mock."""
@@ -124,6 +125,7 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
             ec_result = _ec_passed_result()
 
         builder = KonfluxImageBuilder(config)
+        builder._blocking_custom_integration_test_scenarios = set(blocking_custom_its or ())
         self.last_builder = builder
 
         plr_info = _make_successful_pipelinerun_info()
@@ -168,6 +170,15 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
                         await builder.build(metadata)
 
         return builder._konflux_client.verify_enterprise_contract
+
+    async def test_custom_its_preflight_stores_explicit_blocking_scenarios(self, mock_kc_init):
+        config = _make_config(integration_test_scenarios=("qe-optional", "qe-blocking"))
+        mock_kc_init.return_value.validate_integration_test_scenarios = AsyncMock(return_value={"qe-blocking"})
+        builder = KonfluxImageBuilder(config)
+
+        await builder.validate_custom_integration_test_scenarios()
+
+        self.assertEqual(builder._blocking_custom_integration_test_scenarios, {"qe-blocking"})
 
     async def test_ec_runs_for_release_ocp_image(self, mock_kc_init):
         """EC verification should run for a for_release=True OCP image."""
@@ -246,6 +257,7 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
             image_pullspec="quay.io/openshift-release-dev/ocp-v4.0-art-dev-test@sha256:abc123def456",
             source_url="https://github.com/openshift/test-repo",
             commit_sha="deadbeef",
+            blocking_scenario_names=set(),
             snapshot_annotations={"pac.test.appstudio.openshift.io/branch": "release-4.18"},
             namespace="ocp-art-tenant",
         )
@@ -267,6 +279,8 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
             integration_test_scenarios=("qe-test",),
         )
         metadata = _make_metadata(for_release=True)
+        metadata.should_trigger_base_image_release.return_value = False
+        metadata.should_create_golang_builder_shipment.return_value = False
         failed_url = "https://example.com/pipelineruns/qe-test-123"
 
         await self._run_build_and_get_ec_calls(
@@ -274,12 +288,34 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
             metadata,
             mock_kc_init,
             custom_its_result=CustomIntegrationTestResult(True, failed_url, [failed_url]),
+            blocking_custom_its={"qe-test"},
             expect_build_error=True,
         )
 
         completion_call = self.last_builder.update_konflux_db.await_args_list[-1]
         self.assertEqual(completion_call.args[3], KonfluxBuildOutcome.ITS_ERROR)
         self.assertEqual(completion_call.kwargs["ec_pipeline_url"], failed_url)
+
+    async def test_optional_custom_its_failure_does_not_fail_build(self, mock_kc_init):
+        config = _make_config(
+            dry_run=False,
+            ec_policy_configuration=None,
+            prega_ec_policy_configuration=None,
+            integration_test_scenarios=("qe-test",),
+        )
+        metadata = _make_metadata(for_release=True)
+        metadata.should_trigger_base_image_release.return_value = False
+        metadata.should_create_golang_builder_shipment.return_value = False
+        failed_url = "https://example.com/pipelineruns/qe-test-123"
+        await self._run_build_and_get_ec_calls(
+            config,
+            metadata,
+            mock_kc_init,
+            custom_its_result=CustomIntegrationTestResult(False, "", [failed_url]),
+        )
+
+        completion_call = self.last_builder.update_konflux_db.await_args_list[-1]
+        self.assertEqual(completion_call.args[3], KonfluxBuildOutcome.SUCCESS)
 
     async def test_no_retry_when_ec_fails(self, mock_kc_init):
         """When EC verification fails, the build should NOT be retried."""
