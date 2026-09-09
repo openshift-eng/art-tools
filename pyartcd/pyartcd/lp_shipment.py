@@ -3,7 +3,8 @@
 This module owns the ``assembly.group.shipment.mr`` pointer in ``releases.yml``
 and reconciles generated shipment files with an existing GitLab merge request.
 Current release inputs replace generator-owned fields, while downstream CI-owned
-environment data is retained.
+environment data is retained unless an FBC NVR change makes a recorded pipeline
+result stale.
 """
 
 import copy
@@ -244,7 +245,12 @@ def _identity_sort_key(item: tuple) -> tuple[str, ...]:
 
 
 def _reconcile_config(existing: dict, desired: dict) -> dict:
-    """Apply generated data while retaining downstream-owned environment fields.
+    """Apply generated data while retaining valid downstream environment fields.
+
+    When an FBC NVR changes, recorded stage and production pipeline URLs refer
+    to the previous FBC release. Those URLs are removed so shipment CI releases
+    the new NVR and records fresh results. Other downstream-owned fields remain
+    untouched.
 
     Args:
         existing: Shipment configuration currently present on the MR branch.
@@ -257,6 +263,9 @@ def _reconcile_config(existing: dict, desired: dict) -> dict:
     result = copy.deepcopy(existing)
     existing_shipment = result.setdefault('shipment', {})
     desired_shipment = desired['shipment']
+    existing_nvrs = existing_shipment.get('snapshot', {}).get('nvrs')
+    desired_nvrs = desired_shipment.get('snapshot', {}).get('nvrs')
+    fbc_nvr_changed = desired_shipment.get('metadata', {}).get('fbc', False) and existing_nvrs != desired_nvrs
     existing_shipment['metadata'] = copy.deepcopy(desired_shipment['metadata'])
     existing_shipment['snapshot'] = copy.deepcopy(desired_shipment['snapshot'])
 
@@ -272,6 +281,14 @@ def _reconcile_config(existing: dict, desired: dict) -> dict:
             existing_env['releasePlan'] = desired_env['releasePlan']
         else:
             existing_env.pop('releasePlan', None)
+    if fbc_nvr_changed:
+        for existing_env in existing_environments.values():
+            result_data = existing_env.get('result')
+            if not isinstance(result_data, dict):
+                continue
+            result_data.pop('pipeline', None)
+            if not result_data:
+                existing_env.pop('result')
     return result
 
 
