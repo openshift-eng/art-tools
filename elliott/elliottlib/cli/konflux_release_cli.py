@@ -2,6 +2,7 @@ import os
 import re
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import List, Mapping, Optional, Set
 
 import aiohttp
@@ -293,11 +294,24 @@ class CreateReleaseCli:
 
     def get_object_name(self) -> str:
         timestamp = get_utc_now_formatted_str()
-        raw_prefix = f"{self.runtime.product}-{self.release_env}-{self.runtime.assembly}-{self.kind}"
+        object_kind = self._get_object_kind()
+        raw_prefix = f"{self.runtime.product}-{self.release_env}-{self.runtime.assembly}-{object_kind}"
         prefix = normalize_k8s_dns_label(raw_prefix, max_length=63 - len(timestamp) - 1)
         if not prefix:
             raise ValueError(f"Release object name prefix {raw_prefix!r} cannot be normalized to a Kubernetes name")
         return f"{prefix}-{timestamp}"
+
+    def _get_object_kind(self) -> str:
+        """
+        Return the shipment kind qualified by its RHEL version, when present.
+
+        MicroShift bootc shipments have one configuration file per RHEL version,
+        so the version must be included in Kubernetes object names to avoid
+        collisions when the releases run concurrently.
+        """
+        config_stem = Path(self.config_path).stem
+        match = re.search(rf"(?:^|\.)({re.escape(self.kind)}-el\d+)(?:\.|$)", config_stem)
+        return match.group(1) if match else self.kind
 
     async def create_snapshot(self, shipment: Shipment) -> dict:
         """
