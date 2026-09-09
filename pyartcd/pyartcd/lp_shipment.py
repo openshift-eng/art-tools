@@ -1,3 +1,11 @@
+"""Helpers for safely creating and reusing layered-product shipment merge requests.
+
+This module owns the ``assembly.group.shipment.mr`` pointer in ``releases.yml``
+and reconciles generated shipment files with an existing GitLab merge request.
+Current release inputs replace generator-owned fields, while downstream CI-owned
+environment data is retained.
+"""
+
 import copy
 import re
 from collections import Counter
@@ -20,11 +28,27 @@ _COUNTER_RE = re.compile(r"(\d{14})(\d{2})\.ya?ml$")
 
 
 def _project_path(url: str) -> str:
+    """Extract a GitLab project path from a repository URL.
+
+    Args:
+        url: HTTPS or Git repository URL.
+
+    Returns:
+        The normalized ``namespace/project`` path.
+    """
     return urlparse(url).path.strip('/').removesuffix('.git')
 
 
 def get_shipment_mr_url(releases_config: dict, assembly: str) -> str | None:
-    """Return the LP shipment MR pointer for an assembly, if one exists."""
+    """Read the layered-product shipment MR pointer for an assembly.
+
+    Args:
+        releases_config: Parsed contents of ``releases.yml``.
+        assembly: Assembly name to inspect.
+
+    Returns:
+        The configured shipment MR URL, or ``None`` when it is not present.
+    """
     return (
         (releases_config or {})
         .get('releases', {})
@@ -45,7 +69,28 @@ async def update_shipment_mr_url(
     *,
     create_as_stream: bool,
 ) -> bool:
-    """Persist an LP shipment pointer with optimistic concurrency protection."""
+    """Persist a layered-product shipment MR pointer safely.
+
+    The group branch is fetched immediately before editing. The write proceeds
+    only when the current pointer still equals ``expected_mr_url`` so that a
+    concurrent release cannot be overwritten.
+
+    Args:
+        repo: Initialized ocp-build-data Git repository.
+        group: Group branch containing ``releases.yml``.
+        assembly: Assembly whose shipment pointer should be updated.
+        mr_url: Shipment MR URL to store.
+        expected_mr_url: Pointer value observed before the shipment work began.
+        create_as_stream: Create a missing assembly as an explicit stream
+            assembly. When false, the assembly must already exist.
+
+    Returns:
+        Whether the commit was created and pushed.
+
+    Raises:
+        RuntimeError: If the pointer changed concurrently or a required assembly
+            disappeared.
+    """
     await repo.fetch_switch_branch(group, remote="origin")
     releases_path = repo._directory / "releases.yml"
     releases_config = YAML.load(releases_path) if releases_path.exists() else None
@@ -72,7 +117,17 @@ async def update_shipment_mr_url(
 
 
 async def verify_shipment_mr_url(repo: GitRepository, group: str, assembly: str, expected_mr_url: str) -> None:
-    """Confirm releases.yml still points at the MR selected earlier in the run."""
+    """Confirm that ``releases.yml`` still points at the selected MR.
+
+    Args:
+        repo: Initialized ocp-build-data Git repository.
+        group: Group branch containing ``releases.yml``.
+        assembly: Assembly whose pointer should be checked.
+        expected_mr_url: MR URL selected earlier in the release run.
+
+    Raises:
+        RuntimeError: If another process changed the pointer.
+    """
     await repo.fetch_switch_branch(group, remote="origin")
     releases_path = repo._directory / "releases.yml"
     releases_config = YAML.load(releases_path) if releases_path.exists() else None
@@ -85,7 +140,21 @@ async def verify_shipment_mr_url(repo: GitRepository, group: str, assembly: str,
 
 
 def validate_shipment_mr(gitlab_client, mr_url: str, pull_url: str, push_url: str):
-    """Validate an MR referenced by releases.yml and return the MR object."""
+    """Validate a shipment MR referenced by ``releases.yml``.
+
+    Args:
+        gitlab_client: Authenticated ART GitLab client.
+        mr_url: Referenced shipment MR URL.
+        pull_url: Configured canonical shipment-data repository URL.
+        push_url: Configured shipment-data push repository URL.
+
+    Returns:
+        The open GitLab merge request object when it is safe to reuse.
+
+    Raises:
+        ValueError: If the MR is missing, closed, points to the wrong project or
+            target branch, or originates from the wrong push repository.
+    """
     if urlparse(mr_url).netloc != urlparse(pull_url).netloc:
         raise ValueError(
             f"Shipment MR host {urlparse(mr_url).netloc} does not match {urlparse(pull_url).netloc}. "
@@ -116,6 +185,12 @@ def validate_shipment_mr(gitlab_client, mr_url: str, pull_url: str, push_url: st
 
 
 def set_shipment_mr_draft(mr, dry_run: bool) -> None:
+    """Mark a reused shipment MR as draft before changing its contents.
+
+    Args:
+        mr: GitLab merge request object to update.
+        dry_run: Logically perform the transition without saving it remotely.
+    """
     if mr.title.startswith("Draft:"):
         return
     mr.title = f"Draft: {mr.title}"
@@ -124,10 +199,25 @@ def set_shipment_mr_draft(mr, dry_run: bool) -> None:
 
 
 def _to_dict(config: ShipmentConfig) -> dict:
+    """Convert a shipment model to the mapping written to YAML."""
     return config.model_dump(exclude_unset=True, exclude_none=True)
 
 
 def _identity(config: dict) -> tuple:
+    """Build the stable semantic identity for a shipment configuration.
+
+    FBC identities include the component and target OCP version so multiple
+    operators and multiple OCP targets remain independently addressable.
+
+    Args:
+        config: Parsed shipment configuration.
+
+    Returns:
+        A tuple identifying the logical shipment independently of its filename.
+
+    Raises:
+        ValueError: If an FBC shipment does not contain exactly one FBC NVR.
+    """
     shipment = config.get('shipment', {})
     metadata = shipment.get('metadata', {})
     base = (
@@ -149,11 +239,21 @@ def _identity(config: dict) -> tuple:
 
 
 def _identity_sort_key(item: tuple) -> tuple[str, ...]:
+    """Return a deterministic ordering key for a shipment identity item."""
     return tuple("" if value is None else str(value) for value in item[0])
 
 
 def _reconcile_config(existing: dict, desired: dict) -> dict:
-    """Apply generator-owned data while preserving downstream environment results."""
+    """Apply generated data while retaining downstream-owned environment fields.
+
+    Args:
+        existing: Shipment configuration currently present on the MR branch.
+        desired: Shipment configuration generated from the current release inputs.
+
+    Returns:
+        A new mapping containing current generated fields and preserved CI-owned
+        environment data.
+    """
     result = copy.deepcopy(existing)
     existing_shipment = result.setdefault('shipment', {})
     desired_shipment = desired['shipment']
@@ -176,6 +276,15 @@ def _reconcile_config(existing: dict, desired: dict) -> dict:
 
 
 async def _restore_from_main(repo: GitRepository, path: str) -> None:
+    """Restore a stale MR file to its content on the target branch.
+
+    Args:
+        repo: Checked-out shipment-data repository.
+        path: Repository-relative shipment file path.
+
+    Raises:
+        RuntimeError: If the file cannot be read from ``main``.
+    """
     rc, content, error = await exectools.cmd_gather_async(
         ["git", "-C", str(repo._directory), "show", f"main:{path}"], env=repo._local_env()
     )
@@ -192,7 +301,31 @@ async def reconcile_shipment_mr(
     include_fbc_ocp_version: bool,
     dry_run: bool,
 ) -> bool:
-    """Reconcile generated LP shipments into an existing MR branch."""
+    """Reconcile generated layered-product shipments into an existing MR.
+
+    Files are matched by semantic identity rather than by generated filename.
+    Matching paths are retained, stale MR-owned files are removed or restored,
+    and new FBC filenames receive deterministic counters based on the original
+    MR timestamp.
+
+    Args:
+        repo: Initialized shipment-data repository.
+        mr: Validated GitLab merge request to update.
+        shipments_by_kind: Current generated shipment models keyed by kind.
+        include_fbc_ocp_version: Include the target OCP version in new FBC
+            filenames.
+        dry_run: Prepare and display changes without committing or pushing.
+
+    Returns:
+        Whether reconciliation produced content changes. A no-change rerun
+        returns ``False`` and is considered successful.
+
+    Raises:
+        ValueError: If the MR branch lacks a timestamp or desired/existing files
+            contain duplicate semantic identities.
+        RuntimeError: If GitLab truncates the MR change list or a stale file
+            cannot be restored safely.
+    """
     timestamp_match = _TIMESTAMP_RE.search(mr.source_branch)
     if not timestamp_match:
         raise ValueError(f"Cannot determine shipment timestamp from MR branch {mr.source_branch}")
