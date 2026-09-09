@@ -233,9 +233,7 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
             ec_policy_configuration=None,
             prega_ec_policy_configuration=None,
             integration_test_scenarios=("qe-test",),
-            integration_test_snapshot_annotations={
-                "pac.test.appstudio.openshift.io/branch": "release-4.18"
-            },
+            integration_test_snapshot_annotations={"pac.test.appstudio.openshift.io/branch": "release-4.18"},
         )
         metadata = _make_metadata(for_release=True)
 

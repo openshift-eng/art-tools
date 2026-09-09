@@ -424,8 +424,7 @@ class BuildLayeredProductsPipeline:
         attempted_failures = [
             entry
             for entry in failed
-            if entry.get('task_id') != 'n/a'
-            and 'parent images failed to build' not in entry.get('message', '')
+            if entry.get('task_id') != 'n/a' and 'parent images failed to build' not in entry.get('message', '')
         ]
         job_url = os.getenv('BUILD_URL')
 
