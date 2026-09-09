@@ -1129,8 +1129,8 @@ class KonfluxClient:
 
     @staticmethod
     def _snapshot_test_statuses(snapshot: resource.ResourceInstance) -> Dict[str, dict]:
-        annotation = snapshot.to_dict().get("metadata", {}).get("annotations", {}).get(
-            "test.appstudio.openshift.io/status"
+        annotation = (
+            snapshot.to_dict().get("metadata", {}).get("annotations", {}).get("test.appstudio.openshift.io/status")
         )
         if not annotation:
             return {}
@@ -1170,9 +1170,7 @@ class KonfluxClient:
             if snapshot is None:
                 raise RuntimeError(f"Snapshot {snapshot_name} disappeared")
             statuses = self._snapshot_test_statuses(snapshot)
-            run_label = snapshot.to_dict().get("metadata", {}).get("labels", {}).get(
-                "test.appstudio.openshift.io/run"
-            )
+            run_label = snapshot.to_dict().get("metadata", {}).get("labels", {}).get("test.appstudio.openshift.io/run")
             if scenario_name in statuses and run_label != scenario_name:
                 return snapshot
             await asyncio.sleep(poll_interval_seconds)
@@ -1280,8 +1278,7 @@ class KonfluxClient:
                         pipeline_urls,
                     )
                 if all(
-                    statuses_by_scenario[name].get("status") in {"TestPassed", "TestWarning"}
-                    for name in scenario_names
+                    statuses_by_scenario[name].get("status") in {"TestPassed", "TestWarning"} for name in scenario_names
                 ):
                     for name in scenario_names:
                         self._logger.info(
@@ -1311,15 +1308,11 @@ class KonfluxClient:
                     )
 
                 await asyncio.sleep(poll_interval_seconds)
-                snapshot = await self._get(
-                    API_VERSION, KIND_SNAPSHOT, snapshot_name, namespace=namespace, strict=False
-                )
+                snapshot = await self._get(API_VERSION, KIND_SNAPSHOT, snapshot_name, namespace=namespace, strict=False)
                 if snapshot is None:
                     raise RuntimeError(f"Snapshot {snapshot_name} disappeared")
                 all_statuses = self._snapshot_test_statuses(snapshot)
-                statuses_by_scenario = {
-                    name: all_statuses[name] for name in scenario_names if name in all_statuses
-                }
+                statuses_by_scenario = {name: all_statuses[name] for name in scenario_names if name in all_statuses}
                 if not all(name in statuses_by_scenario for name in scenario_names):
                     raise ValueError(
                         f"Snapshot {snapshot.metadata.name} lost configured integration test status entries"

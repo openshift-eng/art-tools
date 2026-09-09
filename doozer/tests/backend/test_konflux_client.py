@@ -341,7 +341,7 @@ class TestCustomIntegrationTestScenarios(IsolatedAsyncioTestCase):
                 "labels": {"test.appstudio.openshift.io/run": run_label} if run_label else {},
                 "annotations": {
                     "test.appstudio.openshift.io/status": json.dumps(statuses),
-                }
+                },
             }
         }
         return snapshot
@@ -349,9 +349,7 @@ class TestCustomIntegrationTestScenarios(IsolatedAsyncioTestCase):
     async def test_validate_scenarios_accepts_matching_application(self):
         client = self._client()
         scenario = MagicMock()
-        scenario.to_dict.return_value = {
-            "spec": {"application": "test-app", "contexts": [{"name": "disabled"}]}
-        }
+        scenario.to_dict.return_value = {"spec": {"application": "test-app", "contexts": [{"name": "disabled"}]}}
         client.get_integration_test_scenario = AsyncMock(return_value=scenario)
 
         await KonfluxClient.validate_integration_test_scenarios(
@@ -361,9 +359,7 @@ class TestCustomIntegrationTestScenarios(IsolatedAsyncioTestCase):
             namespace="test-tenant",
         )
 
-        client.get_integration_test_scenario.assert_awaited_once_with(
-            "qe-test", namespace="test-tenant", strict=True
-        )
+        client.get_integration_test_scenario.assert_awaited_once_with("qe-test", namespace="test-tenant", strict=True)
 
     async def test_validate_scenarios_rejects_wrong_application(self):
         client = self._client()
@@ -382,9 +378,7 @@ class TestCustomIntegrationTestScenarios(IsolatedAsyncioTestCase):
     async def test_validate_scenarios_rejects_auto_trigger_context(self):
         client = self._client()
         scenario = MagicMock()
-        scenario.to_dict.return_value = {
-            "spec": {"application": "test-app", "contexts": [{"name": "application"}]}
-        }
+        scenario.to_dict.return_value = {"spec": {"application": "test-app", "contexts": [{"name": "application"}]}}
         client.get_integration_test_scenario = AsyncMock(return_value=scenario)
 
         with self.assertRaisesRegex(ValueError, "must use only the 'disabled' context"):

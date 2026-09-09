@@ -345,9 +345,7 @@ class KonfluxBuildCli:
             ec_policy = constants.PRODUCT_EC_POLICY_MAP.get(product)
             prega_ec_policy = constants.PRODUCT_PREGA_EC_POLICY_MAP.get(product, ec_policy)
 
-        integration_test_scenarios = runtime.group_config.get("konflux", {}).get(
-            "integration_test_scenarios", []
-        )
+        integration_test_scenarios = runtime.group_config.get("konflux", {}).get("integration_test_scenarios", [])
         if integration_test_scenarios is Missing or integration_test_scenarios is None:
             integration_test_scenarios = []
         if not isinstance(integration_test_scenarios, (list, tuple)) or not all(
