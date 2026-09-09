@@ -69,6 +69,35 @@ def test_reconcile_config_preserves_downstream_environment_fields():
     assert result['shipment']['environments']['prod']['advisory'] == {'url': 'advisory-url'}
 
 
+def test_reconcile_config_clears_stale_fbc_pipeline_results_when_nvr_changes():
+    """Clear pipeline URLs for both environments when an FBC NVR changes."""
+    existing = _shipment(fbc=True, nvr='cluster-logging-operator-fbc-6.5.2-1.ocp4.19')
+    existing['shipment']['environments']['stage']['result'] = {'pipeline': 'stage-ci'}
+    existing['shipment']['environments']['prod']['result'] = {
+        'pipeline': 'prod-ci',
+        'other': 'preserved',
+    }
+    existing['shipment']['environments']['prod']['advisory'] = {'url': 'advisory-url'}
+    desired = _shipment(fbc=True, nvr='cluster-logging-operator-fbc-6.5.2-2.ocp4.19')
+
+    result = _reconcile_config(existing, desired)
+
+    assert 'result' not in result['shipment']['environments']['stage']
+    assert result['shipment']['environments']['prod']['result'] == {'other': 'preserved'}
+    assert result['shipment']['environments']['prod']['advisory'] == {'url': 'advisory-url'}
+
+
+def test_reconcile_config_preserves_fbc_pipeline_results_when_nvr_is_unchanged():
+    """Retain completed FBC pipeline URLs when the generated NVR is unchanged."""
+    existing = _shipment(fbc=True, nvr='cluster-logging-operator-fbc-6.5.2-1.ocp4.19')
+    existing['shipment']['environments']['stage']['result'] = {'pipeline': 'stage-ci'}
+    desired = _shipment(fbc=True, nvr='cluster-logging-operator-fbc-6.5.2-1.ocp4.19')
+
+    result = _reconcile_config(existing, desired)
+
+    assert result['shipment']['environments']['stage']['result'] == {'pipeline': 'stage-ci'}
+
+
 def test_fbc_identity_uses_component_and_ocp_target():
     """Distinguish FBC shipments by both operator and target OCP version."""
     first = _identity(_shipment(fbc=True, nvr='cluster-logging-operator-fbc-6.5.2-1.ocp4.19'))
@@ -210,8 +239,8 @@ def test_update_shipment_mr_url_rejects_concurrent_pointer_change():
         repo.commit_push.assert_not_awaited()
 
 
-def test_reconcile_existing_fbc_preserves_path_and_downstream_results():
-    """Keep the filename and CI results when updating a matching FBC shipment."""
+def test_reconcile_existing_fbc_clears_stale_pipeline_result():
+    """Keep the filename but clear its pipeline result when the FBC NVR changes."""
     with TemporaryDirectory() as directory:
         repo = GitRepository(directory)
         repo.fetch_switch_branch = AsyncMock()
@@ -253,7 +282,7 @@ def test_reconcile_existing_fbc_preserves_path_and_downstream_results():
         assert changed
         result = YAML.load(path)
         assert result['shipment']['snapshot']['nvrs'] == ['cluster-logging-operator-fbc-6.5.2-2.ocp4.19']
-        assert result['shipment']['environments']['prod']['result'] == {'pipeline': 'prod-ci'}
+        assert 'result' not in result['shipment']['environments']['prod']
         repo.commit_push.assert_awaited_once()
 
 
