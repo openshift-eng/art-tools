@@ -204,12 +204,26 @@ class ReleaseFromFbcPipeline:
             raise ValueError(f"Failed to fetch {filename} from {data_path} branch {branch}: {e}")
 
     def _load_layered_product_shipment_mr(self) -> Optional[str]:
+        """Load the assembly's layered-product shipment MR pointer.
+
+        Returns:
+            The configured MR URL, or ``None`` when the assembly or pointer is
+            absent.
+        """
         content = self.get_file_from_branch(self.group, "releases.yml")
         releases_config = yaml.load(content.decode()) or {}
         self._configured_shipment_mr_url = get_shipment_mr_url(releases_config, self.assembly)
         return self._configured_shipment_mr_url
 
     async def _update_layered_product_shipment_mr(self, mr_url: str) -> None:
+        """Persist a newly created or replacement shipment MR pointer.
+
+        Args:
+            mr_url: Shipment MR URL to store in ``releases.yml``.
+
+        Raises:
+            RuntimeError: If the pointer changed concurrently.
+        """
         if self.dry_run:
             self.logger.info("[DRY-RUN] Would store shipment MR in releases.yml: %s", mr_url)
             return
@@ -228,6 +242,11 @@ class ReleaseFromFbcPipeline:
         )
 
     async def _verify_layered_product_shipment_mr(self) -> None:
+        """Verify that the assembly still points at the selected reusable MR.
+
+        Raises:
+            RuntimeError: If another release changed the pointer concurrently.
+        """
         push_url = self.runtime.config.get("build_config", {}).get(
             "ocp_build_data_repo_push_url", constants.OCP_BUILD_DATA_URL
         )

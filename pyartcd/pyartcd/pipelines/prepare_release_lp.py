@@ -57,6 +57,17 @@ yaml = new_roundtrip_yaml_handler()
 
 
 def _normalize_release_date(date_str: str) -> str:
+    """Normalize a supported release date to ``YYYY-Mon-DD``.
+
+    Args:
+        date_str: Date in ``YYYY-Mon-DD`` or ``YYYY-MM-DD`` format.
+
+    Returns:
+        The normalized date string.
+
+    Raises:
+        click.ClickException: If the input is not in a supported format.
+    """
     for fmt in ("%Y-%b-%d", "%Y-%m-%d"):
         try:
             return datetime.strptime(date_str.strip(), fmt).strftime("%Y-%b-%d")
@@ -853,6 +864,11 @@ class PrepareReleaseLPPipeline:
             self._logger.warning("No changes to commit when updating shipment MR URL")
 
     async def _verify_assembly_shipment_url(self) -> None:
+        """Verify that the assembly still points at the MR selected for reuse.
+
+        Raises:
+            RuntimeError: If another release changed the pointer concurrently.
+        """
         push_url = self.runtime.config["build_config"]["ocp_build_data_repo_push_url"]
         build_data = GitRepository(self._working_dir / "ocp-build-data-verify", dry_run=self.dry_run)
         await build_data.setup(push_url)
