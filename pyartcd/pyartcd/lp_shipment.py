@@ -405,7 +405,7 @@ async def reconcile_shipment_mr(
         out = StringIO()
         YAML.dump(desired, out)
         path = target_dir / filename
-        path.parent.mkdir(parents=True, exist_ok=True)
+        (repo._directory / path).parent.mkdir(parents=True, exist_ok=True)
         await repo.write_file(path, out.getvalue())
         changed = True
 

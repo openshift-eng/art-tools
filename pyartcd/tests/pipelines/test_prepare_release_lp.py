@@ -109,6 +109,7 @@ class TestPrepareReleaseLPPipeline(unittest.TestCase):
                 pipeline._check_env_vars()
 
     def test_cli_force_requires_create_mr(self):
+        """Reject force when shipment MR creation is disabled."""
         from click.testing import CliRunner
         from pyartcd.pipelines.prepare_release_lp import prepare_release_lp
         from pyartcd.runtime import Runtime
@@ -125,6 +126,40 @@ class TestPrepareReleaseLPPipeline(unittest.TestCase):
             standalone_mode=False,
         )
         self.assertIn("--force requires --create-mr", str(result.exception))
+
+    @patch("pyartcd.pipelines.prepare_release_lp.locks.run_with_lock", new_callable=AsyncMock)
+    @patch("pyartcd.pipelines.prepare_release_lp.PrepareReleaseLPPipeline")
+    def test_cli_locks_layered_product_shipment_updates(self, pipeline_cls, run_with_lock):
+        """Serialize prepare-release shipment updates by group and assembly."""
+        from click.testing import CliRunner
+        from pyartcd.pipelines.prepare_release_lp import prepare_release_lp
+        from pyartcd.runtime import Runtime
+
+        async def await_pipeline(coro, **_kwargs):
+            """Execute the coroutine passed through the mocked lock."""
+            return await coro
+
+        run_with_lock.side_effect = await_pipeline
+        pipeline_cls.return_value.run = AsyncMock()
+        runtime = MagicMock(spec=Runtime)
+        runtime.dry_run = False
+        runtime.working_dir = MagicMock()
+        runtime.config = {}
+        asyncio.set_event_loop(asyncio.new_event_loop())
+
+        result = CliRunner().invoke(
+            prepare_release_lp,
+            ["--group", "acm-2.17", "--assembly", "2.17.3", "--create-mr"],
+            obj=runtime,
+            standalone_mode=False,
+        )
+
+        self.assertIsNone(result.exception)
+        run_with_lock.assert_awaited_once()
+        self.assertEqual(
+            run_with_lock.await_args.kwargs["lock_name"],
+            "lock:layered-product-shipment:acm-2.17:2.17.3",
+        )
 
 
 class TestPrepareReleaseLPMultiFBC(unittest.TestCase):
