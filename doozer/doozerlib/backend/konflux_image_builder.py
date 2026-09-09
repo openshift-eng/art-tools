@@ -124,6 +124,7 @@ class KonfluxImageBuilder:
         self._config = config
         self._logger = logger or LOGGER
         self._record_logger = record_logger
+        self._blocking_custom_integration_test_scenarios: Set[str] = set()
         self._konflux_client = KonfluxClient.from_kubeconfig(
             default_namespace=config.namespace,
             config_file=config.kubeconfig,
@@ -136,10 +137,12 @@ class KonfluxImageBuilder:
         if not self._config.integration_test_scenarios or self._config.skip_custom_its:
             return
         application_name = util.konflux_application_name(self._config.group_name)
-        await self._konflux_client.validate_integration_test_scenarios(
-            self._config.integration_test_scenarios,
-            application_name=application_name,
-            namespace=self._config.namespace,
+        self._blocking_custom_integration_test_scenarios = (
+            await self._konflux_client.validate_integration_test_scenarios(
+                self._config.integration_test_scenarios,
+                application_name=application_name,
+                namespace=self._config.namespace,
+            )
         )
 
     async def build(self, metadata: ImageMetadata, git_auth_secret: Optional[str] = None):
@@ -428,14 +431,15 @@ class KonfluxImageBuilder:
                         image_pullspec=f"{image_pullspec.split(':')[0]}@{image_digest}",
                         source_url=artlib_util.convert_remote_git_to_https(build_repo.url),
                         commit_sha=build_repo.commit_hash,
+                        blocking_scenario_names=self._blocking_custom_integration_test_scenarios,
                         snapshot_annotations=self._config.integration_test_snapshot_annotations,
                         namespace=self._config.namespace,
                     )
                     for pipeline_url in custom_its_result.pipeline_urls:
                         logger.info("Custom IntegrationTestScenario PipelineRun: %s", pipeline_url)
-                    if custom_its_result.failed:
-                        if custom_its_result.failed_pipeline_url:
-                            ec_pipeline_url = custom_its_result.failed_pipeline_url
+                    if custom_its_result.blocking_failed:
+                        if custom_its_result.blocking_failed_pipeline_url:
+                            ec_pipeline_url = custom_its_result.blocking_failed_pipeline_url
                             record["ec_pipeline_url"] = ec_pipeline_url
                         outcome = KonfluxBuildOutcome.ITS_ERROR
                 elif (
