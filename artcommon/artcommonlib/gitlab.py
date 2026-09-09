@@ -164,8 +164,7 @@ class GitLabClient:
     async def set_mr_approval_rules(self, mr_url: str, approvers_config: dict[str, list[str]]):
         """
         Configure MR-level approval rules based on group.yml mr_approvers config.
-        Keeps the "ART" rule, removes all other inherited rules, and creates new
-        rules from approvers_config.
+        Removes all inherited rules and creates new rules from approvers_config.
 
         Arg(s):
             mr_url: Full URL to the merge request
@@ -188,9 +187,8 @@ class GitLabClient:
         existing_rules = mr.approval_rules.list()
 
         for rule in existing_rules:
-            if rule.name != "ART":
-                logger.info(f"Deleting approval rule '{rule.name}' (id={rule.id})")
-                rule.delete()
+            logger.info(f"Deleting approval rule '{rule.name}' (id={rule.id})")
+            rule.delete()
 
         for name, usernames in approvers_config.items():
             user_ids = self._resolve_user_ids(usernames)
