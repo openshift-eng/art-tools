@@ -146,6 +146,8 @@ class KonfluxOcpPipeline:
         self.rhcos_jenkins_client = None
         # Stored if _init_rhcos_jenkins_client() fails; re-raised in trigger_rhcos_integration_tests.
         self._rhcos_init_error: Optional[Exception] = None
+        # RHCOS image pairs that passed integration testing and can be promoted.
+        self._rhcos_promotable_pairs = {}
 
         # If build plan includes more than half or excludes less than half or rebuilds everything, it's a mass rebuild
         self.mass_rebuild = False
@@ -938,9 +940,12 @@ class KonfluxOcpPipeline:
         via the build-node-image job. The tests are triggered independently for
         each RHEL version (9/10) whose images were rebuilt.
 
-        Failures are propagated so the caller (run_safe) can record them in
-        critical_failures and cause the pipeline to exit non-zero.
+        Each RHEL version is tested independently. A failed pair is recorded as
+        a critical failure after the other pair has had a chance to run, so a
+        passing pair can still be promoted.
         """
+        self._rhcos_promotable_pairs = {}
+
         if self.skip_rhcos_integration_tests:
             LOGGER.warning("Skipping RHCOS integration tests because --skip-rhcos-integration-tests flag is set")
             return
@@ -973,10 +978,12 @@ class KonfluxOcpPipeline:
             # Build a full lookup of ALL RHCOS image records (including those not rebuilt)
             # so we can find pullspecs for the pair partner if only one was rebuilt
             all_rhcos_records = {}
+            all_rhcos_tags = {}
             for record in records:
                 name = record.get('name')
                 if name in RHCOS_ART_IMAGE_KEYS and record['status'] == '0':
                     all_rhcos_records[name] = record.get('image_pullspec', '')
+                    all_rhcos_tags[name] = record.get('image_tag', '')
 
             # Load group config to derive RELEASE streams from group.yml instead of hardcoding
             group_config = await load_group_config(group=f"openshift-{self.version}", assembly="stream")
@@ -1003,13 +1010,36 @@ class KonfluxOcpPipeline:
                 ('rhel10', self.RHCOS_RHEL10_PAIR),
             ]
 
+            pair_failures = []
             for rhel_label, pair in rhel_pairs:
-                await self._trigger_rhcos_pair_test(
-                    rhel_label, pair, rebuilt_images, all_rhcos_records, release_streams
-                )
+                try:
+                    tested_pair = await self._trigger_rhcos_pair_test(
+                        rhel_label,
+                        pair,
+                        rebuilt_images,
+                        all_rhcos_records,
+                        release_streams,
+                        all_rhcos_tags,
+                    )
+                except Exception as e:
+                    LOGGER.warning(
+                        "RHCOS %s integration test failed; skipping promotion for this pair: %s",
+                        rhel_label,
+                        e,
+                        exc_info=True,
+                    )
+                    pair_failures.append((rhel_label, e))
+                else:
+                    if tested_pair:
+                        self._rhcos_promotable_pairs[rhel_label] = tested_pair
+
+            if pair_failures:
+                failures = '; '.join(f'{rhel_label}: {error}' for rhel_label, error in pair_failures)
+                raise RuntimeError(f'RHCOS integration tests failed: {failures}')
 
         except Exception as e:
-            LOGGER.exception("Failed to trigger RHCOS integration tests: %s", e)
+            if not isinstance(e, RuntimeError) or not str(e).startswith('RHCOS integration tests failed:'):
+                LOGGER.exception("Failed to trigger RHCOS integration tests: %s", e)
             raise
 
     async def _trigger_rhcos_pair_test(
@@ -1019,6 +1049,7 @@ class KonfluxOcpPipeline:
         rebuilt_images: dict,
         all_rhcos_records: dict,
         release_streams: dict,
+        all_rhcos_tags: Optional[dict] = None,
     ):
         """Trigger integration test for a single RHEL version's RHCOS image pair.
 
@@ -1028,7 +1059,13 @@ class KonfluxOcpPipeline:
             rebuilt_images: Dict of {image_name: pullspec} for images that were rebuilt.
             all_rhcos_records: Dict of {image_name: pullspec} for all successful RHCOS builds.
             release_streams: Dict mapping rhel_label to release stream (e.g. {'rhel9': '4.19-9.8'}).
+            all_rhcos_tags: Optional mapping of image names to the tags recorded by Konflux.
+
+        Returns:
+            The exact node and extensions pullspecs and tags used by a passing test,
+            or None when the pair was not run.
         """
+        all_rhcos_tags = all_rhcos_tags or {}
         node_name = pair['node']
         ext_name = pair['extensions']
 
@@ -1058,6 +1095,7 @@ class KonfluxOcpPipeline:
                 )
                 if record:
                     node_pullspec = record.image_pullspec
+                    all_rhcos_tags[node_name] = record.image_tag
                     LOGGER.info("Found latest %s pullspec from KonfluxDb: %s", node_name, node_pullspec)
                 else:
                     LOGGER.warning("No successful %s build found in KonfluxDb for group %s", node_name, group)
@@ -1072,6 +1110,7 @@ class KonfluxOcpPipeline:
                 )
                 if record:
                     ext_pullspec = record.image_pullspec
+                    all_rhcos_tags[ext_name] = record.image_tag
                     LOGGER.info("Found latest %s pullspec from KonfluxDb: %s", ext_name, ext_pullspec)
                 else:
                     LOGGER.warning("No successful %s build found in KonfluxDb for group %s", ext_name, group)
@@ -1099,6 +1138,16 @@ class KonfluxOcpPipeline:
             )
             return
 
+        if not all(pullspec.startswith(f'{RHCOS_IMAGE_REPO}@sha256:') for pullspec in (node_pullspec, ext_pullspec)):
+            LOGGER.warning(
+                "RHCOS %s integration test skipped because image pullspecs are not from %s: node=%s extensions=%s",
+                rhel_label,
+                RHCOS_IMAGE_REPO,
+                node_pullspec,
+                ext_pullspec,
+            )
+            return
+
         # Derive RELEASE param from group.yml (loaded by trigger_rhcos_integration_tests)
         release_stream = release_streams.get(rhel_label)
         if not release_stream:
@@ -1107,30 +1156,81 @@ class KonfluxOcpPipeline:
 
         LOGGER.info("Using RHCOS image pullspecs for Jenkins job: node=%s ext=%s", node_pullspec, ext_pullspec)
 
-        try:
-            client = self.rhcos_jenkins_client
-            build_number = client.trigger_build(
-                'build-node-image',
-                {
-                    'NODE_IMAGE': node_pullspec,
-                    'EXTENSIONS_IMAGE': ext_pullspec,
-                    'RELEASE': release_stream,
-                },
+        client = self.rhcos_jenkins_client
+        build_number = client.trigger_build(
+            'build-node-image',
+            {
+                'NODE_IMAGE': node_pullspec,
+                'EXTENSIONS_IMAGE': ext_pullspec,
+                'RELEASE': release_stream,
+            },
+        )
+        LOGGER.info("Waiting for %s integration test build-node-image #%d...", rhel_label, build_number)
+        result = client.wait_for_build('build-node-image', build_number)
+
+        if result['result'] != 'SUCCESS':
+            raise RuntimeError(
+                f"RHCOS {rhel_label} integration test did not pass (result={result['result']}): "
+                f"{result.get('url', '')} - {result.get('description', '')}"
             )
-            LOGGER.info("Waiting for %s integration test build-node-image #%d...", rhel_label, build_number)
-            result = client.wait_for_build('build-node-image', build_number)
 
-            if result['result'] == 'SUCCESS':
-                LOGGER.info("RHCOS %s integration test passed: %s #%d", rhel_label, result['url'], build_number)
-            else:
-                raise RuntimeError(
-                    f"RHCOS {rhel_label} integration test did not pass (result={result['result']}): "
-                    f"{result['url']} - {result.get('description', '')}"
+        LOGGER.info("RHCOS %s integration test passed: %s #%d", rhel_label, result.get('url', ''), build_number)
+        return {
+            node_name: {
+                'pullspec': node_pullspec,
+                'image_tag': all_rhcos_tags.get(node_name, ''),
+            },
+            ext_name: {
+                'pullspec': ext_pullspec,
+                'image_tag': all_rhcos_tags.get(ext_name, ''),
+            },
+        }
+
+    async def promote_rhcos_images(self):
+        """Promote RHCOS image pairs that passed integration testing to art-images."""
+        if self.skip_rhcos_integration_tests:
+            LOGGER.warning("Skipping RHCOS image promotion because integration tests were skipped")
+            return
+
+        if self.assembly != 'stream':
+            LOGGER.info("Skipping RHCOS image promotion because assembly %s is not stream", self.assembly)
+            return
+
+        if self.runtime.dry_run:
+            LOGGER.info('Not promoting RHCOS images in dry run mode')
+            return
+
+        if not self._rhcos_promotable_pairs:
+            LOGGER.info('No RHCOS image pairs passed integration testing; skipping promotion')
+            return
+
+        pair_failures = []
+        for rhel_label, images in self._rhcos_promotable_pairs.items():
+            try:
+                for image_name, image in images.items():
+                    tags = [f'{image_name}-{self.version}']
+                    if image['image_tag'] and image['image_tag'] not in tags:
+                        tags.insert(0, image['image_tag'])
+                    await sync_to_quay(image['pullspec'], KONFLUX_DEFAULT_IMAGE_REPO, tags)
+                    LOGGER.info(
+                        "Promoted RHCOS %s image %s to %s with tags %s",
+                        rhel_label,
+                        image_name,
+                        KONFLUX_DEFAULT_IMAGE_REPO,
+                        ', '.join(tags),
+                    )
+            except Exception as e:
+                LOGGER.warning(
+                    "Failed to promote RHCOS %s image pair; tested images were not fully promoted: %s",
+                    rhel_label,
+                    e,
+                    exc_info=True,
                 )
+                pair_failures.append((rhel_label, e))
 
-        except Exception as e:
-            LOGGER.exception("Failed to run %s RHCOS integration test: %s", rhel_label, e)
-            raise
+        if pair_failures:
+            failures = '; '.join(f'{rhel_label}: {error}' for rhel_label, error in pair_failures)
+            raise RuntimeError(f'RHCOS image promotion failed: {failures}')
 
     def parse_record_log(self) -> Optional[dict]:
         record_log_path = Path(self.runtime.doozer_working, 'record.log')
@@ -1184,7 +1284,9 @@ class KonfluxOcpPipeline:
 
     async def mirror_images(self):
         """
-        Mirror non embargoed builds to quay.io/redhat-user-workloads/ocp-art-tenant/art-images-share
+        Mirror non-RHCOS, non-embargoed builds to art-images-share.
+
+        RHCOS pairs are promoted separately after their integration tests pass.
         """
 
         if not self.building_images():
@@ -1202,8 +1304,12 @@ class KonfluxOcpPipeline:
             LOGGER.error('record.log not found!')
             return
 
-        # Get the list of successful builds
-        builds_to_mirror = [entry for entry in record_log.get('image_build_konflux', []) if not int(entry['status'])]
+        # RHCOS builds are promoted separately after their pair-specific integration tests.
+        builds_to_mirror = [
+            entry
+            for entry in record_log.get('image_build_konflux', [])
+            if not int(entry['status']) and entry.get('name') not in RHCOS_ART_IMAGE_KEYS
+        ]
 
         async def sync_build(build):
             release = build["nvrs"].split("-")[-1]
@@ -1363,10 +1469,11 @@ class KonfluxOcpPipeline:
 
             self.trigger_bundle_build()
 
-            # Keep mirroring before the remaining stream operations. The RHCOS integration
-            # job receives the original pullspecs from the successful RHCOS image builds.
+            # Keep generic image mirroring and build-sync ordering unchanged. RHCOS images
+            # are promoted to art-images only after their integration tests pass.
             await run_safe(self.mirror_images, critical_failures)
             await run_safe(self.trigger_rhcos_integration_tests, critical_failures)
+            await run_safe(self.promote_rhcos_images, critical_failures)
             await run_safe(self.mirror_streams_to_ci, critical_failures)
 
             try:
