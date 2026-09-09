@@ -108,6 +108,24 @@ class TestPrepareReleaseLPPipeline(unittest.TestCase):
             with self.assertRaises(ValueError):
                 pipeline._check_env_vars()
 
+    def test_cli_force_requires_create_mr(self):
+        from click.testing import CliRunner
+        from pyartcd.pipelines.prepare_release_lp import prepare_release_lp
+        from pyartcd.runtime import Runtime
+
+        runtime = MagicMock(spec=Runtime)
+        runtime.dry_run = False
+        runtime.working_dir = MagicMock()
+        runtime.config = {}
+        asyncio.set_event_loop(asyncio.new_event_loop())
+        result = CliRunner().invoke(
+            prepare_release_lp,
+            ["--group", "acm-2.17", "--assembly", "2.17.3", "--force"],
+            obj=runtime,
+            standalone_mode=False,
+        )
+        self.assertIn("--force requires --create-mr", str(result.exception))
+
 
 class TestPrepareReleaseLPMultiFBC(unittest.TestCase):
     """Tests for multi-FBC (multi-OCP-version) FBC builds in prepare-release-lp."""
