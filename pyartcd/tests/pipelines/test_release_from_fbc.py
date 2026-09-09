@@ -861,6 +861,18 @@ class TestCliValidation(unittest.TestCase):
         self.assertIsInstance(result.exception, click.ClickException)
         self.assertIn("At least one of", str(result.exception))
 
+    def test_force_requires_create_mr(self):
+        result = self._invoke(["--extra-image-nvrs", "foo-container-1.0-1.el9", "--force"])
+        self.assertIsInstance(result.exception, click.ClickException)
+        self.assertIn("--force requires --create-mr", str(result.exception))
+
+    def test_force_rejected_for_ocp_optional(self):
+        result = self._invoke(
+            ["--extra-image-nvrs", "foo-container-1.0-1.el9", "--create-mr", "--force", "--ocp-optional"]
+        )
+        self.assertIsInstance(result.exception, click.ClickException)
+        self.assertIn("only supported for layered-product", str(result.exception))
+
     @patch("pyartcd.pipelines.release_from_fbc.ReleaseFromFbcPipeline")
     def test_fbc_only_does_not_raise(self, mock_pipeline_cls):
         """Providing only --fbc-pullspecs should pass CLI validation."""
@@ -1554,6 +1566,8 @@ class TestOcpOptionalMode(unittest.TestCase):
         pipeline.check_env_vars = MagicMock()
         pipeline.setup_working_dir = MagicMock()
         pipeline.setup_shipment_repo = AsyncMock()
+        pipeline._load_layered_product_shipment_mr = MagicMock(return_value=None)
+        pipeline._update_layered_product_shipment_mr = AsyncMock()
         pipeline._load_product_from_group_config = AsyncMock(return_value="oadp")
         pipeline._load_release_notes_template = MagicMock(return_value=None)
         pipeline.create_snapshot = AsyncMock(return_value=_make_snapshot(app="oadp-1-5"))

@@ -42,6 +42,14 @@ from pyartcd import constants
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.fbc_util import validate_fbc_related_images
 from pyartcd.git import GitRepository
+from pyartcd.lp_shipment import (
+    get_shipment_mr_url,
+    reconcile_shipment_mr,
+    set_shipment_mr_draft,
+    update_shipment_mr_url,
+    validate_shipment_mr,
+    verify_shipment_mr_url,
+)
 from pyartcd.runtime import Runtime
 from pyartcd.util import load_group_config
 
@@ -80,6 +88,7 @@ class PrepareReleaseLPPipeline:
         build_data_repo_url: Optional[str] = None,
         shipment_data_repo_url: Optional[str] = None,
         create_mr: bool = False,
+        force: bool = False,
         jira_bugs: Optional[List[str]] = None,
         target_release_date: Optional[str] = None,
     ) -> None:
@@ -88,6 +97,7 @@ class PrepareReleaseLPPipeline:
         self.group = group
         self.assembly = assembly
         self.create_mr = create_mr
+        self.force = force
         self.dry_run = self.runtime.dry_run
         self.jira_bugs = jira_bugs
         self.target_release_date = target_release_date
@@ -101,6 +111,7 @@ class PrepareReleaseLPPipeline:
         self.gitlab_url = self.runtime.config.get("gitlab_url", "https://gitlab.cee.redhat.com")
         self.gitlab_token: Optional[str] = None
         self.shipment_mr_url: Optional[str] = None
+        self._configured_shipment_mr_url: Optional[str] = None
         self.job_url: Optional[str] = None
 
         self.product: Optional[str] = None
@@ -211,11 +222,12 @@ class PrepareReleaseLPPipeline:
         if not releases_yaml_path.exists():
             raise click.ClickException(f"releases.yml not found in {self.build_data_repo_url} on branch {self.group}")
 
-        releases_config = yaml.load(releases_yaml_path)
+        releases_config = yaml.load(releases_yaml_path) or {}
         assembly = releases_config.get('releases', {}).get(self.assembly)
         if assembly is None:
             raise click.ClickException(f"Assembly '{self.assembly}' not found in releases.yml")
 
+        self._configured_shipment_mr_url = get_shipment_mr_url(releases_config, self.assembly)
         return assembly
 
     def _extract_operand_nvrs(self, assembly_config: Dict) -> List[str]:
@@ -825,30 +837,26 @@ class PrepareReleaseLPPipeline:
             )
             return
 
-        build_data_path = self._working_dir / "ocp-build-data-push"
-        build_data = GitRepository(build_data_path, dry_run=self.dry_run)
+        build_data = GitRepository(self._working_dir / "ocp-build-data-push", dry_run=self.dry_run)
         await build_data.setup(ocp_build_data_repo_push_url)
-        await build_data.fetch_switch_branch(self.group)
-
-        releases_yaml_path = build_data_path / "releases.yml"
-        if not releases_yaml_path.exists():
-            self._logger.warning("releases.yml not found; skipping shipment URL update")
-            return
-
-        releases_yaml = yaml.load(releases_yaml_path)
-        assembly_entry = releases_yaml.get('releases', {}).get(self.assembly, {})
-        assembly_def = assembly_entry.get('assembly', {})
-        group_info = assembly_def.setdefault('group', {})
-        shipment_info = group_info.setdefault('shipment', {})
-        shipment_info['mr'] = shipment_mr_url
-
-        yaml.dump(releases_yaml, releases_yaml_path)
-
-        pushed = await build_data.commit_push(f"Update assembly {self.assembly}: add shipment MR URL")
+        pushed = await update_shipment_mr_url(
+            build_data,
+            self.group,
+            self.assembly,
+            shipment_mr_url,
+            self._configured_shipment_mr_url,
+            create_as_stream=False,
+        )
         if pushed:
             self._logger.info("Updated releases.yml with shipment MR URL: %s", shipment_mr_url)
         else:
             self._logger.warning("No changes to commit when updating shipment MR URL")
+
+    async def _verify_assembly_shipment_url(self) -> None:
+        push_url = self.runtime.config["build_config"]["ocp_build_data_repo_push_url"]
+        build_data = GitRepository(self._working_dir / "ocp-build-data-verify", dry_run=self.dry_run)
+        await build_data.setup(push_url)
+        await verify_shipment_mr_url(build_data, self.group, self.assembly, self._configured_shipment_mr_url)
 
     async def run(self) -> None:
         self._logger.info(
@@ -867,6 +875,15 @@ class PrepareReleaseLPPipeline:
             await self._setup_shipment_repo()
 
         assembly_config = await self._load_assembly()
+        existing_mr = None
+        if self.create_mr and self._configured_shipment_mr_url and not self.force:
+            existing_mr = validate_shipment_mr(
+                self._gitlab,
+                self._configured_shipment_mr_url,
+                self.shipment_data_repo_pull_url,
+                self.shipment_data_repo_push_url,
+            )
+            self._logger.info("Will reuse shipment MR: %s", self._configured_shipment_mr_url)
         operand_nvrs = self._extract_operand_nvrs(assembly_config)
         self._logger.info("Assembly contains %d pinned operand NVRs", len(operand_nvrs))
 
@@ -917,11 +934,25 @@ class PrepareReleaseLPPipeline:
 
         if shipments_by_kind:
             if self.create_mr:
-                mr_url = await self._create_shipment_mr(shipments_by_kind)
+                if existing_mr:
+                    await self._verify_assembly_shipment_url()
+                    set_shipment_mr_draft(existing_mr, self.dry_run)
+                    await reconcile_shipment_mr(
+                        self.shipment_data_repo,
+                        existing_mr,
+                        shipments_by_kind,
+                        include_fbc_ocp_version=False,
+                        dry_run=self.dry_run,
+                    )
+                    mr_url = self._configured_shipment_mr_url
+                    self.shipment_mr_url = mr_url
+                else:
+                    mr_url = await self._create_shipment_mr(shipments_by_kind)
                 if mr_url:
                     self._logger.info("Shipment MR: %s", mr_url)
+                    if not existing_mr:
+                        await self._update_assembly_with_shipment_url(mr_url)
                     await self._set_shipment_mr_ready()
-                    await self._update_assembly_with_shipment_url(mr_url)
             else:
                 timestamp = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
                 for kind, config in shipments_by_kind.items():
@@ -968,6 +999,11 @@ class PrepareReleaseLPPipeline:
     help="Create a merge request in the shipment data repository (requires GITLAB_TOKEN).",
 )
 @click.option(
+    "--force",
+    is_flag=True,
+    help="Create a replacement shipment MR even when releases.yml points to an existing MR.",
+)
+@click.option(
     "--jira-bugs",
     default=None,
     help="Comma-separated JIRA issue IDs for release notes.",
@@ -986,6 +1022,7 @@ async def prepare_release_lp(
     build_data_repo_url: Optional[str],
     shipment_data_repo_url: Optional[str],
     create_mr: bool,
+    force: bool,
     jira_bugs: Optional[str],
     target_release_date: Optional[str],
 ):
@@ -1005,6 +1042,9 @@ async def prepare_release_lp(
     $ artcd prepare-release-lp -g acm-2.17 --assembly 2.17.3 \\
         --create-mr --jira-bugs ACM-1234,ACM-5678
     """
+    if force and not create_mr:
+        raise click.ClickException("--force requires --create-mr")
+
     jira_bugs_list = None
     if jira_bugs:
         jira_bugs_list = [j.strip() for j in jira_bugs.split(',') if j.strip()]
@@ -1022,6 +1062,7 @@ async def prepare_release_lp(
         build_data_repo_url=build_data_repo_url,
         shipment_data_repo_url=shipment_data_repo_url,
         create_mr=create_mr,
+        force=force,
         jira_bugs=jira_bugs_list,
         target_release_date=normalized_date,
     )

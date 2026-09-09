@@ -43,6 +43,14 @@ from pyartcd.fbc_util import extract_fbc_labels as _extract_fbc_labels
 from pyartcd.fbc_util import extract_ocp_version_from_nvr
 from pyartcd.fbc_util import validate_fbc_related_images as _validate_fbc_related_images
 from pyartcd.git import GitRepository
+from pyartcd.lp_shipment import (
+    get_shipment_mr_url,
+    reconcile_shipment_mr,
+    set_shipment_mr_draft,
+    update_shipment_mr_url,
+    validate_shipment_mr,
+    verify_shipment_mr_url,
+)
 from pyartcd.runtime import Runtime
 
 yaml = new_roundtrip_yaml_handler()
@@ -97,6 +105,7 @@ class ReleaseFromFbcPipeline:
         ocp_optional: bool = False,
         exclude_nvr_components: Optional[List[str]] = None,
         release_jira: Optional[str] = None,
+        force: bool = False,
     ) -> None:
         self.logger = logging.getLogger(__name__)
         self.runtime = runtime
@@ -105,6 +114,7 @@ class ReleaseFromFbcPipeline:
         self.fbc_pullspecs = fbc_pullspecs
         self.extra_image_nvrs = extra_image_nvrs or []
         self.create_mr = create_mr
+        self.force = force
         self.dry_run = self.runtime.dry_run
         self.ocp_optional = ocp_optional
         self.excluded_components = set(exclude_nvr_components) if exclude_nvr_components else set()
@@ -119,6 +129,7 @@ class ReleaseFromFbcPipeline:
         self.gitlab_url = self.runtime.config.get("gitlab_url", "https://gitlab.cee.redhat.com")
         self.gitlab_token = None
         self.shipment_mr_url = None
+        self._configured_shipment_mr_url: Optional[str] = None
         self.job_url = None
 
         # Product configuration - initialized to None, will be loaded from group config in run()
@@ -191,6 +202,38 @@ class ReleaseFromFbcPipeline:
             return file_content.decoded_content
         except GithubException as e:
             raise ValueError(f"Failed to fetch {filename} from {data_path} branch {branch}: {e}")
+
+    def _load_layered_product_shipment_mr(self) -> Optional[str]:
+        content = self.get_file_from_branch(self.group, "releases.yml")
+        releases_config = yaml.load(content.decode()) or {}
+        self._configured_shipment_mr_url = get_shipment_mr_url(releases_config, self.assembly)
+        return self._configured_shipment_mr_url
+
+    async def _update_layered_product_shipment_mr(self, mr_url: str) -> None:
+        if self.dry_run:
+            self.logger.info("[DRY-RUN] Would store shipment MR in releases.yml: %s", mr_url)
+            return
+        push_url = self.runtime.config.get("build_config", {}).get(
+            "ocp_build_data_repo_push_url", constants.OCP_BUILD_DATA_URL
+        )
+        build_data_repo = GitRepository(self.working_dir / "ocp-build-data-push", dry_run=self.dry_run)
+        await build_data_repo.setup(push_url)
+        await update_shipment_mr_url(
+            build_data_repo,
+            self.group,
+            self.assembly,
+            mr_url,
+            self._configured_shipment_mr_url,
+            create_as_stream=True,
+        )
+
+    async def _verify_layered_product_shipment_mr(self) -> None:
+        push_url = self.runtime.config.get("build_config", {}).get(
+            "ocp_build_data_repo_push_url", constants.OCP_BUILD_DATA_URL
+        )
+        build_data_repo = GitRepository(self.working_dir / "ocp-build-data-verify", dry_run=self.dry_run)
+        await build_data_repo.setup(push_url)
+        await verify_shipment_mr_url(build_data_repo, self.group, self.assembly, self._configured_shipment_mr_url)
 
     def _load_release_notes_template(self, kind: str | None = None) -> dict | None:
         """
@@ -1108,6 +1151,18 @@ class ReleaseFromFbcPipeline:
         if self.create_mr:
             await self.setup_shipment_repo()
 
+        existing_mr = None
+        if self.create_mr and not self.ocp_optional:
+            configured_mr_url = self._load_layered_product_shipment_mr()
+            if configured_mr_url and not self.force:
+                existing_mr = validate_shipment_mr(
+                    self._gitlab,
+                    configured_mr_url,
+                    self.shipment_data_repo_pull_url,
+                    self.shipment_data_repo_push_url,
+                )
+                self.logger.info("Will reuse shipment MR: %s", configured_mr_url)
+
         # Load product from group configuration
         self.product = await self._load_product_from_group_config()
         self.logger.info(f"Loaded product '{self.product}' - continuing workflow for {self.product} {self.assembly}")
@@ -1239,22 +1294,38 @@ class ReleaseFromFbcPipeline:
 
         # Create MR if requested
         if self.create_mr and shipments_by_kind:
-            try:
-                mr_url = await self.create_shipment_mr(shipments_by_kind, env="prod")
-                if mr_url:
-                    self.logger.info(f"Created shipment MR: {mr_url}")
-
-                    if self.ocp_optional:
-                        main_ocp_mr_url = self._get_main_ocp_shipment_url()
-                        if main_ocp_mr_url:
-                            await self._set_shipment_mr_dependency(main_ocp_mr_url)
-
+            if self.ocp_optional:
+                try:
+                    mr_url = await self.create_shipment_mr(shipments_by_kind, env="prod")
+                    self.logger.info("Shipment MR: %s", mr_url)
+                    main_ocp_mr_url = self._get_main_ocp_shipment_url()
+                    if main_ocp_mr_url:
+                        await self._set_shipment_mr_dependency(main_ocp_mr_url)
                     self._update_jira_with_mr_link(mr_url)
                     await self.set_shipment_mr_ready()
-            except Exception as e:
-                self.logger.exception(f"Failed to create MR: {e}")
-                if not self.dry_run:
-                    self.logger.info("Continuing with local files only")
+                except Exception as e:
+                    self.logger.exception("Failed to create MR: %s", e)
+                    if not self.dry_run:
+                        self.logger.info("Continuing with local files only")
+            else:
+                if existing_mr:
+                    await self._verify_layered_product_shipment_mr()
+                    set_shipment_mr_draft(existing_mr, self.dry_run)
+                    await reconcile_shipment_mr(
+                        self.shipment_data_repo,
+                        existing_mr,
+                        shipments_by_kind,
+                        include_fbc_ocp_version=True,
+                        dry_run=self.dry_run,
+                    )
+                    mr_url = self._configured_shipment_mr_url
+                    self.shipment_mr_url = mr_url
+                else:
+                    mr_url = await self.create_shipment_mr(shipments_by_kind, env="prod")
+                    await self._update_layered_product_shipment_mr(mr_url)
+                self.logger.info("Shipment MR: %s", mr_url)
+                self._update_jira_with_mr_link(mr_url)
+                await self.set_shipment_mr_ready()
 
         # Generate completion message
         completion_msg = (
@@ -1301,6 +1372,11 @@ class ReleaseFromFbcPipeline:
     "--create-mr",
     is_flag=True,
     help="Create a merge request in the shipment data repository (requires GITLAB_TOKEN environment variable)",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    help="Create a replacement shipment MR even when releases.yml points to an existing MR.",
 )
 @click.option(
     '--shipment-data-repo-url',
@@ -1353,6 +1429,7 @@ async def release_from_fbc(
     fbc_pullspecs: str,
     extra_image_nvrs: str,
     create_mr: bool,
+    force: bool,
     shipment_data_repo_url: Optional[str],
     shipment_path: Optional[str],
     jira_bugs: Optional[str],
@@ -1407,6 +1484,11 @@ async def release_from_fbc(
         --exclude-nvr-components kube-rbac-proxy-container \\
         --create-mr
     """
+    if force and not create_mr:
+        raise click.ClickException("--force requires --create-mr")
+    if force and ocp_optional:
+        raise click.ClickException("--force is only supported for layered-product releases, not --ocp-optional")
+
     fbc_pullspecs_list = [spec.strip() for spec in fbc_pullspecs.split(',') if spec.strip()]
     extra_image_nvrs_list = [nvr.strip() for nvr in extra_image_nvrs.split(',') if nvr.strip()]
 
@@ -1446,6 +1528,7 @@ async def release_from_fbc(
         ocp_optional=ocp_optional,
         exclude_nvr_components=exclude_nvr_components_list,
         release_jira=release_jira,
+        force=force,
     )
 
     await pipeline.run()
