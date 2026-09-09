@@ -37,7 +37,7 @@ from elliottlib.util import get_advisory_boilerplate
 from github import GithubException
 from tenacity import retry, stop_after_attempt
 
-from pyartcd import constants
+from pyartcd import constants, locks
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.fbc_util import extract_fbc_labels as _extract_fbc_labels
 from pyartcd.fbc_util import extract_ocp_version_from_nvr
@@ -107,6 +107,24 @@ class ReleaseFromFbcPipeline:
         release_jira: Optional[str] = None,
         force: bool = False,
     ) -> None:
+        """Initialize an FBC-based release pipeline.
+
+        Args:
+            runtime: pyartcd runtime and configuration.
+            group: ocp-build-data group branch.
+            assembly: Release assembly name.
+            fbc_pullspecs: FBC images supplying release content.
+            create_mr: Create or reuse a shipment merge request.
+            shipment_data_repo_url: Optional shipment-data repository override.
+            shipment_path: Optional local output directory.
+            jira_bugs: Jira issues to include in release notes.
+            target_release_date: Optional normalized target ship date.
+            extra_image_nvrs: Additional image NVRs to ship.
+            ocp_optional: Use the independent OCP optional-operator workflow.
+            exclude_nvr_components: Components excluded from OCP optional mode.
+            release_jira: Jira release-request issue to link to the shipment MR.
+            force: Replace the configured layered-product shipment MR.
+        """
         self.logger = logging.getLogger(__name__)
         self.runtime = runtime
         self.group = group
@@ -1550,4 +1568,12 @@ async def release_from_fbc(
         force=force,
     )
 
-    await pipeline.run()
+    if create_mr and not ocp_optional and not runtime.dry_run:
+        lock_name = locks.Lock.LAYERED_PRODUCT_SHIPMENT.value.format(group=group, assembly=assembly)
+        await locks.run_with_lock(
+            coro=pipeline.run(),
+            lock=locks.Lock.LAYERED_PRODUCT_SHIPMENT,
+            lock_name=lock_name,
+        )
+    else:
+        await pipeline.run()

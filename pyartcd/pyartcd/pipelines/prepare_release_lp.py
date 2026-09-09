@@ -38,7 +38,7 @@ from elliottlib.shipment_model import (
 from elliottlib.util import get_advisory_boilerplate
 from github import GithubException
 
-from pyartcd import constants
+from pyartcd import constants, locks
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.fbc_util import validate_fbc_related_images
 from pyartcd.git import GitRepository
@@ -103,6 +103,19 @@ class PrepareReleaseLPPipeline:
         jira_bugs: Optional[List[str]] = None,
         target_release_date: Optional[str] = None,
     ) -> None:
+        """Initialize a layered-product prepare-release pipeline.
+
+        Args:
+            runtime: pyartcd runtime and configuration.
+            group: ocp-build-data group branch.
+            assembly: Named layered-product assembly to prepare.
+            build_data_repo_url: Optional ocp-build-data pull URL override.
+            shipment_data_repo_url: Optional shipment-data repository override.
+            create_mr: Create or reuse a shipment merge request.
+            force: Replace the configured shipment MR instead of reusing it.
+            jira_bugs: Jira issues to include in generated release notes.
+            target_release_date: Optional normalized target ship date.
+        """
         self._logger = logging.getLogger(__name__)
         self.runtime = runtime
         self.group = group
@@ -221,7 +234,15 @@ class PrepareReleaseLPPipeline:
         return {}
 
     async def _load_assembly(self) -> Dict:
-        """Read assembly definition from ocp-build-data releases.yml."""
+        """Read the named assembly definition from ocp-build-data.
+
+        Returns:
+            The complete assembly mapping from ``releases.yml``.
+
+        Raises:
+            click.ClickException: If ``releases.yml`` or the named assembly is
+                missing.
+        """
         self._logger.info("Reading assembly '%s' from releases.yml...", self.assembly)
 
         build_data_path = self._working_dir / "ocp-build-data-read"
@@ -837,6 +858,12 @@ class PrepareReleaseLPPipeline:
 
         Pushes a commit to ocp-build-data to record the shipment MR URL
         in the assembly's ``group.shipment.mr`` field.
+
+        Args:
+            shipment_mr_url: Shipment merge request URL to persist.
+
+        Raises:
+            RuntimeError: If the assembly pointer changed concurrently.
         """
         ocp_build_data_repo_push_url = self.runtime.config["build_config"]["ocp_build_data_repo_push_url"]
 
@@ -875,6 +902,7 @@ class PrepareReleaseLPPipeline:
         await verify_shipment_mr_url(build_data, self.group, self.assembly, self._configured_shipment_mr_url)
 
     async def run(self) -> None:
+        """Build release artifacts and create or reconcile their shipment MR."""
         self._logger.info(
             "Starting prepare-release-lp for group=%s assembly=%s",
             self.group,
@@ -1083,4 +1111,12 @@ async def prepare_release_lp(
         target_release_date=normalized_date,
     )
 
-    await pipeline.run()
+    if create_mr and not runtime.dry_run:
+        lock_name = locks.Lock.LAYERED_PRODUCT_SHIPMENT.value.format(group=group, assembly=assembly)
+        await locks.run_with_lock(
+            coro=pipeline.run(),
+            lock=locks.Lock.LAYERED_PRODUCT_SHIPMENT,
+            lock_name=lock_name,
+        )
+    else:
+        await pipeline.run()

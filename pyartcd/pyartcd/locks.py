@@ -11,6 +11,8 @@ from pyartcd import constants
 
 # Defines the pipeline locks managed by Redis
 class Lock(enum.Enum):
+    """Redis lock-name templates used to serialize pyartcd pipelines."""
+
     OLM_BUNDLE = 'lock:olm-bundle:{version}'
     OLM_BUNDLE_KONFLUX = 'lock:olm-bundle-konflux:{version}'
     MIRRORING_RPMS = 'lock:mirroring-rpms:{version}'
@@ -35,6 +37,7 @@ class Lock(enum.Enum):
     SYNC_CI_IMAGES = 'lock:sync-ci-images:{version}'
     OPEN_RECONCILIATION_PRS = 'lock:open-reconciliation-prs:{version}'
     OPEN_RECONCILIATION_PRS_LAYERED = 'lock:open-reconciliation-prs-layered:{group}'
+    LAYERED_PRODUCT_SHIPMENT = 'lock:layered-product-shipment:{group}:{assembly}'
 
 
 class Keys(enum.Enum):
@@ -169,6 +172,11 @@ LOCK_POLICY = {
         'lock_timeout': DEFAULT_LOCK_TIMEOUT,
     },
     Lock.OPEN_RECONCILIATION_PRS_LAYERED: {
+        'retry_count': 36000,
+        'retry_delay_min': 0.1,
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
+    },
+    Lock.LAYERED_PRODUCT_SHIPMENT: {
         'retry_count': 36000,
         'retry_delay_min': 0.1,
         'lock_timeout': DEFAULT_LOCK_TIMEOUT,

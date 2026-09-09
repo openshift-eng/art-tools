@@ -862,16 +862,51 @@ class TestCliValidation(unittest.TestCase):
         self.assertIn("At least one of", str(result.exception))
 
     def test_force_requires_create_mr(self):
+        """Reject force when shipment MR creation is disabled."""
         result = self._invoke(["--extra-image-nvrs", "foo-container-1.0-1.el9", "--force"])
         self.assertIsInstance(result.exception, click.ClickException)
         self.assertIn("--force requires --create-mr", str(result.exception))
 
     def test_force_rejected_for_ocp_optional(self):
+        """Keep replacement behavior out of the OCP optional path."""
         result = self._invoke(
             ["--extra-image-nvrs", "foo-container-1.0-1.el9", "--create-mr", "--force", "--ocp-optional"]
         )
         self.assertIsInstance(result.exception, click.ClickException)
         self.assertIn("only supported for layered-product", str(result.exception))
+
+    @patch("pyartcd.pipelines.release_from_fbc.locks.run_with_lock", new_callable=AsyncMock)
+    @patch("pyartcd.pipelines.release_from_fbc.ReleaseFromFbcPipeline")
+    def test_layered_product_create_mr_uses_assembly_lock(self, pipeline_cls, run_with_lock):
+        """Serialize layered-product shipment updates by group and assembly."""
+
+        async def await_pipeline(coro, **_kwargs):
+            """Execute the coroutine passed through the mocked lock."""
+            return await coro
+
+        run_with_lock.side_effect = await_pipeline
+        pipeline_cls.return_value.run = AsyncMock()
+
+        result = self._invoke(["--extra-image-nvrs", "foo-container-1.0-1.el9", "--create-mr"])
+
+        self.assertIsNone(result.exception)
+        run_with_lock.assert_awaited_once()
+        self.assertEqual(
+            run_with_lock.await_args.kwargs["lock_name"],
+            "lock:layered-product-shipment:oadp-1.5:1.5.3",
+        )
+
+    @patch("pyartcd.pipelines.release_from_fbc.locks.run_with_lock", new_callable=AsyncMock)
+    @patch("pyartcd.pipelines.release_from_fbc.ReleaseFromFbcPipeline")
+    def test_ocp_optional_create_mr_does_not_use_layered_product_lock(self, pipeline_cls, run_with_lock):
+        """Leave OCP optional shipment MR creation outside the LP lock path."""
+        pipeline_cls.return_value.run = AsyncMock()
+
+        result = self._invoke(["--extra-image-nvrs", "foo-container-1.0-1.el9", "--create-mr", "--ocp-optional"])
+
+        self.assertIsNone(result.exception)
+        run_with_lock.assert_not_awaited()
+        pipeline_cls.return_value.run.assert_awaited_once()
 
     @patch("pyartcd.pipelines.release_from_fbc.ReleaseFromFbcPipeline")
     def test_fbc_only_does_not_raise(self, mock_pipeline_cls):
