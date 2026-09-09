@@ -211,7 +211,7 @@ def get_shipment_configs_from_mr(
 
         filename = file_path.split('/')[-1]
         parts = filename.replace('.yaml', '').replace('.yml', '')
-        kind = next((k for k in kinds if k in parts), None)
+        kind = _get_shipment_config_kind(parts, kinds)
         if not kind:
             continue
 
@@ -226,6 +226,34 @@ def get_shipment_configs_from_mr(
         shipment_configs[kind] = shipment_data
 
     return shipment_configs
+
+
+def _get_shipment_config_kind(filename_stem: str, kinds: Tuple[str, ...]) -> str | None:
+    """
+    Extracts a shipment kind from a filename, preserving an optional RHEL suffix.
+
+    New multi-RHEL shipment files use names such as ``image-el9`` and
+    ``microshift-bootc-el10``. The suffix must remain part of the returned key so
+    that multiple RHEL-specific configs can coexist in one merge request.
+
+    Args:
+        filename_stem: Shipment filename without its YAML extension.
+        kinds: Base shipment kinds accepted by the caller.
+    Returns:
+        The matching base or RHEL-qualified shipment kind, if any.
+    """
+    for kind in sorted(kinds, key=len, reverse=True):
+        qualified_match = re.search(rf"(?:^|\.)({re.escape(kind)}-el\d+)(?:\.|$)", filename_stem)
+        if qualified_match:
+            return qualified_match.group(1)
+
+        base_match = re.search(rf"(?:^|\.){re.escape(kind)}(?:\.|$)", filename_stem)
+        if base_match:
+            return kind
+
+    # Preserve the historical substring matching for unusual legacy filenames such as
+    # ``rpm-extra.yaml``.
+    return next((kind for kind in kinds if kind in filename_stem), None)
 
 
 def get_shipment_config_from_mr(mr_url: str, kind: str) -> ShipmentConfig | None:
