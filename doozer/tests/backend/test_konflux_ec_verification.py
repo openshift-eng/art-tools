@@ -152,7 +152,7 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
                 builder._konflux_client.resource_url = MagicMock(return_value="https://example.com/plr")
 
                 builder._konflux_client.verify_enterprise_contract = AsyncMock(return_value=ec_result)
-                builder._konflux_client.wait_for_integration_test_scenarios = AsyncMock(
+                builder._konflux_client.run_integration_test_scenarios = AsyncMock(
                     return_value=custom_its_result or CustomIntegrationTestResult(False, "", [])
                 )
 
@@ -233,15 +233,22 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
             ec_policy_configuration=None,
             prega_ec_policy_configuration=None,
             integration_test_scenarios=("qe-test",),
+            integration_test_snapshot_annotations={
+                "pac.test.appstudio.openshift.io/branch": "release-4.18"
+            },
         )
         metadata = _make_metadata(for_release=True)
 
         await self._run_build_and_get_ec_calls(config, metadata, mock_kc_init)
 
-        mock_kc_init.return_value.wait_for_integration_test_scenarios.assert_awaited_once_with(
-            pipelinerun_name="test-plr-abc12",
+        mock_kc_init.return_value.run_integration_test_scenarios.assert_awaited_once_with(
             scenario_names=("qe-test",),
             application_name="openshift-4-18",
+            component_name=metadata.get_konflux_component_name.return_value,
+            image_pullspec="quay.io/openshift-release-dev/ocp-v4.0-art-dev-test@sha256:abc123def456",
+            source_url="https://github.com/openshift/test-repo",
+            commit_sha="deadbeef",
+            snapshot_annotations={"pac.test.appstudio.openshift.io/branch": "release-4.18"},
             namespace="ocp-art-tenant",
         )
 
@@ -252,7 +259,7 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
         verify_ec = await self._run_build_and_get_ec_calls(config, metadata, mock_kc_init)
 
         verify_ec.assert_awaited_once()
-        mock_kc_init.return_value.wait_for_integration_test_scenarios.assert_not_awaited()
+        mock_kc_init.return_value.run_integration_test_scenarios.assert_not_awaited()
 
     async def test_custom_its_failure_sets_its_error_and_pipeline_url(self, mock_kc_init):
         config = _make_config(
