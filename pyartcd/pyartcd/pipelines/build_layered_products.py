@@ -336,7 +336,7 @@ class BuildLayeredProductsPipeline:
 
     async def _update_build_fail_counters(self):
         """Update stream build, EC/ITS, and release failure counters from record.log."""
-        if self.assembly != 'stream':
+        if self.assembly != 'stream' or self.runtime.dry_run:
             return
         record_log = self.parse_record_log()
         if not record_log:

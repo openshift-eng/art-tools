@@ -274,6 +274,9 @@ class KonfluxImageBuilder:
 
             for attempt in range(build_attempts):
                 logger.info("Build attempt %s/%s", attempt + 1, build_attempts)
+                image_pullspec = None
+                image_digest = None
+                definitive_image_pullspec = None
                 pipelinerun_info = await self._start_build(
                     metadata=metadata,
                     build_repo=build_repo,
@@ -367,13 +370,11 @@ class KonfluxImageBuilder:
                     and ec_policy is not None
                     and not self._config.skip_ec_verify
                     and metadata.for_release
-                    and image_pullspec  # EC requires actual build results
-                    and image_digest
+                    and definitive_image_pullspec is not None
                 )
                 if should_run_ec:
                     app_name = util.konflux_application_name(self._config.group_name)
 
-                    image_with_digest = f"{image_pullspec.split(':')[0]}@{image_digest}"
                     source_url = artlib_util.convert_remote_git_to_https(build_repo.url)
                     konflux_component_name = metadata.get_konflux_component_name(app_name)
 
@@ -381,7 +382,7 @@ class KonfluxImageBuilder:
                         namespace=self._config.namespace,
                         application_name=app_name,
                         component_name=konflux_component_name,
-                        image_pullspec=image_with_digest,
+                        image_pullspec=definitive_image_pullspec,
                         source_url=source_url,
                         commit_sha=build_repo.commit_hash,
                         ec_policy=ec_policy,
@@ -421,6 +422,7 @@ class KonfluxImageBuilder:
                     and bool(self._config.integration_test_scenarios)
                     and not self._config.skip_custom_its
                     and metadata.for_release
+                    and definitive_image_pullspec is not None
                 )
                 if should_run_custom_its:
                     app_name = util.konflux_application_name(self._config.group_name)
@@ -428,7 +430,7 @@ class KonfluxImageBuilder:
                         scenario_names=self._config.integration_test_scenarios,
                         application_name=app_name,
                         component_name=metadata.get_konflux_component_name(app_name),
-                        image_pullspec=f"{image_pullspec.split(':')[0]}@{image_digest}",
+                        image_pullspec=definitive_image_pullspec,
                         source_url=artlib_util.convert_remote_git_to_https(build_repo.url),
                         commit_sha=build_repo.commit_hash,
                         blocking_scenario_names=self._blocking_custom_integration_test_scenarios,
@@ -462,8 +464,7 @@ class KonfluxImageBuilder:
                     if (
                         outcome is KonfluxBuildOutcome.SUCCESS
                         and metadata.should_trigger_base_image_release()
-                        and image_pullspec
-                        and image_digest
+                        and definitive_image_pullspec is not None
                     ):
                         release_result = await self._trigger_base_image_release(
                             metadata, nvr, definitive_image_pullspec, build_repo
@@ -489,8 +490,7 @@ class KonfluxImageBuilder:
                     if (
                         outcome is KonfluxBuildOutcome.SUCCESS
                         and metadata.should_create_golang_builder_shipment()
-                        and image_pullspec
-                        and image_digest
+                        and definitive_image_pullspec is not None
                     ):
                         try:
                             shipment_handler = GolangBuilderShipmentHandler(

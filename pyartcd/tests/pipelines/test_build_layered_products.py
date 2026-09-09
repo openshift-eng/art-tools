@@ -656,3 +656,14 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
         await self.pipeline._update_build_fail_counters()
         mock_reset.assert_not_awaited()
         mock_increment.assert_not_awaited()
+
+    @patch('pyartcd.pipelines.build_layered_products.increment_fail_counter', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.build_layered_products.reset_fail_counter', new_callable=AsyncMock)
+    async def test_failure_counters_skip_dry_run(self, mock_reset, mock_increment):
+        self.runtime.dry_run = True
+        with patch.object(self.pipeline, 'parse_record_log') as mock_parse_record_log:
+            await self.pipeline._update_build_fail_counters()
+
+        mock_parse_record_log.assert_not_called()
+        mock_reset.assert_not_awaited()
+        mock_increment.assert_not_awaited()

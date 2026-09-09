@@ -118,6 +118,7 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
         ec_result=None,
         custom_its_result=None,
         blocking_custom_its=None,
+        completed_plr_info=None,
         expect_build_error=False,
     ):
         """Helper: run build() with all heavy methods mocked, return verify_enterprise_contract mock."""
@@ -149,8 +150,9 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
                 mock_repo.branch = "art-openshift-4.18-assembly-stream-dgk-test-image"
                 mock_build_repo.return_value = mock_repo
 
-                wait_plr_info = _make_successful_pipelinerun_info()
-                builder._konflux_client.wait_for_pipelinerun = AsyncMock(return_value=wait_plr_info)
+                if completed_plr_info is None:
+                    completed_plr_info = _make_successful_pipelinerun_info()
+                builder._konflux_client.wait_for_pipelinerun = AsyncMock(return_value=completed_plr_info)
                 builder._konflux_client.resource_url = MagicMock(return_value="https://example.com/plr")
 
                 builder._konflux_client.verify_enterprise_contract = AsyncMock(return_value=ec_result)
@@ -261,6 +263,26 @@ class TestEcVerificationGating(IsolatedAsyncioTestCase):
             snapshot_annotations={"pac.test.appstudio.openshift.io/branch": "release-4.18"},
             namespace="ocp-art-tenant",
         )
+
+    async def test_custom_its_skipped_in_dry_run_without_image_results(self, mock_kc_init):
+        config = _make_config(
+            dry_run=True,
+            integration_test_scenarios=("qe-test",),
+        )
+        metadata = _make_metadata(for_release=True)
+        completed_plr_info = _make_successful_pipelinerun_info()
+        completed_plr_info.to_dict.return_value["status"]["results"] = []
+
+        verify_ec = await self._run_build_and_get_ec_calls(
+            config,
+            metadata,
+            mock_kc_init,
+            completed_plr_info=completed_plr_info,
+        )
+
+        verify_ec.assert_not_awaited()
+        mock_kc_init.return_value.run_integration_test_scenarios.assert_not_awaited()
+        self.assertTrue(metadata.build_status)
 
     async def test_skip_custom_its_does_not_skip_ec(self, mock_kc_init):
         config = _make_config(integration_test_scenarios=("qe-test",), skip_custom_its=True)
