@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import sys
 import traceback
 from pathlib import Path
@@ -354,6 +355,35 @@ class KonfluxBuildCli:
         ):
             raise ValueError("konflux.integration_test_scenarios must be a list of non-empty scenario names")
 
+        integration_test_snapshot_annotations = runtime.group_config.get("konflux", {}).get(
+            "integration_test_snapshot_annotations", {}
+        )
+        if integration_test_snapshot_annotations is Missing or integration_test_snapshot_annotations is None:
+            integration_test_snapshot_annotations = {}
+        if not isinstance(integration_test_snapshot_annotations, dict) or not all(
+            isinstance(key, str) and key and isinstance(value, str)
+            for key, value in integration_test_snapshot_annotations.items()
+        ):
+            raise ValueError("konflux.integration_test_snapshot_annotations must be a string-to-string mapping")
+        annotation_key_pattern = re.compile(
+            r"^(?:[a-z0-9](?:[-a-z0-9.]*[a-z0-9])?/)?[A-Za-z0-9](?:[-_.A-Za-z0-9]*[A-Za-z0-9])?$"
+        )
+        invalid_annotation_names = [
+            key for key in integration_test_snapshot_annotations if not annotation_key_pattern.fullmatch(key)
+        ]
+        if invalid_annotation_names:
+            raise ValueError(
+                "konflux.integration_test_snapshot_annotations contains invalid annotation names: "
+                f"{', '.join(sorted(invalid_annotation_names))}"
+            )
+        reserved_snapshot_annotations = {"test.appstudio.openshift.io/status"}
+        invalid_annotations = reserved_snapshot_annotations.intersection(integration_test_snapshot_annotations)
+        if invalid_annotations:
+            raise ValueError(
+                "konflux.integration_test_snapshot_annotations contains controller-managed keys: "
+                f"{', '.join(sorted(invalid_annotations))}"
+            )
+
         config = KonfluxImageBuilderConfig(
             base_dir=Path(runtime.working_dir, constants.WORKING_SUBDIR_KONFLUX_BUILD_SOURCES),
             group_name=group,
@@ -372,6 +402,7 @@ class KonfluxBuildCli:
             skip_ec_verify=self.skip_ec_verify,
             effective_time=self.effective_time,
             integration_test_scenarios=tuple(dict.fromkeys(integration_test_scenarios)),
+            integration_test_snapshot_annotations=dict(integration_test_snapshot_annotations),
             skip_custom_its=self.skip_custom_its,
         )
         builder = KonfluxImageBuilder(config=config, record_logger=runtime.record_logger)

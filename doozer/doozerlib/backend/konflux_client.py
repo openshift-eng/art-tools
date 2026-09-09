@@ -1082,27 +1082,103 @@ class KonfluxClient:
                     f"IntegrationTestScenario {scenario_name!r} belongs to application "
                     f"{actual_application!r}, expected {application_name!r}"
                 )
+            contexts = scenario.to_dict().get("spec", {}).get("contexts", [])
+            context_names = {context.get("name") for context in contexts if isinstance(context, dict)}
+            if context_names != {"disabled"}:
+                raise ValueError(
+                    f"IntegrationTestScenario {scenario_name!r} must use only the 'disabled' context "
+                    "for explicit ART triggering"
+                )
 
-    async def _get_snapshot_for_build(
-        self,
-        pipelinerun_name: str,
-        namespace: Optional[str] = None,
-    ) -> Optional[resource.ResourceInstance]:
-        """Find the Snapshot created for an image build PipelineRun."""
-        namespace = namespace or self.default_namespace
-        api = await self._get_api(API_VERSION, KIND_SNAPSHOT)
-        snapshot_list = await exectools.to_thread(
-            api.get,
-            namespace=namespace,
-            label_selector=f"appstudio.openshift.io/build-pipelinerun={pipelinerun_name}",
-            _request_timeout=self.request_timeout,
+    @staticmethod
+    def _new_custom_integration_test_snapshot(
+        namespace: str,
+        application_name: str,
+        component_name: str,
+        image_pullspec: str,
+        source_url: str,
+        commit_sha: str,
+        annotations: Dict[str, str],
+    ) -> dict:
+        """Create a single-component Snapshot manifest for explicitly triggered integration tests."""
+        application_prefix = art_util.normalize_k8s_dns_label(application_name, max_length=43)
+        return {
+            "apiVersion": API_VERSION,
+            "kind": KIND_SNAPSHOT,
+            "metadata": {
+                "generateName": f"{application_prefix}-art-its-",
+                "namespace": namespace,
+                "labels": {
+                    "appstudio.openshift.io/application": application_name,
+                    "appstudio.openshift.io/component": component_name,
+                    "art.openshift.io/custom-its": "true",
+                },
+                "annotations": dict(annotations),
+            },
+            "spec": {
+                "application": application_name,
+                "components": [
+                    {
+                        "name": component_name,
+                        "containerImage": image_pullspec,
+                        "source": {"git": {"url": source_url, "revision": commit_sha}},
+                    }
+                ],
+            },
+        }
+
+    @staticmethod
+    def _snapshot_test_statuses(snapshot: resource.ResourceInstance) -> Dict[str, dict]:
+        annotation = snapshot.to_dict().get("metadata", {}).get("annotations", {}).get(
+            "test.appstudio.openshift.io/status"
         )
-        snapshots = list(getattr(snapshot_list, "items", []))
-        if not snapshots:
-            return None
-        if len(snapshots) > 1:
-            raise RuntimeError(f"Found multiple Snapshots for build PipelineRun {pipelinerun_name}")
-        return snapshots[0]
+        if not annotation:
+            return {}
+        try:
+            status_entries = json.loads(annotation)
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise ValueError(
+                f"Snapshot {snapshot.metadata.name} has malformed integration test status annotation"
+            ) from exc
+        if not isinstance(status_entries, list) or not all(isinstance(entry, dict) for entry in status_entries):
+            raise ValueError(f"Snapshot {snapshot.metadata.name} has malformed integration test status annotation")
+        return {entry.get("scenario"): entry for entry in status_entries if entry.get("scenario")}
+
+    async def _trigger_integration_test_scenario(
+        self,
+        snapshot_name: str,
+        scenario_name: str,
+        namespace: str,
+        timeout_seconds: int,
+        poll_interval_seconds: int,
+    ) -> resource.ResourceInstance:
+        """Request one scenario run and wait for Integration Service to record it."""
+        await self._patch(
+            {
+                "apiVersion": API_VERSION,
+                "kind": KIND_SNAPSHOT,
+                "metadata": {
+                    "name": snapshot_name,
+                    "namespace": namespace,
+                    "labels": {"test.appstudio.openshift.io/run": scenario_name},
+                },
+            }
+        )
+        deadline = time.monotonic() + timeout_seconds
+        while time.monotonic() < deadline:
+            snapshot = await self._get(API_VERSION, KIND_SNAPSHOT, snapshot_name, namespace=namespace, strict=False)
+            if snapshot is None:
+                raise RuntimeError(f"Snapshot {snapshot_name} disappeared")
+            statuses = self._snapshot_test_statuses(snapshot)
+            run_label = snapshot.to_dict().get("metadata", {}).get("labels", {}).get(
+                "test.appstudio.openshift.io/run"
+            )
+            if scenario_name in statuses and run_label != scenario_name:
+                return snapshot
+            await asyncio.sleep(poll_interval_seconds)
+        raise TimeoutError(
+            f"Timed out waiting for IntegrationTestScenario {scenario_name} to start for Snapshot {snapshot_name}"
+        )
 
     @staticmethod
     def _custom_integration_test_pipeline_url(
@@ -1117,114 +1193,55 @@ class KonfluxClient:
             f"{application_name}/pipelineruns/{pipelinerun_name}"
         )
 
-    async def wait_for_integration_test_scenarios(
+    async def run_integration_test_scenarios(
         self,
-        pipelinerun_name: str,
         scenario_names: Sequence[str],
         application_name: str,
+        component_name: str,
+        image_pullspec: str,
+        source_url: str,
+        commit_sha: str,
+        snapshot_annotations: Optional[Dict[str, str]] = None,
         namespace: Optional[str] = None,
-        snapshot_timeout_seconds: int = 10 * 60,
+        trigger_timeout_seconds: int = 10 * 60,
         completion_timeout_seconds: int = 6 * 60 * 60,
         poll_interval_seconds: int = 10,
     ) -> CustomIntegrationTestResult:
-        """Wait for configured, auto-triggered ITS runs associated with a build Snapshot."""
+        """Create a Snapshot, explicitly trigger configured scenarios, and wait for completion."""
         namespace = namespace or self.default_namespace
         scenario_names = tuple(dict.fromkeys(scenario_names))
         if not scenario_names:
             return CustomIntegrationTestResult(False, "", [])
         if self.dry_run:
             self._logger.warning(
-                "[DRY RUN] Would have waited for custom IntegrationTestScenarios: %s",
+                "[DRY RUN] Would have created a Snapshot and triggered custom IntegrationTestScenarios: %s",
                 ", ".join(scenario_names),
             )
             return CustomIntegrationTestResult(False, "", [])
-
-        trigger_deadline = time.monotonic() + snapshot_timeout_seconds
-        snapshot = None
         statuses_by_scenario: Dict[str, dict] = {}
-
         try:
-            while time.monotonic() < trigger_deadline:
-                snapshot = await self._get_snapshot_for_build(pipelinerun_name, namespace=namespace)
-                if snapshot is None:
-                    await asyncio.sleep(poll_interval_seconds)
-                    continue
+            snapshot_manifest = self._new_custom_integration_test_snapshot(
+                namespace=namespace,
+                application_name=application_name,
+                component_name=component_name,
+                image_pullspec=image_pullspec,
+                source_url=source_url,
+                commit_sha=commit_sha,
+                annotations=snapshot_annotations or {},
+            )
+            snapshot = await self._create(snapshot_manifest)
+            snapshot_name = snapshot.metadata.name
+            self._logger.info("Created custom integration test Snapshot %s", snapshot_name)
 
-                snapshot_dict = snapshot.to_dict()
-                annotation = snapshot_dict.get("metadata", {}).get("annotations", {}).get(
-                    "test.appstudio.openshift.io/status"
+            for scenario_name in scenario_names:
+                snapshot = await self._trigger_integration_test_scenario(
+                    snapshot_name,
+                    scenario_name,
+                    namespace,
+                    trigger_timeout_seconds,
+                    poll_interval_seconds,
                 )
-                if not annotation:
-                    await asyncio.sleep(poll_interval_seconds)
-                    continue
-                try:
-                    status_entries = json.loads(annotation)
-                except (TypeError, json.JSONDecodeError) as exc:
-                    raise ValueError(
-                        f"Snapshot {snapshot.metadata.name} has malformed integration test status annotation"
-                    ) from exc
-                if not isinstance(status_entries, list) or not all(isinstance(entry, dict) for entry in status_entries):
-                    raise ValueError(
-                        f"Snapshot {snapshot.metadata.name} has malformed integration test status annotation"
-                    )
-
-                statuses_by_scenario = {
-                    entry.get("scenario"): entry
-                    for entry in status_entries
-                    if entry.get("scenario") in scenario_names
-                }
-                failed_entry = next(
-                    (
-                        statuses_by_scenario[name]
-                        for name in scenario_names
-                        if name in statuses_by_scenario
-                        and statuses_by_scenario[name].get("status")
-                        in {
-                            "Deleted",
-                            "EnvironmentProvisionError",
-                            "DeploymentError",
-                            "TestFail",
-                            "TestInvalid",
-                            "SnapshotCreationFailed",
-                            "BuildPLRFailed",
-                            "GroupSnapshotCreationFailed",
-                        }
-                    ),
-                    None,
-                )
-                if failed_entry:
-                    self._logger.error(
-                        "Custom IntegrationTestScenario %s finished with %s: %s",
-                        failed_entry.get("scenario"),
-                        failed_entry.get("status"),
-                        failed_entry.get("details", ""),
-                    )
-                    failed_url = self._custom_integration_test_pipeline_url(
-                        namespace,
-                        application_name,
-                        failed_entry.get("testPipelineRunName", ""),
-                    )
-                    pipeline_urls = [
-                        self._custom_integration_test_pipeline_url(
-                            namespace,
-                            application_name,
-                            statuses_by_scenario[name].get("testPipelineRunName", ""),
-                        )
-                        for name in scenario_names
-                        if name in statuses_by_scenario
-                        and statuses_by_scenario[name].get("testPipelineRunName")
-                    ]
-                    return CustomIntegrationTestResult(True, failed_url, pipeline_urls)
-
-                if all(name in statuses_by_scenario for name in scenario_names):
-                    break
-                await asyncio.sleep(poll_interval_seconds)
-            else:
-                self._logger.error(
-                    "Timed out waiting for Snapshot/custom ITS triggers for build PipelineRun %s",
-                    pipelinerun_name,
-                )
-                return CustomIntegrationTestResult(True, "", [])
+                statuses_by_scenario = self._snapshot_test_statuses(snapshot)
 
             completion_deadline = time.monotonic() + completion_timeout_seconds
             while True:
@@ -1294,22 +1311,14 @@ class KonfluxClient:
                     )
 
                 await asyncio.sleep(poll_interval_seconds)
-                snapshot = await self._get_snapshot_for_build(pipelinerun_name, namespace=namespace)
-                if snapshot is None:
-                    raise RuntimeError(f"Snapshot for build PipelineRun {pipelinerun_name} disappeared")
-                annotation = snapshot.to_dict().get("metadata", {}).get("annotations", {}).get(
-                    "test.appstudio.openshift.io/status"
+                snapshot = await self._get(
+                    API_VERSION, KIND_SNAPSHOT, snapshot_name, namespace=namespace, strict=False
                 )
-                try:
-                    status_entries = json.loads(annotation)
-                except (TypeError, json.JSONDecodeError) as exc:
-                    raise ValueError(
-                        f"Snapshot {snapshot.metadata.name} has malformed integration test status annotation"
-                    ) from exc
+                if snapshot is None:
+                    raise RuntimeError(f"Snapshot {snapshot_name} disappeared")
+                all_statuses = self._snapshot_test_statuses(snapshot)
                 statuses_by_scenario = {
-                    entry.get("scenario"): entry
-                    for entry in status_entries
-                    if isinstance(entry, dict) and entry.get("scenario") in scenario_names
+                    name: all_statuses[name] for name in scenario_names if name in all_statuses
                 }
                 if not all(name in statuses_by_scenario for name in scenario_names):
                     raise ValueError(

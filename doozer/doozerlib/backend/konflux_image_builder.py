@@ -6,7 +6,7 @@ import pprint
 import re
 import traceback
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple, cast
@@ -102,6 +102,7 @@ class KonfluxImageBuilderConfig:
     skip_ec_verify: bool = False
     effective_time: str = "now"
     integration_test_scenarios: tuple[str, ...] = ()
+    integration_test_snapshot_annotations: Dict[str, str] = field(default_factory=dict)
     skip_custom_its: bool = False
 
 
@@ -420,10 +421,14 @@ class KonfluxImageBuilder:
                 )
                 if should_run_custom_its:
                     app_name = util.konflux_application_name(self._config.group_name)
-                    custom_its_result = await self._konflux_client.wait_for_integration_test_scenarios(
-                        pipelinerun_name=pipelinerun_name,
+                    custom_its_result = await self._konflux_client.run_integration_test_scenarios(
                         scenario_names=self._config.integration_test_scenarios,
                         application_name=app_name,
+                        component_name=metadata.get_konflux_component_name(app_name),
+                        image_pullspec=f"{image_pullspec.split(':')[0]}@{image_digest}",
+                        source_url=artlib_util.convert_remote_git_to_https(build_repo.url),
+                        commit_sha=build_repo.commit_hash,
+                        snapshot_annotations=self._config.integration_test_snapshot_annotations,
                         namespace=self._config.namespace,
                     )
                     for pipeline_url in custom_its_result.pipeline_urls:
