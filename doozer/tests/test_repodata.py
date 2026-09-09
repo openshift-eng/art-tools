@@ -1310,3 +1310,165 @@ class TestOutdatedRPMFinder(IsolatedAsyncioTestCase):
         # Expected: test-pkg SHOULD be flagged as outdated because bind requirement is satisfied
         expected = [('test-pkg-0:1.0.0-1.el9.x86_64', 'test-pkg-0:2.0.0-1.el9.x86_64', 'rhel-9-appstream')]
         self.assertEqual(actual, expected)
+
+    def test_versioned_variant_regex_true_positives(self):
+        """True positives: real versioned variants should be detected by the regex"""
+        regex = OutdatedRPMFinder._VERSIONED_VARIANT_RE
+        # bind -> bind9.18: suffix "9.18" starts with digit, not followed by alpha
+        self.assertIsNotNone(regex.match("9.18"), "bind9.18 suffix should match")
+        # python -> python3.11: suffix "3.11"
+        self.assertIsNotNone(regex.match("3.11"), "python3.11 suffix should match")
+        # skopeo -> skopeo-2: suffix "-2" (separator + digit)
+        self.assertIsNotNone(regex.match("-2"), "skopeo-2 suffix should match")
+        # nodejs -> nodejs18: suffix "18"
+        self.assertIsNotNone(regex.match("18"), "nodejs18 suffix should match")
+
+    def test_versioned_variant_regex_false_positive_prevention(self):
+        """False-positive prevention: functional name components should NOT match"""
+        regex = OutdatedRPMFinder._VERSIONED_VARIANT_RE
+        # kernel -> kernel-64k-core: suffix "-64k-core", digit "6" followed by alpha "k"
+        self.assertIsNone(regex.match("-64k-core"), "kernel-64k-core suffix should NOT match")
+        # kernel -> kernel-rt-core: suffix "-rt-core", no digit after separator
+        self.assertIsNone(regex.match("-rt-core"), "kernel-rt-core suffix should NOT match")
+
+    def test_has_incompatible_dependencies_true_positive_bind(self):
+        """True positive: bind vs bind9.18 is correctly detected as incompatible"""
+        candidate_rpm = Rpm(
+            name="test-pkg",
+            epoch=0,
+            version="2.0.0",
+            release="1.el9",
+            arch="x86_64",
+            checksum="sha256:new",
+            size=100,
+            location="test-pkg-2.0.0-1.el9.x86_64.rpm",
+            sourcerpm="test-pkg-2.0.0-1.el9.src.rpm",
+            requires=["bind"],  # requires "bind" base package
+        )
+        # bind9.18 is installed — a genuinely versioned variant of bind
+        installed_rpms = {
+            "bind9.18": Rpm.from_nevra("bind9.18-32:9.18.29-14.el9.x86_64").to_dict(),
+            "test-pkg": Rpm.from_nevra("test-pkg-0:1.0.0-1.el9.x86_64").to_dict(),
+        }
+        result = OutdatedRPMFinder._has_incompatible_dependencies(candidate_rpm, installed_rpms)
+        self.assertTrue(result, "Should detect bind vs bind9.18 as incompatible versioned variant")
+
+    def test_has_incompatible_dependencies_true_positive_separator_variant(self):
+        """True positive: skopeo vs skopeo-2 is correctly detected as incompatible"""
+        candidate_rpm = Rpm(
+            name="test-pkg",
+            epoch=0,
+            version="2.0.0",
+            release="1.el9",
+            arch="x86_64",
+            checksum="sha256:new",
+            size=100,
+            location="test-pkg-2.0.0-1.el9.x86_64.rpm",
+            sourcerpm="test-pkg-2.0.0-1.el9.src.rpm",
+            requires=["skopeo"],  # requires "skopeo" base package
+        )
+        # skopeo-2 is installed — a versioned variant with separator
+        installed_rpms = {
+            "skopeo-2": Rpm.from_nevra("skopeo-2-0:1.0.0-1.el9.x86_64").to_dict(),
+            "test-pkg": Rpm.from_nevra("test-pkg-0:1.0.0-1.el9.x86_64").to_dict(),
+        }
+        result = OutdatedRPMFinder._has_incompatible_dependencies(candidate_rpm, installed_rpms)
+        self.assertTrue(result, "Should detect skopeo vs skopeo-2 as incompatible versioned variant")
+
+    def test_has_incompatible_dependencies_no_false_positive_kernel_64k(self):
+        """kernel-64k-core is NOT a versioned variant of kernel — digits followed by alpha"""
+        candidate_rpm = Rpm(
+            name="kernel-64k-core",
+            epoch=0,
+            version="5.14.0",
+            release="503.el9",
+            arch="aarch64",
+            checksum="sha256:new",
+            size=100,
+            location="kernel-64k-core-5.14.0-503.el9.aarch64.rpm",
+            sourcerpm="kernel-5.14.0-503.el9.src.rpm",
+            requires=["kernel"],  # kernel-64k-core requires kernel
+        )
+        installed_rpms = {
+            "kernel-64k-core": Rpm.from_nevra("kernel-64k-core-0:5.14.0-427.el9.aarch64").to_dict(),
+            "kernel": Rpm.from_nevra("kernel-0:5.14.0-427.el9.aarch64").to_dict(),
+        }
+        result = OutdatedRPMFinder._has_incompatible_dependencies(candidate_rpm, installed_rpms)
+        # kernel requirement IS satisfied by installed "kernel", so no conflict
+        self.assertFalse(result, "kernel-64k-core requiring kernel should not be flagged")
+
+    def test_has_incompatible_dependencies_no_false_positive_kernel_rt(self):
+        """kernel-rt-core is NOT a versioned variant of kernel — no digit after separator"""
+        candidate_rpm = Rpm(
+            name="kernel-rt-core",
+            epoch=0,
+            version="5.14.0",
+            release="503.el9",
+            arch="x86_64",
+            checksum="sha256:new",
+            size=100,
+            location="kernel-rt-core-5.14.0-503.el9.x86_64.rpm",
+            sourcerpm="kernel-rt-5.14.0-503.el9.src.rpm",
+            requires=["kernel"],  # kernel-rt-core requires kernel
+        )
+        installed_rpms = {
+            "kernel-rt-core": Rpm.from_nevra("kernel-rt-core-0:5.14.0-427.el9.x86_64").to_dict(),
+            "kernel": Rpm.from_nevra("kernel-0:5.14.0-427.el9.x86_64").to_dict(),
+        }
+        result = OutdatedRPMFinder._has_incompatible_dependencies(candidate_rpm, installed_rpms)
+        self.assertFalse(result, "kernel-rt-core requiring kernel should not be flagged")
+
+    async def test_find_non_latest_rpms_kernel_subpackage_not_skipped(self):
+        """Integration: kernel-64k-core outdated RPM is correctly reported, not skipped by dep check"""
+        installed_rpms = [
+            "kernel-0:5.14.0-427.el9.aarch64",
+            "kernel-64k-core-0:5.14.0-427.el9.aarch64",
+        ]
+        old_kernel_64k = Rpm(
+            name="kernel-64k-core",
+            epoch=0,
+            version="5.14.0",
+            release="427.el9",
+            arch="aarch64",
+            checksum="sha256:old",
+            size=100,
+            location="kernel-64k-core-5.14.0-427.el9.aarch64.rpm",
+            sourcerpm="kernel-5.14.0-427.el9.src.rpm",
+            requires=["kernel"],
+        )
+        new_kernel_64k = Rpm(
+            name="kernel-64k-core",
+            epoch=0,
+            version="5.14.0",
+            release="503.el9",
+            arch="aarch64",
+            checksum="sha256:new",
+            size=100,
+            location="kernel-64k-core-5.14.0-503.el9.aarch64.rpm",
+            sourcerpm="kernel-5.14.0-503.el9.src.rpm",
+            requires=["kernel"],
+        )
+
+        finder = OutdatedRPMFinder()
+        repodatas = [
+            Repodata(
+                name="rhel-9-baseos",
+                primary_rpms=[
+                    Rpm.from_nevra("kernel-0:5.14.0-503.el9.aarch64"),
+                    old_kernel_64k,
+                    new_kernel_64k,
+                ],
+                modules=[],
+            ),
+        ]
+        logger = MagicMock()
+
+        actual = finder.find_non_latest_rpms(
+            [Rpm.from_nevra(nevra).to_dict() for nevra in installed_rpms],
+            repodatas,
+            logger,
+        )
+        # Both kernel and kernel-64k-core should be flagged as outdated
+        expected_names = {"kernel", "kernel-64k-core"}
+        actual_names = {nvra.split("-0:")[0] for nvra, _, _ in actual}
+        self.assertEqual(actual_names, expected_names, "Both kernel and kernel-64k-core should be outdated")

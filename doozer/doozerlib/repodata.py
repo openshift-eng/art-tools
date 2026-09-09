@@ -507,6 +507,24 @@ class RepodataLoader:
 
 
 class OutdatedRPMFinder:
+    # Regex to detect a versioned-variant suffix on a package name.
+    #
+    # Matches real version suffixes like:
+    #   bind  -> bind9.18       suffix "9.18"      (digit-start, no alpha after digit run)
+    #   python -> python3.11    suffix "3.11"
+    #   skopeo -> skopeo-2      suffix "-2"        (separator + digits)
+    #   nodejs -> nodejs18      suffix "18"
+    #
+    # Rejects functional name components like:
+    #   kernel -> kernel-64k-core   suffix "-64k-core"  (digit "6" immediately followed by alpha "k")
+    #   kernel -> kernel-rt-core    suffix "-rt-core"   (no digit at all after separator)
+    #
+    # Pattern: optional separator [-._], then one or more digits NOT immediately
+    # followed by any alphanumeric character.  The negative lookahead includes
+    # digits to prevent backtracking: without it, \d+ would match just "6" from
+    # "64k" and pass the alpha-only lookahead because "4" is not alphabetic.
+    _VERSIONED_VARIANT_RE = re.compile(r"^[-._]?\d+(?![a-zA-Z0-9])")
+
     @staticmethod
     def _has_incompatible_dependencies(candidate_rpm: Rpm, installed_rpms: Dict[str, Dict]) -> bool:
         """
@@ -555,26 +573,15 @@ class OutdatedRPMFinder:
                 # Check if installed package is a versioned variant of the required package
                 # E.g., required="bind", installed="bind9.18"
                 if installed_name.startswith(required_pkg) and len(installed_name) > len(required_pkg):
-                    # Check if what follows is a version number
                     suffix = installed_name[len(required_pkg) :]
-                    # Versioned package patterns: bind9.18, python3.11, etc.
-                    # The suffix should start with a digit (with or without separator)
-                    if suffix[0].isdigit() or (
-                        suffix[0] in ['-', '.', '_'] and len(suffix) > 1 and suffix[1].isdigit()
-                    ):
-                        # We have a versioned variant installed (e.g., bind9.18)
-                        # but candidate requires the base package (e.g., bind)
-                        # These are typically mutually exclusive
+                    if OutdatedRPMFinder._VERSIONED_VARIANT_RE.match(suffix):
                         return True
 
                 # Also check the reverse: required package is versioned, but base is installed
                 # E.g., required="bind9.18", installed="bind"
                 if required_pkg.startswith(installed_name) and len(required_pkg) > len(installed_name):
                     suffix = required_pkg[len(installed_name) :]
-                    if suffix[0].isdigit() or (
-                        suffix[0] in ['-', '.', '_'] and len(suffix) > 1 and suffix[1].isdigit()
-                    ):
-                        # Candidate requires versioned package but base is installed
+                    if OutdatedRPMFinder._VERSIONED_VARIANT_RE.match(suffix):
                         return True
 
         return False
