@@ -48,6 +48,7 @@ from pyartcd.lp_shipment import (
     set_shipment_mr_draft,
     update_shipment_mr_url,
     validate_shipment_mr,
+    validate_shipment_mr_reuse_state,
     verify_shipment_mr_url,
 )
 from pyartcd.runtime import Runtime
@@ -927,6 +928,12 @@ class PrepareReleaseLPPipeline:
                 self.shipment_data_repo_pull_url,
                 self.shipment_data_repo_push_url,
             )
+            await validate_shipment_mr_reuse_state(
+                self.shipment_data_repo,
+                existing_mr,
+                self.group,
+                self.assembly,
+            )
             self._logger.info("Will reuse shipment MR: %s", self._configured_shipment_mr_url)
         operand_nvrs = self._extract_operand_nvrs(assembly_config)
         self._logger.info("Assembly contains %d pinned operand NVRs", len(operand_nvrs))
@@ -979,6 +986,18 @@ class PrepareReleaseLPPipeline:
         if shipments_by_kind:
             if self.create_mr:
                 if existing_mr:
+                    existing_mr = validate_shipment_mr(
+                        self._gitlab,
+                        self._configured_shipment_mr_url,
+                        self.shipment_data_repo_pull_url,
+                        self.shipment_data_repo_push_url,
+                    )
+                    await validate_shipment_mr_reuse_state(
+                        self.shipment_data_repo,
+                        existing_mr,
+                        self.group,
+                        self.assembly,
+                    )
                     await self._verify_assembly_shipment_url()
                     set_shipment_mr_draft(existing_mr, self.dry_run)
                     await reconcile_shipment_mr(

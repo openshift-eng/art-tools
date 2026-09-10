@@ -49,6 +49,7 @@ from pyartcd.lp_shipment import (
     set_shipment_mr_draft,
     update_shipment_mr_url,
     validate_shipment_mr,
+    validate_shipment_mr_reuse_state,
     verify_shipment_mr_url,
 )
 from pyartcd.runtime import Runtime
@@ -1198,6 +1199,12 @@ class ReleaseFromFbcPipeline:
                     self.shipment_data_repo_pull_url,
                     self.shipment_data_repo_push_url,
                 )
+                await validate_shipment_mr_reuse_state(
+                    self.shipment_data_repo,
+                    existing_mr,
+                    self.group,
+                    self.assembly,
+                )
                 self.logger.info("Will reuse shipment MR: %s", configured_mr_url)
 
         # Load product from group configuration
@@ -1346,6 +1353,18 @@ class ReleaseFromFbcPipeline:
                         self.logger.info("Continuing with local files only")
             else:
                 if existing_mr:
+                    existing_mr = validate_shipment_mr(
+                        self._gitlab,
+                        self._configured_shipment_mr_url,
+                        self.shipment_data_repo_pull_url,
+                        self.shipment_data_repo_push_url,
+                    )
+                    await validate_shipment_mr_reuse_state(
+                        self.shipment_data_repo,
+                        existing_mr,
+                        self.group,
+                        self.assembly,
+                    )
                     await self._verify_layered_product_shipment_mr()
                     set_shipment_mr_draft(existing_mr, self.dry_run)
                     await reconcile_shipment_mr(
