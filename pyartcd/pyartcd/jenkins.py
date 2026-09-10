@@ -35,6 +35,7 @@ class Jobs(Enum):
     OKD = 'aos-cd-builds/build%2Fokd'
     OKD_SCAN_KONFLUX = 'aos-cd-builds/build%2Fokd-scan'
     OCP4_KONFLUX = 'aos-cd-builds/build%2Focp4-konflux'
+    RHCOS_NODE_IMAGE_POST_BUILD = 'aos-cd-builds/build%2Frhcos-node-image-post-build'
     OCP4_SCAN = 'aos-cd-builds/build%2Focp4_scan'
     OCP4_SCAN_KONFLUX = 'aos-cd-builds/build%2Focp4-scan-konflux'
     RHCOS = 'aos-cd-builds/build%2Frhcos'
