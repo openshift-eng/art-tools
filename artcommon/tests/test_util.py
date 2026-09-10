@@ -11,6 +11,7 @@ from artcommonlib.util import (
     deep_merge,
     extract_related_images_from_fbc,
     get_inflight,
+    get_registry_namespace_pattern,
     isolate_major_minor_in_group,
     normalize_group_name_for_k8s,
     normalize_k8s_dns_label,
@@ -814,6 +815,35 @@ class TestExtractRelatedImagesFromFBC(unittest.TestCase):
                     indent=4,
                 ),
             ]
+        )
+
+    def test_get_registry_namespace_pattern(self):
+        self.assertEqual(get_registry_namespace_pattern("ocp"), r"openshift\d+")
+        self.assertEqual(get_registry_namespace_pattern("oadp"), "oadp")
+
+    @patch('artcommonlib.util.cmd_gather_async', new_callable=AsyncMock)
+    @patch('builtins.open', new_callable=MagicMock)
+    @patch('os.path.exists')
+    @patch('os.listdir')
+    def test_transforms_ocp5_related_images(self, mock_listdir, mock_exists, mock_open, mock_cmd):
+        mock_cmd.side_effect = [
+            (0, self._create_discover_response(include_related_images=True), ''),
+            (0, 'Pulled artifact successfully', ''),
+        ]
+        mock_listdir.return_value = ['related-images.json']
+        mock_exists.side_effect = lambda path: 'related-images.json' in path
+
+        mock_file = MagicMock()
+        mock_file.__enter__.return_value.read.return_value = json.dumps(
+            ['registry.redhat.io/openshift5/ose-operator@sha256:111']
+        )
+        mock_open.return_value = mock_file
+
+        result = asyncio.run(extract_related_images_from_fbc(self.fbc_pullspec, self.product))
+
+        self.assertEqual(
+            result,
+            ['quay.io/redhat-user-workloads/ocp-art-tenant/art-images@sha256:111'],
         )
 
     def _create_discover_response(self, include_related_images=True, include_rendered_catalog=False):

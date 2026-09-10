@@ -1029,6 +1029,13 @@ def _extract_images_from_catalog_json(catalog_path: str) -> list[str]:
     return images
 
 
+def get_registry_namespace_pattern(product: str) -> str:
+    """Return the registry.redhat.io namespace pattern used for a product's published images."""
+    if product in ("ocp", "openshift"):
+        return r"openshift\d+"
+    return re.escape(product)
+
+
 async def extract_related_images_from_fbc(fbc_pullspec: str, product: str) -> list[str]:
     """
     Extract related image pullspecs from FBC image using ORAS workflow.
@@ -1149,13 +1156,7 @@ async def extract_related_images_from_fbc(fbc_pullspec: str, product: str) -> li
                 "Product parameter is required to determine the registry namespace for image transformation"
             )
 
-        # Map product names to registry namespaces
-        # OCP uses 'openshift4' namespace in registry.redhat.io
-        product_to_namespace = {
-            'ocp': 'openshift4',
-            'openshift': 'openshift4',
-        }
-        registry_namespace = product_to_namespace.get(product, product)
+        registry_namespace = get_registry_namespace_pattern(product)
         LOGGER.info(f"Using registry namespace '{registry_namespace}' for product '{product}'")
 
         registry_transform_pattern = rf'registry\.redhat\.io/{registry_namespace}/[^@]*'
@@ -1171,7 +1172,7 @@ async def extract_related_images_from_fbc(fbc_pullspec: str, product: str) -> li
 
             for img_url in raw_images:
                 # Check if the URL matches the registry namespace pattern
-                if f'registry.redhat.io/{registry_namespace}/' in img_url:
+                if re.search(rf'registry\.redhat\.io/{registry_namespace}/', img_url):
                     # Apply the transformation to quay.io/redhat-user-workloads/ocp-art-tenant/art-images
                     transformed_url = re.sub(
                         registry_transform_pattern,
@@ -1201,7 +1202,7 @@ async def extract_related_images_from_fbc(fbc_pullspec: str, product: str) -> li
                 found_images = _extract_images_from_catalog_json(catalog_json_path)
 
                 for img_url in found_images:
-                    if f'registry.redhat.io/{registry_namespace}/' in img_url:
+                    if re.search(rf'registry\.redhat\.io/{registry_namespace}/', img_url):
                         transformed_url = re.sub(
                             registry_transform_pattern,
                             KONFLUX_DEFAULT_IMAGE_REPO,
