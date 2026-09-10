@@ -931,6 +931,7 @@ class PrepareReleaseLPPipeline:
             await validate_shipment_mr_reuse_state(
                 self.shipment_data_repo,
                 existing_mr,
+                self.product,
                 self.group,
                 self.assembly,
             )
@@ -995,6 +996,7 @@ class PrepareReleaseLPPipeline:
                     await validate_shipment_mr_reuse_state(
                         self.shipment_data_repo,
                         existing_mr,
+                        self.product,
                         self.group,
                         self.assembly,
                     )
