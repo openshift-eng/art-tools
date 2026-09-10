@@ -2,12 +2,10 @@
 
 This module owns the ``assembly.group.shipment.mr`` pointer in ``releases.yml``
 and reconciles generated shipment files with an existing GitLab merge request.
-Current release inputs replace generator-owned fields, while downstream CI-owned
-environment data is retained unless an FBC NVR change makes a recorded pipeline
-result stale.
+On reuse, the previous layered-product shipment files are discarded and rebuilt
+from the current release inputs.
 """
 
-import copy
 import re
 from collections import Counter
 from io import StringIO
@@ -25,7 +23,8 @@ from pyartcd.git import GitRepository
 
 YAML = new_roundtrip_yaml_handler()
 _TIMESTAMP_RE = re.compile(r"(\d{14})$")
-_COUNTER_RE = re.compile(r"(\d{14})(\d{2})\.ya?ml$")
+_PROD_RELEASE_LABEL_PREFIX = "prod-release"
+_STAGE_RELEASE_SUCCESS_LABEL = "stage-release-success"
 
 
 def _project_path(url: str) -> str:
@@ -182,20 +181,38 @@ def validate_shipment_mr(gitlab_client, mr_url: str, pull_url: str, push_url: st
         raise ValueError(
             f"Shipment MR target branch is {mr.target_branch}, not main. Use --force to create a replacement MR."
         )
+    prod_labels = sorted(
+        label for label in (getattr(mr, 'labels', None) or []) if label.lower().startswith(_PROD_RELEASE_LABEL_PREFIX)
+    )
+    if prod_labels:
+        raise ValueError(
+            f"Shipment MR has production release label(s) {prod_labels} and must not be modified. "
+            "Use --force to create a replacement MR."
+        )
     return mr
 
 
 def set_shipment_mr_draft(mr, dry_run: bool) -> None:
-    """Mark a reused shipment MR as draft before changing its contents.
+    """Reset stage status and mark a reused shipment MR as draft.
+
+    An allowed reuse can only have completed stage release work. Its success
+    label describes the previous shipment files and is removed before those
+    files are replaced.
 
     Args:
         mr: GitLab merge request object to update.
         dry_run: Logically perform the transition without saving it remotely.
     """
-    if mr.title.startswith("Draft:"):
-        return
-    mr.title = f"Draft: {mr.title}"
-    if not dry_run:
+    changed = False
+    if not mr.title.startswith("Draft:"):
+        mr.title = f"Draft: {mr.title}"
+        changed = True
+    labels = list(getattr(mr, 'labels', None) or [])
+    if _STAGE_RELEASE_SUCCESS_LABEL in labels:
+        labels.remove(_STAGE_RELEASE_SUCCESS_LABEL)
+        mr.labels = labels
+        changed = True
+    if changed and not dry_run:
         mr.save()
 
 
@@ -244,52 +261,86 @@ def _identity_sort_key(item: tuple) -> tuple[str, ...]:
     return tuple("" if value is None else str(value) for value in item[0])
 
 
-def _reconcile_config(existing: dict, desired: dict) -> dict:
-    """Apply generated data while retaining valid downstream environment fields.
+def _shipment_path_matches(
+    path: str,
+    group: str,
+    assembly: str,
+    product: str | None = None,
+) -> bool:
+    """Determine whether a shipment path belongs to a release scope.
 
-    When an FBC NVR changes, recorded stage and production pipeline URLs refer
-    to the previous FBC release. Those URLs are removed so shipment CI releases
-    the new NVR and records fresh results. Other downstream-owned fields remain
-    untouched.
+    Path-based ownership lets a rerun remove a previously generated file even
+    when its YAML metadata was edited or damaged manually.
 
     Args:
-        existing: Shipment configuration currently present on the MR branch.
-        desired: Shipment configuration generated from the current release inputs.
+        path: Repository-relative shipment file path.
+        group: Expected layered-product group.
+        assembly: Expected layered-product assembly.
+        product: Optional expected shipment product.
 
     Returns:
-        A new mapping containing current generated fields and preserved CI-owned
-        environment data.
+        Whether the path belongs to the requested release scope.
     """
-    result = copy.deepcopy(existing)
-    existing_shipment = result.setdefault('shipment', {})
-    desired_shipment = desired['shipment']
-    existing_nvrs = existing_shipment.get('snapshot', {}).get('nvrs')
-    desired_nvrs = desired_shipment.get('snapshot', {}).get('nvrs')
-    fbc_nvr_changed = desired_shipment.get('metadata', {}).get('fbc', False) and existing_nvrs != desired_nvrs
-    existing_shipment['metadata'] = copy.deepcopy(desired_shipment['metadata'])
-    existing_shipment['snapshot'] = copy.deepcopy(desired_shipment['snapshot'])
+    parts = Path(path).parts
+    if len(parts) < 6 or parts[0] != 'shipment':
+        return False
+    if product is not None and parts[1] != product:
+        return False
+    return parts[2] == group and parts[-1].startswith(f"{assembly}.") and parts[-1].endswith(('.yaml', '.yml'))
 
-    if 'data' in desired_shipment:
-        existing_shipment['data'] = copy.deepcopy(desired_shipment['data'])
-    else:
-        existing_shipment.pop('data', None)
 
-    existing_environments = existing_shipment.setdefault('environments', {})
-    for env_name, desired_env in desired_shipment.get('environments', {}).items():
-        existing_env = existing_environments.setdefault(env_name, {})
-        if 'releasePlan' in desired_env:
-            existing_env['releasePlan'] = desired_env['releasePlan']
-        else:
-            existing_env.pop('releasePlan', None)
-    if fbc_nvr_changed:
-        for existing_env in existing_environments.values():
-            result_data = existing_env.get('result')
-            if not isinstance(result_data, dict):
-                continue
-            result_data.pop('pipeline', None)
-            if not result_data:
-                existing_env.pop('result')
-    return result
+async def validate_shipment_mr_reuse_state(
+    repo: GitRepository,
+    mr,
+    group: str,
+    assembly: str,
+) -> None:
+    """Reject reuse when shipment files contain production release evidence.
+
+    The GitLab success label is checked by :func:`validate_shipment_mr`. This
+    additional content check protects against a missing label or a partially
+    completed labeling job by inspecting both image advisory information and
+    FBC pipeline results.
+
+    Args:
+        repo: Initialized shipment-data repository.
+        mr: Open GitLab merge request proposed for reuse.
+        group: Layered-product group expected in the shipment files.
+        assembly: Layered-product assembly expected in the shipment files.
+
+    Raises:
+        ValueError: If a matching shipment file records production release data.
+        RuntimeError: If GitLab truncates the MR change list.
+    """
+    await repo.fetch_switch_branch(mr.source_branch, remote="origin")
+    change_data = mr.changes()
+    if change_data.get('overflow'):
+        raise RuntimeError("GitLab truncated the shipment MR change list; refusing an incomplete validation")
+
+    for change in change_data.get('changes', []):
+        path = change['new_path']
+        if not _shipment_path_matches(path, group, assembly):
+            continue
+        absolute_path = repo._directory / path
+        if not absolute_path.exists():
+            continue
+        config = YAML.load(absolute_path)
+        if not isinstance(config, dict) or 'shipment' not in config:
+            raise ValueError(f"Cannot safely determine production release state from malformed shipment file {path}")
+        shipment = config['shipment']
+        prod = shipment.get('environments', {}).get('prod', {}) or {}
+        advisory = prod.get('advisory')
+        pipeline = (prod.get('result') or {}).get('pipeline')
+        if advisory or pipeline:
+            markers = []
+            if advisory:
+                markers.append('prod advisory')
+            if pipeline:
+                markers.append('prod pipeline result')
+            raise ValueError(
+                f"Shipment MR file {path} contains {' and '.join(markers)} and must not be modified. "
+                "Use --force to create a replacement MR."
+            )
 
 
 async def _restore_from_main(repo: GitRepository, path: str) -> None:
@@ -318,12 +369,12 @@ async def reconcile_shipment_mr(
     include_fbc_ocp_version: bool,
     dry_run: bool,
 ) -> bool:
-    """Reconcile generated layered-product shipments into an existing MR.
+    """Replace a reusable MR's layered-product shipment files from scratch.
 
-    Files are matched by semantic identity rather than by generated filename.
-    Matching paths are retained, stale MR-owned files are removed or restored,
-    and new FBC filenames receive deterministic counters based on the original
-    MR timestamp.
+    Every MR-owned file for the generated product, group, and assembly is
+    removed (or restored from ``main``), then the current shipment set is
+    written with deterministic filenames. No content or CI mutation from the
+    previous files is carried into the replacement.
 
     Args:
         repo: Initialized shipment-data repository.
@@ -338,8 +389,8 @@ async def reconcile_shipment_mr(
         returns ``False`` and is considered successful.
 
     Raises:
-        ValueError: If the MR branch lacks a timestamp or desired/existing files
-            contain duplicate semantic identities.
+        ValueError: If the MR branch lacks a timestamp or desired files contain
+            duplicate semantic identities or scopes.
         RuntimeError: If GitLab truncates the MR change list or a stale file
             cannot be restored safely.
     """
@@ -354,68 +405,40 @@ async def reconcile_shipment_mr(
     if duplicates:
         raise ValueError(f"Generated shipment configurations contain duplicate identities: {duplicates}")
     desired_by_identity = {identity: item for identity, item in zip(desired_identities, desired_items)}
+    desired_scopes = {identity[:3] for identity in desired_identities}
+    if len(desired_scopes) != 1:
+        raise ValueError(f"Generated shipment configurations span multiple scopes: {sorted(desired_scopes)}")
+    desired_scope = next(iter(desired_scopes))
 
     await repo.fetch_switch_branch(mr.source_branch, remote="origin")
     change_data = mr.changes()
     if change_data.get('overflow'):
         raise RuntimeError("GitLab truncated the shipment MR change list; refusing an incomplete reconciliation")
     changes = change_data.get('changes', [])
-    existing_by_identity: dict[tuple, tuple[str, dict, bool]] = {}
+    existing_files: list[tuple[str, bool]] = []
     for change in changes:
         path = change['new_path']
-        if not path.startswith('shipment/') or not path.endswith(('.yaml', '.yml')):
+        if not _shipment_path_matches(path, desired_scope[1], desired_scope[2], product=desired_scope[0]):
             continue
         absolute_path = repo._directory / path
         if not absolute_path.exists():
             continue
-        config = YAML.load(absolute_path)
-        if not isinstance(config, dict) or 'shipment' not in config:
-            continue
-        identity = _identity(config)
-        if identity[:3] != desired_identities[0][:3]:
-            continue
-        if identity in existing_by_identity:
-            raise ValueError(f"Existing MR contains duplicate shipment identity {identity}")
         is_new = change.get('new_file') is True or change.get('new_file') == 'true'
-        existing_by_identity[identity] = (path, config, is_new)
+        existing_files.append((path, is_new))
 
-    used_counters = {
-        int(match.group(2))
-        for path, _, _ in existing_by_identity.values()
-        if (match := _COUNTER_RE.search(path)) and match.group(1) == timestamp
-    }
-    changed = False
-
-    for identity, (path, existing, _) in existing_by_identity.items():
-        desired_item = desired_by_identity.pop(identity, None)
-        if desired_item:
-            _, desired = desired_item
-            reconciled = _reconcile_config(existing, desired)
-            if reconciled != existing:
-                out = StringIO()
-                YAML.dump(reconciled, out)
-                await repo.write_file(path, out.getvalue())
-                changed = True
-
-    for identity, (path, _, is_new) in existing_by_identity.items():
-        if identity in desired_identities:
-            continue
+    for path, is_new in existing_files:
         if is_new:
             (repo._directory / path).unlink()
         else:
             await _restore_from_main(repo, path)
-        changed = True
 
     next_counter = 1
     for identity, (kind, desired) in sorted(desired_by_identity.items(), key=_identity_sort_key):
-        while next_counter in used_counters:
-            next_counter += 1
         metadata = desired['shipment']['metadata']
         target_dir = Path('shipment') / metadata['product'] / metadata['group'] / metadata['application'] / 'prod'
         if metadata.get('fbc'):
             ocp_part = f".ocp{identity[-1]}" if include_fbc_ocp_version and identity[-1] else ""
             filename = f"{metadata['assembly']}.fbc{ocp_part}.{timestamp}{next_counter:02d}.yaml"
-            used_counters.add(next_counter)
             next_counter += 1
         else:
             filename = f"{metadata['assembly']}.{kind.rstrip('0123456789')}.{timestamp}.yaml"
@@ -424,10 +447,7 @@ async def reconcile_shipment_mr(
         path = target_dir / filename
         (repo._directory / path).parent.mkdir(parents=True, exist_ok=True)
         await repo.write_file(path, out.getvalue())
-        changed = True
 
-    if not changed:
-        return False
     await repo.log_diff()
     if dry_run:
         return True

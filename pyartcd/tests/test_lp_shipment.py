@@ -8,11 +8,12 @@ from elliottlib.shipment_model import ShipmentConfig
 from pyartcd.git import GitRepository
 from pyartcd.lp_shipment import (
     _identity,
-    _reconcile_config,
     get_shipment_mr_url,
     reconcile_shipment_mr,
+    set_shipment_mr_draft,
     update_shipment_mr_url,
     validate_shipment_mr,
+    validate_shipment_mr_reuse_state,
 )
 
 YAML = new_roundtrip_yaml_handler()
@@ -49,55 +50,6 @@ def test_get_shipment_mr_url():
     assert get_shipment_mr_url({}, '6.5.2') is None
 
 
-def test_reconcile_config_preserves_downstream_environment_fields():
-    """Replace generated fields without overwriting downstream CI results."""
-    existing = _shipment()
-    existing['shipment']['environments']['stage']['result'] = {'pipeline': 'stage-ci'}
-    existing['shipment']['environments']['prod']['advisory'] = {'url': 'advisory-url'}
-    existing['shipment']['snapshot']['nvrs'] = ['manually-edited']
-    desired = _shipment(release_notes=False)
-    desired['shipment']['environments']['stage']['releasePlan'] = 'new-stage-plan'
-
-    result = _reconcile_config(existing, desired)
-
-    assert result['shipment']['snapshot'] == desired['shipment']['snapshot']
-    assert 'data' not in result['shipment']
-    assert result['shipment']['environments']['stage'] == {
-        'releasePlan': 'new-stage-plan',
-        'result': {'pipeline': 'stage-ci'},
-    }
-    assert result['shipment']['environments']['prod']['advisory'] == {'url': 'advisory-url'}
-
-
-def test_reconcile_config_clears_stale_fbc_pipeline_results_when_nvr_changes():
-    """Clear pipeline URLs for both environments when an FBC NVR changes."""
-    existing = _shipment(fbc=True, nvr='cluster-logging-operator-fbc-6.5.2-1.ocp4.19')
-    existing['shipment']['environments']['stage']['result'] = {'pipeline': 'stage-ci'}
-    existing['shipment']['environments']['prod']['result'] = {
-        'pipeline': 'prod-ci',
-        'other': 'preserved',
-    }
-    existing['shipment']['environments']['prod']['advisory'] = {'url': 'advisory-url'}
-    desired = _shipment(fbc=True, nvr='cluster-logging-operator-fbc-6.5.2-2.ocp4.19')
-
-    result = _reconcile_config(existing, desired)
-
-    assert 'result' not in result['shipment']['environments']['stage']
-    assert result['shipment']['environments']['prod']['result'] == {'other': 'preserved'}
-    assert result['shipment']['environments']['prod']['advisory'] == {'url': 'advisory-url'}
-
-
-def test_reconcile_config_preserves_fbc_pipeline_results_when_nvr_is_unchanged():
-    """Retain completed FBC pipeline URLs when the generated NVR is unchanged."""
-    existing = _shipment(fbc=True, nvr='cluster-logging-operator-fbc-6.5.2-1.ocp4.19')
-    existing['shipment']['environments']['stage']['result'] = {'pipeline': 'stage-ci'}
-    desired = _shipment(fbc=True, nvr='cluster-logging-operator-fbc-6.5.2-1.ocp4.19')
-
-    result = _reconcile_config(existing, desired)
-
-    assert result['shipment']['environments']['stage']['result'] == {'pipeline': 'stage-ci'}
-
-
 def test_fbc_identity_uses_component_and_ocp_target():
     """Distinguish FBC shipments by both operator and target OCP version."""
     first = _identity(_shipment(fbc=True, nvr='cluster-logging-operator-fbc-6.5.2-1.ocp4.19'))
@@ -111,7 +63,7 @@ def test_validate_shipment_mr():
     """Accept an open MR with the configured source and target repositories."""
     client = MagicMock()
     client._parse_mr_url.return_value = ('hybrid-platforms/art/ocp-shipment-data', '42')
-    mr = MagicMock(state='opened', source_project_id=10, target_branch='main')
+    mr = MagicMock(state='opened', source_project_id=10, target_branch='main', labels=[])
     client.get_mr_from_url.return_value = mr
     client.get_project.return_value.path_with_namespace = 'openshift-eng/ocp-shipment-data'
 
@@ -143,6 +95,88 @@ def test_validate_shipment_mr_rejects_closed_mr():
         assert '--force' in str(exc)
     else:
         raise AssertionError("Expected a closed MR to be rejected")
+
+
+def test_validate_shipment_mr_rejects_prod_release_label():
+    """Reject an open MR after shipment CI records production success."""
+    client = MagicMock()
+    client._parse_mr_url.return_value = ('hybrid-platforms/art/ocp-shipment-data', '42')
+    mr = MagicMock(
+        state='opened',
+        source_project_id=10,
+        target_branch='main',
+        labels=['stage-release-success', 'prod-release-success'],
+    )
+    client.get_mr_from_url.return_value = mr
+    client.get_project.return_value.path_with_namespace = 'openshift-eng/ocp-shipment-data'
+
+    try:
+        validate_shipment_mr(
+            client,
+            'https://gitlab.example/hybrid-platforms/art/ocp-shipment-data/-/merge_requests/42',
+            'https://gitlab.example/hybrid-platforms/art/ocp-shipment-data.git',
+            'https://gitlab.example/openshift-eng/ocp-shipment-data.git',
+        )
+    except ValueError as exc:
+        assert 'prod-release-success' in str(exc)
+        assert '--force' in str(exc)
+    else:
+        raise AssertionError("Expected a production-released MR to be rejected")
+
+
+def test_set_shipment_mr_draft_clears_stage_success_label():
+    """Reset stale stage success when preparing an allowed MR rerun."""
+    mr = MagicMock(title='Shipment for logging 6.5.2', labels=['stage-release-success', 'reviewed'])
+
+    set_shipment_mr_draft(mr, dry_run=False)
+
+    assert mr.title == 'Draft: Shipment for logging 6.5.2'
+    assert mr.labels == ['reviewed']
+    mr.save.assert_called_once_with()
+
+
+def test_validate_shipment_mr_reuse_state_rejects_prod_advisory():
+    """Reject reuse when an image file records a production advisory."""
+    with TemporaryDirectory() as directory:
+        repo = GitRepository(directory)
+        repo.fetch_switch_branch = AsyncMock()
+        path = Path(directory, 'shipment/openshift-logging/logging-6.5/logging-6-5/prod/6.5.2.image.yaml')
+        path.parent.mkdir(parents=True)
+        existing = _shipment()
+        existing['shipment']['environments']['prod']['advisory'] = {'url': 'prod-advisory'}
+        YAML.dump(existing, path)
+        mr = MagicMock(source_branch='prepare-shipment-6.5.2-20260817161645')
+        mr.changes.return_value = {'changes': [{'new_path': str(path.relative_to(directory))}]}
+
+        try:
+            asyncio.run(validate_shipment_mr_reuse_state(repo, mr, 'logging-6.5', '6.5.2'))
+        except ValueError as exc:
+            assert 'prod advisory' in str(exc)
+            assert '--force' in str(exc)
+        else:
+            raise AssertionError("Expected production advisory information to block reuse")
+
+
+def test_validate_shipment_mr_reuse_state_rejects_prod_fbc_result():
+    """Reject reuse when an FBC file records a production pipeline result."""
+    with TemporaryDirectory() as directory:
+        repo = GitRepository(directory)
+        repo.fetch_switch_branch = AsyncMock()
+        path = Path(directory, 'shipment/openshift-logging/logging-6.5/fbc-logging-6-5/prod/6.5.2.fbc.yaml')
+        path.parent.mkdir(parents=True)
+        existing = _shipment(fbc=True, nvr='cluster-logging-operator-fbc-6.5.2-1.ocp4.19')
+        existing['shipment']['environments']['prod']['result'] = {'pipeline': 'prod-ci'}
+        YAML.dump(existing, path)
+        mr = MagicMock(source_branch='prepare-shipment-6.5.2-20260817161645')
+        mr.changes.return_value = {'changes': [{'new_path': str(path.relative_to(directory))}]}
+
+        try:
+            asyncio.run(validate_shipment_mr_reuse_state(repo, mr, 'logging-6.5', '6.5.2'))
+        except ValueError as exc:
+            assert 'prod pipeline result' in str(exc)
+            assert '--force' in str(exc)
+        else:
+            raise AssertionError("Expected production FBC result information to block reuse")
 
 
 def test_update_shipment_mr_url_creates_explicit_stream_assembly():
@@ -239,8 +273,8 @@ def test_update_shipment_mr_url_rejects_concurrent_pointer_change():
         repo.commit_push.assert_not_awaited()
 
 
-def test_reconcile_existing_fbc_clears_stale_pipeline_result():
-    """Keep the filename but clear its pipeline result when the FBC NVR changes."""
+def test_reconcile_recreates_existing_fbc_from_scratch():
+    """Discard existing FBC content and write only the current generated data."""
     with TemporaryDirectory() as directory:
         repo = GitRepository(directory)
         repo.fetch_switch_branch = AsyncMock()
@@ -258,11 +292,13 @@ def test_reconcile_existing_fbc_clears_stale_pipeline_result():
         path = Path(
             directory,
             'shipment/openshift-logging/logging-6.5/fbc-logging-6-5/prod/',
-            '6.5.2.fbc.2026081716164501.yaml',
+            '6.5.2.fbc.ocp4.19.2026081716164501.yaml',
         )
         path.parent.mkdir(parents=True)
         existing = _shipment(fbc=True, nvr='cluster-logging-operator-fbc-6.5.2-1.ocp4.19')
-        existing['shipment']['environments']['prod']['result'] = {'pipeline': 'prod-ci'}
+        existing['shipment']['environments']['stage']['result'] = {'pipeline': 'stage-ci'}
+        existing['shipment']['metadata']['group'] = 'manually-edited'
+        existing['shipment']['manual'] = {'field': 'discarded'}
         YAML.dump(existing, path)
 
         desired = _shipment(fbc=True, nvr='cluster-logging-operator-fbc-6.5.2-2.ocp4.19', release_notes=False)
@@ -282,7 +318,7 @@ def test_reconcile_existing_fbc_clears_stale_pipeline_result():
         assert changed
         result = YAML.load(path)
         assert result['shipment']['snapshot']['nvrs'] == ['cluster-logging-operator-fbc-6.5.2-2.ocp4.19']
-        assert 'result' not in result['shipment']['environments']['prod']
+        assert result == desired
         repo.commit_push.assert_awaited_once()
 
 
