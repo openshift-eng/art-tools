@@ -418,7 +418,7 @@ class TestSetMrApprovalRules(unittest.TestCase):
 
         client.get_mr_from_url.assert_not_called()
 
-    def test_deletes_non_art_and_creates_new(self):
+    def test_deletes_all_existing_rules_and_creates_new(self):
         client = self._make_client(dry_run=False)
 
         mock_mr = MagicMock()
@@ -445,7 +445,7 @@ class TestSetMrApprovalRules(unittest.TestCase):
             )
         )
 
-        art_rule.delete.assert_not_called()
+        art_rule.delete.assert_called_once()
         ert_rule.delete.assert_called_once()
         docs_rule.delete.assert_called_once()
         mock_mr.approval_rules.create.assert_called_once_with(
