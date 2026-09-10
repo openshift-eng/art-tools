@@ -126,7 +126,12 @@ def resolve_shipment_mr_url(runtime) -> str:
 def fetch_shipment_components(mr_url: str) -> tuple[list[tuple[str, str]], str]:
     gl = GitLabClient.from_url(mr_url)
     mr = gl.get_mr_from_url(mr_url)
-    source_project = gl.get_project(mr.source_project_id)
+    if mr.state == "merged" and mr.merge_commit_sha:
+        project = gl.get_project(mr.target_project_id)
+        file_ref = mr.merge_commit_sha
+    else:
+        project = gl.get_project(mr.source_project_id)
+        file_ref = mr.source_branch
 
     title = mr.title or ""
     match = re.search(r"Shipment for (\d+\.\d+\.\d+(?:-\S+)?)", title, re.IGNORECASE)
@@ -148,7 +153,7 @@ def fetch_shipment_components(mr_url: str) -> tuple[list[tuple[str, str]], str]:
             continue
 
         try:
-            file_content = source_project.files.get(file_path, mr.source_branch)
+            file_content = project.files.get(file_path, file_ref)
             content = file_content.decode().decode("utf-8")
             data = yaml.safe_load(content)
             if not isinstance(data, dict):

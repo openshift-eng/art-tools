@@ -239,6 +239,7 @@ shipment:
 
         mock_mr = MagicMock()
         mock_mr.title = "Shipment for 4.18.51"
+        mock_mr.state = "opened"
         mock_mr.source_branch = "shipment-4.18.51"
         mock_mr.source_project_id = 123
         mock_mr.diffs.list.return_value = [MagicMock(id=1)]
@@ -278,9 +279,53 @@ shipment:
         self.assertEqual(len(components), 2)
         self.assertEqual(components[0][0], "ose-cli")
         self.assertIn("sha256:abc", components[0][1])
+        mock_gl.get_project.assert_called_once_with(123)
+        mock_project.files.get.assert_called_once_with("shipments/4.18/4.18.51.yaml", "shipment-4.18.51")
         mock_requests.get.assert_called_once_with(
             "https://errata.devel.redhat.com/advisory/12345", timeout=30, allow_redirects=False
         )
+
+    @patch("elliottlib.cli.verify_image_grades_cli.requests")
+    @patch("elliottlib.cli.verify_image_grades_cli.GitLabClient")
+    def test_reads_merged_mr_from_merge_commit(self, mock_gl_cls, mock_requests):
+        shipment_yaml = """
+shipment:
+  environments:
+    stage:
+      advisory:
+        internal_url: "https://errata.devel.redhat.com/advisory/12345"
+"""
+        mock_file = MagicMock()
+        mock_file.decode.return_value = shipment_yaml.encode("utf-8")
+        mock_project = MagicMock()
+        mock_project.files.get.return_value = mock_file
+
+        mock_diff = MagicMock()
+        mock_diff.diffs = [{"new_path": "shipments/4.18/4.18.51.yaml"}]
+
+        mock_mr = MagicMock()
+        mock_mr.title = "Shipment for 4.18.51"
+        mock_mr.state = "merged"
+        mock_mr.merge_commit_sha = "merge-sha"
+        mock_mr.target_project_id = 456
+        mock_mr.source_project_id = 123
+        mock_mr.source_branch = "deleted-branch"
+        mock_mr.diffs.list.return_value = [MagicMock(id=1)]
+        mock_mr.diffs.get.return_value = mock_diff
+
+        mock_gl = MagicMock()
+        mock_gl.get_mr_from_url.return_value = mock_mr
+        mock_gl.get_project.return_value = mock_project
+        mock_gl_cls.from_url.return_value = mock_gl
+
+        mock_resp = MagicMock()
+        mock_resp.text = yaml.dump({"spec": {"content": {"images": []}}})
+        mock_requests.get.return_value = mock_resp
+
+        fetch_shipment_components("https://gitlab.example.com/mr/1")
+
+        mock_gl.get_project.assert_called_once_with(456)
+        mock_project.files.get.assert_called_once_with("shipments/4.18/4.18.51.yaml", "merge-sha")
 
     @patch("elliottlib.cli.verify_image_grades_cli.requests")
     @patch("elliottlib.cli.verify_image_grades_cli.GitLabClient")
