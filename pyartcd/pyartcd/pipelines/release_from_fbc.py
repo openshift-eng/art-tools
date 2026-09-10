@@ -1189,6 +1189,11 @@ class ReleaseFromFbcPipeline:
         if self.create_mr:
             await self.setup_shipment_repo()
 
+        # Load product before validating a reusable MR so an unrelated product's
+        # shipment cannot be modified through an incorrect releases.yml pointer.
+        self.product = await self._load_product_from_group_config()
+        self.logger.info(f"Loaded product '{self.product}' - continuing workflow for {self.product} {self.assembly}")
+
         existing_mr = None
         if self.create_mr and not self.ocp_optional:
             configured_mr_url = self._load_layered_product_shipment_mr()
@@ -1202,14 +1207,11 @@ class ReleaseFromFbcPipeline:
                 await validate_shipment_mr_reuse_state(
                     self.shipment_data_repo,
                     existing_mr,
+                    self.product,
                     self.group,
                     self.assembly,
                 )
                 self.logger.info("Will reuse shipment MR: %s", configured_mr_url)
-
-        # Load product from group configuration
-        self.product = await self._load_product_from_group_config()
-        self.logger.info(f"Loaded product '{self.product}' - continuing workflow for {self.product} {self.assembly}")
 
         related_nvrs = []
         fbc_nvrs = []
@@ -1362,6 +1364,7 @@ class ReleaseFromFbcPipeline:
                     await validate_shipment_mr_reuse_state(
                         self.shipment_data_repo,
                         existing_mr,
+                        self.product,
                         self.group,
                         self.assembly,
                     )

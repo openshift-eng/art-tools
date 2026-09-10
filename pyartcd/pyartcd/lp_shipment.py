@@ -292,10 +292,11 @@ def _shipment_path_matches(
 async def validate_shipment_mr_reuse_state(
     repo: GitRepository,
     mr,
+    product: str,
     group: str,
     assembly: str,
 ) -> None:
-    """Reject reuse when shipment files contain production release evidence.
+    """Validate the release scope and reject production-completed MR reuse.
 
     The GitLab success label is checked by :func:`validate_shipment_mr`. This
     additional content check protects against a missing label or a partially
@@ -305,11 +306,13 @@ async def validate_shipment_mr_reuse_state(
     Args:
         repo: Initialized shipment-data repository.
         mr: Open GitLab merge request proposed for reuse.
+        product: Layered product expected in the shipment files.
         group: Layered-product group expected in the shipment files.
         assembly: Layered-product assembly expected in the shipment files.
 
     Raises:
-        ValueError: If a matching shipment file records production release data.
+        ValueError: If the MR does not contain the expected release scope or a
+            matching shipment file records production release data.
         RuntimeError: If GitLab truncates the MR change list.
     """
     await repo.fetch_switch_branch(mr.source_branch, remote="origin")
@@ -317,13 +320,18 @@ async def validate_shipment_mr_reuse_state(
     if change_data.get('overflow'):
         raise RuntimeError("GitLab truncated the shipment MR change list; refusing an incomplete validation")
 
+    matching_files = []
+    shipment_paths = []
     for change in change_data.get('changes', []):
         path = change['new_path']
-        if not _shipment_path_matches(path, group, assembly):
+        if _shipment_path_matches(path, group, assembly):
+            shipment_paths.append(path)
+        if not _shipment_path_matches(path, group, assembly, product=product):
             continue
         absolute_path = repo._directory / path
         if not absolute_path.exists():
             continue
+        matching_files.append(path)
         config = YAML.load(absolute_path)
         if not isinstance(config, dict) or 'shipment' not in config:
             raise ValueError(f"Cannot safely determine production release state from malformed shipment file {path}")
@@ -341,6 +349,14 @@ async def validate_shipment_mr_reuse_state(
                 f"Shipment MR file {path} contains {' and '.join(markers)} and must not be modified. "
                 "Use --force to create a replacement MR."
             )
+
+    if not matching_files:
+        found = f" Found candidate files: {sorted(shipment_paths)}." if shipment_paths else ""
+        raise ValueError(
+            f"Shipment MR does not contain shipment files for product {product!r}, group {group!r}, "
+            f"and assembly {assembly!r}; refusing to modify an unrelated MR.{found} "
+            "Correct the assembly shipment.mr pointer or use --force to create a replacement MR."
+        )
 
 
 async def _restore_from_main(repo: GitRepository, path: str) -> None:

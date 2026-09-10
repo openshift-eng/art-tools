@@ -149,7 +149,7 @@ def test_validate_shipment_mr_reuse_state_rejects_prod_advisory():
         mr.changes.return_value = {'changes': [{'new_path': str(path.relative_to(directory))}]}
 
         try:
-            asyncio.run(validate_shipment_mr_reuse_state(repo, mr, 'logging-6.5', '6.5.2'))
+            asyncio.run(validate_shipment_mr_reuse_state(repo, mr, 'openshift-logging', 'logging-6.5', '6.5.2'))
         except ValueError as exc:
             assert 'prod advisory' in str(exc)
             assert '--force' in str(exc)
@@ -171,12 +171,35 @@ def test_validate_shipment_mr_reuse_state_rejects_prod_fbc_result():
         mr.changes.return_value = {'changes': [{'new_path': str(path.relative_to(directory))}]}
 
         try:
-            asyncio.run(validate_shipment_mr_reuse_state(repo, mr, 'logging-6.5', '6.5.2'))
+            asyncio.run(validate_shipment_mr_reuse_state(repo, mr, 'openshift-logging', 'logging-6.5', '6.5.2'))
         except ValueError as exc:
             assert 'prod pipeline result' in str(exc)
             assert '--force' in str(exc)
         else:
             raise AssertionError("Expected production FBC result information to block reuse")
+
+
+def test_validate_shipment_mr_reuse_state_rejects_wrong_product():
+    """Reject an MR whose shipment files belong to another product."""
+    with TemporaryDirectory() as directory:
+        repo = GitRepository(directory)
+        repo.fetch_switch_branch = AsyncMock()
+        path = Path(directory, 'shipment/openshift-logging/logging-6.5/logging-6-5/prod/6.5.2.image.yaml')
+        path.parent.mkdir(parents=True)
+        YAML.dump(_shipment(), path)
+        mr = MagicMock(source_branch='prepare-shipment-6.5.2-20260817161645')
+        mr.changes.return_value = {'changes': [{'new_path': str(path.relative_to(directory))}]}
+
+        try:
+            asyncio.run(validate_shipment_mr_reuse_state(repo, mr, 'oadp', 'logging-6.5', '6.5.2'))
+        except ValueError as exc:
+            message = str(exc)
+            assert "product 'oadp'" in message
+            assert 'refusing to modify an unrelated MR' in message
+            assert str(path.relative_to(directory)) in message
+            assert '--force' in message
+        else:
+            raise AssertionError("Expected an MR for another product to be rejected")
 
 
 def test_update_shipment_mr_url_creates_explicit_stream_assembly():
