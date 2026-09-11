@@ -96,6 +96,10 @@ class Repo(object):
         if repo_config.reposync:
             repo_dict['reposync'] = repo_config.reposync.model_dump(exclude_none=True)
 
+        # Add scan_sources if present (ART-14091)
+        if repo_config.scan_sources:
+            repo_dict['scan_sources'] = repo_config.scan_sources.model_dump(exclude_none=True)
+
         return Repo(repo_config.name, repo_dict, list(arches), gpgcheck)
 
     def __init__(self, name: str, data: Dict, valid_arches: List[str], gpgcheck: bool = True):
