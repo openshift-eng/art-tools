@@ -144,5 +144,35 @@ class TestGetReplaceVars(unittest.TestCase):
         self.assertEqual(result['release_name'], '')
 
 
+class TestGetExtraVars(unittest.TestCase):
+    """Tests for Runtime.get_extra_vars() parsing."""
+
+    def test_empty(self):
+        rt = stub_runtime()
+        rt.extra_vars = None
+        self.assertEqual(rt.get_extra_vars(), {})
+
+    def test_parse_key_value(self):
+        rt = stub_runtime()
+        rt.extra_vars = ['FOO=bar', 'COUNT=42']
+        result = rt.get_extra_vars()
+        self.assertEqual(result, {'FOO': 'bar', 'COUNT': 42})
+
+    def test_invalid_format(self):
+        rt = stub_runtime()
+        rt.extra_vars = ['BADFORMAT']
+        with self.assertRaises(ValueError):
+            rt.get_extra_vars()
+
+    def test_get_replace_vars_uses_get_extra_vars(self):
+        """get_replace_vars still applies extra_vars last (via get_extra_vars)."""
+        rt = stub_runtime()
+        rt.assembly = '4.17.3'
+        rt.assembly_type = AssemblyTypes.STREAM
+        rt.extra_vars = ['runtime_assembly=from-cli']
+        result = rt.get_replace_vars(None)
+        self.assertEqual(result['runtime_assembly'], 'from-cli')
+
+
 if __name__ == "__main__":
     unittest.main()

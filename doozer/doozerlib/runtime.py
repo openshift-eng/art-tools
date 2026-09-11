@@ -292,6 +292,26 @@ class Runtime(GroupRuntime):
                 _register_name_in_bundle(short_name_with_ose, img.key)
 
     @functools.lru_cache(maxsize=1)
+    def get_extra_vars(self) -> dict:
+        """Parse CLI ``--var KEY=VALUE`` arguments into a dict.
+
+        Integer-like values are converted to int.  This helper is shared by
+        :meth:`get_replace_vars` and :meth:`get_group_config` so the parsing
+        logic lives in one place.
+        """
+        parsed: dict = {}
+        if self.extra_vars:
+            for item in self.extra_vars:
+                if '=' not in item:
+                    raise ValueError(f"Invalid --var format '{item}', expected KEY=VALUE")
+                key, value = item.split('=', 1)
+                try:
+                    value = int(value)
+                except ValueError:
+                    pass
+                parsed[key] = value
+        return parsed
+
     def get_group_config(self) -> Model:
         """
         Load and cache group configuration. Automatically merges OKD config when variant=okd.
@@ -302,6 +322,7 @@ class Runtime(GroupRuntime):
             self.assembly,
             self.get_releases_config(),
             additional_vars=replace_vars,
+            extra_vars=self.get_extra_vars(),
         )
 
         # For OKD variant, automatically merge the optional okd: field
@@ -403,16 +424,7 @@ class Runtime(GroupRuntime):
                 # for example: replace_vars = {'CVES': 'None', 'IMPACT': 'Low', 'MAJOR': 4, 'MINOR': 12, 'RHCOS_EL_MAJOR': 8, 'RHCOS_EL_MINOR': 6, 'release_name': '4.12.77', 'runtime_assembly': '4.12.77'}
                 if 'PATCH' not in replace_vars:
                     replace_vars['PATCH'] = Version.parse(release_name).patch
-        if self.extra_vars:
-            for item in self.extra_vars:
-                if '=' not in item:
-                    raise ValueError(f"Invalid --var format '{item}', expected KEY=VALUE")
-                key, value = item.split('=', 1)
-                try:
-                    value = int(value)
-                except ValueError:
-                    pass
-                replace_vars[key] = value
+        replace_vars.update(self.get_extra_vars())
         return replace_vars
 
     def init_state(self):

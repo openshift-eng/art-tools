@@ -135,6 +135,16 @@ class Runtime(GroupRuntime):
     def group_config(self, config: Model):
         self._group_config = config
 
+    def get_extra_vars(self) -> dict:
+        """Parse CLI ``--var KEY=VALUE`` arguments into a dict.
+
+        Elliott does not currently expose a ``--var`` option, so this
+        always returns an empty dict.  It exists so the same
+        ``load_group_config(extra_vars=self.get_extra_vars())`` pattern
+        works identically in both doozer and elliott.
+        """
+        return {}
+
     def get_replace_vars(self, group_config: Model | None):
         replace_vars: dict = group_config.vars.primitive() if group_config and group_config.vars else {}
         # Only set runtime_assembly from self.assembly if group_config.vars didn't already provide a value.
@@ -145,7 +155,10 @@ class Runtime(GroupRuntime):
     def get_group_config(self):
         additional_vars = self.get_replace_vars(None)
         group_config = self._build_data_loader.load_group_config(
-            assembly=self.assembly, releases_config=self.get_releases_config(), additional_vars=additional_vars
+            assembly=self.assembly,
+            releases_config=self.get_releases_config(),
+            additional_vars=additional_vars,
+            extra_vars=self.get_extra_vars(),
         )
         return Model(group_config)
 

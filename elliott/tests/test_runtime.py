@@ -46,3 +46,12 @@ class TestGetMajorMinorPatch(unittest.TestCase):
         self.runtime.assembly_type = AssemblyTypes.CUSTOM
         with self.assertRaises(ValueError):
             self.runtime.get_major_minor_patch()
+
+
+class TestGetExtraVars(unittest.TestCase):
+    """Elliott Runtime.get_extra_vars() always returns empty (no --var support)."""
+
+    def test_returns_empty_dict(self):
+        rt = Runtime()
+        rt._logger = MagicMock()
+        self.assertEqual(rt.get_extra_vars(), {})
