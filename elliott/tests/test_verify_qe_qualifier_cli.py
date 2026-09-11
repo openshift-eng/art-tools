@@ -6,9 +6,9 @@ from elliottlib.cli.verify_qe_qualifier_cli import (
     QualifierCheckResult,
     VerifyQeQualifierResult,
     check_qe_qualifier,
-    render_result,
     verify_qe_qualifier,
 )
+from elliottlib.verify_common import render_verify_result
 
 
 class TestQualifierCheckResult(TestCase):
@@ -314,7 +314,7 @@ class TestRenderResult(TestCase):
                 QualifierCheckResult(release_tag="4.22.0-0.nightly-2026-08-05-104816", arch="amd64", badge_earned=True)
             ],
         )
-        text = render_result(result, "text")
+        text = render_verify_result(result, "text")
         self.assertIn("Assembly: 4.22.9", text)
         self.assertIn("Overall: PASS", text)
         self.assertIn("Stable:", text)
@@ -325,7 +325,7 @@ class TestRenderResult(TestCase):
             assembly="4.22.9",
             stable_results=[QualifierCheckResult(release_tag="4.22.9", arch="amd64", badge_earned=False)],
         )
-        text = render_result(result, "text")
+        text = render_verify_result(result, "text")
         self.assertIn("Overall: FAIL", text)
 
     def test_text_error(self):
@@ -333,7 +333,7 @@ class TestRenderResult(TestCase):
             assembly="4.22.9",
             stable_results=[QualifierCheckResult(release_tag="4.22.9", arch="amd64", error="release not found")],
         )
-        text = render_result(result, "text")
+        text = render_verify_result(result, "text")
         self.assertIn("ERROR", text)
         self.assertIn("release not found", text)
 
@@ -345,7 +345,7 @@ class TestRenderResult(TestCase):
                 QualifierCheckResult(release_tag="4.22.0-0.nightly-2026-08-05-104816", arch="amd64", badge_earned=True)
             ],
         )
-        text = render_result(result, "json")
+        text = render_verify_result(result, "json")
         data = json.loads(text)
         self.assertEqual(data["assembly"], "4.22.9")
         self.assertTrue(data["passed"])
@@ -358,7 +358,7 @@ class TestRenderResult(TestCase):
             assembly="4.22.9",
             stable_results=[QualifierCheckResult(release_tag="4.22.9", arch="amd64", error="not found")],
         )
-        text = render_result(result, "json")
+        text = render_verify_result(result, "json")
         data = json.loads(text)
         self.assertFalse(data["passed"])
         self.assertEqual(data["stable"][0]["error"], "not found")

@@ -14,9 +14,9 @@ from elliottlib.cli.verify_kernel_tag_cli import (
     get_kernel_rpms_from_rhcos,
     get_rpm_deliveries_config,
     nvr_to_brewroot_metadata_url,
-    render_result,
     verify_kernel_tag,
 )
+from elliottlib.verify_common import render_verify_result
 from requests.exceptions import HTTPError
 
 
@@ -407,7 +407,7 @@ class TestRenderResult(IsolatedAsyncioTestCase):
             ],
             stop_ship_tag="early-kernel-stop-ship",
         )
-        text = render_result(result, "text")
+        text = render_verify_result(result, "text")
         self.assertIn("OK", text)
         self.assertIn("PASS", text)
         self.assertIn("kernel-5.14.0-1.el9", text)
@@ -423,7 +423,7 @@ class TestRenderResult(IsolatedAsyncioTestCase):
             ],
             stop_ship_tag="early-kernel-stop-ship",
         )
-        text = render_result(result, "text")
+        text = render_verify_result(result, "text")
         self.assertIn("STOP-SHIP", text)
         self.assertIn("FAIL", text)
 
@@ -434,7 +434,7 @@ class TestRenderResult(IsolatedAsyncioTestCase):
             ],
             stop_ship_tag="early-kernel-stop-ship",
         )
-        text = render_result(result, "text")
+        text = render_verify_result(result, "text")
         self.assertIn("SKIPPED", text)
 
     def test_text_error(self):
@@ -444,7 +444,7 @@ class TestRenderResult(IsolatedAsyncioTestCase):
             ],
             stop_ship_tag="early-kernel-stop-ship",
         )
-        text = render_result(result, "text")
+        text = render_verify_result(result, "text")
         self.assertIn("ERROR", text)
         self.assertIn("connection failed", text)
 
@@ -460,7 +460,7 @@ class TestRenderResult(IsolatedAsyncioTestCase):
             ],
             stop_ship_tag="early-kernel-stop-ship",
         )
-        output = render_result(result, "json")
+        output = render_verify_result(result, "json")
         data = json.loads(output)
         self.assertTrue(data["passed"])
         self.assertFalse(data["failed"])
@@ -480,7 +480,7 @@ class TestRenderResult(IsolatedAsyncioTestCase):
             ],
             stop_ship_tag="early-kernel-stop-ship",
         )
-        output = render_result(result, "json")
+        output = render_verify_result(result, "json")
         data = json.loads(output)
         self.assertFalse(data["passed"])
         self.assertTrue(data["failed"])

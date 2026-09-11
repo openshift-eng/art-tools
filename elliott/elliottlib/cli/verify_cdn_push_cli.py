@@ -1,13 +1,17 @@
-import json
 import logging
 from dataclasses import dataclass, field
 from typing import Optional
 
 import click
-from artcommonlib.assembly import assembly_config_struct
 
 from elliottlib.cli.common import cli, click_coroutine
 from elliottlib.errata_async import AsyncErrataAPI
+from elliottlib.verify_common import (
+    VerifyResultBase,
+    get_assembly_advisory_ids,
+    handle_verify_result,
+    verify_output_option,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -54,16 +58,50 @@ class AdvisoryPushResult:
 
 
 @dataclass
-class VerifyCdnPushResult:
+class VerifyCdnPushResult(VerifyResultBase):
     advisories: list[AdvisoryPushResult] = field(default_factory=list)
 
     @property
-    def complete(self) -> bool:
+    def passed(self) -> bool:
         return bool(self.advisories) and all(a.complete for a in self.advisories)
 
     @property
     def failed(self) -> bool:
         return any(a.failed for a in self.advisories)
+
+    def to_dict(self) -> dict:
+        return {
+            "passed": self.passed,
+            "failed": self.failed,
+            "advisories": [
+                {
+                    "advisory_id": a.advisory_id,
+                    "impetus": a.impetus,
+                    "complete": a.complete,
+                    "failed": a.failed,
+                    "push_triggered": a.push_triggered,
+                    "error": a.error,
+                    "push_jobs": [{"target": j.target, "job_id": j.job_id, "status": j.status} for j in a.push_jobs],
+                }
+                for a in self.advisories
+            ],
+        }
+
+    def render_text(self) -> str:
+        lines = ["CDN staging push status", ""]
+        for a in self.advisories:
+            status = "COMPLETE" if a.complete else ("FAIL" if a.failed else "PENDING")
+            lines.append(f"  Advisory {a.advisory_id} ({a.impetus}): {status}")
+            if a.push_triggered:
+                lines.append("    Push re-triggered")
+            if a.error:
+                lines.append(f"    Error: {a.error}")
+            for j in a.push_jobs:
+                lines.append(f"    {j.target}: {j.status} (job {j.job_id})")
+        lines.append("")
+        overall = "COMPLETE" if self.passed else ("FAIL" if self.failed else "PENDING")
+        lines.append(f"Overall: {overall}")
+        return "\n".join(lines)
 
 
 def parse_push_jobs(raw_jobs: list) -> list[PushJobInfo]:
@@ -166,59 +204,6 @@ async def verify_cdn_push(advisories: dict[str, int], do_push: bool) -> VerifyCd
     return result
 
 
-def render_result(result: VerifyCdnPushResult, output: str) -> str:
-    if output == "json":
-        return json.dumps(
-            {
-                "complete": result.complete,
-                "failed": result.failed,
-                "advisories": [
-                    {
-                        "advisory_id": a.advisory_id,
-                        "impetus": a.impetus,
-                        "complete": a.complete,
-                        "failed": a.failed,
-                        "push_triggered": a.push_triggered,
-                        "error": a.error,
-                        "push_jobs": [
-                            {"target": j.target, "job_id": j.job_id, "status": j.status} for j in a.push_jobs
-                        ],
-                    }
-                    for a in result.advisories
-                ],
-            },
-            indent=2,
-        )
-
-    lines = ["CDN staging push status", ""]
-    for a in result.advisories:
-        status = "COMPLETE" if a.complete else ("FAIL" if a.failed else "PENDING")
-        lines.append(f"  Advisory {a.advisory_id} ({a.impetus}): {status}")
-        if a.push_triggered:
-            lines.append("    Push re-triggered")
-        if a.error:
-            lines.append(f"    Error: {a.error}")
-        for j in a.push_jobs:
-            lines.append(f"    {j.target}: {j.status} (job {j.job_id})")
-    lines.append("")
-
-    overall = "COMPLETE" if result.complete else ("FAIL" if result.failed else "PENDING")
-    lines.append(f"Overall: {overall}")
-    return "\n".join(lines)
-
-
-def get_advisory_ids(runtime) -> dict[str, int]:
-    releases_config = runtime.get_releases_config()
-    group_config = assembly_config_struct(releases_config, runtime.assembly, "group", {})
-    advisories = group_config.get("advisories", {})
-    result = {}
-    for impetus in CDN_PUSH_ADVISORY_TYPES:
-        ad_id = advisories.get(impetus)
-        if ad_id:
-            result[impetus] = int(ad_id)
-    return result
-
-
 @cli.command("verify-cdn-push", short_help="Verify CDN staging push jobs for advisories")
 @click.option(
     "--push/--no-push",
@@ -226,14 +211,7 @@ def get_advisory_ids(runtime) -> dict[str, int]:
     show_default=True,
     help="Re-trigger CDN push for advisories with failed or missing push jobs.",
 )
-@click.option(
-    "-o",
-    "--output",
-    type=click.Choice(["text", "json"]),
-    default="text",
-    show_default=True,
-    help="Output format.",
-)
+@verify_output_option
 @click.pass_obj
 @click_coroutine
 async def verify_cdn_push_cli(runtime, push, output):
@@ -250,12 +228,10 @@ async def verify_cdn_push_cli(runtime, push, output):
         elliott --group openshift-4.18 --assembly 4.18.51 verify-cdn-push
     """
     runtime.initialize()
-    advisories = get_advisory_ids(runtime)
+    advisories = get_assembly_advisory_ids(runtime, include_types=CDN_PUSH_ADVISORY_TYPES)
     if not advisories:
         raise click.UsageError(f"No advisory IDs found for {CDN_PUSH_ADVISORY_TYPES} in assembly config.")
 
     LOGGER.info("Checking CDN push status for advisories: %s", advisories)
     result = await verify_cdn_push(advisories=advisories, do_push=push)
-    click.echo(render_result(result, output))
-    if not result.complete:
-        raise SystemExit(1)
+    handle_verify_result(result, output)

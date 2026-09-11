@@ -9,6 +9,7 @@ import click
 from artcommonlib import exectools
 
 from elliottlib.cli.common import cli, click_coroutine
+from elliottlib.verify_common import VerifyResultBase, handle_verify_result, verify_output_option
 
 LOGGER = logging.getLogger(__name__)
 
@@ -16,8 +17,8 @@ RELEASE_STREAM_API = "https://amd64.ocp.releases.ci.openshift.org/api/v1/release
 
 
 @dataclass
-class VerifyMetadataUrlResult:
-    release: str
+class VerifyMetadataUrlResult(VerifyResultBase):
+    release: str = ""
     pullspec: str = ""
     metadata_url: str = ""
     accessible: bool = False
@@ -27,9 +28,31 @@ class VerifyMetadataUrlResult:
     def passed(self) -> bool:
         return self.accessible and not self.error
 
-    @property
-    def failed(self) -> bool:
-        return not self.accessible or bool(self.error)
+    def to_dict(self) -> dict:
+        return {
+            "passed": self.passed,
+            "failed": self.failed,
+            "release": self.release,
+            "pullspec": self.pullspec,
+            "metadata_url": self.metadata_url,
+            "accessible": self.accessible,
+            "error": self.error,
+        }
+
+    def render_text(self) -> str:
+        lines = ["Metadata URL check", ""]
+        lines.append(f"  Release: {self.release}")
+        if self.pullspec:
+            lines.append(f"  Pullspec: {self.pullspec}")
+        if self.metadata_url:
+            lines.append(f"  Metadata URL: {self.metadata_url}")
+            lines.append(f"  Accessible: {'yes' if self.accessible else 'no'}")
+        if self.error:
+            lines.append(f"  Error: {self.error}")
+        lines.append("")
+        overall = "PASS" if self.passed else "FAIL"
+        lines.append(f"Overall: {overall}")
+        return "\n".join(lines)
 
 
 def _release_stream_name(release: str) -> str:
@@ -123,46 +146,8 @@ async def verify_metadata_url(release: str) -> VerifyMetadataUrlResult:
     return result
 
 
-def render_result(result: VerifyMetadataUrlResult, output: str) -> str:
-    if output == "json":
-        return json.dumps(
-            {
-                "passed": result.passed,
-                "failed": result.failed,
-                "release": result.release,
-                "pullspec": result.pullspec,
-                "metadata_url": result.metadata_url,
-                "accessible": result.accessible,
-                "error": result.error,
-            },
-            indent=2,
-        )
-
-    lines = ["Metadata URL check", ""]
-    lines.append(f"  Release: {result.release}")
-    if result.pullspec:
-        lines.append(f"  Pullspec: {result.pullspec}")
-    if result.metadata_url:
-        lines.append(f"  Metadata URL: {result.metadata_url}")
-        lines.append(f"  Accessible: {'yes' if result.accessible else 'no'}")
-    if result.error:
-        lines.append(f"  Error: {result.error}")
-    lines.append("")
-
-    overall = "PASS" if result.passed else "FAIL"
-    lines.append(f"Overall: {overall}")
-    return "\n".join(lines)
-
-
 @cli.command("verify-metadata-url", short_help="Check release payload metadata URL accessibility")
-@click.option(
-    "-o",
-    "--output",
-    type=click.Choice(["text", "json"]),
-    default="text",
-    show_default=True,
-    help="Output format.",
-)
+@verify_output_option
 @click.pass_obj
 @click_coroutine
 async def verify_metadata_url_cli(runtime, output):
@@ -184,6 +169,4 @@ async def verify_metadata_url_cli(runtime, output):
 
     LOGGER.info("Verifying metadata URL for release %s", release)
     result = await verify_metadata_url(release=release)
-    click.echo(render_result(result, output))
-    if not result.passed:
-        raise SystemExit(1)
+    handle_verify_result(result, output)

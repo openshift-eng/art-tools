@@ -1,14 +1,18 @@
 import asyncio
-import json
 import logging
 from dataclasses import dataclass, field
 from typing import Optional
 
 import click
-from artcommonlib.assembly import assembly_config_struct
 
 from elliottlib.cli.common import cli, click_coroutine
 from elliottlib.errata_async import AsyncErrataAPI
+from elliottlib.verify_common import (
+    VerifyResultBase,
+    get_assembly_advisory_ids,
+    handle_verify_result,
+    verify_output_option,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -32,16 +36,46 @@ class AdvisoryAlertResult:
 
 
 @dataclass
-class VerifySecurityAlertsResult:
+class VerifySecurityAlertsResult(VerifyResultBase):
     advisories: list[AdvisoryAlertResult] = field(default_factory=list)
 
     @property
-    def ok(self) -> bool:
+    def passed(self) -> bool:
         return all(a.ok for a in self.advisories)
 
-    @property
-    def failed(self) -> bool:
-        return any(a.failed for a in self.advisories)
+    def to_dict(self) -> dict:
+        return {
+            "passed": self.passed,
+            "failed": self.failed,
+            "advisories": [
+                {
+                    "advisory_id": a.advisory_id,
+                    "impetus": a.impetus,
+                    "errata_type": a.errata_type,
+                    "blocking": a.blocking,
+                    "skipped": a.skipped,
+                    "error": a.error,
+                }
+                for a in self.advisories
+            ],
+        }
+
+    def render_text(self) -> str:
+        lines = ["Security alerts check", ""]
+        for a in self.advisories:
+            if a.skipped:
+                lines.append(f"  Advisory {a.advisory_id} ({a.impetus}): SKIPPED ({a.errata_type.upper()})")
+            elif a.blocking:
+                lines.append(f"  Advisory {a.advisory_id} ({a.impetus}): BLOCKING")
+            elif a.error:
+                lines.append(f"  Advisory {a.advisory_id} ({a.impetus}): ERROR")
+                lines.append(f"    {a.error}")
+            else:
+                lines.append(f"  Advisory {a.advisory_id} ({a.impetus}): OK")
+        lines.append("")
+        overall = "OK" if self.passed else "FAIL"
+        lines.append(f"Overall: {overall}")
+        return "\n".join(lines)
 
 
 def get_errata_type(advisory_data: dict) -> str:
@@ -106,69 +140,12 @@ async def verify_security_alerts(advisories: dict[str, int]) -> VerifySecurityAl
     return result
 
 
-def render_result(result: VerifySecurityAlertsResult, output: str) -> str:
-    if output == "json":
-        return json.dumps(
-            {
-                "ok": result.ok,
-                "failed": result.failed,
-                "advisories": [
-                    {
-                        "advisory_id": a.advisory_id,
-                        "impetus": a.impetus,
-                        "errata_type": a.errata_type,
-                        "blocking": a.blocking,
-                        "skipped": a.skipped,
-                        "error": a.error,
-                    }
-                    for a in result.advisories
-                ],
-            },
-            indent=2,
-        )
-
-    lines = ["Security alerts check", ""]
-    for a in result.advisories:
-        if a.skipped:
-            lines.append(f"  Advisory {a.advisory_id} ({a.impetus}): SKIPPED ({a.errata_type.upper()})")
-        elif a.blocking:
-            lines.append(f"  Advisory {a.advisory_id} ({a.impetus}): BLOCKING")
-        elif a.error:
-            lines.append(f"  Advisory {a.advisory_id} ({a.impetus}): ERROR")
-            lines.append(f"    {a.error}")
-        else:
-            lines.append(f"  Advisory {a.advisory_id} ({a.impetus}): OK")
-    lines.append("")
-
-    overall = "OK" if result.ok else "FAIL"
-    lines.append(f"Overall: {overall}")
-    return "\n".join(lines)
-
-
 # microshift advisories are managed separately and don't go through ProdSec alert flow
 SKIPPED_IMPETUS = ("microshift",)
 
 
-def get_advisory_ids(runtime) -> dict[str, int]:
-    releases_config = runtime.get_releases_config()
-    group_config = assembly_config_struct(releases_config, runtime.assembly, "group", {})
-    advisories = group_config.get("advisories", {})
-    result = {}
-    for impetus, ad_id in advisories.items():
-        if ad_id and impetus not in SKIPPED_IMPETUS:
-            result[impetus] = int(ad_id)
-    return result
-
-
 @cli.command("verify-security-alerts", short_help="Check RHSA advisories for blocking security alerts")
-@click.option(
-    "-o",
-    "--output",
-    type=click.Choice(["text", "json"]),
-    default="text",
-    show_default=True,
-    help="Output format.",
-)
+@verify_output_option
 @click.pass_obj
 @click_coroutine
 async def verify_security_alerts_cli(runtime, output):
@@ -186,12 +163,10 @@ async def verify_security_alerts_cli(runtime, output):
         elliott --group openshift-4.18 --assembly 4.18.51 verify-security-alerts
     """
     runtime.initialize()
-    advisories = get_advisory_ids(runtime)
+    advisories = get_assembly_advisory_ids(runtime, exclude_types=SKIPPED_IMPETUS)
     if not advisories:
         raise click.UsageError("No advisory IDs found in assembly config.")
 
     LOGGER.info("Checking security alerts for advisories: %s", advisories)
     result = await verify_security_alerts(advisories=advisories)
-    click.echo(render_result(result, output))
-    if not result.ok:
-        raise SystemExit(1)
+    handle_verify_result(result, output)

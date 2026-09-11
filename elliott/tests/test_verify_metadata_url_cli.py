@@ -8,10 +8,10 @@ from elliottlib.cli.verify_metadata_url_cli import (
     check_url_accessible,
     extract_metadata_url,
     get_release_pullspec,
-    render_result,
     validate_metadata_url,
     verify_metadata_url,
 )
+from elliottlib.verify_common import render_verify_result
 
 
 class TestVerifyMetadataUrlResult(TestCase):
@@ -302,7 +302,7 @@ class TestRenderResult(TestCase):
             metadata_url="https://access.redhat.com/errata/RHBA-2025:1234",
             accessible=True,
         )
-        text = render_result(r, "text")
+        text = render_verify_result(r, "text")
         self.assertIn("PASS", text)
         self.assertIn("4.18", text)
         self.assertIn("access.redhat.com", text)
@@ -314,13 +314,13 @@ class TestRenderResult(TestCase):
             metadata_url="https://access.redhat.com/errata/RHBA-2025:1234",
             accessible=False,
         )
-        text = render_result(r, "text")
+        text = render_verify_result(r, "text")
         self.assertIn("FAIL", text)
         self.assertIn("no", text)
 
     def test_text_error(self):
         r = VerifyMetadataUrlResult(release="4.18", error="API unreachable")
-        text = render_result(r, "text")
+        text = render_verify_result(r, "text")
         self.assertIn("FAIL", text)
         self.assertIn("API unreachable", text)
 
@@ -331,7 +331,7 @@ class TestRenderResult(TestCase):
             metadata_url="https://access.redhat.com/errata/RHBA-2025:1234",
             accessible=True,
         )
-        data = json.loads(render_result(r, "json"))
+        data = json.loads(render_verify_result(r, "json"))
         self.assertTrue(data["passed"])
         self.assertFalse(data["failed"])
         self.assertEqual(data["release"], "4.18")
@@ -339,7 +339,7 @@ class TestRenderResult(TestCase):
 
     def test_json_fail(self):
         r = VerifyMetadataUrlResult(release="4.18", error="boom")
-        data = json.loads(render_result(r, "json"))
+        data = json.loads(render_verify_result(r, "json"))
         self.assertFalse(data["passed"])
         self.assertTrue(data["failed"])
         self.assertEqual(data["error"], "boom")
