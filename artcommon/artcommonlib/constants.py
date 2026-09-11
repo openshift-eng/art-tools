@@ -99,6 +99,7 @@ PRODUCT_NAMESPACE_MAP = {
     "external-secrets-operator": "art-oap-tenant",
     "openshift_agent_installer": "art-installer-agent-tenant",
     "logging": "art-logging-tenant",
+    "mirror-gui": "ocp-art-tenant",
     "mta": "art-mta-tenant",
     "oadp": "art-oadp-tenant",
     "oc-mirror": "ocp-art-tenant",
@@ -157,6 +158,10 @@ LAYERED_PRODUCT_CONFORMA_STAGE_POLICY_MAP = {
         "rhtap-releng-tenant/registry-art-logging-stage",
         "rhtap-releng-tenant/fbc-stage",
     ),
+    "mirror-gui": (
+        "rhtap-releng-tenant/registry-standard",
+        None,
+    ),
     "oc-mirror": (
         "rhtap-releng-tenant/registry-standard",
         None,
@@ -201,6 +206,7 @@ PRODUCT_KUBECONFIG_MAP = {
     "external-secrets-operator": "OAP_KONFLUX_SA_KUBECONFIG",
     "openshift_agent_installer": "ASSISTED_INSTALLER_SA_KUBECONFIG",
     "logging": "LOGGING_KONFLUX_SA_KUBECONFIG",
+    "mirror-gui": "KONFLUX_SA_KUBECONFIG",
     "mta": "MTA_KONFLUX_SA_KUBECONFIG",
     "oadp": "OADP_KONFLUX_SA_KUBECONFIG",
     "oc-mirror": "KONFLUX_SA_KUBECONFIG",
