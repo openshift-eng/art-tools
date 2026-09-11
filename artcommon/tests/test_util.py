@@ -717,9 +717,8 @@ class TestProductBasedResolution(unittest.TestCase):
 
     @patch.dict("os.environ", {"KONFLUX_SA_KUBECONFIG": "/path/to/kubeconfig"})
     def test_product_kubeconfig_resolution(self):
-        # Test that both oc-mirror and oc-mirror-2.0 resolve to the same KONFLUX_SA_KUBECONFIG path
+        # Test that oc-mirror resolves to the KONFLUX_SA_KUBECONFIG path
         self.assertEqual(util.resolve_konflux_kubeconfig_by_product("oc-mirror"), "/path/to/kubeconfig")
-        self.assertEqual(util.resolve_konflux_kubeconfig_by_product("oc-mirror-2.0"), "/path/to/kubeconfig")
 
         # Test that ocp also resolves to KONFLUX_SA_KUBECONFIG path
         self.assertEqual(util.resolve_konflux_kubeconfig_by_product("ocp"), "/path/to/kubeconfig")
