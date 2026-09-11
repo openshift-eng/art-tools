@@ -13,6 +13,7 @@ from elliottlib.shipment_model import (
     SnapshotComponent,
     SnapshotSpec,
 )
+from pyartcd.lp_shipment import ShipmentMRActiveStageError
 from pyartcd.pipelines.release_from_fbc import ReleaseFromFbcPipeline, _normalize_release_date
 
 
@@ -861,6 +862,53 @@ class TestCliValidation(unittest.TestCase):
         self.assertIsInstance(result.exception, click.ClickException)
         self.assertIn("At least one of", str(result.exception))
 
+    def test_force_requires_create_mr(self):
+        """Reject force when shipment MR creation is disabled."""
+        result = self._invoke(["--extra-image-nvrs", "foo-container-1.0-1.el9", "--force"])
+        self.assertIsInstance(result.exception, click.ClickException)
+        self.assertIn("--force requires --create-mr", str(result.exception))
+
+    def test_force_rejected_for_ocp_optional(self):
+        """Keep replacement behavior out of the OCP optional path."""
+        result = self._invoke(
+            ["--extra-image-nvrs", "foo-container-1.0-1.el9", "--create-mr", "--force", "--ocp-optional"]
+        )
+        self.assertIsInstance(result.exception, click.ClickException)
+        self.assertIn("only supported for layered-product", str(result.exception))
+
+    @patch("pyartcd.pipelines.release_from_fbc.locks.run_with_lock", new_callable=AsyncMock)
+    @patch("pyartcd.pipelines.release_from_fbc.ReleaseFromFbcPipeline")
+    def test_layered_product_create_mr_uses_assembly_lock(self, pipeline_cls, run_with_lock):
+        """Serialize layered-product shipment updates by group and assembly."""
+
+        async def await_pipeline(coro, **_kwargs):
+            """Execute the coroutine passed through the mocked lock."""
+            return await coro
+
+        run_with_lock.side_effect = await_pipeline
+        pipeline_cls.return_value.run = AsyncMock()
+
+        result = self._invoke(["--extra-image-nvrs", "foo-container-1.0-1.el9", "--create-mr"])
+
+        self.assertIsNone(result.exception)
+        run_with_lock.assert_awaited_once()
+        self.assertEqual(
+            run_with_lock.await_args.kwargs["lock_name"],
+            "lock:layered-product-shipment:oadp-1.5:1.5.3",
+        )
+
+    @patch("pyartcd.pipelines.release_from_fbc.locks.run_with_lock", new_callable=AsyncMock)
+    @patch("pyartcd.pipelines.release_from_fbc.ReleaseFromFbcPipeline")
+    def test_ocp_optional_create_mr_does_not_use_layered_product_lock(self, pipeline_cls, run_with_lock):
+        """Leave OCP optional shipment MR creation outside the LP lock path."""
+        pipeline_cls.return_value.run = AsyncMock()
+
+        result = self._invoke(["--extra-image-nvrs", "foo-container-1.0-1.el9", "--create-mr", "--ocp-optional"])
+
+        self.assertIsNone(result.exception)
+        run_with_lock.assert_not_awaited()
+        pipeline_cls.return_value.run.assert_awaited_once()
+
     @patch("pyartcd.pipelines.release_from_fbc.ReleaseFromFbcPipeline")
     def test_fbc_only_does_not_raise(self, mock_pipeline_cls):
         """Providing only --fbc-pullspecs should pass CLI validation."""
@@ -1382,6 +1430,70 @@ class TestOcpOptionalMode(unittest.TestCase):
 
     # -- run() integration tests --
 
+    @patch('pyartcd.pipelines.release_from_fbc.validate_shipment_mr_for_operation', new_callable=AsyncMock)
+    def test_active_stage_blocks_before_fbc_processing(self, mock_validate):
+        """Reject unsafe layered-product reuse before processing release inputs."""
+        mock_validate.side_effect = ShipmentMRActiveStageError("stage pipeline is running")
+        pipeline = self._make_pipeline(ocp_optional=False, group="oadp-1.5", assembly="1.5.8")
+        pipeline.create_mr = True
+        pipeline.check_env_vars = MagicMock()
+        pipeline.setup_working_dir = MagicMock()
+        pipeline.setup_shipment_repo = AsyncMock()
+        pipeline._load_product_from_group_config = AsyncMock(return_value="oadp")
+        pipeline._load_layered_product_shipment_mr = MagicMock(
+            return_value="https://gitlab.example/project/-/merge_requests/42"
+        )
+        pipeline.validate_fbc_related_images = AsyncMock()
+        pipeline.__dict__['_gitlab'] = MagicMock()
+
+        with self.assertRaisesRegex(ShipmentMRActiveStageError, "stage pipeline is running"):
+            asyncio.run(pipeline.run())
+
+        pipeline.validate_fbc_related_images.assert_not_awaited()
+
+    @patch('pyartcd.pipelines.release_from_fbc.validate_shipment_mr_for_operation', new_callable=AsyncMock)
+    def test_force_makes_open_previous_mr_draft_before_replacement(self, mock_validate):
+        """Draft an open stage-only MR before direct release creates its replacement."""
+        previous_mr = MagicMock(
+            state='opened',
+            title='Shipment for oadp 1.5.8',
+            labels=['stage-release-success', 'reviewed'],
+        )
+        ci_state = MagicMock(active_stage=('stage pipeline is running',), prod_attempts=())
+        mock_validate.return_value = (previous_mr, ci_state)
+        pipeline = self._make_pipeline(ocp_optional=False, group="oadp-1.5", assembly="1.5.8")
+        pipeline.create_mr = True
+        pipeline.force = True
+        pipeline.fbc_pullspecs = []
+        pipeline.extra_image_nvrs = ["oadp-container-v1.5.8-1.el9"]
+        pipeline._configured_shipment_mr_url = "https://gitlab.example/project/-/merge_requests/42"
+        pipeline.check_env_vars = MagicMock()
+        pipeline.setup_working_dir = MagicMock()
+        pipeline.setup_shipment_repo = AsyncMock()
+        pipeline._load_product_from_group_config = AsyncMock(return_value="oadp")
+        pipeline._load_layered_product_shipment_mr = MagicMock(
+            return_value="https://gitlab.example/project/-/merge_requests/42"
+        )
+        pipeline.create_snapshot = AsyncMock(return_value=_make_snapshot(app="oadp-1-5"))
+        pipeline.create_shipment_config = MagicMock(return_value=MagicMock())
+        pipeline._load_release_notes_template = MagicMock(return_value=None)
+        pipeline._verify_layered_product_shipment_mr = AsyncMock()
+        pipeline.create_shipment_mr = AsyncMock(return_value="https://gitlab.example/project/-/merge_requests/43")
+        pipeline._update_layered_product_shipment_mr = AsyncMock()
+        pipeline.set_shipment_mr_ready = AsyncMock()
+        pipeline.__dict__['_gitlab'] = MagicMock()
+
+        with patch('pyartcd.pipelines.release_from_fbc.is_nvr_embargoed', return_value=False):
+            asyncio.run(pipeline.run())
+
+        self.assertEqual(previous_mr.title, 'Draft: Shipment for oadp 1.5.8')
+        self.assertEqual(previous_mr.labels, ['reviewed'])
+        previous_mr.save.assert_called_once_with()
+        pipeline.create_shipment_mr.assert_awaited_once()
+        pipeline._update_layered_product_shipment_mr.assert_awaited_once_with(
+            "https://gitlab.example/project/-/merge_requests/43"
+        )
+
     def test_extra_image_nvrs_merged_into_extras_key(self):
         """In OCP optional mode, extra_image_nvrs should merge into 'extras', not 'image'."""
         pipeline = self._make_pipeline(ocp_optional=True)
@@ -1554,6 +1666,8 @@ class TestOcpOptionalMode(unittest.TestCase):
         pipeline.check_env_vars = MagicMock()
         pipeline.setup_working_dir = MagicMock()
         pipeline.setup_shipment_repo = AsyncMock()
+        pipeline._load_layered_product_shipment_mr = MagicMock(return_value=None)
+        pipeline._update_layered_product_shipment_mr = AsyncMock()
         pipeline._load_product_from_group_config = AsyncMock(return_value="oadp")
         pipeline._load_release_notes_template = MagicMock(return_value=None)
         pipeline.create_snapshot = AsyncMock(return_value=_make_snapshot(app="oadp-1-5"))

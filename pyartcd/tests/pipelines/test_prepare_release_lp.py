@@ -3,6 +3,7 @@ import json
 import unittest
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
+from pyartcd.lp_shipment import ShipmentMRActiveStageError
 from pyartcd.pipelines.prepare_release_lp import PrepareReleaseLPPipeline
 
 
@@ -107,6 +108,59 @@ class TestPrepareReleaseLPPipeline(unittest.TestCase):
         with patch.dict('os.environ', {}, clear=True):
             with self.assertRaises(ValueError):
                 pipeline._check_env_vars()
+
+    def test_cli_force_requires_create_mr(self):
+        """Reject force when shipment MR creation is disabled."""
+        from click.testing import CliRunner
+        from pyartcd.pipelines.prepare_release_lp import prepare_release_lp
+        from pyartcd.runtime import Runtime
+
+        runtime = MagicMock(spec=Runtime)
+        runtime.dry_run = False
+        runtime.working_dir = MagicMock()
+        runtime.config = {}
+        asyncio.set_event_loop(asyncio.new_event_loop())
+        result = CliRunner().invoke(
+            prepare_release_lp,
+            ["--group", "acm-2.17", "--assembly", "2.17.3", "--force"],
+            obj=runtime,
+            standalone_mode=False,
+        )
+        self.assertIn("--force requires --create-mr", str(result.exception))
+
+    @patch("pyartcd.pipelines.prepare_release_lp.locks.run_with_lock", new_callable=AsyncMock)
+    @patch("pyartcd.pipelines.prepare_release_lp.PrepareReleaseLPPipeline")
+    def test_cli_locks_layered_product_shipment_updates(self, pipeline_cls, run_with_lock):
+        """Serialize prepare-release shipment updates by group and assembly."""
+        from click.testing import CliRunner
+        from pyartcd.pipelines.prepare_release_lp import prepare_release_lp
+        from pyartcd.runtime import Runtime
+
+        async def await_pipeline(coro, **_kwargs):
+            """Execute the coroutine passed through the mocked lock."""
+            return await coro
+
+        run_with_lock.side_effect = await_pipeline
+        pipeline_cls.return_value.run = AsyncMock()
+        runtime = MagicMock(spec=Runtime)
+        runtime.dry_run = False
+        runtime.working_dir = MagicMock()
+        runtime.config = {}
+        asyncio.set_event_loop(asyncio.new_event_loop())
+
+        result = CliRunner().invoke(
+            prepare_release_lp,
+            ["--group", "acm-2.17", "--assembly", "2.17.3", "--create-mr"],
+            obj=runtime,
+            standalone_mode=False,
+        )
+
+        self.assertIsNone(result.exception)
+        run_with_lock.assert_awaited_once()
+        self.assertEqual(
+            run_with_lock.await_args.kwargs["lock_name"],
+            "lock:layered-product-shipment:acm-2.17:2.17.3",
+        )
 
 
 class TestPrepareReleaseLPMultiFBC(unittest.TestCase):
@@ -442,6 +496,85 @@ class TestPrepareReleaseLPRun(unittest.TestCase):
         )
         kwargs.update(overrides)
         return PrepareReleaseLPPipeline(**kwargs)
+
+    @patch('pyartcd.pipelines.prepare_release_lp.validate_shipment_mr_for_operation', new_callable=AsyncMock)
+    def test_active_stage_blocks_before_expensive_build_work(self, mock_validate):
+        """Reject unsafe reuse before bundle and FBC builds begin."""
+        import tempfile
+
+        mock_validate.side_effect = ShipmentMRActiveStageError("stage pipeline is running")
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            pipeline = self._make_pipeline(tmp_dir, create_mr=True)
+            pipeline._configured_shipment_mr_url = "https://gitlab.example/project/-/merge_requests/42"
+            pipeline._check_env_vars = MagicMock()
+            pipeline._setup_working_dir = MagicMock()
+            pipeline._setup_shipment_repo = AsyncMock()
+            pipeline._load_product_from_group_config = AsyncMock(return_value="rhacm2")
+            pipeline._load_assembly = AsyncMock(return_value={'assembly': {'type': 'standard'}})
+            pipeline._trigger_bundle_build = AsyncMock()
+            pipeline.__dict__['_gitlab'] = MagicMock()
+
+            with self.assertRaisesRegex(ShipmentMRActiveStageError, "stage pipeline is running"):
+                asyncio.run(pipeline.run())
+
+            pipeline._trigger_bundle_build.assert_not_awaited()
+
+    @patch('pyartcd.pipelines.prepare_release_lp.validate_shipment_mr_for_operation', new_callable=AsyncMock)
+    def test_force_makes_open_previous_mr_draft_before_replacement(self, mock_validate):
+        """Supersede an open stage-only MR without modifying its shipment files."""
+        import tempfile
+
+        previous_mr = MagicMock(
+            state='opened',
+            title='Shipment for rhacm2 2.17.3',
+            labels=['stage-release-success', 'reviewed'],
+        )
+        ci_state = MagicMock(active_stage=('stage pipeline is running',), prod_attempts=())
+        mock_validate.return_value = (previous_mr, ci_state)
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            pipeline = self._make_pipeline(tmp_dir, create_mr=True, force=True)
+            pipeline.dry_run = False
+            pipeline._configured_shipment_mr_url = "https://gitlab.example/project/-/merge_requests/42"
+            pipeline._check_env_vars = MagicMock()
+            pipeline._setup_working_dir = MagicMock()
+            pipeline._setup_shipment_repo = AsyncMock()
+            pipeline._load_product_from_group_config = AsyncMock(return_value="rhacm2")
+            pipeline._load_assembly = AsyncMock(
+                return_value={
+                    'assembly': {
+                        'type': 'standard',
+                        'members': {
+                            'images': [
+                                {
+                                    'distgit_key': 'search-v2-api-container',
+                                    'metadata': {'is': {'nvr': 'search-v2-api-container-2.17.3-1'}},
+                                }
+                            ]
+                        },
+                    }
+                }
+            )
+            pipeline._trigger_bundle_build = AsyncMock(return_value=([], []))
+            pipeline._trigger_fbc_build = AsyncMock(return_value=([], []))
+            pipeline._create_snapshot = AsyncMock(return_value=[MagicMock()])
+            pipeline._create_shipment_config = MagicMock(return_value=MagicMock())
+            pipeline._load_release_notes_template = MagicMock(return_value=None)
+            pipeline._verify_assembly_shipment_url = AsyncMock()
+            pipeline._create_shipment_mr = AsyncMock(return_value="https://gitlab.example/project/-/merge_requests/43")
+            pipeline._update_assembly_with_shipment_url = AsyncMock()
+            pipeline._set_shipment_mr_ready = AsyncMock()
+            pipeline.__dict__['_gitlab'] = MagicMock()
+
+            asyncio.run(pipeline.run())
+
+            self.assertEqual(previous_mr.title, 'Draft: Shipment for rhacm2 2.17.3')
+            self.assertEqual(previous_mr.labels, ['reviewed'])
+            previous_mr.save.assert_called_once_with()
+            pipeline._create_shipment_mr.assert_awaited_once()
+            pipeline._update_assembly_with_shipment_url.assert_awaited_once_with(
+                "https://gitlab.example/project/-/merge_requests/43"
+            )
 
     @patch.object(PrepareReleaseLPPipeline, '_load_release_notes_template', return_value=None)
     @patch.object(PrepareReleaseLPPipeline, '_create_snapshot', new_callable=AsyncMock)
