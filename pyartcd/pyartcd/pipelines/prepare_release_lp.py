@@ -1005,6 +1005,8 @@ class PrepareReleaseLPPipeline:
         if shipments_by_kind:
             if self.create_mr:
                 if existing_mr:
+                    # Revalidate around the draft transition because CI or MR state may have changed
+                    # since the initial check performed before the expensive build work.
                     existing_mr, _ = await validate_shipment_mr_for_operation(
                         self._gitlab,
                         self.shipment_data_repo,
@@ -1019,6 +1021,7 @@ class PrepareReleaseLPPipeline:
                     )
                     await self._verify_assembly_shipment_url()
                     set_shipment_mr_draft(existing_mr, self.dry_run)
+                    # Drafting mutates the MR; check again before replacing its shipment files.
                     await validate_shipment_mr_for_operation(
                         self._gitlab,
                         self.shipment_data_repo,
