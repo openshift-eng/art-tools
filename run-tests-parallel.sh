@@ -22,7 +22,7 @@ pids=()
 
 for pkg in "${packages[@]}"; do
     echo "  Starting: $pkg"
-    uv run pytest --verbose --color=yes "$pkg/tests/" > "$tmpdir/$pkg.out" 2>&1 &
+    uv run pytest --verbose --color=no "$pkg/tests/" > "$tmpdir/$pkg.out" 2>&1 &
     pids+=($!)
 done
 
@@ -51,7 +51,8 @@ for pkg in "${packages[@]}"; do
     if grep -q "FAILED" "$tmpdir/$pkg.out" || grep -q "ERROR" "$tmpdir/$pkg.out"; then
         echo "❌ $pkg: FAILED"
     else
-        passed=$(grep -oP '\d+(?= passed)' "$tmpdir/$pkg.out" | tail -1 || echo "0")
+        passed=$(awk '/ passed/{for (i = 2; i <= NF; i++) if ($i == "passed" && $(i - 1) ~ /^[0-9]+$/) print $(i - 1)}' "$tmpdir/$pkg.out" | tail -1)
+        passed=${passed:-0}
         echo "✅ $pkg: $passed tests passed"
     fi
 done
