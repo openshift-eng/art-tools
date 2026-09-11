@@ -287,9 +287,7 @@ class Runtime(GroupRuntime):
         else:
             filter_func = filter_enabled
 
-        replace_vars = self.group_config.vars.primitive() if self.group_config.vars else {}
-        if self.assembly:
-            replace_vars['runtime_assembly'] = self.assembly
+        replace_vars = self.get_replace_vars(self.group_config)
         # release_name variable is currently only used in microshift rpm config to allow Doozer to pass release name to a modification script.
         # Elliott doesn't need to care about it. Set an arbitrary value until it becomes necessary.
         replace_vars['release_name'] = '(irrelevant)'
@@ -405,9 +403,7 @@ class Runtime(GroupRuntime):
         if distgit_name in self.image_map:
             return self.image_map[distgit_name]
         if not data_obj:
-            replace_vars = self.group_config.vars.primitive() if self.group_config.vars else {}
-            if self.assembly:
-                replace_vars['runtime_assembly'] = self.assembly
+            replace_vars = self.get_replace_vars(self.group_config)
             data_obj = self.gitdata.load_data(path='images', key=distgit_name, replace_vars=replace_vars)
             if not data_obj:
                 raise ElliottFatalError('Unable to resovle image metadata for {}'.format(distgit_name))
