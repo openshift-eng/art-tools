@@ -137,6 +137,12 @@ class KonfluxImageBuilder:
             "dir": str(dest_dir.absolute()),
             "dockerfile": str(df_path.absolute()),
             "name": metadata.distgit_key,
+            "delivery_repo_name": (
+                str(metadata.config.delivery.delivery_repo_names[0]).rsplit("/", 1)[-1]
+                if metadata.config.delivery.delivery_repo_names is not Missing
+                and len(metadata.config.delivery.delivery_repo_names) > 0
+                else metadata.distgit_key
+            ),
             "nvrs": "n/a",
             "message": "Unknown failure",
             "task_id": "n/a",

@@ -104,5 +104,206 @@ class TestUpdateBuildFailCounters(unittest.IsolatedAsyncioTestCase):
         mock_increment.assert_not_called()
 
 
+class TestMirrorImages(unittest.IsolatedAsyncioTestCase):
+    """
+    Tests for KonfluxOcpPipeline.mirror_images().
+
+    Focus: group-component and NVR tags are included alongside image_tag
+    and latest_tag when syncing to art-images-share (ART-23164).
+    """
+
+    def _make_pipeline(self, assembly='stream', version='4.21'):
+        runtime = MagicMock()
+        runtime.doozer_working = '/tmp/doozer-working'
+        runtime.dry_run = False
+        runtime.new_slack_client.return_value = MagicMock()
+        with patch('pyartcd.pipelines.ocp4_konflux.util.default_release_suffix', return_value='202408190000'):
+            pipeline = KonfluxOcpPipeline(
+                runtime=runtime,
+                assembly=assembly,
+                version=version,
+                image_build_strategy='all',
+                rpm_build_strategy='none',
+                build_priority='auto',
+                data_path='https://github.com/openshift-eng/ocp-build-data',
+            )
+        return pipeline
+
+    def _build_entry(
+        self,
+        name='test-image',
+        delivery_repo_name=None,
+        status='0',
+        nvrs='test-image-v4.21.0-202408190000.p0.gabcdef.assembly.stream.el9',
+        image_tag='sha256-abc123',
+        image_pullspec='quay.io/src/image@sha256:abc123',
+    ):
+        entry = {
+            'name': name,
+            'status': status,
+            'task_id': '12345',
+            'task_url': 'https://example.com',
+            'message': '',
+            'outcome': '',
+            'nvrs': nvrs,
+            'build_pipeline_url': '',
+            'image_tag': image_tag,
+            'image_pullspec': image_pullspec,
+            'has_olm_bundle': '0',
+        }
+        if delivery_repo_name is not None:
+            entry['delivery_repo_name'] = delivery_repo_name
+        return entry
+
+    @patch('pyartcd.pipelines.ocp4_konflux.sync_to_quay', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.ocp4_konflux.is_release_embargoed', return_value=False)
+    async def test_group_component_tag_uses_delivery_repo_name(self, mock_embargoed, mock_sync):
+        """When delivery_repo_name is present, the group-component tag uses it."""
+        pipeline = self._make_pipeline(version='4.17')
+        build = self._build_entry(name='ansible-operator', delivery_repo_name='ose-ansible-operator')
+        pipeline.parse_record_log = MagicMock(return_value={'image_build_konflux': [build]})
+        pipeline.building_images = MagicMock(return_value=True)
+
+        await pipeline.mirror_images()
+
+        mock_sync.assert_called_once()
+        tags = mock_sync.call_args[0][2]
+        self.assertIn('openshift-4.17-ose-ansible-operator', tags)
+        # The tag must NOT use the plain name when delivery_repo_name is set
+        self.assertNotIn('openshift-4.17-ansible-operator', tags)
+
+    @patch('pyartcd.pipelines.ocp4_konflux.sync_to_quay', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.ocp4_konflux.is_release_embargoed', return_value=False)
+    async def test_group_component_tag_falls_back_to_name(self, mock_embargoed, mock_sync):
+        """When delivery_repo_name is absent, the group-component tag falls back to build name."""
+        pipeline = self._make_pipeline(version='4.17')
+        # No delivery_repo_name key in build entry
+        build = self._build_entry(name='ose-ansible-operator')
+        pipeline.parse_record_log = MagicMock(return_value={'image_build_konflux': [build]})
+        pipeline.building_images = MagicMock(return_value=True)
+
+        await pipeline.mirror_images()
+
+        mock_sync.assert_called_once()
+        tags = mock_sync.call_args[0][2]
+        self.assertIn('openshift-4.17-ose-ansible-operator', tags)
+
+    @patch('pyartcd.pipelines.ocp4_konflux.sync_to_quay', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.ocp4_konflux.is_release_embargoed', return_value=False)
+    async def test_single_nvr_included_as_tag(self, mock_embargoed, mock_sync):
+        """A single NVR value is included as an additional tag."""
+        pipeline = self._make_pipeline()
+        nvr = 'test-image-v4.21.0-202408190000.p0.gabcdef.assembly.stream.el9'
+        build = self._build_entry(nvrs=nvr)
+        pipeline.parse_record_log = MagicMock(return_value={'image_build_konflux': [build]})
+        pipeline.building_images = MagicMock(return_value=True)
+
+        await pipeline.mirror_images()
+
+        mock_sync.assert_called_once()
+        tags = mock_sync.call_args[0][2]
+        self.assertIn(nvr, tags)
+        self.assertIn(build['image_tag'], tags)
+        self.assertIn(f'{build["name"]}-4.21', tags)
+
+    @patch('pyartcd.pipelines.ocp4_konflux.sync_to_quay', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.ocp4_konflux.is_release_embargoed', return_value=False)
+    async def test_multiple_comma_separated_nvrs(self, mock_embargoed, mock_sync):
+        """Comma-separated NVRs are each added as separate tags."""
+        pipeline = self._make_pipeline()
+        nvr1 = 'test-image-v4.21.0-202408190000.p0.gabcdef.assembly.stream.el9'
+        nvr2 = 'test-image-v4.21.0-202408190000.p0.gabcdef.assembly.stream.el8'
+        build = self._build_entry(nvrs=f'{nvr1},{nvr2}')
+        pipeline.parse_record_log = MagicMock(return_value={'image_build_konflux': [build]})
+        pipeline.building_images = MagicMock(return_value=True)
+
+        await pipeline.mirror_images()
+
+        mock_sync.assert_called_once()
+        tags = mock_sync.call_args[0][2]
+        self.assertIn(nvr1, tags)
+        self.assertIn(nvr2, tags)
+        # image_tag, latest_tag, group_component_tag, nvr1, nvr2
+        self.assertEqual(len(tags), 5)
+
+    @patch('pyartcd.pipelines.ocp4_konflux.sync_to_quay', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.ocp4_konflux.is_release_embargoed', return_value=False)
+    async def test_empty_nvrs_no_extra_tags(self, mock_embargoed, mock_sync):
+        """Empty nvrs string does not add empty-string tags."""
+        pipeline = self._make_pipeline()
+        build = self._build_entry(nvrs='')
+        pipeline.parse_record_log = MagicMock(return_value={'image_build_konflux': [build]})
+        pipeline.building_images = MagicMock(return_value=True)
+
+        await pipeline.mirror_images()
+
+        mock_sync.assert_called_once()
+        tags = mock_sync.call_args[0][2]
+        # image_tag, latest_tag, group_component_tag (no NVR tags)
+        self.assertEqual(len(tags), 3)
+
+    @patch('pyartcd.pipelines.ocp4_konflux.sync_to_quay', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.ocp4_konflux.is_release_embargoed', return_value=False)
+    async def test_nvrs_with_whitespace_trimmed(self, mock_embargoed, mock_sync):
+        """Whitespace around comma-separated NVRs is stripped."""
+        pipeline = self._make_pipeline()
+        nvr1 = 'test-image-v4.21.0-202408190000.el9'
+        nvr2 = 'test-image-v4.21.0-202408190000.el8'
+        build = self._build_entry(nvrs=f' {nvr1} , {nvr2} ')
+        pipeline.parse_record_log = MagicMock(return_value={'image_build_konflux': [build]})
+        pipeline.building_images = MagicMock(return_value=True)
+
+        await pipeline.mirror_images()
+
+        mock_sync.assert_called_once()
+        tags = mock_sync.call_args[0][2]
+        self.assertIn(nvr1, tags)
+        self.assertIn(nvr2, tags)
+        for tag in tags:
+            self.assertEqual(tag, tag.strip())
+            self.assertTrue(len(tag) > 0)
+
+    @patch('pyartcd.pipelines.ocp4_konflux.sync_to_quay', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.ocp4_konflux.is_release_embargoed', return_value=False)
+    async def test_group_component_tag_format(self, mock_embargoed, mock_sync):
+        """The group-component tag follows openshift-<version>-<delivery_name> format."""
+        pipeline = self._make_pipeline(version='4.17')
+        build = self._build_entry(name='ansible-operator', delivery_repo_name='ose-ansible-operator')
+        pipeline.parse_record_log = MagicMock(return_value={'image_build_konflux': [build]})
+        pipeline.building_images = MagicMock(return_value=True)
+
+        await pipeline.mirror_images()
+
+        mock_sync.assert_called_once()
+        tags = mock_sync.call_args[0][2]
+        self.assertIn('openshift-4.17-ose-ansible-operator', tags)
+
+    @patch('pyartcd.pipelines.ocp4_konflux.sync_to_quay', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.ocp4_konflux.is_release_embargoed', return_value=False)
+    async def test_non_stream_assembly_skips_sync(self, mock_embargoed, mock_sync):
+        """Non-stream assemblies skip syncing entirely."""
+        pipeline = self._make_pipeline(assembly='4.21.3')
+        build = self._build_entry()
+        pipeline.parse_record_log = MagicMock(return_value={'image_build_konflux': [build]})
+        pipeline.building_images = MagicMock(return_value=True)
+
+        await pipeline.mirror_images()
+
+        mock_sync.assert_not_called()
+
+    @patch('pyartcd.pipelines.ocp4_konflux.sync_to_quay', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.ocp4_konflux.is_release_embargoed', return_value=True)
+    async def test_embargoed_build_skips_sync(self, mock_embargoed, mock_sync):
+        """Embargoed builds are not synced."""
+        pipeline = self._make_pipeline()
+        build = self._build_entry()
+        pipeline.parse_record_log = MagicMock(return_value={'image_build_konflux': [build]})
+        pipeline.building_images = MagicMock(return_value=True)
+
+        await pipeline.mirror_images()
+
+        mock_sync.assert_not_called()
+
+
 if __name__ == '__main__':
     unittest.main()
