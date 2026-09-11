@@ -136,6 +136,58 @@ class TestSuggestionsSpec(unittest.TestCase):
 class TestBuildSuggestions(unittest.TestCase):
     """Test the BuildSuggestions Pydantic model"""
 
+    def test_valid_min_versions_schemas(self):
+        """Test new-schema suggestions for 5.0 and multi-stream 5.1 releases"""
+        cases = [
+            ["4.22.0-rc.0", "5.0.0-ec.0"],
+            ["4.23.0-rc.0", "5.0.0-rc.0", "5.1.0-ec.0"],
+        ]
+
+        for min_versions in cases:
+            with self.subTest(min_versions=min_versions):
+                suggestions = BuildSuggestions.model_validate({"min_versions": min_versions})
+
+                self.assertEqual(suggestions.min_versions, min_versions)
+                self.assertIsNone(suggestions.default)
+                constraints = suggestions.get_source_constraints("s390x")
+                self.assertEqual([constraint.min_version for constraint in constraints], min_versions)
+                self.assertTrue(all(constraint.max_version is None for constraint in constraints))
+                self.assertTrue(all(constraint.block_list == [] for constraint in constraints))
+
+    def test_empty_min_versions_rejected(self):
+        """Test that the new schema requires at least one source release line"""
+        with self.assertRaises(ValidationError):
+            BuildSuggestions.model_validate({"min_versions": []})
+
+    def test_invalid_semver_in_min_versions_rejected(self):
+        """Test that every new-schema minimum is valid semver"""
+        with self.assertRaises(ValidationError) as context:
+            BuildSuggestions.model_validate({"min_versions": ["4.23.0-rc.0", "not-a-version"]})
+
+        self.assertIn("Invalid semver format", str(context.exception))
+
+    def test_duplicate_release_line_in_min_versions_rejected(self):
+        """Test that a release line cannot have ambiguous minimum versions"""
+        with self.assertRaises(ValidationError) as context:
+            BuildSuggestions.model_validate({"min_versions": ["5.0.0-ec.0", "5.0.0-rc.0"]})
+
+        self.assertIn("duplicate release line 5.0", str(context.exception))
+
+    def test_mixed_schemas_rejected(self):
+        """Test that a document cannot combine new and legacy schema fields"""
+        data = {
+            "min_versions": ["5.0.0-ec.0"],
+            "default": {
+                "minor_min": "4.22.0-rc.0",
+                "z_min": "5.0.0-ec.0",
+            },
+        }
+
+        with self.assertRaises(ValidationError) as context:
+            BuildSuggestions.model_validate(data)
+
+        self.assertIn("cannot mix", str(context.exception))
+
     def test_valid_build_suggestions_default_only(self):
         """Test BuildSuggestions with only default section"""
         data = {
@@ -236,6 +288,24 @@ class TestBuildSuggestions(unittest.TestCase):
         spec_default = suggestions.get_for_arch("default")
         self.assertEqual(spec_default.minor_min, "4.22.0")
 
+    def test_legacy_range_must_stay_within_one_release_line(self):
+        """Test that legacy min/max validation remains in normalized constraints"""
+        suggestions = BuildSuggestions.model_validate(
+            {
+                "default": {
+                    "minor_min": "4.22.0",
+                    "minor_max": "4.23.9999",
+                    "z_min": "5.0.0",
+                    "z_max": "5.0.9999",
+                }
+            }
+        )
+
+        with self.assertRaises(ValidationError) as context:
+            suggestions.get_source_constraints()
+
+        self.assertIn("minimum and maximum versions must have the same major.minor", str(context.exception))
+
     def test_malformed_arch_override_rejected(self):
         """Test that non-mapping architecture overrides are rejected"""
         data = {
@@ -269,7 +339,7 @@ class TestBuildSuggestions(unittest.TestCase):
         with self.assertRaises(ValidationError) as context:
             BuildSuggestions.model_validate(data)
 
-        self.assertIn("Field required", str(context.exception))
+        self.assertIn("must define either 'min_versions'", str(context.exception))
 
 
 class TestGetBuildSuggestionsAsync(unittest.IsolatedAsyncioTestCase):
@@ -299,6 +369,25 @@ default:
             self.assertIsInstance(result, BuildSuggestions)
             self.assertEqual(result.default.minor_min, "4.22.0-rc.0")
             self.assertEqual(result.default.z_min, "5.0.0-ec.0")
+
+    async def test_successful_fetch_and_parse_min_versions(self):
+        """Test fetching and parsing the new multi-stream schema"""
+        yaml_content = """
+min_versions:
+- 4.23.0-rc.0
+- 5.0.0-rc.0
+- 5.1.0-ec.0
+"""
+        mock_response = MagicMock()
+        mock_response.text = yaml_content
+        mock_response.raise_for_status = MagicMock()
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.get = AsyncMock(return_value=mock_response)
+
+            result = await get_build_suggestions_async(5, 1)
+
+        self.assertEqual(result.min_versions, ["4.23.0-rc.0", "5.0.0-rc.0", "5.1.0-ec.0"])
 
     async def test_invalid_yaml_syntax(self):
         """Test that invalid YAML syntax raises ValueError with OTA message"""
@@ -665,6 +754,62 @@ class TestCalcUpgradeSourcesAsync(unittest.IsolatedAsyncioTestCase):
                 },
             }
         return BuildSuggestions.model_validate(data)
+
+    @patch("artcommonlib.ocp_version_ancestry.get_release_controller_versions_async", new_callable=AsyncMock)
+    @patch("artcommonlib.ocp_version_ancestry.get_channel_versions_async")
+    @patch("artcommonlib.ocp_version_ancestry.get_build_suggestions_async")
+    async def test_min_versions_queries_all_configured_release_lines(self, mock_suggestions, mock_channel, mock_rc):
+        """5.1 should include configured 4.23, 5.0, and 5.1 sources, but not 4.22"""
+        mock_suggestions.return_value = self._make_suggestions(
+            {"min_versions": ["4.23.0-rc.0", "5.0.0-rc.0", "5.1.0-ec.0"]}
+        )
+        mock_channel.side_effect = [
+            (
+                ["4.23.0", "4.23.0-rc.0", "4.23.0-ec.9", "4.22.99"],
+                {},
+            ),
+            (
+                ["5.0.1", "5.0.0-rc.0", "5.0.0-ec.9"],
+                {},
+            ),
+            (
+                ["5.1.0-ec.1", "5.1.0-ec.0"],
+                {},
+            ),
+        ]
+        mock_rc.side_effect = [
+            ["4.23.1", "4.23.0-rc.0"],
+            ["5.0.1", "5.0.0-rc.1"],
+            ["5.1.0-ec.2", "5.1.0-ec.0"],
+        ]
+
+        result = await calc_upgrade_sources_async("5.1.0-ec.3", "x86_64")
+
+        self.assertEqual(
+            [call.args[0] for call in mock_channel.call_args_list],
+            ["candidate-4.23", "candidate-5.0", "candidate-5.1"],
+        )
+        self.assertEqual(
+            [call.args[:2] for call in mock_rc.call_args_list],
+            [(4, 23), (5, 0), (5, 1)],
+        )
+        self.assertEqual(
+            result,
+            [
+                "5.1.0-ec.2",
+                "5.1.0-ec.1",
+                "5.1.0-ec.0",
+                "5.0.1",
+                "5.0.0-rc.1",
+                "5.0.0-rc.0",
+                "4.23.1",
+                "4.23.0",
+                "4.23.0-rc.0",
+            ],
+        )
+        self.assertNotIn("4.22.99", result)
+        self.assertNotIn("4.23.0-ec.9", result)
+        self.assertNotIn("5.0.0-ec.9", result)
 
     @patch("artcommonlib.ocp_version_ancestry.get_release_controller_versions_async", new_callable=AsyncMock)
     @patch("artcommonlib.ocp_version_ancestry.get_channel_versions_async")
