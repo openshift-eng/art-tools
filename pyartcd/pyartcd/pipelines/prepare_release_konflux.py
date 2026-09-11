@@ -67,6 +67,7 @@ from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.git import GitRepository
 from pyartcd.jira_client import JIRAClient
 from pyartcd.runtime import Runtime
+from pyartcd.shipment_utils import split_builds_by_shipment_kind
 from pyartcd.slack import SlackClient
 from pyartcd.util import (
     get_assembly_basis,
@@ -103,7 +104,24 @@ def _get_shipment_builds(kind: str, shipment: ShipmentConfig, kind_to_builds: Di
     """
     if re.search(r"-el\d+$", kind) and shipment.shipment.snapshot and shipment.shipment.snapshot.nvrs:
         return shipment.shipment.snapshot.nvrs
-    return kind_to_builds[_get_base_shipment_kind(kind)]
+    return kind_to_builds.get(kind, kind_to_builds.get(_get_base_shipment_kind(kind), []))
+
+
+def _get_builds_for_base_kind(kind_to_builds: Dict[str, List[str]], base_kind: str) -> List[str]:
+    """
+    Combine build lists for a base kind and all of its RHEL-qualified variants.
+
+    Args:
+        kind_to_builds: Build lists keyed by shipment kind.
+        base_kind: Unqualified shipment kind.
+    Returns:
+        All builds belonging to the base kind.
+    """
+    builds = []
+    for kind, kind_builds in kind_to_builds.items():
+        if _get_base_shipment_kind(kind) == base_kind:
+            builds.extend(kind_builds)
+    return builds
 
 
 class PrepareReleaseKonfluxPipeline:
@@ -537,7 +555,9 @@ class PrepareReleaseKonfluxPipeline:
             for kind, shipment in shipments_by_kind.items():
                 if kind == "fbc":
                     continue
-                bug_ids = bugs_by_kind.get(_get_base_shipment_kind(kind), [])
+                bug_ids = bugs_by_kind.get(kind)
+                if bug_ids is None:
+                    bug_ids = bugs_by_kind.get(_get_base_shipment_kind(kind), [])
                 set_jira_bug_ids(shipment.shipment.data.releaseNotes, bug_ids)
 
             await self.update_shipment_mr(shipments_by_kind, env, shipment_url)
@@ -664,11 +684,12 @@ class PrepareReleaseKonfluxPipeline:
 
         # make sure that metadata shipment needs to be prepared
         # if so, build any missing bundle builds
-        if any(_get_base_shipment_kind(kind) == "metadata" for kind in shipments_by_kind) and kind_to_builds[
-            "olm_builds_not_found"
-        ]:
+        metadata_kinds = {kind for kind in shipments_by_kind if _get_base_shipment_kind(kind) == "metadata"}
+        if metadata_kinds and kind_to_builds["olm_builds_not_found"]:
             bundle_nvrs, bundle_errors = await self.find_or_build_bundle_builds(kind_to_builds["olm_builds_not_found"])
-            kind_to_builds["metadata"] += bundle_nvrs
+            metadata_builds = split_builds_by_shipment_kind(bundle_nvrs, "metadata", metadata_kinds)
+            for kind, builds in metadata_builds.items():
+                kind_to_builds.setdefault(kind, []).extend(builds)
             if bundle_errors:
                 self.record_deferred_build_errors(
                     "bundle",
@@ -686,7 +707,7 @@ class PrepareReleaseKonfluxPipeline:
         # find and build any missing fbc builds
         if "fbc" in shipments_by_kind:
             fbc_builds, fbc_errors = await self.find_or_build_fbc_builds(
-                kind_to_builds["extras"] + kind_to_builds["image"]
+                _get_builds_for_base_kind(kind_to_builds, "extras") + _get_builds_for_base_kind(kind_to_builds, "image")
             )
             kind_to_builds["fbc"] = fbc_builds
             if fbc_errors:
@@ -932,31 +953,39 @@ class PrepareReleaseKonfluxPipeline:
                         attached image builds.
         """
         self.logger.info("Verify_attached_operators ...")
-        olm_builds = kind_to_builds.get('metadata')
-        if not olm_builds:
-            # No metadata builds to verify, so the check passes.
+        metadata_kinds = [kind for kind in kind_to_builds if _get_base_shipment_kind(kind) == "metadata"]
+        if not metadata_kinds:
             return
-        image_builds = kind_to_builds['image'] + kind_to_builds['extras']
+
         kdb = KonfluxDb()
         kdb.bind(KonfluxBundleBuildRecord)
-        tasks = [
-            kdb.get_latest_build(nvr=build, outcome=KonfluxBuildOutcome.SUCCESS, exclude_large_columns=True)
-            for build in olm_builds
-        ]
-        olm_records = await asyncio.gather(*tasks)
         missing_references = []
-        for record in filter(None, olm_records):
-            # Check the main operator NVR
-            if record.operator_nvr not in image_builds:
-                missing_references.append(
-                    f"Bundle {record.nvr} references operator {record.operator_nvr}, which is not in the release."
-                )
-            # Check all operand NVRs
-            for operand in record.operand_nvrs:
-                if operand not in image_builds:
+        for metadata_kind in metadata_kinds:
+            rhel_suffix_match = re.search(r"-el\d+$", metadata_kind)
+            related_kinds = [
+                kind
+                for kind in kind_to_builds
+                if _get_base_shipment_kind(kind) in ("image", "extras")
+                and (not rhel_suffix_match or kind.endswith(rhel_suffix_match.group(0)))
+            ]
+            image_builds = _get_builds_for_base_kind(
+                {kind: kind_to_builds[kind] for kind in related_kinds}, "image"
+            ) + _get_builds_for_base_kind({kind: kind_to_builds[kind] for kind in related_kinds}, "extras")
+            tasks = [
+                kdb.get_latest_build(nvr=build, outcome=KonfluxBuildOutcome.SUCCESS, exclude_large_columns=True)
+                for build in kind_to_builds[metadata_kind]
+            ]
+            olm_records = await asyncio.gather(*tasks)
+            for record in filter(None, olm_records):
+                if record.operator_nvr not in image_builds:
                     missing_references.append(
-                        f"Bundle {record.nvr} references operand {operand}, which is not in the release."
+                        f"Bundle {record.nvr} references operator {record.operator_nvr}, which is not in the release."
                     )
+                for operand in record.operand_nvrs:
+                    if operand not in image_builds:
+                        missing_references.append(
+                            f"Bundle {record.nvr} references operand {operand}, which is not in the release."
+                        )
         if missing_references:
             error_details = "\n".join(missing_references)
             self.logger.warning("Verify_attached_operators check failed with the following errors:\n%s", error_details)
@@ -1324,16 +1353,23 @@ class PrepareReleaseKonfluxPipeline:
         """
         cmd = self._elliott_base_command + ["find-builds", "--kind=image", "--all-image-types", "--json=-"]
         stdout = await self.execute_command_with_logging(cmd)
+        shipment_kinds = {
+            advisory.get("kind") for advisory in self.shipment_config.get("advisories", []) if advisory.get("kind")
+        }
         if not stdout:
             self.logger.warning("No output received from find-builds command.")
-            return {"image": [], "extras": [], "metadata": [], "olm_builds_not_found": []}
+            kind_to_builds = {"olm_builds_not_found": []}
+            for base_kind in ("image", "extras", "metadata"):
+                kind_to_builds.update(split_builds_by_shipment_kind([], base_kind, shipment_kinds))
+            return kind_to_builds
         out = json.loads(stdout)
-        kind_to_builds = {
-            "image": out.get("payload", []),
-            "extras": out.get("non_payload", []),
-            "metadata": out.get("olm_builds", []),
-            "olm_builds_not_found": out.get("olm_builds_not_found", []),
-        }
+        kind_to_builds = {"olm_builds_not_found": out.get("olm_builds_not_found", [])}
+        for base_kind, output_key in (
+            ("image", "payload"),
+            ("extras", "non_payload"),
+            ("metadata", "olm_builds"),
+        ):
+            kind_to_builds.update(split_builds_by_shipment_kind(out.get(output_key, []), base_kind, shipment_kinds))
 
         return kind_to_builds
 
@@ -1387,7 +1423,7 @@ class PrepareReleaseKonfluxPipeline:
 
         attach_cve_flaws_command = self._elliott_base_command + [
             'attach-cve-flaws',
-            f'--use-default-advisory={_get_base_shipment_kind(kind)}',
+            f'--use-default-advisory={kind}',
             '--reconcile',
             '--output=yaml',
         ]

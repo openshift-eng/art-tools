@@ -512,6 +512,94 @@ class TestCategorizeBugsByType(unittest.TestCase):
         for kind in expected:
             self.assertEqual(expected[kind], set(b.id for b in bugs_by_kind[kind]))
 
+    def test_categorize_tracker_for_matching_rhel_variant(self):
+        """Tracker bugs are assigned to the compound advisory containing their build."""
+        bug = flexmock(
+            id="OCPBUGS-EL8",
+            is_tracker_bug=lambda: True,
+            is_invalid_tracker_bug=lambda: False,
+            has_valid_target_version_in_summary=lambda *_: True,
+            whiteboard_component="ose-a-container",
+            component="",
+            summary="",
+        )
+        flexmock(sweep_cli).should_receive("extras_bugs").and_return(set())
+        builds_by_advisory_kind = {
+            "image-el8": {"ose-a-container-v4.17.0-1.el8"},
+            "image-el9": {"ose-b-container-v4.17.0-1.el9"},
+            "extras-el8": set(),
+            "extras-el9": set(),
+        }
+
+        bugs_by_kind, issues = categorize_bugs_by_type(
+            runtime=self.runtime,
+            bugs=[bug],
+            builds_by_advisory_kind=builds_by_advisory_kind,
+            major_version=self.major_version,
+            minor_version=self.minor_version,
+        )
+
+        self.assertEqual(issues, [])
+        self.assertEqual({bug.id}, {item.id for item in bugs_by_kind["image-el8"]})
+        self.assertEqual(set(), bugs_by_kind["image-el9"])
+
+    def test_categorize_non_tracker_for_matching_rhel_variant(self):
+        """Non-tracker bugs with a matching component stay with that variant."""
+        bug = flexmock(
+            id="OCPBUGS-EL9",
+            is_tracker_bug=lambda: False,
+            is_invalid_tracker_bug=lambda: False,
+            component="ose-b-container",
+            summary="",
+        )
+        flexmock(sweep_cli).should_receive("extras_bugs").and_return(set())
+        flexmock(sweep_cli).should_receive("normalize_component_by_ocp_delivery_repo").and_return("ose-b-container")
+        builds_by_advisory_kind = {
+            "image-el8": {"ose-a-container-v4.17.0-1.el8"},
+            "image-el9": {"ose-b-container-v4.17.0-1.el9"},
+        }
+
+        bugs_by_kind, issues = categorize_bugs_by_type(
+            runtime=self.runtime,
+            bugs=[bug],
+            builds_by_advisory_kind=builds_by_advisory_kind,
+            major_version=self.major_version,
+            minor_version=self.minor_version,
+        )
+
+        self.assertEqual(issues, [])
+        self.assertEqual(set(), bugs_by_kind["image-el8"])
+        self.assertEqual({bug.id}, {item.id for item in bugs_by_kind["image-el9"]})
+
+    def test_categorize_shared_tracker_for_all_matching_rhel_variants(self):
+        """A tracker affecting builds in both streams is attached to both variants."""
+        bug = flexmock(
+            id="OCPBUGS-BOTH",
+            is_tracker_bug=lambda: True,
+            is_invalid_tracker_bug=lambda: False,
+            has_valid_target_version_in_summary=lambda *_: True,
+            whiteboard_component="shared-container",
+            component="",
+            summary="",
+        )
+        flexmock(sweep_cli).should_receive("extras_bugs").and_return(set())
+        builds_by_advisory_kind = {
+            "image-el8": {"shared-container-v4.17.0-1.el8"},
+            "image-el9": {"shared-container-v4.17.0-1.el9"},
+        }
+
+        bugs_by_kind, issues = categorize_bugs_by_type(
+            runtime=self.runtime,
+            bugs=[bug],
+            builds_by_advisory_kind=builds_by_advisory_kind,
+            major_version=self.major_version,
+            minor_version=self.minor_version,
+        )
+
+        self.assertEqual(issues, [])
+        self.assertEqual({bug.id}, {item.id for item in bugs_by_kind["image-el8"]})
+        self.assertEqual({bug.id}, {item.id for item in bugs_by_kind["image-el9"]})
+
     def test_categorize_with_trackers_no_builds(self):
         bugs = [
             # valid tracker

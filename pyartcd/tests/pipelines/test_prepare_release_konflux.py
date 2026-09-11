@@ -60,9 +60,7 @@ def _make_image_shipment(
         SnapshotComponent(
             name=f"image-{index}",
             containerImage=f"quay.io/example/image-{index}:latest",
-            source=ComponentSource(
-                git=GitSource(url="https://github.com/example/image.git", revision="revision")
-            ),
+            source=ComponentSource(git=GitSource(url="https://github.com/example/image.git", revision="revision")),
         )
         for index in range(component_count)
     ]
@@ -124,6 +122,122 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         builds = _get_shipment_builds("image-el9", shipment, {"image": ["new-image-nvr"]})
 
         self.assertEqual(builds, ["image-el9-nvr"])
+
+    async def test_reserve_live_id_reserves_each_compound_advisory(self):
+        """Each non-FBC compound advisory receives its own live ID."""
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+        )
+        pipeline.updated_assembly_group_config = Model(
+            {
+                "shipment": {
+                    "advisories": [
+                        {"kind": "image-el8"},
+                        {"kind": "image-el9"},
+                        {"kind": "extras-el8"},
+                    ]
+                }
+            }
+        )
+        errata_api = AsyncMock()
+        errata_api.reserve_live_id.side_effect = [1001, 1002, 1003]
+        pipeline._errata_api = errata_api
+
+        live_ids = [await pipeline.reserve_live_id({"kind": kind}) for kind in ("image-el8", "image-el9", "extras-el8")]
+
+        self.assertEqual(live_ids, [1001, 1002, 1003])
+        self.assertEqual(
+            [config.live_id for config in pipeline.updated_assembly_group_config.shipment.advisories],
+            [1001, 1002, 1003],
+        )
+
+    async def test_find_builds_all_splits_configured_compound_kinds(self):
+        """find-builds output is partitioned only for configured RHEL variants."""
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+        )
+        pipeline.releases_config = Model(
+            {
+                "releases": {
+                    self.assembly: {
+                        "assembly": {
+                            "group": {
+                                "shipment": {
+                                    "advisories": [
+                                        {"kind": "image-el8"},
+                                        {"kind": "image-el9"},
+                                        {"kind": "extras"},
+                                    ]
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        )
+        pipeline.execute_command_with_logging = AsyncMock(
+            return_value=json.dumps(
+                {
+                    "payload": [
+                        "image-a-container-v4.17.0-1.el8",
+                        "image-b-container-v4.17.0-1.el9",
+                    ],
+                    "non_payload": ["extras-a-container-v4.17.0-1.el9"],
+                    "olm_builds": [],
+                    "olm_builds_not_found": [],
+                }
+            )
+        )
+
+        builds = await pipeline.find_builds_all()
+
+        self.assertEqual(builds["image-el8"], ["image-a-container-v4.17.0-1.el8"])
+        self.assertEqual(builds["image-el9"], ["image-b-container-v4.17.0-1.el9"])
+        self.assertEqual(builds["extras"], ["extras-a-container-v4.17.0-1.el9"])
+        self.assertNotIn("image", builds)
+
+    async def test_attach_cve_flaws_targets_exact_compound_kind(self):
+        """CVE reconciliation targets the RHEL-specific shipment advisory."""
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+        )
+        pipeline.execute_command_with_logging = AsyncMock(return_value="")
+
+        await pipeline.attach_cve_flaws("image-el8", Mock())
+
+        command = pipeline.execute_command_with_logging.await_args.args[0]
+        self.assertIn("--use-default-advisory=image-el8", command)
+
+    async def test_sweep_bugs_updates_each_compound_shipment_independently(self):
+        """Bug IDs are written to the matching RHEL-specific shipment file."""
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+        )
+        pipeline.find_bugs = AsyncMock(return_value={"image-el8": ["BUG-EL8"], "image-el9": ["BUG-EL9"]})
+        pipeline.update_shipment_mr = AsyncMock()
+        shipments = {
+            "image-el8": _make_image_shipment("image-el8", 1, 1001, "el8", self.group, self.assembly),
+            "image-el9": _make_image_shipment("image-el9", 1, 1002, "el9", self.group, self.assembly),
+        }
+
+        await pipeline.sweep_bugs({}, (shipments, "prod", "https://gitlab.example.com/mr/1"))
+
+        el8_bugs = shipments["image-el8"].shipment.data.releaseNotes.issues.fixed
+        el9_bugs = shipments["image-el9"].shipment.data.releaseNotes.issues.fixed
+        self.assertEqual([issue.id for issue in el8_bugs], ["BUG-EL8"])
+        self.assertEqual([issue.id for issue in el9_bugs], ["BUG-EL9"])
 
     def test_init(self):
         pipeline = PrepareReleaseKonfluxPipeline(

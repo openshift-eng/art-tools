@@ -3,7 +3,6 @@ import sys
 import click
 from artcommonlib import logutil
 from artcommonlib.assembly import AssemblyTypes
-from artcommonlib.constants import SHIPMENT_CONFIG_KINDS
 from artcommonlib.gitdata import SafeFormatter
 from doozerlib.backend.konflux_fbc import KonfluxFbcBuilder
 from doozerlib.util import konflux_application_name
@@ -20,6 +19,7 @@ from elliottlib.shipment_model import (
     ShipmentConfig,
     ShipmentEnv,
 )
+from elliottlib.shipment_utils import split_shipment_kind
 from elliottlib.util import get_advisory_boilerplate
 
 LOGGER = logutil.get_logger(__name__)
@@ -28,6 +28,24 @@ yaml = YAML()
 yaml.default_flow_style = False
 yaml.preserve_quotes = True
 yaml.indent(mapping=2, sequence=4, offset=2)
+
+
+def _shipment_kind_type(value: str) -> str:
+    """
+    Validate and return a base or RHEL-qualified shipment kind for Click.
+
+    Args:
+        value: User-provided shipment kind.
+    Returns:
+        The validated shipment kind.
+    Raises:
+        click.BadParameter: If the shipment kind is unsupported.
+    """
+    try:
+        split_shipment_kind(value)
+    except ValueError as error:
+        raise click.BadParameter(str(error)) from error
+    return value
 
 
 @cli.group("shipment", short_help="Commands for managing release Shipment config")
@@ -47,7 +65,9 @@ class InitShipmentCli:
     async def run(self):
         self.runtime.initialize(build_system='konflux', with_shipment=True)
 
-        if self.kind == "fbc":
+        base_kind, rhel_suffix = split_shipment_kind(self.kind)
+
+        if base_kind == "fbc":
             application = KonfluxFbcBuilder.get_application_name(self.runtime.group)
         else:
             application = konflux_application_name(self.runtime.group)
@@ -56,17 +76,34 @@ class InitShipmentCli:
         # where defaults are set per application
         shipment_config = self.runtime.shipment_gitdata.load_yaml_file('config.yaml', strict=False) or {}
         app_env_config = shipment_config.get("applications", {}).get(application, {}).get("environments", {})
-        stage_rpa = app_env_config.get("stage", {}).get("releasePlan", "n/a")
-        prod_rpa = app_env_config.get("prod", {}).get("releasePlan", "n/a")
+
+        def get_release_plan(environment: str) -> str:
+            """
+            Select the configured ReleasePlan for an environment.
+
+            Args:
+                environment: Environment name, such as ``stage`` or ``prod``.
+            Returns:
+                The RHEL-specific plan when configured, otherwise the default plan.
+            """
+            environment_config = app_env_config.get(environment, {})
+            if rhel_suffix:
+                rhel_release_plan = environment_config.get(f"releasePlan-{rhel_suffix}")
+                if rhel_release_plan:
+                    return rhel_release_plan
+            return environment_config.get("releasePlan", "n/a")
+
+        stage_rpa = get_release_plan("stage")
+        prod_rpa = get_release_plan("prod")
 
         data = None
-        if self.kind != "fbc":
+        if base_kind != "fbc":
             et_data = self.runtime.get_errata_config()
             major, minor, patch = self.runtime.get_major_minor_patch()
             is_ga = self.runtime.assembly_type == AssemblyTypes.STANDARD and self.runtime.assembly.endswith(".0")
             errata_type = "RHEA" if is_ga else "RHBA"
             advisory_boilerplate = get_advisory_boilerplate(
-                runtime=self.runtime, et_data=et_data, art_advisory_key=self.kind, errata_type=errata_type
+                runtime=self.runtime, et_data=et_data, art_advisory_key=base_kind, errata_type=errata_type
             )
             replace_vars = {"MAJOR": major, "MINOR": minor, "PATCH": patch}
             formatter = SafeFormatter()
@@ -92,7 +129,7 @@ class InitShipmentCli:
                     application=application,
                     group=self.runtime.group,
                     assembly=self.runtime.assembly,
-                    fbc=self.kind == "fbc",
+                    fbc=base_kind == "fbc",
                 ),
                 environments=Environments(
                     stage=ShipmentEnv(releasePlan=stage_rpa),
@@ -109,7 +146,7 @@ class InitShipmentCli:
 @click.argument(
     "kind",
     metavar="<KIND>",
-    type=click.Choice(SHIPMENT_CONFIG_KINDS),
+    type=_shipment_kind_type,
 )
 @click.pass_obj
 @click_coroutine

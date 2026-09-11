@@ -4,7 +4,11 @@ Tests for shared Konflux shipment helpers.
 
 from pathlib import Path
 
-from pyartcd.shipment_utils import get_release_plan_names, group_nvrs_by_rhel_version
+from pyartcd.shipment_utils import (
+    get_release_plan_names,
+    group_nvrs_by_rhel_version,
+    split_builds_by_shipment_kind,
+)
 
 
 def test_group_nvrs_by_rhel_version_sorts_rhel_groups() -> None:
@@ -24,6 +28,40 @@ def test_group_nvrs_by_rhel_version_uses_default_without_suffix() -> None:
     """Places NVRs without a detectable RHEL suffix in the default group."""
     assert group_nvrs_by_rhel_version(["microshift-bootc-container-v5.0-1"]) == {
         "default": ["microshift-bootc-container-v5.0-1"]
+    }
+
+
+def test_split_builds_by_shipment_kind_uses_requested_rhel_variants() -> None:
+    """Only configured compound kinds receive RHEL-specific build lists."""
+    builds = [
+        "ose-a-container-v4.17.0-1.el8",
+        "ose-b-container-v4.17.0-1.el9",
+    ]
+
+    assert split_builds_by_shipment_kind(builds, "image", {"image-el8", "image-el9"}) == {
+        "image-el8": ["ose-a-container-v4.17.0-1.el8"],
+        "image-el9": ["ose-b-container-v4.17.0-1.el9"],
+    }
+
+
+def test_split_builds_by_shipment_kind_keeps_plain_kind_backward_compatible() -> None:
+    """Plain shipment kinds continue to receive the complete build list."""
+    builds = ["ose-a-container-v4.18.0-1.el9"]
+
+    assert split_builds_by_shipment_kind(builds, "image", {"image"}) == {"image": builds}
+
+
+def test_split_builds_by_shipment_kind_preserves_plain_and_compound_kinds() -> None:
+    """A temporary mixed configuration does not lose the plain shipment build list."""
+    builds = [
+        "ose-a-container-v4.17.0-1.el8",
+        "ose-b-container-v4.17.0-1.el9",
+    ]
+
+    assert split_builds_by_shipment_kind(builds, "image", {"image", "image-el8", "image-el9"}) == {
+        "image": builds,
+        "image-el8": ["ose-a-container-v4.17.0-1.el8"],
+        "image-el9": ["ose-b-container-v4.17.0-1.el9"],
     }
 
 

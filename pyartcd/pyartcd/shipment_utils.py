@@ -36,6 +36,27 @@ def group_nvrs_by_rhel_version(nvrs: list[str]) -> dict[str, list[str]]:
     )
 
 
+def split_builds_by_shipment_kind(builds: list[str], base_kind: str, shipment_kinds: set[str]) -> dict[str, list[str]]:
+    """
+    Splits build NVRs into the RHEL-qualified shipment kinds requested by an assembly.
+
+    Args:
+        builds: Build NVRs belonging to the base shipment kind.
+        base_kind: Unqualified shipment kind, such as ``image``.
+        shipment_kinds: Shipment kinds configured for the assembly.
+    Returns:
+        Build lists keyed by the configured shipment kind. Plain kinds retain all builds.
+    """
+    qualified_kinds = sorted(kind for kind in shipment_kinds if kind.startswith(f"{base_kind}-el"))
+    split_builds = {base_kind: builds} if base_kind in shipment_kinds else {}
+    if not qualified_kinds:
+        return split_builds or {base_kind: builds}
+
+    builds_by_rhel = group_nvrs_by_rhel_version(builds)
+    split_builds.update({kind: builds_by_rhel.get(kind.removeprefix(f"{base_kind}-"), []) for kind in qualified_kinds})
+    return split_builds
+
+
 def get_release_plan_names(
     config_path: Path,
     application: str,

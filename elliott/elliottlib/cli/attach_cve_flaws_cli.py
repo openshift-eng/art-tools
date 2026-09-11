@@ -23,12 +23,12 @@ from elliottlib.bzutil import (
     is_rhcos_pscomponent,
     sort_cve_bugs,
 )
-from elliottlib.cli.common import cli, click_coroutine, find_default_advisory, use_default_advisory_option
+from elliottlib.cli.common import cli, click_coroutine, find_default_advisory
 from elliottlib.errata import is_security_advisory
 from elliottlib.errata_async import AsyncErrataAPI, AsyncErrataUtils
 from elliottlib.runtime import Runtime
 from elliottlib.shipment_model import CveAssociation, ReleaseNotes
-from elliottlib.shipment_utils import get_shipment_config_from_mr, set_bugzilla_bug_ids
+from elliottlib.shipment_utils import get_base_shipment_kind, get_shipment_config_from_mr, set_bugzilla_bug_ids
 from elliottlib.util import (
     get_advisory_boilerplate,
     get_component_by_delivery_repo,
@@ -195,7 +195,7 @@ class AttachCveFlaws:
         self.errata_config = self.runtime.get_errata_config()
 
         if default_advisory_type:
-            self.advisory_kind = default_advisory_type
+            self.advisory_kind = get_base_shipment_kind(default_advisory_type)
         elif advisory_id:
             self.advisory_kind = next(
                 (k for k, v in self.runtime.group_config.advisories.items() if v == self.advisory_id), None
@@ -698,7 +698,13 @@ class AttachCveFlaws:
     is_flag=True,
     help="Print what would change, but don't change anything",
 )
-@use_default_advisory_option
+@click.option(
+    "--use-default-advisory",
+    "default_advisory_type",
+    metavar="ADVISORY_TYPE",
+    type=click.STRING,
+    help="Use the default value from [group|releases].yml for ADVISORY_TYPE.",
+)
 @click.option(
     "--into-default-advisories", is_flag=True, help='Run for all advisories values defined in [group|releases].yml'
 )

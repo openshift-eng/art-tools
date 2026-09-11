@@ -168,10 +168,7 @@ class VerifyPayloadPipeline:
         image_shipment = get_shipment_config_from_mr(mr_url, "image")
         if image_shipment is None or image_shipment.shipment.snapshot is None:
             raise click.UsageError("Could not find an image shipment config in the merge request")
-        return {
-            parse_nvr(nvr)["name"]: nvr
-            for nvr in image_shipment.shipment.snapshot.nvrs
-        }
+        return {parse_nvr(nvr)["name"]: nvr for nvr in image_shipment.shipment.snapshot.nvrs}
 
     async def check_konflux_payload(self):
         self.all_advisory_nvrs = await self.get_shipment_nvrs()

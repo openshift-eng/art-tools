@@ -5,7 +5,7 @@ from typing import Dict, Iterable, List, Mapping, Tuple
 from urllib.parse import urlparse
 
 from artcommonlib.assembly import assembly_config_struct
-from artcommonlib.constants import SHIPMENT_CONFIG_KINDS
+from artcommonlib.constants import SHIPMENT_CONFIG_KINDS, SHIPMENT_CONFIG_KINDS_WITH_COMPOUNDS
 from artcommonlib.gitlab import GitLabClient
 from artcommonlib.jira_config import JIRA_DOMAIN_NAME
 from artcommonlib.model import Model
@@ -23,6 +23,44 @@ yaml = new_roundtrip_yaml_handler()
 PUBLIC_ERRATA_URL = "https://access.redhat.com/errata"
 
 _IMAGE_SHIPMENT_KIND_PATTERN = re.compile(r"^image(?:-el(?P<rhel_version>\d+))?$")
+_RHEL_SHIPMENT_KIND_PATTERN = re.compile(r"^(?P<base>.+)-(?P<rhel_suffix>el\d+)$")
+
+
+def split_shipment_kind(kind: str) -> tuple[str, str | None]:
+    """
+    Split a shipment kind into its base kind and optional RHEL suffix.
+
+    Args:
+        kind: Shipment kind, such as ``image`` or ``image-el9``.
+    Returns:
+        A tuple containing the base kind and optional suffix.
+    Raises:
+        ValueError: If the kind is not a supported shipment kind.
+    """
+    if kind in SHIPMENT_CONFIG_KINDS:
+        return kind, None
+
+    match = _RHEL_SHIPMENT_KIND_PATTERN.fullmatch(kind)
+    if match and kind in SHIPMENT_CONFIG_KINDS_WITH_COMPOUNDS:
+        return match.group("base"), match.group("rhel_suffix")
+
+    raise ValueError(f"Unsupported shipment kind: {kind}")
+
+
+def get_base_shipment_kind(kind: str) -> str:
+    """
+    Return the unqualified base kind for a shipment kind.
+
+    Args:
+        kind: Shipment kind, optionally qualified by a RHEL suffix.
+    Returns:
+        The base shipment kind.
+    """
+    try:
+        return split_shipment_kind(kind)[0]
+    except ValueError:
+        match = _RHEL_SHIPMENT_KIND_PATTERN.fullmatch(kind)
+        return match.group("base") if match else kind
 
 
 def select_primary_image_shipment(
@@ -42,9 +80,7 @@ def select_primary_image_shipment(
         shipment is present.
     """
     image_shipments = [
-        (kind, shipment)
-        for kind, shipment in shipments_by_kind.items()
-        if _IMAGE_SHIPMENT_KIND_PATTERN.fullmatch(kind)
+        (kind, shipment) for kind, shipment in shipments_by_kind.items() if _IMAGE_SHIPMENT_KIND_PATTERN.fullmatch(kind)
     ]
     if not image_shipments:
         return None
@@ -75,9 +111,7 @@ def add_secondary_image_advisory_references(shipments_by_kind: Mapping[str, Ship
 
     primary_kind, primary_shipment = primary
     primary_release_notes = (
-        primary_shipment.shipment.data.releaseNotes
-        if primary_shipment.shipment.data is not None
-        else None
+        primary_shipment.shipment.data.releaseNotes if primary_shipment.shipment.data is not None else None
     )
     if primary_release_notes is None:
         return False
@@ -99,7 +133,9 @@ def add_secondary_image_advisory_references(shipments_by_kind: Mapping[str, Ship
 
     description = primary_release_notes.description or ""
     reference_block = "See the following advisory for additional container images:\n\n" + "\n".join(references)
-    primary_release_notes.description = f"{description.rstrip()}\n\n{reference_block}" if description else reference_block
+    primary_release_notes.description = (
+        f"{description.rstrip()}\n\n{reference_block}" if description else reference_block
+    )
     return True
 
 
@@ -253,7 +289,7 @@ def patch_et_advisory_text(
 
 def get_shipment_configs_from_mr(
     mr_url: str,
-    kinds: Tuple[str, ...] = SHIPMENT_CONFIG_KINDS,
+    kinds: Tuple[str, ...] = SHIPMENT_CONFIG_KINDS_WITH_COMPOUNDS,
     group: str | None = None,
 ) -> Dict[str, ShipmentConfig]:
     """
@@ -322,13 +358,18 @@ def _get_shipment_config_kind(filename_stem: str, kinds: Tuple[str, ...]) -> str
         The matching base or RHEL-qualified shipment kind, if any.
     """
     for kind in sorted(kinds, key=len, reverse=True):
-        qualified_match = re.search(rf"(?:^|\.)({re.escape(kind)}-el\d+)(?:\.|$)", filename_stem)
-        if qualified_match:
-            return qualified_match.group(1)
+        if kind != "fbc":
+            qualified_match = re.search(rf"(?:^|\.)({re.escape(kind)}-el\d+)(?:\.|$)", filename_stem)
+            if qualified_match and qualified_match.group(1) in SHIPMENT_CONFIG_KINDS_WITH_COMPOUNDS:
+                return qualified_match.group(1)
 
         base_match = re.search(rf"(?:^|\.){re.escape(kind)}(?:\.|$)", filename_stem)
         if base_match:
             return kind
+
+    supported_base_pattern = "|".join(re.escape(kind) for kind in SHIPMENT_CONFIG_KINDS)
+    if re.search(rf"(?:^|\.)(?:{supported_base_pattern})-el\d+(?:\.|$)", filename_stem):
+        return None
 
     # Preserve the historical substring matching for unusual legacy filenames such as
     # ``rpm-extra.yaml``.

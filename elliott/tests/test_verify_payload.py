@@ -17,9 +17,7 @@ class TestVerifyPayloadPipeline(unittest.IsolatedAsyncioTestCase):
         mock_get_shipment_config.return_value = image_shipment
 
         pipeline = VerifyPayloadPipeline(MagicMock(), "quay.io/example/release:4.20.1-x86_64")
-        pipeline.assembly_group_config = {
-            "shipment": {"url": "https://gitlab.example.com/project/-/merge_requests/1"}
-        }
+        pipeline.assembly_group_config = {"shipment": {"url": "https://gitlab.example.com/project/-/merge_requests/1"}}
 
         result = await pipeline.get_shipment_nvrs()
 

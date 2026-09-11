@@ -860,9 +860,7 @@ def _make_image_shipment_config(kind: str, component_count: int, live_id: int) -
         SnapshotComponent(
             name=f"image-{index}",
             containerImage=f"quay.io/example/image-{index}:latest",
-            source=ComponentSource(
-                git=GitSource(url="https://github.com/example/image.git", revision="revision")
-            ),
+            source=ComponentSource(git=GitSource(url="https://github.com/example/image.git", revision="revision")),
         )
         for index in range(component_count)
     ]
