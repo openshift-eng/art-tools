@@ -1,12 +1,14 @@
+import html
 import os
 import re
-from typing import Dict
+from typing import Dict, Optional
 
 import click
 from artcommonlib.constants import KONFLUX_DEFAULT_IMAGE_REPO, RHCOS_IMAGE_REPO
 from artcommonlib.registry_config import RegistryConfig
 from artcommonlib.util import sync_to_quay
 
+from pyartcd import jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.rhcos_jenkins_client import RhcosJenkinsClient
 from pyartcd.runtime import Runtime
@@ -87,6 +89,34 @@ class RhcosNodeImagePostBuildPipeline:
                 else:
                     os.environ['QUAY_AUTH_FILE'] = previous_auth_file
 
+    def _build_description(self, integration_test: dict, tags: Optional[Dict[str, str]] = None) -> str:
+        """Build the Jenkins description for the integration test and promotion."""
+
+        integration_url = html.escape(integration_test.get('url', ''), quote=True)
+        integration_result = html.escape(str(integration_test.get('result', 'UNKNOWN')))
+        integration_job = f'<a href="{integration_url}">build-node-image</a>' if integration_url else 'build-node-image'
+        description = (
+            f'RHCOS integration test: {integration_job} (result: {integration_result})<br/>'
+            f'Input node image: <code>{html.escape(self.node_image)}</code><br/>'
+            f'Input extensions image: <code>{html.escape(self.extensions_image)}</code><br/>'
+        )
+        if tags:
+            description += (
+                'Updated pullspecs:<br/>'
+                f'<code>{html.escape(KONFLUX_DEFAULT_IMAGE_REPO)}:{html.escape(tags["node"])}</code><br/>'
+                f'<code>{html.escape(KONFLUX_DEFAULT_IMAGE_REPO)}:{html.escape(tags["extensions"])}</code><br/>'
+            )
+        return description
+
+    def _update_build_description(self, description: str):
+        """Update the Jenkins description without changing the build result if it fails."""
+
+        try:
+            jenkins.init_jenkins()
+            jenkins.update_description(description)
+        except Exception:
+            self.runtime.logger.warning('Unable to update the Jenkins build description', exc_info=True)
+
     async def run(self):
         """Run integration testing and mirror the exact tested image digests."""
 
@@ -111,6 +141,7 @@ class RhcosNodeImagePostBuildPipeline:
         )
         result = client.wait_for_build('build-node-image', build_number)
         if result['result'] != 'SUCCESS':
+            self._update_build_description(self._build_description(result))
             raise RuntimeError(
                 f'RHCOS integration test failed for {self.release}: '
                 f'{result.get("url", "")} - {result.get("description", "")}'
@@ -122,6 +153,7 @@ class RhcosNodeImagePostBuildPipeline:
             tags,
         )
         await self._promote(tags)
+        self._update_build_description(self._build_description(result, tags))
 
 
 @cli.command('rhcos-node-image-post-build', help='Test and promote a pair of Konflux-built RHCOS images')

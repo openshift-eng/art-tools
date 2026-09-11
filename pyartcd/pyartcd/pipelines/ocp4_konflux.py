@@ -1116,13 +1116,10 @@ class KonfluxOcpPipeline:
             child_params,
             block_until_complete=True,
         )
+        child_job_path = jenkins.Jobs.RHCOS_NODE_IMAGE_POST_BUILD.value.replace('/', '/job/').replace('%2F', '%252F')
+        child_job_url = f'{jenkins.get_jenkins_url()}/job/{child_job_path}/'
         jenkins.update_description(
-            '<br/>RHCOS %s post-build child parameters: <code>%s</code><br/>Result: %s'
-            % (
-                rhel_label,
-                json.dumps(child_params, sort_keys=True),
-                child_result,
-            )
+            '<br/>RHCOS %s post-build: <a href="%s">rhcos-node-image-post-build</a><br/>' % (rhel_label, child_job_url)
         )
         if child_result != 'SUCCESS':
             raise RuntimeError(f"RHCOS {rhel_label} post-build job did not pass (result={child_result})")

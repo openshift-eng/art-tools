@@ -161,6 +161,10 @@ class TestRhcosPostBuildDelegation(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(result['NODE_IMAGE'], params['NODE_IMAGE'])
         mock_update_description.assert_called_once()
+        description = mock_update_description.call_args.args[0]
+        self.assertIn('rhcos-node-image-post-build', description)
+        self.assertIn('/job/aos-cd-builds/job/build%252Frhcos-node-image-post-build/', description)
+        self.assertNotIn('EXTENSIONS_IMAGE', description)
 
     @patch('pyartcd.pipelines.ocp4_konflux.load_group_config', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.ocp4_konflux.jenkins.update_description')
