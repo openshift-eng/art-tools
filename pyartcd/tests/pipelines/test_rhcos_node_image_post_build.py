@@ -48,12 +48,14 @@ class TestRhcosNodeImagePostBuildPipeline(unittest.IsolatedAsyncioTestCase):
     @patch('pyartcd.pipelines.rhcos_node_image_post_build.RegistryConfig')
     @patch('pyartcd.pipelines.rhcos_node_image_post_build.sync_to_quay', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.rhcos_node_image_post_build.load_group_config', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.rhcos_node_image_post_build.jenkins.init_jenkins')
     @patch('pyartcd.pipelines.rhcos_node_image_post_build.jenkins.update_description')
     @patch('pyartcd.pipelines.rhcos_node_image_post_build.RhcosJenkinsClient')
     async def test_tests_then_promotes_exact_digests_with_configured_tags(
         self,
         mock_client_type,
         mock_update_description,
+        mock_init_jenkins,
         mock_load_group_config,
         mock_sync,
         mock_registry_config,
@@ -90,6 +92,7 @@ class TestRhcosNodeImagePostBuildPipeline(unittest.IsolatedAsyncioTestCase):
             ['5.0-9.8-node-image-extensions'],
         )
         self.assertEqual(mock_sync.await_count, 2)
+        mock_init_jenkins.assert_called_once()
         mock_update_description.assert_called_once()
         description = mock_update_description.call_args.args[0]
         self.assertIn('https://jenkins.example.com/job/build-node-image/46173/', description)
@@ -100,8 +103,11 @@ class TestRhcosNodeImagePostBuildPipeline(unittest.IsolatedAsyncioTestCase):
 
     @patch('pyartcd.pipelines.rhcos_node_image_post_build.sync_to_quay', new_callable=AsyncMock)
     @patch('pyartcd.pipelines.rhcos_node_image_post_build.RhcosJenkinsClient')
+    @patch('pyartcd.pipelines.rhcos_node_image_post_build.jenkins.init_jenkins')
     @patch('pyartcd.pipelines.rhcos_node_image_post_build.jenkins.update_description')
-    async def test_failed_integration_test_does_not_promote(self, mock_update_description, mock_client_type, mock_sync):
+    async def test_failed_integration_test_does_not_promote(
+        self, mock_update_description, mock_init_jenkins, mock_client_type, mock_sync
+    ):
         mock_client = mock_client_type.return_value
         mock_client.trigger_build.return_value = 46173
         mock_client.wait_for_build.return_value = {
@@ -113,10 +119,23 @@ class TestRhcosNodeImagePostBuildPipeline(unittest.IsolatedAsyncioTestCase):
             await _make_pipeline().run()
 
         mock_sync.assert_not_awaited()
+        mock_init_jenkins.assert_called_once()
         mock_update_description.assert_called_once()
         self.assertIn(
             'https://jenkins.example.com/job/build-node-image/46173/', mock_update_description.call_args.args[0]
         )
+
+    @patch('pyartcd.pipelines.rhcos_node_image_post_build.jenkins.init_jenkins')
+    @patch('pyartcd.pipelines.rhcos_node_image_post_build.jenkins.update_description')
+    def test_description_update_failure_does_not_fail_pipeline(self, mock_update_description, mock_init_jenkins):
+        mock_update_description.side_effect = RuntimeError('description update failed')
+        pipeline = _make_pipeline()
+
+        pipeline._update_build_description('description')
+
+        mock_init_jenkins.assert_called_once()
+        mock_update_description.assert_called_once_with('description')
+        pipeline.runtime.logger.warning.assert_called_once()
 
     @patch('pyartcd.pipelines.rhcos_node_image_post_build.RhcosJenkinsClient')
     @patch('pyartcd.pipelines.rhcos_node_image_post_build.sync_to_quay', new_callable=AsyncMock)

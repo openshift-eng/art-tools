@@ -108,6 +108,15 @@ class RhcosNodeImagePostBuildPipeline:
             )
         return description
 
+    def _update_build_description(self, description: str):
+        """Update the Jenkins description without changing the build result if it fails."""
+
+        try:
+            jenkins.init_jenkins()
+            jenkins.update_description(description)
+        except Exception:
+            self.runtime.logger.warning('Unable to update the Jenkins build description', exc_info=True)
+
     async def run(self):
         """Run integration testing and mirror the exact tested image digests."""
 
@@ -132,7 +141,7 @@ class RhcosNodeImagePostBuildPipeline:
         )
         result = client.wait_for_build('build-node-image', build_number)
         if result['result'] != 'SUCCESS':
-            jenkins.update_description(self._build_description(result))
+            self._update_build_description(self._build_description(result))
             raise RuntimeError(
                 f'RHCOS integration test failed for {self.release}: '
                 f'{result.get("url", "")} - {result.get("description", "")}'
@@ -144,7 +153,7 @@ class RhcosNodeImagePostBuildPipeline:
             tags,
         )
         await self._promote(tags)
-        jenkins.update_description(self._build_description(result, tags))
+        self._update_build_description(self._build_description(result, tags))
 
 
 @cli.command('rhcos-node-image-post-build', help='Test and promote a pair of Konflux-built RHCOS images')
