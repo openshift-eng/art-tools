@@ -2794,7 +2794,7 @@ class PromotePipeline:
         format_dict = {}
 
         # Add SHA digests for image shipments
-        if shipment_kind == "image":
+        if re.fullmatch(r"image(?:-el\d+)?", shipment_kind):
             for arch, sha in payload_shas.items():
                 if arch == "multi":
                     continue  # Skip multi-arch as it's not a specific architecture
@@ -2855,7 +2855,7 @@ class PromotePipeline:
         self._logger.info("Found template placeholders in %s shipment: %s", shipment_kind, placeholders_found)
 
         # Validate template placeholders in both description and solution fields (for image shipments)
-        if shipment_kind == "image":
+        if re.fullmatch(r"image(?:-el\d+)?", shipment_kind):
             # Check solution field for SHA digest placeholders
             if hasattr(shipment_config.shipment.data.releaseNotes, 'solution'):
                 solution_text = shipment_config.shipment.data.releaseNotes.solution

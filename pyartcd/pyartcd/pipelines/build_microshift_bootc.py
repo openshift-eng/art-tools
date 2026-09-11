@@ -42,7 +42,7 @@ from artcommonlib.util import (
 )
 from doozerlib.backend.konflux_client import API_VERSION, KIND_SNAPSHOT
 from doozerlib.util import isolate_git_commit_in_release
-from elliottlib.shipment_model import ShipmentConfig, Snapshot, SnapshotSpec
+from elliottlib.shipment_model import Environments, ShipmentConfig, ShipmentEnv, Snapshot, SnapshotSpec
 from github import GithubException
 
 from pyartcd import constants, jenkins
@@ -50,6 +50,7 @@ from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.git import GitRepository
 from pyartcd.plashets import convert_plashet_config_to_new_style, plashet_config_for_major_minor
 from pyartcd.runtime import Runtime
+from pyartcd.shipment_utils import get_release_plan_names, group_nvrs_by_rhel_version
 from pyartcd.util import (
     default_release_suffix,
     get_assembly_type,
@@ -871,7 +872,7 @@ class BuildMicroShiftBootcPipeline:
             await asyncio.sleep(check_interval)
 
     async def _prepare_shipment(self, builds: dict[str, KonfluxBuildRecord]):
-        """Prepare shipment for microshift-bootc (all variants combined in one shipment MR).
+        """Prepare RHEL-specific microshift-bootc shipments in one shipment MR.
 
         Args:
             builds: Mapping of image_name -> KonfluxBuildRecord for each built variant.
@@ -884,8 +885,8 @@ class BuildMicroShiftBootcPipeline:
         # Step 2: Setup shipment data repository first
         await self._setup_shipment_data_repo()
 
-        # Step 3: Check for existing shipment branch and try to load existing config
-        shipment_config = await self._load_or_init_shipment_config()
+        # Step 3: Reuse the existing shipment MR branch when one is configured.
+        await self._load_or_init_shipment_branch()
 
         # Check if there was an existing microshift_bootc_shipment URL
         assembly_shipment_config = self.assembly_group_config.get("microshift_bootc_shipment", {})
@@ -899,14 +900,11 @@ class BuildMicroShiftBootcPipeline:
         for image_name, build in builds.items():
             self._logger.info("Using bootc build for %s: %s", image_name, build.nvr)
 
-        # Step 5: Create snapshot from all bootc builds
-        image_names = list(builds.keys())
-        nvrs = [build.nvr for build in builds.values()]
-        snapshot = await self._create_snapshot(nvrs, image_names)
-        shipment_config.shipment.snapshot = snapshot
+        # Step 5: Create one snapshot and shipment config for each RHEL version.
+        shipment_configs = await self._create_shipment_configs(builds)
 
-        # Step 6: Create shipment MR
-        self.shipment_mr_url = await self._create_shipment_mr(shipment_config, env)
+        # Step 6: Create or update one shipment MR containing all RHEL-specific files.
+        self.shipment_mr_url = await self._create_shipment_mr(shipment_configs, env)
 
         if self.shipment_mr_url:
             await self.slack_client.say_in_thread(f"Shipment MR created: {self.shipment_mr_url}")
@@ -917,6 +915,37 @@ class BuildMicroShiftBootcPipeline:
                 await self._create_or_update_build_data_pr()
         else:
             await self.slack_client.say_in_thread("No changes in shipment data. MR was not created or updated.")
+
+    async def _create_shipment_configs(self, builds: dict[str, KonfluxBuildRecord]) -> dict[str, ShipmentConfig]:
+        """
+        Create one snapshot and shipment config for each RHEL version in the builds.
+
+        Args:
+            builds: Mapping of bootc image name to its Konflux build record.
+        Returns:
+            Shipment configurations keyed by the shipment filename kind.
+        """
+        builds_by_nvr = {build.nvr: (image_name, build) for image_name, build in builds.items()}
+        nvr_groups = group_nvrs_by_rhel_version([build.nvr for build in builds.values()])
+        multiple_rhel_versions = len(nvr_groups) > 1
+        shipment_configs: dict[str, ShipmentConfig] = {}
+
+        for rhel_suffix, group_nvrs in nvr_groups.items():
+            image_names = [builds_by_nvr[nvr][0] for nvr in group_nvrs]
+            snapshot = await self._create_snapshot(group_nvrs, image_names)
+            if snapshot is None:
+                raise ValueError(f"No snapshot created for RHEL group {rhel_suffix}")
+
+            shipment_config = await self._init_shipment_config(rhel_suffix if rhel_suffix != "default" else None)
+            shipment_config.shipment.snapshot = snapshot
+
+            if multiple_rhel_versions:
+                shipment_kind = f"microshift-bootc-{rhel_suffix}"
+            else:
+                shipment_kind = "microshift-bootc"
+            shipment_configs[shipment_kind] = shipment_config
+
+        return shipment_configs
 
     def _resolve_shipment_env(self) -> str:
         """Resolve the target shipment environment (stage/prod) from the assembly definition.
@@ -1088,35 +1117,33 @@ class BuildMicroShiftBootcPipeline:
         await self._wait_for_pr_merge(pr)
         return True
 
-    async def _load_or_init_shipment_config(self) -> ShipmentConfig:
-        """Load existing shipment config from branch or initialize new one
-
-        If a shipment MR already exists (URL in config), reuse the existing branch.
-        Otherwise, create a new branch with timestamp.
-
-        Sets self._shipment_source_branch to the resolved branch name for reuse in _create_shipment_mr.
+    async def _load_or_init_shipment_branch(self) -> None:
         """
-        # Check if shipment already exists in assembly config
+        Switches to the existing shipment branch or prepares for a new branch.
+
+        Existing shipment MRs must remain open so that a rerun can safely update
+        their source branch.
+        """
         assembly_shipment_config = self.assembly_group_config.get("microshift_bootc_shipment", {})
         existing_mr_url = assembly_shipment_config.get("url")
 
         if existing_mr_url:
-            # Get the branch name from the existing MR (validates MR state)
             self._shipment_source_branch = self._get_shipment_mr_branch(existing_mr_url)
-
-            self._logger.info('Found existing shipment MR, using branch: %s', self._shipment_source_branch)
+            self._logger.info("Found existing shipment MR, using branch: %s", self._shipment_source_branch)
             await self.shipment_data_repo.fetch_switch_branch(self._shipment_source_branch, remote="origin")
-
-            # Initialize new config - we'll load the snapshot from existing files later if needed
-            return await self._init_shipment_config()
         else:
-            # No existing MR - this is the first run, initialize new config
-            self._logger.info('No existing shipment MR found, will initialize new shipment config')
+            self._logger.info("No existing shipment MR found, will initialize a new shipment branch")
             self._shipment_source_branch = None
-            return await self._init_shipment_config()
 
-    async def _init_shipment_config(self) -> ShipmentConfig:
-        """Initialize shipment configuration using elliott shipment init"""
+    async def _init_shipment_config(self, rhel_suffix: str | None = None) -> ShipmentConfig:
+        """
+        Initialize shipment configuration and resolve its RHEL-specific ReleasePlans.
+
+        Args:
+            rhel_suffix: Optional suffix such as ``el9`` or ``el10``.
+        Returns:
+            Initialized shipment configuration with resolved stage/prod ReleasePlans.
+        """
         self._logger.info("Initializing shipment configuration for microshift-bootc...")
 
         create_cmd = self._elliott_base_command + [
@@ -1130,6 +1157,21 @@ class BuildMicroShiftBootcPipeline:
         # Convert CommentedMap to regular Python objects before creating Pydantic model
         out = Model(yaml.load(stdout)).primitive()
         shipment = ShipmentConfig(**out)
+
+        config_path = self.shipment_data_repo._directory / "config.yaml"
+        application = shipment.shipment.metadata.application
+        stage_release_plan, prod_release_plan = get_release_plan_names(config_path, application, rhel_suffix)
+        if stage_release_plan == "n/a" or prod_release_plan == "n/a":
+            effective_key = f"{application}-{rhel_suffix}" if rhel_suffix else application
+            raise ValueError(
+                f"stage/prod releasePlan is not registered for '{effective_key}' in {config_path}. "
+                "Cannot create a shipment MR with unresolved ReleasePlans."
+            )
+
+        shipment.shipment.environments = Environments(
+            stage=ShipmentEnv(releasePlan=stage_release_plan),
+            prod=ShipmentEnv(releasePlan=prod_release_plan),
+        )
 
         self._logger.info("Shipment configuration initialized")
         return shipment
@@ -1190,8 +1232,8 @@ class BuildMicroShiftBootcPipeline:
 
         self._logger.info("Shipment data repository setup completed")
 
-    async def _create_shipment_mr(self, shipment_config: ShipmentConfig, env: str = "prod") -> str | None:
-        """Create or update shipment MR with the given shipment config. Returns None if no changes.
+    async def _create_shipment_mr(self, shipments_by_kind: dict[str, ShipmentConfig], env: str = "prod") -> str | None:
+        """Create or update shipment MR with the given shipment configs. Returns None if no changes.
 
         :param env: The target environment (prod or stage) that determines the shipment file directory.
         """
@@ -1199,10 +1241,10 @@ class BuildMicroShiftBootcPipeline:
 
         target_branch = "main"
 
-        # Use the cached branch name from _load_or_init_shipment_config (if available)
+        # Use the cached branch name from _load_or_init_shipment_branch (if available)
         cached_branch = getattr(self, '_shipment_source_branch', None)
         if cached_branch:
-            # Reusing existing MR branch (already switched in _load_or_init_shipment_config)
+            # Reusing existing MR branch (already switched in _load_or_init_shipment_branch)
             source_branch = cached_branch
             self._logger.info('Reusing existing shipment branch: %s', source_branch)
         else:
@@ -1215,7 +1257,7 @@ class BuildMicroShiftBootcPipeline:
         # Update shipment data repo with shipment config
         release_name = get_release_name_for_assembly(self.group, self.releases_config, self.assembly)
         commit_message = f"Add microshift-bootc shipment configuration for {release_name}"
-        updated = await self._update_shipment_data(shipment_config, commit_message, source_branch, env)
+        updated = await self._update_shipment_data(shipments_by_kind, commit_message, source_branch, env)
         if not updated:
             self._logger.info("No changes in shipment data. MR will not be created or updated.")
             return None
@@ -1267,30 +1309,29 @@ class BuildMicroShiftBootcPipeline:
         return mr_url
 
     async def _update_shipment_data(
-        self, shipment_config: ShipmentConfig, commit_message: str, branch: str, env: str = "prod"
+        self,
+        shipments_by_kind: dict[str, ShipmentConfig],
+        commit_message: str,
+        branch: str,
+        env: str = "prod",
     ) -> bool:
-        """Update shipment data repo with the given shipment config file
+        """Update shipment data repo with the given shipment config files.
 
-        :param env: The target environment (prod or stage) that determines the shipment file directory.
+        Args:
+            shipments_by_kind: Shipment configurations keyed by filename kind.
+            commit_message: Git commit message for the shipment update.
+            branch: Shipment branch name containing the timestamp.
+            env: Target environment directory, either ``prod`` or ``stage``.
         """
         # Extract timestamp from branch name (last segment after splitting by "-")
         # Branch format: prepare-microshift-bootc-shipment-{assembly}-{timestamp}
         timestamp = branch.split("-")[-1]
-        filename = f"{self.assembly}.microshift-bootc.{timestamp}.yaml"
-        product = shipment_config.shipment.metadata.product
-        group = shipment_config.shipment.metadata.group
-        application = shipment_config.shipment.metadata.application
 
-        relative_target_dir = Path("shipment") / product / group / application / env
-        target_dir = self.shipment_data_repo._directory / relative_target_dir
-        target_dir.mkdir(parents=True, exist_ok=True)
-        filepath = relative_target_dir / filename
+        if len(shipments_by_kind) > 1:
+            await self._remove_legacy_combined_shipment_file(shipments_by_kind, timestamp, env)
 
-        self._logger.info("Updating shipment file: %s", filename)
-        shipment_dump = shipment_config.model_dump(exclude_unset=True, exclude_none=True)
-        out = StringIO()
-        yaml.dump(shipment_dump, out)
-        await self.shipment_data_repo.write_file(filepath, out.getvalue())
+        for shipment_kind, shipment_config in shipments_by_kind.items():
+            await self._write_shipment_file(shipment_kind, shipment_config, timestamp, env)
 
         await self.shipment_data_repo.add_all()
         await self.shipment_data_repo.log_diff()
@@ -1300,6 +1341,71 @@ class BuildMicroShiftBootcPipeline:
             commit_message += f"\n{job_url}"
 
         return await self.shipment_data_repo.commit_push(commit_message, safe=True)
+
+    async def _write_shipment_file(
+        self,
+        shipment_kind: str,
+        shipment_config: ShipmentConfig,
+        timestamp: str,
+        env: str,
+    ) -> Path:
+        """
+        Writes one shipment config file to the shipment-data repository.
+
+        Args:
+            shipment_kind: Kind used in the shipment filename.
+            shipment_config: Shipment configuration to serialize.
+            timestamp: Timestamp shared by all files in the shipment MR.
+            env: Target environment directory, either ``prod`` or ``stage``.
+        Returns:
+            Relative path of the written shipment file.
+        """
+        product = shipment_config.shipment.metadata.product
+        group = shipment_config.shipment.metadata.group
+        application = shipment_config.shipment.metadata.application
+        relative_target_dir = Path("shipment") / product / group / application / env
+        target_dir = self.shipment_data_repo._directory / relative_target_dir
+        target_dir.mkdir(parents=True, exist_ok=True)
+        filename = f"{self.assembly}.{shipment_kind}.{timestamp}.yaml"
+        filepath = relative_target_dir / filename
+
+        self._logger.info("Updating shipment file: %s", filename)
+        shipment_dump = shipment_config.model_dump(exclude_unset=True, exclude_none=True)
+        out = StringIO()
+        yaml.dump(shipment_dump, out)
+        await self.shipment_data_repo.write_file(filepath, out.getvalue())
+        return filepath
+
+    async def _remove_legacy_combined_shipment_file(
+        self,
+        shipments_by_kind: dict[str, ShipmentConfig],
+        timestamp: str,
+        env: str,
+    ) -> None:
+        """
+        Removes the old combined shipment file when migrating to RHEL-specific files.
+
+        Args:
+            shipments_by_kind: New shipment configurations used to locate the target directory.
+            timestamp: Timestamp encoded in the existing shipment branch.
+            env: Target environment directory, either ``prod`` or ``stage``.
+        """
+        shipment_config = next(iter(shipments_by_kind.values()))
+        product = shipment_config.shipment.metadata.product
+        group = shipment_config.shipment.metadata.group
+        application = shipment_config.shipment.metadata.application
+        legacy_relative_path = (
+            Path("shipment")
+            / product
+            / group
+            / application
+            / env
+            / f"{self.assembly}.microshift-bootc.{timestamp}.yaml"
+        )
+        legacy_path = self.shipment_data_repo._directory / legacy_relative_path
+        if legacy_path.exists():
+            self._logger.info("Removing legacy combined shipment file: %s", legacy_relative_path)
+            legacy_path.unlink()
 
     @cached_property
     def _gitlab(self) -> GitLabClient:

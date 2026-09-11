@@ -947,17 +947,42 @@ class GenAssemblyCli:
         if env and env not in ['stage', 'prod']:
             raise ValueError(f"Invalid environment: {env}")
 
+        shipment_kinds = ['image', 'extras', 'metadata']
+        rhel_versions = self._get_rhel_versions()
+        if len(rhel_versions) > 1:
+            shipment_kinds = [
+                f'{kind}-el{rhel_version}' for kind in shipment_kinds for rhel_version in sorted(rhel_versions)
+            ]
+
         default_shipment = {
             'advisories': [
-                {'kind': 'image'},
-                {'kind': 'extras'},
-                {'kind': 'metadata'},
+                *({'kind': kind} for kind in shipment_kinds),
                 {'kind': 'fbc'},
             ],
         }
         if env:
             default_shipment['env'] = env
         return default_shipment
+
+    def _get_rhel_versions(self) -> Set[int]:
+        """
+        Get the RHEL versions represented by the selected Konflux image builds.
+
+        Return Value(s):
+            Set[int]: The detected RHEL major versions.
+        """
+        if self.runtime.build_system != 'konflux':
+            return set()
+
+        rhel_versions = set()
+        for build_inspector in self.component_image_builds.values():
+            release = build_inspector.get_release()
+            if not release:
+                continue
+            rhel_version = isolate_el_version_in_release(release)
+            if rhel_version is not None:
+                rhel_versions.add(rhel_version)
+        return rhel_versions
 
     def _get_previous_shipment_info(self) -> dict:
         """

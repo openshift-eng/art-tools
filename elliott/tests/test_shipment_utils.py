@@ -6,13 +6,18 @@ from unittest.mock import MagicMock, Mock, patch
 from artcommonlib.model import Model
 from elliottlib import shipment_utils
 from elliottlib.shipment_model import (
+    ComponentSource,
     Data,
     Environments,
+    GitSource,
     Metadata,
     ReleaseNotes,
     Shipment,
     ShipmentConfig,
     ShipmentEnv,
+    Snapshot,
+    SnapshotComponent,
+    SnapshotSpec,
 )
 
 
@@ -189,6 +194,19 @@ shipment:
         # Verify the underlying function was called correctly
         mock_get_configs.assert_called_once_with(self.test_mr_url)
 
+    @patch("elliottlib.shipment_utils.get_shipment_configs_from_mr")
+    def test_get_shipment_config_image_returns_principal_rhel_variant(self, mock_get_configs):
+        """The generic image lookup selects the principal RHEL-qualified image shipment."""
+        image_el9 = Mock()
+        image_el9.shipment.snapshot.spec.components = ["one"]
+        image_el10 = Mock()
+        image_el10.shipment.snapshot.spec.components = ["one", "two"]
+        mock_get_configs.return_value = {"image-el9": image_el9, "image-el10": image_el10}
+
+        result = shipment_utils.get_shipment_config_from_mr(self.test_mr_url, "image")
+
+        self.assertIs(result, image_el10)
+
     def test_default_kinds_parameter(self):
         """Test that default kinds parameter works correctly"""
         with patch('artcommonlib.gitlab.gitlab.Gitlab') as mock_gitlab_class:
@@ -303,6 +321,39 @@ shipment:
         # Assertions
         expected_kinds = {"fbc", "image", "extras", "microshift-bootc", "metadata"}
         self.assertEqual(set(result.keys()), expected_kinds)
+
+    @patch('artcommonlib.gitlab.gitlab.Gitlab')
+    @patch.dict(os.environ, {'GITLAB_TOKEN': 'test-token'})
+    def test_get_shipment_configs_preserves_rhel_qualified_kinds(self, mock_gitlab_class):
+        """RHEL-qualified shipment files remain distinct when parsed from one MR."""
+        mock_gitlab = mock_gitlab_class.return_value
+        mock_gitlab.projects.get.side_effect = [self.mock_project, self.mock_source_project]
+
+        self.mock_project.mergerequests.get.return_value = self.mock_mr
+        self.mock_mr.source_project_id = "source-project-id"
+        self.mock_mr.source_branch = "test-branch"
+
+        self.mock_diff_info.id = "diff-id"
+        self.mock_mr.diffs.list.return_value = [self.mock_diff_info]
+        self.mock_mr.diffs.get.return_value = self.mock_diff
+        self.mock_diff.diffs = [
+            {"new_path": "image-el9.yaml", "old_path": None},
+            {"new_path": "image-el10.yaml", "old_path": None},
+            {"new_path": "extras-el9.yaml", "old_path": None},
+            {"new_path": "metadata-el10.yaml", "old_path": None},
+            {"new_path": "microshift-bootc-el9.yaml", "old_path": None},
+            {"new_path": "microshift-bootc-el10.yaml", "old_path": None},
+        ]
+
+        self.mock_file_content.decode.return_value.decode.return_value = self.sample_yaml_content
+        self.mock_source_project.files.get.return_value = self.mock_file_content
+
+        result = shipment_utils.get_shipment_configs_from_mr(self.test_mr_url)
+
+        self.assertEqual(
+            set(result),
+            {"image-el9", "image-el10", "extras-el9", "metadata-el10", "microshift-bootc-el9", "microshift-bootc-el10"},
+        )
 
 
 class TestGroupFiltering(unittest.TestCase):
@@ -800,6 +851,65 @@ class TestGetFullAdvisoryIdFromShipment(unittest.TestCase):
             shipment_utils.get_full_advisory_id_from_shipment(_make_shipment_config("image", live_id=13660)),
             f"RHBA-{year}:13660",
         )
+
+
+def _make_image_shipment_config(kind: str, component_count: int, live_id: int) -> ShipmentConfig:
+    """Build an image shipment with a controlled component count and advisory ID."""
+    application = f"app-{kind}"
+    components = [
+        SnapshotComponent(
+            name=f"image-{index}",
+            containerImage=f"quay.io/example/image-{index}:latest",
+            source=ComponentSource(git=GitSource(url="https://github.com/example/image.git", revision="revision")),
+        )
+        for index in range(component_count)
+    ]
+    return ShipmentConfig(
+        shipment=Shipment(
+            metadata=Metadata(
+                product="ocp",
+                application=application,
+                group="openshift-4.18",
+                assembly="4.18.1",
+            ),
+            environments=Environments(
+                stage=ShipmentEnv(releasePlan=f"rp-{kind}-stage"),
+                prod=ShipmentEnv(releasePlan=f"rp-{kind}-prod"),
+            ),
+            snapshot=Snapshot(
+                nvrs=[f"{kind}-nvr"],
+                spec=SnapshotSpec(application=application, components=components),
+            ),
+            data=Data(releaseNotes=ReleaseNotes(type="RHBA", live_id=live_id, description="Primary image advisory.")),
+        )
+    )
+
+
+class TestPrimaryImageShipment(unittest.TestCase):
+    def test_selects_highest_rhel_version_when_image_counts_are_equal(self):
+        shipments = {
+            "image-el9": _make_image_shipment_config("image-el9", component_count=3, live_id=100),
+            "image-el10": _make_image_shipment_config("image-el10", component_count=3, live_id=101),
+        }
+
+        kind, _ = shipment_utils.select_primary_image_shipment(shipments)
+
+        self.assertEqual(kind, "image-el10")
+
+    def test_adds_secondary_advisory_reference_to_primary_description(self):
+        shipments = {
+            "image-el9": _make_image_shipment_config("image-el9", component_count=2, live_id=100),
+            "image-el10": _make_image_shipment_config("image-el10", component_count=3, live_id=101),
+        }
+
+        changed = shipment_utils.add_secondary_image_advisory_references(shipments)
+
+        self.assertTrue(changed)
+        description = shipments["image-el10"].shipment.data.releaseNotes.description
+        self.assertIn("https://access.redhat.com/errata/RHBA-", description)
+        self.assertIn(":0100", description)
+        self.assertNotIn(":0101", description)
+        self.assertFalse(shipment_utils.add_secondary_image_advisory_references(shipments))
 
 
 class TestStripAdvisoryCrossReference(unittest.TestCase):

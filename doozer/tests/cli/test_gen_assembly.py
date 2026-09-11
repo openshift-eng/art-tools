@@ -376,6 +376,75 @@ class TestGenAssemblyCli(TestCase):
         }
         self.assertEqual(expected, shipment)
 
+    def test_get_shipment_info_mixed_rhel_versions_uses_detected_compound_kinds(self):
+        """Mixed image RHEL streams generate one shipment reference per stream."""
+        runtime = MagicMock(build_system='konflux')
+        runtime.get_releases_config.return_value = Model({'releases': {}})
+        gacli = GenAssemblyCli(runtime=runtime, gen_assembly_name='4.23.52')
+        for index, release in enumerate(('1.el9', '2.el8', '3.el9')):
+            build = MagicMock()
+            build.get_release.return_value = release
+            gacli.component_image_builds[f'image-{index}'] = build
+
+        shipment = gacli._get_shipment_info()
+
+        self.assertEqual(
+            shipment,
+            {
+                'advisories': [
+                    {'kind': 'image-el8'},
+                    {'kind': 'image-el9'},
+                    {'kind': 'extras-el8'},
+                    {'kind': 'extras-el9'},
+                    {'kind': 'metadata-el8'},
+                    {'kind': 'metadata-el9'},
+                    {'kind': 'fbc'},
+                ],
+            },
+        )
+
+    def test_get_shipment_info_detects_rhel_versions_without_allowlist(self):
+        """The detected stream names are not limited to a hardcoded RHEL version list."""
+        runtime = MagicMock(build_system='konflux')
+        runtime.get_releases_config.return_value = Model({'releases': {}})
+        gacli = GenAssemblyCli(runtime=runtime, gen_assembly_name='4.23.1')
+        for index, release in enumerate(('1.el10', '2.el9')):
+            build = MagicMock()
+            build.get_release.return_value = release
+            gacli.component_image_builds[f'image-{index}'] = build
+
+        self.assertEqual(
+            gacli._get_shipment_info()['advisories'],
+            [
+                {'kind': 'image-el9'},
+                {'kind': 'image-el10'},
+                {'kind': 'extras-el9'},
+                {'kind': 'extras-el10'},
+                {'kind': 'metadata-el9'},
+                {'kind': 'metadata-el10'},
+                {'kind': 'fbc'},
+            ],
+        )
+
+    def test_get_shipment_info_single_rhel_version_keeps_plain_kinds(self):
+        """A single detected RHEL stream does not require compound shipment kinds."""
+        runtime = MagicMock(build_system='konflux')
+        runtime.get_releases_config.return_value = Model({'releases': {}})
+        gacli = GenAssemblyCli(runtime=runtime, gen_assembly_name='4.23.1')
+        build = MagicMock()
+        build.get_release.return_value = '1.el9'
+        gacli.component_image_builds['image'] = build
+
+        self.assertEqual(
+            gacli._get_shipment_info()['advisories'],
+            [
+                {'kind': 'image'},
+                {'kind': 'extras'},
+                {'kind': 'metadata'},
+                {'kind': 'fbc'},
+            ],
+        )
+
     def test_get_shipment_info_ec0(self):
         runtime = MagicMock(build_system='konflux')
         runtime.get_releases_config.return_value = Model({'releases': {}})

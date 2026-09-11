@@ -53,9 +53,11 @@ from elliottlib.errata import get_errata_live_id, push_cdn_stage
 from elliottlib.errata_async import AsyncErrataAPI
 from elliottlib.shipment_model import Issue, ReleaseNotes, ShipmentConfig, Snapshot, SnapshotSpec, Tools
 from elliottlib.shipment_utils import (
+    add_secondary_image_advisory_references,
     get_full_advisory_id_from_shipment,
     get_shipment_configs_from_mr,
     patch_et_advisory_text,
+    select_primary_image_shipment,
     set_jira_bug_ids,
 )
 from tenacity import retry, stop_after_attempt, wait_fixed
@@ -65,6 +67,7 @@ from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.git import GitRepository
 from pyartcd.jira_client import JIRAClient
 from pyartcd.runtime import Runtime
+from pyartcd.shipment_utils import split_builds_by_shipment_kind
 from pyartcd.slack import SlackClient
 from pyartcd.util import (
     get_assembly_basis,
@@ -74,6 +77,51 @@ from pyartcd.util import (
 )
 
 yaml = new_roundtrip_yaml_handler()
+
+
+def _get_base_shipment_kind(kind: str) -> str:
+    """
+    Remove an optional RHEL suffix from a shipment kind.
+
+    Args:
+        kind: Shipment kind, such as ``image-el9`` or ``metadata``.
+    Returns:
+        The base shipment kind used by build and advisory lookup commands.
+    """
+    return re.sub(r"-el\d+$", "", kind)
+
+
+def _get_shipment_builds(kind: str, shipment: ShipmentConfig, kind_to_builds: Dict[str, List[str]]) -> List[str]:
+    """
+    Select builds for a shipment, preserving RHEL-qualified snapshot membership.
+
+    Args:
+        kind: Shipment kind, optionally qualified by a RHEL version.
+        shipment: Shipment configuration that may contain an existing snapshot.
+        kind_to_builds: Builds grouped by base shipment kind.
+    Returns:
+        NVRs to use when creating the shipment snapshot.
+    """
+    if re.search(r"-el\d+$", kind) and shipment.shipment.snapshot and shipment.shipment.snapshot.nvrs:
+        return shipment.shipment.snapshot.nvrs
+    return kind_to_builds.get(kind, kind_to_builds.get(_get_base_shipment_kind(kind), []))
+
+
+def _get_builds_for_base_kind(kind_to_builds: Dict[str, List[str]], base_kind: str) -> List[str]:
+    """
+    Combine build lists for a base kind and all of its RHEL-qualified variants.
+
+    Args:
+        kind_to_builds: Build lists keyed by shipment kind.
+        base_kind: Unqualified shipment kind.
+    Returns:
+        All builds belonging to the base kind.
+    """
+    builds = []
+    for kind, kind_builds in kind_to_builds.items():
+        if _get_base_shipment_kind(kind) == base_kind:
+            builds.extend(kind_builds)
+    return builds
 
 
 class PrepareReleaseKonfluxPipeline:
@@ -507,7 +555,9 @@ class PrepareReleaseKonfluxPipeline:
             for kind, shipment in shipments_by_kind.items():
                 if kind == "fbc":
                     continue
-                bug_ids = bugs_by_kind.get(kind, [])
+                bug_ids = bugs_by_kind.get(kind)
+                if bug_ids is None:
+                    bug_ids = bugs_by_kind.get(_get_base_shipment_kind(kind), [])
                 set_jira_bug_ids(shipment.shipment.data.releaseNotes, bug_ids)
 
             await self.update_shipment_mr(shipments_by_kind, env, shipment_url)
@@ -634,9 +684,12 @@ class PrepareReleaseKonfluxPipeline:
 
         # make sure that metadata shipment needs to be prepared
         # if so, build any missing bundle builds
-        if "metadata" in shipments_by_kind and kind_to_builds["olm_builds_not_found"]:
+        metadata_kinds = {kind for kind in shipments_by_kind if _get_base_shipment_kind(kind) == "metadata"}
+        if metadata_kinds and kind_to_builds["olm_builds_not_found"]:
             bundle_nvrs, bundle_errors = await self.find_or_build_bundle_builds(kind_to_builds["olm_builds_not_found"])
-            kind_to_builds["metadata"] += bundle_nvrs
+            metadata_builds = split_builds_by_shipment_kind(bundle_nvrs, "metadata", metadata_kinds)
+            for kind, builds in metadata_builds.items():
+                kind_to_builds.setdefault(kind, []).extend(builds)
             if bundle_errors:
                 self.record_deferred_build_errors(
                     "bundle",
@@ -654,7 +707,7 @@ class PrepareReleaseKonfluxPipeline:
         # find and build any missing fbc builds
         if "fbc" in shipments_by_kind:
             fbc_builds, fbc_errors = await self.find_or_build_fbc_builds(
-                kind_to_builds["extras"] + kind_to_builds["image"]
+                _get_builds_for_base_kind(kind_to_builds, "extras") + _get_builds_for_base_kind(kind_to_builds, "image")
             )
             kind_to_builds["fbc"] = fbc_builds
             if fbc_errors:
@@ -670,13 +723,23 @@ class PrepareReleaseKonfluxPipeline:
 
         # prepare snapshot from the found builds
         for kind, shipment in shipments_by_kind.items():
-            shipment.shipment.snapshot = await self.get_snapshot(kind_to_builds[kind])
+            shipment.shipment.snapshot = await self.get_snapshot(_get_shipment_builds(kind, shipment, kind_to_builds))
 
         # Validate snapshot components against RPA before finalizing
         for kind, shipment in shipments_by_kind.items():
             if shipment.shipment.snapshot and shipment.shipment.snapshot.spec.components:
                 component_names = [c.name for c in shipment.shipment.snapshot.spec.components]
-                await validate_snapshot_against_rpa(self.group, env, kind, component_names)
+                release_plans = {
+                    "stage": shipment.shipment.environments.stage.releasePlan,
+                    "prod": shipment.shipment.environments.prod.releasePlan,
+                }
+                await validate_snapshot_against_rpa(
+                    self.group,
+                    env,
+                    kind,
+                    component_names,
+                    release_plans=release_plans,
+                )
 
         # Update shipment MR with found builds
         await self.update_shipment_mr(shipments_by_kind, env, shipment_url)
@@ -722,13 +785,13 @@ class PrepareReleaseKonfluxPipeline:
         image_advisory_id = None
         if shipment_data:
             shipments_by_kind, _, _ = shipment_data
-            image_shipment = (shipments_by_kind or {}).get("image")
+            primary_image = select_primary_image_shipment(shipments_by_kind or {})
             if (
-                image_shipment
-                and image_shipment.shipment.data
-                and isinstance(image_shipment.shipment.data.releaseNotes.live_id, int)
+                primary_image
+                and primary_image[1].shipment.data
+                and isinstance(primary_image[1].shipment.data.releaseNotes.live_id, int)
             ):
-                image_advisory_id = get_full_advisory_id_from_shipment(image_shipment)
+                image_advisory_id = get_full_advisory_id_from_shipment(primary_image[1])
 
         if not rpm_advisory_id and not image_advisory_id:
             return
@@ -816,6 +879,7 @@ class PrepareReleaseKonfluxPipeline:
             return
 
         modified: dict = {}
+        secondary_references_added = add_secondary_image_advisory_references(shipments_by_kind or {})
         for kind, shipment in (shipments_by_kind or {}).items():
             if kind == "fbc":
                 continue
@@ -835,6 +899,11 @@ class PrepareReleaseKonfluxPipeline:
                     changed = True
             if changed:
                 modified[kind] = shipment
+
+        if secondary_references_added:
+            primary_image = select_primary_image_shipment(shipments_by_kind or {})
+            if primary_image:
+                modified[primary_image[0]] = primary_image[1]
 
         if not modified:
             self.logger.info("No advisory ID placeholders found in shipment MR YAML, skipping")
@@ -884,31 +953,39 @@ class PrepareReleaseKonfluxPipeline:
                         attached image builds.
         """
         self.logger.info("Verify_attached_operators ...")
-        olm_builds = kind_to_builds.get('metadata')
-        if not olm_builds:
-            # No metadata builds to verify, so the check passes.
+        metadata_kinds = [kind for kind in kind_to_builds if _get_base_shipment_kind(kind) == "metadata"]
+        if not metadata_kinds:
             return
-        image_builds = kind_to_builds['image'] + kind_to_builds['extras']
+
         kdb = KonfluxDb()
         kdb.bind(KonfluxBundleBuildRecord)
-        tasks = [
-            kdb.get_latest_build(nvr=build, outcome=KonfluxBuildOutcome.SUCCESS, exclude_large_columns=True)
-            for build in olm_builds
-        ]
-        olm_records = await asyncio.gather(*tasks)
         missing_references = []
-        for record in filter(None, olm_records):
-            # Check the main operator NVR
-            if record.operator_nvr not in image_builds:
-                missing_references.append(
-                    f"Bundle {record.nvr} references operator {record.operator_nvr}, which is not in the release."
-                )
-            # Check all operand NVRs
-            for operand in record.operand_nvrs:
-                if operand not in image_builds:
+        for metadata_kind in metadata_kinds:
+            rhel_suffix_match = re.search(r"-el\d+$", metadata_kind)
+            related_kinds = [
+                kind
+                for kind in kind_to_builds
+                if _get_base_shipment_kind(kind) in ("image", "extras")
+                and (not rhel_suffix_match or kind.endswith(rhel_suffix_match.group(0)))
+            ]
+            image_builds = _get_builds_for_base_kind(
+                {kind: kind_to_builds[kind] for kind in related_kinds}, "image"
+            ) + _get_builds_for_base_kind({kind: kind_to_builds[kind] for kind in related_kinds}, "extras")
+            tasks = [
+                kdb.get_latest_build(nvr=build, outcome=KonfluxBuildOutcome.SUCCESS, exclude_large_columns=True)
+                for build in kind_to_builds[metadata_kind]
+            ]
+            olm_records = await asyncio.gather(*tasks)
+            for record in filter(None, olm_records):
+                if record.operator_nvr not in image_builds:
                     missing_references.append(
-                        f"Bundle {record.nvr} references operand {operand}, which is not in the release."
+                        f"Bundle {record.nvr} references operator {record.operator_nvr}, which is not in the release."
                     )
+                for operand in record.operand_nvrs:
+                    if operand not in image_builds:
+                        missing_references.append(
+                            f"Bundle {record.nvr} references operand {operand}, which is not in the release."
+                        )
         if missing_references:
             error_details = "\n".join(missing_references)
             self.logger.warning("Verify_attached_operators check failed with the following errors:\n%s", error_details)
@@ -1276,16 +1353,23 @@ class PrepareReleaseKonfluxPipeline:
         """
         cmd = self._elliott_base_command + ["find-builds", "--kind=image", "--all-image-types", "--json=-"]
         stdout = await self.execute_command_with_logging(cmd)
+        shipment_kinds = {
+            advisory.get("kind") for advisory in self.shipment_config.get("advisories", []) if advisory.get("kind")
+        }
         if not stdout:
             self.logger.warning("No output received from find-builds command.")
-            return {"image": [], "extras": [], "metadata": [], "olm_builds_not_found": []}
+            kind_to_builds = {"olm_builds_not_found": []}
+            for base_kind in ("image", "extras", "metadata"):
+                kind_to_builds.update(split_builds_by_shipment_kind([], base_kind, shipment_kinds))
+            return kind_to_builds
         out = json.loads(stdout)
-        kind_to_builds = {
-            "image": out.get("payload", []),
-            "extras": out.get("non_payload", []),
-            "metadata": out.get("olm_builds", []),
-            "olm_builds_not_found": out.get("olm_builds_not_found", []),
-        }
+        kind_to_builds = {"olm_builds_not_found": out.get("olm_builds_not_found", [])}
+        for base_kind, output_key in (
+            ("image", "payload"),
+            ("extras", "non_payload"),
+            ("metadata", "olm_builds"),
+        ):
+            kind_to_builds.update(split_builds_by_shipment_kind(out.get(output_key, []), base_kind, shipment_kinds))
 
         return kind_to_builds
 

@@ -1,11 +1,11 @@
 import logging
 import re
 from datetime import datetime
-from typing import Dict, Iterable, List, Tuple
+from typing import Dict, Iterable, List, Mapping, Tuple
 from urllib.parse import urlparse
 
 from artcommonlib.assembly import assembly_config_struct
-from artcommonlib.constants import SHIPMENT_CONFIG_KINDS
+from artcommonlib.constants import SHIPMENT_CONFIG_KINDS, SHIPMENT_CONFIG_KINDS_WITH_COMPOUNDS
 from artcommonlib.gitlab import GitLabClient
 from artcommonlib.jira_config import JIRA_DOMAIN_NAME
 from artcommonlib.model import Model
@@ -20,8 +20,123 @@ yaml = new_roundtrip_yaml_handler()
 
 
 # Single source of truth for the public errata URL.
-# verify_docs_approval.py defines the same constant; import from here once that module lands.
 PUBLIC_ERRATA_URL = "https://access.redhat.com/errata"
+
+_IMAGE_SHIPMENT_KIND_PATTERN = re.compile(r"^image(?:-el(?P<rhel_version>\d+))?$")
+_RHEL_SHIPMENT_KIND_PATTERN = re.compile(r"^(?P<base>.+)-(?P<rhel_suffix>el\d+)$")
+
+
+def split_shipment_kind(kind: str) -> tuple[str, str | None]:
+    """
+    Split a shipment kind into its base kind and optional RHEL suffix.
+
+    Args:
+        kind: Shipment kind, such as ``image`` or ``image-el9``.
+    Returns:
+        A tuple containing the base kind and optional suffix.
+    Raises:
+        ValueError: If the kind is not a supported shipment kind.
+    """
+    if kind in SHIPMENT_CONFIG_KINDS:
+        return kind, None
+
+    match = _RHEL_SHIPMENT_KIND_PATTERN.fullmatch(kind)
+    if match and kind in SHIPMENT_CONFIG_KINDS_WITH_COMPOUNDS:
+        return match.group("base"), match.group("rhel_suffix")
+
+    raise ValueError(f"Unsupported shipment kind: {kind}")
+
+
+def get_base_shipment_kind(kind: str) -> str:
+    """
+    Return the unqualified base kind for a shipment kind.
+
+    Args:
+        kind: Shipment kind, optionally qualified by a RHEL suffix.
+    Returns:
+        The base shipment kind.
+    """
+    try:
+        return split_shipment_kind(kind)[0]
+    except ValueError:
+        match = _RHEL_SHIPMENT_KIND_PATTERN.fullmatch(kind)
+        return match.group("base") if match else kind
+
+
+def select_primary_image_shipment(
+    shipments_by_kind: Mapping[str, ShipmentConfig],
+) -> tuple[str, ShipmentConfig] | None:
+    """
+    Select the image shipment that represents the principal image advisory.
+
+    The shipment with the most snapshot components is considered principal. If
+    multiple image shipments contain the same number of components, the one
+    with the highest RHEL version is selected.
+
+    Args:
+        shipments_by_kind: Shipment configurations keyed by their filename kind.
+    Returns:
+        The principal shipment kind and configuration, or None when no image
+        shipment is present.
+    """
+    image_shipments = [
+        (kind, shipment) for kind, shipment in shipments_by_kind.items() if _IMAGE_SHIPMENT_KIND_PATTERN.fullmatch(kind)
+    ]
+    if not image_shipments:
+        return None
+
+    def sort_key(item: tuple[str, ShipmentConfig]) -> tuple[int, int]:
+        kind, shipment = item
+        snapshot = shipment.shipment.snapshot
+        component_count = len(snapshot.spec.components) if snapshot else 0
+        match = _IMAGE_SHIPMENT_KIND_PATTERN.fullmatch(kind)
+        rhel_version = int(match.group("rhel_version")) if match and match.group("rhel_version") else -1
+        return component_count, rhel_version
+
+    return max(image_shipments, key=sort_key)
+
+
+def add_secondary_image_advisory_references(shipments_by_kind: Mapping[str, ShipmentConfig]) -> bool:
+    """
+    Add public Errata references for secondary image advisories to the principal advisory.
+
+    Args:
+        shipments_by_kind: Shipment configurations keyed by their filename kind.
+    Returns:
+        True when the principal image description was changed; otherwise False.
+    """
+    primary = select_primary_image_shipment(shipments_by_kind)
+    if primary is None:
+        return False
+
+    primary_kind, primary_shipment = primary
+    primary_release_notes = (
+        primary_shipment.shipment.data.releaseNotes if primary_shipment.shipment.data is not None else None
+    )
+    if primary_release_notes is None:
+        return False
+
+    references: list[str] = []
+    for kind, shipment in sorted(shipments_by_kind.items()):
+        if kind == primary_kind or not _IMAGE_SHIPMENT_KIND_PATTERN.fullmatch(kind):
+            continue
+        release_notes = shipment.shipment.data.releaseNotes if shipment.shipment.data is not None else None
+        if release_notes is None or not release_notes.live_id:
+            continue
+        advisory_id = get_full_advisory_id_from_shipment(shipment)
+        advisory_url = f"{PUBLIC_ERRATA_URL}/{advisory_id}"
+        if advisory_url not in (primary_release_notes.description or ""):
+            references.append(advisory_url)
+
+    if not references:
+        return False
+
+    description = primary_release_notes.description or ""
+    reference_block = "See the following advisory for additional container images:\n\n" + "\n".join(references)
+    primary_release_notes.description = (
+        f"{description.rstrip()}\n\n{reference_block}" if description else reference_block
+    )
+    return True
 
 
 def strip_advisory_cross_reference(text: str, rpm_name: str) -> str:
@@ -174,7 +289,7 @@ def patch_et_advisory_text(
 
 def get_shipment_configs_from_mr(
     mr_url: str,
-    kinds: Tuple[str, ...] = SHIPMENT_CONFIG_KINDS,
+    kinds: Tuple[str, ...] = SHIPMENT_CONFIG_KINDS_WITH_COMPOUNDS,
     group: str | None = None,
 ) -> Dict[str, ShipmentConfig]:
     """
@@ -211,7 +326,7 @@ def get_shipment_configs_from_mr(
 
         filename = file_path.split('/')[-1]
         parts = filename.replace('.yaml', '').replace('.yml', '')
-        kind = next((k for k in kinds if k in parts), None)
+        kind = _get_shipment_config_kind(parts, kinds)
         if not kind:
             continue
 
@@ -228,9 +343,50 @@ def get_shipment_configs_from_mr(
     return shipment_configs
 
 
+def _get_shipment_config_kind(filename_stem: str, kinds: Tuple[str, ...]) -> str | None:
+    """
+    Extracts a shipment kind from a filename, preserving an optional RHEL suffix.
+
+    New multi-RHEL shipment files use names such as ``image-el9`` and
+    ``microshift-bootc-el10``. The suffix must remain part of the returned key so
+    that multiple RHEL-specific configs can coexist in one merge request.
+
+    Args:
+        filename_stem: Shipment filename without its YAML extension.
+        kinds: Base shipment kinds accepted by the caller.
+    Returns:
+        The matching base or RHEL-qualified shipment kind, if any.
+    """
+    for kind in sorted(kinds, key=len, reverse=True):
+        if kind != "fbc":
+            qualified_match = re.search(rf"(?:^|\.)({re.escape(kind)}-el\d+)(?:\.|$)", filename_stem)
+            if qualified_match and qualified_match.group(1) in SHIPMENT_CONFIG_KINDS_WITH_COMPOUNDS:
+                return qualified_match.group(1)
+
+        base_match = re.search(rf"(?:^|\.){re.escape(kind)}(?:\.|$)", filename_stem)
+        if base_match:
+            return kind
+
+    supported_base_pattern = "|".join(re.escape(kind) for kind in SHIPMENT_CONFIG_KINDS)
+    if re.search(rf"(?:^|\.)(?:{supported_base_pattern})-el\d+(?:\.|$)", filename_stem):
+        return None
+
+    # Preserve the historical substring matching for unusual legacy filenames such as
+    # ``rpm-extra.yaml``.
+    return next((kind for kind in kinds if kind in filename_stem), None)
+
+
 def get_shipment_config_from_mr(mr_url: str, kind: str) -> ShipmentConfig | None:
-    """Fetch a specific shipment config from a merge request URL."""
+    """
+    Fetch a shipment config from a merge request URL.
+
+    The base ``image`` kind resolves to the principal image shipment when the
+    merge request contains RHEL-qualified image variants.
+    """
     shipment_configs = get_shipment_configs_from_mr(mr_url)
+    if kind == "image":
+        primary = select_primary_image_shipment(shipment_configs)
+        return primary[1] if primary else None
     return shipment_configs.get(kind)
 
 

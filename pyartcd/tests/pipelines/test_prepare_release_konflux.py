@@ -27,11 +27,63 @@ from elliottlib.shipment_model import (
     SnapshotSpec,
 )
 from pyartcd.git import GitRepository
-from pyartcd.pipelines.prepare_release_konflux import PrepareReleaseKonfluxPipeline
+from pyartcd.pipelines.prepare_release_konflux import PrepareReleaseKonfluxPipeline, _get_shipment_builds
 from pyartcd.runtime import Runtime
 from pyartcd.slack import SlackClient
 
 from pyartcd import constants
+
+
+def _make_image_shipment(
+    kind: str,
+    component_count: int,
+    live_id: int,
+    description: str,
+    group: str,
+    assembly: str,
+) -> ShipmentConfig:
+    """
+    Build an image shipment with a controlled snapshot size and release notes.
+
+    Args:
+        kind: Kind used to identify the image shipment.
+        component_count: Number of components in the snapshot.
+        live_id: Errata live ID in the release notes.
+        description: Image advisory description.
+        group: Build-data group for the shipment.
+        assembly: Release assembly for the shipment.
+    Returns:
+        A validated image shipment configuration.
+    """
+    application = f"app-{kind}"
+    components = [
+        SnapshotComponent(
+            name=f"image-{index}",
+            containerImage=f"quay.io/example/image-{index}:latest",
+            source=ComponentSource(git=GitSource(url="https://github.com/example/image.git", revision="revision")),
+        )
+        for index in range(component_count)
+    ]
+    return ShipmentConfig(
+        shipment=Shipment(
+            metadata=Metadata(product="ocp", group=group, assembly=assembly, application=application),
+            environments=Environments(
+                stage=ShipmentEnv(releasePlan=f"rp-{kind}-stage"),
+                prod=ShipmentEnv(releasePlan=f"rp-{kind}-prod"),
+            ),
+            snapshot=Snapshot(
+                nvrs=[f"{kind}-nvr"],
+                spec=SnapshotSpec(application=application, components=components),
+            ),
+            data=Data(
+                releaseNotes=ReleaseNotes(
+                    type="RHBA",
+                    live_id=live_id,
+                    description=description,
+                )
+            ),
+        )
+    )
 
 
 class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
@@ -55,6 +107,137 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         self.assembly = "test-assembly"
         self.gitlab_token = "gl_token"
         self.job_url = "http://jenkins/job/test-job/1"
+
+    def test_get_shipment_builds_preserves_rhel_qualified_snapshot_membership(self):
+        """Qualified shipments keep their variant-specific builds during re-preparation."""
+        shipment = _make_image_shipment(
+            "image-el9",
+            component_count=1,
+            live_id=100,
+            description="Image advisory.",
+            group=self.group,
+            assembly=self.assembly,
+        )
+
+        builds = _get_shipment_builds("image-el9", shipment, {"image": ["new-image-nvr"]})
+
+        self.assertEqual(builds, ["image-el9-nvr"])
+
+    async def test_reserve_live_id_reserves_each_compound_advisory(self):
+        """Each non-FBC compound advisory receives its own live ID."""
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+        )
+        pipeline.updated_assembly_group_config = Model(
+            {
+                "shipment": {
+                    "advisories": [
+                        {"kind": "image-el8"},
+                        {"kind": "image-el9"},
+                        {"kind": "extras-el8"},
+                    ]
+                }
+            }
+        )
+        errata_api = AsyncMock()
+        errata_api.reserve_live_id.side_effect = [1001, 1002, 1003]
+        pipeline._errata_api = errata_api
+
+        live_ids = [await pipeline.reserve_live_id({"kind": kind}) for kind in ("image-el8", "image-el9", "extras-el8")]
+
+        self.assertEqual(live_ids, [1001, 1002, 1003])
+        self.assertEqual(
+            [config.live_id for config in pipeline.updated_assembly_group_config.shipment.advisories],
+            [1001, 1002, 1003],
+        )
+
+    async def test_find_builds_all_splits_configured_compound_kinds(self):
+        """find-builds output is partitioned only for configured RHEL variants."""
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+        )
+        pipeline.releases_config = Model(
+            {
+                "releases": {
+                    self.assembly: {
+                        "assembly": {
+                            "group": {
+                                "shipment": {
+                                    "advisories": [
+                                        {"kind": "image-el8"},
+                                        {"kind": "image-el9"},
+                                        {"kind": "extras"},
+                                    ]
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        )
+        pipeline.execute_command_with_logging = AsyncMock(
+            return_value=json.dumps(
+                {
+                    "payload": [
+                        "image-a-container-v4.17.0-1.el8",
+                        "image-b-container-v4.17.0-1.el9",
+                    ],
+                    "non_payload": ["extras-a-container-v4.17.0-1.el9"],
+                    "olm_builds": [],
+                    "olm_builds_not_found": [],
+                }
+            )
+        )
+
+        builds = await pipeline.find_builds_all()
+
+        self.assertEqual(builds["image-el8"], ["image-a-container-v4.17.0-1.el8"])
+        self.assertEqual(builds["image-el9"], ["image-b-container-v4.17.0-1.el9"])
+        self.assertEqual(builds["extras"], ["extras-a-container-v4.17.0-1.el9"])
+        self.assertNotIn("image", builds)
+
+    async def test_attach_cve_flaws_targets_exact_compound_kind(self):
+        """CVE reconciliation targets the RHEL-specific shipment advisory."""
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+        )
+        pipeline.execute_command_with_logging = AsyncMock(return_value="")
+
+        await pipeline.attach_cve_flaws("image-el8", Mock())
+
+        command = pipeline.execute_command_with_logging.await_args.args[0]
+        self.assertIn("--use-default-advisory=image-el8", command)
+
+    async def test_sweep_bugs_updates_each_compound_shipment_independently(self):
+        """Bug IDs are written to the matching RHEL-specific shipment file."""
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+        )
+        pipeline.find_bugs = AsyncMock(return_value={"image-el8": ["BUG-EL8"], "image-el9": ["BUG-EL9"]})
+        pipeline.update_shipment_mr = AsyncMock()
+        shipments = {
+            "image-el8": _make_image_shipment("image-el8", 1, 1001, "el8", self.group, self.assembly),
+            "image-el9": _make_image_shipment("image-el9", 1, 1002, "el9", self.group, self.assembly),
+        }
+
+        await pipeline.sweep_bugs({}, (shipments, "prod", "https://gitlab.example.com/mr/1"))
+
+        el8_bugs = shipments["image-el8"].shipment.data.releaseNotes.issues.fixed
+        el9_bugs = shipments["image-el9"].shipment.data.releaseNotes.issues.fixed
+        self.assertEqual([issue.id for issue in el8_bugs], ["BUG-EL8"])
+        self.assertEqual([issue.id for issue in el9_bugs], ["BUG-EL9"])
 
     def test_init(self):
         pipeline = PrepareReleaseKonfluxPipeline(
@@ -1137,6 +1320,52 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             description=f"See https://access.redhat.com/errata/{expected_image_advisory}"
         )
         rpm_advisory.commit.assert_called_once()
+
+    async def test_resolve_advisory_placeholders_updates_principal_image_with_secondary_reference(self):
+        """The highest RHEL image shipment receives secondary advisory references."""
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+        )
+        pipeline.logger = Mock()
+        pipeline.update_shipment_mr = AsyncMock()
+
+        shipments = {
+            "image-el9": _make_image_shipment(
+                "image-el9",
+                component_count=2,
+                live_id=100,
+                description="Secondary image advisory.",
+                group=self.group,
+                assembly=self.assembly,
+            ),
+            "image-el10": _make_image_shipment(
+                "image-el10",
+                component_count=2,
+                live_id=101,
+                description="See {IMAGE_ADVISORY}",
+                group=self.group,
+                assembly=self.assembly,
+            ),
+        }
+
+        await pipeline._resolve_shipment_mr_placeholders(
+            shipments,
+            "prod",
+            "https://gitlab.example.com/x/-/merge_requests/1",
+            {"IMAGE_ADVISORY": "RHBA-2026:0101"},
+        )
+
+        description = shipments["image-el10"].shipment.data.releaseNotes.description
+        self.assertIn("RHBA-2026:0101", description)
+        self.assertIn("https://access.redhat.com/errata/RHBA-2026:0100", description)
+        pipeline.update_shipment_mr.assert_awaited_once_with(
+            {"image-el10": shipments["image-el10"]},
+            "prod",
+            "https://gitlab.example.com/x/-/merge_requests/1",
+        )
 
     @patch("elliottlib.shipment_utils.Erratum")
     @patch("pyartcd.pipelines.prepare_release_konflux.get_errata_live_id")

@@ -1,4 +1,5 @@
 import json
+import re
 import sys
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Set
@@ -28,6 +29,76 @@ logger = logutil.get_logger(__name__)
 type_bug_list = List[Bug]
 type_bug_set = Set[Bug]
 yaml = new_roundtrip_yaml_handler()
+
+_COMPOUND_SHIPMENT_KIND_PATTERN = re.compile(r"^(?P<base>.+)-el\d+$")
+
+
+def _get_base_shipment_kind(kind: str) -> str:
+    """
+    Return the unqualified shipment kind for a base or RHEL-qualified kind.
+
+    Args:
+        kind: Shipment kind such as ``image`` or ``image-el9``.
+    Returns:
+        The base shipment kind.
+    """
+    match = _COMPOUND_SHIPMENT_KIND_PATTERN.fullmatch(kind)
+    return match.group("base") if match else kind
+
+
+def _get_compound_kinds(builds_by_advisory_kind: Dict[str, List[str]], base_kind: str) -> list[str]:
+    """
+    Find configured RHEL-qualified variants for a base shipment kind.
+
+    Args:
+        builds_by_advisory_kind: Build NVRs keyed by shipment kind.
+        base_kind: Unqualified shipment kind.
+    Returns:
+        Sorted RHEL-qualified shipment kinds.
+    """
+    return sorted(
+        kind for kind in builds_by_advisory_kind if _get_base_shipment_kind(kind) == base_kind and kind != base_kind
+    )
+
+
+def _distribute_bugs_to_compound_kinds(
+    bugs: type_bug_set,
+    base_kind: str,
+    builds_by_advisory_kind: Dict[str, List[str]],
+    runtime: Runtime,
+) -> Dict[str, type_bug_set]:
+    """
+    Distribute non-tracker bugs to RHEL variants using their attached builds.
+
+    Bugs whose component matches one variant's build package are routed to that
+    variant. Ambiguous bugs are retained in every variant so that a bug is not
+    silently omitted from a shipment.
+
+    Args:
+        bugs: Bugs already categorized for the base advisory kind.
+        base_kind: Unqualified advisory kind.
+        builds_by_advisory_kind: Build NVRs keyed by shipment kind.
+        runtime: Elliott runtime used for component normalization.
+    Returns:
+        Bug sets keyed by the configured RHEL-qualified shipment kind.
+    """
+    compound_kinds = _get_compound_kinds(builds_by_advisory_kind, base_kind)
+    if not compound_kinds:
+        return {base_kind: bugs}
+
+    packages_by_kind = {
+        kind: {parse_nvr(nvr)["name"] for nvr in builds_by_advisory_kind.get(kind, [])} for kind in compound_kinds
+    }
+    distributed = {kind: set() for kind in compound_kinds}
+    for bug in bugs:
+        component = getattr(bug, "component", "") or ""
+        normalized_component = normalize_component_by_ocp_delivery_repo(runtime, component) if component else component
+        matching_kinds = [kind for kind, packages in packages_by_kind.items() if normalized_component in packages]
+        if not matching_kinds:
+            matching_kinds = compound_kinds
+        for kind in matching_kinds:
+            distributed[kind].add(bug)
+    return distributed
 
 
 class FindBugsMode:
@@ -512,6 +583,14 @@ def categorize_bugs_by_type(
         operator_bundle_advisory: set(),
         "microshift": set(),
     }
+    compound_bases = {
+        _get_base_shipment_kind(kind)
+        for kind in (builds_by_advisory_kind or {})
+        if _get_base_shipment_kind(kind) != kind
+    }
+    for base_kind in compound_bases:
+        for compound_kind in _get_compound_kinds(builds_by_advisory_kind, base_kind):
+            bugs_by_type[compound_kind] = set()
 
     # for 3.x, all bugs should go to the rpm advisory
     if int(major_version) < 4:
@@ -552,6 +631,17 @@ def categorize_bugs_by_type(
 
     # remaining non-tracker bugs go to image advisory
     bugs_by_type["image"] = non_tracker_bugs
+
+    # Keep non-tracker bugs aligned with the shipment snapshot that contains
+    # their build when a base advisory has been split by RHEL.
+    for base_kind in ("extras", "image", operator_bundle_advisory):
+        if base_kind not in compound_bases or base_kind not in bugs_by_type:
+            continue
+        distributed = _distribute_bugs_to_compound_kinds(
+            bugs_by_type[base_kind], base_kind, builds_by_advisory_kind, runtime
+        )
+        bugs_by_type[base_kind] = set()
+        bugs_by_type.update(distributed)
 
     # Complain about fake trackers
     if fake_trackers:
@@ -604,12 +694,12 @@ def categorize_bugs_by_type(
     logger.info("Validating tracker bugs with builds in advisories..")
     found = set()
     for kind in bugs_by_type.keys():
-        if len(found) == len(tracker_bugs):
-            break
+        if _get_base_shipment_kind(kind) in compound_bases and kind == _get_base_shipment_kind(kind):
+            continue
         attached_nvrs = builds_by_advisory_kind.get(kind, [])
         packages = {parse_nvr(nvr)["name"] for nvr in attached_nvrs}
         exception_packages = []
-        if kind == 'image':
+        if _get_base_shipment_kind(kind) == 'image':
             # golang builder is a special tracker component
             # which applies to all our golang images
             exception_packages.append(constants.GOLANG_BUILDER_CVE_COMPONENT)

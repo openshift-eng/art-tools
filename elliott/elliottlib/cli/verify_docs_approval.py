@@ -6,7 +6,8 @@ Docs team review that currently happens before prod release.
 
 import json
 import re
-from typing import Literal
+from pathlib import Path
+from typing import Literal, Sequence
 
 import click
 from artcommonlib import exectools
@@ -17,6 +18,7 @@ from pydantic import BaseModel
 from elliottlib import Runtime
 from elliottlib.cli.common import cli, click_coroutine
 from elliottlib.shipment_model import ReleaseNotes, ShipmentConfig
+from elliottlib.shipment_utils import select_primary_image_shipment
 
 PUBLIC_ERRATA_URL = "https://access.redhat.com/errata"
 OCP_RELEASE_PULLSPEC_TEMPLATE = "quay.io/openshift-release-dev/ocp-release:{assembly}-{arch}"
@@ -80,7 +82,22 @@ def contains_advisory_reference(text: str, advisory_type: str, live_id: int) -> 
     Return Value(s):
         bool: True if text references TYPE-<any year>:live_id.
     """
-    pattern = rf"{re.escape(advisory_type)}-\d{{4}}:{live_id}\b"
+    pattern = rf"{re.escape(advisory_type)}-\d{{4}}:0*{live_id}\b"
+    return re.search(pattern, text) is not None
+
+
+def _contains_public_advisory_reference(text: str, advisory_type: str, live_id: int) -> bool:
+    """
+    Check whether text contains a public Errata URL for an advisory.
+
+    Args:
+        text: Freeform advisory or release-notes text to search.
+        advisory_type: RHSA/RHBA/RHEA.
+        live_id: The advisory's live ID.
+    Returns:
+        True when a public Errata URL references the advisory.
+    """
+    pattern = rf"{re.escape(PUBLIC_ERRATA_URL)}/{re.escape(advisory_type)}-\d{{4}}:0*{live_id}\b"
     return re.search(pattern, text) is not None
 
 
@@ -98,7 +115,7 @@ def extract_advisory_name(text: str, advisory_type: str, live_id: int) -> str | 
     Return Value(s):
         str | None: the full display name (e.g. "RHSA-2026:51007"), or None if not found.
     """
-    pattern = rf"({re.escape(advisory_type)}-\d{{4}}:{live_id})\b"
+    pattern = rf"({re.escape(advisory_type)}-\d{{4}}:0*{live_id})\b"
     match = re.search(pattern, text)
     return match.group(1) if match else None
 
@@ -135,6 +152,48 @@ def check_extras_references_image(
         name=name,
         status="fail",
         detail=f"extras description does not reference image advisory {display}",
+    )
+
+
+def check_primary_image_references_secondary(
+    primary_image_release_notes: ReleaseNotes | None,
+    secondary_image_release_notes: Sequence[ReleaseNotes],
+) -> CheckResult:
+    """
+    Check that the principal image advisory references every secondary image advisory.
+
+    Args:
+        primary_image_release_notes: Release notes for the principal image advisory.
+        secondary_image_release_notes: Release notes for additional image advisories.
+    Returns:
+        CheckResult: Pass, fail, or skip outcome for the cross-reference check.
+    """
+    name = "primary image references secondary images"
+    if not secondary_image_release_notes:
+        return CheckResult(name=name, status="pass", detail="no secondary image advisories provided")
+    if primary_image_release_notes is None:
+        return CheckResult(name=name, status="fail", detail="principal image advisory not provided")
+    if primary_image_release_notes.description is None:
+        return CheckResult(name=name, status="fail", detail="principal image advisory has no description")
+
+    missing = []
+    for secondary in secondary_image_release_notes:
+        if not secondary.live_id or not _contains_public_advisory_reference(
+            primary_image_release_notes.description, secondary.type, secondary.live_id
+        ):
+            display = f"{secondary.type}:{secondary.live_id or 'missing-live-id'}"
+            missing.append(display)
+
+    if missing:
+        return CheckResult(
+            name=name,
+            status="fail",
+            detail=f"principal image description does not reference secondary image advisory(s): {', '.join(missing)}",
+        )
+    return CheckResult(
+        name=name,
+        status="pass",
+        detail=f"principal image description references {len(secondary_image_release_notes)} secondary image advisory(s)",
     )
 
 
@@ -373,11 +432,55 @@ def load_release_notes(runtime: Runtime, config_path: str) -> ReleaseNotes | Non
     Return Value(s):
         ReleaseNotes | None: the parsed release notes, or None if this shipment has none (e.g. FBC).
     """
-    config_raw = runtime.shipment_gitdata.load_yaml_file(config_path)
-    config = ShipmentConfig.model_validate(config_raw)
+    config = load_shipment_config(runtime, config_path)
     if config.shipment.data is None:
         return None
     return config.shipment.data.releaseNotes
+
+
+def load_shipment_config(runtime: Runtime, config_path: str) -> ShipmentConfig:
+    """
+    Load and validate a shipment configuration from the shipment data repository.
+
+    Args:
+        runtime: Elliott runtime with shipment data access configured.
+        config_path: Path to the shipment YAML file relative to the repository root.
+    Returns:
+        The validated shipment configuration.
+    """
+    config_raw = runtime.shipment_gitdata.load_yaml_file(config_path)
+    return ShipmentConfig.model_validate(config_raw)
+
+
+def _shipment_kind_from_config_path(config_path: str) -> str:
+    """
+    Extract the image shipment kind from a shipment filename.
+
+    Args:
+        config_path: Shipment YAML path, such as ``4.18.1.image-el10.123.yaml``.
+    Returns:
+        The image kind encoded in the filename, or ``image`` for legacy names.
+    """
+    for part in Path(config_path).stem.split("."):
+        if re.fullmatch(r"image(?:-el\d+)?", part):
+            return part
+    return "image"
+
+
+def _normalize_config_paths(config_paths: str | Sequence[str] | None) -> list[str]:
+    """
+    Normalize one or more CLI configuration paths to a list.
+
+    Args:
+        config_paths: A single path, an iterable of paths, or None.
+    Returns:
+        A list of non-empty paths.
+    """
+    if config_paths is None:
+        return []
+    if isinstance(config_paths, str):
+        return [config_paths]
+    return [path for path in config_paths if path]
 
 
 def get_advisory_id(runtime: Runtime, kind: str) -> int | None:
@@ -446,19 +549,40 @@ def _build_advisory_text(erratum: Erratum) -> str:
 
 
 async def run_checks(
-    runtime: Runtime, image_config_path: str | None, extras_config_path: str | None
+    runtime: Runtime,
+    image_config_path: str | Sequence[str] | None,
+    extras_config_path: str | None,
 ) -> list[CheckResult]:
     """
-    Run all six docs-approval checks for one shipment MR.
+    Run all seven docs-approval checks for one shipment MR.
 
     Arg(s):
         runtime (Runtime): the elliott Runtime, already initialized with shipment data access.
-        image_config_path (str | None): path to the changed image shipment file, if any.
+        image_config_path (str | Sequence[str] | None): path(s) to the changed image shipment file(s), if any.
         extras_config_path (str | None): path to the changed extras shipment file, if any.
     Return Value(s):
         list[CheckResult]: one result per check, in a fixed order.
     """
-    image_release_notes = load_release_notes(runtime, image_config_path) if image_config_path else None
+    image_shipments = {
+        _shipment_kind_from_config_path(path): load_shipment_config(runtime, path)
+        for path in _normalize_config_paths(image_config_path)
+    }
+    primary_image = select_primary_image_shipment(image_shipments)
+    primary_image_kind = primary_image[0] if primary_image else None
+    image_release_notes = (
+        primary_image[1].shipment.data.releaseNotes
+        if primary_image and primary_image[1].shipment.data is not None
+        else None
+    )
+    secondary_image_release_notes = [
+        shipment.shipment.data.releaseNotes
+        for kind, shipment in image_shipments.items()
+        if (
+            kind != primary_image_kind
+            and shipment.shipment.data is not None
+            and shipment.shipment.data.releaseNotes is not None
+        )
+    ]
     extras_release_notes = load_release_notes(runtime, extras_config_path) if extras_config_path else None
 
     rpm_advisory_id = get_advisory_id(runtime, "rpm")
@@ -501,6 +625,7 @@ async def run_checks(
         return CheckResult(name=name, status="skip", detail=f"advisory {dropped_name} is DROPPED_NO_SHIP")
 
     return [
+        check_primary_image_references_secondary(image_release_notes, secondary_image_release_notes),
         check_extras_references_image(extras_release_notes, image_release_notes, image_errata_name),
         check_image_does_not_reference_dropped_rpm(image_release_notes, rpm_dropped_name)
         if rpm_dropped_name
@@ -543,7 +668,8 @@ def format_report(results: list[CheckResult]) -> str:
     "image_config_path",
     metavar="PATH",
     default=None,
-    help="Path to the image shipment config for this release, if changed",
+    multiple=True,
+    help="Path to an image shipment config for this release; repeat for multiple RHEL variants",
 )
 @click.option(
     "--extras-config",
@@ -556,18 +682,20 @@ def format_report(results: list[CheckResult]) -> str:
 @click_coroutine
 async def verify_docs_approval(runtime, image_config_path, extras_config_path):
     """
-    Verify advisory cross-references (extras->image, image->rpm, rpm->image,
+    Verify advisory cross-references (principal image->secondary images,
+    extras->image, image->rpm, rpm->image,
     rhcos->rpm) and per-arch release payload SHA values are correct
     for a shipment MR, automating the manual Docs approval review.
 
     \b
     Checks performed:
-      1. extras (shipment MR) references image advisory
-      2. image (shipment MR) references rpm advisory
-      3. rpm advisory references image advisory
-      4. image shipment payload SHAs match the published release payload
-      5. rhcos advisory references rpm advisory
-      6. rhcos advisory payload SHAs match image shipment SHAs
+      1. principal image (shipment MR) references every secondary image advisory
+      2. extras (shipment MR) references principal image advisory
+      3. principal image (shipment MR) references rpm advisory
+      4. rpm advisory references principal image advisory
+      5. image shipment payload SHAs match the published release payload
+      6. rhcos advisory references rpm advisory
+      7. rhcos advisory payload SHAs match image shipment SHAs
 
     \b
         $ elliott -g openshift-4.20 --assembly=4.20.32 --shipment-path=. \\

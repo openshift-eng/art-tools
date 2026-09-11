@@ -82,7 +82,7 @@ class TestBuildMicroShiftBootcPipeline(IsolatedAsyncioTestCase):
         source_branch = f"prepare-microshift-bootc-shipment-{self.assembly}-{existing_timestamp}"
 
         # when
-        await pipeline._update_shipment_data(mock_shipment_config, "Test commit", source_branch)
+        await pipeline._update_shipment_data({"microshift-bootc": mock_shipment_config}, "Test commit", source_branch)
 
         # then
         pipeline.shipment_data_repo.write_file.assert_called_once()
@@ -126,7 +126,9 @@ class TestBuildMicroShiftBootcPipeline(IsolatedAsyncioTestCase):
         source_branch = f"prepare-microshift-bootc-shipment-{self.assembly}-{timestamp}"
 
         # when
-        await pipeline._update_shipment_data(mock_shipment_config, "Test commit", source_branch, "stage")
+        await pipeline._update_shipment_data(
+            {"microshift-bootc": mock_shipment_config}, "Test commit", source_branch, "stage"
+        )
 
         # then
         pipeline.shipment_data_repo.write_file.assert_called_once()
@@ -235,7 +237,7 @@ class TestBuildMicroShiftBootcPipeline(IsolatedAsyncioTestCase):
 
         # when
         with patch('pyartcd.pipelines.build_microshift_bootc.get_release_name_for_assembly', return_value="4.21.0"):
-            _ = await pipeline._create_shipment_mr(mock_shipment_config)
+            _ = await pipeline._create_shipment_mr({"microshift-bootc": mock_shipment_config})
 
         # then
         pipeline.shipment_data_repo.write_file.assert_called_once()
@@ -297,7 +299,7 @@ class TestBuildMicroShiftBootcPipeline(IsolatedAsyncioTestCase):
 
         # when
         with patch('pyartcd.pipelines.build_microshift_bootc.get_release_name_for_assembly', return_value="4.18.1"):
-            _ = await pipeline._create_shipment_mr(mock_shipment_config)
+            _ = await pipeline._create_shipment_mr({"microshift-bootc": mock_shipment_config})
 
         # then
         # Verify a new branch with timestamp was created
@@ -319,6 +321,27 @@ class TestBuildMicroShiftBootcPipeline(IsolatedAsyncioTestCase):
         self.assertEqual(timestamp_from_branch, timestamp_part)
         self.assertEqual(len(timestamp_part), 14)
         self.assertTrue(timestamp_part.isdigit())
+
+    async def test_load_or_init_shipment_branch_reuses_open_mr_branch(self):
+        """Reuses the source branch from the configured open shipment MR."""
+        pipeline = self._make_pipeline(group="openshift-5.0", assembly="rc.1")
+        existing_mr_url = "https://gitlab.example.com/shipment-data/-/merge_requests/806"
+        existing_branch = "prepare-microshift-bootc-shipment-rc.1-20260904133832"
+        pipeline.releases_config = Model(
+            {"releases": {"rc.1": {"assembly": {"group": {"microshift_bootc_shipment": {"url": existing_mr_url}}}}}}
+        )
+        pipeline.shipment_data_repo = Mock()
+        pipeline.shipment_data_repo.fetch_switch_branch = AsyncMock()
+
+        mock_mr = Mock(source_branch=existing_branch, state="opened")
+        mock_gitlab = Mock()
+        mock_gitlab.get_mr_from_url.return_value = mock_mr
+        pipeline._gitlab = mock_gitlab
+
+        await pipeline._load_or_init_shipment_branch()
+
+        self.assertEqual(pipeline._shipment_source_branch, existing_branch)
+        pipeline.shipment_data_repo.fetch_switch_branch.assert_awaited_once_with(existing_branch, remote="origin")
 
     @patch("pyartcd.pipelines.build_microshift_bootc.get_microshift_builds")
     async def test_get_microshift_rpm_commit_extracts_commit(self, mock_get_builds):
@@ -641,6 +664,76 @@ class TestBuildMicroShiftBootcPipeline(IsolatedAsyncioTestCase):
         self.assertEqual(images[1]["distgit_key"], "microshift-bootc-rhel10")
         self.assertEqual(
             images[1]["metadata"]["is"]["nvr"], "microshift-bootc-rhel10-container-v4.22-202606081229.el10"
+        )
+
+    @patch.object(BuildMicroShiftBootcPipeline, "_init_shipment_config", new_callable=AsyncMock)
+    @patch.object(BuildMicroShiftBootcPipeline, "_create_snapshot", new_callable=AsyncMock)
+    async def test_create_shipment_configs_groups_builds_by_rhel_version(
+        self, mock_create_snapshot, mock_init_shipment_config
+    ):
+        """Creates one shipment config and snapshot for each RHEL version."""
+        pipeline = self._make_pipeline(group="openshift-5.0", assembly="rc.1")
+        snapshot_el9 = Mock()
+        snapshot_el10 = Mock()
+        mock_create_snapshot.side_effect = [snapshot_el9, snapshot_el10]
+
+        config_el9 = Mock()
+        config_el10 = Mock()
+        mock_init_shipment_config.side_effect = [config_el9, config_el10]
+        builds = {
+            "microshift-bootc": Mock(nvr="microshift-bootc-container-v5.0-1.el9"),
+            "microshift-bootc-rhel10": Mock(nvr="microshift-bootc-rhel10-container-v5.0-1.el10"),
+        }
+
+        shipment_configs = await pipeline._create_shipment_configs(builds)
+
+        self.assertEqual(list(shipment_configs), ["microshift-bootc-el9", "microshift-bootc-el10"])
+        self.assertIs(shipment_configs["microshift-bootc-el9"], config_el9)
+        self.assertIs(shipment_configs["microshift-bootc-el10"], config_el10)
+        mock_init_shipment_config.assert_any_await("el9")
+        mock_init_shipment_config.assert_any_await("el10")
+        self.assertEqual(mock_create_snapshot.await_count, 2)
+
+    async def test_update_shipment_data_writes_multiple_files_and_removes_legacy_file(self):
+        """Writes RHEL-specific files and removes the old combined shipment file."""
+        pipeline = self._make_pipeline(group="openshift-5.0", assembly="rc.1")
+        pipeline.shipment_data_repo = Mock()
+        pipeline.shipment_data_repo._directory = Path(tempfile.mkdtemp())
+        pipeline.shipment_data_repo.write_file = AsyncMock()
+        pipeline.shipment_data_repo.add_all = AsyncMock()
+        pipeline.shipment_data_repo.log_diff = AsyncMock()
+        pipeline.shipment_data_repo.commit_push = AsyncMock(return_value=True)
+
+        legacy_dir = pipeline.shipment_data_repo._directory / "shipment/ocp/openshift-5.0/openshift-5-0/stage"
+        legacy_dir.mkdir(parents=True)
+        legacy_file = legacy_dir / "rc.1.microshift-bootc.20260904133832.yaml"
+        legacy_file.write_text("legacy")
+
+        configs = {}
+        for kind in ("microshift-bootc-el9", "microshift-bootc-el10"):
+            config = Mock()
+            config.shipment.metadata.product = "ocp"
+            config.shipment.metadata.group = "openshift-5.0"
+            config.shipment.metadata.application = "openshift-5-0"
+            config.model_dump.return_value = {"shipment": {}}
+            configs[kind] = config
+
+        updated = await pipeline._update_shipment_data(
+            configs,
+            "Update shipment",
+            "prepare-microshift-bootc-shipment-rc.1-20260904133832",
+            "stage",
+        )
+
+        self.assertTrue(updated)
+        self.assertFalse(legacy_file.exists())
+        written_paths = [call.args[0] for call in pipeline.shipment_data_repo.write_file.call_args_list]
+        self.assertEqual(
+            {path.name for path in written_paths},
+            {
+                "rc.1.microshift-bootc-el9.20260904133832.yaml",
+                "rc.1.microshift-bootc-el10.20260904133832.yaml",
+            },
         )
 
     def test_pin_image_nvr_updates_existing_entry(self):

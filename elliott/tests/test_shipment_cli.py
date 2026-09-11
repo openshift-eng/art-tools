@@ -130,6 +130,46 @@ class TestInitShipmentCliAdvisoryType(unittest.IsolatedAsyncioTestCase):
         release_notes = result["shipment"]["data"]["releaseNotes"]
         self.assertEqual(release_notes["type"], "RHBA")
 
+    @patch("elliottlib.cli.shipment_cli.get_advisory_boilerplate")
+    @patch("elliottlib.cli.shipment_cli.konflux_application_name", return_value="test-app")
+    async def test_rhel_qualified_kind_uses_base_boilerplate_and_specific_release_plan(
+        self, _mock_app_name, mock_boilerplate
+    ):
+        """RHEL-qualified shipments keep the application name but select the qualified plans."""
+        mock_boilerplate.return_value = {
+            "synopsis": "syn",
+            "topic": "top",
+            "description": "desc",
+            "solution": "sol",
+        }
+        runtime = self._make_runtime("4", "17", "52")
+        runtime.shipment_gitdata.load_yaml_file.return_value = {
+            "applications": {
+                "test-app": {
+                    "environments": {
+                        "stage": {
+                            "releasePlan": "stage-default",
+                            "releasePlan-el8": "stage-el8",
+                        },
+                        "prod": {
+                            "releasePlan": "prod-default",
+                            "releasePlan-el8": "prod-el8",
+                        },
+                    }
+                }
+            }
+        }
+
+        result = await InitShipmentCli(runtime=runtime, kind="image-el8").run()
+
+        mock_boilerplate.assert_called_once_with(
+            runtime=runtime, et_data={}, art_advisory_key="image", errata_type="RHBA"
+        )
+        shipment = result["shipment"]
+        self.assertEqual(shipment["metadata"]["application"], "test-app")
+        self.assertEqual(shipment["environments"]["stage"]["releasePlan"], "stage-el8")
+        self.assertEqual(shipment["environments"]["prod"]["releasePlan"], "prod-el8")
+
 
 if __name__ == "__main__":
     unittest.main()

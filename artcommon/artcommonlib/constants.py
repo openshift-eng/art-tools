@@ -60,6 +60,9 @@ TASKRUN_TABLE_ID = 'taskruns'
 REDHAT_GITLAB_URL = "https://gitlab.cee.redhat.com"
 SHIPMENT_DATA_URL_TEMPLATE = "https://gitlab.cee.redhat.com/hybrid-platforms/art/ocp-shipment-data"
 SHIPMENT_CONFIG_KINDS = ("image", "extras", "metadata", "fbc", "microshift-bootc")
+SHIPMENT_CONFIG_KINDS_WITH_COMPOUNDS = SHIPMENT_CONFIG_KINDS + tuple(
+    f"{kind}-el{rhel_version}" for kind in SHIPMENT_CONFIG_KINDS if kind != "fbc" for rhel_version in (8, 9, 10)
+)
 
 # Redis related vars
 REDIS_HOST = 'master.redis.gwprhd.use1.cache.amazonaws.com'
