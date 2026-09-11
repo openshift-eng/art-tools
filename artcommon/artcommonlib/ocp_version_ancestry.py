@@ -6,10 +6,8 @@ and determines which previous major.minor versions a target OCP version can upgr
 
 Key components:
 - SuggestionsSpec: Pydantic model for version constraints
-- BuildSuggestions: Pydantic model for complete build-suggestions structure
+- BuildSuggestions: Pydantic model for legacy and multi-stream build-suggestions structures
 - get_build_suggestions_async(): Fetch and validate Cincinnati build-suggestions YAML files
-- get_previous_minor_version_from_suggestions(): Extract the previous major.minor version
-  from validated build-suggestions data
 - get_cincinnati_channels(): Get Cincinnati channel names for a version
 - get_release_controller_versions_async(): Fetch promoted versions from the release controller
 - calc_upgrade_sources_async(): Calculate which versions can upgrade to a target version
@@ -98,14 +96,51 @@ class SuggestionsSpec(BaseModel):
         return versions
 
 
+class _SourceConstraint(BaseModel):
+    """Normalized constraints for one source major.minor release line."""
+
+    min_version: str
+    max_version: Optional[str] = None
+    block_list: list[str] = Field(default_factory=list)
+
+    @property
+    def major_minor(self) -> tuple[int, int]:
+        version = semver.VersionInfo.parse(self.min_version)
+        return version.major, version.minor
+
+    @model_validator(mode='after')
+    def validate_release_line(self) -> '_SourceConstraint':
+        """Require an optional maximum to describe the same release line as its minimum."""
+        if self.max_version is None:
+            return self
+
+        maximum = semver.VersionInfo.parse(self.max_version)
+        if self.major_minor != (maximum.major, maximum.minor):
+            raise ValueError(
+                'Build-suggestions constraint error: minimum and maximum versions must have the same '
+                f"major.minor; found '{self.min_version}' and '{self.max_version}'. "
+                'Please contact the OTA team to fix the build-suggestions file.'
+            )
+        return self
+
+
 class BuildSuggestions(BaseModel):
     """
-    Complete build-suggestions structure for a specific OCP minor version.
+    Build-suggestions for a specific OCP minor version.
 
-    The 'default' section applies to all architectures unless overridden by
-    architecture-specific sections (e.g., 's390x', 'aarch64').
+    The new schema lists the inclusive minimum version for every source release line::
 
-    Example YAML structure:
+        min_versions:
+        - 4.23.0-rc.0
+        - 5.0.0-rc.0
+        - 5.1.0-ec.0
+
+    During the schema transition, the legacy architecture-aware structure is also
+    supported. Its 'default' section applies unless an architecture-specific section
+    (e.g. 's390x' or 'aarch64') overrides it.
+
+    Legacy YAML structure::
+
         default:
           minor_min: "4.22.0-rc.0"
           minor_max: "4.22.9999"
@@ -122,27 +157,45 @@ class BuildSuggestions(BaseModel):
           z_block_list: []
     """
 
-    default: SuggestionsSpec = Field(
-        ...,
-        description="Default constraints applied to all architectures",
+    min_versions: Optional[list[str]] = Field(
+        None,
+        min_length=1,
+        description="Inclusive minimum version for every source major.minor release line",
+    )
+    default: Optional[SuggestionsSpec] = Field(
+        None,
+        description="Legacy default constraints applied to all architectures",
     )
 
-    # Architecture-specific overrides as additional fields
+    # Legacy architecture-specific overrides are stored as additional fields.
     model_config = {"extra": "allow"}
 
     @model_validator(mode="before")
     @classmethod
     def parse_architecture_overrides(cls, data: Any) -> Any:
         """
-        Parse architecture-specific overrides as SuggestionsSpec objects.
+        Select the new or legacy schema and parse legacy architecture overrides.
 
-        Pydantic's extra="allow" keeps extra fields as-is (dicts). This validator
-        converts architecture override dicts into SuggestionsSpec objects.
+        New-schema documents contain only min_versions. Legacy documents require
+        default and treat every other top-level field as an architecture override.
         """
         if not isinstance(data, dict):
             return data
 
-        # Parse all non-default fields as SuggestionsSpec
+        has_min_versions = 'min_versions' in data
+        has_default = 'default' in data
+        if has_min_versions:
+            if has_default:
+                raise ValueError("build-suggestions cannot mix 'min_versions' with the legacy 'default' schema")
+            unexpected_fields = set(data) - {'min_versions'}
+            if unexpected_fields:
+                fields = ', '.join(sorted(unexpected_fields))
+                raise ValueError(f"New build-suggestions schema contains unexpected fields: {fields}")
+            return data
+
+        if not has_default:
+            raise ValueError("build-suggestions must define either 'min_versions' or the legacy 'default' section")
+
         parsed = {}
         for key, value in data.items():
             if key == "default":
@@ -158,6 +211,26 @@ class BuildSuggestions(BaseModel):
 
         return parsed
 
+    @field_validator('min_versions')
+    @classmethod
+    def validate_min_versions(cls, versions: Optional[list[str]]) -> Optional[list[str]]:
+        """Validate new-schema minima and ensure each release line occurs once."""
+        if versions is None:
+            raise ValueError('min_versions must be a non-empty list')
+
+        release_lines: dict[tuple[int, int], str] = {}
+        for version in versions:
+            SuggestionsSpec._parse_semver(version)
+            parsed = semver.VersionInfo.parse(version)
+            release_line = (parsed.major, parsed.minor)
+            if release_line in release_lines:
+                raise ValueError(
+                    f"min_versions contains duplicate release line {parsed.major}.{parsed.minor}: "
+                    f"'{release_lines[release_line]}' and '{version}'"
+                )
+            release_lines[release_line] = version
+        return versions
+
     def get_for_arch(self, arch: str) -> SuggestionsSpec:
         """
         Get constraints for a specific architecture, falling back to default.
@@ -165,10 +238,31 @@ class BuildSuggestions(BaseModel):
         :param arch: Architecture name (e.g., 'amd64', 's390x', 'aarch64')
         :return: SuggestionsSpec for the architecture
         """
+        if self.default is None:
+            raise ValueError('Architecture-specific constraints are unavailable in the min_versions schema')
         # Check if architecture-specific override exists
         if hasattr(self, arch) and arch != 'default':
             return getattr(self, arch)
         return self.default
+
+    def get_source_constraints(self, arch: str = 'default') -> list[_SourceConstraint]:
+        """Normalize the selected schema into constraints for each source release line."""
+        if self.min_versions is not None:
+            return [_SourceConstraint(min_version=version) for version in self.min_versions]
+
+        spec = self.get_for_arch(arch)
+        return [
+            _SourceConstraint(
+                min_version=spec.minor_min,
+                max_version=spec.minor_max,
+                block_list=spec.minor_block_list,
+            ),
+            _SourceConstraint(
+                min_version=spec.z_min,
+                max_version=spec.z_max,
+                block_list=spec.z_block_list,
+            ),
+        ]
 
 
 async def get_build_suggestions_async(
@@ -187,7 +281,7 @@ async def get_build_suggestions_async(
     :param minor: Minor version (e.g., 0)
     :param suggestions_url: Base URL to Cincinnati build-suggestions directory
     :param timeout: HTTP request timeout in seconds
-    :return: BuildSuggestions object with default and architecture-specific constraints
+    :return: Validated legacy or multi-stream BuildSuggestions object
     :raises httpx.HTTPError: If the HTTP request fails (404, network errors, etc.)
     :raises ValueError: If YAML parsing or validation fails
     """
@@ -220,53 +314,6 @@ async def get_build_suggestions_async(
                 f"Please contact the OTA (OpenShift Update Architecture) team to fix the build-suggestions file. "
                 f"Validation error: {e}"
             ) from e
-
-
-def get_previous_minor_version_from_suggestions(
-    suggestions: BuildSuggestions,
-    go_arch: str = 'default',
-) -> tuple[int, int]:
-    """
-    Extract the previous major.minor version from build-suggestions by parsing minor_min.
-
-    This is the PRIMARY strategy for determining the previous version, as the
-    build-suggestions YAML explicitly defines which previous versions can upgrade.
-
-    Example:
-        If 5.0.yaml contains minor_min: "4.22.0-rc.0", this returns (4, 22).
-
-    Validation:
-        - minor_min and minor_max must have the same major.minor version
-        - Example: minor_min="4.22.0" and minor_max="4.22.9999" is valid
-        - Example: minor_min="4.22.0" and minor_max="4.23.0" is INVALID
-
-    :param suggestions: BuildSuggestions object (already fetched and validated)
-    :param go_arch: Go architecture name (e.g., 'amd64', 's390x'), defaults to 'default'
-    :return: Tuple of (prev_major, prev_minor)
-    :raises ValueError: If minor_min/minor_max cannot be parsed or have different minor versions
-    """
-    spec = suggestions.get_for_arch(go_arch)
-
-    try:
-        min_info = semver.VersionInfo.parse(spec.minor_min)
-    except (ValueError, AttributeError) as e:
-        raise ValueError(f"Cannot parse minor_min '{spec.minor_min}' as valid semver. Error: {e}") from e
-
-    # If minor_max is provided, validate it has the same major.minor as minor_min
-    if spec.minor_max is not None:
-        try:
-            max_info = semver.VersionInfo.parse(spec.minor_max)
-        except (ValueError, AttributeError) as e:
-            raise ValueError(f"Cannot parse minor_max '{spec.minor_max}' as valid semver. Error: {e}") from e
-        if (min_info.major, min_info.minor) != (max_info.major, max_info.minor):
-            raise ValueError(
-                f"Build-suggestions constraint error: minor_min and minor_max must have the same major.minor version. "
-                f"Found minor_min='{spec.minor_min}' ({min_info.major}.{min_info.minor}) "
-                f"and minor_max='{spec.minor_max}' ({max_info.major}.{max_info.minor}). "
-                f"Please contact the OTA team to fix the build-suggestions file."
-            )
-
-    return (min_info.major, min_info.minor)
 
 
 def get_cincinnati_channels(major: int, minor: int) -> list[str]:
@@ -441,13 +488,12 @@ async def calc_upgrade_sources_async(
     Calculate which previous release versions can upgrade to the specified version.
 
     This function determines upgrade sources by:
-    1. Fetching build-suggestions to determine the previous minor version
-    2. Using get_previous_minor_version_from_suggestions to extract previous version
-    3. Querying Cincinnati for versions from both previous and current minor releases
-    4. Supplementing Cincinnati data with release controller versions (catches recently-promoted
+    1. Fetching and normalizing legacy or multi-stream build-suggestions
+    2. Querying Cincinnati for every configured source release line
+    3. Supplementing Cincinnati data with release controller versions (catches recently-promoted
        z-streams whose cincinnati-graph-data PR hasn't merged yet)
-    5. Filtering based on build-suggestions constraints (minor_min/max, z_min/max, block lists)
-    6. Including eligible hotfix releases
+    4. Filtering each release line based on its minimum, optional maximum, and block list
+    5. Including eligible hotfix releases from the target release line
 
     :param version: Version string (e.g., "5.0.0-rc.0")
     :param arch: Architecture (brew arch name, e.g., "x86_64")
@@ -457,7 +503,7 @@ async def calc_upgrade_sources_async(
         'https://{go_arch}.ocp.releases.ci.openshift.org'.
     :return: Sorted list of version strings that can upgrade to the target version
     :raises IOError: If the version string cannot be parsed into major.minor fields
-    :raises ValueError: If build-suggestions are invalid or previous version cannot be determined
+    :raises ValueError: If build-suggestions are invalid
     :raises httpx.HTTPError: If Cincinnati or build-suggestions fetch fails
     """
     # Parse version to extract major.minor
@@ -466,58 +512,44 @@ async def calc_upgrade_sources_async(
     # Convert brew arch to Go arch (Cincinnati uses Go arch names)
     go_arch = go_arch_for_brew_arch(arch)
 
-    # STEP 1: Fetch build-suggestions FIRST (before querying channels)
-    # This is the KEY FIX for ART-14348 - we fetch suggestions before determining channels
+    # Fetch build-suggestions before querying channels because they define every source release line.
     suggestions = await get_build_suggestions_async(major, minor, suggestions_url)
-    spec = suggestions.get_for_arch(go_arch)
+    constraints = suggestions.get_source_constraints(go_arch)
 
-    # STEP 2: Determine previous minor version using build-suggestions
-    # This replaces the broken "minor - 1" logic that fails for 5.0 → 4.22
-    prev_major, prev_minor = get_previous_minor_version_from_suggestions(suggestions, go_arch)
+    upgrade_from: set[str] = set()
+    current_versions: list[str] = []
+    current_edges: dict[str, list[str]] = {}
+    current_constraint: Optional[_SourceConstraint] = None
 
-    # STEP 3: Get Cincinnati channel names
-    candidate_channel = get_cincinnati_channels(major, minor)[0]
-    prev_candidate_channel = get_cincinnati_channels(prev_major, prev_minor)[0]
+    for constraint in constraints:
+        source_major, source_minor = constraint.major_minor
+        candidate_channel = get_cincinnati_channels(source_major, source_minor)[0]
+        channel_versions, channel_edges = await get_channel_versions_async(candidate_channel, go_arch, graph_url)
+        rc_versions = await get_release_controller_versions_async(
+            source_major, source_minor, go_arch, release_controller_url
+        )
+        source_versions = sort_semver(list(set(channel_versions) | set(rc_versions)))
 
-    # STEP 4: Query Cincinnati for version lists
-    prev_versions, _ = await get_channel_versions_async(prev_candidate_channel, go_arch, graph_url)
-    curr_versions, current_edges = await get_channel_versions_async(candidate_channel, go_arch, graph_url)
+        for source_version in source_versions:
+            if (
+                _version_in_range(source_version, constraint.min_version, constraint.max_version)
+                and source_version not in constraint.block_list
+            ):
+                upgrade_from.add(source_version)
 
-    # STEP 4.5: Supplement Cincinnati data with release controller versions.
-    # If a z-stream was promoted but its cincinnati-graph-data PR hasn't merged yet,
-    # it will be invisible to Cincinnati. The release controller tracks all promoted
-    # versions in the {major}-stable stream, so we union those in.
-    rc_prev_versions = await get_release_controller_versions_async(
-        prev_major, prev_minor, go_arch, release_controller_url
-    )
-    rc_curr_versions = await get_release_controller_versions_async(major, minor, go_arch, release_controller_url)
+        if (source_major, source_minor) == (major, minor):
+            current_versions = source_versions
+            current_edges = channel_edges
+            current_constraint = constraint
 
-    prev_versions_set = set(prev_versions) | set(rc_prev_versions)
-    prev_versions = sort_semver(list(prev_versions_set))
-
-    curr_versions_set = set(curr_versions) | set(rc_curr_versions)
-    curr_versions = sort_semver(list(curr_versions_set))
-
-    upgrade_from = set()
-
-    # STEP 5: Filter previous minor versions based on minor_min/minor_max constraints
-    for v in prev_versions:
-        if _version_in_range(v, spec.minor_min, spec.minor_max) and v not in spec.minor_block_list:
-            upgrade_from.add(v)
-
-    # STEP 6: Filter current minor versions based on z_min/z_max constraints
-    for v in curr_versions:
-        if _version_in_range(v, spec.z_min, spec.z_max) and v not in spec.z_block_list:
-            upgrade_from.add(v)
-
-    # STEP 7: Include eligible hotfix releases (only for standard releases)
+    # Include eligible hotfix releases from the target release line (only for standard releases).
     # If we are calculating previous list for a standard release (not a nightly/hotfix),
     # include hotfixes that don't already have 2 outgoing edges to standard releases.
     # Ref: https://docs.google.com/document/d/16eGVikCYARd6nUUtAIHFRKXa7R_rU5Exc9jUPcQoG8A/edit
-    if 'nightly' not in version and 'hotfix' not in version:
-        previous_hotfixes = [release for release in curr_versions if 'nightly' in release or 'hotfix' in release]
+    if current_constraint is not None and 'nightly' not in version and 'hotfix' not in version:
+        previous_hotfixes = [release for release in current_versions if 'nightly' in release or 'hotfix' in release]
         for hotfix_version in previous_hotfixes:
-            if hotfix_version in spec.z_block_list:
+            if hotfix_version in current_constraint.block_list:
                 continue
             standard_edges = [
                 edge for edge in current_edges.get(hotfix_version, []) if 'nightly' not in edge and 'hotfix' not in edge
