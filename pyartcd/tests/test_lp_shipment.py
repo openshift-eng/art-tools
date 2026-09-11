@@ -1,18 +1,24 @@
 import asyncio
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
 from artcommonlib.util import new_roundtrip_yaml_handler
 from elliottlib.shipment_model import ShipmentConfig
 from pyartcd.git import GitRepository
 from pyartcd.lp_shipment import (
+    ShipmentMRActiveStageError,
+    ShipmentMRProductionError,
     _identity,
     get_shipment_mr_url,
+    inspect_shipment_mr_ci_state,
     reconcile_shipment_mr,
     set_shipment_mr_draft,
     update_shipment_mr_url,
     validate_shipment_mr,
+    validate_shipment_mr_ci_state,
     validate_shipment_mr_reuse_state,
 )
 
@@ -119,9 +125,174 @@ def test_validate_shipment_mr_rejects_prod_release_label():
         )
     except ValueError as exc:
         assert 'prod-release-success' in str(exc)
-        assert '--force' in str(exc)
+        assert 'manual recovery' in str(exc)
     else:
         raise AssertionError("Expected a production-released MR to be rejected")
+
+
+def _shipment_ci_graph(
+    *,
+    parent_status='manual',
+    stage_status='success',
+    downstream_stage_status='success',
+    stage_job_status='success',
+    prod_status='manual',
+    prod_downstream=None,
+):
+    """Build a minimal python-gitlab object graph for Shipment CI tests."""
+    client = MagicMock()
+    client._parse_mr_url.return_value = ('hybrid-platforms/art/ocp-shipment-data', '42')
+
+    project = SimpleNamespace(id=10, pipelines=MagicMock())
+    parent_pipeline = SimpleNamespace(
+        id=100,
+        status=parent_status,
+        web_url='https://gitlab.example/pipelines/100',
+        bridges=MagicMock(),
+    )
+    stage_downstream = {'id': 200, 'project_id': 10}
+    stage_bridge = SimpleNamespace(name='stage-job', status=stage_status, downstream_pipeline=stage_downstream)
+    prod_bridge = SimpleNamespace(name='prod-job', status=prod_status, downstream_pipeline=prod_downstream)
+    parent_pipeline.bridges.list.return_value = [stage_bridge, prod_bridge]
+
+    stage_pipeline = SimpleNamespace(
+        id=200,
+        status=downstream_stage_status,
+        web_url='https://gitlab.example/pipelines/200',
+        jobs=MagicMock(),
+    )
+    stage_pipeline.jobs.list.return_value = [SimpleNamespace(name='shipment-watch-stage', status=stage_job_status)]
+
+    def get_pipeline(pipeline_id):
+        return parent_pipeline if pipeline_id == 100 else stage_pipeline
+
+    project.pipelines.get.side_effect = get_pipeline
+    client.get_project.return_value = project
+    mr = SimpleNamespace(pipelines=MagicMock())
+    mr.pipelines.list.return_value = [SimpleNamespace(id=100)]
+    return client, mr, parent_pipeline, stage_pipeline
+
+
+def test_inspect_shipment_mr_ci_state_accepts_terminal_stage_and_manual_prod():
+    """Allow the normal reuse window after stage and before manual prod starts."""
+    client, mr, parent, stage = _shipment_ci_graph()
+
+    state = inspect_shipment_mr_ci_state(client, 'https://gitlab.example/project/-/merge_requests/42', mr)
+
+    assert state.active_stage == ()
+    assert state.prod_attempts == ()
+    mr.pipelines.list.assert_called_once_with(get_all=True)
+    parent.bridges.list.assert_called_once_with(get_all=True)
+    stage.jobs.list.assert_called_once_with(get_all=True, include_retried=True)
+
+
+@pytest.mark.parametrize(
+    'status', ['created', 'waiting_for_resource', 'preparing', 'pending', 'running', 'scheduled', 'canceling']
+)
+def test_validate_shipment_mr_ci_state_rejects_active_stage(status):
+    """Reject every nonterminal stage state during in-place reuse."""
+    client, mr, _, _ = _shipment_ci_graph(stage_status=status, downstream_stage_status=status, stage_job_status=status)
+
+    with pytest.raises(ShipmentMRActiveStageError, match='active stage work'):
+        validate_shipment_mr_ci_state(
+            client,
+            'https://gitlab.example/project/-/merge_requests/42',
+            mr,
+            allow_active_stage=False,
+        )
+
+
+def test_validate_shipment_mr_ci_state_allows_active_stage_for_force():
+    """Allow force replacement to isolate a new MR while old stage continues."""
+    client, mr, _, _ = _shipment_ci_graph(
+        parent_status='running',
+        stage_status='running',
+        downstream_stage_status='running',
+        stage_job_status='running',
+    )
+
+    state = validate_shipment_mr_ci_state(
+        client,
+        'https://gitlab.example/project/-/merge_requests/42',
+        mr,
+        allow_active_stage=True,
+    )
+
+    assert state.active_stage
+    assert not state.prod_attempts
+
+
+@pytest.mark.parametrize('status', ['created', 'pending', 'running', 'success', 'failed', 'canceled'])
+def test_validate_shipment_mr_ci_state_rejects_any_prod_attempt(status):
+    """Block replacement once the production bridge leaves its untouched state."""
+    client, mr, _, _ = _shipment_ci_graph(prod_status=status)
+
+    with pytest.raises(ShipmentMRProductionError, match='Manual release recovery'):
+        validate_shipment_mr_ci_state(
+            client,
+            'https://gitlab.example/project/-/merge_requests/42',
+            mr,
+            allow_active_stage=True,
+        )
+
+
+def test_validate_shipment_mr_ci_state_rejects_prod_downstream_from_manual_bridge():
+    """Treat any associated production child pipeline as an attempted release."""
+    client, mr, _, _ = _shipment_ci_graph(
+        prod_status='manual',
+        prod_downstream={'id': 300, 'project_id': 10},
+    )
+
+    with pytest.raises(ShipmentMRProductionError, match='production pipeline history'):
+        validate_shipment_mr_ci_state(
+            client,
+            'https://gitlab.example/project/-/merge_requests/42',
+            mr,
+            allow_active_stage=True,
+        )
+
+
+def test_inspect_shipment_mr_ci_state_fails_closed_on_unknown_status():
+    """Refuse mutation when GitLab returns a state the implementation cannot classify."""
+    client, mr, _, _ = _shipment_ci_graph(stage_status='mystery')
+
+    with pytest.raises(RuntimeError, match='unknown GitLab CI status'):
+        inspect_shipment_mr_ci_state(client, 'https://gitlab.example/project/-/merge_requests/42', mr)
+
+
+def test_validate_shipment_mr_allows_closed_for_replacement_inspection():
+    """Inspect a closed, unmerged MR when force replacement is requested."""
+    client = MagicMock()
+    client._parse_mr_url.return_value = ('hybrid-platforms/art/ocp-shipment-data', '42')
+    mr = MagicMock(state='closed', source_project_id=10, target_branch='main', labels=[])
+    client.get_mr_from_url.return_value = mr
+    client.get_project.return_value.path_with_namespace = 'openshift-eng/ocp-shipment-data'
+
+    result = validate_shipment_mr(
+        client,
+        'https://gitlab.example/hybrid-platforms/art/ocp-shipment-data/-/merge_requests/42',
+        'https://gitlab.example/hybrid-platforms/art/ocp-shipment-data.git',
+        'https://gitlab.example/openshift-eng/ocp-shipment-data.git',
+        allowed_states=('opened', 'closed'),
+    )
+
+    assert result is mr
+
+
+def test_validate_shipment_mr_rejects_merged_for_replacement():
+    """Never automate a replacement for a merged shipment record."""
+    client = MagicMock()
+    client._parse_mr_url.return_value = ('hybrid-platforms/art/ocp-shipment-data', '42')
+    client.get_mr_from_url.return_value = MagicMock(state='merged')
+
+    with pytest.raises(ShipmentMRProductionError, match='merged'):
+        validate_shipment_mr(
+            client,
+            'https://gitlab.example/hybrid-platforms/art/ocp-shipment-data/-/merge_requests/42',
+            'https://gitlab.example/hybrid-platforms/art/ocp-shipment-data.git',
+            'https://gitlab.example/openshift-eng/ocp-shipment-data.git',
+            allowed_states=('opened', 'closed'),
+        )
 
 
 def test_set_shipment_mr_draft_clears_stage_success_label():
@@ -152,7 +323,7 @@ def test_validate_shipment_mr_reuse_state_rejects_prod_advisory():
             asyncio.run(validate_shipment_mr_reuse_state(repo, mr, 'openshift-logging', 'logging-6.5', '6.5.2'))
         except ValueError as exc:
             assert 'prod advisory' in str(exc)
-            assert '--force' in str(exc)
+            assert 'manual recovery' in str(exc)
         else:
             raise AssertionError("Expected production advisory information to block reuse")
 
@@ -174,7 +345,7 @@ def test_validate_shipment_mr_reuse_state_rejects_prod_fbc_result():
             asyncio.run(validate_shipment_mr_reuse_state(repo, mr, 'openshift-logging', 'logging-6.5', '6.5.2'))
         except ValueError as exc:
             assert 'prod pipeline result' in str(exc)
-            assert '--force' in str(exc)
+            assert 'manual recovery' in str(exc)
         else:
             raise AssertionError("Expected production FBC result information to block reuse")
 

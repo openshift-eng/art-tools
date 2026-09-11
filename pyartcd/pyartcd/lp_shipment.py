@@ -8,6 +8,7 @@ from the current release inputs.
 
 import re
 from collections import Counter
+from dataclasses import dataclass
 from io import StringIO
 from pathlib import Path
 from typing import Dict
@@ -25,6 +26,49 @@ YAML = new_roundtrip_yaml_handler()
 _TIMESTAMP_RE = re.compile(r"(\d{14})$")
 _PROD_RELEASE_LABEL_PREFIX = "prod-release"
 _STAGE_RELEASE_SUCCESS_LABEL = "stage-release-success"
+_ACTIVE_CI_STATUSES = frozenset(
+    {
+        'created',
+        'waiting_for_resource',
+        'preparing',
+        'pending',
+        'running',
+        'scheduled',
+        'canceling',
+    }
+)
+_TERMINAL_CI_STATUSES = frozenset({'success', 'failed', 'canceled', 'skipped', 'manual'})
+_UNTOUCHED_PROD_STATUSES = frozenset({'manual', 'skipped'})
+
+
+class ShipmentMRValidationError(ValueError):
+    """Indicate that a configured shipment MR is invalid or unrelated."""
+
+
+class ShipmentMRScopeError(ShipmentMRValidationError):
+    """Indicate that a shipment MR does not belong to the expected release scope."""
+
+
+class ShipmentMRProductionError(ValueError):
+    """Indicate that production history makes automated MR replacement unsafe."""
+
+
+class ShipmentMRActiveStageError(ValueError):
+    """Indicate that active stage work makes in-place MR reuse unsafe."""
+
+
+@dataclass(frozen=True)
+class ShipmentMRCIState:
+    """Summarize Shipment CI state relevant to layered-product MR reuse.
+
+    Attributes:
+        active_stage: Descriptions of active MR, stage bridge, or downstream
+            stage jobs.
+        prod_attempts: Descriptions proving that production was attempted.
+    """
+
+    active_stage: tuple[str, ...]
+    prod_attempts: tuple[str, ...]
 
 
 def _project_path(url: str) -> str:
@@ -139,7 +183,172 @@ async def verify_shipment_mr_url(repo: GitRepository, group: str, assembly: str,
         )
 
 
-def validate_shipment_mr(gitlab_client, mr_url: str, pull_url: str, push_url: str):
+def _object_value(item, name: str, default=None):
+    """Read a field from a python-gitlab object or API response mapping.
+
+    Args:
+        item: Python object or mapping returned by the GitLab API.
+        name: Field name to read.
+        default: Value returned when the field is absent.
+
+    Returns:
+        The field value, or ``default`` when it is absent.
+    """
+    if isinstance(item, dict):
+        return item.get(name, default)
+    return getattr(item, name, default)
+
+
+def _checked_ci_status(item, context: str) -> str:
+    """Return a recognized GitLab CI status or fail closed.
+
+    Args:
+        item: Python-gitlab object or response mapping containing ``status``.
+        context: Human-readable pipeline or job description.
+
+    Returns:
+        The normalized GitLab CI status.
+
+    Raises:
+        RuntimeError: If the status is absent or unknown.
+    """
+    status = _object_value(item, 'status')
+    if status not in _ACTIVE_CI_STATUSES | _TERMINAL_CI_STATUSES:
+        raise RuntimeError(f"Cannot safely classify {context}: unknown GitLab CI status {status!r}")
+    return status
+
+
+def inspect_shipment_mr_ci_state(gitlab_client, mr_url: str, mr) -> ShipmentMRCIState:
+    """Inspect all Shipment CI pipelines belonging to a merge request.
+
+    Parent pipeline state, stage and production trigger bridges, and downstream
+    stage jobs are inspected with pagination enabled. A production bridge is
+    considered attempted once it leaves the untouched ``manual`` or ``skipped``
+    states, or as soon as GitLab associates a downstream pipeline with it.
+
+    Args:
+        gitlab_client: Authenticated ART GitLab client.
+        mr_url: URL of the shipment merge request.
+        mr: Python-gitlab merge request object.
+
+    Returns:
+        Active stage work and evidence of production attempts.
+
+    Raises:
+        RuntimeError: If GitLab returns incomplete or unrecognized pipeline
+            state. Callers must fail closed rather than mutate the MR.
+    """
+    project_path, _ = gitlab_client._parse_mr_url(mr_url)
+    project = gitlab_client.get_project(project_path)
+    active_stage = []
+    prod_attempts = []
+
+    mr_pipelines = mr.pipelines.list(get_all=True)
+    for mr_pipeline in mr_pipelines:
+        pipeline_id = _object_value(mr_pipeline, 'id')
+        if pipeline_id is None:
+            raise RuntimeError("Cannot safely inspect shipment MR CI state: a pipeline has no ID")
+        pipeline = project.pipelines.get(pipeline_id)
+        pipeline_url = _object_value(pipeline, 'web_url', f'pipeline {pipeline_id}')
+        pipeline_status = _checked_ci_status(pipeline, f'MR pipeline {pipeline_url}')
+        bridges = pipeline.bridges.list(get_all=True)
+        stage_bridge_found = False
+
+        for bridge in bridges:
+            bridge_name = _object_value(bridge, 'name')
+            if bridge_name not in {'stage-job', 'prod-job'}:
+                continue
+            bridge_status = _checked_ci_status(bridge, f'{bridge_name} in {pipeline_url}')
+            downstream = _object_value(bridge, 'downstream_pipeline')
+
+            if bridge_name == 'prod-job':
+                if bridge_status not in _UNTOUCHED_PROD_STATUSES or downstream:
+                    prod_attempts.append(f"{pipeline_url} prod-job is {bridge_status}")
+                continue
+
+            stage_bridge_found = True
+            if bridge_status in _ACTIVE_CI_STATUSES:
+                active_stage.append(f"{pipeline_url} stage-job is {bridge_status}")
+
+            if not downstream:
+                continue
+            downstream_id = _object_value(downstream, 'id')
+            downstream_project_id = _object_value(downstream, 'project_id', _object_value(project, 'id'))
+            if downstream_id is None or downstream_project_id is None:
+                raise RuntimeError(
+                    f"Cannot safely inspect {pipeline_url} stage-job: downstream pipeline identification is incomplete"
+                )
+            downstream_project = (
+                project
+                if downstream_project_id == _object_value(project, 'id')
+                else gitlab_client.get_project(downstream_project_id)
+            )
+            downstream_pipeline = downstream_project.pipelines.get(downstream_id)
+            downstream_url = _object_value(downstream_pipeline, 'web_url', f'pipeline {downstream_id}')
+            downstream_status = _checked_ci_status(downstream_pipeline, f'downstream stage pipeline {downstream_url}')
+            if downstream_status in _ACTIVE_CI_STATUSES:
+                active_stage.append(f"downstream stage pipeline {downstream_url} is {downstream_status}")
+
+            for job in downstream_pipeline.jobs.list(get_all=True, include_retried=True):
+                job_name = _object_value(job, 'name', 'unknown job')
+                job_status = _checked_ci_status(job, f'{job_name} in {downstream_url}')
+                if job_status in _ACTIVE_CI_STATUSES:
+                    active_stage.append(f"{downstream_url} job {job_name!r} is {job_status}")
+
+        # A ready MR pipeline can still be validating or generating its dynamic
+        # configuration before GitLab exposes the stage trigger bridge.
+        if pipeline_status in _ACTIVE_CI_STATUSES and not stage_bridge_found:
+            active_stage.append(f"{pipeline_url} is {pipeline_status} before its stage job is available")
+
+    return ShipmentMRCIState(tuple(sorted(set(active_stage))), tuple(sorted(set(prod_attempts))))
+
+
+def validate_shipment_mr_ci_state(
+    gitlab_client,
+    mr_url: str,
+    mr,
+    *,
+    allow_active_stage: bool,
+) -> ShipmentMRCIState:
+    """Validate whether Shipment CI state permits reuse or replacement.
+
+    Args:
+        gitlab_client: Authenticated ART GitLab client.
+        mr_url: URL of the shipment merge request.
+        mr: Python-gitlab merge request object.
+        allow_active_stage: Permit stage-only activity for ``--force``
+            replacement. Normal in-place reuse must pass ``False``.
+
+    Returns:
+        The fully inspected Shipment CI state.
+
+    Raises:
+        ShipmentMRProductionError: If production was attempted.
+        ShipmentMRActiveStageError: If stage is active during normal reuse.
+        RuntimeError: If CI state cannot be determined reliably.
+    """
+    state = inspect_shipment_mr_ci_state(gitlab_client, mr_url, mr)
+    if state.prod_attempts:
+        raise ShipmentMRProductionError(
+            "Shipment MR has production pipeline history and cannot be reused or automatically replaced: "
+            f"{'; '.join(state.prod_attempts)}. Manual release recovery is required."
+        )
+    if state.active_stage and not allow_active_stage:
+        raise ShipmentMRActiveStageError(
+            "Shipment MR still has active stage work and cannot be reused in place: "
+            f"{'; '.join(state.active_stage)}. Wait for stage to finish or use --force to create a replacement MR."
+        )
+    return state
+
+
+def validate_shipment_mr(
+    gitlab_client,
+    mr_url: str,
+    pull_url: str,
+    push_url: str,
+    *,
+    allowed_states: tuple[str, ...] = ('opened',),
+):
     """Validate a shipment MR referenced by ``releases.yml``.
 
     Args:
@@ -147,57 +356,71 @@ def validate_shipment_mr(gitlab_client, mr_url: str, pull_url: str, push_url: st
         mr_url: Referenced shipment MR URL.
         pull_url: Configured canonical shipment-data repository URL.
         push_url: Configured shipment-data push repository URL.
+        allowed_states: MR states accepted by the requested operation. Normal
+            reuse accepts only ``opened``; replacement inspection also accepts
+            ``closed``.
 
     Returns:
-        The open GitLab merge request object when it is safe to reuse.
+        The GitLab merge request object when it satisfies the requested state
+        and repository constraints.
 
     Raises:
-        ValueError: If the MR is missing, closed, points to the wrong project or
-            target branch, or originates from the wrong push repository.
+        ShipmentMRValidationError: If the MR is missing, has a disallowed state,
+            points to the wrong project or target branch, or originates from the
+            wrong push repository.
+        ShipmentMRProductionError: If the MR is merged or has a production
+            release label.
     """
     if urlparse(mr_url).netloc != urlparse(pull_url).netloc:
-        raise ValueError(
+        raise ShipmentMRValidationError(
             f"Shipment MR host {urlparse(mr_url).netloc} does not match {urlparse(pull_url).netloc}. "
             "Use --force to create a replacement MR."
         )
     target_project_path, _ = gitlab_client._parse_mr_url(mr_url)
     mr = gitlab_client.get_mr_from_url(mr_url)
     if not mr:
-        raise ValueError(f"Shipment MR {mr_url} was not found. Use --force to create a replacement MR.")
-    if mr.state != "opened":
-        raise ValueError(f"Shipment MR state is {mr.state}, not opened. Use --force to create a replacement MR.")
+        raise ShipmentMRValidationError(f"Shipment MR {mr_url} was not found. Use --force to create a replacement MR.")
+    if mr.state == 'merged':
+        raise ShipmentMRProductionError(
+            f"Shipment MR {mr_url} is merged and cannot be reused or automatically replaced. Manual recovery is required."
+        )
+    if mr.state not in allowed_states:
+        raise ShipmentMRValidationError(
+            f"Shipment MR state is {mr.state}, not one of {allowed_states}. Use --force to create a replacement MR."
+        )
     if target_project_path != _project_path(pull_url):
-        raise ValueError(
+        raise ShipmentMRValidationError(
             f"Shipment MR target project {target_project_path} does not match {_project_path(pull_url)}. "
             "Use --force to create a replacement MR."
         )
     source_project_path = gitlab_client.get_project(mr.source_project_id).path_with_namespace
     if source_project_path != _project_path(push_url):
-        raise ValueError(
+        raise ShipmentMRValidationError(
             f"Shipment MR source project {source_project_path} does not match {_project_path(push_url)}. "
             "Use --force to create a replacement MR."
         )
     if mr.target_branch != "main":
-        raise ValueError(
+        raise ShipmentMRValidationError(
             f"Shipment MR target branch is {mr.target_branch}, not main. Use --force to create a replacement MR."
         )
     prod_labels = sorted(
         label for label in (getattr(mr, 'labels', None) or []) if label.lower().startswith(_PROD_RELEASE_LABEL_PREFIX)
     )
     if prod_labels:
-        raise ValueError(
+        raise ShipmentMRProductionError(
             f"Shipment MR has production release label(s) {prod_labels} and must not be modified. "
-            "Use --force to create a replacement MR."
+            "Automated replacement is disabled after a production attempt; manual recovery is required."
         )
     return mr
 
 
 def set_shipment_mr_draft(mr, dry_run: bool) -> None:
-    """Reset stage status and mark a reused shipment MR as draft.
+    """Reset stage status and mark a reused or superseded MR as draft.
 
-    An allowed reuse can only have completed stage release work. Its success
-    label describes the previous shipment files and is removed before those
-    files are replaced.
+    For normal reuse, the success label describes the previous shipment files
+    and is removed before those files are replaced. For ``--force`` replacement,
+    marking an open previous MR draft prevents its manual production path from
+    proceeding while any already-started stage work finishes independently.
 
     Args:
         mr: GitLab merge request object to update.
@@ -345,18 +568,74 @@ async def validate_shipment_mr_reuse_state(
                 markers.append('prod advisory')
             if pipeline:
                 markers.append('prod pipeline result')
-            raise ValueError(
+            raise ShipmentMRProductionError(
                 f"Shipment MR file {path} contains {' and '.join(markers)} and must not be modified. "
-                "Use --force to create a replacement MR."
+                "Automated replacement is disabled after a production attempt; manual recovery is required."
             )
 
     if not matching_files:
         found = f" Found candidate files: {sorted(shipment_paths)}." if shipment_paths else ""
-        raise ValueError(
+        raise ShipmentMRScopeError(
             f"Shipment MR does not contain shipment files for product {product!r}, group {group!r}, "
             f"and assembly {assembly!r}; refusing to modify an unrelated MR.{found} "
             "Correct the assembly shipment.mr pointer or use --force to create a replacement MR."
         )
+
+
+async def validate_shipment_mr_for_operation(
+    gitlab_client,
+    repo: GitRepository,
+    mr_url: str,
+    pull_url: str,
+    push_url: str,
+    product: str,
+    group: str,
+    assembly: str,
+    *,
+    allowed_states: tuple[str, ...],
+    allow_active_stage: bool,
+) -> tuple[object, ShipmentMRCIState]:
+    """Validate a layered-product shipment MR and its complete safety state.
+
+    Args:
+        gitlab_client: Authenticated ART GitLab client.
+        repo: Initialized shipment-data repository.
+        mr_url: URL referenced by the assembly in ``releases.yml``.
+        pull_url: Configured canonical shipment-data repository URL.
+        push_url: Configured shipment-data push repository URL.
+        product: Expected layered-product name.
+        group: Expected layered-product group.
+        assembly: Expected layered-product assembly.
+        allowed_states: MR states accepted by the requested operation.
+        allow_active_stage: Permit an isolated ``--force`` replacement while
+            stage work on the previous MR continues.
+
+    Returns:
+        The validated MR and its inspected Shipment CI state.
+
+    Raises:
+        ShipmentMRValidationError: If the MR is invalid or unrelated.
+        ShipmentMRProductionError: If the MR is merged or production was
+            attempted.
+        ShipmentMRActiveStageError: If normal reuse encounters active stage
+            work.
+        RuntimeError: If GitLab state cannot be determined reliably.
+    """
+    mr = validate_shipment_mr(
+        gitlab_client,
+        mr_url,
+        pull_url,
+        push_url,
+        allowed_states=allowed_states,
+    )
+    await validate_shipment_mr_reuse_state(repo, mr, product, group, assembly)
+    state = validate_shipment_mr_ci_state(
+        gitlab_client,
+        mr_url,
+        mr,
+        allow_active_stage=allow_active_stage,
+    )
+    return mr, state
 
 
 async def _restore_from_main(repo: GitRepository, path: str) -> None:
