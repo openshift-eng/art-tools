@@ -291,7 +291,6 @@ class Runtime(GroupRuntime):
                 short_name_with_ose = "ose-" + short_name_without_ose
                 _register_name_in_bundle(short_name_with_ose, img.key)
 
-    @functools.lru_cache(maxsize=1)
     def get_extra_vars(self) -> dict:
         """Parse CLI ``--var KEY=VALUE`` arguments into a dict.
 
@@ -312,6 +311,7 @@ class Runtime(GroupRuntime):
                 parsed[key] = value
         return parsed
 
+    @functools.lru_cache(maxsize=1)
     def get_group_config(self) -> Model:
         """
         Load and cache group configuration. Automatically merges OKD config when variant=okd.
