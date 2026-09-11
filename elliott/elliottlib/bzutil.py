@@ -1085,6 +1085,9 @@ class JIRABugTracker(BugTracker):
 
     @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(5))
     def _search(self, query, verbose=False) -> List[JIRABug]:
+        if query is None:
+            logger.warning("_search called with query=None; returning empty result set")
+            return []
         if verbose:
             logger.info(query)
         try:
