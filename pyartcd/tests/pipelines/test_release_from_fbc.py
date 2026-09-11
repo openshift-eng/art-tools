@@ -13,6 +13,7 @@ from elliottlib.shipment_model import (
     SnapshotComponent,
     SnapshotSpec,
 )
+from pyartcd.lp_shipment import ShipmentMRActiveStageError
 from pyartcd.pipelines.release_from_fbc import ReleaseFromFbcPipeline, _normalize_release_date
 
 
@@ -1428,6 +1429,70 @@ class TestOcpOptionalMode(unittest.TestCase):
         self.assertEqual(len(result["extras"]), 2)
 
     # -- run() integration tests --
+
+    @patch('pyartcd.pipelines.release_from_fbc.validate_shipment_mr_for_operation', new_callable=AsyncMock)
+    def test_active_stage_blocks_before_fbc_processing(self, mock_validate):
+        """Reject unsafe layered-product reuse before processing release inputs."""
+        mock_validate.side_effect = ShipmentMRActiveStageError("stage pipeline is running")
+        pipeline = self._make_pipeline(ocp_optional=False, group="oadp-1.5", assembly="1.5.8")
+        pipeline.create_mr = True
+        pipeline.check_env_vars = MagicMock()
+        pipeline.setup_working_dir = MagicMock()
+        pipeline.setup_shipment_repo = AsyncMock()
+        pipeline._load_product_from_group_config = AsyncMock(return_value="oadp")
+        pipeline._load_layered_product_shipment_mr = MagicMock(
+            return_value="https://gitlab.example/project/-/merge_requests/42"
+        )
+        pipeline.validate_fbc_related_images = AsyncMock()
+        pipeline.__dict__['_gitlab'] = MagicMock()
+
+        with self.assertRaisesRegex(ShipmentMRActiveStageError, "stage pipeline is running"):
+            asyncio.run(pipeline.run())
+
+        pipeline.validate_fbc_related_images.assert_not_awaited()
+
+    @patch('pyartcd.pipelines.release_from_fbc.validate_shipment_mr_for_operation', new_callable=AsyncMock)
+    def test_force_makes_open_previous_mr_draft_before_replacement(self, mock_validate):
+        """Draft an open stage-only MR before direct release creates its replacement."""
+        previous_mr = MagicMock(
+            state='opened',
+            title='Shipment for oadp 1.5.8',
+            labels=['stage-release-success', 'reviewed'],
+        )
+        ci_state = MagicMock(active_stage=('stage pipeline is running',), prod_attempts=())
+        mock_validate.return_value = (previous_mr, ci_state)
+        pipeline = self._make_pipeline(ocp_optional=False, group="oadp-1.5", assembly="1.5.8")
+        pipeline.create_mr = True
+        pipeline.force = True
+        pipeline.fbc_pullspecs = []
+        pipeline.extra_image_nvrs = ["oadp-container-v1.5.8-1.el9"]
+        pipeline._configured_shipment_mr_url = "https://gitlab.example/project/-/merge_requests/42"
+        pipeline.check_env_vars = MagicMock()
+        pipeline.setup_working_dir = MagicMock()
+        pipeline.setup_shipment_repo = AsyncMock()
+        pipeline._load_product_from_group_config = AsyncMock(return_value="oadp")
+        pipeline._load_layered_product_shipment_mr = MagicMock(
+            return_value="https://gitlab.example/project/-/merge_requests/42"
+        )
+        pipeline.create_snapshot = AsyncMock(return_value=_make_snapshot(app="oadp-1-5"))
+        pipeline.create_shipment_config = MagicMock(return_value=MagicMock())
+        pipeline._load_release_notes_template = MagicMock(return_value=None)
+        pipeline._verify_layered_product_shipment_mr = AsyncMock()
+        pipeline.create_shipment_mr = AsyncMock(return_value="https://gitlab.example/project/-/merge_requests/43")
+        pipeline._update_layered_product_shipment_mr = AsyncMock()
+        pipeline.set_shipment_mr_ready = AsyncMock()
+        pipeline.__dict__['_gitlab'] = MagicMock()
+
+        with patch('pyartcd.pipelines.release_from_fbc.is_nvr_embargoed', return_value=False):
+            asyncio.run(pipeline.run())
+
+        self.assertEqual(previous_mr.title, 'Draft: Shipment for oadp 1.5.8')
+        self.assertEqual(previous_mr.labels, ['reviewed'])
+        previous_mr.save.assert_called_once_with()
+        pipeline.create_shipment_mr.assert_awaited_once()
+        pipeline._update_layered_product_shipment_mr.assert_awaited_once_with(
+            "https://gitlab.example/project/-/merge_requests/43"
+        )
 
     def test_extra_image_nvrs_merged_into_extras_key(self):
         """In OCP optional mode, extra_image_nvrs should merge into 'extras', not 'image'."""

@@ -44,12 +44,12 @@ from pyartcd.fbc_util import extract_ocp_version_from_nvr
 from pyartcd.fbc_util import validate_fbc_related_images as _validate_fbc_related_images
 from pyartcd.git import GitRepository
 from pyartcd.lp_shipment import (
+    ShipmentMRValidationError,
     get_shipment_mr_url,
     reconcile_shipment_mr,
     set_shipment_mr_draft,
     update_shipment_mr_url,
-    validate_shipment_mr,
-    validate_shipment_mr_reuse_state,
+    validate_shipment_mr_for_operation,
     verify_shipment_mr_url,
 )
 from pyartcd.runtime import Runtime
@@ -1195,23 +1195,41 @@ class ReleaseFromFbcPipeline:
         self.logger.info(f"Loaded product '{self.product}' - continuing workflow for {self.product} {self.assembly}")
 
         existing_mr = None
+        force_previous_mr = None
         if self.create_mr and not self.ocp_optional:
             configured_mr_url = self._load_layered_product_shipment_mr()
-            if configured_mr_url and not self.force:
-                existing_mr = validate_shipment_mr(
-                    self._gitlab,
-                    configured_mr_url,
-                    self.shipment_data_repo_pull_url,
-                    self.shipment_data_repo_push_url,
-                )
-                await validate_shipment_mr_reuse_state(
-                    self.shipment_data_repo,
-                    existing_mr,
-                    self.product,
-                    self.group,
-                    self.assembly,
-                )
-                self.logger.info("Will reuse shipment MR: %s", configured_mr_url)
+            if configured_mr_url:
+                try:
+                    candidate_mr, ci_state = await validate_shipment_mr_for_operation(
+                        self._gitlab,
+                        self.shipment_data_repo,
+                        configured_mr_url,
+                        self.shipment_data_repo_pull_url,
+                        self.shipment_data_repo_push_url,
+                        self.product,
+                        self.group,
+                        self.assembly,
+                        allowed_states=('opened', 'closed') if self.force else ('opened',),
+                        allow_active_stage=self.force,
+                    )
+                    if self.force:
+                        force_previous_mr = candidate_mr
+                        if ci_state.active_stage:
+                            self.logger.warning(
+                                "Previous shipment MR has active stage work that may continue during replacement: %s",
+                                "; ".join(ci_state.active_stage),
+                            )
+                    else:
+                        existing_mr = candidate_mr
+                        self.logger.info("Will reuse shipment MR: %s", configured_mr_url)
+                except ShipmentMRValidationError as exc:
+                    if not self.force:
+                        raise
+                    self.logger.warning(
+                        "Configured shipment MR cannot be associated safely with this release and will be left "
+                        "unchanged while --force creates a replacement: %s",
+                        exc,
+                    )
 
         related_nvrs = []
         fbc_nvrs = []
@@ -1355,21 +1373,32 @@ class ReleaseFromFbcPipeline:
                         self.logger.info("Continuing with local files only")
             else:
                 if existing_mr:
-                    existing_mr = validate_shipment_mr(
+                    existing_mr, _ = await validate_shipment_mr_for_operation(
                         self._gitlab,
+                        self.shipment_data_repo,
                         self._configured_shipment_mr_url,
                         self.shipment_data_repo_pull_url,
                         self.shipment_data_repo_push_url,
-                    )
-                    await validate_shipment_mr_reuse_state(
-                        self.shipment_data_repo,
-                        existing_mr,
                         self.product,
                         self.group,
                         self.assembly,
+                        allowed_states=('opened',),
+                        allow_active_stage=False,
                     )
                     await self._verify_layered_product_shipment_mr()
                     set_shipment_mr_draft(existing_mr, self.dry_run)
+                    await validate_shipment_mr_for_operation(
+                        self._gitlab,
+                        self.shipment_data_repo,
+                        self._configured_shipment_mr_url,
+                        self.shipment_data_repo_pull_url,
+                        self.shipment_data_repo_push_url,
+                        self.product,
+                        self.group,
+                        self.assembly,
+                        allowed_states=('opened',),
+                        allow_active_stage=False,
+                    )
                     await reconcile_shipment_mr(
                         self.shipment_data_repo,
                         existing_mr,
@@ -1380,6 +1409,40 @@ class ReleaseFromFbcPipeline:
                     mr_url = self._configured_shipment_mr_url
                     self.shipment_mr_url = mr_url
                 else:
+                    if force_previous_mr:
+                        await self._verify_layered_product_shipment_mr()
+                        force_previous_mr, force_ci_state = await validate_shipment_mr_for_operation(
+                            self._gitlab,
+                            self.shipment_data_repo,
+                            self._configured_shipment_mr_url,
+                            self.shipment_data_repo_pull_url,
+                            self.shipment_data_repo_push_url,
+                            self.product,
+                            self.group,
+                            self.assembly,
+                            allowed_states=('opened', 'closed'),
+                            allow_active_stage=True,
+                        )
+                        if force_previous_mr.state == 'opened':
+                            set_shipment_mr_draft(force_previous_mr, self.dry_run)
+                            _, force_ci_state = await validate_shipment_mr_for_operation(
+                                self._gitlab,
+                                self.shipment_data_repo,
+                                self._configured_shipment_mr_url,
+                                self.shipment_data_repo_pull_url,
+                                self.shipment_data_repo_push_url,
+                                self.product,
+                                self.group,
+                                self.assembly,
+                                allowed_states=('opened',),
+                                allow_active_stage=True,
+                            )
+                        if force_ci_state.active_stage:
+                            self.logger.warning(
+                                "Replacing a shipment MR while its stage work is active; the old staging operation "
+                                "may continue, but the old MR has been made draft and cannot proceed to production: %s",
+                                "; ".join(force_ci_state.active_stage),
+                            )
                     mr_url = await self.create_shipment_mr(shipments_by_kind, env="prod")
                     await self._update_layered_product_shipment_mr(mr_url)
                 self.logger.info("Shipment MR: %s", mr_url)
@@ -1435,7 +1498,10 @@ class ReleaseFromFbcPipeline:
 @click.option(
     "--force",
     is_flag=True,
-    help="Create a replacement shipment MR even when releases.yml points to an existing MR.",
+    help=(
+        "Create a replacement shipment MR and update releases.yml. An open previous MR is made draft; replacement "
+        "is refused if it was merged or production was attempted."
+    ),
 )
 @click.option(
     '--shipment-data-repo-url',
