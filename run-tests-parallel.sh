@@ -51,7 +51,7 @@ for pkg in "${packages[@]}"; do
     if grep -q "FAILED" "$tmpdir/$pkg.out" || grep -q "ERROR" "$tmpdir/$pkg.out"; then
         echo "❌ $pkg: FAILED"
     else
-        passed=$(awk '/ passed/{for (i = 2; i <= NF; i++) if ($i == "passed" && $(i - 1) ~ /^[0-9]+$/) print $(i - 1)}' "$tmpdir/$pkg.out" | tail -1)
+        passed=$(awk '/ passed/{for (i = 2; i <= NF; i++) { gsub(/[[:punct:]]+$/, "", $i); if ($i == "passed" && $(i - 1) ~ /^[0-9]+$/) print $(i - 1) }}' "$tmpdir/$pkg.out" | tail -1)
         passed=${passed:-0}
         echo "✅ $pkg: $passed tests passed"
     fi
