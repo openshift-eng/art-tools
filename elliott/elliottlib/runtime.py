@@ -137,7 +137,8 @@ class Runtime(GroupRuntime):
 
     def get_replace_vars(self, group_config: Model | None):
         replace_vars: dict = group_config.vars.primitive() if group_config and group_config.vars else {}
-        if self.assembly:
+        # Only set runtime_assembly from self.assembly if group_config.vars didn't already provide a value.
+        if self.assembly and 'runtime_assembly' not in replace_vars:
             replace_vars['runtime_assembly'] = self.assembly
         return replace_vars
 
