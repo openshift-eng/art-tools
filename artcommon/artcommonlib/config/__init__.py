@@ -146,13 +146,16 @@ class BuildDataLoader:
         assembly: str | None,
         releases_config: dict | None,
         additional_vars: dict[str, str] | None = None,
+        extra_vars: dict[str, str] | None = None,
         allow_includes: bool = True,
     ):
         """Loads group configuration.
 
         :param assembly: The assembly name. If specified, assembly-specific overrides will be applied to the group configuration.
         :param releases_config: The releases configuration. If None, the releases configuration from build data will be used.
-        :param additional_vars: Additional variables to substitute in the configuration.
+        :param additional_vars: Computed default variables (e.g. runtime_assembly, release_name) to substitute in the configuration.
+        :param extra_vars: Explicit CLI ``--var`` overrides. These have the highest precedence and will override
+            both computed defaults (additional_vars) and assembly-level group.vars.
         :param allow_includes: Whether to allow !include directives in the YAML files.
         :return: The loaded group configuration.
         """
@@ -197,6 +200,9 @@ class BuildDataLoader:
             if konflux_overrides:
                 group_config = deep_merge(group_config, konflux_overrides)
 
+        # Capture vars before assembly overrides so we can detect what the assembly changed
+        pre_assembly_vars = dict(group_config.get('vars') or {}) if group_config else {}
+
         # If assembly is specified, apply assembly-specific overrides
         if assembly:
             if releases_config is None:
@@ -206,7 +212,26 @@ class BuildDataLoader:
             resolved_vars = group_config.get('vars')
             if 'vars' in group_config and not isinstance(resolved_vars, dict):
                 raise TypeError("The 'vars' field in group configuration must be a dictionary if present.")
-            group_config['vars'] = {**(resolved_vars or {}), **(additional_vars or {})}
+            # Compute which vars the assembly specifically overrode (added or changed).
+            # Only assembly-changed vars should beat the computed defaults in additional_vars.
+            assembly_overridden_vars: dict = {}
+            if resolved_vars:
+                for k, v in resolved_vars.items():
+                    if k not in pre_assembly_vars or pre_assembly_vars[k] != v:
+                        assembly_overridden_vars[k] = v
+            # Precedence (lowest → highest):
+            #   1. resolved_vars       — base group.yml vars (may contain placeholders)
+            #   2. additional_vars     — computed defaults (e.g. runtime_assembly = self.assembly)
+            #   3. assembly overrides  — vars that the assembly specifically set in releases.yml;
+            #                            e.g. runtime_assembly: "stream" must NOT be clobbered by
+            #                            the computed default in additional_vars.
+            #   4. extra_vars          — explicit CLI --var overrides (highest priority, always wins)
+            group_config['vars'] = {
+                **(resolved_vars or {}),
+                **(additional_vars or {}),
+                **assembly_overridden_vars,
+                **(extra_vars or {}),
+            }
         return group_config
 
     def load_releases_config(self, config_file: str | None = None) -> dict:

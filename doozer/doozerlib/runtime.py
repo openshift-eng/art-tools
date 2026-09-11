@@ -291,6 +291,26 @@ class Runtime(GroupRuntime):
                 short_name_with_ose = "ose-" + short_name_without_ose
                 _register_name_in_bundle(short_name_with_ose, img.key)
 
+    def get_extra_vars(self) -> dict:
+        """Parse CLI ``--var KEY=VALUE`` arguments into a dict.
+
+        Integer-like values are converted to int.  This helper is shared by
+        :meth:`get_replace_vars` and :meth:`get_group_config` so the parsing
+        logic lives in one place.
+        """
+        parsed: dict = {}
+        if self.extra_vars:
+            for item in self.extra_vars:
+                if '=' not in item:
+                    raise ValueError(f"Invalid --var format '{item}', expected KEY=VALUE")
+                key, value = item.split('=', 1)
+                try:
+                    value = int(value)
+                except ValueError:
+                    pass
+                parsed[key] = value
+        return parsed
+
     @functools.lru_cache(maxsize=1)
     def get_group_config(self) -> Model:
         """
@@ -302,6 +322,7 @@ class Runtime(GroupRuntime):
             self.assembly,
             self.get_releases_config(),
             additional_vars=replace_vars,
+            extra_vars=self.get_extra_vars(),
         )
 
         # For OKD variant, automatically merge the optional okd: field
@@ -383,12 +404,19 @@ class Runtime(GroupRuntime):
 
     def get_replace_vars(self, group_config: Model | None):
         replace_vars: dict = group_config.vars.primitive() if group_config and group_config.vars else {}
+        # Track whether runtime_assembly was explicitly provided by group_config.vars
+        has_config_runtime_assembly = 'runtime_assembly' in replace_vars
         # If assembly mode is enabled, `runtime_assembly` will become the assembly name.
-        replace_vars['runtime_assembly'] = ''
+        # Only set the default if group_config.vars didn't already provide a value.
+        if not has_config_runtime_assembly:
+            replace_vars['runtime_assembly'] = ''
         # If running against an assembly for a named release, release_name will become the release name.
-        replace_vars['release_name'] = ''
+        if 'release_name' not in replace_vars:
+            replace_vars['release_name'] = ''
         if self.assembly:
-            replace_vars['runtime_assembly'] = self.assembly
+            # Only override runtime_assembly with self.assembly if group_config.vars didn't already set it.
+            if not has_config_runtime_assembly:
+                replace_vars['runtime_assembly'] = self.assembly
             if self.assembly_type is not AssemblyTypes.STREAM:
                 release_name = replace_vars['release_name'] = util.get_release_name_for_assembly(
                     self.group, self.get_releases_config(), self.assembly
@@ -396,16 +424,7 @@ class Runtime(GroupRuntime):
                 # for example: replace_vars = {'CVES': 'None', 'IMPACT': 'Low', 'MAJOR': 4, 'MINOR': 12, 'RHCOS_EL_MAJOR': 8, 'RHCOS_EL_MINOR': 6, 'release_name': '4.12.77', 'runtime_assembly': '4.12.77'}
                 if 'PATCH' not in replace_vars:
                     replace_vars['PATCH'] = Version.parse(release_name).patch
-        if self.extra_vars:
-            for item in self.extra_vars:
-                if '=' not in item:
-                    raise ValueError(f"Invalid --var format '{item}', expected KEY=VALUE")
-                key, value = item.split('=', 1)
-                try:
-                    value = int(value)
-                except ValueError:
-                    pass
-                replace_vars[key] = value
+        replace_vars.update(self.get_extra_vars())
         return replace_vars
 
     def init_state(self):

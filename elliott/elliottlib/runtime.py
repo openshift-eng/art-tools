@@ -135,16 +135,30 @@ class Runtime(GroupRuntime):
     def group_config(self, config: Model):
         self._group_config = config
 
+    def get_extra_vars(self) -> dict:
+        """Parse CLI ``--var KEY=VALUE`` arguments into a dict.
+
+        Elliott does not currently expose a ``--var`` option, so this
+        always returns an empty dict.  It exists so the same
+        ``load_group_config(extra_vars=self.get_extra_vars())`` pattern
+        works identically in both doozer and elliott.
+        """
+        return {}
+
     def get_replace_vars(self, group_config: Model | None):
         replace_vars: dict = group_config.vars.primitive() if group_config and group_config.vars else {}
-        if self.assembly:
+        # Only set runtime_assembly from self.assembly if group_config.vars didn't already provide a value.
+        if self.assembly and 'runtime_assembly' not in replace_vars:
             replace_vars['runtime_assembly'] = self.assembly
         return replace_vars
 
     def get_group_config(self):
         additional_vars = self.get_replace_vars(None)
         group_config = self._build_data_loader.load_group_config(
-            assembly=self.assembly, releases_config=self.get_releases_config(), additional_vars=additional_vars
+            assembly=self.assembly,
+            releases_config=self.get_releases_config(),
+            additional_vars=additional_vars,
+            extra_vars=self.get_extra_vars(),
         )
         return Model(group_config)
 
@@ -273,9 +287,7 @@ class Runtime(GroupRuntime):
         else:
             filter_func = filter_enabled
 
-        replace_vars = self.group_config.vars.primitive() if self.group_config.vars else {}
-        if self.assembly:
-            replace_vars['runtime_assembly'] = self.assembly
+        replace_vars = self.get_replace_vars(self.group_config)
         # release_name variable is currently only used in microshift rpm config to allow Doozer to pass release name to a modification script.
         # Elliott doesn't need to care about it. Set an arbitrary value until it becomes necessary.
         replace_vars['release_name'] = '(irrelevant)'
@@ -391,9 +403,7 @@ class Runtime(GroupRuntime):
         if distgit_name in self.image_map:
             return self.image_map[distgit_name]
         if not data_obj:
-            replace_vars = self.group_config.vars.primitive() if self.group_config.vars else {}
-            if self.assembly:
-                replace_vars['runtime_assembly'] = self.assembly
+            replace_vars = self.get_replace_vars(self.group_config)
             data_obj = self.gitdata.load_data(path='images', key=distgit_name, replace_vars=replace_vars)
             if not data_obj:
                 raise ElliottFatalError('Unable to resovle image metadata for {}'.format(distgit_name))
