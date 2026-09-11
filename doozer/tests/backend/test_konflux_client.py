@@ -9,6 +9,7 @@ from doozerlib.backend.konflux_client import (
     API_VERSION_V1BETA2,
     KIND_APPLICATION,
     KIND_INTEGRATION_TEST_SCENARIO,
+    CustomIntegrationTestResult,
     ECVerificationResult,
     GitHubApiUrlInfo,
     ImageBuildParams,
@@ -282,6 +283,7 @@ class TestNewEcPipelinerun(TestCase):
         params = {p["name"]: p["value"] for p in manifest["spec"]["params"]}
         self.assertEqual(params["POLICY_CONFIGURATION"], "rhtap-releng-tenant/registry-ocp-art-stage")
         self.assertEqual(params["SINGLE_COMPONENT"], "true")
+        self.assertEqual(params["EFFECTIVE_TIME"], "now")
         parsed_snapshot = json.loads(params["SNAPSHOT"])
         self.assertEqual(parsed_snapshot["application"], "openshift-4-21")
         self.assertEqual(len(parsed_snapshot["components"]), 1)
@@ -315,6 +317,408 @@ class TestEnsureIntegrationTestScenario(IsolatedAsyncioTestCase):
         manifest = client._create_or_patch.call_args[0][0]
         self.assertEqual(manifest["metadata"]["ownerReferences"][0]["uid"], "app-uid-5678")
         self.assertEqual(manifest["spec"]["application"], "openshift-4-21")
+
+
+class TestCustomIntegrationTestScenarios(IsolatedAsyncioTestCase):
+    @staticmethod
+    def _client():
+        client = MagicMock(spec=KonfluxClient)
+        client.default_namespace = "test-tenant"
+        client.dry_run = False
+        client._logger = MagicMock()
+        client._custom_integration_test_pipeline_url = KonfluxClient._custom_integration_test_pipeline_url
+        client._new_custom_integration_test_snapshot = KonfluxClient._new_custom_integration_test_snapshot
+        client._snapshot_test_statuses = KonfluxClient._snapshot_test_statuses
+        return client
+
+    @staticmethod
+    def _snapshot(statuses, run_label=None):
+        snapshot = MagicMock()
+        snapshot.metadata.name = "test-snapshot"
+        snapshot.to_dict.return_value = {
+            "metadata": {
+                "name": "test-snapshot",
+                "labels": {"test.appstudio.openshift.io/run": run_label} if run_label else {},
+                "annotations": {
+                    "test.appstudio.openshift.io/status": json.dumps(statuses),
+                },
+            }
+        }
+        return snapshot
+
+    async def test_validate_scenarios_accepts_matching_application(self):
+        client = self._client()
+        scenario = MagicMock()
+        scenario.to_dict.return_value = {
+            "metadata": {"labels": {"test.appstudio.openshift.io/optional": "true"}},
+            "spec": {"application": "test-app", "contexts": [{"name": "disabled"}]},
+        }
+        client.get_integration_test_scenario = AsyncMock(return_value=scenario)
+
+        blocking_scenarios = await KonfluxClient.validate_integration_test_scenarios(
+            client,
+            ["qe-test"],
+            application_name="test-app",
+            namespace="test-tenant",
+        )
+
+        self.assertEqual(blocking_scenarios, set())
+        client.get_integration_test_scenario.assert_awaited_once_with("qe-test", namespace="test-tenant", strict=True)
+
+    async def test_validate_scenarios_defaults_to_non_blocking(self):
+        client = self._client()
+        scenario = MagicMock()
+        scenario.to_dict.return_value = {
+            "metadata": {"labels": {}},
+            "spec": {"application": "test-app", "contexts": [{"name": "disabled"}]},
+        }
+        client.get_integration_test_scenario = AsyncMock(return_value=scenario)
+
+        blocking_scenarios = await KonfluxClient.validate_integration_test_scenarios(
+            client,
+            ["qe-test"],
+            application_name="test-app",
+            namespace="test-tenant",
+        )
+
+        self.assertEqual(blocking_scenarios, set())
+
+    async def test_validate_scenarios_accepts_explicit_release_blocking_label(self):
+        client = self._client()
+        scenario = MagicMock()
+        scenario.to_dict.return_value = {
+            "metadata": {"labels": {"test.appstudio.openshift.io/optional": "false"}},
+            "spec": {"application": "test-app", "contexts": [{"name": "disabled"}]},
+        }
+        client.get_integration_test_scenario = AsyncMock(return_value=scenario)
+
+        blocking_scenarios = await KonfluxClient.validate_integration_test_scenarios(
+            client,
+            ["qe-test"],
+            application_name="test-app",
+            namespace="test-tenant",
+        )
+
+        self.assertEqual(blocking_scenarios, {"qe-test"})
+
+    async def test_validate_scenarios_rejects_wrong_application(self):
+        client = self._client()
+        scenario = MagicMock()
+        scenario.to_dict.return_value = {"spec": {"application": "other-app"}}
+        client.get_integration_test_scenario = AsyncMock(return_value=scenario)
+
+        with self.assertRaisesRegex(ValueError, "belongs to application"):
+            await KonfluxClient.validate_integration_test_scenarios(
+                client,
+                ["qe-test"],
+                application_name="test-app",
+                namespace="test-tenant",
+            )
+
+    async def test_validate_scenarios_rejects_auto_trigger_context(self):
+        client = self._client()
+        scenario = MagicMock()
+        scenario.to_dict.return_value = {"spec": {"application": "test-app", "contexts": [{"name": "application"}]}}
+        client.get_integration_test_scenario = AsyncMock(return_value=scenario)
+
+        with self.assertRaisesRegex(ValueError, "must use only the 'disabled' context"):
+            await KonfluxClient.validate_integration_test_scenarios(
+                client, ["qe-test"], application_name="test-app", namespace="test-tenant"
+            )
+
+    def test_new_snapshot_contains_build_and_configured_annotations(self):
+        manifest = KonfluxClient._new_custom_integration_test_snapshot(
+            namespace="test-tenant",
+            application_name="installer-ove-ui-4-22",
+            component_name="installer-ove-ui-4-22-art-agent-installer-iso",
+            image_pullspec="quay.io/example/image@sha256:abc123",
+            source_url="https://github.com/openshift-priv/agent-installer-utils",
+            commit_sha="deadbeef",
+            annotations={"pac.test.appstudio.openshift.io/branch": "release-4.22"},
+        )
+
+        self.assertEqual(manifest["metadata"]["generateName"], "installer-ove-ui-4-22-art-its-")
+        self.assertNotIn("test.appstudio.openshift.io/type", manifest["metadata"]["labels"])
+        self.assertEqual(
+            manifest["metadata"]["annotations"]["pac.test.appstudio.openshift.io/branch"],
+            "release-4.22",
+        )
+        component = manifest["spec"]["components"][0]
+        self.assertEqual(component["containerImage"], "quay.io/example/image@sha256:abc123")
+        self.assertEqual(component["source"]["git"]["revision"], "deadbeef")
+
+    def test_snapshot_statuses_reject_malformed_annotation(self):
+        snapshot = self._snapshot([])
+        snapshot.to_dict.return_value["metadata"]["annotations"]["test.appstudio.openshift.io/status"] = "not-json"
+
+        with self.assertRaisesRegex(ValueError, "malformed integration test status annotation"):
+            KonfluxClient._snapshot_test_statuses(snapshot)
+
+    async def test_trigger_patches_snapshot_and_waits_for_status(self):
+        client = self._client()
+        client._patch = AsyncMock()
+        client._get = AsyncMock(
+            return_value=self._snapshot(
+                [{"scenario": "qe-test", "status": "Pending", "testPipelineRunName": "qe-test-123"}]
+            )
+        )
+
+        snapshot = await KonfluxClient._trigger_integration_test_scenario(
+            client,
+            "test-snapshot",
+            "qe-test",
+            "test-tenant",
+            timeout_seconds=1,
+            poll_interval_seconds=0,
+        )
+
+        self.assertEqual(snapshot.metadata.name, "test-snapshot")
+        patch_manifest = client._patch.await_args.args[0]
+        self.assertEqual(patch_manifest["metadata"]["labels"]["test.appstudio.openshift.io/run"], "qe-test")
+
+    async def test_run_creates_one_snapshot_and_accepts_passed_and_warning(self):
+        client = self._client()
+        client._create = AsyncMock(return_value=self._snapshot([]))
+        completed_snapshot = self._snapshot(
+            [
+                {"scenario": "qe-a", "status": "TestPassed", "testPipelineRunName": "qe-a-123"},
+                {"scenario": "qe-b", "status": "TestWarning", "testPipelineRunName": "qe-b-123"},
+            ]
+        )
+        client._trigger_integration_test_scenario = AsyncMock(return_value=completed_snapshot)
+
+        result = await KonfluxClient.run_integration_test_scenarios(
+            client,
+            ["qe-a", "qe-b"],
+            application_name="test-app",
+            component_name="test-component",
+            image_pullspec="quay.io/example/image@sha256:abc123",
+            source_url="https://github.com/example/repo",
+            commit_sha="deadbeef",
+            snapshot_annotations={"pac.test.appstudio.openshift.io/branch": "release-4.22"},
+            poll_interval_seconds=0,
+        )
+
+        self.assertIsInstance(result, CustomIntegrationTestResult)
+        self.assertFalse(result.blocking_failed)
+        self.assertEqual(len(result.pipeline_urls), 2)
+        client._create.assert_awaited_once()
+        self.assertEqual(client._trigger_integration_test_scenario.await_count, 2)
+
+    async def test_run_reports_test_failure(self):
+        client = self._client()
+        client._create = AsyncMock(return_value=self._snapshot([]))
+        client._trigger_integration_test_scenario = AsyncMock(
+            return_value=self._snapshot(
+                [{"scenario": "qe-test", "status": "TestFail", "testPipelineRunName": "qe-test-123"}]
+            )
+        )
+
+        result = await KonfluxClient.run_integration_test_scenarios(
+            client,
+            ["qe-test"],
+            application_name="test-app",
+            component_name="test-component",
+            image_pullspec="quay.io/example/image@sha256:abc123",
+            source_url="https://github.com/example/repo",
+            commit_sha="deadbeef",
+            blocking_scenario_names=("qe-test",),
+            poll_interval_seconds=0,
+        )
+
+        self.assertTrue(result.blocking_failed)
+        self.assertTrue(result.blocking_failed_pipeline_url.endswith("/pipelineruns/qe-test-123"))
+
+    async def test_run_does_not_report_optional_test_failure_as_blocking(self):
+        client = self._client()
+        client._create = AsyncMock(return_value=self._snapshot([]))
+        client._trigger_integration_test_scenario = AsyncMock(
+            return_value=self._snapshot(
+                [{"scenario": "qe-test", "status": "TestFail", "testPipelineRunName": "qe-test-123"}]
+            )
+        )
+
+        result = await KonfluxClient.run_integration_test_scenarios(
+            client,
+            ["qe-test"],
+            application_name="test-app",
+            component_name="test-component",
+            image_pullspec="quay.io/example/image@sha256:abc123",
+            source_url="https://github.com/example/repo",
+            commit_sha="deadbeef",
+            blocking_scenario_names=(),
+            poll_interval_seconds=0,
+        )
+
+        self.assertFalse(result.blocking_failed)
+        self.assertEqual(len(result.pipeline_urls), 1)
+
+    async def test_run_allows_optional_failure_when_blocking_test_passes(self):
+        client = self._client()
+        client._create = AsyncMock(return_value=self._snapshot([]))
+        completed_snapshot = self._snapshot(
+            [
+                {"scenario": "qe-optional", "status": "TestFail", "testPipelineRunName": "qe-optional-123"},
+                {"scenario": "qe-blocking", "status": "TestPassed", "testPipelineRunName": "qe-blocking-123"},
+            ]
+        )
+        client._trigger_integration_test_scenario = AsyncMock(return_value=completed_snapshot)
+
+        result = await KonfluxClient.run_integration_test_scenarios(
+            client,
+            ["qe-optional", "qe-blocking"],
+            application_name="test-app",
+            component_name="test-component",
+            image_pullspec="quay.io/example/image@sha256:abc123",
+            source_url="https://github.com/example/repo",
+            commit_sha="deadbeef",
+            blocking_scenario_names=("qe-blocking",),
+            poll_interval_seconds=0,
+        )
+
+        self.assertFalse(result.blocking_failed)
+        self.assertEqual(len(result.pipeline_urls), 2)
+
+    async def test_run_reports_snapshot_creation_error(self):
+        client = self._client()
+        client._create = AsyncMock(side_effect=RuntimeError("create failed"))
+
+        result = await KonfluxClient.run_integration_test_scenarios(
+            client,
+            ["qe-test"],
+            application_name="test-app",
+            component_name="test-component",
+            image_pullspec="quay.io/example/image@sha256:abc123",
+            source_url="https://github.com/example/repo",
+            commit_sha="deadbeef",
+            blocking_scenario_names=("qe-test",),
+            poll_interval_seconds=0,
+        )
+
+        self.assertTrue(result.blocking_failed)
+        self.assertEqual(result.pipeline_urls, [])
+
+    async def test_run_does_not_block_on_optional_snapshot_creation_error(self):
+        client = self._client()
+        client._create = AsyncMock(side_effect=RuntimeError("create failed"))
+
+        result = await KonfluxClient.run_integration_test_scenarios(
+            client,
+            ["qe-test"],
+            application_name="test-app",
+            component_name="test-component",
+            image_pullspec="quay.io/example/image@sha256:abc123",
+            source_url="https://github.com/example/repo",
+            commit_sha="deadbeef",
+            blocking_scenario_names=(),
+            poll_interval_seconds=0,
+        )
+
+        self.assertFalse(result.blocking_failed)
+
+    async def test_run_reports_trigger_timeout(self):
+        client = self._client()
+        client._create = AsyncMock(return_value=self._snapshot([]))
+        client._trigger_integration_test_scenario = AsyncMock(side_effect=TimeoutError("not triggered"))
+
+        result = await KonfluxClient.run_integration_test_scenarios(
+            client,
+            ["qe-test"],
+            application_name="test-app",
+            component_name="test-component",
+            image_pullspec="quay.io/example/image@sha256:abc123",
+            source_url="https://github.com/example/repo",
+            commit_sha="deadbeef",
+            blocking_scenario_names=("qe-test",),
+        )
+
+        self.assertTrue(result.blocking_failed)
+        self.assertEqual(result.pipeline_urls, [])
+
+    async def test_run_does_not_block_on_optional_trigger_timeout(self):
+        client = self._client()
+        client._create = AsyncMock(return_value=self._snapshot([]))
+        client._trigger_integration_test_scenario = AsyncMock(side_effect=TimeoutError("not triggered"))
+
+        result = await KonfluxClient.run_integration_test_scenarios(
+            client,
+            ["qe-test"],
+            application_name="test-app",
+            component_name="test-component",
+            image_pullspec="quay.io/example/image@sha256:abc123",
+            source_url="https://github.com/example/repo",
+            commit_sha="deadbeef",
+            blocking_scenario_names=(),
+        )
+
+        self.assertFalse(result.blocking_failed)
+
+    async def test_run_reports_snapshot_deleted_during_completion(self):
+        client = self._client()
+        client._create = AsyncMock(return_value=self._snapshot([]))
+        client._trigger_integration_test_scenario = AsyncMock(
+            return_value=self._snapshot(
+                [{"scenario": "qe-test", "status": "InProgress", "testPipelineRunName": "qe-test-123"}]
+            )
+        )
+        client._get = AsyncMock(return_value=None)
+
+        result = await KonfluxClient.run_integration_test_scenarios(
+            client,
+            ["qe-test"],
+            application_name="test-app",
+            component_name="test-component",
+            image_pullspec="quay.io/example/image@sha256:abc123",
+            source_url="https://github.com/example/repo",
+            commit_sha="deadbeef",
+            blocking_scenario_names=("qe-test",),
+            poll_interval_seconds=0,
+        )
+
+        self.assertTrue(result.blocking_failed)
+        self.assertTrue(result.blocking_failed_pipeline_url.endswith("/pipelineruns/qe-test-123"))
+
+    async def test_run_does_not_block_when_optional_test_times_out(self):
+        client = self._client()
+        client._create = AsyncMock(return_value=self._snapshot([]))
+        client._trigger_integration_test_scenario = AsyncMock(
+            return_value=self._snapshot(
+                [{"scenario": "qe-test", "status": "InProgress", "testPipelineRunName": "qe-test-123"}]
+            )
+        )
+
+        result = await KonfluxClient.run_integration_test_scenarios(
+            client,
+            ["qe-test"],
+            application_name="test-app",
+            component_name="test-component",
+            image_pullspec="quay.io/example/image@sha256:abc123",
+            source_url="https://github.com/example/repo",
+            commit_sha="deadbeef",
+            blocking_scenario_names=(),
+            completion_timeout_seconds=0,
+            poll_interval_seconds=0,
+        )
+
+        self.assertFalse(result.blocking_failed)
+
+    async def test_run_dry_run_does_not_create_snapshot(self):
+        client = self._client()
+        client.dry_run = True
+        client._create = AsyncMock()
+
+        result = await KonfluxClient.run_integration_test_scenarios(
+            client,
+            ["qe-test"],
+            application_name="test-app",
+            component_name="test-component",
+            image_pullspec="quay.io/example/image@sha256:abc123",
+            source_url="https://github.com/example/repo",
+            commit_sha="deadbeef",
+        )
+
+        self.assertFalse(result.blocking_failed)
+        client._create.assert_not_awaited()
 
 
 class TestStartEcPipelineRun(IsolatedAsyncioTestCase):
@@ -511,6 +915,7 @@ class TestVerifyEnterpriseContract(IsolatedAsyncioTestCase):
             commit_sha="deadbeef",
             ec_policy="rhtap-releng-tenant/registry-ocp-art-stage",
             logger=logging.getLogger("test"),
+            effective_time="2026-09-22T00:00:00Z",
         )
 
         self.assertIsInstance(result, ECVerificationResult)
@@ -521,6 +926,7 @@ class TestVerifyEnterpriseContract(IsolatedAsyncioTestCase):
             application_name="openshift-4-21",
             policy_configuration="rhtap-releng-tenant/registry-ocp-art-stage",
         )
+        self.assertEqual(client.start_ec_pipeline_run.call_args.kwargs["effective_time"], "2026-09-22T00:00:00Z")
 
     async def test_ec_failed(self):
         client = self._make_client_with_ec_result(is_success=False)

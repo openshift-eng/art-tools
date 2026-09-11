@@ -624,6 +624,35 @@
           "$ref": "#/properties/konflux/properties/build_attempts"
         },
         "build_attempts-": {},
+        "integration_test_scenarios": {
+          "description": "Existing Konflux IntegrationTestScenario names to gate successful releasable builds",
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "integration_test_scenarios!": {
+          "$ref": "#/properties/konflux/properties/integration_test_scenarios"
+        },
+        "integration_test_scenarios?": {
+          "$ref": "#/properties/konflux/properties/integration_test_scenarios"
+        },
+        "integration_test_scenarios-": {},
+        "integration_test_snapshot_annotations": {
+          "description": "Annotations to add to the ART-created Snapshot used for custom integration tests",
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^(?:[a-z0-9](?:[-a-z0-9.]*[a-z0-9])?/)?[A-Za-z0-9](?:[-_.A-Za-z0-9]*[A-Za-z0-9])?$",
+            "not": { "enum": ["test.appstudio.openshift.io/status"] }
+          },
+          "additionalProperties": { "type": "string" }
+        },
+        "integration_test_snapshot_annotations!": {
+          "$ref": "#/properties/konflux/properties/integration_test_snapshot_annotations"
+        },
+        "integration_test_snapshot_annotations?": {
+          "$ref": "#/properties/konflux/properties/integration_test_snapshot_annotations"
+        },
+        "integration_test_snapshot_annotations-": {},
         "plr_template_commitish": {
           "description": "Git commit-ish (branch, tag, or SHA) for the Pipeline Run template repository",
           "type": "string",

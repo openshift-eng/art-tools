@@ -6,7 +6,7 @@ import pprint
 import re
 import traceback
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple, cast
@@ -97,9 +97,13 @@ class KonfluxImageBuilderConfig:
     skip_tasks: tuple[str, ...] = ()
     dry_run: bool = False
     build_priority: Optional[str] = None
-    ec_policy_configuration: str = constants.KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION
-    prega_ec_policy_configuration: str = constants.KONFLUX_PREGA_EC_POLICY_CONFIGURATION
+    ec_policy_configuration: Optional[str] = None
+    prega_ec_policy_configuration: Optional[str] = None
     skip_ec_verify: bool = False
+    effective_time: str = "now"
+    integration_test_scenarios: tuple[str, ...] = ()
+    integration_test_snapshot_annotations: Dict[str, str] = field(default_factory=dict)
+    skip_custom_its: bool = False
 
 
 class KonfluxImageBuilder:
@@ -120,11 +124,25 @@ class KonfluxImageBuilder:
         self._config = config
         self._logger = logger or LOGGER
         self._record_logger = record_logger
+        self._blocking_custom_integration_test_scenarios: Set[str] = set()
         self._konflux_client = KonfluxClient.from_kubeconfig(
             default_namespace=config.namespace,
             config_file=config.kubeconfig,
             context=config.context,
             dry_run=config.dry_run,
+        )
+
+    async def validate_custom_integration_test_scenarios(self) -> None:
+        """Validate group-configured custom ITS resources before starting builds."""
+        if not self._config.integration_test_scenarios or self._config.skip_custom_its:
+            return
+        application_name = util.konflux_application_name(self._config.group_name)
+        self._blocking_custom_integration_test_scenarios = (
+            await self._konflux_client.validate_integration_test_scenarios(
+                self._config.integration_test_scenarios,
+                application_name=application_name,
+                namespace=self._config.namespace,
+            )
         )
 
     async def build(self, metadata: ImageMetadata, git_auth_secret: Optional[str] = None):
@@ -256,6 +274,9 @@ class KonfluxImageBuilder:
 
             for attempt in range(build_attempts):
                 logger.info("Build attempt %s/%s", attempt + 1, build_attempts)
+                image_pullspec = None
+                image_digest = None
+                definitive_image_pullspec = None
                 pipelinerun_info = await self._start_build(
                     metadata=metadata,
                     build_repo=build_repo,
@@ -305,10 +326,8 @@ class KonfluxImageBuilder:
                         record["image_tag"] = image_tag
 
                         # Validate SLSA attestation and source image signature
-                        # Skip for non-OCP groups (e.g., OKD) as they may not have attestations/signatures
-                        is_ocp_group = self._config.group_name.startswith("openshift-")
                         skip_validate_slsa = metadata.config.get("konflux", {}).get("skip_validate_slsa", False)
-                        if is_ocp_group and skip_validate_slsa is not True:
+                        if metadata.runtime.variant is not BuildVariant.OKD and skip_validate_slsa is not True:
                             try:
                                 # use image_digest here to be precise, image_pullspec can collide in case of golang-builder images
                                 await self._validate_build_attestation_and_signature(
@@ -319,9 +338,9 @@ class KonfluxImageBuilder:
                                     f"Failed to get SLA attestation / source signature from konflux for image {definitive_image_pullspec}, marking build as {KonfluxBuildOutcome.BUILD_ERROR}. Error: {e}"
                                 )
                                 outcome = KonfluxBuildOutcome.BUILD_ERROR
-                        elif not is_ocp_group:
+                        elif metadata.runtime.variant is BuildVariant.OKD:
                             logger.info(
-                                "Skipping SLSA attestation validation for %s: non-OCP group '%s'",
+                                "Skipping SLSA attestation validation for %s: OKD build variant in group '%s'",
                                 metadata.distgit_key,
                                 self._config.group_name,
                             )
@@ -335,34 +354,27 @@ class KonfluxImageBuilder:
                         raise IOError("PipelineRun succeeded but IMAGE_URL or IMAGE_DIGEST missing from results")
 
                 # Run enterprise-contract (EC) verification after a successful build
-                # TODO: Expand EC verification to layered products
                 # TODO: Expose EC failure links (ITS/PLR URLs) via Slack notification or dashboard column
-                is_ocp_group = self._config.group_name.startswith("openshift-")
+                lifecycle_phase = metadata.runtime.group_config.software_lifecycle.phase
+                if (
+                    lifecycle_phase is not Missing
+                    and SoftwareLifecyclePhase.from_name(lifecycle_phase) == SoftwareLifecyclePhase.PRE_RELEASE
+                ):
+                    ec_policy = self._config.prega_ec_policy_configuration
+                else:
+                    ec_policy = self._config.ec_policy_configuration
+
                 should_run_ec = (
                     outcome is KonfluxBuildOutcome.SUCCESS
                     and metadata.runtime.variant is not BuildVariant.OKD
-                    and is_ocp_group
+                    and ec_policy is not None
                     and not self._config.skip_ec_verify
                     and metadata.for_release
-                    and image_pullspec  # EC requires actual build results
-                    and image_digest
+                    and definitive_image_pullspec is not None
                 )
                 if should_run_ec:
                     app_name = util.konflux_application_name(self._config.group_name)
 
-                    # Select EC policy based on software lifecycle phase:
-                    # - pre-release phase uses a more permissive policy that allows unsigned RPMs
-                    # - All other phases use the default stage policy
-                    lifecycle_phase = metadata.runtime.group_config.software_lifecycle.phase
-                    if (
-                        lifecycle_phase is not Missing
-                        and SoftwareLifecyclePhase.from_name(lifecycle_phase) == SoftwareLifecyclePhase.PRE_RELEASE
-                    ):
-                        ec_policy = self._config.prega_ec_policy_configuration
-                    else:
-                        ec_policy = self._config.ec_policy_configuration
-
-                    image_with_digest = f"{image_pullspec.split(':')[0]}@{image_digest}"
                     source_url = artlib_util.convert_remote_git_to_https(build_repo.url)
                     konflux_component_name = metadata.get_konflux_component_name(app_name)
 
@@ -370,11 +382,12 @@ class KonfluxImageBuilder:
                         namespace=self._config.namespace,
                         application_name=app_name,
                         component_name=konflux_component_name,
-                        image_pullspec=image_with_digest,
+                        image_pullspec=definitive_image_pullspec,
                         source_url=source_url,
                         commit_sha=build_repo.commit_hash,
                         ec_policy=ec_policy,
                         logger=logger,
+                        effective_time=self._config.effective_time,
                     )
                     # Always save EC pipeline URL for tracking, regardless of pass/fail
                     ec_pipeline_url = ec_result.ec_pipeline_url
@@ -392,9 +405,9 @@ class KonfluxImageBuilder:
                         logger.info(
                             "Skipping EC verification for %s: --skip-ec-verify flag is set", metadata.distgit_key
                         )
-                    elif not is_ocp_group:
+                    elif ec_policy is None:
                         logger.info(
-                            "Skipping EC verification for %s: non-OCP group '%s'",
+                            "Skipping EC verification for %s: no EC policy configured for the current lifecycle in group '%s'",
                             metadata.distgit_key,
                             self._config.group_name,
                         )
@@ -403,6 +416,43 @@ class KonfluxImageBuilder:
                             "Skipping EC verification for %s: image is not for_release",
                             metadata.distgit_key,
                         )
+
+                should_run_custom_its = (
+                    outcome is KonfluxBuildOutcome.SUCCESS
+                    and bool(self._config.integration_test_scenarios)
+                    and not self._config.skip_custom_its
+                    and metadata.for_release
+                    and definitive_image_pullspec is not None
+                )
+                if should_run_custom_its:
+                    app_name = util.konflux_application_name(self._config.group_name)
+                    custom_its_result = await self._konflux_client.run_integration_test_scenarios(
+                        scenario_names=self._config.integration_test_scenarios,
+                        application_name=app_name,
+                        component_name=metadata.get_konflux_component_name(app_name),
+                        image_pullspec=definitive_image_pullspec,
+                        source_url=artlib_util.convert_remote_git_to_https(build_repo.url),
+                        commit_sha=build_repo.commit_hash,
+                        blocking_scenario_names=self._blocking_custom_integration_test_scenarios,
+                        snapshot_annotations=self._config.integration_test_snapshot_annotations,
+                        namespace=self._config.namespace,
+                    )
+                    for pipeline_url in custom_its_result.pipeline_urls:
+                        logger.info("Custom IntegrationTestScenario PipelineRun: %s", pipeline_url)
+                    if custom_its_result.blocking_failed:
+                        if custom_its_result.blocking_failed_pipeline_url:
+                            ec_pipeline_url = custom_its_result.blocking_failed_pipeline_url
+                            record["ec_pipeline_url"] = ec_pipeline_url
+                        outcome = KonfluxBuildOutcome.ITS_ERROR
+                elif (
+                    outcome is KonfluxBuildOutcome.SUCCESS
+                    and self._config.integration_test_scenarios
+                    and self._config.skip_custom_its
+                ):
+                    logger.info(
+                        "Skipping custom IntegrationTestScenarios for %s: --skip-custom-its flag is set",
+                        metadata.distgit_key,
+                    )
 
                 if self._config.dry_run:
                     logger.info("Dry run: Would have inserted build record in Konflux DB")
@@ -414,8 +464,7 @@ class KonfluxImageBuilder:
                     if (
                         outcome is KonfluxBuildOutcome.SUCCESS
                         and metadata.should_trigger_base_image_release()
-                        and image_pullspec
-                        and image_digest
+                        and definitive_image_pullspec is not None
                     ):
                         release_result = await self._trigger_base_image_release(
                             metadata, nvr, definitive_image_pullspec, build_repo
@@ -441,8 +490,7 @@ class KonfluxImageBuilder:
                     if (
                         outcome is KonfluxBuildOutcome.SUCCESS
                         and metadata.should_create_golang_builder_shipment()
-                        and image_pullspec
-                        and image_digest
+                        and definitive_image_pullspec is not None
                     ):
                         try:
                             shipment_handler = GolangBuilderShipmentHandler(

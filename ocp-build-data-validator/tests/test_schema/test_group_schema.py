@@ -4,6 +4,52 @@ from validator.schema import group_schema
 
 
 class TestGroupSchema(unittest.TestCase):
+    def test_validate_custom_integration_test_scenarios(self):
+        valid_data = {
+            "konflux": {
+                "integration_test_scenarios": ["abi-qe-prow-compact"],
+            }
+        }
+        self.assertEqual("", group_schema.validate("group.yml", valid_data))
+
+    def test_reject_duplicate_custom_integration_test_scenarios(self):
+        invalid_data = {
+            "konflux": {
+                "integration_test_scenarios": ["abi-qe-prow-compact", "abi-qe-prow-compact"],
+            }
+        }
+        self.assertIn("has non-unique elements", group_schema.validate("group.yml", invalid_data))
+
+    def test_validate_custom_integration_test_snapshot_annotations(self):
+        valid_data = {
+            "konflux": {
+                "integration_test_snapshot_annotations": {
+                    "pac.test.appstudio.openshift.io/branch": "release-4.22",
+                },
+            }
+        }
+        self.assertEqual("", group_schema.validate("group.yml", valid_data))
+
+    def test_reject_non_string_custom_integration_test_snapshot_annotation(self):
+        invalid_data = {
+            "konflux": {
+                "integration_test_snapshot_annotations": {
+                    "pac.test.appstudio.openshift.io/branch": 422,
+                },
+            }
+        }
+        self.assertIn("is not of type 'string'", group_schema.validate("group.yml", invalid_data))
+
+    def test_reject_controller_managed_custom_integration_test_snapshot_annotation(self):
+        invalid_data = {
+            "konflux": {
+                "integration_test_snapshot_annotations": {
+                    "test.appstudio.openshift.io/status": "[]",
+                },
+            }
+        }
+        self.assertIn("should not be valid", group_schema.validate("group.yml", invalid_data))
+
     def test_validate_with_valid_bridge_release_config(self):
         valid_data = {
             "name": "openshift-4.23",

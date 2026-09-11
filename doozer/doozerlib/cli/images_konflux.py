@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import sys
 import traceback
 from pathlib import Path
@@ -15,6 +16,7 @@ from artcommonlib.konflux.konflux_build_record import (
     KonfluxBundleBuildRecord,
 )
 from artcommonlib.konflux.konflux_db import KonfluxDb
+from artcommonlib.model import Missing
 from artcommonlib.telemetry import start_as_current_span_async
 from artcommonlib.util import (
     KubeCondition,
@@ -292,6 +294,8 @@ class KonfluxBuildCli:
         plr_template: str,
         build_priority: Optional[str],
         skip_ec_verify: bool = False,
+        effective_time: str = "now",
+        skip_custom_its: bool = False,
         skip_tasks: tuple[str, ...] = (),
     ):
         self.runtime = runtime
@@ -306,6 +310,8 @@ class KonfluxBuildCli:
         self.plr_template = plr_template
         self.build_priority = build_priority
         self.skip_ec_verify = skip_ec_verify
+        self.effective_time = effective_time
+        self.skip_custom_its = skip_custom_its
 
         validate_build_priority(self.build_priority)
 
@@ -331,12 +337,50 @@ class KonfluxBuildCli:
         else:
             group = runtime.group
 
+        product = runtime.product
         if runtime.assembly == "test":
-            ec_policy = constants.KONFLUX_TEST_EC_POLICY_CONFIGURATION
-            prega_ec_policy = constants.KONFLUX_TEST_PREGA_EC_POLICY_CONFIGURATION
+            ec_policy = constants.PRODUCT_TEST_EC_POLICY_MAP.get(product)
+            prega_ec_policy = constants.PRODUCT_TEST_PREGA_EC_POLICY_MAP.get(product, ec_policy)
         else:
-            ec_policy = constants.KONFLUX_DEFAULT_EC_POLICY_CONFIGURATION
-            prega_ec_policy = constants.KONFLUX_PREGA_EC_POLICY_CONFIGURATION
+            ec_policy = constants.PRODUCT_EC_POLICY_MAP.get(product)
+            prega_ec_policy = constants.PRODUCT_PREGA_EC_POLICY_MAP.get(product, ec_policy)
+
+        integration_test_scenarios = runtime.group_config.get("konflux", {}).get("integration_test_scenarios", [])
+        if integration_test_scenarios is Missing or integration_test_scenarios is None:
+            integration_test_scenarios = []
+        if not isinstance(integration_test_scenarios, (list, tuple)) or not all(
+            isinstance(name, str) and name for name in integration_test_scenarios
+        ):
+            raise ValueError("konflux.integration_test_scenarios must be a list of non-empty scenario names")
+
+        integration_test_snapshot_annotations = runtime.group_config.get("konflux", {}).get(
+            "integration_test_snapshot_annotations", {}
+        )
+        if integration_test_snapshot_annotations is Missing or integration_test_snapshot_annotations is None:
+            integration_test_snapshot_annotations = {}
+        if not isinstance(integration_test_snapshot_annotations, dict) or not all(
+            isinstance(key, str) and key and isinstance(value, str)
+            for key, value in integration_test_snapshot_annotations.items()
+        ):
+            raise ValueError("konflux.integration_test_snapshot_annotations must be a string-to-string mapping")
+        annotation_key_pattern = re.compile(
+            r"^(?:[a-z0-9](?:[-a-z0-9.]*[a-z0-9])?/)?[A-Za-z0-9](?:[-_.A-Za-z0-9]*[A-Za-z0-9])?$"
+        )
+        invalid_annotation_names = [
+            key for key in integration_test_snapshot_annotations if not annotation_key_pattern.fullmatch(key)
+        ]
+        if invalid_annotation_names:
+            raise ValueError(
+                "konflux.integration_test_snapshot_annotations contains invalid annotation names: "
+                f"{', '.join(sorted(invalid_annotation_names))}"
+            )
+        reserved_snapshot_annotations = {"test.appstudio.openshift.io/status"}
+        invalid_annotations = reserved_snapshot_annotations.intersection(integration_test_snapshot_annotations)
+        if invalid_annotations:
+            raise ValueError(
+                "konflux.integration_test_snapshot_annotations contains controller-managed keys: "
+                f"{', '.join(sorted(invalid_annotations))}"
+            )
 
         config = KonfluxImageBuilderConfig(
             base_dir=Path(runtime.working_dir, constants.WORKING_SUBDIR_KONFLUX_BUILD_SOURCES),
@@ -354,8 +398,13 @@ class KonfluxBuildCli:
             ec_policy_configuration=ec_policy,
             prega_ec_policy_configuration=prega_ec_policy,
             skip_ec_verify=self.skip_ec_verify,
+            effective_time=self.effective_time,
+            integration_test_scenarios=tuple(dict.fromkeys(integration_test_scenarios)),
+            integration_test_snapshot_annotations=dict(integration_test_snapshot_annotations),
+            skip_custom_its=self.skip_custom_its,
         )
         builder = KonfluxImageBuilder(config=config, record_logger=runtime.record_logger)
+        await builder.validate_custom_integration_test_scenarios()
 
         # Mint a per-invocation GitHub App token and create a transient Secret.
         # All PipelineRuns in this batch share the same secret — no contention.
@@ -445,6 +494,18 @@ class KonfluxBuildCli:
     is_flag=True,
     help='Skip enterprise-contract verification after builds.',
 )
+@click.option(
+    '--effective-time',
+    default='now',
+    show_default=True,
+    help='Effective time passed only to ART-managed Enterprise Contract verification.',
+)
+@click.option(
+    '--skip-custom-its',
+    default=False,
+    is_flag=True,
+    help='Skip custom IntegrationTestScenarios configured in group.yml.',
+)
 @pass_runtime
 @click_coroutine
 async def images_konflux_build(
@@ -460,6 +521,8 @@ async def images_konflux_build(
     build_priority: Optional[str],
     network_mode: Optional[str],
     skip_ec_verify: bool,
+    effective_time: str,
+    skip_custom_its: bool,
 ):
     if network_mode:
         runtime.network_mode_override = network_mode
@@ -477,6 +540,8 @@ async def images_konflux_build(
         plr_template=plr_template,
         build_priority=build_priority,
         skip_ec_verify=skip_ec_verify,
+        effective_time=effective_time,
+        skip_custom_its=skip_custom_its,
     )
     await cli.run()
 
