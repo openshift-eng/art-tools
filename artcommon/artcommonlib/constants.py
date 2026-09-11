@@ -126,6 +126,7 @@ PRODUCT_BASE_IMAGE_KONFLUX_RELEASE_MAP = {
     "cert-manager": ("oap-cm-images-base-silent", "oap-images-base"),
     "cluster-observability-operator": ("coo-images-base-silent", "coo-images-base"),
     "zero-trust-workload-identity-manager": ("oap-zt-images-base-silent", "oap-images-base"),
+    "quay": ("quay-images-base-silent", "quay-images-base"),
 }
 
 # Layered-product release-time EC policies for scheduled Conforma verification.
