@@ -11,6 +11,8 @@ from pyartcd.git import GitRepository
 from pyartcd.lp_shipment import (
     ShipmentMRActiveStageError,
     ShipmentMRProductionError,
+    ShipmentMRScopeError,
+    ShipmentMRValidationError,
     _identity,
     get_shipment_mr_url,
     inspect_shipment_mr_ci_state,
@@ -90,17 +92,13 @@ def test_validate_shipment_mr_rejects_closed_mr():
     client._parse_mr_url.return_value = ('hybrid-platforms/art/ocp-shipment-data', '42')
     client.get_mr_from_url.return_value = MagicMock(state='closed')
 
-    try:
+    with pytest.raises(ShipmentMRValidationError, match='--force'):
         validate_shipment_mr(
             client,
             'https://gitlab.example/hybrid-platforms/art/ocp-shipment-data/-/merge_requests/42',
             'https://gitlab.example/hybrid-platforms/art/ocp-shipment-data.git',
             'https://gitlab.example/openshift-eng/ocp-shipment-data.git',
         )
-    except ValueError as exc:
-        assert '--force' in str(exc)
-    else:
-        raise AssertionError("Expected a closed MR to be rejected")
 
 
 def test_validate_shipment_mr_rejects_prod_release_label():
@@ -116,18 +114,14 @@ def test_validate_shipment_mr_rejects_prod_release_label():
     client.get_mr_from_url.return_value = mr
     client.get_project.return_value.path_with_namespace = 'openshift-eng/ocp-shipment-data'
 
-    try:
+    with pytest.raises(ShipmentMRProductionError, match='prod-release-success') as exc_info:
         validate_shipment_mr(
             client,
             'https://gitlab.example/hybrid-platforms/art/ocp-shipment-data/-/merge_requests/42',
             'https://gitlab.example/hybrid-platforms/art/ocp-shipment-data.git',
             'https://gitlab.example/openshift-eng/ocp-shipment-data.git',
         )
-    except ValueError as exc:
-        assert 'prod-release-success' in str(exc)
-        assert 'manual recovery' in str(exc)
-    else:
-        raise AssertionError("Expected a production-released MR to be rejected")
+    assert 'manual recovery' in str(exc_info.value)
 
 
 def _shipment_ci_graph(
@@ -319,13 +313,9 @@ def test_validate_shipment_mr_reuse_state_rejects_prod_advisory():
         mr = MagicMock(source_branch='prepare-shipment-6.5.2-20260817161645')
         mr.changes.return_value = {'changes': [{'new_path': str(path.relative_to(directory))}]}
 
-        try:
+        with pytest.raises(ShipmentMRProductionError, match='prod advisory') as exc_info:
             asyncio.run(validate_shipment_mr_reuse_state(repo, mr, 'openshift-logging', 'logging-6.5', '6.5.2'))
-        except ValueError as exc:
-            assert 'prod advisory' in str(exc)
-            assert 'manual recovery' in str(exc)
-        else:
-            raise AssertionError("Expected production advisory information to block reuse")
+        assert 'manual recovery' in str(exc_info.value)
 
 
 def test_validate_shipment_mr_reuse_state_rejects_prod_fbc_result():
@@ -341,13 +331,9 @@ def test_validate_shipment_mr_reuse_state_rejects_prod_fbc_result():
         mr = MagicMock(source_branch='prepare-shipment-6.5.2-20260817161645')
         mr.changes.return_value = {'changes': [{'new_path': str(path.relative_to(directory))}]}
 
-        try:
+        with pytest.raises(ShipmentMRProductionError, match='prod pipeline result') as exc_info:
             asyncio.run(validate_shipment_mr_reuse_state(repo, mr, 'openshift-logging', 'logging-6.5', '6.5.2'))
-        except ValueError as exc:
-            assert 'prod pipeline result' in str(exc)
-            assert 'manual recovery' in str(exc)
-        else:
-            raise AssertionError("Expected production FBC result information to block reuse")
+        assert 'manual recovery' in str(exc_info.value)
 
 
 def test_validate_shipment_mr_reuse_state_rejects_wrong_product():
@@ -361,16 +347,12 @@ def test_validate_shipment_mr_reuse_state_rejects_wrong_product():
         mr = MagicMock(source_branch='prepare-shipment-6.5.2-20260817161645')
         mr.changes.return_value = {'changes': [{'new_path': str(path.relative_to(directory))}]}
 
-        try:
+        with pytest.raises(ShipmentMRScopeError, match='refusing to modify an unrelated MR') as exc_info:
             asyncio.run(validate_shipment_mr_reuse_state(repo, mr, 'oadp', 'logging-6.5', '6.5.2'))
-        except ValueError as exc:
-            message = str(exc)
-            assert "product 'oadp'" in message
-            assert 'refusing to modify an unrelated MR' in message
-            assert str(path.relative_to(directory)) in message
-            assert '--force' in message
-        else:
-            raise AssertionError("Expected an MR for another product to be rejected")
+        message = str(exc_info.value)
+        assert "product 'oadp'" in message
+        assert str(path.relative_to(directory)) in message
+        assert '--force' in message
 
 
 def test_update_shipment_mr_url_creates_explicit_stream_assembly():

@@ -1373,6 +1373,8 @@ class ReleaseFromFbcPipeline:
                         self.logger.info("Continuing with local files only")
             else:
                 if existing_mr:
+                    # Revalidate around the draft transition because CI or MR state may have changed
+                    # since the initial check performed before the expensive build work.
                     existing_mr, _ = await validate_shipment_mr_for_operation(
                         self._gitlab,
                         self.shipment_data_repo,
@@ -1387,6 +1389,7 @@ class ReleaseFromFbcPipeline:
                     )
                     await self._verify_layered_product_shipment_mr()
                     set_shipment_mr_draft(existing_mr, self.dry_run)
+                    # Drafting mutates the MR; check again before replacing its shipment files.
                     await validate_shipment_mr_for_operation(
                         self._gitlab,
                         self.shipment_data_repo,
