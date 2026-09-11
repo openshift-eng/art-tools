@@ -15,6 +15,7 @@ from elliottlib.cli.verify_docs_approval import (
     check_image_does_not_reference_dropped_rpm,
     check_image_references_rpm,
     check_payload_shas,
+    check_primary_image_references_secondary,
     check_rhcos_does_not_reference_dropped_rpm,
     check_rhcos_payload_shas,
     check_rhcos_references_rpm,
@@ -62,6 +63,11 @@ def test_contains_exact_advisory_url_no_prefix_match():
 def test_contains_advisory_reference_match_any_year():
     text = "See https://access.redhat.com/errata/RHSA-2026:48676 for details."
     assert contains_advisory_reference(text, "RHSA", 48676) is True
+
+
+def test_contains_advisory_reference_accepts_zero_padded_live_id():
+    text = "See https://access.redhat.com/errata/RHSA-2026:0100 for details."
+    assert contains_advisory_reference(text, "RHSA", 100) is True
 
 
 def test_contains_advisory_reference_wrong_live_id():
@@ -148,6 +154,51 @@ def test_check_extras_references_image_skip_when_image_live_id_is_none():
     extras = _release_notes("RHBA", 48677, description="See https://access.redhat.com/errata/RHSA-2026:48676")
     result = check_extras_references_image(extras, image, None)
     assert result.status == "skip"
+
+
+def test_check_primary_image_references_secondary_pass():
+    primary = _release_notes(
+        "RHBA",
+        48676,
+        description="See https://access.redhat.com/errata/RHBA-2026:48677 for additional images.",
+    )
+    secondary = _release_notes("RHBA", 48677)
+
+    result = check_primary_image_references_secondary(primary, [secondary])
+
+    assert result.status == "pass"
+
+
+def test_check_primary_image_references_zero_padded_secondary_live_id():
+    primary = _release_notes(
+        "RHBA",
+        101,
+        description="See https://access.redhat.com/errata/RHBA-2026:0100 for additional images.",
+    )
+    secondary = _release_notes("RHBA", 100)
+
+    result = check_primary_image_references_secondary(primary, [secondary])
+
+    assert result.status == "pass"
+
+
+def test_check_primary_image_references_secondary_requires_public_url():
+    primary = _release_notes("RHBA", 101, description="See RHBA-2026:100 for additional images.")
+    secondary = _release_notes("RHBA", 100)
+
+    result = check_primary_image_references_secondary(primary, [secondary])
+
+    assert result.status == "fail"
+
+
+def test_check_primary_image_references_secondary_fails_when_reference_is_missing():
+    primary = _release_notes("RHBA", 48676, description="No secondary advisory reference.")
+    secondary = _release_notes("RHBA", 48677)
+
+    result = check_primary_image_references_secondary(primary, [secondary])
+
+    assert result.status == "fail"
+    assert "48677" in result.detail
 
 
 def test_check_rpm_references_image_skip_when_image_live_id_is_none():
@@ -479,8 +530,49 @@ class TestRunChecks(unittest.IsolatedAsyncioTestCase):
 
         results = await run_checks(runtime, "image.yaml", "extras.yaml")
 
-        assert len(results) == 6
+        assert len(results) == 7
         assert all(r.status == "pass" for r in results), results
+
+    @patch("elliottlib.cli.verify_docs_approval.get_advisory_id", return_value=None)
+    @patch("elliottlib.cli.verify_docs_approval.check_payload_shas", new_callable=AsyncMock)
+    async def test_run_checks_selects_principal_and_validates_secondary_image(
+        self, mock_check_payload_shas, _mock_get_advisory_id
+    ):
+        """The verify command selects the highest RHEL variant when image sizes tie."""
+        image_config_raw = {
+            "shipment": {
+                "metadata": {"product": "ocp", "application": "app", "group": "openshift-4.20", "assembly": "4.20.32"},
+                "environments": {"stage": {"releasePlan": "p"}, "prod": {"releasePlan": "p"}},
+                "data": {"releaseNotes": {"type": "RHBA", "live_id": 100, "description": "Secondary image."}},
+            }
+        }
+        principal_config_raw = {
+            "shipment": {
+                "metadata": {"product": "ocp", "application": "app", "group": "openshift-4.20", "assembly": "4.20.32"},
+                "environments": {"stage": {"releasePlan": "p"}, "prod": {"releasePlan": "p"}},
+                "data": {
+                    "releaseNotes": {
+                        "type": "RHBA",
+                        "live_id": 101,
+                        "description": "See https://access.redhat.com/errata/RHBA-2026:0100",
+                    }
+                },
+            }
+        }
+        runtime = self._make_runtime()
+        runtime.shipment_gitdata.load_yaml_file.side_effect = lambda path: {
+            "image-el9.yaml": image_config_raw,
+            "image-el10.yaml": principal_config_raw,
+        }[path]
+        mock_check_payload_shas.return_value = (
+            CheckResult(name="image payload SHAs", status="skip", detail="not checked"),
+            {},
+        )
+
+        results = await run_checks(runtime, ("image-el9.yaml", "image-el10.yaml"), None)
+
+        assert results[0].status == "pass"
+        assert "secondary image advisory" in results[0].detail
 
 
 if __name__ == "__main__":

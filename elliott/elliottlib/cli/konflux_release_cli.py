@@ -117,7 +117,8 @@ async def validate_snapshot_against_rpa(
         LOGGER.info("Skipping RPA validation for FBC releases (different naming scheme)")
         return
 
-    if kind not in OCP_RPA_KINDS:
+    rpa_kind = re.sub(r"-el\d+$", "", kind)
+    if rpa_kind not in OCP_RPA_KINDS:
         raise ValueError(f"Unsupported release kind for RPA validation: {kind!r}. Supported: {sorted(OCP_RPA_KINDS)}")
 
     if env not in OCP_RPA_ENVS:
@@ -127,7 +128,7 @@ async def validate_snapshot_against_rpa(
     for check_env in envs_to_check:
         rpa_name = (release_plans or {}).get(check_env)
         if not rpa_name:
-            rpa_name = f"{OCP_RPA_KINDS[kind]}-{check_env}-{major}-{minor}"
+            rpa_name = f"{OCP_RPA_KINDS[rpa_kind]}-{check_env}-{major}-{minor}"
         await _validate_snapshot_against_single_rpa(kind, rpa_name, snapshot_components)
 
 
@@ -305,9 +306,9 @@ class CreateReleaseCli:
         """
         Return the shipment kind qualified by its RHEL version, when present.
 
-        MicroShift bootc shipments have one configuration file per RHEL version,
+        RHEL-qualified shipments have one configuration file per RHEL version,
         so the version must be included in Kubernetes object names to avoid
-        collisions when the releases run concurrently.
+        collisions when releases run concurrently.
         """
         config_stem = Path(self.config_path).stem
         match = re.search(rf"(?:^|\.)({re.escape(self.kind)}-el\d+)(?:\.|$)", config_stem)

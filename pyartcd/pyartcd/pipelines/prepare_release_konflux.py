@@ -53,9 +53,11 @@ from elliottlib.errata import get_errata_live_id, push_cdn_stage
 from elliottlib.errata_async import AsyncErrataAPI
 from elliottlib.shipment_model import Issue, ReleaseNotes, ShipmentConfig, Snapshot, SnapshotSpec, Tools
 from elliottlib.shipment_utils import (
+    add_secondary_image_advisory_references,
     get_full_advisory_id_from_shipment,
     get_shipment_configs_from_mr,
     patch_et_advisory_text,
+    select_primary_image_shipment,
     set_jira_bug_ids,
 )
 from tenacity import retry, stop_after_attempt, wait_fixed
@@ -74,6 +76,34 @@ from pyartcd.util import (
 )
 
 yaml = new_roundtrip_yaml_handler()
+
+
+def _get_base_shipment_kind(kind: str) -> str:
+    """
+    Remove an optional RHEL suffix from a shipment kind.
+
+    Args:
+        kind: Shipment kind, such as ``image-el9`` or ``metadata``.
+    Returns:
+        The base shipment kind used by build and advisory lookup commands.
+    """
+    return re.sub(r"-el\d+$", "", kind)
+
+
+def _get_shipment_builds(kind: str, shipment: ShipmentConfig, kind_to_builds: Dict[str, List[str]]) -> List[str]:
+    """
+    Select builds for a shipment, preserving RHEL-qualified snapshot membership.
+
+    Args:
+        kind: Shipment kind, optionally qualified by a RHEL version.
+        shipment: Shipment configuration that may contain an existing snapshot.
+        kind_to_builds: Builds grouped by base shipment kind.
+    Returns:
+        NVRs to use when creating the shipment snapshot.
+    """
+    if re.search(r"-el\d+$", kind) and shipment.shipment.snapshot and shipment.shipment.snapshot.nvrs:
+        return shipment.shipment.snapshot.nvrs
+    return kind_to_builds[_get_base_shipment_kind(kind)]
 
 
 class PrepareReleaseKonfluxPipeline:
@@ -507,7 +537,7 @@ class PrepareReleaseKonfluxPipeline:
             for kind, shipment in shipments_by_kind.items():
                 if kind == "fbc":
                     continue
-                bug_ids = bugs_by_kind.get(kind, [])
+                bug_ids = bugs_by_kind.get(_get_base_shipment_kind(kind), [])
                 set_jira_bug_ids(shipment.shipment.data.releaseNotes, bug_ids)
 
             await self.update_shipment_mr(shipments_by_kind, env, shipment_url)
@@ -634,7 +664,9 @@ class PrepareReleaseKonfluxPipeline:
 
         # make sure that metadata shipment needs to be prepared
         # if so, build any missing bundle builds
-        if "metadata" in shipments_by_kind and kind_to_builds["olm_builds_not_found"]:
+        if any(_get_base_shipment_kind(kind) == "metadata" for kind in shipments_by_kind) and kind_to_builds[
+            "olm_builds_not_found"
+        ]:
             bundle_nvrs, bundle_errors = await self.find_or_build_bundle_builds(kind_to_builds["olm_builds_not_found"])
             kind_to_builds["metadata"] += bundle_nvrs
             if bundle_errors:
@@ -670,7 +702,7 @@ class PrepareReleaseKonfluxPipeline:
 
         # prepare snapshot from the found builds
         for kind, shipment in shipments_by_kind.items():
-            shipment.shipment.snapshot = await self.get_snapshot(kind_to_builds[kind])
+            shipment.shipment.snapshot = await self.get_snapshot(_get_shipment_builds(kind, shipment, kind_to_builds))
 
         # Validate snapshot components against RPA before finalizing
         for kind, shipment in shipments_by_kind.items():
@@ -732,13 +764,13 @@ class PrepareReleaseKonfluxPipeline:
         image_advisory_id = None
         if shipment_data:
             shipments_by_kind, _, _ = shipment_data
-            image_shipment = (shipments_by_kind or {}).get("image")
+            primary_image = select_primary_image_shipment(shipments_by_kind or {})
             if (
-                image_shipment
-                and image_shipment.shipment.data
-                and isinstance(image_shipment.shipment.data.releaseNotes.live_id, int)
+                primary_image
+                and primary_image[1].shipment.data
+                and isinstance(primary_image[1].shipment.data.releaseNotes.live_id, int)
             ):
-                image_advisory_id = get_full_advisory_id_from_shipment(image_shipment)
+                image_advisory_id = get_full_advisory_id_from_shipment(primary_image[1])
 
         if not rpm_advisory_id and not image_advisory_id:
             return
@@ -826,6 +858,7 @@ class PrepareReleaseKonfluxPipeline:
             return
 
         modified: dict = {}
+        secondary_references_added = add_secondary_image_advisory_references(shipments_by_kind or {})
         for kind, shipment in (shipments_by_kind or {}).items():
             if kind == "fbc":
                 continue
@@ -845,6 +878,11 @@ class PrepareReleaseKonfluxPipeline:
                     changed = True
             if changed:
                 modified[kind] = shipment
+
+        if secondary_references_added:
+            primary_image = select_primary_image_shipment(shipments_by_kind or {})
+            if primary_image:
+                modified[primary_image[0]] = primary_image[1]
 
         if not modified:
             self.logger.info("No advisory ID placeholders found in shipment MR YAML, skipping")
@@ -1349,7 +1387,7 @@ class PrepareReleaseKonfluxPipeline:
 
         attach_cve_flaws_command = self._elliott_base_command + [
             'attach-cve-flaws',
-            f'--use-default-advisory={kind}',
+            f'--use-default-advisory={_get_base_shipment_kind(kind)}',
             '--reconcile',
             '--output=yaml',
         ]

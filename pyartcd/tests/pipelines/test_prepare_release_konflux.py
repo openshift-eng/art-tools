@@ -27,11 +27,65 @@ from elliottlib.shipment_model import (
     SnapshotSpec,
 )
 from pyartcd.git import GitRepository
-from pyartcd.pipelines.prepare_release_konflux import PrepareReleaseKonfluxPipeline
+from pyartcd.pipelines.prepare_release_konflux import PrepareReleaseKonfluxPipeline, _get_shipment_builds
 from pyartcd.runtime import Runtime
 from pyartcd.slack import SlackClient
 
 from pyartcd import constants
+
+
+def _make_image_shipment(
+    kind: str,
+    component_count: int,
+    live_id: int,
+    description: str,
+    group: str,
+    assembly: str,
+) -> ShipmentConfig:
+    """
+    Build an image shipment with a controlled snapshot size and release notes.
+
+    Args:
+        kind: Kind used to identify the image shipment.
+        component_count: Number of components in the snapshot.
+        live_id: Errata live ID in the release notes.
+        description: Image advisory description.
+        group: Build-data group for the shipment.
+        assembly: Release assembly for the shipment.
+    Returns:
+        A validated image shipment configuration.
+    """
+    application = f"app-{kind}"
+    components = [
+        SnapshotComponent(
+            name=f"image-{index}",
+            containerImage=f"quay.io/example/image-{index}:latest",
+            source=ComponentSource(
+                git=GitSource(url="https://github.com/example/image.git", revision="revision")
+            ),
+        )
+        for index in range(component_count)
+    ]
+    return ShipmentConfig(
+        shipment=Shipment(
+            metadata=Metadata(product="ocp", group=group, assembly=assembly, application=application),
+            environments=Environments(
+                stage=ShipmentEnv(releasePlan=f"rp-{kind}-stage"),
+                prod=ShipmentEnv(releasePlan=f"rp-{kind}-prod"),
+            ),
+            snapshot=Snapshot(
+                nvrs=[f"{kind}-nvr"],
+                spec=SnapshotSpec(application=application, components=components),
+            ),
+            data=Data(
+                releaseNotes=ReleaseNotes(
+                    type="RHBA",
+                    live_id=live_id,
+                    description=description,
+                )
+            ),
+        )
+    )
 
 
 class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
@@ -55,6 +109,21 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
         self.assembly = "test-assembly"
         self.gitlab_token = "gl_token"
         self.job_url = "http://jenkins/job/test-job/1"
+
+    def test_get_shipment_builds_preserves_rhel_qualified_snapshot_membership(self):
+        """Qualified shipments keep their variant-specific builds during re-preparation."""
+        shipment = _make_image_shipment(
+            "image-el9",
+            component_count=1,
+            live_id=100,
+            description="Image advisory.",
+            group=self.group,
+            assembly=self.assembly,
+        )
+
+        builds = _get_shipment_builds("image-el9", shipment, {"image": ["new-image-nvr"]})
+
+        self.assertEqual(builds, ["image-el9-nvr"])
 
     def test_init(self):
         pipeline = PrepareReleaseKonfluxPipeline(
@@ -1137,6 +1206,52 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
             description=f"See https://access.redhat.com/errata/{expected_image_advisory}"
         )
         rpm_advisory.commit.assert_called_once()
+
+    async def test_resolve_advisory_placeholders_updates_principal_image_with_secondary_reference(self):
+        """The highest RHEL image shipment receives secondary advisory references."""
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+        )
+        pipeline.logger = Mock()
+        pipeline.update_shipment_mr = AsyncMock()
+
+        shipments = {
+            "image-el9": _make_image_shipment(
+                "image-el9",
+                component_count=2,
+                live_id=100,
+                description="Secondary image advisory.",
+                group=self.group,
+                assembly=self.assembly,
+            ),
+            "image-el10": _make_image_shipment(
+                "image-el10",
+                component_count=2,
+                live_id=101,
+                description="See {IMAGE_ADVISORY}",
+                group=self.group,
+                assembly=self.assembly,
+            ),
+        }
+
+        await pipeline._resolve_shipment_mr_placeholders(
+            shipments,
+            "prod",
+            "https://gitlab.example.com/x/-/merge_requests/1",
+            {"IMAGE_ADVISORY": "RHBA-2026:0101"},
+        )
+
+        description = shipments["image-el10"].shipment.data.releaseNotes.description
+        self.assertIn("RHBA-2026:0101", description)
+        self.assertIn("https://access.redhat.com/errata/RHBA-2026:0100", description)
+        pipeline.update_shipment_mr.assert_awaited_once_with(
+            {"image-el10": shipments["image-el10"]},
+            "prod",
+            "https://gitlab.example.com/x/-/merge_requests/1",
+        )
 
     @patch("elliottlib.shipment_utils.Erratum")
     @patch("pyartcd.pipelines.prepare_release_konflux.get_errata_live_id")

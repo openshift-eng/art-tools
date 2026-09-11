@@ -48,6 +48,7 @@ from elliottlib.shipment_utils import (
     get_shipment_config_from_mr,
     get_shipment_configs_from_mr,
     patch_et_advisory_text,
+    select_primary_image_shipment,
     strip_advisory_cross_reference,
     strip_et_advisory_rpm_reference,
 )
@@ -2794,7 +2795,8 @@ class PromotePipeline:
         format_dict = {}
 
         # Add SHA digests for image shipments
-        if shipment_kind == "image":
+        primary_image = select_primary_image_shipment(shipments_by_kind)
+        if primary_image and shipment_kind == primary_image[0]:
             for arch, sha in payload_shas.items():
                 if arch == "multi":
                     continue  # Skip multi-arch as it's not a specific architecture
@@ -2855,7 +2857,7 @@ class PromotePipeline:
         self._logger.info("Found template placeholders in %s shipment: %s", shipment_kind, placeholders_found)
 
         # Validate template placeholders in both description and solution fields (for image shipments)
-        if shipment_kind == "image":
+        if primary_image and shipment_kind == primary_image[0]:
             # Check solution field for SHA digest placeholders
             if hasattr(shipment_config.shipment.data.releaseNotes, 'solution'):
                 solution_text = shipment_config.shipment.data.releaseNotes.solution

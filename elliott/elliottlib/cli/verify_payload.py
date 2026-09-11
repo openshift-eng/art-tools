@@ -11,7 +11,7 @@ from elliottlib import Runtime
 from elliottlib.cli.common import cli, click_coroutine
 from elliottlib.constants import errata_url
 from elliottlib.errata import get_advisory_nvrs, get_brew_build, get_raw_erratum
-from elliottlib.shipment_utils import get_builds_from_mr
+from elliottlib.shipment_utils import get_shipment_config_from_mr
 from elliottlib.util import get_nvrs_from_release, parse_nvr
 
 
@@ -165,8 +165,13 @@ class VerifyPayloadPipeline:
         if not mr_url:
             raise click.UsageError("Shipment block does not contain a 'url' field for the merge request")
 
-        builds_by_kind = get_builds_from_mr(mr_url)
-        return {parse_nvr(nvr)['name']: nvr for nvr in builds_by_kind['image']}
+        image_shipment = get_shipment_config_from_mr(mr_url, "image")
+        if image_shipment is None or image_shipment.shipment.snapshot is None:
+            raise click.UsageError("Could not find an image shipment config in the merge request")
+        return {
+            parse_nvr(nvr)["name"]: nvr
+            for nvr in image_shipment.shipment.snapshot.nvrs
+        }
 
     async def check_konflux_payload(self):
         self.all_advisory_nvrs = await self.get_shipment_nvrs()
