@@ -2169,6 +2169,7 @@ class GenPayloadCli:
                 "--reference-mode=source",
                 "--keep-manifest-list",
                 f"--from-image-stream-file={str(multi_release_is_path)}",
+                "--allow-missing-images",
                 f"--to-image-base={to_image_base}",
                 f"--to-image={to_image}",
                 "--metadata",

@@ -543,7 +543,8 @@ class BuildSyncPipeline:
             # Build new Openshift release image
             cmd = (
                 f'oc adm release new --to-image={image} --name {name} '
-                f'--reference-mode=source -n {namespace} --from-image-stream {meta["name"]}'
+                f'--reference-mode=source --allow-missing-images -n {namespace} '
+                f'--from-image-stream {meta["name"]}'
             )
             if self._registry_config:
                 cmd += f' --registry-config={self._registry_config}'

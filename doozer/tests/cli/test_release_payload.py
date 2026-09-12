@@ -138,6 +138,7 @@ class TestGenerateManifests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("ocp", cmd)
         self.assertIn("--from-image-stream=4.21-art-latest", cmd)
         self.assertIn("--reference-mode=source", cmd)
+        self.assertIn("--allow-missing-images", cmd)
 
     @mock.patch("doozerlib.cli.release_payload.exectools.cmd_assert_async")
     async def test_generate_manifests_uses_from_release_override(self, mock_cmd_assert_async):
@@ -154,6 +155,7 @@ class TestGenerateManifests(unittest.IsolatedAsyncioTestCase):
         cmd = mock_cmd_assert_async.call_args.args[0]
         self.assertIn("--from-release=registry.example.com/ocp/release:4.21.0", cmd)
         self.assertNotIn("--from-image-stream=4.21-konflux-art-latest", cmd)
+        self.assertNotIn("--allow-missing-images", cmd)
 
     @mock.patch("doozerlib.cli.release_payload.exectools.cmd_assert_async")
     async def test_generate_manifests_missing_image_references_raises(self, mock_cmd_assert_async):
