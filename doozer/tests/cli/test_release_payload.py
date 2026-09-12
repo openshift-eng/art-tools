@@ -90,7 +90,15 @@ class TestResolveImagestream(unittest.TestCase):
         self.runtime.assembly_type = AssemblyTypes.STANDARD
         namespace, name = self.cli._resolve_imagestream()
         self.assertEqual(namespace, "ocp")
-        self.assertEqual(name, "4.21-art-assembly-4.21.1")
+        self.assertEqual(name, "4.21-art-assembly-4.21.1-test")
+
+    def test_resolve_imagestream_for_named_assembly_and_non_default_arch(self):
+        self.runtime.assembly = "4.21.1"
+        self.runtime.assembly_type = AssemblyTypes.STANDARD
+        self.cli.arch = "s390x"
+        namespace, name = self.cli._resolve_imagestream()
+        self.assertEqual(namespace, "ocp-s390x")
+        self.assertEqual(name, "4.21-art-assembly-4.21.1-test-s390x")
 
     def test_resolve_imagestream_for_non_default_arch(self):
         self.cli.arch = "s390x"
