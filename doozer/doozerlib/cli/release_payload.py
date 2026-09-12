@@ -11,6 +11,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import click
 import yaml
 from artcommonlib import exectools
+from artcommonlib.arch_util import go_arch_for_brew_arch
 from artcommonlib.constants import KONFLUX_DEFAULT_NAMESPACE
 from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.util import oc_image_info_async, sync_to_quay
@@ -59,10 +60,11 @@ class ReleasePayloadRebaseAndBuildCli:
 
     Unlike a normal doozer image, the release payload has no upstream source repository:
     its "rebase" step runs `oc adm release new --to-dir` to snapshot the manifests already
-    populated in the group's imagestream (by build-sync) and writes a minimal Dockerfile
-    that layers those manifests onto the cluster-version-operator image. Because Konflux
-    builds a single multi-arch image (a manifest list) from one Dockerfile, this command
-    is invoked once per group/assembly rather than once per architecture.
+    populated in the group's architecture-specific imagestreams (by build-sync) and writes a
+    minimal Dockerfile that selects the matching manifests for each target architecture before
+    layering them onto the cluster-version-operator image. Because Konflux builds a single
+    multi-arch image (a manifest list) from one Dockerfile, this command is invoked once per
+    group/assembly rather than once per architecture.
     """
 
     def __init__(
@@ -128,7 +130,7 @@ class ReleasePayloadRebaseAndBuildCli:
         """
         return f"release-payload-{group}".replace(".", "-").replace("_", "-")
 
-    def _resolve_imagestream(self) -> Tuple[str, str]:
+    def _resolve_imagestream(self, arch: Optional[str] = None) -> Tuple[str, str]:
         """Derive the (namespace, name) of the build-sync imagestream to source manifests from.
 
         This mirrors the naming used by build-sync, e.g. for `--group openshift-5.0
@@ -143,13 +145,17 @@ class ReleasePayloadRebaseAndBuildCli:
             # TODO: Remove the temporary test imagestream override after payload filler testing is complete.
             base_name += '-test'
         base_namespace = default_imagestream_namespace_base_name()
-        namespace, name = payload_imagestream_namespace_and_name(base_namespace, base_name, self.arch, private=False)
+        namespace, name = payload_imagestream_namespace_and_name(
+            base_namespace, base_name, arch or self.arch, private=False
+        )
         return namespace, name
 
-    async def _generate_manifests(self, manifests_dir: Path) -> str:
+    async def _generate_manifests(self, manifests_dir: Path, arch: Optional[str] = None) -> str:
         """Run `oc adm release new --to-dir` and return the cluster-version-operator pullspec.
 
         :param manifests_dir: Directory to write the release manifests into.
+        :param arch: Brew architecture whose build-sync ImageStream should be used. When omitted,
+            the deprecated `--arch` value is used for compatibility.
         :return: The pullspec for the cluster-version-operator image referenced by the manifests.
         """
         await exectools.to_thread(manifests_dir.mkdir, parents=True, exist_ok=True)
@@ -166,7 +172,7 @@ class ReleasePayloadRebaseAndBuildCli:
         if self.from_release:
             cmd.append(f"--from-release={self.from_release}")
         else:
-            namespace, imagestream_name = self._resolve_imagestream()
+            namespace, imagestream_name = self._resolve_imagestream(arch)
             cmd.extend(["-n", namespace, f"--from-image-stream={imagestream_name}", "--reference-mode=source"])
         if self.registry_config:
             cmd.append(f"--registry-config={self.registry_config}")
@@ -197,6 +203,26 @@ class ReleasePayloadRebaseAndBuildCli:
             )
         self._logger.info("Resolved cluster-version-operator pullspec: %s", cvo_pullspec)
         return cvo_pullspec
+
+    def _get_build_arches(self) -> List[str]:
+        """Return the configured architectures for the single multi-platform build."""
+        arches = list(self.runtime.get_global_konflux_arches())
+        if not arches:
+            raise DoozerFatalError(f"No architectures found in group config for {self.runtime.group}")
+        if self.arch not in arches:
+            self._logger.warning(
+                "Deprecated --arch=%s is not configured for %s; using %s as the CVO reference architecture. "
+                "All configured architectures will still be built.",
+                self.arch,
+                self.runtime.group,
+                arches[0],
+            )
+        else:
+            self._logger.warning(
+                "--arch is deprecated and no longer selects the release payload source; "
+                "all configured architectures will be built.",
+            )
+        return arches
 
     async def _resolve_art_images_pullspec(self, imagestream_pullspec: str) -> str:
         """Resolve a quay art-dev pullspec from the imagestream to the original Konflux build output.
@@ -251,12 +277,28 @@ class ReleasePayloadRebaseAndBuildCli:
         if manifests_dir.exists():
             await exectools.to_thread(shutil.rmtree, manifests_dir)
 
-        cvo_pullspec = await self._generate_manifests(manifests_dir)
+        arches = self._get_build_arches()
+        cvo_pullspecs = {}
+        for arch in arches:
+            docker_arch = go_arch_for_brew_arch(arch)
+            cvo_pullspecs[arch] = await self._generate_manifests(manifests_dir / docker_arch, arch)
 
-        # The imagestream pullspec is a single-arch quay art-dev image. Resolve it to the
-        # original Konflux build output (image_pullspec in art-images) so the Dockerfile FROM
-        # is a multi-arch manifest list natively accessible from within the Konflux build environment.
-        from_pullspec = await self._resolve_art_images_pullspec(cvo_pullspec)
+        reference_arch = self.arch if self.arch in arches else arches[0]
+        cvo_pullspec = cvo_pullspecs[reference_arch]
+
+        # Each architecture-specific ImageStream has a single-arch CVO pullspec. Resolve every
+        # one to the original Konflux build output so the Dockerfile FROM is a consistent
+        # multi-arch manifest list natively accessible from within the Konflux build environment.
+        from_pullspecs = {
+            arch: await self._resolve_art_images_pullspec(arch_cvo_pullspec)
+            for arch, arch_cvo_pullspec in cvo_pullspecs.items()
+        }
+        if len(set(from_pullspecs.values())) != 1:
+            details = ", ".join(f"{arch}={pullspec}" for arch, pullspec in from_pullspecs.items())
+            raise DoozerFatalError(
+                f"Architecture-specific CVO builds resolved to different art-images pullspecs: {details}"
+            )
+        from_pullspec = from_pullspecs[reference_arch]
 
         if "@" not in from_pullspec:
             raise DoozerFatalError(f"Expected digest-based art-images pullspec but got: {from_pullspec}")
@@ -267,9 +309,10 @@ class ReleasePayloadRebaseAndBuildCli:
         # this is how node-image-pull.sh discovers component pullspecs during bootstrap.
         dockerfile_content = (
             f"FROM {from_pullspec}\n"
+            "ARG TARGETARCH\n"
             f'LABEL io.openshift.release="{self._get_release_label()}" \\\n'
             f'      io.openshift.release.base-image-digest="{cvo_image_digest}"\n'
-            f"COPY {RELEASE_MANIFESTS_SUBDIR}/ /{RELEASE_MANIFESTS_SUBDIR}/\n"
+            f"COPY {RELEASE_MANIFESTS_SUBDIR}/${{TARGETARCH}}/ /{RELEASE_MANIFESTS_SUBDIR}/\n"
         )
         dockerfile_path = repo_dir / "Dockerfile"
         await exectools.to_thread(dockerfile_path.write_text, dockerfile_content)
@@ -735,8 +778,7 @@ def _validate_optional_version(ctx, param, version):
     "--arch",
     metavar='ARCH',
     default='x86_64',
-    help="Brew arch of the build-sync imagestream to source release manifests from."
-    " Does not limit which arches Konflux builds; Konflux always builds a multi-arch manifest list.",
+    help="Deprecated reference Brew arch. All configured architectures are built from their own build-sync ImageStreams.",
 )
 @click.option(
     "--from-release",
