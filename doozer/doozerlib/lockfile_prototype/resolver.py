@@ -1,10 +1,10 @@
 """
-RPM resolution via rpm-lockfile-prototype subprocess.
+RPM resolution via rpm-lockfile-prototype container.
 
-Invokes the rpm-lockfile-prototype tool through system Python so
-that python3-dnf (a system package built for the system Python) is
-available. The venv Python may be a different minor version where
-dnf cannot be imported.
+Invokes the rpm-lockfile-prototype tool inside a podman container
+so that python3-dnf and all system dependencies are self-contained.
+The container image is pulled from the art-cluster internal registry
+on first use if not already present locally.
 """
 
 import logging
@@ -22,45 +22,125 @@ from doozerlib.lockfile_prototype.constants import (
     DEFAULT_RPM_INFILE_NAME,
     DEFAULT_RPM_LOCKFILE_NAME,
     JENKINS_CACHE_DIR,
-    RPM_LOCKFILE_ENTRY_POINT,
+    RPM_LOCKFILE_IMAGE,
     RPMDB_CACHE_ERROR_PATTERNS,
     RPMDB_CACHE_SUBDIR,
-    SYSTEM_PYTHON,
     VALID_PKG_NAME,
 )
 from doozerlib.lockfile_prototype.models import LockfileData, RpmsInConfig
-from doozerlib.lockfile_prototype.utils import build_env
 
 
 class RpmResolver:
     """
-    Invokes rpm-lockfile-prototype via system Python subprocess.
+    Invokes rpm-lockfile-prototype via podman container.
 
     Maintains a persistent DNF repodata cache directory across
     resolve() calls so that repeated runs against the same repos
     (common during multi-image rebases) skip redundant downloads.
     """
 
-    def __init__(self, working_dir: Path, logger: logging.Logger | None = None, cache_dir: str | None = None):
+    def __init__(
+        self,
+        working_dir: Path | None = None,
+        logger: logging.Logger | None = None,
+        cache_dir: str | None = None,
+        image: str | None = None,
+    ):
         self.logger = logger or logutil.get_logger(__name__)
-        self._working_dir = str(working_dir)
+        self._working_dir = str(working_dir) if working_dir else None
         self._cache_dir_owner = (
             None if cache_dir else TemporaryDirectory(prefix="rpm-lockfile-cache-", dir=self._working_dir)
         )
         self._cache_path = cache_dir or self._cache_dir_owner.name
+        self._image = image or RPM_LOCKFILE_IMAGE
 
-        # In Jenkins, redirect the rpm-lockfile-prototype RPMDB cache to a
-        # persistent volume via XDG_CACHE_HOME so it survives across job runs
-        # and stays off the small root volume (~/.cache).
-        # Outside Jenkins, honour an existing XDG_CACHE_HOME if set.
+        # In Jenkins, preserve the pre-containerization RPMDB path
+        # (JENKINS_CACHE_DIR/rpmdbs) by mounting JENKINS_CACHE_DIR at
+        # XDG_CACHE_HOME/rpm-lockfile-prototype inside the container.
+        # Outside Jenkins, honour XDG_CACHE_HOME or ~/.cache.
         if os.environ.get("JENKINS_HOME"):
-            self._xdg_cache_home: Path | None = JENKINS_CACHE_DIR
+            self._rpmdb_cache_path = JENKINS_CACHE_DIR / "rpmdbs"
         else:
-            self._xdg_cache_home = None
-        xdg_env = os.environ.get("XDG_CACHE_HOME")
-        cache_root = self._xdg_cache_home or (Path(xdg_env) if xdg_env else Path.home() / ".cache")
-        self._rpmdb_cache_path = cache_root / RPMDB_CACHE_SUBDIR
+            xdg_env = os.environ.get("XDG_CACHE_HOME")
+            if xdg_env and Path(xdg_env).is_absolute():
+                xdg_cache_home = Path(xdg_env)
+            else:
+                if xdg_env:
+                    self.logger.warning("XDG_CACHE_HOME is not absolute (%r), falling back to ~/.cache", xdg_env)
+                xdg_cache_home = Path.home() / ".cache"
+            self._rpmdb_cache_path = xdg_cache_home / RPMDB_CACHE_SUBDIR
         self.logger.info("RPMDB cache path: %s", self._rpmdb_cache_path)
+
+    def _build_podman_cmd(
+        self,
+        tmpdir: str,
+        image_pullspec: str | None,
+        containerfile_path: str | None = None,
+    ) -> list[str]:
+        """
+        Build the podman run command with volume mounts and env vars.
+
+        Arg(s):
+            tmpdir (str): Host temp directory with rpms.in.yaml.
+            image_pullspec (str | None): Base image for rpmdb context.
+            containerfile_path (str | None): Host path to the Containerfile
+                to mount read-only at /work/Containerfile inside the container.
+        Return Value(s):
+            list[str]: Complete podman command.
+        """
+        cmd = ["podman", "run", "--rm"]
+
+        # Work directory: rpms.in.yaml input and rpms.lock.yaml output.
+        # :Z (exclusive SELinux label) is correct — each resolve() call gets its
+        # own unique TemporaryDirectory, so no other container shares this path.
+        cmd.extend(["-v", f"{tmpdir}:/work:Z"])
+
+        # DNF repodata cache — :z (shared) so parallel resolve() calls can read
+        # the same repodata without re-downloading.
+        cmd.extend(["-v", f"{self._cache_path}:/cache:z"])
+        cmd.extend(["-e", "RPM_LOCKFILE_PROTOTYPE_DNF_CACHE=/cache"])
+
+        # RPMDB cache via XDG_CACHE_HOME. The tool stores rpmdbs at
+        # $XDG_CACHE_HOME/rpm-lockfile-prototype/rpmdbs. In Jenkins, mount
+        # JENKINS_CACHE_DIR at XDG_CACHE_HOME/rpm-lockfile-prototype so rpmdbs
+        # land at JENKINS_CACHE_DIR/rpmdbs — same path as before containerization,
+        # no cold cache on upgrade. Outside Jenkins, mount the XDG_CACHE_HOME parent.
+        self._rpmdb_cache_path.mkdir(parents=True, exist_ok=True)
+        container_xdg = "/rpmdb-cache"
+        if os.environ.get("JENKINS_HOME"):
+            cmd.extend(["-v", f"{JENKINS_CACHE_DIR}:{container_xdg}/rpm-lockfile-prototype:z"])
+        else:
+            cmd.extend(["-v", f"{self._rpmdb_cache_path.parent.parent}:{container_xdg}:z"])
+        cmd.extend(["-e", f"XDG_CACHE_HOME={container_xdg}"])
+
+        # Mount host entitlement certs for accessing protected repos.
+        # Use :ro without :z — SELinux won't allow relabeling system dirs.
+        for host_path in ("/etc/pki/entitlement", "/etc/rhsm/ca", "/etc/pki/rpm-gpg"):
+            if Path(host_path).is_dir():
+                cmd.extend(["-v", f"{host_path}:{host_path}:ro"])
+
+        # Registry auth
+        auth_file = os.environ.get("QUAY_AUTH_FILE") or os.environ.get("REGISTRY_AUTH_FILE")
+        if auth_file:
+            cmd.extend(["-v", f"{auth_file}:/auth/auth.json:ro,z"])
+            cmd.extend(["-e", "REGISTRY_AUTH_FILE=/auth/auth.json"])
+
+        # Containerfile — mounted read-only so packagesFromContainerfile can read it.
+        # The config references it as "Containerfile" (relative to /work/rpms.in.yaml).
+        if containerfile_path:
+            cmd.extend(["-v", f"{containerfile_path}:/work/Containerfile:ro,Z"])
+
+        # Image name
+        cmd.append(self._image)
+
+        # Tool arguments
+        if image_pullspec:
+            cmd.extend(["--image", image_pullspec])
+        else:
+            cmd.append("--bare")
+        cmd.extend(["--outfile", "/work/" + DEFAULT_RPM_LOCKFILE_NAME, "/work/" + DEFAULT_RPM_INFILE_NAME])
+
+        return cmd
 
     async def resolve(
         self,
@@ -70,8 +150,8 @@ class RpmResolver:
         stage_num: int | None = None,
     ) -> LockfileData:
         """
-        Resolve RPM packages by running rpm-lockfile-prototype via
-        system Python as a subprocess.
+        Resolve RPM packages by running rpm-lockfile-prototype in a
+        podman container.
 
         When containerfile_path is set, the tool extracts packages from
         the Dockerfile's RUN commands via packagesFromContainerfile.
@@ -93,7 +173,10 @@ class RpmResolver:
             LockfileData: Resolved lockfile.
         """
         if containerfile_path:
-            pfc_spec: dict = {"file": containerfile_path}
+            # Use the container-side path — the Containerfile is mounted at
+            # /work/Containerfile by _build_podman_cmd. "Containerfile" is
+            # relative to the input file at /work/rpms.in.yaml.
+            pfc_spec: dict = {"file": "Containerfile"}
             if stage_num is not None:
                 pfc_spec["stageNum"] = stage_num
             config.packagesFromContainerfile = pfc_spec
@@ -104,25 +187,14 @@ class RpmResolver:
 
             in_file.write_text(yaml.safe_dump(config.model_dump(exclude_none=True), sort_keys=False))
 
-            cmd = [SYSTEM_PYTHON, "-c", RPM_LOCKFILE_ENTRY_POINT]
-            if image_pullspec:
-                cmd.extend(["--image", image_pullspec])
-            else:
-                cmd.append("--bare")
-            cmd.extend(["--outfile", str(out_file), str(in_file)])
-
-            env = build_env()
-            env["RPM_LOCKFILE_PROTOTYPE_DNF_CACHE"] = self._cache_path
-            if self._xdg_cache_home:
-                env["XDG_CACHE_HOME"] = str(self._xdg_cache_home)
-            env["TMPDIR"] = self._working_dir
-            rc, _, stderr = await cmd_gather_async(cmd, check=False, env=env)
+            cmd = self._build_podman_cmd(tmpdir, image_pullspec, containerfile_path)
+            rc, _, stderr = await cmd_gather_async(cmd, check=False)
 
             if rc != 0:
                 if image_pullspec and self._is_rpmdb_corrupt(stderr):
                     self._clear_rpmdb_cache(image_pullspec)
                     self.logger.info("Retrying rpm-lockfile-prototype after RPMDB cache error")
-                    rc, _, stderr = await cmd_gather_async(cmd, check=False, env=env)
+                    rc, _, stderr = await cmd_gather_async(cmd, check=False)
                     if rc == 0:
                         return LockfileData.model_validate(yaml.safe_load(out_file.read_text()))
                     error_summary = stderr.strip().rsplit("\n", 1)[-1]
