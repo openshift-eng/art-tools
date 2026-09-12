@@ -5,13 +5,14 @@ import itertools
 import json
 import logging
 import os
+import shlex
 import shutil
 import tempfile
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from random import uniform
-from typing import BinaryIO, Dict, Iterable, List, Optional, Set, Tuple, cast
+from typing import Awaitable, BinaryIO, Callable, Dict, Iterable, List, Optional, Protocol, Sequence, Set, Tuple, cast
 
 import aiofiles
 import aiohttp
@@ -220,6 +221,320 @@ class AsyncSignatory:
             sig_file=sig_file,
         )
         return signature_meta
+
+
+CommandRunner = Callable[..., Awaitable[Tuple[Optional[int], str, str]]]
+
+
+class Signatory(Protocol):
+    """Common interface implemented by UMB and direct signing transports."""
+
+    async def sign_json_digest(
+        self, product: str, release_name: str, pullspec: str, digest: str, sig_file: BinaryIO
+    ) -> dict[str, str]: ...
+
+    async def sign_message_digest(
+        self, product: str, release_name: str, artifact: BinaryIO, sig_file: BinaryIO
+    ) -> dict[str, str]: ...
+
+
+def get_direct_signing_credential_env_names(signing_env: str) -> tuple[str, str]:
+    """
+    Returns the keytab and principal environment variables for a signing environment.
+
+    Args:
+        signing_env: Signing environment. Supported values are ``stage`` and ``prod``.
+    Return Value(s):
+        A tuple containing the keytab variable name and principal variable name.
+    """
+    normalized_env = signing_env.lower()
+    if normalized_env not in ("stage", "prod"):
+        raise ValueError(f"Unsupported direct signing environment: {signing_env}")
+
+    prefix = f"DIRECT_SIGNING_{normalized_env.upper()}"
+    return f"{prefix}_KEYTAB", f"{prefix}_PRINCIPAL"
+
+
+class DirectSignatory:
+    """
+    DirectSignatory signs artifacts by invoking the signing team's direct client.
+
+    The client receives a temporary input artifact and output signature path. The
+    command construction is kept in this class so the signing client interface can
+    change without changing the promote and RHCOS sync pipelines.
+    """
+
+    DEFAULT_CLIENT_COMMAND = ("rh-signing-client",)
+    DEFAULT_TIMEOUT = 10 * 60
+
+    def __init__(
+        self,
+        client_command: Sequence[str],
+        sig_keyname: str = "test",
+        requestor: str = "timer",
+        signing_env: str | None = None,
+        keytab_file: str | None = None,
+        principal: str | None = None,
+        ccache_path: str | None = None,
+        timeout: int = DEFAULT_TIMEOUT,
+        command_runner: CommandRunner = exectools.cmd_gather_async,
+    ) -> None:
+        """
+        Initializes a direct signing client.
+
+        Args:
+            client_command: Executable and fixed arguments for the direct signing client.
+            sig_keyname: Signing key name passed to the direct client.
+            requestor: Requester recorded by the signing server as ``--onbehalfof``.
+            signing_env: Signing environment, such as ``stage`` or ``prod``.
+            keytab_file: Keytab used to initialize the isolated signing credential cache.
+            principal: Kerberos principal used with ``keytab_file``.
+            ccache_path: Optional credential-cache path. A temporary path is created when omitted.
+            timeout: Maximum duration in seconds for each subprocess invocation.
+            command_runner: Async subprocess runner, injectable for unit tests.
+        """
+        if not client_command:
+            raise ValueError("The direct signing client command cannot be empty")
+        if timeout <= 0:
+            raise ValueError("The direct signing timeout must be positive")
+
+        self.client_command = tuple(client_command)
+        self.sig_keyname = sig_keyname
+        self.requestor = requestor
+        self.signing_env = signing_env
+        self.keytab_file = keytab_file
+        self.principal = principal
+        self.ccache_path = ccache_path
+        self.timeout = timeout
+        self._command_runner = command_runner
+        self._environment = os.environ.copy()
+        self._ccache_name: str | None = None
+        self._owns_ccache = ccache_path is None
+
+    @classmethod
+    def from_environment(cls, signing_env: str, sig_keyname: str) -> "DirectSignatory":
+        """
+        Creates a direct signatory from Jenkins-provided environment variables.
+
+        The direct signing credentials are deliberately separate from the UMB
+        ``SIGNING_CERT`` and ``SIGNING_KEY`` variables. The signing server team can
+        confirm the final client command and credential names without changing the
+        pipeline call sites. The keytab is managed by Jenkins and is not removed by
+        this signatory.
+        """
+        keytab_env_name, principal_env_name = get_direct_signing_credential_env_names(signing_env)
+        keytab_file = os.environ.get(keytab_env_name)
+        principal = os.environ.get(principal_env_name)
+        missing = [
+            name for name, value in ((keytab_env_name, keytab_file), (principal_env_name, principal)) if not value
+        ]
+        if missing:
+            raise ValueError(f"Direct signing requires: {', '.join(missing)}")
+
+        command = os.environ.get("DIRECT_SIGNING_CLIENT_COMMAND")
+        client_command = shlex.split(command) if command else list(cls.DEFAULT_CLIENT_COMMAND)
+        requestor = os.environ.get("DIRECT_SIGNING_REQUESTOR", "timer")
+        timeout = int(os.environ.get("DIRECT_SIGNING_TIMEOUT", str(cls.DEFAULT_TIMEOUT)))
+        return cls(
+            client_command=client_command,
+            sig_keyname=sig_keyname,
+            requestor=requestor,
+            signing_env=signing_env,
+            keytab_file=keytab_file,
+            principal=principal,
+            timeout=timeout,
+        )
+
+    async def __aenter__(self) -> "DirectSignatory":
+        """
+        Starts the isolated direct-signing session.
+        """
+        await self.start()
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        """
+        Closes the isolated direct-signing session.
+        """
+        await self.close()
+
+    async def start(self) -> None:
+        """
+        Initializes a dedicated Kerberos credential cache when credentials are configured.
+        """
+        if bool(self.keytab_file) != bool(self.principal):
+            raise ValueError("Direct signing keytab and principal must be provided together")
+        if not self.keytab_file:
+            return
+
+        if self.ccache_path is None:
+            self.ccache_path = self._new_ccache_path()
+        self._ccache_name = f"FILE:{self.ccache_path}"
+        self._environment["KRB5CCNAME"] = self._ccache_name
+        command = [
+            "kinit",
+            "-k",
+            "-t",
+            self.keytab_file,
+            "-c",
+            self._ccache_name,
+            self.principal,
+        ]
+        rc, _, stderr = await self._command_runner(
+            command,
+            check=False,
+            env=self._environment,
+            timeout=self.timeout,
+        )
+        if rc != 0:
+            await self.close()
+            raise SignatoryServerError(f"Direct signing Kerberos initialization failed: {stderr.strip()}")
+
+    async def close(self) -> None:
+        """
+        Destroys the dedicated Kerberos cache and removes owned temporary files.
+        """
+        if not self._ccache_name:
+            return
+
+        try:
+            rc, _, stderr = await self._command_runner(
+                ["kdestroy", "-c", self._ccache_name],
+                check=False,
+                env=self._environment,
+                timeout=self.timeout,
+            )
+            if rc != 0:
+                _LOGGER.warning("Direct signing Kerberos cleanup failed: %s", stderr.strip())
+        finally:
+            if self._owns_ccache and self.ccache_path:
+                try:
+                    os.unlink(self.ccache_path)
+                except FileNotFoundError:
+                    pass
+            self._ccache_name = None
+
+    async def sign_json_digest(
+        self, product: str, release_name: str, pullspec: str, digest: str, sig_file: BinaryIO
+    ) -> dict[str, str]:
+        """
+        Signs a JSON digest claim with the direct signing client.
+        """
+        json_claim = {
+            "critical": {
+                "image": {"docker-manifest-digest": digest},
+                "type": "atomic container signature",
+                "identity": {"docker-reference": pullspec},
+            },
+            "optional": {"creator": "Red Hat OpenShift Signing Authority 0.0.1"},
+        }
+        artifact = io.BytesIO(json.dumps(json_claim).encode())
+        return await self._sign_artifact(
+            typ="json-digest",
+            product=product,
+            release_name=release_name,
+            name=digest.replace(":", "="),
+            artifact=artifact,
+            sig_file=sig_file,
+        )
+
+    async def sign_message_digest(
+        self, product: str, release_name: str, artifact: BinaryIO, sig_file: BinaryIO
+    ) -> dict[str, str]:
+        """
+        Signs a message digest with the direct signing client.
+        """
+        return await self._sign_artifact(
+            typ="message-digest",
+            product=product,
+            release_name=release_name,
+            name="sha256sum.txt.gpg",
+            artifact=artifact,
+            sig_file=sig_file,
+        )
+
+    async def _sign_artifact(
+        self,
+        typ: str,
+        product: str,
+        release_name: str,
+        name: str,
+        artifact: BinaryIO,
+        sig_file: BinaryIO,
+    ) -> dict[str, str]:
+        """
+        Writes an artifact to a temporary directory and invokes the direct signing client.
+        """
+        with tempfile.TemporaryDirectory(prefix="art-direct-signing-") as directory:
+            input_path = os.path.join(directory, "artifact")
+            output_path = os.path.join(directory, "signature")
+            with open(input_path, "wb") as input_file:
+                shutil.copyfileobj(artifact, input_file)
+
+            command = [
+                *self.client_command,
+                "--key",
+                self.sig_keyname,
+                input_path,
+                "--gpgsign",
+                "--output",
+                output_path,
+                "--onbehalfof",
+                self.requestor,
+            ]
+
+            rc, _, stderr = await self._command_runner(
+                command,
+                check=False,
+                env=self._environment,
+                timeout=self.timeout,
+            )
+            if rc != 0:
+                raise SignatoryServerError(f"Direct signing failed: {stderr.strip()}")
+            if not os.path.isfile(output_path):
+                raise SignatoryServerError("Direct signing did not produce a signature file")
+
+            with open(output_path, "rb") as generated_signature:
+                signature = generated_signature.read()
+            if not signature:
+                raise SignatoryServerError("Direct signing produced an empty signature file")
+            sig_file.write(signature)
+
+        return {
+            "name": name,
+            "product": product,
+            "release_name": release_name,
+            "type": typ,
+        }
+
+    @staticmethod
+    def _new_ccache_path() -> str:
+        """
+        Returns a unique temporary path for an isolated Kerberos credential cache.
+        """
+        return os.path.join(tempfile.gettempdir(), f"krb5cc-art-signing-{uuid.uuid4()}")
+
+
+def create_signatory(
+    transport: str,
+    *,
+    signing_env: str,
+    sig_keyname: str,
+    cert_file: str | None = None,
+    key_file: str | None = None,
+) -> Signatory:
+    """
+    Creates the configured UMB or direct signatory for a pipeline signing session.
+    """
+    if transport == "direct":
+        return DirectSignatory.from_environment(signing_env=signing_env, sig_keyname=sig_keyname)
+    if transport == "umb":
+        if not cert_file or not key_file:
+            raise ValueError("UMB signing requires SIGNING_CERT and SIGNING_KEY")
+        from pyartcd import constants
+
+        return AsyncSignatory(constants.UMB_BROKERS[signing_env], cert_file, key_file, sig_keyname=sig_keyname)
+    raise ValueError(f"Unsupported signing transport: {transport}")
 
 
 @dataclass
