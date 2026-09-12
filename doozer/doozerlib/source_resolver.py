@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple, cast
 from artcommonlib import assertion, constants, exectools
 from artcommonlib import util as art_util
 from artcommonlib.git_helper import git_clone
-from artcommonlib.github_auth import get_github_client_for_org, get_github_git_auth_env
+from artcommonlib.github_auth import get_github_client_for_org, get_github_git_auth_env, get_github_git_pat_env
 from artcommonlib.lock import get_named_semaphore
 from artcommonlib.model import ListModel, Missing, Model
 from github import GithubException, UnknownObjectException
@@ -306,13 +306,22 @@ class SourceResolver:
         if use_source_fallback_branch not in ["yes", "always", "never"]:
             raise ValueError(f"Invalid value for use_source_fallback_branch: {use_source_fallback_branch}")
 
-        git_url = source_details.get("url_pull", source_details["url"])  # Use pull URL if available
+        pull_url = source_details.get("url_pull")
+        push_url = source_details["url"]
+        git_url = pull_url or push_url
+        # When url_pull points to a personal fork, the GitHub App won't have
+        # access.  Use GITHUB_TOKEN (PAT) for branch detection against url_pull
+        # and fall back to the push url (where the App is installed) if needed.
+        use_pat = bool(pull_url)
         branches = source_details["branch"]
 
         stage_branch = branches.get("stage", None) if stage else None
         if stage_branch:
             LOGGER.info('Normal branch overridden by --stage option, using "{}"'.format(stage_branch))
-            result = SourceResolver._get_remote_branch_ref(git_url, stage_branch)
+            result = SourceResolver._get_remote_branch_ref(git_url, stage_branch, use_pat=use_pat)
+            if not result and pull_url:
+                LOGGER.info("Branch check against url_pull %s failed, retrying with push url %s", pull_url, push_url)
+                result = SourceResolver._get_remote_branch_ref(push_url, stage_branch)
             if result:
                 return stage_branch, result
             raise IOError(
@@ -331,7 +340,10 @@ class SourceResolver:
         if SourceResolver.is_branch_commit_hash(branch):
             return branch, branch
 
-        result = SourceResolver._get_remote_branch_ref(git_url, branch)
+        result = SourceResolver._get_remote_branch_ref(git_url, branch, use_pat=use_pat)
+        if not result and pull_url:
+            LOGGER.info("Branch check against url_pull %s failed, retrying with push url %s", pull_url, push_url)
+            result = SourceResolver._get_remote_branch_ref(push_url, branch)
         if result:
             return branch, result
 
@@ -339,7 +351,10 @@ class SourceResolver:
             raise IOError('Requested target branch {} does not exist and no fallback provided'.format(branch))
 
         LOGGER.info('Target branch does not exist in {}, checking fallback branch {}'.format(git_url, fallback_branch))
-        result = SourceResolver._get_remote_branch_ref(git_url, fallback_branch)
+        result = SourceResolver._get_remote_branch_ref(git_url, fallback_branch, use_pat=use_pat)
+        if not result and pull_url:
+            LOGGER.info("Branch check against url_pull %s failed, retrying with push url %s", pull_url, push_url)
+            result = SourceResolver._get_remote_branch_ref(push_url, fallback_branch)
         if result:
             return fallback_branch, result
         raise IOError('Requested fallback branch {} does not exist'.format(branch))
@@ -363,15 +378,18 @@ class SourceResolver:
         return False
 
     @staticmethod
-    def _get_remote_branch_ref(git_url, branch):
+    def _get_remote_branch_ref(git_url, branch, use_pat=False):
         """
         Detect whether a single branch exists on a remote repo; returns git hash if found
         :param git_url: The URL to the git repo to check.
         :param branch: The name of the branch. If the name is not a branch and appears to be a commit
                 hash, the hash will be returned without modification.
+        :param use_pat: If True, use GITHUB_TOKEN (PAT) instead of GitHub App auth.
+                This is needed for url_pull repos (personal forks) where the
+                GitHub App is not installed.
         """
         git_url = art_util.ensure_github_https_url(git_url)
-        auth_env = get_github_git_auth_env(url=git_url)
+        auth_env = get_github_git_pat_env() if use_pat else get_github_git_auth_env(url=git_url)
         LOGGER.info('Checking if target branch {} exists in {}'.format(branch, git_url))
 
         try:
