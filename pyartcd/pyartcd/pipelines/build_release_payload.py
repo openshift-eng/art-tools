@@ -245,7 +245,7 @@ class BuildReleasePayloadPipeline:
     "--arch",
     metavar="ARCH",
     default="x86_64",
-    help="Brew arch of the build-sync imagestream to source release manifests from.",
+    help="Deprecated reference Brew arch. All configured architectures are built from their own build-sync ImageStreams.",
 )
 @click.option(
     "--sync",

@@ -188,6 +188,23 @@ class TestGenerateManifests(unittest.IsolatedAsyncioTestCase):
         cmd = mock_cmd_assert_async.call_args.args[0]
         self.assertIn("--registry-config=/path/to/auth.json", cmd)
 
+    @mock.patch("doozerlib.cli.release_payload.exectools.cmd_assert_async")
+    async def test_generate_manifests_uses_requested_architecture(self, mock_cmd_assert_async):
+        manifests_dir = self.manifests_dir / "arm64"
+
+        async def _write_manifests(cmd, **kwargs):
+            manifests_dir.joinpath("image-references").write_text(IMAGE_REFERENCES_YAML)
+            return 0
+
+        mock_cmd_assert_async.side_effect = _write_manifests
+
+        await self.cli._generate_manifests(manifests_dir, arch="aarch64")
+
+        cmd = mock_cmd_assert_async.call_args.args[0]
+        self.assertIn("-n", cmd)
+        self.assertIn("ocp-arm64", cmd)
+        self.assertIn("--from-image-stream=4.21-art-latest-arm64", cmd)
+
 
 class TestRebase(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
@@ -201,6 +218,7 @@ class TestRebase(unittest.IsolatedAsyncioTestCase):
         self.runtime.upcycle = False
         self.runtime.working_dir = self.tmpdir.name
         self.runtime.group_config = Model({"vars": {"MAJOR": 4, "MINOR": 21}})
+        self.runtime.get_global_konflux_arches = mock.Mock(return_value=["x86_64", "s390x"])
 
         self.cli = _make_cli(self.runtime)
 
@@ -222,7 +240,9 @@ class TestRebase(unittest.IsolatedAsyncioTestCase):
         art_images_pullspec = "quay.io/redhat-user-workloads/ocp-art-tenant/art-images@sha256:abc123def456"
         with (
             mock.patch.object(
-                self.cli, "_generate_manifests", mock.AsyncMock(return_value="registry.example.com/cvo@sha256:digest")
+                self.cli,
+                "_generate_manifests",
+                mock.AsyncMock(return_value="registry.example.com/cvo@sha256:digest"),
             ) as mock_generate_manifests,
             mock.patch.object(
                 self.cli, "_resolve_art_images_pullspec", mock.AsyncMock(return_value=art_images_pullspec)
@@ -237,8 +257,19 @@ class TestRebase(unittest.IsolatedAsyncioTestCase):
 
         mock_build_repo.ensure_source.assert_awaited_once()
         mock_build_repo.delete_all_files.assert_awaited_once()
-        mock_generate_manifests.assert_awaited_once()
-        mock_resolve.assert_awaited_once_with("registry.example.com/cvo@sha256:digest")
+        self.assertEqual(mock_generate_manifests.await_count, 2)
+        mock_generate_manifests.assert_has_awaits(
+            [
+                mock.call(self.repo_dir / "release-manifests" / "amd64", "x86_64"),
+                mock.call(self.repo_dir / "release-manifests" / "s390x", "s390x"),
+            ]
+        )
+        mock_resolve.assert_has_awaits(
+            [
+                mock.call("registry.example.com/cvo@sha256:digest"),
+                mock.call("registry.example.com/cvo@sha256:digest"),
+            ]
+        )
         mock_build_repo.commit.assert_awaited_once()
 
         self.assertEqual(cvo_pullspec, "registry.example.com/cvo@sha256:digest")
@@ -251,7 +282,9 @@ class TestRebase(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("COPY --from=cvo", dockerfile_content)
         self.assertIn('io.openshift.release="4.21.1"', dockerfile_content)
         self.assertIn('io.openshift.release.base-image-digest="sha256:abc123def456"', dockerfile_content)
-        self.assertIn("COPY release-manifests/ /release-manifests/", dockerfile_content)
+        self.assertIn("ARG TARGETARCH", dockerfile_content)
+        self.assertIn("COPY release-manifests/${TARGETARCH}/ /release-manifests/", dockerfile_content)
+        self.assertNotIn("COPY release-manifests/ /release-manifests/", dockerfile_content)
 
         commit_message = mock_build_repo.commit.call_args.args[0]
         self.assertIn("openshift-4.21", commit_message)
@@ -305,6 +338,40 @@ class TestRebase(unittest.IsolatedAsyncioTestCase):
         ):
             with self.assertRaises(DoozerFatalError):
                 await self.cli._rebase()
+
+    @mock.patch("doozerlib.cli.release_payload.get_release_name_for_assembly", return_value="4.21.1")
+    @mock.patch("doozerlib.cli.release_payload.BuildRepo")
+    async def test_rebase_raises_when_arch_cvo_bases_differ(self, mock_build_repo_class, mock_get_release_name):
+        mock_build_repo = mock.AsyncMock()
+        mock_build_repo.local_dir = self.repo_dir
+        mock_build_repo_class.return_value = mock_build_repo
+
+        with (
+            mock.patch.object(
+                self.cli,
+                "_generate_manifests",
+                mock.AsyncMock(
+                    side_effect=[
+                        "registry.example.com/cvo@sha256:x86-digest",
+                        "registry.example.com/cvo@sha256:s390x-digest",
+                    ]
+                ),
+            ),
+            mock.patch.object(
+                self.cli,
+                "_resolve_art_images_pullspec",
+                mock.AsyncMock(
+                    side_effect=[
+                        "quay.io/redhat-user-workloads/ocp-art-tenant/art-images@sha256:x86-digest",
+                        "quay.io/redhat-user-workloads/ocp-art-tenant/art-images@sha256:s390x-digest",
+                    ]
+                ),
+            ),
+        ):
+            with self.assertRaises(DoozerFatalError) as cm:
+                await self.cli._rebase()
+
+        self.assertIn("resolved to different art-images pullspecs", str(cm.exception))
 
     @mock.patch("doozerlib.cli.release_payload.get_release_name_for_assembly", return_value="5.0.0-ec.6")
     @mock.patch("doozerlib.cli.release_payload.BuildRepo")
