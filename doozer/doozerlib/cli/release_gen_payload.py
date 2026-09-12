@@ -230,9 +230,8 @@ Generate files for mirroring from registry-proxy (OSBS storage) to our quay regi
     $ doozer --group=openshift-4.12 release:gen-payload \\
         --is-name=4.12-art-latest
 
-Note that if you use -i to include specific images, you should also include openshift-enterprise-pod
-to supply the 'pod' tag. The 'pod' image is used automatically as a payload stand-in for images that
-do not build on all arches.
+Images that are not built for a particular architecture are omitted from that architecture's payload.
+No filler image is added for missing architecture-specific builds.
 
 ## Validation ##
 
@@ -2727,7 +2726,6 @@ class PayloadGenerator:
         """
 
         members: Dict[str, PayloadEntry] = self._find_initial_payload_entries(assembly_inspector, arch, dest_repo)
-        members = self._replace_missing_payload_entries(members, arch)
         rhcos_members, issues = self._find_rhcos_payload_entries(
             assembly_inspector, arch, registry_config=registry_config
         )
@@ -2738,12 +2736,11 @@ class PayloadGenerator:
         self, assembly_inspector: AssemblyInspector, arch: str, dest_repo: str
     ) -> Dict[str, PayloadEntry]:
         # Maps release payload tag name to the PayloadEntry for the image.
-        members: Dict[str, Optional[PayloadEntry]] = dict()
+        # Images which are not configured for this architecture are omitted.
+        members: Dict[str, PayloadEntry] = dict()
         for payload_tag, image_inspector in self.get_group_payload_tag_mapping(assembly_inspector, arch).items():
             if not image_inspector:
-                # There is no build for this payload tag for this CPU arch. This
-                # will be filled in later in this method for the final list.
-                members[payload_tag] = None
+                # The image is not built for this CPU architecture; do not add a filler image.
                 continue
 
             members[payload_tag] = PayloadEntry(
@@ -2757,24 +2754,6 @@ class PayloadGenerator:
                 issues=list(),
             )
         return members
-
-    @staticmethod
-    def _replace_missing_payload_entries(members: Dict[str, PayloadEntry], arch: str) -> Dict[str, PayloadEntry]:
-        """
-        Members contains a complete map of payload tag keys, but some values may be None, indicating that the image
-        does not build for this architecture. However, all architecture-specific release payloads must contain the
-        full set of tags or 'oc adm release new' will fail; while a tag may not be logically necessary on e.g. s390x,
-        we still need to populate that tag with something for metadata references to resolve.
-
-        To do this, we replace missing images with the 'pod' image for the architecture. This should
-        be available for every CPU architecture. As such, we must find 'pod' to proceed.
-        """
-
-        pod_entry = members.get("pod", None)
-        if not pod_entry:
-            raise IOError(f"Unable to find 'pod' image archive for architecture: {arch}; unable to construct payload")
-
-        return {tag_name: entry or pod_entry for tag_name, entry in members.items()}
 
     @staticmethod
     @TRACER.start_as_current_span("PayloadGenerator._find_rhcos_payload_entries")
@@ -2954,7 +2933,7 @@ class PayloadGenerator:
             if arch not in image_meta.get_arches():
                 # If this image is not meant for this architecture
                 if tag_name not in members:
-                    members[tag_name] = None  # We still need a placeholder in the tag mapping
+                    members[tag_name] = None  # Preserve the tag marker so entry construction can omit it.
                 continue
 
             if members.get(tag_name, None) and not explicit:
