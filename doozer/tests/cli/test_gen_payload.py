@@ -1432,6 +1432,7 @@ spec:
         gpcli.create_multi_release_manifest_list.assert_awaited_once_with(
             {"arch": "quay.io/org/repo:spam-arch"}, 'isname', 'quay.io/org/repo:spam'
         )
+        self.assertIn("--allow-missing-images", exec_mock.call_args.args[0])
 
     @patch("doozerlib.cli.release_gen_payload.find_manifest_list_sha")
     @patch("doozerlib.cli.release_gen_payload.GenPayloadCli.mirror_payload_content")

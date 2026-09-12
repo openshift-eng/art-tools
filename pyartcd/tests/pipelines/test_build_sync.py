@@ -1,4 +1,5 @@
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -95,3 +96,15 @@ class TestBuildSyncPipeline(IsolatedAsyncioTestCase):
 
         cmd = cmd_assert.await_args.args[0]
         self.assertFalse(any(argument.startswith('--is-name=') for argument in cmd))
+
+    @patch('pyartcd.pipelines.build_sync.exectools.cmd_assert_async', new_callable=AsyncMock)
+    async def test_publish_allows_missing_images(self, cmd_assert):
+        pipeline = _make_pipeline()
+        with NamedTemporaryFile(mode='w') as metadata_file:
+            metadata_file.write('metadata:\n  namespace: ocp\n  name: 5.1-art-assembly-4.21.0-test\n')
+            metadata_file.flush()
+
+            await pipeline._publish(metadata_file.name)
+
+        cmd = cmd_assert.await_args.args[0]
+        self.assertIn('--allow-missing-images', cmd)

@@ -2282,7 +2282,13 @@ class PromotePipeline:
         if source_image_pullspec:
             cmd.append(f"--from-release={source_image_pullspec}")
         if source_image_stream:
-            cmd.extend(["--reference-mode=source", f"--from-image-stream={source_image_stream}"])
+            cmd.extend(
+                [
+                    "--reference-mode=source",
+                    f"--from-image-stream={source_image_stream}",
+                    "--allow-missing-images",
+                ]
+            )
         if keep_manifest_list:
             cmd.append("--keep-manifest-list")
 

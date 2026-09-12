@@ -173,7 +173,15 @@ class ReleasePayloadRebaseAndBuildCli:
             cmd.append(f"--from-release={self.from_release}")
         else:
             namespace, imagestream_name = self._resolve_imagestream(arch)
-            cmd.extend(["-n", namespace, f"--from-image-stream={imagestream_name}", "--reference-mode=source"])
+            cmd.extend(
+                [
+                    "-n",
+                    namespace,
+                    f"--from-image-stream={imagestream_name}",
+                    "--reference-mode=source",
+                    "--allow-missing-images",
+                ]
+            )
         if self.registry_config:
             cmd.append(f"--registry-config={self.registry_config}")
 
