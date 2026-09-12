@@ -304,6 +304,32 @@ shipment:
         expected_kinds = {"fbc", "image", "extras", "microshift-bootc", "metadata"}
         self.assertEqual(set(result.keys()), expected_kinds)
 
+    @patch('artcommonlib.gitlab.gitlab.Gitlab')
+    @patch.dict(os.environ, {'GITLAB_TOKEN': 'test-token'})
+    def test_get_shipment_configs_preserves_rhel_qualified_kinds(self, mock_gitlab_class):
+        """RHEL-qualified shipment files remain distinct when parsed from one MR."""
+        mock_gitlab = mock_gitlab_class.return_value
+        mock_gitlab.projects.get.side_effect = [self.mock_project, self.mock_source_project]
+
+        self.mock_project.mergerequests.get.return_value = self.mock_mr
+        self.mock_mr.source_project_id = "source-project-id"
+        self.mock_mr.source_branch = "test-branch"
+
+        self.mock_diff_info.id = "diff-id"
+        self.mock_mr.diffs.list.return_value = [self.mock_diff_info]
+        self.mock_mr.diffs.get.return_value = self.mock_diff
+        self.mock_diff.diffs = [
+            {'new_path': 'microshift-bootc-el9.yaml', 'old_path': None},
+            {'new_path': 'microshift-bootc-el10.yaml', 'old_path': None},
+        ]
+
+        self.mock_file_content.decode.return_value.decode.return_value = self.sample_yaml_content
+        self.mock_source_project.files.get.return_value = self.mock_file_content
+
+        result = shipment_utils.get_shipment_configs_from_mr(self.test_mr_url)
+
+        self.assertEqual(set(result), {'microshift-bootc-el9', 'microshift-bootc-el10'})
+
 
 class TestGroupFiltering(unittest.TestCase):
     """Test cases for group-based filtering in get_shipment_configs_from_mr"""

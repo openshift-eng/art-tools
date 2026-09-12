@@ -2,7 +2,8 @@ import os
 import re
 import sys
 from dataclasses import dataclass
-from typing import List, Optional, Set
+from pathlib import Path
+from typing import List, Mapping, Optional, Set
 
 import aiohttp
 import click
@@ -87,7 +88,23 @@ async def _validate_snapshot_against_single_rpa(kind: str, rpa_name: str, snapsh
     )
 
 
-async def validate_snapshot_against_rpa(group: str, env: str, kind: str, snapshot_components: List[str]) -> None:
+async def validate_snapshot_against_rpa(
+    group: str,
+    env: str,
+    kind: str,
+    snapshot_components: List[str],
+    release_plans: Mapping[str, str] | None = None,
+) -> None:
+    """
+    Validate snapshot components against the configured stage and prod RPAs.
+
+    Args:
+        group: Build-data group used to determine whether RPA validation applies.
+        env: Environment being released first; the other environment is checked second.
+        kind: Shipment kind used by the legacy RPA naming fallback.
+        snapshot_components: Component names present in the shipment snapshot.
+        release_plans: Optional mapping of environment names to configured ReleasePlans.
+    """
     match = re.fullmatch(r"openshift-(\d+)\.(\d+)", group)
     if group.startswith("openshift-") and not match:
         raise ValueError(f"Unrecognized openshift group format, refusing to skip RPA validation: {group!r}")
@@ -108,7 +125,9 @@ async def validate_snapshot_against_rpa(group: str, env: str, kind: str, snapsho
 
     envs_to_check = [env] + [e for e in OCP_RPA_ENVS if e != env]
     for check_env in envs_to_check:
-        rpa_name = f"{OCP_RPA_KINDS[kind]}-{check_env}-{major}-{minor}"
+        rpa_name = (release_plans or {}).get(check_env)
+        if not rpa_name:
+            rpa_name = f"{OCP_RPA_KINDS[kind]}-{check_env}-{major}-{minor}"
         await _validate_snapshot_against_single_rpa(kind, rpa_name, snapshot_components)
 
 
@@ -234,7 +253,17 @@ class CreateReleaseCli:
         if self.runtime.group.startswith("openshift-") and config.shipment.snapshot:
             LOGGER.info("Validating snapshot components against RPA...")
             component_names = [c.name for c in config.shipment.snapshot.spec.components]
-            await validate_snapshot_against_rpa(self.runtime.group, self.release_env, self.kind, component_names)
+            release_plans = {
+                "stage": config.shipment.environments.stage.releasePlan,
+                "prod": config.shipment.environments.prod.releasePlan,
+            }
+            await validate_snapshot_against_rpa(
+                self.runtime.group,
+                self.release_env,
+                self.kind,
+                component_names,
+                release_plans=release_plans,
+            )
 
         # Create snapshot first using the spec from shipment config
         LOGGER.info("Creating snapshot from shipment config...")
@@ -265,11 +294,24 @@ class CreateReleaseCli:
 
     def get_object_name(self) -> str:
         timestamp = get_utc_now_formatted_str()
-        raw_prefix = f"{self.runtime.product}-{self.release_env}-{self.runtime.assembly}-{self.kind}"
+        object_kind = self._get_object_kind()
+        raw_prefix = f"{self.runtime.product}-{self.release_env}-{self.runtime.assembly}-{object_kind}"
         prefix = normalize_k8s_dns_label(raw_prefix, max_length=63 - len(timestamp) - 1)
         if not prefix:
             raise ValueError(f"Release object name prefix {raw_prefix!r} cannot be normalized to a Kubernetes name")
         return f"{prefix}-{timestamp}"
+
+    def _get_object_kind(self) -> str:
+        """
+        Return the shipment kind qualified by its RHEL version, when present.
+
+        MicroShift bootc shipments have one configuration file per RHEL version,
+        so the version must be included in Kubernetes object names to avoid
+        collisions when the releases run concurrently.
+        """
+        config_stem = Path(self.config_path).stem
+        match = re.search(rf"(?:^|\.)({re.escape(self.kind)}-el\d+)(?:\.|$)", config_stem)
+        return match.group(1) if match else self.kind
 
     async def create_snapshot(self, shipment: Shipment) -> dict:
         """
@@ -538,5 +580,9 @@ async def validate_rpa_cli(runtime: Runtime, config, env, kind):
     component_names = [c.name for c in shipment_config.shipment.snapshot.spec.components]
     LOGGER.info("Validating %d components against RPA for %s/%s...", len(component_names), env, kind)
 
-    await validate_snapshot_against_rpa(runtime.group, env, kind, component_names)
+    release_plans = {
+        "stage": shipment_config.shipment.environments.stage.releasePlan,
+        "prod": shipment_config.shipment.environments.prod.releasePlan,
+    }
+    await validate_snapshot_against_rpa(runtime.group, env, kind, component_names, release_plans=release_plans)
     LOGGER.info("Validation passed: all components are present in the RPA")

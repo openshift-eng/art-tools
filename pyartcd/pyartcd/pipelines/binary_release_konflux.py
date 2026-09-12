@@ -16,7 +16,6 @@ from artcommonlib import exectools
 from artcommonlib.build_visibility import is_nvr_embargoed
 from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
 from artcommonlib.gitlab import GitLabClient
-from artcommonlib.release_util import isolate_el_version_in_release
 from artcommonlib.util import new_roundtrip_yaml_handler
 from elliottlib.shipment_model import (
     Environments,
@@ -32,6 +31,7 @@ from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.click_validators import validate_release_date
 from pyartcd.git import GitRepository
 from pyartcd.runtime import Runtime
+from pyartcd.shipment_utils import get_release_plan_names, group_nvrs_by_rhel_version
 
 yaml = new_roundtrip_yaml_handler()
 
@@ -237,14 +237,7 @@ class BinaryReleaseKonfluxPipeline:
         NVRs without a detectable .el* suffix go under the 'default' key.
         Returns an OrderedDict-like dict sorted by key for deterministic ordering.
         """
-        groups: Dict[str, List[str]] = {}
-        for nvr in nvrs:
-            # The release field is the last hyphen-delimited segment of an NVR
-            release = nvr.rsplit('-', 1)[-1] if '-' in nvr else nvr
-            el_ver = isolate_el_version_in_release(release)
-            key = f"el{el_ver}" if el_ver is not None else "default"
-            groups.setdefault(key, []).append(nvr)
-        return dict(sorted(groups.items()))
+        return group_nvrs_by_rhel_version(nvrs)
 
     async def create_snapshot(self, builds: List[str]) -> Optional[Snapshot]:
         """
@@ -316,21 +309,8 @@ class BinaryReleaseKonfluxPipeline:
             fbc=False,
         )
 
-        stage_rpa = "n/a"
-        prod_rpa = "n/a"
         config_path = self.shipment_data_repo._directory / "config.yaml"
-        if config_path.exists():
-            with open(config_path, 'r') as f:
-                shipment_config = stdlib_yaml.safe_load(f) or {}
-            applications = shipment_config.get("applications", {})
-            # Try RHEL-versioned key first (e.g. 'oc-mirror-2-0-el9'), then fall back to the
-            # plain application name for products that don't split by RHEL version.
-            lookup_key = f"{application}-{rhel_suffix}" if rhel_suffix else application
-            app_env_config = (applications.get(lookup_key) or applications.get(application) or {}).get(
-                "environments", {}
-            )
-            stage_rpa = app_env_config.get("stage", {}).get("releasePlan", "n/a")
-            prod_rpa = app_env_config.get("prod", {}).get("releasePlan", "n/a")
+        stage_rpa, prod_rpa = get_release_plan_names(config_path, application, rhel_suffix)
 
         if stage_rpa == "n/a" or prod_rpa == "n/a":
             effective_key = f"{application}-{rhel_suffix}" if rhel_suffix else application

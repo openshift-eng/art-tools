@@ -676,7 +676,17 @@ class PrepareReleaseKonfluxPipeline:
         for kind, shipment in shipments_by_kind.items():
             if shipment.shipment.snapshot and shipment.shipment.snapshot.spec.components:
                 component_names = [c.name for c in shipment.shipment.snapshot.spec.components]
-                await validate_snapshot_against_rpa(self.group, env, kind, component_names)
+                release_plans = {
+                    "stage": shipment.shipment.environments.stage.releasePlan,
+                    "prod": shipment.shipment.environments.prod.releasePlan,
+                }
+                await validate_snapshot_against_rpa(
+                    self.group,
+                    env,
+                    kind,
+                    component_names,
+                    release_plans=release_plans,
+                )
 
         # Update shipment MR with found builds
         await self.update_shipment_mr(shipments_by_kind, env, shipment_url)

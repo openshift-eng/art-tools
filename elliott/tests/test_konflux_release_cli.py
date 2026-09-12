@@ -203,6 +203,26 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
         self.assertEqual(name, "ocp-prod-4-18-2-rc-1-image-v2-20260805200004")
         self.assertLessEqual(len(name), 63)
 
+    @patch("elliottlib.cli.konflux_release_cli.get_utc_now_formatted_str", return_value="20260909154630")
+    @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
+    def test_object_name_includes_rhel_suffix_from_shipment_filename(self, mock_konflux_client_init, _mock_timestamp):
+        mock_konflux_client_init.return_value = self.konflux_client
+        self.runtime.assembly = "rc.1"
+
+        cli = CreateReleaseCli(
+            runtime=self.runtime,
+            config_path=(
+                "shipment/ocp/openshift-5.0/openshift-5-0/stage/rc.1.microshift-bootc-el10.20260904133832.yaml"
+            ),
+            release_env="stage",
+            konflux_config=self.konflux_config,
+            image_repo_pull_secret=self.image_repo_pull_secret,
+            dry_run=self.dry_run,
+            kind="microshift-bootc",
+        )
+
+        self.assertEqual(cli.get_object_name(), "ocp-stage-rc-1-microshift-bootc-el10-20260909154630")
+
     @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
     async def test_release_rejects_invalid_snapshot_reference(self, mock_konflux_client_init):
         mock_konflux_client_init.return_value = self.konflux_client
@@ -786,6 +806,29 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
         # When env is "stage", stage is checked first, then prod
         calls = [c.args[0] for c in mock_fetch_rpa.await_args_list]
         self.assertEqual(calls, ["ocp-art-advisory-stage-4-18", "ocp-art-advisory-prod-4-18"])
+
+    @patch("elliottlib.cli.konflux_release_cli.fetch_rpa", new_callable=AsyncMock)
+    async def test_validate_rpa_uses_configured_release_plans(self, mock_fetch_rpa):
+        """Uses RHEL-specific ReleasePlans from the shipment configuration when provided."""
+        rpa_data = {"spec": {"data": {"mapping": {"components": [{"name": "comp1"}]}}}}
+        mock_fetch_rpa.return_value = rpa_data
+
+        await validate_snapshot_against_rpa(
+            "openshift-5.0",
+            "stage",
+            "microshift-bootc",
+            ["comp1"],
+            release_plans={
+                "stage": "ocp-art-advisory-stage-5-0-rhel9",
+                "prod": "ocp-art-advisory-prod-5-0-rhel9",
+            },
+        )
+
+        calls = [c.args[0] for c in mock_fetch_rpa.await_args_list]
+        self.assertEqual(
+            calls,
+            ["ocp-art-advisory-stage-5-0-rhel9", "ocp-art-advisory-prod-5-0-rhel9"],
+        )
 
     @patch("elliottlib.cli.konflux_release_cli.fetch_rpa", new_callable=AsyncMock)
     async def test_validate_rpa_skipped_for_non_openshift(self, mock_fetch_rpa):
