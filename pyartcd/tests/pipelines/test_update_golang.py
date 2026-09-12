@@ -1131,11 +1131,13 @@ repos:
             return_value={9: "openshift-golang-builder-container-v1.25.8-202604150744.p2.gf28329a.el9"}
         )
         pipeline.update_golang_streams = AsyncMock()
+        pipeline._refresh_ci_images = AsyncMock()
 
         await pipeline.run()
 
         mock_kinit.assert_awaited_once()
         pipeline.update_golang_streams.assert_not_awaited()
+        pipeline._refresh_ci_images.assert_awaited_once()
         move_golang_bugs.assert_awaited_once()
         slack_messages = [call.args[0] for call in pipeline._slack_client.say_in_thread.await_args_list]
         self.assertTrue(
@@ -1165,6 +1167,7 @@ repos:
         pipeline.get_existing_builders_konflux = AsyncMock(return_value={8: builder_record})
         pipeline._get_builder_pullspec = Mock()
         pipeline.update_golang_streams = AsyncMock()
+        pipeline._refresh_ci_images = AsyncMock()
 
         await pipeline.run()
 
@@ -1174,6 +1177,9 @@ repos:
         self.assertEqual(list(pipeline._build_golang_plashets.await_args.args[1]), [8])
         pipeline._get_builder_pullspec.assert_not_called()
         pipeline.update_golang_streams.assert_not_awaited()
+        # CI image reconciliation still runs for the test assembly (it publishes to the
+        # .test-suffixed CI tag via --live-test-mode instead of skipping entirely).
+        pipeline._refresh_ci_images.assert_awaited_once()
         move_golang_bugs.assert_not_awaited()
         slack_messages = [call.args[0] for call in pipeline._slack_client.say_in_thread.await_args_list]
         self.assertTrue(any("test assembly" in message for message in slack_messages), slack_messages)
@@ -1204,6 +1210,7 @@ repos:
         pipeline.get_existing_builders_konflux = AsyncMock(return_value={8: builder_record})
         pipeline._get_builder_pullspec = Mock(return_value="registry.example.com/golang-builder:v1.25.11-el8")
         pipeline.update_golang_streams = AsyncMock()
+        pipeline._refresh_ci_images = AsyncMock()
 
         await pipeline.run()
 
@@ -1217,6 +1224,7 @@ repos:
             "1.25.11",
             {8: "registry.example.com/golang-builder:v1.25.11-el8"},
         )
+        pipeline._refresh_ci_images.assert_awaited_once()
         move_golang_bugs.assert_awaited_once()
 
     @patch("pyartcd.pipelines.update_golang.kinit", new_callable=AsyncMock)
@@ -1283,6 +1291,7 @@ repos:
         pipeline._rebase_and_build_konflux = AsyncMock()
         pipeline._get_builder_pullspec = Mock(return_value="registry.example.com/golang-builder:v1.25.11-el8")
         pipeline.update_golang_streams = AsyncMock()
+        pipeline._refresh_ci_images = AsyncMock()
 
         await pipeline.run()
 
@@ -1296,6 +1305,7 @@ repos:
         )
         self.assertEqual(pipeline.get_existing_builders_konflux.await_count, 2)
         pipeline.update_golang_streams.assert_awaited_once()
+        pipeline._refresh_ci_images.assert_awaited_once()
         move_golang_bugs.assert_awaited_once()
 
     @patch("pyartcd.pipelines.update_golang.KonfluxDb")
@@ -2430,6 +2440,419 @@ class TestBuildGolangPlashets(IsolatedAsyncioTestCase):
 
         mock_jenkins.start_build_plashets.assert_called_once()
         self.assertTrue(mock_jenkins.start_build_plashets.call_args.kwargs["dry_run"])
+
+
+class TestReconcileCiImages(IsolatedAsyncioTestCase):
+    """Test the CI golang builder / build-root image reconciliation stage"""
+
+    def _make_pipeline(self, dry_run=False, assembly=DEFAULT_GOLANG_ASSEMBLY):
+        mock_slack = Mock()
+        mock_slack.say_in_thread = AsyncMock()
+        mock_runtime = Mock(dry_run=dry_run, working_dir=Path("/tmp/working"))
+        mock_runtime.new_slack_client.return_value = mock_slack
+        return UpdateGolangPipeline(
+            runtime=mock_runtime,
+            ocp_version="4.18",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.22.9-1.el9"],
+            art_jira="ART-1234",
+            tag_builds=(assembly == DEFAULT_GOLANG_ASSEMBLY),
+            build_system="konflux",
+            assembly=assembly,
+        )
+
+    @staticmethod
+    def _content(name):
+        content = Mock()
+        content.name = name
+        return content
+
+    @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    async def test_get_ci_image_keys_filters_by_prefix(self, mock_konflux_db, mock_get_github_client):
+        pipeline = self._make_pipeline()
+        upstream_repo = Mock()
+        upstream_repo.get_contents.return_value = [
+            self._content("ci-openshift-golang-builder-latest.rhel9.yml"),
+            self._content("ci-openshift-golang-builder-extra.rhel8.yml"),
+            self._content("ci-openshift-build-root-latest.rhel9.yml"),
+            self._content("openshift-enterprise-ansible-operator.yml"),
+        ]
+        mock_get_github_client.return_value.get_repo.return_value = upstream_repo
+
+        image_keys = await pipeline._get_ci_image_keys()
+
+        self.assertEqual(
+            image_keys,
+            [
+                "ci-openshift-build-root-latest.rhel9",
+                "ci-openshift-golang-builder-extra.rhel8",
+                "ci-openshift-golang-builder-latest.rhel9",
+            ],
+        )
+        upstream_repo.get_contents.assert_called_once_with("images", ref="openshift-4.18")
+
+    @patch("pyartcd.pipelines.update_golang.get_github_client_for_org")
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    async def test_get_ci_image_keys_returns_empty_when_none_found(self, mock_konflux_db, mock_get_github_client):
+        pipeline = self._make_pipeline()
+        upstream_repo = Mock()
+        upstream_repo.get_contents.return_value = [self._content("openshift-enterprise-ansible-operator.yml")]
+        mock_get_github_client.return_value.get_repo.return_value = upstream_repo
+
+        image_keys = await pipeline._get_ci_image_keys()
+
+        self.assertEqual(image_keys, [])
+
+    # Common args for _refresh_ci_images: a GO_LATEST bump on rhel9.
+    RECONCILE_ARGS = ("1.22", {"GO_LATEST": "1.22"}, {9: "golang-1.22.9-1.el9"})
+
+    @patch("pyartcd.pipelines.update_golang.jenkins")
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    async def test_reconcile_noops_when_variant_unmatched(self, mock_konflux_db, mock_jenkins):
+        """No GO_LATEST/GO_EXTRA/GO_PREVIOUS var matches this build; nothing to check."""
+        pipeline = self._make_pipeline()
+        pipeline._get_ci_image_keys = AsyncMock()
+
+        await pipeline._refresh_ci_images("1.23", {"GO_LATEST": "1.22"}, {9: "golang"})
+
+        pipeline._get_ci_image_keys.assert_not_awaited()
+        mock_jenkins.start_ocp4_konflux.assert_not_called()
+        mock_jenkins.start_sync_ci_images.assert_not_called()
+        pipeline._slack_client.say_in_thread.assert_not_awaited()
+
+    @patch("pyartcd.pipelines.update_golang.jenkins")
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    async def test_reconcile_noops_when_no_matching_images_found(self, mock_konflux_db, mock_jenkins):
+        """GO_LATEST matches, but no ci-openshift-golang-builder-latest.rhel* image exists."""
+        pipeline = self._make_pipeline()
+        pipeline._get_ci_image_keys = AsyncMock(return_value=[])
+        pipeline._scan_stale_ci_images = AsyncMock()
+
+        await pipeline._refresh_ci_images(*self.RECONCILE_ARGS)
+
+        pipeline._scan_stale_ci_images.assert_not_awaited()
+        mock_jenkins.start_ocp4_konflux.assert_not_called()
+        mock_jenkins.start_sync_ci_images.assert_not_called()
+        pipeline._slack_client.say_in_thread.assert_not_awaited()
+
+    @patch("pyartcd.pipelines.update_golang.jenkins")
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    async def test_reconcile_syncs_but_does_not_rebuild_when_ci_image_already_current(
+        self, mock_konflux_db, mock_jenkins
+    ):
+        """
+        No image was stale, so the ocp4-konflux build is never triggered -- but the sync-ci-images
+        job still runs unconditionally, to keep CI in sync with the latest successful build even
+        when nothing needed rebuilding this run.
+        """
+        pipeline = self._make_pipeline()
+        pipeline._get_ci_image_keys = AsyncMock(return_value=["ci-openshift-golang-builder-latest.rhel9"])
+        pipeline._scan_stale_ci_images = AsyncMock(return_value=[])
+        mock_jenkins.start_sync_ci_images.return_value = "SUCCESS"
+
+        await pipeline._refresh_ci_images(*self.RECONCILE_ARGS)
+
+        pipeline._scan_stale_ci_images.assert_awaited_once_with(["ci-openshift-golang-builder-latest.rhel9"])
+        mock_jenkins.start_ocp4_konflux.assert_not_called()
+        mock_jenkins.start_sync_ci_images.assert_called_once_with(
+            version=pipeline.ocp_version,
+            block_until_complete=True,
+            assembly=pipeline.assembly,
+            image_list=["ci-openshift-golang-builder-latest.rhel9"],
+            dry_run=pipeline.dry_run,
+            load_disabled=True,
+            live_test_mode=False,
+        )
+        slack_messages = [call.args[0] for call in pipeline._slack_client.say_in_thread.await_args_list]
+        self.assertFalse(any("Rebuilding CI golang builder/build-root image" in m for m in slack_messages))
+        self.assertTrue(any("Synced CI image" in m for m in slack_messages))
+
+    @patch("pyartcd.pipelines.update_golang.jenkins")
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    async def test_reconcile_rebuilds_stale_image(self, mock_konflux_db, mock_jenkins):
+        pipeline = self._make_pipeline()
+        pipeline._get_ci_image_keys = AsyncMock(return_value=["ci-openshift-golang-builder-latest.rhel9"])
+        pipeline._scan_stale_ci_images = AsyncMock(return_value=["ci-openshift-golang-builder-latest.rhel9"])
+        mock_jenkins.start_ocp4_konflux.return_value = "SUCCESS"
+        mock_jenkins.start_sync_ci_images.return_value = "SUCCESS"
+
+        await pipeline._refresh_ci_images(*self.RECONCILE_ARGS)
+
+        mock_jenkins.start_ocp4_konflux.assert_called_once_with(
+            build_version=pipeline.ocp_version,
+            assembly=pipeline.assembly,
+            image_list=["ci-openshift-golang-builder-latest.rhel9"],
+            dry_run=pipeline.dry_run,
+            block_until_complete=True,
+        )
+        mock_jenkins.start_sync_ci_images.assert_called_once_with(
+            version=pipeline.ocp_version,
+            block_until_complete=True,
+            assembly=pipeline.assembly,
+            image_list=["ci-openshift-golang-builder-latest.rhel9"],
+            dry_run=pipeline.dry_run,
+            load_disabled=True,
+            live_test_mode=False,
+        )
+        self.assertTrue(
+            any(
+                "Rebuilding CI golang builder/build-root image" in call.args[0]
+                for call in pipeline._slack_client.say_in_thread.await_args_list
+            )
+        )
+        self.assertTrue(
+            any("Synced CI image" in call.args[0] for call in pipeline._slack_client.say_in_thread.await_args_list)
+        )
+
+    @patch("pyartcd.pipelines.update_golang.jenkins")
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    async def test_reconcile_raises_when_scan_fails(self, mock_konflux_db, mock_jenkins):
+        pipeline = self._make_pipeline()
+        pipeline._get_ci_image_keys = AsyncMock(return_value=["ci-openshift-golang-builder-latest.rhel9"])
+        pipeline._scan_stale_ci_images = AsyncMock(side_effect=RuntimeError("doozer scan-sources failed"))
+
+        with self.assertRaisesRegex(RuntimeError, "scan-sources failed"):
+            await pipeline._refresh_ci_images(*self.RECONCILE_ARGS)
+
+        mock_jenkins.start_ocp4_konflux.assert_not_called()
+        mock_jenkins.start_sync_ci_images.assert_not_called()
+
+    @patch("pyartcd.pipelines.update_golang.jenkins")
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    async def test_reconcile_raises_when_rebuild_fails(self, mock_konflux_db, mock_jenkins):
+        pipeline = self._make_pipeline()
+        pipeline._get_ci_image_keys = AsyncMock(return_value=["ci-openshift-golang-builder-latest.rhel9"])
+        pipeline._scan_stale_ci_images = AsyncMock(return_value=["ci-openshift-golang-builder-latest.rhel9"])
+        mock_jenkins.start_ocp4_konflux.return_value = "FAILURE"
+
+        with self.assertRaisesRegex(RuntimeError, "CI image build .* failed with result: FAILURE"):
+            await pipeline._refresh_ci_images(*self.RECONCILE_ARGS)
+
+        # Sync only happens after the build step completes, so a build failure means nothing
+        # gets mirrored to CI this run.
+        mock_jenkins.start_sync_ci_images.assert_not_called()
+
+    @patch("pyartcd.pipelines.update_golang.jenkins")
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    async def test_reconcile_triggers_build_root_after_golang_builder_rebuild(self, mock_konflux_db, mock_jenkins):
+        """
+        Build-root images pull their parent via a `member` reference to the golang-builder CI
+        image. Both are scanned together in one `_scan_stale_ci_images` call, so doozer's own
+        change propagation (a changing image marks its `member`-referencing descendants as
+        changing too) reports build-root as stale right alongside its golang-builder parent.
+        """
+        pipeline = self._make_pipeline()
+        pipeline._get_ci_image_keys = AsyncMock(
+            return_value=["ci-openshift-golang-builder-latest.rhel9", "ci-openshift-build-root-latest.rhel9"]
+        )
+        pipeline._scan_stale_ci_images = AsyncMock(
+            return_value=["ci-openshift-golang-builder-latest.rhel9", "ci-openshift-build-root-latest.rhel9"]
+        )
+        mock_jenkins.start_ocp4_konflux.return_value = "SUCCESS"
+        mock_jenkins.start_sync_ci_images.return_value = "SUCCESS"
+
+        await pipeline._refresh_ci_images(*self.RECONCILE_ARGS)
+
+        # Both families are scanned together in a single call.
+        pipeline._scan_stale_ci_images.assert_awaited_once_with(
+            ["ci-openshift-golang-builder-latest.rhel9", "ci-openshift-build-root-latest.rhel9"]
+        )
+        # Golang builder and build-root are rebuilt together in a single batch call, so doozer
+        # resolves the `from: member:` reference between them in-process.
+        mock_jenkins.start_ocp4_konflux.assert_called_once_with(
+            build_version=pipeline.ocp_version,
+            assembly=pipeline.assembly,
+            image_list=["ci-openshift-golang-builder-latest.rhel9", "ci-openshift-build-root-latest.rhel9"],
+            dry_run=pipeline.dry_run,
+            block_until_complete=True,
+        )
+        # Both families are synced together in a single call, after the rebuild batch completes.
+        mock_jenkins.start_sync_ci_images.assert_called_once_with(
+            version=pipeline.ocp_version,
+            block_until_complete=True,
+            assembly=pipeline.assembly,
+            image_list=["ci-openshift-golang-builder-latest.rhel9", "ci-openshift-build-root-latest.rhel9"],
+            dry_run=pipeline.dry_run,
+            load_disabled=True,
+            live_test_mode=False,
+        )
+        slack_messages = [call.args[0] for call in pipeline._slack_client.say_in_thread.await_args_list]
+        self.assertTrue(any("Rebuilding CI golang builder/build-root image" in m for m in slack_messages))
+        self.assertTrue(any("Synced CI image" in m for m in slack_messages))
+
+    @patch("pyartcd.pipelines.update_golang.jenkins")
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    async def test_reconcile_skips_build_root_when_golang_builder_already_fresh(self, mock_konflux_db, mock_jenkins):
+        """If golang builder wasn't rebuilt, its build-root sibling is left untouched."""
+        pipeline = self._make_pipeline()
+        pipeline._get_ci_image_keys = AsyncMock(
+            return_value=["ci-openshift-golang-builder-latest.rhel9", "ci-openshift-build-root-latest.rhel9"]
+        )
+        pipeline._scan_stale_ci_images = AsyncMock(return_value=[])
+        mock_jenkins.start_sync_ci_images.return_value = "SUCCESS"
+
+        await pipeline._refresh_ci_images(*self.RECONCILE_ARGS)
+
+        mock_jenkins.start_ocp4_konflux.assert_not_called()
+        slack_messages = [call.args[0] for call in pipeline._slack_client.say_in_thread.await_args_list]
+        self.assertFalse(any("Rebuilding CI golang builder/build-root image" in m for m in slack_messages))
+
+    @patch("pyartcd.pipelines.update_golang.jenkins")
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    async def test_reconcile_skips_build_root_when_none_defined_for_variant(self, mock_konflux_db, mock_jenkins):
+        """Golang builder rebuilds fine even when no matching build-root image is defined."""
+        pipeline = self._make_pipeline()
+        pipeline._get_ci_image_keys = AsyncMock(return_value=["ci-openshift-golang-builder-latest.rhel9"])
+        pipeline._scan_stale_ci_images = AsyncMock(return_value=["ci-openshift-golang-builder-latest.rhel9"])
+        mock_jenkins.start_ocp4_konflux.return_value = "SUCCESS"
+        mock_jenkins.start_sync_ci_images.return_value = "SUCCESS"
+
+        await pipeline._refresh_ci_images(*self.RECONCILE_ARGS)
+
+        mock_jenkins.start_ocp4_konflux.assert_called_once_with(
+            build_version=pipeline.ocp_version,
+            assembly=pipeline.assembly,
+            image_list=["ci-openshift-golang-builder-latest.rhel9"],
+            dry_run=pipeline.dry_run,
+            block_until_complete=True,
+        )
+        mock_jenkins.start_sync_ci_images.assert_called_once_with(
+            version=pipeline.ocp_version,
+            block_until_complete=True,
+            assembly=pipeline.assembly,
+            image_list=["ci-openshift-golang-builder-latest.rhel9"],
+            dry_run=pipeline.dry_run,
+            load_disabled=True,
+            live_test_mode=False,
+        )
+
+    @patch("pyartcd.pipelines.update_golang.jenkins")
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    async def test_reconcile_raises_when_build_root_rebuild_fails(self, mock_konflux_db, mock_jenkins):
+        pipeline = self._make_pipeline()
+        pipeline._get_ci_image_keys = AsyncMock(
+            return_value=["ci-openshift-golang-builder-latest.rhel9", "ci-openshift-build-root-latest.rhel9"]
+        )
+        pipeline._scan_stale_ci_images = AsyncMock(return_value=["ci-openshift-golang-builder-latest.rhel9"])
+        mock_jenkins.start_ocp4_konflux.return_value = "FAILURE"
+
+        with self.assertRaisesRegex(RuntimeError, "CI image build .* failed with result: FAILURE"):
+            await pipeline._refresh_ci_images(*self.RECONCILE_ARGS)
+
+        # Sync only happens after the rebuild batch completes, so a build-root failure means
+        # nothing gets mirrored to CI this run -- even though the batch call is single-shot.
+        mock_jenkins.start_sync_ci_images.assert_not_called()
+
+    @patch("pyartcd.pipelines.update_golang.jenkins")
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    async def test_reconcile_syncs_for_test_assembly(self, mock_konflux_db, mock_jenkins):
+        """
+        Test-assembly builds get rebuilt and synced too -- start_sync_ci_images itself is
+        responsible for redirecting the publish to the .test-suffixed CI tag via
+        `live_test_mode`, so _refresh_ci_images doesn't need to skip the call for the test
+        assembly.
+        """
+        pipeline = self._make_pipeline(assembly="test")
+        pipeline._get_ci_image_keys = AsyncMock(return_value=["ci-openshift-golang-builder-latest.rhel9"])
+        pipeline._scan_stale_ci_images = AsyncMock(return_value=["ci-openshift-golang-builder-latest.rhel9"])
+        mock_jenkins.start_ocp4_konflux.return_value = "SUCCESS"
+        mock_jenkins.start_sync_ci_images.return_value = "SUCCESS"
+
+        await pipeline._refresh_ci_images(*self.RECONCILE_ARGS)
+
+        mock_jenkins.start_ocp4_konflux.assert_called_once_with(
+            build_version=pipeline.ocp_version,
+            assembly=pipeline.assembly,
+            image_list=["ci-openshift-golang-builder-latest.rhel9"],
+            dry_run=pipeline.dry_run,
+            block_until_complete=True,
+        )
+        mock_jenkins.start_sync_ci_images.assert_called_once_with(
+            version=pipeline.ocp_version,
+            block_until_complete=True,
+            assembly=pipeline.assembly,
+            image_list=["ci-openshift-golang-builder-latest.rhel9"],
+            dry_run=pipeline.dry_run,
+            load_disabled=True,
+            live_test_mode=True,
+        )
+        self.assertTrue(
+            any("Synced CI image" in call.args[0] for call in pipeline._slack_client.say_in_thread.await_args_list)
+        )
+
+
+class TestScanStaleCiImages(IsolatedAsyncioTestCase):
+    """Test the doozer scan-sources wrapper used to detect stale CI images"""
+
+    def _make_pipeline(self, kubeconfig=None):
+        mock_runtime = Mock(dry_run=False, working_dir=Path("/tmp/working"))
+        mock_runtime.new_slack_client.return_value = Mock()
+        return UpdateGolangPipeline(
+            runtime=mock_runtime,
+            ocp_version="4.18",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.22.9-1.el9"],
+            art_jira="ART-1234",
+            tag_builds=True,
+            build_system="konflux",
+            kubeconfig=kubeconfig,
+        )
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    @patch("artcommonlib.exectools.cmd_gather_async")
+    async def test_builds_command_and_returns_changed_images(self, mock_cmd_gather, mock_konflux_db):
+        # --ci-kubeconfig must come from the app.ci KUBECONFIG env var, not self.kubeconfig
+        # (which holds the Konflux SA kubeconfig and lacks RBAC on app.ci imagestreams).
+        pipeline = self._make_pipeline(kubeconfig="/tmp/konflux-kubeconfig")
+        report = (
+            "images:\n"
+            "- name: ci-openshift-golang-builder-latest.rhel9\n"
+            "  changed: true\n"
+            "- name: ci-openshift-golang-builder-extra.rhel8\n"
+            "  changed: false\n"
+        )
+        mock_cmd_gather.return_value = (0, report, "")
+
+        with patch.dict(os.environ, {"KUBECONFIG": "/tmp/ci-kubeconfig"}):
+            stale = await pipeline._scan_stale_ci_images(
+                ["ci-openshift-golang-builder-latest.rhel9", "ci-openshift-golang-builder-extra.rhel8"]
+            )
+
+        self.assertEqual(stale, ["ci-openshift-golang-builder-latest.rhel9"])
+        cmd = mock_cmd_gather.call_args.args[0]
+        self.assertIn("beta:config:konflux:scan-sources", cmd)
+        self.assertIn("--yaml", cmd)
+        self.assertEqual(cmd[cmd.index("--assembly") + 1], "stream")
+        self.assertEqual(
+            cmd[cmd.index("-i") + 1],
+            "ci-openshift-golang-builder-latest.rhel9,ci-openshift-golang-builder-extra.rhel8",
+        )
+        self.assertIn("--ci-kubeconfig=/tmp/ci-kubeconfig", cmd)
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    @patch("artcommonlib.exectools.cmd_gather_async")
+    async def test_omits_ci_kubeconfig_when_not_set(self, mock_cmd_gather, mock_konflux_db):
+        pipeline = self._make_pipeline(kubeconfig=None)
+        mock_cmd_gather.return_value = (0, "images: []\n", "")
+
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("KUBECONFIG", None)
+            await pipeline._scan_stale_ci_images(["ci-openshift-golang-builder-latest.rhel9"])
+
+        cmd = mock_cmd_gather.call_args.args[0]
+        self.assertFalse(any(arg.startswith("--ci-kubeconfig") for arg in cmd))
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    @patch("artcommonlib.exectools.cmd_gather_async")
+    async def test_raises_when_doozer_command_fails(self, mock_cmd_gather, mock_konflux_db):
+        pipeline = self._make_pipeline()
+        mock_cmd_gather.return_value = (1, "", "boom")
+
+        with self.assertRaisesRegex(RuntimeError, "doozer scan-sources failed"):
+            await pipeline._scan_stale_ci_images(["ci-openshift-golang-builder-latest.rhel9"])
 
 
 class TestMonobranchDispatch(IsolatedAsyncioTestCase):

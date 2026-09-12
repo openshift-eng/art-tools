@@ -31,7 +31,7 @@ from tenacity import before_sleep_log, retry, retry_if_exception_type, stop_afte
 from pyartcd import constants, jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.runtime import Runtime
-from pyartcd.util import default_release_suffix, kinit
+from pyartcd.util import default_release_suffix, get_changes, kinit
 
 _LOGGER = logging.getLogger(__name__)
 yaml = new_roundtrip_yaml_handler()
@@ -41,6 +41,8 @@ BREW_TEST_ASSEMBLY_UNSUPPORTED = (
     "Brew builds for the test assembly are not supported because Brew floating tags are updated after every "
     "successful build. Use --build-system konflux for test assembly builds."
 )
+CI_GOLANG_BUILDER_IMAGE_PREFIX = "ci-openshift-golang-builder-"
+CI_BUILD_ROOT_IMAGE_PREFIX = "ci-openshift-build-root-"
 
 
 def is_latest(ocp_version: str, el_v: int, nvr: str, koji_session) -> bool:
@@ -230,10 +232,10 @@ class UpdateGolangPipeline:
 
         # GitHub auth is handled by get_github_client_for_org() with App auth / PAT fallback
 
-        # Initialize KonfluxDb for Konflux build system
-        if build_system in ('konflux', 'both'):
-            self.konflux_db = KonfluxDb()
-            self.konflux_db.bind(KonfluxBuildRecord)
+        # Initialize KonfluxDb. Needed for Konflux build systems, and also for the CI golang
+        # builder image reconciliation stage, which always checks/rebuilds via Konflux.
+        self.konflux_db = KonfluxDb()
+        self.konflux_db.bind(KonfluxBuildRecord)
 
     @property
     def is_production_assembly(self) -> bool:
@@ -260,15 +262,17 @@ class UpdateGolangPipeline:
     def _get_upstream_ocp_build_data_repo(self):
         return get_github_client_for_org("openshift-eng").get_repo("openshift-eng/ocp-build-data")
 
-    def _get_ocp_build_data_repo_and_branch(self, default_branch):
+    def _get_ocp_build_data_repo_and_branch(self, default_branch, data_path=None, data_gitref=None):
         """Get the ocp-build-data repo and branch, respecting data_path/data_gitref overrides."""
-        if self.data_path:
-            match = re.search(r'github\.com[:/](.+?)(?:\.git)?$', self.data_path)
+        data_path = self.data_path if data_path is None else data_path
+        data_gitref = self.data_gitref if data_gitref is None else data_gitref
+        if data_path:
+            match = re.search(r'github\.com[:/](.+?)(?:\.git)?$', data_path)
             if match:
                 repo_name = match.group(1)
                 org = repo_name.split('/')[0]
                 repo = get_github_client_for_org(org).get_repo(repo_name)
-                branch = self.data_gitref or default_branch
+                branch = data_gitref or default_branch
                 return repo, branch
         return self._get_upstream_ocp_build_data_repo(), default_branch
 
@@ -555,6 +559,8 @@ class UpdateGolangPipeline:
                 await self.update_golang_streams(go_version, builder_pullspecs)
             else:
                 _LOGGER.info("No Konflux golang builder images found; streams.yml will not be updated.")
+
+        await self._refresh_ci_images(build_major_minor, allowed_major_minors, el_nvr_map_for_images)
 
         if self.is_production_assembly:
             await move_golang_bugs(
@@ -1163,6 +1169,203 @@ class UpdateGolangPipeline:
         await self._rebase_konflux(el_v, go_version, go_nvr)
         await self._build_konflux(el_v, go_version)
 
+    async def _get_ci_image_keys(self) -> List[str]:
+        """
+        List the `ci-openshift-golang-builder-*` and `ci-openshift-build-root-*` doozer image keys
+        defined for this OCP version. Golang-builder images pull their parent directly from a
+        golang stream in streams.yml (e.g. rhel-9-golang-{GO_LATEST}); build-root images pull
+        their parent via a `member` reference to the corresponding golang-builder CI image. Both
+        need to be rebuilt whenever their respective parent changes.
+        """
+        branch = f"openshift-{self.ocp_version}"
+        repo, branch = self._get_ocp_build_data_repo_and_branch(branch)
+        contents = repo.get_contents("images", ref=branch)
+        ci_image_keys = sorted(
+            content.name[: -len(".yml")]
+            for content in contents
+            if content.name.endswith(".yml")
+            and (
+                content.name.startswith(CI_GOLANG_BUILDER_IMAGE_PREFIX)
+                or content.name.startswith(CI_BUILD_ROOT_IMAGE_PREFIX)
+            )
+        )
+        return ci_image_keys
+
+    async def _scan_stale_ci_images(self, image_keys: List[str]) -> List[str]:
+        """
+        Determine which of the given CI image keys need rebuilding, by invoking doozer's
+        `beta:config:konflux:scan-sources` -- the same builder-staleness check the standing ocp4
+        scan-sources job uses. For each image's declared builder/parent (resolving `stream:`
+        references against streams.yml), it queries the parent's actual current build and flags
+        the image if that build is newer than the image's own last build.
+        """
+        group = self._get_ci_group()
+        cmd = [
+            "doozer",
+            f"--working-dir={self._doozer_working_dir}-ci-scan",
+            "--build-system=konflux",
+        ]
+        if self.data_path:
+            cmd.append(f"--data-path={self.data_path}")
+        cmd.extend(["--group", group])
+        # These images are `mode: disabled` in ocp-build-data so the standing ocp4-scan job (which
+        # scans the whole group without --load-disabled) leaves their lifecycle to this pipeline.
+        # scan-sources applies that same enabled-filter even to explicitly `-i`-named images, so
+        # --load-disabled is required here or this scan would always report them as not stale.
+        cmd.append("--load-disabled")
+        cmd.extend(self._get_doozer_assembly_args())
+        cmd.extend(["-i", ",".join(image_keys)])
+        # These CI images declare `scan_sources: exempt_rpms: - '*'`, so RPM changes never affect
+        # their staleness anyway. --skip-rpms avoids loading/cloning every RPM source in the whole
+        # group (mode='images' instead of 'both' in doozer), which is otherwise unconditional and
+        # unrelated to the -i image filter above.
+        cmd.extend(["beta:config:konflux:scan-sources", "--yaml", "--skip-rpms"])
+        # --ci-kubeconfig is for looking at release-controller imagestreams on app.ci, which is a
+        # different cluster/identity than self.kubeconfig (the Konflux SA kubeconfig).
+        ci_kubeconfig = os.environ.get('KUBECONFIG')
+        if ci_kubeconfig:
+            cmd.append(f"--ci-kubeconfig={ci_kubeconfig}")
+
+        rc, out, _ = await exectools.cmd_gather_async(cmd, env=self._doozer_env_vars, stderr=None, check=False)
+        if rc != 0:
+            raise RuntimeError(f"doozer scan-sources failed with exit code {rc} for {', '.join(image_keys)}:\n{out}")
+
+        report = yaml.load(out) or {}
+        changes = get_changes(report)
+        return [image_key for image_key in changes.get('images', []) if image_key in image_keys]
+
+    CI_VARIANT_BY_GROUP_VAR = {
+        "GO_LATEST": "latest",
+        "GO_EXTRA": "extra",
+        "GO_PREVIOUS": "previous",
+    }
+
+    async def _refresh_ci_images(
+        self,
+        build_major_minor: str,
+        allowed_major_minors: dict[str, str],
+        el_nvr_map_for_images: dict[int, str],
+    ):
+        """
+        Standing reconciliation check: make sure the ci-openshift-golang-builder-* and
+        ci-openshift-build-root-* image(s) for the variant (GO_LATEST/GO_EXTRA/GO_PREVIOUS)
+        matching this run's golang version are built against their current declared parent. The
+        ocp-build-data-validator enforces that GO_LATEST/GO_EXTRA/GO_PREVIOUS never share a
+        major.minor, so at most one variant can match here. Both families are scanned together in
+        a single `_scan_stale_ci_images` call (see `beta:config:konflux:scan-sources`) -- the same
+        builder-staleness check used by the standing ocp4 scan-sources job -- so build-root's own
+        source changes are caught directly. Loading both together also means doozer's own change
+        propagation (a changing image marks its `member`-referencing descendants as changing too)
+        naturally covers the case where build-root itself hasn't changed but its golang-builder
+        parent has. Whatever comes back stale is rebased+built together in one batch by triggering
+        the standing `ocp4-konflux` job (see `jenkins.start_ocp4_konflux`), scoped to just these
+        image(s) via `IMAGE_LIST` -- doozer only resolves a `from: member:` reference correctly
+        when both images are loaded in the same run. Once done, every image considered this run
+        (not just what was rebuilt) is synced to CI in a single final step by triggering the
+        standing `sync-ci-images` job (see `jenkins.start_sync_ci_images`) -- re-mirroring an
+        already-current image is cheap for a handful of images, and it keeps CI in sync with the
+        latest successful build even when nothing needed rebuilding. For the test assembly,
+        `live_test_mode` is passed so that job publishes to the `.test`-suffixed CI imagestream
+        tag instead of the real one, so test-assembly runs never overwrite what production CI
+        actually consumes.
+        """
+        variant = next(
+            (
+                self.CI_VARIANT_BY_GROUP_VAR[var_name]
+                for var_name, major_minor in allowed_major_minors.items()
+                if major_minor == build_major_minor
+            ),
+            None,
+        )
+        if not variant:
+            _LOGGER.info(
+                "Golang %s does not match any of GO_LATEST/GO_EXTRA/GO_PREVIOUS for openshift-%s; "
+                "skipping CI golang builder/build-root reconciliation",
+                build_major_minor,
+                self.ocp_version,
+            )
+            return
+
+        all_image_keys = set(await self._get_ci_image_keys())
+        # (el_v, image_key) for every rhel version sharing this golang version that has a CI golang builder image defined
+        builder_targets = [
+            (el_v, f"{CI_GOLANG_BUILDER_IMAGE_PREFIX}{variant}.rhel{el_v}")
+            for el_v in el_nvr_map_for_images
+            if f"{CI_GOLANG_BUILDER_IMAGE_PREFIX}{variant}.rhel{el_v}" in all_image_keys
+        ]
+        if not builder_targets:
+            _LOGGER.info(
+                "No CI golang builder images found for variant %s on openshift-%s; "
+                "skipping CI golang builder/build-root reconciliation",
+                variant,
+                self.ocp_version,
+            )
+            return
+
+        # Build-root counterpart for every el_v that has a golang-builder image, scanned alongside
+        # it regardless of the builder's own staleness -- both build-root's own source changes and
+        # "parent golang-builder changed" (via doozer's descendant-propagation once both images are
+        # loaded together) are caught by this one scan.
+        build_root_targets = [
+            (el_v, f"{CI_BUILD_ROOT_IMAGE_PREFIX}{variant}.rhel{el_v}")
+            for el_v, _ in builder_targets
+            if f"{CI_BUILD_ROOT_IMAGE_PREFIX}{variant}.rhel{el_v}" in all_image_keys
+        ]
+        if not build_root_targets:
+            _LOGGER.info(
+                "No CI build-root images found for variant %s on openshift-%s; scanning golang builder image(s) only",
+                variant,
+                self.ocp_version,
+            )
+
+        scan_targets = builder_targets + build_root_targets
+        scan_keys = [image_key for _, image_key in scan_targets]
+        stale_image_keys = set(await self._scan_stale_ci_images(scan_keys))
+        rebuilt_image_keys = [image_key for image_key in scan_keys if image_key in stale_image_keys]
+
+        if rebuilt_image_keys:
+            await self._slack_client.say_in_thread(
+                f":construction: Rebuilding CI golang builder/build-root image(s) for "
+                f"{self.ocp_version}: {', '.join(rebuilt_image_keys)}"
+            )
+
+            build_result = jenkins.start_ocp4_konflux(
+                build_version=self.ocp_version,
+                assembly=self.assembly,
+                image_list=rebuilt_image_keys,
+                dry_run=self.dry_run,
+                block_until_complete=True,
+            )
+            if build_result != "SUCCESS":
+                raise RuntimeError(f"CI image build for {self.ocp_version} failed with result: {build_result}")
+
+            await self._slack_client.say_in_thread(
+                f":white_check_mark: Rebuilt CI golang builder/build-root image(s): {', '.join(rebuilt_image_keys)}"
+            )
+        else:
+            _LOGGER.info(
+                "All CI golang builder/build-root images for openshift-%s already use their current parent image;",
+                self.ocp_version,
+            )
+
+        # Sync every image considered this run, not just what was just rebuilt -- mirroring an
+        # already-current image is a no-op cost-wise (a handful of images at most), and it keeps CI
+        # in sync with the latest successful build even on runs where nothing needed rebuilding.
+
+        sync_result = jenkins.start_sync_ci_images(
+            version=self.ocp_version,
+            block_until_complete=True,
+            assembly=self.assembly,
+            image_list=scan_keys,
+            dry_run=self.dry_run,
+            load_disabled=True,
+            live_test_mode=not self.is_production_assembly,
+        )
+        if sync_result != "SUCCESS":
+            raise RuntimeError(f"CI image sync for {self.ocp_version} failed with result: {sync_result}")
+
+        await self._slack_client.say_in_thread(f":white_check_mark: Synced CI image(s): {', '.join(scan_keys)}")
+
     GOLANG_DATA_BRANCH = 'golang'
 
     @staticmethod
@@ -1181,6 +1384,16 @@ class UpdateGolangPipeline:
         if self.data_gitref:
             group += f'@{self.data_gitref}'
         return group, image_key
+
+    def _get_ci_group(self) -> str:
+        """The openshift-{version} doozer group used by the CI golang-builder/build-root
+        methods, honoring --data-gitref so a fork's non-default-named branch (e.g.
+        openshift-5.0-test) is actually checked out instead of doozer defaulting to a branch
+        literally named openshift-{version}."""
+        group = f"openshift-{self.ocp_version}"
+        if self.data_gitref:
+            group += f'@{self.data_gitref}'
+        return group
 
     def verify_golang_builder_repo(self, el_v, go_version):
         default_branch = self.GOLANG_DATA_BRANCH
