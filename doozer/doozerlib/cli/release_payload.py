@@ -139,6 +139,9 @@ class ReleasePayloadRebaseAndBuildCli:
         base_name = assembly_imagestream_base_name_generic(
             version, runtime.assembly, runtime.assembly_type, build_system='konflux'
         )
+        if runtime.assembly.lower() != 'stream':
+            # TODO: Remove the temporary test imagestream override after payload filler testing is complete.
+            base_name += '-test'
         base_namespace = default_imagestream_namespace_base_name()
         namespace, name = payload_imagestream_namespace_and_name(base_namespace, base_name, self.arch, private=False)
         return namespace, name

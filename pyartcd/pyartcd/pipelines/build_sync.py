@@ -95,6 +95,21 @@ class BuildSyncPipeline:
             else f'{self.version}-konflux-art-latest'
         )
 
+    def _test_imagestream_base_name(self) -> str | None:
+        if self.assembly.lower() == 'stream':
+            return None
+
+        # TODO: Remove the temporary test imagestream override after payload filler testing is complete.
+        return (
+            f'{self.version}-art-assembly-{self.assembly}-test'
+            if self.build_system == 'brew' or uses_konflux_imagestream_override(self.version)
+            else f'{self.version}-konflux-art-assembly-{self.assembly}-test'
+        )
+
+    def _mark_test_run(self):
+        if self._test_imagestream_base_name():
+            jenkins.update_title(' [TEST]')
+
     @start_as_current_span_async(TRACER, "build-sync.comment-on-assembly-pr")
     async def comment_on_assembly_pr(self, text_body):
         """
@@ -481,6 +496,9 @@ class BuildSyncPipeline:
                 f'--output-dir={GEN_PAYLOAD_ARTIFACTS_OUT_DIR}',
             ]
         )
+        test_imagestream_base_name = self._test_imagestream_base_name()
+        if test_imagestream_base_name:
+            cmd.append(f'--is-name={test_imagestream_base_name}')
         if not self.runtime.dry_run:
             cmd.append('--apply')
         if self.emergency_ignore_issues:
@@ -732,6 +750,7 @@ async def build_sync(
         embargo_permit_ack=embargo_permit_ack,
         build_system=build_system,
     )
+    pipeline._mark_test_run()
 
     if build_system == 'brew':
         lock = locks.Lock.BUILD_SYNC
