@@ -1,7 +1,7 @@
 import copy
 import difflib
 import typing
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from enum import Enum
 
 from artcommonlib.model import ListModel, Missing, Model
@@ -232,6 +232,31 @@ def _merger(a, b):
     raise TypeError(f'Unexpected value type: {type(a)}: {a}')
 
 
+def _check_until_date(until_str: str, context: str) -> typing.Optional[str]:
+    """
+    Check whether an 'until' expiry date has passed.
+
+    Arg(s):
+        until_str (str): ISO 8601 date string (YYYY-MM-DD) from an 'until' field.
+        context (str): Human-readable description of the override (for error messages).
+    Return Value(s):
+        str | None: Error message if expired, None if still valid.
+    """
+    try:
+        until_date = date.fromisoformat(until_str)
+    except ValueError:
+        raise ValueError(f"Invalid 'until' date format in {context}: {until_str!r}. Expected YYYY-MM-DD.")
+    today = date.today()
+    if until_date < today:
+        days_overdue = (today - until_date).days
+        return (
+            f"Assembly override has expired: {context} had 'until: {until_str}' "
+            f"but today is {today.isoformat()} ({days_overdue} day(s) overdue). "
+            f"Remove or extend this override."
+        )
+    return None
+
+
 def assembly_permits(releases_config: Model, group_config: Model, assembly: typing.Optional[str]) -> ListModel:
     """
     :param releases_config: The content of releases.yml in Model form.
@@ -261,6 +286,12 @@ def assembly_permits(releases_config: Model, group_config: Model, assembly: typi
                 f'and permitting conflicts causes RPM advisories to claim newer versions than '
                 f'what actually shipped in RHCOS.'
             )
+        if permit.until is not Missing and permit.until:
+            msg = _check_until_date(
+                str(permit.until), f"permit(code={permit.code}, component={permit.component}) in assembly '{assembly}'"
+            )
+            if msg:
+                raise ValueError(msg)
     return defined_permits
 
 
@@ -605,3 +636,54 @@ def assembly_validate_member_distgit_keys(
                 f"Assembly '{assembly}' references {meta_type} member '{dgk}' "
                 f"which does not match any known {meta_type} definition in the group.{suggestion}"
             )
+
+
+def check_assembly_overrides_expiry(releases_config: Model, assembly: typing.Optional[str]) -> typing.List[str]:
+    """
+    Check whether any member overrides have passed their 'until' expiry date.
+    Covers members.images[].until and members.rpms[].until.
+    Permit expiry is checked separately by assembly_permits().
+
+    Arg(s):
+        releases_config (Model): The content of releases.yml in Model form.
+        assembly (str | None): The name of the assembly to check.
+    Return Value(s):
+        list[str]: Human-readable error messages for every expired override.
+                   Empty list means all overrides are still valid (or have no 'until').
+    """
+    if not assembly or not isinstance(releases_config, Model):
+        return []
+
+    errors: typing.List[str] = []
+    _check_members_expiry(releases_config, assembly, 'image', errors)
+    _check_members_expiry(releases_config, assembly, 'rpm', errors)
+    return errors
+
+
+def _check_members_expiry(
+    releases_config: Model,
+    assembly: str,
+    meta_type: str,
+    errors: typing.List[str],
+) -> None:
+    """
+    Accumulate expiry errors for members.images[] or members.rpms[].
+
+    Arg(s):
+        releases_config (Model): The content of releases.yml in Model form.
+        assembly (str): The name of the assembly to check.
+        meta_type (str): 'image' or 'rpm'.
+        errors (list[str]): List to append error messages to.
+    """
+    component_list = assembly_config_struct(releases_config, assembly, 'members', {})
+    entries = component_list[f'{meta_type}s']
+    if entries is Missing:
+        return
+    for entry in entries:
+        if entry.until is not Missing and entry.until:
+            msg = _check_until_date(
+                str(entry.until),
+                f"member {meta_type} override(distgit_key={entry.distgit_key}) in assembly '{assembly}'",
+            )
+            if msg:
+                errors.append(msg)

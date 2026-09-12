@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from unittest import TestCase
 
 import yaml
@@ -15,6 +15,7 @@ from artcommonlib.assembly import (
     assembly_rhcos_config,
     assembly_targeted_fixes_only,
     assembly_validate_member_distgit_keys,
+    check_assembly_overrides_expiry,
 )
 from artcommonlib.model import Missing, Model
 
@@ -1120,3 +1121,217 @@ releases:
         releases_config = Model(dict_to_model=yaml.safe_load(releases_yml))
         with self.assertRaises(ValueError):
             assembly_validate_member_distgit_keys(releases_config, 'loop_assembly', 'image', {'some-image'})
+
+
+class TestAssemblyOverridesExpiry(TestCase):
+    """Tests for the 'until' expiry field on assembly overrides."""
+
+    def _group_config(self):
+        return Model(dict_to_model={'software_lifecycle': {'phase': 'release'}})
+
+    def test_permit_until_not_expired(self):
+        """Permit with future 'until' date should not raise."""
+        future = (date.today() + timedelta(days=30)).isoformat()
+        releases_yml = f"""
+releases:
+  test:
+    assembly:
+      permits:
+        - code: MISMATCHED_SIBLINGS
+          component: '*'
+          until: "{future}"
+"""
+        releases_config = Model(dict_to_model=yaml.safe_load(releases_yml))
+        permits = assembly_permits(releases_config, self._group_config(), "test")
+        self.assertEqual(len(permits), 1)
+
+    def test_permit_until_expired(self):
+        """Permit with past 'until' date should raise ValueError."""
+        past = (date.today() - timedelta(days=5)).isoformat()
+        releases_yml = f"""
+releases:
+  test:
+    assembly:
+      permits:
+        - code: MISMATCHED_SIBLINGS
+          component: '*'
+          until: "{past}"
+"""
+        releases_config = Model(dict_to_model=yaml.safe_load(releases_yml))
+        with self.assertRaises(ValueError) as cm:
+            assembly_permits(releases_config, self._group_config(), "test")
+        self.assertIn("expired", str(cm.exception))
+        self.assertIn("MISMATCHED_SIBLINGS", str(cm.exception))
+        self.assertIn("5 day(s) overdue", str(cm.exception))
+
+    def test_permit_until_invalid_format(self):
+        """Permit with non-date 'until' should raise ValueError."""
+        releases_yml = """
+releases:
+  test:
+    assembly:
+      permits:
+        - code: MISMATCHED_SIBLINGS
+          component: '*'
+          until: "not-a-date"
+"""
+        releases_config = Model(dict_to_model=yaml.safe_load(releases_yml))
+        with self.assertRaises(ValueError) as cm:
+            assembly_permits(releases_config, self._group_config(), "test")
+        self.assertIn("Invalid 'until' date format", str(cm.exception))
+
+    def test_permit_without_until_still_works(self):
+        """Permits without 'until' should work as before."""
+        releases_yml = """
+releases:
+  test:
+    assembly:
+      permits:
+        - code: MISMATCHED_SIBLINGS
+          component: '*'
+"""
+        releases_config = Model(dict_to_model=yaml.safe_load(releases_yml))
+        permits = assembly_permits(releases_config, self._group_config(), "test")
+        self.assertEqual(len(permits), 1)
+
+    def test_member_image_until_expired(self):
+        """Member image override with past 'until' should be reported."""
+        past = (date.today() - timedelta(days=10)).isoformat()
+        releases_yml = f"""
+releases:
+  test:
+    assembly:
+      members:
+        images:
+          - distgit_key: ose-network-operator
+            why: "Pin for testing"
+            until: "{past}"
+"""
+        releases_config = Model(dict_to_model=yaml.safe_load(releases_yml))
+        errors = check_assembly_overrides_expiry(releases_config, "test")
+        self.assertEqual(len(errors), 1)
+        self.assertIn("ose-network-operator", errors[0])
+        self.assertIn("expired", errors[0])
+
+    def test_member_rpm_until_expired(self):
+        """Member RPM override with past 'until' should be reported."""
+        past = (date.today() - timedelta(days=3)).isoformat()
+        releases_yml = f"""
+releases:
+  test:
+    assembly:
+      members:
+        rpms:
+          - distgit_key: my-rpm
+            why: "Pin NVR"
+            until: "{past}"
+"""
+        releases_config = Model(dict_to_model=yaml.safe_load(releases_yml))
+        errors = check_assembly_overrides_expiry(releases_config, "test")
+        self.assertEqual(len(errors), 1)
+        self.assertIn("my-rpm", errors[0])
+
+    def test_member_until_not_expired(self):
+        """Member override with future 'until' should not be reported."""
+        future = (date.today() + timedelta(days=30)).isoformat()
+        releases_yml = f"""
+releases:
+  test:
+    assembly:
+      members:
+        images:
+          - distgit_key: ose-network-operator
+            why: "Pin for testing"
+            until: "{future}"
+"""
+        releases_config = Model(dict_to_model=yaml.safe_load(releases_yml))
+        errors = check_assembly_overrides_expiry(releases_config, "test")
+        self.assertEqual(len(errors), 0)
+
+    def test_no_until_no_error(self):
+        """Overrides without 'until' should produce no errors."""
+        releases_yml = """
+releases:
+  test:
+    assembly:
+      members:
+        images:
+          - distgit_key: ose-network-operator
+            why: "Pin for testing"
+      permits:
+        - code: MISMATCHED_SIBLINGS
+          component: '*'
+"""
+        releases_config = Model(dict_to_model=yaml.safe_load(releases_yml))
+        errors = check_assembly_overrides_expiry(releases_config, "test")
+        self.assertEqual(len(errors), 0)
+        permits = assembly_permits(releases_config, self._group_config(), "test")
+        self.assertEqual(len(permits), 1)
+
+    def test_inherited_member_until_expired(self):
+        """Expired 'until' on a member override in a parent assembly should be caught."""
+        past = (date.today() - timedelta(days=7)).isoformat()
+        releases_yml = f"""
+releases:
+  parent:
+    assembly:
+      members:
+        images:
+          - distgit_key: inherited-image
+            why: "Temporary pin"
+            until: "{past}"
+  child:
+    assembly:
+      basis:
+        assembly: parent
+"""
+        releases_config = Model(dict_to_model=yaml.safe_load(releases_yml))
+        errors = check_assembly_overrides_expiry(releases_config, "child")
+        self.assertEqual(len(errors), 1)
+        self.assertIn("inherited-image", errors[0])
+
+    def test_none_assembly_returns_empty(self):
+        """None assembly should return empty list."""
+        releases_config = Model(dict_to_model={})
+        errors = check_assembly_overrides_expiry(releases_config, None)
+        self.assertEqual(len(errors), 0)
+
+    def test_multiple_expired_overrides(self):
+        """Multiple expired overrides should all be reported."""
+        past = (date.today() - timedelta(days=1)).isoformat()
+        releases_yml = f"""
+releases:
+  test:
+    assembly:
+      members:
+        images:
+          - distgit_key: image-a
+            why: "Pin A"
+            until: "{past}"
+          - distgit_key: image-b
+            why: "Pin B"
+            until: "{past}"
+        rpms:
+          - distgit_key: rpm-c
+            why: "Pin C"
+            until: "{past}"
+"""
+        releases_config = Model(dict_to_model=yaml.safe_load(releases_yml))
+        errors = check_assembly_overrides_expiry(releases_config, "test")
+        self.assertEqual(len(errors), 3)
+
+    def test_permit_until_today_not_expired(self):
+        """Permit with 'until' set to today should not be expired (expires after today)."""
+        today = date.today().isoformat()
+        releases_yml = f"""
+releases:
+  test:
+    assembly:
+      permits:
+        - code: MISMATCHED_SIBLINGS
+          component: '*'
+          until: "{today}"
+"""
+        releases_config = Model(dict_to_model=yaml.safe_load(releases_yml))
+        permits = assembly_permits(releases_config, self._group_config(), "test")
+        self.assertEqual(len(permits), 1)

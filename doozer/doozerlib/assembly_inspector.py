@@ -9,6 +9,7 @@ from artcommonlib.assembly import (
     assembly_permits,
     assembly_rhcos_config,
     assembly_type,
+    check_assembly_overrides_expiry,
 )
 from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
 from artcommonlib.rhcos import RhcosMissingContainerException, get_container_configs
@@ -44,6 +45,12 @@ class AssemblyInspector:
             str, Dict[str, Optional[Dict]]
         ] = {}  # Dict[tag] -> Dict[distgit_key] -> Optional[BuildDict]
         self._permits = assembly_permits(self.runtime.releases_config, self.runtime.group_config, self.runtime.assembly)
+        expiry_errors = check_assembly_overrides_expiry(self.runtime.releases_config, self.runtime.assembly)
+        if expiry_errors:
+            raise ValueError(
+                "Assembly override(s) have expired and must be cleaned up:\n"
+                + "\n".join(f"  - {e}" for e in expiry_errors)
+            )
         self._rpm_deliveries: Dict[str, List[RPMDelivery]] = {}  # Dict[package_name] => list of RpmDelivery configs
         self._release_build_record_inspectors: Dict[str, Optional[BuildRecordInspector]] = dict()
 
