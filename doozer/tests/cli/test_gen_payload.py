@@ -31,6 +31,27 @@ rgp_cli.asyncio.sleep = no_sleep
 
 
 class TestGenPayloadCli(IsolatedAsyncioTestCase):
+    def test_find_payload_entries_omits_images_not_built_for_architecture(self):
+        image_inspector = MagicMock()
+        image_inspector.get_image_meta.return_value = MagicMock()
+        image_inspector.get_build_inspector.return_value = MagicMock()
+        image_inspector.get_digest.return_value = "sha256:image"
+        image_inspector.get_manifest_list_digest.return_value = "sha256:manifest"
+
+        assembly_inspector = MagicMock()
+        assembly_inspector.get_rhcos_build.return_value.get_container_configs.return_value = []
+        payload_generator = rgp_cli.PayloadGenerator()
+        with patch.object(
+            payload_generator,
+            "get_group_payload_tag_mapping",
+            return_value={"built-image": image_inspector, "unsupported-image": None},
+        ):
+            entries, issues = payload_generator.find_payload_entries(assembly_inspector, "s390x", "quay.io/test")
+
+        self.assertEqual(issues, [])
+        self.assertIn("built-image", entries)
+        self.assertNotIn("unsupported-image", entries)
+
     def test_find_rhcos_payload_entries(self):
         rhcos_build = MagicMock()
         assembly_inspector = MagicMock()
