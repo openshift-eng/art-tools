@@ -7,6 +7,7 @@ the upstream rpm-lockfile-prototype tool (v0.22.0+). Container image
 interactions are delegated to ContainerImageHelper.
 """
 
+import asyncio
 import logging
 import re
 import shlex
@@ -52,6 +53,18 @@ def _is_local_rpm(token: str) -> bool:
     if "/" in token and "*" in token:
         return True
     return False
+
+
+def _package_name(package: str | ArchSpecificPackage) -> str:
+    """
+    Return the package name from a plain or architecture-scoped package spec.
+
+    Arg(s):
+        package (str | ArchSpecificPackage): Package specification.
+    Return Value(s):
+        str: Plain package name.
+    """
+    return package if isinstance(package, str) else package.name
 
 
 _BARE_UPDATE_RE = re.compile(
@@ -216,7 +229,7 @@ def build_rpms_in_yaml(
     packages: list[str],
     arch_specific_packages: dict[str, list[str]] | None = None,
     reinstall_packages: list[str] | None = None,
-    upgrade_packages: list[str] | None = None,
+    upgrade_packages: list[str | ArchSpecificPackage] | None = None,
     module_enable: list[str] | None = None,
     exclude_packages: list[str] | None = None,
     context: dict[str, bool | str] | None = None,
@@ -233,7 +246,7 @@ def build_rpms_in_yaml(
         arch_specific_packages (dict[str, list[str]] | None): Per-arch packages.
         reinstall_packages (list[str] | None): Installed packages to reinstall
             from repos (ensures they appear in the lockfile).
-        upgrade_packages (list[str] | None): Packages to upgrade.
+        upgrade_packages (list[str | ArchSpecificPackage] | None): Packages to upgrade.
         module_enable (list[str] | None): Module streams to enable
             (e.g., ["nodejs:18", "python36:3.6"]).
         exclude_packages (list[str] | None): Packages to exclude from
@@ -252,7 +265,7 @@ def build_rpms_in_yaml(
     if reinstall_packages:
         reinstall_packages = [p for p in reinstall_packages if not _is_local_rpm(p)]
     if upgrade_packages:
-        upgrade_packages = [p for p in upgrade_packages if not _is_local_rpm(p)]
+        upgrade_packages = [p for p in upgrade_packages if not _is_local_rpm(_package_name(p))]
 
     package_entries: list[str | ArchSpecificPackage] = list(packages)
     if arch_specific_packages:
@@ -528,10 +541,10 @@ class RpmLockfilePrototypeGenerator:
             extra_packages: list[str] = list(cat_packages.get(stage_num, []))
 
             reinstall_pkgs: list[str] | None = None
-            upgrade_pkgs: list[str] | None = None
+            upgrade_pkgs: list[str | ArchSpecificPackage] | None = None
             if stage_num == final_stage_num and not bare_context:
                 if image_pullspec:
-                    base_pkgs = await self._get_base_image_packages(stage_num, image_pullspec, distgit_key)
+                    base_pkgs = await self._get_base_image_packages(stage_num, image_pullspec, distgit_key, arches)
                     if base_pkgs:
                         # Use upgrade semantics for base image packages so repos
                         # can provide newer versions. reinstallPackages pins to the
@@ -545,7 +558,7 @@ class RpmLockfilePrototypeGenerator:
                             "packages added as upgrade targets into lockfile"
                         )
                 else:
-                    base_pkgs = await self._get_base_image_packages(stage_num, None, distgit_key)
+                    base_pkgs = await self._get_base_image_packages(stage_num, None, distgit_key, arches)
                     if base_pkgs:
                         extra = [p for p in base_pkgs if p not in extra_packages]
                         if extra:
@@ -563,7 +576,9 @@ class RpmLockfilePrototypeGenerator:
                 elif stage_num != final_stage_num and not upgrade_pkgs:
                     # Final stage already populated upgrade_pkgs from base image;
                     # only query again for non-final stages with bare updates.
-                    bare_update_base = await self._get_base_image_packages(stage_num, image_pullspec, distgit_key)
+                    bare_update_base = await self._get_base_image_packages(
+                        stage_num, image_pullspec, distgit_key, arches
+                    )
                     if bare_update_base:
                         upgrade_pkgs = list(bare_update_base)
                 if upgrade_pkgs and stage_num in stages_with_bare_updates:
@@ -593,10 +608,12 @@ class RpmLockfilePrototypeGenerator:
                 dockerfile_install_pkgs = _extract_install_packages(entries, stage_num)
                 if dockerfile_install_pkgs:
                     if upgrade_pkgs:
-                        base_pkg_set = set(upgrade_pkgs)
+                        base_pkg_set = {_package_name(package) for package in upgrade_pkgs}
                     else:
-                        stage_base_pkgs = await self._get_base_image_packages(stage_num, image_pullspec, distgit_key)
-                        base_pkg_set = set(stage_base_pkgs) if stage_base_pkgs else set()
+                        stage_base_pkgs = await self._get_base_image_packages(
+                            stage_num, image_pullspec, distgit_key, arches
+                        )
+                        base_pkg_set = {_package_name(package) for package in stage_base_pkgs}
                     pin_candidates = sorted(dockerfile_install_pkgs & base_pkg_set)
                     if pin_candidates:
                         result = await self._pin_missing_dockerfile_packages(
@@ -614,23 +631,44 @@ class RpmLockfilePrototypeGenerator:
 
         return stage_lockfiles
 
-    async def _get_base_image_packages(self, stage_num: int, image_pullspec: str | None, distgit_key: str) -> list[str]:
+    async def _get_base_image_packages(
+        self,
+        stage_num: int,
+        image_pullspec: str | None,
+        distgit_key: str,
+        arches: list[str],
+    ) -> list[str | ArchSpecificPackage]:
         """
-        Get installed package names from the base image for conflict
-        detection. Tries a live podman query first; falls back to parent
-        lockfile data if the image is unreachable.
+        Get installed package names from the base image for upgrade targets
+        and conflict detection. Tries live podman queries for every target
+        architecture first; falls back to parent lockfile data if the image
+        is unreachable.
 
         Arg(s):
             stage_num (int): Dockerfile stage number.
             image_pullspec (str | None): Base image pullspec (None = bare mode).
             distgit_key (str): Image identifier for logging.
+            arches (list[str]): Brew architectures to query.
         Return Value(s):
-            list[str]: Package names, or empty if unavailable.
+            list[str | ArchSpecificPackage]: Package names or scoped package
+                specifications, or empty if unavailable.
         """
         if image_pullspec:
-            pkgs = await self._container.get_installed_packages(image_pullspec)
-            if pkgs:
-                return pkgs
+            packages_by_arch = await asyncio.gather(
+                *(self._container.get_installed_packages(image_pullspec, arch) for arch in arches)
+            )
+            scoped_packages = [
+                ArchSpecificPackage(name=package, arches={"only": arch})
+                for arch, packages in zip(arches, packages_by_arch)
+                for package in packages
+            ]
+            empty_arches = [arch for arch, packages in zip(arches, packages_by_arch) if not packages]
+            if empty_arches:
+                self.logger.warning(
+                    f"{distgit_key}: stage {stage_num}: no installed package data for architectures: {empty_arches}"
+                )
+            if scoped_packages:
+                return scoped_packages
         if stage_num in self.fallback_installed:
             self.logger.info(
                 f"{distgit_key}: stage {stage_num}: using parent lockfile data "
@@ -752,7 +790,7 @@ class RpmLockfilePrototypeGenerator:
         stage_num: int,
         reinstall_packages: list[str] | None = None,
         containerfile_path: str | None = None,
-        upgrade_packages: list[str] | None = None,
+        upgrade_packages: list[str | ArchSpecificPackage] | None = None,
         bare_context: bool = False,
     ) -> LockfileData | None:
         """
@@ -773,7 +811,7 @@ class RpmLockfilePrototypeGenerator:
                 to reinstall from repos into the lockfile.
             containerfile_path (str | None): Dockerfile path for upstream
                 package extraction.
-            upgrade_packages (list[str] | None): Base image packages to
+            upgrade_packages (list[str | ArchSpecificPackage] | None): Base image packages to
                 upgrade (from bare dnf/yum update commands).
             bare_context (bool): Whether to emit a bare resolution context.
         Return Value(s):
@@ -800,8 +838,10 @@ class RpmLockfilePrototypeGenerator:
         while real_retries < MAX_RESOLUTION_RETRIES:
             all_upgrade_targets = list(remaining_reinstall)
             if remaining_upgrade:
-                existing = set(all_upgrade_targets)
-                all_upgrade_targets.extend(p for p in remaining_upgrade if p not in existing)
+                existing = {_package_name(package) for package in all_upgrade_targets}
+                all_upgrade_targets.extend(
+                    package for package in remaining_upgrade if _package_name(package) not in existing
+                )
             effective_upgrade = all_upgrade_targets if (image_pullspec and all_upgrade_targets) else None
             in_yaml = build_rpms_in_yaml(
                 repo_list,
@@ -841,7 +881,8 @@ class RpmLockfilePrototypeGenerator:
                         continue
                 # Drop all bare-update upgrade packages on any miss
                 # (all-or-nothing: partial upgrades cause EVR conflicts).
-                upgrade_hit = missing & set(remaining_upgrade) if remaining_upgrade else set()
+                upgrade_names = {_package_name(package) for package in remaining_upgrade}
+                upgrade_hit = missing & upgrade_names if remaining_upgrade else set()
                 if upgrade_hit:
                     self.logger.info(
                         f"{distgit_key}: stage {stage_num}: dropping all "
@@ -1002,7 +1043,7 @@ class RpmLockfilePrototypeGenerator:
         stage_num: int,
         reinstall_packages: list[str] | None = None,
         containerfile_path: str | None = None,
-        upgrade_packages: list[str] | None = None,
+        upgrade_packages: list[str | ArchSpecificPackage] | None = None,
         bare_context: bool = False,
     ) -> LockfileData | None:
         """
@@ -1023,7 +1064,7 @@ class RpmLockfilePrototypeGenerator:
                 reinstall from repos into the lockfile.
             containerfile_path (str | None): Dockerfile path for upstream
                 package extraction.
-            upgrade_packages (list[str] | None): Base image packages to
+            upgrade_packages (list[str | ArchSpecificPackage] | None): Base image packages to
                 upgrade (from bare dnf/yum update commands).
             bare_context (bool): Whether to emit a bare resolution context.
         Return Value(s):
@@ -1065,7 +1106,9 @@ class RpmLockfilePrototypeGenerator:
             [p for p in reinstall_packages if p not in mismatched_names] if reinstall_packages else reinstall_packages
         )
         pinned_upgrade = (
-            [p for p in upgrade_packages if p not in mismatched_names] if upgrade_packages else upgrade_packages
+            [p for p in upgrade_packages if _package_name(p) not in mismatched_names]
+            if upgrade_packages
+            else upgrade_packages
         )
 
         try:
