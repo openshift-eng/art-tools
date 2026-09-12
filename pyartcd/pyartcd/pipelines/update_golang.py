@@ -43,6 +43,54 @@ BREW_TEST_ASSEMBLY_UNSUPPORTED = (
 )
 
 
+# Floating-tag format: registry.redhat.io/openshift/golang-builder:golang-builder-v1.22-rhel9
+_FLOATING_TAG_RE = re.compile(r'golang-builder-v(\d+)\.(\d+)-rhel(\d+)$')
+# NVR-tag format: registry.redhat.io/openshift/golang-builder:openshift-golang-builder-container-v1.22.12-...el9
+_NVR_TAG_RE = re.compile(r'openshift-golang-builder[^:]*-v(\d+)\.(\d+)\.\d+[^:]*\.el(\d+)')
+
+
+def _parse_pullspec_tuple(pullspec: str) -> tuple[int, int, int]:
+    """Normalise a golang-builder pullspec (floating or NVR) to (major, minor, rhel_version).
+
+    Raises ValueError for unrecognised formats.
+    """
+    tag = pullspec.split(':')[-1]
+    m = _FLOATING_TAG_RE.search(tag)
+    if m:
+        return int(m.group(1)), int(m.group(2)), int(m.group(3))
+    m = _NVR_TAG_RE.search(tag)
+    if m:
+        return int(m.group(1)), int(m.group(2)), int(m.group(3))
+    raise ValueError(f"Cannot parse golang-builder pullspec into (major, minor, rhel) tuple: {pullspec!r}")
+
+
+def _branch_uses_floating_tags(streams_content: dict) -> bool:
+    """Return True when any golang-builder stream entry uses a floating tag format."""
+    if not streams_content:
+        return False
+    for info in streams_content.values():
+        image = info.get('image', '') if isinstance(info, dict) else ''
+        if _FLOATING_TAG_RE.search(image.split(':')[-1]):
+            return True
+    return False
+
+
+def _pullspecs_match(a: str, b: str) -> bool:
+    """Compare two golang-builder pullspecs via tuple normalisation.
+
+    When both strings represent recognisable golang-builder pullspecs (floating or NVR),
+    compares by (major, minor, rhel_version) so a floating tag and an NVR for the same
+    builder version are treated as equal.
+
+    Falls back to string equality when either pullspec cannot be parsed (e.g. unrecognised
+    registry/format in test fixtures or legacy entries), preserving the old behaviour.
+    """
+    try:
+        return _parse_pullspec_tuple(a) == _parse_pullspec_tuple(b)
+    except ValueError:
+        return a == b
+
+
 def is_latest(ocp_version: str, el_v: int, nvr: str, koji_session) -> bool:
     build_tag = f'rhaos-{ocp_version}-rhel-{el_v}-build'
     parsed_nvr = parse_nvr(nvr)
@@ -806,14 +854,42 @@ class UpdateGolangPipeline:
         build_records = await asyncio.gather(*(find_builder(el_v) for el_v in el_nvr_map))
         return {el_v: build_record for el_v, build_record in zip(el_nvr_map, build_records) if build_record is not None}
 
-    def _get_builder_pullspec(self, builder_nvr: str):
-        """Generate the published pullspec used in streams.yml for Konflux-built builders."""
+    def _get_builder_pullspec(self, builder_nvr: str, streams_content: dict | None = None):
+        """Generate the published pullspec used in streams.yml for Konflux-built builders.
+
+        When *streams_content* is provided (or the branch content is already cached on the
+        instance), and the branch uses floating tags, returns a floating-tag pullspec of the
+        form ``golang-builder-v{major}.{minor}-rhel{el}``.
+        Otherwise returns the full NVR pullspec.
+        """
         parsed_nvr = parse_nvr(builder_nvr)
         component_name = parsed_nvr["name"]
         if component_name == GOLANG_BUILDER_IMAGE_NAME:
             component_name = GOLANG_BUILDER_CVE_COMPONENT
         elif component_name != GOLANG_BUILDER_CVE_COMPONENT:
             raise ValueError(f"Expected a golang builder image NVR, got: {builder_nvr}")
+
+        # If not explicitly provided, use the branch content (memoized — no extra fetch).
+        if streams_content is None:
+            cached = self._get_branch_content() if self._branch_content is not None else None
+            if cached is not None:
+                streams_content = cached.get('streams')
+
+        if streams_content and _branch_uses_floating_tags(streams_content):
+            # Extract go major.minor and RHEL version from the NVR, e.g.
+            # openshift-golang-builder-container-v1.22.12-...el9 → (1, 22, 9)
+            published_nvr = f'{component_name}-{parsed_nvr["version"]}-{parsed_nvr["release"]}'
+            full_pullspec = rh_art_images_base_pullspec(published_nvr)
+            try:
+                major, minor, el_v = _parse_pullspec_tuple(full_pullspec)
+                return f"golang-builder-v{major}.{minor}-rhel{el_v}"
+            except ValueError:
+                _LOGGER.warning(
+                    "Could not parse golang-builder NVR into floating-tag format: %s — falling back to NVR pullspec",
+                    builder_nvr,
+                )
+                return full_pullspec
+
         published_nvr = f'{component_name}-{parsed_nvr["version"]}-{parsed_nvr["release"]}'
         return rh_art_images_base_pullspec(published_nvr)
 
@@ -896,7 +972,7 @@ class UpdateGolangPipeline:
                 latest_go = get_stream(latest_go_stream_name(el_v))['image']
 
                 for _, info in streams_content.items():
-                    if info['image'] == latest_go:
+                    if isinstance(info, dict) and _pullspecs_match(info.get('image', ''), latest_go):
                         info['image'] = pullspec
                         update_streams = True
         # This is to bump minor golang for GO_PREVIOUS
@@ -906,7 +982,7 @@ class UpdateGolangPipeline:
                 previous_go = get_stream(previous_go_stream_name(el_v))['image']
 
                 for _, info in streams_content.items():
-                    if info['image'] == previous_go:
+                    if isinstance(info, dict) and _pullspecs_match(info.get('image', ''), previous_go):
                         info['image'] = pullspec
                         update_streams = True
         # This is to bump minor golang for GO_EXTRA
@@ -926,7 +1002,7 @@ class UpdateGolangPipeline:
                 extra_go = extra_go_stream['image']
 
                 for _, info in streams_content.items():
-                    if info['image'] == extra_go:
+                    if isinstance(info, dict) and _pullspecs_match(info.get('image', ''), extra_go):
                         info['image'] = pullspec
                         update_streams = True
         # This is to bump major golang for GO_LATEST and update GO_PREVIOUS to current GO_LATEST
@@ -939,9 +1015,9 @@ class UpdateGolangPipeline:
                 previous_go = get_stream(previous_go_stream_name(el_v))['image'] if go_previous else None
 
                 for _, info in streams_content.items():
-                    if info['image'] == latest_go:
+                    if isinstance(info, dict) and _pullspecs_match(info.get('image', ''), latest_go):
                         info['image'] = pullspec
-                    if info['image'] == previous_go:
+                    if previous_go and isinstance(info, dict) and _pullspecs_match(info.get('image', ''), previous_go):
                         info['image'] = latest_go
                 group_content['vars'][go_latest_var] = build_major_minor
                 update_streams = update_group = True

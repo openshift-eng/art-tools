@@ -14,6 +14,9 @@ from pyartcd.pipelines.update_golang import (
     DEFAULT_GOLANG_ASSEMBLY,
     GOLANG_ASSEMBLIES,
     UpdateGolangPipeline,
+    _branch_uses_floating_tags,
+    _parse_pullspec_tuple,
+    _pullspecs_match,
     extract_and_validate_golang_nvrs,
     get_latest_nvr_in_tag,
     is_available,
@@ -2458,6 +2461,406 @@ class TestMonobranchDispatch(IsolatedAsyncioTestCase):
         pipeline = self._make_pipeline()
         args = pipeline._get_doozer_var_args()
         self.assertEqual(args, ['--var', 'MAJOR=4', '--var', 'MINOR=18'])
+
+
+class TestParsePullspecTuple(unittest.TestCase):
+    """Tests for the _parse_pullspec_tuple module-level helper (t4a)."""
+
+    NVR_PULLSPEC_EL9 = (
+        "registry.redhat.io/openshift/golang-builder:"
+        "openshift-golang-builder-container-v1.22.12-202608131106.p2.g7d3050a.assembly.stream.el9"
+    )
+    NVR_PULLSPEC_EL8 = (
+        "registry.redhat.io/openshift/golang-builder:"
+        "openshift-golang-builder-container-v1.22.12-202608131106.p2.g7d3050a.assembly.stream.el8"
+    )
+    FLOAT_PULLSPEC_EL9 = "registry.redhat.io/openshift/golang-builder:golang-builder-v1.22-rhel9"
+    FLOAT_PULLSPEC_EL8 = "registry.redhat.io/openshift/golang-builder:golang-builder-v1.22-rhel8"
+
+    def test_nvr_tag_el9(self):
+        self.assertEqual(_parse_pullspec_tuple(self.NVR_PULLSPEC_EL9), (1, 22, 9))
+
+    def test_nvr_tag_el8(self):
+        self.assertEqual(_parse_pullspec_tuple(self.NVR_PULLSPEC_EL8), (1, 22, 8))
+
+    def test_floating_tag_el9(self):
+        self.assertEqual(_parse_pullspec_tuple(self.FLOAT_PULLSPEC_EL9), (1, 22, 9))
+
+    def test_floating_tag_el8(self):
+        self.assertEqual(_parse_pullspec_tuple(self.FLOAT_PULLSPEC_EL8), (1, 22, 8))
+
+    def test_mismatched_rhel_versions_are_not_equal(self):
+        self.assertNotEqual(
+            _parse_pullspec_tuple(self.FLOAT_PULLSPEC_EL8),
+            _parse_pullspec_tuple(self.FLOAT_PULLSPEC_EL9),
+        )
+
+    def test_unknown_format_raises(self):
+        with self.assertRaises(ValueError):
+            _parse_pullspec_tuple("registry.redhat.io/openshift/ose-base:some-unrelated-tag")
+
+    def test_empty_string_raises(self):
+        with self.assertRaises(ValueError):
+            _parse_pullspec_tuple("")
+
+
+class TestPullspecsMatch(unittest.TestCase):
+    """Tests for _pullspecs_match cross-format equality (SC-3)."""
+
+    _NVR_EL9 = (
+        "registry.redhat.io/openshift/golang-builder:"
+        "openshift-golang-builder-container-v1.22.12-202608131106.p2.g7d3050a.assembly.stream.el9"
+    )
+    _FLOAT_EL9 = "registry.redhat.io/openshift/golang-builder:golang-builder-v1.22-rhel9"
+    _FLOAT_EL8 = "registry.redhat.io/openshift/golang-builder:golang-builder-v1.22-rhel8"
+    _LEGACY = "registry.example.com/golang-builder:v1.22.8-el9"  # unparseable format
+
+    def test_floating_equals_nvr_same_version(self):
+        """Core SC-3 behaviour: floating and NVR pullspecs for the same (major, minor, el) are equal."""
+        self.assertTrue(_pullspecs_match(self._FLOAT_EL9, self._NVR_EL9))
+        self.assertTrue(_pullspecs_match(self._NVR_EL9, self._FLOAT_EL9))
+
+    def test_same_tuple_different_el_not_equal(self):
+        self.assertFalse(_pullspecs_match(self._FLOAT_EL9, self._FLOAT_EL8))
+
+    def test_both_parseable_different_minor_not_equal(self):
+        other = "registry.redhat.io/openshift/golang-builder:golang-builder-v1.23-rhel9"
+        self.assertFalse(_pullspecs_match(self._FLOAT_EL9, other))
+
+    def test_one_side_unparseable_falls_back_to_string_inequality(self):
+        self.assertFalse(_pullspecs_match(self._LEGACY, self._FLOAT_EL9))
+
+    def test_both_same_unparseable_string_equal_via_fallback(self):
+        self.assertTrue(_pullspecs_match(self._LEGACY, self._LEGACY))
+
+    def test_two_different_unparseable_strings_not_equal(self):
+        other_legacy = "registry.example.com/golang-builder:v1.22.9-el9"
+        self.assertFalse(_pullspecs_match(self._LEGACY, other_legacy))
+
+
+class TestBranchUsesFloatingTags(unittest.TestCase):
+    """Tests for the _branch_uses_floating_tags module-level helper (t4b)."""
+
+    def _float_entry(self, major, minor, el_v):
+        return {'image': f'registry.redhat.io/openshift/golang-builder:golang-builder-v{major}.{minor}-rhel{el_v}'}
+
+    def _nvr_entry(self, el_v):
+        return {
+            'image': (
+                f'registry.redhat.io/openshift/golang-builder:'
+                f'openshift-golang-builder-container-v1.22.12-202608131106.p2.g7d3050a.assembly.stream.el{el_v}'
+            )
+        }
+
+    def test_all_floating(self):
+        streams = {
+            'rhel-9-golang': self._float_entry(1, 22, 9),
+            'rhel-8-golang': self._float_entry(1, 22, 8),
+        }
+        self.assertTrue(_branch_uses_floating_tags(streams))
+
+    def test_all_nvr(self):
+        streams = {
+            'rhel-9-golang': self._nvr_entry(9),
+            'rhel-8-golang': self._nvr_entry(8),
+        }
+        self.assertFalse(_branch_uses_floating_tags(streams))
+
+    def test_mixed_streams_any_floating_returns_true(self):
+        streams = {
+            'rhel-9-golang': self._float_entry(1, 22, 9),
+            'rhel-8-golang': self._nvr_entry(8),
+        }
+        self.assertTrue(_branch_uses_floating_tags(streams))
+
+    def test_empty_streams(self):
+        self.assertFalse(_branch_uses_floating_tags({}))
+
+    def test_none_streams(self):
+        self.assertFalse(_branch_uses_floating_tags(None))
+
+    def test_unrelated_stream_only(self):
+        streams = {'ose-base': {'image': 'registry.redhat.io/openshift/ose-base:some-tag'}}
+        self.assertFalse(_branch_uses_floating_tags(streams))
+
+    def test_non_dict_stream_entry_ignored(self):
+        streams = {
+            'some-stream': 'not-a-dict',
+            'rhel-9-golang': self._float_entry(1, 22, 9),
+        }
+        self.assertTrue(_branch_uses_floating_tags(streams))
+
+    def test_dict_entry_missing_image_key(self):
+        streams = {'rhel-9-golang': {'aliases': ['rhel-9-golang-{GO_LATEST}']}}
+        self.assertFalse(_branch_uses_floating_tags(streams))
+
+
+class TestGetBuilderPullspec(unittest.TestCase):
+    """Tests for UpdateGolangPipeline._get_builder_pullspec (t4c)."""
+
+    _BUILDER_NVR = "openshift-golang-builder-container-v1.22.12-202608131106.p2.g7d3050a.assembly.stream.el9"
+    _BUILDER_NVR_EL8 = "openshift-golang-builder-container-v1.22.12-202608131106.p2.g7d3050a.assembly.stream.el8"
+
+    def _make_pipeline(self):
+        mock_runtime = Mock(dry_run=False, working_dir=Path("/tmp/working"))
+        mock_runtime.new_slack_client.return_value = Mock()
+        return UpdateGolangPipeline(
+            runtime=mock_runtime,
+            ocp_version="4.18",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.22.9-1.el9"],
+            art_jira="ART-1234",
+            tag_builds=False,
+        )
+
+    def _float_streams(self):
+        return {'rhel-9-golang': {'image': 'registry.redhat.io/openshift/golang-builder:golang-builder-v1.22-rhel9'}}
+
+    def _nvr_streams(self):
+        return {
+            'rhel-9-golang': {
+                'image': (
+                    'registry.redhat.io/openshift/golang-builder:'
+                    'openshift-golang-builder-container-v1.22.10-202607011200.p2.g1234567.assembly.stream.el9'
+                )
+            }
+        }
+
+    _EXPECTED_NVR_PULLSPEC = (
+        "registry.redhat.io/openshift/golang-builder:"
+        "openshift-golang-builder-container-v1.22.12-202608131106.p2.g7d3050a.assembly.stream.el9"
+    )
+    _EXPECTED_NVR_PULLSPEC_EL8 = (
+        "registry.redhat.io/openshift/golang-builder:"
+        "openshift-golang-builder-container-v1.22.12-202608131106.p2.g7d3050a.assembly.stream.el8"
+    )
+
+    def test_floating_branch_returns_floating_tag(self):
+        pipeline = self._make_pipeline()
+        result = pipeline._get_builder_pullspec(self._BUILDER_NVR, self._float_streams())
+        self.assertEqual(result, "golang-builder-v1.22-rhel9")
+
+    def test_nvr_branch_returns_full_nvr_pullspec(self):
+        pipeline = self._make_pipeline()
+        result = pipeline._get_builder_pullspec(self._BUILDER_NVR, self._nvr_streams())
+        self.assertEqual(result, self._EXPECTED_NVR_PULLSPEC)
+
+    def test_no_streams_content_returns_nvr_pullspec(self):
+        pipeline = self._make_pipeline()
+        result = pipeline._get_builder_pullspec(self._BUILDER_NVR)
+        self.assertEqual(result, self._EXPECTED_NVR_PULLSPEC)
+
+    def test_none_streams_content_returns_nvr_pullspec(self):
+        pipeline = self._make_pipeline()
+        result = pipeline._get_builder_pullspec(self._BUILDER_NVR, None)
+        self.assertEqual(result, self._EXPECTED_NVR_PULLSPEC)
+
+    def test_floating_el8_returns_rhel8_tag(self):
+        pipeline = self._make_pipeline()
+        float_streams_el8 = {
+            'rhel-8-golang': {'image': 'registry.redhat.io/openshift/golang-builder:golang-builder-v1.22-rhel8'}
+        }
+        result = pipeline._get_builder_pullspec(self._BUILDER_NVR_EL8, float_streams_el8)
+        self.assertEqual(result, "golang-builder-v1.22-rhel8")
+
+    def test_auto_reads_streams_from_cached_branch_content(self):
+        """_get_builder_pullspec() auto-reads streams from cached _branch_content (the run() call path)."""
+        pipeline = self._make_pipeline()
+        pipeline._branch_content = {
+            'branch': 'openshift-4.18',
+            'repo': Mock(),
+            'group': {'vars': {'GO_LATEST': '1.22'}},
+            'streams': self._float_streams(),
+        }
+        # Call without streams_content — must pick up the cached floating streams
+        result = pipeline._get_builder_pullspec(self._BUILDER_NVR)
+        self.assertEqual(result, "golang-builder-v1.22-rhel9")
+
+    @patch("pyartcd.pipelines.update_golang.rh_art_images_base_pullspec")
+    def test_fallback_to_nvr_when_parse_fails(self, mock_pullspec):
+        """If _parse_pullspec_tuple raises on the computed full_pullspec, fall back to NVR pullspec."""
+        mock_pullspec.return_value = "registry.redhat.io/openshift/golang-builder:unrecognised-format"
+        pipeline = self._make_pipeline()
+        result = pipeline._get_builder_pullspec(self._BUILDER_NVR, self._float_streams())
+        # Falls back to the unrecognised pullspec value rather than raising
+        self.assertEqual(result, "registry.redhat.io/openshift/golang-builder:unrecognised-format")
+
+
+class TestUpdateGolangStreamsFloatingTags(IsolatedAsyncioTestCase):
+    """End-to-end tests for update_golang_streams with floating-tag and NVR-pinned branches (t4d, t4e)."""
+
+    @patch("pyartcd.pipelines.update_golang.KonfluxDb")
+    def _make_pipeline(self, mock_konflux_db):
+        mock_runtime = Mock(dry_run=False, working_dir=Path("/tmp/working"))
+        mock_runtime.new_slack_client.return_value = AsyncMock()
+        pipeline = UpdateGolangPipeline(
+            runtime=mock_runtime,
+            ocp_version="4.18",
+            cves=None,
+            force_update_tracker=False,
+            go_nvrs=["golang-1.22.12-1.el9", "golang-1.22.12-1.el8"],
+            art_jira="ART-1234",
+            tag_builds=False,
+            build_system="konflux",
+        )
+        return pipeline
+
+    def _make_branch_content(self, streams, go_latest="1.22", go_extra=None, go_previous=None):
+        group = {
+            'vars': {
+                'GO_LATEST': go_latest,
+            },
+            'repos': {},
+        }
+        if go_extra:
+            group['vars']['GO_EXTRA'] = go_extra
+        if go_previous:
+            group['vars']['GO_PREVIOUS'] = go_previous
+        return {
+            'branch': 'openshift-4.18',
+            'repo': Mock(),
+            'group': group,
+            'streams': streams,
+        }
+
+    async def test_floating_branch_minor_bump(self):
+        """t4d: floating-tag branch gets floating pullspecs after minor bump."""
+        streams = {
+            'rhel-9-golang': {
+                'aliases': ['rhel-9-golang-{GO_LATEST}'],
+                'image': 'registry.redhat.io/openshift/golang-builder:golang-builder-v1.22-rhel9',
+            },
+            'rhel-8-golang': {
+                'aliases': ['rhel-8-golang-{GO_LATEST}'],
+                'image': 'registry.redhat.io/openshift/golang-builder:golang-builder-v1.22-rhel8',
+            },
+            'ose-base': {'image': 'registry.redhat.io/openshift/ose-base:some-unrelated-tag'},
+        }
+        branch_content = self._make_branch_content(streams)
+        pipeline = self._make_pipeline()
+        pipeline._branch_content = branch_content
+        pipeline.data_path = None
+        pipeline.skip_pr = True  # avoid GitHub calls
+
+        builder_pullspecs = {
+            9: 'golang-builder-v1.22-rhel9',
+            8: 'golang-builder-v1.22-rhel8',
+        }
+        await pipeline.update_golang_streams("1.22.12", builder_pullspecs)
+
+        # The golang streams are updated; the unrelated stream is untouched
+        self.assertEqual(
+            streams['rhel-9-golang']['image'],
+            'golang-builder-v1.22-rhel9',
+        )
+        self.assertEqual(
+            streams['rhel-8-golang']['image'],
+            'golang-builder-v1.22-rhel8',
+        )
+        self.assertEqual(
+            streams['ose-base']['image'],
+            'registry.redhat.io/openshift/ose-base:some-unrelated-tag',
+        )
+
+    async def test_nvr_branch_minor_bump(self):
+        """t4d: NVR-pinned branch gets NVR pullspecs after minor bump."""
+        old_nvr9 = (
+            'registry.redhat.io/openshift/golang-builder:'
+            'openshift-golang-builder-container-v1.22.10-202607011200.p2.g1234567.assembly.stream.el9'
+        )
+        old_nvr8 = (
+            'registry.redhat.io/openshift/golang-builder:'
+            'openshift-golang-builder-container-v1.22.10-202607011200.p2.g1234567.assembly.stream.el8'
+        )
+        new_nvr9 = (
+            'registry.redhat.io/openshift/golang-builder:'
+            'openshift-golang-builder-container-v1.22.12-202608131106.p2.g7d3050a.assembly.stream.el9'
+        )
+        new_nvr8 = (
+            'registry.redhat.io/openshift/golang-builder:'
+            'openshift-golang-builder-container-v1.22.12-202608131106.p2.g7d3050a.assembly.stream.el8'
+        )
+        streams = {
+            'rhel-9-golang': {
+                'aliases': ['rhel-9-golang-{GO_LATEST}'],
+                'image': old_nvr9,
+            },
+            'rhel-8-golang': {
+                'aliases': ['rhel-8-golang-{GO_LATEST}'],
+                'image': old_nvr8,
+            },
+        }
+        branch_content = self._make_branch_content(streams)
+        pipeline = self._make_pipeline()
+        pipeline._branch_content = branch_content
+        pipeline.data_path = None
+        pipeline.skip_pr = True
+
+        builder_pullspecs = {9: new_nvr9, 8: new_nvr8}
+        await pipeline.update_golang_streams("1.22.12", builder_pullspecs)
+
+        self.assertEqual(streams['rhel-9-golang']['image'], new_nvr9)
+        self.assertEqual(streams['rhel-8-golang']['image'], new_nvr8)
+
+    async def test_floating_branch_major_bump(self):
+        """t4e: floating-tag branch, major golang bump (1.22 → 1.23).
+
+        Exercises the elif build_major_minor_tuple > latest_major_minor_tuple block (~933-946).
+        """
+        streams = {
+            'rhel-9-golang': {
+                'aliases': ['rhel-9-golang-{GO_LATEST}'],
+                'image': 'registry.redhat.io/openshift/golang-builder:golang-builder-v1.22-rhel9',
+            },
+            'rhel-8-golang': {
+                'aliases': ['rhel-8-golang-{GO_LATEST}'],
+                'image': 'registry.redhat.io/openshift/golang-builder:golang-builder-v1.22-rhel8',
+            },
+            'rhel-9-golang-previous': {
+                'aliases': ['rhel-9-golang-{GO_PREVIOUS}'],
+                'image': 'registry.redhat.io/openshift/golang-builder:golang-builder-v1.21-rhel9',
+            },
+            'rhel-8-golang-previous': {
+                'aliases': ['rhel-8-golang-{GO_PREVIOUS}'],
+                'image': 'registry.redhat.io/openshift/golang-builder:golang-builder-v1.21-rhel8',
+            },
+        }
+        # go_previous = "1.22" (current GO_LATEST before bump), go_latest = "1.22"
+        branch_content = self._make_branch_content(streams, go_latest="1.22", go_previous="1.21")
+        pipeline = self._make_pipeline()
+        pipeline._branch_content = branch_content
+        pipeline.data_path = None
+        pipeline.skip_pr = True
+        pipeline.major_bump = True
+
+        # New floating pullspecs for go 1.23
+        builder_pullspecs = {
+            9: 'golang-builder-v1.23-rhel9',
+            8: 'golang-builder-v1.23-rhel8',
+        }
+        await pipeline.update_golang_streams("1.23.0", builder_pullspecs)
+
+        # GO_LATEST streams should now point to v1.23
+        self.assertEqual(
+            streams['rhel-9-golang']['image'],
+            'golang-builder-v1.23-rhel9',
+        )
+        self.assertEqual(
+            streams['rhel-8-golang']['image'],
+            'golang-builder-v1.23-rhel8',
+        )
+        # GO_PREVIOUS streams should now point to old GO_LATEST (v1.22)
+        self.assertEqual(
+            streams['rhel-9-golang-previous']['image'],
+            'registry.redhat.io/openshift/golang-builder:golang-builder-v1.22-rhel9',
+        )
+        self.assertEqual(
+            streams['rhel-8-golang-previous']['image'],
+            'registry.redhat.io/openshift/golang-builder:golang-builder-v1.22-rhel8',
+        )
+        # group.yml GO_LATEST var should be updated to the new major.minor
+        self.assertEqual(branch_content['group']['vars']['GO_LATEST'], '1.23')
 
 
 if __name__ == "__main__":
