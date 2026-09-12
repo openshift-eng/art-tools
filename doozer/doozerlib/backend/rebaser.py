@@ -18,13 +18,19 @@ import bashlex
 import bashlex.errors
 import semver
 import yaml
-from artcommonlib import exectools, release_util
+from artcommonlib import exectools, git_helper, release_util
 from artcommonlib.build_visibility import BuildVisibility, get_visibility_suffix, is_release_embargoed
 from artcommonlib.constants import GOLANG_NVR_ENV, GOLANG_NVR_LABEL
 from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildRecord
 from artcommonlib.model import ListModel, Missing, Model
 from artcommonlib.telemetry import start_as_current_span_async
-from artcommonlib.util import deep_merge, detect_package_managers, is_cachito_enabled, oc_image_info_for_arch_async
+from artcommonlib.util import (
+    deep_merge,
+    detect_package_managers,
+    is_cachito_enabled,
+    isolate_major_minor_in_group,
+    oc_image_info_for_arch_async,
+)
 from artcommonlib.variants import BuildVariant
 from dockerfile_parse import DockerfileParser
 from doozerlib import constants, util
@@ -228,6 +234,10 @@ class KonfluxRebaser:
                 self._logger.info("Pushing changes to %s...", build_repo.url)
                 force = (self._runtime.assembly != "stream") or (build_repo.url != build_repo.pull_url)
                 await build_repo.push(force=force)
+
+                # Push .repo files to public upstream for RHCOS images
+                # This is called AFTER the push to ensure the commit exists and we can check if files changed
+                await self._push_repo_files_to_public_upstream(metadata, build_repo)
 
             self._rebased_nvr_info[metadata.distgit_key] = (actual_version, actual_release)
             metadata.rebase_status = True
@@ -1885,6 +1895,156 @@ class KonfluxRebaser:
 
             async with aiofiles.open(dest_dir.joinpath('cvp-owners.yml'), 'w', encoding='utf-8') as co:
                 await co.write(yaml_str)
+
+    def _get_public_repo_branch_name(self, metadata: ImageMetadata) -> str:
+        """
+        Get the branch name for pushing .repo files to public upstream.
+
+        Arg(s):
+            metadata (ImageMetadata): The image metadata.
+        Return Value(s):
+            str: Branch name in format: art-repos-{image-name}-{major}.{minor}
+        """
+        major, minor = isolate_major_minor_in_group(self._runtime.group)
+        if major is None or minor is None:
+            raise ValueError(f"Could not extract major.minor from group {self._runtime.group}")
+
+        return f"art-repos-{metadata.distgit_key}-{major}.{minor}"
+
+    @start_as_current_span_async(TRACER, "rebase.push_repo_files_to_public_upstream")
+    async def _push_repo_files_to_public_upstream(self, metadata: ImageMetadata, build_repo: BuildRepo) -> None:
+        """
+        Push .repo files to the public upstream repository for RHCOS images.
+        This creates a branch named art-repos-{IMAGE_NAME}-{MAJOR}.{MINOR} and
+        pushes art-signed.repo and art-unsigned.repo to it.
+
+        Only applies to images with content.source.git.web pointing to
+        https://github.com/openshift/os (i.e., RHCOS images)
+
+        Optimization: Only pushes if .repo files have changed in the rebase commit,
+        or if they don't yet exist on the public upstream.
+
+        Arg(s):
+            metadata (ImageMetadata): The image metadata.
+            build_repo (BuildRepo): The build repository object.
+        Return Value(s):
+            None
+        """
+        # Check if this is an RHCOS image that needs .repo files pushed to public upstream
+        if not metadata.config.get('content', {}).get('source', {}).get('git', {}).get('web'):
+            return
+
+        web_url = metadata.config.content.source.git.web
+        if web_url != "https://github.com/openshift/os":
+            return
+
+        # Convert HTTPS URL to SSH for push operations
+        # Format: https://github.com/org/repo -> git@github.com:org/repo.git
+        if web_url.startswith("https://github.com/"):
+            repo_path = web_url[len("https://github.com/") :]
+            if not repo_path.endswith(".git"):
+                repo_path += ".git"
+            ssh_url = f"git@github.com:{repo_path}"
+        else:
+            self._logger.warning(f"Unexpected web URL format: {web_url}, using as-is")
+            ssh_url = web_url
+
+        # Check if .repo files were modified in the last commit (the rebase commit)
+        # This is an optimization to avoid cloning the public repo if nothing changed
+        local_dir = str(build_repo.local_dir)
+        rc, stdout, _ = await git_helper.gather_git_async(
+            ["-C", local_dir, "diff", "--name-only", "HEAD~1", "HEAD", "--", ".oit/*.repo"],
+            check=False,
+            github_url=build_repo.url,
+        )
+
+        repo_files_changed = bool(stdout.strip())
+
+        # If files haven't changed, we still need to check if this is the first time
+        # pushing to public upstream (files might not exist there yet)
+        # So we'll do a lightweight check: try to fetch the branch
+        # If branch doesn't exist, we need to push. If it exists and files unchanged, skip.
+        if not repo_files_changed:
+            # Quick check: does the branch exist on public upstream?
+            # We'll do a shallow ls-remote to avoid cloning
+            branch_name = self._get_public_repo_branch_name(metadata)
+            rc, stdout, _ = await git_helper.gather_git_async(
+                ["ls-remote", "--heads", ssh_url, branch_name], check=False, github_url=ssh_url
+            )
+
+            if stdout.strip():
+                # Branch exists and files unchanged, skip
+                self._logger.info(
+                    f"No changes to .repo files for {metadata.distgit_key} "
+                    f"and branch {branch_name} exists on public upstream, skipping push"
+                )
+                return
+            else:
+                # Branch doesn't exist yet, need to push for the first time
+                self._logger.info(
+                    f"Branch {branch_name} doesn't exist on public upstream yet, "
+                    f"will push .repo files for {metadata.distgit_key}"
+                )
+        else:
+            self._logger.info(f"Pushing updated .repo files to public upstream for {metadata.distgit_key}...")
+
+        # Get branch name
+        branch_name = self._get_public_repo_branch_name(metadata)
+
+        # Clone the PUBLIC upstream repository to a temporary directory
+        # Note: git_clone will convert SSH to HTTPS by default (by design)
+        with TemporaryDirectory() as temp_dir:
+            upstream_dir = Path(temp_dir) / "upstream"
+
+            try:
+                # Clone using HTTPS (git_clone converts SSH to HTTPS automatically)
+                git_helper.git_clone(web_url, str(upstream_dir))
+            except Exception as e:
+                self._logger.error(f"Failed to clone public upstream repo {web_url}: {e}")
+                raise
+
+            # Create or checkout the branch
+            with exectools.Dir(str(upstream_dir)):
+                # Add SSH remote for pushing (we don't want to push to openshift/ via HTTPS)
+                self._logger.info(f"Adding SSH remote for push: {ssh_url}")
+                exectools.cmd_assert(["git", "remote", "add", "push_remote", ssh_url])
+
+                # Try to checkout existing branch or create orphan branch
+                rc, _, _ = exectools.cmd_gather(["git", "checkout", branch_name])
+                if rc != 0:
+                    # Branch doesn't exist, create it as orphan (no parent commits)
+                    self._logger.info(f"Creating orphan branch {branch_name}")
+                    exectools.cmd_assert(["git", "checkout", "--orphan", branch_name])
+                    # Remove all files from the index (orphan branch starts with staged files from HEAD)
+                    exectools.cmd_assert(["git", "rm", "-rf", "."])
+
+                # Copy .repo files from build repo to upstream repo root
+                repo_files = ["art-signed.repo", "art-unsigned.repo"]
+                for repo_file in repo_files:
+                    src_path = build_repo.local_dir / ".oit" / repo_file
+                    dst_path = upstream_dir / repo_file
+
+                    if not src_path.exists():
+                        self._logger.warning(f"Source file not found: {src_path}")
+                        continue
+
+                    shutil.copy2(src_path, dst_path)
+                    exectools.cmd_assert(["git", "add", repo_file])
+
+                # Commit changes
+                commit_message = (
+                    f"Update .repo files for {metadata.distgit_key}\n\n"
+                    f"Generated by ART during rebase for {self._runtime.group} assembly {self._runtime.assembly}"
+                )
+                rc, _, _ = exectools.cmd_gather(["git", "commit", "-m", commit_message])
+
+                if rc == 0:
+                    # Changes were committed, push to SSH remote
+                    self._logger.info(f"Pushing to SSH remote: {ssh_url}")
+                    exectools.cmd_assert(["git", "push", "push_remote", branch_name], retries=3)
+                    self._logger.info(f"Successfully pushed .repo files to {branch_name}")
+                else:
+                    self._logger.info(f"No changes to .repo files for {branch_name}")
 
     @start_as_current_span_async(TRACER, "rebase.write_fetch_artifacts")
     async def _write_fetch_artifacts(self, metadata: ImageMetadata, dest_dir: Path):
