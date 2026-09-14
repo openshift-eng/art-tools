@@ -76,6 +76,29 @@ from pyartcd.util import (
 yaml = new_roundtrip_yaml_handler()
 
 
+def _replace_advisory_reference(text: str, advisory_id: str) -> str:
+    """
+    Replace an advisory reference with its current advisory type and live ID.
+
+    Resolved shipment text can outlive an advisory type conversion, so replacing
+    only template placeholders is insufficient. Advisory live IDs are unique,
+    which lets us safely normalize an old RHBA/RHSA/RHEA reference in place.
+
+    Args:
+        text: Shipment release-notes text.
+        advisory_id: Current full advisory ID, such as ``RHSA-2026:16158``.
+    Returns:
+        Text with references to the current advisory live ID normalized.
+    """
+    match = re.fullmatch(r"(?:RHBA|RHSA|RHEA)-\d{4}:(\d+)", advisory_id)
+    if not match:
+        return text
+
+    live_id = int(match.group(1))
+    pattern = rf"(?<![-\w:])(?:RHBA|RHSA|RHEA)-\d{{4}}:0*{live_id}(?:-\d+)?(?![-\w:])"
+    return re.sub(pattern, advisory_id, text)
+
+
 class PrepareReleaseKonfluxPipeline:
     def __init__(
         self,
@@ -830,6 +853,7 @@ class PrepareReleaseKonfluxPipeline:
                 new_text = text
                 for var_name, value in format_dict.items():
                     new_text = new_text.replace(f"{{{var_name}}}", value)
+                    new_text = _replace_advisory_reference(new_text, value)
                 if new_text != text:
                     setattr(rn, field, new_text)
                     changed = True

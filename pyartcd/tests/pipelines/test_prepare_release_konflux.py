@@ -1140,6 +1140,54 @@ class TestPrepareReleaseKonfluxPipeline(unittest.IsolatedAsyncioTestCase):
 
     @patch("elliottlib.shipment_utils.Erratum")
     @patch("pyartcd.pipelines.prepare_release_konflux.get_errata_live_id")
+    async def test_resolve_advisory_placeholders_updates_resolved_rpm_reference(
+        self, mock_get_live_id, mock_erratum_cls
+    ):
+        """Shipment text with a resolved RHBA RPM URL is updated when the RPM advisory becomes RHSA."""
+        pipeline = PrepareReleaseKonfluxPipeline(
+            slack_client=self.mock_slack_client,
+            runtime=self.runtime,
+            group=self.group,
+            assembly=self.assembly,
+        )
+        pipeline.logger = Mock()
+        pipeline.dry_run = False
+        pipeline.update_shipment_mr = AsyncMock()
+
+        mock_get_live_id.return_value = "RHSA-2026:16158"
+        mock_erratum_cls.return_value = Mock(description="", solution="")
+
+        image_shipment = ShipmentConfig(
+            shipment=Shipment(
+                metadata=Metadata(product="ocp", group=self.group, assembly=self.assembly, application="app-image"),
+                environments=Environments(
+                    stage=ShipmentEnv(releasePlan="rp-img-stage"),
+                    prod=ShipmentEnv(releasePlan="rp-img-prod"),
+                ),
+                data=Data(
+                    releaseNotes=ReleaseNotes(
+                        type="RHBA",
+                        live_id=16164,
+                        description="See https://access.redhat.com/errata/RHBA-2026:16158",
+                    )
+                ),
+            )
+        )
+
+        shipment_data = ({"image": image_shipment}, "prod", "https://gitlab.example.com/x/-/merge_requests/1")
+
+        await pipeline.resolve_advisory_placeholders({"rpm": 999}, shipment_data)
+
+        self.assertEqual(
+            image_shipment.shipment.data.releaseNotes.description,
+            "See https://access.redhat.com/errata/RHSA-2026:16158",
+        )
+        pipeline.update_shipment_mr.assert_awaited_once_with(
+            {"image": image_shipment}, "prod", "https://gitlab.example.com/x/-/merge_requests/1"
+        )
+
+    @patch("elliottlib.shipment_utils.Erratum")
+    @patch("pyartcd.pipelines.prepare_release_konflux.get_errata_live_id")
     async def test_resolve_advisory_placeholders_commit_failure_soft_fails(self, mock_get_live_id, mock_erratum_cls):
         """Erratum.commit() raising must not propagate — Phase 4 continues with a warning."""
         pipeline = PrepareReleaseKonfluxPipeline(
