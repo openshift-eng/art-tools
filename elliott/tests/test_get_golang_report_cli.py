@@ -86,7 +86,37 @@ class TestGoVersionFromFloatingTag(TestCase):
 
 
 class TestGoVersionFromFloatingTagExact(TestCase):
-    def test_resolves_via_oc_image_info(self):
+    def test_resolves_via_golang_nvr_label(self):
+        """Happy path: io.openshift.build.golang-nvr label present — no DB lookup needed."""
+        fake_image_data = {
+            'config': {
+                'config': {
+                    'Labels': {
+                        'io.openshift.build.golang-nvr': 'golang-1.22.12-2.el9',
+                        'com.redhat.component': 'openshift-golang-builder-container',
+                        'version': 'v1.22.12',
+                        'release': '202608131106.p2.g7d3050a.assembly.stream.el9',
+                    }
+                }
+            }
+        }
+        with (
+            patch(
+                'elliottlib.cli.get_golang_report_cli.oc_image_info_for_arch',
+                return_value=fake_image_data,
+            ) as mock_oi,
+            patch(
+                'elliottlib.cli.get_golang_report_cli.get_golang_container_nvrs',
+            ) as mock_nvrs,
+        ):
+            result = go_version_from_floating_tag_exact('registry.redhat.io/openshift/golang-builder:v1.22-rhel9')
+
+        self.assertEqual(result, 'golang-1.22.12-2.el9')
+        mock_oi.assert_called_once_with('registry.redhat.io/openshift/golang-builder:v1.22-rhel9')
+        mock_nvrs.assert_not_called()
+
+    def test_falls_back_to_db_when_golang_nvr_label_absent(self):
+        """Fallback path: no io.openshift.build.golang-nvr label — derive NVR via DB lookup."""
         fake_image_data = {
             'config': {
                 'config': {
@@ -100,7 +130,7 @@ class TestGoVersionFromFloatingTagExact(TestCase):
         }
         with (
             patch(
-                'elliottlib.cli.get_golang_report_cli.oc_image_info',
+                'elliottlib.cli.get_golang_report_cli.oc_image_info_for_arch',
                 return_value=fake_image_data,
             ) as mock_oi,
             patch(
@@ -119,9 +149,7 @@ class TestGoVersionFromFloatingTagExact(TestCase):
             result = go_version_from_floating_tag_exact('registry.redhat.io/openshift/golang-builder:v1.22-rhel9')
 
         self.assertEqual(result, 'golang-1.22.12-1.el9')
-        mock_oi.assert_called_once_with(
-            'registry.redhat.io/openshift/golang-builder:v1.22-rhel9', '--filter-by-os=amd64'
-        )
+        mock_oi.assert_called_once_with('registry.redhat.io/openshift/golang-builder:v1.22-rhel9')
         mock_nvrs.assert_called_once_with(
             [('openshift-golang-builder-container', 'v1.22.12', '202608131106.p2.g7d3050a.assembly.stream.el9')],
             unittest.mock.ANY,
@@ -130,7 +158,7 @@ class TestGoVersionFromFloatingTagExact(TestCase):
 
     def test_raises_on_missing_labels(self):
         fake_image_data = {'config': {'config': {'Labels': {}}}}
-        with patch('elliottlib.cli.get_golang_report_cli.oc_image_info', return_value=fake_image_data):
+        with patch('elliottlib.cli.get_golang_report_cli.oc_image_info_for_arch', return_value=fake_image_data):
             with self.assertRaises(ValueError):
                 go_version_from_floating_tag_exact('registry.redhat.io/openshift/golang-builder:v1.22-rhel9')
 
@@ -147,7 +175,7 @@ class TestGoVersionFromFloatingTagExact(TestCase):
             }
         }
         with (
-            patch('elliottlib.cli.get_golang_report_cli.oc_image_info', return_value=fake_image_data),
+            patch('elliottlib.cli.get_golang_report_cli.oc_image_info_for_arch', return_value=fake_image_data),
             patch(
                 'elliottlib.cli.get_golang_report_cli.get_golang_container_nvrs',
                 return_value={'golang-1.22.12-1.el9': set(), 'golang-1.22.11-1.el9': set()},
@@ -169,7 +197,7 @@ class TestGoVersionFromFloatingTagExact(TestCase):
             }
         }
         with (
-            patch('elliottlib.cli.get_golang_report_cli.oc_image_info', return_value=fake_image_data),
+            patch('elliottlib.cli.get_golang_report_cli.oc_image_info_for_arch', return_value=fake_image_data),
             patch('elliottlib.cli.get_golang_report_cli.get_golang_container_nvrs', return_value={}),
         ):
             with self.assertRaises(ValueError):
@@ -249,6 +277,7 @@ class TestGolangReportForVersionFloatingExact(TestCase):
             'config': {
                 'config': {
                     'Labels': {
+                        'io.openshift.build.golang-nvr': 'golang-1.22.12-1.el9',
                         'com.redhat.component': 'openshift-golang-builder-container',
                         'version': 'v1.22.12',
                         'release': '202608131106.p2.g7d3050a.assembly.stream.el9',
@@ -258,7 +287,7 @@ class TestGolangReportForVersionFloatingExact(TestCase):
         }
         with (
             patch(
-                'elliottlib.cli.get_golang_report_cli.oc_image_info',
+                'elliottlib.cli.get_golang_report_cli.oc_image_info_for_arch',
                 return_value=fake_image_data,
             ),
             patch(

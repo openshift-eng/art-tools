@@ -6,7 +6,7 @@ from artcommonlib import logutil
 from artcommonlib.format_util import green_print
 from artcommonlib.release_util import split_el_suffix_in_release
 from artcommonlib.rpm_utils import parse_nvr
-from artcommonlib.util import oc_image_info
+from artcommonlib.util import oc_image_info_for_arch
 
 from elliottlib.cli.common import cli
 from elliottlib.runtime import Runtime
@@ -15,14 +15,21 @@ from elliottlib.util import get_golang_container_nvrs
 _LOGGER = logutil.get_logger(__name__)
 
 # Matches floating golang-builder tags such as:
-#   openshift-golang-builder-container-v1.22-rhel9
+#   golang-builder-v1.22-rhel9
 #   openshift-golang-builder-container-v1.22-rhel8
 # These lack the X.Y.Z patch version present in full NVR tags.
+# Example matching string: "golang-builder-v1.22-rhel9"
 _FLOATING_TAG_RE = re.compile(r'v(\d+\.\d+)-rhel(\d+)$')
 
 
 def is_floating_golang_builder_tag(nvr_like: str) -> bool:
-    """Return True when *nvr_like* is a floating tag (vX.Y-rhelN) rather than a full NVR string."""
+    """Return True when *nvr_like* is a floating tag (vX.Y-rhelN) rather than a full NVR string.
+
+    Example::
+
+        is_floating_golang_builder_tag("openshift-golang-builder-container-v1.22-rhel9")  # True
+        is_floating_golang_builder_tag("openshift-golang-builder-container-v1.22.5-202506011200.el9")  # False
+    """
     return bool(_FLOATING_TAG_RE.search(nvr_like))
 
 
@@ -45,14 +52,25 @@ def go_version_from_floating_tag(nvr_like: str, ignore_rhel: bool) -> str:
 def go_version_from_floating_tag_exact(image_pullspec: str) -> str:
     """Resolve a floating-tag pullspec to the exact golang package NVR.
 
-    Calls ``oc image info`` to read the OCI labels from the resolved image,
-    constructs the builder NVR, then delegates to ``get_golang_container_nvrs``
-    (exact mode) to return the golang package NVR string (e.g.
-    ``golang-1.22.5-1.el9``).
+    Calls ``oc image info`` to read the OCI labels from the resolved image.
+    First checks for the ``io.openshift.build.golang-nvr`` label (e.g.
+    ``golang-1.22.5-1.el9``), which is the direct golang RPM NVR and avoids a
+    database lookup.  Falls back to reading the builder image NVR from
+    ``com.redhat.component`` / ``version`` / ``release`` labels and querying
+    Brew/Konflux via ``get_golang_container_nvrs`` for older images that do not
+    carry the ``io.openshift.build.golang-nvr`` label.
     """
     _LOGGER.info(f"Resolving floating tag via oc image info: {image_pullspec}")
-    image_data = oc_image_info(image_pullspec, '--filter-by-os=amd64')
+    image_data = oc_image_info_for_arch(image_pullspec)
     labels = image_data.get('config', {}).get('config', {}).get('Labels', {})
+
+    # Prefer the direct golang RPM NVR label — present on all modern builder images.
+    golang_nvr = labels.get('io.openshift.build.golang-nvr')
+    if golang_nvr:
+        _LOGGER.info(f"Found golang NVR directly in image label: {golang_nvr}")
+        return golang_nvr
+
+    # Fallback for older images without the label: derive NVR via DB lookup.
     component = labels.get('com.redhat.component')
     version = labels.get('version')
     release = labels.get('release')
