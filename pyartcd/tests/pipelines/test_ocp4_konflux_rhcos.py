@@ -38,23 +38,17 @@ class TestRhcosIntegrationCli(unittest.TestCase):
             '--version=4.21',
         ]
 
-    def test_rhcos_integration_tests_run_by_default(self):
+    def test_node_image_post_build_ops_run_by_default(self):
         with ocp4.make_context('beta:ocp4-konflux', self.required_args) as context:
-            self.assertFalse(context.params['skip_rhcos_integration_tests'])
+            self.assertFalse(context.params['skip_node_image_post_build_ops'])
 
-        self.assertFalse(_make_pipeline().skip_rhcos_integration_tests)
+        self.assertFalse(_make_pipeline().skip_node_image_post_build_ops)
 
-    def test_rhcos_integration_tests_can_be_skipped(self):
-        args = [*self.required_args, '--skip-rhcos-integration-tests']
+    def test_node_image_post_build_ops_can_be_skipped(self):
+        args = [*self.required_args, '--skip-node-image-post-build-ops']
 
         with ocp4.make_context('beta:ocp4-konflux', args) as context:
-            self.assertTrue(context.params['skip_rhcos_integration_tests'])
-
-    def test_skip_rhcos_integration_tests_is_a_one_way_flag(self):
-        option = next(param for param in ocp4.params if param.name == 'skip_rhcos_integration_tests')
-
-        self.assertEqual(option.opts, ['--skip-rhcos-integration-tests'])
-        self.assertFalse(option.secondary_opts)
+            self.assertTrue(context.params['skip_node_image_post_build_ops'])
 
 
 class TestRegistryAuthConfiguration(unittest.IsolatedAsyncioTestCase):
