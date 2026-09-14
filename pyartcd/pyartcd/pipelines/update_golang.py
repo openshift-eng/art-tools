@@ -23,7 +23,7 @@ from artcommonlib.release_util import isolate_assembly_in_release, isolate_el_ve
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import new_roundtrip_yaml_handler
 from doozerlib.cli.config_plashet import KNOWN_SIGNING_KEYS
-from doozerlib.util import rh_art_images_base_pullspec
+from doozerlib.util import konflux_golang_builder_component_name, rh_art_images_base_pullspec
 from elliottlib import util as elliottutil
 from elliottlib.constants import GOLANG_BUILDER_CVE_COMPONENT
 from tenacity import before_sleep_log, retry, retry_if_exception_type, stop_after_attempt, wait_exponential
@@ -76,17 +76,29 @@ def _branch_uses_floating_tags(streams_content: dict) -> bool:
 
 
 def _pullspecs_match(a: str, b: str) -> bool:
-    """Compare two golang-builder pullspecs via tuple normalisation.
+    """Compare two golang-builder pullspecs.
 
-    When both strings represent recognisable golang-builder pullspecs (floating or NVR),
-    compares by (major, minor, rhel_version) so a floating tag and an NVR for the same
-    builder version are treated as equal.
+    For cross-format comparisons (one floating tag, one NVR-pinned), normalises
+    both to (major, minor, rhel_version) so they can be matched — e.g. when
+    looking up which streams to update after migrating to floating tags.
 
-    Falls back to string equality when either pullspec cannot be parsed (e.g. unrecognised
-    registry/format in test fixtures or legacy entries), preserving the old behaviour.
+    For same-format NVR-to-NVR comparisons, uses string equality to preserve
+    patch-version and build-release distinction.  This prevents accidentally
+    overwriting a stream that is intentionally pinned to a different build
+    (e.g. v1.22.10-1.el9 and v1.22.11-2.el9 should NOT be treated as equal).
+
+    Falls back to string equality when either pullspec cannot be parsed.
     """
     try:
-        return _parse_pullspec_tuple(a) == _parse_pullspec_tuple(b)
+        ta = _parse_pullspec_tuple(a)
+        tb = _parse_pullspec_tuple(b)
+        # Only use tuple comparison when at least one side is a floating tag.
+        # NVR-to-NVR: require exact string match to avoid conflating patch versions.
+        a_floating = _FLOATING_TAG_RE.search(a.split(':')[-1]) is not None
+        b_floating = _FLOATING_TAG_RE.search(b.split(':')[-1]) is not None
+        if a_floating or b_floating:
+            return ta == tb
+        return a == b
     except ValueError:
         return a == b
 
@@ -875,23 +887,23 @@ class UpdateGolangPipeline:
             if cached is not None:
                 streams_content = cached.get('streams')
 
+        published_nvr = f'{component_name}-{parsed_nvr["version"]}-{parsed_nvr["release"]}'
+        full_pullspec = rh_art_images_base_pullspec(published_nvr)
+
         if streams_content and _branch_uses_floating_tags(streams_content):
-            # Extract go major.minor and RHEL version from the NVR, e.g.
-            # openshift-golang-builder-container-v1.22.12-...el9 → (1, 22, 9)
-            published_nvr = f'{component_name}-{parsed_nvr["version"]}-{parsed_nvr["release"]}'
-            full_pullspec = rh_art_images_base_pullspec(published_nvr)
+            # Reuse the shared helper that already encodes the floating-tag naming rules,
+            # e.g. openshift-golang-builder-container-v1.22.12-...el9 → golang-builder-v1.22-rhel9.
             try:
-                major, minor, el_v = _parse_pullspec_tuple(full_pullspec)
-                return f"golang-builder-v{major}.{minor}-rhel{el_v}"
-            except ValueError:
+                tag = konflux_golang_builder_component_name(published_nvr)
+                repository = full_pullspec.rsplit(":", 1)[0]
+                return f"{repository}:{tag}"
+            except (ValueError, KeyError):
                 _LOGGER.warning(
-                    "Could not parse golang-builder NVR into floating-tag format: %s — falling back to NVR pullspec",
+                    "Could not derive floating tag for %s — falling back to NVR pullspec",
                     builder_nvr,
                 )
-                return full_pullspec
 
-        published_nvr = f'{component_name}-{parsed_nvr["version"]}-{parsed_nvr["release"]}'
-        return rh_art_images_base_pullspec(published_nvr)
+        return full_pullspec
 
     async def update_golang_streams(self, go_version, builder_pullspecs):
         """

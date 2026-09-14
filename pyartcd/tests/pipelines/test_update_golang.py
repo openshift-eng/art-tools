@@ -2537,6 +2537,27 @@ class TestPullspecsMatch(unittest.TestCase):
         other_legacy = "registry.example.com/golang-builder:v1.22.9-el9"
         self.assertFalse(_pullspecs_match(self._LEGACY, other_legacy))
 
+    def test_nvr_to_nvr_same_string_equal(self):
+        """Two identical NVR pullspecs are equal."""
+        self.assertTrue(_pullspecs_match(self._NVR_EL9, self._NVR_EL9))
+
+    def test_nvr_to_nvr_different_patch_not_equal(self):
+        """Two NVR pullspecs that differ only in patch version must NOT be treated as equal.
+
+        This prevents _pullspecs_match from accidentally overwriting a stream
+        that is intentionally pinned to a different build when bumping patch.
+        """
+        nvr_patch_a = (
+            "registry.redhat.io/openshift/golang-builder:"
+            "openshift-golang-builder-container-v1.22.10-202607011200.p0.g1234567.assembly.stream.el9"
+        )
+        nvr_patch_b = (
+            "registry.redhat.io/openshift/golang-builder:"
+            "openshift-golang-builder-container-v1.22.11-202608011200.p0.g2345678.assembly.stream.el9"
+        )
+        self.assertFalse(_pullspecs_match(nvr_patch_a, nvr_patch_b))
+        self.assertFalse(_pullspecs_match(nvr_patch_b, nvr_patch_a))
+
 
 class TestBranchUsesFloatingTags(unittest.TestCase):
     """Tests for the _branch_uses_floating_tags module-level helper (t4b)."""
@@ -2636,10 +2657,13 @@ class TestGetBuilderPullspec(unittest.TestCase):
         "openshift-golang-builder-container-v1.22.12-202608131106.p2.g7d3050a.assembly.stream.el8"
     )
 
+    _EXPECTED_FLOAT_PULLSPEC_EL9 = "registry.redhat.io/openshift/golang-builder:golang-builder-v1.22-rhel9"
+    _EXPECTED_FLOAT_PULLSPEC_EL8 = "registry.redhat.io/openshift/golang-builder:golang-builder-v1.22-rhel8"
+
     def test_floating_branch_returns_floating_tag(self):
         pipeline = self._make_pipeline()
         result = pipeline._get_builder_pullspec(self._BUILDER_NVR, self._float_streams())
-        self.assertEqual(result, "golang-builder-v1.22-rhel9")
+        self.assertEqual(result, self._EXPECTED_FLOAT_PULLSPEC_EL9)
 
     def test_nvr_branch_returns_full_nvr_pullspec(self):
         pipeline = self._make_pipeline()
@@ -2662,7 +2686,7 @@ class TestGetBuilderPullspec(unittest.TestCase):
             'rhel-8-golang': {'image': 'registry.redhat.io/openshift/golang-builder:golang-builder-v1.22-rhel8'}
         }
         result = pipeline._get_builder_pullspec(self._BUILDER_NVR_EL8, float_streams_el8)
-        self.assertEqual(result, "golang-builder-v1.22-rhel8")
+        self.assertEqual(result, self._EXPECTED_FLOAT_PULLSPEC_EL8)
 
     def test_auto_reads_streams_from_cached_branch_content(self):
         """_get_builder_pullspec() auto-reads streams from cached _branch_content (the run() call path)."""
@@ -2675,16 +2699,15 @@ class TestGetBuilderPullspec(unittest.TestCase):
         }
         # Call without streams_content — must pick up the cached floating streams
         result = pipeline._get_builder_pullspec(self._BUILDER_NVR)
-        self.assertEqual(result, "golang-builder-v1.22-rhel9")
+        self.assertEqual(result, self._EXPECTED_FLOAT_PULLSPEC_EL9)
 
-    @patch("pyartcd.pipelines.update_golang.rh_art_images_base_pullspec")
-    def test_fallback_to_nvr_when_parse_fails(self, mock_pullspec):
-        """If _parse_pullspec_tuple raises on the computed full_pullspec, fall back to NVR pullspec."""
-        mock_pullspec.return_value = "registry.redhat.io/openshift/golang-builder:unrecognised-format"
+    @patch("pyartcd.pipelines.update_golang.konflux_golang_builder_component_name", side_effect=ValueError("bad"))
+    def test_fallback_to_nvr_when_helper_raises(self, mock_helper):
+        """If konflux_golang_builder_component_name raises, fall back to the full NVR pullspec."""
         pipeline = self._make_pipeline()
         result = pipeline._get_builder_pullspec(self._BUILDER_NVR, self._float_streams())
-        # Falls back to the unrecognised pullspec value rather than raising
-        self.assertEqual(result, "registry.redhat.io/openshift/golang-builder:unrecognised-format")
+        # Falls back to NVR pullspec rather than raising
+        self.assertEqual(result, self._EXPECTED_NVR_PULLSPEC)
 
 
 class TestUpdateGolangStreamsFloatingTags(IsolatedAsyncioTestCase):
