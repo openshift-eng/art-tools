@@ -9,7 +9,6 @@ from typing import List, cast
 import click
 import koji
 from artcommonlib import exectools
-from artcommonlib.brew import BuildStates
 from artcommonlib.constants import (
     BREW_HUB,
     GOLANG_BUILDER_IMAGE_NAME,
@@ -37,10 +36,6 @@ _LOGGER = logging.getLogger(__name__)
 yaml = new_roundtrip_yaml_handler()
 GOLANG_ASSEMBLIES = ("stream", "test")
 DEFAULT_GOLANG_ASSEMBLY = "stream"
-BREW_TEST_ASSEMBLY_UNSUPPORTED = (
-    "Brew builds for the test assembly are not supported because Brew floating tags are updated after every "
-    "successful build. Use --build-system konflux for test assembly builds."
-)
 
 
 def is_latest(ocp_version: str, el_v: int, nvr: str, koji_session) -> bool:
@@ -182,9 +177,7 @@ class UpdateGolangPipeline:
         go_nvrs: List[str],
         art_jira: str,
         tag_builds: bool,
-        scratch: bool = False,
         force_image_build: bool = False,
-        build_system: str = 'brew',
         kubeconfig: str | None = None,
         data_path: str | None = None,
         data_gitref: str | None = None,
@@ -196,14 +189,12 @@ class UpdateGolangPipeline:
     ):
         self.runtime = runtime
         self.dry_run = runtime.dry_run
-        self.scratch = scratch
         self.ocp_version = ocp_version
         self.cves = cves
         self.force_update_tracker = force_update_tracker
         self.force_image_build = force_image_build
         self.go_nvrs = go_nvrs
         self.art_jira = art_jira
-        self.build_system = build_system
         self.koji_session = koji.ClientSession(BREW_HUB)  # Always needed for RPM builds
         self.tag_builds = tag_builds
         self.data_path = data_path
@@ -214,9 +205,6 @@ class UpdateGolangPipeline:
         self.major_bump = major_bump
         if assembly not in GOLANG_ASSEMBLIES:
             raise ValueError(f"Unsupported golang assembly {assembly!r}; expected one of {GOLANG_ASSEMBLIES}")
-        if assembly == "test" and build_system in ("brew", "both"):
-            _LOGGER.error(BREW_TEST_ASSEMBLY_UNSUPPORTED)
-            raise ValueError(BREW_TEST_ASSEMBLY_UNSUPPORTED)
         self.assembly = assembly
         self._slack_client = self.runtime.new_slack_client()
         self._doozer_working_dir = self.runtime.working_dir / "doozer-working"
@@ -230,10 +218,8 @@ class UpdateGolangPipeline:
 
         # GitHub auth is handled by get_github_client_for_org() with App auth / PAT fallback
 
-        # Initialize KonfluxDb for Konflux build system
-        if build_system in ('konflux', 'both'):
-            self.konflux_db = KonfluxDb()
-            self.konflux_db.bind(KonfluxBuildRecord)
+        self.konflux_db = KonfluxDb()
+        self.konflux_db.bind(KonfluxBuildRecord)
 
     @property
     def is_production_assembly(self) -> bool:
@@ -370,10 +356,7 @@ class UpdateGolangPipeline:
         self._slack_client.bind_channel(self.ocp_version)
         running_in_jenkins = os.environ.get('BUILD_ID', False)
         if running_in_jenkins:
-            title_update = (
-                f" {self.ocp_version} - {go_version} - el{list(el_nvr_map.keys())}"
-                f" - {self.build_system} - {self.assembly}"
-            )
+            title_update = f" {self.ocp_version} - {go_version} - el{list(el_nvr_map.keys())} - {self.assembly}"
             if self.dry_run:
                 title_update += ' [dry-run]'
             jenkins.init_jenkins()
@@ -381,7 +364,7 @@ class UpdateGolangPipeline:
         external_repos_msg = " using golang RPMs from external repos" if self.external_golang_rpms else ""
         await self._slack_client.say_in_thread(
             f":construction: Updating golang for {self.ocp_version} "
-            f"(building {self.assembly} images on {self.build_system}{external_repos_msg}) :construction:"
+            f"(building {self.assembly} images on Konflux{external_repos_msg}) :construction:"
         )
 
         if self.external_golang_rpms:
@@ -420,32 +403,18 @@ class UpdateGolangPipeline:
 
         # Check if openshift-golang-builder image builds exist for the provided compiler builds
         # Only for RHEL versions that support golang-builder images (excludes el10 for now)
-        brew_nvrs = {}
         konflux_records: dict[int, KonfluxBuildRecord] = {}
         if not self.force_image_build:
-            if self.build_system in ['both', 'brew']:
-                brew_nvrs = self.get_existing_builders_brew(el_nvr_map_for_images, go_version)
-            if self.build_system in ['both', 'konflux']:
-                konflux_records = await self.get_existing_builders_konflux(el_nvr_map_for_images, go_version)
+            konflux_records = await self.get_existing_builders_konflux(el_nvr_map_for_images, go_version)
 
         # Determine which rhel versions need builds
-        brew_missing = (
-            el_nvr_map_for_images.keys() - brew_nvrs.keys() if self.build_system in ['both', 'brew'] else set()
-        )
-        konflux_missing = (
-            el_nvr_map_for_images.keys() - konflux_records.keys() if self.build_system in ['both', 'konflux'] else set()
-        )
+        konflux_missing = el_nvr_map_for_images.keys() - konflux_records.keys()
 
-        if brew_missing or konflux_missing:
+        if konflux_missing:
             if not process_rpm_builds and not self.external_golang_rpms:
-                missing = []
-                if brew_missing:
-                    missing.append(f'Brew: {sorted(brew_missing)}')
-                if konflux_missing:
-                    missing.append(f'Konflux: {sorted(konflux_missing)}')
                 raise ValueError(
                     "Cannot build missing non-GO_LATEST golang builder image(s) without "
-                    f"--external-golang-rpms ({', '.join(missing)}). "
+                    f"--external-golang-rpms (Konflux: {sorted(konflux_missing)}). "
                     "Build them from the owning GO_LATEST release first, or enable external Golang RPMs."
                 )
 
@@ -454,60 +423,34 @@ class UpdateGolangPipeline:
                     self.verify_golang_builder_repo(el_v, go_version)
 
             # Rebase and build missing images
-            build_targets = []  # list of (label, coroutine)
-            if self.build_system in ['both', 'brew'] and brew_missing:
-                build_targets.extend(
-                    (
-                        f"RHEL {el_v} (brew)",
-                        self._rebase_and_build_brew(el_v, go_version, el_nvr_map_for_images[el_v]),
-                    )
-                    for el_v in sorted(brew_missing)
+            build_targets = [
+                (
+                    f"RHEL {el_v} (Konflux)",
+                    self._rebase_and_build_konflux(el_v, go_version, el_nvr_map_for_images[el_v]),
                 )
-            if self.build_system in ['both', 'konflux'] and konflux_missing:
-                build_targets.extend(
-                    (
-                        f"RHEL {el_v} (konflux)",
-                        self._rebase_and_build_konflux(el_v, go_version, el_nvr_map_for_images[el_v]),
-                    )
-                    for el_v in sorted(konflux_missing)
-                )
-            if build_targets:
-                labels, coros = zip(*build_targets)
-                results = await asyncio.gather(*coros, return_exceptions=True)
-                succeeded = [label for label, r in zip(labels, results) if not isinstance(r, Exception)]
-                failed = [(label, r) for label, r in zip(labels, results) if isinstance(r, Exception)]
+                for el_v in sorted(konflux_missing)
+            ]
+            labels, coros = zip(*build_targets)
+            results = await asyncio.gather(*coros, return_exceptions=True)
+            succeeded = [label for label, r in zip(labels, results) if not isinstance(r, Exception)]
+            failed = [(label, r) for label, r in zip(labels, results) if isinstance(r, Exception)]
 
-                summary = "\n".join(
-                    ["Image build summary:"]
-                    + [f"  ✅ {label}: succeeded" for label in succeeded]
-                    + [f"  ❌ {label}: FAILED - {err}" for label, err in failed]
-                )
-                _LOGGER.info(summary)
+            summary = "\n".join(
+                ["Image build summary:"]
+                + [f"  ✅ {label}: succeeded" for label in succeeded]
+                + [f"  ❌ {label}: FAILED - {err}" for label, err in failed]
+            )
+            _LOGGER.info(summary)
 
-                if failed:
-                    raise RuntimeError(f"{len(failed)}/{len(build_targets)} image build(s) failed:\n{summary}")
+            if failed:
+                raise RuntimeError(f"{len(failed)}/{len(build_targets)} image build(s) failed:\n{summary}")
 
             # Now all builders should be available, fetch again
-            if self.build_system in ['both', 'brew']:
-                brew_nvrs = self.get_existing_builders_brew(el_nvr_map_for_images, go_version)
-            if self.build_system in ['both', 'konflux']:
-                konflux_records = await self.get_existing_builders_konflux(el_nvr_map_for_images, go_version)
+            konflux_records = await self.get_existing_builders_konflux(el_nvr_map_for_images, go_version)
 
-            brew_still_missing = (
-                el_nvr_map_for_images.keys() - brew_nvrs.keys() if self.build_system in ['both', 'brew'] else set()
-            )
-            konflux_still_missing = (
-                el_nvr_map_for_images.keys() - konflux_records.keys()
-                if self.build_system in ['both', 'konflux']
-                else set()
-            )
-            if brew_still_missing or konflux_still_missing:
-                error_parts = []
-                if brew_still_missing:
-                    error_parts.append(f'Brew: {brew_still_missing}')
-                if konflux_still_missing:
-                    error_parts.append(f'Konflux: {konflux_still_missing}')
-                error_msg = f'Failed to find existing builder(s) for rhel version(s): {", ".join(error_parts)}'
+            konflux_still_missing = el_nvr_map_for_images.keys() - konflux_records.keys()
+            if konflux_still_missing:
+                error_msg = f'Failed to find existing Konflux builder(s) for rhel version(s): {konflux_still_missing}'
                 if self.external_golang_rpms:
                     error_msg += (
                         '. When using --external-golang-rpms, ensure the external repo is enabled '
@@ -520,14 +463,7 @@ class UpdateGolangPipeline:
         # build is done but the shipment MRs are still in-flight, so the image is not yet
         # reachable at registry.redhat.io. The ocp-build-data PR body will warn reviewers
         # not to merge until those MRs land.
-        if self.build_system == "brew":
-            skip_message = (
-                "Skipping streams.yml update for brew-only run; "
-                "streams.yml only references Konflux-built golang builder pullspecs."
-            )
-            _LOGGER.info(skip_message)
-            await self._slack_client.say_in_thread(skip_message)
-        elif not self.is_production_assembly:
+        if not self.is_production_assembly:
             skip_message = "Skipping streams.yml update for the test assembly."
             _LOGGER.info(skip_message)
             await self._slack_client.say_in_thread(skip_message)
@@ -689,50 +625,11 @@ class UpdateGolangPipeline:
                 raise RuntimeError(f"Plashet build for {group} failed with result: {result}")
             _LOGGER.info("Plashet build complete for %s", group)
 
-    def get_existing_builders_brew(self, el_nvr_map, go_version):
-        component = GOLANG_BUILDER_CVE_COMPONENT
-        _LOGGER.info(
-            "Checking if %s %s builds exist in Brew for given golang builds",
-            component,
-            self.assembly,
-        )
-        package_info = self.koji_session.getPackage(component)
-        if not package_info:
-            raise IOError(f'Cannot find brew package info for {component}')
-        package_id = package_info['id']
-        builder_nvrs = {}
-        for el_v, go_nvr in el_nvr_map.items():
-            pattern = f"{component}-v{go_version}-*el{el_v}*"
-            builds = self.koji_session.listBuilds(
-                packageID=package_id,
-                state=BuildStates.COMPLETE.value,
-                pattern=pattern,
-                queryOpts={'limit': 50, 'order': '-creation_event_id'},
-            )
-            for build in builds:
-                if not self._existing_build_matches_assembly(build['release']):
-                    continue
-                # `elliottutil.get_golang_container_nvrs` uses p-flag to determine the build system.
-                # However, our existing golang-builders may not have p-flags.
-                # Here we are safe to looking at only Brew builds.
-                go_nvr_map = elliottutil.get_golang_container_nvrs_brew(
-                    [(build['name'], build['version'], build['release'])],
-                    _LOGGER,
-                )  # {'1.20.12-2.el9_3': {('openshift-golang-builder-container', 'v1.20.12',
-                # '202403212137.el9.g144a3f8.el9')}}
-                builder_go_vr = list(go_nvr_map.keys())[0]
-                if builder_go_vr in go_nvr:
-                    _LOGGER.info(f"Found existing builder image: {build['nvr']} built with {go_nvr}")
-                    builder_nvrs[el_v] = build['nvr']
-                    break
-        return builder_nvrs
-
     async def get_existing_builders_konflux(
         self, el_nvr_map: dict[int, str], go_version: str
     ) -> dict[int, KonfluxBuildRecord]:
         """
         Check if openshift-golang-builder builds exist in Konflux for the provided compiler builds.
-        Similar to get_existing_builders_brew but queries KonfluxDb instead of Brew.
         Returns {el_v: KonfluxBuildRecord} so callers have access to image_pullspec.
         """
         _LOGGER.info(
@@ -1018,75 +915,6 @@ class UpdateGolangPipeline:
             else:
                 _LOGGER.info(f"No update needed in {branch}")
 
-    async def _rebase_brew(self, el_v, go_version, go_nvr: str):
-        _LOGGER.info("Rebasing for Brew...")
-        group, image_key = self._get_doozer_group_and_image(el_v, go_version)
-        version = f"v{go_version}"
-        release = default_release_suffix()
-        cmd = [
-            "doozer",
-            f"--working-dir={self._doozer_working_dir}-brew-{el_v}",
-            "--build-system=brew",
-        ]
-        cmd.extend(self._get_doozer_assembly_args())
-        if self.data_path:
-            cmd.append(f"--data-path={self.data_path}")
-        cmd.extend(self._get_doozer_var_args())
-        cmd.extend(
-            [
-                "--group",
-                group,
-                "-i",
-                image_key,
-                "images:rebase",
-                "--version",
-                version,
-                "--release",
-                release,
-                "--extra-label",
-                f"{GOLANG_NVR_LABEL}={go_nvr}",
-                "--message",
-                f"bumping to {version}-{release}",
-            ]
-        )
-        if not self.dry_run:
-            cmd.append("--push")
-        await exectools.cmd_assert_async(cmd, env=self._doozer_env_vars, log_stdout=True)
-
-    async def _build_brew(self, el_v, go_version):
-        _LOGGER.info("Building on Brew...")
-        group, image_key = self._get_doozer_group_and_image(el_v, go_version)
-        cmd = [
-            "doozer",
-            f"--working-dir={self._doozer_working_dir}-brew-{el_v}",
-            "--build-system=brew",
-        ]
-        cmd.extend(self._get_doozer_assembly_args())
-        if self.data_path:
-            cmd.append(f"--data-path={self.data_path}")
-        cmd.extend(self._get_doozer_var_args())
-        cmd.extend(
-            [
-                "--group",
-                group,
-                "-i",
-                image_key,
-                "images:build",
-                "--repo-type",
-                "unsigned",
-                "--push-to-defaults",
-            ]
-        )
-        if self.dry_run:
-            cmd.append("--dry-run")
-        if self.scratch:
-            cmd.append("--scratch")
-        await exectools.cmd_assert_async(cmd, env=self._doozer_env_vars, log_stdout=True)
-
-    async def _rebase_and_build_brew(self, el_v, go_version, go_nvr: str):
-        await self._rebase_brew(el_v, go_version, go_nvr)
-        await self._build_brew(el_v, go_version)
-
     async def _rebase_konflux(self, el_v, go_version, go_nvr: str):
         """Rebase golang-builder image for Konflux"""
         _LOGGER.info("Rebasing for Konflux...")
@@ -1232,7 +1060,6 @@ class UpdateGolangPipeline:
 
 @cli.command('update-golang')
 @click.option('--ocp-version', required=True, help='OCP version to update golang for, e.g. 4.16')
-@click.option('--scratch', is_flag=True, default=False, help='Build images in scratch mode')
 @click.option('--art-jira', required=True, help='Related ART Jira ticket e.g. ART-1234')
 @click.option(
     '--cves',
@@ -1253,12 +1080,6 @@ class UpdateGolangPipeline:
 @click.argument('go_nvrs', metavar='GO_NVRS...', nargs=-1, required=True)
 @click.option(
     '--force-image-build', is_flag=True, default=False, help='Rebuild golang builder image regardless of if one exists'
-)
-@click.option(
-    '--build-system',
-    type=click.Choice(['brew', 'konflux', 'both'], case_sensitive=False),
-    default='brew',
-    help='Build system to use for golang-builder images (brew, konflux, or both). Test assemblies require Konflux. Defaults to brew for backward compatibility.',
 )
 @click.option("--kubeconfig", required=False, help="Path to kubeconfig file to use for Konflux cluster connections")
 @click.option(
@@ -1305,7 +1126,6 @@ class UpdateGolangPipeline:
 async def update_golang(
     runtime: Runtime,
     ocp_version: str,
-    scratch: bool,
     art_jira: str,
     cves: str,
     force_update_tracker: bool,
@@ -1313,7 +1133,6 @@ async def update_golang(
     tag_builds: bool,
     go_nvrs: List[str],
     force_image_build: bool,
-    build_system: str,
     kubeconfig: str,
     data_path: str,
     data_gitref: str,
@@ -1329,29 +1148,22 @@ async def update_golang(
     cves_list = cves.split(',') if cves else None
     if force_update_tracker and not cves_list:
         raise ValueError('CVEs must be provided with --force-update-tracker')
-    if network_mode and build_system == 'brew':
-        raise click.BadParameter('--network-mode only applies when --build-system is "konflux" or "both".')
-    if assembly == "test" and build_system in ("brew", "both"):
-        _LOGGER.error(BREW_TEST_ASSEMBLY_UNSUPPORTED)
-        raise click.BadParameter(BREW_TEST_ASSEMBLY_UNSUPPORTED, param_hint='--build-system')
     pipeline = UpdateGolangPipeline(
-        runtime,
-        ocp_version,
-        cves_list,
-        force_update_tracker,
-        go_nvrs,
-        art_jira,
-        tag_builds,
-        scratch,
-        force_image_build,
-        build_system,
-        kubeconfig,
-        data_path,
-        data_gitref,
-        skip_pr,
-        external_golang_rpms,
-        network_mode,
-        major_bump,
-        assembly,
+        runtime=runtime,
+        ocp_version=ocp_version,
+        cves=cves_list,
+        force_update_tracker=force_update_tracker,
+        go_nvrs=go_nvrs,
+        art_jira=art_jira,
+        tag_builds=tag_builds,
+        force_image_build=force_image_build,
+        kubeconfig=kubeconfig,
+        data_path=data_path,
+        data_gitref=data_gitref,
+        skip_pr=skip_pr,
+        external_golang_rpms=external_golang_rpms,
+        network_mode=network_mode,
+        major_bump=major_bump,
+        assembly=assembly,
     )
     await pipeline.run()
