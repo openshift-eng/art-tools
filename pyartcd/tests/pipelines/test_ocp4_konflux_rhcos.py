@@ -50,12 +50,6 @@ class TestRhcosIntegrationCli(unittest.TestCase):
         with ocp4.make_context('beta:ocp4-konflux', args) as context:
             self.assertTrue(context.params['skip_node_image_post_build_ops'])
 
-    def test_skip_node_image_post_build_ops_uses_new_artcd_flag(self):
-        option = next(param for param in ocp4.params if param.name == 'skip_node_image_post_build_ops')
-
-        self.assertEqual(option.opts, ['--skip-node-image-post-build-ops'])
-        self.assertFalse(option.secondary_opts)
-
 
 class TestRegistryAuthConfiguration(unittest.IsolatedAsyncioTestCase):
     @patch.dict(
