@@ -35,6 +35,23 @@ class TestReleases(unittest.TestCase):
         err = releases.validate(valid_releases)
         self.assertIsNone(err)
 
+    def test_assembly_group_can_override_plashet_download_url(self):
+        valid_releases = {
+            "releases": {
+                "art23398": {
+                    "assembly": {
+                        "group": {
+                            "plashet": {
+                                "download_url": "https://example.com/$MAJOR.$MINOR/stream/$slug/latest/$arch/os/"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        err = releases_schema.validate(None, valid_releases)
+        self.assertIsNone(err)
+
     def test_member_exclude_image(self):
         valid_releases = {
             "releases": {
