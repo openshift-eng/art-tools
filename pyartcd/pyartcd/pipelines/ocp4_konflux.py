@@ -902,7 +902,7 @@ class KonfluxOcpPipeline:
             return
 
         if self.skip_node_image_post_build_ops:
-            LOGGER.warning('Skipping RHCOS post-build jobs because --skip-rhcos-integration-tests is set')
+            LOGGER.warning('Skipping RHCOS post-build jobs because --skip-node-image-post-build-ops is set')
             return
 
         record_log = self.parse_record_log()
@@ -1476,7 +1476,7 @@ class KonfluxOcpPipeline:
     "--skip-ec-verify", is_flag=True, default=False, help="Skip Enterprise Contract verification for built images"
 )
 @click.option(
-    "--skip-rhcos-integration-tests",
+    "--skip-node-image-post-build-ops",
     "skip_node_image_post_build_ops",
     is_flag=True,
     default=False,
