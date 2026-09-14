@@ -340,6 +340,8 @@ class KonfluxOkdPipeline:
             self.logger.warning('No images will be built')
             return
 
+        embargoed_names = []
+
         # Exclude embargoed images from the build
         if self.embargoed_builds:
             embargoed_names = [img['name'] for img in self.embargoed_builds]
@@ -361,12 +363,25 @@ class KonfluxOkdPipeline:
                 # Add embargoed images to existing exclusion list
                 self.build_plan.images_excluded.extend(embargoed_names)
 
+        # The build plan may have contained only embargoed images. Check again after
+        # removing them so an empty --images value cannot cause Doozer to build all
+        # images by default.
+        if not self.building_images():
+            self.logger.warning('No non-embargoed images will be built')
+            return
+
         self.logger.info(f'Building images for OCP {self.version} with release {self.release}')
 
         cmd = self._doozer_base_command.copy()
 
         cmd.append('--latest-parent-version')
         cmd.extend(self.include_exclude_param())
+        if embargoed_names:
+            # Doozer may add dependent images to its runtime image map while
+            # processing the explicit --images list. Keep the embargoed names
+            # available to the Doozer build command so those dependents can be
+            # filtered after expansion too.
+            cmd.append(f'--exclude={",".join(embargoed_names)}')
         cmd.extend(
             [
                 'beta:images:konflux:build',

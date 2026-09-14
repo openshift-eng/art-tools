@@ -1,5 +1,6 @@
 import json
 import unittest
+from types import SimpleNamespace
 from unittest import mock
 
 from artcommonlib.konflux.konflux_build_record import (
@@ -8,7 +9,13 @@ from artcommonlib.konflux.konflux_build_record import (
     KonfluxBundleBuildRecord,
 )
 from artcommonlib.model import Model
-from doozerlib.cli.images_konflux import BundleStageReleaseRelatedImagesCli, KonfluxBundleCli, KonfluxRebaseCli
+from artcommonlib.variants import BuildVariant
+from doozerlib.cli.images_konflux import (
+    BundleStageReleaseRelatedImagesCli,
+    KonfluxBundleCli,
+    KonfluxRebaseCli,
+    _filter_okd_excluded_metas,
+)
 from doozerlib.exceptions import DoozerFatalError, ParentRebaseFailedError
 from doozerlib.runtime import Runtime
 from doozerlib.source_resolver import SourceResolver
@@ -162,6 +169,30 @@ class TestKonfluxBundleCli(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(DoozerFatalError):
             await self.bundle_cli.run()
+
+
+class TestKonfluxBuildSelection(unittest.TestCase):
+    def test_okd_excludes_dependents_added_during_metadata_expansion(self):
+        runtime = mock.Mock(spec=Runtime)
+        runtime.variant = BuildVariant.OKD
+        runtime.exclude = ("pf-status-relay-operator",)
+        public_meta = SimpleNamespace(distgit_key="kube-rbac-proxy")
+        embargoed_meta = SimpleNamespace(distgit_key="pf-status-relay-operator")
+
+        result = _filter_okd_excluded_metas(runtime, [public_meta, embargoed_meta])
+
+        self.assertEqual(result, [public_meta])
+
+    def test_non_okd_builds_are_not_filtered_by_okd_guard(self):
+        runtime = mock.Mock(spec=Runtime)
+        runtime.variant = BuildVariant.OCP
+        runtime.exclude = ("pf-status-relay-operator",)
+        public_meta = SimpleNamespace(distgit_key="kube-rbac-proxy")
+        excluded_meta = SimpleNamespace(distgit_key="pf-status-relay-operator")
+
+        result = _filter_okd_excluded_metas(runtime, [public_meta, excluded_meta])
+
+        self.assertEqual(result, [public_meta, excluded_meta])
 
 
 class TestKonfluxRebaseCli(unittest.IsolatedAsyncioTestCase):
