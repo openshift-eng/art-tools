@@ -1003,6 +1003,44 @@ class TestDetectEmbargoedBuilds(IsolatedAsyncioTestCase):
         # then - should complete without error
         self.assertEqual(len(self.pipeline.embargoed_builds), 0)
 
+    async def test_build_images_passes_embargoed_names_to_doozer(self):
+        """
+        Test that embargoed names are passed as Doozer exclusions.
+        """
+
+        self.pipeline.build_plan.image_build_strategy = BuildStrategy.ONLY
+        self.pipeline.build_plan.images_included = ['cli', 'operator']
+        self.pipeline.embargoed_builds = [{'name': 'operator'}]
+
+        with (
+            patch('pyartcd.pipelines.okd.exectools.cmd_assert_async', new_callable=AsyncMock) as mock_cmd,
+            patch.object(self.pipeline, 'handle_built_images', new_callable=AsyncMock),
+        ):
+            await self.pipeline.build_images()
+
+        command = mock_cmd.await_args.args[0]
+        self.assertIn('--images=cli', command)
+        self.assertIn('--exclude=operator', command)
+        self.assertNotIn('--images=cli,operator', command)
+
+    async def test_build_images_skips_doozer_when_only_embargoed_images_remain(self):
+        """
+        Test that filtering the last requested image does not produce an unscoped build.
+        """
+
+        self.pipeline.build_plan.image_build_strategy = BuildStrategy.ONLY
+        self.pipeline.build_plan.images_included = ['operator']
+        self.pipeline.embargoed_builds = [{'name': 'operator'}]
+
+        with (
+            patch('pyartcd.pipelines.okd.exectools.cmd_assert_async', new_callable=AsyncMock) as mock_cmd,
+            patch.object(self.pipeline, 'handle_built_images', new_callable=AsyncMock) as mock_handle,
+        ):
+            await self.pipeline.build_images()
+
+        mock_cmd.assert_not_awaited()
+        mock_handle.assert_not_awaited()
+
 
 class TestUpdateImagestreamsDataPath(IsolatedAsyncioTestCase):
     """Tests that update_imagestreams resolves the ocp-build-data clone directory

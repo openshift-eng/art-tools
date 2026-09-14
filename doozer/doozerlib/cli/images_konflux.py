@@ -69,6 +69,23 @@ def _validate_version(ctx, param, version):
     return validate_semver_major_minor_patch(ctx, param, version)
 
 
+def _filter_okd_excluded_metas(runtime: Runtime, metas: Sequence[ImageMetadata]) -> list[ImageMetadata]:
+    """
+    Filter explicitly excluded images after metadata dependency expansion.
+
+    OKD image metadata can add dependents to the runtime image map while an
+    image selected by --images is initialized. Apply --exclude after that
+    expansion so an embargoed dependent cannot be submitted for build.
+    """
+    if runtime.variant is not BuildVariant.OKD or not runtime.exclude:
+        return list(metas)
+
+    excluded_names = {
+        name.strip() for value in runtime.exclude for name in value.replace(' ', ',').split(',') if name.strip()
+    }
+    return [meta for meta in metas if meta.distgit_key not in excluded_names]
+
+
 class KonfluxRebaseCli:
     def __init__(
         self,
@@ -318,7 +335,7 @@ class KonfluxBuildCli:
 
         runtime.konflux_db.bind(KonfluxBuildRecord)
         assert runtime.source_resolver is not None, "source_resolver is not initialized. Doozer bug?"
-        metas = runtime.ordered_image_metas()
+        metas = _filter_okd_excluded_metas(runtime, runtime.ordered_image_metas())
 
         # Update span name to include metas count
         span = trace.get_current_span()
