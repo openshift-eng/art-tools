@@ -7,9 +7,9 @@ from elliottlib.cli.verify_security_alerts_cli import (
     VerifySecurityAlertsResult,
     check_advisory_security_alerts,
     get_errata_type,
-    render_result,
     verify_security_alerts,
 )
+from elliottlib.verify_common import render_verify_result
 
 
 class TestAdvisoryAlertResult(TestCase):
@@ -33,6 +33,9 @@ class TestAdvisoryAlertResult(TestCase):
         self.assertTrue(r.ok)
         self.assertFalse(r.failed)
 
+    # AdvisoryAlertResult keeps its domain-specific .ok property;
+    # VerifySecurityAlertsResult uses the standardized .passed property.
+
 
 class TestVerifySecurityAlertsResult(TestCase):
     def test_all_ok(self):
@@ -42,7 +45,7 @@ class TestVerifySecurityAlertsResult(TestCase):
                 AdvisoryAlertResult(advisory_id=2, impetus="rhcos", errata_type="rhba", skipped=True),
             ]
         )
-        self.assertTrue(r.ok)
+        self.assertTrue(r.passed)
         self.assertFalse(r.failed)
 
     def test_one_blocking(self):
@@ -52,7 +55,7 @@ class TestVerifySecurityAlertsResult(TestCase):
                 AdvisoryAlertResult(advisory_id=2, impetus="rhcos", errata_type="rhba", skipped=True),
             ]
         )
-        self.assertFalse(r.ok)
+        self.assertFalse(r.passed)
         self.assertTrue(r.failed)
 
 
@@ -137,7 +140,7 @@ class TestVerifySecurityAlerts(IsolatedAsyncioTestCase):
         api.get_advisory.return_value = {"errata": {"rhba": {}}}
 
         result = await verify_security_alerts({"rpm": 111, "rhcos": 222})
-        self.assertTrue(result.ok)
+        self.assertTrue(result.passed)
         self.assertEqual(len(result.advisories), 2)
 
     @patch("elliottlib.cli.verify_security_alerts_cli.AsyncErrataAPI")
@@ -150,7 +153,7 @@ class TestVerifySecurityAlerts(IsolatedAsyncioTestCase):
         api.refresh_security_alerts.return_value = {"alerts": {"blocking": True, "alerts": [{"id": 1}]}}
 
         result = await verify_security_alerts({"rpm": 111})
-        self.assertFalse(result.ok)
+        self.assertFalse(result.passed)
         self.assertTrue(result.failed)
 
     @patch("elliottlib.cli.verify_security_alerts_cli.AsyncErrataAPI")
@@ -168,7 +171,7 @@ class TestVerifySecurityAlerts(IsolatedAsyncioTestCase):
         api.refresh_security_alerts.return_value = {"alerts": {"blocking": False, "alerts": []}}
 
         result = await verify_security_alerts({"rpm": 111, "rhcos": 222})
-        self.assertTrue(result.ok)
+        self.assertTrue(result.passed)
         rhsa_result = next(a for a in result.advisories if a.impetus == "rpm")
         rhba_result = next(a for a in result.advisories if a.impetus == "rhcos")
         self.assertFalse(rhsa_result.skipped)
@@ -182,7 +185,7 @@ class TestRenderResult(TestCase):
                 AdvisoryAlertResult(advisory_id=12345, impetus="rpm", errata_type="rhsa"),
             ]
         )
-        text = render_result(r, "text")
+        text = render_verify_result(r, "text")
         self.assertIn("OK", text)
         self.assertIn("12345", text)
 
@@ -192,7 +195,7 @@ class TestRenderResult(TestCase):
                 AdvisoryAlertResult(advisory_id=12345, impetus="rpm", errata_type="rhsa", blocking=True),
             ]
         )
-        text = render_result(r, "text")
+        text = render_verify_result(r, "text")
         self.assertIn("BLOCKING", text)
         self.assertIn("FAIL", text)
 
@@ -202,7 +205,7 @@ class TestRenderResult(TestCase):
                 AdvisoryAlertResult(advisory_id=12345, impetus="rpm", errata_type="rhba", skipped=True),
             ]
         )
-        text = render_result(r, "text")
+        text = render_verify_result(r, "text")
         self.assertIn("SKIPPED", text)
         self.assertIn("RHBA", text)
 
@@ -212,8 +215,8 @@ class TestRenderResult(TestCase):
                 AdvisoryAlertResult(advisory_id=12345, impetus="rpm", errata_type="rhsa", blocking=True),
             ]
         )
-        data = json.loads(render_result(r, "json"))
-        self.assertFalse(data["ok"])
+        data = json.loads(render_verify_result(r, "json"))
+        self.assertFalse(data["passed"])
         self.assertTrue(data["failed"])
         self.assertTrue(data["advisories"][0]["blocking"])
 
@@ -223,6 +226,6 @@ class TestRenderResult(TestCase):
                 AdvisoryAlertResult(advisory_id=12345, impetus="rpm", error="boom"),
             ]
         )
-        text = render_result(r, "text")
+        text = render_verify_result(r, "text")
         self.assertIn("ERROR", text)
         self.assertIn("boom", text)

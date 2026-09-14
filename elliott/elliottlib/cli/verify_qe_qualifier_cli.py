@@ -1,5 +1,4 @@
 import asyncio
-import json
 import logging
 from dataclasses import dataclass, field
 from typing import Optional
@@ -10,6 +9,7 @@ from artcommonlib.arch_util import go_arch_for_brew_arch
 from artcommonlib.assembly import assembly_basis
 
 from elliottlib.cli.common import cli, click_coroutine
+from elliottlib.verify_common import VerifyResultBase, handle_verify_result, verify_output_option
 
 LOGGER = logging.getLogger(__name__)
 
@@ -30,8 +30,8 @@ class QualifierCheckResult:
 
 
 @dataclass
-class VerifyQeQualifierResult:
-    assembly: str
+class VerifyQeQualifierResult(VerifyResultBase):
+    assembly: str = ""
     stable_results: list[QualifierCheckResult] = field(default_factory=list)
     nightly_results: list[QualifierCheckResult] = field(default_factory=list)
 
@@ -39,6 +39,59 @@ class VerifyQeQualifierResult:
     def passed(self) -> bool:
         all_results = self.stable_results + self.nightly_results
         return bool(all_results) and all(r.passed for r in all_results)
+
+    def to_dict(self) -> dict:
+        return {
+            "assembly": self.assembly,
+            "passed": self.passed,
+            "stable": [
+                {
+                    "release_tag": r.release_tag,
+                    "arch": r.arch,
+                    "badge_earned": r.badge_earned,
+                    "passed": r.passed,
+                    "error": r.error,
+                }
+                for r in self.stable_results
+            ],
+            "nightly": [
+                {
+                    "release_tag": r.release_tag,
+                    "arch": r.arch,
+                    "badge_earned": r.badge_earned,
+                    "passed": r.passed,
+                    "error": r.error,
+                }
+                for r in self.nightly_results
+            ],
+        }
+
+    def render_text(self) -> str:
+        lines = [f"Assembly: {self.assembly}", ""]
+
+        if self.stable_results:
+            lines.append("Stable:")
+            for r in self.stable_results:
+                status = "PASS" if r.passed else "FAIL"
+                if r.error:
+                    lines.append(f"  {r.arch}: ERROR - {r.error}")
+                else:
+                    lines.append(f"  {r.arch}: {status} (tag: {r.release_tag})")
+            lines.append("")
+
+        if self.nightly_results:
+            lines.append("Nightly:")
+            for r in self.nightly_results:
+                status = "PASS" if r.passed else "FAIL"
+                if r.error:
+                    lines.append(f"  {r.arch}: ERROR - {r.error}")
+                else:
+                    lines.append(f"  {r.arch}: {status} (tag: {r.release_tag})")
+            lines.append("")
+
+        overall = "PASS" if self.passed else "FAIL"
+        lines.append(f"Overall: {overall}")
+        return "\n".join(lines)
 
 
 async def check_qe_qualifier(release_tag: str, go_arch: str, session: aiohttp.ClientSession) -> QualifierCheckResult:
@@ -94,65 +147,8 @@ async def verify_qe_qualifier(
     return result
 
 
-def render_result(result: VerifyQeQualifierResult, output: str) -> str:
-    if output == "json":
-        data = {
-            "assembly": result.assembly,
-            "passed": result.passed,
-            "stable": [
-                {
-                    "release_tag": r.release_tag,
-                    "arch": r.arch,
-                    "badge_earned": r.badge_earned,
-                    "passed": r.passed,
-                    "error": r.error,
-                }
-                for r in result.stable_results
-            ],
-            "nightly": [
-                {
-                    "release_tag": r.release_tag,
-                    "arch": r.arch,
-                    "badge_earned": r.badge_earned,
-                    "passed": r.passed,
-                    "error": r.error,
-                }
-                for r in result.nightly_results
-            ],
-        }
-        return json.dumps(data, indent=2)
-
-    lines = [f"Assembly: {result.assembly}", ""]
-
-    if result.stable_results:
-        lines.append("Stable:")
-        for r in result.stable_results:
-            status = "PASS" if r.passed else "FAIL"
-            if r.error:
-                lines.append(f"  {r.arch}: ERROR - {r.error}")
-            else:
-                lines.append(f"  {r.arch}: {status} (tag: {r.release_tag})")
-        lines.append("")
-
-    if result.nightly_results:
-        lines.append("Nightly:")
-        for r in result.nightly_results:
-            status = "PASS" if r.passed else "FAIL"
-            if r.error:
-                lines.append(f"  {r.arch}: ERROR - {r.error}")
-            else:
-                lines.append(f"  {r.arch}: {status} (tag: {r.release_tag})")
-        lines.append("")
-
-    overall = "PASS" if result.passed else "FAIL"
-    lines.append(f"Overall: {overall}")
-    return "\n".join(lines)
-
-
 @cli.command("verify-qe-qualifier", short_help="Check release controller QE qualifier for stable and nightly builds")
-@click.option(
-    "-o", "--output", type=click.Choice(["text", "json"]), default="text", show_default=True, help="Output format."
-)
+@verify_output_option
 @click.option("--stable/--no-stable", default=True, show_default=True, help="Check stable build QE qualifier.")
 @click.option("--nightly/--no-nightly", default=True, show_default=True, help="Check nightly build QE qualifier.")
 @click.pass_obj
@@ -199,6 +195,4 @@ async def verify_qe_qualifier_cli(runtime, output, stable, nightly):
         check_stable=stable,
         check_nightly=nightly,
     )
-    click.echo(render_result(result, output))
-    if not result.passed:
-        raise SystemExit(1)
+    handle_verify_result(result, output)

@@ -8,9 +8,9 @@ from elliottlib.cli.verify_cdn_push_cli import (
     VerifyCdnPushResult,
     check_advisory_push,
     parse_push_jobs,
-    render_result,
     verify_cdn_push,
 )
+from elliottlib.verify_common import render_verify_result
 
 
 class TestPushJobInfo(TestCase):
@@ -96,7 +96,7 @@ class TestVerifyCdnPushResult(TestCase):
                 ),
             ]
         )
-        self.assertTrue(r.complete)
+        self.assertTrue(r.passed)
         self.assertFalse(r.failed)
 
     def test_one_failed(self):
@@ -114,7 +114,7 @@ class TestVerifyCdnPushResult(TestCase):
                 ),
             ]
         )
-        self.assertFalse(r.complete)
+        self.assertFalse(r.passed)
         self.assertTrue(r.failed)
 
 
@@ -221,7 +221,7 @@ class TestVerifyCdnPush(IsolatedAsyncioTestCase):
         ]
 
         result = await verify_cdn_push({"rpm": 111}, do_push=True)
-        self.assertTrue(result.complete)
+        self.assertTrue(result.passed)
 
     @patch("elliottlib.cli.verify_cdn_push_cli.AsyncErrataAPI")
     async def test_with_blocking_advisory(self, mock_api_cls):
@@ -235,7 +235,7 @@ class TestVerifyCdnPush(IsolatedAsyncioTestCase):
         ]
 
         result = await verify_cdn_push({"rpm": 111}, do_push=True)
-        self.assertTrue(result.complete)
+        self.assertTrue(result.passed)
         self.assertEqual(len(result.advisories), 2)
 
     @patch("elliottlib.cli.verify_cdn_push_cli.AsyncErrataAPI")
@@ -250,7 +250,7 @@ class TestVerifyCdnPush(IsolatedAsyncioTestCase):
         ]
 
         result = await verify_cdn_push({"rpm": 111}, do_push=True)
-        self.assertFalse(result.complete)
+        self.assertFalse(result.passed)
 
     @patch("elliottlib.cli.verify_cdn_push_cli.AsyncErrataAPI")
     async def test_blocking_lookup_failure(self, mock_api_cls):
@@ -261,7 +261,7 @@ class TestVerifyCdnPush(IsolatedAsyncioTestCase):
         api.get_advisory.side_effect = RuntimeError("connection failed")
 
         result = await verify_cdn_push({"rpm": 111}, do_push=True)
-        self.assertFalse(result.complete)
+        self.assertFalse(result.passed)
         self.assertTrue(result.failed)
 
 
@@ -276,7 +276,7 @@ class TestRenderResult(TestCase):
                 ),
             ]
         )
-        text = render_result(r, "text")
+        text = render_verify_result(r, "text")
         self.assertIn("COMPLETE", text)
         self.assertIn("12345", text)
 
@@ -291,7 +291,7 @@ class TestRenderResult(TestCase):
                 ),
             ]
         )
-        text = render_result(r, "text")
+        text = render_verify_result(r, "text")
         self.assertIn("re-triggered", text.lower())
 
     def test_json_output(self):
@@ -304,8 +304,8 @@ class TestRenderResult(TestCase):
                 ),
             ]
         )
-        data = json.loads(render_result(r, "json"))
-        self.assertTrue(data["complete"])
+        data = json.loads(render_verify_result(r, "json"))
+        self.assertTrue(data["passed"])
         self.assertEqual(len(data["advisories"]), 1)
         self.assertEqual(data["advisories"][0]["advisory_id"], 12345)
 
@@ -315,6 +315,6 @@ class TestRenderResult(TestCase):
                 AdvisoryPushResult(advisory_id=12345, impetus="rpm", error="boom"),
             ]
         )
-        text = render_result(r, "text")
+        text = render_verify_result(r, "text")
         self.assertIn("FAIL", text)
         self.assertIn("boom", text)

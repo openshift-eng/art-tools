@@ -1,5 +1,4 @@
 import asyncio
-import json
 import logging
 import re
 from dataclasses import dataclass, field
@@ -8,12 +7,17 @@ from typing import Optional
 import click
 import koji
 import requests
-from artcommonlib.assembly import assembly_config_struct
 from artcommonlib.constants import BREW_DOWNLOAD_URL, BREW_HUB
 
 from elliottlib import brew
 from elliottlib.cli.common import cli, click_coroutine
 from elliottlib.errata_async import AsyncErrataAPI
+from elliottlib.verify_common import (
+    VerifyResultBase,
+    get_assembly_advisory_ids,
+    handle_verify_result,
+    verify_output_option,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -45,7 +49,7 @@ class AdvisoryKernelResult:
 
 
 @dataclass
-class VerifyKernelTagResult:
+class VerifyKernelTagResult(VerifyResultBase):
     advisories: list[AdvisoryKernelResult] = field(default_factory=list)
     stop_ship_tag: str = ""
 
@@ -56,6 +60,45 @@ class VerifyKernelTagResult:
     @property
     def failed(self) -> bool:
         return any(a.failed for a in self.advisories)
+
+    def to_dict(self) -> dict:
+        return {
+            "passed": self.passed,
+            "failed": self.failed,
+            "stop_ship_tag": self.stop_ship_tag,
+            "advisories": [
+                {
+                    "advisory_id": a.advisory_id,
+                    "impetus": a.impetus,
+                    "rhcos_builds": a.rhcos_builds,
+                    "kernel_builds": [{"nvr": k.nvr, "has_stop_ship": k.has_stop_ship} for k in a.kernel_builds],
+                    "skipped": a.skipped,
+                    "error": a.error,
+                }
+                for a in self.advisories
+            ],
+        }
+
+    def render_text(self) -> str:
+        lines = [f"Kernel stop-ship tag check (tag: {self.stop_ship_tag})", ""]
+        for a in self.advisories:
+            if a.skipped:
+                lines.append(f"  Advisory {a.advisory_id} ({a.impetus}): SKIPPED (no RHCOS/kernel)")
+            elif a.failed:
+                status = "STOP-SHIP" if any(k.has_stop_ship for k in a.kernel_builds) else "ERROR"
+                lines.append(f"  Advisory {a.advisory_id} ({a.impetus}): {status}")
+            else:
+                lines.append(f"  Advisory {a.advisory_id} ({a.impetus}): OK")
+
+            if a.error:
+                lines.append(f"    Error: {a.error}")
+            for k in a.kernel_builds:
+                tag_status = "STOP-SHIP" if k.has_stop_ship else "ok"
+                lines.append(f"    {k.nvr}: {tag_status}")
+        lines.append("")
+        overall = "PASS" if self.passed else "FAIL"
+        lines.append(f"Overall: {overall}")
+        return "\n".join(lines)
 
 
 def get_rpm_deliveries_config(runtime) -> list:
@@ -196,71 +239,8 @@ async def verify_kernel_tag(
     return result
 
 
-def render_result(result: VerifyKernelTagResult, output: str) -> str:
-    if output == "json":
-        return json.dumps(
-            {
-                "passed": result.passed,
-                "failed": result.failed,
-                "stop_ship_tag": result.stop_ship_tag,
-                "advisories": [
-                    {
-                        "advisory_id": a.advisory_id,
-                        "impetus": a.impetus,
-                        "rhcos_builds": a.rhcos_builds,
-                        "kernel_builds": [{"nvr": k.nvr, "has_stop_ship": k.has_stop_ship} for k in a.kernel_builds],
-                        "skipped": a.skipped,
-                        "error": a.error,
-                    }
-                    for a in result.advisories
-                ],
-            },
-            indent=2,
-        )
-
-    lines = [f"Kernel stop-ship tag check (tag: {result.stop_ship_tag})", ""]
-    for a in result.advisories:
-        if a.skipped:
-            lines.append(f"  Advisory {a.advisory_id} ({a.impetus}): SKIPPED (no RHCOS/kernel)")
-        elif a.failed:
-            status = "STOP-SHIP" if any(k.has_stop_ship for k in a.kernel_builds) else "ERROR"
-            lines.append(f"  Advisory {a.advisory_id} ({a.impetus}): {status}")
-        else:
-            lines.append(f"  Advisory {a.advisory_id} ({a.impetus}): OK")
-
-        if a.error:
-            lines.append(f"    Error: {a.error}")
-        for k in a.kernel_builds:
-            tag_status = "STOP-SHIP" if k.has_stop_ship else "ok"
-            lines.append(f"    {k.nvr}: {tag_status}")
-    lines.append("")
-
-    overall = "PASS" if result.passed else "FAIL"
-    lines.append(f"Overall: {overall}")
-    return "\n".join(lines)
-
-
-def get_advisory_ids(runtime) -> dict[str, int]:
-    releases_config = runtime.get_releases_config()
-    group_config = assembly_config_struct(releases_config, runtime.assembly, "group", {})
-    advisories = group_config.get("advisories", {})
-    result = {}
-    for impetus in KERNEL_TAG_ADVISORY_TYPES:
-        ad_id = advisories.get(impetus)
-        if ad_id:
-            result[impetus] = int(ad_id)
-    return result
-
-
 @cli.command("verify-kernel-tag", short_help="Check RHCOS kernel builds for stop-ship tags")
-@click.option(
-    "-o",
-    "--output",
-    type=click.Choice(["text", "json"]),
-    default="text",
-    show_default=True,
-    help="Output format.",
-)
+@verify_output_option
 @click.pass_obj
 @click_coroutine
 async def verify_kernel_tag_cli(runtime, output):
@@ -288,7 +268,7 @@ async def verify_kernel_tag_cli(runtime, output):
     if not kernel_packages or not stop_ship_tag:
         raise click.UsageError("No kernel packages or stop_ship_tag found in rpm_deliveries config.")
 
-    advisories = get_advisory_ids(runtime)
+    advisories = get_assembly_advisory_ids(runtime, include_types=KERNEL_TAG_ADVISORY_TYPES)
     if not advisories:
         raise click.UsageError(f"No advisory IDs found for {KERNEL_TAG_ADVISORY_TYPES} in assembly config.")
 
@@ -307,6 +287,4 @@ async def verify_kernel_tag_cli(runtime, output):
         kernel_packages=kernel_packages,
         stop_ship_tag=stop_ship_tag,
     )
-    click.echo(render_result(result, output))
-    if not result.passed:
-        raise SystemExit(1)
+    handle_verify_result(result, output)
