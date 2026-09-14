@@ -112,7 +112,7 @@ class KonfluxOcpPipeline:
         skip_bundle_build: bool = None,
         skip_build_sync_konflux: bool = False,
         skip_ec_verify: bool = False,
-        skip_rhcos_integration_tests: bool = False,
+        skip_node_image_post_build_ops: bool = False,
         arches: Tuple[str, ...] = None,
         plr_template: str = None,
         lock_identifier: str = None,
@@ -133,7 +133,7 @@ class KonfluxOcpPipeline:
         self.skip_bundle_build = skip_bundle_build
         self.skip_build_sync_konflux = skip_build_sync_konflux
         self.skip_ec_verify = skip_ec_verify
-        self.skip_rhcos_integration_tests = skip_rhcos_integration_tests
+        self.skip_node_image_post_build_ops = skip_node_image_post_build_ops
         self.plr_template = plr_template
         self.lock_identifier = lock_identifier
         self.skip_plashets = skip_plashets
@@ -901,7 +901,7 @@ class KonfluxOcpPipeline:
             LOGGER.info('Skipping RHCOS integration tests for %s assembly', self.assembly)
             return
 
-        if self.skip_rhcos_integration_tests:
+        if self.skip_node_image_post_build_ops:
             LOGGER.warning('Skipping RHCOS post-build jobs because --skip-rhcos-integration-tests is set')
             return
 
@@ -1477,9 +1477,10 @@ class KonfluxOcpPipeline:
 )
 @click.option(
     "--skip-rhcos-integration-tests",
+    "skip_node_image_post_build_ops",
     is_flag=True,
     default=False,
-    help="Skip RHCOS integration tests",
+    help="Skip node image post-build operations",
 )
 @click.option(
     "--arch", "arches", metavar="TAG", multiple=True, help="(Optional) [MULTIPLE] Limit included arches to this list"
@@ -1533,7 +1534,7 @@ async def ocp4(
     skip_bundle_build: bool,
     skip_build_sync_konflux: bool,
     skip_ec_verify: bool,
-    skip_rhcos_integration_tests: bool,
+    skip_node_image_post_build_ops: bool,
     arches: Tuple[str, ...],
     plr_template: str,
     skip_plashets,
@@ -1561,7 +1562,7 @@ async def ocp4(
         skip_bundle_build=skip_bundle_build,
         skip_build_sync_konflux=skip_build_sync_konflux,
         skip_ec_verify=skip_ec_verify,
-        skip_rhcos_integration_tests=skip_rhcos_integration_tests,
+        skip_node_image_post_build_ops=skip_node_image_post_build_ops,
         arches=arches,
         plr_template=plr_template,
         lock_identifier=lock_identifier,
