@@ -9,11 +9,19 @@ from artcommonlib.exceptions import VerificationError
 from artcommonlib.jira_config import JIRA_SERVER_URL
 from artcommonlib.model import Model
 from pyartcd.pipelines.advisory_drop import drop_advisory
-from pyartcd.pipelines.promote import PromotePipeline
+from pyartcd.pipelines.promote import PromotePipeline, should_update_shipment_mr
 from ruamel.yaml import YAML
 
 
 class TestPromotePipeline(IsolatedAsyncioTestCase):
+    def test_should_update_shipment_mr_skips_merged_ec_and_rc(self):
+        merged_mr = Mock(state="merged")
+
+        self.assertFalse(should_update_shipment_mr(AssemblyTypes.PREVIEW, merged_mr))
+        self.assertFalse(should_update_shipment_mr(AssemblyTypes.CANDIDATE, merged_mr))
+        self.assertTrue(should_update_shipment_mr(AssemblyTypes.STANDARD, merged_mr))
+        self.assertTrue(should_update_shipment_mr(AssemblyTypes.PREVIEW, Mock(state="opened")))
+
     FAKE_DEST_MANIFEST_LIST = {
         "schemaVersion": 2,
         "mediaType": "application/vnd.docker.distribution.manifest.list.v2+json",

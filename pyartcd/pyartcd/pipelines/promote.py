@@ -47,6 +47,7 @@ from elliottlib.shipment_utils import (
     get_full_advisory_id_from_shipment,
     get_shipment_config_from_mr,
     get_shipment_configs_from_mr,
+    get_shipment_mr_from_url,
     patch_et_advisory_text,
     strip_advisory_cross_reference,
     strip_et_advisory_rpm_reference,
@@ -96,6 +97,11 @@ shipment_yaml = YAML()
 shipment_yaml.default_flow_style = False
 shipment_yaml.preserve_quotes = True
 shipment_yaml.indent(mapping=2, sequence=4, offset=2)
+
+
+def should_update_shipment_mr(assembly_type: AssemblyTypes, shipment_mr) -> bool:
+    """Merged EC/RC shipment MRs are immutable after stage-release."""
+    return not (assembly_type in (AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE) and shipment_mr.state == "merged")
 
 
 class PromotePipeline:
@@ -483,14 +489,20 @@ class PromotePipeline:
             shipment_config = group_config.get("shipment")
             if shipment_config and shipment_config.get("url"):
                 shipment_url = shipment_config["url"]
-                self._logger.info("Found shipment configuration with URL: %s", shipment_url)
-                self._logger.info("Updating shipment MR with payload SHAs for %d architectures...", len(payload_shas))
-                try:
-                    await self.update_shipment_with_payload_shas(shipment_url, payload_shas)
-                    self._logger.info("Successfully updated shipment MR with payload SHAs")
-                except Exception as ex:
-                    self._logger.warning("Failed to update shipment MR with payload SHAs: %s", ex)
-                    await self._slack_client.say_in_thread(f"Failed to update shipment MR with payload SHAs: {ex}")
+                shipment_mr = get_shipment_mr_from_url(shipment_url)
+                if not should_update_shipment_mr(assembly_type, shipment_mr):
+                    self._logger.info("Shipment MR is merged; skipping payload SHA update for EC/RC assembly.")
+                else:
+                    self._logger.info("Found shipment configuration with URL: %s", shipment_url)
+                    self._logger.info(
+                        "Updating shipment MR with payload SHAs for %d architectures...", len(payload_shas)
+                    )
+                    try:
+                        await self.update_shipment_with_payload_shas(shipment_url, payload_shas)
+                        self._logger.info("Successfully updated shipment MR with payload SHAs")
+                    except Exception as ex:
+                        self._logger.warning("Failed to update shipment MR with payload SHAs: %s", ex)
+                        await self._slack_client.say_in_thread(f"Failed to update shipment MR with payload SHAs: {ex}")
 
                 # Also patch classic ET advisories (rpm, rhcos) with arch SHA digests.
                 # IMAGE_ADVISORY/RPM_ADVISORY are handled by Phase 4 in prepare_release_konflux.

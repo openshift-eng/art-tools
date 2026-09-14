@@ -196,7 +196,14 @@ def get_shipment_configs_from_mr(
     gl = GitLabClient.from_url(mr_url)
 
     mr = gl.get_mr_from_url(mr_url)
-    source_project = gl.get_project(mr.source_project_id)
+    if mr.state == "merged":
+        project = gl.get_project(mr.target_project_id)
+        ref = mr.merge_commit_sha or getattr(mr, "squash_commit_sha", None) or mr.target_branch
+        if not ref:
+            raise ValueError(f"Merged shipment MR {mr_url} has no readable commit or target branch")
+    else:
+        project = gl.get_project(mr.source_project_id)
+        ref = mr.source_branch
 
     diff_info = mr.diffs.list(all=True)[0]
     diff = mr.diffs.get(diff_info.id)
@@ -215,7 +222,7 @@ def get_shipment_configs_from_mr(
         if not kind:
             continue
 
-        file_content = source_project.files.get(file_path, mr.source_branch)
+        file_content = project.files.get(file_path, ref)
         content = file_content.decode().decode('utf-8')
 
         # Convert CommentedMap to regular Python objects before creating Pydantic model
@@ -232,6 +239,11 @@ def get_shipment_config_from_mr(mr_url: str, kind: str) -> ShipmentConfig | None
     """Fetch a specific shipment config from a merge request URL."""
     shipment_configs = get_shipment_configs_from_mr(mr_url)
     return shipment_configs.get(kind)
+
+
+def get_shipment_mr_from_url(mr_url: str):
+    """Fetch the GitLab merge request referenced by a shipment URL."""
+    return GitLabClient.from_url(mr_url).get_mr_from_url(mr_url)
 
 
 def get_builds_from_mr(mr_url: str) -> Dict[str, List[str]]:

@@ -113,6 +113,29 @@ shipment:
 
     @patch('artcommonlib.gitlab.gitlab.Gitlab')
     @patch.dict(os.environ, {'GITLAB_TOKEN': 'test-token'})
+    def test_get_shipment_configs_from_merged_mr_reads_merge_commit(self, mock_gitlab_class):
+        """Merged shipment MRs are read from the target project at the merge commit."""
+        mock_gitlab = mock_gitlab_class.return_value
+        target_project = Mock()
+        mock_gitlab.projects.get.side_effect = [self.mock_project, target_project]
+
+        self.mock_project.mergerequests.get.return_value = self.mock_mr
+        self.mock_mr.state = "merged"
+        self.mock_mr.target_project_id = "target-project-id"
+        self.mock_mr.merge_commit_sha = "merge-commit-sha"
+        self.mock_mr.diffs.list.return_value = [self.mock_diff_info]
+        self.mock_mr.diffs.get.return_value = self.mock_diff
+        self.mock_diff.diffs = [self.mock_file_diff]
+        self.mock_file_content.decode.return_value.decode.return_value = self.sample_yaml_content
+        target_project.files.get.return_value = self.mock_file_content
+
+        result = shipment_utils.get_shipment_configs_from_mr(self.test_mr_url, ("rpm",))
+
+        self.assertEqual(len(result), 1)
+        target_project.files.get.assert_called_once_with("rpm.yaml", "merge-commit-sha")
+
+    @patch('artcommonlib.gitlab.gitlab.Gitlab')
+    @patch.dict(os.environ, {'GITLAB_TOKEN': 'test-token'})
     def test_get_shipment_configs_by_kind_no_matching_files(self, mock_gitlab_class):
         """Test when no files match the requested kinds"""
         # Setup mocks
