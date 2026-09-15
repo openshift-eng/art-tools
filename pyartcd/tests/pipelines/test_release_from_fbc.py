@@ -13,8 +13,14 @@ from elliottlib.shipment_model import (
     SnapshotComponent,
     SnapshotSpec,
 )
-from pyartcd.lp_shipment import ShipmentMRActiveStageError
-from pyartcd.pipelines.release_from_fbc import ReleaseFromFbcPipeline, _normalize_release_date
+from pyartcd.lp_shipment import ShipmentMRActiveStageError, ShipmentMRValidationError
+from pyartcd.pipelines.release_from_fbc import (
+    _TEST_MR_DESCRIPTION_MARKER,
+    ReleaseFromFbcPipeline,
+    _is_test_shipment_mr,
+    _mark_shipment_mr_as_test,
+    _normalize_release_date,
+)
 
 
 def _make_snapshot(app="oadp-1-4"):
@@ -678,11 +684,63 @@ class TestSetShipmentMrReady(unittest.TestCase):
         mock_sleep.assert_not_awaited()
         mock_gitlab.trigger_ci_pipeline.assert_not_awaited()
 
+    @patch("asyncio.sleep", new_callable=AsyncMock)
+    def test_test_mode_leaves_mr_draft_without_triggering_ci(self, mock_sleep):
+        """Test mode preserves the manual review gate and starts no explicit pipeline."""
+        pipeline = self._make_pipeline(dry_run=False)
+        pipeline.test_mode = True
+        mock_gitlab = MagicMock()
+        mock_gitlab.set_mr_ready = AsyncMock()
+        mock_gitlab.trigger_ci_pipeline = AsyncMock()
+        pipeline.__dict__["_gitlab"] = mock_gitlab
+
+        asyncio.run(pipeline.set_shipment_mr_ready())
+
+        mock_gitlab.set_mr_ready.assert_not_awaited()
+        mock_gitlab.trigger_ci_pipeline.assert_not_awaited()
+        mock_sleep.assert_not_awaited()
+
+
+class TestShipmentMrTestMode(unittest.TestCase):
+    """Tests for the persistent test/debug marker on shipment MRs."""
+
+    def test_mark_test_mr_is_clear_and_idempotent(self):
+        """Add one title prefix and one warning while preserving existing description."""
+        mr = MagicMock(title="Draft: Shipment for oadp 1.4.11", description="Created by job: example")
+
+        _mark_shipment_mr_as_test(mr, dry_run=False)
+        _mark_shipment_mr_as_test(mr, dry_run=False)
+
+        self.assertEqual(mr.title, "Draft: Test: Shipment for oadp 1.4.11")
+        self.assertIn(_TEST_MR_DESCRIPTION_MARKER, mr.description)
+        self.assertIn("TEST/DEBUG MR - DO NOT RELEASE", mr.description)
+        self.assertTrue(mr.description.endswith("Created by job: example"))
+        mr.save.assert_called_once_with()
+        self.assertTrue(_is_test_shipment_mr(mr))
+
+    def test_detect_test_mr_from_description(self):
+        """Retain the safety guard if an operator removes only the title prefix."""
+        mr = MagicMock(
+            title="Shipment for oadp 1.4.11",
+            description=f"{_TEST_MR_DESCRIPTION_MARKER}\nDo not release",
+        )
+
+        self.assertTrue(_is_test_shipment_mr(mr))
+
+    def test_dry_run_does_not_save_test_marker(self):
+        """Dry-run test marking changes no GitLab state."""
+        mr = MagicMock(title="Draft: Shipment for oadp 1.4.11", description="")
+
+        _mark_shipment_mr_as_test(mr, dry_run=True)
+
+        self.assertTrue(_is_test_shipment_mr(mr))
+        mr.save.assert_not_called()
+
 
 class TestReleaseJira(unittest.TestCase):
     """Tests for the --release-jira feature: MR description and JIRA link update."""
 
-    def _make_pipeline(self, dry_run=False, release_jira=None):
+    def _make_pipeline(self, dry_run=False, release_jira=None, test_mode=False):
         runtime = MagicMock()
         runtime.dry_run = dry_run
         runtime.working_dir = MagicMock()
@@ -696,6 +754,7 @@ class TestReleaseJira(unittest.TestCase):
             fbc_pullspecs=["quay.io/test/fbc:latest"],
             create_mr=True,
             release_jira=release_jira,
+            test_mode=test_mode,
         )
         pipeline.product = "oadp"
         pipeline.shipment_data_repo = AsyncMock()
@@ -746,6 +805,27 @@ class TestReleaseJira(unittest.TestCase):
 
         create_call = mock_source_project.mergerequests.create.call_args[0][0]
         self.assertNotIn("Release JIRA", create_call["description"])
+
+    @patch("pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async")
+    def test_test_mr_title_and_description_are_explicit(self, mock_cmd):
+        """New test MRs carry an obvious title and warning before job metadata."""
+        mock_cmd.return_value = (0, "None", "")
+        pipeline = self._make_pipeline(dry_run=False, test_mode=True)
+        pipeline.update_shipment_data = AsyncMock(return_value=True)
+
+        mock_source_project = MagicMock()
+        mock_mr = MagicMock()
+        mock_mr.web_url = "https://gitlab.example.com/org/repo/-/merge_requests/42"
+        mock_source_project.mergerequests.create.return_value = mock_mr
+        pipeline._get_gitlab_project = MagicMock(return_value=mock_source_project)
+        pipeline.__dict__["_gitlab"] = MagicMock()
+
+        asyncio.run(pipeline.create_shipment_mr({}, env="prod"))
+
+        create_call = mock_source_project.mergerequests.create.call_args.args[0]
+        self.assertEqual(create_call["title"], "Draft: Test: Shipment for oadp 1.4.8")
+        self.assertTrue(create_call["description"].startswith(_TEST_MR_DESCRIPTION_MARKER))
+        self.assertIn("TEST/DEBUG MR - DO NOT RELEASE", create_call["description"])
 
     def test_parse_jira_key_from_url(self):
         key = ReleaseFromFbcPipeline._parse_jira_key("https://redhat.atlassian.net/browse/OADP-1234")
@@ -875,6 +955,29 @@ class TestCliValidation(unittest.TestCase):
         )
         self.assertIsInstance(result.exception, click.ClickException)
         self.assertIn("only supported for layered-product", str(result.exception))
+
+    def test_test_requires_create_mr(self):
+        """Reject test mode when no shipment MR will be created or reused."""
+        result = self._invoke(["--extra-image-nvrs", "foo-container-1.0-1.el9", "--test"])
+        self.assertIsInstance(result.exception, click.ClickException)
+        self.assertIn("--test requires --create-mr", str(result.exception))
+
+    @patch("pyartcd.pipelines.release_from_fbc.locks.run_with_lock", new_callable=AsyncMock)
+    @patch("pyartcd.pipelines.release_from_fbc.ReleaseFromFbcPipeline")
+    def test_test_option_is_passed_to_pipeline(self, pipeline_cls, run_with_lock):
+        """Pass the CLI test checkbox through the serialized layered-product path."""
+
+        async def await_pipeline(coro, **_kwargs):
+            """Execute the coroutine passed through the mocked lock."""
+            return await coro
+
+        run_with_lock.side_effect = await_pipeline
+        pipeline_cls.return_value.run = AsyncMock()
+
+        result = self._invoke(["--extra-image-nvrs", "foo-container-1.0-1.el9", "--create-mr", "--test"])
+
+        self.assertIsNone(result.exception)
+        self.assertTrue(pipeline_cls.call_args.kwargs["test_mode"])
 
     @patch("pyartcd.pipelines.release_from_fbc.locks.run_with_lock", new_callable=AsyncMock)
     @patch("pyartcd.pipelines.release_from_fbc.ReleaseFromFbcPipeline")
@@ -1447,6 +1550,32 @@ class TestOcpOptionalMode(unittest.TestCase):
         pipeline.__dict__['_gitlab'] = MagicMock()
 
         with self.assertRaisesRegex(ShipmentMRActiveStageError, "stage pipeline is running"):
+            asyncio.run(pipeline.run())
+
+        pipeline.validate_fbc_related_images.assert_not_awaited()
+
+    @patch('pyartcd.pipelines.release_from_fbc.validate_shipment_mr_for_operation', new_callable=AsyncMock)
+    def test_normal_run_refuses_test_marked_mr_before_fbc_processing(self, mock_validate):
+        """Require an explicit operator decision before a test MR can become releasable."""
+        test_mr = MagicMock(
+            state='opened',
+            title='Draft: Test: Shipment for oadp 1.5.8',
+            description=f'{_TEST_MR_DESCRIPTION_MARKER}\nDo not release',
+        )
+        mock_validate.return_value = (test_mr, MagicMock(active_stage=(), prod_attempts=()))
+        pipeline = self._make_pipeline(ocp_optional=False, group="oadp-1.5", assembly="1.5.8")
+        pipeline.create_mr = True
+        pipeline.check_env_vars = MagicMock()
+        pipeline.setup_working_dir = MagicMock()
+        pipeline.setup_shipment_repo = AsyncMock()
+        pipeline._load_product_from_group_config = AsyncMock(return_value="oadp")
+        pipeline._load_layered_product_shipment_mr = MagicMock(
+            return_value="https://gitlab.example/project/-/merge_requests/42"
+        )
+        pipeline.validate_fbc_related_images = AsyncMock()
+        pipeline.__dict__['_gitlab'] = MagicMock()
+
+        with self.assertRaisesRegex(ShipmentMRValidationError, "marked for testing"):
             asyncio.run(pipeline.run())
 
         pipeline.validate_fbc_related_images.assert_not_awaited()

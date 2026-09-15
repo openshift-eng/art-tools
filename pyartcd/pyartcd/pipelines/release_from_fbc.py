@@ -57,6 +57,52 @@ from pyartcd.runtime import Runtime
 
 yaml = new_roundtrip_yaml_handler()
 
+_TEST_MR_TITLE_PREFIX = "Test: "
+_TEST_MR_DESCRIPTION_MARKER = "<!-- release-from-fbc-test-mode -->"
+_TEST_MR_DESCRIPTION_WARNING = (
+    f"{_TEST_MR_DESCRIPTION_MARKER}\n"
+    "**TEST/DEBUG MR - DO NOT RELEASE.** This merge request is being used to inspect "
+    "release-from-fbc output. An ART operator must review it and mark it ready manually."
+)
+
+
+def _is_test_shipment_mr(mr) -> bool:
+    """Return whether a shipment MR carries the release-from-fbc test marker.
+
+    Args:
+        mr: GitLab merge request object to inspect.
+
+    Returns:
+        ``True`` when the title or description identifies a test shipment MR.
+    """
+    title = (getattr(mr, "title", "") or "").removeprefix("Draft: ")
+    description = getattr(mr, "description", "") or ""
+    return title.startswith(_TEST_MR_TITLE_PREFIX) or _TEST_MR_DESCRIPTION_MARKER in description
+
+
+def _mark_shipment_mr_as_test(mr, dry_run: bool) -> None:
+    """Mark a shipment MR clearly as test-only without changing its draft state.
+
+    Args:
+        mr: GitLab merge request object to update.
+        dry_run: Update only the in-memory object without saving it remotely.
+    """
+    changed = False
+    title = getattr(mr, "title", "") or ""
+    draft_prefix = "Draft: " if title.startswith("Draft: ") else ""
+    title_without_draft = title.removeprefix("Draft: ")
+    if not title_without_draft.startswith(_TEST_MR_TITLE_PREFIX):
+        mr.title = f"{draft_prefix}{_TEST_MR_TITLE_PREFIX}{title_without_draft}"
+        changed = True
+
+    description = getattr(mr, "description", "") or ""
+    if _TEST_MR_DESCRIPTION_MARKER not in description:
+        mr.description = f"{_TEST_MR_DESCRIPTION_WARNING}\n\n{description}".rstrip()
+        changed = True
+
+    if changed and not dry_run:
+        mr.save()
+
 
 def _normalize_release_date(date_str: str) -> str:
     """Normalize a release date string to YYYY-Mon-DD format (e.g. 2026-Mar-31).
@@ -108,6 +154,7 @@ class ReleaseFromFbcPipeline:
         exclude_nvr_components: Optional[List[str]] = None,
         release_jira: Optional[str] = None,
         force: bool = False,
+        test_mode: bool = False,
     ) -> None:
         """Initialize an FBC-based release pipeline.
 
@@ -126,6 +173,7 @@ class ReleaseFromFbcPipeline:
             exclude_nvr_components: Components excluded from OCP optional mode.
             release_jira: Jira release-request issue to link to the shipment MR.
             force: Replace the configured layered-product shipment MR.
+            test_mode: Keep the shipment MR draft and mark it as test-only.
         """
         self.logger = logging.getLogger(__name__)
         self.runtime = runtime
@@ -135,6 +183,7 @@ class ReleaseFromFbcPipeline:
         self.extra_image_nvrs = extra_image_nvrs or []
         self.create_mr = create_mr
         self.force = force
+        self.test_mode = test_mode
         self.dry_run = self.runtime.dry_run
         self.ocp_optional = ocp_optional
         self.excluded_components = set(exclude_nvr_components) if exclude_nvr_components else set()
@@ -947,16 +996,22 @@ class ReleaseFromFbcPipeline:
         target_project = self._get_gitlab_project(self.shipment_data_repo_pull_url)
 
         # Create MR title and description
+        purpose_prefix = _TEST_MR_TITLE_PREFIX if self.test_mode else ""
         if self.target_release_date:
-            mr_title = f"Draft: Shipment for {self.product} {self.assembly} (ship date: {self.target_release_date})"
+            mr_title = (
+                f"Draft: {purpose_prefix}Shipment for {self.product} {self.assembly} "
+                f"(ship date: {self.target_release_date})"
+            )
         else:
-            mr_title = f"Draft: Shipment for {self.product} {self.assembly}"
+            mr_title = f"Draft: {purpose_prefix}Shipment for {self.product} {self.assembly}"
         mr_description = f"Created by job: {self.job_url}\n\n" if self.job_url else ""
         mr_description += f"Shipment files created for {self.assembly} using release-from-fbc command"
         if self.release_jira:
             issue_key = self._parse_jira_key(self.release_jira)
             jira_url = f"{self._JIRA_BROWSE_URL}/{issue_key}" if issue_key else self.release_jira
             mr_description += f"\n\nRelease JIRA: {jira_url}"
+        if self.test_mode:
+            mr_description = f"{_TEST_MR_DESCRIPTION_WARNING}\n\n{mr_description}"
 
         if self.dry_run:
             self.logger.info("[DRY-RUN] Would have created MR with title: %s", mr_title)
@@ -1001,6 +1056,9 @@ class ReleaseFromFbcPipeline:
         Mark the shipment MR as ready by removing the Draft prefix from the title.
         This should be called at the end of the pipeline when all work is complete.
         """
+        if self.test_mode:
+            self.logger.warning("Test mode enabled; leaving shipment MR draft and skipping the CI pipeline trigger")
+            return
         if self.dry_run:
             self.logger.info("[DRY-RUN] Would set shipment MR ready: %s", self.shipment_mr_url)
             return
@@ -1225,6 +1283,13 @@ class ReleaseFromFbcPipeline:
                                 "; ".join(ci_state.active_stage),
                             )
                     else:
+                        if not self.test_mode and _is_test_shipment_mr(candidate_mr):
+                            raise ShipmentMRValidationError(
+                                f"Shipment MR {configured_mr_url} is marked for testing and will not be promoted "
+                                "automatically. Run again with --test to keep debugging, use --force to create a "
+                                "replacement release MR, or deliberately remove the test title and warning before "
+                                "release."
+                            )
                         existing_mr = candidate_mr
                         self.logger.info("Will reuse shipment MR: %s", configured_mr_url)
                 except ShipmentMRValidationError as exc:
@@ -1394,6 +1459,8 @@ class ReleaseFromFbcPipeline:
                     )
                     await self._verify_layered_product_shipment_mr()
                     set_shipment_mr_draft(existing_mr, self.dry_run)
+                    if self.test_mode:
+                        _mark_shipment_mr_as_test(existing_mr, self.dry_run)
                     # Drafting mutates the MR; check again before replacing its shipment files.
                     await validate_shipment_mr_for_operation(
                         self._gitlab,
@@ -1519,6 +1586,15 @@ class ReleaseFromFbcPipeline:
     ),
 )
 @click.option(
+    "--test",
+    "test_mode",
+    is_flag=True,
+    help=(
+        "Mark the shipment MR as test/debug-only, keep it draft, and skip the explicit CI pipeline trigger. "
+        "An ART operator must review and mark it ready manually."
+    ),
+)
+@click.option(
     '--shipment-data-repo-url',
     help='Shipment data repository URL for MR creation. If not provided, will use default based on configuration.',
 )
@@ -1570,6 +1646,7 @@ async def release_from_fbc(
     extra_image_nvrs: str,
     create_mr: bool,
     force: bool,
+    test_mode: bool,
     shipment_data_repo_url: Optional[str],
     shipment_path: Optional[str],
     jira_bugs: Optional[str],
@@ -1626,6 +1703,8 @@ async def release_from_fbc(
     """
     if force and not create_mr:
         raise click.ClickException("--force requires --create-mr")
+    if test_mode and not create_mr:
+        raise click.ClickException("--test requires --create-mr")
     if force and ocp_optional:
         raise click.ClickException("--force is only supported for layered-product releases, not --ocp-optional")
 
@@ -1669,6 +1748,7 @@ async def release_from_fbc(
         exclude_nvr_components=exclude_nvr_components_list,
         release_jira=release_jira,
         force=force,
+        test_mode=test_mode,
     )
 
     if create_mr and not ocp_optional and not runtime.dry_run:
