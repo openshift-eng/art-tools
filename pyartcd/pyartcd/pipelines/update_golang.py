@@ -90,18 +90,25 @@ def _pullspecs_match(a: str, b: str) -> bool:
     overwriting a stream that is intentionally pinned to a different build
     (e.g. v1.22.10-1.el9 and v1.22.11-2.el9 should NOT be treated as equal).
 
+    Returns False when either argument is None or when cross-format comparison
+    detects a repository mismatch (different registry/image path).
+
     Falls back to string equality when either pullspec cannot be parsed.
     """
+    if a is None or b is None:
+        return False
     try:
         ta = _parse_pullspec_tuple(a)
         tb = _parse_pullspec_tuple(b)
         # Only use tuple comparison when at least one side is a floating tag.
         # NVR-to-NVR: require exact string match to avoid conflating patch versions.
-        # Use `or ''` guards so None inputs don't cause AttributeError.
-        a_floating = _FLOATING_TAG_RE.search((a or '').split(':')[-1]) is not None
-        b_floating = _FLOATING_TAG_RE.search((b or '').split(':')[-1]) is not None
+        a_floating = _FLOATING_TAG_RE.search(a.split(':')[-1]) is not None
+        b_floating = _FLOATING_TAG_RE.search(b.split(':')[-1]) is not None
         if a_floating or b_floating:
-            return ta == tb
+            # Also require same repository to prevent cross-repo false matches.
+            a_repo = a.rsplit(':', 1)[0]
+            b_repo = b.rsplit(':', 1)[0]
+            return ta == tb and a_repo == b_repo
         return a == b
     except ValueError:
         return a == b
@@ -1018,10 +1025,22 @@ class UpdateGolangPipeline:
                     if extra_go_stream:
                         break
                 if not extra_go_stream:
-                    raise ValueError(
-                        f"Could not find a golang stream for {go_extra_var}={extra_major_minor} and RHEL {el_v}"
+                    _LOGGER.warning(
+                        "Could not find golang stream for %s=%s and RHEL %s; skipping",
+                        go_extra_var,
+                        extra_major_minor,
+                        el_v,
                     )
+                    continue
                 extra_go = extra_go_stream.get('image')
+                if not extra_go:
+                    _LOGGER.warning(
+                        "Golang stream for %s=%s RHEL %s has no 'image' key; skipping",
+                        go_extra_var,
+                        extra_major_minor,
+                        el_v,
+                    )
+                    continue
 
                 for _, info in streams_content.items():
                     if isinstance(info, dict) and _pullspecs_match(info.get('image'), extra_go):

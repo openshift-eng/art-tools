@@ -2559,10 +2559,18 @@ class TestPullspecsMatch(unittest.TestCase):
         self.assertFalse(_pullspecs_match(nvr_patch_b, nvr_patch_a))
 
     def test_none_input_does_not_crash(self):
-        """None pullspec values must not cause AttributeError — fall back to string equality."""
+        """None pullspec values must not cause AttributeError."""
         self.assertFalse(_pullspecs_match(None, self._FLOAT_EL9))
         self.assertFalse(_pullspecs_match(self._FLOAT_EL9, None))
-        self.assertTrue(_pullspecs_match(None, None))
+
+    def test_none_none_returns_false(self):
+        """_pullspecs_match(None, None) must return False, not True."""
+        self.assertFalse(_pullspecs_match(None, None))
+
+    def test_cross_repo_no_match(self):
+        """Same (major, minor, rhel) from different registries must NOT match."""
+        same_ver_diff_repo = "quay.io/other-org/golang-builder:golang-builder-v1.22-rhel9"
+        self.assertFalse(_pullspecs_match(self._FLOAT_EL9, same_ver_diff_repo))
 
 
 class TestBranchUsesFloatingTags(unittest.TestCase):
@@ -2925,6 +2933,57 @@ class TestUpdateGolangStreamsFloatingTags(IsolatedAsyncioTestCase):
         await pipeline.update_golang_streams("1.22.12", builder_pullspecs)
         # The unrelated stream is untouched.
         self.assertEqual(streams['ose-base']['image'], 'registry.redhat.io/openshift/ose-base:some-tag')
+
+    async def test_missing_go_extra_stream_warns_and_continues(self):
+        """When GO_EXTRA stream is absent from streams.yml, warn and continue without raising."""
+        streams = {
+            'rhel-9-golang': {
+                'aliases': ['rhel-9-golang-{GO_LATEST}'],
+                'image': 'registry.redhat.io/openshift/golang-builder:golang-builder-v1.22-rhel9',
+            },
+            # Intentionally no 'rhel-9-golang-{GO_EXTRA}' or equivalent entry.
+        }
+        # GO_EXTRA=1.23, build version=1.23.5 → build_major_minor == extra_major_minor
+        branch_content = self._make_branch_content(streams, go_latest="1.22", go_extra="1.23")
+        pipeline = self._make_pipeline()
+        pipeline._branch_content = branch_content
+        pipeline.data_path = None
+        pipeline.skip_pr = True
+
+        extra_pullspec = 'registry.redhat.io/openshift/golang-builder:golang-builder-v1.23-rhel9'
+        builder_pullspecs = {9: extra_pullspec}
+        # Must complete without raising ValueError.
+        await pipeline.update_golang_streams("1.23.5", builder_pullspecs)
+        # GO_LATEST stream is untouched (it's for 1.22, not 1.23).
+        self.assertEqual(
+            streams['rhel-9-golang']['image'],
+            'registry.redhat.io/openshift/golang-builder:golang-builder-v1.22-rhel9',
+        )
+
+    async def test_go_extra_stream_null_image_warns_and_continues(self):
+        """When GO_EXTRA stream exists but has image: null, warn and continue without raising."""
+        streams = {
+            'rhel-9-golang': {
+                'aliases': ['rhel-9-golang-{GO_LATEST}'],
+                'image': 'registry.redhat.io/openshift/golang-builder:golang-builder-v1.22-rhel9',
+            },
+            'rhel-9-golang-extra': {
+                'aliases': ['rhel-9-golang-{GO_EXTRA}'],
+                'image': None,  # malformed: image key present but null
+            },
+        }
+        branch_content = self._make_branch_content(streams, go_latest="1.22", go_extra="1.23")
+        pipeline = self._make_pipeline()
+        pipeline._branch_content = branch_content
+        pipeline.data_path = None
+        pipeline.skip_pr = True
+
+        extra_pullspec = 'registry.redhat.io/openshift/golang-builder:golang-builder-v1.23-rhel9'
+        builder_pullspecs = {9: extra_pullspec}
+        # Must complete without raising.
+        await pipeline.update_golang_streams("1.23.5", builder_pullspecs)
+        # Null-image stream is not updated.
+        self.assertIsNone(streams['rhel-9-golang-extra']['image'])
 
 
 if __name__ == "__main__":
