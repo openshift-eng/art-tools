@@ -763,7 +763,7 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         open_mock.return_value.__aenter__.return_value.write = AsyncMock(side_effect=lambda s: buffer.write(s))
         exec_mock.return_value = None  # do not actually run the command
 
-        await gpcli.mirror_payload_content("s390x", payload_entries)
+        await gpcli.mirror_payload_content("s390x", payload_entries, "quay.io/openshift-release-dev/ocp-v4.0-art-dev")
 
         lines = sorted(buffer.getvalue().splitlines())
         self.assertEqual(
@@ -803,7 +803,7 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         open_mock.return_value.__aenter__.return_value.write = AsyncMock(side_effect=lambda s: buffer.write(s))
         exec_mock.return_value = None  # do not actually run the command
 
-        await gpcli.mirror_payload_content("s390x", payload_entries)
+        await gpcli.mirror_payload_content("s390x", payload_entries, "quay.io/openshift-release-dev/ocp-v4.0-art-dev")
 
         lines = sorted(buffer.getvalue().splitlines())
         self.assertEqual(
