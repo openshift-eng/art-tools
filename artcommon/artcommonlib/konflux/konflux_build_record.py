@@ -10,6 +10,7 @@ from urllib.parse import unquote, urlparse
 
 from artcommonlib import constants
 from artcommonlib import util as artlib_util
+from artcommonlib.variants import BuildVariant
 
 LOGGER = logging.getLogger(__name__)
 
@@ -131,6 +132,7 @@ class KonfluxRecord:
         ingestion_time: datetime = None,
         build_component: str = '',
         build_priority: int = constants.KONFLUX_DEFAULT_BUILD_PRIORITY,
+        build_variant: BuildVariant | None = None,
     ):
         """
         All fields default to None to facilitate testing
@@ -157,6 +159,11 @@ class KonfluxRecord:
         self.schema_level = schema_level
         self.build_component = build_component
         self.build_priority = build_priority
+        self.build_variant = (
+            build_variant
+            if build_variant is None or isinstance(build_variant, BuildVariant)
+            else BuildVariant(build_variant)
+        )
         # A build will correspond to multiple records, as Doozer will first create a build record with PENDING state.
         # Once the pipeline completed, a new record will be created for the same build, with the final build outcome.
         # Two records for the same build will share the same build_id, but will have different record_ids
@@ -182,7 +189,11 @@ class KonfluxRecord:
         Since 2 different builds cannot have the same exact fields, this should protect us from collisions.
         """
 
-        build_repr = {key: val for key, val in self.to_dict().items() if key not in self.EXCLUDED_KEYS}
+        build_repr = {
+            key: val
+            for key, val in self.to_dict().items()
+            if key not in self.EXCLUDED_KEYS and (key != 'build_variant' or val is not None)
+        }
         return self._generate_uuid(hashlib.sha256(json.dumps(build_repr).encode()).digest())
 
     @classmethod
@@ -328,6 +339,7 @@ class KonfluxBuildRecord(KonfluxRecord):
         ec_pipeline_url: str = '',
         release_pipeline: str = '',
         released_pullspec: str = '',
+        build_variant: BuildVariant | None = None,
     ):
         super().__init__(
             name,
@@ -352,6 +364,7 @@ class KonfluxBuildRecord(KonfluxRecord):
             ingestion_time,
             build_component,
             build_priority,
+            build_variant=build_variant,
         )
 
         self.el_target = el_target
@@ -403,6 +416,7 @@ class KonfluxBundleBuildRecord(KonfluxRecord):
         build_component: str = '',
         build_priority: int = constants.KONFLUX_DEFAULT_BUILD_PRIORITY,
         ec_pipeline_url: str = '',
+        build_variant: BuildVariant | None = None,
     ):
         super().__init__(
             name,
@@ -427,6 +441,7 @@ class KonfluxBundleBuildRecord(KonfluxRecord):
             ingestion_time,
             build_component,
             build_priority,
+            build_variant=build_variant,
         )
         self.operand_nvrs = operand_nvrs
         self.operator_nvr = operator_nvr
@@ -469,6 +484,7 @@ class KonfluxFbcBuildRecord(KonfluxRecord):
         build_component: str = '',
         build_priority: int = constants.KONFLUX_DEFAULT_BUILD_PRIORITY,
         ec_pipeline_url: str = '',
+        build_variant: BuildVariant | None = None,
     ):
         super().__init__(
             name,
@@ -493,6 +509,7 @@ class KonfluxFbcBuildRecord(KonfluxRecord):
             ingestion_time,
             build_component,
             build_priority,
+            build_variant=build_variant,
         )
         self.bundle_nvrs = bundle_nvrs
         self.arches = arches

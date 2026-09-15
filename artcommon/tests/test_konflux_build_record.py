@@ -8,6 +8,7 @@ from artcommonlib.konflux.konflux_build_record import (
     KonfluxBundleBuildRecord,
     KonfluxFbcBuildRecord,
 )
+from artcommonlib.variants import BuildVariant
 
 
 class TestKonfluxBuildOutcome(TestCase):
@@ -71,6 +72,26 @@ class TestKonfluxBuild(TestCase):
         build_2 = KonfluxBuildRecord()
         self.assertEqual(build_1.build_id, build_2.build_id)
         self.assertNotEqual(build_1.record_id, build_2.record_id)
+
+    def test_build_variant_defaults_to_none_for_existing_construction(self):
+        for record_type in (KonfluxBuildRecord, KonfluxBundleBuildRecord, KonfluxFbcBuildRecord):
+            self.assertIsNone(record_type().build_variant)
+
+    def test_build_variant_serializes_enum_value_and_normalizes_string(self):
+        enum_record = KonfluxBuildRecord(build_variant=BuildVariant.OADP)
+        string_record = KonfluxBuildRecord(build_variant='oadp')
+
+        self.assertIs(enum_record.build_variant, BuildVariant.OADP)
+        self.assertIs(string_record.build_variant, BuildVariant.OADP)
+        self.assertEqual(enum_record.to_dict()['build_variant'], 'oadp')
+
+    def test_build_id_omits_none_variant_but_includes_present_variant(self):
+        default_record = KonfluxBuildRecord()
+        variant_record = KonfluxBuildRecord(build_variant=BuildVariant.OADP)
+
+        self.assertEqual(default_record.build_id, '944cef3a-8c5f-81aa-5716-c764919ffeb8')
+        self.assertEqual(default_record.generate_build_id(), default_record.build_id)
+        self.assertNotEqual(variant_record.build_id, default_record.build_id)
 
     def test_build_id_reentrance(self):
         build = KonfluxBuildRecord()
