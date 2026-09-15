@@ -629,7 +629,7 @@ class TestSetShipmentMrReady(unittest.TestCase):
 
     @patch("asyncio.sleep", new_callable=AsyncMock)
     def test_set_shipment_mr_ready_dry_run(self, mock_sleep):
-        """dry_run=True. set_mr_ready is called but sleep and trigger_ci_pipeline are NOT called."""
+        """Dry runs do not resolve or mutate the placeholder shipment MR."""
         pipeline = self._make_pipeline(dry_run=True)
 
         mock_mr = MagicMock()
@@ -640,7 +640,7 @@ class TestSetShipmentMrReady(unittest.TestCase):
 
         asyncio.run(pipeline.set_shipment_mr_ready())
 
-        mock_gitlab.set_mr_ready.assert_awaited_once_with(pipeline.shipment_mr_url)
+        mock_gitlab.set_mr_ready.assert_not_awaited()
         mock_sleep.assert_not_awaited()
         mock_gitlab.trigger_ci_pipeline.assert_not_awaited()
 

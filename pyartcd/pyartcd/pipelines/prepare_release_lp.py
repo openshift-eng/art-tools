@@ -843,6 +843,10 @@ class PrepareReleaseLPPipeline:
     async def _set_shipment_mr_ready(self):
         if not self.shipment_mr_url:
             return
+        if self.dry_run:
+            self._logger.info("[DRY-RUN] Would set shipment MR ready: %s", self.shipment_mr_url)
+            return
+
         mr = await self._gitlab.set_mr_ready(self.shipment_mr_url)
         if mr and not self.dry_run:
             self._logger.info("Waiting 30s for MR update...")

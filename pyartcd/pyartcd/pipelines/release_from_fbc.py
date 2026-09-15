@@ -1000,6 +1000,10 @@ class ReleaseFromFbcPipeline:
         Mark the shipment MR as ready by removing the Draft prefix from the title.
         This should be called at the end of the pipeline when all work is complete.
         """
+        if self.dry_run:
+            self.logger.info("[DRY-RUN] Would set shipment MR ready: %s", self.shipment_mr_url)
+            return
+
         mr = await self._gitlab.set_mr_ready(self.shipment_mr_url)
 
         if mr and not self.dry_run:

@@ -908,6 +908,19 @@ class TestCreateShipmentMrApprovalRules(unittest.TestCase):
             self.assertIn("placeholder", result)
             mock_gitlab.set_mr_approval_rules.assert_not_called()
 
+    def test_dry_run_skips_setting_mr_ready(self):
+        """Dry runs do not resolve or mutate a shipment MR."""
+        pipeline = self._make_pipeline(dry_run=True)
+        pipeline.shipment_mr_url = "https://gitlab.example.com/placeholder/-/merge_requests/placeholder"
+
+        mock_gitlab = MagicMock()
+        mock_gitlab.set_mr_ready = AsyncMock()
+        type(pipeline)._gitlab = PropertyMock(return_value=mock_gitlab)
+
+        asyncio.run(pipeline._set_shipment_mr_ready())
+
+        mock_gitlab.set_mr_ready.assert_not_awaited()
+
 
 if __name__ == '__main__':
     unittest.main()
