@@ -516,6 +516,25 @@ async def calc_upgrade_sources_async(
     suggestions = await get_build_suggestions_async(major, minor, suggestions_url)
     constraints = suggestions.get_source_constraints(go_arch)
 
+    target_release_line = (major, minor)
+    source_release_lines = [constraint.major_minor for constraint in constraints]
+    target_constraint_count = source_release_lines.count(target_release_line)
+    if target_constraint_count != 1:
+        raise ValueError(
+            f"Build-suggestions must include exactly one constraint for target release line {major}.{minor}; "
+            f"found {target_constraint_count}."
+        )
+
+    newer_release_lines = [release_line for release_line in source_release_lines if release_line > target_release_line]
+    if newer_release_lines:
+        formatted_lines = ', '.join(
+            f'{source_major}.{source_minor}' for source_major, source_minor in newer_release_lines
+        )
+        raise ValueError(
+            f"Build-suggestions cannot include source release lines newer than target {major}.{minor}: "
+            f'{formatted_lines}.'
+        )
+
     upgrade_from: set[str] = set()
     current_versions: list[str] = []
     current_edges: dict[str, list[str]] = {}
@@ -537,7 +556,7 @@ async def calc_upgrade_sources_async(
             ):
                 upgrade_from.add(source_version)
 
-        if (source_major, source_minor) == (major, minor):
+        if (source_major, source_minor) == target_release_line:
             current_versions = source_versions
             current_edges = channel_edges
             current_constraint = constraint

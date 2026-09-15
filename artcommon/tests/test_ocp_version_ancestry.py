@@ -814,6 +814,34 @@ class TestCalcUpgradeSourcesAsync(unittest.IsolatedAsyncioTestCase):
     @patch("artcommonlib.ocp_version_ancestry.get_release_controller_versions_async", new_callable=AsyncMock)
     @patch("artcommonlib.ocp_version_ancestry.get_channel_versions_async")
     @patch("artcommonlib.ocp_version_ancestry.get_build_suggestions_async")
+    async def test_min_versions_requires_target_release_line(self, mock_suggestions, mock_channel, mock_rc):
+        """Reject suggestions that omit the requested target release line before querying sources"""
+        mock_suggestions.return_value = self._make_suggestions({"min_versions": ["4.23.0-rc.0", "5.0.0-rc.0"]})
+
+        with self.assertRaisesRegex(ValueError, "exactly one constraint for target release line 5.1; found 0"):
+            await calc_upgrade_sources_async("5.1.0-ec.0", "x86_64")
+
+        mock_channel.assert_not_awaited()
+        mock_rc.assert_not_awaited()
+
+    @patch("artcommonlib.ocp_version_ancestry.get_release_controller_versions_async", new_callable=AsyncMock)
+    @patch("artcommonlib.ocp_version_ancestry.get_channel_versions_async")
+    @patch("artcommonlib.ocp_version_ancestry.get_build_suggestions_async")
+    async def test_min_versions_rejects_newer_release_line(self, mock_suggestions, mock_channel, mock_rc):
+        """Reject future release lines before they can become upgrade sources"""
+        mock_suggestions.return_value = self._make_suggestions(
+            {"min_versions": ["5.0.0-rc.0", "5.1.0-ec.0", "5.2.0-ec.0"]}
+        )
+
+        with self.assertRaisesRegex(ValueError, "release lines newer than target 5.1: 5.2"):
+            await calc_upgrade_sources_async("5.1.0-ec.0", "x86_64")
+
+        mock_channel.assert_not_awaited()
+        mock_rc.assert_not_awaited()
+
+    @patch("artcommonlib.ocp_version_ancestry.get_release_controller_versions_async", new_callable=AsyncMock)
+    @patch("artcommonlib.ocp_version_ancestry.get_channel_versions_async")
+    @patch("artcommonlib.ocp_version_ancestry.get_build_suggestions_async")
     async def test_5_0_queries_4_22_channel(self, mock_suggestions, mock_channel, mock_rc):
         """5.0 should query candidate-4.22 (not candidate-5.-1)"""
         mock_suggestions.return_value = self._make_suggestions()
