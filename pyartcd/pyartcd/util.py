@@ -524,7 +524,13 @@ def default_release_suffix():
     return f'{datetime.strftime(datetime.now(tz=timezone.utc), "%Y%m%d%H%M")}.p?'
 
 
-def build_history_link_url(group: str, assembly: str, days: int = 2, job_url: str = '') -> str:
+def build_history_link_url(
+    group: str,
+    assembly: str,
+    days: int = 2,
+    job_url: str = '',
+    outcomes: Optional[List[str]] = None,
+) -> str:
     """
     Construct a URL for art-build-history with proper encoding.
     Shows both successful and failed builds from a specific job.
@@ -534,17 +540,24 @@ def build_history_link_url(group: str, assembly: str, days: int = 2, job_url: st
         assembly (str): Assembly name (e.g., 'stream')
         days (int): Number of days to look back for build history (default: 2)
         job_url (str): Jenkins BUILD_URL to filter builds (default: '')
+        outcomes (Optional[List[str]]): List of outcome filters to include
+            (e.g., ['Success', 'Failure', 'Pending']). Defaults to ['Success', 'Failure'].
 
     Return Value(s):
         str: Complete art-build-history URL with all parameters
     """
+    if outcomes is None:
+        outcomes = ['Success', 'Failure']
+
     start_date = (datetime.now(timezone.utc) - timedelta(days=days)).strftime('%Y-%m-%d')
     end_date = (datetime.now(timezone.utc)).strftime('%Y-%m-%d')
+
+    outcome_params = ''.join(f'&outcome={o}' for o in outcomes)
 
     # Build URL with parameters in correct order and include empty parameters
     build_history_url = (
         f'{ART_BUILD_HISTORY_URL}/?name=&group={group}&assembly={assembly}'
-        f'&outcome=Success&outcome=Failure&engine=konflux'
+        f'{outcome_params}&engine=konflux'
         f'&dateRange={start_date}+to+{end_date}'
         f'&nvr=&record_id=&image_sha_tag=&source_repo=&commitish='
     )
