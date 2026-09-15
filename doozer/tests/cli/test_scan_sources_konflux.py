@@ -197,6 +197,121 @@ class TestMinimalCrashIsolation(TestScanSourcesKonflux):
         mock_rebase.assert_called_once()
 
 
+class TestScanRpmChanges(TestScanSourcesKonflux):
+    """Test architecture consistency checks for RPM-triggered image rebuilds."""
+
+    def setUp(self):
+        """Set up a multi-architecture image build."""
+        super().setUp()
+        self.build_record.arches = ["x86_64", "aarch64", "ppc64le", "s390x"]
+        self.build_record.installed_rpms = []
+        self.build_record.nvr = "test-image-1-1"
+        self.image_meta.qualified_key = "image:test-image"
+
+    async def test_existing_architecture_version_mismatch_allows_consistent_rebuild(self):
+        """An existing cross-architecture RPM mismatch can be repaired by a consistent rebuild."""
+        self.build_record.installed_rpms = [
+            "kernel-headers-0:5.14.0-687.46.1.el9_8",
+            "kernel-headers-0:5.14.0-687.47.1.el9_8",
+        ]
+        non_latest_rpms = {
+            arch: [
+                (
+                    f"openssl-1:3.5.5-{installed_release}.{arch}",
+                    f"openssl-1:3.5.8-1.el9_8.{arch}",
+                    "rhel-9-baseos-rpms",
+                )
+            ]
+            for arch, installed_release in {
+                "x86_64": "6.el9_8",
+                "aarch64": "5.el9_8",
+                "ppc64le": "4.el9_8",
+                "s390x": "3.el9_8",
+            }.items()
+        }
+
+        with patch("doozerlib.cli.scan_sources_konflux.KonfluxBuildRecordInspector") as mock_inspector_class:
+            mock_inspector_class.return_value.find_non_latest_rpms = AsyncMock(return_value=non_latest_rpms)
+
+            await self.scanner.scan_rpm_changes(self.image_meta)
+
+        self.assertIn("test-image", self.scanner.changing_image_names)
+        self.assertEqual(
+            self.scanner.assessment_code["image:test-image+True"],
+            RebuildHintCode.PACKAGE_CHANGE,
+        )
+        mock_inspector_class.return_value.find_non_latest_rpms.assert_awaited_once_with(self.scanner.package_rpm_finder)
+
+    async def test_partial_architecture_update_does_not_trigger_rebuild(self):
+        """An RPM outdated on only some architectures must not trigger a rebuild."""
+        non_latest_rpms = {
+            arch: [
+                (
+                    f"perl-0:5.32.1-481.1.el9_6.{arch}",
+                    f"perl-0:5.32.1-484.el9_8.{arch}",
+                    "rhel-9-appstream-rpms",
+                )
+            ]
+            for arch in ["x86_64", "ppc64le"]
+        }
+
+        with patch("doozerlib.cli.scan_sources_konflux.KonfluxBuildRecordInspector") as mock_inspector_class:
+            mock_inspector_class.return_value.find_non_latest_rpms = AsyncMock(return_value=non_latest_rpms)
+
+            await self.scanner.scan_rpm_changes(self.image_meta)
+
+        self.assertNotIn("test-image", self.scanner.changing_image_names)
+
+    async def test_inconsistent_candidate_versions_do_not_trigger_rebuild(self):
+        """Different candidate versions across architectures must not trigger a rebuild."""
+        non_latest_rpms = {
+            arch: [
+                (
+                    f"perl-0:5.32.1-481.1.el9_6.{arch}",
+                    f"perl-0:5.32.1-{release}.{arch}",
+                    "rhel-9-appstream-rpms",
+                )
+            ]
+            for arch, release in {
+                "x86_64": "484.el9_8",
+                "aarch64": "484.el9_8",
+                "ppc64le": "483.el9_7",
+                "s390x": "483.el9_7",
+            }.items()
+        }
+
+        with patch("doozerlib.cli.scan_sources_konflux.KonfluxBuildRecordInspector") as mock_inspector_class:
+            mock_inspector_class.return_value.find_non_latest_rpms = AsyncMock(return_value=non_latest_rpms)
+
+            await self.scanner.scan_rpm_changes(self.image_meta)
+
+        self.assertNotIn("test-image", self.scanner.changing_image_names)
+
+    async def test_consistent_update_on_all_architectures_triggers_rebuild(self):
+        """An RPM with one candidate version available on every architecture triggers a rebuild."""
+        non_latest_rpms = {
+            arch: [
+                (
+                    f"curl-0:7.76.1-1.el9_6.{arch}",
+                    f"curl-0:7.76.1-2.el9_8.{arch}",
+                    "rhel-9-baseos-rpms",
+                )
+            ]
+            for arch in self.build_record.arches
+        }
+
+        with patch("doozerlib.cli.scan_sources_konflux.KonfluxBuildRecordInspector") as mock_inspector_class:
+            mock_inspector_class.return_value.find_non_latest_rpms = AsyncMock(return_value=non_latest_rpms)
+
+            await self.scanner.scan_rpm_changes(self.image_meta)
+
+        self.assertIn("test-image", self.scanner.changing_image_names)
+        self.assertEqual(
+            self.scanner.assessment_code["image:test-image+True"],
+            RebuildHintCode.PACKAGE_CHANGE,
+        )
+
+
 class TestScanTaskBundleChanges(TestScanSourcesKonflux):
     """Test the scan_task_bundle_changes method."""
 

@@ -37,6 +37,7 @@ from doozerlib.cli import release_gen_payload as rgp
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.image import ImageMetadata
 from doozerlib.metadata import Metadata, RebuildHint, RebuildHintCode
+from doozerlib.repodata import Rpm
 from doozerlib.rpmcfg import RPMMetadata
 from doozerlib.runtime import Runtime
 from doozerlib.source_resolver import SourceResolver
@@ -1280,6 +1281,7 @@ class ConfigScanSources:
         # Check for changes in non-ART RPMs
         build_record_inspector = KonfluxBuildRecordInspector(self.runtime, build_record)
         non_latest_rpms = await build_record_inspector.find_non_latest_rpms(self.package_rpm_finder)
+        non_latest_rpms = self._filter_arch_inconsistent_rpm_updates(build_record, non_latest_rpms)
 
         if non_latest_rpms:
             non_latest_rpms = await self._filter_parent_inherited_rpms(image_meta, non_latest_rpms)
@@ -1295,6 +1297,65 @@ class ConfigScanSources:
             )
         else:
             self.logger.info('No package changes detected for %s', build_record.nvr)
+
+    def _filter_arch_inconsistent_rpm_updates(
+        self,
+        build_record: KonfluxBuildRecord,
+        non_latest_rpms: Dict[str, List[tuple[str, str, str]]],
+    ) -> Dict[str, List[tuple[str, str, str]]]:
+        """
+        Keep RPM updates that are safe to apply to every architecture in an image.
+
+        An update that is available only on some architectures, or that resolves to
+        different versions across architectures, can create a Conforma violation in
+        the resulting multi-arch image. Such updates are ignored by scan-sources.
+
+        Arg(s):
+            build_record (KonfluxBuildRecord): Latest multi-architecture image build.
+            non_latest_rpms (Dict[str, List[tuple[str, str, str]]]): Outdated RPMs
+                grouped by architecture.
+        Return Value(s):
+            Dict[str, List[tuple[str, str, str]]]: Safe outdated RPMs grouped by
+                architecture.
+        """
+        target_arches = set(build_record.arches)
+        if len(target_arches) < 2:
+            return non_latest_rpms
+
+        updates_by_arch: Dict[str, List[tuple[str, tuple[str, str, str]]]] = {}
+        update_arches: Dict[str, set[str]] = {}
+        candidate_versions: Dict[str, set[tuple[int, str, str]]] = {}
+
+        for arch, rpm_updates in non_latest_rpms.items():
+            updates_by_arch[arch] = []
+            for update in rpm_updates:
+                installed_rpm = Rpm.from_nevra(update[0])
+                candidate_rpm = Rpm.from_nevra(update[1])
+                updates_by_arch[arch].append((installed_rpm.name, update))
+                update_arches.setdefault(installed_rpm.name, set()).add(arch)
+                candidate_versions.setdefault(installed_rpm.name, set()).add(
+                    (candidate_rpm.epoch, candidate_rpm.version, candidate_rpm.release)
+                )
+
+        consistent_names = {
+            name
+            for name, arches in update_arches.items()
+            if arches == target_arches and len(candidate_versions[name]) == 1
+        }
+        skipped_names = sorted(set(update_arches) - consistent_names)
+        if skipped_names:
+            self.logger.info(
+                "Skipping RPM rebuild for %s because updates for these RPMs are not available on every architecture: "
+                "%s. Rebuilding would update only some arches and could cause a Conforma RPM version mismatch.",
+                build_record.nvr,
+                ", ".join(skipped_names),
+            )
+
+        return {
+            arch: [update for name, update in updates if name in consistent_names]
+            for arch, updates in updates_by_arch.items()
+            if any(name in consistent_names for name, _ in updates)
+        }
 
     async def _filter_parent_inherited_rpms(
         self,
