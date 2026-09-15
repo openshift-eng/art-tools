@@ -857,7 +857,12 @@
     "bridge_release?": {
       "$ref": "#/properties/bridge_release"
     },
-    "bridge_release-": {}
+    "bridge_release-": {},
+    "el_target": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Explicit RHEL major version target (e.g. 8, 9). Overrides distgit branch parsing."
+    }
   },
   "additionalProperties": false
 }

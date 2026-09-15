@@ -102,3 +102,21 @@ class TestGroupSchema(unittest.TestCase):
             },
         }
         self.assertIn("'yes' is not of type 'boolean'", group_schema.validate("group.yml", invalid_data))
+
+    def test_validate_with_valid_el_target(self):
+        valid_data = {
+            "el_target": 9,
+        }
+        self.assertEqual("", group_schema.validate("group.yml", valid_data))
+
+    def test_validate_with_el_target_zero_invalid(self):
+        invalid_data = {
+            "el_target": 0,
+        }
+        self.assertIn("is less than the minimum of 1", group_schema.validate("group.yml", invalid_data))
+
+    def test_validate_with_el_target_negative_invalid(self):
+        invalid_data = {
+            "el_target": -1,
+        }
+        self.assertIn("is less than the minimum of 1", group_schema.validate("group.yml", invalid_data))
