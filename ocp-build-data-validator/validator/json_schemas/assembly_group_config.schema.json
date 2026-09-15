@@ -27,6 +27,29 @@
       "$ref": "#/properties/repos"
     },
     "repos-": {},
+    "plashet": {
+      "type": "object",
+      "properties": {
+        "download_url": {
+          "type": "string"
+        },
+        "download_url!": {
+          "$ref": "#/properties/plashet/properties/download_url"
+        },
+        "download_url?": {
+          "$ref": "#/properties/plashet/properties/download_url"
+        },
+        "download_url-": {}
+      },
+      "additionalProperties": false
+    },
+    "plashet!": {
+      "$ref": "#/properties/plashet"
+    },
+    "plashet?": {
+      "$ref": "#/properties/plashet"
+    },
+    "plashet-": {},
     "advisories": {
       "type": "object",
       "properties": {
