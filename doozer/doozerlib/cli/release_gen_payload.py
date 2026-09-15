@@ -815,10 +815,18 @@ class GenPayloadCli:
                 dgk for (dgk, ii) in assembly_inspector.get_group_release_images().items() if ii is None
             ],  # A list of metas where the assembly did not find a build
         )
-        # These checks must run even when emergency_ignore_issues is set (which overrides
+        # Only named stream-type assemblies can use this fast path. Keep these checks for
+        # the "stream" assembly even when emergency_ignore_issues is set (which overrides
         # viability to True in assess_assembly_viability). The results are recorded as
         # release.openshift.io/inconsistency annotations on imagestream tags, which are
-        # publicly visible and propagated by the release controller (see module docstring).
+        # publicly visible and propagated by the release controller.
+
+        if self.emergency_ignore_issues and rt.assembly_type is AssemblyTypes.STREAM and rt.assembly != "stream":
+            self.logger.warning("Skipping assembly consistency checks because --emergency-ignore-issues was specified")
+            report.update(viable=True, assembly_issues={})
+            self.payload_permitted = True
+            return report
+
         report["viable"], report["assembly_issues"] = await self.generate_assembly_issues_report(assembly_inspector)
         self.payload_permitted = report["viable"]
 

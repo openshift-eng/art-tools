@@ -306,6 +306,65 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         await gpcli.generate_assembly_report(assembly_inspector)
         self.assertTrue(gpcli.payload_permitted, "payload permitted according to assembly report")
 
+    @patch("doozerlib.cli.release_gen_payload.GenPayloadCli.generate_assembly_issues_report")
+    async def test_generate_assembly_report_skips_checks_when_emergency_ignore_issues(self, gai_report_mock):
+        empty_arr = Mock(return_value=[])
+        rt = Mock(
+            assembly="4.20",
+            assembly_type=AssemblyTypes.STREAM,
+            get_non_release_image_metas=empty_arr,
+            get_for_release_image_metas=empty_arr,
+        )
+        assembly_inspector = Mock(get_group_release_images=Mock(return_value={}))
+        gpcli = rgp_cli.GenPayloadCli(runtime=rt, emergency_ignore_issues=True)
+
+        report = await gpcli.generate_assembly_report(assembly_inspector)
+
+        gai_report_mock.assert_not_awaited()
+        self.assertTrue(gpcli.payload_permitted)
+        self.assertTrue(report["viable"])
+        self.assertEqual(report["assembly_issues"], {})
+
+    @patch("doozerlib.cli.release_gen_payload.GenPayloadCli.generate_assembly_issues_report")
+    async def test_generate_assembly_report_runs_checks_for_stream_assembly(self, gai_report_mock):
+        empty_arr = Mock(return_value=[])
+        rt = Mock(
+            assembly="stream",
+            assembly_type=AssemblyTypes.STREAM,
+            get_non_release_image_metas=empty_arr,
+            get_for_release_image_metas=empty_arr,
+        )
+        assembly_inspector = Mock(get_group_release_images=Mock(return_value={}))
+        gpcli = rgp_cli.GenPayloadCli(runtime=rt, emergency_ignore_issues=True)
+        gai_report_mock.return_value = (False, {"issue": "found"})
+
+        report = await gpcli.generate_assembly_report(assembly_inspector)
+
+        gai_report_mock.assert_awaited_once_with(assembly_inspector)
+        self.assertFalse(gpcli.payload_permitted)
+        self.assertFalse(report["viable"])
+        self.assertEqual(report["assembly_issues"], {"issue": "found"})
+
+    @patch("doozerlib.cli.release_gen_payload.GenPayloadCli.generate_assembly_issues_report")
+    async def test_generate_assembly_report_runs_checks_for_non_stream_assembly_type(self, gai_report_mock):
+        empty_arr = Mock(return_value=[])
+        rt = Mock(
+            assembly="4.17.38",
+            assembly_type=AssemblyTypes.STANDARD,
+            get_non_release_image_metas=empty_arr,
+            get_for_release_image_metas=empty_arr,
+        )
+        assembly_inspector = Mock(get_group_release_images=Mock(return_value={}))
+        gpcli = rgp_cli.GenPayloadCli(runtime=rt, emergency_ignore_issues=True)
+        gai_report_mock.return_value = (False, {"issue": "found"})
+
+        report = await gpcli.generate_assembly_report(assembly_inspector)
+
+        gai_report_mock.assert_awaited_once_with(assembly_inspector)
+        self.assertFalse(gpcli.payload_permitted)
+        self.assertFalse(report["viable"])
+        self.assertEqual(report["assembly_issues"], {"issue": "found"})
+
     # this mainly checks that method names are valid and it executes
     @patch("doozerlib.cli.release_gen_payload.PayloadGenerator.check_nightlies_consistency")
     async def test_generate_assembly_issues_report(self, cnc_mock):
