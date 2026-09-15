@@ -92,6 +92,41 @@ class TestParseMrUrl(unittest.TestCase):
             GitLabClient._parse_mr_url("https://gitlab.cee.redhat.com/group/project")
 
 
+class TestAddMrComment(unittest.TestCase):
+    """Tests for adding merge request comments."""
+
+    @patch("artcommonlib.gitlab.gitlab.Gitlab")
+    def test_adds_comment(self, mock_gitlab_class):
+        """Create a note containing the requested Markdown body."""
+        from artcommonlib.gitlab import GitLabClient
+
+        mock_mr = MagicMock()
+        mock_project = MagicMock()
+        mock_project.mergerequests.get.return_value = mock_mr
+        mock_gitlab_class.return_value.projects.get.return_value = mock_project
+
+        client = GitLabClient("https://gitlab.example.com", "fake-token")
+        client.add_mr_comment(
+            "https://gitlab.example.com/group/project/-/merge_requests/10",
+            "Superseded by MR 11",
+        )
+
+        mock_mr.notes.create.assert_called_once_with({'body': "Superseded by MR 11"})
+
+    @patch("artcommonlib.gitlab.gitlab.Gitlab")
+    def test_dry_run_does_not_resolve_or_comment(self, mock_gitlab_class):
+        """Avoid GitLab project and note operations during dry runs."""
+        from artcommonlib.gitlab import GitLabClient
+
+        client = GitLabClient("https://gitlab.example.com", "fake-token", dry_run=True)
+        client.add_mr_comment(
+            "https://gitlab.example.com/group/project/-/merge_requests/10",
+            "Superseded by MR 11",
+        )
+
+        mock_gitlab_class.return_value.projects.get.assert_not_called()
+
+
 class TestAddMrDependency(unittest.TestCase):
     MR_URL = "https://gitlab.example.com/group/project/-/merge_requests/10"
     BLOCKING_URL = "https://gitlab.example.com/group/project/-/merge_requests/5"

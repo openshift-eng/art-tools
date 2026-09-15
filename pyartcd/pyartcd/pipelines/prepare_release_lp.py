@@ -44,6 +44,7 @@ from pyartcd.fbc_util import validate_fbc_related_images
 from pyartcd.git import GitRepository
 from pyartcd.lp_shipment import (
     ShipmentMRValidationError,
+    add_superseded_mr_comment,
     get_shipment_mr_url,
     reconcile_shipment_mr,
     set_shipment_mr_draft,
@@ -1087,6 +1088,13 @@ class PrepareReleaseLPPipeline:
                     self._logger.info("Shipment MR: %s", mr_url)
                     if not existing_mr:
                         await self._update_assembly_with_shipment_url(mr_url)
+                        if force_previous_mr:
+                            add_superseded_mr_comment(
+                                self._gitlab,
+                                self._configured_shipment_mr_url,
+                                mr_url,
+                                self.job_url,
+                            )
                     await self._set_shipment_mr_ready()
             else:
                 timestamp = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')

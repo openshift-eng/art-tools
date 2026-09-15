@@ -14,6 +14,7 @@ from pyartcd.lp_shipment import (
     ShipmentMRScopeError,
     ShipmentMRValidationError,
     _identity,
+    add_superseded_mr_comment,
     get_shipment_mr_url,
     inspect_shipment_mr_ci_state,
     reconcile_shipment_mr,
@@ -25,6 +26,38 @@ from pyartcd.lp_shipment import (
 )
 
 YAML = new_roundtrip_yaml_handler()
+
+
+def test_add_superseded_mr_comment_records_replacement_and_job():
+    """Link the authoritative replacement and the job that selected it."""
+    gitlab_client = MagicMock()
+
+    add_superseded_mr_comment(
+        gitlab_client,
+        "https://gitlab.example.com/group/project/-/merge_requests/10",
+        "https://gitlab.example.com/group/project/-/merge_requests/11",
+        "https://jenkins.example.com/job/release/42/",
+    )
+
+    gitlab_client.add_mr_comment.assert_called_once()
+    old_mr_url, body = gitlab_client.add_mr_comment.call_args.args
+    assert old_mr_url.endswith("/merge_requests/10")
+    assert "merge_requests/11" in body
+    assert "jenkins.example.com/job/release/42" in body
+
+
+def test_add_superseded_mr_comment_failure_is_nonfatal(caplog):
+    """Keep the persisted replacement authoritative if its audit comment fails."""
+    gitlab_client = MagicMock()
+    gitlab_client.add_mr_comment.side_effect = RuntimeError("GitLab unavailable")
+
+    add_superseded_mr_comment(
+        gitlab_client,
+        "https://gitlab.example.com/group/project/-/merge_requests/10",
+        "https://gitlab.example.com/group/project/-/merge_requests/11",
+    )
+
+    assert "Failed to comment on superseded shipment MR" in caplog.text
 
 
 def _shipment(*, fbc=False, nvr=None, release_notes=True):

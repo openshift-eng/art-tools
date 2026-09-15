@@ -45,6 +45,7 @@ from pyartcd.fbc_util import validate_fbc_related_images as _validate_fbc_relate
 from pyartcd.git import GitRepository
 from pyartcd.lp_shipment import (
     ShipmentMRValidationError,
+    add_superseded_mr_comment,
     get_shipment_mr_url,
     reconcile_shipment_mr,
     set_shipment_mr_draft,
@@ -1452,6 +1453,13 @@ class ReleaseFromFbcPipeline:
                             )
                     mr_url = await self.create_shipment_mr(shipments_by_kind, env="prod")
                     await self._update_layered_product_shipment_mr(mr_url)
+                    if force_previous_mr:
+                        add_superseded_mr_comment(
+                            self._gitlab,
+                            self._configured_shipment_mr_url,
+                            mr_url,
+                            self.job_url,
+                        )
                 self.logger.info("Shipment MR: %s", mr_url)
                 self._update_jira_with_mr_link(mr_url)
                 await self.set_shipment_mr_ready()

@@ -110,6 +110,24 @@ class GitLabClient:
         project = self._client.projects.get(project_path)
         return project.mergerequests.get(mr_iid)
 
+    def add_mr_comment(self, mr_url: str, body: str):
+        """Add a comment to a GitLab merge request.
+
+        Arg(s):
+            mr_url (str): Full URL of the merge request to comment on
+            body (str): Markdown comment body
+        Return Value(s):
+            The created GitLab note, or ``None`` during a dry run
+        """
+        if self.dry_run:
+            logger.info("[DRY-RUN] Would comment on MR %s: %s", mr_url, body)
+            return None
+
+        mr = self.get_mr_from_url(mr_url)
+        note = mr.notes.create({'body': body})
+        logger.info("Added comment to MR: %s", mr_url)
+        return note
+
     async def set_mr_ready(self, mr_url: str):
         """
         Mark a GitLab MR as ready by removing the "Draft: " prefix from the title.

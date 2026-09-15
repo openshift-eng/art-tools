@@ -1479,9 +1479,13 @@ class TestOcpOptionalMode(unittest.TestCase):
         pipeline._load_release_notes_template = MagicMock(return_value=None)
         pipeline._verify_layered_product_shipment_mr = AsyncMock()
         pipeline.create_shipment_mr = AsyncMock(return_value="https://gitlab.example/project/-/merge_requests/43")
-        pipeline._update_layered_product_shipment_mr = AsyncMock()
+        operation_order = []
+        pipeline._update_layered_product_shipment_mr = AsyncMock(
+            side_effect=lambda _: operation_order.append('pointer')
+        )
         pipeline.set_shipment_mr_ready = AsyncMock()
         pipeline.__dict__['_gitlab'] = MagicMock()
+        pipeline._gitlab.add_mr_comment.side_effect = lambda *_: operation_order.append('comment')
 
         with patch('pyartcd.pipelines.release_from_fbc.is_nvr_embargoed', return_value=False):
             asyncio.run(pipeline.run())
@@ -1493,6 +1497,10 @@ class TestOcpOptionalMode(unittest.TestCase):
         pipeline._update_layered_product_shipment_mr.assert_awaited_once_with(
             "https://gitlab.example/project/-/merge_requests/43"
         )
+        self.assertEqual(operation_order, ['pointer', 'comment'])
+        comment_url, comment_body = pipeline._gitlab.add_mr_comment.call_args.args
+        self.assertEqual(comment_url, "https://gitlab.example/project/-/merge_requests/42")
+        self.assertIn("merge_requests/43", comment_body)
 
     def test_extra_image_nvrs_merged_into_extras_key(self):
         """In OCP optional mode, extra_image_nvrs should merge into 'extras', not 'image'."""

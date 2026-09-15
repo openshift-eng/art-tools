@@ -6,6 +6,7 @@ On reuse, the previous layered-product shipment files are discarded and rebuilt
 from the current release inputs.
 """
 
+import logging
 import re
 from collections import Counter
 from dataclasses import dataclass
@@ -22,6 +23,7 @@ from elliottlib.shipment_model import ShipmentConfig
 from pyartcd.fbc_util import extract_ocp_version_from_nvr
 from pyartcd.git import GitRepository
 
+LOGGER = logging.getLogger(__name__)
 YAML = new_roundtrip_yaml_handler()
 _TIMESTAMP_RE = re.compile(r"(\d{14})$")
 _PROD_RELEASE_LABEL_PREFIX = "prod-release"
@@ -69,6 +71,39 @@ class ShipmentMRCIState:
 
     active_stage: tuple[str, ...]
     prod_attempts: tuple[str, ...]
+
+
+def add_superseded_mr_comment(
+    gitlab_client,
+    superseded_mr_url: str,
+    replacement_mr_url: str,
+    job_url: str | None = None,
+) -> None:
+    """Record a successful forced replacement on the superseded MR.
+
+    Comment failure is intentionally non-fatal because the authoritative
+    replacement pointer has already been persisted in ``releases.yml``.
+
+    Args:
+        gitlab_client: Authenticated ART GitLab client.
+        superseded_mr_url: Shipment MR that was replaced.
+        replacement_mr_url: New authoritative shipment MR.
+        job_url: Optional Jenkins job URL that performed the replacement.
+    """
+    body = (
+        f"This shipment MR was superseded by [the replacement shipment MR]({replacement_mr_url}) "
+        "during a forced replacement. Do not use this MR for release."
+    )
+    if job_url:
+        body += f" Replacement job: [Jenkins build]({job_url})."
+    try:
+        gitlab_client.add_mr_comment(superseded_mr_url, body)
+    except Exception as exc:
+        LOGGER.warning(
+            "Failed to comment on superseded shipment MR %s: %s",
+            superseded_mr_url,
+            exc,
+        )
 
 
 def _project_path(url: str) -> str:
