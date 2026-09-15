@@ -206,7 +206,7 @@ PRODUCT_FBC_STAGE_RELEASE_PLAN_MAP: dict[str, dict[tuple[int, int], str]] = {
         (5, 0): "acm-advisory-stage-5-0",
     },
     "rhosdt": {
-        (3, 11): "rhosdt-stage-3-11-fbc",
+        (3, 11): "rhosdt-stage-auto-3-11",
     },
     "zero-trust-workload-identity-manager": {
         (1, 0): "zt-advisory-stage-auto-1-0",
