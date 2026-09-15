@@ -22,6 +22,10 @@ def split_el_suffix_in_release(release: str) -> Tuple[str, Optional[str]]:
     is None if there .el### or .scos### is not detected.
     For OKD builds, this returns the scos suffix (e.g., 'scos9').
     For OCP builds, this returns the el suffix (e.g., 'el9').
+
+    Also handles floating image tags that use a '-rhelN' suffix (e.g.,
+    'golang-builder-v1.22-rhel9'), normalising the result to the canonical
+    'el9' form so that callers behave identically for both tag styles.
     """
 
     el_suffix_match = re.match(r'(.*)[.+]((?:el|scos)\d+(?:_\d+)?)(?:.*|$)', release)
@@ -29,8 +33,18 @@ def split_el_suffix_in_release(release: str) -> Tuple[str, Optional[str]]:
         prefix = el_suffix_match.group(1)
         el_suffix = el_suffix_match.group(2)
         return prefix, el_suffix
-    else:
-        return release, None
+
+    # Fallback: floating image tags use '-rhelN' (e.g. 'golang-builder-v1.22-rhel9').
+    # Normalise to the canonical 'elN' form so downstream callers are unaffected.
+    # The leading `.*` is greedy, so when multiple `-rhelN` segments exist the
+    # rightmost match wins (e.g. 'img-rhel8-rhel9' → el9).
+    rhel_suffix_match = re.match(r'^(.*)-rhel(\d+)(.*)$', release)
+    if rhel_suffix_match:
+        prefix = rhel_suffix_match.group(1)
+        el_suffix = f'el{rhel_suffix_match.group(2)}'
+        return prefix, el_suffix
+
+    return release, None
 
 
 def isolate_assembly_in_release(release: str) -> Optional[str]:
