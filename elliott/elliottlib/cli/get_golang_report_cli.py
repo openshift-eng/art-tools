@@ -14,12 +14,21 @@ from elliottlib.util import get_golang_container_nvrs
 
 _LOGGER = logutil.get_logger(__name__)
 
-# Matches floating golang-builder tags such as:
+# Matches complete floating golang-builder tag forms such as:
 #   golang-builder-v1.22-rhel9
 #   openshift-golang-builder-container-v1.22-rhel8
 # These lack the X.Y.Z patch version present in full NVR tags.
-# Example matching string: "golang-builder-v1.22-rhel9"
-_FLOATING_TAG_RE = re.compile(r'v(\d+\.\d+)-rhel(\d+)$')
+#
+# Anchored so that:
+#   • the "v" must appear at the start of the string or immediately after "-" or ":"
+#     (prevents false positives like "foov1.22-rhel9");
+#   • the end is anchored with "$" to reject trailing garbage;
+#   • ASCII [0-9] is used instead of \d to avoid matching Unicode digits.
+#
+# Example matching strings:
+#   "golang-builder-v1.22-rhel9"
+#   "openshift-golang-builder-container-v1.22-rhel8"
+_FLOATING_TAG_RE = re.compile(r'(?:^|[-:])v([0-9]+\.[0-9]+)-rhel([0-9]+)$')
 
 
 def is_floating_golang_builder_tag(nvr_like: str) -> bool:

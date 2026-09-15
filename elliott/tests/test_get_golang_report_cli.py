@@ -27,6 +27,25 @@ from elliottlib.cli.get_golang_report_cli import (
 
 
 class TestIsFloatingGolangBuilderTag(TestCase):
+    # --- rejection cases added by regex hardening ---
+
+    def test_embedded_v_not_after_separator_rejected(self):
+        """foov1.22-rhel9 must not match — 'v' is embedded in a word."""
+        self.assertFalse(is_floating_golang_builder_tag("foov1.22-rhel9"))
+
+    def test_unicode_digits_rejected(self):
+        """Unicode digit characters must not satisfy the [0-9] constraint."""
+        # U+0661 ARABIC-INDIC DIGIT ONE, etc.
+        self.assertFalse(is_floating_golang_builder_tag("v\u0661.\u0662\u0662-rhel\u0669"))
+
+    def test_trailing_garbage_rejected(self):
+        """Extra characters after the RHEL number must not match."""
+        self.assertFalse(is_floating_golang_builder_tag("golang-builder-v1.22-rhel9extra"))
+
+    def test_colon_separator_accepted(self):
+        """v after ':' (tag portion of a pullspec) is a valid separator."""
+        self.assertTrue(is_floating_golang_builder_tag("golang-builder:v1.22-rhel9"))
+
     def test_floating_rhel9(self):
         self.assertTrue(is_floating_golang_builder_tag('openshift-golang-builder-container-v1.22-rhel9'))
 
