@@ -117,13 +117,37 @@ class MetadataBase(object):
 
     def branch_el_target(self) -> int:
         """
-        :return: Determines what rhel-# version the distgit branch is associated with and returns the RHEL version as an int
+        Determines what RHEL version this component targets and returns it as an int.
+
+        Uses a 3-level lookup chain:
+        1. Image/RPM config: ``el_target`` field in the component's own config
+        2. Group config: ``el_target`` field in group.yml (shared default for all components)
+        3. Branch fallback: parses the RHEL version from the distgit branch string
+           (e.g. ``rhaos-4.21-rhel-9`` → 9)
+
+        The explicit ``el_target`` field is intended for layered products where
+        the distgit branch is legacy and only kept to carry the RHEL version.
+
+        :return: RHEL major version as an int (e.g. 8, 9)
         """
+        # 1. Check image/RPM-level config
+        if self.config.el_target is not Missing:
+            return int(self.config.el_target)
+
+        # 2. Check group-level config
+        group_el_target = self.runtime.group_config.get('el_target')
+        if group_el_target is not None:
+            return int(group_el_target)
+
+        # 3. Fallback: parse from the distgit branch string
         target_match = re.match(r'.*-rhel-(\d+)(?:-|$)', str(self.branch()))
         if target_match:
             return int(target_match.group(1))
         else:
-            raise IOError(f'Unable to determine rhel version from branch: {self.branch()}')
+            raise IOError(
+                f'Unable to determine RHEL version from branch: {self.branch()}. '
+                f'Set el_target explicitly in the image config or group.yml.'
+            )
 
     def determine_rhel_targets(self) -> list[int]:
         """
