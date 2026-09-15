@@ -38,7 +38,7 @@ _ACTIVE_CI_STATUSES = frozenset(
     }
 )
 _TERMINAL_CI_STATUSES = frozenset({'success', 'failed', 'canceled', 'skipped', 'manual'})
-_UNTOUCHED_PROD_STATUSES = frozenset({'manual', 'skipped'})
+_UNTOUCHED_PROD_STATUSES = frozenset({'created', 'manual', 'skipped'})
 
 
 class ShipmentMRValidationError(ValueError):

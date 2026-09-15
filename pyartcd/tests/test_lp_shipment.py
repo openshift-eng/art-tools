@@ -216,7 +216,26 @@ def test_validate_shipment_mr_ci_state_allows_active_stage_for_force():
     assert not state.prod_attempts
 
 
-@pytest.mark.parametrize('status', ['created', 'pending', 'running', 'success', 'failed', 'canceled'])
+def test_validate_shipment_mr_ci_state_reports_active_stage_with_created_prod_bridge():
+    """Treat a production bridge awaiting stage completion as untouched."""
+    client, mr, _, _ = _shipment_ci_graph(
+        parent_status='running',
+        stage_status='running',
+        downstream_stage_status='running',
+        stage_job_status='running',
+        prod_status='created',
+    )
+
+    with pytest.raises(ShipmentMRActiveStageError, match='active stage work'):
+        validate_shipment_mr_ci_state(
+            client,
+            'https://gitlab.example/project/-/merge_requests/42',
+            mr,
+            allow_active_stage=False,
+        )
+
+
+@pytest.mark.parametrize('status', ['pending', 'running', 'success', 'failed', 'canceled'])
 def test_validate_shipment_mr_ci_state_rejects_any_prod_attempt(status):
     """Block replacement once the production bridge leaves its untouched state."""
     client, mr, _, _ = _shipment_ci_graph(prod_status=status)
@@ -230,10 +249,11 @@ def test_validate_shipment_mr_ci_state_rejects_any_prod_attempt(status):
         )
 
 
-def test_validate_shipment_mr_ci_state_rejects_prod_downstream_from_manual_bridge():
+@pytest.mark.parametrize('prod_status', ['created', 'manual'])
+def test_validate_shipment_mr_ci_state_rejects_prod_downstream_from_untouched_bridge(prod_status):
     """Treat any associated production child pipeline as an attempted release."""
     client, mr, _, _ = _shipment_ci_graph(
-        prod_status='manual',
+        prod_status=prod_status,
         prod_downstream={'id': 300, 'project_id': 10},
     )
 
