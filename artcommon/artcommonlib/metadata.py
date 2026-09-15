@@ -115,6 +115,41 @@ class MetadataBase(object):
             targets = [self._default_brew_target()]
         return targets
 
+    @staticmethod
+    def _validate_el_target(value, source: str) -> int:
+        """Validate and convert an ``el_target`` config value to a positive int.
+
+        Accepted inputs:
+        - Plain ints: 8, 9, 10
+        - String representations **without** leading zeros: "8", "9", "10"
+
+        Rejected inputs:
+        - Strings with leading zeros ("09", "08") — ambiguous
+        - Non-numeric strings ("nine", "rhel-9")
+        - Zero or negative numbers
+
+        :param value: The raw config value to validate.
+        :param source: Human-readable label for error messages (e.g. "image config").
+        :raises ValueError: If the value is not a valid RHEL major version.
+        :return: Validated RHEL major version as a positive int.
+        """
+        if isinstance(value, int):
+            if value <= 0:
+                raise ValueError(f'el_target in {source} must be a positive integer, got {value}')
+            return value
+
+        s = str(value)
+        # Reject leading zeros (ambiguous: "09" could be octal or typo)
+        if len(s) > 1 and s[0] == '0':
+            raise ValueError(f'el_target in {source} must not have leading zeros, got {s!r}')
+        # Reject non-numeric strings
+        if not s.isdigit():
+            raise ValueError(f'el_target in {source} must be a positive integer, got {s!r}')
+        result = int(s)
+        if result <= 0:
+            raise ValueError(f'el_target in {source} must be a positive integer, got {value}')
+        return result
+
     def branch_el_target(self) -> int:
         """
         Determines what RHEL version this component targets and returns it as an int.
@@ -132,11 +167,11 @@ class MetadataBase(object):
         """
         # 1. Check image/RPM-level config
         if self.config.el_target is not Missing:
-            return int(self.config.el_target)
+            return self._validate_el_target(self.config.el_target, 'image config')
 
         # 2. Check group-level config
         if self.runtime.group_config.el_target is not Missing:
-            return int(self.runtime.group_config.el_target)
+            return self._validate_el_target(self.runtime.group_config.el_target, 'group config')
 
         # 3. Fallback: parse from the distgit branch string
         target_match = re.match(r'.*-rhel-(\d+)(?:-|$)', str(self.branch()))

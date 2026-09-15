@@ -15,6 +15,9 @@ class TestBranchElTarget(unittest.TestCase):
         meta.runtime = MagicMock()
         meta.runtime.group_config = Model(group_config)
 
+        # Wire up the real static method so validation actually runs
+        meta._validate_el_target = MetadataBase._validate_el_target
+
         # Wire up branch() — only needed for the fallback path
         if branch_value is not None:
             meta.branch = MagicMock(return_value=branch_value)
@@ -89,6 +92,35 @@ class TestBranchElTarget(unittest.TestCase):
         result = MetadataBase.branch_el_target(meta)
         self.assertEqual(result, 9)
         self.assertIsInstance(result, int)
+
+    # --- Validation: invalid values ---
+
+    def test_leading_zero_string_raises(self):
+        """el_target: '09' → raises ValueError (ambiguous leading zero)."""
+        meta = self._make_meta(image_config={"el_target": "09"}, group_config={})
+        with self.assertRaises(ValueError) as ctx:
+            MetadataBase.branch_el_target(meta)
+        self.assertIn("leading zeros", str(ctx.exception))
+
+    def test_non_numeric_string_raises(self):
+        """el_target: 'abc' → raises ValueError."""
+        meta = self._make_meta(image_config={"el_target": "abc"}, group_config={})
+        with self.assertRaises(ValueError):
+            MetadataBase.branch_el_target(meta)
+
+    def test_zero_raises(self):
+        """el_target: 0 → raises ValueError."""
+        meta = self._make_meta(image_config={"el_target": 0}, group_config={})
+        with self.assertRaises(ValueError) as ctx:
+            MetadataBase.branch_el_target(meta)
+        self.assertIn("positive integer", str(ctx.exception))
+
+    def test_negative_raises(self):
+        """el_target: -1 → raises ValueError."""
+        meta = self._make_meta(image_config={"el_target": -1}, group_config={})
+        with self.assertRaises(ValueError) as ctx:
+            MetadataBase.branch_el_target(meta)
+        self.assertIn("positive integer", str(ctx.exception))
 
 
 class TestBridgeBugMirroringEnabled(unittest.TestCase):
