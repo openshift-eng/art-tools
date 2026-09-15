@@ -52,8 +52,10 @@ _NVR_TAG_RE = re.compile(r'openshift-golang-builder[^:]*-v(\d+)\.(\d+)\.\d+[^:]*
 def _parse_pullspec_tuple(pullspec: str) -> tuple[int, int, int]:
     """Normalise a golang-builder pullspec (floating or NVR) to (major, minor, rhel_version).
 
-    Raises ValueError for unrecognised formats.
+    Raises ValueError for unrecognised formats, including None input.
     """
+    if not pullspec:
+        raise ValueError(f"Cannot parse empty or None pullspec: {pullspec!r}")
     tag = pullspec.split(':')[-1]
     m = _FLOATING_TAG_RE.search(tag)
     if m:
@@ -69,7 +71,8 @@ def _branch_uses_floating_tags(streams_content: dict) -> bool:
     if not streams_content:
         return False
     for info in streams_content.values():
-        image = info.get('image', '') if isinstance(info, dict) else ''
+        # Use `or ''` to safely handle explicit None image values.
+        image = (info.get('image') if isinstance(info, dict) else None) or ''
         if _FLOATING_TAG_RE.search(image.split(':')[-1]):
             return True
     return False
@@ -94,8 +97,9 @@ def _pullspecs_match(a: str, b: str) -> bool:
         tb = _parse_pullspec_tuple(b)
         # Only use tuple comparison when at least one side is a floating tag.
         # NVR-to-NVR: require exact string match to avoid conflating patch versions.
-        a_floating = _FLOATING_TAG_RE.search(a.split(':')[-1]) is not None
-        b_floating = _FLOATING_TAG_RE.search(b.split(':')[-1]) is not None
+        # Use `or ''` guards so None inputs don't cause AttributeError.
+        a_floating = _FLOATING_TAG_RE.search((a or '').split(':')[-1]) is not None
+        b_floating = _FLOATING_TAG_RE.search((b or '').split(':')[-1]) is not None
         if a_floating or b_floating:
             return ta == tb
         return a == b

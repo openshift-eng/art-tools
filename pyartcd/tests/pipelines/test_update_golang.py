@@ -2558,6 +2558,12 @@ class TestPullspecsMatch(unittest.TestCase):
         self.assertFalse(_pullspecs_match(nvr_patch_a, nvr_patch_b))
         self.assertFalse(_pullspecs_match(nvr_patch_b, nvr_patch_a))
 
+    def test_none_input_does_not_crash(self):
+        """None pullspec values must not cause AttributeError — fall back to string equality."""
+        self.assertFalse(_pullspecs_match(None, self._FLOAT_EL9))
+        self.assertFalse(_pullspecs_match(self._FLOAT_EL9, None))
+        self.assertTrue(_pullspecs_match(None, None))
+
 
 class TestBranchUsesFloatingTags(unittest.TestCase):
     """Tests for the _branch_uses_floating_tags module-level helper (t4b)."""
@@ -2610,6 +2616,14 @@ class TestBranchUsesFloatingTags(unittest.TestCase):
             'rhel-9-golang': self._float_entry(1, 22, 9),
         }
         self.assertTrue(_branch_uses_floating_tags(streams))
+
+    def test_none_image_value_does_not_crash(self):
+        """Explicit None image must not cause AttributeError — treated as non-floating."""
+        streams = {
+            'rhel-9-golang': {'image': None},
+            'rhel-8-golang': self._nvr_entry(8),
+        }
+        self.assertFalse(_branch_uses_floating_tags(streams))
 
     def test_dict_entry_missing_image_key(self):
         streams = {'rhel-9-golang': {'aliases': ['rhel-9-golang-{GO_LATEST}']}}
@@ -2766,21 +2780,14 @@ class TestUpdateGolangStreamsFloatingTags(IsolatedAsyncioTestCase):
         pipeline.data_path = None
         pipeline.skip_pr = True  # avoid GitHub calls
 
-        builder_pullspecs = {
-            9: 'golang-builder-v1.22-rhel9',
-            8: 'golang-builder-v1.22-rhel8',
-        }
+        new_float9 = 'registry.redhat.io/openshift/golang-builder:golang-builder-v1.22-rhel9'
+        new_float8 = 'registry.redhat.io/openshift/golang-builder:golang-builder-v1.22-rhel8'
+        builder_pullspecs = {9: new_float9, 8: new_float8}
         await pipeline.update_golang_streams("1.22.12", builder_pullspecs)
 
         # The golang streams are updated; the unrelated stream is untouched
-        self.assertEqual(
-            streams['rhel-9-golang']['image'],
-            'golang-builder-v1.22-rhel9',
-        )
-        self.assertEqual(
-            streams['rhel-8-golang']['image'],
-            'golang-builder-v1.22-rhel8',
-        )
+        self.assertEqual(streams['rhel-9-golang']['image'], new_float9)
+        self.assertEqual(streams['rhel-8-golang']['image'], new_float8)
         self.assertEqual(
             streams['ose-base']['image'],
             'registry.redhat.io/openshift/ose-base:some-unrelated-tag',
@@ -2857,22 +2864,15 @@ class TestUpdateGolangStreamsFloatingTags(IsolatedAsyncioTestCase):
         pipeline.skip_pr = True
         pipeline.major_bump = True
 
-        # New floating pullspecs for go 1.23
-        builder_pullspecs = {
-            9: 'golang-builder-v1.23-rhel9',
-            8: 'golang-builder-v1.23-rhel8',
-        }
+        # New floating pullspecs for go 1.23 (full pullspecs, as _get_builder_pullspec emits them)
+        new_float23_el9 = 'registry.redhat.io/openshift/golang-builder:golang-builder-v1.23-rhel9'
+        new_float23_el8 = 'registry.redhat.io/openshift/golang-builder:golang-builder-v1.23-rhel8'
+        builder_pullspecs = {9: new_float23_el9, 8: new_float23_el8}
         await pipeline.update_golang_streams("1.23.0", builder_pullspecs)
 
         # GO_LATEST streams should now point to v1.23
-        self.assertEqual(
-            streams['rhel-9-golang']['image'],
-            'golang-builder-v1.23-rhel9',
-        )
-        self.assertEqual(
-            streams['rhel-8-golang']['image'],
-            'golang-builder-v1.23-rhel8',
-        )
+        self.assertEqual(streams['rhel-9-golang']['image'], new_float23_el9)
+        self.assertEqual(streams['rhel-8-golang']['image'], new_float23_el8)
         # GO_PREVIOUS streams should now point to old GO_LATEST (v1.22)
         self.assertEqual(
             streams['rhel-9-golang-previous']['image'],
