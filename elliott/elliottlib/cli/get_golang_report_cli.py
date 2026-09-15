@@ -1,3 +1,4 @@
+import asyncio
 import json
 import re
 
@@ -6,12 +7,95 @@ from artcommonlib import logutil
 from artcommonlib.format_util import green_print
 from artcommonlib.release_util import split_el_suffix_in_release
 from artcommonlib.rpm_utils import parse_nvr
+from artcommonlib.util import oc_image_info_for_arch
+from doozerlib.release_inspector import extract_nvr_from_pullspec
 
 from elliottlib.cli.common import cli
 from elliottlib.runtime import Runtime
 from elliottlib.util import get_golang_container_nvrs
 
 _LOGGER = logutil.get_logger(__name__)
+
+# Matches complete floating golang-builder tag forms such as:
+#   golang-builder-v1.22-rhel9
+#   openshift-golang-builder-container-v1.22-rhel8
+# These lack the X.Y.Z patch version present in full NVR tags.
+#
+# Fully anchored with explicit known-prefix alternation so that arbitrary
+# prefixes (e.g. "junk-v1.22-rhel9") are rejected.  ASCII [0-9] avoids
+# matching Unicode digits.
+#
+# Inputs after tag normalisation in golang_report_for_version:
+#   "golang-builder-v1.22-rhel9"
+#   "openshift-golang-builder-container-v1.22-rhel8"
+_FLOATING_TAG_RE = re.compile(r'^(?:golang-builder|openshift-golang-builder-container)-v([0-9]+\.[0-9]+)-rhel([0-9]+)$')
+
+
+def is_floating_golang_builder_tag(nvr_like: str) -> bool:
+    """Return True when *nvr_like* is a floating tag (vX.Y-rhelN) rather than a full NVR string.
+
+    Example::
+
+        is_floating_golang_builder_tag("openshift-golang-builder-container-v1.22-rhel9")  # True
+        is_floating_golang_builder_tag("openshift-golang-builder-container-v1.22.5-202506011200.el9")  # False
+    """
+    return bool(_FLOATING_TAG_RE.search(nvr_like))
+
+
+def go_version_from_floating_tag(nvr_like: str, ignore_rhel: bool) -> str:
+    """Extract a go-version string from a floating tag like
+    ``openshift-golang-builder-container-v1.22-rhel9``.
+
+    Returns ``X.Y.elN`` normally, or just ``X.Y`` when *ignore_rhel* is True.
+    """
+    m = _FLOATING_TAG_RE.search(nvr_like)
+    if not m:
+        raise ValueError(f"Not a floating golang-builder tag: {nvr_like!r}")
+    major_minor = m.group(1)
+    rhel_version = m.group(2)
+    if ignore_rhel:
+        return major_minor
+    return f"{major_minor}.el{rhel_version}"
+
+
+def go_version_from_floating_tag_exact(image_pullspec: str) -> str:
+    """Resolve a floating-tag pullspec to the exact golang package NVR.
+
+    Calls ``oc image info`` to read the OCI labels from the resolved image.
+    First checks for the ``io.openshift.build.golang-nvr`` label (e.g.
+    ``golang-1.22.5-1.el9``), which is the direct golang RPM NVR and avoids a
+    database lookup.  Falls back to ``extract_nvr_from_pullspec`` from
+    ``doozerlib.release_inspector`` (reads ``com.redhat.component`` / ``version``
+    / ``release`` labels) and queries Brew/Konflux via ``get_golang_container_nvrs``
+    for older images that do not carry the ``io.openshift.build.golang-nvr`` label.
+    """
+    _LOGGER.info(f"Resolving floating tag via oc image info: {image_pullspec}")
+    image_data = oc_image_info_for_arch(image_pullspec)
+    # Use `or {}` so that an explicit null Labels value is treated as empty.
+    labels = image_data.get('config', {}).get('config', {}).get('Labels') or {}
+
+    # Prefer the direct golang RPM NVR label — present on all modern builder images.
+    golang_nvr = labels.get('io.openshift.build.golang-nvr')
+    if golang_nvr:
+        _LOGGER.info(f"Found golang NVR directly in image label: {golang_nvr}")
+        return golang_nvr
+
+    # Fallback for older images without the label: reuse extract_nvr_from_pullspec
+    # to read the builder image NVR from standard OCI labels, then query the DB.
+    try:
+        component, version, release = asyncio.run(extract_nvr_from_pullspec(image_pullspec))
+    except IOError as e:
+        raise ValueError(str(e)) from e
+    _LOGGER.info(f"Resolved floating tag to builder NVR: {component}-{version}-{release}")
+    go_builder_nvr_map = get_golang_container_nvrs([(component, version, release)], _LOGGER, exact=True)
+    if not go_builder_nvr_map:
+        raise ValueError(f"Could not determine golang package NVR for builder {component}-{version}-{release}")
+    if len(go_builder_nvr_map) != 1:
+        raise ValueError(
+            f"Expected exactly one golang version for builder {component}-{version}-{release}, "
+            f"got {list(go_builder_nvr_map.keys())}"
+        )
+    return list(go_builder_nvr_map.keys())[0]
 
 
 @cli.command("go:report", short_help="Report about golang streams configured in streams.yml")
@@ -26,7 +110,7 @@ def get_golang_report_cli(runtime: Runtime, ocp_versions: str, ignore_rhel: bool
 
     Usage:
 
-    $ elliott go:report --versions 4.11,4.12,4.13,4.14,4.15,4.16
+    $ elliott go:report --ocp-versions 4.11,4.12,4.13,4.14,4.15,4.16
 
     """
     results = {}
@@ -93,11 +177,24 @@ def golang_report_for_version(runtime, ocp_version: str, ignore_rhel: bool = Fal
 
         _LOGGER.info(f"Detected stream {stream_name} with builder nvr: {nvr}")
 
-        if exact:
+        if is_floating_golang_builder_tag(nvr):
+            # Floating tag (e.g. openshift-golang-builder-container-v1.22-rhel9): no full NVR available.
+            # Non-exact mode: extract major.minor + RHEL suffix from the tag string directly.
+            # Exact mode: resolve to actual image via oc image info to obtain the real golang package NVR.
+            _LOGGER.info(f"Stream {stream_name} uses a floating tag; extracting version from tag")
+            if exact:
+                version = go_version_from_floating_tag_exact(image_nvr_like)
+            else:
+                version = go_version_from_floating_tag(nvr, ignore_rhel)
+        elif exact:
             parsed_nvr = parse_nvr(nvr)
             go_builder_nvr_map = get_golang_container_nvrs(
                 [(parsed_nvr['name'], parsed_nvr['version'], parsed_nvr['release'])], _LOGGER, exact=exact
             )
+            if len(go_builder_nvr_map) != 1:
+                raise ValueError(
+                    f"Expected exactly one golang version for builder {nvr}, got {list(go_builder_nvr_map.keys())}"
+                )
             exact_pkg = list(go_builder_nvr_map.keys())[0]
             version = exact_pkg
         else:
