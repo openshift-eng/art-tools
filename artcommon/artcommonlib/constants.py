@@ -200,6 +200,7 @@ PRODUCT_FBC_STAGE_RELEASE_PLAN_MAP: dict[str, dict[tuple[int, int], str]] = {
     },
     "quay": {
         (3, 17): "quay-advisory-stage-3-17",
+        (3, 18): "quay-advisory-stage-3-18",
     },
     "rhacm2": {
         (2, 16): "acm-advisory-stage-2-16",
