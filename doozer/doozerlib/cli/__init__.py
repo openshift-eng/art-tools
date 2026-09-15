@@ -6,6 +6,7 @@ from functools import update_wrapper
 import click
 from artcommonlib import dotconfig
 from artcommonlib.format_util import yellow_print
+from artcommonlib.variants import BuildVariant
 
 from doozerlib import __version__
 from doozerlib.cli import cli_opts
@@ -182,10 +183,10 @@ def print_version(ctx, param, value):
 )
 @click.option('--load-disabled', default=False, is_flag=True, help='Treat disabled images/rpms as if they were enabled')
 @click.option(
-    '--variant',
-    type=click.Choice(['ocp', 'okd'], case_sensitive=False),
-    default='ocp',
-    help='Build variant (ocp or okd). Affects metadata resolution and branch selection.',
+    "--variant",
+    type=click.Choice([variant.value for variant in BuildVariant], case_sensitive=False),
+    default="ocp",
+    help="Build variant (ocp, okd, or a layered product). Affects metadata resolution and branch selection.",
 )
 @click.option(
     '--local/--osbs',
