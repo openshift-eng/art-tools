@@ -1041,11 +1041,18 @@ class PromotePipeline:
 
         # Get cli installer operator-registry pull-spec from the release
         for release_component_tag_name, source_name in constants.MIRROR_CLIENTS.items():
-            image_stat, cli_pull_spec = get_release_image_pullspec(
-                pullspec,
-                release_component_tag_name,
-                registry_config=registry_config,
-            )
+            try:
+                image_stat, cli_pull_spec = get_release_image_pullspec(
+                    pullspec,
+                    release_component_tag_name,
+                    registry_config=registry_config,
+                )
+            except Exception as e:
+                if "no image tag" in str(e).lower():
+                    image_stat = 1
+                    self._logger.warning(f"Image tag '{release_component_tag_name}' not found in release payload")
+                else:
+                    raise
             if image_stat == 0:  # image exists
                 _, image_info = get_release_image_info_from_pullspec(cli_pull_spec, registry_config=registry_config)
                 # Retrieve the commit from image info
@@ -1056,7 +1063,7 @@ class PromotePipeline:
                 tarball_path = f"{client_mirror_dir}/{source_name}-src-{release_name}-{build_arch}.tar.gz"
                 self._download_source_tarball(tarball_url, tarball_path)
             else:
-                self._logger.error(f"Error get {release_component_tag_name} image from release pullspec")
+                self._logger.warning(f"Error get {release_component_tag_name} image from release pullspec")
 
         # Upload baremetal installer binary to mirror
         self.publish_baremetal_installer_binary(
@@ -1064,16 +1071,28 @@ class PromotePipeline:
         )
 
         # Starting from 4.14, oc-mirror will be synced for all arches. See ART-6820 and ART-6863
-        # oc-mirror was introduced in 4.10, so skip for <= 4.9. Not applicable for 5.0+.
+        # oc-mirror was introduced in 4.10, so skip for <= 4.9.
+        # oc-mirror has been decoupled from the release payload starting in 4.23, so skip for 4.23+.
         major, minor = isolate_major_minor_in_group(self.group)
-        if major < 5 and ((major, minor) >= (4, 14) or ((major, minor) >= (4, 10) and build_arch == 'x86_64')):
+        if (
+            major == 4
+            and (major, minor) <= (4, 22)
+            and ((major, minor) >= (4, 14) or ((major, minor) >= (4, 10) and build_arch == 'x86_64'))
+        ):
             # oc image  extract requires an empty destination directory. So do this before extracting tools.
             # oc adm release extract --tools does not require an empty directory.
-            image_stat, oc_mirror_pullspec = get_release_image_pullspec(
-                pullspec,
-                "oc-mirror",
-                registry_config=registry_config,
-            )
+            try:
+                image_stat, oc_mirror_pullspec = get_release_image_pullspec(
+                    pullspec,
+                    "oc-mirror",
+                    registry_config=registry_config,
+                )
+            except Exception as e:
+                if "no image tag" in str(e).lower():
+                    image_stat = 1
+                    self._logger.warning("Image tag 'oc-mirror' not found in release payload")
+                else:
+                    raise
             if image_stat == 0:  # image exist
                 # extract image to workdir, if failed it will raise error in function
                 multi_rhel_path = [f"--path=/usr/bin/oc-mirror*:{client_mirror_dir}"]
@@ -1099,7 +1118,7 @@ class PromotePipeline:
                 if files_extracted == 0:
                     self._logger.error("No binaries extracted from the oc-mirror image")
             else:
-                self._logger.error("Error get oc-mirror image from release pullspec")
+                self._logger.warning("Error get oc-mirror image from release pullspec")
 
         # create symlink for clients
         self.create_symlink(client_mirror_dir, False, False)
