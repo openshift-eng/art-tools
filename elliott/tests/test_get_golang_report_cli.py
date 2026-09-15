@@ -13,6 +13,7 @@ from unittest import TestCase
 from unittest.mock import MagicMock, patch
 
 from elliottlib.cli.get_golang_report_cli import (
+    _nvr_from_labels,
     go_version_from_floating_tag,
     go_version_from_floating_tag_exact,
     go_version_from_nvr_string,
@@ -162,6 +163,13 @@ class TestGoVersionFromFloatingTagExact(TestCase):
             with self.assertRaises(ValueError):
                 go_version_from_floating_tag_exact('registry.redhat.io/openshift/golang-builder:v1.22-rhel9')
 
+    def test_raises_when_labels_is_null(self):
+        """Labels: null in the image manifest must not cause AttributeError (issue: or {} guard)."""
+        fake_image_data = {'config': {'config': {'Labels': None}}}
+        with patch('elliottlib.cli.get_golang_report_cli.oc_image_info_for_arch', return_value=fake_image_data):
+            with self.assertRaises(ValueError):
+                go_version_from_floating_tag_exact('registry.redhat.io/openshift/golang-builder:v1.22-rhel9')
+
     def test_raises_on_multiple_nvr_map_entries(self):
         fake_image_data = {
             'config': {
@@ -202,6 +210,34 @@ class TestGoVersionFromFloatingTagExact(TestCase):
         ):
             with self.assertRaises(ValueError):
                 go_version_from_floating_tag_exact('registry.redhat.io/openshift/golang-builder:v1.22-rhel9')
+
+
+# ---------------------------------------------------------------------------
+# _nvr_from_labels helper
+# ---------------------------------------------------------------------------
+
+
+class TestNvrFromLabels(TestCase):
+    def test_returns_tuple_when_all_labels_present(self):
+        labels = {
+            'com.redhat.component': 'openshift-golang-builder-container',
+            'version': 'v1.22.12',
+            'release': '202608131106.p2.g7d3050a.assembly.stream.el9',
+        }
+        result = _nvr_from_labels(labels, 'registry.redhat.io/openshift/golang-builder:golang-builder-v1.22-rhel9')
+        self.assertEqual(
+            result,
+            ('openshift-golang-builder-container', 'v1.22.12', '202608131106.p2.g7d3050a.assembly.stream.el9'),
+        )
+
+    def test_raises_on_empty_labels(self):
+        with self.assertRaises(ValueError):
+            _nvr_from_labels({}, 'registry.redhat.io/openshift/golang-builder:golang-builder-v1.22-rhel9')
+
+    def test_raises_on_partial_labels(self):
+        labels = {'com.redhat.component': 'openshift-golang-builder-container'}
+        with self.assertRaises(ValueError):
+            _nvr_from_labels(labels, 'registry.redhat.io/openshift/golang-builder:golang-builder-v1.22-rhel9')
 
 
 # ---------------------------------------------------------------------------
