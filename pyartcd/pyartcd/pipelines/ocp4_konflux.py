@@ -1318,7 +1318,9 @@ class KonfluxOcpPipeline:
 
     async def _run_pipeline(self):
         """Core pipeline logic wrapped by global registry auth config."""
-        # Add build history link at the start so it's available before builds begin
+        await self.initialize()
+
+        # Add build history link after initialize() so jenkins_client is available
         job_url = os.getenv('BUILD_URL', '')
         build_history_url = build_history_link_url(
             group=f'openshift-{self.version}',
@@ -1328,8 +1330,6 @@ class KonfluxOcpPipeline:
             outcomes=['Pending', 'Success', 'Failure'],
         )
         jenkins.update_description(f'<a href="{build_history_url}">Status of image builds</a><br/>')
-
-        await self.initialize()
 
         # Rebase and build RPMs
         await self.rebase_and_build_rpms(self.release)
