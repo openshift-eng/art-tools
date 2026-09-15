@@ -107,6 +107,7 @@ PRODUCT_NAMESPACE_MAP = {
     "openshift-logging": "art-logging-tenant",
     "quay": "art-quay-tenant",
     "rhmtc": "art-mtc-tenant",
+    "rhosdt": "art-rhosdt-tenant",
     "supplemental-tools": "ocp-art-tenant",
     "zero-trust-workload-identity-manager": "art-oap-tenant",
 }
@@ -204,6 +205,9 @@ PRODUCT_FBC_STAGE_RELEASE_PLAN_MAP: dict[str, dict[tuple[int, int], str]] = {
         (2, 16): "acm-advisory-stage-2-16",
         (5, 0): "acm-advisory-stage-5-0",
     },
+    "rhosdt": {
+        (3, 11): "rhosdt-stage-3-11-fbc",
+    },
     "zero-trust-workload-identity-manager": {
         (1, 0): "zt-advisory-stage-auto-1-0",
         (1, 1): "zt-advisory-stage-auto-1-1",
@@ -226,6 +230,7 @@ PRODUCT_KUBECONFIG_MAP = {
     "openshift-logging": "LOGGING_KONFLUX_SA_KUBECONFIG",
     "quay": "QUAY_KONFLUX_SA_KUBECONFIG",
     "rhmtc": "MTC_KONFLUX_SA_KUBECONFIG",
+    "rhosdt": "RHOSDT_KONFLUX_SA_KUBECONFIG",
     "supplemental-tools": "KONFLUX_SA_KUBECONFIG",
     "zero-trust-workload-identity-manager": "OAP_KONFLUX_SA_KUBECONFIG",
 }
