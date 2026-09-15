@@ -1047,7 +1047,8 @@ async def get_group_images(
     :param working_dir: Working directory for doozer
     :param doozer_data_path: Path to ocp-build-data repository
     :param doozer_data_gitref: Git reference to use in ocp-build-data
-    :param variant: Build variant ('ocp' or 'okd'). If None, uses doozer's default (runtime.variant, which defaults to 'ocp').
+    :param variant: Build variant value (for example, "ocp", "okd", or "oadp"). If None, uses doozer's default
+        (runtime.variant, which defaults to "ocp").
     :return: List of image distgit keys
     """
 
