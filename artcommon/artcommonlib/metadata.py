@@ -166,12 +166,13 @@ class MetadataBase(object):
         :return: RHEL major version as an int (e.g. 8, 9)
         """
         # 1. Check image/RPM-level config
-        if self.config.el_target is not Missing:
-            return self._validate_el_target(self.config.el_target, 'image config')
+        if isinstance(self.config, Model) and 'el_target' in self.config:
+            return self._validate_el_target(self.config['el_target'], 'image config')
 
         # 2. Check group-level config
-        if self.runtime.group_config.el_target is not Missing:
-            return self._validate_el_target(self.runtime.group_config.el_target, 'group config')
+        group_cfg = self.runtime.group_config
+        if isinstance(group_cfg, Model) and 'el_target' in group_cfg:
+            return self._validate_el_target(group_cfg['el_target'], 'group config')
 
         # 3. Fallback: parse from the distgit branch string
         target_match = re.match(r'.*-rhel-(\d+)(?:-|$)', str(self.branch()))
