@@ -27,6 +27,8 @@ from pydantic import BaseModel, Field, ValidationError, field_validator, model_v
 
 logger = logging.getLogger(__name__)
 
+BUILD_SUGGESTIONS_OWNERS_URL = 'https://github.com/openshift/cincinnati-graph-data/blob/master/build-suggestions/OWNERS'
+
 
 class SuggestionsSpec(BaseModel):
     """
@@ -119,7 +121,8 @@ class _SourceConstraint(BaseModel):
             raise ValueError(
                 'Build-suggestions constraint error: minimum and maximum versions must have the same '
                 f"major.minor; found '{self.min_version}' and '{self.max_version}'. "
-                'Please contact the OTA team to fix the build-suggestions file.'
+                f'Please contact the build-suggestions owners listed in {BUILD_SUGGESTIONS_OWNERS_URL} '
+                'to fix the file.'
             )
         return self
 
@@ -248,21 +251,34 @@ class BuildSuggestions(BaseModel):
     def get_source_constraints(self, arch: str = 'default') -> list[_SourceConstraint]:
         """Normalize the selected schema into constraints for each source release line."""
         if self.min_versions is not None:
-            return [_SourceConstraint(min_version=version) for version in self.min_versions]
+            constraints = [_SourceConstraint(min_version=version) for version in self.min_versions]
+        else:
+            spec = self.get_for_arch(arch)
+            constraints = [
+                _SourceConstraint(
+                    min_version=spec.minor_min,
+                    max_version=spec.minor_max,
+                    block_list=spec.minor_block_list,
+                ),
+                _SourceConstraint(
+                    min_version=spec.z_min,
+                    max_version=spec.z_max,
+                    block_list=spec.z_block_list,
+                ),
+            ]
 
-        spec = self.get_for_arch(arch)
-        return [
-            _SourceConstraint(
-                min_version=spec.minor_min,
-                max_version=spec.minor_max,
-                block_list=spec.minor_block_list,
-            ),
-            _SourceConstraint(
-                min_version=spec.z_min,
-                max_version=spec.z_max,
-                block_list=spec.z_block_list,
-            ),
-        ]
+        seen_release_lines: set[tuple[int, int]] = set()
+        for constraint in constraints:
+            if constraint.major_minor in seen_release_lines:
+                source_major, source_minor = constraint.major_minor
+                raise ValueError(
+                    f'Build-suggestions contain duplicate source release line {source_major}.{source_minor}. '
+                    f'Please contact the build-suggestions owners listed in {BUILD_SUGGESTIONS_OWNERS_URL} '
+                    'to fix the file.'
+                )
+            seen_release_lines.add(constraint.major_minor)
+
+        return constraints
 
 
 async def get_build_suggestions_async(
@@ -300,7 +316,8 @@ async def get_build_suggestions_async(
             raise ValueError(
                 f"Failed to parse YAML from build-suggestions file {major}.{minor}.yaml at {url}. "
                 f"The file contains invalid YAML syntax. "
-                f"Please contact the OTA (OpenShift Update Architecture) team to fix the build-suggestions file. "
+                f"Please contact the build-suggestions owners listed in {BUILD_SUGGESTIONS_OWNERS_URL} "
+                f"to fix the file. "
                 f"YAML error: {e}"
             ) from e
 
@@ -311,7 +328,8 @@ async def get_build_suggestions_async(
             raise ValueError(
                 f"Failed to validate build-suggestions for {major}.{minor} from {url}. "
                 f"The YAML structure is invalid or contains incorrect version strings. "
-                f"Please contact the OTA (OpenShift Update Architecture) team to fix the build-suggestions file. "
+                f"Please contact the build-suggestions owners listed in {BUILD_SUGGESTIONS_OWNERS_URL} "
+                f"to fix the file. "
                 f"Validation error: {e}"
             ) from e
 
@@ -516,16 +534,18 @@ async def calc_upgrade_sources_async(
     suggestions = await get_build_suggestions_async(major, minor, suggestions_url)
     constraints = suggestions.get_source_constraints(go_arch)
 
-    target_release_line = (major, minor)
+    target_release_major_minor = (major, minor)
     source_release_lines = [constraint.major_minor for constraint in constraints]
-    target_constraint_count = source_release_lines.count(target_release_line)
+    target_constraint_count = source_release_lines.count(target_release_major_minor)
     if target_constraint_count != 1:
         raise ValueError(
             f"Build-suggestions must include exactly one constraint for target release line {major}.{minor}; "
             f"found {target_constraint_count}."
         )
 
-    newer_release_lines = [release_line for release_line in source_release_lines if release_line > target_release_line]
+    newer_release_lines = [
+        release_line for release_line in source_release_lines if release_line > target_release_major_minor
+    ]
     if newer_release_lines:
         formatted_lines = ', '.join(
             f'{source_major}.{source_minor}' for source_major, source_minor in newer_release_lines
@@ -556,7 +576,7 @@ async def calc_upgrade_sources_async(
             ):
                 upgrade_from.add(source_version)
 
-        if (source_major, source_minor) == target_release_line:
+        if (source_major, source_minor) == target_release_major_minor:
             current_versions = source_versions
             current_edges = channel_edges
             current_constraint = constraint

@@ -305,6 +305,25 @@ class TestBuildSuggestions(unittest.TestCase):
             suggestions.get_source_constraints()
 
         self.assertIn("minimum and maximum versions must have the same major.minor", str(context.exception))
+        self.assertIn("build-suggestions/OWNERS", str(context.exception))
+
+    def test_legacy_constraints_reject_duplicate_release_lines(self):
+        """Test that normalized legacy constraints cannot describe the same release line twice"""
+        suggestions = BuildSuggestions.model_validate(
+            {
+                "default": {
+                    "minor_min": "5.0.0-ec.0",
+                    "minor_max": "5.0.9999",
+                    "z_min": "5.0.0-rc.0",
+                    "z_max": "5.0.9999",
+                }
+            }
+        )
+
+        with self.assertRaisesRegex(ValueError, "duplicate source release line 5.0") as context:
+            suggestions.get_source_constraints()
+
+        self.assertIn("build-suggestions/OWNERS", str(context.exception))
 
     def test_malformed_arch_override_rejected(self):
         """Test that non-mapping architecture overrides are rejected"""
@@ -390,7 +409,7 @@ min_versions:
         self.assertEqual(result.min_versions, ["4.23.0-rc.0", "5.0.0-rc.0", "5.1.0-ec.0"])
 
     async def test_invalid_yaml_syntax(self):
-        """Test that invalid YAML syntax raises ValueError with OTA message"""
+        """Test that invalid YAML syntax directs users to the build-suggestions owners"""
         invalid_yaml = """
 default:
   minor_min: "4.22.0"
@@ -409,11 +428,11 @@ default:
 
             error_msg = str(context.exception)
             self.assertIn("Failed to parse YAML", error_msg)
-            self.assertIn("OTA", error_msg)
+            self.assertIn("build-suggestions/OWNERS", error_msg)
             self.assertIn("5.0.yaml", error_msg)
 
     async def test_invalid_semver_in_yaml(self):
-        """Test that invalid semver raises ValueError with OTA message"""
+        """Test that invalid semver directs users to the build-suggestions owners"""
         yaml_content = """
 default:
   minor_min: "not-a-version"
@@ -436,11 +455,11 @@ default:
 
             error_msg = str(context.exception)
             self.assertIn("Failed to validate", error_msg)
-            self.assertIn("OTA", error_msg)
+            self.assertIn("build-suggestions/OWNERS", error_msg)
             self.assertIn("5.0", error_msg)
 
     async def test_missing_required_fields(self):
-        """Test that missing required fields raises ValueError with OTA message"""
+        """Test that missing required fields direct users to the build-suggestions owners"""
         yaml_content = """
 default:
   minor_min: "4.22.0"
@@ -460,7 +479,7 @@ default:
 
             error_msg = str(context.exception)
             self.assertIn("Failed to validate", error_msg)
-            self.assertIn("OTA", error_msg)
+            self.assertIn("build-suggestions/OWNERS", error_msg)
 
     async def test_http_error_propagates(self):
         """Test that HTTP errors (404, etc.) propagate naturally"""
