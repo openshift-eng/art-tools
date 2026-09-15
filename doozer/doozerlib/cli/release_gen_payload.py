@@ -1461,9 +1461,11 @@ class GenPayloadCli:
         # image.
         tasks = []
         for arch, payload_entries in self.private_payload_entries_for_arch.items():
-            tasks.append(self.mirror_payload_content(arch, payload_entries, True))
+            dest_repo = self.full_component_repo(repo_type=RepositoryType.PRIVATE)
+            tasks.append(self.mirror_payload_content(arch, payload_entries, dest_repo, True))
         for arch, payload_entries in self.payload_entries_for_arch.items():
-            tasks.append(self.mirror_payload_content(arch, payload_entries))
+            dest_repo = self.full_component_repo(repo_type=RepositoryType.PUBLIC)
+            tasks.append(self.mirror_payload_content(arch, payload_entries, dest_repo))
         await asyncio.gather(*tasks)
 
         await asyncio.sleep(120)
@@ -1506,7 +1508,9 @@ class GenPayloadCli:
                     "not have group.multi_arch.enabled==true"
                 )
 
-    async def mirror_payload_content(self, arch: str, payload_entries: Dict[str, PayloadEntry], private: bool = False):
+    async def mirror_payload_content(
+        self, arch: str, payload_entries: Dict[str, PayloadEntry], dest_repo: str, private: bool = False
+    ):
         """
         Ensure an arch's payload entries are synced out for the public to access.
         """
@@ -1527,7 +1531,9 @@ class GenPayloadCli:
                 cmd.append(f'--registry-config={self.runtime.registry_config}')
             await exectools.cmd_assert_async(cmd)
 
-        for payload_entry in payload_entries.values():
+        mirror_rhcos = self.runtime.group_config.get('rhcos', {}).get('mirror_to_release_dev', False)
+
+        for tag_name, payload_entry in payload_entries.items():
             if payload_entry.image_meta and payload_entry.image_meta.distgit_key in self.mismatched_siblings:
                 self.logger.warning(
                     f"Skipping mirroring of {payload_entry.image_meta.distgit_key} "
@@ -1536,7 +1542,14 @@ class GenPayloadCli:
                 continue
 
             if not payload_entry.image_inspector:
-                continue  # Nothing to mirror (e.g. RHCOS)
+                if payload_entry.rhcos_build and mirror_rhcos:
+                    # Mirror RHCOS images from the Konflux tenant registry to openshift-release-dev
+                    src = payload_entry.dest_pullspec
+                    sha256 = src.split('@')[-1]
+                    dest = PayloadGenerator.get_mirroring_destination(sha256, dest_repo)
+                    mirror_src_for_dest[dest] = src
+                    payload_entries[tag_name] = payload_entry._replace(dest_pullspec=dest)
+                continue
 
             mirror_src_for_dest[payload_entry.dest_pullspec] = payload_entry.image_inspector.get_pullspec()
             if payload_entry.dest_manifest_list_pullspec:
