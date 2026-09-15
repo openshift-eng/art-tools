@@ -184,6 +184,15 @@ PRODUCT_FBC_STAGE_RELEASE_PLAN_MAP: dict[str, dict[tuple[int, int], str]] = {
     "external-secrets-operator": {
         (1, 1): "eso-advisory-stage-auto-1-1",
     },
+    "logging": {
+        (6, 0): "logging-advisory-stage-auto-6-0",
+        (6, 2): "logging-advisory-stage-auto-6-2",
+        (6, 3): "logging-advisory-stage-auto-6-3",
+        (6, 4): "logging-advisory-stage-auto-6-4",
+        (6, 5): "logging-advisory-stage-auto-6-5",
+        (6, 6): "logging-advisory-stage-auto-6-6",
+        (6, 7): "logging-advisory-stage-auto-6-7",
+    },
     "multicluster-engine": {
         (2, 11): "mce-advisory-stage-2-11",
         (5, 0): "mce-advisory-stage-5-0",
