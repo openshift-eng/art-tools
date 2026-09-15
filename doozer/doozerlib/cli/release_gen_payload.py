@@ -815,6 +815,10 @@ class GenPayloadCli:
                 dgk for (dgk, ii) in assembly_inspector.get_group_release_images().items() if ii is None
             ],  # A list of metas where the assembly did not find a build
         )
+        # These checks must run even when emergency_ignore_issues is set (which overrides
+        # viability to True in assess_assembly_viability). The results are recorded as
+        # release.openshift.io/inconsistency annotations on imagestream tags, which are
+        # publicly visible and propagated by the release controller (see module docstring).
         report["viable"], report["assembly_issues"] = await self.generate_assembly_issues_report(assembly_inspector)
         self.payload_permitted = report["viable"]
 
