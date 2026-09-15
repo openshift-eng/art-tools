@@ -135,9 +135,8 @@ class MetadataBase(object):
             return int(self.config.el_target)
 
         # 2. Check group-level config
-        group_el_target = self.runtime.group_config.get('el_target')
-        if group_el_target is not None:
-            return int(group_el_target)
+        if self.runtime.group_config.el_target is not Missing:
+            return int(self.runtime.group_config.el_target)
 
         # 3. Fallback: parse from the distgit branch string
         target_match = re.match(r'.*-rhel-(\d+)(?:-|$)', str(self.branch()))
