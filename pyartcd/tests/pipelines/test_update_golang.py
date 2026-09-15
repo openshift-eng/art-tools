@@ -2885,6 +2885,47 @@ class TestUpdateGolangStreamsFloatingTags(IsolatedAsyncioTestCase):
         # group.yml GO_LATEST var should be updated to the new major.minor
         self.assertEqual(branch_content['group']['vars']['GO_LATEST'], '1.23')
 
+    async def test_floating_branch_none_image_skipped(self):
+        """Streams with image: null must be skipped without crashing (None-safety regression)."""
+        streams = {
+            'rhel-9-golang': {
+                'aliases': ['rhel-9-golang-{GO_LATEST}'],
+                'image': 'registry.redhat.io/openshift/golang-builder:golang-builder-v1.22-rhel9',
+            },
+            # A stream with an explicit null image value must not cause AttributeError.
+            'some-broken-stream': {'image': None},
+        }
+        branch_content = self._make_branch_content(streams)
+        pipeline = self._make_pipeline()
+        pipeline._branch_content = branch_content
+        pipeline.data_path = None
+        pipeline.skip_pr = True
+
+        new_float9 = 'registry.redhat.io/openshift/golang-builder:golang-builder-v1.22-rhel9'
+        builder_pullspecs = {9: new_float9}
+        # Must complete without raising AttributeError.
+        await pipeline.update_golang_streams("1.22.12", builder_pullspecs)
+        self.assertEqual(streams['some-broken-stream']['image'], None)  # untouched
+
+    async def test_floating_branch_missing_stream_no_crash(self):
+        """When the canonical go-stream alias is absent, no streams are updated and no error is raised."""
+        # Streams dict has no entry with the GO_LATEST alias pattern.
+        streams = {
+            'ose-base': {'image': 'registry.redhat.io/openshift/ose-base:some-tag'},
+        }
+        branch_content = self._make_branch_content(streams)
+        pipeline = self._make_pipeline()
+        pipeline._branch_content = branch_content
+        pipeline.data_path = None
+        pipeline.skip_pr = True
+
+        new_float9 = 'registry.redhat.io/openshift/golang-builder:golang-builder-v1.22-rhel9'
+        builder_pullspecs = {9: new_float9}
+        # The reference stream is not found (get_stream returns None); must not crash.
+        await pipeline.update_golang_streams("1.22.12", builder_pullspecs)
+        # The unrelated stream is untouched.
+        self.assertEqual(streams['ose-base']['image'], 'registry.redhat.io/openshift/ose-base:some-tag')
+
 
 if __name__ == "__main__":
     unittest.main()

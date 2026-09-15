@@ -873,10 +873,14 @@ class UpdateGolangPipeline:
     def _get_builder_pullspec(self, builder_nvr: str, streams_content: dict | None = None):
         """Generate the published pullspec used in streams.yml for Konflux-built builders.
 
+        Always returns a **full pullspec** (``registry.redhat.io/openshift/golang-builder:<tag>``).
+
         When *streams_content* is provided (or the branch content is already cached on the
-        instance), and the branch uses floating tags, returns a floating-tag pullspec of the
-        form ``golang-builder-v{major}.{minor}-rhel{el}``.
-        Otherwise returns the full NVR pullspec.
+        instance) and the branch already uses floating tags, the tag portion is the floating
+        form ``golang-builder-v{major}.{minor}-rhel{el}`` (e.g.
+        ``registry.redhat.io/openshift/golang-builder:golang-builder-v1.22-rhel9``).
+        Otherwise the tag is the full NVR form (e.g.
+        ``registry.redhat.io/openshift/golang-builder:openshift-golang-builder-container-v1.22.12-...el9``).
         """
         parsed_nvr = parse_nvr(builder_nvr)
         component_name = parsed_nvr["name"]
@@ -985,20 +989,22 @@ class UpdateGolangPipeline:
         if build_major_minor == latest_major_minor:
             for el_v, pullspec in builder_pullspecs.items():
                 _LOGGER.info("Looking for golang stream %s in streams.yml", latest_go_stream_name(el_v))
-                latest_go = get_stream(latest_go_stream_name(el_v))['image']
+                _stream = get_stream(latest_go_stream_name(el_v))
+                latest_go = _stream.get('image') if isinstance(_stream, dict) else None
 
                 for _, info in streams_content.items():
-                    if isinstance(info, dict) and _pullspecs_match(info.get('image', ''), latest_go):
+                    if isinstance(info, dict) and _pullspecs_match(info.get('image'), latest_go):
                         info['image'] = pullspec
                         update_streams = True
         # This is to bump minor golang for GO_PREVIOUS
         elif previous_major_minor and build_major_minor == previous_major_minor:
             for el_v, pullspec in builder_pullspecs.items():
                 _LOGGER.info("Looking for golang stream %s in streams.yml", previous_go_stream_name(el_v))
-                previous_go = get_stream(previous_go_stream_name(el_v))['image']
+                _stream = get_stream(previous_go_stream_name(el_v))
+                previous_go = _stream.get('image') if isinstance(_stream, dict) else None
 
                 for _, info in streams_content.items():
-                    if isinstance(info, dict) and _pullspecs_match(info.get('image', ''), previous_go):
+                    if isinstance(info, dict) and _pullspecs_match(info.get('image'), previous_go):
                         info['image'] = pullspec
                         update_streams = True
         # This is to bump minor golang for GO_EXTRA
@@ -1015,25 +1021,30 @@ class UpdateGolangPipeline:
                     raise ValueError(
                         f"Could not find a golang stream for {go_extra_var}={extra_major_minor} and RHEL {el_v}"
                     )
-                extra_go = extra_go_stream['image']
+                extra_go = extra_go_stream.get('image')
 
                 for _, info in streams_content.items():
-                    if isinstance(info, dict) and _pullspecs_match(info.get('image', ''), extra_go):
+                    if isinstance(info, dict) and _pullspecs_match(info.get('image'), extra_go):
                         info['image'] = pullspec
                         update_streams = True
         # This is to bump major golang for GO_LATEST and update GO_PREVIOUS to current GO_LATEST
         elif build_major_minor_tuple > latest_major_minor_tuple:
             for el_v, pullspec in builder_pullspecs.items():
                 _LOGGER.info("Looking for golang stream %s in streams.yml", latest_go_stream_name(el_v))
-                latest_go = get_stream(latest_go_stream_name(el_v))['image']
+                _stream = get_stream(latest_go_stream_name(el_v))
+                latest_go = _stream.get('image') if isinstance(_stream, dict) else None
 
                 _LOGGER.info("Looking for golang stream %s in streams.yml", previous_go_stream_name(el_v))
-                previous_go = get_stream(previous_go_stream_name(el_v))['image'] if go_previous else None
+                if go_previous:
+                    _prev_stream = get_stream(previous_go_stream_name(el_v))
+                    previous_go = _prev_stream.get('image') if isinstance(_prev_stream, dict) else None
+                else:
+                    previous_go = None
 
                 for _, info in streams_content.items():
-                    if isinstance(info, dict) and _pullspecs_match(info.get('image', ''), latest_go):
+                    if isinstance(info, dict) and _pullspecs_match(info.get('image'), latest_go):
                         info['image'] = pullspec
-                    if previous_go and isinstance(info, dict) and _pullspecs_match(info.get('image', ''), previous_go):
+                    if previous_go and isinstance(info, dict) and _pullspecs_match(info.get('image'), previous_go):
                         info['image'] = latest_go
                 group_content['vars'][go_latest_var] = build_major_minor
                 update_streams = update_group = True
