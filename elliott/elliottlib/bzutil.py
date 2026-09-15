@@ -106,9 +106,10 @@ class Bug:
         raise NotImplementedError
 
     def is_flaw_bug(self):
-        if self.product == "Security Response" and self.component == "vulnerability-draft":
-            raise ValueError(f'{self.id} has Component "vulnerability-draft". Consult ProdSec on how to proceed.')
-        return self.product == "Security Response" and self.component == "vulnerability"
+        return self.product == "Security Response" and self.component in ("vulnerability", "vulnerability-draft")
+
+    def is_vulnerability_draft_bug(self):
+        return self.product == "Security Response" and self.component == "vulnerability-draft"
 
     def make_summary_with_target_version(self, major_version: int, minor_version: int) -> str:
         """Given an OCPBUGS bug summary and the major and minor version numbers,
@@ -1467,6 +1468,29 @@ class BugzillaBugTracker(BugTracker):
             for b in self.get_bugs(bug_ids, permissive=not strict, include_fields=fields, verbose=verbose)
             if b.is_flaw_bug()
         ]
+
+
+def get_vulnerability_draft_flaws(
+    tracker_bugs: Iterable[Bug], flaw_bug_tracker: BugTracker, verbose: bool = False
+) -> Dict[object, List[Bug]]:
+    """Return vulnerability-draft flaw bugs grouped by the trackers that reference them."""
+    tracker_bugs = list(tracker_bugs)
+    flaw_bug_ids = sorted({flaw_id for tracker in tracker_bugs for flaw_id in tracker.corresponding_flaw_bug_ids})
+    if not flaw_bug_ids:
+        return {}
+
+    flaw_bugs = flaw_bug_tracker.get_bugs(
+        flaw_bug_ids,
+        permissive=True,
+        include_fields=["product", "component"],
+        verbose=verbose,
+    )
+    draft_flaws = {bug.id: bug for bug in flaw_bugs if bug.is_vulnerability_draft_bug()}
+    return {
+        tracker.id: [draft_flaws[flaw_id] for flaw_id in tracker.corresponding_flaw_bug_ids if flaw_id in draft_flaws]
+        for tracker in tracker_bugs
+        if any(flaw_id in draft_flaws for flaw_id in tracker.corresponding_flaw_bug_ids)
+    }
 
 
 def get_highest_impact(trackers, tracker_flaws_map):

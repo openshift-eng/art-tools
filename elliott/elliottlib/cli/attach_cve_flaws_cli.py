@@ -20,12 +20,14 @@ from elliottlib.bzutil import (
     BugTracker,
     get_flaws,
     get_highest_security_impact,
+    get_vulnerability_draft_flaws,
     is_rhcos_pscomponent,
     sort_cve_bugs,
 )
 from elliottlib.cli.common import cli, click_coroutine, find_default_advisory, use_default_advisory_option
 from elliottlib.errata import is_security_advisory
 from elliottlib.errata_async import AsyncErrataAPI, AsyncErrataUtils
+from elliottlib.exceptions import ElliottFatalError
 from elliottlib.runtime import Runtime
 from elliottlib.shipment_model import CveAssociation, ReleaseNotes
 from elliottlib.shipment_utils import get_shipment_config_from_mr, set_bugzilla_bug_ids
@@ -230,6 +232,24 @@ class AttachCveFlaws:
                 raise click.UsageError("Reconciliation is not supported for Brew")
             await self.handle_brew_cve_flaws()
 
+    def _fail_on_vulnerability_draft_flaws(self, tracker_bugs: Iterable[Bug]):
+        draft_flaws_by_tracker = get_vulnerability_draft_flaws(
+            tracker_bugs,
+            self.runtime.get_bug_tracker('bugzilla'),
+            verbose=self.runtime.debug,
+        )
+        if not draft_flaws_by_tracker:
+            return
+
+        relationships = '; '.join(
+            f'{tracker_id}: {sorted(bug.id for bug in draft_flaws_by_tracker[tracker_id])}'
+            for tracker_id in sorted(draft_flaws_by_tracker, key=str)
+        )
+        raise ElliottFatalError(
+            'Cannot attach flaw bug(s) with Component "vulnerability-draft". '
+            f'Tracker-to-flaw links: {relationships}. Consult ProdSec on how to proceed.'
+        )
+
     async def handle_konflux_cve_flaws(self) -> Optional[ReleaseNotes]:
         """
         Handle attaching CVE flaws in a Konflux environment.
@@ -282,6 +302,7 @@ class AttachCveFlaws:
         self.logger.info(f"Found {len(tracker_bugs)} tracker bugs in shipment")
 
         # Get flaw bugs
+        self._fail_on_vulnerability_draft_flaws(tracker_bugs)
         tracker_flaws, flaw_bugs = get_flaws(self.runtime, tracker_bugs) if tracker_bugs else ({}, [])
         self.logger.info(f"Found {len(flaw_bugs)} eligible flaw bugs for shipment to be attached")
 
@@ -478,6 +499,7 @@ class AttachCveFlaws:
                 advisory_bug_ids = bug_tracker.advisory_bug_ids(advisory)
                 attached_trackers.extend(self.get_attached_trackers(advisory_bug_ids, bug_tracker))
 
+            self._fail_on_vulnerability_draft_flaws(attached_trackers)
             tracker_flaws, flaw_bugs = get_flaws(self.runtime, attached_trackers) if attached_trackers else ({}, [])
             self.logger.info(f"Found {len(flaw_bugs)} eligible flaw bugs for advisory {advisory_id} to be attached")
 

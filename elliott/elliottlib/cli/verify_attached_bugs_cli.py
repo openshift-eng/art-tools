@@ -193,6 +193,7 @@ async def verify_bugs_cli(
     Default validations:
     - Target Release: All bugs belong to the group's target release.
     - Improper Tracker Bugs: Bugs that have CVE in their title but do not have Tracker Bug labels set.
+    - Draft Flaw Bugs: Tracker bugs do not reference flaws with the vulnerability-draft component.
     - Regression Check: If there are any backport bugs, make sure they don't get ahead of their original bug.
     This is to make sure we don't regress when upgrading from OCP X.Y to X.Y+1. To skip use --no-verify-blocking-bugs.
 
@@ -219,6 +220,7 @@ async def verify_bugs(
         ocp_bugs.extend(bugs)
 
     try:
+        validator._verify_vulnerability_draft_flaws(ocp_bugs)
         validator.validate(ocp_bugs, verify_bug_status, no_verify_blocking_bugs)
     except Exception as e:
         validator._complain(f"Error validating bugs: {e}")
@@ -280,6 +282,20 @@ class BugValidator:
         if not no_verify_blocking_bugs:
             blocking_bugs_for = self._get_blocking_bugs_for(non_flaw_bugs)
             self._verify_blocking_bugs(blocking_bugs_for, is_attached=is_attached)
+
+    def _verify_vulnerability_draft_flaws(self, bugs: Iterable[Bug]):
+        tracker_bugs = [bug for bug in bugs if bug.is_tracker_bug()]
+        draft_flaws_by_tracker = bzutil.get_vulnerability_draft_flaws(
+            tracker_bugs,
+            self.runtime.get_bug_tracker('bugzilla'),
+            verbose=self.runtime.debug,
+        )
+        for tracker_id in sorted(draft_flaws_by_tracker, key=str):
+            flaw_bugs = draft_flaws_by_tracker[tracker_id]
+            self._complain(
+                f'Tracker bug {tracker_id} links to flaw bug(s) with Component "vulnerability-draft": '
+                f'{sorted(bug.id for bug in flaw_bugs)}. Consult ProdSec on how to proceed.'
+            )
 
     def verify_bugs_advisory_type(self, runtime, non_flaw_bugs, advisory_id_map, advisory_bug_map):
         advance_release = False

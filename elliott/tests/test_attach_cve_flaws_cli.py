@@ -6,6 +6,7 @@ from elliottlib import constants
 from elliottlib.bzutil import Bug, BugzillaBug
 from elliottlib.cli.attach_cve_flaws_cli import AttachCveFlaws
 from elliottlib.errata_async import AsyncErrataAPI
+from elliottlib.exceptions import ElliottFatalError
 from elliottlib.shipment_model import ReleaseNotes
 
 
@@ -84,6 +85,26 @@ class TestAttachCVEFlawsCLI(unittest.IsolatedAsyncioTestCase):
         advisory.update.assert_any_call(
             description='some description with * foo (CVE-2022-123)\n* bar (CVE-2022-456)',
         )
+
+    @patch("elliottlib.cli.attach_cve_flaws_cli.get_vulnerability_draft_flaws")
+    def test_fail_on_vulnerability_draft_flaws(self, get_draft_flaws):
+        tracker = Mock(id="OCPBUGS-1")
+        draft_flaw = Mock(id=123)
+        get_draft_flaws.return_value = {tracker.id: [draft_flaw]}
+        pipeline = AttachCveFlaws(
+            self.mock_runtime,
+            advisory_id=0,
+            into_default_advisories=False,
+            default_advisory_type="",
+            output="json",
+            noop=False,
+        )
+
+        with self.assertRaisesRegex(
+            ElliottFatalError,
+            r'Cannot attach flaw bug\(s\) with Component "vulnerability-draft".*OCPBUGS-1: \[123\]',
+        ):
+            pipeline._fail_on_vulnerability_draft_flaws([tracker])
 
     @patch("elliottlib.errata_async.AsyncErrataUtils.associate_builds_with_cves", autospec=True)
     async def test_associate_builds_with_cves_bz(self, fake_urls_associate_builds_with_cves: AsyncMock):

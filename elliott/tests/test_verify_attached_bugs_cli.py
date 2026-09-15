@@ -264,6 +264,30 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
 
 
 class TestBugValidator(IsolatedAsyncioTestCase):
+    def test_verify_vulnerability_draft_flaws(self):
+        runtime = flexmock(debug=False)
+        flaw_bug_tracker = flexmock()
+        runtime.should_receive("get_bug_tracker").with_args("bugzilla").and_return(flaw_bug_tracker)
+        draft_flaw = flexmock(id=123)
+        tracker = flexmock(id="OCPBUGS-1", is_tracker_bug=lambda: True)
+        non_tracker = flexmock(id="OCPBUGS-2", is_tracker_bug=lambda: False)
+        flexmock(verify_attached_bugs_cli.bzutil).should_receive("get_vulnerability_draft_flaws").with_args(
+            [tracker], flaw_bug_tracker, verbose=False
+        ).and_return({tracker.id: [draft_flaw]})
+
+        validator = BugValidator.__new__(BugValidator)
+        validator.runtime = runtime
+        validator.problems = []
+        validator._verify_vulnerability_draft_flaws([tracker, non_tracker])
+
+        self.assertEqual(
+            validator.problems,
+            [
+                'Tracker bug OCPBUGS-1 links to flaw bug(s) with Component "vulnerability-draft": '
+                '[123]. Consult ProdSec on how to proceed.'
+            ],
+        )
+
     async def test_get_attached_bugs_jira(self):
         runtime = Runtime()
         advisory_id_1, advisory_id_2 = '123', '145'
