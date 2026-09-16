@@ -198,10 +198,10 @@ class BuildLayeredProductsPipeline:
             f"--data-path={self._doozer_env_vars['DOOZER_DATA_PATH']}",
             "--build-system=konflux",
             self._group_param(),
+            "--latest-parent-version",
         ]
         if build_variant is not None:
             command.append(f"--variant={build_variant.value}")
-        command.append("--latest-parent-version")
         return command
 
     async def _rebase_and_build(self, product: str, image_repo: str):
