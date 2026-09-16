@@ -32,6 +32,19 @@ class TestBug(unittest.TestCase):
 
     @parameterized.expand(
         [
+            ("Security Response", "vulnerability", True, False),
+            ("Security Response", "vulnerability-draft", True, True),
+            ("Security Response", "other", False, False),
+            ("Other Product", "vulnerability-draft", False, False),
+        ]
+    )
+    def test_is_flaw_bug(self, product, component, is_flaw, is_draft):
+        bug = BugzillaBug(flexmock(id=1, product=product, component=component))
+        self.assertEqual(bug.is_flaw_bug(), is_flaw)
+        self.assertEqual(bug.is_vulnerability_draft_bug(), is_draft)
+
+    @parameterized.expand(
+        [
             ("Bug is fine [openshift-4.12]", (4, 12), "Bug is fine [openshift-4.12]"),
             (
                 "Trailing .z [openshift-4.19.z]",
@@ -152,6 +165,24 @@ class TestBugTracker(unittest.TestCase):
             tracker_bugs,
             BugzillaBugTracker({}),
             strict=True,
+        )
+
+    def test_get_vulnerability_draft_flaws(self):
+        regular_flaw = flexmock(id=1, is_vulnerability_draft_bug=lambda: False)
+        draft_flaw = flexmock(id=2, is_vulnerability_draft_bug=lambda: True)
+        trackers = [
+            flexmock(id="OCPBUGS-1", corresponding_flaw_bug_ids=[1, 2]),
+            flexmock(id="OCPBUGS-2", corresponding_flaw_bug_ids=[2]),
+            flexmock(id="OCPBUGS-3", corresponding_flaw_bug_ids=[]),
+        ]
+        flaw_bug_tracker = flexmock()
+        flaw_bug_tracker.should_receive("get_bugs").with_args(
+            [1, 2], permissive=True, include_fields=["product", "component"], verbose=False
+        ).and_return([regular_flaw, draft_flaw])
+
+        self.assertEqual(
+            bzutil.get_vulnerability_draft_flaws(trackers, flaw_bug_tracker),
+            {"OCPBUGS-1": [draft_flaw], "OCPBUGS-2": [draft_flaw]},
         )
 
 
