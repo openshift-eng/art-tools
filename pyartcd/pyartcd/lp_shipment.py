@@ -6,6 +6,7 @@ On reuse, the previous layered-product shipment files are discarded and rebuilt
 from the current release inputs.
 """
 
+import asyncio
 import logging
 import re
 from collections import Counter
@@ -19,6 +20,7 @@ from artcommonlib import exectools
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import new_roundtrip_yaml_handler
 from elliottlib.shipment_model import ShipmentConfig
+from gitlab.exceptions import GitlabCreateError
 
 from pyartcd.fbc_util import extract_ocp_version_from_nvr
 from pyartcd.git import GitRepository
@@ -28,6 +30,8 @@ YAML = new_roundtrip_yaml_handler()
 _TIMESTAMP_RE = re.compile(r"(\d{14})$")
 _PROD_RELEASE_LABEL_PREFIX = "prod-release"
 _STAGE_RELEASE_SUCCESS_LABEL = "stage-release-success"
+_MR_CREATION_ATTEMPTS = 3
+_MR_CREATION_RETRY_DELAY_SECONDS = 5
 _ACTIVE_CI_STATUSES = frozenset(
     {
         'created',
@@ -57,6 +61,48 @@ class ShipmentMRProductionError(ValueError):
 
 class ShipmentMRActiveStageError(ValueError):
     """Indicate that active stage work makes in-place MR reuse unsafe."""
+
+
+async def create_shipment_mr_with_retry(source_project, attributes: dict, logger: logging.Logger) -> object:
+    """Create a shipment MR after GitLab recognizes its newly pushed branch.
+
+    GitLab can briefly return ``source_branch: does not exist`` immediately
+    after accepting a new branch push. Retry only that known transient error;
+    all other MR creation failures remain immediate and unchanged.
+
+    Args:
+        source_project: Python-gitlab project that owns the source branch.
+        attributes: Merge request attributes passed to python-gitlab.
+        logger: Logger used to report a transient retry.
+
+    Returns:
+        The newly created python-gitlab merge request object.
+
+    Raises:
+        GitlabCreateError: If MR creation fails for another reason or the
+            source branch remains unavailable after all attempts.
+    """
+    source_branch = attributes.get('source_branch', '<unknown>')
+    for attempt in range(1, _MR_CREATION_ATTEMPTS + 1):
+        try:
+            return source_project.mergerequests.create(attributes)
+        except GitlabCreateError as exc:
+            errors = exc.error_message if isinstance(exc.error_message, dict) else {}
+            source_errors = errors.get('source_branch', [])
+            missing_source_branch = exc.response_code == 400 and any(
+                'does not exist' in str(error).lower() for error in source_errors
+            )
+            if not missing_source_branch or attempt == _MR_CREATION_ATTEMPTS:
+                raise
+            logger.warning(
+                "GitLab has not recognized newly pushed branch %s yet; retrying MR creation (%d/%d)",
+                source_branch,
+                attempt + 1,
+                _MR_CREATION_ATTEMPTS,
+            )
+            await asyncio.sleep(_MR_CREATION_RETRY_DELAY_SECONDS)
+
+    raise AssertionError("Unreachable")
 
 
 @dataclass(frozen=True)

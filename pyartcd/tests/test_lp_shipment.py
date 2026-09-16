@@ -2,11 +2,12 @@ import asyncio
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from artcommonlib.util import new_roundtrip_yaml_handler
 from elliottlib.shipment_model import ShipmentConfig
+from gitlab.exceptions import GitlabCreateError
 from pyartcd.git import GitRepository
 from pyartcd.lp_shipment import (
     ShipmentMRActiveStageError,
@@ -15,6 +16,7 @@ from pyartcd.lp_shipment import (
     ShipmentMRValidationError,
     _identity,
     add_superseded_mr_comment,
+    create_shipment_mr_with_retry,
     get_shipment_mr_url,
     inspect_shipment_mr_ci_state,
     reconcile_shipment_mr,
@@ -26,6 +28,43 @@ from pyartcd.lp_shipment import (
 )
 
 YAML = new_roundtrip_yaml_handler()
+
+
+@patch("pyartcd.lp_shipment.asyncio.sleep", new_callable=AsyncMock)
+def test_create_shipment_mr_retries_transient_missing_branch(mock_sleep):
+    """Retry when GitLab has not recognized a newly pushed branch yet."""
+    source_project = MagicMock()
+    expected_mr = MagicMock()
+    source_project.mergerequests.create.side_effect = [
+        GitlabCreateError({'source_branch': ['does not exist']}, 400, None),
+        expected_mr,
+    ]
+    attributes = {'source_branch': 'prepare-shipment-test'}
+
+    result = asyncio.run(create_shipment_mr_with_retry(source_project, attributes, MagicMock()))
+
+    assert result is expected_mr
+    assert source_project.mergerequests.create.call_count == 2
+    mock_sleep.assert_awaited_once_with(5)
+
+
+@patch("pyartcd.lp_shipment.asyncio.sleep", new_callable=AsyncMock)
+def test_create_shipment_mr_does_not_retry_other_errors(mock_sleep):
+    """Keep unrelated GitLab MR creation failures immediate."""
+    source_project = MagicMock()
+    source_project.mergerequests.create.side_effect = GitlabCreateError({'title': ['is invalid']}, 400, None)
+
+    with pytest.raises(GitlabCreateError):
+        asyncio.run(
+            create_shipment_mr_with_retry(
+                source_project,
+                {'source_branch': 'prepare-shipment-test'},
+                MagicMock(),
+            )
+        )
+
+    source_project.mergerequests.create.assert_called_once()
+    mock_sleep.assert_not_awaited()
 
 
 def test_add_superseded_mr_comment_records_replacement_and_job():

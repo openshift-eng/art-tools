@@ -837,6 +837,31 @@ class TestCreateShipmentMrApprovalRules(unittest.TestCase):
         return pipeline
 
     @patch("pyartcd.pipelines.prepare_release_lp.exectools.cmd_gather_async")
+    def test_force_starts_replacement_branch_from_main(self, mock_cmd):
+        """Discard the inspected old MR checkout before creating its replacement."""
+        mock_cmd.return_value = (0, "None", "")
+        pipeline = self._make_pipeline()
+        pipeline.force = True
+
+        mock_gitlab = MagicMock()
+        mock_gitlab.set_mr_approval_rules = AsyncMock()
+        type(pipeline)._gitlab = PropertyMock(return_value=mock_gitlab)
+        mock_mr = MagicMock(web_url="https://gitlab.example.com/org/repo/-/merge_requests/4")
+        mock_source_project = MagicMock()
+        mock_source_project.mergerequests.create.return_value = mock_mr
+        mock_target_project = MagicMock(id=42)
+
+        with (
+            patch.object(pipeline, '_get_gitlab_project', side_effect=[mock_source_project, mock_target_project]),
+            patch.object(pipeline, '_write_shipment_file', new_callable=AsyncMock),
+        ):
+            pipeline.shipment_data_repo.commit_push = AsyncMock(return_value=True)
+            asyncio.run(pipeline._create_shipment_mr({"image": MagicMock()}))
+
+        pipeline.shipment_data_repo.fetch_switch_branch.assert_awaited_once_with("main")
+        pipeline.shipment_data_repo.create_branch.assert_awaited_once()
+
+    @patch("pyartcd.pipelines.prepare_release_lp.exectools.cmd_gather_async")
     def test_approval_rules_set_after_mr_creation(self, mock_cmd):
         """Approval rules from group config should be applied to the created MR."""
         mock_cmd.return_value = (0, "QE:\n- reviewer1\n", "")

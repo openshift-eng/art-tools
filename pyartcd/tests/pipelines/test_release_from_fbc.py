@@ -300,6 +300,25 @@ class TestCreateShipmentMrApprovalRules(unittest.TestCase):
         return pipeline
 
     @patch("pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async")
+    def test_force_starts_replacement_branch_from_main(self, mock_cmd):
+        """Discard the inspected old MR checkout before creating its replacement."""
+        mock_cmd.return_value = (0, "None", "")
+        pipeline = self._make_pipeline(dry_run=False)
+        pipeline.force = True
+        pipeline.update_shipment_data = AsyncMock(return_value=True)
+
+        mock_source_project = MagicMock()
+        mock_mr = MagicMock(web_url="https://gitlab.example.com/org/repo/-/merge_requests/4")
+        mock_source_project.mergerequests.create.return_value = mock_mr
+        pipeline._get_gitlab_project = MagicMock(return_value=mock_source_project)
+        pipeline.__dict__["_gitlab"] = MagicMock()
+
+        asyncio.run(pipeline.create_shipment_mr({}, env="prod"))
+
+        pipeline.shipment_data_repo.fetch_switch_branch.assert_awaited_once_with("main")
+        pipeline.shipment_data_repo.create_branch.assert_awaited_once()
+
+    @patch("pyartcd.pipelines.release_from_fbc.exectools.cmd_gather_async")
     def test_dry_run_skips_set_mr_approval_rules(self, mock_cmd):
         """In dry-run, approval rules are logged but set_mr_approval_rules is not called."""
         mock_cmd.return_value = (0, "QE:\n- asdas1\n", "")

@@ -45,6 +45,7 @@ from pyartcd.git import GitRepository
 from pyartcd.lp_shipment import (
     ShipmentMRValidationError,
     add_superseded_mr_comment,
+    create_shipment_mr_with_retry,
     get_shipment_mr_url,
     reconcile_shipment_mr,
     set_shipment_mr_draft,
@@ -788,6 +789,11 @@ class PrepareReleaseLPPipeline:
         timestamp = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
         source_branch = f"prepare-shipment-lp-{self.assembly}-{timestamp}"
 
+        # Validation of an existing MR checks out its source branch. A forced
+        # replacement must always start cleanly from main.
+        if self.force:
+            await self.shipment_data_repo.fetch_switch_branch("main")
+
         await self.shipment_data_repo.create_branch(source_branch)
 
         for kind, config in shipments_by_kind.items():
@@ -818,7 +824,8 @@ class PrepareReleaseLPPipeline:
             self._logger.info("[DRY-RUN] Would create MR: %s", mr_title)
             return f"{self.gitlab_url}/placeholder/-/merge_requests/placeholder"
 
-        mr = source_project.mergerequests.create(
+        mr = await create_shipment_mr_with_retry(
+            source_project,
             {
                 'source_branch': source_branch,
                 'target_project_id': target_project.id,
@@ -826,7 +833,8 @@ class PrepareReleaseLPPipeline:
                 'title': mr_title,
                 'description': mr_description,
                 'remove_source_branch': True,
-            }
+            },
+            self._logger,
         )
         mr_url = mr.web_url
         self._logger.info("Created MR: %s", mr_url)

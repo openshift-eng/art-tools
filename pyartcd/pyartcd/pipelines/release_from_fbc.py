@@ -46,6 +46,7 @@ from pyartcd.git import GitRepository
 from pyartcd.lp_shipment import (
     ShipmentMRValidationError,
     add_superseded_mr_comment,
+    create_shipment_mr_with_retry,
     get_shipment_mr_url,
     reconcile_shipment_mr,
     set_shipment_mr_draft,
@@ -983,6 +984,11 @@ class ReleaseFromFbcPipeline:
         source_branch = f"prepare-shipment-{self.assembly}-{timestamp}"
         target_branch = "main"
 
+        # Validation of an existing MR checks out its source branch. A new MR,
+        # especially a forced replacement, must always start cleanly from main.
+        if self.force:
+            await self.shipment_data_repo.fetch_switch_branch(target_branch)
+
         # Create and checkout branch
         await self.shipment_data_repo.create_branch(source_branch)
 
@@ -1017,7 +1023,8 @@ class ReleaseFromFbcPipeline:
             self.logger.info("[DRY-RUN] Would have created MR with title: %s", mr_title)
             mr_url = f"{self.gitlab_url}/placeholder/placeholder/-/merge_requests/placeholder"
         else:
-            mr = source_project.mergerequests.create(
+            mr = await create_shipment_mr_with_retry(
+                source_project,
                 {
                     'source_branch': source_branch,
                     'target_project_id': target_project.id,
@@ -1025,7 +1032,8 @@ class ReleaseFromFbcPipeline:
                     'title': mr_title,
                     'description': mr_description,
                     'remove_source_branch': True,
-                }
+                },
+                self.logger,
             )
             mr_url = mr.web_url
             self.logger.info("Created Merge Request: %s", mr_url)
