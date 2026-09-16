@@ -15,12 +15,97 @@ from collections import defaultdict
 from typing import Dict, List, Optional
 
 from artcommonlib import exectools
+from artcommonlib.rpm_utils import parse_nvr
 from elliottlib.util import extract_nvrs_from_fbc
 from tenacity import retry, stop_after_attempt
 
 logger = logging.getLogger(__name__)
 
 _OCP_VERSION_RE = re.compile(r'\.ocp(\d+\.\d+)')
+_LP_GROUP_VERSION_RE = re.compile(r'-(\d+)\.(\d+)$')
+_LP_ASSEMBLY_VERSION_RE = re.compile(r'^v?(\d+)\.(\d+)(?:\.(\d+))?$')
+
+
+def validate_layered_product_group_assembly(group: str, assembly: str) -> None:
+    """Validate that a layered-product assembly belongs to its group.
+
+    Args:
+        group: Layered-product group name ending in its major and minor
+            version, such as ``logging-6.2``.
+        assembly: Layered-product assembly version, such as ``6.2.13``.
+
+    Raises:
+        ValueError: If either version cannot be determined or their major and
+            minor versions differ.
+    """
+    group_match = _LP_GROUP_VERSION_RE.search(group)
+    if not group_match:
+        raise ValueError(
+            f"Cannot determine the layered-product version from group '{group}'; expected a name ending in "
+            "'<major>.<minor>'"
+        )
+
+    assembly_match = _LP_ASSEMBLY_VERSION_RE.fullmatch(assembly)
+    if not assembly_match:
+        raise ValueError(
+            f"Cannot determine the layered-product version from assembly '{assembly}'; expected '<major>.<minor>' "
+            "or '<major>.<minor>.<patch>'"
+        )
+
+    group_version = group_match.group(1, 2)
+    assembly_version = assembly_match.group(1, 2)
+    if group_version != assembly_version:
+        expected = '.'.join(group_version)
+        actual = '.'.join(assembly_version)
+        raise ValueError(
+            f"Assembly '{assembly}' does not belong to group '{group}': group release train is {expected}, "
+            f"but assembly release train is {actual}. No shipment data was changed."
+        )
+
+
+def validate_layered_product_fbc_nvrs(assembly: str, fbc_nvrs: List[str]) -> None:
+    """Validate that layered-product FBC NVRs belong to an assembly.
+
+    A three-component assembly requires an exact major, minor, and patch
+    match. A two-component assembly requires the same major and minor. The
+    NVR release field, including its target OCP version, is intentionally not
+    considered.
+
+    Args:
+        assembly: Layered-product assembly version.
+        fbc_nvrs: FBC NVRs to validate.
+
+    Raises:
+        ValueError: If the assembly or an FBC NVR has an unsupported version,
+            or if an FBC belongs to a different assembly.
+    """
+    assembly_match = _LP_ASSEMBLY_VERSION_RE.fullmatch(assembly)
+    if not assembly_match:
+        raise ValueError(
+            f"Cannot validate FBC NVRs for assembly '{assembly}'; expected '<major>.<minor>' or "
+            "'<major>.<minor>.<patch>'"
+        )
+    assembly_parts = tuple(part for part in assembly_match.groups() if part is not None)
+
+    mismatches = []
+    for nvr in fbc_nvrs:
+        try:
+            parsed_nvr = parse_nvr(nvr)
+        except ValueError as exc:
+            raise ValueError(f"Cannot determine the version of FBC NVR '{nvr}': {exc}") from exc
+
+        nvr_version = parsed_nvr.get('version', '').lstrip('v')
+        nvr_match = _LP_ASSEMBLY_VERSION_RE.fullmatch(nvr_version)
+        if not nvr_match:
+            raise ValueError(f"Cannot determine the layered-product version of FBC NVR '{nvr}'")
+        nvr_parts = tuple(part for part in nvr_match.groups() if part is not None)
+        if nvr_parts[: len(assembly_parts)] != assembly_parts:
+            mismatches.append(f"{nvr} (version {nvr_version})")
+
+    if mismatches:
+        raise ValueError(
+            f"FBC NVRs do not match assembly '{assembly}': {', '.join(mismatches)}. No shipment data was changed."
+        )
 
 
 def extract_ocp_version_from_nvr(nvr: str) -> Optional[str]:

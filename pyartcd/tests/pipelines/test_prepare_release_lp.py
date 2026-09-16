@@ -497,6 +497,72 @@ class TestPrepareReleaseLPRun(unittest.TestCase):
         kwargs.update(overrides)
         return PrepareReleaseLPPipeline(**kwargs)
 
+    def test_mismatched_group_and_assembly_fail_before_setup(self):
+        """Reject a layered-product assembly from another release train immediately."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            pipeline = self._make_pipeline(tmp_dir, group="logging-6.2", assembly="6.5.13")
+            pipeline._check_env_vars = MagicMock()
+            pipeline._setup_working_dir = MagicMock()
+            pipeline._trigger_bundle_build = AsyncMock()
+
+            with self.assertRaisesRegex(ValueError, "Assembly '6.5.13' does not belong to group 'logging-6.2'"):
+                asyncio.run(pipeline.run())
+
+            pipeline._check_env_vars.assert_not_called()
+            pipeline._setup_working_dir.assert_not_called()
+            pipeline._trigger_bundle_build.assert_not_awaited()
+
+    @patch('pyartcd.pipelines.prepare_release_lp.validate_fbc_related_images', new_callable=AsyncMock)
+    def test_mismatched_generated_fbc_fails_before_snapshot(self, mock_validate_related):
+        """Reject a generated FBC whose product version differs from the assembly."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            pipeline = self._make_pipeline(tmp_dir, group="logging-6.2", assembly="6.2.13")
+            pipeline._check_env_vars = MagicMock()
+            pipeline._setup_working_dir = MagicMock()
+            pipeline._load_product_from_group_config = AsyncMock(return_value="openshift-logging")
+            pipeline._load_assembly = AsyncMock(return_value={'assembly': {'type': 'standard'}})
+            pipeline._trigger_bundle_build = AsyncMock(return_value=([], []))
+            pipeline._trigger_fbc_build = AsyncMock(
+                return_value=(
+                    ["cluster-logging-operator-fbc-6.2.12-20260910151430.ocp4.16"],
+                    ["quay.io/example/fbc@sha256:abc"],
+                )
+            )
+            pipeline._create_snapshot = AsyncMock()
+
+            with self.assertRaisesRegex(ValueError, "FBC NVRs do not match assembly '6.2.13'"):
+                asyncio.run(pipeline.run())
+
+            mock_validate_related.assert_not_awaited()
+            pipeline._create_snapshot.assert_not_awaited()
+
+    @patch('pyartcd.pipelines.prepare_release_lp.validate_fbc_related_images', new_callable=AsyncMock)
+    def test_generated_fbc_without_nvr_fails_before_snapshot(self, mock_validate_related):
+        """Reject generated FBC output that has no corresponding NVR."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            pipeline = self._make_pipeline(tmp_dir, group="logging-6.2", assembly="6.2.13")
+            pipeline._check_env_vars = MagicMock()
+            pipeline._setup_working_dir = MagicMock()
+            pipeline._load_product_from_group_config = AsyncMock(return_value="openshift-logging")
+            pipeline._load_assembly = AsyncMock(return_value={'assembly': {'type': 'standard'}})
+            pipeline._trigger_bundle_build = AsyncMock(return_value=([], []))
+            pipeline._trigger_fbc_build = AsyncMock(
+                return_value=([], ["quay.io/example/fbc@sha256:abc"]),
+            )
+            pipeline._create_snapshot = AsyncMock()
+
+            with self.assertRaisesRegex(ValueError, "Cannot match 1 generated FBC pullspecs to 0 FBC NVRs"):
+                asyncio.run(pipeline.run())
+
+            mock_validate_related.assert_not_awaited()
+            pipeline._create_snapshot.assert_not_awaited()
+
     @patch('pyartcd.pipelines.prepare_release_lp.validate_shipment_mr_for_operation', new_callable=AsyncMock)
     def test_active_stage_blocks_before_expensive_build_work(self, mock_validate):
         """Reject unsafe reuse before bundle and FBC builds begin."""

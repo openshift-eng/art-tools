@@ -40,7 +40,11 @@ from tenacity import retry, stop_after_attempt
 from pyartcd import constants, locks
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.fbc_util import extract_fbc_labels as _extract_fbc_labels
-from pyartcd.fbc_util import extract_ocp_version_from_nvr
+from pyartcd.fbc_util import (
+    extract_ocp_version_from_nvr,
+    validate_layered_product_fbc_nvrs,
+    validate_layered_product_group_assembly,
+)
 from pyartcd.fbc_util import validate_fbc_related_images as _validate_fbc_related_images
 from pyartcd.git import GitRepository
 from pyartcd.lp_shipment import (
@@ -1250,6 +1254,7 @@ class ReleaseFromFbcPipeline:
                     "OCP FBCs must use --ocp-optional to produce extras/fbc shipments. "
                     "Without it, cross-group filtering may discard images and produce only FBC yaml."
                 )
+            validate_layered_product_group_assembly(self.group, self.assembly)
         self.logger.info(f"Processing {len(self.fbc_pullspecs)} FBC pullspecs")
         if self.extra_image_nvrs:
             self.logger.info(f"Including {len(self.extra_image_nvrs)} extra image NVRs")
@@ -1313,18 +1318,27 @@ class ReleaseFromFbcPipeline:
         fbc_nvrs = []
 
         if self.fbc_pullspecs:
-            # Validate that all FBC builds have the same related images
-            related_nvrs = await self.validate_fbc_related_images(self.fbc_pullspecs)
+            # Resolve and validate the FBC identities before the more expensive
+            # related-image extraction or any shipment MR mutation.
+            for fbc_pullspec in self.fbc_pullspecs:
+                nvr = self.extract_fbc_nvr(fbc_pullspec)
+                if not nvr:
+                    if not self.ocp_optional:
+                        raise ValueError(
+                            f"Cannot determine the FBC NVR for '{fbc_pullspec}'. Refusing to create shipment data."
+                        )
+                    continue
+                fbc_nvrs.append(nvr)
 
-            # Extract FBC NVRs from each FBC pullspec
-            fbc_nvrs = [
-                nvr for fbc_pullspec in self.fbc_pullspecs if (nvr := self.extract_fbc_nvr(fbc_pullspec)) is not None
-            ]
-
+            if not self.ocp_optional:
+                validate_layered_product_fbc_nvrs(self.assembly, fbc_nvrs)
             if fbc_nvrs:
                 self.logger.info(f"Extracted {len(fbc_nvrs)} FBC NVRs: {fbc_nvrs}")
             else:
                 self.logger.warning("Could not extract any FBC NVRs - FBC shipments will not be created")
+
+            # Validate that all FBC builds have the same related images.
+            related_nvrs = await self.validate_fbc_related_images(self.fbc_pullspecs)
 
         # Combine related images with FBC NVRs
         all_nvrs = related_nvrs[:] + fbc_nvrs

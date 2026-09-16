@@ -40,7 +40,11 @@ from github import GithubException
 
 from pyartcd import constants, locks
 from pyartcd.cli import cli, click_coroutine, pass_runtime
-from pyartcd.fbc_util import validate_fbc_related_images
+from pyartcd.fbc_util import (
+    validate_fbc_related_images,
+    validate_layered_product_fbc_nvrs,
+    validate_layered_product_group_assembly,
+)
 from pyartcd.git import GitRepository
 from pyartcd.lp_shipment import (
     ShipmentMRValidationError,
@@ -923,6 +927,8 @@ class PrepareReleaseLPPipeline:
             self.assembly,
         )
 
+        validate_layered_product_group_assembly(self.group, self.assembly)
+
         self._check_env_vars()
         self._setup_working_dir()
 
@@ -975,6 +981,12 @@ class PrepareReleaseLPPipeline:
 
         fbc_nvrs, fbc_pullspecs = await self._trigger_fbc_build(assembly_operator_nvrs)
         self._logger.info("FBC builds: %d NVRs", len(fbc_nvrs))
+        if fbc_pullspecs and len(fbc_nvrs) != len(fbc_pullspecs):
+            raise ValueError(
+                f"Cannot match {len(fbc_pullspecs)} generated FBC pullspecs to {len(fbc_nvrs)} FBC NVRs. "
+                "Refusing to create shipment data."
+            )
+        validate_layered_product_fbc_nvrs(self.assembly, fbc_nvrs)
 
         if len(fbc_pullspecs) > 1:
             self._logger.info("Validating FBC consistency across OCP target versions...")

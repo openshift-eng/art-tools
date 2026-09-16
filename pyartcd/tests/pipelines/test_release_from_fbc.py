@@ -1552,6 +1552,56 @@ class TestOcpOptionalMode(unittest.TestCase):
 
     # -- run() integration tests --
 
+    def test_mismatched_layered_product_group_and_assembly_fail_before_setup(self):
+        """Reject the observed Logging mismatch before repository or FBC work."""
+        pipeline = self._make_pipeline(ocp_optional=False, group="logging-6.2", assembly="6.5.13")
+        pipeline.check_env_vars = MagicMock()
+        pipeline.setup_working_dir = MagicMock()
+        pipeline.setup_shipment_repo = AsyncMock()
+        pipeline.validate_fbc_related_images = AsyncMock()
+
+        with self.assertRaisesRegex(ValueError, "Assembly '6.5.13' does not belong to group 'logging-6.2'"):
+            asyncio.run(pipeline.run())
+
+        pipeline.check_env_vars.assert_not_called()
+        pipeline.setup_working_dir.assert_not_called()
+        pipeline.setup_shipment_repo.assert_not_awaited()
+        pipeline.validate_fbc_related_images.assert_not_awaited()
+
+    def test_mismatched_layered_product_fbc_fails_before_snapshot(self):
+        """Reject an FBC from another assembly before extracting related images."""
+        pipeline = self._make_pipeline(ocp_optional=False, group="logging-6.2", assembly="6.2.13")
+        pipeline.create_mr = False
+        pipeline.check_env_vars = MagicMock()
+        pipeline.setup_working_dir = MagicMock()
+        pipeline._load_product_from_group_config = AsyncMock(return_value="openshift-logging")
+        pipeline.validate_fbc_related_images = AsyncMock(return_value=["external-container-v4.18.0-1"])
+        pipeline.extract_fbc_nvr = MagicMock(return_value="cluster-logging-operator-fbc-6.2.12-20260910151430.ocp4.16")
+        pipeline.create_snapshot = AsyncMock()
+
+        with self.assertRaisesRegex(ValueError, "FBC NVRs do not match assembly '6.2.13'"):
+            asyncio.run(pipeline.run())
+
+        pipeline.validate_fbc_related_images.assert_not_awaited()
+        pipeline.create_snapshot.assert_not_awaited()
+
+    def test_missing_layered_product_fbc_nvr_fails_before_snapshot(self):
+        """Reject a supplied LP FBC whose NVR cannot be determined."""
+        pipeline = self._make_pipeline(ocp_optional=False, group="logging-6.2", assembly="6.2.13")
+        pipeline.create_mr = False
+        pipeline.check_env_vars = MagicMock()
+        pipeline.setup_working_dir = MagicMock()
+        pipeline._load_product_from_group_config = AsyncMock(return_value="openshift-logging")
+        pipeline.validate_fbc_related_images = AsyncMock(return_value=[])
+        pipeline.extract_fbc_nvr = MagicMock(return_value=None)
+        pipeline.create_snapshot = AsyncMock()
+
+        with self.assertRaisesRegex(ValueError, "Cannot determine the FBC NVR"):
+            asyncio.run(pipeline.run())
+
+        pipeline.validate_fbc_related_images.assert_not_awaited()
+        pipeline.create_snapshot.assert_not_awaited()
+
     @patch('pyartcd.pipelines.release_from_fbc.validate_shipment_mr_for_operation', new_callable=AsyncMock)
     def test_active_stage_blocks_before_fbc_processing(self, mock_validate):
         """Reject unsafe layered-product reuse before processing release inputs."""

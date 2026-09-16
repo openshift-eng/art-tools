@@ -5,6 +5,8 @@ from unittest.mock import AsyncMock, patch
 from pyartcd.fbc_util import (
     extract_ocp_version_from_nvr,
     validate_fbc_related_images,
+    validate_layered_product_fbc_nvrs,
+    validate_layered_product_group_assembly,
 )
 
 
@@ -27,6 +29,39 @@ class TestExtractOcpVersionFromNvr(unittest.TestCase):
 
     def test_returns_none_for_non_fbc_nvr(self):
         self.assertIsNone(extract_ocp_version_from_nvr("search-v2-api-container-2.17.3-1"))
+
+
+class TestValidateLayeredProductReleaseVersions(unittest.TestCase):
+    def test_group_and_assembly_match(self):
+        validate_layered_product_group_assembly("logging-6.2", "6.2.13")
+
+    def test_group_and_assembly_mismatch(self):
+        with self.assertRaisesRegex(ValueError, "Assembly '6.5.13' does not belong to group 'logging-6.2'"):
+            validate_layered_product_group_assembly("logging-6.2", "6.5.13")
+
+    def test_fbc_nvrs_match_full_assembly(self):
+        validate_layered_product_fbc_nvrs(
+            "6.2.13",
+            [
+                "cluster-logging-operator-fbc-6.2.13-20260910151430.ocp4.16",
+                "loki-operator-fbc-6.2.13-20260910151552.ocp4.20",
+            ],
+        )
+
+    def test_two_component_assembly_accepts_matching_release_train(self):
+        validate_layered_product_fbc_nvrs(
+            "6.2",
+            ["cluster-logging-operator-fbc-6.2.13-20260910151430.ocp4.16"],
+        )
+
+    def test_fbc_nvr_mismatch(self):
+        nvr = "cluster-logging-operator-fbc-6.2.13-20260910151430.ocp4.16"
+        with self.assertRaisesRegex(ValueError, "FBC NVRs do not match assembly '6.5.13'"):
+            validate_layered_product_fbc_nvrs("6.5.13", [nvr])
+
+    def test_unparseable_fbc_nvr_fails_closed(self):
+        with self.assertRaisesRegex(ValueError, "Cannot determine.*version of FBC NVR"):
+            validate_layered_product_fbc_nvrs("6.2.13", ["not-an-nvr"])
 
 
 class TestValidateFbcRelatedImages(unittest.TestCase):
