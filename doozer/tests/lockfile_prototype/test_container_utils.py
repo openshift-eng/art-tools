@@ -44,6 +44,19 @@ class TestContainerImageHelper(unittest.TestCase):
                         }
                     ],
                 },
+                {
+                    "name": "python3-attrs",
+                    "externalRefs": [
+                        {
+                            "referenceType": "purl",
+                            "referenceLocator": (
+                                "pkg:rpm/redhat/python3-attrs@21.4.0-1.el9?"
+                                "arch=noarch&checksum=sha256:abc123&"
+                                "repository_id=rhel-9-for-aarch64-appstream-e4s-rpms__9_DOT_6"
+                            ),
+                        }
+                    ],
+                },
             ]
         }
 
@@ -51,7 +64,7 @@ class TestContainerImageHelper(unittest.TestCase):
 
         result = helper._parse_sbom_package_names(sbom)
 
-        self.assertEqual(result, ["python3-six"])
+        self.assertEqual(result, ["python3-attrs", "python3-six"])
 
     @patch("doozerlib.lockfile_prototype.container_utils.oc_image_info_for_arch_async", new_callable=AsyncMock)
     def test_resolve_to_digest_already_list_digest(self, mock_oc):
