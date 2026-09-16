@@ -13,6 +13,7 @@ from artcommonlib.konflux.konflux_build_record import (
     KonfluxFbcBuildRecord,
 )
 from artcommonlib.konflux.konflux_db import CacheRecordsType, KonfluxDb
+from artcommonlib.variants import BuildVariant
 from google.cloud.bigquery import SchemaField
 
 
@@ -33,7 +34,7 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
 
     @patch('artcommonlib.bigquery.BigQueryClient.query')
     def test_add_builds(self, query_mock):
-        build = KonfluxBuildRecord()
+        build = KonfluxBuildRecord(build_variant=BuildVariant.OCP)
 
         self.db.add_build(build)
         query_mock.assert_called_once()
@@ -49,6 +50,24 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
         query_mock.reset_mock()
         asyncio.run(self.db.add_builds([build for _ in range(10)]))
         self.assertEqual(query_mock.call_count, 10)
+
+    @patch('artcommonlib.bigquery.BigQueryClient.query')
+    def test_add_build_rejects_missing_variant_for_konflux_record(self, query_mock):
+        build = KonfluxBuildRecord(build_variant=None)
+
+        with self.assertRaisesRegex(ValueError, 'build_variant'):
+            self.db.add_build(build)
+
+        query_mock.assert_not_called()
+
+    @patch('artcommonlib.bigquery.BigQueryClient.query')
+    def test_add_build_rejects_missing_variant_for_brew_record(self, query_mock):
+        build = KonfluxBuildRecord(engine=Engine.BREW, build_variant=None)
+
+        with self.assertRaisesRegex(ValueError, 'build_variant'):
+            self.db.add_build(build)
+
+        query_mock.assert_not_called()
 
     def test_add_builds_cache_validation(self):
         """Test that cache.add_builds validates all builds are from the same group"""

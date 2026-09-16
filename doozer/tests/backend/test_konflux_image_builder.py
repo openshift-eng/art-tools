@@ -9,6 +9,7 @@ from artcommonlib.konflux.konflux_build_record import (
     KonfluxBuildOutcome,
     KonfluxBuildRecord,
 )
+from artcommonlib.variants import BuildVariant
 from doozerlib.backend.konflux_image_builder import (
     KonfluxImageBuilder,
     KonfluxImageBuilderConfig,
@@ -52,6 +53,7 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
         metadata.build_event = MagicMock()
         metadata.runtime = MagicMock()
         metadata.runtime.assembly = "test-assembly"
+        metadata.runtime.variant = BuildVariant.OCP
         metadata.runtime.konflux_db = MagicMock()
 
         async def search_builds_by_fields(**_kwargs):
@@ -366,6 +368,7 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
 
     async def test_update_konflux_db_uses_definitive_pullspec_for_installed_packages(self):
         metadata = self._metadata()
+        metadata.runtime.variant = BuildVariant.OKD
         build_repo = MagicMock()
         build_repo.https_url = "https://example.com/repo.git"
         build_repo.commit_hash = "test-commit-hash"
@@ -427,6 +430,8 @@ class TestKonfluxImageBuilder(unittest.IsolatedAsyncioTestCase):
             )
 
         mock_get_installed_packages.assert_awaited_once_with("quay.io/test/image@sha256:testdigest", ["x86_64"], None)
+        build_record = metadata.runtime.konflux_db.add_build.call_args[0][0]
+        self.assertEqual(build_record.build_variant, BuildVariant.OKD)
 
     async def test_update_konflux_db_skips_rpm_extraction_when_no_shell(self):
         """RPM extraction is skipped for no_shell images (e.g. FROM scratch ISO builds)."""

@@ -469,6 +469,8 @@ class TestBuildMicroShiftBootcPipeline(IsolatedAsyncioTestCase):
 
             rebase_cmd = mock_cmd.call_args_list[0][0][0]
 
+            self.assertIn("--variant=microshift", rebase_cmd)
+
             # --version uses 2-segment format (no trailing .0)
             ver_idx = rebase_cmd.index("--version")
             self.assertEqual(rebase_cmd[ver_idx + 1], "v4.21")
@@ -520,6 +522,7 @@ class TestBuildMicroShiftBootcPipeline(IsolatedAsyncioTestCase):
             # Verify build command uses the RPM commit, not HEAD
             build_call = mock_cmd.call_args_list[1]
             build_cmd = build_call[0][0]
+            self.assertIn("--variant=microshift", build_cmd)
             lock_idx = build_cmd.index("--lock-upstream")
             self.assertEqual(build_cmd[lock_idx + 1], "microshift-bootc")
             self.assertEqual(build_cmd[lock_idx + 2], "0d0943b")

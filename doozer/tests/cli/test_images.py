@@ -195,9 +195,51 @@ class TestReleaseToBaseRepo(unittest.TestCase):
         self.assertEqual(len(captured), 1)
         followup = captured[0]
         self.assertEqual(followup.build_id, "shared-bid")
+        self.assertEqual(followup.build_variant, BuildVariant.OCP)
         self.assertEqual(followup.release_pipeline, release_out.release_pipeline)
         self.assertEqual(followup.released_pullspec, release_out.released_pullspec)
         self.assertNotEqual(followup.record_id, "prior-id")
+
+    def test_legacy_followup_uses_group_product_variant(self):
+        runtime = self._runtime_with_base_image()
+        runtime.group = "logging-6.6"
+        runtime.product = "openshift-logging"
+        runtime.variant = BuildVariant.OCP
+        nvr = "logging-base-container-v6.6-1.el9"
+        source = KonfluxBuildRecord(
+            name="openshift-enterprise-base-rhel9",
+            group=runtime.group,
+            nvr=nvr,
+            outcome=KonfluxBuildOutcome.SUCCESS,
+            engine=Engine.KONFLUX,
+            record_id="prior-id",
+            build_id="shared-bid",
+            image_pullspec="quay.io/base@sha256:abc",
+            rebase_repo_url="https://git.example/r.git",
+            rebase_commitish="deadbeef",
+        )
+
+        kb = MagicMock()
+        kb.get_build_record_by_nvr = AsyncMock(return_value=source)
+        kb.bind = MagicMock()
+        kb.add_builds = AsyncMock()
+        runtime.konflux_db = kb
+        runtime.initialize = MagicMock()
+
+        release_out = BaseImageReleaseResult(
+            release_name="r1",
+            snapshot_name="s1",
+            nvr=nvr,
+            release_pipeline="https://pipeline",
+            released_pullspec="registry.example/img:tag",
+        )
+
+        with patch("doozerlib.cli.images.BaseImageHandler") as bh_cls:
+            bh_cls.return_value.snapshot_release = AsyncMock(return_value=release_out)
+            _invoke_release_to_base_repo_inner(runtime, nvr)
+
+        followup = kb.add_builds.await_args.args[0][0]
+        self.assertEqual(followup.build_variant, BuildVariant.LOGGING)
 
     def test_golang_builder_snapshot_input_openshift_slash_builder_name(self):
         """Regression: openshift/golang-builder in metadata marks golang (ART-18934)."""

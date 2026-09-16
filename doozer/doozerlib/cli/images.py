@@ -21,6 +21,7 @@ from artcommonlib.format_util import color_print, green_print, yellow_print
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
+from artcommonlib.variants import get_build_variant_for_product
 from dockerfile_parse import DockerfileParser
 
 from doozerlib import Runtime, coverity, state
@@ -1550,6 +1551,8 @@ async def release_to_base_repo(runtime, nvr):
         result.release_pipeline,
     )
     followup = copy.deepcopy(source_row)
+    if followup.build_variant is None:
+        followup.build_variant = get_build_variant_for_product(runtime.product) or runtime.variant
     followup.release_pipeline = result.release_pipeline
     followup.released_pullspec = result.released_pullspec
     followup.record_id = KonfluxBuildRecord.generate_record_id()

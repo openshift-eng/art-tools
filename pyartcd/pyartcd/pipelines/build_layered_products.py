@@ -11,6 +11,7 @@ from artcommonlib import exectools
 from artcommonlib.build_visibility import is_nvr_embargoed
 from artcommonlib.constants import PRODUCT_KUBECONFIG_MAP
 from artcommonlib.util import resolve_konflux_kubeconfig_by_product, resolve_konflux_namespace_by_product
+from artcommonlib.variants import BuildVariant, get_build_variant_for_product
 from doozerlib.constants import KONFLUX_DEFAULT_IMAGE_REPO
 
 from pyartcd import constants, jenkins, locks
@@ -169,7 +170,7 @@ class BuildLayeredProductsPipeline:
             self._logger.info(f"Using version {self.version} from group config")
 
         # Extract product from group config
-        product = group_config.get('product', 'ocp')
+        product = group_config.get('product') or 'ocp'
         image_repo = group_config.get('konflux', {}).get('image_repo') or KONFLUX_DEFAULT_IMAGE_REPO
         await self._rebase_and_build(product, image_repo)
         self.trigger_bundle_build()
@@ -189,8 +190,8 @@ class BuildLayeredProductsPipeline:
             return f"--group={self.group}@{self.data_gitref}"
         return f"--group={self.group}"
 
-    def _doozer_base_command(self) -> List[str]:
-        return [
+    def _doozer_base_command(self, build_variant: BuildVariant | None = None) -> List[str]:
+        command = [
             "doozer",
             f"--assembly={self.assembly}",
             f"--working-dir={self.runtime.doozer_working}",
@@ -199,15 +200,19 @@ class BuildLayeredProductsPipeline:
             self._group_param(),
             "--latest-parent-version",
         ]
+        if build_variant is not None:
+            command.append(f"--variant={build_variant.value}")
+        return command
 
     async def _rebase_and_build(self, product: str, image_repo: str):
         """Rebase and build layered product images."""
+        build_variant = get_build_variant_for_product(product)
         strategy = self.image_build_strategy
         rebase_image_list = self.image_list if strategy == BuildStrategy.ONLY else None
         excluded: List[str] = []
 
         if not self.skip_rebase:
-            excluded = await self._rebase(rebase_image_list)
+            excluded = await self._rebase(rebase_image_list, build_variant)
         else:
             self._logger.warning("Skipping rebase step because --skip-rebase flag is set")
 
@@ -222,11 +227,11 @@ class BuildLayeredProductsPipeline:
             build_image_list = None
 
         try:
-            await self._build(strategy, build_image_list, excluded, product, image_repo)
+            await self._build(strategy, build_image_list, excluded, product, image_repo, build_variant)
         finally:
             self._update_build_description()
 
-    async def _rebase(self, image_list: Optional[str]) -> List[str]:
+    async def _rebase(self, image_list: Optional[str], build_variant: BuildVariant | None = None) -> List[str]:
         """Rebase layered product images.
 
         Returns the list of images excluded due to rebase failure.
@@ -237,7 +242,7 @@ class BuildLayeredProductsPipeline:
         else:
             self._logger.info(f"Rebasing all images for assembly {self.assembly}")
 
-        rebase_cmd = self._doozer_base_command()
+        rebase_cmd = self._doozer_base_command(build_variant)
         if image_list:
             rebase_cmd.append(f"--images={image_list}")
         rebase_cmd.extend(
@@ -315,6 +320,7 @@ class BuildLayeredProductsPipeline:
         excluded: List[str],
         product: str,
         image_repo: str,
+        build_variant: BuildVariant | None = None,
     ):
         """Build layered product images."""
         if image_list:
@@ -322,7 +328,7 @@ class BuildLayeredProductsPipeline:
         else:
             self._logger.info(f"Building all images for assembly {self.assembly}")
 
-        build_cmd = self._doozer_base_command()
+        build_cmd = self._doozer_base_command(build_variant)
         if strategy == BuildStrategy.ONLY:
             build_cmd.append(f"--images={image_list}")
         elif excluded:

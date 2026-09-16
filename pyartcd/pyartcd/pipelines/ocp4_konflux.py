@@ -155,6 +155,7 @@ class KonfluxOcpPipeline:
             f'--data-path={data_path}',
             '--build-system=konflux',
             group_param,
+            '--variant=ocp',
         ]
 
         self.build_plan = BuildPlan(BuildStrategy(image_build_strategy), BuildStrategy(rpm_build_strategy))

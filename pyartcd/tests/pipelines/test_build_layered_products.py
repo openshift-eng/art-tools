@@ -5,6 +5,7 @@ from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import yaml
+from artcommonlib.variants import BuildVariant
 from doozerlib.constants import KONFLUX_DEFAULT_IMAGE_REPO
 from pyartcd.pipelines.build_layered_products import BuildLayeredProductsPipeline
 from pyartcd.pipelines.ocp4_konflux import BuildStrategy
@@ -66,6 +67,11 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
                 skip_bundle_build=True,
             )
         mock_update_title.assert_not_called()
+
+    def test_doozer_base_command_uses_explicit_build_variant(self):
+        command = self.pipeline._doozer_base_command(BuildVariant.OADP)
+
+        self.assertIn("--variant=oadp", command)
 
     async def test_rebase_success_returns_no_excluded_images(self):
         """When rebase succeeds, no images are excluded."""
@@ -222,6 +228,7 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
         mock_cmd.assert_called_once()
         cmd = mock_cmd.call_args[0][0]
         self.assertIn(f'--images={self.pipeline.image_list}', cmd)
+        self.assertIn('--variant=oadp', cmd)
         self.assertIn('beta:images:konflux:build', cmd)
 
     @patch('pyartcd.pipelines.build_layered_products.jenkins.update_description')
