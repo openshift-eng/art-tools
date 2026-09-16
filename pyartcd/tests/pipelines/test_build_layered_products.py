@@ -1,12 +1,14 @@
 import os
 import tempfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import yaml
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome
 from doozerlib.constants import KONFLUX_DEFAULT_IMAGE_REPO
-from pyartcd.pipelines.build_layered_products import BuildLayeredProductsPipeline
+from pyartcd.pipelines.build_layered_products import BuildLayeredProductsPipeline, _resolve_effective_time
 from pyartcd.pipelines.ocp4_konflux import BuildStrategy
 from pyartcd.runtime import Runtime
 
@@ -555,3 +557,113 @@ class TestBuildLayeredProductsPipeline(IsolatedAsyncioTestCase):
         cmd = mock_cmd.call_args[0][0]
         self.assertIn('--images=', cmd)
         self.assertIn('--exclude=img-a,img-b', cmd)
+
+    def test_effective_time_defaults_to_fourteen_days_ahead(self):
+        before = datetime.now(timezone.utc) + timedelta(days=14)
+        resolved = datetime.fromisoformat(_resolve_effective_time(None).replace('Z', '+00:00'))
+        after = datetime.now(timezone.utc) + timedelta(days=14)
+        self.assertLessEqual(before.replace(microsecond=0), resolved)
+        self.assertLessEqual(resolved, after)
+
+    def test_effective_time_requires_rfc3339_timezone(self):
+        self.assertEqual(_resolve_effective_time('2026-09-22T00:00:00Z'), '2026-09-22T00:00:00Z')
+        with self.assertRaisesRegex(ValueError, 'timezone is required'):
+            _resolve_effective_time('2026-09-22T00:00:00')
+
+    async def test_build_passes_independent_verification_options(self):
+        self.pipeline.skip_ec_verify = True
+        self.pipeline.skip_custom_its = True
+        self.pipeline.effective_time = '2026-09-22T00:00:00Z'
+        with (
+            patch(
+                'pyartcd.pipelines.build_layered_products.exectools.cmd_assert_async',
+                new_callable=AsyncMock,
+            ) as mock_cmd,
+            patch(
+                'pyartcd.pipelines.build_layered_products.resolve_konflux_kubeconfig_by_product',
+                return_value='/path/to/kubeconfig',
+            ),
+        ):
+            await self.pipeline._build(BuildStrategy.ONLY, 'img-a', [], 'oadp', KONFLUX_DEFAULT_IMAGE_REPO)
+
+        cmd = mock_cmd.call_args.args[0]
+        self.assertIn('--skip-ec-verify', cmd)
+        self.assertIn('--skip-custom-its', cmd)
+        self.assertIn('--effective-time=2026-09-22T00:00:00Z', cmd)
+
+    @patch('pyartcd.pipelines.build_layered_products.increment_fail_counter', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.build_layered_products.reset_fail_counter', new_callable=AsyncMock)
+    async def test_layered_build_failure_counters(self, mock_reset, mock_increment):
+        record_log = {
+            'image_build_konflux': [
+                {'name': 'ok', 'status': '0'},
+                {
+                    'name': 'build-fail',
+                    'status': '1',
+                    'task_id': 'build-plr',
+                    'outcome': 'build_error',
+                    'build_pipeline_url': 'https://example/build',
+                },
+                {
+                    'name': 'its-fail',
+                    'status': '1',
+                    'task_id': 'build-plr',
+                    'outcome': str(KonfluxBuildOutcome.ITS_ERROR),
+                    'ec_pipeline_url': 'https://example/its',
+                },
+                {
+                    'name': 'release-fail',
+                    'status': '1',
+                    'task_id': 'build-plr',
+                    'outcome': str(KonfluxBuildOutcome.RELEASE_ERROR),
+                    'release_pipeline': 'https://example/release',
+                },
+                {'name': 'infra', 'status': '1', 'task_id': 'n/a', 'outcome': 'failure'},
+                {
+                    'name': 'child',
+                    'status': '1',
+                    'task_id': 'n/a',
+                    'message': "Couldn't build child because parent images failed to build",
+                },
+            ]
+        }
+        with patch.object(self.pipeline, 'parse_record_log', return_value=record_log):
+            await self.pipeline._update_build_fail_counters()
+
+        reset_keys = {call.args[0] for call in mock_reset.await_args_list}
+        self.assertEqual(
+            reset_keys,
+            {
+                'count:build-failure:konflux:oadp-1.4:ok',
+                'count:ec-failure:konflux:oadp-1.4:ok',
+                'count:release-failure:konflux:oadp-1.4:ok',
+            },
+        )
+        increment_keys = {call.args[0] for call in mock_increment.await_args_list}
+        self.assertEqual(
+            increment_keys,
+            {
+                'count:build-failure:konflux:oadp-1.4:build-fail',
+                'count:ec-failure:konflux:oadp-1.4:its-fail',
+                'count:release-failure:konflux:oadp-1.4:release-fail',
+            },
+        )
+
+    @patch('pyartcd.pipelines.build_layered_products.increment_fail_counter', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.build_layered_products.reset_fail_counter', new_callable=AsyncMock)
+    async def test_failure_counters_skip_non_stream_assemblies(self, mock_reset, mock_increment):
+        self.pipeline.assembly = 'test'
+        await self.pipeline._update_build_fail_counters()
+        mock_reset.assert_not_awaited()
+        mock_increment.assert_not_awaited()
+
+    @patch('pyartcd.pipelines.build_layered_products.increment_fail_counter', new_callable=AsyncMock)
+    @patch('pyartcd.pipelines.build_layered_products.reset_fail_counter', new_callable=AsyncMock)
+    async def test_failure_counters_skip_dry_run(self, mock_reset, mock_increment):
+        self.runtime.dry_run = True
+        with patch.object(self.pipeline, 'parse_record_log') as mock_parse_record_log:
+            await self.pipeline._update_build_fail_counters()
+
+        mock_parse_record_log.assert_not_called()
+        mock_reset.assert_not_awaited()
+        mock_increment.assert_not_awaited()

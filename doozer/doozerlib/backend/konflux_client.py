@@ -105,6 +105,15 @@ class ECVerificationResult:
     ec_failed: bool
 
 
+@dataclass
+class CustomIntegrationTestResult:
+    """Result of configured custom IntegrationTestScenario runs."""
+
+    blocking_failed: bool
+    blocking_failed_pipeline_url: str
+    pipeline_urls: List[str]
+
+
 class GitHubApiUrlInfo(NamedTuple):
     """Parsed GitHub API URL components."""
 
@@ -1031,6 +1040,392 @@ class KonfluxClient:
         )
         return await self._create_or_patch(its)
 
+    async def get_integration_test_scenario(
+        self,
+        name: str,
+        namespace: Optional[str] = None,
+        strict: bool = True,
+    ) -> Optional[resource.ResourceInstance]:
+        """Get an existing IntegrationTestScenario without modifying it."""
+        return await self._get(
+            API_VERSION_V1BETA2,
+            KIND_INTEGRATION_TEST_SCENARIO,
+            name,
+            namespace=namespace,
+            strict=strict,
+        )
+
+    async def validate_integration_test_scenarios(
+        self,
+        scenario_names: Sequence[str],
+        application_name: str,
+        namespace: Optional[str] = None,
+    ) -> set[str]:
+        """Validate configured custom ITS resources and return the release-blocking scenario names."""
+        if self.dry_run:
+            self._logger.warning(
+                "[DRY RUN] Would have validated custom IntegrationTestScenarios for application %s: %s",
+                application_name,
+                ", ".join(scenario_names),
+            )
+            return set()
+
+        blocking_scenario_names = set()
+        for scenario_name in scenario_names:
+            scenario = await self.get_integration_test_scenario(
+                scenario_name,
+                namespace=namespace,
+                strict=True,
+            )
+            scenario_dict = scenario.to_dict()
+            actual_application = scenario_dict.get("spec", {}).get("application")
+            if actual_application != application_name:
+                raise ValueError(
+                    f"IntegrationTestScenario {scenario_name!r} belongs to application "
+                    f"{actual_application!r}, expected {application_name!r}"
+                )
+            contexts = scenario_dict.get("spec", {}).get("contexts", [])
+            context_names = {context.get("name") for context in contexts if isinstance(context, dict)}
+            if context_names != {"disabled"}:
+                raise ValueError(
+                    f"IntegrationTestScenario {scenario_name!r} must use only the 'disabled' context "
+                    "for explicit ART triggering"
+                )
+            optional_label = (
+                scenario_dict.get("metadata", {}).get("labels", {}).get("test.appstudio.openshift.io/optional")
+            )
+            if optional_label == "false":
+                blocking_scenario_names.add(scenario_name)
+                self._logger.info(
+                    "Custom IntegrationTestScenario %s is release-blocking",
+                    scenario_name,
+                )
+            else:
+                self._logger.info(
+                    "Custom IntegrationTestScenario %s is optional and will not block the build",
+                    scenario_name,
+                )
+
+        return blocking_scenario_names
+
+    @staticmethod
+    def _new_custom_integration_test_snapshot(
+        namespace: str,
+        application_name: str,
+        component_name: str,
+        image_pullspec: str,
+        source_url: str,
+        commit_sha: str,
+        annotations: Dict[str, str],
+    ) -> dict:
+        """Create a single-component Snapshot manifest for explicitly triggered integration tests."""
+        application_prefix = art_util.normalize_k8s_dns_label(application_name, max_length=43)
+        return {
+            "apiVersion": API_VERSION,
+            "kind": KIND_SNAPSHOT,
+            "metadata": {
+                "generateName": f"{application_prefix}-art-its-",
+                "namespace": namespace,
+                "labels": {
+                    "appstudio.openshift.io/application": application_name,
+                    "appstudio.openshift.io/component": component_name,
+                    "art.openshift.io/custom-its": "true",
+                },
+                "annotations": dict(annotations),
+            },
+            "spec": {
+                "application": application_name,
+                "components": [
+                    {
+                        "name": component_name,
+                        "containerImage": image_pullspec,
+                        "source": {"git": {"url": source_url, "revision": commit_sha}},
+                    }
+                ],
+            },
+        }
+
+    @staticmethod
+    def _snapshot_test_statuses(snapshot: resource.ResourceInstance) -> Dict[str, dict]:
+        annotation = (
+            snapshot.to_dict().get("metadata", {}).get("annotations", {}).get("test.appstudio.openshift.io/status")
+        )
+        if not annotation:
+            return {}
+        try:
+            status_entries = json.loads(annotation)
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise ValueError(
+                f"Snapshot {snapshot.metadata.name} has malformed integration test status annotation"
+            ) from exc
+        if not isinstance(status_entries, list) or not all(isinstance(entry, dict) for entry in status_entries):
+            raise ValueError(f"Snapshot {snapshot.metadata.name} has malformed integration test status annotation")
+        return {entry.get("scenario"): entry for entry in status_entries if entry.get("scenario")}
+
+    async def _trigger_integration_test_scenario(
+        self,
+        snapshot_name: str,
+        scenario_name: str,
+        namespace: str,
+        timeout_seconds: int,
+        poll_interval_seconds: int,
+    ) -> resource.ResourceInstance:
+        """Request one scenario run and wait for Integration Service to record it."""
+        await self._patch(
+            {
+                "apiVersion": API_VERSION,
+                "kind": KIND_SNAPSHOT,
+                "metadata": {
+                    "name": snapshot_name,
+                    "namespace": namespace,
+                    "labels": {"test.appstudio.openshift.io/run": scenario_name},
+                },
+            }
+        )
+        deadline = time.monotonic() + timeout_seconds
+        while time.monotonic() < deadline:
+            snapshot = await self._get(API_VERSION, KIND_SNAPSHOT, snapshot_name, namespace=namespace, strict=False)
+            if snapshot is None:
+                raise RuntimeError(f"Snapshot {snapshot_name} disappeared")
+            statuses = self._snapshot_test_statuses(snapshot)
+            run_label = snapshot.to_dict().get("metadata", {}).get("labels", {}).get("test.appstudio.openshift.io/run")
+            if scenario_name in statuses and run_label != scenario_name:
+                return snapshot
+            await asyncio.sleep(poll_interval_seconds)
+        raise TimeoutError(
+            f"Timed out waiting for IntegrationTestScenario {scenario_name} to start for Snapshot {snapshot_name}"
+        )
+
+    @staticmethod
+    def _custom_integration_test_pipeline_url(
+        namespace: str,
+        application_name: str,
+        pipelinerun_name: str,
+    ) -> str:
+        if not pipelinerun_name:
+            return ""
+        return (
+            f"{constants.KONFLUX_UI_HOST}/ns/{namespace}/applications/"
+            f"{application_name}/pipelineruns/{pipelinerun_name}"
+        )
+
+    async def run_integration_test_scenarios(
+        self,
+        scenario_names: Sequence[str],
+        application_name: str,
+        component_name: str,
+        image_pullspec: str,
+        source_url: str,
+        commit_sha: str,
+        blocking_scenario_names: Optional[Sequence[str]] = None,
+        snapshot_annotations: Optional[Dict[str, str]] = None,
+        namespace: Optional[str] = None,
+        trigger_timeout_seconds: int = 10 * 60,
+        completion_timeout_seconds: int = 6 * 60 * 60,
+        poll_interval_seconds: int = 10,
+    ) -> CustomIntegrationTestResult:
+        """Create a Snapshot, explicitly trigger configured scenarios, and wait for completion."""
+        namespace = namespace or self.default_namespace
+        scenario_names = tuple(dict.fromkeys(scenario_names))
+        blocking_scenario_names = set(blocking_scenario_names or ()).intersection(scenario_names)
+        if not scenario_names:
+            return CustomIntegrationTestResult(False, "", [])
+        if self.dry_run:
+            self._logger.warning(
+                "[DRY RUN] Would have created a Snapshot and triggered custom IntegrationTestScenarios: %s",
+                ", ".join(scenario_names),
+            )
+            return CustomIntegrationTestResult(False, "", [])
+        statuses_by_scenario: Dict[str, dict] = {}
+        trigger_failed_scenarios = set()
+        try:
+            snapshot_manifest = self._new_custom_integration_test_snapshot(
+                namespace=namespace,
+                application_name=application_name,
+                component_name=component_name,
+                image_pullspec=image_pullspec,
+                source_url=source_url,
+                commit_sha=commit_sha,
+                annotations=snapshot_annotations or {},
+            )
+            snapshot = await self._create(snapshot_manifest)
+            snapshot_name = snapshot.metadata.name
+            self._logger.info("Created custom integration test Snapshot %s", snapshot_name)
+
+            for scenario_name in scenario_names:
+                try:
+                    snapshot = await self._trigger_integration_test_scenario(
+                        snapshot_name,
+                        scenario_name,
+                        namespace,
+                        trigger_timeout_seconds,
+                        poll_interval_seconds,
+                    )
+                except Exception:
+                    trigger_failed_scenarios.add(scenario_name)
+                    if scenario_name in blocking_scenario_names:
+                        self._logger.exception(
+                            "Failed to trigger release-blocking custom IntegrationTestScenario %s",
+                            scenario_name,
+                        )
+                        pipeline_urls = [
+                            self._custom_integration_test_pipeline_url(
+                                namespace,
+                                application_name,
+                                entry.get("testPipelineRunName", ""),
+                            )
+                            for entry in statuses_by_scenario.values()
+                            if entry.get("testPipelineRunName")
+                        ]
+                        return CustomIntegrationTestResult(True, "", pipeline_urls)
+                    self._logger.warning(
+                        "Failed to trigger optional custom IntegrationTestScenario %s; continuing the build",
+                        scenario_name,
+                        exc_info=True,
+                    )
+                    continue
+                statuses_by_scenario = self._snapshot_test_statuses(snapshot)
+
+            monitored_scenario_names = tuple(name for name in scenario_names if name not in trigger_failed_scenarios)
+            if not monitored_scenario_names:
+                return CustomIntegrationTestResult(False, "", [])
+
+            completion_deadline = time.monotonic() + completion_timeout_seconds
+            reported_failures = set()
+            while True:
+                pipeline_urls = [
+                    self._custom_integration_test_pipeline_url(
+                        namespace,
+                        application_name,
+                        statuses_by_scenario[name].get("testPipelineRunName", ""),
+                    )
+                    for name in monitored_scenario_names
+                    if statuses_by_scenario[name].get("testPipelineRunName")
+                ]
+                pending_statuses = {"Pending", "InProgress", "BuildPLRInProgress"}
+                passing_statuses = {"TestPassed", "TestWarning"}
+                failed_scenario_names = [
+                    name
+                    for name in monitored_scenario_names
+                    if statuses_by_scenario[name].get("status") not in pending_statuses | passing_statuses
+                ]
+                for name in failed_scenario_names:
+                    if name in reported_failures:
+                        continue
+                    entry = statuses_by_scenario[name]
+                    log = self._logger.error if name in blocking_scenario_names else self._logger.warning
+                    log(
+                        "%s custom IntegrationTestScenario %s finished with %s: %s",
+                        "Release-blocking" if name in blocking_scenario_names else "Optional",
+                        name,
+                        entry.get("status"),
+                        entry.get("details", ""),
+                    )
+                    reported_failures.add(name)
+
+                blocking_failed_name = next(
+                    (name for name in failed_scenario_names if name in blocking_scenario_names),
+                    None,
+                )
+                if blocking_failed_name:
+                    failed_entry = statuses_by_scenario[blocking_failed_name]
+                    return CustomIntegrationTestResult(
+                        True,
+                        self._custom_integration_test_pipeline_url(
+                            namespace,
+                            application_name,
+                            failed_entry.get("testPipelineRunName", ""),
+                        ),
+                        pipeline_urls,
+                    )
+
+                pending_scenario_names = [
+                    name
+                    for name in monitored_scenario_names
+                    if statuses_by_scenario[name].get("status") in pending_statuses
+                ]
+                if not pending_scenario_names:
+                    for name in monitored_scenario_names:
+                        if name not in failed_scenario_names:
+                            self._logger.info(
+                                "Custom IntegrationTestScenario %s finished with %s",
+                                name,
+                                statuses_by_scenario[name].get("status"),
+                            )
+                    return CustomIntegrationTestResult(False, "", pipeline_urls)
+                if time.monotonic() >= completion_deadline:
+                    blocking_pending_name = next(
+                        (name for name in pending_scenario_names if name in blocking_scenario_names),
+                        None,
+                    )
+                    pending_entry = statuses_by_scenario[blocking_pending_name or pending_scenario_names[0]]
+                    log = self._logger.error if blocking_pending_name else self._logger.warning
+                    log(
+                        "Timed out waiting for %s custom IntegrationTestScenario %s PipelineRun to complete",
+                        "release-blocking" if blocking_pending_name else "optional",
+                        pending_entry.get("scenario"),
+                    )
+                    return CustomIntegrationTestResult(
+                        bool(blocking_pending_name),
+                        self._custom_integration_test_pipeline_url(
+                            namespace,
+                            application_name,
+                            pending_entry.get("testPipelineRunName", ""),
+                        )
+                        if blocking_pending_name
+                        else "",
+                        pipeline_urls,
+                    )
+
+                await asyncio.sleep(poll_interval_seconds)
+                snapshot = await self._get(API_VERSION, KIND_SNAPSHOT, snapshot_name, namespace=namespace, strict=False)
+                if snapshot is None:
+                    raise RuntimeError(f"Snapshot {snapshot_name} disappeared")
+                all_statuses = self._snapshot_test_statuses(snapshot)
+                statuses_by_scenario = {
+                    name: all_statuses[name] for name in monitored_scenario_names if name in all_statuses
+                }
+                if not all(name in statuses_by_scenario for name in monitored_scenario_names):
+                    raise ValueError(
+                        f"Snapshot {snapshot.metadata.name} lost configured integration test status entries"
+                    )
+        except Exception:
+            passed_blocking_scenario_names = {
+                name
+                for name in blocking_scenario_names
+                if statuses_by_scenario.get(name, {}).get("status") in {"TestPassed", "TestWarning"}
+            }
+            blocking_failed = bool(blocking_scenario_names - passed_blocking_scenario_names)
+            if blocking_failed:
+                self._logger.exception("Release-blocking custom IntegrationTestScenario verification error")
+            else:
+                self._logger.warning(
+                    "Optional custom IntegrationTestScenario verification error; continuing the build",
+                    exc_info=True,
+                )
+            pipeline_urls = [
+                self._custom_integration_test_pipeline_url(
+                    namespace,
+                    application_name,
+                    entry.get("testPipelineRunName", ""),
+                )
+                for entry in statuses_by_scenario.values()
+                if entry.get("testPipelineRunName")
+            ]
+            blocking_pipeline_url = next(
+                (
+                    self._custom_integration_test_pipeline_url(
+                        namespace,
+                        application_name,
+                        statuses_by_scenario[name].get("testPipelineRunName", ""),
+                    )
+                    for name in blocking_scenario_names
+                    if statuses_by_scenario.get(name, {}).get("testPipelineRunName")
+                ),
+                "",
+            )
+            return CustomIntegrationTestResult(blocking_failed, blocking_pipeline_url, pipeline_urls)
+
     @staticmethod
     def _new_ec_pipelinerun(
         generate_name: str,
@@ -1044,6 +1439,7 @@ class KonfluxClient:
         ec_pipeline_url: str = constants.KONFLUX_EC_PIPELINE_GIT_URL,
         ec_pipeline_revision: str = constants.KONFLUX_EC_PIPELINE_REVISION,
         ec_pipeline_path: str = constants.KONFLUX_EC_PIPELINE_PATH,
+        effective_time: str = "now",
     ) -> dict:
         """Create a PipelineRun manifest for enterprise-contract verification.
 
@@ -1054,6 +1450,7 @@ class KonfluxClient:
         :param snapshot_json: JSON-encoded snapshot spec for the SNAPSHOT param.
         :param its_name: The name of the IntegrationTestScenario.
         :param policy_configuration: The EC policy configuration.
+        :param effective_time: Effective time passed to Enterprise Contract.
         :param watch_labels: Labels for the KonfluxWatcher to track this PLR.
         :param ec_pipeline_url: The git URL for the EC pipeline.
         :param ec_pipeline_revision: The git revision for the EC pipeline.
@@ -1092,6 +1489,7 @@ class KonfluxClient:
                 "params": [
                     {"name": "POLICY_CONFIGURATION", "value": policy_configuration},
                     {"name": "SINGLE_COMPONENT", "value": "true"},
+                    {"name": "EFFECTIVE_TIME", "value": effective_time},
                     {"name": "SNAPSHOT", "value": snapshot_json},
                 ],
                 "taskRunTemplate": {
@@ -1113,6 +1511,7 @@ class KonfluxClient:
         commit_sha: str,
         its_name: str,
         policy_configuration: str,
+        effective_time: str = "now",
     ) -> PipelineRunInfo:
         """Start an enterprise-contract verification PipelineRun.
 
@@ -1124,6 +1523,7 @@ class KonfluxClient:
         :param commit_sha: The source commit SHA.
         :param its_name: The name of the IntegrationTestScenario.
         :param policy_configuration: The EC policy configuration.
+        :param effective_time: Effective time passed to Enterprise Contract.
         :return: The PipelineRunInfo for the created EC PipelineRun.
         """
         snapshot_spec = {
@@ -1157,6 +1557,7 @@ class KonfluxClient:
             snapshot_json=snapshot_json,
             its_name=its_name,
             policy_configuration=policy_configuration,
+            effective_time=effective_time,
             watch_labels=watch_labels,
         )
 
@@ -1181,6 +1582,7 @@ class KonfluxClient:
         commit_sha: str,
         ec_policy: str,
         logger: logging.Logger,
+        effective_time: str = "now",
     ) -> ECVerificationResult:
         """Run enterprise-contract verification for a built image.
 
@@ -1214,6 +1616,7 @@ class KonfluxClient:
                 commit_sha=commit_sha,
                 its_name=its_name,
                 policy_configuration=ec_policy,
+                effective_time=effective_time,
             )
             ec_plr_name = ec_plr_info.name
 
