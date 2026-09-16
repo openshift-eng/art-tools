@@ -85,6 +85,40 @@ def test_connect_issue_with_pr_bug_in_title(mocker):
 # Tests for resolve_upstream_from
 
 
+@pytest.mark.parametrize(
+    ('pullspec', 'expected'),
+    [
+        (
+            'registry.ci.openshift.org/ocp/4.20:cli',
+            'quay-proxy.ci.openshift.org/openshift/ci:ocp_4.20_cli',
+        ),
+        (
+            'registry.ci.openshift.org/openshift/release:rhel-9-release-golang-1.26-openshift-4.20',
+            'quay-proxy.ci.openshift.org/openshift/ci:openshift_release_rhel-9-release-golang-1.26-openshift-4.20',
+        ),
+        (
+            'quay-proxy.ci.openshift.org/openshift/ci:ocp_4.20_cli',
+            'quay-proxy.ci.openshift.org/openshift/ci:ocp_4.20_cli',
+        ),
+        ('quay.io/example/image:latest', 'quay.io/example/image:latest'),
+    ],
+)
+def test_to_qci_pullspec(pullspec, expected):
+    """Test conversion of app.ci image references to QCI pullspecs."""
+    assert images_streams._to_qci_pullspec(pullspec) == expected
+
+
+def test_get_image_stream_coordinate_from_qci_pullspec():
+    """Test recovering an ImageStream coordinate from a QCI pullspec."""
+    pullspec = 'quay-proxy.ci.openshift.org/openshift/ci:openshift_release_tag_with_underscores'
+
+    assert images_streams._get_image_stream_coordinate(pullspec) == {
+        'namespace': 'openshift',
+        'name': 'release',
+        'tag': 'tag_with_underscores',
+    }
+
+
 def test_resolve_upstream_from_with_member_and_explicit_upstream_image(mocker, mock_runtime):
     """Test resolving upstream from a member entry with explicit upstream_image"""
     # Create a mock image metadata with explicit upstream_image
@@ -97,7 +131,7 @@ def test_resolve_upstream_from_with_member_and_explicit_upstream_image(mocker, m
 
     result = images_streams.resolve_upstream_from(mock_runtime, image_entry)
 
-    assert result == 'registry.ci.openshift.org/ocp/4.17:custom-base'
+    assert result == 'quay-proxy.ci.openshift.org/openshift/ci:ocp_4.17_custom-base'
     mock_runtime.resolve_image.assert_called_once_with('openshift-enterprise-base', True)
 
 
@@ -116,7 +150,7 @@ def test_resolve_upstream_from_with_member_using_heuristic(mocker, mock_runtime)
     result = images_streams.resolve_upstream_from(mock_runtime, image_entry)
 
     # Should strip 'ose-' prefix from image name
-    assert result == 'registry.ci.openshift.org/ocp/4.17:ansible'
+    assert result == 'quay-proxy.ci.openshift.org/openshift/ci:ocp_4.17_ansible'
 
 
 def test_resolve_upstream_from_with_member_using_payload_name(mocker, mock_runtime):
@@ -135,7 +169,7 @@ def test_resolve_upstream_from_with_member_using_payload_name(mocker, mock_runti
     result = images_streams.resolve_upstream_from(mock_runtime, image_entry)
 
     # Should use payload_name and strip path
-    assert result == 'registry.ci.openshift.org/ocp/4.18:custom-payload-name'
+    assert result == 'quay-proxy.ci.openshift.org/openshift/ci:ocp_4.18_custom-payload-name'
 
 
 def test_resolve_upstream_from_with_image_entry(mock_runtime):
@@ -159,7 +193,7 @@ def test_resolve_upstream_from_with_stream_entry(mocker, mock_runtime):
 
     result = images_streams.resolve_upstream_from(mock_runtime, image_entry)
 
-    assert result == 'registry.ci.openshift.org/ocp/4.17:golang-1.20'
+    assert result == 'quay-proxy.ci.openshift.org/openshift/ci:ocp_4.17_golang-1.20'
     mock_runtime.resolve_stream.assert_called_once_with('golang')
 
 
