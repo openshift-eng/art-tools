@@ -14,6 +14,45 @@ from doozerlib.lockfile_prototype.container_utils import ContainerImageHelper
 
 
 class TestContainerImageHelper(unittest.TestCase):
+    def test_parse_sbom_package_names_ignores_repository_metadata(self):
+        """
+        Ignore RPM PURLs that describe repository metadata rather than installed packages.
+        """
+        sbom = {
+            "packages": [
+                {
+                    "name": "python3-dateutil",
+                    "externalRefs": [
+                        {
+                            "referenceType": "purl",
+                            "referenceLocator": (
+                                "pkg:rpm/redhat/python3-dateutil@2.8.1-7.el9?"
+                                "arch=noarch&repository_id=rhel-9-for-aarch64-baseos-e4s-rpms__9_DOT_6"
+                            ),
+                        }
+                    ],
+                },
+                {
+                    "name": "python3-six",
+                    "externalRefs": [
+                        {
+                            "referenceType": "purl",
+                            "referenceLocator": (
+                                "pkg:rpm/redhat/python3-six@1.15.0-1.el9?"
+                                "arch=noarch&upstream=python-six-1.15.0-1.el9.src.rpm"
+                            ),
+                        }
+                    ],
+                },
+            ]
+        }
+
+        helper = ContainerImageHelper()
+
+        result = helper._parse_sbom_package_names(sbom)
+
+        self.assertEqual(result, ["python3-six"])
+
     @patch("doozerlib.lockfile_prototype.container_utils.oc_image_info_for_arch_async", new_callable=AsyncMock)
     def test_resolve_to_digest_already_list_digest(self, mock_oc):
         """
@@ -164,7 +203,9 @@ class TestContainerImageHelper(unittest.TestCase):
                     "externalRefs": [
                         {
                             "referenceType": "purl",
-                            "referenceLocator": "pkg:rpm/redhat/bash@5.1.8-9.el9?arch=x86_64",
+                            "referenceLocator": (
+                                "pkg:rpm/redhat/bash@5.1.8-9.el9?arch=x86_64&upstream=bash-5.1.8-9.el9.src.rpm"
+                            ),
                         }
                     ]
                 },
@@ -226,7 +267,9 @@ class TestContainerImageHelper(unittest.TestCase):
                     "externalRefs": [
                         {
                             "referenceType": "purl",
-                            "referenceLocator": "pkg:rpm/redhat/bash@5.1.8-9.el9?arch=x86_64",
+                            "referenceLocator": (
+                                "pkg:rpm/redhat/bash@5.1.8-9.el9?arch=x86_64&upstream=bash-5.1.8-9.el9.src.rpm"
+                            ),
                         }
                     ]
                 }

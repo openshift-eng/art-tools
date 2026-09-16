@@ -306,6 +306,10 @@ class ContainerImageHelper:
                 package_arch = purl.qualifiers.get("arch")
                 if not package_arch or package_arch in {"src", "nosrc"} or purl.name in RPM_PSEUDO_PACKAGES:
                     continue
+                # RPM PURLs without an upstream source RPM can describe packages
+                # available in repository metadata rather than installed packages.
+                if not purl.qualifiers.get("upstream"):
+                    continue
                 if purl.name:
                     package_names.add(purl.name)
 
