@@ -317,7 +317,7 @@ class TestDirectSignatory(IsolatedAsyncioTestCase):
         self.assertEqual(command[:3], ["rh-signing-client", "--key", "redhatrelease2"])
         self.assertEqual(command[4], "--gpgsign")
         self.assertEqual(command[5], "--output")
-        self.assertEqual(command[7:], ["--onbehalfof", "timer"])
+        self.assertEqual(command[7:], ["--onbehalfof", "jupierce@redhat.com"])
 
     async def test_sign_json_digest_writes_signature_from_client_output(self):
         command_runner = AsyncMock()
@@ -408,7 +408,6 @@ class TestDirectSignatory(IsolatedAsyncioTestCase):
                 "DIRECT_SIGNING_STAGE_KEYTAB": "/path/to/stage-keytab",
                 "DIRECT_SIGNING_STAGE_PRINCIPAL": "art-signing-stage@IPA.REDHAT.COM",
                 "DIRECT_SIGNING_CLIENT_COMMAND": "rh-signing-client --config /path/to/config",
-                "DIRECT_SIGNING_REQUESTOR": "fabio.gallotti",
                 "DIRECT_SIGNING_TIMEOUT": "42",
             },
             clear=True,
@@ -420,7 +419,7 @@ class TestDirectSignatory(IsolatedAsyncioTestCase):
         self.assertEqual(signatory.principal, "art-signing-stage@IPA.REDHAT.COM")
         self.assertEqual(signatory.signing_env, "stage")
         self.assertEqual(signatory.sig_keyname, "beta2")
-        self.assertEqual(signatory.requestor, "fabio.gallotti")
+        self.assertEqual(signatory.ON_BEHALF_OF, "jupierce@redhat.com")
         self.assertEqual(signatory.timeout, 42)
 
 
