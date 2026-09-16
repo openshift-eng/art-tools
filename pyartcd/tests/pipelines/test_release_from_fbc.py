@@ -1650,8 +1650,8 @@ class TestOcpOptionalMode(unittest.TestCase):
         pipeline.validate_fbc_related_images.assert_not_awaited()
 
     @patch('pyartcd.pipelines.release_from_fbc.validate_shipment_mr_for_operation', new_callable=AsyncMock)
-    def test_force_makes_open_previous_mr_draft_before_replacement(self, mock_validate):
-        """Draft an open stage-only MR before direct release creates its replacement."""
+    def test_force_closes_open_previous_mr_before_replacement(self, mock_validate):
+        """Close an open stage-only MR before direct release creates its replacement."""
         previous_mr = MagicMock(
             state='opened',
             title='Shipment for oadp 1.5.8',
@@ -1677,26 +1677,33 @@ class TestOcpOptionalMode(unittest.TestCase):
         pipeline.create_shipment_config = MagicMock(return_value=MagicMock())
         pipeline._load_release_notes_template = MagicMock(return_value=None)
         pipeline._verify_layered_product_shipment_mr = AsyncMock()
-        pipeline.create_shipment_mr = AsyncMock(return_value="https://gitlab.example/project/-/merge_requests/43")
         operation_order = []
+        pipeline.create_shipment_mr = AsyncMock(
+            side_effect=lambda *_, **__: (
+                operation_order.append('create') or "https://gitlab.example/project/-/merge_requests/43"
+            )
+        )
         pipeline._update_layered_product_shipment_mr = AsyncMock(
             side_effect=lambda _: operation_order.append('pointer')
         )
         pipeline.set_shipment_mr_ready = AsyncMock()
         pipeline.__dict__['_gitlab'] = MagicMock()
+        previous_mr.save.side_effect = lambda: operation_order.append('close')
         pipeline._gitlab.add_mr_comment.side_effect = lambda *_: operation_order.append('comment')
 
         with patch('pyartcd.pipelines.release_from_fbc.is_nvr_embargoed', return_value=False):
             asyncio.run(pipeline.run())
 
-        self.assertEqual(previous_mr.title, 'Draft: Shipment for oadp 1.5.8')
-        self.assertEqual(previous_mr.labels, ['reviewed'])
+        self.assertEqual(previous_mr.title, 'Shipment for oadp 1.5.8')
+        self.assertEqual(previous_mr.labels, ['stage-release-success', 'reviewed'])
+        self.assertEqual(previous_mr.state_event, 'close')
         previous_mr.save.assert_called_once_with()
+        self.assertEqual(mock_validate.await_count, 3)
         pipeline.create_shipment_mr.assert_awaited_once()
         pipeline._update_layered_product_shipment_mr.assert_awaited_once_with(
             "https://gitlab.example/project/-/merge_requests/43"
         )
-        self.assertEqual(operation_order, ['pointer', 'comment'])
+        self.assertEqual(operation_order, ['close', 'create', 'pointer', 'comment'])
         comment_url, comment_body = pipeline._gitlab.add_mr_comment.call_args.args
         self.assertEqual(comment_url, "https://gitlab.example/project/-/merge_requests/42")
         self.assertIn("merge_requests/43", comment_body)

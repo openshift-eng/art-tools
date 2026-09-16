@@ -49,6 +49,7 @@ from pyartcd.git import GitRepository
 from pyartcd.lp_shipment import (
     ShipmentMRValidationError,
     add_superseded_mr_comment,
+    close_superseded_shipment_mr,
     create_shipment_mr_with_retry,
     get_shipment_mr_url,
     reconcile_shipment_mr,
@@ -1083,26 +1084,25 @@ class PrepareReleaseLPPipeline:
                             allowed_states=('opened', 'closed'),
                             allow_active_stage=True,
                         )
-                        if force_previous_mr.state == 'opened':
-                            set_shipment_mr_draft(force_previous_mr, self.dry_run)
-                            _, force_ci_state = await validate_shipment_mr_for_operation(
-                                self._gitlab,
-                                self.shipment_data_repo,
-                                self._configured_shipment_mr_url,
-                                self.shipment_data_repo_pull_url,
-                                self.shipment_data_repo_push_url,
-                                self.product,
-                                self.group,
-                                self.assembly,
-                                allowed_states=('opened',),
-                                allow_active_stage=True,
-                            )
                         if force_ci_state.active_stage:
                             self._logger.warning(
                                 "Replacing a shipment MR while its stage work is active; the old staging operation "
-                                "may continue, but the old MR has been made draft and cannot proceed to production: %s",
+                                "may continue after the old MR is closed, but cannot proceed through that MR: %s",
                                 "; ".join(force_ci_state.active_stage),
                             )
+                        close_superseded_shipment_mr(force_previous_mr, self.dry_run)
+                        force_previous_mr, _ = await validate_shipment_mr_for_operation(
+                            self._gitlab,
+                            self.shipment_data_repo,
+                            self._configured_shipment_mr_url,
+                            self.shipment_data_repo_pull_url,
+                            self.shipment_data_repo_push_url,
+                            self.product,
+                            self.group,
+                            self.assembly,
+                            allowed_states=('opened', 'closed') if self.dry_run else ('closed',),
+                            allow_active_stage=True,
+                        )
                     mr_url = await self._create_shipment_mr(shipments_by_kind)
                 if mr_url:
                     self._logger.info("Shipment MR: %s", mr_url)
@@ -1166,7 +1166,7 @@ class PrepareReleaseLPPipeline:
     "--force",
     is_flag=True,
     help=(
-        "Create a replacement shipment MR and update releases.yml. An open previous MR is made draft; replacement "
+        "Create a replacement shipment MR and update releases.yml. An open previous MR is closed; replacement "
         "is refused if it was merged or production was attempted."
     ),
 )

@@ -119,6 +119,23 @@ class ShipmentMRCIState:
     prod_attempts: tuple[str, ...]
 
 
+def close_superseded_shipment_mr(mr, dry_run: bool) -> None:
+    """Close an open shipment MR before creating its forced replacement.
+
+    Args:
+        mr: Superseded GitLab merge request object.
+        dry_run: Report the transition without saving it remotely.
+    """
+    if getattr(mr, 'state', None) != 'opened':
+        return
+    if dry_run:
+        LOGGER.info("[DRY-RUN] Would close superseded shipment MR: %s", getattr(mr, 'web_url', 'unknown'))
+        return
+    mr.state_event = 'close'
+    mr.save()
+    mr.state = 'closed'
+
+
 def add_superseded_mr_comment(
     gitlab_client,
     superseded_mr_url: str,
@@ -502,12 +519,10 @@ def validate_shipment_mr(
 
 
 def set_shipment_mr_draft(mr, dry_run: bool) -> None:
-    """Reset stage status and mark a reused or superseded MR as draft.
+    """Reset stage status and mark a reused MR as draft.
 
     For normal reuse, the success label describes the previous shipment files
-    and is removed before those files are replaced. For ``--force`` replacement,
-    marking an open previous MR draft prevents its manual production path from
-    proceeding while any already-started stage work finishes independently.
+    and is removed before those files are replaced.
 
     Args:
         mr: GitLab merge request object to update.

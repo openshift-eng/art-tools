@@ -16,6 +16,7 @@ from pyartcd.lp_shipment import (
     ShipmentMRValidationError,
     _identity,
     add_superseded_mr_comment,
+    close_superseded_shipment_mr,
     create_shipment_mr_with_retry,
     get_shipment_mr_url,
     inspect_shipment_mr_ci_state,
@@ -131,6 +132,35 @@ def test_add_superseded_mr_comment_failure_is_nonfatal(caplog):
     )
 
     assert "Failed to comment on superseded shipment MR" in caplog.text
+
+
+def test_close_superseded_shipment_mr_closes_open_mr():
+    """Close an open MR before creating its forced replacement."""
+    mr = MagicMock(state='opened')
+
+    close_superseded_shipment_mr(mr, dry_run=False)
+
+    assert mr.state_event == 'close'
+    assert mr.state == 'closed'
+    mr.save.assert_called_once_with()
+
+
+def test_close_superseded_shipment_mr_leaves_closed_mr_unchanged():
+    """Do not attempt to close an MR that was already abandoned."""
+    mr = MagicMock(state='closed')
+
+    close_superseded_shipment_mr(mr, dry_run=False)
+
+    mr.save.assert_not_called()
+
+
+def test_close_superseded_shipment_mr_dry_run_does_not_save():
+    """Report closure intent without mutating GitLab during a dry run."""
+    mr = MagicMock(state='opened', web_url='https://gitlab.example/mr/42')
+
+    close_superseded_shipment_mr(mr, dry_run=True)
+
+    mr.save.assert_not_called()
 
 
 def _shipment(*, fbc=False, nvr=None, release_notes=True):
