@@ -34,24 +34,27 @@ spec:
         EXPECTED_PRODUCT = "quay"
         PROD_JOB_NAME = "prod-job"
         PROD_STAGE_NAME = "prod-release-triggers"
+        GITLAB_HOST = "https://gitlab.cee.redhat.com"
+        PROJECT_PATH = "hybrid-platforms/art/ocp-shipment-data"
 
         mr_url = "$(params.mr-url)"
         dry_run = "$(params.dry-run)" == "true"
 
-        match = re.match(
-            r"(https://[^/]+)/(.+)/-/merge_requests/(\d+)",
+        match = re.fullmatch(
+            rf"{re.escape(GITLAB_HOST)}/{re.escape(PROJECT_PATH)}/-/merge_requests/(\d+)",
             mr_url,
         )
         if not match:
             print(f"ERROR: Cannot parse MR URL: {mr_url}", flush=True)
-            print("Expected format: https://<host>/<project-path>/-/merge_requests/<iid>", flush=True)
+            print(
+                f"Expected format: {GITLAB_HOST}/{PROJECT_PATH}/-/merge_requests/<iid>",
+                flush=True,
+            )
             sys.exit(1)
 
-        gitlab_host = match.group(1)
-        project_path = match.group(2)
-        mr_iid = match.group(3)
-        encoded_path = urllib.parse.quote(project_path, safe="")
-        api_base = f"{gitlab_host}/api/v4/projects/{encoded_path}"
+        mr_iid = match.group(1)
+        encoded_path = urllib.parse.quote(PROJECT_PATH, safe="")
+        api_base = f"{GITLAB_HOST}/api/v4/projects/{encoded_path}"
 
         gitlab_token = os.environ.get("GITLAB_TOKEN", "")
         if not gitlab_token:
@@ -80,7 +83,7 @@ spec:
             resp.raise_for_status()
             return resp.json()
 
-        log(f"Fetching MR !{mr_iid} from {project_path}...")
+        log(f"Fetching MR !{mr_iid} from {PROJECT_PATH}...")
         mr = api_get(f"/merge_requests/{mr_iid}")
         source_branch = mr["source_branch"]
         log(f"Source branch: {source_branch}")
@@ -215,7 +218,7 @@ spec:
                 f"If the pipeline has not reached '{PROD_STAGE_NAME}' yet, wait for earlier stages to complete.",
                 flush=True,
             )
-            print(f"Job URL: {gitlab_host}/{project_path}/-/jobs/{job_id}", flush=True)
+            print(f"Job URL: {GITLAB_HOST}/{PROJECT_PATH}/-/jobs/{job_id}", flush=True)
             sys.exit(1)
 
         log(f"Triggering job '{PROD_JOB_NAME}' (ID: {job_id}, action: {action})...")
@@ -223,7 +226,7 @@ spec:
         resp.raise_for_status()
         result = resp.json()
         log(f"Successfully triggered job '{PROD_JOB_NAME}' (ID: {job_id}). New status: {result.get('status')}")
-        log(f"Job URL: {gitlab_host}/{project_path}/-/jobs/{job_id}")
+        log(f"Job URL: {GITLAB_HOST}/{PROJECT_PATH}/-/jobs/{job_id}")
     taskRef:
       kind: Task
       name: artcd
